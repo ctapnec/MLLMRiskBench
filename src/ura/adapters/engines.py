@@ -1,8 +1,8 @@
 """Attacker aggregator + factory (thesis III.2.2).
 
 Each external red-team engine has its own module - pyrit, garak, deepteam,
-promptfoo, t3mp3st, petri, fuzzyai, nanogcg, autodan, agentdojo, giskard - and the
-pure-python replay / crescendo adapters live beside them. This module re-exports
+promptfoo, t3mp3st, petri, fuzzyai, nanogcg, autodan, agentdojo, giskard,
+easyjailbreak - and the pure-python replay / crescendo adapters live beside them. This module re-exports
 the engine classes and provides :func:`get_attacker`,
 which resolves any attacker by name. Every engine dependency is imported lazily
 inside its own module, so importing this file needs only pydantic + stdlib.
@@ -13,6 +13,7 @@ from .agentdojo import AgentDojoAttacker
 from .autodan import AutoDANTurboAttacker
 from .base import BaseAttacker
 from .deepteam import DeepTeamAttacker
+from .easyjailbreak import EasyJailbreakAttacker
 from .fuzzyai import FuzzyAIAttacker
 from .garak import GarakAttacker
 from .giskard import GiskardAttacker
@@ -50,6 +51,7 @@ def get_attacker(name: str) -> BaseAttacker:
         "autodan": AutoDANTurboAttacker,
         "agentdojo": AgentDojoAttacker,
         "giskard": GiskardAttacker,
+        "easyjailbreak": EasyJailbreakAttacker,
     }
     if key in engines:
         return engines[key]()
@@ -71,5 +73,6 @@ __all__ = [
     "AutoDANTurboAttacker",
     "AgentDojoAttacker",
     "GiskardAttacker",
+    "EasyJailbreakAttacker",
     "get_attacker",
 ]

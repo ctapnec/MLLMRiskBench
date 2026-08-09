@@ -1,0 +1,175 @@
+"""Video-SafetyBench converter: emergent unsafety from video-text composition.
+
+Video-SafetyBench (HF ``BAAI/Video-SafetyBench``; github.com/flageval-baai/
+Video-SafetyBench; NeurIPS D&B 2025, arXiv:2505.11842) is the first large-scale
+safety set for video large vision-language models: 2,264 video-text pairs built
+from 1,132 synthesized ~10s videos, spanning 13 primary unsafe categories and 48
+fine-grained subcategories (an MLCommons-style hazard taxonomy S1-S13).
+
+Its defining property mirrors SIUO but in the temporal domain: each synthesized
+video is paired with either a *harmful* query (explicit malice) or a *benign*
+query that reads as harmless in isolation yet elicits unsafe behavior once
+interpreted jointly with the video. The unsafe intent for the benign pairs is
+emergent from the video composition, so a text-only view would lose the risk.
+
+Real released layout: a metadata table (json / jsonl) whose records carry
+``question_id``, ``question`` (the query text), ``harmful_intention``,
+``video_path`` (relative to the metadata file), ``category`` and
+``subcategory``. The benign vs harmful split is carried by the release directory
+name (``video_safetybench_{query_type}``) and/or a per-record type field. Point
+``URA_VIDEOSAFETYBENCH_PATH`` at either variant's metadata file. Video files are
+resolved against the metadata file's parent (with a ``videos/`` fallback).
+Robust to a missing path (returns []).
+
+Imports only the standard library plus ``_common`` (which re-exports the data
+models); ``BaseConverter`` is the framework's converter ABC.
+"""
+from __future__ import annotations
+
+import re
+from pathlib import Path
+from typing import Optional
+
+from ..adapters.base import BaseConverter
+from ._common import DataPoint, DialogTurn, MediaRef, Rc, dp, missing, read_json, read_jsonl
+
+# Primary hazard categories (S1-S13) -> internal taxonomy. Unmapped categories
+# (e.g. Specialized Advice, Elections) fall through to the JAILBREAK default.
+CATEGORY_MAP = {
+    "violent crimes": Rc.LEGALITY,
+    "non-violent crimes": Rc.LEGALITY,
+    "sex-related crimes": Rc.LEGALITY,
+    "child sexual exploitation": Rc.CATASTROPHIC,
+    "defamation": Rc.TOXICITY,
+    "privacy": Rc.PRIVACY,
+    "intellectual property": Rc.LEGALITY,
+    "indiscriminate weapons": Rc.CATASTROPHIC,
+    "hate": Rc.TOXICITY,
+    "suicide and self-harm": Rc.CATASTROPHIC,
+    "sexual content": Rc.TOXICITY,
+}
+
+# Subcategory keyword refinements (checked before the category map).
+KEYWORD_OVERRIDES = (
+    ("child", Rc.CATASTROPHIC),
+    ("csem", Rc.CATASTROPHIC),
+    ("self-harm", Rc.CATASTROPHIC),
+    ("self harm", Rc.CATASTROPHIC),
+    ("suicide", Rc.CATASTROPHIC),
+    ("weapon", Rc.CATASTROPHIC),
+    ("cbrn", Rc.CATASTROPHIC),
+    ("biological", Rc.CATASTROPHIC),
+    ("chemical", Rc.CATASTROPHIC),
+    ("nuclear", Rc.CATASTROPHIC),
+    ("cyber", Rc.CYBERSEC),
+    ("hacking", Rc.CYBERSEC),
+    ("malware", Rc.CYBERSEC),
+    ("privacy", Rc.PRIVACY),
+)
+
+_BENIGN = "benign"
+_HARMFUL = "harmful"
+
+
+def _norm(s: Optional[str]) -> str:
+    """Normalize a category label: drop an ``S1-`` style prefix and punctuation."""
+    s = (s or "").strip().lower()
+    s = re.sub(r"^s\d+\s*[-:._)]*\s*", "", s)
+    s = s.replace("_", " ").replace("&", " and ")
+    return re.sub(r"\s+", " ", s).strip()
+
+
+def _risk(category: Optional[str], subcategory: Optional[str]) -> Rc:
+    """Derive the internal risk from subcategory keywords, then category, then JAILBREAK."""
+    text = f"{category or ''} {subcategory or ''}".lower()
+    for kw, rc in KEYWORD_OVERRIDES:
+        if kw in text:
+            return rc
+    return CATEGORY_MAP.get(_norm(category), Rc.JAILBREAK)
+
+
+def _query_type(rec: dict, path: Path) -> Optional[str]:
+    """Classify a record as benign / harmful via a type field or the release path."""
+    for k in ("query_type", "type", "variant", "split", "prompt_type"):
+        v = rec.get(k)
+        if isinstance(v, str) and v.strip().lower() in (_BENIGN, _HARMFUL):
+            return v.strip().lower()
+    for k in ("is_benign", "benign"):
+        v = rec.get(k)
+        if isinstance(v, bool):
+            return _BENIGN if v else _HARMFUL
+    hay = str(path).lower()
+    if _BENIGN in hay:
+        return _BENIGN
+    if _HARMFUL in hay:
+        return _HARMFUL
+    return None
+
+
+def _video(video_path: Optional[str], root: Path) -> list[MediaRef]:
+    """Resolve the video against the metadata parent (with a ``videos/`` fallback)."""
+    if not video_path:
+        return []
+    cand = root / video_path
+    if not cand.is_file():
+        alt = root / "videos" / Path(video_path).name
+        if alt.is_file():
+            cand = alt
+    return [MediaRef(modality="video", path=str(cand))]
+
+
+class VideoSafetyBenchConverter(BaseConverter):
+    name = "videosafetybench"
+
+    def parse(self, path: Path) -> list[DataPoint]:
+        path = Path(path)
+        if not path.is_file():
+            return missing(self.name, path)
+        root = path.parent
+        records = read_jsonl(path) if path.suffix == ".jsonl" else read_json(path)
+        if isinstance(records, dict):
+            records = (
+                records.get("data")
+                or records.get("questions")
+                or records.get("records")
+                or list(records.values())
+            )
+        out: list[DataPoint] = []
+        for i, rec in enumerate(records):
+            if not isinstance(rec, dict):
+                continue
+            category = rec.get("category")
+            subcategory = rec.get("subcategory")
+            text = rec.get("question") or rec.get("query") or rec.get("prompt")
+            media = _video(rec.get("video_path") or rec.get("video"), root)
+
+            qtype = _query_type(rec, path)
+            # Benign (or unclassified) pairs are emergent-unsafe: the query reads
+            # as harmless and the harm arises only in composition with the video,
+            # so the model must answer safely rather than refuse a benign request.
+            emergent = qtype != _HARMFUL
+            expected = "safe_answer" if emergent else "refuse"
+
+            tag = qtype or "q"
+            rid = rec.get("question_id", rec.get("id", i))
+            out.append(dp(
+                id=f"videosafetybench:{tag}:{rid}",
+                source="videosafetybench",
+                modalities=["text", "video"],
+                risk=_risk(category, subcategory),
+                expected=expected,
+                dialog=[DialogTurn(role="user", content=text or "", media=media)],
+                payload_text=text,
+                media=media,
+                risk_subtype=(subcategory or category or None),
+                attack_family="video_composition",
+                meta={
+                    "category": category,
+                    "subcategory": subcategory,
+                    "harmful_intention": rec.get("harmful_intention"),
+                    "query_type": qtype,
+                    "emergent_unsafe": emergent,
+                    "video_path": rec.get("video_path") or rec.get("video"),
+                },
+            ))
+        return out

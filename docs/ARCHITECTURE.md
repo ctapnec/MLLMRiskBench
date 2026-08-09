@@ -62,7 +62,7 @@ classDiagram
 
 | Layer | Module | Role |
 |---|---|---|
-| 1 | `ura.converters` | 17 source converters + `synth_corpus` → `DataPoint`s |
+| 1 | `ura.converters` | 19 source converters + `synth_corpus` → `DataPoint`s |
 | 3 | `ura.adapters.{replay,crescendo,engines}` | static replay, offline multi-turn escalation, engine wrappers |
 | 3 | `ura.targets.{api,local}` | Mock/Anthropic/OpenAI/Gemini + vLLM/Ollama, via `REGISTRY` |
 | 3 | `ura.judges.{rules,guardrail,llm}` + `JudgeCascade` | cheapest-first cascade with per-stage trail |

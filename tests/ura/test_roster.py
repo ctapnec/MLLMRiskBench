@@ -17,13 +17,15 @@ from ura.converters import _CONVERTERS
 # The wrapped engines require a third-party library or CLI; offline they must raise
 # a clear error at generate() time, never import their dep at module load.
 WRAPPED_ENGINES = ["pyrit", "garak", "deepteam", "promptfoo", "t3mp3st",
-                   "petri", "fuzzyai", "nanogcg", "autodan", "agentdojo", "giskard"]
+                   "petri", "fuzzyai", "nanogcg", "autodan", "agentdojo", "giskard",
+                   "easyjailbreak"]
 NATIVE_ATTACKERS = ["replay", "crescendo"]
 
 EXPECTED_CONVERTERS = {
     "rjudge", "mmsafety", "jailbreakv", "gptgeochat", "agentharm", "strongreject",
     "bipia", "harmbench", "vlsbench", "mossbench", "siuo",
     "advbench", "jailbreakbench", "figstep", "cyberseceval", "injecagent", "mllmguard",
+    "jalmbench", "videosafetybench",
 }
 
 

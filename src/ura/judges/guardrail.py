@@ -6,6 +6,11 @@ that reads the full conversation via its chat template and emits ``safe`` /
 taxonomy). This is cheaper and more reproducible than a full LLM judge, so the
 cascade runs it after the deterministic rules and before the LLM stage.
 
+The verdict parser currently understands the Llama-Guard output shape; other
+open guardrails (WildGuard, ShieldGemma) are pluggable at this stage by design
+but need their own per-model verdict parser, which is future work - so Llama
+Guard 3 is the wired back-end and the others are listed as planned.
+
 The module imports with only pydantic + the stdlib present; ``transformers`` and
 ``torch`` are imported lazily the first time :meth:`GuardrailJudge.judge` runs.
 """

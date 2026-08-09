@@ -90,8 +90,11 @@ python experiments/run_matrix.py --api claude-opus-5 --attackers replay \
   --judges rules --corpora synth,mmsafety --limit 200 --seeds 0,1 --out runs/judge-rules
 ```
 Return: `runs/kappa/` (incl. `judge_kappa.json`) and `runs/judge-rules/`. Also, if you can,
-hand-label a stratified ~100-item sample (I will send a sampling script/CSV) so we report
-human-vs-automated agreement. Keep the kappa cell on `claude-opus-5` (matches PROTOCOL E8).
+hand-label a stratified ~100-item sample as a CSV (`attempt_id,label`) and run
+`python experiments/human_audit.py --results runs/kappa --labels human_labels.csv` - it writes
+`human_audit.json` with judge-vs-human Cohen's kappa and accuracy/precision/recall/F1 per stage
+(V.2.5 external validity). Return that CSV + `human_audit.json`. Keep the kappa cell on
+`claude-opus-5` (matches PROTOCOL E8).
 
 ### R4 - Defense ablation (guardrail pre-filter on/off)  (-> V.2.3, RQ3)
 ```bash

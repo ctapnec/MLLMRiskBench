@@ -328,6 +328,24 @@ REGISTRY.register(
     backend="ollama",
 )
 
+# Gray Swan Cygnet circuit-breaker (RR) open weights - the built-in-defense contrast
+# of RQ3 (thesis II.6.1 / V.1.2 / V.2.3). Registered as first-class targets so the exact
+# HF ids resolve without the vllm: prefix; the LLaVA variant is vision-capable.
+REGISTRY.register(
+    "GraySwanAI/Llama-3-8B-Instruct-RR",
+    lambda: make_vllm_target("GraySwanAI/Llama-3-8B-Instruct-RR"),
+    backend="vllm",
+    tensor_parallel_size=2,
+)
+REGISTRY.register(
+    "GraySwanAI/llava-v1.6-mistral-7b-hf-RR",
+    lambda: make_vllm_target(
+        "GraySwanAI/llava-v1.6-mistral-7b-hf-RR", modality_support=("text", "image")
+    ),
+    backend="vllm",
+    tensor_parallel_size=2,
+)
+
 
 __all__ = [
     "VLLMTarget",
