@@ -1,8 +1,9 @@
 """Per-framework source converters (thesis IV.1.6).
 
 Each benchmark framework has its own module (rjudge, mmsafety, jailbreakv,
-gptgeochat, agentharm, strongreject, bipia, harmbench, vlsbench, mossbench, siuo),
-and each converter loads that framework's REAL released layout into unified
+gptgeochat, agentharm, strongreject, bipia, harmbench, vlsbench, mossbench, siuo,
+advbench, jailbreakbench, figstep, cyberseceval, injecagent, mllmguard), and each
+converter loads that framework's REAL released layout into unified
 DataPoints. ``get_converter(name)`` returns a fresh instance; ``synth_corpus``
 builds an offline mixed-modality corpus. Adding a framework is a new module plus
 one line in the registry below (open/closed; thesis N4).
@@ -10,11 +11,17 @@ one line in the registry below (open/closed; thesis N4).
 from __future__ import annotations
 
 from ..adapters.base import BaseConverter
+from .advbench import AdvBenchConverter
 from .agentharm import AgentHarmConverter
 from .bipia import BIPIAConverter
+from .cyberseceval import CyberSecEvalConverter
+from .figstep import FigStepConverter
 from .gptgeochat import GPTGeoChatConverter
 from .harmbench import HarmBenchConverter
+from .injecagent import InjecAgentConverter
+from .jailbreakbench import JailbreakBenchConverter
 from .jailbreakv import JailBreakVConverter
+from .mllmguard import MLLMGuardConverter
 from .mmsafety import MMSafetyConverter
 from .mossbench import MOSSBenchConverter
 from .rjudge import RJudgeConverter
@@ -28,6 +35,8 @@ _CONVERTERS: dict[str, type[BaseConverter]] = {
         RJudgeConverter, MMSafetyConverter, JailBreakVConverter, GPTGeoChatConverter,
         AgentHarmConverter, StrongRejectConverter, BIPIAConverter, HarmBenchConverter,
         VLSBenchConverter, MOSSBenchConverter, SIUOConverter,
+        AdvBenchConverter, JailbreakBenchConverter, FigStepConverter,
+        CyberSecEvalConverter, InjecAgentConverter, MLLMGuardConverter,
     )
 }
 
@@ -43,5 +52,7 @@ __all__ = [
     "RJudgeConverter", "MMSafetyConverter", "JailBreakVConverter", "GPTGeoChatConverter",
     "AgentHarmConverter", "StrongRejectConverter", "BIPIAConverter", "HarmBenchConverter",
     "VLSBenchConverter", "MOSSBenchConverter", "SIUOConverter",
+    "AdvBenchConverter", "JailbreakBenchConverter", "FigStepConverter",
+    "CyberSecEvalConverter", "InjecAgentConverter", "MLLMGuardConverter",
     "get_converter", "synth_corpus",
 ]

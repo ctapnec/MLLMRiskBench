@@ -22,7 +22,7 @@ See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) (five layers, schema class diag
 
 ```bash
 pip install pydantic            # the only hard dependency of the core
-python -m pytest tests/ura -q   # 25 tests, ~1s
+python -m pytest tests/ura -q   # 49 tests, ~2s
 
 # full pipeline on a synthetic corpus against the offline MockTarget:
 PYTHONPATH=src python -m ura.cli run --corpus synth --attacker replay \
@@ -66,7 +66,7 @@ src/unify/          LEGACY v0.3 prototype (kept for reference)
 
 ## Status
 
-Core + offline pipeline: **implemented and tested** (25/25). Live target/judge/engine paths and real corpora: implemented with lazy deps, to be validated on first rig run. Experiments: turnkey, pending execution on the rig.
+Core + offline pipeline: **implemented and tested** (49/49). Live target/judge/engine paths and real corpora: implemented with lazy deps, to be validated on first rig run. Experiments: turnkey, pending execution on the rig.
 
 ## License
 

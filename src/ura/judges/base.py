@@ -1,9 +1,14 @@
 """Judge interface and the cheapest-first cascade (thesis III.2.2, II.5.2).
 
 The cascade answers Chapter II's LLM-as-judge validity critique: cheap
-deterministic rules run first, then a guardrail classifier, then an LLM judge
-only for the uncertain remainder, with a human-audit sink for calibration.
-Each stage emits a Judgment; agreement between stages is a reported metric.
+deterministic rules run first, then a guardrail classifier, then an LLM judge.
+By default every stage is scored so inter-judge agreement (Cohen's kappa) can be
+computed over the full per-stage trail, and ``escalate_below`` selects which
+stage's verdict is authoritative (set it above 0 for a cost-saving early-exit
+where later stages run only for low-confidence items). The ``human_sink`` is a
+RESERVED calibration hook: human adjudication is applied out-of-band on the
+stratified audit sample of V.1.5 (yielding judge-vs-human precision/recall/F1 via
+:func:`ura.metrics.judge_scores`), not as an automatic fourth cascade stage.
 """
 from __future__ import annotations
 
@@ -41,6 +46,8 @@ class JudgeCascade:
         if not stages:
             raise ValueError("JudgeCascade needs at least one stage")
         self.stages = stages
+        # Reserved calibration hook (out-of-band human audit on a stratified sample,
+        # V.1.5); not invoked inside judge(), which scores only the automated stages.
         self.human_sink = human_sink
 
     def judge(self, datapoint: DataPoint, response: Response) -> tuple[Judgment, list[Judgment]]:
