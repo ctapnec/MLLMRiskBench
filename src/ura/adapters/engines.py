@@ -13,6 +13,7 @@ from .deepteam import DeepTeamAttacker
 from .garak import GarakAttacker
 from .promptfoo import PromptfooAttacker
 from .pyrit import PyRITAttacker
+from .t3mp3st import T3MP3STAttacker
 
 
 def get_attacker(name: str) -> BaseAttacker:
@@ -35,6 +36,7 @@ def get_attacker(name: str) -> BaseAttacker:
         "garak": GarakAttacker,
         "deepteam": DeepTeamAttacker,
         "promptfoo": PromptfooAttacker,
+        "t3mp3st": T3MP3STAttacker,
     }
     if key in engines:
         return engines[key]()
@@ -49,5 +51,6 @@ __all__ = [
     "GarakAttacker",
     "DeepTeamAttacker",
     "PromptfooAttacker",
+    "T3MP3STAttacker",
     "get_attacker",
 ]

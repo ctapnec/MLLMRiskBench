@@ -3,6 +3,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
 from ura.adapters.base import AttackBudget
 from ura.adapters.replay import ReplayAttacker
 from ura.converters import synth_corpus
@@ -72,3 +74,15 @@ def test_modality_grouping_and_trails(tmp_path: Path):
     assert trail_path.exists()
     lines = trail_path.read_text(encoding="utf-8").strip().splitlines()
     assert len(lines) == 2 * len(judgments)           # two judge stages per attempt
+
+
+def test_t3mp3st_registered_and_guarded():
+    from ura.adapters.engines import T3MP3STAttacker, get_attacker
+
+    a = get_attacker("t3mp3st")
+    assert isinstance(a, T3MP3STAttacker) and a.name == "t3mp3st"
+    # offline: the CLI is absent, so plan generation must raise a clear RuntimeError
+    guarded = T3MP3STAttacker(cli="t3mp3st-not-installed-xyz")
+    dp = synth_corpus(1)[0]
+    with pytest.raises(RuntimeError):
+        list(guarded.generate(dp, AttackBudget(max_queries=2)))
