@@ -1,4 +1,4 @@
-# URA-Bench — Unified Risk-Assessment Benchmark for (M)LLMs
+# URA-Bench - Unified Risk-Assessment Benchmark for (M)LLMs
 
 *A plugin-based, standards-aligned, modality- and agentic-aware harness for measuring the safety risk of large and multimodal language models under adversarial and realistic conditions.*
 
@@ -8,9 +8,9 @@
 
 The safety-evaluation ecosystem is fragmented: every red-teaming engine and benchmark uses its own format, its own definition of a “successful” attack, its own judge, and its own (or no) mapping to the risk taxonomies regulators now require. Results do not compose. URA-Bench unifies three concerns that today live in separate silos and **wraps** the mature tools (PyRIT, Garak, DeepTeam, Promptfoo, MM-SafetyBench, AgentHarm, …) rather than re-implementing attacks:
 
-1. **Attacks** — single/multi-turn text, image+text, audio, and agentic tool-use.
-2. **Targets** — hosted APIs (Anthropic/OpenAI/Google) and self-hosted open weights (vLLM/Ollama).
-3. **Judgment & metrics** — a rule→guardrail→LLM cascade, modern metrics with confidence intervals, and first-class OWASP/NIST/MLCommons/EU-AI-Act mapping.
+1. **Attacks** - single/multi-turn text, image+text, audio, and agentic tool-use.
+2. **Targets** - hosted APIs (Anthropic/OpenAI/Google) and self-hosted open weights (vLLM/Ollama).
+3. **Judgment & metrics** - a rule→guardrail→LLM cascade, modern metrics with confidence intervals, and first-class OWASP/NIST/MLCommons/EU-AI-Act mapping.
 
 The three are **independent, interchangeable axes** (any attacker × any target × any judge).
 
@@ -38,7 +38,7 @@ pip install -r requirements.txt      # + extras per backend (see requirements.tx
 export ANTHROPIC_API_KEY=…  OPENAI_API_KEY=…  GOOGLE_API_KEY=…
 python experiments/run_matrix.py --dry-run --out runs/dry           # offline check
 python experiments/run_matrix.py \
-    --api claude-3-5-sonnet-latest,gpt-4o,gemini-1.5-pro \
+    --api claude-opus-5,gpt-5.6,gemini-3.1-pro \
     --local vllm:Qwen/Qwen3-VL-8B-Instruct,vllm:google/gemma-3-27b-it \
     --attackers replay,crescendo --judges rules,llm \
     --corpora synth --limit 200 --seeds 0,1 --out runs/full
@@ -49,7 +49,7 @@ See [experiments/README.md](experiments/README.md). Figures: `python ../../Thesi
 ## Layout
 
 ```text
-src/ura/            modern package (schema v1.0) — the harness
+src/ura/            modern package (schema v1.0) - the harness
   data_models.py    typed schema (Pydantic v2)
   taxonomy.py       RiskCategory → OWASP/NIST/MLCommons (data)
   metrics.py        ASR, StrongREJECT, FRR, robust-refusal, κ, bootstrap CIs
@@ -59,7 +59,7 @@ src/ura/            modern package (schema v1.0) — the harness
   runner.py         orchestrator (+ run manifest, aggregation)
   report.py, cli.py reporting + `ura convert|run|report`
 tests/ura/          25 offline tests (core, plugins, end-to-end smoke)
-experiments/        run_matrix.py — turnkey model×attacker×judge driver
+experiments/        run_matrix.py - turnkey model×attacker×judge driver
 docs/               architecture, schema, metrics, attack tags
 src/unify/          LEGACY v0.3 prototype (kept for reference)
 ```

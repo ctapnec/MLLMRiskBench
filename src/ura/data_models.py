@@ -1,4 +1,4 @@
-"""URA-Bench unified schema — version 1.0.
+"""URA-Bench unified schema - version 1.0.
 
 Typed data contract shared by every layer of the harness (see thesis III.3).
 Extends the pre-2025 prototype schema (v0.3: DataPoint / DialogTurn / EvalResult)

@@ -1,4 +1,4 @@
-"""Standards taxonomy mapping — data, not code (thesis III.3.1, F7/N4).
+"""Standards taxonomy mapping - data, not code (thesis III.3.1, F7/N4).
 
 Maps the internal RiskCategory to external governance taxonomies so the
 reporting layer can emit OWASP / NIST / MLCommons roll-ups without new code.

@@ -1,4 +1,4 @@
-"""Guardrail-classifier judge — the middle cascade stage (thesis III.2.2, II.5.2).
+"""Guardrail-classifier judge - the middle cascade stage (thesis III.2.2, II.5.2).
 
 Wraps a Hugging Face safety classifier (default ``meta-llama/Llama-Guard-3-8B``)
 that reads the full conversation via its chat template and emits ``safe`` /

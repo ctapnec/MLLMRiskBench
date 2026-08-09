@@ -1,6 +1,6 @@
 # Architecture (URA-Bench, schema v1.0)
 
-URA-Bench is organized as **five layers** with a strict downward dependency rule: upper layers depend only on the schema (`ura.data_models`), never on one another's internals. The structural decision underneath everything is the separation of **Attacker / Target / Judge** into independent, interchangeable axes — any attacker can run against any target and be scored by any judge.
+URA-Bench is organized as **five layers** with a strict downward dependency rule: upper layers depend only on the schema (`ura.data_models`), never on one another's internals. The structural decision underneath everything is the separation of **Attacker / Target / Judge** into independent, interchangeable axes - any attacker can run against any target and be scored by any judge.
 
 ```mermaid
 flowchart TD
@@ -28,7 +28,7 @@ flowchart TD
     JUDGE --> MET --> TAX
     subgraph L5["5 · Persistence & Reporting"]
         STORE["results.jsonl / .parquet + RunManifest"]
-        RPT["report.py — risk card / HTML"]
+        RPT["report.py - risk card / HTML"]
     end
     TAX --> STORE --> RPT
 ```
@@ -73,12 +73,12 @@ classDiagram
 
 ## Design principles
 
-1. **Attacker/Target/Judge separation** — combinatorial reuse, fair cross-engine comparison.
-2. **Schema-first** — a typed, versioned contract between all layers.
-3. **Adapters over re-implementation** — wrap mature engines; add normalization.
-4. **Standards as first-class data** — taxonomy mapping is a data table, so compliance reporting is by construction.
-5. **Measurement honesty** — confidence intervals, judge calibration (κ), and the over-refusal utility axis; no bare point estimates.
-6. **Reproducibility by construction** — seeds, content-hashed corpus, and a re-derivable `run_id` in every manifest.
+1. **Attacker/Target/Judge separation** - combinatorial reuse, fair cross-engine comparison.
+2. **Schema-first** - a typed, versioned contract between all layers.
+3. **Adapters over re-implementation** - wrap mature engines; add normalization.
+4. **Standards as first-class data** - taxonomy mapping is a data table, so compliance reporting is by construction.
+5. **Measurement honesty** - confidence intervals, judge calibration (κ), and the over-refusal utility axis; no bare point estimates.
+6. **Reproducibility by construction** - seeds, content-hashed corpus, and a re-derivable `run_id` in every manifest.
 
 ## Harness safety
 

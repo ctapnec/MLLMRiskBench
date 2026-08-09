@@ -2,13 +2,13 @@
 
 A single ``ura`` entry point that wires the harness end-to-end:
 
-* ``convert`` — normalise a source framework's corpus into unified DataPoints
+* ``convert`` - normalise a source framework's corpus into unified DataPoints
   (JSONL) via :func:`ura.converters.get_converter`;
-* ``run`` — replay/attack a corpus against a registered target, judge every
+* ``run`` - replay/attack a corpus against a registered target, judge every
   response through a cheapest-first :class:`~ura.judges.base.JudgeCascade`, and
   persist judgments, aggregated results, and the re-derivable
   :class:`~ura.data_models.RunManifest`;
-* ``report`` — render an aggregated result set into a markdown risk card.
+* ``report`` - render an aggregated result set into a markdown risk card.
 
 Only pydantic + the standard library are needed to import this module. Heavy
 judge/target backends (guardrail HF models, provider SDKs) are constructed

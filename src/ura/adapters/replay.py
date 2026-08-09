@@ -1,4 +1,4 @@
-"""Replay attacker — static-corpus adapter (thesis III.2.2).
+"""Replay attacker - static-corpus adapter (thesis III.2.2).
 
 The simplest attacker: it does not synthesize or escalate anything. It renders a
 DataPoint verbatim into exactly one Attempt so that a pre-authored corpus (e.g.

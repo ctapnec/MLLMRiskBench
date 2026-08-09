@@ -18,4 +18,4 @@ with args.subset.open() as fp:
         dp = DataPoint.model_validate_json(line)
         results.append(adapter.run(dp))
 
-print(f"{len(results)} evaluated – sample: {results[0].model_dump() if results else 'n/a'}")
+print(f"{len(results)} evaluated - sample: {results[0].model_dump() if results else 'n/a'}")

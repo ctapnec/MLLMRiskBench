@@ -8,7 +8,7 @@ Typed Pydantic v2 contract shared by every layer. Extends the pre-2025 prototype
 - `Role = system | user | assistant | tool | env`
 - `ExpectedBehavior = refuse | safe_answer | comply_safely`
 - `JudgeLabel = safe | violation | refusal | over_refusal`
-- `RiskCategory` — 11 members (see [ATTACK_TAGS.md](ATTACK_TAGS.md))
+- `RiskCategory` - 11 members (see [ATTACK_TAGS.md](ATTACK_TAGS.md))
 
 ## Types
 
@@ -32,4 +32,4 @@ Typed Pydantic v2 contract shared by every layer. Extends the pre-2025 prototype
 
 ## Why v1.0 over v0.3
 
-v0.3 could express only single-shot text pairs with a stored boolean ground truth. v1.0 adds multi-turn lineage (`turn_index`, escalation trees), agentic traces (`tool_call`/`tool_result`), content-addressed media, the Attacker/Target/Judge split (separate `Attempt`/`Response`/`Judgment` records linked by id), and standards mapping — the capabilities the 2025–2026 threat landscape requires and the prototype lacked. Converters declare the schema version they emit; the metrics engine refuses to mix versions.
+v0.3 could express only single-shot text pairs with a stored boolean ground truth. v1.0 adds multi-turn lineage (`turn_index`, escalation trees), agentic traces (`tool_call`/`tool_result`), content-addressed media, the Attacker/Target/Judge split (separate `Attempt`/`Response`/`Judgment` records linked by id), and standards mapping - the capabilities the 2025-2026 threat landscape requires and the prototype lacked. Converters declare the schema version they emit; the metrics engine refuses to mix versions.

@@ -1,9 +1,9 @@
-"""URA-Bench reporting layer — the one-page risk card (thesis III.2.4, V.1).
+"""URA-Bench reporting layer - the one-page risk card (thesis III.2.4, V.1).
 
 Turns aggregated :class:`~ura.data_models.EvalResult` records into a compact,
 human-readable *risk card*: a per-model, per-risk-category roll-up that pairs
 the safety axis (ASR / StrongREJECT severity) against the utility axis
-(over-refusal), so a reviewer can read the safety–utility trade-off at a glance
+(over-refusal), so a reviewer can read the safety-utility trade-off at a glance
 and follow the standards taxonomy (OWASP / NIST / MLCommons) roll-up.
 
 Pure Python + standard library only. ``risk_card`` emits GitHub-flavoured
@@ -28,7 +28,7 @@ from .taxonomy import EU_AI_ACT_SYSTEMIC_RISKS, TAXONOMY_MAP
 _RISK_KEYS = ("risk", "risk_category", "category", "risk_cat")
 _MODEL_KEYS = ("model", "model_id", "target")
 
-# Substrings that identify the two axes of the safety–utility pair.
+# Substrings that identify the two axes of the safety-utility pair.
 _SAFETY_METRICS = ("asr", "attack_success", "strongreject", "isr", "injection")
 _UTILITY_METRICS = ("frr", "over_refusal", "over-refusal", "overrefusal")
 
@@ -92,7 +92,7 @@ def risk_card(results: list[EvalResult], model_id: str) -> str:
 
     Results are grouped by risk category (via ``EvalResult.group_by``); each
     group lists its metrics with value, 95% CI (``ci_low..ci_high``) and ``n``,
-    followed by the safety–utility pair (ASR vs over-refusal) and, where known,
+    followed by the safety-utility pair (ASR vs over-refusal) and, where known,
     the external-standard taxonomy references. Results whose group targets a
     different model are ignored so a shared result list can hold many models.
     """
@@ -128,7 +128,7 @@ def risk_card(results: list[EvalResult], model_id: str) -> str:
             )
         lines.append("")
 
-        # Safety–utility pair.
+        # Safety-utility pair.
         safety = _pick(group, _SAFETY_METRICS)
         utility = _pick(group, _UTILITY_METRICS)
         lines.append(

@@ -9,7 +9,7 @@ aggregates judgments into :class:`EvalResult` metrics with bootstrap CIs, and
 persists results as JSONL (and Parquet when pandas is importable).
 
 Determinism is a hard requirement: no wall-clock or unseeded randomness leaks
-into the manifest or the metrics — ``started_at`` is injected by the caller and
+into the manifest or the metrics - ``started_at`` is injected by the caller and
 every stochastic metric threads a fixed seed.
 """
 from __future__ import annotations
@@ -125,6 +125,8 @@ class Runner:
             "source": datapoint.source,
             "risk_category": datapoint.risk_category.value,
             "risk": datapoint.risk_category.value,  # short alias for grouping/figures
+            "modality": _modality_label(datapoint.modalities),   # for m-ASR grouping
+            "is_multimodal": len(set(datapoint.modalities) - {"text"}) > 0,
             "risk_subtype": datapoint.risk_subtype,
             "expected_behavior": datapoint.expected_behavior,
             "attack_family": datapoint.attack_family,
@@ -284,6 +286,26 @@ class Runner:
         flat = [{**r, "raw": json.dumps(r.get("raw", {}), sort_keys=True)} for r in rows]
         pd.DataFrame(flat).to_parquet(parquet_path, index=False)
 
+    def save_trails(self, path: str | Path) -> None:
+        """Persist the per-stage judge trail as JSONL for inter-judge agreement (κ).
+
+        One row per (attempt, judge stage): ``{attempt_id, stage, judge, label,
+        score}``. Consumed by ``experiments/kappa.py`` to compute Cohen's κ
+        between judge stages (thesis II.5.2 / V.2.5).
+        """
+        p = Path(path)
+        p.parent.mkdir(parents=True, exist_ok=True)
+        with p.open("w", encoding="utf-8") as fh:
+            for attempt_id, trail in self.trails.items():
+                for stage, j in enumerate(trail):
+                    fh.write(json.dumps({
+                        "attempt_id": attempt_id,
+                        "stage": stage,
+                        "judge": j.judge,
+                        "label": j.label,
+                        "score": j.score,
+                    }, sort_keys=True) + "\n")
+
     # ------------------------------------------------------------------ #
     # Resume
     # ------------------------------------------------------------------ #
@@ -308,6 +330,17 @@ def _sha256_json(obj: Any) -> str:
     """Stable SHA-256 over a JSON-serializable object (sorted keys)."""
     blob = json.dumps(obj, sort_keys=True, ensure_ascii=False, default=str)
     return hashlib.sha256(blob.encode("utf-8")).hexdigest()
+
+
+def _modality_label(modalities: list[str]) -> str:
+    """Canonical single-label modality for grouping (e.g. m-ASR): the richest
+    non-text modality present, else 'tool', else 'text'."""
+    for m in ("video", "audio", "image"):
+        if m in modalities:
+            return m
+    if "tool" in modalities:
+        return "tool"
+    return "text"
 
 
 def _group_value(judgment: Judgment, key: str) -> str:

@@ -2,10 +2,10 @@
 
 Concrete :class:`~ura.targets.base.BaseTarget` implementations:
 
-* :class:`MockTarget` — a dependency-free, deterministic model used by the test
+* :class:`MockTarget` - a dependency-free, deterministic model used by the test
   suite and offline demos. It refuses on a keyword heuristic and complies
   benignly otherwise, so pure-python attacker/judge paths can run end-to-end.
-* :class:`AnthropicTarget`, :class:`OpenAITarget`, :class:`GeminiTarget` — thin
+* :class:`AnthropicTarget`, :class:`OpenAITarget`, :class:`GeminiTarget` - thin
   gateways over the hosted SDKs. Each lazily imports its SDK, reads its API key
   from the environment, converts :class:`~ura.data_models.DialogTurn` histories
   (including image :class:`~ura.data_models.MediaRef`) into the provider format,
@@ -151,7 +151,7 @@ class MockTarget(BaseTarget):
             reply = _REFUSAL_TEXT
         else:
             reply = (
-                "Sure — here is a straightforward, safe answer to your request: "
+                "Sure - here is a straightforward, safe answer to your request: "
                 f"{prompt.strip()[:160]}"
             )
 
@@ -323,11 +323,14 @@ class OpenAITarget(BaseTarget):
         client = self._get_client()
         messages = self._to_messages(dialog)
 
+        # GPT-5 / o-series reasoning models require max_completion_tokens
+        token_key = ("max_completion_tokens"
+                     if self.model.startswith(("gpt-5", "o1", "o3", "o4")) else "max_tokens")
         start = time.perf_counter()
         resp = client.chat.completions.create(  # provider-specific call
             model=self.model,
             messages=messages,
-            max_tokens=self.max_tokens,
+            **{token_key: self.max_tokens},
         )
         latency_ms = (time.perf_counter() - start) * 1000.0
 
@@ -349,6 +352,29 @@ class OpenAITarget(BaseTarget):
             tokens=tokens,
             raw={"id": getattr(resp, "id", None), "model": self.model},
         )
+
+
+class OpenAICompatibleTarget(OpenAITarget):
+    """An OpenAI-compatible Chat Completions endpoint at a different base URL and
+    API key. Covers DeepSeek, Moonshot/Kimi, Zhipu/GLM, Alibaba Qwen (DashScope),
+    and ByteDance Doubao (Volcano Ark). The message/image handling and response
+    mapping are inherited from OpenAITarget; only the client wiring changes."""
+
+    def __init__(self, model: str, base_url: str, key_env: str, max_tokens: int = 1024) -> None:
+        super().__init__(model, max_tokens=max_tokens)
+        self.base_url = base_url
+        self.key_env = key_env
+        self.name = model
+
+    def _get_client(self):
+        if self._client is None:
+            openai = _require("openai", f"{self.name} (OpenAI-compatible)")
+            key = os.environ.get(self.key_env)
+            if not key:
+                raise RuntimeError(
+                    f"{self.key_env} is required for {self.name}; set it in the environment")
+            self._client = openai.OpenAI(api_key=key, base_url=self.base_url)
+        return self._client
 
 
 class GeminiTarget(BaseTarget):
@@ -438,9 +464,26 @@ class GeminiTarget(BaseTarget):
 
 REGISTRY.register("mock", MockTarget, provider="mock", modality="text+image")
 
-_ANTHROPIC_DEFAULTS = ("claude-3-5-sonnet-latest", "claude-3-5-haiku-latest")
-_OPENAI_DEFAULTS = ("gpt-4o", "gpt-4o-mini")
-_GEMINI_DEFAULTS = ("gemini-1.5-pro", "gemini-1.5-flash")
+# Current frontier model ids (August 2026). Model names churn fast, so this list
+# is only a convenience: you can always pass ANY id as "<provider>:<model>" (see
+# build_api_target), so the registry never has to be edited when a new checkpoint
+# ships. Do NOT add legacy ids here.
+_ANTHROPIC_DEFAULTS = (
+    "claude-opus-5",                 # top Opus tier
+    "claude-sonnet-5",               # balanced
+    "claude-fable-5",                # generally-available Mythos-class (exceeds Opus 4.8)
+    "claude-haiku-4-5-20251001",     # cheap/fast (good judge model)
+    "claude-mythos-5",               # Mythos-class, safeguards lifted (approved orgs only)
+)
+_OPENAI_DEFAULTS = (
+    "gpt-5.6",                       # GPT-5.6 flagship (Sol)
+    "gpt-5.6-luna",                  # GPT-5.6 cost-efficient (Luna) - good judge model
+    "gpt-5.5",                       # previous frontier, still available
+)
+_GEMINI_DEFAULTS = (
+    "gemini-3.1-pro",                # flagship reasoning/multimodal
+    "gemini-3.6-flash",             # fast/cheap
+)
 
 for _mid in _ANTHROPIC_DEFAULTS:
     REGISTRY.register(
@@ -455,10 +498,70 @@ for _mid in _GEMINI_DEFAULTS:
         _mid, (lambda m=_mid: GeminiTarget(m)), provider="google", hosted=True
     )
 
+# OpenAI-compatible providers (base_url + key env). The open-weight frontier
+# flagships (DeepSeek V4, GLM-5.x, Kimi K3) are huge MoEs, so their APIs are the
+# practical way to test them; smaller variants also run locally via vLLM (below).
+_COMPAT: dict[str, tuple[str, str]] = {
+    "deepseek": ("https://api.deepseek.com", "DEEPSEEK_API_KEY"),
+    "glm": ("https://open.bigmodel.cn/api/paas/v4", "ZHIPU_API_KEY"),
+    "zhipu": ("https://open.bigmodel.cn/api/paas/v4", "ZHIPU_API_KEY"),
+    "kimi": ("https://api.moonshot.cn/v1", "MOONSHOT_API_KEY"),
+    "moonshot": ("https://api.moonshot.cn/v1", "MOONSHOT_API_KEY"),
+    "qwen": ("https://dashscope.aliyuncs.com/compatible-mode/v1", "DASHSCOPE_API_KEY"),
+    "dashscope": ("https://dashscope.aliyuncs.com/compatible-mode/v1", "DASHSCOPE_API_KEY"),
+    "alibaba": ("https://dashscope.aliyuncs.com/compatible-mode/v1", "DASHSCOPE_API_KEY"),
+    "doubao": ("https://ark.cn-beijing.volces.com/api/v3", "ARK_API_KEY"),
+    "bytedance": ("https://ark.cn-beijing.volces.com/api/v3", "ARK_API_KEY"),
+}
+
+# Representative current (2026) ids per lab. Verify the exact id/endpoint for your
+# account; anything not listed still works via "<provider>:<model>".
+_COMPAT_DEFAULTS = {
+    "deepseek": ("deepseek-chat", "deepseek-reasoner"),   # DeepSeek V4 Pro / reasoner
+    "glm": ("glm-5.2", "glm-4.6"),                         # Zhipu / z.ai (MIT, open weights)
+    "kimi": ("kimi-k3", "kimi-k2.6"),                      # Moonshot (open weights)
+    "qwen": ("qwen-max", "qwen-plus"),                     # Alibaba (Qwen3.6-Max via qwen-max)
+    "doubao": ("doubao-pro", "doubao-vision-pro"),         # ByteDance (use your endpoint id)
+}
+for _prov, _ids in _COMPAT_DEFAULTS.items():
+    _url, _key = _COMPAT[_prov]
+    for _mid in _ids:
+        REGISTRY.register(
+            _mid, (lambda m=_mid, u=_url, k=_key: OpenAICompatibleTarget(m, u, k)),
+            provider=_prov, hosted=True)
+
+_PROVIDERS = {
+    "anthropic": AnthropicTarget, "claude": AnthropicTarget,
+    "openai": OpenAITarget, "gpt": OpenAITarget,
+    "google": GeminiTarget, "gemini": GeminiTarget,
+}
+
+
+def build_api_target(spec: str) -> BaseTarget:
+    """Build a hosted target from ``"<provider>:<model>"`` or a bare registered id.
+
+    Native providers: anthropic/claude, openai/gpt, google/gemini. OpenAI-compatible
+    providers: deepseek, glm/zhipu, kimi/moonshot, qwen/dashscope/alibaba,
+    doubao/bytedance. Examples: ``"deepseek:deepseek-chat"``, ``"qwen:qwen-max"``,
+    ``"kimi:kimi-k3"``, or a bare registered id like ``"claude-fable-5"``.
+    """
+    if ":" in spec:
+        provider, model = spec.split(":", 1)
+        provider = provider.lower()
+        if provider in _PROVIDERS:
+            return _PROVIDERS[provider](model)
+        if provider in _COMPAT:
+            url, key = _COMPAT[provider]
+            return OpenAICompatibleTarget(model, url, key)
+        raise KeyError(f"unknown API provider '{provider}' in '{spec}'")
+    return REGISTRY.create(spec)
+
 
 __all__ = [
     "MockTarget",
     "AnthropicTarget",
     "OpenAITarget",
+    "OpenAICompatibleTarget",
     "GeminiTarget",
+    "build_api_target",
 ]

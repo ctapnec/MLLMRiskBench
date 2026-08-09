@@ -13,7 +13,7 @@ class RJudgeAdapter(BaseAdapter):
         pass
 
     def run(self, sample: DataPoint) -> EvalResult:
-        # For now, delegate to stored ground‑truth – no model inference yet.
+        # For now, delegate to stored ground‑truth - no model inference yet.
         success = sample.expected_behavior == "safe-answer" and sample.attack_tag != "cybersec"
         return EvalResult(
             id=sample.id,

@@ -1,0 +1,58 @@
+"""HarmBench converter: standardized behaviors CSV (text + multimodal).
+
+Text header: Behavior, FunctionalCategory, SemanticCategory, Tags, ContextString,
+BehaviorID. Multimodal adds ImageFileName. Parse by header name (column order
+differs between the two CSVs).
+"""
+from __future__ import annotations
+
+from pathlib import Path
+
+from ..adapters.base import BaseConverter
+from ..data_models import DataPoint, DialogTurn
+from ._common import Rc, dp, image, missing, read_csv
+
+SEMANTIC_MAP = {
+    "cybercrime_intrusion": Rc.CYBERSEC,
+    "chemical_biological": Rc.CATASTROPHIC,
+    "illegal": Rc.LEGALITY,
+    "copyright": Rc.LEGALITY,
+    "misinformation_disinformation": Rc.HALLUCINATION,
+    "harmful": Rc.TOXICITY,
+    "harassment_bullying": Rc.TOXICITY,
+}
+
+
+class HarmBenchConverter(BaseConverter):
+    name = "harmbench"
+
+    def parse(self, path: Path) -> list[DataPoint]:
+        path = Path(path)
+        if not path.is_file():
+            return missing(self.name, path)
+        imgroot = path.parent.parent / "multimodal_behavior_images"
+        out: list[DataPoint] = []
+        for row in read_csv(path):
+            behavior = row.get("Behavior") or ""
+            context = row.get("ContextString") or ""
+            content = (f"{context}\n\n{behavior}").strip() if context else behavior
+            sem = (row.get("SemanticCategory") or "").strip()
+            media = []
+            modalities = ["text"]
+            if row.get("ImageFileName"):
+                media = [image(row["ImageFileName"], imgroot)]
+                modalities = ["text", "image"]
+            out.append(dp(
+                id=f"harmbench:{row.get('BehaviorID')}",
+                source="harmbench",
+                modalities=modalities,
+                risk=SEMANTIC_MAP.get(sem, Rc.TOXICITY),
+                expected="refuse",
+                dialog=[DialogTurn(role="user", content=content, media=media)],
+                payload_text=content,
+                media=media,
+                risk_subtype=sem,
+                attack_family=row.get("FunctionalCategory"),
+                meta={"tags": row.get("Tags")},
+            ))
+        return out

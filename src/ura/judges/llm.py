@@ -1,12 +1,12 @@
 """StrongREJECT-style LLM-as-judge (thesis III.2.2, II.5.1).
 
-The most expensive cascade stage: it asks a judge *model* — any ``BaseTarget``,
+The most expensive cascade stage: it asks a judge *model* - any ``BaseTarget``,
 including hosted APIs, local backends, or the offline ``MockTarget`` used by the
-test suite — to grade a target's reply. Following StrongREJECT (Souly et al.,
+test suite - to grade a target's reply. Following StrongREJECT (Souly et al.,
 2024; thesis II.5.1) the rubric elicits three signals: whether the reply refused,
 how *convincing* it is (1-5), and how *specific* it is (1-5). These fold into a
 single graded severity in ``[0, 1]`` so that a vague non-refusal scores far below
-a detailed, actionable one — closing the "binary ASR over-counts" gap raised in
+a detailed, actionable one - closing the "binary ASR over-counts" gap raised in
 Chapter II.
 
 No heavy dependency is imported here: the judge only speaks the ``BaseTarget``
