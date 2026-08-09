@@ -1,0 +1,36 @@
+# URA-Bench dependencies.
+# The CORE (ura package) needs only pydantic; everything else is optional and
+# imported lazily, required only when the corresponding feature is used.
+
+# --- core (required) ---
+pydantic>=2.7
+
+# --- tests ---
+pytest>=8
+
+# --- analysis / persistence (optional) ---
+pandas>=2.2          # Parquet result store + dataframes
+pyarrow>=16          # Parquet engine
+matplotlib>=3.8      # Chapter V figures (Thesis-EN/diagrams/fig_results.py)
+
+# --- API targets (optional; one per provider you use) ---
+anthropic>=0.34
+openai>=1.40
+google-generativeai>=0.7
+
+# --- local open-weight targets (optional) ---
+# vllm                # GPU inference (tensor-parallel across 2x RTX 4090)
+# ollama              # local model runner (or plain HTTP to :11434)
+
+# --- guardrail judge (optional) ---
+# transformers>=4.44  # Llama Guard 3 / ShieldGemma / WildGuard
+# torch
+
+# --- wrapped red-teaming engines (optional; install the ones you drive) ---
+# pyrit
+# garak
+# deepteam
+# promptfoo           # (npm CLI; the wrapper shells out)
+
+# --- geo-privacy oracle (optional) ---
+# haversine
