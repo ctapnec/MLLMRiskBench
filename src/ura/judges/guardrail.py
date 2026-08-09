@@ -11,6 +11,11 @@ open guardrails (WildGuard, ShieldGemma) are pluggable at this stage by design
 but need their own per-model verdict parser, which is future work - so Llama
 Guard 3 is the wired back-end and the others are listed as planned.
 
+This stage is text-only: non-text media on a turn are flattened to a text
+placeholder before classification, so multimodal adjudication is handled by the
+target model and the downstream LLM judge, not by this guardrail stage (a
+Llama-Guard-3-Vision / ShieldGemma-2 image path is future work).
+
 The module imports with only pydantic + the stdlib present; ``transformers`` and
 ``torch`` are imported lazily the first time :meth:`GuardrailJudge.judge` runs.
 """

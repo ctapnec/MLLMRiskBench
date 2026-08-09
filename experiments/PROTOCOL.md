@@ -2,7 +2,7 @@
 
 Run the phases in order. Phase 0 is a shakedown you must clear before spending API
 budget or GPU hours. Each experiment states its purpose, the research question it
-answers, the exact command, the outputs. Every experiment E1-E9 runs now (all eleven
+answers, the exact command, the outputs. Every experiment E1-E9 runs now (all nineteen
 converters and the defense/transfer/kappa/modality additions are implemented).
 
 ## Goals → research questions → figures
@@ -22,7 +22,7 @@ converters and the defense/transfer/kappa/modality additions are implemented).
 ```bash
 cd Project/MLLMRiskBench
 pip install -r requirements.txt pydantic pytest
-python -m pytest tests/ura -q                 # expect: 34 passed
+python -m pytest tests/ura -q                 # expect: 50 passed
 
 # 0a. offline flow (no keys, no GPU)
 python experiments/run_matrix.py --dry-run --limit 12 --out runs/dry
@@ -46,7 +46,7 @@ Do **not** proceed to Phase 2 until 0b and 0c each produce a `*.results.jsonl`.
 
 ## Phase 1 - Data acquisition (real corpora)
 
-All eleven converters load each framework's REAL released layout (a directory or a file,
+All nineteen converters load each framework's REAL released layout (a directory or a file,
 per framework) from the path in `URA_<NAME>_PATH`. Clone the framework, then point the
 env var at its data:
 
@@ -63,6 +63,14 @@ env var at its data:
 | `vlsbench` | github.com/AI45Lab/VLSBench (HF Foreshhh/vlsbench) | a JSON/JSONL export | leakage-free image safety (2,241) |
 | `mossbench` | github.com/xirui-li/MOSSBench (HF AIcell/MOSSBench) | a JSON/JSONL export | BENIGN over-refusal set (300) |
 | `siuo` | github.com/sinwang20/SIUO | `data/siuo_gen.json` (images in sibling `images/`) | cross-modal safe-input-unsafe-output (~300) |
+| `advbench` | github.com/llm-attacks/llm-attacks | `data/advbench/harmful_behaviors.csv` | 520 harmful behaviors (text anchor) |
+| `jailbreakbench` | github.com/JailbreakBench/jailbreakbench (HF JBB-Behaviors) | a CSV/JSONL export | 100 harmful + 100 benign (text anchor) |
+| `figstep` | github.com/ThuCCSLab/FigStep | `data/question/safebench.csv` (+ rendered images) | typographic image jailbreak |
+| `cyberseceval` | github.com/meta-llama/PurpleLlama | a CybersecurityBenchmarks prompt JSON | offensive-cyber prompts |
+| `injecagent` | github.com/uiuc-kang-lab/InjecAgent | a test-case JSON | indirect tool-injection for agents |
+| `mllmguard` | github.com/Carol-gutianle/MLLMGuard | a JSON/JSONL export (+ images) | bilingual multimodal safety |
+| `jalmbench` | github.com/sfofgalaxy/JALMBench | a JSON/JSONL manifest (audio in sibling `audio/`) | audio-LM jailbreak |
+| `videosafetybench` | HF BAAI/Video-SafetyBench | a metadata JSON (videos in sibling `videos/`) | video-text safety (needs video-capable target) |
 | `bipia` | github.com/microsoft/BIPIA | a context `*.jsonl` (e.g. `email/test.jsonl`) | indirect injection; joins sibling attack file |
 
 All converters are implemented against the frameworks' verified real formats and are robust

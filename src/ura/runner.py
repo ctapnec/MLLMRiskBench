@@ -245,6 +245,17 @@ class Runner:
             results.append(
                 _result("ASR", asr, group_by, n, ci=(lo, hi), bucket=bucket_label)
             )
+            # ISR: ASR restricted to indirect prompt-injection attempts, emitted
+            # separately so the injection axis is not averaged away (II.5.1).
+            injection = [
+                j for j in bucket
+                if (j.raw.get("risk_category") or j.raw.get("risk")) == "prompt_injection_indirect"
+            ]
+            if injection:
+                isr, ilo, ihi = metrics.asr_with_ci(injection, seed=seed)
+                results.append(
+                    _result("ISR", isr, group_by, len(injection), ci=(ilo, ihi), bucket=bucket_label)
+                )
             refusal_ind = [1.0 if j.label in ("refusal", "over_refusal") else 0.0 for j in bucket]
             results.append(
                 _result(
