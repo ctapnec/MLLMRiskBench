@@ -139,28 +139,27 @@ Already produced by E1 (both `replay` and `crescendo`). Compare, per model:
 crescendo breaks models that refuse the direct request.
 
 ### E3 - Judge-cascade ablation (validity) - runs now
-Quantify how much the guardrail/LLM stages change the verdict vs. rules alone.
+Quantify how much the guardrail/LLM stages change the verdict vs. rules alone. Uses the
+same target (`claude-opus-5`) as the E8 kappa run so the ablation is not model-confounded;
+the full-cascade side IS the E8 run (`runs/kappa`), so E3 adds only the rules-only cell.
 ```bash
-# rules-only
-python experiments/run_matrix.py --api gpt-5.6 --attackers replay \
+# rules-only (compare against runs/kappa produced by E8)
+python experiments/run_matrix.py --api claude-opus-5 --attackers replay \
   --judges rules --corpora synth,mmsafety --limit 200 --seeds 0,1 --out runs/judge-rules
-# full cascade
-python experiments/run_matrix.py --api gpt-5.6 --attackers replay \
-  --judges rules,guardrail,llm --judge-model claude-haiku-4-5-20251001 \
-  --corpora synth,mmsafety --limit 200 --seeds 0,1 --out runs/judge-full
 ```
-Compare ASR between the two `runs/` dirs. (Guardrail judge needs `transformers` +
-gated Llama-Guard-3 access; skips cleanly if unavailable.)
+Compare ASR between `runs/judge-rules` (rules only) and `runs/kappa` (full cascade, from E8);
+both are `claude-opus-5`, `--seeds 0,1`, same corpora, so the only variable is the cascade.
+(Guardrail judge needs `transformers` + gated Llama-Guard-3 access; skips cleanly if unavailable.)
 
 ### E4 - Defense ablation: guardrail pre-filter on/off (RQ3) - runs now
 Run the same cell with and without a `GuardedTarget` wrapper, then diff ASR and FRR.
 ```bash
 python experiments/run_matrix.py --api claude-opus-5 --attackers replay \
   --judges rules,llm --judge-model claude-haiku-4-5-20251001 \
-  --corpora synth,mmsafety --limit 200 --out runs/nodef
+  --corpora synth,mmsafety --limit 200 --seeds 0,1 --out runs/nodef
 python experiments/run_matrix.py --api claude-opus-5 --attackers replay \
   --judges rules,llm --judge-model claude-haiku-4-5-20251001 \
-  --corpora synth,mmsafety --limit 200 \
+  --corpora synth,mmsafety --limit 200 --seeds 0,1 \
   --defense input --defense-guard guardrail --out runs/def
 ```
 The defended cell is attributed to `<model>+guard`; a good guardrail lowers ASR but
@@ -192,7 +191,7 @@ Cohen's κ over a multi-stage cascade run:
 ```bash
 python experiments/run_matrix.py --api claude-opus-5 --attackers replay \
   --judges rules,guardrail,llm --judge-model claude-haiku-4-5-20251001 \
-  --corpora synth,mmsafety --limit 200 --out runs/kappa
+  --corpora synth,mmsafety --limit 200 --seeds 0,1 --out runs/kappa
 python experiments/kappa.py --results runs/kappa
 ```
 `--judge-model` is required here: without it the `llm` stage falls back to the offline keyword

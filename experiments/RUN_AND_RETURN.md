@@ -4,7 +4,8 @@ This is the checklist that turns rig time into a finished Chapter V. Run the exp
 below, then return the artifacts listed. With those, I regenerate every figure from real
 data and fill V.2.1-V.2.7 with measured numbers; then we translate.
 
-The runbook ids below map one-to-one onto the protocol phases in `PROTOCOL.md`:
+The runbook ids below map onto the protocol phases in `PROTOCOL.md` (R3 covers two E-ids;
+R8 is a phase, not an experiment; E5 is a read of R1, not a separate run):
 
 | Runbook | PROTOCOL.md | Purpose |
 |---|---|---|
@@ -12,10 +13,15 @@ The runbook ids below map one-to-one onto the protocol phases in `PROTOCOL.md`:
 | R2 | E2 | Attacker ablation (read of R1: replay vs crescendo) |
 | R3 | E3 + E8 | Judge-cascade ablation + inter-judge kappa |
 | R4 | E4 | Defense ablation (guardrail on/off) |
+| R1 (read) | E5 | Multimodal m-ASR (read of R1 with `--group model,risk,modality`) |
 | R5 | E6 | Over-refusal / utility (read of R1 + MOSSBench) |
 | R6 | E7 | Transferability matrix |
 | R7 | E9 | Fable vs Mythos case study |
 | R8 | Phase 4 | Figures from real data |
+
+Note on `runs/main`: R1 (full) runs the `rules,guardrail,llm` cascade, whereas the reduced
+E1 runs `rules,llm` (no guardrail stage), so an `E1` `runs/main` will not contain guardrail
+trails. Run whichever you commit to and keep the downstream references consistent.
 
 ## 0. TL;DR - what to send back
 
