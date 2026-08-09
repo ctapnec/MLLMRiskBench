@@ -57,7 +57,7 @@ class RJudgeConverter(BaseConverter):
                 unsafe = rec.get("label") == 1
                 out.append(dp(
                     id=f"rjudge:{stem}:{rec.get('id')}",
-                    source="R-Judge",
+                    source="rjudge",
                     modalities=["text"],
                     risk=risk,
                     expected="refuse" if unsafe else "comply_safely",

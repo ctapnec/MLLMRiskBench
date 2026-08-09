@@ -48,14 +48,13 @@ from ura.judges.llm import LLMJudge                   # noqa: E402
 from ura.judges.rules import RuleJudge                # noqa: E402
 from ura.runner import Runner                         # noqa: E402
 from ura.targets.api import MockTarget, build_api_target  # noqa: E402
-from ura.targets.base import REGISTRY                 # noqa: E402
 
 
 # Substrings that mark a local open-weight checkpoint as a vision-language model,
 # so image datapoints are forwarded rather than silently dropped (thesis V.1.2 / E5).
 _VLM_MARKERS = (
     "-vl", "vl-", "vl2", "vision", "llava", "pixtral", "internvl",
-    "gemma-3", "qwen2-vl", "qwen3-vl", "kimi-vl", "deepseek-vl", "-rr",
+    "gemma-3", "qwen2-vl", "qwen3-vl", "kimi-vl", "deepseek-vl", "phi-4-multimodal",
 )
 
 
@@ -119,7 +118,10 @@ def build_judges(names: list[str], judge_model: str) -> JudgeCascade:
         if n == "rules":
             stages.append(RuleJudge())
         elif n == "llm":
-            stages.append(LLMJudge(judge_target=REGISTRY.create(judge_model)))
+            # build_api_target resolves both bare registered ids and provider:model
+            # forms, so the judge can be any provider (e.g. kimi:kimi-k3), not only a
+            # registry default; falls back to REGISTRY.create for bare ids like "mock".
+            stages.append(LLMJudge(judge_target=build_api_target(judge_model)))
         elif n == "guardrail":
             from ura.judges.guardrail import GuardrailJudge
             stages.append(GuardrailJudge())

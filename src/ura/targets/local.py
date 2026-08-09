@@ -318,13 +318,13 @@ def make_ollama_target(model: str, **kwargs: Any) -> "OllamaTarget":
 # via ``REGISTRY.register(id, lambda: make_vllm_target("org/model", ...))``.
 REGISTRY.register(
     "vllm",
-    lambda: make_vllm_target("meta-llama/Llama-3.1-8B-Instruct"),
+    lambda: make_vllm_target("Qwen/Qwen3-VL-8B-Instruct"),
     backend="vllm",
     tensor_parallel_size=2,
 )
 REGISTRY.register(
     "ollama",
-    lambda: make_ollama_target("llama3.1"),
+    lambda: make_ollama_target("llama3.3"),
     backend="ollama",
 )
 

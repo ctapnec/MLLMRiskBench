@@ -86,3 +86,26 @@ def test_t3mp3st_registered_and_guarded():
     dp = synth_corpus(1)[0]
     with pytest.raises(RuntimeError):
         list(guarded.generate(dp, AttackBudget(max_queries=2)))
+
+
+def test_petri_registered_and_guarded():
+    from ura.adapters.engines import PetriAttacker, get_attacker
+
+    a = get_attacker("petri")
+    assert isinstance(a, PetriAttacker) and a.name == "petri"
+    # offline: the Inspect CLI is absent, so audit-seed generation must raise cleanly
+    guarded = PetriAttacker(cli="inspect-not-installed-xyz")
+    dp = synth_corpus(1)[0]
+    with pytest.raises(RuntimeError):
+        list(guarded.generate(dp, AttackBudget(max_queries=2)))
+
+
+def test_siuo_converter_registered():
+    from pathlib import Path
+
+    from ura.converters import SIUOConverter, get_converter
+
+    c = get_converter("siuo")
+    assert isinstance(c, SIUOConverter) and c.name == "siuo"
+    # robust to a missing path (returns [] rather than raising), like the others
+    assert c.parse(Path("does-not-exist.json")) == []

@@ -2,7 +2,7 @@
 
 Converters normalize a source corpus into DataPoints; attackers turn a DataPoint
 into one or more concrete Attempts, either by replaying a static corpus or by
-driving an external engine (PyRIT, Garak, DeepTeam, Promptfoo, Petri).
+driving an external engine (PyRIT, Garak, DeepTeam, Promptfoo, T3MP3ST).
 """
 from __future__ import annotations
 

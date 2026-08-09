@@ -1,8 +1,8 @@
 """Attacker aggregator + factory (thesis III.2.2).
 
 Each external red-team engine has its own module - pyrit, garak, deepteam,
-promptfoo - and the pure-python replay / crescendo adapters live beside them.
-This module re-exports the engine classes and provides :func:`get_attacker`,
+promptfoo, t3mp3st - and the pure-python replay / crescendo adapters live beside
+them. This module re-exports the engine classes and provides :func:`get_attacker`,
 which resolves any attacker by name. Every engine dependency is imported lazily
 inside its own module, so importing this file needs only pydantic + stdlib.
 """
@@ -11,6 +11,7 @@ from __future__ import annotations
 from .base import BaseAttacker
 from .deepteam import DeepTeamAttacker
 from .garak import GarakAttacker
+from .petri import PetriAttacker
 from .promptfoo import PromptfooAttacker
 from .pyrit import PyRITAttacker
 from .t3mp3st import T3MP3STAttacker
@@ -37,6 +38,7 @@ def get_attacker(name: str) -> BaseAttacker:
         "deepteam": DeepTeamAttacker,
         "promptfoo": PromptfooAttacker,
         "t3mp3st": T3MP3STAttacker,
+        "petri": PetriAttacker,
     }
     if key in engines:
         return engines[key]()
@@ -52,5 +54,6 @@ __all__ = [
     "DeepTeamAttacker",
     "PromptfooAttacker",
     "T3MP3STAttacker",
+    "PetriAttacker",
     "get_attacker",
 ]

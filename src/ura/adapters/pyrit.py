@@ -40,7 +40,7 @@ class PyRITAttacker(BaseAttacker):
 
     def _render(self, seed: str) -> str:
         """Apply the configured PyRIT converter chain (lazy import)."""
-        mod = _require("pyrit.prompt_converter", "PyRITAttacker")
+        mod = _require("pyrit.prompt_converter", "PyRITAttacker", "pyrit-ai")
         text = seed
         for name in self.converters:
             converter_cls = getattr(mod, name)

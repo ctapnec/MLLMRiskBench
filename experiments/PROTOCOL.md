@@ -2,7 +2,7 @@
 
 Run the phases in order. Phase 0 is a shakedown you must clear before spending API
 budget or GPU hours. Each experiment states its purpose, the research question it
-answers, the exact command, the outputs. Every experiment E1-E9 runs now (all ten
+answers, the exact command, the outputs. Every experiment E1-E9 runs now (all eleven
 converters and the defense/transfer/kappa/modality additions are implemented).
 
 ## Goals → research questions → figures
@@ -46,7 +46,7 @@ Do **not** proceed to Phase 2 until 0b and 0c each produce a `*.results.jsonl`.
 
 ## Phase 1 - Data acquisition (real corpora)
 
-All ten converters load each framework's REAL released layout (a directory or a file,
+All eleven converters load each framework's REAL released layout (a directory or a file,
 per framework) from the path in `URA_<NAME>_PATH`. Clone the framework, then point the
 env var at its data:
 
@@ -62,6 +62,7 @@ env var at its data:
 | `harmbench` | github.com/centerforaisafety/HarmBench | `data/behavior_datasets/harmbench_behaviors_text_all.csv` | 400 behaviors (text + multimodal csv) |
 | `vlsbench` | github.com/AI45Lab/VLSBench (HF Foreshhh/vlsbench) | a JSON/JSONL export | leakage-free image safety (2,241) |
 | `mossbench` | github.com/xirui-li/MOSSBench (HF AIcell/MOSSBench) | a JSON/JSONL export | BENIGN over-refusal set (300) |
+| `siuo` | github.com/sinwang20/SIUO | `data/siuo_gen.json` (images in sibling `images/`) | cross-modal safe-input-unsafe-output (~300) |
 | `bipia` | github.com/microsoft/BIPIA | a context `*.jsonl` (e.g. `email/test.jsonl`) | indirect injection; joins sibling attack file |
 
 All converters are implemented against the frameworks' verified real formats and are robust

@@ -27,10 +27,12 @@ google-generativeai>=0.7
 # torch
 
 # --- wrapped red-teaming engines (optional; install the ones you drive) ---
-# pyrit
+# pyrit-ai            # Microsoft PyRIT (PyPI distribution is 'pyrit-ai')
 # garak
 # deepteam
 # promptfoo           # (npm CLI; the wrapper shells out)
+# t3mp3st             # (Node CLI; the wrapper shells out in plan mode, N5)
+# inspect-ai petri    # Petri auditor (Inspect-native; the wrapper shells out)
 
 # --- geo-privacy oracle (optional) ---
 # haversine
