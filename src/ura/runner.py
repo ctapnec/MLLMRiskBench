@@ -59,6 +59,9 @@ class Runner:
         self.attempts: list[Attempt] = []
         self.responses: list[Response] = []
         self.trails: dict[str, list[Judgment]] = {}
+        # Per-attempt grouping keys for the trails (risk_category/modality/model/seed),
+        # so save_trails can emit per-category rows that kappa.py groups on (V.2.5).
+        self.trail_meta: dict[str, dict[str, str]] = {}
 
     # ------------------------------------------------------------------ #
     # Execution
@@ -81,6 +84,7 @@ class Runner:
         self.attempts = []
         self.responses = []
         self.trails = {}
+        self.trail_meta = {}
         judgments: list[Judgment] = []
 
         for dp in corpus:
@@ -96,6 +100,12 @@ class Runner:
                     self.attempts.append(attempt)
                     self.responses.append(response)
                     self.trails[attempt.id] = trail
+                    self.trail_meta[attempt.id] = {
+                        "risk_category": dp.risk_category.value,
+                        "modality": _modality_label(dp.modalities),
+                        "model": response.target,
+                        "seed": str(attempt.seed),
+                    }
                     judgments.append(final)
 
         manifest = self._build_manifest(corpus, started_at=started_at)
@@ -133,6 +143,7 @@ class Runner:
             "attacker": attempt.attacker,
             "strategy": attempt.strategy,
             "seed": attempt.seed,
+            "turn_index": attempt.turn_index,   # orders multi-turn escalations (V.2.4)
             "target": response.target,
             "model": response.target,
         }
@@ -260,6 +271,32 @@ class Runner:
                     bucket=bucket_label,
                 )
             )
+
+            # Multi-turn robustness (V.2.4 / RQ4): group the bucket's judgments into
+            # escalations (one conversation per datapoint+seed, ordered by turn) and
+            # report whole-escalation robust refusal and median turns-to-break. Well
+            # defined for single-turn cells too (each escalation is one turn).
+            escalations = _escalations(bucket)
+            results.append(
+                _result(
+                    "robust_refusal_rate",
+                    metrics.robust_refusal_rate(escalations),
+                    group_by,
+                    len(escalations),
+                    bucket=bucket_label,
+                )
+            )
+            mttb = metrics.median_turns_to_break(escalations)
+            if mttb is not None:  # None = no escalation ever broke; omit rather than emit 0
+                results.append(
+                    _result(
+                        "median_turns_to_break",
+                        mttb,
+                        group_by,
+                        len(escalations),
+                        bucket=bucket_label,
+                    )
+                )
         return results
 
     # ------------------------------------------------------------------ #
@@ -287,16 +324,18 @@ class Runner:
         pd.DataFrame(flat).to_parquet(parquet_path, index=False)
 
     def save_trails(self, path: str | Path) -> None:
-        """Persist the per-stage judge trail as JSONL for inter-judge agreement (κ).
+        """Persist the per-stage judge trail as JSONL for inter-judge agreement (kappa).
 
         One row per (attempt, judge stage): ``{attempt_id, stage, judge, label,
-        score}``. Consumed by ``experiments/kappa.py`` to compute Cohen's κ
-        between judge stages (thesis II.5.2 / V.2.5).
+        score, risk_category, modality}``. Consumed by ``experiments/kappa.py`` to
+        compute Cohen's kappa between judge stages, pooled and PER RISK CATEGORY -
+        the per-category agreement V.2.2/V.2.3/V.2.5 depend on.
         """
         p = Path(path)
         p.parent.mkdir(parents=True, exist_ok=True)
         with p.open("w", encoding="utf-8") as fh:
             for attempt_id, trail in self.trails.items():
+                meta = self.trail_meta.get(attempt_id, {})
                 for stage, j in enumerate(trail):
                     fh.write(json.dumps({
                         "attempt_id": attempt_id,
@@ -304,6 +343,8 @@ class Runner:
                         "judge": j.judge,
                         "label": j.label,
                         "score": j.score,
+                        "risk_category": meta.get("risk_category", "unknown"),
+                        "modality": meta.get("modality", "unknown"),
                     }, sort_keys=True) + "\n")
 
     # ------------------------------------------------------------------ #
@@ -341,6 +382,23 @@ def _modality_label(modalities: list[str]) -> str:
     if "tool" in modalities:
         return "tool"
     return "text"
+
+
+def _escalations(bucket: list[Judgment]) -> dict[str, list[Judgment]]:
+    """Group a bucket of judgments into per-conversation escalations for the
+    multi-turn metrics: keyed by (datapoint_id, seed), each ordered by turn_index.
+
+    A single-turn attacker (replay) yields one-turn escalations; a multi-turn one
+    (crescendo) yields the full turn ladder, so turns-to-break is well defined.
+    """
+    esc: dict[str, list[Judgment]] = {}
+    for j in bucket:
+        dp_id = j.raw.get("datapoint_id", "?")
+        seed = j.raw.get("seed", "?")
+        esc.setdefault(f"{dp_id}::s{seed}", []).append(j)
+    for key in esc:
+        esc[key].sort(key=lambda j: j.raw.get("turn_index", 0))
+    return esc
 
 
 def _group_value(judgment: Judgment, key: str) -> str:

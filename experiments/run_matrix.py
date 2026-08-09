@@ -31,7 +31,9 @@ from __future__ import annotations
 
 import argparse
 import os
+import platform
 import sys
+from datetime import datetime, timezone
 from pathlib import Path
 
 # make `import ura` work when run as a script from the repo root
@@ -49,7 +51,20 @@ from ura.targets.api import MockTarget, build_api_target  # noqa: E402
 from ura.targets.base import REGISTRY                 # noqa: E402
 
 
-def build_target(spec: str):
+# Substrings that mark a local open-weight checkpoint as a vision-language model,
+# so image datapoints are forwarded rather than silently dropped (thesis V.1.2 / E5).
+_VLM_MARKERS = (
+    "-vl", "vl-", "vl2", "vision", "llava", "pixtral", "internvl",
+    "gemma-3", "qwen2-vl", "qwen3-vl", "kimi-vl", "deepseek-vl", "-rr",
+)
+
+
+def _is_vision_model(model_id: str) -> bool:
+    m = model_id.lower()
+    return any(mark in m for mark in _VLM_MARKERS)
+
+
+def build_target(spec: str, *, quantization: str = "", dtype: str = "auto"):
     """Resolve a target spec to a BaseTarget, or return None if unavailable.
 
     spec is one of:
@@ -57,6 +72,11 @@ def build_target(spec: str):
         "anthropic:claude-fable-5", "openai:gpt-5.6-pro", "google:gemini-3.1-pro";
       * a local "<backend>:<model>" - "vllm:Qwen/Qwen3-VL-8B-Instruct",
         "ollama:llama3.3:70b".
+
+    ``quantization``/``dtype`` are forwarded to the vLLM engine so a 27B-class
+    model fits the 2x RTX 4090 rig (e.g. ``--quantization awq``); a pre-quantized
+    (AWQ/GPTQ) checkpoint is auto-detected and needs no flag. Vision-language
+    checkpoints are given image support so image corpora are not run text-only.
     """
     try:
         if ":" in spec:
@@ -65,7 +85,12 @@ def build_target(spec: str):
                 _, model = spec.split(":", 1)
                 if backend == "vllm":
                     from ura.targets.local import VLLMTarget
-                    return VLLMTarget(model=model)
+                    kwargs: dict = {"dtype": dtype}
+                    if quantization:
+                        kwargs["quantization"] = quantization
+                    if _is_vision_model(model):
+                        kwargs["modality_support"] = ("text", "image")
+                    return VLLMTarget(model=model, **kwargs)
                 from ura.targets.local import OllamaTarget
                 return OllamaTarget(model=model)
             # provider:model (anthropic/openai/google/gemini)
@@ -78,6 +103,17 @@ def build_target(spec: str):
 
 
 def build_judges(names: list[str], judge_model: str) -> JudgeCascade:
+    if "llm" in names and judge_model == "mock":
+        # The llm judge backed by the offline MockTarget is a keyword heuristic, not
+        # a model. Fine for a keyless smoke run, but it silently invalidates any
+        # scored run (ASR, and especially the inter-judge kappa of V.2.5). Warn loud.
+        print(
+            "  ! WARNING: --judges includes 'llm' but --judge-model is 'mock'. "
+            "The llm stage will use the offline keyword mock, NOT a real model; "
+            "kappa and llm-judged ASR will be meaningless. Pass e.g. "
+            "--judge-model claude-haiku-4-5-20251001 for a scored run.",
+            file=sys.stderr,
+        )
     stages = []
     for n in names:
         if n == "rules":
@@ -121,12 +157,22 @@ def main(argv=None) -> int:
                     help="wrap targets in a GuardedTarget pre/post-filter (E4 ablation)")
     ap.add_argument("--defense-guard", default="rules", choices=["rules", "guardrail"],
                     help="judge used as the defense guardrail when --defense is set")
+    ap.add_argument("--quantization", default="",
+                    help="vLLM quantization for local models (e.g. awq, gptq, fp8); "
+                         "empty auto-detects from a pre-quantized checkpoint")
+    ap.add_argument("--dtype", default="auto",
+                    help="vLLM dtype for local models (auto, bfloat16, float16)")
     ap.add_argument("--out", default="runs/exp")
     args = ap.parse_args(argv)
 
     seeds = [int(s) for s in args.seeds.split(",") if s.strip()]
     out = Path(args.out)
     out.mkdir(parents=True, exist_ok=True)
+
+    # Wall-clock provenance for V.2.6 (run date). Recorded in the manifest but kept
+    # OUT of the run_id hash, so runs stay reproducible while the date is captured.
+    run_started = datetime.now(timezone.utc).isoformat(timespec="seconds")
+    run_env = {"python": platform.python_version(), "platform": platform.platform()}
 
     model_specs = ["mock"] if args.dry_run else (
         [s for s in args.api.split(",") if s] + [s for s in args.local.split(",") if s]
@@ -147,7 +193,7 @@ def main(argv=None) -> int:
         print(f"corpus '{corpus_name}': {len(corpus)} datapoints")
         group_keys = [k for k in args.group.split(",") if k]
         for spec in model_specs:
-            target = build_target(spec)
+            target = build_target(spec, quantization=args.quantization, dtype=args.dtype)
             if target is None:
                 continue
             if args.defense != "none":  # E4: wrap in a guardrail pre/post-filter
@@ -163,7 +209,8 @@ def main(argv=None) -> int:
                 cascade = build_judges(judge_names, args.judge_model)
                 runner = Runner(attacker, target, cascade,
                                 AttackBudget(max_turns=4, seed=seeds[0]), seeds)
-                judgments, manifest = runner.run(corpus, started_at="")
+                judgments, manifest = runner.run(corpus, started_at=run_started)
+                manifest.env = run_env
                 results = runner.aggregate(judgments, group_keys=group_keys)
 
                 stem = f"{corpus_name}__{target.name}__{attacker_name}"

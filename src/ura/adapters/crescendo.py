@@ -115,7 +115,9 @@ class CrescendoAttacker(BaseAttacker):
             text = variant.format(topic=topic, payload=payload)
             accumulated.append(DialogTurn(role="user", content=text))
             yield Attempt(
-                id=f"{datapoint.id}:crescendo:{turn_index}",
+                # seed in the id so multi-seed runs do not collide across the
+                # transfer/kappa maps that key on attempt_id (id stays model-independent).
+                id=f"{datapoint.id}:crescendo:{turn_index}::s{budget.seed}",
                 datapoint_id=datapoint.id,
                 attacker=self.name,
                 strategy="crescendo",

@@ -29,7 +29,10 @@ class ReplayAttacker(BaseAttacker):
         """
         rendered = self._render(datapoint)
         yield Attempt(
-            id=f"{datapoint.id}::replay",
+            # seed is part of the id so multi-seed runs do not collide in the
+            # transfer matrix / kappa trails (which key on attempt_id); the id stays
+            # model-independent, so the same (datapoint, seed) still matches across models.
+            id=f"{datapoint.id}::replay::s{budget.seed}",
             datapoint_id=datapoint.id,
             attacker=self.name,
             strategy="replay",

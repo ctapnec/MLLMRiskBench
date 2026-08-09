@@ -44,7 +44,9 @@ def _attempt(
 ) -> Attempt:
     """Build a schema-valid :class:`Attempt` for a single engine turn."""
     return Attempt(
-        id=f"{datapoint.id}:{attacker}:{turn_index}",
+        # seed in the id so multi-seed runs do not collide across the transfer/kappa
+        # maps that key on attempt_id (id stays model-independent for transfer matching).
+        id=f"{datapoint.id}:{attacker}:{turn_index}::s{seed}",
         datapoint_id=datapoint.id,
         attacker=attacker,
         strategy=strategy,

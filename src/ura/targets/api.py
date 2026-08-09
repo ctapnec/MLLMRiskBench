@@ -140,6 +140,7 @@ class MockTarget(BaseTarget):
 
     def __init__(self, model: str = "mock") -> None:
         self.model = model
+        self.name = model  # per-instance id so distinct mocks get distinct output cells
 
     def generate(self, dialog: list[DialogTurn]) -> Response:
         start = time.perf_counter()
@@ -185,6 +186,7 @@ class AnthropicTarget(BaseTarget):
 
     def __init__(self, model: str, max_tokens: int = 1024) -> None:
         self.model = model
+        self.name = model  # per-model id (not the provider) so each model gets its own cell
         self.max_tokens = max_tokens
         self._client = None
 
@@ -283,6 +285,7 @@ class OpenAITarget(BaseTarget):
 
     def __init__(self, model: str, max_tokens: int = 1024) -> None:
         self.model = model
+        self.name = model  # per-model id (not the provider) so each model gets its own cell
         self.max_tokens = max_tokens
         self._client = None
 
@@ -385,6 +388,7 @@ class GeminiTarget(BaseTarget):
 
     def __init__(self, model: str) -> None:
         self.model = model
+        self.name = model  # per-model id (not the provider) so each model gets its own cell
         self._genai = None
 
     def _get_sdk(self):

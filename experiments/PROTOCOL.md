@@ -22,7 +22,7 @@ converters and the defense/transfer/kappa/modality additions are implemented).
 ```bash
 cd Project/MLLMRiskBench
 pip install -r requirements.txt pydantic pytest
-python -m pytest tests/ura -q                 # expect: 25 passed
+python -m pytest tests/ura -q                 # expect: 34 passed
 
 # 0a. offline flow (no keys, no GPU)
 python experiments/run_matrix.py --dry-run --limit 12 --out runs/dry
@@ -84,38 +84,54 @@ bipia` for full coverage.
 | API (China) | `kimi:kimi-k3` | Moonshot | - |
 | API (China) | `qwen:qwen-max` (Qwen3.6-Max) | Alibaba | - |
 | API (China) | `doubao:doubao-vision-pro` | ByteDance | - |
-| Local | `vllm:Qwen/Qwen3-VL-8B-Instruct` | Alibaba | fp16, ~1 GPU |
-| Local | `vllm:meta-llama/Llama-4-Scout-17B-16E-Instruct` | Meta | 4-bit MoE, 2-GPU |
-| Local | `vllm:google/gemma-3-27b-it` | Google | INT8, 2-GPU |
-| Local | `vllm:moonshotai/Kimi-VL-A3B-Thinking` | Moonshot | fp16 MoE |
-| Local | `vllm:deepseek-ai/deepseek-vl2` | DeepSeek | fp16 |
-| Local | `ollama:llama3.3:70b` | Meta | 4-bit, 2-GPU |
+| Local | `vllm:Qwen/Qwen3-VL-8B-Instruct` | Alibaba | fp16 VLM, ~16 GB (1 card) |
+| Local | `vllm:GraySwanAI/Llama-3-8B-Instruct-RR` | Gray Swan | circuit-breaker (RR) text, ~16 GB |
+| Local | `vllm:GraySwanAI/llava-v1.6-mistral-7b-hf-RR` | Gray Swan | circuit-breaker (RR) VLM, ~15 GB |
+| Local | `ollama:gemma3:27b` | Google | 4-bit, ~18 GB (fits) |
+| Local | `ollama:llama3.3:70b` | Meta | 4-bit, ~40 GB (2 cards); the quant-vs-safety probe |
+| Local (opt.) | `vllm:moonshotai/Kimi-VL-A3B-Thinking` | Moonshot | ~16B MoE, fp16 (fits) |
 | Local (opt.) | `vllm:microsoft/Phi-4-multimodal-instruct` | Microsoft | text+image+audio |
+| Out of scope | `Llama-4-Scout-17B-16E-Instruct` | Meta | 109B MoE; exceeds 48 GB even at 4-bit - hosted/omitted |
+| Out of scope | `deepseek-ai/deepseek-vl2` | DeepSeek | ~27B fp16 (~27 GB/card OOM); use a smaller/quantized variant |
 
 Set the per-provider API keys: `DEEPSEEK_API_KEY`, `ZHIPU_API_KEY`, `MOONSHOT_API_KEY`,
 `DASHSCOPE_API_KEY` (Qwen), `ARK_API_KEY` (Doubao), plus the Western ones. Update ids to the
 newest you have; any id works via `<provider>:<model>` (e.g. `qwen:qwen3.6-max`,
 `kimi:kimi-k3`). Where you have Fable/Mythos access, add both as `--api` targets (E9).
 
+Rig footprints assume 2x RTX 4090 (24 GB/card, 48 GB total). The 27B/70B run 4-bit via
+Ollama (which fits cleanly); an alternative for the 27B is vLLM against a pre-quantized AWQ
+checkpoint with `--quantization awq`. The two `GraySwanAI/*-RR` models are the
+representation-rerouting hardened open weights (Gray Swan's Cygnet line); their ASR against a
+comparable base model is the external defense contrast (V.2.3). Vision-language checkpoints
+are auto-detected by `run_matrix.py` and receive image inputs; Ollama-served models are run
+text-only, so exclude them from the m-ASR image comparison (E5).
+
 ---
 
 ## Phase 3 - The experiments
 
 ### E1 - Main matrix (RQ1, RQ2) - runs now
-The backbone run; everything else reuses or ablates it.
+The backbone run; everything else reuses or ablates it. This is the *reduced,
+first-publishable* subset (3 APIs + 3 local, no-gated corpora); the full roster is R1 in
+`RUN_AND_RETURN.md` (8 APIs + 5 local incl. the Chinese labs and Gray Swan RR models). Keep
+downstream references consistent with whichever you actually run.
 ```bash
 export ANTHROPIC_API_KEY=... OPENAI_API_KEY=... GOOGLE_API_KEY=...
 export URA_RJUDGE_PATH=data/rjudge.jsonl URA_MMSAFETY_PATH=data/mmsafety.jsonl \
-       URA_GPTGEOCHAT_PATH=data/gptgeochat.jsonl
+       URA_JAILBREAKV_PATH=data/JailBreakV_28K.csv URA_GPTGEOCHAT_PATH=data/gptgeochat.jsonl
 python experiments/run_matrix.py \
   --api claude-opus-5,gpt-5.6,gemini-3.1-pro \
-  --local vllm:Qwen/Qwen3-VL-8B-Instruct,vllm:google/gemma-3-27b-it,ollama:llama3.3:70b \
+  --local vllm:Qwen/Qwen3-VL-8B-Instruct,ollama:gemma3:27b,ollama:llama3.3:70b \
   --attackers replay,crescendo --judges rules,llm --judge-model claude-haiku-4-5-20251001 \
-  --corpora synth,rjudge,mmsafety,gptgeochat \
+  --corpora synth,rjudge,mmsafety,jailbreakv,gptgeochat \
+  --group model,risk,modality \
   --limit 200 --seeds 0,1 --out runs/main
 ```
-**Outputs:** per cell `<corpus>__<model>__<attacker>.{jsonl,results.jsonl,manifest.json}`.
-Feeds Fig V.1 (mean ASR by model) and Fig V.2 (ASR by risk category).
+**Outputs:** per cell `<corpus>__<model>__<attacker>.{jsonl,results.jsonl,trails.jsonl,manifest.json}`.
+Feeds Fig V.1 (mean ASR by model) and Fig V.2 (ASR by risk category). `--group model,risk,modality`
+emits the per-modality m-ASR rows E5/V.2.2 read; `jailbreakv` is included so E5 has a second image
+corpus to compare.
 
 ### E2 - Attacker ablation: single-shot vs multi-turn (RQ4) - runs now
 Already produced by E1 (both `replay` and `crescendo`). Compare, per model:
@@ -140,9 +156,11 @@ gated Llama-Guard-3 access; skips cleanly if unavailable.)
 Run the same cell with and without a `GuardedTarget` wrapper, then diff ASR and FRR.
 ```bash
 python experiments/run_matrix.py --api claude-opus-5 --attackers replay \
-  --judges rules,llm --corpora synth,mmsafety --limit 200 --out runs/nodef
+  --judges rules,llm --judge-model claude-haiku-4-5-20251001 \
+  --corpora synth,mmsafety --limit 200 --out runs/nodef
 python experiments/run_matrix.py --api claude-opus-5 --attackers replay \
-  --judges rules,llm --corpora synth,mmsafety --limit 200 \
+  --judges rules,llm --judge-model claude-haiku-4-5-20251001 \
+  --corpora synth,mmsafety --limit 200 \
   --defense input --defense-guard guardrail --out runs/def
 ```
 The defended cell is attributed to `<model>+guard`; a good guardrail lowers ASR but
@@ -173,16 +191,19 @@ The driver saves each judge stage's verdict as `*.trails.jsonl`; compute inter-j
 Cohen's κ over a multi-stage cascade run:
 ```bash
 python experiments/run_matrix.py --api claude-opus-5 --attackers replay \
-  --judges rules,guardrail,llm --corpora synth,mmsafety --limit 200 --out runs/kappa
+  --judges rules,guardrail,llm --judge-model claude-haiku-4-5-20251001 \
+  --corpora synth,mmsafety --limit 200 --out runs/kappa
 python experiments/kappa.py --results runs/kappa
 ```
-Then draw a stratified ~100-item sample for human labelling to anchor the automated
-stages (record agreement per category); low κ is a signal to prefer the graded
-StrongREJECT score over binary ASR in that category.
+`--judge-model` is required here: without it the `llm` stage falls back to the offline keyword
+mock and the kappa is meaningless (the driver warns loudly). `kappa.py` reports kappa both
+pooled and PER RISK CATEGORY (read from the trails' `risk_category`). Then draw a stratified
+~100-item sample for human labelling to anchor the automated stages (record agreement per
+category); low κ is a signal to prefer the graded StrongREJECT score over binary ASR there.
 
 ### E9 - Fable vs Mythos case study (optional, if access) - runs now
 ```bash
-python experiments/run_matrix.py --api <fable-id>,<mythos-id> \
+python experiments/run_matrix.py --api claude-fable-5,claude-mythos-5 \
   --attackers replay,crescendo --judges rules,llm --judge-model claude-haiku-4-5-20251001 \
   --corpora synth,mmsafety --limit 200 --seeds 0,1 --out runs/fable-mythos
 ```

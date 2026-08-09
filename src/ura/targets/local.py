@@ -29,13 +29,20 @@ _ROLE_MAP = {
 }
 
 
-def _dialog_to_messages(dialog: list[DialogTurn]) -> list[dict[str, str]]:
-    """Flatten a URA dialog into OpenAI/Ollama-style chat messages.
+def _dialog_to_messages(
+    dialog: list[DialogTurn], *, multimodal: bool = False
+) -> list[dict[str, Any]]:
+    """Flatten a URA dialog into OpenAI/vLLM-style chat messages.
 
-    Only textual content is forwarded; tool results are inlined as text so that
-    text-only local backends still receive the full context of a turn.
+    Text content and tool results are inlined as text so that text-only local
+    backends still receive the full context of a turn. When ``multimodal`` is set
+    (the target declares image support, e.g. a vision-language model served by
+    vLLM), any image :class:`~ura.data_models.MediaRef` on a turn is forwarded as
+    an OpenAI-style ``image_url`` content part (a ``data:`` base64 URI, or the
+    remote URL) - the format ``vllm.LLM.chat`` accepts for VLMs. Turns without
+    images keep a bare string so text-only models are unaffected.
     """
-    messages: list[dict[str, str]] = []
+    messages: list[dict[str, Any]] = []
     for turn in dialog:
         role = _ROLE_MAP.get(turn.role, "user")
         parts: list[str] = []
@@ -48,7 +55,24 @@ def _dialog_to_messages(dialog: list[DialogTurn]) -> list[dict[str, str]]:
             )
         if turn.tool_result is not None:
             parts.append(f"[tool_result] {turn.tool_result}")
-        messages.append({"role": role, "content": "\n".join(parts)})
+        text = "\n".join(parts)
+
+        images = [m for m in turn.media if m.modality == "image"] if multimodal else []
+        if not images:
+            messages.append({"role": role, "content": text})
+            continue
+
+        # lazy import keeps this module stdlib-only until an image is actually sent
+        from .api import _encode_media
+
+        content: list[dict[str, Any]] = []
+        if text:
+            content.append({"type": "text", "text": text})
+        for media in images:
+            mime, data, url = _encode_media(media)
+            image_url = url or f"data:{mime};base64,{data}"
+            content.append({"type": "image_url", "image_url": {"url": image_url}})
+        messages.append({"role": role, "content": content})
     return messages
 
 
@@ -73,9 +97,15 @@ class VLLMTarget(BaseTarget):
         temperature: float = 0.0,
         dtype: str = "auto",
         gpu_memory_utilization: float = 0.90,
+        modality_support: tuple[str, ...] = ("text",),
         **engine_kwargs: Any,
     ) -> None:
         self.model = model
+        self.name = model  # per-model id so each vLLM model writes its own result cell
+        # A vision-language model (e.g. Qwen3-VL) declares ("text", "image") so image
+        # datapoints are forwarded; a text-only local model stays ("text",) and image
+        # corpora are run text-only (documented; excluded from m-ASR in the protocol).
+        self.modality_support = tuple(modality_support)
         self.tensor_parallel_size = tensor_parallel_size
         self.quantization = quantization
         self.max_tokens = max_tokens
@@ -113,7 +143,9 @@ class VLLMTarget(BaseTarget):
             ) from exc
 
         llm = self._engine()
-        messages = _dialog_to_messages(dialog)
+        messages = _dialog_to_messages(
+            dialog, multimodal="image" in self.modality_support
+        )
         sampling = SamplingParams(
             temperature=self.temperature,
             max_tokens=self.max_tokens,
@@ -180,6 +212,7 @@ class OllamaTarget(BaseTarget):
         **options: Any,
     ) -> None:
         self.model = model
+        self.name = model  # per-model id so each Ollama model writes its own result cell
         self.host = host.rstrip("/")
         self.temperature = temperature
         self.num_predict = num_predict
