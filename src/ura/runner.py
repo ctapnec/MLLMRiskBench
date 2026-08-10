@@ -95,7 +95,8 @@ class Runner:
                         continue
                     response = self._respond(attempt)
                     final, trail = self.judge_cascade.judge(dp, response)
-                    final = self._annotate(final, dp, attempt, response)
+                    target_modalities = getattr(self.target, "modality_support", ("text",))
+                    final = self._annotate(final, dp, attempt, response, target_modalities)
 
                     self.attempts.append(attempt)
                     self.responses.append(response)
@@ -124,18 +125,28 @@ class Runner:
         datapoint: DataPoint,
         attempt: Attempt,
         response: Response,
+        target_modalities: tuple[str, ...] = ("text",),
     ) -> Judgment:
         """Fold grouping/provenance keys into the judgment's ``raw`` block.
 
         Aggregation only sees judgments, so the dimensions we may later group by
-        (model, adapter, risk) must travel inside the record itself.
+        (model, adapter, risk) must travel inside the record itself. Both the
+        datapoint's declared modality and the modality the target could actually
+        consume are recorded, so a datapoint whose channel the target does not
+        support (e.g. an audio datapoint against a text+image target) is visibly
+        reported on its ``effective_modality`` rather than silently counted as
+        full-modality (thesis II.3.1 Family E / III.2.1 future-work scope).
         """
+        declared = _modality_label(datapoint.modalities)
+        effective = _effective_modality(datapoint.modalities, target_modalities)
         provenance = {
             "datapoint_id": datapoint.id,
             "source": datapoint.source,
             "risk_category": datapoint.risk_category.value,
             "risk": datapoint.risk_category.value,  # short alias for grouping/figures
-            "modality": _modality_label(datapoint.modalities),   # for m-ASR grouping
+            "modality": declared,                    # declared corpus modality
+            "effective_modality": effective,         # what the target could consume (m-ASR)
+            "target_modalities": list(target_modalities),
             "is_multimodal": len(set(datapoint.modalities) - {"text"}) > 0,
             "risk_subtype": datapoint.risk_subtype,
             "expected_behavior": datapoint.expected_behavior,
@@ -403,6 +414,23 @@ def _modality_label(modalities: list[str]) -> str:
         if m in modalities:
             return m
     if "tool" in modalities:
+        return "tool"
+    return "text"
+
+
+def _effective_modality(modalities: list[str], target_modalities: tuple[str, ...]) -> str:
+    """The richest datapoint modality the target can actually consume.
+
+    A datapoint declares its modalities, but a target only handles those in its
+    ``modality_support``; the richest supported one is what was truly exercised.
+    So an audio/video datapoint against a text+image target resolves to its text
+    channel here, making the degradation explicit rather than silent (Family E).
+    """
+    supported = set(target_modalities)
+    for m in ("video", "audio", "image"):
+        if m in modalities and m in supported:
+            return m
+    if "tool" in modalities and "tool" in supported:
         return "tool"
     return "text"
 
