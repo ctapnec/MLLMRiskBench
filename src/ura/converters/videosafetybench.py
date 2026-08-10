@@ -19,7 +19,7 @@ Real released layout: a metadata table (json / jsonl) whose records carry
 name (``video_safetybench_{query_type}``) and/or a per-record type field. Point
 ``URA_VIDEOSAFETYBENCH_PATH`` at either variant's metadata file. Video files are
 resolved against the metadata file's parent (with a ``videos/`` fallback).
-Robust to a missing path (returns []).
+Missing metadata or referenced video assets fail closed.
 
 Imports only the standard library plus ``_common`` (which re-exports the data
 models); ``BaseConverter`` is the framework's converter ABC.
@@ -31,7 +31,7 @@ from pathlib import Path
 from typing import Optional
 
 from ..adapters.base import BaseConverter
-from ._common import DataPoint, DialogTurn, MediaRef, Rc, dp, missing, read_json, read_jsonl
+from ._common import CorpusFormatError, DataPoint, DialogTurn, MediaRef, Rc, dp, local_media, missing, read_json, read_jsonl
 
 # Primary hazard categories (S1-S13) -> internal taxonomy. Unmapped categories
 # (e.g. Specialized Advice, Elections) fall through to the JAILBREAK default.
@@ -109,13 +109,13 @@ def _query_type(rec: dict, path: Path) -> Optional[str]:
 def _video(video_path: Optional[str], root: Path) -> list[MediaRef]:
     """Resolve the video against the metadata parent (with a ``videos/`` fallback)."""
     if not video_path:
-        return []
-    cand = root / video_path
-    if not cand.is_file():
-        alt = root / "videos" / Path(video_path).name
-        if alt.is_file():
-            cand = alt
-    return [MediaRef(modality="video", path=str(cand))]
+        raise CorpusFormatError("Video-SafetyBench row has no video path")
+    raw = Path(video_path)
+    if not raw.is_absolute() and not (root / raw).is_file():
+        alt = Path("videos") / raw.name
+        if (root / alt).is_file():
+            raw = alt
+    return [local_media(raw, root, modality="video")]
 
 
 class VideoSafetyBenchConverter(BaseConverter):
@@ -128,27 +128,49 @@ class VideoSafetyBenchConverter(BaseConverter):
         root = path.parent
         records = read_jsonl(path) if path.suffix == ".jsonl" else read_json(path)
         if isinstance(records, dict):
-            records = (
-                records.get("data")
-                or records.get("questions")
-                or records.get("records")
-                or list(records.values())
+            known = next(
+                (
+                    records[name]
+                    for name in ("data", "questions", "records")
+                    if name in records
+                ),
+                None,
             )
+            if known is not None:
+                records = known
+            elif records and all(isinstance(value, dict) for value in records.values()):
+                records = list(records.values())
+            else:
+                raise CorpusFormatError(
+                    f"Video-SafetyBench metadata object has no record collection: {path}"
+                )
+        if not isinstance(records, list):
+            raise CorpusFormatError(f"Video-SafetyBench metadata is not a list: {path}")
         out: list[DataPoint] = []
         for i, rec in enumerate(records):
             if not isinstance(rec, dict):
-                continue
+                raise CorpusFormatError(
+                    f"Video-SafetyBench row {i} in {path} is not an object"
+                )
             category = rec.get("category")
             subcategory = rec.get("subcategory")
             text = rec.get("question") or rec.get("query") or rec.get("prompt")
+            if not isinstance(text, str) or not text.strip():
+                raise CorpusFormatError(
+                    f"Video-SafetyBench row {i} in {path} has no non-empty question"
+                )
             media = _video(rec.get("video_path") or rec.get("video"), root)
 
             qtype = _query_type(rec, path)
-            # Benign (or unclassified) pairs are emergent-unsafe: the query reads
-            # as harmless and the harm arises only in composition with the video,
-            # so the model must answer safely rather than refuse a benign request.
+            if qtype is None:
+                raise CorpusFormatError(
+                    f"Video-SafetyBench row {i} in {path} has no benign/harmful split"
+                )
+            # Both variants are harmful evaluation units.  For benign-query rows
+            # the unsafe intent emerges only from joint video-text interpretation;
+            # they must not enter the benign false-refusal denominator.
             emergent = qtype != _HARMFUL
-            expected = "safe_answer" if emergent else "refuse"
+            expected = "refuse"
 
             tag = qtype or "q"
             rid = rec.get("question_id", rec.get("id", i))
@@ -158,7 +180,7 @@ class VideoSafetyBenchConverter(BaseConverter):
                 modalities=["text", "video"],
                 risk=_risk(category, subcategory),
                 expected=expected,
-                dialog=[DialogTurn(role="user", content=text or "", media=media)],
+                dialog=[DialogTurn(role="user", content=text, media=media)],
                 payload_text=text,
                 media=media,
                 risk_subtype=(subcategory or category or None),
@@ -172,4 +194,8 @@ class VideoSafetyBenchConverter(BaseConverter):
                     "video_path": rec.get("video_path") or rec.get("video"),
                 },
             ))
+        if not out:
+            raise CorpusFormatError(
+                f"Video-SafetyBench conversion produced no rows from {path}"
+            )
         return out

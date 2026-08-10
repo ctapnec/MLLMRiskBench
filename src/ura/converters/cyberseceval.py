@@ -21,8 +21,12 @@ offensive cyber operations, all released as plain JSON lists under
 
 Point ``URA_CYBERSECEVAL_PATH`` at any of these JSON files (a JSONL export is also
 tolerated). Every record maps to ``Rc.CYBERSEC`` with
-``attack_family="offensive_cyber"``. Robust to a missing path (returns []).
-Text-only source, so no media is attached. Mirrors siuo.py / advbench.py.
+``attack_family="offensive_cyber"``. Missing inputs fail closed.
+This file parser covers the released JSON/JSONL prompt suites.  It is distinct
+from the official native runner and from the visual benchmark's directory
+loader.  Any CyberSecEval DataPoint carrying verified media must place the same
+MediaRefs on its authored user turn; the source-bound ``purplellama`` identity
+adapter enforces that invariant rather than silently dropping images.
 """
 from __future__ import annotations
 
@@ -30,7 +34,7 @@ from pathlib import Path
 
 from ..adapters.base import BaseConverter
 from ..data_models import DataPoint, DialogTurn
-from ._common import Rc, dp, missing, read_json, read_jsonl
+from ._common import CorpusFormatError, Rc, dp, missing, read_json, read_jsonl
 
 # The prompt-injection suite wants the model to keep its original instruction and
 # ignore the injected turn (safe_answer); the offensive-generation suites (mitre,
@@ -72,16 +76,27 @@ class CyberSecEvalConverter(BaseConverter):
             records = records.get(
                 "data", records.get("prompts", records.get("test_cases", []))
             )
+        if not isinstance(records, list):
+            raise CorpusFormatError(
+                f"CyberSecEval source is not a record list: {path}"
+            )
         out: list[DataPoint] = []
         for i, rec in enumerate(records):
             if not isinstance(rec, dict):
-                continue
+                raise CorpusFormatError(
+                    f"CyberSecEval row {i} in {path} is not an object"
+                )
             dataset = self._dataset(rec, path)
             rid = rec.get("prompt_id", rec.get("id", i))
 
             if dataset == "prompt_injection":
                 system = _as_text(rec.get("test_case_prompt"))
                 user = _as_text(rec.get("user_input") or rec.get("mutated_prompt"))
+                if not user.strip():
+                    raise CorpusFormatError(
+                        f"CyberSecEval prompt-injection row {i} in {path} "
+                        "has no user input"
+                    )
                 dialog = []
                 if system:
                     dialog.append(DialogTurn(role="system", content=system))
@@ -99,6 +114,10 @@ class CyberSecEvalConverter(BaseConverter):
                     or rec.get("prompt")
                     or rec.get("base_prompt")
                 )
+                if not text.strip():
+                    raise CorpusFormatError(
+                        f"CyberSecEval row {i} in {path} has no executable prompt"
+                    )
                 dialog = [DialogTurn(role="user", content=text)]
                 payload = text
                 subtype = (
@@ -109,6 +128,7 @@ class CyberSecEvalConverter(BaseConverter):
                     or None
                 )
 
+            is_prompt_injection = dataset == "prompt_injection"
             out.append(dp(
                 id=f"cyberseceval:{dataset}:{rid}",
                 source="cyberseceval",
@@ -118,7 +138,10 @@ class CyberSecEvalConverter(BaseConverter):
                 dialog=dialog,
                 payload_text=payload or None,
                 risk_subtype=subtype,
-                attack_family="offensive_cyber",
+                attack_family=(
+                    "indirect_prompt_injection"
+                    if is_prompt_injection else "offensive_cyber"
+                ),
                 meta={
                     "dataset": dataset,
                     "mitre_category": rec.get("mitre_category"),
@@ -128,7 +151,29 @@ class CyberSecEvalConverter(BaseConverter):
                     "judge_question": rec.get("judge_question"),
                     "speaking_language": rec.get("speaking_language"),
                     "cwe_identifier": rec.get("cwe_identifier"),
+                    # The released prompt-injection suite supplies a
+                    # task-specific judge question. Refusal/over-refusal does not
+                    # determine whether the original application instruction was
+                    # preserved, so keep this construct in the framework as an
+                    # explicit source-specific track until that scorer is wired.
+                    "common_metrics_eligible": not is_prompt_injection,
+                    "required_metric": (
+                        "cyberseceval_prompt_injection_judge_question"
+                        if is_prompt_injection else None
+                    ),
+                    "source_metric_attackers": (
+                        ["replay", "purplellama"]
+                        if is_prompt_injection else None
+                    ),
+                    "execution_adapters": ["replay", "purplellama"],
+                    "purplellama_identity_eligible": True,
+                    "native_purplellama_runner_executed": False,
+                    "official_judge_question_executed": False,
                     "citation": "cyberseceval3-2024",
                 },
             ))
+        if not out:
+            raise CorpusFormatError(
+                f"CyberSecEval conversion produced no rows from {path}"
+            )
         return out

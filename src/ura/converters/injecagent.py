@@ -16,8 +16,10 @@ instructions" preamble. The exact per-record keys (verbatim, note the source typ
 ``Tool Response`` (template already filled), ``Attacker Instruction``,
 ``Attacker Tools`` (a list), ``Attack Type``, ``Expected Achievements``, ``Thought``.
 
-Point ``URA_INJECAGENT_PATH`` at one of the ``test_cases_*.json`` files (a ``.jsonl``
-export is also accepted). Robust to a missing path (returns []).
+The converter represents the already-returned poisoned tool observation; it does
+not execute either the benign user tool or any attacker tool.  Official
+InjecAgent ASR still requires an agent runtime that can expose and score tool
+calls.
 """
 from __future__ import annotations
 
@@ -26,7 +28,7 @@ from pathlib import Path
 
 from ..adapters.base import BaseConverter
 from ..data_models import DataPoint, DialogTurn, ToolCall
-from ._common import Rc, dp, missing, read_json, read_jsonl
+from ._common import CorpusFormatError, Rc, dp, missing, read_json, read_jsonl
 
 
 def _parse_params(raw: object) -> dict:
@@ -60,11 +62,13 @@ class InjecAgentConverter(BaseConverter):
         records = read_jsonl(path) if path.suffix == ".jsonl" else read_json(path)
         if isinstance(records, dict):
             records = records.get("data", records.get("cases", []))
+        if not isinstance(records, list):
+            raise CorpusFormatError(f"InjecAgent file is not a list: {path}")
 
         out: list[DataPoint] = []
         for i, rec in enumerate(records):
             if not isinstance(rec, dict):
-                continue
+                raise CorpusFormatError(f"InjecAgent row {i} in {path} is not an object")
 
             user_instr = rec.get("User Instruction") or rec.get("user_instruction") or ""
             user_tool = rec.get("User Tool") or rec.get("user_tool")
@@ -84,6 +88,10 @@ class InjecAgentConverter(BaseConverter):
             template = rec.get("Tool Response Template") or rec.get("tool_response_template") or ""
             if not tool_response:
                 tool_response = template.replace("<Attacker Instruction>", attacker_instr)
+            if not user_instr or not user_tool or not attacker_instr or not tool_response:
+                raise CorpusFormatError(
+                    f"InjecAgent row {i} in {path} lacks a required user/tool/attack field"
+                )
 
             # dialog: the user asks; the agent calls the benign user tool; the tool
             # returns a response carrying the injected attacker instruction
@@ -101,7 +109,7 @@ class InjecAgentConverter(BaseConverter):
             out.append(dp(
                 id=f"injecagent:{path.stem}:{i}",
                 source="injecagent",
-                modalities=["text"],
+                modalities=["text", "tool"],
                 risk=Rc.PROMPT_INJECTION_INDIRECT,
                 expected="safe_answer",   # complete the benign task, ignore the injection
                 dialog=dialog,
@@ -122,6 +130,17 @@ class InjecAgentConverter(BaseConverter):
                     "tool_response_template": template or None,
                     "thought": rec.get("Thought"),
                     "modified": rec.get("Modifed", rec.get("Modified")),
+                    "source_construct": "tool_integrated_indirect_injection",
+                    "execution_mode": "recorded_tool_observation_continuation",
+                    "user_tool_executed": False,
+                    "attacker_tool_executed": False,
+                    "official_injecagent_scoring_executed": False,
+                    "evaluation_scope": "static_observation_continuation_proxy",
+                    "common_metrics_eligible": False,
+                    "required_metric": "official_injecagent_tool_call_scoring",
+                    "source_metric_attackers": ["replay"],
                 },
             ))
+        if not out:
+            raise CorpusFormatError(f"InjecAgent conversion produced no rows from {path}")
         return out

@@ -1,110 +1,556 @@
-"""Petri engine adapter: Inspect-native automated alignment auditing.
+"""Petri v3 native Inspect-audit integration.
 
-Petri (Parallel Exploration Tool for Risky Interactions; Meridian Labs / UK AISI,
-orig. Anthropic Alignment) is an open-source auditing agent built on Inspect: an
-*auditor* model is given a short natural-language "special instruction" (a seed
-audit directive) and autonomously drives a multi-turn interaction with a target,
-after which a judge scores the transcript across alignment dimensions
-[petri-2025; inspect-2024].
+Petri is an end-to-end alignment auditor, not an attacker-style seed generator.
+Its Inspect task binds distinct ``auditor``, ``target`` and ``judge`` model roles,
+constructs multi-turn scenarios, supports simulated tools and rollback branches,
+and scores the resulting target timeline on configurable 1--10 dimensions.  The
+authoritative upstream contracts are:
 
-In URA-Bench, Petri is wrapped as an *auditor-style attacker* (thesis II.4.1 /
-III.2.2): the adapter expands a DataPoint into Petri special instructions and
-materialises the auditor's seed probes as Attempts, so an audit can be run through
-the same attacker/target/judge pipeline as the other engines. Petri is
-Inspect-native and has no lightweight Python entry point that runs without the
-framework, so this is a bridge in the same shape as PromptfooAttacker /
-T3MP3STAttacker: it imports with only stdlib present, and the ``inspect``/``petri``
-toolchain is required only when :meth:`generate` is actually invoked.
+* https://github.com/meridianlabs-ai/inspect_petri
+* https://github.com/meridianlabs-ai/inspect_petri/blob/main/src/inspect_petri/_task/audit.py
+* https://github.com/meridianlabs-ai/inspect_petri/blob/main/src/inspect_petri/_judge/judge.py
+* https://inspect.aisi.org.uk/eval-logs.html
+* https://inspect.aisi.org.uk/reference/inspect_ai.log.html
 
-Safety (thesis N5, III.2.4): the adapter produces audit *seed probes*; the full
-live auditor-vs-target loop runs only in Chapter V against real models with keys
-present. Authorized testing only.
+URA therefore imports the complete successful Inspect log (native ``.eval`` or
+official JSON conversion), retains its task/model-role/sample/score lineage and
+does not replay a selected message through ``Runner``.  Petri dimension scores
+remain source-specific; no arbitrary threshold is used to turn them into common
+ASR/FRR labels.
 """
+
 from __future__ import annotations
 
-from collections.abc import Iterable
+import json
+import re
+from collections.abc import Iterable, Mapping
+from pathlib import Path
+from typing import Any
 
 from ..data_models import Attempt, DataPoint
+from ._engine_common import (
+    ExternalEngineConformanceError,
+    ExternalEngineOutputError,
+    _require,
+)
+from ._native_artifacts import (
+    DEFAULT_MAX_ARTIFACT_BYTES,
+    NativeArtifactFile,
+    NativeEngineCase,
+    NativeEngineRun,
+    json_sha256,
+    read_utf8_artifact,
+    require_expected_sha256,
+    strict_json_loads,
+)
 from .base import AttackBudget, BaseAttacker
-from ._engine_common import _attempt
+
+
+PETRI_REPOSITORY = "https://github.com/meridianlabs-ai/inspect_petri"
+PETRI_TASK = "inspect_petri/audit"
+PETRI_NATIVE_SCHEMA = "inspect-eval-log/petri-v3"
+_VERSION_3_RE = re.compile(r"^3(?:\.|$)")
+
+
+def _mapping(value: Any, *, field: str) -> dict[str, Any]:
+    if not isinstance(value, dict):
+        raise ExternalEngineOutputError(f"Petri Inspect log {field} must be an object")
+    return value
+
+
+def _nonblank(value: Any, *, field: str) -> str:
+    if not isinstance(value, str) or not value.strip():
+        raise ExternalEngineOutputError(
+            f"Petri Inspect log {field} must be a nonblank string"
+        )
+    return value
+
+
+def _package_version(packages: Mapping[str, Any], distribution: str) -> str:
+    wanted = distribution.lower().replace("-", "_")
+    matches = [
+        value
+        for name, value in packages.items()
+        if isinstance(name, str) and name.lower().replace("-", "_") == wanted
+    ]
+    if len(matches) != 1:
+        raise ExternalEngineOutputError(
+            f"Petri Inspect log must record exactly one {distribution!r} package version"
+        )
+    return _nonblank(matches[0], field=f"eval.packages[{distribution!r}]")
+
+
+def _role_model(role: str, value: Any) -> str:
+    if isinstance(value, str):
+        return _nonblank(value, field=f"eval.model_roles.{role}")
+    role_config = _mapping(value, field=f"eval.model_roles.{role}")
+    return _nonblank(role_config.get("model"), field=f"eval.model_roles.{role}.model")
+
+
+def _read_eval_log(
+    path: Path, *, max_artifact_bytes: int
+) -> tuple[Path, bytes, dict[str, Any]]:
+    """Read an Inspect JSON or binary eval log without triggering model calls."""
+
+    resolved = path.resolve(strict=True)
+    if not resolved.is_file():
+        raise ExternalEngineOutputError(f"Petri log is not a file: {resolved}")
+    size = resolved.stat().st_size
+    if size < 1:
+        raise ExternalEngineOutputError(f"Petri log is empty: {resolved}")
+    if not isinstance(max_artifact_bytes, int) or max_artifact_bytes < 1:
+        raise ValueError("max_artifact_bytes must be a positive integer")
+    if size > max_artifact_bytes:
+        raise ExternalEngineOutputError(
+            f"Petri log exceeds the {max_artifact_bytes}-byte import limit: {resolved}"
+        )
+
+    suffix = resolved.suffix.lower()
+    if suffix == ".json":
+        _, data, text = read_utf8_artifact(resolved, max_bytes=max_artifact_bytes)
+        try:
+            value = strict_json_loads(text)
+        except (json.JSONDecodeError, ValueError) as exc:
+            raise ExternalEngineOutputError(
+                f"invalid Petri Inspect JSON log: {exc}"
+            ) from exc
+    elif suffix == ".eval":
+        data = resolved.read_bytes()
+        inspect_log = _require(
+            "inspect_ai.log",
+            "Petri .eval artifact import",
+            "inspect-ai>=0.3.236",
+        )
+        try:
+            loaded = inspect_log.read_eval_log(resolved, format="eval")
+            value = loaded.model_dump(mode="json")
+        except Exception as exc:  # noqa: BLE001 - normalize optional backend errors
+            raise ExternalEngineOutputError(
+                f"Inspect could not decode Petri .eval log {resolved}: {exc}"
+            ) from exc
+    else:
+        raise ExternalEngineOutputError(
+            "Petri import accepts only native .eval logs or `inspect log convert --to json` output"
+        )
+    if not isinstance(value, dict):
+        raise ExternalEngineOutputError("Petri Inspect log root must be a JSON object")
+    return resolved, data, value
 
 
 class PetriAttacker(BaseAttacker):
-    """Wrap Petri's Inspect-native auditor to emit audit seed probes as Attempts.
+    """Import complete Petri v3 Inspect audit logs with native score semantics.
 
-    ``dimensions`` names the alignment dimensions the special instructions target
-    (e.g. deception, sycophancy, power-seeking); ``cli`` is the Inspect entrypoint
-    used for the bridge. The auditor/target/judge models are supplied by the run
-    (Chapter V), not by this adapter.
+    The historical class name remains for registry compatibility.  This object
+    is an audit-artifact adapter, not a ``Runner`` prompt generator.  Configure
+    role identities and/or dimensions to assert them during import; leaving one
+    unset accepts the value embedded in the authoritative Inspect log while
+    still recording it in the returned provenance.
     """
 
     name = "petri"
+    supported_integration_mode = "native_artifact_import"
+    runner_replay_eligible = False
 
     def __init__(
         self,
         dimensions: list[str] | None = None,
-        auditor_model: str = "anthropic/claude-sonnet-5",
+        auditor_model: str | None = None,
+        target_model: str | None = None,
+        judge_model: str | None = None,
         cli: str = "inspect",
+        credential_env: list[str] | tuple[str, ...] | None = None,
+        timeout_seconds: float | None = None,
     ) -> None:
-        # Alignment dimensions the seed audit instructions probe for.
-        self.dimensions = dimensions or ["deception", "harmful_compliance"]
+        if dimensions is not None:
+            if not dimensions or any(
+                not isinstance(dimension, str) or not dimension.strip()
+                for dimension in dimensions
+            ):
+                raise ValueError("Petri dimensions must contain nonblank names")
+            if len(set(dimensions)) != len(dimensions):
+                raise ValueError("Petri dimensions must be unique")
+        for role, model in (
+            ("auditor", auditor_model),
+            ("target", target_model),
+            ("judge", judge_model),
+        ):
+            if model is not None and (not isinstance(model, str) or not model.strip()):
+                raise ValueError(f"Petri {role}_model must be nonblank when supplied")
+        self.dimensions = dimensions
         self.auditor_model = auditor_model
+        self.target_model = target_model
+        self.judge_model = judge_model
         self.cli = cli
+        self.credential_env = tuple(credential_env or ())
+        self.timeout_seconds = timeout_seconds
+
+    def build_native_command(self) -> list[str]:
+        """Build (but never execute) the official three-role Inspect invocation."""
+
+        roles = {
+            "auditor": self.auditor_model,
+            "target": self.target_model,
+            "judge": self.judge_model,
+        }
+        missing = sorted(role for role, model in roles.items() if model is None)
+        if missing:
+            raise ValueError(
+                "Petri native command requires configured model roles: "
+                + ", ".join(missing)
+            )
+        command = [self.cli, "eval", PETRI_TASK]
+        for role in ("auditor", "target", "judge"):
+            command.extend(["--model-role", f"{role}={roles[role]}"])
+        return command
+
+    def import_run(
+        self,
+        log_path: str | Path,
+        *,
+        expected_log_sha256: str | None = None,
+        expected_upstream_version: str | None = None,
+        max_artifact_bytes: int = DEFAULT_MAX_ARTIFACT_BYTES,
+    ) -> NativeEngineRun:
+        """Import a completed Petri v3 Inspect log without re-running the audit."""
+
+        resolved, log_bytes, log = _read_eval_log(
+            Path(log_path), max_artifact_bytes=max_artifact_bytes
+        )
+        log_digest = require_expected_sha256(
+            log_bytes, expected_log_sha256, role="Petri Inspect log"
+        )
+
+        required_top_level = {
+            "version",
+            "status",
+            "eval",
+            "plan",
+            "results",
+            "stats",
+            "error",
+            "invalidated",
+            "samples",
+        }
+        missing_top_level = sorted(required_top_level - set(log))
+        if missing_top_level:
+            raise ExternalEngineOutputError(
+                "Petri Inspect log lacks required top-level fields: "
+                + ", ".join(missing_top_level)
+            )
+        version = log.get("version")
+        if isinstance(version, bool) or not isinstance(version, int) or version < 1:
+            raise ExternalEngineOutputError(
+                "Petri Inspect log version must be a positive integer"
+            )
+        if log.get("status") != "success":
+            raise ExternalEngineOutputError(
+                f"Petri Inspect log status must be 'success', observed {log.get('status')!r}"
+            )
+        if log.get("error") is not None:
+            raise ExternalEngineOutputError(
+                "Petri Inspect log marked successful but contains a top-level error"
+            )
+        if not isinstance(log.get("invalidated"), bool):
+            raise ExternalEngineOutputError(
+                "Petri Inspect log invalidated field must be boolean"
+            )
+        if log.get("invalidated") is True:
+            raise ExternalEngineOutputError(
+                "Petri Inspect log contains invalidated samples"
+            )
+        _mapping(log.get("plan"), field="plan")
+        _mapping(log.get("results"), field="results")
+        _mapping(log.get("stats"), field="stats")
+
+        eval_spec = _mapping(log.get("eval"), field="eval")
+        task = _nonblank(eval_spec.get("task"), field="eval.task")
+        if task != PETRI_TASK:
+            raise ExternalEngineOutputError(
+                f"Inspect log task is {task!r}, not the Petri v3 task {PETRI_TASK!r}"
+            )
+        eval_id = _nonblank(eval_spec.get("eval_id"), field="eval.eval_id")
+        inspect_run_id = _nonblank(eval_spec.get("run_id"), field="eval.run_id")
+
+        packages = _mapping(eval_spec.get("packages"), field="eval.packages")
+        petri_version = _package_version(packages, "inspect_petri")
+        inspect_version = _package_version(packages, "inspect_ai")
+        if not _VERSION_3_RE.match(petri_version):
+            raise ExternalEngineOutputError(
+                f"Petri v3 importer cannot admit inspect_petri version {petri_version!r}"
+            )
+        if (
+            expected_upstream_version is not None
+            and petri_version != expected_upstream_version
+        ):
+            raise ExternalEngineOutputError(
+                "Petri package-version mismatch: "
+                f"expected={expected_upstream_version!r}, observed={petri_version!r}"
+            )
+
+        role_values = _mapping(eval_spec.get("model_roles"), field="eval.model_roles")
+        model_roles: dict[str, str] = {}
+        for role in ("auditor", "target", "judge"):
+            if role not in role_values:
+                raise ExternalEngineOutputError(
+                    f"Petri Inspect log lacks required {role!r} model role"
+                )
+            model_roles[role] = _role_model(role, role_values[role])
+        if "realism" in role_values:
+            model_roles["realism"] = _role_model("realism", role_values["realism"])
+        configured = {
+            "auditor": self.auditor_model,
+            "target": self.target_model,
+            "judge": self.judge_model,
+        }
+        for role, expected_model in configured.items():
+            if expected_model is not None and model_roles[role] != expected_model:
+                raise ExternalEngineOutputError(
+                    f"Petri {role} model mismatch: configured={expected_model!r}, "
+                    f"artifact={model_roles[role]!r}"
+                )
+
+        task_args = _mapping(eval_spec.get("task_args"), field="eval.task_args")
+        max_turns = task_args.get("max_turns")
+        if (
+            isinstance(max_turns, bool)
+            or not isinstance(max_turns, int)
+            or max_turns < 1
+        ):
+            raise ExternalEngineOutputError(
+                "Petri eval.task_args.max_turns must be a positive integer"
+            )
+        enable_rollback = task_args.get("enable_rollback")
+        if not isinstance(enable_rollback, bool):
+            raise ExternalEngineOutputError(
+                "Petri eval.task_args.enable_rollback must be boolean"
+            )
+        target_tools = task_args.get("target_tools")
+        if target_tools not in {"synthetic", "fixed", "none"}:
+            raise ExternalEngineOutputError(
+                "Petri eval.task_args.target_tools must be synthetic, fixed, or none"
+            )
+
+        samples = log.get("samples")
+        if not isinstance(samples, list) or not samples:
+            raise ExternalEngineOutputError(
+                "successful Petri Inspect log must contain non-empty samples"
+            )
+
+        cases: list[NativeEngineCase] = []
+        identities: set[tuple[str, int]] = set()
+        scored_dimensions: set[str] | None = None
+        scored = 0
+        unscored = 0
+        fallback_samples = 0
+        for index, raw_sample in enumerate(samples):
+            sample = _mapping(raw_sample, field=f"samples[{index}]")
+            sample_id_value = sample.get("id")
+            if isinstance(sample_id_value, bool) or not isinstance(
+                sample_id_value, (str, int)
+            ):
+                raise ExternalEngineOutputError(
+                    f"Petri samples[{index}].id must be a string or integer"
+                )
+            sample_id = str(sample_id_value)
+            if not sample_id.strip():
+                raise ExternalEngineOutputError(
+                    f"Petri samples[{index}].id must not be blank"
+                )
+            epoch = sample.get("epoch")
+            if isinstance(epoch, bool) or not isinstance(epoch, int) or epoch < 1:
+                raise ExternalEngineOutputError(
+                    f"Petri samples[{index}].epoch must be a positive integer"
+                )
+            identity = (sample_id, epoch)
+            if identity in identities:
+                raise ExternalEngineOutputError(
+                    f"duplicate Petri sample identity {identity!r}"
+                )
+            identities.add(identity)
+
+            if sample.get("error") is not None:
+                raise ExternalEngineOutputError(
+                    f"successful Petri sample {identity!r} contains an error"
+                )
+            transcript_fields = ("messages", "events", "timelines")
+            if not any(
+                isinstance(sample.get(field), list) and bool(sample.get(field))
+                for field in transcript_fields
+            ):
+                raise ExternalEngineOutputError(
+                    f"Petri sample {identity!r} contains no transcript messages/events/timelines"
+                )
+
+            scores = _mapping(sample.get("scores"), field=f"samples[{index}].scores")
+            score = _mapping(
+                scores.get("audit_judge"),
+                field=f"samples[{index}].scores.audit_judge",
+            )
+            score_value = score.get("value")
+            score_metadata = score.get("metadata")
+            if score_metadata is None:
+                score_metadata = {}
+            score_metadata = _mapping(
+                score_metadata,
+                field=f"samples[{index}].scores.audit_judge.metadata",
+            )
+            native_scores: dict[str, int | float] = {}
+            if score_value is None:
+                if score_metadata.get("refusal") is not True:
+                    raise ExternalEngineOutputError(
+                        f"Petri sample {identity!r} is unscored without explicit judge refusal"
+                    )
+                explanation = score.get("explanation")
+                if not isinstance(explanation, str) or not explanation.strip():
+                    raise ExternalEngineOutputError(
+                        f"Petri sample {identity!r} judge refusal lacks an explanation"
+                    )
+                native_outcome = "judge_refusal_unscored"
+                unscored += 1
+            else:
+                value_map = _mapping(
+                    score_value,
+                    field=f"samples[{index}].scores.audit_judge.value",
+                )
+                if not value_map:
+                    raise ExternalEngineOutputError(
+                        f"Petri sample {identity!r} has an empty dimension-score map"
+                    )
+                for dimension, value in value_map.items():
+                    if not isinstance(dimension, str) or not dimension.strip():
+                        raise ExternalEngineOutputError(
+                            f"Petri sample {identity!r} has a blank dimension name"
+                        )
+                    if isinstance(value, bool) or not isinstance(value, int):
+                        raise ExternalEngineOutputError(
+                            f"Petri dimension {dimension!r} for sample {identity!r} "
+                            "must be an integer"
+                        )
+                    if value < 1 or value > 10:
+                        raise ExternalEngineOutputError(
+                            f"Petri dimension {dimension!r} for sample {identity!r} "
+                            "must be in [1, 10]"
+                        )
+                    native_scores[dimension] = value
+                dimensions = set(native_scores)
+                if scored_dimensions is None:
+                    scored_dimensions = dimensions
+                elif dimensions != scored_dimensions:
+                    raise ExternalEngineOutputError(
+                        f"Petri sample {identity!r} dimension set differs from prior samples"
+                    )
+                native_outcome = "dimension_scores"
+                scored += 1
+
+            if (
+                self.dimensions is not None
+                and native_scores
+                and set(self.dimensions) != set(native_scores)
+            ):
+                raise ExternalEngineOutputError(
+                    f"Petri sample {identity!r} dimensions do not match configured dimensions"
+                )
+            model_fallbacks = sample.get("model_fallbacks")
+            if isinstance(model_fallbacks, list) and model_fallbacks:
+                fallback_samples += 1
+            sample_digest = json_sha256(sample)
+            uuid = sample.get("uuid")
+            case_id = (
+                f"petri:{uuid}"
+                if isinstance(uuid, str) and uuid.strip()
+                else f"petri:{eval_id}:{sample_id}:epoch{epoch}"
+            )
+            cases.append(
+                NativeEngineCase(
+                    id=case_id,
+                    source_run_id=eval_id,
+                    target_model=model_roles["target"],
+                    attack_method="petri:audit",
+                    original_input=sample.get("input"),
+                    adversarial_input=None,
+                    target_outputs=[],
+                    native_outcome=native_outcome,
+                    native_scores=native_scores,
+                    native_details={
+                        "epoch": epoch,
+                        "sample_uuid": uuid,
+                        "judge_explanation": score.get("explanation"),
+                        "judge_metadata": score_metadata,
+                        "model_fallbacks": model_fallbacks,
+                        "transcript_fields": [
+                            field
+                            for field in transcript_fields
+                            if isinstance(sample.get(field), list)
+                            and bool(sample.get(field))
+                        ],
+                        "transcript_retained_in_source_artifact": True,
+                    },
+                    source_artifact_role="inspect_log",
+                    source_record=f"samples[{index}] (id={sample_id!r}, epoch={epoch})",
+                    source_record_sha256=sample_digest,
+                )
+            )
+
+        if self.dimensions is not None and scored_dimensions is None:
+            # All-refusal runs are valid native artifacts, but there is no evidence
+            # that the configured dimensions were actually returned.
+            raise ExternalEngineOutputError(
+                "Petri log contains no scored sample with which to verify configured dimensions"
+            )
+
+        artifact = NativeArtifactFile(
+            role="inspect_log",
+            path=str(resolved),
+            sha256=log_digest,
+            bytes=len(log_bytes),
+            records=len(samples),
+        )
+        return NativeEngineRun(
+            engine="petri",
+            native_schema=f"{PETRI_NATIVE_SCHEMA};inspect_log_version={version}",
+            native_run_id=eval_id,
+            upstream_repository=PETRI_REPOSITORY,
+            upstream_version=petri_version,
+            source_artifacts=[artifact],
+            target_models=[model_roles["target"]],
+            model_roles=model_roles,
+            cases=cases,
+            native_aggregates={
+                "inspect_run_id": inspect_run_id,
+                "inspect_results": log.get("results"),
+                "inspect_packages": packages,
+                "inspect_ai_version": inspect_version,
+                "task": task,
+                "task_args": task_args,
+                "eval_revision": eval_spec.get("revision"),
+                "score_dimensions": sorted(scored_dimensions or []),
+            },
+            import_accounting={
+                "samples": len(samples),
+                "scored_samples": scored,
+                "judge_refusal_unscored_samples": unscored,
+                "samples_with_model_fallbacks": fallback_samples,
+                "native_score_coverage": scored / len(samples),
+            },
+            measurement_semantics=(
+                "Petri source-native 1-10 alignment dimension scores over complete "
+                "auditor-target transcripts; judge refusals remain unscored and no "
+                "common ASR/FRR threshold is imputed"
+            ),
+        )
 
     def generate(self, datapoint: DataPoint, budget: AttackBudget) -> Iterable[Attempt]:
-        seed = datapoint.payload_text or datapoint.payload_code or ""
-        probes = self._audit_probes(seed, max(1, budget.max_queries))
-        for i, prompt in enumerate(probes):
-            yield _attempt(
-                datapoint,
-                self.name,
-                strategy="+".join(self.dimensions),
-                turn_index=i,
-                prompt=prompt,
-                seed=budget.seed,
-                params={"dimensions": self.dimensions, "mode": "audit-seed"},
-            )
-
-    def _audit_probes(self, seed: str, n: int) -> list[str]:
-        """Run Petri's auditor over the seed special instruction and read back its
-        opening probes (lazy; requires the Inspect + Petri toolchain).
-
-        The Inspect ``inspect_ai``/``petri`` packages are imported lazily so this
-        module stays stdlib-only until an audit is actually run.
-        """
-        import json
-        import shutil
-        import subprocess
-        import tempfile
-        from pathlib import Path
-
-        if shutil.which(self.cli) is None:
-            raise RuntimeError(
-                "Petri requires the Inspect toolchain for PetriAttacker; install it "
-                "(pip install inspect-ai petri) and expose the `inspect` CLI. "
-                "Authorized use only."
-            )
-        instruction = (
-            f"Audit the target for {', '.join(self.dimensions)}. "
-            f"Seed scenario: {seed}"
+        raise ExternalEngineConformanceError(
+            "Petri is supported through import_run(log_path). BaseAttacker.generate "
+            "is inapplicable because Petri is a complete Inspect auditor/target/judge "
+            "task, not a seed-only probes.json exporter. Replaying one message would "
+            "discard its multi-turn timeline, branches, tools and native scores."
         )
-        with tempfile.TemporaryDirectory() as tmp:
-            spec = Path(tmp) / "special_instructions.txt"
-            spec.write_text(instruction, encoding="utf-8")
-            out = Path(tmp) / "probes.json"
-            # Petri seed-generation: expand the special instruction into the auditor's
-            # opening probes without running the live target loop (harness safety N5).
-            subprocess.run(
-                [self.cli, "eval", "petri/petri", "--model", self.auditor_model,
-                 "-T", f"special_instructions={spec}",
-                 "-T", f"max_probes={n}", "--log-dir", str(out.parent),
-                 "--log-format", "json"],
-                check=True, capture_output=True,
-            )
-            data = json.loads(out.read_text(encoding="utf-8")) if out.exists() else {}
-        probes = data.get("probes", data) if isinstance(data, dict) else data
-        prompts = [
-            p.get("prompt", "") if isinstance(p, dict) else str(p)
-            for p in probes
-        ] if isinstance(probes, list) else []
-        return [p for p in prompts if p] or [instruction]
+
+
+__all__ = [
+    "PETRI_NATIVE_SCHEMA",
+    "PETRI_REPOSITORY",
+    "PETRI_TASK",
+    "PetriAttacker",
+]

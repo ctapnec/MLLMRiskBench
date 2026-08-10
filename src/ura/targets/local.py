@@ -11,11 +11,14 @@ Factories are registered in the shared ``REGISTRY`` under ``"vllm"`` and
 """
 from __future__ import annotations
 
+import hashlib
 import json
+import re
 import time
 import urllib.error
 import urllib.request
-from typing import Any, Optional
+from pathlib import Path
+from typing import Any, Iterable, Optional
 
 from ..data_models import DialogTurn, Response
 from .base import REGISTRY, BaseTarget
@@ -28,9 +31,71 @@ _ROLE_MAP = {
     "env": "user",  # environment observations surface as user-side context
 }
 
+_IMMUTABLE_REVISION = re.compile(r"[0-9a-f]{40,64}")
+_SHA256 = re.compile(r"[0-9a-f]{64}")
+
+
+def _is_explicit_local_path(model: str) -> bool:
+    """True only when the model spec is an explicit filesystem path.
+
+    A bare Hugging Face hub id such as ``Qwen/Qwen3-VL-8B-Instruct`` is never
+    treated as a local checkpoint even if a same-named directory happens to exist
+    in the current working directory. A local checkpoint must be given as an
+    absolute path or with an explicit ``~``, ``./`` or ``../`` prefix, so
+    local-vs-remote identity does not depend on the process's working directory.
+    """
+    spec = model.strip()
+    if not spec:
+        return False
+    # POSIX-absolute ("/..."), Windows drive-relative/UNC ("\\..."), and the
+    # explicit relative prefixes are path signals on any platform; a hub id such
+    # as "org/model" matches none of them. is_absolute() additionally catches a
+    # Windows drive-absolute path ("C:\\...").
+    if spec.startswith(("~", "./", "../", ".\\", "..\\", "/", "\\")):
+        return True
+    return Path(spec).is_absolute()
+
+
+class LocalTargetOutputError(RuntimeError):
+    """A local backend returned incomplete output or unverifiable provenance."""
+
+
+def _tree_sha256(path: Path) -> str:
+    if path.is_symlink():
+        raise ValueError("local model identity cannot be verified through a symlink")
+    digest = hashlib.sha256()
+    if path.is_file():
+        with path.open("rb") as handle:
+            for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+                digest.update(chunk)
+        return digest.hexdigest()
+    if not path.is_dir():
+        raise ValueError("local model path must be a regular file or directory")
+    all_items = sorted(path.rglob("*"))
+    if any(item.is_symlink() for item in all_items):
+        raise ValueError("local model tree must not contain symlinks")
+    files = [item for item in all_items if item.is_file()]
+    if not files:
+        raise ValueError("local model directory is empty")
+    for item in files:
+        file_digest = hashlib.sha256()
+        size = 0
+        with item.open("rb") as handle:
+            for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+                size += len(chunk)
+                file_digest.update(chunk)
+        digest.update(item.relative_to(path).as_posix().encode("utf-8"))
+        digest.update(b"\0")
+        digest.update(str(size).encode("ascii"))
+        digest.update(b"\0")
+        digest.update(file_digest.hexdigest().encode("ascii"))
+        digest.update(b"\n")
+    return digest.hexdigest()
+
 
 def _dialog_to_messages(
-    dialog: list[DialogTurn], *, multimodal: bool = False
+    dialog: list[DialogTurn], *, multimodal: bool = False,
+    media_roots: Optional[Iterable[str | Path]] = None,
 ) -> list[dict[str, Any]]:
     """Flatten a URA dialog into OpenAI/vLLM-style chat messages.
 
@@ -57,7 +122,15 @@ def _dialog_to_messages(
             parts.append(f"[tool_result] {turn.tool_result}")
         text = "\n".join(parts)
 
-        images = [m for m in turn.media if m.modality == "image"] if multimodal else []
+        if turn.media and not multimodal:
+            raise ValueError("text-only local target cannot render physical media")
+        unsupported = [m.modality for m in turn.media if m.modality != "image"]
+        if unsupported:
+            raise ValueError(
+                "local multimodal renderer cannot encode media modalities: "
+                + ",".join(sorted(set(unsupported)))
+            )
+        images = list(turn.media) if multimodal else []
         if not images:
             messages.append({"role": role, "content": text})
             continue
@@ -69,7 +142,7 @@ def _dialog_to_messages(
         if text:
             content.append({"type": "text", "text": text})
         for media in images:
-            mime, data, url = _encode_media(media)
+            mime, data, url = _encode_media(media, allowed_roots=media_roots)
             image_url = url or f"data:{mime};base64,{data}"
             content.append({"type": "image_url", "image_url": {"url": image_url}})
         messages.append({"role": role, "content": content})
@@ -91,21 +164,36 @@ class VLLMTarget(BaseTarget):
         self,
         model: str,
         *,
+        revision: Optional[str] = None,
+        model_digest: Optional[str] = None,
         tensor_parallel_size: int = 2,
         quantization: Optional[str] = None,
         max_tokens: int = 512,
         temperature: float = 0.0,
         dtype: str = "auto",
         gpu_memory_utilization: float = 0.90,
-        modality_support: tuple[str, ...] = ("text",),
+        modality_support: Optional[tuple[str, ...]] = None,
+        media_roots: Optional[Iterable[str | Path]] = None,
         **engine_kwargs: Any,
     ) -> None:
         self.model = model
-        self.name = model  # per-model id so each vLLM model writes its own result cell
+        self.revision = revision.lower() if isinstance(revision, str) else revision
+        self.model_digest = (
+            model_digest.lower() if isinstance(model_digest, str) else model_digest
+        )
+        if self.revision is not None and self.model_digest is not None:
+            raise ValueError("VLLMTarget accepts revision or model_digest, not both")
+        identity = self.revision or (
+            f"sha256:{self.model_digest}" if self.model_digest else "unresolved"
+        )
+        self.name = f"vllm:{model}@{identity}"
         # A vision-language model (e.g. Qwen3-VL) declares ("text", "image") so image
         # datapoints are forwarded; a text-only local model stays ("text",) and image
         # corpora are run text-only (documented; excluded from m-ASR in the protocol).
-        self.modality_support = tuple(modality_support)
+        self.capabilities_declared = modality_support is not None
+        self.modality_support = tuple(modality_support or ("text",))
+        from .api import _media_roots
+        self.media_roots = _media_roots(media_roots)
         self.tensor_parallel_size = tensor_parallel_size
         self.quantization = quantization
         self.max_tokens = max_tokens
@@ -114,9 +202,53 @@ class VLLMTarget(BaseTarget):
         self.gpu_memory_utilization = gpu_memory_utilization
         self.engine_kwargs = engine_kwargs
         self._llm: Any = None
+        self._identity_verified = False
+
+    def validate_research_identity(self) -> None:
+        if self._identity_verified:
+            return
+        if not self.capabilities_declared:
+            raise ValueError(
+                "VLLMTarget measured runs require an explicit modality_support "
+                "declaration; model-name guessing is not evidence"
+            )
+        allowed = {"text", "image"}
+        if (
+            not self.modality_support
+            or "text" not in self.modality_support
+            or set(self.modality_support) - allowed
+            or len(set(self.modality_support)) != len(self.modality_support)
+        ):
+            raise ValueError(
+                "VLLMTarget modality_support must be a unique text[/image] declaration"
+            )
+        # Local vs remote (hub) identity is decided by an explicit path signal, not
+        # by cwd-relative existence, so a bare hub id can never be silently treated
+        # as a local checkpoint that shadows a same-named working-directory folder.
+        if _is_explicit_local_path(self.model):
+            local_path = Path(self.model).expanduser()
+            if not isinstance(self.model_digest, str) or not _SHA256.fullmatch(
+                self.model_digest
+            ):
+                raise ValueError(
+                    "local vLLM checkpoints require an explicit 64-hex model_digest"
+                )
+            if local_path.is_symlink():
+                raise ValueError("local vLLM checkpoint path must not be a symlink")
+            resolved = local_path.resolve(strict=True)
+            if _tree_sha256(resolved) != self.model_digest:
+                raise ValueError("local vLLM checkpoint digest does not match bytes")
+        elif not isinstance(self.revision, str) or not _IMMUTABLE_REVISION.fullmatch(
+            self.revision
+        ):
+            raise ValueError(
+                "remote (hub) vLLM checkpoints require an immutable 40-64 hex revision"
+            )
+        self._identity_verified = True
 
     def _engine(self) -> Any:
         """Lazily build and cache the vLLM engine."""
+        self.validate_research_identity()
         if self._llm is None:
             try:
                 from vllm import LLM  # type: ignore
@@ -124,17 +256,23 @@ class VLLMTarget(BaseTarget):
                 raise RuntimeError(
                     "vllm is required for VLLMTarget; pip install vllm"
                 ) from exc
+            identity_kwargs: dict[str, Any] = {}
+            if self.revision is not None:
+                identity_kwargs["revision"] = self.revision
             self._llm = LLM(
                 model=self.model,
                 tensor_parallel_size=self.tensor_parallel_size,
                 quantization=self.quantization,
                 dtype=self.dtype,
                 gpu_memory_utilization=self.gpu_memory_utilization,
+                **identity_kwargs,
                 **self.engine_kwargs,
             )
         return self._llm
 
-    def generate(self, dialog: list[DialogTurn]) -> Response:
+    def generate(
+        self, dialog: list[DialogTurn], *, seed: int | None = None
+    ) -> Response:
         try:
             from vllm import SamplingParams  # type: ignore
         except ImportError as exc:  # pragma: no cover - offline path
@@ -144,50 +282,88 @@ class VLLMTarget(BaseTarget):
 
         llm = self._engine()
         messages = _dialog_to_messages(
-            dialog, multimodal="image" in self.modality_support
+            dialog,
+            multimodal="image" in self.modality_support,
+            media_roots=self.media_roots,
         )
-        sampling = SamplingParams(
+        sampling_kwargs: dict[str, Any] = dict(
             temperature=self.temperature,
             max_tokens=self.max_tokens,
         )
+        if seed is not None:
+            sampling_kwargs["seed"] = int(seed)
+        sampling = SamplingParams(**sampling_kwargs)
 
         t0 = time.perf_counter()
         outputs = llm.chat(messages, sampling)  # type: ignore[attr-defined]
         latency_ms = (time.perf_counter() - t0) * 1000.0
 
-        text, tokens = self._extract(outputs)
+        text, tokens, finish_reason, stop_reason = self._extract(outputs)
         return Response(
             attempt_id="",
-            target=self.model,
+            target=self.name,
             output_turns=[DialogTurn(role="assistant", content=text)],
             latency_ms=latency_ms,
             tokens=tokens,
-            raw={"backend": "vllm", "model": self.model},
+            raw={
+                "backend": "vllm",
+                "model": self.model,
+                "resolved_model": self.model,
+                "model_revision": self.revision,
+                "model_digest": self.model_digest,
+                "finish_reason": finish_reason,
+                "stop_reason": stop_reason,
+                "requested_seed": seed,
+                "target_sampling_control": (
+                    "local_seed" if seed is not None else "uncontrolled"
+                ),
+                "generation": {
+                    "seed": seed,
+                    "temperature": self.temperature,
+                    "max_tokens": self.max_tokens,
+                },
+            },
         )
 
     @staticmethod
-    def _extract(outputs: Any) -> tuple[str, Optional[dict[str, int]]]:
+    def _extract(
+        outputs: Any,
+    ) -> tuple[str, dict[str, int], str, Optional[str]]:
         """Pull generated text + token counts from a vLLM ``RequestOutput``.
 
         Isolated so the online API surface is easy to adjust in one place.
         """
-        if not outputs:
-            return "", None
+        if not isinstance(outputs, (list, tuple)) or len(outputs) != 1:
+            raise LocalTargetOutputError(
+                "vLLM must return exactly one RequestOutput for one chat request"
+            )
         first = outputs[0]
-        completion = first.outputs[0]
+        completions = getattr(first, "outputs", None)
+        if not isinstance(completions, (list, tuple)) or len(completions) != 1:
+            raise LocalTargetOutputError("vLLM returned zero or multiple completions")
+        completion = completions[0]
         text = getattr(completion, "text", "") or ""
-        tokens: Optional[dict[str, int]] = None
+        if not text.strip():
+            raise LocalTargetOutputError("vLLM returned an empty completion")
+        finish_reason = getattr(completion, "finish_reason", None)
+        if finish_reason != "stop":
+            raise LocalTargetOutputError(
+                f"vLLM completion is truncated or incomplete: {finish_reason!r}"
+            )
+        stop_reason_raw = getattr(completion, "stop_reason", None)
+        stop_reason = str(stop_reason_raw) if stop_reason_raw is not None else None
         prompt_ids = getattr(first, "prompt_token_ids", None)
         completion_ids = getattr(completion, "token_ids", None)
-        if prompt_ids is not None or completion_ids is not None:
-            prompt_n = len(prompt_ids) if prompt_ids is not None else 0
-            completion_n = len(completion_ids) if completion_ids is not None else 0
-            tokens = {
-                "prompt": prompt_n,
-                "completion": completion_n,
-                "total": prompt_n + completion_n,
-            }
-        return text, tokens
+        if prompt_ids is None or completion_ids is None:
+            raise LocalTargetOutputError("vLLM omitted prompt/completion token provenance")
+        prompt_n = len(prompt_ids)
+        completion_n = len(completion_ids)
+        tokens = {
+            "prompt": prompt_n,
+            "completion": completion_n,
+            "total": prompt_n + completion_n,
+        }
+        return text, tokens, finish_reason, stop_reason
 
 
 class OllamaTarget(BaseTarget):
@@ -205,6 +381,7 @@ class OllamaTarget(BaseTarget):
         self,
         model: str,
         *,
+        model_digest: Optional[str] = None,
         host: str = "http://localhost:11434",
         temperature: float = 0.0,
         num_predict: int = 512,
@@ -212,50 +389,168 @@ class OllamaTarget(BaseTarget):
         **options: Any,
     ) -> None:
         self.model = model
-        self.name = model  # per-model id so each Ollama model writes its own result cell
+        self.model_digest = (
+            model_digest.lower() if isinstance(model_digest, str) else model_digest
+        )
+        identity = f"sha256:{self.model_digest}" if self.model_digest else "unresolved"
+        self.name = f"ollama:{model}@{identity}"
         self.host = host.rstrip("/")
         self.temperature = temperature
         self.num_predict = num_predict
         self.timeout = timeout
         self.options = options
+        self._verified_digest: Optional[str] = None
 
-    def _sampling_options(self) -> dict[str, Any]:
+    def validate_research_identity(self) -> None:
+        if not isinstance(self.model_digest, str) or not _SHA256.fullmatch(
+            self.model_digest
+        ):
+            raise ValueError(
+                "OllamaTarget measured runs require an explicit 64-hex model_digest"
+            )
+
+    @staticmethod
+    def _normalized_digest(value: object) -> Optional[str]:
+        if not isinstance(value, str):
+            return None
+        normalized = value.lower().removeprefix("sha256:")
+        return normalized if _SHA256.fullmatch(normalized) else None
+
+    def _verify_daemon_identity(self) -> str:
+        if self._verified_digest is not None:
+            return self._verified_digest
+        self.validate_research_identity()
+        try:
+            import ollama  # type: ignore
+        except ImportError:
+            request = urllib.request.Request(
+                f"{self.host}/api/tags", method="GET"
+            )
+            try:
+                with urllib.request.urlopen(request, timeout=self.timeout) as response:
+                    if response.headers.get("Content-Length") and int(
+                        response.headers["Content-Length"]
+                    ) > 4 * 1024 * 1024:
+                        raise LocalTargetOutputError(
+                            "Ollama model inventory exceeds the 4 MiB limit"
+                        )
+                    body = response.read(4 * 1024 * 1024 + 1)
+            except urllib.error.URLError as exc:  # pragma: no cover - network path
+                raise RuntimeError(
+                    f"could not query Ollama model identity at {self.host}"
+                ) from exc
+            if len(body) > 4 * 1024 * 1024:
+                raise LocalTargetOutputError(
+                    "Ollama model inventory exceeds the 4 MiB limit"
+                )
+            inventory = json.loads(body.decode("utf-8"))
+        else:
+            result = ollama.Client(host=self.host).list()
+            inventory = result.model_dump() if hasattr(result, "model_dump") else dict(result)
+        if not isinstance(inventory, dict) or not isinstance(inventory.get("models"), list):
+            raise LocalTargetOutputError("Ollama returned an invalid model inventory")
+        matches = [
+            item for item in inventory["models"]
+            if isinstance(item, dict)
+            and (item.get("model") == self.model or item.get("name") == self.model)
+        ]
+        if len(matches) != 1:
+            raise LocalTargetOutputError(
+                f"Ollama inventory did not resolve exactly one {self.model!r} model"
+            )
+        resolved = self._normalized_digest(matches[0].get("digest"))
+        if resolved != self.model_digest:
+            raise LocalTargetOutputError(
+                "Ollama daemon model digest does not match declared model_digest"
+            )
+        self._verified_digest = resolved
+        return resolved
+
+    def _sampling_options(self, seed: int | None = None) -> dict[str, Any]:
         opts: dict[str, Any] = {
             "temperature": self.temperature,
             "num_predict": self.num_predict,
         }
         opts.update(self.options)
+        if seed is not None:
+            opts["seed"] = int(seed)
         return opts
 
-    def generate(self, dialog: list[DialogTurn]) -> Response:
+    def generate(
+        self, dialog: list[DialogTurn], *, seed: int | None = None
+    ) -> Response:
+        verified_digest = self._verify_daemon_identity()
         messages = _dialog_to_messages(dialog)
         t0 = time.perf_counter()
-        data = self._chat(messages)
+        data = self._chat(messages, seed=seed)
         latency_ms = (time.perf_counter() - t0) * 1000.0
 
-        text = (data.get("message") or {}).get("content", "") or ""
+        if not isinstance(data, dict):
+            raise LocalTargetOutputError("Ollama response is not an object")
+        if data.get("error"):
+            raise LocalTargetOutputError(f"Ollama returned an error: {data['error']}")
+        if data.get("done") is not True:
+            raise LocalTargetOutputError("Ollama response did not declare done=true")
+        done_reason = data.get("done_reason")
+        if done_reason != "stop":
+            raise LocalTargetOutputError(
+                f"Ollama response is truncated or incomplete: {done_reason!r}"
+            )
+        resolved_model = data.get("model")
+        if not isinstance(resolved_model, str) or resolved_model != self.model:
+            raise LocalTargetOutputError(
+                f"Ollama returned unexpected model identity {resolved_model!r}"
+            )
+        message = data.get("message")
+        if not isinstance(message, dict):
+            raise LocalTargetOutputError("Ollama response omitted its message object")
+        if message.get("role", "assistant") != "assistant":
+            raise LocalTargetOutputError("Ollama returned a non-assistant message")
+        text = message.get("content")
+        if not isinstance(text, str) or not text.strip():
+            raise LocalTargetOutputError("Ollama returned an empty completion")
         tokens = self._token_counts(data)
         return Response(
             attempt_id="",
-            target=self.model,
+            target=self.name,
             output_turns=[DialogTurn(role="assistant", content=text)],
             latency_ms=latency_ms,
             tokens=tokens,
-            raw={"backend": "ollama", "model": self.model},
+            raw={
+                "backend": "ollama",
+                "model": self.model,
+                "resolved_model": resolved_model,
+                "model_digest": self.model_digest,
+                "verified_model_digest": verified_digest,
+                "model_identity_verified": True,
+                "done": True,
+                "done_reason": done_reason,
+                "requested_seed": seed,
+                "target_sampling_control": (
+                    "local_seed" if seed is not None else "uncontrolled"
+                ),
+                "generation": {
+                    "seed": seed,
+                    "temperature": self.temperature,
+                    "num_predict": self.num_predict,
+                },
+            },
         )
 
-    def _chat(self, messages: list[dict[str, str]]) -> dict[str, Any]:
+    def _chat(
+        self, messages: list[dict[str, Any]], *, seed: int | None = None
+    ) -> dict[str, Any]:
         """Send a chat request via the ollama client, or HTTP fallback."""
         try:
             import ollama  # type: ignore
         except ImportError:
-            return self._chat_http(messages)
+            return self._chat_http(messages, seed=seed)
 
         client = ollama.Client(host=self.host)
         result = client.chat(
             model=self.model,
             messages=messages,
-            options=self._sampling_options(),
+            options=self._sampling_options(seed),
             stream=False,
         )
         # Newer clients return a pydantic-like object; normalize to a dict.
@@ -263,13 +558,15 @@ class OllamaTarget(BaseTarget):
             return result.model_dump()  # type: ignore[no-any-return]
         return dict(result)
 
-    def _chat_http(self, messages: list[dict[str, str]]) -> dict[str, Any]:
+    def _chat_http(
+        self, messages: list[dict[str, Any]], *, seed: int | None = None
+    ) -> dict[str, Any]:
         """Dependency-free fallback against Ollama's REST API."""
         payload = json.dumps(
             {
                 "model": self.model,
                 "messages": messages,
-                "options": self._sampling_options(),
+                "options": self._sampling_options(seed),
                 "stream": False,
             }
         ).encode("utf-8")
@@ -287,16 +584,26 @@ class OllamaTarget(BaseTarget):
                 f"could not reach Ollama daemon at {self.host}; "
                 "start it with `ollama serve` or install the ollama client"
             ) from exc
-        return json.loads(body)
+        value = json.loads(body)
+        if not isinstance(value, dict):
+            raise LocalTargetOutputError("Ollama HTTP response is not a JSON object")
+        return value
 
     @staticmethod
-    def _token_counts(data: dict[str, Any]) -> Optional[dict[str, int]]:
+    def _token_counts(data: dict[str, Any]) -> dict[str, int]:
         prompt_n = data.get("prompt_eval_count")
         completion_n = data.get("eval_count")
-        if prompt_n is None and completion_n is None:
-            return None
-        prompt_n = int(prompt_n or 0)
-        completion_n = int(completion_n or 0)
+        if (
+            isinstance(prompt_n, bool)
+            or not isinstance(prompt_n, int)
+            or prompt_n < 0
+            or isinstance(completion_n, bool)
+            or not isinstance(completion_n, int)
+            or completion_n < 0
+        ):
+            raise LocalTargetOutputError(
+                "Ollama omitted valid prompt/completion token provenance"
+            )
         return {
             "prompt": prompt_n,
             "completion": completion_n,

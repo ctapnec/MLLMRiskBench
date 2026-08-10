@@ -11,11 +11,11 @@ III.2.2; OWASP LLM01 Prompt Injection / jailbreak; RiskCategory.JAILBREAK). It i
 distinct from the multimodal safety corpora (converters): those replay fixed
 image/audio/video probes, whereas IDEATOR generates fresh malicious media here.
 
-Scope: IDEATOR needs a VLM red-teamer (MiniGPT-4 / Vicuna-13B, or a Gemini backend
-with safety settings relaxed) and a diffusion image synthesizer (Stable Diffusion
-3.5 Large), both of which require a GPU and downloaded weights. It ships as a cloned
-research repo rather than a stable PyPI package, so the heavy dependency is imported
-lazily and is required only when generate() is actually invoked.
+Scope: the official repository exposes research scripts, not the
+``ideator.IDEATOR`` Python package/class assumed by an older local prototype; its
+README also says the full Gemini implementation is withheld. This adapter therefore
+supports only explicit precomputed ``seed_pairs``. The unverified generation path
+fails closed until a pinned upstream script/export contract is implemented.
 
 Safety (thesis N5, III.2.4): this adapter operates in attack-GENERATION / seed mode
 only. It materialises each red-teamer-produced image+text pair as an Attempt whose
@@ -36,7 +36,11 @@ from collections.abc import Iterable
 
 from ..data_models import Attempt, DataPoint, MediaRef
 from .base import AttackBudget, BaseAttacker
-from ._engine_common import _attempt, _require
+from ._engine_common import (
+    ExternalEngineConformanceError,
+    ExternalEngineOutputError,
+    _attempt,
+)
 
 
 class IDEATORAttacker(BaseAttacker):
@@ -110,49 +114,27 @@ class IDEATORAttacker(BaseAttacker):
         """Return ``(pairs, mode)`` where each pair is ``(jailbreak_text, image_path)``.
 
         Uses the precomputed ``seed_pairs`` fully offline (mode ``"seed"``), or runs
-        IDEATOR's VLM red-teamer + diffusion synthesizer via a lazy import of the
-        ideator package (mode ``"generate"``; needs the VLM + diffusion weights + a
-        GPU). Never contacts a live / third-party target (thesis N5)."""
+        explicit precomputed pairs (mode ``"seed"``). The repository does not
+        expose the package API previously assumed by this bridge, so an absent
+        ``seed_pairs`` value is a conformance error rather than an invented live
+        generation path."""
         if self.seed_pairs is not None:
-            pairs = [(str(t), str(p)) for t, p in self.seed_pairs][:n]
-            return (pairs or [(objective, "")], "seed")
+            pairs = [
+                (text, image)
+                for text, image in self.seed_pairs
+                if isinstance(text, str)
+                and text.strip()
+                and isinstance(image, str)
+                and image.strip()
+            ][:n]
+            if not pairs:
+                raise ExternalEngineOutputError(
+                    "IDEATOR seed-pair input contains no valid image+text pairs"
+                )
+            return pairs, "seed"
 
-        import tempfile
-        from pathlib import Path
-
-        # The ideator package plus its diffusion / torch backend; a clear RuntimeError
-        # is raised here when the research repo or its GPU deps are absent.
-        ideator = _require(
-            "ideator",
-            "IDEATORAttacker (VLM red-teamer + diffusion model, requires a GPU; "
-            "clone https://github.com/roywang021/IDEATOR and install its weights)",
-            "ideator",
+        raise ExternalEngineConformanceError(
+            "IDEATOR live generation is disabled: the official repository does "
+            "not expose the ideator.IDEATOR package API assumed by the former "
+            "bridge. Supply verified precomputed seed_pairs instead."
         )
-
-        out_dir = self.out_dir or tempfile.mkdtemp(prefix="ideator_")
-        Path(out_dir).mkdir(parents=True, exist_ok=True)
-
-        # Generation mode: the red-teamer VLM invents the jailbreak text and the
-        # diffusion model paints the paired image to ``out_dir``; no live target is
-        # driven (harness safety principle N5).
-        redteamer = ideator.IDEATOR(
-            vlm=self.vlm,
-            diffusion_model=self.diffusion_model,
-            device=self.device,
-            seed=budget.seed,
-        )
-        results = redteamer.generate(objective=objective, num_pairs=n, out_dir=out_dir)
-
-        pairs: list[tuple[str, str]] = []
-        for r in results or []:
-            if isinstance(r, dict):
-                text = r.get("text") or r.get("jailbreak_prompt") or ""
-                image = r.get("image") or r.get("image_path") or ""
-            else:
-                text = getattr(r, "text", "") or getattr(r, "jailbreak_prompt", "")
-                image = getattr(r, "image_path", "") or getattr(r, "image", "")
-            text = str(text)
-            image = str(image) if image else ""
-            if text or image:
-                pairs.append((text or objective, image))
-        return (pairs[:n] or [(objective, "")], "generate")

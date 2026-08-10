@@ -15,7 +15,7 @@ gets typeset into the image and ``question`` is the original interrogative form.
 The rendered images ship under ``data/images/SafeBench/`` named
 ``query_{dataset}_{category_id}_{task_id}_6.png`` (the ``_6`` is FigStep's prompt
 template index). Point ``URA_FIGSTEP_PATH`` at the CSV (a JSON/JSONL export is
-also accepted). Robust to a missing path (returns []).
+also accepted). Missing corpus or image assets fail closed.
 """
 from __future__ import annotations
 
@@ -23,7 +23,7 @@ from pathlib import Path
 
 from ..adapters.base import BaseConverter
 from ..data_models import DataPoint, DialogTurn
-from ._common import Rc, dp, image, missing, read_csv, read_json, read_jsonl
+from ._common import CorpusFormatError, Rc, dp, image, missing, read_csv, read_json, read_jsonl
 
 # SafeBench's 10 forbidden topics -> internal taxonomy (default LEGALITY).
 CATEGORY_MAP = {
@@ -55,7 +55,8 @@ class FigStepConverter(BaseConverter):
         path = Path(path)
         if not path.is_file():
             return missing(self.name, path)
-        root = path.parent
+        root = path.parent.resolve()
+        data_root = root.parent
         if path.suffix == ".csv":
             records = read_csv(path)
         elif path.suffix == ".jsonl":
@@ -63,18 +64,35 @@ class FigStepConverter(BaseConverter):
         else:
             records = read_json(path)
         if isinstance(records, dict):
-            records = records.get("data", records.get("questions", []))
+            if "data" in records:
+                records = records["data"]
+            elif "questions" in records:
+                records = records["questions"]
+            elif any(
+                key in records for key in ("instruction", "question", "prompt")
+            ):
+                records = [records]
+            else:
+                raise CorpusFormatError(
+                    f"FigStep object has no data or questions records: {path}"
+                )
+        if not isinstance(records, list):
+            raise CorpusFormatError(f"FigStep source is not a record list: {path}")
         out: list[DataPoint] = []
         for i, rec in enumerate(records):
             if not isinstance(rec, dict):
-                continue
+                raise CorpusFormatError(f"FigStep row {i} in {path} is not an object")
             cat = str(rec.get("category_name") or rec.get("category") or "").strip()
             risk = CATEGORY_MAP.get(cat.lower(), Rc.LEGALITY)
             # 'instruction' is the imperative text typeset into the image; keep the
             # interrogative 'question' as a fallback / for meta.
             harmful = rec.get("instruction") or rec.get("question") or rec.get("prompt")
+            if not isinstance(harmful, str) or not harmful.strip():
+                raise CorpusFormatError(
+                    f"FigStep row {i} in {path} lacks a non-empty harmful instruction"
+                )
             question = rec.get("question")
-            dataset = str(rec.get("dataset") or "ForbidQI").strip()
+            dataset = str(rec.get("dataset") or "ForbidQI").strip() or "ForbidQI"
             cat_id = rec.get("category_id")
             task_id = rec.get("task_id")
 
@@ -83,16 +101,24 @@ class FigStepConverter(BaseConverter):
             media = []
             explicit = rec.get("image") or rec.get("image_path") or rec.get("image_file")
             if explicit:
-                media = [image(str(explicit), root)]
+                raw = Path(str(explicit))
+                candidate = root / raw if not raw.is_absolute() else raw
+                if not candidate.is_file() and not raw.is_absolute():
+                    candidate = data_root / raw
+                media = [image(candidate, data_root)]
             elif cat_id is not None and task_id is not None:
                 fname = f"query_{dataset}_{cat_id}_{task_id}_6.png"
                 candidates = [
-                    root.parent / "images" / "SafeBench" / fname,  # data/question -> data/images
+                    data_root / "images" / "SafeBench" / fname,  # data/question -> data/images
                     root / "images" / "SafeBench" / fname,
                     root / fname,
                 ]
                 found = next((c for c in candidates if c.is_file()), candidates[0])
-                media = [image(str(found))]
+                media = [image(found, data_root)]
+            if not media:
+                raise CorpusFormatError(
+                    f"FigStep row {i} in {path} cannot identify its rendered image"
+                )
 
             rid = rec.get("id")
             if rid is None:
@@ -117,4 +143,6 @@ class FigStepConverter(BaseConverter):
                     "carrier_prompt": FIGSTEP_PROMPT,
                 },
             ))
+        if not out:
+            raise CorpusFormatError(f"FigStep conversion produced no rows from {path}")
         return out

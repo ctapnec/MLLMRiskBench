@@ -31,6 +31,7 @@ from .strongreject import StrongRejectConverter
 from .synth import synth_corpus
 from .videosafetybench import VideoSafetyBenchConverter
 from .vlsbench import VLSBenchConverter
+from ._common import ConverterError, CorpusFormatError, CorpusNotFoundError, MediaAssetError
 
 _CONVERTERS: dict[str, type[BaseConverter]] = {
     c.name: c for c in (
@@ -59,4 +60,5 @@ __all__ = [
     "CyberSecEvalConverter", "InjecAgentConverter", "MLLMGuardConverter",
     "JALMBenchConverter", "VideoSafetyBenchConverter",
     "get_converter", "synth_corpus",
+    "ConverterError", "CorpusFormatError", "CorpusNotFoundError", "MediaAssetError",
 ]

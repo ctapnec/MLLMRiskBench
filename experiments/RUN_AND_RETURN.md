@@ -1,170 +1,250 @@
-# Run-and-return: what to execute on the rig, and what to send back
+# Run-and-return checklist
 
-This is the checklist that turns rig time into a finished Chapter V. Run the experiments
-below, then return the artifacts listed. With those, I regenerate every figure from real
-data and fill V.2.1-V.2.7 with measured numbers; then we translate.
+Use this checklist after [PROTOCOL.md](PROTOCOL.md) has been frozen. The experiments are pending. Returning a dry run, a partial artifact family without its error record, or files produced with placeholder IDs is not sufficient for Chapter V.
 
-The runbook ids below map onto the protocol phases in `PROTOCOL.md` (R3 covers two E-ids;
-R8 is a phase, not an experiment; E5 is a read of R1, not a separate run):
+The default output name below is `runs/fable-vs-gpt56-sol-pro`. The planned comparison is an exact account-visible Claude Fable endpoint versus the public `gpt-5.6-sol` model through the Responses API with Pro mode, medium effort, and current-turn reasoning context. It is cross-provider and non-causal; it is not a same-base defense ablation.
 
-| Runbook | PROTOCOL.md | Purpose |
-|---|---|---|
-| R1 | E1 | Main matrix (models x attackers x judges x corpora) |
-| R2 | E2 | Attacker ablation (read of R1: replay vs crescendo) |
-| R3 | E3 + E8 | Judge-cascade ablation + inter-judge kappa |
-| R4 | E4 | Defense ablation (guardrail on/off) |
-| R1 (read) | E5 | Multimodal m-ASR (read of R1 with `--group model,risk,modality`) |
-| R5 | E6 | Over-refusal / utility (read of R1 + MOSSBench) |
-| R6 | E7 | Transferability matrix |
-| R7 | E9 | Fable vs Mythos case study |
-| R8 | Phase 4 | Figures from real data |
+Mythos is not a run target. The researcher lacks access. Preserve Mythos in the thesis as Anthropic's frontier cybersecurity model, external evidence, an access/governance limitation, and a future replication target. Do not create a Mythos row, placeholder measurement, or executable alias.
 
-Note on `runs/main`: R1 (full) runs the `rules,guardrail,llm` cascade, whereas the reduced
-E1 runs `rules,llm` (no guardrail stage), so an `E1` `runs/main` will not contain guardrail
-trails. Run whichever you commit to and keep the downstream references consistent.
+## 0. Freeze sheet
 
-## 0. TL;DR - what to send back
+Before any paid or GPU-backed run, save a short run note containing:
 
-Zip and return the whole `runs/` tree. Do NOT prune it to a "minimum" set: the raw
-`*.jsonl` and `*.trails.jsonl` are required (V.2.4 multi-turn metrics and the per-category
-kappa are computed from them and cannot be reconstructed otherwise). Per matrix cell
-`<corpus>__<model>__<attacker>` the tree holds:
+- repository commit and worktree state;
+- exact target and judge endpoint/checkpoint IDs copied from the accounts/backends;
+- provider account tier/region and UTC access date;
+- data releases, splits, licenses, paths, counts, and media roots;
+- `--corpora`, `--limit`, `--sample-seed`, `--seeds`, query/turn budgets, grouping, judges, and defense settings;
+- hardware and local-serving details if local targets are added;
+- primary comparisons, exclusions, stopping rule, and protocol amendments.
 
-| File | Contains | Feeds |
-|---|---|---|
-| `*.results.jsonl` | aggregated `EvalResult`s (ASR+CI, refusal, over-refusal, StrongREJECT, robust-refusal, median-turns-to-break), grouped | Fig V.1/V.2/V.3, V.2.1-V.2.4 |
-| `*.jsonl` | raw per-attempt judgments (+ provenance) | transfer matrix, re-analysis |
-| `*.trails.jsonl` | each judge stage's verdict per attempt (+ risk_category) | judge kappa, pooled and per-category (V.2.5) |
-| `*.manifest.json` | model id, seeds, dataset hashes, code version, `started_at`, env | provenance, versioning-drift caveat (V.2.6) |
-| `transfer_matrix.json` (+ `.png`) | A->B transfer rates | transfer heatmap, V.2.4 |
-| `judge_kappa.json` | inter-judge Cohen's kappa, pooled + per category | V.2.5 |
+Replace every `<...>` token in the commands. Preserve the exact substituted command in the run note. Do not invent a Sol-Pro slug or replace the canonical `openai-responses:...` condition with standard Chat Completions.
 
-Also paste the console summary lines from each run (including any `! WARNING`/`! skipping`
-lines) and any tracebacks.
+Set corpus paths and local-media roots before preflight. Example variable names are shown; values depend on the actual released layouts:
 
-## 1. The runs (current models)
-
-Set keys first: `ANTHROPIC_API_KEY OPENAI_API_KEY GOOGLE_API_KEY DEEPSEEK_API_KEY ZHIPU_API_KEY MOONSHOT_API_KEY DASHSCOPE_API_KEY ARK_API_KEY`.
-Point the corpus env vars at the cloned frameworks (see PROTOCOL.md Phase 1). Order: local
-open-weights and cheap APIs first; the 70B-4bit and the most expensive APIs last.
-
-Rig note (2x RTX 4090 = 48 GB total, 24 GB/card): the local set below is chosen to fit.
-The 27B and 70B run 4-bit via Ollama; the 8B-class models run under vLLM at fp16
-(`tensor_parallel_size=2`). vision-language checkpoints (`Qwen3-VL`, the LLaVA-RR model)
-are auto-detected and receive image inputs; the Ollama-served 27B/70B are treated text-only.
-`Llama-4-Scout` (109B MoE) does NOT fit 48 GB even at 4-bit and is omitted from local runs
-(run it via a hosted endpoint if you have one, else drop it).
-
-### R1 - Main matrix  (-> Fig V.1, Fig V.2; V.2.1, V.2.2)
 ```bash
-python experiments/run_matrix.py \
-  --api claude-opus-5,gpt-5.6,gemini-3.1-pro,deepseek:deepseek-chat,glm:glm-5.2,kimi:kimi-k3,qwen:qwen-max,doubao:doubao-vision-pro \
-  --local vllm:Qwen/Qwen3-VL-8B-Instruct,vllm:GraySwanAI/Llama-3-8B-Instruct-RR,vllm:GraySwanAI/llava-v1.6-mistral-7b-hf-RR,ollama:gemma3:27b,ollama:llama3.3:70b \
-  --attackers replay,crescendo --judges rules,guardrail,llm --judge-model claude-haiku-4-5-20251001 \
-  --corpora synth,rjudge,mmsafety,jailbreakv,gptgeochat,vlsbench,agentharm \
-  --group model,risk,modality --limit 200 --seeds 0,1 --out runs/main
+export URA_STRONGREJECT_PATH="<released-strongreject-path>"
+export URA_MMSAFETY_PATH="<released-mmsafety-path>"
+export URA_MOSSBENCH_PATH="<released-mossbench-path>"
+export URA_MEDIA_ROOTS="<approved-media-root-list>"
 ```
-Return: all of `runs/main/`. (R2, R5, R6 are reads of this one cell set.)
-The two `GraySwanAI/*-RR` models are Gray Swan's circuit-breaker/representation-rerouting
-hardened open weights; their ASR next to a comparable base model is the external
-defense contrast that feeds V.2.3 (and mirrors the Fable/Mythos split of R7).
 
-If a 27B/70B fails to fit under Ollama on your box, swap in the vLLM+AWQ path, e.g.
-`--local vllm:<awq-repo>/gemma-3-27b-it-AWQ --quantization awq` (a pre-quantized checkpoint
-is auto-detected and needs no flag).
+Keep API keys only in the process environment or an approved secret manager. Do not put them in commands, manifests, filenames, label spreadsheets, or returned archives.
 
-### R2 - Attacker ablation (single-shot vs multi-turn)  (-> V.2.4, RQ4)
-No extra run: it is the `replay` vs `crescendo` cells inside `runs/main`. Robust-refusal and
-median-turns-to-break are emitted directly into the crescendo `*.results.jsonl`
-(metrics `robust_refusal_rate`, `median_turns_to_break`); the raw `*.jsonl` back them up.
+## 1. Shakedown and live probes
 
-### R3 - Judge-cascade ablation + kappa  (-> V.2.5, measurement validity)
+Run the offline checks first:
+
 ```bash
-# full cascade (feeds the pooled + per-category kappa)
-python experiments/run_matrix.py --api claude-opus-5 --attackers replay \
-  --judges rules,guardrail,llm --judge-model claude-haiku-4-5-20251001 \
-  --corpora synth,mmsafety --limit 200 --seeds 0,1 --out runs/kappa
-python experiments/kappa.py --results runs/kappa
-# cascade ablation: rules-only vs full-cascade ASR on the same cells
-python experiments/run_matrix.py --api claude-opus-5 --attackers replay \
-  --judges rules --corpora synth,mmsafety --limit 200 --seeds 0,1 --out runs/judge-rules
+python -m pytest
+python experiments/run_matrix.py --dry-run --attackers replay --judges rules,llm --corpora synth --limit 12 --out runs/dry
 ```
-Return: `runs/kappa/` (incl. `judge_kappa.json`) and `runs/judge-rules/`. Also, if you can,
-hand-label a stratified ~100-item sample as a CSV (`attempt_id,label`) and run
-`python experiments/human_audit.py --results runs/kappa --labels human_labels.csv` - it writes
-`human_audit.json` with judge-vs-human Cohen's kappa and accuracy/precision/recall/F1 per stage
-(V.2.5 external validity). Return that CSV + `human_audit.json`. Keep the kappa cell on
-`claude-opus-5` (matches PROTOCOL E8).
 
-### R4 - Defense ablation (guardrail pre-filter on/off)  (-> V.2.3, RQ3)
+Then run a separately named, tiny live probe for each exact target and the exact judge. Use the same physical modalities planned for the main study. Verify authentication, request shape, timeout/rate-limit behavior, output parsing, media transmission, effective seed control, and manifest IDs before scaling.
+
+The runner rejects unsupported image, audio, or video requirements before the first call. Do not work around that failure by dropping media or inserting text captions. Fix target registration or change the declared study scope.
+
+Inspect console output. Target-construction failures write setup-phase `*.error.json` records. Once a cell is established, an exception writes its own `*.error.json` and may leave partial artifacts; retain them all. Any requested failure makes the command exit nonzero even if other cells completed.
+
+## 2. Runbook map
+
+| Runbook | Protocol | Purpose | New calls? |
+| --- | --- | --- | --- |
+| R1 | E1, E2, E5, E6 | Main matched matrix: harmful/benign, static/adaptive, risk/modality views | Yes |
+| R2 | E3 | Same-response per-stage judge sensitivity with abstention bounds | No; reads R1 trails and responses |
+| R3 | E4 | Within-target explicit guardrail intervention | Yes |
+| R4 | E7 | Exact static transfer | No; reads R1 judgments |
+| R5 | E8 | Inter-judge kappa | No; reads R1 trails |
+| R6 | E8 | Blinded multi-rater human audit | Human work; reads R1 artifacts |
+| R7 | E9 | Fable-versus-GPT-5.6-Sol-Pro primary case | No separate calls if R1 contains the frozen pair |
+| R8 | Phase 4 | Real-data figures and traceability audit | No model calls |
+
+## 3. R1 - Main matched matrix
+
+After successful live probes, execute the frozen command. This template uses full released real corpora (`--limit 0`); change the sampling plan only before freeze or through a logged amendment.
+
 ```bash
-python experiments/run_matrix.py --api claude-opus-5 --attackers replay \
-  --judges rules,llm --judge-model claude-haiku-4-5-20251001 \
-  --corpora synth,mmsafety --limit 200 --seeds 0,1 --out runs/nodef
-python experiments/run_matrix.py --api claude-opus-5 --attackers replay \
-  --judges rules,llm --judge-model claude-haiku-4-5-20251001 \
-  --corpora synth,mmsafety --limit 200 --seeds 0,1 \
-  --defense input --defense-guard guardrail --out runs/def
+python experiments/run_matrix.py --api "anthropic-fable:claude-fable-5;effort=high;max_tokens=25000,openai-responses:gpt-5.6-sol;reasoning_mode=pro;reasoning_effort=medium;reasoning_context=current_turn" --attackers replay,crescendo --judges rules,llm --judge-model "anthropic:<exact-account-visible-judge-id>" --corpora strongreject,mmsafety,mossbench --sample-seed 0 --limit 0 --seeds 0,1 --max-queries 4 --max-turns 4 --group model,risk,modality --out runs/fable-vs-gpt56-sol-pro
 ```
-Return: `runs/nodef/` and `runs/def/`. I diff ASR and over-refusal to get the defense delta.
-(Both pass `--judge-model` so the `llm` stage is a real model, not the offline mock.)
 
-### R5 - Over-refusal / utility  (-> Fig V.3 y-axis; V.2.3)
-No extra run: `synth` (benign items) and `mossbench` supply FRR. Add `mossbench` to `--corpora`
-in R1 if you have it (`--corpora ...,mossbench`); otherwise `synth` benign items suffice.
+If a limited sample is required, choose and record `--limit N --sample-seed S`. Real-corpus subsampling is deterministic and corpus-scoped, not first-N. Do not confuse the corpus sampling seed with `--seeds`, which controls attack/target repetitions.
 
-### R6 - Transferability  (-> transfer heatmap; V.2.4)
+R1 should supply:
+
+- harmful ASR and desired-refusal rows, plus unconditional StrongREJECT-style rows only where the dedicated LLM rubric graded the complete harmful bucket;
+- benign FRR rows from the benign source;
+- risk- and modality-grouped rows where populations exist;
+- response-conditioned conversation-ASR, robust-refusal, and turns-to-break data;
+- static replay rows eligible for exact transfer;
+- joinable attempts, responses, judgments, and shadow judge trails.
+
+Do not add R-Judge or GPTGeoChat rows to common ASR/FRR, but do not discard
+them. Run these source tracks with static replay and return their source-specific
+result families: validity/all-output accuracy and valid-prediction classification
+metrics for R-Judge and GPTGeoChat at all five location thresholds. Preserve the disclosed R-Judge
+single-call-versus-serial-protocol limitation and the pending risk-effectiveness
+score. AgentHarm, BIPIA, InjecAgent, and the CyberSecEval prompt-injection split
+are registered/convertible inputs, but they are not executable scored Runner
+cells until their respective source runtimes/evaluators are integrated. The
+preflight rejects them before target calls. A zero implementation-coverage row
+may be retained only as an offline/native-artifact diagnostic; it is neither a
+completed run nor a zero performance score. Other harmful CyberSecEval suites
+remain distinct and may be common-metric eligible where their construct maps.
+
+Run the integrated source-specific tracks separately:
+
 ```bash
-python experiments/transfer_matrix.py --results runs/main
+python experiments/run_matrix.py --api "anthropic-fable:claude-fable-5;effort=high;max_tokens=25000,openai-responses:gpt-5.6-sol;reasoning_mode=pro;reasoning_effort=medium;reasoning_context=current_turn" --attackers replay --judges rules,llm --judge-model "anthropic:<exact-account-visible-judge-id>" --corpora rjudge,gptgeochat --sample-seed 0 --limit 0 --seeds 0,1 --group model,source --out runs/source-monitors
 ```
-Return: `runs/main/transfer_matrix.json` (+ `transfer_matrix.png`). Note: the transfer heatmap
-is produced by `transfer_matrix.py`, not by `fig_results.py`; I copy its `.png` into
-`Thesis-EN/diagrams/figures/` for the V.2.4 figure slot.
 
-### R7 - Fable vs Mythos case study (if access)  (-> V.3 case study; II.6.1 payoff)
+## 4. R2 - Judge sensitivity
+
+Use the full-shadow R1 trails. Every configured stage already judged the same target response, so sensitivity requires no repeat provider calls and introduces no target-response nondeterminism.
+
 ```bash
-python experiments/run_matrix.py --api claude-fable-5,claude-mythos-5 \
-  --attackers replay,crescendo --judges rules,llm --judge-model claude-haiku-4-5-20251001 \
-  --corpora synth,mmsafety --limit 200 --seeds 0,1 --out runs/fable-mythos
+python experiments/judge_sensitivity.py --results runs/fable-vs-gpt56-sol-pro --attacker replay
 ```
-Return: `runs/fable-mythos/`. (You have Fable; add Mythos only if your access allows.)
 
-### R8 - Figures from real data (sanity check on your side)
+Return `judge_sensitivity.json`. The postprocessor refuses incomplete or misjoined cells, verifies each stage's response SHA-256 and cascade lineage, and reports parse, confidence-gate, and decision coverage. It treats low-confidence and explicitly unparsed rows as abstentions, never as `safe`. Accordingly, harmful ASR and benign FRR are lower/upper identification bounds unless stage decision coverage is complete. The complete-case rate is diagnostic only. Never treat any automated stage or the cascade as ground truth.
+
+## 5. R3 - Explicit guardrail intervention
+
+Run one target with and without one prespecified guard while holding everything else fixed. The following is a template using an input rule guard; use the defense mode frozen in the protocol.
+
 ```bash
-python ../../Thesis-EN/diagrams/fig_results.py --results runs/main
+python experiments/run_matrix.py --api "anthropic-fable:claude-fable-5;effort=high;max_tokens=25000" --attackers replay --judges rules,llm --judge-model "anthropic:<exact-account-visible-judge-id>" --corpora strongreject,mossbench --sample-seed 0 --limit "<frozen-defense-limit>" --seeds 0,1 --defense none --out runs/defense-comparison/control
+python experiments/run_matrix.py --api "anthropic-fable:claude-fable-5;effort=high;max_tokens=25000" --attackers replay --judges rules,llm --judge-model "anthropic:<exact-account-visible-judge-id>" --corpora strongreject,mossbench --sample-seed 0 --limit "<frozen-defense-limit>" --seeds 0,1 --defense input --defense-guard rules --out runs/defense-comparison/input
+python experiments/paired_compare.py --results runs/defense-comparison --left-model "anthropic-fable:claude-fable-5;effort=high;max_tokens=25000" --right-model "anthropic-fable:claude-fable-5;effort=high;max_tokens=25000" --left-defense none --right-defense input --attacker replay
 ```
-This confirms the pipeline end-to-end; I regenerate the final figures on my side from the
-returned artifacts so styling stays consistent.
 
-## 2. Data each figure/subsection needs (so nothing is missed)
+Return `paired_comparison.json`. Estimate paired datapoint-cluster changes in harmful ASR and benign FRR. The effect direction is control minus guarded for the command above. Confirm exact shared unit counts and all unmatched/excluded units before interpretation. Do not use the Fable-versus-GPT comparison as a substitute for this intervention: the cross-provider contrast cannot identify a defense effect. The script marks the intervention as conditionally eligible for causal interpretation but never asserts that a causal effect has been established.
 
-| Target in Chapter V | Exact data | From |
-|---|---|---|
-| **Fig V.1** ASR by model | ASR + 95% CI per model (n-weighted mean across corpora/attackers/seeds) | `runs/main/*.results.jsonl` (metric=ASR, group_by.model) |
-| **Fig V.2** ASR by category | ASR per (model, risk) | `runs/main/*.results.jsonl` (group_by.model+risk) |
-| **Fig V.3** safety-utility | ASR (x) vs over_refusal_rate (y) per model; benign FRR | `runs/main` (ASR) + `synth`/`mossbench` benign FRR; overlay `runs/def` vs `runs/nodef` |
-| transfer heatmap | A->B transfer rates | `runs/main/transfer_matrix.json` (via `transfer_matrix.py`) |
-| V.2.1 overall ranking | ASR+CI ordering; note CI overlaps | `runs/main` |
-| V.2.2 per-category + m-ASR | per-risk ASR; m-ASR by modality | `runs/main` (`--group model,risk,modality`) |
-| V.2.3 safety-utility + defense | FRR per model; ASR/FRR delta with guardrail; RR-vs-base | `runs/main`, `runs/def` vs `runs/nodef` |
-| V.2.4 multi-turn + transfer | robust_refusal_rate, median_turns_to_break; transfer matrix | crescendo cells in `runs/main`; `transfer_matrix.json` |
-| V.2.5 judge validity | kappa per judge pair, pooled + per category; human-audit agreement | `judge_kappa.json`; the labelled sample |
-| V.2.6 threats to validity | exact model ids + run dates + env | `*.manifest.json` (`models`, `started_at`, `env`) |
-| V.2.7 discussion | synthesis - no new data (draws on all of the above) | - |
+If the frozen intervention uses the model-backed guard instead of `rules`,
+install `.[guardrail]`, select `--defense-guard guardrail`, and add
+`--guardrail-model meta-llama/Llama-Guard-3-8B --guardrail-revision
+"<exact-40-hex-hf-commit>" --guardrail-device cuda` to both commands. Record the
+actual device/runtime environment. A branch, tag or omitted revision is rejected;
+do not invent a commit for this template. An output that does not match the
+model guard's explicit verdict grammar is a cell error, not pass, block or an
+imputed safe decision.
 
-## 3. Budget and knobs
-- Start with `--limit 50` for the paid APIs, `--limit 200` for local; scale up if budget allows.
-- `--seeds 0,1` minimum; add `2` to tighten CIs. Seeds no longer collide in the transfer/kappa
-  maps (attempt ids carry the seed), so multi-seed data is fully used.
-- Crescendo multiplies API calls by up to `max_turns` (4). If cost is tight, run crescendo on a
-  subset (`--attackers crescendo --limit 50`) into a separate `runs/main-crescendo` dir.
-- Skip any model whose key/weights you lack - the driver skips it with a message; a partial matrix
-  still produces valid figures (I note the omissions).
-- If `--judges` includes `llm`, always pass a real `--judge-model` (e.g. `claude-haiku-4-5-20251001`).
-  The driver prints a loud warning if it would otherwise fall back to the offline keyword mock.
+## 6. R4 - Exact static transfer
 
-## 4. What I do with the return
-Regenerate Fig V.1-V.3 and the transfer heatmap from the returned `*.results.jsonl` /
-`transfer_matrix.json`, fill V.2.1-V.2.7 with the measured ASR/CI/FRR/kappa/transfer numbers and
-the model ranking, remove the ILLUSTRATIVE watermark, and then we proceed to the Bulgarian
-translation.
+```bash
+python experiments/transfer_matrix.py --results runs/fable-vs-gpt56-sol-pro
+```
+
+Return `transfer_matrix.json` and, when Matplotlib is available, `transfer_matrix.png`. Each A-to-B cell conditions on harmful, transferable source successes with the same `transfer_key` and rendered-input fingerprint on B. Live response-conditioned Crescendo attempts are marked non-transferable and excluded. `null` plus a reason/support count is a valid no-estimand result; never rewrite it as zero.
+
+Also compute the separate paired endpoint contrast:
+
+```bash
+python experiments/paired_compare.py --results runs/fable-vs-gpt56-sol-pro --left-model "anthropic-fable:claude-fable-5;effort=high;max_tokens=25000" --right-model "openai-responses:gpt-5.6-sol;reasoning_mode=pro;reasoning_effort=medium;reasoning_context=current_turn" --left-defense none --right-defense none --attacker replay
+```
+
+Return `paired_comparison.json`. It reports left-minus-right ASR and benign over-refusal differences only on exact shared datapoint-by-seed units, with paired datapoint-cluster intervals and complete match/exclusion lineage. This is not conditional transferability and cannot identify why providers differ. A `null` effect with an explicit no-shared-unit status remains a valid no-estimand result.
+
+## 7. R5 - Inter-judge agreement
+
+```bash
+python experiments/kappa.py --results runs/fable-vs-gpt56-sol-pro
+```
+
+Return `judge_kappa.json`. The primary statistic is kappa on `violation` versus `other`, pooled and by risk category, only where both stages made decisions. Low-confidence/unparsed outputs are abstentions; the report records each stage's decisions, abstentions, joint-decision support, one-sided decisions, and joint abstentions. Exact four-label kappa is diagnostic. Degenerate or no-joint-decision strata remain JSON `null` with a reason/coverage record.
+
+## 8. R6 - Human calibration
+
+Preparation exports potentially harmful content and requires explicit acknowledgement:
+
+```bash
+python experiments/human_audit.py --results runs/fable-vs-gpt56-sol-pro --prepare 100 --acknowledge-sensitive-content --output runs/fable-vs-gpt56-sol-pro/human_audit_sample.csv
+```
+
+The script also writes an instruction file. Keep automated labels hidden. Duplicate every selected row for at least two independent qualified raters, fill distinct `rater_id` values and valid labels, preserve all sampling fields, then adjudicate unresolved disagreements after independent rating. Save the completed file under a new name, for example `human_audit_labels.csv`.
+
+```bash
+python experiments/human_audit.py --results runs/fable-vs-gpt56-sol-pro --labels runs/fable-vs-gpt56-sol-pro/human_audit_labels.csv
+```
+
+Return the prepared sampling record, completed multi-rater labels, instruction file, and `human_audit.json` through an approved access-controlled channel. Report inter-human agreement before automated-versus-consensus agreement. Per-stage automated calibration uses actual stage decisions only and reports missing predictions where that stage abstained; the cascade-authoritative series remains separately identified. The unweighted stratified-sample metrics are not population rates.
+
+## 9. R7 - Fable versus GPT-5.6 Sol Pro case-study extraction
+
+R7 is the prespecified paired contrast inside R1, not an independent Fable-versus-Mythos run. Verify that:
+
+- both exact account-visible target IDs appear in manifests;
+- the same source datapoints, sample seed, attack seeds, budgets, judges, and physical assets were used;
+- failed and unsupported cells are disclosed rather than dropped from denominators;
+- marginal harmful ASR/StrongREJECT-style estimates and benign FRR retain separate supports;
+- model differences use paired datapoint-cluster intervals on shared observations;
+- cross-provider endpoint policy, deployment controls, versioning, and sampling differences are listed as non-identifiable causes.
+
+Mythos belongs in the accompanying literature discussion, supported by Anthropic's [Mythos overview](https://www.anthropic.com/claude/mythos) and [Fable/Mythos documentation](https://platform.claude.com/docs/en/about-claude/models/introducing-claude-fable-5-and-claude-mythos-5). State explicitly that access was unavailable, no Mythos calls were made, and any future Mythos comparison requires a new versioned replication protocol.
+
+## 10. R8 - Figures and traceability check
+
+Only after inspecting completion/error status and running the analyses above:
+
+```bash
+python -m experiments.figures --model-results runs/fable-vs-gpt56-sol-pro --defense-results runs/defense-comparison --model-left "anthropic-fable:claude-fable-5;effort=high;max_tokens=25000" --model-right "openai-responses:gpt-5.6-sol;reasoning_mode=pro;reasoning_effort=medium;reasoning_context=current_turn" --model-defense none --model-corpus strongreject --model-corpus mmsafety --defense-model "anthropic-fable:claude-fable-5;effort=high;max_tokens=25000" --defense-left none --defense-right input --defense-corpus strongreject --defense-corpus mossbench --attacker replay --policy-label "<frozen-policy-label>" --multiplicity-family "<frozen-family>" --minimum-cell-n "<pilot-frozen-minimum-unique-clusters>" --out ../../Thesis-EN/diagrams/figures
+```
+
+Do not generate measured thesis figures from `runs/dry`. The command requires
+separate model-comparison and same-base defense roots and explicit repeatable
+corpus selectors; it does not pool corpora. Replace the policy, multiplicity and
+minimum-support placeholders with the pilot-frozen choices. Do not remove an
+illustrative label unless every plotted value traces to a complete real-run
+artifact and `fig-v-provenance.json` contains no missing-cell substitution.
+
+For each plotted/table value, retain the sidecar's source file, run ID, metric
+population, paired and unique-cluster support, grouping, status and interval.
+Keep `transfer_matrix.png` separate from the main figure generator's outputs
+unless the thesis build deliberately copies it.
+
+## 11. What to preserve and return
+
+Preserve the entire `runs/` tree and the exact console logs. For each planned cell, retain all files that exist:
+
+| Suffix | Required use |
+| --- | --- |
+| `*.attempts.jsonl` | Exact rendered inputs, seeds, strategies, fingerprints, and transfer flags |
+| `*.responses.jsonl` | Exact outputs, latency/token metadata, requested/resolved target identity, disclosed provider fingerprint, and effective sampling control |
+| `*.jsonl` | Authoritative final judgments and downstream transfer provenance |
+| `*.trails.jsonl` | All shadow verdicts plus stage confidence/parse/authority fields and the exact Response SHA-256 for sensitivity, kappa, and audit sampling |
+| `*.results.jsonl` | Population-specific aggregates, support, intervals, and grouping |
+| `*.manifest.json` | Run/config identity, exact requested configuration, realized target/ordered-judge identity inventory and digest, code/environment, corpus/media hashes, and counts |
+| `*.checkpoint.jsonl` | Append-only exact-resume record; do not edit or deduplicate manually |
+| `*.complete.json` | Proof that required success artifacts existed when the cell completed |
+| `*.error.json` | Structured cell failure and completed-attempt count |
+
+Also preserve:
+
+- `transfer_matrix.json` and optional PNG;
+- `paired_comparison.json` for each prespecified target or defense contrast;
+- `judge_sensitivity.json` with stage coverage and abstention bounds;
+- `judge_kappa.json`;
+- the human-audit sample, instruction file, completed multi-rater labels, and `human_audit.json`;
+- the frozen run note, protocol amendments, exact commands, dependency lock/freeze, and console logs;
+- figure-generation logs and generated real-data figures.
+
+The run artifacts can contain harmful prompts, model outputs, personal/location content, and provider metadata. Review them before transfer and use an approved encrypted/access-controlled channel. Do not publish secrets or restricted benchmark assets.
+
+## 12. Completion audit
+
+Before calling Chapter V measured, verify all of the following:
+
+- no `<...>` placeholders remain in executed commands or manifests;
+- each intended target specification is accounted for: completed cells have a matching complete marker and every setup/runtime failure has a retained error artifact;
+- manifest run IDs match attempts, responses, judgments, trails, and aggregates;
+- the completion marker's realized-identity digest matches a reconstruction from
+  the response/trail artifacts, with no target or judge identity drift;
+- corpus and media hashes match the frozen inputs;
+- unsupported physical modalities failed before calls and were not converted to text;
+- no missing population, transfer support, or undefined kappa was encoded as zero;
+- judge sensitivity reused exact R1 responses, and low-confidence/unparsed stage outputs were bounded as abstentions rather than imputed as safe;
+- ASR uses harmful probes, FRR uses benign probes, and StrongREJECT comes only from complete dedicated LLM-rubric coverage with refusals contributing zero;
+- transfer includes static exact replay only and excludes live Crescendo;
+- the human audit has at least two independent ratings per analysed item unless explicitly marked exploratory;
+- R-Judge/GPTGeoChat source-specific results and protocol qualifications remain visible; AgentHarm/BIPIA/InjecAgent/CyberSecEval-prompt-injection are recorded as pre-call rejected pending integrations, never as completed zero-coverage runs;
+- Mythos appears only as literature/external evidence, access limitation, and future replication;
+- all claims in the thesis match retained code, configuration, artifacts, and measured support.

@@ -12,13 +12,22 @@ from ..data_models import DialogTurn, Response
 
 
 class BaseTarget(ABC):
-    """A model under test."""
+    """A model under test.
+
+    ``seed`` is a request for deterministic sampling, not a guarantee. Concrete
+    targets must state the effective control in
+    ``Response.raw["target_sampling_control"]``; hosted providers that cannot
+    honour a seed report ``"uncontrolled"``. This prevents the runner from
+    inferring reproducibility merely because a method accepted the argument.
+    """
 
     name: str = "base"
     modality_support: tuple[str, ...] = ("text",)
 
     @abstractmethod
-    def generate(self, dialog: list[DialogTurn]) -> Response:
+    def generate(
+        self, dialog: list[DialogTurn], *, seed: int | None = None
+    ) -> Response:
         ...  # pragma: no cover - interface
 
 

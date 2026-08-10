@@ -1,298 +1,332 @@
-"""EasyJailbreak engine adapter: recipe-zoo LLM jailbreak generation.
+"""EasyJailbreak 0.1.3 native-result integration.
 
-EasyJailbreak (EasyJailbreak/EasyJailbreak, ``pip install easyjailbreak``) is a
-unified framework that packages a *zoo* of published jailbreak recipes behind one
-attacker/mutation/dataset abstraction -- ReNeLLM, GPTFuzz, Cipher, CodeChameleon,
-DeepInception, MultiLingual, ICA, Jailbroken, PAIR, TAP and GCG. Each recipe turns
-a harmful ``query`` into one or more transformed ``jailbreak_prompt`` strings. In
-URA-Bench it represents the reproducible published-recipe jailbreak family (thesis
-II.3.1 / II.4.1, III.2.2; OWASP LLM01 Prompt Injection / jailbreak;
-RiskCategory.JAILBREAK).
+EasyJailbreak recipes are complete attack experiments: depending on the recipe,
+they call an attack model, a target model and an evaluator, and they retain all
+three roles in their result ``Instance`` objects.  They are not a documented
+target-free prompt-export API.  URA therefore imports the exact JSONL written by
+``JailbreakDataset.save_to_jsonl`` instead of making a second target call and
+silently replacing EasyJailbreak's native evaluator.
 
-License isolation (GPL-3.0): EasyJailbreak is distributed under GPL-3.0. To keep
-the harness (and anything that imports it) free of GPL contamination, this adapter
-NEVER imports ``easyjailbreak`` in-process. Instead it drives the library from a
-*separate* Python interpreter as a subprocess bridge (cf. :class:`PromptfooAttacker`
-/ :class:`T3MP3STAttacker` / :class:`AutoDANTurboAttacker`, which shell out to
-external tools): a small generation program -- kept out of this process -- imports
-the recipes, applies them to the seed and writes the resulting prompts back to a
-JSON file that this adapter reads. Only stdlib + pydantic are imported at module
-load; ``easyjailbreak`` lives entirely in the child interpreter.
+Authoritative upstream contracts:
 
-Safety (thesis N5, III.2.4): this adapter operates in attack-GENERATION mode only.
-It materialises each recipe's transformed jailbreak prompts as Attempts for the
-harness to judge later; it never lets EasyJailbreak drive a live attacker-vs-target
-scoring loop against a deployed/third-party system (that live loop belongs to
-Chapter V, against real models with keys present). Authorized red-team use only.
+* https://github.com/EasyJailbreak/EasyJailbreak
+* ``easyjailbreak/attacker/__init__.py`` (the exported recipe registry)
+* ``easyjailbreak/datasets/jailbreak_datasets.py`` (``save_to_jsonl``)
+* ``setup.py`` (package version 0.1.3 and GPL-3.0 license)
 
-Provisioning: because the GPL dependency must stay out of the harness environment,
-the EasyJailbreak-equipped interpreter is supplied out-of-band -- a dedicated venv
-(``$EASYJAILBREAK_VENV`` or ``venv=...``) or an explicit interpreter
-(``$EASYJAILBREAK_PYTHON`` or ``python=...``). :meth:`generate` raises a clear
-RuntimeError when no such interpreter with ``easyjailbreak`` importable is found.
+The import is deliberately strict.  It requires the exact upstream commit,
+recipe and model roles, a predeclared record count, and optionally a preregistered
+file digest.  Every response and native boolean evaluation is preserved.  The
+result stays common-metric- and Runner-replay-ineligible because the upstream
+evaluator is part of the native estimand.
 """
+
 from __future__ import annotations
 
+import json
+import re
 from collections.abc import Iterable
+from pathlib import Path
+from typing import Any
+
+from pydantic import BaseModel, ConfigDict, ValidationError, field_validator
 
 from ..data_models import Attempt, DataPoint
+from ._engine_common import (
+    ExternalEngineConformanceError,
+    ExternalEngineOutputError,
+)
+from ._native_artifacts import (
+    DEFAULT_MAX_ARTIFACT_BYTES,
+    NativeArtifactFile,
+    NativeEngineCase,
+    NativeEngineRun,
+    json_sha256,
+    read_utf8_artifact,
+    require_expected_sha256,
+    strict_json_loads,
+)
 from .base import AttackBudget, BaseAttacker
-from ._engine_common import _attempt
-
-# Generation program run in the SEPARATE (GPL) interpreter. It is deliberately
-# self-contained and best-effort: it resolves each requested recipe by
-# name-prefix (tolerating EasyJailbreak's ``<Recipe>_<author>_<year>`` module
-# suffixes), applies it to the one-instance seed dataset in generation mode and
-# harvests the transformed ``jailbreak_prompt`` strings. Any per-recipe failure
-# (missing keys, model, etc.) is swallowed so the bridge always emits a JSON
-# document and exits 0; this process only ever reads that JSON back.
-_BRIDGE = r'''
-import importlib
-import json
-import pkgutil
-import sys
 
 
-def _load_recipe(name):
-    import easyjailbreak.attacker as attacker_pkg
+EASYJAILBREAK_REPOSITORY = "https://github.com/EasyJailbreak/EasyJailbreak"
+EASYJAILBREAK_VERSION = "0.1.3"
+EASYJAILBREAK_NATIVE_SCHEMA = "easyjailbreak:JailbreakDataset.save_to_jsonl/0.1.3"
+_COMMIT_RE = re.compile(r"^[0-9a-fA-F]{40}$")
 
-    target = name.lower()
-    for mod_info in pkgutil.iter_modules(attacker_pkg.__path__):
-        if mod_info.name.lower().split("_", 1)[0] != target:
-            continue
-        module = importlib.import_module("easyjailbreak.attacker." + mod_info.name)
-        for attr in (name, mod_info.name, mod_info.name.split("_", 1)[0]):
-            obj = getattr(module, attr, None)
-            if isinstance(obj, type):
-                return obj
-    raise ImportError("EasyJailbreak recipe not found: " + name)
-
-
-def _build_model(model_name):
-    # A model handle for recipes that require one. Kept generation-only; no live
-    # scoring loop is driven from here (harness safety N5).
-    import os
-
-    from easyjailbreak.models.openai_model import OpenaiModel
-
-    return OpenaiModel(
-        model_name=model_name, api_keys=os.environ.get("OPENAI_API_KEY", "")
-    )
+# Exact public exports in easyjailbreak/attacker/__init__.py.  This is a registry,
+# not a fuzzy module/class search: a typo or future API drift must fail closed.
+EASYJAILBREAK_RECIPES: dict[str, str] = {
+    "AutoDAN": "easyjailbreak.attacker.AutoDAN_Liu_2023.AutoDAN",
+    "Cipher": "easyjailbreak.attacker.Cipher_Yuan_2023.Cipher",
+    "CodeChameleon": "easyjailbreak.attacker.CodeChameleon_2024.CodeChameleon",
+    "DeepInception": "easyjailbreak.attacker.DeepInception_Li_2023.DeepInception",
+    "GCG": "easyjailbreak.attacker.GCG_Zou_2023.GCG",
+    "GPTFuzzer": "easyjailbreak.attacker.Gptfuzzer_yu_2023.GPTFuzzer",
+    "ICA": "easyjailbreak.attacker.ICA_wei_2023.ICA",
+    "Jailbroken": "easyjailbreak.attacker.Jailbroken_wei_2023.Jailbroken",
+    "MJP": "easyjailbreak.attacker.MJP_Li_2023.MJP",
+    "Multilingual": "easyjailbreak.attacker.Multilingual_Deng_2023.Multilingual",
+    "PAIR": "easyjailbreak.attacker.PAIR_chao_2023.PAIR",
+    "ReNeLLM": "easyjailbreak.attacker.ReNeLLM_ding_2023.ReNeLLM",
+    "TAP": "easyjailbreak.attacker.TAP_Mehrotra_2023.TAP",
+}
 
 
-def _instantiate(recipe_cls, dataset, model):
-    # Recipe constructors vary; try the richest signature first and fall back.
-    for kwargs in (
-        {"attack_model": model, "target_model": model, "eval_model": model},
-        {"attack_model": model, "target_model": model},
-        {"target_model": model},
-        {},
-    ):
-        try:
-            return recipe_cls(jailbreak_datasets=dataset, **kwargs)
-        except TypeError:
-            continue
-    return None
+class _EasyJailbreakRecord(BaseModel):
+    """Exact fields emitted by upstream ``save_to_jsonl``."""
+
+    model_config = ConfigDict(extra="forbid", strict=True)
+
+    jailbreak_prompt: str
+    query: str
+    target_responses: list[str]
+    eval_results: list[bool | int]
+
+    @field_validator("jailbreak_prompt", "query")
+    @classmethod
+    def _nonblank_prompt(cls, value: str) -> str:
+        if not value.strip():
+            raise ValueError("EasyJailbreak prompts and queries must not be blank")
+        return value
 
 
-def _harvest(attacker, dataset):
-    prompts = []
-    pools = [getattr(attacker, "attack_results", None), dataset]
-    for pool in pools:
-        if not pool:
-            continue
-        for inst in pool:
-            value = getattr(inst, "jailbreak_prompt", None) or getattr(
-                inst, "query", None
+def _validated_binary_results(values: list[bool | int], *, line_no: int) -> list[bool]:
+    normalized: list[bool] = []
+    for index, value in enumerate(values):
+        if isinstance(value, bool):
+            normalized.append(value)
+        elif isinstance(value, int) and value in (0, 1):
+            normalized.append(bool(value))
+        else:
+            raise ExternalEngineOutputError(
+                "EasyJailbreak eval_results must contain only booleans/0/1 "
+                f"(line {line_no}, index {index})"
             )
-            if value:
-                prompts.append(str(value))
-    return prompts
-
-
-def main():
-    cfg = json.load(open(sys.argv[1], encoding="utf-8"))
-    seed = cfg["seed"]
-    recipes = cfg["recipes"]
-    limit = int(cfg["n"])
-    out_path = cfg["out"]
-    model_name = cfg.get("model") or "gpt-4o-mini"
-
-    prompts = []
-    try:
-        from easyjailbreak.datasets import Instance, JailbreakDataset
-
-        model = None
-        for recipe in recipes:
-            try:
-                recipe_cls = _load_recipe(recipe)
-            except Exception:
-                continue
-            dataset = JailbreakDataset([Instance(query=seed)])
-            if model is None:
-                try:
-                    model = _build_model(model_name)
-                except Exception:
-                    model = None
-            attacker = _instantiate(recipe_cls, dataset, model)
-            if attacker is None:
-                continue
-            try:
-                attacker.attack()
-            except Exception:
-                pass
-            prompts.extend(_harvest(attacker, dataset))
-            if len(prompts) >= limit:
-                break
-    except Exception:
-        prompts = []
-
-    json.dump({"prompts": prompts[:limit]}, open(out_path, "w", encoding="utf-8"))
-
-
-main()
-'''
+    return normalized
 
 
 class EasyJailbreakAttacker(BaseAttacker):
-    """Drive EasyJailbreak's recipe zoo in generation mode -- via a separate
-    (GPL-isolated) interpreter -- to produce transformed jailbreak prompts as
-    Attempts (no live attacker-vs-target loop).
+    """Import a complete EasyJailbreak recipe run without changing its estimand.
 
-    ``recipes`` names the recipes to apply (default ``["ReNeLLM", "Cipher"]``;
-    any of ReNeLLM, GPTFuzz, Cipher, CodeChameleon, DeepInception, MultiLingual,
-    ICA, Jailbroken, PAIR, TAP, GCG). ``model`` is the model handle recipes that
-    need one construct with. ``python`` / ``venv`` (or ``$EASYJAILBREAK_PYTHON`` /
-    ``$EASYJAILBREAK_VENV``) locate the EasyJailbreak-equipped interpreter that
-    keeps the GPL dependency out of the harness environment.
+    Execute one exact upstream recipe in a pinned EasyJailbreak 0.1.3 checkout,
+    retain its complete ``attack_results`` dataset, and call upstream
+    ``attack_results.save_to_jsonl(path)``.  Then configure this importer with
+    the same recipe and model-role identities and call :meth:`import_run`.
+
+    ``generate`` intentionally rejects use through ``Runner``.  EasyJailbreak's
+    recipes own target calls and native evaluation; treating their saved prompt
+    as a fresh URA attack would be a different transfer experiment.
     """
 
     name = "easyjailbreak"
+    supported_integration_mode = "native_artifact_import"
+    runner_replay_eligible = False
 
     def __init__(
         self,
-        recipes: list[str] | None = None,
-        model: str = "gpt-4o-mini",
-        python: str | None = None,
-        venv: str | None = None,
+        *,
+        recipe: str = "ReNeLLM",
+        target_model: str | None = None,
+        attack_model: str | None = None,
+        eval_model: str | None = None,
+        upstream_version: str = EASYJAILBREAK_VERSION,
     ) -> None:
-        # Recipes from the EasyJailbreak zoo whose transformed prompts we harvest.
-        self.recipes = recipes or ["ReNeLLM", "Cipher"]
-        # Model handle for recipes that require one; generation-only, no live loop.
-        self.model = model
-        # Out-of-band, GPL-isolated interpreter: an explicit python or a venv dir.
-        self.python = python
-        self.venv = venv
+        if recipe not in EASYJAILBREAK_RECIPES:
+            raise ValueError(
+                "EasyJailbreak recipe must be an exact audited export: "
+                + ", ".join(EASYJAILBREAK_RECIPES)
+            )
+        if upstream_version != EASYJAILBREAK_VERSION:
+            raise ValueError(
+                f"EasyJailbreak package must be pinned to {EASYJAILBREAK_VERSION}"
+            )
+        for role, model in (("target", target_model), ("evaluator", eval_model)):
+            if model is not None and (
+                not isinstance(model, str) or not model.strip()
+            ):
+                raise ValueError(f"EasyJailbreak {role} model identity must not be blank")
+        if attack_model is not None and (
+            not isinstance(attack_model, str) or not attack_model.strip()
+        ):
+            raise ValueError(
+                "EasyJailbreak attack model must be nonblank or explicitly None"
+            )
+        self.recipe = recipe
+        self.target_model = target_model
+        self.attack_model = attack_model
+        self.eval_model = eval_model
+        self.upstream_version = upstream_version
+
+    @property
+    def upstream_recipe_class(self) -> str:
+        return EASYJAILBREAK_RECIPES[self.recipe]
+
+    def import_run(
+        self,
+        result_jsonl: str | Path,
+        *,
+        upstream_revision: str,
+        expected_records: int,
+        expected_sha256: str | None = None,
+        max_artifact_bytes: int = DEFAULT_MAX_ARTIFACT_BYTES,
+    ) -> NativeEngineRun:
+        """Import the complete upstream ``save_to_jsonl`` output.
+
+        ``expected_records`` is mandatory and must come from the frozen native
+        run plan.  This prevents a truncated prefix from being accepted merely
+        because every remaining JSON line happens to be valid.
+        """
+
+        if not _COMMIT_RE.fullmatch(upstream_revision):
+            raise ValueError(
+                "EasyJailbreak upstream_revision must be a full 40-hex Git commit"
+            )
+        if isinstance(expected_records, bool) or not isinstance(expected_records, int):
+            raise ValueError("EasyJailbreak expected_records must be an integer")
+        if expected_records < 1:
+            raise ValueError("EasyJailbreak expected_records must be positive")
+        if self.target_model is None or self.eval_model is None:
+            raise ValueError(
+                "EasyJailbreak import requires explicit target_model and eval_model identities"
+            )
+
+        path, file_bytes, text = read_utf8_artifact(
+            Path(result_jsonl), max_bytes=max_artifact_bytes
+        )
+        file_digest = require_expected_sha256(
+            file_bytes, expected_sha256, role="EasyJailbreak result JSONL"
+        )
+
+        records: list[tuple[dict[str, Any], _EasyJailbreakRecord, list[bool]]] = []
+        for line_no, line in enumerate(text.splitlines(), start=1):
+            if not line.strip():
+                raise ExternalEngineOutputError(
+                    f"EasyJailbreak JSONL contains a blank record at line {line_no}"
+                )
+            try:
+                value = strict_json_loads(line)
+                record = _EasyJailbreakRecord.model_validate(value)
+            except (json.JSONDecodeError, ValueError, ValidationError) as exc:
+                raise ExternalEngineOutputError(
+                    f"invalid EasyJailbreak JSONL record at line {line_no}: {exc}"
+                ) from exc
+            if not record.target_responses:
+                raise ExternalEngineOutputError(
+                    f"EasyJailbreak line {line_no} has no target response"
+                )
+            if any(not response.strip() for response in record.target_responses):
+                raise ExternalEngineOutputError(
+                    f"EasyJailbreak line {line_no} contains a blank target response"
+                )
+            results = _validated_binary_results(record.eval_results, line_no=line_no)
+            if len(results) != len(record.target_responses):
+                raise ExternalEngineOutputError(
+                    f"EasyJailbreak line {line_no} response/evaluation counts differ"
+                )
+            assert isinstance(value, dict)  # guaranteed by Pydantic validation
+            records.append((value, record, results))
+
+        if len(records) != expected_records:
+            raise ExternalEngineOutputError(
+                "EasyJailbreak result count mismatch: "
+                f"expected {expected_records}, observed {len(records)}"
+            )
+
+        run_id = f"easyjailbreak:{self.recipe}:{file_digest[:20]}"
+        cases: list[NativeEngineCase] = []
+        successes = 0
+        evaluations = 0
+        for index, (raw, record, results) in enumerate(records, start=1):
+            successes += sum(results)
+            evaluations += len(results)
+            if all(results):
+                outcome = "all_native_evaluations_jailbreak"
+            elif any(results):
+                outcome = "mixed_native_evaluations"
+            else:
+                outcome = "no_native_evaluation_jailbreak"
+            cases.append(
+                NativeEngineCase(
+                    id=f"{run_id}:line{index}",
+                    source_run_id=run_id,
+                    target_model=self.target_model,
+                    attack_method=f"easyjailbreak:{self.recipe}",
+                    original_input=record.query,
+                    adversarial_input=record.jailbreak_prompt,
+                    target_outputs=record.target_responses,
+                    native_outcome=outcome,
+                    native_scores={
+                        "native_jailbreak_count": sum(results),
+                        "native_evaluation_count": len(results),
+                        "native_success_fraction": sum(results) / len(results),
+                    },
+                    native_details={
+                        "native_eval_results": results,
+                        "jailbreak_prompt_may_be_template": "{query}"
+                        in record.jailbreak_prompt,
+                        "recipe_class": self.upstream_recipe_class,
+                        "full_native_record": raw,
+                    },
+                    source_artifact_role="attack_results",
+                    source_record=f"{path.name}:line{index}",
+                    source_record_sha256=json_sha256(raw),
+                )
+            )
+
+        roles = {"target": self.target_model, "evaluator": self.eval_model}
+        if self.attack_model is not None:
+            roles["attack"] = self.attack_model
+        return NativeEngineRun(
+            engine="easyjailbreak",
+            native_schema=EASYJAILBREAK_NATIVE_SCHEMA,
+            native_run_id=run_id,
+            upstream_repository=EASYJAILBREAK_REPOSITORY,
+            upstream_version=self.upstream_version,
+            upstream_revision=upstream_revision.lower(),
+            source_artifacts=[
+                NativeArtifactFile(
+                    role="attack_results",
+                    path=str(path),
+                    sha256=file_digest,
+                    bytes=len(file_bytes),
+                    records=len(records),
+                )
+            ],
+            target_models=[self.target_model],
+            model_roles=roles,
+            cases=cases,
+            native_aggregates={
+                "recipe": self.recipe,
+                "recipe_class": self.upstream_recipe_class,
+                "native_jailbreak_count": successes,
+                "native_evaluation_count": evaluations,
+                "native_success_fraction": successes / evaluations,
+            },
+            import_accounting={
+                "expected_records": expected_records,
+                "imported_records": len(records),
+                "target_responses": evaluations,
+                "native_evaluations": evaluations,
+            },
+            measurement_semantics=(
+                "EasyJailbreak source-native recipe, target and evaluator results; "
+                "not URA common ASR/FRR and not a prompt-only Runner replay"
+            ),
+        )
 
     def generate(self, datapoint: DataPoint, budget: AttackBudget) -> Iterable[Attempt]:
-        seed = datapoint.payload_text or datapoint.payload_code or ""
-        prompts = self._recipe_prompts(seed, max(1, budget.max_queries))
-        for i, prompt in enumerate(prompts):
-            yield _attempt(
-                datapoint,
-                self.name,
-                strategy="+".join(self.recipes),
-                turn_index=i,
-                prompt=prompt,
-                seed=budget.seed,
-                params={"recipes": self.recipes, "model": self.model, "mode": "generate"},
-            )
-
-    def _interpreter(self) -> str | None:
-        """Resolve the GPL-isolated interpreter that has ``easyjailbreak`` installed.
-
-        Prefers an explicit ``python`` / ``$EASYJAILBREAK_PYTHON``, else derives the
-        interpreter inside a ``venv`` / ``$EASYJAILBREAK_VENV`` checkout. Returns the
-        path only if it exists on disk / PATH; never falls back to the harness's own
-        interpreter, so the GPL dependency stays out of this environment.
-        """
-        import os
-        import shutil
-        from pathlib import Path
-
-        candidate = self.python or os.environ.get("EASYJAILBREAK_PYTHON")
-        if not candidate:
-            venv = self.venv or os.environ.get("EASYJAILBREAK_VENV")
-            if venv:
-                base = Path(venv)
-                for rel in ("Scripts/python.exe", "bin/python", "bin/python3"):
-                    exe = base / rel
-                    if exe.exists():
-                        candidate = str(exe)
-                        break
-        if not candidate:
-            return None
-        if shutil.which(candidate) or Path(candidate).exists():
-            return candidate
-        return None
-
-    def _recipe_prompts(self, seed: str, n: int) -> list[str]:
-        """Run the EasyJailbreak recipes over ``seed`` in a separate interpreter and
-        read back the transformed jailbreak prompts (lazy; requires the GPL-isolated
-        interpreter). Never imports ``easyjailbreak`` in-process and never drives a
-        live attacker-vs-target scoring loop (harness safety principle N5)."""
-        import json
-        import subprocess
-        import tempfile
-        from pathlib import Path
-
-        python = self._interpreter()
-        if python is None or not self._has_easyjailbreak(python):
-            raise RuntimeError(
-                "EasyJailbreak is required for EasyJailbreakAttacker; because it is "
-                "GPL-3.0 it is run from a SEPARATE interpreter to avoid contaminating "
-                "the harness. Create a venv (python -m venv ejb && ejb/bin/pip install "
-                "easyjailbreak) and set $EASYJAILBREAK_VENV (or pass venv=...), or set "
-                "$EASYJAILBREAK_PYTHON / python=... to an interpreter with easyjailbreak "
-                "installed. Authorized red-team use only."
-            )
-        with tempfile.TemporaryDirectory() as tmp:
-            tmp_dir = Path(tmp)
-            out = tmp_dir / "prompts.json"
-            cfg = tmp_dir / "cfg.json"
-            script = tmp_dir / "ejb_bridge.py"
-            cfg.write_text(
-                json.dumps(
-                    {
-                        "seed": seed,
-                        "recipes": self.recipes,
-                        "n": n,
-                        "out": str(out),
-                        "model": self.model,
-                    }
-                ),
-                encoding="utf-8",
-            )
-            script.write_text(_BRIDGE, encoding="utf-8")
-            # Generation mode: the child interpreter imports the GPL recipes, emits
-            # the transformed prompts to ``out`` and exits; no live target is driven.
-            subprocess.run(
-                [python, str(script), str(cfg)],
-                check=True,
-                capture_output=True,
-            )
-            data = json.loads(out.read_text(encoding="utf-8")) if out.exists() else {}
-        items = data.get("prompts", data) if isinstance(data, dict) else data
-        prompts = [
-            it.get("prompt", "") if isinstance(it, dict) else str(it)
-            for it in items
-        ] if isinstance(items, list) else []
-        return [p for p in prompts if p] or [seed]
-
-    @staticmethod
-    def _has_easyjailbreak(python: str) -> bool:
-        """Probe -- in the child interpreter, never in-process -- whether
-        ``easyjailbreak`` is importable there, without importing it here."""
-        import subprocess
-
-        probe = (
-            "import importlib.util, sys; "
-            "sys.exit(0 if importlib.util.find_spec('easyjailbreak') else 1)"
+        raise ExternalEngineConformanceError(
+            "EasyJailbreak is supported through import_run(result_jsonl, ...). "
+            "BaseAttacker.generate is inapplicable because the audited 0.1.3 recipes "
+            "perform their own attack-model, target-model and evaluator calls."
         )
-        try:
-            result = subprocess.run(
-                [python, "-c", probe], capture_output=True, timeout=60
-            )
-        except (OSError, subprocess.SubprocessError):
-            return False
-        return result.returncode == 0
+
+
+__all__ = [
+    "EASYJAILBREAK_NATIVE_SCHEMA",
+    "EASYJAILBREAK_RECIPES",
+    "EASYJAILBREAK_REPOSITORY",
+    "EASYJAILBREAK_VERSION",
+    "EasyJailbreakAttacker",
+]

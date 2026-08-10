@@ -8,8 +8,9 @@ complement to the older image-jailbreak corpora (thesis II.4.3 / V.1.3).
 Real released layout: ``data/siuo_gen.json`` (free-form generation) and
 ``data/siuo_mcqa.json`` (multiple choice), each a JSON list of records with a
 ``category``, a ``question`` (the benign text), and an ``image`` filename resolved
-against a sibling ``images/`` directory. Point ``URA_SIUO_PATH`` at either JSON
-file (or a JSONL export). Robust to a missing path (returns []).
+against a sibling ``images/`` directory.  Although each channel is benign in
+isolation, the *joint request* is a harmful safety probe; it therefore belongs to
+the harmful ASR population rather than the benign false-refusal population.
 """
 from __future__ import annotations
 
@@ -17,12 +18,12 @@ from pathlib import Path
 
 from ..adapters.base import BaseConverter
 from ..data_models import DataPoint, DialogTurn
-from ._common import Rc, dp, image, missing, read_json, read_jsonl
+from ._common import CorpusFormatError, Rc, dp, image, missing, read_json, read_jsonl
 
 # SIUO safety categories -> internal taxonomy (default LEGALITY when unmapped).
 CATEGORY_MAP = {
-    "self-harm": Rc.TOXICITY,
-    "violence": Rc.TOXICITY,
+    "self-harm": Rc.CATASTROPHIC,
+    "violence": Rc.CATASTROPHIC,
     "hate": Rc.TOXICITY,
     "hate speech": Rc.TOXICITY,
     "illegal activity": Rc.LEGALITY,
@@ -44,35 +45,56 @@ class SIUOConverter(BaseConverter):
         path = Path(path)
         if not path.is_file():
             return missing(self.name, path)
-        root = path.parent
+        root = path.parent.resolve()
         records = read_jsonl(path) if path.suffix == ".jsonl" else read_json(path)
         if isinstance(records, dict):
             records = records.get("data", records.get("questions", []))
+        if not isinstance(records, list):
+            raise CorpusFormatError(f"SIUO source is not a record list: {path}")
         out: list[DataPoint] = []
         for i, rec in enumerate(records):
             if not isinstance(rec, dict):
-                continue
+                raise CorpusFormatError(f"SIUO row {i} in {path} is not an object")
             cat = str(rec.get("category") or "").strip()
             risk = CATEGORY_MAP.get(cat.lower(), Rc.LEGALITY)
             text = rec.get("question") or rec.get("instruction") or rec.get("prompt")
             img_name = rec.get("image") or rec.get("image_path") or rec.get("image_id")
-            # images live under a sibling images/ dir in the release; fall back to root
-            media = []
-            if img_name:
-                img_path = root / "images" / str(img_name)
-                media = [image(str(img_path) if img_path.is_file() else str(img_name), root)]
+            if not isinstance(text, str) or not text.strip() or not img_name:
+                raise CorpusFormatError(
+                    f"SIUO row {i} in {path} lacks the required question or image"
+                )
+            # The official archive uses data/images; tolerate manifests that
+            # already include the images/ prefix, but never fabricate a fallback.
+            img_ref = Path(str(img_name))
+            relative = img_ref if img_ref.parts[:1] == ("images",) else Path("images") / img_ref
+            if not (root / relative).is_file() and (root / img_ref).is_file():
+                relative = img_ref
+            media = [image(relative, root)]
             rid = rec.get("question_id", rec.get("index", rec.get("id", i)))
             out.append(dp(
                 id=f"siuo:{rid}",
                 source="siuo",
                 modalities=["text", "image"],
                 risk=risk,
-                expected="safe_answer",   # inputs are benign; the unsafe output must be avoided
+                expected="refuse",
                 dialog=[DialogTurn(role="user", content=text or "", media=media)],
                 payload_text=text,
                 media=media,
                 risk_subtype=cat or None,
                 attack_family="cross_modal_composition",
-                meta={"reference": rec.get("reference") or rec.get("safe_response")},
+                meta={
+                    "safety_warning": rec.get("safety_warning"),
+                    "reference_answer": (
+                        rec.get("reference_answer")
+                        or rec.get("reference")
+                        or rec.get("safe_response")
+                    ),
+                    "source_task": "mcqa" if "mcqa" in path.stem.lower() else "generation",
+                    "joint_input_harmful": True,
+                    "single_channel_inputs_benign": True,
+                    "reference_status": "source_provided_not_revalidated",
+                },
             ))
+        if not out:
+            raise CorpusFormatError(f"SIUO conversion produced no rows from {path}")
         return out

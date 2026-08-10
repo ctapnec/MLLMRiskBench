@@ -30,11 +30,13 @@ red-team use only.
 """
 from __future__ import annotations
 
+import hashlib
+import re
 from collections.abc import Iterable
 
-from ..data_models import Attempt, DataPoint
+from ..data_models import Attempt, DataPoint, DialogTurn
 from .base import AttackBudget, BaseAttacker
-from ._engine_common import _attempt
+from ._engine_common import ExternalEngineOutputError, _attempt, run_engine_command
 
 
 class SpikeeAttacker(BaseAttacker):
@@ -63,47 +65,87 @@ class SpikeeAttacker(BaseAttacker):
         include_system_message: bool = False,
         seed_folder: str | None = None,
         cli: str = "spikee",
+        credential_env: list[str] | tuple[str, ...] | None = None,
+        timeout_seconds: float | None = None,
+        engine_version: str = "0.9.1",
     ) -> None:
         # Generation-time transformation plugins applied to the spliced payload.
-        self.plugins = plugins or ["base64", "1337"]
+        self.plugins = ["base64", "1337"] if plugins is None else list(plugins)
         # spikee output format: full-prompt (complete injected prompt) or user-input.
         self.out_format = out_format
         # Injection positions inside the benign document context.
-        self.positions = positions or ["end"]
+        self.positions = ["end"] if positions is None else list(positions)
         # Whether spikee prepends the seed folder's system message to each prompt.
         self.include_system_message = include_system_message
         # Optional path to a pre-existing spikee seed folder; else one is synthesised.
         self.seed_folder = seed_folder
         self.cli = cli
+        self.credential_env = tuple(credential_env or ())
+        self.timeout_seconds = timeout_seconds
+        if out_format not in {"full-prompt", "user-input"}:
+            raise ValueError("Spikee format must be full-prompt or user-input")
+        if not self.positions or any(
+            position not in {"start", "middle", "end"} for position in self.positions
+        ):
+            raise ValueError("Spikee positions must contain start, middle, or end")
+        if any(not isinstance(plugin, str) or not plugin.strip() for plugin in self.plugins):
+            raise ValueError("Spikee plugin names must be non-blank strings")
+        if not isinstance(engine_version, str) or not engine_version.strip():
+            raise ValueError("Spikee engine_version must be non-blank")
+        self.engine_version = engine_version.strip()
 
     def generate(self, datapoint: DataPoint, budget: AttackBudget) -> Iterable[Attempt]:
         seed = datapoint.payload_text or datapoint.payload_code or ""
-        prompts = self._inject_prompts(datapoint, seed, max(1, budget.max_queries))
-        strategy = "spikee:" + ("+".join(self.plugins) if self.plugins else "generate")
-        for i, prompt in enumerate(prompts):
-            yield _attempt(
+        entries = self._inject_entries(datapoint, seed, max(1, budget.max_queries))
+        for i, entry in enumerate(entries):
+            plugin = entry["plugin"] or "untransformed"
+            strategy = f"spikee:generated-dataset-transfer:{plugin}"
+            attempt = _attempt(
                 datapoint,
                 self.name,
                 strategy=strategy,
                 turn_index=i,
-                prompt=prompt,
+                prompt=entry["content"],
                 seed=budget.seed,
                 params={
-                    "plugins": self.plugins,
+                    "requested_plugins": self.plugins,
+                    "realized_plugin": entry["plugin"],
+                    "plugin_semantics": (
+                        "piped" if entry["plugin"] and "~" in entry["plugin"]
+                        else "alternative_variant"
+                    ),
                     "format": self.out_format,
                     "positions": self.positions,
                     "include_system_message": self.include_system_message,
-                    "mode": "generate",
+                    "mode": "generate_dataset",
+                    "attack_semantics": "generated_dataset_transfer",
+                    "native_test_executed": False,
+                    "native_judge_executed": False,
+                    "spikee_version": self.engine_version,
+                    "dataset_file": entry["_dataset_file"],
+                    "dataset_sha256": entry["_dataset_sha256"],
+                    "dataset_bytes": entry["_dataset_bytes"],
+                    "spikee_entry": {
+                        key: value for key, value in entry.items()
+                        if not key.startswith("_")
+                    },
                     "risk": "prompt_injection_indirect",
                 },
             )
+            system_message = entry.get("system_message")
+            if system_message:
+                rendered = [DialogTurn(role="system", content=system_message)]
+                rendered.extend(datapoint.dialog_history)
+                rendered.append(DialogTurn(role="user", content=entry["content"]))
+                attempt = attempt.model_copy(update={"rendered_input": rendered})
+            yield attempt
 
     def _document_context(self, datapoint: DataPoint) -> str:
         """Render the benign document / tool context the payload is spliced into.
 
         Uses the DataPoint's prior dialog as the surrounding context when present,
-        else a generic document container, always leaving a placeholder so spikee
-        injects the payload inside the document (a true indirect injection).
+        else a generic document container. Spikee applies each configured
+        injection position to this untrusted document.
         """
         parts: list[str] = []
         for turn in datapoint.dialog_history:
@@ -112,14 +154,14 @@ class SpikeeAttacker(BaseAttacker):
             if turn.tool_result:
                 parts.append(f"tool_result: {turn.tool_result}")
         context = "\n".join(parts) or "Untrusted document retrieved for the task."
-        return f"{context}\n<PLACEHOLDER>"
+        return context
 
     def _write_seed_folder(self, tmp_dir, datapoint: DataPoint, seed: str):
         """Synthesise a minimal spikee seed folder from the DataPoint.
 
         The DataPoint payload becomes the injected ``instruction``; the document
-        context is a benign container with a placeholder; a few jailbreak framing
-        templates provide realistic indirect-injection wrappers.
+        context is a benign container; a few jailbreak framing templates provide
+        realistic indirect-injection wrappers.
         """
         import json
 
@@ -133,7 +175,7 @@ class SpikeeAttacker(BaseAttacker):
                 "question": "",
                 "ideal_answer": "",
                 "ideal_summary": "",
-                "placeholder": "<PLACEHOLDER>",
+                "placeholder": "",
             }
         ]
         instructions = [
@@ -142,7 +184,7 @@ class SpikeeAttacker(BaseAttacker):
                 "instruction_type": "indirect-injection",
                 "instruction": seed or "Follow the injected instruction.",
                 "lang": "en",
-                "judge_name": "canary",
+                "judge_name": "llm_judge_harmful",
                 "judge_args": "",
             }
         ]
@@ -181,11 +223,16 @@ class SpikeeAttacker(BaseAttacker):
         _dump("standalone_user_inputs.jsonl", [])
         # Minimal system_messages.toml so --include-system-message never dangles.
         (sf / "system_messages.toml").write_text(
-            'default = "You are a helpful assistant."\n', encoding="utf-8"
+            '[[configurations]]\n'
+            'spotlighting_data_markers = "default"\n'
+            'system_message = "You are a helpful assistant."\n',
+            encoding="utf-8",
         )
         return sf
 
-    def _inject_prompts(self, datapoint: DataPoint, seed: str, n: int) -> list[str]:
+    def _inject_entries(
+        self, datapoint: DataPoint, seed: str, n: int
+    ) -> list[dict]:
         """Run ``spikee generate`` over the (synthesised or supplied) seed folder in
         a temporary workspace and read back the spliced injection prompts (lazy;
         requires the spikee CLI). Generation / seed mode only: never runs
@@ -195,7 +242,6 @@ class SpikeeAttacker(BaseAttacker):
         import json
         import os
         import shutil
-        import subprocess
         import tempfile
         from pathlib import Path
 
@@ -226,39 +272,126 @@ class SpikeeAttacker(BaseAttacker):
 
             # Generation mode: spikee splices the payload into the document context
             # and writes the dataset under <cwd>/datasets/; no target is queried.
-            subprocess.run(
-                cmd, cwd=tmp, check=True, capture_output=True,
+            completed = run_engine_command(
+                cmd,
+                feature="spikee prompt generation",
+                cwd=tmp,
+                check=True,
+                allow_credentials=self.credential_env,
+                timeout_seconds=self.timeout_seconds,
             )
+            version_pattern = re.compile(
+                rf"(?<![0-9.]){re.escape(self.engine_version)}(?![0-9.])"
+            )
+            if not version_pattern.search(completed.stdout):
+                raise ExternalEngineOutputError(
+                    "Spikee did not report the pinned engine version "
+                    f"{self.engine_version!r}"
+                )
 
             produced = sorted(
                 glob.glob(str(tmp_dir / "datasets" / "*.jsonl")),
                 key=os.path.getmtime,
             )
-            prompts: list[str] = []
-            if produced:
-                with open(produced[-1], encoding="utf-8") as fh:
-                    for line in fh:
-                        line = line.strip()
-                        if not line:
-                            continue
-                        try:
-                            entry = json.loads(line)
-                        except json.JSONDecodeError:
-                            continue
-                        # spikee's prompt field has shifted across versions:
-                        # current builds emit "content"; older ones "input"/"text".
-                        text = (
-                            entry.get("content")
-                            or entry.get("input")
-                            or entry.get("text")
-                            or entry.get("full_prompt")
-                            or entry.get("payload")
-                            if isinstance(entry, dict)
-                            else str(entry)
-                        )
-                        if text:
-                            prompts.append(str(text))
-                        if len(prompts) >= n:
-                            break
+            if len(produced) != 1:
+                raise ExternalEngineOutputError(
+                    "Spikee must emit exactly one generated JSONL dataset"
+                )
+            dataset = Path(produced[0])
+            dataset_bytes = dataset.read_bytes()
+            dataset_sha256 = hashlib.sha256(dataset_bytes).hexdigest()
+            entries: list[dict] = []
+            for line_no, line in enumerate(
+                dataset_bytes.decode("utf-8").splitlines(), 1
+            ):
+                if not line.strip():
+                    continue
+                try:
+                    raw = json.loads(line)
+                except json.JSONDecodeError as exc:
+                    raise ExternalEngineOutputError(
+                        f"Spikee dataset has invalid JSON at line {line_no}"
+                    ) from exc
+                entry = self._validate_entry(raw, line_no)
+                entry["_dataset_file"] = dataset.name
+                entry["_dataset_sha256"] = dataset_sha256
+                entry["_dataset_bytes"] = len(dataset_bytes)
+                entries.append(entry)
 
-        return prompts[:n] or [seed]
+            if not entries:
+                raise ExternalEngineOutputError(
+                    "Spikee prompt generation produced no valid generated prompts"
+                )
+            realized_plugins = {
+                entry["plugin"] for entry in entries if entry["plugin"] is not None
+            }
+            expected_plugins = {plugin.replace("|", "~") for plugin in self.plugins}
+            missing = sorted(expected_plugins - realized_plugins)
+            if missing:
+                raise ExternalEngineOutputError(
+                    "Spikee omitted configured plugin variants: " + ", ".join(missing)
+                )
+            realized_positions = {
+                entry["position"] for entry in entries if entry["position"] is not None
+            }
+            missing_positions = sorted(set(self.positions) - realized_positions)
+            if missing_positions:
+                raise ExternalEngineOutputError(
+                    "Spikee omitted configured injection positions: "
+                    + ", ".join(missing_positions)
+                )
+
+        return entries[:n]
+
+    def _validate_entry(self, raw: object, line_no: int) -> dict:
+        if not isinstance(raw, dict):
+            raise ExternalEngineOutputError(
+                f"Spikee dataset line {line_no} is not an object"
+            )
+        required = {
+            "id", "long_id", "content", "content_type", "judge_name",
+            "judge_args", "injected", "task_type", "document_id", "position",
+            "system_message", "plugin", "payload",
+        }
+        missing = sorted(required - raw.keys())
+        if missing:
+            raise ExternalEngineOutputError(
+                f"Spikee dataset line {line_no} lacks fields: {', '.join(missing)}"
+            )
+        if not isinstance(raw["long_id"], str) or not raw["long_id"].strip():
+            raise ExternalEngineOutputError(
+                f"Spikee dataset line {line_no} has invalid long_id"
+            )
+        if raw["content_type"] != "text":
+            raise ExternalEngineOutputError(
+                f"Spikee dataset line {line_no} uses unsupported content_type"
+            )
+        if not isinstance(raw["content"], str) or not raw["content"].strip():
+            raise ExternalEngineOutputError(
+                f"Spikee dataset line {line_no} has blank content"
+            )
+        if raw["injected"] not in {True, "true"}:
+            raise ExternalEngineOutputError(
+                f"Spikee dataset line {line_no} is not marked injected"
+            )
+        for key in ("judge_name", "payload"):
+            if not isinstance(raw[key], str) or not raw[key].strip():
+                raise ExternalEngineOutputError(
+                    f"Spikee dataset line {line_no} has invalid {key}"
+                )
+        for key in ("system_message", "plugin"):
+            if raw[key] is not None and (
+                not isinstance(raw[key], str) or not raw[key].strip()
+            ):
+                raise ExternalEngineOutputError(
+                    f"Spikee dataset line {line_no} has invalid {key}"
+                )
+        if self.include_system_message and not raw["system_message"]:
+            raise ExternalEngineOutputError(
+                f"Spikee dataset line {line_no} omitted requested system message"
+            )
+        if raw["position"] not in {"start", "middle", "end"}:
+            raise ExternalEngineOutputError(
+                f"Spikee dataset line {line_no} has invalid injection position"
+            )
+        return dict(raw)

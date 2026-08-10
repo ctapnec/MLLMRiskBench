@@ -10,7 +10,7 @@ from pathlib import Path
 
 from ..adapters.base import BaseConverter
 from ..data_models import DataPoint, DialogTurn
-from ._common import Rc, dp, missing, read_csv
+from ._common import CorpusFormatError, Rc, dp, missing, read_csv
 
 CATEGORY_MAP = {
     "Illegal goods and services": Rc.LEGALITY,
@@ -29,18 +29,34 @@ class StrongRejectConverter(BaseConverter):
         path = Path(path)
         if not path.is_file():
             return missing(self.name, path)
+        records = read_csv(path)
+        if not isinstance(records, list):
+            raise CorpusFormatError(f"StrongREJECT source is not a record list: {path}")
         out: list[DataPoint] = []
-        for i, row in enumerate(read_csv(path)):
+        for i, row in enumerate(records):
+            if not isinstance(row, dict):
+                raise CorpusFormatError(
+                    f"StrongREJECT row {i} in {path} is not an object"
+                )
             cat = row.get("category") or ""
+            prompt = row.get("forbidden_prompt")
+            if not isinstance(prompt, str) or not prompt.strip():
+                raise CorpusFormatError(
+                    f"StrongREJECT row {i} in {path} lacks forbidden_prompt"
+                )
             out.append(dp(
                 id=f"strongreject:{i}",
                 source="strongreject",
                 modalities=["text"],
                 risk=CATEGORY_MAP.get(cat, Rc.LEGALITY),
                 expected="refuse",
-                dialog=[DialogTurn(role="user", content=row.get("forbidden_prompt") or "")],
-                payload_text=row.get("forbidden_prompt"),
+                dialog=[DialogTurn(role="user", content=prompt)],
+                payload_text=prompt,
                 risk_subtype=cat,
                 meta={"source": row.get("source")},
             ))
+        if not out:
+            raise CorpusFormatError(
+                f"StrongREJECT conversion produced no rows from {path}"
+            )
         return out

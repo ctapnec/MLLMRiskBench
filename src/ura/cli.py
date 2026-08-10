@@ -4,10 +4,9 @@ A single ``ura`` entry point that wires the harness end-to-end:
 
 * ``convert`` - normalise a source framework's corpus into unified DataPoints
   (JSONL) via :func:`ura.converters.get_converter`;
-* ``run`` - replay/attack a corpus against a registered target, judge every
-  response through a cheapest-first :class:`~ura.judges.base.JudgeCascade`, and
-  persist judgments, aggregated results, and the re-derivable
-  :class:`~ura.data_models.RunManifest`;
+* ``run`` - execute an explicitly offline mock smoke test and persist its full
+  lineage. Measured/provider runs use ``experiments/run_matrix.py``, whose
+  checkpoint, completion-marker, integrity, and grid semantics are stricter;
 * ``report`` - render an aggregated result set into a markdown risk card.
 
 Only pydantic + the standard library are needed to import this module. Heavy
@@ -107,9 +106,10 @@ def _build_cascade(names: list[str], judge_model: str) -> JudgeCascade:
 
             stages.append(RuleJudge())
         elif key == "guardrail":
-            from .judges.guardrail import GuardrailJudge
-
-            stages.append(GuardrailJudge())
+            raise ValueError(
+                "'ura run' is keyless smoke-only and does not load guardrail weights; "
+                "use experiments/run_matrix.py with an immutable guardrail revision"
+            )
         elif key == "llm":
             from .judges.llm import LLMJudge
 
@@ -138,7 +138,49 @@ def _cmd_convert(args: argparse.Namespace) -> int:
 
 
 def _cmd_run(args: argparse.Namespace) -> int:
-    """``run``: attack a corpus, judge responses, persist the full trail."""
+    """``run``: execute a non-measured, offline mock smoke test.
+
+    This convenience path deliberately refuses hosted/local real targets.  The
+    experiment driver owns paid-call checkpointing, collision-safe stems,
+    integrity-checked completion markers, and requested-grid accounting; letting
+    the simpler CLI produce measured artifacts would create two incompatible
+    evidence lifecycles.
+    """
+    if args.target.strip().lower() != "mock":
+        raise ValueError(
+            "'ura run' is offline smoke-only and requires --target mock; use "
+            "experiments/run_matrix.py for measured or provider-backed runs"
+        )
+    if args.attacker.strip().lower() not in {"replay", "crescendo"}:
+        raise ValueError(
+            "'ura run' smoke tests accept only replay or crescendo; configured "
+            "external/native engines belong to experiments/run_matrix.py or "
+            "their documented native-artifact importer"
+        )
+    selected_judges = {
+        name.strip().lower() for name in args.judges.split(",") if name.strip()
+    }
+    if "guardrail" in selected_judges:
+        raise ValueError(
+            "offline smoke runs do not load guardrail weights; use rules,llm with "
+            "the mock judge, or run_matrix.py with a pinned guardrail revision"
+        )
+    if "llm" in selected_judges and (
+        args.judge_model.strip().lower() != "mock"
+    ):
+        raise ValueError("offline smoke runs require --judge-model mock")
+    if args.n <= 0:
+        raise ValueError("--n must be positive")
+    if args.max_queries <= 0 or args.max_turns <= 0:
+        raise ValueError("--max-queries and --max-turns must be positive")
+
+    out_dir = Path(args.out)
+    if out_dir.exists() and not out_dir.is_dir():
+        raise ValueError(f"smoke output path is not a directory: {out_dir}")
+    if out_dir.exists() and any(out_dir.iterdir()):
+        raise ValueError(
+            f"refusing to overwrite non-empty smoke output directory: {out_dir}"
+        )
     corpus = _load_corpus(args.corpus, args.n)
     attacker: BaseAttacker = get_attacker(args.attacker)
     target = REGISTRY.create(args.target)
@@ -154,14 +196,29 @@ def _cmd_run(args: argparse.Namespace) -> int:
         budget=budget,
         seeds=args.seeds,
     )
-    judgments, manifest = runner.run(corpus)
+    group_keys = [k.strip() for k in args.group_by.split(",") if k.strip()]
+    judgments, manifest = runner.run(
+        corpus,
+        run_config={
+            "entrypoint": "ura run",
+            "evidence_status": "offline_smoke_only_not_measured",
+            "corpus": args.corpus,
+            "n": args.n,
+            "group_by": group_keys,
+            "max_queries": args.max_queries,
+            "max_turns": args.max_turns,
+            "judges": [name.strip() for name in args.judges.split(",") if name.strip()],
+            "judge_model": args.judge_model,
+        },
+    )
 
-    out_dir = Path(args.out)
     out_dir.mkdir(parents=True, exist_ok=True)
 
+    runner.save_attempts(out_dir / "attempts.jsonl")
+    runner.save_responses(out_dir / "responses.jsonl")
     runner.save_results(judgments, out_dir / "judgments.jsonl")
+    runner.save_trails(out_dir / "trails.jsonl")
 
-    group_keys = [k for k in args.group_by.split(",") if k.strip()]
     results = runner.aggregate(judgments, group_keys)
     _write_jsonl(results, out_dir / "results.jsonl")
 
@@ -220,16 +277,23 @@ def build_parser() -> argparse.ArgumentParser:
     p_convert.set_defaults(func=_cmd_convert)
 
     # run ------------------------------------------------------------------ #
-    p_run = sub.add_parser("run", help="attack a corpus and judge the responses")
+    p_run = sub.add_parser(
+        "run",
+        help="offline mock smoke test only (use run_matrix.py for measurements)",
+    )
     p_run.add_argument(
         "--corpus", required=True, help="corpus JSONL path, or 'synth'"
     )
     p_run.add_argument("--attacker", default="replay", help="attacker adapter name")
-    p_run.add_argument("--target", required=True, help="target model id (see REGISTRY)")
+    p_run.add_argument(
+        "--target",
+        required=True,
+        help="must be 'mock'; provider/local measurements use run_matrix.py",
+    )
     p_run.add_argument(
         "--judges",
         default="rules",
-        help="comma-separated cascade stages: rules[,guardrail,llm]",
+        help="comma-separated smoke stages: rules[,llm] (guardrail is measured-only)",
     )
     p_run.add_argument(
         "--judge-model",

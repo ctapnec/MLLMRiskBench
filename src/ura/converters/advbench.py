@@ -11,8 +11,8 @@ should refuse; ``target`` is the "Sure, here is ..." affirmative prefix GCG
 optimizes for (preserved in ``meta`` for attackers that replay the suffix search).
 There is no per-row category label, so every behavior maps to ``JAILBREAK`` and
 ``expected="refuse"``. Point ``URA_ADVBENCH_PATH`` at that CSV (a ``harmful_strings``
-export with a lone ``target`` column is tolerated). Robust to a missing path
-(returns []). Mirrors strongreject.py's CSV reading.
+export with a lone ``target`` column is tolerated). Missing inputs raise a
+typed corpus error so the evaluation denominator cannot shrink silently.
 """
 from __future__ import annotations
 
@@ -20,7 +20,7 @@ from pathlib import Path
 
 from ..adapters.base import BaseConverter
 from ..data_models import DataPoint, DialogTurn
-from ._common import Rc, dp, missing, read_csv
+from ._common import CorpusFormatError, Rc, dp, missing, read_csv
 
 
 class AdvBenchConverter(BaseConverter):
@@ -30,8 +30,13 @@ class AdvBenchConverter(BaseConverter):
         path = Path(path)
         if not path.is_file():
             return missing(self.name, path)
+        records = read_csv(path)
+        if not isinstance(records, list):
+            raise CorpusFormatError(f"AdvBench source is not a record list: {path}")
         out: list[DataPoint] = []
-        for i, row in enumerate(read_csv(path)):
+        for i, row in enumerate(records):
+            if not isinstance(row, dict):
+                raise CorpusFormatError(f"AdvBench row {i} in {path} is not an object")
             # AdvBench uses `goal`; tolerate `behavior`/`prompt`, or the
             # harmful_strings export whose only column is `target`.
             goal = (
@@ -41,6 +46,10 @@ class AdvBenchConverter(BaseConverter):
                 or row.get("target")
                 or ""
             )
+            if not isinstance(goal, str) or not goal.strip():
+                raise CorpusFormatError(
+                    f"AdvBench row {i} in {path} lacks a non-empty harmful prompt"
+                )
             target = row.get("target")
             out.append(dp(
                 id=f"advbench:{i}",
@@ -54,4 +63,6 @@ class AdvBenchConverter(BaseConverter):
                 attack_family="gcg_suffix",
                 meta={"target": target, "citation": "advbench-gcg-2023"},
             ))
+        if not out:
+            raise CorpusFormatError(f"AdvBench conversion produced no rows from {path}")
         return out

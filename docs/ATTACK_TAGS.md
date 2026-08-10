@@ -1,34 +1,72 @@
-# Risk taxonomy & standards mapping (v1.0)
+# Risk categories and informational crosswalk
 
-The internal `RiskCategory` enum (`ura.data_models`) is a superset of the prototype's 8 tags, extended for the 2025-2026 landscape. It stores **no** external identifiers itself; the mapping to governance taxonomies lives in `ura.taxonomy.TAXONOMY_MAP` as **data**, so adding a standard is a one-line change and every result rolls up to OWASP / NIST / MLCommons automatically (`refs_for(category)` → `["OWASP_LLM:LLM02", …]`).
+`RiskCategory` is URA-Bench's internal analysis taxonomy. `ura.taxonomy` maps
+each category to nearby entries in external frameworks so results can be
+navigated alongside those documents. The mapping is interpretive: it is not an
+official OWASP, NIST, MLCommons, or EU assessment and does not establish legal
+compliance or certification.
 
-## Categories → external standards
+Protocol baselines:
 
-| `RiskCategory` | OWASP LLM / Agentic | NIST GenAI (AI 600-1) | MLCommons AILuminate |
-|---|---|---|---|
+- [OWASP Top 10 for LLM Applications 2025](https://genai.owasp.org/llm-top-10/)
+- [OWASP Top 10 for Agentic Applications](https://genai.owasp.org/2025/12/09/owasp-top-10-for-agentic-applications-the-benchmark-for-agentic-security-in-the-age-of-autonomous-ai/)
+- [NIST AI 600-1, Generative AI Profile](https://doi.org/10.6028/NIST.AI.600-1)
+- [MLCommons AILuminate safety information](https://mlcommons.org/ailuminate/safety-faq/)
+
+## Internal category crosswalk
+
+The category-level defaults below are deliberately conservative: a standard id is
+listed for a whole category only when it holds for every member. Narrower ids that
+depend on a specific construct are attached per DataPoint by the converter through
+`dp(extra_refs=...)`, not forced onto the category.
+
+| Internal category | OWASP vicinity | NIST AI 600-1 risk vicinity | MLCommons hazard vicinity |
+| --- | --- | --- | --- |
 | `jailbreak` | LLM01 Prompt Injection | Information Security | - |
-| `prompt_injection_indirect` | LLM01 · ASI06 Memory/Context Poisoning | Information Integrity | - |
-| `toxicity` | LLM05 Improper Output | Dangerous/Violent/Hateful Content | Hate |
-| `privacy` | LLM02 Sensitive Info Disclosure | Data Privacy | Privacy |
-| `bias` | - | Harmful Bias/Homogenization | - |
+| `prompt_injection_indirect` | LLM01 Prompt Injection (covers direct and indirect) | Information Integrity | - |
+| `toxicity` | - | Dangerous, Violent, or Hateful Content | Hate |
+| `privacy` | LLM02 Sensitive Information Disclosure | Data Privacy | Privacy |
+| `bias` | - | Harmful Bias or Homogenization | - |
 | `hallucination` | LLM09 Misinformation | Confabulation | - |
-| `legality` | - | Dangerous/Violent Content | Non-Violent/Violent Crimes |
-| `cybersec` | LLM05 · ASI05 Unexpected Code Execution | Information Security | - |
+| `legality` | - | - | Non-Violent Crimes |
+| `cybersec` | - | Information Security | - |
 | `geo` | LLM02 | Data Privacy | Privacy |
-| `agentic_misuse` | ASI01 Goal Hijack · ASI02 Tool Misuse | Human-AI Configuration | - |
-| `catastrophic` (CBRN/weapons/self-harm/CSEM) | - | CBRN Information | Indiscriminate Weapons · Suicide & Self-Harm · Child Sexual Exploitation |
+| `agentic_misuse` | ASI01 Goal Hijack; ASI02 Tool Misuse | Human-AI Configuration | - |
+| `catastrophic` | - | - (umbrella) | - (umbrella) |
 
-For frontier-model runs, the **EU AI Act GPAI** systemic-risk names attach at report level: `ura.taxonomy.EU_AI_ACT_SYSTEMIC_RISKS = ["CBRN", "loss of control", "cyber offence", "harmful manipulation"]`.
+Notes on the conservative defaults:
 
-## Attack-technique families (by mechanism)
+- OWASP **LLM05 Improper Output Handling** concerns validating/sanitizing model
+  *output* before a downstream sink (XSS/SQLi/SSRF/code-execution consumers). It is
+  not generic toxic content and not offensive-cyber capability, so `toxicity` and
+  `cybersec` carry no LLM05 default.
+- OWASP **LLM01 Prompt Injection** already covers both direct and indirect
+  injection, so `prompt_injection_indirect` needs no additional agentic id by
+  default. **ASI05 Unexpected Code Execution** and **ASI06 Memory/Context
+  Poisoning** are attached only to the exact subtypes that establish them (a
+  tool-enabled agent that executes attacker code; persistent corruption of agent
+  memory/context), via `extra_refs`.
+- `catastrophic` is an umbrella (CBRN, weapons, self-harm, CSEM). No single hazard
+  applies to every member, so its category default is empty and the specific
+  hazard (NIST CBRN, MLCommons Indiscriminate Weapons / Suicide and Self-Harm /
+  Child Sexual Exploitation) is attached per DataPoint.
 
-Orthogonal to the risk *category* above (what harm), the attack *family* records *how* a violation was induced. The harness tags each `DataPoint.attack_family`; the taxonomy follows thesis II.3.1:
+AILuminate's official test has its own controlled prompts, grading, scoring,
+and validation process. URA-Bench does not call its outputs “AILuminate scores”;
+the labels above are crosswalk annotations only.
 
-- **Text single-turn** - DAN/role-play, GCG optimization suffixes, encoding/obfuscation, persuasion/overload.
-- **Multi-turn / adaptive** - crescendo escalation, PAIR/TAP, chain-of-utterances, many-shot.
-- **Indirect / environmental** - indirect prompt injection, GUI environmental injection.
-- **Vision-channel** - adversarial pixels, typographic (FigStep), query-relevant generated imagery (MM-SafetyBench/HADES), steganographic, visual chain-of-reasoning lures.
-- **Cross-modal / temporal** - safe-inputs-unsafe-output (SIUO), multi-image/multi-clip, audio.
-- **Agentic** - goal hijack, tool misuse.
+## Attack mechanism
 
-Both axes are queryable, so a result can be sliced by *what* harm (category → standard) and by *how* it was reached (family).
+Risk category answers “what harm?” `attack_family` separately records “how was
+the probe delivered?” Relevant families include:
+
+- single-turn text jailbreak or adversarial suffix;
+- stateful multi-turn escalation;
+- indirect/environmental prompt injection;
+- vision-channel typography or adversarial imagery;
+- cross-modal/audio/video interaction;
+- represented agentic goal or tool misuse.
+
+These axes must not be collapsed. For example, a privacy probe and a cyber probe
+may both use indirect injection, while a single catastrophic objective may be
+tested by replay and by a response-conditioned conversation.

@@ -10,7 +10,7 @@ from pathlib import Path
 
 from ..adapters.base import BaseConverter
 from ..data_models import DataPoint, DialogTurn
-from ._common import Rc, dp, image, missing, read_csv
+from ._common import CorpusFormatError, Rc, dp, image, missing, read_csv
 
 SEMANTIC_MAP = {
     "cybercrime_intrusion": Rc.CYBERSEC,
@@ -31,10 +31,23 @@ class HarmBenchConverter(BaseConverter):
         if not path.is_file():
             return missing(self.name, path)
         imgroot = path.parent.parent / "multimodal_behavior_images"
+        records = read_csv(path)
+        if not isinstance(records, list):
+            raise CorpusFormatError(f"HarmBench source is not a record list: {path}")
         out: list[DataPoint] = []
-        for row in read_csv(path):
-            behavior = row.get("Behavior") or ""
+        for i, row in enumerate(records):
+            if not isinstance(row, dict):
+                raise CorpusFormatError(f"HarmBench row {i} in {path} is not an object")
+            behavior = row.get("Behavior")
+            if not isinstance(behavior, str) or not behavior.strip():
+                raise CorpusFormatError(
+                    f"HarmBench row {i} in {path} lacks non-empty Behavior"
+                )
             context = row.get("ContextString") or ""
+            if not isinstance(context, str):
+                raise CorpusFormatError(
+                    f"HarmBench row {i} in {path} has non-text ContextString"
+                )
             content = (f"{context}\n\n{behavior}").strip() if context else behavior
             sem = (row.get("SemanticCategory") or "").strip()
             media = []
@@ -55,4 +68,6 @@ class HarmBenchConverter(BaseConverter):
                 attack_family=row.get("FunctionalCategory"),
                 meta={"tags": row.get("Tags")},
             ))
+        if not out:
+            raise CorpusFormatError(f"HarmBench conversion produced no rows from {path}")
         return out

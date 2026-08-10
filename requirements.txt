@@ -3,45 +3,47 @@
 # imported lazily, required only when the corresponding feature is used.
 
 # --- core (required) ---
-pydantic>=2.7
+pydantic>=2.7,<3
 
 # --- tests ---
-pytest>=8
+pytest>=8,<9
+ruff>=0.15,<1
 
 # --- analysis / persistence (optional) ---
-pandas>=2.2          # Parquet result store + dataframes
-pyarrow>=16          # Parquet engine
-matplotlib>=3.8      # Chapter V figures (Thesis-EN/diagrams/fig_results.py)
+pandas>=2.2,<3        # Parquet result store + dataframes
+pyarrow>=16,<24       # Parquet engine
+matplotlib>=3.8,<4    # Chapter V figures (python -m experiments.figures)
 
 # --- API targets (optional; one per provider you use) ---
-anthropic>=0.34
-openai>=1.40
-google-generativeai>=0.7
+anthropic>=0.108,<1   # Fable 5 effort + typed refusal/stop-details support
+openai>=2.45,<3       # Responses API reasoning.mode=pro / GPT-5.6 Sol types
+google-genai>=1,<2
 
 # --- local open-weight targets (optional) ---
 # vllm                # GPU inference (tensor-parallel across 2x RTX 4090)
 # ollama              # local model runner (or plain HTTP to :11434)
 
 # --- guardrail judge (optional) ---
-# transformers>=4.44  # Llama Guard 3 / ShieldGemma / WildGuard
-# torch
+# torch>=2.4,<3        # Llama Guard 3 inference
+# transformers>=4.44,<6
+# accelerate>=0.34,<2 # required by the default device_map="auto" path
 
 # --- wrapped red-teaming engines (optional; install the ones you drive) ---
-# pyrit-ai            # Microsoft PyRIT (PyPI distribution is 'pyrit-ai')
+# pyrit==0.14.0       # deterministic PromptConverter transfer subset
 # garak
-# deepteam
+# deepteam==1.0.7     # deterministic standalone enhancement transfer subset
 # promptfoo           # (npm CLI; the wrapper shells out)
-# t3mp3st             # (Node CLI; the wrapper shells out in plan mode, N5)
-# inspect-ai petri    # Petri auditor (Inspect-native; the wrapper shells out)
+# t3mp3st             # prestarted pinned loopback planner; /api/general/plan only
+# inspect-ai petri    # Petri v3 auditor; native Inspect log import
 # nanogcg             # white-box GCG (needs transformers + a white-box HF model + GPU)
-# agentdojo           # agentic tool-use injection testbed
-# giskard             # giskard-oss scan (giskard-scan)
+# agentdojo==0.1.35   # native suite/environment traces; utility + security import
+# giskard[llm]==2.19.2 # stable v2 Model/ScanReport + RAGET contract; v3 is separate
 # easyjailbreak       # GPL-3.0 recipe zoo (subprocess-isolated)
 # h4rm3l              # composable attack-synthesis DSL
 # spikee              # (CLI; prompt-injection dataset generation)
 # ideator             # multimodal attack generation (VLM + diffusion; GPU)
-# purplellama         # Meta CyberSecEval attack suites
-# asb                 # Agent Security Bench (memory-poisoning / backdoor)
+# purplellama         # no package required for source-bound CyberSecEval identity replay
+# PyYAML>=6           # ASB pinned config + native AIOS result import
 # harmbench           # white-box optimizers + image attacks + classifier (GPU)
 
 # --- geo-privacy oracle (optional) ---

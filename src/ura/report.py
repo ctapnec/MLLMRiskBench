@@ -4,7 +4,8 @@ Turns aggregated :class:`~ura.data_models.EvalResult` records into a compact,
 human-readable *risk card*: a per-model, per-risk-category roll-up that pairs
 the safety axis (ASR / StrongREJECT severity) against the utility axis
 (over-refusal), so a reviewer can read the safety-utility trade-off at a glance
-and follow the standards taxonomy (OWASP / NIST / MLCommons) roll-up.
+and follow an informational standards crosswalk (OWASP / NIST / MLCommons).
+The crosswalk is not a certification or compliance determination.
 
 Pure Python + standard library only. ``risk_card`` emits GitHub-flavoured
 Markdown; ``to_html`` renders a list of cards into a single self-contained HTML
@@ -31,6 +32,13 @@ _MODEL_KEYS = ("model", "model_id", "target")
 # Substrings that identify the two axes of the safety-utility pair.
 _SAFETY_METRICS = ("asr", "attack_success", "strongreject", "isr", "injection")
 _UTILITY_METRICS = ("frr", "over_refusal", "over-refusal", "overrefusal")
+
+# A metric name containing this marks a live, response-conditioned (multi-turn)
+# estimand, whose population differs from the static single-turn safety metrics.
+_LIVE_MARK = "conversation"
+
+# Sentinel rendered when a value or CI is absent (an em dash, escaped).
+_ABSENT = "\u2014"
 
 _UNGROUPED = "overall"
 
@@ -87,16 +95,35 @@ def _taxonomy_line(category: RiskCategory) -> str:
 # Markdown risk card
 # --------------------------------------------------------------------------- #
 
-def risk_card(results: list[EvalResult], model_id: str) -> str:
+def risk_card(
+    results: list[EvalResult], model_id: str, *, include_untagged: bool | None = None
+) -> str:
     """Render a one-page Markdown risk card for ``model_id``.
 
     Results are grouped by risk category (via ``EvalResult.group_by``); each
     group lists its metrics with value, 95% CI (``ci_low..ci_high``) and ``n``,
-    followed by the safety-utility pair (ASR vs over-refusal) and, where known,
-    the external-standard taxonomy references. Results whose group targets a
-    different model are ignored so a shared result list can hold many models.
+    then the safety axes (kept separate for static single-turn vs live multi-turn
+    estimands) and the utility axis, each metric rendered under its own name, and
+    finally the external-standard taxonomy references.
+
+    Model scoping is explicit: a result carrying a model tag contributes only to
+    the matching model's card. Untagged results are treated as this model's only
+    when the whole ``results`` set carries no model tag (a single-model run whose
+    aggregate grouping omits the model key); when any result is model-tagged,
+    untagged results are ambiguous and excluded, so one model's numbers can never
+    be silently attributed to every model. Pass ``include_untagged`` to override.
     """
-    scoped = [r for r in results if _belongs_to_model(r, model_id)]
+    tagged_models = {tag for tag in (_model_tag(r) for r in results) if tag is not None}
+    if include_untagged is None:
+        include_untagged = not tagged_models
+    scoped: list[EvalResult] = []
+    for r in results:
+        tag = _model_tag(r)
+        if tag is None:
+            if include_untagged:
+                scoped.append(r)
+        elif tag == model_id:
+            scoped.append(r)
     generated = _dt.datetime.now(_dt.timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
 
     lines: list[str] = []
@@ -128,29 +155,44 @@ def risk_card(results: list[EvalResult], model_id: str) -> str:
             )
         lines.append("")
 
-        # Safety-utility pair.
-        safety = _pick(group, _SAFETY_METRICS)
-        utility = _pick(group, _UTILITY_METRICS)
-        lines.append(
-            "**Safety \u2013 utility:** "
-            f"attack success `{_fmt_num(safety.value if safety else None)}` "
-            "vs. over-refusal "
-            f"`{_fmt_num(utility.value if utility else None)}`"
-        )
-        lines.append("")
+        # Safety and utility axes: render every estimand under its own metric
+        # name (no first-substring collapse), keeping static single-turn and live
+        # multi-turn safety estimands separate because their populations differ.
+        safety = _axis_metrics(group, _SAFETY_METRICS)
+        static_safety = [r for r in safety if _LIVE_MARK not in r.metric.lower()]
+        live_safety = [r for r in safety if _LIVE_MARK in r.metric.lower()]
+        utility = _axis_metrics(group, _UTILITY_METRICS)
+        if static_safety:
+            lines.append(
+                "**Safety (static, single-turn):** "
+                + "; ".join(_metric_span(r) for r in static_safety)
+            )
+            lines.append("")
+        if live_safety:
+            lines.append(
+                "**Safety (live, multi-turn):** "
+                + "; ".join(_metric_span(r) for r in live_safety)
+            )
+            lines.append("")
+        if utility:
+            lines.append(
+                "**Utility (over-refusal):** "
+                + "; ".join(_metric_span(r) for r in utility)
+            )
+            lines.append("")
 
-        # Standards roll-up.
+        # Informational standards crosswalk (not a compliance determination).
         if category:
             tax = _taxonomy_line(category)
             if tax:
-                lines.append(f"_Standards:_ {tax}")
+                lines.append(f"_Informational standards crosswalk (not compliance):_ {tax}")
                 lines.append("")
 
-    # Frontier / systemic-risk footer.
+    # Informational systemic-risk lenses footer.
     lines.append("---")
     lines.append("")
     lines.append(
-        "_EU AI Act systemic-risk lenses: "
+        "_Informational EU AI Act systemic-risk lenses (not legal compliance): "
         + ", ".join(EU_AI_ACT_SYSTEMIC_RISKS)
         + "._"
     )
@@ -158,13 +200,22 @@ def risk_card(results: list[EvalResult], model_id: str) -> str:
     return "\n".join(lines)
 
 
-def _belongs_to_model(result: EvalResult, model_id: str) -> bool:
-    """True if the result targets ``model_id`` (or carries no model tag)."""
+def _model_tag(result: EvalResult) -> str | None:
+    """The model this result is scoped to, or ``None`` if it carries no model tag."""
     for key in _MODEL_KEYS:
         val = result.group_by.get(key)
         if val:
-            return str(val) == model_id
-    return True
+            return str(val)
+    return None
+
+
+def _metric_span(result: EvalResult) -> str:
+    """Render one metric under its real name with CI and, where known, population."""
+    ci = _fmt_ci(result)
+    ci_part = f" (CI {ci})" if ci != _ABSENT else ""
+    pop = result.provenance.get("population") or result.provenance.get("estimand")
+    pop_part = f" [{pop}]" if pop else ""
+    return f"{result.metric} `{_fmt_num(result.value)}`{ci_part}{pop_part}"
 
 
 def _group_by_risk(results: list[EvalResult]) -> dict[str, list[EvalResult]]:
@@ -182,12 +233,14 @@ def _ordered_labels(groups: dict[str, list[EvalResult]]) -> list[str]:
     return known + extra
 
 
-def _pick(group: list[EvalResult], needles: tuple[str, ...]) -> EvalResult | None:
-    """First result in ``group`` whose metric name matches one of ``needles``."""
-    for r in group:
-        if _is_metric(r.metric, needles):
-            return r
-    return None
+def _axis_metrics(
+    group: list[EvalResult], needles: tuple[str, ...]
+) -> list[EvalResult]:
+    """All results in ``group`` whose metric name matches ``needles`` (name-sorted)."""
+    return [
+        r for r in sorted(group, key=lambda x: x.metric.lower())
+        if _is_metric(r.metric, needles)
+    ]
 
 
 # --------------------------------------------------------------------------- #

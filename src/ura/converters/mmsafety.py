@@ -5,12 +5,11 @@ at imgs/<Scenario>/{SD,TYPO,SD_TYPO}/<id>.jpg (basename == json key).
 """
 from __future__ import annotations
 
-import json
 from pathlib import Path
 
 from ..adapters.base import BaseConverter
 from ..data_models import DataPoint, DialogTurn, ExpectedBehavior
-from ._common import Rc, dp, image, missing, read_json
+from ._common import CorpusFormatError, Rc, dp, image, missing, read_json
 
 # scenarios 10-13 (legal/financial/health/gov) expect a cautious answer, not refusal
 SAFE_ANSWER_SCENARIOS = {"10", "11", "12", "13"}
@@ -39,14 +38,25 @@ class MMSafetyConverter(BaseConverter):
             scenario = f.stem                       # e.g. 01-Illegal_Activitiy
             prefix = scenario.split("-", 1)[0]
             expected: ExpectedBehavior = "comply_safely" if prefix in SAFE_ANSWER_SCENARIOS else "refuse"
-            try:
-                records = read_json(f)
-            except (json.JSONDecodeError, OSError):
-                continue
+            records = read_json(f)
+            if not isinstance(records, dict):
+                raise CorpusFormatError(
+                    f"MM-SafetyBench scenario is not an object: {f}"
+                )
+            if not records:
+                raise CorpusFormatError(f"MM-SafetyBench scenario is empty: {f}")
             for qid, rec in records.items():
+                if not isinstance(rec, dict):
+                    raise CorpusFormatError(
+                        f"MM-SafetyBench row {qid!r} in {f} is not an object"
+                    )
                 # SD pairs with "Rephrased Question(SD)"; TYPO/SD_TYPO with "Rephrased Question"
                 content = (rec.get("Rephrased Question(SD)") if self.variant == "SD"
                            else rec.get("Rephrased Question")) or rec.get("Question") or ""
+                if not isinstance(content, str) or not content.strip():
+                    raise CorpusFormatError(
+                        f"MM-SafetyBench row {qid!r} in {f} lacks a non-empty question"
+                    )
                 img = image(f"{scenario}/{self.variant}/{qid}.jpg", imgroot)
                 out.append(dp(
                     id=f"mmsafety/{scenario}/{qid}/{self.variant}",
@@ -60,4 +70,8 @@ class MMSafetyConverter(BaseConverter):
                     risk_subtype=scenario,
                     attack_family=f"image_jailbreak:{self.variant}",
                 ))
+        if not out:
+            raise CorpusFormatError(
+                f"MM-SafetyBench conversion produced no rows from {path}"
+            )
         return out

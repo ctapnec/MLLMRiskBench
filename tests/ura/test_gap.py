@@ -8,7 +8,7 @@ import pytest
 from ura.adapters.base import AttackBudget
 from ura.adapters.replay import ReplayAttacker
 from ura.converters import synth_corpus
-from ura.data_models import DataPoint, DialogTurn, Judgment, Response, RiskCategory
+from ura.data_models import DataPoint, DialogTurn, Judgment, Response
 from ura.judges.base import BaseJudge, JudgeCascade
 from ura.judges.rules import RuleJudge
 from ura.report import risk_card  # noqa: F401  (import sanity)
@@ -26,7 +26,13 @@ class _StubGuard(BaseJudge):
 
     def judge(self, dp: DataPoint, response: Response) -> Judgment:
         label = "violation" if self.flag else "safe"
-        return Judgment(attempt_id="x", judge=self.name, label=label, score=1.0 if self.flag else 0.0)
+        return Judgment(
+            attempt_id=response.attempt_id,
+            judge=self.name,
+            label=label,
+            score=1.0 if self.flag else 0.0,
+            raw={"confidence": 1.0},
+        )
 
 
 def _harmful_dialog():
@@ -81,10 +87,11 @@ def test_t3mp3st_registered_and_guarded():
 
     a = get_attacker("t3mp3st")
     assert isinstance(a, T3MP3STAttacker) and a.name == "t3mp3st"
-    # offline: the CLI is absent, so plan generation must raise a clear RuntimeError
-    guarded = T3MP3STAttacker(cli="t3mp3st-not-installed-xyz")
+    # A live call is inadmissible without an exact upstream commit and declared
+    # source model; generation fails before any loopback request is attempted.
+    guarded = T3MP3STAttacker()
     dp = synth_corpus(1)[0]
-    with pytest.raises(RuntimeError):
+    with pytest.raises(RuntimeError, match="upstream_revision"):
         list(guarded.generate(dp, AttackBudget(max_queries=2)))
 
 
@@ -103,9 +110,9 @@ def test_petri_registered_and_guarded():
 def test_siuo_converter_registered():
     from pathlib import Path
 
-    from ura.converters import SIUOConverter, get_converter
+    from ura.converters import CorpusNotFoundError, SIUOConverter, get_converter
 
     c = get_converter("siuo")
     assert isinstance(c, SIUOConverter) and c.name == "siuo"
-    # robust to a missing path (returns [] rather than raising), like the others
-    assert c.parse(Path("does-not-exist.json")) == []
+    with pytest.raises(CorpusNotFoundError):
+        c.parse(Path("does-not-exist.json"))

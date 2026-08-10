@@ -31,21 +31,21 @@ from .spikee import SpikeeAttacker
 from .t3mp3st import T3MP3STAttacker
 
 
-def get_attacker(name: str) -> BaseAttacker:
+def get_attacker(name: str, **config: object) -> BaseAttacker:
     """Resolve an attacker adapter by name.
 
     Handles the pure-python ``replay`` / ``crescendo`` adapters (imported lazily
-    from sibling modules) and the four engine wrappers.
+    from sibling modules) and every registered external-engine integration.
     """
     key = name.strip().lower()
     if key == "replay":
         from .replay import ReplayAttacker
 
-        return ReplayAttacker()
+        return ReplayAttacker(**config)
     if key == "crescendo":
         from .crescendo import CrescendoAttacker
 
-        return CrescendoAttacker()
+        return CrescendoAttacker(**config)
     engines: dict[str, type[BaseAttacker]] = {
         "pyrit": PyRITAttacker,
         "garak": GarakAttacker,
@@ -67,7 +67,7 @@ def get_attacker(name: str) -> BaseAttacker:
         "harmbench": HarmBenchAttacker,
     }
     if key in engines:
-        return engines[key]()
+        return engines[key](**config)
     raise ValueError(
         f"unknown attacker {name!r}; "
         f"choose from replay, crescendo, {', '.join(engines)}"

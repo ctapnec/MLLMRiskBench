@@ -10,7 +10,7 @@ from pathlib import Path
 
 from ..adapters.base import BaseConverter
 from ..data_models import DataPoint, DialogTurn
-from ._common import Rc, dp, image, missing, read_json, read_jsonl
+from ._common import CorpusFormatError, Rc, dp, image, missing, read_json, read_jsonl
 
 CATEGORY_MAP = {
     "Illegal Activity": Rc.LEGALITY,
@@ -32,25 +32,43 @@ class VLSBenchConverter(BaseConverter):
         records = read_jsonl(path) if path.suffix == ".jsonl" else read_json(path)
         if isinstance(records, dict):
             records = records.get("data", [])
+        if not isinstance(records, list):
+            raise CorpusFormatError(f"VLSBench source is not a record list: {path}")
         out: list[DataPoint] = []
-        for rec in records:
+        for i, rec in enumerate(records):
+            if not isinstance(rec, dict):
+                raise CorpusFormatError(
+                    f"VLSBench row {i} in {path} is not an object"
+                )
+            instruction = rec.get("instruction")
+            image_path = rec.get("image_path")
+            if not isinstance(instruction, str) or not instruction.strip():
+                raise CorpusFormatError(
+                    f"VLSBench row {i} in {path} has no non-empty instruction"
+                )
+            if not isinstance(image_path, str) or not image_path.strip():
+                raise CorpusFormatError(
+                    f"VLSBench row {i} in {path} has no image_path"
+                )
             cat = rec.get("category") or ""
             sub = rec.get("sub_category") or ""
             risk = CATEGORY_MAP.get(cat, Rc.LEGALITY)
             if "cyber" in sub.lower():
                 risk = Rc.CYBERSEC
-            media = [image(rec.get("image_path") or "", root)] if rec.get("image_path") else []
+            media = [image(image_path, root)]
             out.append(dp(
-                id=f"vlsbench:{rec.get('instruction_id')}",
+                id=f"vlsbench:{rec.get('instruction_id', rec.get('id', i))}",
                 source="vlsbench",
                 modalities=["text", "image"],
                 risk=risk,
                 expected="refuse",
-                dialog=[DialogTurn(role="user", content=rec.get("instruction") or "", media=media)],
-                payload_text=rec.get("instruction"),
+                dialog=[DialogTurn(role="user", content=instruction, media=media)],
+                payload_text=instruction,
                 media=media,
                 risk_subtype=sub,
                 attack_family="visual_leakage",
                 meta={"safety_reason": rec.get("safety_reason")},
             ))
+        if not out:
+            raise CorpusFormatError(f"VLSBench conversion produced no rows from {path}")
         return out

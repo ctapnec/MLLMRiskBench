@@ -30,12 +30,14 @@ RuntimeError when h4rm3l is missing (offline).
 """
 from __future__ import annotations
 
+import hashlib
 import re
 from collections.abc import Iterable
+from importlib import metadata
 
 from ..data_models import Attempt, DataPoint
 from .base import AttackBudget, BaseAttacker
-from ._engine_common import _attempt, _require
+from ._engine_common import ExternalEngineOutputError, _attempt, _require
 
 # Default composable attack programs, expressed in the h4rm3l DSL. Each is built
 # ONLY from pure string-transform primitives so it renders fully offline with
@@ -76,17 +78,36 @@ class H4rm3lAttacker(BaseAttacker):
         programs: list[str] | None = None,
         syntax_version: int = 2,
         synthesis_model: str = "gpt-3.5-turbo",
+        engine_version: str = "0.2.4",
     ) -> None:
         # DSL programs whose rendered adversarial prompts we harvest.
-        self.programs = list(programs) if programs else list(_DEFAULT_PROGRAMS)
+        self.programs = list(_DEFAULT_PROGRAMS) if programs is None else list(programs)
+        if not self.programs or any(
+            not isinstance(program, str) or not program.strip()
+            for program in self.programs
+        ):
+            raise ValueError("h4rm3l programs must contain non-blank DSL strings")
+        if len(set(self.programs)) != len(self.programs):
+            raise ValueError("h4rm3l configured DSL programs must be unique")
         # Decorator syntax version (h4rm3l's current DSL is v2).
         self.syntax_version = syntax_version
+        if syntax_version not in {1, 2}:
+            raise ValueError("h4rm3l syntax_version must be 1 or 2")
         # Names the compilation namespace only; generation-only, no live model call.
         self.synthesis_model = synthesis_model
+        if not isinstance(synthesis_model, str) or not synthesis_model.strip():
+            raise ValueError("h4rm3l synthesis_model namespace must be non-blank")
+        if not isinstance(engine_version, str) or not engine_version.strip():
+            raise ValueError("h4rm3l engine_version must be non-blank")
+        self.engine_version = engine_version.strip()
 
     def generate(self, datapoint: DataPoint, budget: AttackBudget) -> Iterable[Attempt]:
         seed = datapoint.payload_text or datapoint.payload_code or ""
-        rendered = self._render_programs(seed, max(1, budget.max_queries))
+        if not seed.strip():
+            raise ExternalEngineOutputError("h4rm3l received a blank seed")
+        installed_version, rendered = self._render_programs(
+            seed, max(1, budget.max_queries)
+        )
         for i, (program, prompt) in enumerate(rendered):
             yield _attempt(
                 datapoint,
@@ -97,43 +118,82 @@ class H4rm3lAttacker(BaseAttacker):
                 seed=budget.seed,
                 params={
                     "program": program,
+                    "program_sha256": hashlib.sha256(program.encode("utf-8")).hexdigest(),
                     "syntax_version": self.syntax_version,
-                    "mode": "generate",
+                    "engine_version": installed_version,
+                    "mode": "offline_dsl_render",
+                    "attack_semantics": "configured_program_application",
+                    "program_synthesis_executed": False,
+                    "target_feedback_used": False,
+                    "credentials_supplied_to_h4rm3l": False,
+                    "compilation_namespace_model": self.synthesis_model,
                 },
             )
 
-    def _render_programs(self, seed: str, n: int) -> list[tuple[str, str]]:
+    def _render_programs(
+        self, seed: str, n: int
+    ) -> tuple[str, list[tuple[str, str]]]:
         """Compile each h4rm3l program and apply it to ``seed`` (lazy; requires
         h4rm3l). Compiled with ``credentials=None`` so only pure string-transform
         primitives run and the bandit few-shot synthesizer is never invoked; never
         drives a live attacker-vs-target scoring loop (harness safety principle N5).
 
-        Per-program compile/apply failures fall back to the raw seed so a single bad
-        program never aborts generation; a missing h4rm3l install raises a clear
-        RuntimeError via :func:`_require`.
+        Every requested program must compile and emit a non-blank transformation.
+        A partial survivor set would silently change the configured attack cell,
+        so one failed or identity program fails the whole cell closed. A missing
+        install raises a clear RuntimeError via :func:`_require`.
         """
         from argparse import Namespace
 
         mod = _require("h4rm3l.decorators", "H4rm3lAttacker", "h4rm3l")
+        installed_version = getattr(mod, "__version__", None)
+        if not isinstance(installed_version, str) or not installed_version.strip():
+            try:
+                installed_version = metadata.version("h4rm3l")
+            except metadata.PackageNotFoundError as exc:
+                raise ExternalEngineOutputError(
+                    "h4rm3l installed package version cannot be established"
+                ) from exc
+        if installed_version != self.engine_version:
+            raise ExternalEngineOutputError(
+                "h4rm3l version mismatch: "
+                f"expected {self.engine_version!r}, observed {installed_version!r}"
+            )
         # credentials=None keeps h4rm3l OFFLINE: no model-prompting interface is
         # initialised, so the synthesizer / model-backed decorators never fire.
         args = Namespace(
             decorator_syntax_version=self.syntax_version,
             synthesis_model_name=self.synthesis_model,
         )
+        requested = self.programs[:n]
+        if not requested:
+            raise ExternalEngineOutputError("h4rm3l has no requested DSL programs")
         out: list[tuple[str, str]] = []
-        for program in self.programs[:n]:
-            prompt = seed
+        for index, program in enumerate(requested):
             try:
                 attack = mod.make_prompt_decorator(program, credentials=None, args=args)
-                if attack is not None:
-                    result = attack(seed)
-                    if result:
-                        prompt = str(result)
-            except Exception:  # noqa: BLE001 - best-effort per-program rendering
-                prompt = seed
-            out.append((program, prompt))
-        return out or [("IdentityDecorator()", seed)]
+                if attack is None:
+                    raise ExternalEngineOutputError(
+                        f"h4rm3l DSL program {index} compiled to no decorator"
+                    )
+                result = attack(seed)
+            except ExternalEngineOutputError:
+                raise
+            except Exception as exc:  # noqa: BLE001 - external DSL boundary
+                raise ExternalEngineOutputError(
+                    f"h4rm3l DSL program {index} failed during compile/apply "
+                    f"({type(exc).__name__})"
+                ) from exc
+            if not isinstance(result, str) or not result.strip():
+                raise ExternalEngineOutputError(
+                    f"h4rm3l DSL program {index} emitted no prompt"
+                )
+            if result == seed:
+                raise ExternalEngineOutputError(
+                    f"h4rm3l DSL program {index} emitted the unchanged seed"
+                )
+            out.append((program, result))
+        return installed_version, out
 
     @staticmethod
     def _label(program: str) -> str:

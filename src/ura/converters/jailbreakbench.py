@@ -18,8 +18,8 @@ origin (Original / TDC-HarmBench / AdvBench).
 Point ``URA_JAILBREAKBENCH_PATH`` at either CSV; the benign subset is detected
 from the file name (``"benign"`` in the stem) and its rows carry
 ``expected="safe_answer"`` (over-refusal probes), while harmful rows carry
-``expected="refuse"``. A JSON/JSONL export is also tolerated. Robust to a missing
-path (returns []). Mirrors advbench.py / strongreject.py CSV reading.
+``expected="refuse"``. A JSON/JSONL export is also tolerated. Missing inputs
+raise a typed corpus error.
 """
 from __future__ import annotations
 
@@ -27,7 +27,7 @@ from pathlib import Path
 
 from ..adapters.base import BaseConverter
 from ..data_models import DataPoint, DialogTurn
-from ._common import Rc, dp, missing, read_csv, read_json, read_jsonl
+from ._common import CorpusFormatError, Rc, dp, missing, read_csv, read_json, read_jsonl
 
 # JBB categories (OpenAI usage policies) -> internal taxonomy. Default LEGALITY
 # when unmapped, matching the other harmful-behavior CSV converters.
@@ -59,14 +59,33 @@ class JailbreakBenchConverter(BaseConverter):
         else:
             records = read_csv(path)
         if isinstance(records, dict):
-            records = records.get("data", records.get("behaviors", []))
+            if "data" in records:
+                records = records["data"]
+            elif "behaviors" in records:
+                records = records["behaviors"]
+            elif any(key in records for key in ("Goal", "goal", "prompt")):
+                records = [records]
+            else:
+                raise CorpusFormatError(
+                    f"JailbreakBench object has no data or behaviors records: {path}"
+                )
+        if not isinstance(records, list):
+            raise CorpusFormatError(
+                f"JailbreakBench source is not a record list: {path}"
+            )
         # Harmful vs benign is a subset (separate file), not a per-row column.
         benign = "benign" in path.stem.lower()
         out: list[DataPoint] = []
         for i, rec in enumerate(records):
             if not isinstance(rec, dict):
-                continue
+                raise CorpusFormatError(
+                    f"JailbreakBench row {i} in {path} is not an object"
+                )
             goal = rec.get("Goal") or rec.get("goal") or rec.get("prompt") or ""
+            if not isinstance(goal, str) or not goal.strip():
+                raise CorpusFormatError(
+                    f"JailbreakBench row {i} in {path} lacks a non-empty goal"
+                )
             target = rec.get("Target") or rec.get("target")
             behavior = rec.get("Behavior") or rec.get("behavior")
             cat = str(rec.get("Category") or rec.get("category") or "").strip()
@@ -95,4 +114,8 @@ class JailbreakBenchConverter(BaseConverter):
                     "citation": "jailbreakbench-2024",
                 },
             ))
+        if not out:
+            raise CorpusFormatError(
+                f"JailbreakBench conversion produced no rows from {path}"
+            )
         return out

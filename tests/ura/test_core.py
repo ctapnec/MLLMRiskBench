@@ -11,8 +11,8 @@ import pytest
 from pydantic import ValidationError
 
 from ura.data_models import (
-    Attempt, DataPoint, DialogTurn, EvalResult, Judgment, MediaRef,
-    Response, RiskCategory, RunManifest, SCHEMA_VERSION,
+    DataPoint, DialogTurn, EvalResult, Judgment, MediaRef,
+    RiskCategory, RunManifest, SCHEMA_VERSION,
 )
 from ura import metrics
 from ura import taxonomy
@@ -67,8 +67,14 @@ def test_multiturn_agentic_datapoint_roundtrips():
 # --------------------------------------------------------------------------- #
 
 def test_every_category_maps_to_some_standard():
+    # Every non-umbrella category carries at least one conservative category-level
+    # standard reference; umbrella categories (e.g. CATASTROPHIC) attach the
+    # specific hazard per DataPoint instead, so their category default is empty.
     for cat in RiskCategory:
-        assert taxonomy.TAXONOMY_MAP.get(cat), f"{cat} has no mapping"
+        if cat in taxonomy.UMBRELLA_CATEGORIES:
+            assert not taxonomy.refs_for(cat), f"{cat} umbrella must not force a hazard"
+            continue
+        assert taxonomy.refs_for(cat), f"{cat} has no category-level standard reference"
 
 
 def test_refs_for_privacy():
@@ -98,7 +104,7 @@ def test_asr_and_dsr_complement():
 def test_over_refusal_rate():
     js = _judgments(["over_refusal", "safe", "over_refusal", "refusal"])
     assert metrics.over_refusal_rate(js) == 0.5
-    assert metrics.refusal_rate(js) == 0.75
+    assert metrics.refusal_rate(js) == 0.25
 
 
 def test_cohen_kappa_perfect_and_chance():

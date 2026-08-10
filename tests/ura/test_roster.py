@@ -1,5 +1,5 @@
 """Roster tests: the full attacker + converter registries resolve, guard offline,
-and are robust to a missing corpus path. Locks the expanded engine/framework set
+and fail closed on a missing corpus path. Locks the expanded engine/framework set
 against silent regressions (an engine dropped from get_attacker, a converter that
 crashes on a missing file, a wrapped engine that imports a heavy dep at module load).
 """
@@ -11,7 +11,7 @@ import pytest
 
 from ura.adapters.base import AttackBudget
 from ura.adapters.engines import get_attacker
-from ura.converters import get_converter, synth_corpus
+from ura.converters import CorpusNotFoundError, get_converter, synth_corpus
 from ura.converters import _CONVERTERS
 
 # The wrapped engines require a third-party library or CLI; offline they must raise
@@ -48,11 +48,13 @@ def test_wrapped_engine_guarded_offline(name: str):
         list(attacker.generate(dp, AttackBudget(max_queries=2)))
 
 
-def test_converter_roster_resolves_and_is_missing_path_safe():
+def test_converter_roster_resolves_and_fails_closed_on_missing_path():
     assert set(_CONVERTERS) == EXPECTED_CONVERTERS
     for name in EXPECTED_CONVERTERS:
         conv = get_converter(name)
         assert conv.name == name
-        # a missing corpus path returns [] rather than raising (dependency-tolerant)
-        assert conv.parse(Path(f"does-not-exist-{name}.json")) == []
-        assert conv.parse(Path(f"does-not-exist-{name}.csv")) == []
+        # Missing data is a measurement failure, not an empty benchmark cell.
+        with pytest.raises(CorpusNotFoundError):
+            conv.parse(Path(f"does-not-exist-{name}.json"))
+        with pytest.raises(CorpusNotFoundError):
+            conv.parse(Path(f"does-not-exist-{name}.csv"))

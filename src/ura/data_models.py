@@ -9,12 +9,22 @@ Pure Python + Pydantic v2 (no framework lock-in). Every artifact validates here.
 """
 from __future__ import annotations
 
+import math
 from enum import Enum
 from typing import Any, Literal, Optional
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 SCHEMA_VERSION = "1.0"
+
+_HEX = frozenset("0123456789abcdef")
+
+
+def _nonblank(value: str, label: str) -> str:
+    """Fail-closed identifier check: a required string must not be blank."""
+    if not isinstance(value, str) or not value.strip():
+        raise ValueError(f"{label} must be a non-blank string")
+    return value
 
 # --------------------------------------------------------------------------- #
 # Enumerations
@@ -67,6 +77,25 @@ class MediaRef(BaseModel):
             raise ValueError("MediaRef.modality must be a non-text modality")
         return v
 
+    @field_validator("sha256")
+    @classmethod
+    def _valid_sha256(cls, v: Optional[str]) -> Optional[str]:
+        if v is None:
+            return None
+        normalized = v.lower()
+        # Preserve schema-level compatibility with legacy abbreviated fixture
+        # digests; Runner preflight requires the full 64 characters before an
+        # artifact can enter an executable run.
+        if not normalized or any(c not in "0123456789abcdef" for c in normalized):
+            raise ValueError("MediaRef.sha256 must be hexadecimal")
+        return normalized
+
+    @model_validator(mode="after")
+    def _exactly_one_source(self) -> "MediaRef":
+        if bool(self.path) == bool(self.uri):
+            raise ValueError("MediaRef must contain exactly one of path or uri")
+        return self
+
 
 class ToolCall(BaseModel):
     name: str
@@ -105,16 +134,23 @@ class DataPoint(BaseModel):
         description="external standard IDs, e.g. ['OWASP:LLM01', 'NIST:InformationSecurity']",
     )
     attack_family: Optional[str] = None           # e.g. 'crescendo', 'typographic'
-    turns: int = 1
+    turns: int = Field(default=1, ge=1)
     is_agentic: bool = False
     schema_version: str = SCHEMA_VERSION
     meta: dict[str, Any] = Field(default_factory=dict)
+
+    @field_validator("id", "source")
+    @classmethod
+    def _dp_ids_nonblank(cls, v: str, info) -> str:
+        return _nonblank(v, f"DataPoint.{info.field_name}")
 
     @field_validator("modalities")
     @classmethod
     def _non_empty(cls, v: list[str]) -> list[str]:
         if not v:
             raise ValueError("DataPoint.modalities must not be empty")
+        if len(set(v)) != len(v):
+            raise ValueError("DataPoint.modalities must not contain duplicates")
         return v
 
 
@@ -129,10 +165,17 @@ class Attempt(BaseModel):
     datapoint_id: str
     attacker: str                                 # adapter name
     strategy: Optional[str] = None                # e.g. 'TAP', 'replay'
-    turn_index: int = 0
+    target: Optional[str] = None                  # execution target, stamped by Runner
+    turn_index: int = Field(default=0, ge=0)
     rendered_input: list[DialogTurn]
     seed: Optional[int] = None
     params: dict[str, Any] = Field(default_factory=dict)
+    run_id: Optional[str] = None
+
+    @field_validator("id", "datapoint_id", "attacker")
+    @classmethod
+    def _attempt_ids_nonblank(cls, v: str, info) -> str:
+        return _nonblank(v, f"Attempt.{info.field_name}")
 
 
 class Response(BaseModel):
@@ -140,11 +183,22 @@ class Response(BaseModel):
 
     attempt_id: str
     target: str                                   # target model id
-    output_turns: list[DialogTurn]
+    output_turns: list[DialogTurn]                # may be empty for a typed provider refusal
     tool_trace: list[DialogTurn] = Field(default_factory=list)
     latency_ms: Optional[float] = None
     tokens: Optional[dict[str, int]] = None
     raw: dict[str, Any] = Field(default_factory=dict)
+    run_id: Optional[str] = None
+
+    # Note: output_turns is intentionally allowed to be empty. A typed provider
+    # refusal / empty / truncation is a valid terminal state that carries no
+    # assistant turn; the Runner validates that state centrally via
+    # raw.provider_refusal, so it must not be rejected at the schema boundary.
+
+    @field_validator("attempt_id", "target")
+    @classmethod
+    def _response_ids_nonblank(cls, v: str, info) -> str:
+        return _nonblank(v, f"Response.{info.field_name}")
 
 
 class Judgment(BaseModel):
@@ -156,6 +210,12 @@ class Judgment(BaseModel):
     score: float = Field(ge=0.0, le=1.0, description="graded severity in [0,1]")
     rationale: Optional[str] = None
     raw: dict[str, Any] = Field(default_factory=dict)
+    run_id: Optional[str] = None
+
+    @field_validator("attempt_id", "judge")
+    @classmethod
+    def _judgment_ids_nonblank(cls, v: str, info) -> str:
+        return _nonblank(v, f"Judgment.{info.field_name}")
 
 
 # --------------------------------------------------------------------------- #
@@ -170,9 +230,32 @@ class EvalResult(BaseModel):
     value: float
     ci_low: Optional[float] = None
     ci_high: Optional[float] = None
-    n: int = 0
+    n: int = Field(default=0, ge=0)
     group_by: dict[str, str] = Field(default_factory=dict)  # {'model':..., 'risk':...}
     provenance: dict[str, Any] = Field(default_factory=dict)
+    run_id: Optional[str] = None
+
+    @field_validator("id", "metric")
+    @classmethod
+    def _result_ids_nonblank(cls, v: str, info) -> str:
+        return _nonblank(v, f"EvalResult.{info.field_name}")
+
+    @field_validator("value", "ci_low", "ci_high")
+    @classmethod
+    def _finite(cls, v: Optional[float], info) -> Optional[float]:
+        if v is not None and not math.isfinite(v):
+            raise ValueError(f"EvalResult.{info.field_name} must be a finite number")
+        return v
+
+    @model_validator(mode="after")
+    def _coherent_ci(self) -> "EvalResult":
+        if self.ci_low is not None and self.ci_high is not None:
+            if self.ci_low > self.ci_high:
+                raise ValueError("EvalResult.ci_low must be <= ci_high")
+            tol = 1e-9
+            if not (self.ci_low - tol <= self.value <= self.ci_high + tol):
+                raise ValueError("EvalResult.value must lie within [ci_low, ci_high]")
+        return self
 
 
 class RunManifest(BaseModel):
@@ -189,6 +272,32 @@ class RunManifest(BaseModel):
     started_at: str = ""                          # ISO-8601, injected by the runner
     env: dict[str, Any] = Field(default_factory=dict)
     schema_version: str = SCHEMA_VERSION
+
+    @field_validator("run_id", "code_version")
+    @classmethod
+    def _manifest_ids_nonblank(cls, v: str, info) -> str:
+        return _nonblank(v, f"RunManifest.{info.field_name}")
+
+    @field_validator("seeds", "models", "adapters", "judges")
+    @classmethod
+    def _no_duplicate_lists(cls, v: list, info) -> list:
+        if len(set(v)) != len(v):
+            raise ValueError(f"RunManifest.{info.field_name} must not contain duplicates")
+        return v
+
+    @field_validator("dataset_hashes")
+    @classmethod
+    def _hex_dataset_hashes(cls, v: dict[str, str]) -> dict[str, str]:
+        for key, digest in v.items():
+            if (
+                not isinstance(digest, str)
+                or len(digest) != 64
+                or any(c not in _HEX for c in digest.lower())
+            ):
+                raise ValueError(
+                    f"RunManifest.dataset_hashes[{key!r}] must be a 64-char SHA-256 hex digest"
+                )
+        return v
 
 
 __all__ = [

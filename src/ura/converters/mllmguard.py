@@ -11,8 +11,8 @@ dimension whose records carry ``file_name`` (an image path such as
 ``imgs/0957.webp``, resolved against a sibling ``imgs/`` directory), ``Prompt``
 (the text), ``Jailbreak Type``, ``Lan`` (language code), ``Category I`` (the
 safety dimension) and ``Category II`` (the fine-grained subtype). Point
-``URA_MLLMGUARD_PATH`` at a per-dimension CSV/JSON/JSONL export. Robust to a
-missing path (returns []).
+``URA_MLLMGUARD_PATH`` at a per-dimension CSV/JSON/JSONL export. Missing inputs
+or referenced images fail closed.
 """
 from __future__ import annotations
 
@@ -20,7 +20,7 @@ from pathlib import Path
 
 from ..adapters.base import BaseConverter
 from ..data_models import DataPoint, DialogTurn, ExpectedBehavior
-from ._common import Rc, dp, image, missing, read_csv, read_json, read_jsonl
+from ._common import CorpusFormatError, Rc, dp, image, missing, read_csv, read_json, read_jsonl
 
 # MLLMGuard dimension / "Category I" -> internal taxonomy (default TOXICITY).
 CATEGORY_MAP = {
@@ -59,15 +59,37 @@ class MLLMGuardConverter(BaseConverter):
         else:
             records = read_json(path)
         if isinstance(records, dict):
-            records = records.get("data", records.get("records", []))
+            if "data" in records:
+                records = records["data"]
+            elif "records" in records:
+                records = records["records"]
+            elif any(
+                key in records
+                for key in ("Prompt", "prompt", "question", "instruction")
+            ):
+                records = [records]
+            else:
+                raise CorpusFormatError(
+                    f"MLLMGuard object has no data or records list: {path}"
+                )
+        if not isinstance(records, list):
+            raise CorpusFormatError(f"MLLMGuard source is not a record list: {path}")
         # the dimension is sometimes only recoverable from the per-dimension filename
         split = path.stem.lower().replace("_", "-")
         out: list[DataPoint] = []
         for i, rec in enumerate(records):
             if not isinstance(rec, dict):
-                continue
+                raise CorpusFormatError(f"MLLMGuard row {i} in {path} is not an object")
             text = rec.get("Prompt") or rec.get("prompt") or rec.get("question") or rec.get("instruction")
             img_name = rec.get("file_name") or rec.get("image") or rec.get("image_path")
+            if not isinstance(text, str) or not text.strip():
+                raise CorpusFormatError(
+                    f"MLLMGuard row {i} in {path} lacks a non-empty prompt"
+                )
+            if not isinstance(img_name, str) or not img_name.strip():
+                raise CorpusFormatError(
+                    f"MLLMGuard row {i} in {path} lacks its required image"
+                )
             cat1 = str(rec.get("Category I") or rec.get("category_1") or rec.get("category") or rec.get("dimension") or "").strip()
             cat2 = rec.get("Category II") or rec.get("category_2") or rec.get("sub_category")
             jb = rec.get("Jailbreak Type") or rec.get("jailbreak_type")
@@ -77,7 +99,7 @@ class MLLMGuardConverter(BaseConverter):
             risk = CATEGORY_MAP.get(dim, CATEGORY_MAP.get(split, Rc.TOXICITY))
             expected: ExpectedBehavior = EXPECTED_MAP.get(dim, EXPECTED_MAP.get(split, "refuse"))
 
-            media = [image(str(img_name), root)] if img_name else []
+            media = [image(img_name, root)]
 
             tag = f"{dim} {split}"
             if "position" in tag:
@@ -107,4 +129,6 @@ class MLLMGuardConverter(BaseConverter):
                     "dimension": dim or None,
                 },
             ))
+        if not out:
+            raise CorpusFormatError(f"MLLMGuard conversion produced no rows from {path}")
         return out

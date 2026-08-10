@@ -1,6 +1,8 @@
 """Plugin-layer tests (offline, pydantic + stdlib only)."""
 from __future__ import annotations
 
+import pytest
+
 from ura.adapters.base import AttackBudget
 from ura.adapters.crescendo import CrescendoAttacker
 from ura.adapters.engines import get_attacker
@@ -42,12 +44,18 @@ def test_replay_yields_one_attempt_per_datapoint():
 
 def test_crescendo_respects_turn_budget():
     dp = synth_corpus(3)[0]
-    budget = AttackBudget(max_turns=4, seed=1)
+    budget = AttackBudget(max_queries=4, max_turns=4, seed=1)
     attempts = list(CrescendoAttacker().generate(dp, budget))
     assert 1 <= len(attempts) <= 4
     # turn_index is monotonic
     idxs = [a.turn_index for a in attempts]
     assert idxs == sorted(idxs)
+
+
+def test_crescendo_rejects_opener_only_budget():
+    dp = synth_corpus(1)[0]
+    with pytest.raises(ValueError, match="at least two"):
+        list(CrescendoAttacker().generate(dp, AttackBudget()))
 
 
 def test_mock_target_offline():

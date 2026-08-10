@@ -1,0 +1,69 @@
+[build-system]
+requires = ["setuptools>=75,<82", "wheel>=0.44,<1"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "ura-bench"
+version = "0.1.0"
+description = "Research harness for policy-conditioned LLM and MLLM risk evaluation"
+readme = "README.md"
+requires-python = ">=3.12,<3.14"
+license = { file = "LICENSE" }
+authors = [{ name = "Georgi Nenkov Georgiev" }]
+classifiers = [
+  "Development Status :: 3 - Alpha",
+  "License :: OSI Approved :: Apache Software License",
+  "Programming Language :: Python :: 3.12",
+  "Topic :: Scientific/Engineering :: Artificial Intelligence",
+  "Topic :: Security",
+]
+dependencies = ["pydantic>=2.7,<3"]
+
+[project.optional-dependencies]
+dev = [
+  "pytest>=8,<9",
+  "ruff>=0.15,<1",
+]
+analysis = [
+  "matplotlib>=3.8,<4",
+  "pandas>=2.2,<3",
+  "pyarrow>=16,<24",
+]
+api = [
+  "anthropic>=0.108,<1",
+  "openai>=2.45,<3",
+  "google-genai>=1,<2",
+]
+guardrail = [
+  "torch>=2.4,<3",
+  "transformers>=4.44,<6",
+  "accelerate>=0.34,<2",
+]
+giskard-v2 = ["giskard[llm]==2.19.2"]
+
+[project.scripts]
+ura = "ura.cli:main"
+
+[tool.setuptools]
+package-dir = { "" = "src" }
+
+[tool.setuptools.packages.find]
+where = ["src"]
+include = ["ura*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests/ura"]
+addopts = "-ra"
+asyncio_default_fixture_loop_scope = "function"
+
+[tool.ruff]
+target-version = "py312"
+line-length = 100
+extend-exclude = [
+  ".tmp-*", ".pytest-*", ".smoke-*", ".audit-upstream-*", ".ruff_cache", "runs",
+]
+
+[tool.ruff.lint]
+# The real-error ruleset (undefined names, unused imports, syntax/runtime bugs);
+# style-only column width is deliberately not enforced on research code.
+select = ["E4", "E7", "E9", "F"]
