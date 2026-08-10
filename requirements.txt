@@ -33,6 +33,16 @@ google-generativeai>=0.7
 # promptfoo           # (npm CLI; the wrapper shells out)
 # t3mp3st             # (Node CLI; the wrapper shells out in plan mode, N5)
 # inspect-ai petri    # Petri auditor (Inspect-native; the wrapper shells out)
+# nanogcg             # white-box GCG (needs transformers + a white-box HF model + GPU)
+# agentdojo           # agentic tool-use injection testbed
+# giskard             # giskard-oss scan (giskard-scan)
+# easyjailbreak       # GPL-3.0 recipe zoo (subprocess-isolated)
+# h4rm3l              # composable attack-synthesis DSL
+# spikee              # (CLI; prompt-injection dataset generation)
+# ideator             # multimodal attack generation (VLM + diffusion; GPU)
+# purplellama         # Meta CyberSecEval attack suites
+# asb                 # Agent Security Bench (memory-poisoning / backdoor)
+# harmbench           # white-box optimizers + image attacks + classifier (GPU)
 
 # --- geo-privacy oracle (optional) ---
 # haversine

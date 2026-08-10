@@ -18,7 +18,8 @@ from ura.converters import _CONVERTERS
 # a clear error at generate() time, never import their dep at module load.
 WRAPPED_ENGINES = ["pyrit", "garak", "deepteam", "promptfoo", "t3mp3st",
                    "petri", "fuzzyai", "nanogcg", "autodan", "agentdojo", "giskard",
-                   "easyjailbreak"]
+                   "easyjailbreak", "h4rm3l", "spikee", "ideator", "purplellama",
+                   "asb", "harmbench"]
 NATIVE_ATTACKERS = ["replay", "crescendo"]
 
 EXPECTED_CONVERTERS = {
