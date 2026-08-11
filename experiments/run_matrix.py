@@ -640,15 +640,78 @@ def build_judges(
     return JudgeCascade(stages or [RuleJudge()])
 
 
+def _cluster_key(index: int, record: object) -> str:
+    """Group key for whole-cluster sampling: a source cluster id (e.g. a
+    GPTGeoChat conversation's five threshold rows, or an R-Judge trajectory)
+    if present, else the DataPoint id, else the row index (independent rows)."""
+    meta = getattr(record, "meta", None)
+    if isinstance(meta, dict):
+        cluster = meta.get("source_cluster_id")
+        if isinstance(cluster, str) and cluster.strip():
+            return cluster
+    identifier = getattr(record, "id", None)
+    if isinstance(identifier, str) and identifier.strip():
+        return identifier
+    return f"__row_{index}__"
+
+
 def _select_corpus(
     name: str, dps: list[DataPoint], limit: int, sample_seed: int
 ) -> tuple[list[DataPoint], list[int]]:
     if not limit or limit >= len(dps):
         return dps, list(range(len(dps)))
-    seed_material = f"ura-corpus-sample-v1\0{name}\0{sample_seed}".encode("utf-8")
+    # Sample whole clusters, never splitting a conversation/threshold cluster,
+    # so per-cluster classification denominators stay intact.
+    clusters: dict[str, list[int]] = {}
+    for index, record in enumerate(dps):
+        clusters.setdefault(_cluster_key(index, record), []).append(index)
+    keys = list(clusters)
+    seed_material = f"ura-corpus-sample-v2\0{name}\0{sample_seed}".encode("utf-8")
     scoped_seed = int.from_bytes(hashlib.sha256(seed_material).digest()[:8], "big")
-    indices = sorted(random.Random(scoped_seed).sample(range(len(dps)), k=limit))
+    order = random.Random(scoped_seed).sample(range(len(keys)), k=len(keys))
+    chosen: list[int] = []
+    total = 0
+    for position in order:
+        members = clusters[keys[position]]
+        if chosen and total + len(members) > limit:
+            continue  # never split a cluster; skip an overflowing one
+        chosen.extend(members)
+        total += len(members)
+        if total >= limit:
+            break
+    indices = sorted(chosen)
     return [dps[index] for index in indices], indices
+
+
+def _verify_expected_release(
+    name: str, *, source_tree_sha256: str, total_records: int
+) -> None:
+    """Optional preregistered release check: URA_<CORPUS>_EXPECT_COUNT / _SHA256.
+
+    Unset means no check. A mismatch fails closed so a truncated or altered
+    corpus tree cannot silently shrink the evaluation denominator.
+    """
+    prefix = f"URA_{name.upper()}_EXPECT"
+    want_count = os.environ.get(f"{prefix}_COUNT")
+    if want_count and want_count.strip():
+        try:
+            expected = int(want_count)
+        except ValueError as exc:
+            raise ValueError(
+                f"{prefix}_COUNT must be an integer, got {want_count!r}"
+            ) from exc
+        if expected != total_records:
+            raise ValueError(
+                f"corpus {name!r} release record-count mismatch: expected "
+                f"{expected}, converted {total_records} (partial or altered tree)"
+            )
+    want_sha = os.environ.get(f"{prefix}_SHA256")
+    if want_sha and want_sha.strip() and want_sha.strip().lower() != (source_tree_sha256 or ""):
+        raise ValueError(
+            f"corpus {name!r} source-tree sha256 mismatch: expected "
+            f"{want_sha.strip().lower()!r}, got {source_tree_sha256!r} "
+            "(partial or altered corpus tree)"
+        )
 
 
 def _corpus_path(name: str) -> Path:
@@ -701,6 +764,7 @@ def load_corpus_with_audit(
     selected, indices = _select_corpus(name, full, limit, sample_seed)
     resolved = path.expanduser().resolve(strict=True)
     tree_digest, file_count = _source_tree_digest(resolved)
+    _verify_expected_release(name, source_tree_sha256=tree_digest, total_records=len(full))
     full_digest = hashlib.sha256(
         json.dumps(
             [datapoint.model_dump(mode="json") for datapoint in full],

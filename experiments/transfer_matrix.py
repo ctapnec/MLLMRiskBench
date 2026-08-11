@@ -1199,7 +1199,6 @@ def main(argv: list[str] | None = None) -> int:
         return 1
 
     results_by_corpus: dict[str, dict[str, Any]] = {}
-    invalid_support: dict[str, list[str]] = {}
     not_applicable: dict[str, dict[str, Any]] = {}
     for corpus_name, (per_model, audit) in loaded_facets.items():
         if len(per_model) < 2:
@@ -1214,7 +1213,14 @@ def main(argv: list[str] | None = None) -> int:
                     "unexplained_exclusions": 0,
                 }
                 continue
-            invalid_support[corpus_name] = sorted(per_model)
+            not_applicable[corpus_name] = {
+                "reason": "insufficient_eligible_models",
+                "eligible_models": sorted(per_model),
+                "eligible_model_count": len(per_model),
+                "minimum_required": 2,
+                "load_audit": audit,
+                "unexplained_exclusions": 0,
+            }
             continue
         results_by_corpus[corpus_name] = build_matrix(
             per_model,
@@ -1222,13 +1228,6 @@ def main(argv: list[str] | None = None) -> int:
             seed=args.seed,
             load_audit=audit,
         )
-    if invalid_support:
-        print(
-            "each transfer facet needs >=2 eligible models; insufficient facets: "
-            f"{invalid_support!r}",
-            file=sys.stderr,
-        )
-        return 1
 
     output = args.results / "transfer_matrix.json"
     if len(results_by_corpus) == 1 and not not_applicable:
