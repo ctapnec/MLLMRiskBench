@@ -8,8 +8,8 @@ from typing import Any
 import pytest
 
 from experiments import figure_results
-from ura.data_models import Response
-from ura.runner import realized_identity_summary
+from ura.data_models import SCHEMA_VERSION, Response
+from ura.runner import CODE_VERSION, realized_identity_summary
 
 _HASH_A = "a" * 64
 _HASH_B = "b" * 64
@@ -248,8 +248,8 @@ def _cell(
     )
     manifest = {
         "run_id": run_id,
-        "code_version": "ura-runner/2.0",
-        "schema_version": "1.0",
+        "code_version": CODE_VERSION,
+        "schema_version": SCHEMA_VERSION,
         "seeds": sorted(seeds),
         "models": [resolved_model],
         "adapters": [attacker],
@@ -317,8 +317,8 @@ def _cell(
         "status": "complete",
         "format_version": 2,
         "run_id": run_id,
-        "code_version": "ura-runner/2.0",
-        "schema_version": "1.0",
+        "code_version": CODE_VERSION,
+        "schema_version": SCHEMA_VERSION,
         "n_attempts": len(attempts),
         "n_responses": len(responses),
         "n_judgments": len(judgments),

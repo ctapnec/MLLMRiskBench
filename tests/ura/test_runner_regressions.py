@@ -16,6 +16,7 @@ from experiments.run_matrix import _safe_component
 from ura.adapters.base import AttackBudget, BaseAttacker
 from ura.adapters.crescendo import CrescendoAttacker
 from ura.data_models import (
+    SCHEMA_VERSION,
     Attempt,
     DataPoint,
     DialogTurn,
@@ -25,7 +26,7 @@ from ura.data_models import (
     RiskCategory,
 )
 from ura.judges.base import BaseJudge, JudgeCascade
-from ura.runner import Runner
+from ura.runner import CODE_VERSION, Runner
 from ura.targets.base import BaseTarget
 
 
@@ -143,7 +144,7 @@ def test_matrix_completion_recomputes_realized_identity_manifest(
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
     identities = manifest["config"]["realized_identities"]
 
-    assert manifest["code_version"] == "ura-runner/2.0"
+    assert manifest["code_version"] == CODE_VERSION
     assert identities["target"]["observations"] == 1
     assert identities["target"]["snapshot"] == {"target": "mock"}
     assert identities["judges"] == [{
@@ -226,7 +227,7 @@ def test_convenience_cli_is_explicitly_offline_smoke_only(tmp_path: Path) -> Non
 def _datapoint(
     ident: str = "dp-1",
     *,
-    schema_version: str = "1.0",
+    schema_version: str = SCHEMA_VERSION,
     media: list[MediaRef] | None = None,
 ) -> DataPoint:
     return DataPoint(

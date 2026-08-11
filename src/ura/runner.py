@@ -47,7 +47,7 @@ from .judges.base import JudgeCascade
 from .targets.base import BaseTarget
 
 #: Bumped when the orchestration semantics change (recorded in every manifest).
-CODE_VERSION = "ura-runner/2.0"
+CODE_VERSION = "ura-runner/2.1"
 _MAX_SCORED_MEDIA_BYTES = 25 * 1024 * 1024
 
 CheckpointRecord = dict[str, Any]

@@ -15,7 +15,7 @@ from typing import Any, Literal, Optional
 
 from pydantic import BaseModel, Field, field_validator, model_validator
 
-SCHEMA_VERSION = "1.0"
+SCHEMA_VERSION = "1.1"
 
 _HEX = frozenset("0123456789abcdef")
 

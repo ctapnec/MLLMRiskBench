@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 
-from ura.data_models import Response
+from ura.data_models import SCHEMA_VERSION, Response
 from ura.runner import realized_identity_summary
 
 from experiments.human_audit import (
@@ -320,7 +320,7 @@ def _write_completed_cell(
         "dataset_hashes": {"corpus": hashlib.sha256(b"fixture-corpus").hexdigest()},
         "started_at": "2026-01-01T00:00:00Z",
         "env": {"python": "test"},
-        "schema_version": "1.0",
+        "schema_version": SCHEMA_VERSION,
     }), encoding="utf-8")
     artifact_paths = {
         "attempts": attempts,
@@ -361,7 +361,7 @@ def _write_completed_cell(
         marker.update({
             "format_version": 2,
             "code_version": CODE_VERSION,
-            "schema_version": "1.0",
+            "schema_version": SCHEMA_VERSION,
         })
     complete.write_text(json.dumps(marker), encoding="utf-8")
     if grid_manifest:
@@ -1445,7 +1445,7 @@ def _write_human_artifacts(root: Path, *, descriptor_marker: bool = True) -> str
         "dataset_hashes": {"corpus": hashlib.sha256(b"fixture-corpus").hexdigest()},
         "started_at": "2026-01-01T00:00:00Z",
         "env": {"python": "test"},
-        "schema_version": "1.0",
+        "schema_version": SCHEMA_VERSION,
     }), encoding="utf-8")
     artifact_names = {
         "attempts": "cell.attempts.jsonl",
@@ -1483,7 +1483,7 @@ def _write_human_artifacts(root: Path, *, descriptor_marker: bool = True) -> str
         marker.update({
             "format_version": 2,
             "code_version": CODE_VERSION,
-            "schema_version": "1.0",
+            "schema_version": SCHEMA_VERSION,
         })
     (root / "cell.complete.json").write_text(json.dumps(marker), encoding="utf-8")
     _write_grid_manifest(
