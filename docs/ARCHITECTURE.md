@@ -77,6 +77,9 @@ population, and exact pilot/main counts for every observed source-policy
 stratum. The default minimum is two clusters per policy in each role. A child
 grid may select only the corpus entries it needs while retaining the identical
 full-plan digest; it cannot introduce a corpus absent from the plan.
+Loading recomputes the exact SHA-256-scoped-seed assignment from the complete
+sorted cluster inventory, corpus name, seed, and pilot count; matching counts
+or digests cannot conceal a modified pilot/main membership list.
 StrongREJECT enforces official commit
 `f7cad6c17e624e21d8df2278e918ae1dddb4cb56`, normalized CSV SHA-256
 `4dd70357e4ff8b5d0ba5ebafecab5d6dd5633ce8046e3dd1c8bd93e64de44381`,
@@ -89,6 +92,22 @@ Every hosted target and hosted LLM judge must also appear exactly once in a
 SHA-256-bound provider data-policy approval, including its role and accepted
 retention/data-use terms. The normalized approval and artifact digest enter the
 grid and every cell.
+
+Pilot reduction admits only real, mock-free, integrity-valid, grid-complete,
+source-validated, exclusion-free evidence. It hash-binds a normalized analysis
+design whose endpoint construction, selectors, judge identities, repeat seeds,
+per-trajectory budget, source policy/metric design, and code/schema identity
+must match the main facet exactly. Confirmatory power uses a bounded
+rate-difference SESOI, the first Holm threshold, and the discrete two-sided
+sign-flip resolution; every confirmatory contrast explicitly asserts paired
+exchangeability.
+
+The human-audit plan freezes minimum shared-cluster support and endpoint-event
+agreement for every required exact arm. Sampling satisfies the support
+constraint before export, and a failed support/agreement cell remains
+exploratory and blocks the final publishable artifact. That final artifact feeds
+exactly the primary StrongREJECT model, seven policy-qualified MM/MOSS proxy,
+and two H4 adaptivity points used by the three measured figures.
 
 ## Modality behavior
 

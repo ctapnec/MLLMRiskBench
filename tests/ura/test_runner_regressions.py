@@ -33,6 +33,7 @@ from ura.runner import (
     GlobalCallBudget,
     Runner,
 )
+from ura.targets.api import MockTarget
 from ura.targets.base import BaseTarget
 
 
@@ -69,6 +70,10 @@ def _provider_policy_args(
     return [
         "--provider-data-policy-approval", str(path),
         "--provider-data-policy-sha256", digest,
+        "--max-total-target-calls", "100000",
+        "--max-total-judge-calls", "100000",
+        "--max-total-http-attempts", "100000",
+        "--deadline-seconds", "3600",
     ]
 
 
@@ -84,8 +89,9 @@ def _partition_plan_args(
     cluster_ids = sorted({
         str(record.meta.get("source_cluster_id") or record.id) for record in records
     })
-    pilot = cluster_ids[:1]
-    main = cluster_ids[1:]
+    pilot, main = run_matrix._partition_cluster_ids(
+        cluster_ids, seed=0, corpus=corpus, pilot_count=1,
+    )
     assert pilot and main
     cluster_policies = {
         str(record.meta.get("source_cluster_id") or record.id):
@@ -175,8 +181,9 @@ def _multi_corpus_partition_args(
                 run_matrix._source_policy_key(record)
             for record in records
         }
-        pilot = cluster_ids[:1]
-        main = cluster_ids[1:]
+        pilot, main = run_matrix._partition_cluster_ids(
+            cluster_ids, seed=0, corpus=corpus, pilot_count=1,
+        )
         corpora[corpus] = {
             "source_locator": run_matrix._stable_source_locator(corpus, "file"),
             "full_converted_corpus_sha256": (
@@ -345,6 +352,34 @@ def test_partition_plan_rejects_converted_release_mismatch_before_calls(
     assert message in error["message"]
 
 
+def test_partition_plan_rejects_relabelled_hand_selected_assignment(
+    tmp_path: Path,
+) -> None:
+    records = [
+        _datapoint(name).model_copy(update={
+            "meta": {"source_cluster_id": name}
+        })
+        for name in ("a", "b", "c", "d")
+    ]
+    args = _partition_plan_args(tmp_path, "fixture", records)
+    path = Path(args[1])
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    entry = payload["corpora"]["fixture"]
+    pilot_ids = list(entry["pilot"]["cluster_ids"])
+    main_ids = list(entry["main"]["cluster_ids"])
+    pilot_ids[0], main_ids[0] = main_ids[0], pilot_ids[0]
+    for role, ids in (("pilot", sorted(pilot_ids)), ("main", sorted(main_ids))):
+        entry[role]["cluster_ids"] = ids
+        entry[role]["cluster_ids_sha256"] = run_matrix._sha256_json(ids)
+    path.write_text(json.dumps(payload, sort_keys=True) + "\n", encoding="utf-8")
+
+    with pytest.raises(ValueError, match="scoped-seed random assignment"):
+        run_matrix._load_partition_plan(
+            str(path), hashlib.sha256(path.read_bytes()).hexdigest(),
+            "pilot", ["fixture"],
+        )
+
+
 def test_partition_plan_selects_exact_role_and_is_manifest_bound(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -402,8 +437,13 @@ def test_partition_plan_selects_exact_role_and_is_manifest_bound(
     run_config = manifest["config"]["run"]
     assert run_config["partition_plan"]["status"] == "bound"
     assert run_config["partition_plan"]["partition_role"] == "pilot"
-    assert run_config["partition_assignment"]["cluster_ids"] == ["a"]
-    assert run_config["sampling_audit"]["selected_records"] == 2
+    expected_pilot, _ = run_matrix._partition_cluster_ids(
+        ["a", "b"], seed=0, corpus="fixture", pilot_count=1,
+    )
+    assert run_config["partition_assignment"]["cluster_ids"] == expected_pilot
+    assert run_config["sampling_audit"]["selected_records"] == sum(
+        record.meta["source_cluster_id"] in expected_pilot for record in records
+    )
     assert run_config["provider_data_policy_approval"]["status"] == "approved"
 
 
@@ -613,6 +653,73 @@ def test_group_validation_precedes_target_construction(
     assert constructions == 0
 
 
+def test_rig_check_runs_preflights_and_projects_calls_without_generation(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture,
+) -> None:
+    from experiments import rig_check
+
+    class _NeverCalledTarget(BaseTarget):
+        name = "rig-check-target"
+        modality_support = ("text", "image")
+
+        def __init__(self) -> None:
+            self.calls = 0
+
+        def generate(self, dialog, *, seed=None):
+            self.calls += 1
+            raise AssertionError("rig-check must not call target.generate")
+
+    target = _NeverCalledTarget()
+    monkeypatch.setattr(run_matrix, "build_target", lambda *_a, **_kw: target)
+
+    assert rig_check.main([
+        "--dry-run", "--attackers", "replay,crescendo", "--judges", "rules",
+        "--corpora", "synth", "--limit", "2", "--seeds", "0,1",
+        "--max-queries", "4", "--max-turns", "4",
+    ]) == 0
+    output = capsys.readouterr().out
+    assert "source-policy clusters" in output
+    assert '"target_calls":20' in output
+    assert '"judge_calls":0' in output
+    assert "no target or judge generation calls were made" in output
+    assert target.calls == 0
+
+
+def test_real_grid_requires_finite_limits_before_generation(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture,
+) -> None:
+    class _NeverCalledTarget(BaseTarget):
+        name = "finite-limit-target"
+        modality_support = ("text",)
+        max_transport_attempts_per_call = 1
+
+        def __init__(self) -> None:
+            self.calls = 0
+
+        def generate(self, dialog, *, seed=None):
+            self.calls += 1
+            raise AssertionError("invalid finite limits must fail before generation")
+
+    target = _NeverCalledTarget()
+    monkeypatch.setattr(run_matrix, "build_target", lambda *_a, **_kw: target)
+    args = [
+        "--api", "fixture:model", "--attackers", "replay", "--judges", "rules",
+        "--corpora", "synth", "--limit", "1", "--out", str(tmp_path / "run"),
+        *_provider_policy_args(tmp_path, [
+            ("fixture:model", "fixture", ["target"]),
+        ]),
+        "--max-total-target-calls", "0",
+        "--max-total-http-attempts", "0",
+        "--deadline-seconds", "0",
+    ]
+    assert run_matrix.main(args) == 1
+    assert "planned call limits" in capsys.readouterr().err
+    assert target.calls == 0
+
+
 def test_matrix_builds_exactly_one_stage_per_requested_judge() -> None:
     cascade = run_matrix.build_judges(["rules", "llm"], "mock")
     assert [stage.name for stage in cascade.stages] == ["rules", "llm-judge"]
@@ -683,6 +790,60 @@ def test_matrix_completion_marker_detects_artifact_tampering(tmp_path: Path) -> 
     assert "mismatch" in error["message"]
     grid = json.loads(next(tmp_path.glob("*.grid.json")).read_text(encoding="utf-8"))
     assert grid["status"] == "partial"
+
+
+def test_rolled_back_budget_ledger_fails_before_generation(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture,
+) -> None:
+    args = [
+        "--dry-run", "--attackers", "replay", "--judges", "rules",
+        "--corpora", "synth", "--limit", "1", "--seeds", "0",
+        "--max-queries", "1", "--max-turns", "1", "--out", str(tmp_path),
+    ]
+    assert run_matrix.main(args) == 0
+    budget_path = next(tmp_path.glob("grid-*.budget.json"))
+    budget = json.loads(budget_path.read_text(encoding="utf-8"))
+    assert budget["target_calls"] > 0
+    for field in ("target_calls", "judge_calls", "http_attempts"):
+        budget[field] = 0
+    run_matrix._write_json(budget_path, budget)
+
+    calls = 0
+
+    def forbidden_generate(self, dialog, *, seed=None):
+        nonlocal calls
+        calls += 1
+        raise AssertionError("rolled-back budget must fail before generation")
+
+    monkeypatch.setattr(MockTarget, "generate", forbidden_generate)
+    assert run_matrix.main(args) == 1
+    assert calls == 0
+    assert "ledger is behind trustworthy same-grid" in capsys.readouterr().err
+
+
+def test_budget_ledger_dominating_completion_allows_call_free_resume(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    args = [
+        "--dry-run", "--attackers", "replay", "--judges", "rules",
+        "--corpora", "synth", "--limit", "1", "--seeds", "0",
+        "--max-queries", "1", "--max-turns", "1", "--out", str(tmp_path),
+    ]
+    assert run_matrix.main(args) == 0
+
+    calls = 0
+
+    def forbidden_generate(self, dialog, *, seed=None):
+        nonlocal calls
+        calls += 1
+        raise AssertionError("verified completion must resume without generation")
+
+    monkeypatch.setattr(MockTarget, "generate", forbidden_generate)
+    assert run_matrix.main(args) == 0
+    assert calls == 0
 
 
 def test_matrix_completion_recomputes_realized_identity_manifest(
@@ -781,7 +942,7 @@ def test_systemic_target_failure_opens_circuit_before_next_cell(
     result = run_matrix.main([
         "--api", "fixture:model", "--attackers", "replay,crescendo",
         "--judges", "rules", "--corpora", "synth", "--limit", "1",
-        "--max-queries", "1", "--max-turns", "1", "--out", str(tmp_path),
+        "--max-queries", "2", "--max-turns", "2", "--out", str(tmp_path),
         *_provider_policy_args(tmp_path, [
             ("fixture:model", "fixture", ["target"]),
         ]),

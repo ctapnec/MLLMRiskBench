@@ -43,6 +43,12 @@ equally. The confirmatory plan uses one disjoint-pilot variance artifact and one
 SESOI per hypothesis. It freezes complete Holm-Bonferroni families; unavailable
 hypotheses stay in their family and prevent publishability.
 
+For a rate-difference hypothesis, SESOI is restricted to `(0,1]`. Prospective
+sizing uses `alpha / family_size` and takes the larger of the normal-
+approximation result and the exact two-sided sign-flip resolution requirement
+`2 / 2^n <= alpha / family_size`. Confirmatory p-values are produced only for
+contrasts that explicitly freeze `assume_exchangeable: true`.
+
 ## Corpus and source-policy scope
 
 The executed corpus set is:
@@ -79,7 +85,10 @@ portable `source_locator`, full converted population, source-cluster inventory,
 and exact per-policy counts in both roles. Its pilot and main minimums default
 to two clusters per observed policy stratum. A child grid may use a selected
 corpus subset of that same complete plan. A missing, partial, modified, or
-schema-drifted release fails before paid calls.
+schema-drifted release fails before paid calls. Loading also recomputes the exact
+scoped-seed membership from the complete sorted cluster inventory, corpus seed,
+and stored pilot count; a role list cannot drift while retaining only its
+counts.
 
 ## Target and modality scope
 
@@ -132,6 +141,13 @@ the cause, `--reset-open-circuits` is the only deliberate reset. Append-only
 checkpoints resume verified completed work, including continuation state. These
 controls bound call exposure, not provider billing or token cost.
 
+Before each paid invocation, execute its unchanged argument list with
+`python -m experiments.rig_check` instead of `run_matrix`. This temporary,
+no-generation pass reuses the release, partition, policy, component, modality,
+and source-metric gates; it prints exact selected source-policy cluster counts
+and conservative complete-grid target/judge/HTTP upper bounds. The paid command
+starts only after its finite ceilings cover those printed bounds.
+
 `--limit N` counts unique source clusters and retains every row in them. Measured
 real execution always selects a frozen partition role with `--limit 0`; arbitrary
 limited sampling is diagnostic only.
@@ -152,7 +168,12 @@ limited sampling is diagnostic only.
    MM/MOSS-secondary model families. The primary H4 family contains two
    StrongREJECT ASR hypotheses: replay versus Crescendo once for Fable and once
    for Sol. Each is a one-shot replay ASR versus bounded-conversation ASR
-   endpoint contrast, not an identical-transcript comparison.
+   endpoint contrast, not an identical-transcript comparison. A sizing pilot
+   must be real and mock-free, pass the byte-integrity, requested-grid,
+   source-identity and compatible code/schema/source checks, and have zero
+   common-metric, pairing and unexplained exclusions. Its normalized endpoint,
+   selector, realized-judge, repeat, budget, policy/metric and code/schema design
+   must match the main facet exactly.
 6. Repeat the two-child layout under the main parent using the same partition
    and conditions. Do not add pilot rows to main estimates.
 7. Run same-response judge sensitivity, exact transfer, kappa, and the optional
@@ -160,8 +181,13 @@ limited sampling is diagnostic only.
 8. From the common main parent, prepare exactly the frozen number of whole source
    clusters and exact model/defense/attacker arms for at least two independent
    raters. Rate refusal, harmfulness, convincingness and specificity separately;
-   adjudicate only after independent labels and use equal-cluster bootstrap
-   uncertainty.
+   adjudicate only after independent labels and use the plan's exact alpha,
+   bootstrap-resample count, and seed for equal-cluster uncertainty. The audit
+   records the completed labels CSV byte count and SHA-256. Freeze at least two
+   shared clusters for every exact required arm
+   and a prospective endpoint-event agreement threshold; `0.80` is recommended.
+   The selector guarantees the support minimum before export. Any failed arm is
+   exploratory and prevents publishability.
 9. Produce the final confirmatory artifact bound to both the immutable plan and
    successful human-audit SHA-256.
 10. Render measured figures only from that final artifact.
@@ -173,6 +199,22 @@ confirmatory endpoint has its own power gate and `primary` or `secondary` role.
 A family cannot mix roles. Hypotheses use the canonical
 `policy=<percent-encoded-id>@<percent-encoded-version>` token; no confirmatory
 MM-SafetyBench effect pools its six policies.
+
+The plan's evaluation-policy field is not a free-standing label. It binds the
+repository-relative `experiments/evaluation-policy.json` by exact byte count and
+raw SHA-256, and its policy ID/version must match the resolved JSON content. The
+analysis artifact carries that verified content plus its raw and canonical
+content digests into figure provenance. This freezes interpretation and claim
+rules only; the plan and run artifacts continue to bind the exact hypotheses,
+source policies, arms, realized target snapshot, and requested/realized judge
+identities.
+
+The measured figure contract is the same frozen family inventory: one primary
+StrongREJECT model point in `fig-v-asr-by-model.png`, six policy-qualified
+MM-SafetyBench ASR points plus one MOSSBench benign-FRR point in
+`fig-v-policy-proxies.png`, and the two model-specific H4 points in
+`fig-v-adaptivity.png`. It does not require an unfrozen category or defense
+family.
 
 ## Judge and transfer validity
 
@@ -208,4 +250,7 @@ measured zero. Taxonomy mappings remain informational crosswalks, not compliance
 conclusions.
 
 The exact operator commands and JSON shapes are in
-[RUN_AND_RETURN.md](RUN_AND_RETURN.md).
+[RUN_AND_RETURN.md](RUN_AND_RETURN.md). Start the immutable plan from
+[`confirmatory-plan.template.json`](confirmatory-plan.template.json), replace
+every `REPLACE_*` sentinel, then hash the final bytes; the template adds no new
+schema or generation step.

@@ -5,7 +5,6 @@ import argparse
 from collections import Counter
 import hashlib
 import json
-import random
 import sys
 from pathlib import Path
 from typing import Any
@@ -15,7 +14,11 @@ sys.path.insert(0, str(_REPO_ROOT))
 sys.path.insert(0, str(_REPO_ROOT / "src"))
 
 from experiments.analysis_integrity import analysis_source_identity  # noqa: E402
-from experiments.run_matrix import _cluster_key, load_corpus_with_audit  # noqa: E402
+from experiments.run_matrix import (  # noqa: E402
+    _cluster_key,
+    _partition_cluster_ids,
+    load_corpus_with_audit,
+)
 
 PARTITION_SCHEMA = "ura-cluster-partition/1.2"
 
@@ -92,13 +95,9 @@ def create_partition(
             or not isinstance(total_records, int) or total_records < len(cluster_ids)
         ):
             raise ValueError(f"corpus {corpus!r} lacks canonical converted identity")
-        scoped = int.from_bytes(hashlib.sha256(
-            f"ura-pilot-main-partition-v1\0{seed}\0{corpus}".encode()
-        ).digest()[:8], "big")
-        shuffled = list(cluster_ids)
-        random.Random(scoped).shuffle(shuffled)
-        pilot = sorted(shuffled[:pilot_count])
-        main = sorted(shuffled[pilot_count:])
+        pilot, main = _partition_cluster_ids(
+            list(cluster_ids), seed=seed, corpus=corpus, pilot_count=pilot_count,
+        )
         if set(pilot) & set(main) or set(pilot) | set(main) != set(cluster_ids):
             raise AssertionError("internal cluster-partition accounting error")
         cluster_policies = _cluster_policy_map(list(points))

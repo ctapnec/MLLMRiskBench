@@ -27,12 +27,137 @@ from experiments.analysis_integrity import (  # noqa: E402
 from experiments.paired_compare import compare, compare_adaptivity  # noqa: E402
 
 PILOT_SCHEMA = "ura-disjoint-pilot/1.0"
+REQUIRED_PILOT_CHECKS = {
+    "non_dry",
+    "v2_integrity",
+    "grid_accounted",
+    "source_identity_validated",
+    "compatible_code_schema_source",
+    "zero_common_metric_exclusions",
+    "zero_pairing_exclusions",
+    "zero_unexplained_exclusions",
+}
 
 
 def _sha256_json(value: Any) -> str:
     return hashlib.sha256(json.dumps(
         value, ensure_ascii=False, sort_keys=True, separators=(",", ":")
     ).encode("utf-8")).hexdigest()
+
+
+def _normalized_judge_identities(summary: dict[str, Any]) -> list[dict[str, Any]]:
+    realized = summary.get("realized_identities")
+    judges = realized.get("judges") if isinstance(realized, dict) else None
+    if not isinstance(judges, list) or not judges:
+        raise ValueError("pilot/main arm lacks realized judge identities")
+    normalized: list[dict[str, Any]] = []
+    for item in judges:
+        if (
+            not isinstance(item, dict)
+            or not isinstance(item.get("stage"), int)
+            or not isinstance(item.get("judge"), str)
+            or not isinstance(item.get("snapshot"), dict)
+        ):
+            raise ValueError("pilot/main arm has an invalid realized judge identity")
+        normalized.append({
+            "stage": item["stage"],
+            "judge": item["judge"],
+            "snapshot": item["snapshot"],
+        })
+    return normalized
+
+
+def _normalized_target_identity(summary: dict[str, Any]) -> dict[str, Any]:
+    realized = summary.get("realized_identities")
+    target = realized.get("target") if isinstance(realized, dict) else None
+    snapshot = target.get("snapshot") if isinstance(target, dict) else None
+    if not isinstance(snapshot, dict) or not snapshot:
+        raise ValueError("pilot/main arm lacks its realized target identity")
+    return dict(snapshot)
+
+
+def _arm_analysis_design(summary: Any) -> dict[str, Any]:
+    if not isinstance(summary, dict):
+        raise ValueError("pilot/main comparison lacks an arm summary")
+    required = (
+        "model_spec", "resolved_target", "defense", "attacker", "corpus",
+        "judges", "seeds", "budget", "code_version", "schema_version",
+    )
+    missing = [key for key in required if summary.get(key) is None]
+    if missing:
+        raise ValueError(f"pilot/main arm design lacks fields: {missing!r}")
+    source_policies = summary.get("source_policy_inventory")
+    if not isinstance(source_policies, list):
+        raise ValueError("pilot/main arm lacks its source-policy design")
+    source_metrics = summary.get("source_metric_inventory")
+    if not isinstance(source_metrics, list):
+        raise ValueError("pilot/main arm lacks its source-metric design")
+    normalized_source_metrics = [
+        {
+            key: value for key, value in entry.items()
+            if key not in {"n_source_evaluations", "source_metric_emitted"}
+        }
+        for entry in source_metrics if isinstance(entry, dict)
+    ]
+    if len(normalized_source_metrics) != len(source_metrics):
+        raise ValueError("pilot/main arm has an invalid source-metric design")
+    return {
+        "model_spec": summary["model_spec"],
+        "resolved_target": summary["resolved_target"],
+        "defense": summary["defense"],
+        "attacker": summary["attacker"],
+        "corpus": summary["corpus"],
+        "judges": summary["judges"],
+        "realized_target": _normalized_target_identity(summary),
+        "realized_judges": _normalized_judge_identities(summary),
+        "seeds": summary["seeds"],
+        "budget": summary["budget"],
+        "code_version": summary["code_version"],
+        "schema_version": summary["schema_version"],
+        "source_policy_inventory": source_policies,
+        # Realized evaluation counts differ with pilot/main partition size; the
+        # evaluator requirement and policy are the design factors.
+        "source_metric_design": normalized_source_metrics,
+    }
+
+
+def paired_analysis_design(facet: Any) -> dict[str, Any]:
+    """Return pilot/main factors that must match, excluding data partition size.
+
+    Pilot and main necessarily have different run IDs, cluster assignments and
+    aggregate call ceilings.  Model/defense/attacker selectors, judge identity,
+    repeat seeds, per-trajectory query/turn horizons, endpoint construction and
+    code/schema identity must not drift.
+    """
+    if not isinstance(facet, dict):
+        raise ValueError("pilot/main comparison facet must be an object")
+    required = (
+        "comparison_type", "unit_mode", "pairing_unit", "inference_cluster", "source",
+    )
+    missing = [key for key in required if facet.get(key) is None]
+    if missing:
+        raise ValueError(f"pilot/main comparison design lacks fields: {missing!r}")
+    return {
+        "schema_version": "ura-paired-analysis-design/1.0",
+        "comparison_type": facet["comparison_type"],
+        "unit_mode": facet["unit_mode"],
+        "pairing_unit": facet["pairing_unit"],
+        "inference_cluster": facet["inference_cluster"],
+        "source": facet["source"],
+        "source_policy_facets": facet.get("source_policy_facets"),
+        "left": _arm_analysis_design(facet.get("left")),
+        "right": _arm_analysis_design(facet.get("right")),
+    }
+
+
+def _contains_mock_identity(value: Any) -> bool:
+    if isinstance(value, str):
+        return value.strip().lower() in {"mock", "offline_mock", "deterministic_mock"}
+    if isinstance(value, list):
+        return any(_contains_mock_identity(item) for item in value)
+    if isinstance(value, dict):
+        return any(_contains_mock_identity(item) for item in value.values())
+    return False
 
 
 def generate_pilot(
@@ -106,6 +231,30 @@ def generate_pilot(
                 candidate = value
     if not isinstance(candidate, dict) or candidate.get("status") != "estimated":
         raise ValueError(f"pilot {metric} is not estimable in corpus {corpus!r}")
+    publishability_checks = facet.get("publishability_checks")
+    if not isinstance(publishability_checks, dict):
+        raise ValueError("pilot comparison lacks publishability checks")
+    failed_checks = sorted(
+        key for key in REQUIRED_PILOT_CHECKS
+        if publishability_checks.get(key) is not True
+    )
+    if failed_checks:
+        raise ValueError(
+            "pilot comparison is inadmissible for main-run sizing; failed checks: "
+            f"{failed_checks!r}"
+        )
+    candidate_audit = candidate.get("pairing_audit")
+    candidate_exclusions = (
+        "left_only_units", "right_only_units", "static_input_mismatch_units",
+        "unexplained_exclusions",
+    )
+    if not isinstance(candidate_audit, dict) or any(
+        candidate_audit.get(field) != 0 for field in candidate_exclusions
+    ):
+        raise ValueError("pilot endpoint has paired-unit exclusions and cannot size main")
+    analysis_design = paired_analysis_design(facet)
+    if _contains_mock_identity(analysis_design):
+        raise ValueError("mock targets or judges cannot produce a sizing pilot")
     sd = candidate.get("cluster_difference_sd")
     summaries = candidate.get("cluster_summaries")
     if (
@@ -187,6 +336,19 @@ def generate_pilot(
                 "attacker": right_attacker or left_attacker,
             },
         },
+        "admissibility": {
+            "status": "eligible_real_complete_exclusion_free_pilot",
+            "checks": {
+                key: publishability_checks[key]
+                for key in sorted(REQUIRED_PILOT_CHECKS)
+            },
+            "endpoint_pairing_exclusions": {
+                key: candidate_audit[key] for key in candidate_exclusions
+            },
+            "mock_free": True,
+        },
+        "analysis_design": analysis_design,
+        "analysis_design_sha256": _sha256_json(analysis_design),
         "paired_analysis_source": report["analysis_source"],
         "partition_plan": partition_plan,
         "partition_assignment": partition_assignment,
@@ -195,7 +357,11 @@ def generate_pilot(
             _REPO_ROOT / "experiments" / "analysis_integrity.py",
             _REPO_ROOT / "src" / "ura" / "metrics.py",
         ]),
-        "artifact_root": str(Path(results).resolve()),
+        "artifact_locator": {
+            "kind": "completed_run_set",
+            "source_run_ids": source_run_ids,
+            "source_run_ids_sha256": _sha256_json(source_run_ids),
+        },
         "no_new_target_or_judge_calls": True,
     }
 

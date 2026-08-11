@@ -1,9 +1,9 @@
 """Render the three Chapter V figures and their machine-readable provenance.
 
 ``--synth`` creates exactly three neutral, conspicuously watermarked layout
-placeholders.  Measured mode is intentionally explicit: Figures V.1/V.2 take a
-paired cross-target experiment root while Figure V.3 takes a same-base defense
-experiment root.  Both paths are validated by :mod:`experiments.figure_results`.
+placeholders.  Measured mode consumes one final human-bound confirmatory
+artifact and renders the prospectively frozen primary-model, policy-proxy, and
+adaptivity families validated by :mod:`experiments.figure_results`.
 """
 from __future__ import annotations
 
@@ -28,8 +28,8 @@ _WATERMARK = "ILLUSTRATIVE \u2014 NOT MEASURED"
 _PROVENANCE_NAME = "fig-v-provenance.json"
 _FIGURE_NAMES = (
     "fig-v-asr-by-model.png",
-    "fig-v-asr-by-category.png",
-    "fig-v-safety-utility.png",
+    "fig-v-policy-proxies.png",
+    "fig-v-adaptivity.png",
 )
 
 
@@ -76,50 +76,65 @@ def _placeholder_point(point_id: str, label: str, index: int, **extra: Any) -> d
 def synth_matrix() -> dict[str, Any]:
     """Return a neutral preview of the final paired-effect layouts."""
     model_points = [
-        _placeholder_point(f"model:condition-{index}", f"Condition {letter}", index)
-        for index, letter in enumerate("ABCDEF")
-    ]
-    category_points = [
         _placeholder_point(
-            f"category:condition-{index}",
-            f"Condition {letter} | Category {index + 1} | Modality {index % 2 + 1}",
+            "model:condition-a",
+            "Condition A | primary model contrast | ASR",
+            0,
+            corpus="Condition A",
+            metric="ASR",
+            comparison_type="cross_target_endpoint_noncausal",
+        )
+    ]
+    proxy_points = [
+        _placeholder_point(
+            f"proxy:condition-{index}",
+            f"Condition {letter} | policy-qualified proxy | {metric}",
             index,
             corpus=f"Condition {letter}",
-            risk_category=f"Category {index + 1}",
-            modality=f"Modality {index % 2 + 1}",
+            source_policy_id=f"Policy {index + 1}",
+            metric=metric,
+            population=(
+                "harmful_expected_refusal" if metric == "ASR"
+                else "benign_expected_answer"
+            ),
+            comparison_type="cross_target_endpoint_noncausal",
         )
-        for index, letter in enumerate("ABCDE")
+        for index, (letter, metric) in enumerate(zip("ABCDEFG", ["ASR"] * 6 + ["FRR"]))
     ]
-    defense_points: list[dict[str, Any]] = []
-    for index, letter in enumerate("ABC"):
-        for metric_index, metric in enumerate(("ASR", "FRR")):
-            defense_points.append(_placeholder_point(
-                f"defense:condition-{index}:{metric}",
-                f"Condition {letter} | {metric}",
-                index * 2 + metric_index,
-                corpus=f"Condition {letter}",
-                metric=metric,
-            ))
+    adaptivity_points = [
+        _placeholder_point(
+            f"adaptivity:condition-{index}",
+            f"Condition {letter} | replay-vs-adaptive | ASR",
+            index,
+            corpus="Condition A",
+            metric="ASR",
+            comparison_type="within_target_adaptivity_endpoint",
+        )
+        for index, letter in enumerate("HI")
+    ]
     figures = {
         _FIGURE_NAMES[0]: {
-            "estimand": "illustrative paired harmful-risk difference",
+            "figure_role": "primary_model",
+            "estimand": "illustrative primary paired harmful-ASR difference",
             "points": model_points,
         },
         _FIGURE_NAMES[1]: {
-            "estimand": "illustrative paired category-cell difference",
-            "points": category_points,
+            "figure_role": "secondary_policy_proxies",
+            "estimand": "illustrative policy-qualified ASR/FRR proxy differences",
+            "points": proxy_points,
         },
         _FIGURE_NAMES[2]: {
-            "estimand": "illustrative paired defense effects",
-            "points": defense_points,
+            "figure_role": "h4_adaptivity",
+            "estimand": "illustrative replay-versus-adaptive harmful-ASR differences",
+            "points": adaptivity_points,
         },
     }
     return {
-        "schema_version": "ura-chapter-v-figures/1.0",
+        "schema_version": "ura-chapter-v-figures/1.2",
         "illustrative": True,
         "analysis": {
             "status": "illustrative_not_measured",
-            "labels": "neutral Condition A--F labels",
+            "labels": "neutral Condition A--I labels",
             "corpus_pooling": "not applicable",
         },
         "figures": figures,
@@ -141,31 +156,43 @@ def _tag(fig: Any, illustrative: bool) -> None:
         )
 
 
-def _point_label(point: dict[str, Any], *, category: bool = False) -> str:
+def _arm_label(arm: Any) -> str:
+    if not isinstance(arm, dict):
+        return "unknown arm"
+    model = arm.get("model_spec") or arm.get("resolved_target") or "unknown model"
+    attacker = arm.get("attacker") or "unknown attacker"
+    return f"{model} [{attacker}]"
+
+
+def _point_label(point: dict[str, Any], *, policy_proxy: bool = False) -> str:
     if point.get("label"):
         return str(point["label"])
     corpus = str(point.get("corpus") or "unknown corpus")
-    if category:
-        risk = str(point.get("risk_category") or "no harmful cells")
-        modality = str(point.get("modality") or "unavailable modality")
-        return f"{corpus} | {risk} | {modality}"
-    if point.get("metric"):
-        return f"{corpus} | {point['metric']}"
-    return corpus
+    metric = str(point.get("metric") or "unknown endpoint")
+    arms = f"{_arm_label(point.get('left_arm'))} minus {_arm_label(point.get('right_arm'))}"
+    if policy_proxy:
+        policy = str(point.get("source_policy_id") or "unversioned policy")
+        cells = [corpus, policy, metric]
+        if point.get("risk_category"):
+            cells.append(str(point["risk_category"]))
+        if point.get("modality"):
+            cells.append(str(point["modality"]))
+        return " | ".join(cells) + f"\n{arms}"
+    return f"{corpus} | {metric}\n{arms}"
 
 
 def _contrast_figure(
     points: list[dict[str, Any]], out: Path, *, filename: str, title: str,
-    category: bool = False, illustrative: bool,
+    policy_proxy: bool = False, illustrative: bool,
 ) -> None:
     if not points:
         raise ValueError(f"{filename} has no explicit facet rows")
     height = max(3.4, 0.48 * len(points) + 1.8)
-    fig, ax = plt.subplots(figsize=(9.6 if category else 8.2, height))
+    fig, ax = plt.subplots(figsize=(9.6 if policy_proxy else 8.2, height))
     ax.axvline(0.0, color=_INK_2, linewidth=1.0)
     labels: list[str] = []
     for index, point in enumerate(points):
-        labels.append(_point_label(point, category=category))
+        labels.append(_point_label(point, policy_proxy=policy_proxy))
         value = point.get("value")
         low = point.get("ci_low")
         high = point.get("ci_high")
@@ -209,7 +236,7 @@ def _contrast_figure(
     ax.invert_yaxis()
     ax.set_xlim(-1.0, 1.0)
     ax.xaxis.set_major_formatter(lambda x, _: f"{x:+.0%}")
-    ax.set_xlabel("paired risk difference (left minus right; lower favours left)")
+    ax.set_xlabel("paired adverse-endpoint difference (left minus right; lower favours left)")
     ax.set_title(title)
     _tag(fig, illustrative)
     fig.savefig(out / filename, dpi=200, bbox_inches="tight")
@@ -222,15 +249,15 @@ def fig_asr_by_model(data: dict[str, Any], out: Path) -> None:
         out,
         filename=_FIGURE_NAMES[0],
         title=(
-            "Paired harmful-risk endpoint contrasts by benchmark (illustrative)"
+            "Primary paired harmful-ASR model contrast (illustrative)"
             if data["illustrative"]
-            else "Paired harmful-risk endpoint contrasts by benchmark"
+            else "Primary paired harmful-ASR model contrast"
         ),
         illustrative=data["illustrative"],
     )
 
 
-def fig_asr_by_category(data: dict[str, Any], out: Path) -> None:
+def fig_policy_proxies(data: dict[str, Any], out: Path) -> None:
     analysis = data.get("analysis") or {}
     detail = ""
     if not data["illustrative"]:
@@ -251,19 +278,22 @@ def fig_asr_by_category(data: dict[str, Any], out: Path) -> None:
         data["figures"][_FIGURE_NAMES[1]]["points"],
         out,
         filename=_FIGURE_NAMES[1],
-        title="Paired harmful-risk differences by benchmark, category, and modality" + detail,
-        category=True,
+        title=(
+            "Secondary policy-qualified proxy endpoints: MM-SafetyBench ASR and "
+            "MOSSBench benign FRR"
+        ) + detail,
+        policy_proxy=True,
         illustrative=data["illustrative"],
     )
 
 
-def fig_safety_utility(data: dict[str, Any], out: Path) -> None:
+def fig_adaptivity(data: dict[str, Any], out: Path) -> None:
     _contrast_figure(
         data["figures"][_FIGURE_NAMES[2]]["points"],
         out,
         filename=_FIGURE_NAMES[2],
         title=(
-            "Paired same-base defense effects on harmful risk and benign false refusal"
+            "H4 within-target replay-versus-Crescendo harmful-ASR contrasts"
             + (" (illustrative)" if data["illustrative"] else "")
         ),
         illustrative=data["illustrative"],
@@ -292,8 +322,8 @@ def render_all(data: dict[str, Any], out: Path) -> list[Path]:
     out.mkdir(parents=True, exist_ok=True)
     _apply_style()
     fig_asr_by_model(data, out)
-    fig_asr_by_category(data, out)
-    fig_safety_utility(data, out)
+    fig_policy_proxies(data, out)
+    fig_adaptivity(data, out)
     _write_provenance(data, out)
     return [out / filename for filename in _FIGURE_NAMES]
 

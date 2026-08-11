@@ -17,9 +17,17 @@ def test_synth_matrix_is_marked_illustrative():
     assert data["illustrative"] is True
     assert set(data["figures"]) == {
         "fig-v-asr-by-model.png",
-        "fig-v-asr-by-category.png",
-        "fig-v-safety-utility.png",
+        "fig-v-policy-proxies.png",
+        "fig-v-adaptivity.png",
     }
+    assert [
+        data["figures"][name]["figure_role"]
+        for name in (
+            "fig-v-asr-by-model.png",
+            "fig-v-policy-proxies.png",
+            "fig-v-adaptivity.png",
+        )
+    ] == ["primary_model", "secondary_policy_proxies", "h4_adaptivity"]
     labels = [
         point["label"]
         for figure in data["figures"].values()
@@ -48,8 +56,8 @@ def test_render_all_writes_three_pngs(tmp_path):
 def test_synth_cli_emits_exactly_three_figures_plus_sidecar(tmp_path):
     assert main(["--synth", "--out", str(tmp_path)]) == 0
     assert sorted(path.name for path in tmp_path.iterdir()) == [
-        "fig-v-asr-by-category.png",
+        "fig-v-adaptivity.png",
         "fig-v-asr-by-model.png",
+        "fig-v-policy-proxies.png",
         "fig-v-provenance.json",
-        "fig-v-safety-utility.png",
     ]

@@ -68,6 +68,29 @@ _RATING_FIELDS = {
 }
 
 
+def _input_artifact_descriptor(path: Path, *, label: str) -> dict[str, Any]:
+    if path.is_symlink() or not path.is_file():
+        raise ValueError(f"{label} must be a regular non-symlink file")
+    expected_bytes = path.stat().st_size
+    if expected_bytes <= 0 or expected_bytes > _MAX_ARTIFACT_BYTES:
+        raise ValueError(f"{label} has an invalid byte size")
+    digest = hashlib.sha256()
+    observed_bytes = 0
+    with path.open("rb") as handle:
+        while chunk := handle.read(1024 * 1024):
+            observed_bytes += len(chunk)
+            if observed_bytes > _MAX_ARTIFACT_BYTES:
+                raise ValueError(f"{label} exceeds the byte limit while reading")
+            digest.update(chunk)
+    if observed_bytes != expected_bytes:
+        raise ValueError(f"{label} changed while being read")
+    return {
+        "file": path.name,
+        "bytes": observed_bytes,
+        "sha256": digest.hexdigest(),
+    }
+
+
 def _record_key(row: dict, *, model: str | None = None) -> str:
     raw = row.get("raw") or {}
     run_values = {
@@ -273,8 +296,15 @@ def _candidate_matches_requirement(
 def _select_sample_clusters(
     candidates: list[dict[str, Any]], n: int,
     requirements: list[dict[str, Any]],
+    *, minimum_clusters_per_requirement: int = 1,
 ) -> tuple[list[dict[str, Any]], set[str], dict[str, dict[str, float | int]], dict[str, Any]]:
     """Deterministically cover frozen sensitivity cells, then balance strata."""
+    if (
+        not isinstance(minimum_clusters_per_requirement, int)
+        or isinstance(minimum_clusters_per_requirement, bool)
+        or minimum_clusters_per_requirement < 1
+    ):
+        raise ValueError("minimum clusters per human-audit requirement must be positive")
     clusters: dict[str, list[dict[str, Any]]] = defaultdict(list)
     for candidate in candidates:
         clusters[candidate["cluster_key"]].append(candidate)
@@ -302,8 +332,15 @@ def _select_sample_clusters(
         )
 
     selected_cluster_ids: set[str] = set()
-    unmet = set(requirement_ids)
-    while unmet:
+    coverage_counts = {requirement_id: 0 for requirement_id in requirement_ids}
+    while any(
+        count < minimum_clusters_per_requirement
+        for count in coverage_counts.values()
+    ):
+        unmet = {
+            requirement_id for requirement_id, count in coverage_counts.items()
+            if count < minimum_clusters_per_requirement
+        }
         ranked = sorted(
             (
                 (-len(coverage[key] & unmet), hashlib.sha256(key.encode()).hexdigest(), key)
@@ -317,7 +354,8 @@ def _select_sample_clusters(
             )
         selected = ranked[0][2]
         selected_cluster_ids.add(selected)
-        unmet -= coverage[selected]
+        for requirement_id in coverage[selected]:
+            coverage_counts[requirement_id] += 1
 
     cluster_strata: dict[str, list[str]] = defaultdict(list)
     for cluster_key, rows in clusters.items():
@@ -364,12 +402,24 @@ def _select_sample_clusters(
         for row in clusters[cluster_key]
     ]
     covered = set().union(*(coverage[key] for key in selected_cluster_ids))
+    selected_requirement_counts = {
+        requirement_id: sum(
+            requirement_id in coverage[key] for key in selected_cluster_ids
+        )
+        for requirement_id in sorted(requirement_ids)
+    }
     coverage_audit = {
         "required_cells": len(requirement_ids),
         "covered_cells": len(covered),
         "required_cell_ids": sorted(requirement_ids),
         "covered_cell_ids": sorted(covered),
         "all_required_cells_covered": covered == requirement_ids,
+        "minimum_clusters_per_required_cell": minimum_clusters_per_requirement,
+        "selected_clusters_per_required_cell": selected_requirement_counts,
+        "all_required_cells_meet_minimum_support": all(
+            count >= minimum_clusters_per_requirement
+            for count in selected_requirement_counts.values()
+        ),
         "coverage_priority_clusters": sum(bool(coverage[key]) for key in selected_cluster_ids),
     }
     return selected_rows, selected_cluster_ids, selection_metadata, coverage_audit
@@ -807,7 +857,14 @@ def prepare_sample(
         raise SystemExit("no joinable Attempt/Response/Judgment/trail artifacts found")
 
     selected, selected_cluster_ids, selection_metadata, coverage_audit = (
-        _select_sample_clusters(candidates, n, requirements)
+        _select_sample_clusters(
+            candidates, n, requirements,
+            minimum_clusters_per_requirement=int(
+                ((design or {}).get("validity_gate") or {}).get(
+                    "minimum_shared_clusters_per_required_cell", 1
+                )
+            ),
+        )
     )
     for row in selected:
         row.update(selection_metadata[row["cluster_key"]])
@@ -930,6 +987,16 @@ def _load_labels(path: Path) -> tuple[dict[str, dict[str, str]], dict[str, dict]
                             f"invalid {dimension}={value!r} at CSV row {row_no}"
                         )
                     by_dimension[dimension][rater][key] = value
+                try:
+                    confidence = int((row.get("confidence") or "").strip())
+                except ValueError as exc:
+                    raise ValueError(
+                        f"confidence at CSV row {row_no} must be integer 1..5"
+                    ) from exc
+                if not 1 <= confidence <= 5:
+                    raise ValueError(
+                        f"confidence at CSV row {row_no} must be integer 1..5"
+                    )
             adjudicated = (row.get("adjudicated_label") or "").strip()
             if adjudicated and adjudicated not in VALID_LABELS:
                 raise ValueError(
@@ -1147,7 +1214,10 @@ def _judge_report(
     unsafe_gold = ["violation" if label == "violation" else "other" for label in gold]
     return {
         "unsafe_kappa": _kappa(unsafe_pred, unsafe_gold),
-        "unsafe_kappa_ci": _kappa_ci(unsafe_pred, unsafe_gold, clusters),
+        "unsafe_kappa_ci": _kappa_ci(
+            unsafe_pred, unsafe_gold, clusters,
+            n_resamples=n_resamples, alpha=alpha, seed=seed,
+        ),
         "exact_label_kappa_diagnostic": _kappa(pred, gold),
         "confusion": _confusion(gold, pred),
         "score_cluster_bootstrap_ci": _judge_score_cluster_cis(
@@ -1302,6 +1372,35 @@ def _primary_effect_sensitivity(
             auto_point = weighted({key: automated_means[key] for key in keys})
             human_point = weighted({key: human_means[key] for key in keys})
             point = human_point - auto_point
+            agreement_by_cluster: dict[str, float] = {}
+            for key in keys:
+                automated_conversations = model_cluster[
+                    "automated"
+                ][cell_id][model][key]
+                human_conversations = model_cluster[
+                    "human_consensus"
+                ][cell_id][model][key]
+                if set(automated_conversations) != set(human_conversations):
+                    raise ValueError(
+                        "human/automated endpoint conversations do not align for "
+                        f"{cell_id!r}/{model!r}/{key!r}"
+                    )
+                conversation_agreements = [
+                    1.0 - abs(
+                        float(any(automated_conversations[conversation_id]))
+                        - float(any(human_conversations[conversation_id]))
+                    )
+                    for conversation_id in sorted(automated_conversations)
+                ]
+                if not conversation_agreements:
+                    raise ValueError(
+                        "human/automated endpoint cluster has no conversations for "
+                        f"{cell_id!r}/{model!r}/{key!r}"
+                    )
+                agreement_by_cluster[key] = sum(conversation_agreements) / len(
+                    conversation_agreements
+                )
+            endpoint_agreement = weighted(agreement_by_cluster)
             local_seed = scoped_seed(f"rate-delta::{cell_id}::{model}")
             rng = random.Random(local_seed)
             draws: list[float] = []
@@ -1312,6 +1411,7 @@ def _primary_effect_sensitivity(
                 )
             rate_sensitivity[cell_id][model] = {
                 "human_minus_automated_rate": point,
+                "endpoint_event_agreement": endpoint_agreement,
                 "bootstrap_ci": interval(
                     point, draws, local_seed=local_seed, n_clusters=len(keys),
                 ),
@@ -1410,6 +1510,9 @@ def analyse(
 ) -> int:
     if n_resamples < 1 or not 0 < alpha < 1:
         raise ValueError("human-audit bootstrap requires n_resamples>=1 and 0<alpha<1")
+    label_artifact = _input_artifact_descriptor(
+        labels_path, label="completed human labels CSV"
+    )
     per_judge, artifact_meta, _, artifact_audit = _joined_artifacts(results)
     by_rater, label_meta, label_audit = _load_labels(labels_path)
     dimension_ratings = label_audit.pop("_dimension_ratings", {})
@@ -1532,6 +1635,9 @@ def analyse(
         "required_cells": 0, "covered_cells": 0,
         "all_required_cells_covered": False,
     }
+    sensitivity_requirements: list[dict[str, Any]] = []
+    minimum_shared_clusters_per_required_cell: int | None = None
+    minimum_endpoint_agreement: float | None = None
     if design_bound:
         plan_sha256, required_text, raters_text, requirements_digest = (
             populated_design_rows[0]
@@ -1568,9 +1674,35 @@ def analyse(
             or design.get("minimum_independent_raters") != frozen_minimum_raters
         ):
             raise ValueError("label CSV does not match the supplied human-audit design")
-        requirements = list(design.get("sensitivity_requirements") or [])
-        if _sha256_json(requirements) != requirements_digest:
+        sensitivity_requirements = list(design.get("sensitivity_requirements") or [])
+        if _sha256_json(sensitivity_requirements) != requirements_digest:
             raise ValueError("label CSV sensitivity requirements do not match the plan")
+        validity_gate = design.get("validity_gate")
+        if not isinstance(validity_gate, dict):
+            raise ValueError("confirmatory human-audit design lacks a validity gate")
+        minimum_shared_clusters_per_required_cell = validity_gate.get(
+            "minimum_shared_clusters_per_required_cell"
+        )
+        minimum_endpoint_agreement = validity_gate.get(
+            "minimum_endpoint_agreement"
+        )
+        if (
+            not isinstance(minimum_shared_clusters_per_required_cell, int)
+            or isinstance(minimum_shared_clusters_per_required_cell, bool)
+            or minimum_shared_clusters_per_required_cell < 2
+        ):
+            raise ValueError(
+                "human validity gate requires at least two shared clusters per cell"
+            )
+        if (
+            not isinstance(minimum_endpoint_agreement, (int, float))
+            or isinstance(minimum_endpoint_agreement, bool)
+            or not 0 < float(minimum_endpoint_agreement) <= 1
+        ):
+            raise ValueError(
+                "human validity gate minimum_endpoint_agreement must be in (0,1]"
+            )
+        minimum_endpoint_agreement = float(minimum_endpoint_agreement)
         replay_candidates: list[dict[str, Any]] = []
         for key, meta in sorted(artifact_meta.items()):
             labels = [labels[key] for labels in per_judge.values() if key in labels]
@@ -1597,7 +1729,10 @@ def analyse(
             })
         _, expected_clusters, expected_sampling, sensitivity_coverage_audit = (
             _select_sample_clusters(
-                replay_candidates, frozen_required_clusters, requirements,
+                replay_candidates, frozen_required_clusters, sensitivity_requirements,
+                minimum_clusters_per_requirement=(
+                    minimum_shared_clusters_per_required_cell
+                ),
             )
         )
         observed_cluster_keys = {
@@ -1641,7 +1776,10 @@ def analyse(
         ]
         inter_human[f"{a}|{b}"] = {
             "unsafe_kappa": _kappa(unsafe_a, unsafe_b),
-            "unsafe_kappa_ci": _kappa_ci(unsafe_a, unsafe_b, clusters),
+            "unsafe_kappa_ci": _kappa_ci(
+                unsafe_a, unsafe_b, clusters,
+                n_resamples=n_resamples, alpha=alpha, seed=seed,
+            ),
             "exact_label_kappa_diagnostic": _kappa(
                 [by_rater[a][key] for key in shared],
                 [by_rater[b][key] for key in shared],
@@ -1768,6 +1906,7 @@ def analyse(
                     "kappa_ci": _kappa_ci(
                         [ratings[left_rater][key] for key in shared],
                         [ratings[right_rater][key] for key in shared], clusters,
+                        n_resamples=n_resamples, alpha=alpha, seed=seed,
                     ),
                     "n": len(shared),
                     "n_unique_clusters": len(set(clusters)),
@@ -1788,6 +1927,85 @@ def analyse(
         n_resamples=n_resamples, alpha=alpha, seed=seed,
     )
 
+    validity_cells: dict[str, dict[str, Any]] = {}
+    validity_gate_passed = False
+    if design_bound:
+        rate_sensitivity = primary_sensitivity.get(
+            "human_minus_automated_endpoint_rates", {}
+        )
+        arm_metadata = primary_sensitivity.get("analysis_arm_metadata", {})
+        cell_metadata = primary_sensitivity.get("analysis_cell_metadata", {})
+        for requirement in sensitivity_requirements:
+            matching_cells = [
+                cell_id for cell_id, metadata in cell_metadata.items()
+                if metadata.get("source_policy_id")
+                == requirement["source_policy_id"]
+                and metadata.get("source_policy_version")
+                == requirement["source_policy_version"]
+                and metadata.get("risk_category") == requirement.get("risk_category")
+                and metadata.get("modality") == requirement.get("modality")
+                and metadata.get("metric") == requirement["metric"]
+            ]
+            if len(matching_cells) != 1:
+                raise ValueError(
+                    f"human validity requirement {requirement['requirement_id']!r} "
+                    f"matches {len(matching_cells)} realized analysis cells"
+                )
+            cell_id = matching_cells[0]
+            matching_arms = [
+                arm_id for arm_id, metadata in arm_metadata.items()
+                if metadata.get("model_spec") == requirement["model_spec"]
+                and metadata.get("defense") == requirement["defense"]
+                and metadata.get("attacker") == requirement["attacker"]
+            ]
+            if len(matching_arms) != 1:
+                raise ValueError(
+                    f"human validity requirement {requirement['requirement_id']!r} "
+                    f"matches {len(matching_arms)} realized analysis arms"
+                )
+            arm_id = matching_arms[0]
+            gate_id = requirement["requirement_id"]
+            record = (rate_sensitivity.get(cell_id) or {}).get(arm_id) or {}
+            n_shared = record.get("n_shared_unique_clusters")
+            agreement = record.get("endpoint_event_agreement")
+            support_passed = (
+                isinstance(n_shared, int)
+                and n_shared >= minimum_shared_clusters_per_required_cell
+            )
+            agreement_passed = (
+                isinstance(agreement, (int, float))
+                and not isinstance(agreement, bool)
+                and math.isfinite(float(agreement))
+                and float(agreement) >= minimum_endpoint_agreement
+            )
+            validity_cells[gate_id] = {
+                "requirement_id": requirement["requirement_id"],
+                "analysis_cell_id": cell_id,
+                "analysis_arm_id": arm_id,
+                "n_shared_unique_clusters": n_shared,
+                "endpoint_event_agreement": agreement,
+                "support_passed": support_passed,
+                "agreement_passed": agreement_passed,
+                "passed": support_passed and agreement_passed,
+            }
+        validity_gate_passed = (
+            bool(validity_cells)
+            and len(validity_cells) == len(sensitivity_requirements)
+            and all(record["passed"] for record in validity_cells.values())
+        )
+    human_validity_gate = {
+        "status": "passed" if validity_gate_passed else (
+            "failed" if design_bound else "not_preregistered_exploratory"
+        ),
+        "minimum_shared_clusters_per_required_cell": (
+            minimum_shared_clusters_per_required_cell
+        ),
+        "minimum_endpoint_agreement": minimum_endpoint_agreement,
+        "required_arm_cells": len(validity_cells),
+        "all_required_arm_cells_passed": validity_gate_passed,
+        "cells": validity_cells,
+    }
+
     output = {
         "schema_version": "ura-human-audit/1.0",
         "scope": (
@@ -1800,6 +2018,7 @@ def analyse(
             "design_name": "automated-label-blinded_model-visible",
         },
         "raters": sorted(by_rater),
+        "completed_labels_artifact": label_artifact,
         "n_consensus": len(consensus),
         "publishable_real_run": (
             not allow_single_rater
@@ -1815,17 +2034,22 @@ def analyse(
             and design_bound
             and selection_replayed
             and sensitivity_coverage_audit.get("all_required_cells_covered") is True
+            and sensitivity_coverage_audit.get(
+                "all_required_cells_meet_minimum_support"
+            ) is True
             and frozen_required_clusters == len(selected_clusters)
             and dimensions_present
             and all(
                 report.get("complete_consensus") is True
                 for report in dimension_reports.values()
             )
+            and validity_gate_passed
         ),
         "inter_human": inter_human,
         "automated_vs_consensus": automated,
         "separate_rating_dimensions": dimension_reports,
         "primary_effect_sensitivity": primary_sensitivity,
+        "human_validity_gate": human_validity_gate,
         "analysis_source": analysis_source_identity([
             Path(__file__), _REPO_ROOT / "src" / "ura" / "metrics.py",
             _REPO_ROOT / "experiments" / "transfer_matrix.py",
@@ -1836,6 +2060,10 @@ def analyse(
         "frozen_human_audit_design": {
             "required_unique_clusters": frozen_required_clusters,
             "minimum_independent_raters": frozen_minimum_raters,
+            "minimum_shared_clusters_per_required_cell": (
+                minimum_shared_clusters_per_required_cell
+            ),
+            "minimum_endpoint_agreement": minimum_endpoint_agreement,
         },
         "audit": {
             "artifacts": artifact_audit,

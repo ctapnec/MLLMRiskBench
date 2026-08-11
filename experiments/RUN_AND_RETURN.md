@@ -162,6 +162,9 @@ cluster inventory, and portable `source_locator`; it does not persist the
 operator's absolute corpus path. Pilot and main are exhaustive and disjoint.
 Every measured child uses this same artifact and `--limit 0`. A child may select
 only a subset of corpora already present in the plan.
+Every load recomputes the exact scoped-seed role assignment from the complete
+sorted cluster inventory, corpus, seed, and pilot count; stored membership is
+not trusted on its own.
 
 If a pilot later has fewer than two clusters or zero/undefined cluster-
 difference variance, stop. Do not repartition, weaken the SESOI after seeing the
@@ -195,6 +198,15 @@ Put the chosen positive integers and derivation in `RUNNOTE.md`. Crescendo setup
 turns consume target calls but no judge calls. These ledgers bound declared call
 exposure, not dollars, tokens, provider-side activity outside the declared
 transport, or billing reconciliation. Never use zero (unbounded) on a paid run.
+
+Before executing each command below, run its exact arguments once with
+`python -m experiments.rig_check` in place of
+`python -m experiments.run_matrix`. The check uses temporary storage, makes no
+target/judge generation call, prints the selected source-policy cluster counts,
+and prints conservative complete-grid target, model-judge and declared HTTP-
+attempt upper bounds. A ceiling below those bounds fails the check. The
+StrongREJECT-only Crescendo checks are performed after their referenced replay
+modality proof exists.
 
 ## 6. Run the two-child pilot
 
@@ -350,26 +362,53 @@ python -m experiments.pilot_analysis --results runs/pilot \
 ```
 
 Each command prints its content SHA-256 and cluster SD. For each artifact,
-prespecify and justify a SESOI, then calculate its own required main-cluster
-count. Never reuse one pilot SD across hypotheses:
+prespecify and justify a rate-difference SESOI in `(0,1]`, then calculate its
+own required main-cluster count using the size of its complete frozen family.
+Never reuse one pilot SD across hypotheses:
 
 ```bash
-python -c 'import json,sys; from ura.metrics import required_clusters_for_power as f; p=json.load(open(sys.argv[1],encoding="utf-8")); print(f(float(sys.argv[2]),p["cluster_sd"],alpha=.05,target_power=.80))' \
-  runs/pilot-analysis/model-strongreject-asr.json '<prespecified-SESOI>'
+python -c 'import json,sys; from ura.metrics import required_clusters_for_power as f; p=json.load(open(sys.argv[1],encoding="utf-8")); print(f(float(sys.argv[2]),p["cluster_sd"],alpha=.05,target_power=.80,family_size=int(sys.argv[3])))' \
+  runs/pilot-analysis/model-strongreject-asr.json '<prespecified-SESOI>' 1
 ```
 
-Repeat for all ten artifacts. If a requirement exceeds its exact main policy
-stratum, the hypothesis is infeasible under this design. Stop before main and
-amend the prospective design; do not change the partition or SESOI in response
-to the observed effect.
+Use family size `1` for the StrongREJECT model hypothesis, `7` for each of the
+six MM-SafetyBench and one MOSSBench proxy hypotheses, and `2` for each H4
+hypothesis. The calculation uses `alpha / family_size` and also requires enough
+clusters for the two-sided sign-flip test to attain that threshold
+(`2 / 2^n <= alpha / family_size`). If a requirement exceeds its exact main
+policy stratum, the hypothesis is infeasible under this design. Stop before main
+and amend the prospective design; do not change the partition or SESOI in
+response to the observed effect.
+
+`pilot_analysis` refuses to size the main study unless each source artifact is
+real and mock-free, passes v2 byte-integrity, requested-grid, source-identity
+and compatible code/schema/source checks, and has zero common-metric, pairing,
+static-input-mismatch and unexplained exclusions. It hashes a normalized
+analysis design; the main facet must exactly match its endpoint, selectors,
+realized target snapshot and judge identities, repeat seeds, per-trajectory budget, source-policy/
+metric design and code/schema identity. Pilot/main run IDs, partition
+assignments and aggregate call ceilings are expected to differ.
 
 ## 8. Freeze the confirmatory plan
 
 Write `runs/freeze/confirmatory-plan.json` using
 `ura-confirmatory-plan/1.0`. Relative result/artifact paths resolve from the
-plan's directory. Every hypothesis design must contain its own
+plan's directory, except `evaluation_policy.artifact`, which is a canonical
+repository-relative locator. Every hypothesis design must contain its own
 `endpoint_role`, `smallest_effect`, `{artifact,sha256}` pilot binding, and exact
 integer `required_unique_clusters` recomputed above.
+
+Copy `experiments/confirmatory-plan.template.json` as the starting point. It
+contains the exact three-family/ten-hypothesis inventory below and obvious
+`REPLACE_*` sentinels; it is deliberately invalid until every sentinel is
+replaced with the frozen value. It is a reviewable JSON template, not a plan
+generator or an alternative schema.
+
+The template already freezes `experiments/evaluation-policy.json` by path,
+byte count, SHA-256, policy ID and version. Verify those values in the checkout
+used for the experiment; do not replace them with a digest of an arbitrary
+label. If that small interpretation artifact is deliberately changed, increment
+its version and update the byte count and digest before hashing the final plan.
 
 Freeze exactly these multiplicity families:
 
@@ -389,7 +428,10 @@ specifications. A model contrast has `type: "model"`; each H4 contrast has
 and `crescendo`. Use one globally unique `contrast_id`; each family-level
 hypothesis is `<contrast_id>::<local-hypothesis>`. Keep endpoint roles identical
 between a family and all its hypothesis designs. Do not put MM/MOSS proxies in a
-primary family.
+primary family. Every tested contrast must also contain
+`"assume_exchangeable": true`. If paired sign-flip exchangeability cannot be
+defended, keep that comparison descriptive outside the confirmatory plan rather
+than emitting a confirmatory p-value.
 
 The exact policy token form is
 `policy=<percent-encoded-id>@<percent-encoded-version>`. Reuse the policy IDs and
@@ -419,7 +461,11 @@ option, use:
   "event_prevalence_mode": "conservative_max_binomial_variance",
   "precision_half_width": "<prespecified-number>",
   "required_unique_clusters": "<exact-recomputed-integer>",
-  "minimum_independent_raters": 2
+  "minimum_independent_raters": 2,
+  "validity_gate": {
+    "minimum_shared_clusters_per_required_cell": 2,
+    "minimum_endpoint_agreement": 0.80
+  }
 }
 ```
 
@@ -428,7 +474,11 @@ numbers, not quoted placeholders. Calculate the latter with
 `ura.metrics.required_clusters_for_proportion_precision(0.5, half_width,
 alpha=0.05)`; do not invent a fixed count. The frozen plan makes the audit cover
 the exact model, defense, attacker, policy and endpoint arms in all three
-families.
+families. `minimum_shared_clusters_per_required_cell` must be at least two and
+cannot exceed `required_unique_clusters`; `minimum_endpoint_agreement` must lie
+in `(0,1]`. The shown `0.80` is the recommended threshold to freeze before main,
+not a claimed observed reliability value. Sampling fails before label export if
+the exact required arms cannot each receive the frozen cluster support.
 
 Hash the final bytes and never edit them in place:
 
@@ -541,7 +591,8 @@ Follow the generated instructions. Preserve every binding field, duplicate each
 selected item for at least two independent qualified raters, use distinct
 `rater_id` values, and label refusal, harmfulness, convincingness and specificity
 separately. Adjudicate only after independent labels. Analyse with the same plan
-binding:
+binding and the plan's exact bootstrap count, alpha, and seed. The output binds
+the completed labels CSV by byte count and SHA-256:
 
 ```bash
 python -m experiments.human_audit --results runs/main \
@@ -568,7 +619,9 @@ FINAL_SHA=$(sha256sum runs/analysis/confirmatory-final.json | cut -d' ' -f1)
 The final artifact is publishable only if all frozen hypotheses are estimable
 and adequately powered, family inventories and endpoint roles are intact,
 pilot/main identities are disjoint, all source and condition identities match,
-and the human audit covers every required arm.
+and every human-audit arm meets both its frozen shared-cluster support and
+direct equal-cluster endpoint-event agreement threshold. A failed human cell is
+exploratory and makes the audit and final artifact non-publishable.
 
 ## 12. Figures and return package
 
@@ -581,6 +634,15 @@ python -m experiments.figures \
 
 The renderer rejects preliminary, dry-run, incomplete, underpowered or unbound
 analysis. Preserve `fig-v-provenance.json` beside the three PNG files.
+The fixed outputs are:
+
+- `fig-v-asr-by-model.png`: one primary StrongREJECT Fable-versus-Sol point;
+- `fig-v-policy-proxies.png`: six policy-qualified MM-SafetyBench ASR points
+  and one MOSSBench benign-FRR point; and
+- `fig-v-adaptivity.png`: the two model-specific H4 replay-versus-Crescendo
+  points.
+
+No unfrozen category or defense collection is required by measured rendering.
 
 Return the complete access-controlled `runs/` tree, including:
 

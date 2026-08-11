@@ -99,6 +99,7 @@ from ura.runner import (                              # noqa: E402
     _portable_attempt_dump,
     realized_identity_summary,
 )
+from ura import source_metrics                        # noqa: E402
 from ura.targets.api import build_api_target              # noqa: E402
 
 
@@ -317,6 +318,26 @@ def _sha256_json(value: object) -> str:
         allow_nan=False,
     ).encode("utf-8")
     return hashlib.sha256(material).hexdigest()
+
+
+def _partition_cluster_ids(
+    cluster_ids: list[str], *, seed: int, corpus: str, pilot_count: int,
+) -> tuple[list[str], list[str]]:
+    """Reproduce the declared scoped-seed pilot/main assignment exactly."""
+    if (
+        not corpus
+        or isinstance(seed, bool) or not isinstance(seed, int)
+        or isinstance(pilot_count, bool) or not isinstance(pilot_count, int)
+        or pilot_count < 1 or pilot_count >= len(cluster_ids)
+        or len(set(cluster_ids)) != len(cluster_ids)
+    ):
+        raise ValueError("invalid deterministic cluster-partition inputs")
+    scoped = int.from_bytes(hashlib.sha256(
+        f"ura-pilot-main-partition-v1\0{seed}\0{corpus}".encode()
+    ).digest()[:8], "big")
+    shuffled = sorted(cluster_ids)
+    random.Random(scoped).shuffle(shuffled)
+    return sorted(shuffled[:pilot_count]), sorted(shuffled[pilot_count:])
 
 
 def _record_count(path: Path) -> int:
@@ -752,6 +773,18 @@ def _load_partition_plan(
         if union != set(total_cluster_ids):
             raise ValueError(
                 f"partition plan corpus {name!r} is not exhaustive over source clusters"
+            )
+        expected_pilot, expected_main = _partition_cluster_ids(
+            list(total_cluster_ids), seed=seed, corpus=name,
+            pilot_count=len(role_payloads["pilot"]["cluster_ids"]),
+        )
+        if (
+            role_payloads["pilot"]["cluster_ids"] != expected_pilot
+            or role_payloads["main"]["cluster_ids"] != expected_main
+        ):
+            raise ValueError(
+                f"partition plan corpus {name!r} does not match its declared "
+                "scoped-seed random assignment"
             )
         if name in expected_corpora:
             assignments[name] = {
@@ -1242,6 +1275,155 @@ def _read_jsonl(path: Path) -> list[dict]:
                 raise ValueError(f"non-object JSONL row in {path}:{line_number}")
             rows.append(value)
     return rows
+
+
+_BUDGET_COUNTER_FIELDS = ("target_calls", "judge_calls", "http_attempts")
+
+
+def _same_grid_budget_snapshot(
+    value: object, current: dict[str, object], *, label: str,
+) -> dict[str, object] | None:
+    """Validate one persisted snapshot if it belongs to the active grid."""
+    if not isinstance(value, dict) or value.get("budget_id") != current["budget_id"]:
+        return None
+    if set(value) != set(current):
+        raise ValueError(f"{label} has an invalid call-budget snapshot")
+    for field in set(current) - set(_BUDGET_COUNTER_FIELDS):
+        if value.get(field) != current[field]:
+            raise ValueError(f"{label} call-budget {field} mismatch")
+    for field in _BUDGET_COUNTER_FIELDS:
+        count = value.get(field)
+        if isinstance(count, bool) or not isinstance(count, int) or count < 0:
+            raise ValueError(f"{label} has invalid call-budget {field}")
+    return dict(value)
+
+
+def _completion_budget_snapshots(
+    out: Path, current: dict[str, object],
+) -> list[tuple[str, dict[str, object]]]:
+    """Read budget high-water marks from manifest-bound completion markers."""
+    found: list[tuple[str, dict[str, object]]] = []
+    grid_id = str(current["budget_id"])
+    suffix = ".complete.json"
+    for marker_path in sorted(out.glob(f"*{suffix}")):
+        if (
+            marker_path.is_symlink()
+            or not marker_path.is_file()
+            or marker_path.stat().st_size > 1024 * 1024
+        ):
+            continue
+        marker = _json_loads_strict(marker_path.read_text(encoding="utf-8"))
+        if not isinstance(marker, dict):
+            continue
+        snapshot = _same_grid_budget_snapshot(
+            marker.get("call_budget_snapshot"), current,
+            label=f"completion marker {marker_path.name!r}",
+        )
+        if snapshot is None:
+            continue
+        if marker.get("status") != "complete" or marker.get("format_version") != 2:
+            raise ValueError(
+                f"same-grid completion marker {marker_path.name!r} is not trustworthy"
+            )
+        artifacts = marker.get("artifacts")
+        descriptor = artifacts.get("manifest") if isinstance(artifacts, dict) else None
+        expected_name = marker_path.name.removesuffix(suffix) + ".manifest.json"
+        if (
+            not isinstance(descriptor, dict)
+            or set(descriptor) != {"file", "sha256", "bytes", "records"}
+            or descriptor.get("file") != expected_name
+        ):
+            raise ValueError(
+                f"same-grid completion marker {marker_path.name!r} lacks a bound manifest"
+            )
+        manifest_path = out / expected_name
+        if (
+            manifest_path.is_symlink()
+            or not manifest_path.is_file()
+            or descriptor.get("bytes") != manifest_path.stat().st_size
+            or descriptor.get("sha256") != _sha256_file(manifest_path)
+            or descriptor.get("records") != 1
+        ):
+            raise ValueError(
+                f"same-grid completion marker {marker_path.name!r} manifest mismatch"
+            )
+        manifest = RunManifest.model_validate_json(
+            manifest_path.read_text(encoding="utf-8")
+        )
+        run_config = manifest.config.get("run")
+        if (
+            not isinstance(run_config, dict)
+            or run_config.get("grid_id") != grid_id
+            or manifest.config.get("call_budget_snapshot") != snapshot
+        ):
+            raise ValueError(
+                f"same-grid completion marker {marker_path.name!r} budget lineage mismatch"
+            )
+        found.append((f"completion marker {marker_path.name}", snapshot))
+    return found
+
+
+def _response_checkpoint_budget_snapshots(
+    out: Path, current: dict[str, object],
+) -> list[tuple[str, dict[str, object]]]:
+    """Read budget high-water marks from strict response recovery records."""
+    found: list[tuple[str, dict[str, object]]] = []
+    grid_id = str(current["budget_id"])
+    for path in sorted(out.glob("*.responses.checkpoint.jsonl")):
+        if path.is_symlink() or not path.is_file():
+            continue
+        size = path.stat().st_size
+        if size <= 0 or size > 512 * 1024 * 1024:
+            continue
+        # Checkpoint names do not contain the grid id. Avoid parsing unrelated
+        # old-grid recovery files unless their bytes claim the active lineage.
+        raw = path.read_text(encoding="utf-8")
+        if grid_id not in raw:
+            continue
+        records = Runner.load_response_checkpoint(path)
+        snapshots = [record.get("budget_after_target") for record in records.values()]
+        matching = [
+            _same_grid_budget_snapshot(
+                value, current, label=f"response checkpoint {path.name!r}"
+            )
+            for value in snapshots
+        ]
+        matching = [value for value in matching if value is not None]
+        if not matching:
+            continue
+        if len(matching) != len(snapshots):
+            raise ValueError(
+                f"response checkpoint {path.name!r} mixes call-budget lineages"
+            )
+        found.extend(
+            (f"response checkpoint {path.name}", value) for value in matching
+        )
+    return found
+
+
+def _validate_budget_recovery_high_water(
+    out: Path, current: dict[str, object],
+) -> None:
+    """Reject a rolled-back ledger before another external call can start."""
+    snapshots = [
+        *_completion_budget_snapshots(out, current),
+        *_response_checkpoint_budget_snapshots(out, current),
+    ]
+    for label, snapshot in snapshots:
+        ahead = {
+            field: (int(current[field]), int(snapshot[field]))
+            for field in _BUDGET_COUNTER_FIELDS
+            if int(snapshot[field]) > int(current[field])
+        }
+        if ahead:
+            detail = ", ".join(
+                f"{field} ledger={ledger} artifact={artifact}"
+                for field, (ledger, artifact) in ahead.items()
+            )
+            raise ValueError(
+                "durable call-budget ledger is behind trustworthy same-grid "
+                f"recovery evidence ({label}: {detail}); manual audit required"
+            )
 
 
 def _validate_completion_marker(
@@ -1750,6 +1932,126 @@ def _source_policy_cluster_counts(records: list[DataPoint]) -> dict[str, int]:
     return dict(sorted(Counter(cluster_policies.values()).items()))
 
 
+def _declared_transport_attempts(component: object) -> int:
+    value = getattr(component, "max_transport_attempts_per_call", 0)
+    if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+        raise ValueError(
+            "max_transport_attempts_per_call must be a non-negative integer"
+        )
+    return value
+
+
+def _project_grid_call_upper_bounds(
+    *,
+    targets: dict[str, object],
+    corpora: dict[str, list[DataPoint]],
+    attackers: dict[str, object],
+    cascade: JudgeCascade,
+    seeds: list[int],
+    max_queries: int,
+    max_turns: int,
+) -> dict[str, object]:
+    """Conservative complete-grid exposure using already-built components.
+
+    These are ledger-aligned upper bounds, not price or token estimates. Stateful
+    trajectories may stop early after a policy violation, and provider refusals
+    can avoid judge calls, but a complete grid must be budgeted for the longest
+    permitted path.
+    """
+    logical_limit = min(max_queries, max_turns)
+    model_judges = [
+        getattr(stage, "judge_target")
+        for stage in cascade.stages
+        if getattr(stage, "judge_target", None) is not None
+    ]
+    judge_calls_per_evaluable = len(model_judges)
+    judge_http_per_evaluable = sum(
+        _declared_transport_attempts(target) for target in model_judges
+    )
+    by_attacker: dict[str, dict[str, int]] = {}
+    total_target = total_judge = total_http = total_trajectories = 0
+    for name, attacker in attackers.items():
+        canonical_name = str(getattr(attacker, "name", name)).lower()
+        if canonical_name == "replay":
+            target_turns = evaluable_turns = 1
+        elif canonical_name == "crescendo":
+            ladder = getattr(attacker, "_ladder")(logical_limit)
+            target_turns = len(ladder)
+            evaluable_turns = sum(int(rung >= 2) for rung in ladder)
+        else:
+            # External/static adapters can emit fewer attempts, but Runner caps
+            # every trajectory at this value. Do not execute an engine merely to
+            # make a planning estimate.
+            target_turns = evaluable_turns = logical_limit
+        attacker_target = attacker_judge = attacker_http = attacker_trajectories = 0
+        for target in targets.values():
+            trajectories = sum(len(rows) for rows in corpora.values()) * len(seeds)
+            target_calls = trajectories * target_turns
+            judge_calls = trajectories * evaluable_turns * judge_calls_per_evaluable
+            http_attempts = (
+                target_calls * _declared_transport_attempts(target)
+                + trajectories * evaluable_turns * judge_http_per_evaluable
+            )
+            attacker_trajectories += trajectories
+            attacker_target += target_calls
+            attacker_judge += judge_calls
+            attacker_http += http_attempts
+        by_attacker[name] = {
+            "trajectories": attacker_trajectories,
+            "target_calls": attacker_target,
+            "judge_calls": attacker_judge,
+            "http_attempts": attacker_http,
+        }
+        total_trajectories += attacker_trajectories
+        total_target += attacker_target
+        total_judge += attacker_judge
+        total_http += attacker_http
+    return {
+        "semantics": "conservative_complete_grid_upper_bound_v1",
+        "trajectories": total_trajectories,
+        "target_calls": total_target,
+        "judge_calls": total_judge,
+        "http_attempts": total_http,
+        "by_attacker": by_attacker,
+    }
+
+
+def _validate_planned_call_budget(
+    projection: dict[str, object], *, target: int, judge: int, http: int,
+    deadline_seconds: int, dry_run: bool, require_complete: bool,
+) -> None:
+    """Require finite real-run limits; rig-check also requires full coverage."""
+    if dry_run:
+        return
+    requirements = {
+        "--max-total-target-calls": int(projection["target_calls"]),
+        "--max-total-judge-calls": int(projection["judge_calls"]),
+        "--max-total-http-attempts": int(projection["http_attempts"]),
+    }
+    supplied = {
+        "--max-total-target-calls": target,
+        "--max-total-judge-calls": judge,
+        "--max-total-http-attempts": http,
+    }
+    shortfalls = []
+    for flag, required in requirements.items():
+        if required <= 0:
+            continue
+        minimum = required if require_complete else 1
+        if supplied[flag] < minimum:
+            shortfalls.append(
+                f"{flag}={supplied[flag]} (need >= {minimum}"
+                + (" for the complete planned grid)" if require_complete else ")")
+            )
+    if deadline_seconds <= 0:
+        shortfalls.append("--deadline-seconds must be positive")
+    if shortfalls:
+        raise ValueError(
+            "real grid has invalid planned call limits: "
+            + "; ".join(shortfalls)
+        )
+
+
 def _select_corpus(
     name: str,
     dps: list[DataPoint],
@@ -2015,6 +2317,10 @@ def _validate_partitioned_corpus(
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(description="URA-Bench experiment matrix.")
     ap.add_argument("--dry-run", action="store_true", help="use MockTarget only")
+    ap.add_argument(
+        "--preflight-only", action="store_true",
+        help="validate and project the complete grid without model/judge calls",
+    )
     ap.add_argument("--api", default="", help="comma list of API model ids")
     ap.add_argument("--local", default="", help="comma list of backend:model specs")
     ap.add_argument(
@@ -2433,6 +2739,75 @@ def main(argv=None) -> int:
     modality_plan_payload = modality_plan.manifest_payload()
     (out / "modality-coverage.error.json").unlink(missing_ok=True)
 
+    try:
+        for rows in loaded_corpora.values():
+            source_metrics.validate_scored_source_metrics(rows)
+        for target in prebuilt_targets.values():
+            validator = getattr(target, "validate_research_identity", None)
+            if callable(validator):
+                validator()
+        planned_attackers = {}
+        for attacker_name in attacker_names:
+            attacker = get_attacker(
+                attacker_name,
+                **attacker_configs.get(attacker_name.lower(), {}),
+            )
+            if getattr(attacker, "runner_replay_eligible", True) is False:
+                raise ValueError(
+                    f"attacker {attacker_name!r} is a native-artifact integration "
+                    "and cannot be replayed through Runner"
+                )
+            _component_config(attacker)
+            planned_attackers[attacker_name] = attacker
+        planned_cascade = build_judges(
+            judge_names,
+            args.judge_model,
+            guardrail_model=args.guardrail_model,
+            guardrail_revision=args.guardrail_revision,
+            guardrail_device=args.guardrail_device,
+        )
+        _component_config(planned_cascade)
+        policy_strata = {
+            name: _source_policy_cluster_counts(rows)
+            for name, rows in loaded_corpora.items()
+        }
+        call_projection = _project_grid_call_upper_bounds(
+            targets=prebuilt_targets,
+            corpora=loaded_corpora,
+            attackers=planned_attackers,
+            cascade=planned_cascade,
+            seeds=seeds,
+            max_queries=args.max_queries,
+            max_turns=args.max_turns,
+        )
+        _validate_planned_call_budget(
+            call_projection,
+            target=args.max_total_target_calls,
+            judge=args.max_total_judge_calls,
+            http=args.max_total_http_attempts,
+            deadline_seconds=args.deadline_seconds,
+            dry_run=bool(args.dry_run),
+            require_complete=bool(args.preflight_only),
+        )
+    except Exception as exc:  # noqa: BLE001 - fail closed at the pre-call boundary
+        _write_json(out / "grid-planning.error.json", {
+            "status": "error",
+            "phase": "grid_planning_preflight",
+            "exception_type": type(exc).__name__,
+            "message": str(exc),
+        })
+        print(f"grid planning preflight failed: {exc}", file=sys.stderr)
+        return 1
+    for corpus_name, counts in policy_strata.items():
+        print(
+            f"plan '{corpus_name}' source-policy clusters: "
+            + json.dumps(counts, sort_keys=True, separators=(",", ":"))
+        )
+    print(
+        "planned complete-grid call upper bounds: "
+        + json.dumps(call_projection, sort_keys=True, separators=(",", ":"))
+    )
+
     grid_request = {
         "models": [persisted_model_specs[spec] for spec in model_specs],
         "corpora": corpora,
@@ -2477,6 +2852,8 @@ def main(argv=None) -> int:
         "partition_assignments": partition_assignments,
         "modality_coverage_plan": modality_plan_payload,
         "modality_coverage_companion": companion_binding,
+        "source_policy_cluster_counts": policy_strata,
+        "call_projection": call_projection,
     }
     grid_material = json.dumps(
         grid_request, sort_keys=True, separators=(",", ":")
@@ -2487,6 +2864,13 @@ def main(argv=None) -> int:
     budget_path = out / f"{grid_id}.budget.json"
     circuit_path = out / f"{grid_id}.circuits.json"
     circuits: dict[str, dict[str, object]] = {}
+
+    if args.preflight_only:
+        print(
+            f"rig preflight passed for {grid_id}; no target or judge generation "
+            "calls were made"
+        )
+        return 0
 
     def persist_circuits() -> None:
         _write_json(circuit_path, {
@@ -2571,6 +2955,9 @@ def main(argv=None) -> int:
             deadline_epoch=deadline_epoch,
             state_path=budget_path,
             budget_id=grid_id,
+        )
+        _validate_budget_recovery_high_water(
+            out, call_budget.snapshot()
         )
     except (OSError, ValueError) as exc:
         _release_artifact_lock(grid_lock, grid_lock_token)

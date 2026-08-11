@@ -713,17 +713,47 @@ def power_for_paired_difference(
 def required_clusters_for_power(
     effect: float, sd: float, *, alpha: float = 0.05,
     target_power: float = 0.8, two_sided: bool = True,
+    family_size: int = 1,
 ) -> int:
-    """Smallest cluster count whose approximate power reaches ``target_power``."""
-    if effect == 0:
-        raise ValueError("a nonzero smallest effect of interest is required")
+    """Smallest cluster count meeting power and sign-flip resolution gates.
+
+    The rate-difference SESOI is a positive magnitude bounded by one.  The
+    normal approximation uses the conservative first Holm threshold
+    ``alpha / family_size``.  A two-sided sign-flip test also cannot attain a
+    p-value below ``2 / 2**n``; that discrete resolution is enforced even when
+    the normal approximation alone would claim that a tiny sample is enough.
+    """
+    if not 0 < effect <= 1:
+        raise ValueError(
+            "the rate-difference smallest effect of interest must lie in (0,1]"
+        )
     if sd <= 0:
         raise ValueError("sd must be positive")
+    if not 0.0 < alpha < 1.0:
+        raise ValueError("alpha must be strictly between 0 and 1")
     if not 0.0 < target_power < 1.0:
         raise ValueError("target_power must be strictly between 0 and 1")
-    z_alpha = _norm_ppf(1 - alpha / 2) if two_sided else _norm_ppf(1 - alpha)
+    if (
+        isinstance(family_size, bool)
+        or not isinstance(family_size, int)
+        or family_size < 1
+    ):
+        raise ValueError("family_size must be a positive integer")
+    per_hypothesis_alpha = alpha / family_size
+    z_alpha = (
+        _norm_ppf(1 - per_hypothesis_alpha / 2)
+        if two_sided
+        else _norm_ppf(1 - per_hypothesis_alpha)
+    )
     z_power = _norm_ppf(target_power)
-    return int(math.ceil((((z_alpha + z_power) * sd / abs(effect)) ** 2)))
+    normal_required = max(
+        1, int(math.ceil((((z_alpha + z_power) * sd / effect) ** 2)))
+    )
+    extreme_sign_patterns = 2 if two_sided else 1
+    resolution_required = 1
+    while extreme_sign_patterns / (2 ** resolution_required) > per_hypothesis_alpha:
+        resolution_required += 1
+    return max(normal_required, resolution_required)
 
 
 def required_clusters_for_proportion_precision(
@@ -751,6 +781,7 @@ def required_clusters_for_proportion_precision(
 def power_gate(
     effect: float, pilot_sd: float, n_clusters: int, *,
     alpha: float = 0.05, target_power: float = 0.8, two_sided: bool = True,
+    family_size: int = 1,
 ) -> dict[str, object]:
     """Prospective power / minimum-effect gate from a DISJOINT pilot's cluster SD.
 
@@ -758,19 +789,36 @@ def power_gate(
     comparison being tested; the caller is responsible for supplying it.
     """
     required = required_clusters_for_power(
-        effect, pilot_sd, alpha=alpha, target_power=target_power, two_sided=two_sided
+        effect, pilot_sd, alpha=alpha, target_power=target_power,
+        two_sided=two_sided, family_size=family_size,
     )
+    per_hypothesis_alpha = alpha / family_size
     achieved = power_for_paired_difference(
-        effect, pilot_sd, n_clusters, alpha=alpha, two_sided=two_sided
+        effect, pilot_sd, n_clusters, alpha=per_hypothesis_alpha,
+        two_sided=two_sided,
     )
+    extreme_sign_patterns = 2 if two_sided else 1
+    minimum_attainable_p = extreme_sign_patterns / (2 ** n_clusters)
+    resolution_required = 1
+    while extreme_sign_patterns / (2 ** resolution_required) > per_hypothesis_alpha:
+        resolution_required += 1
     return {
         "smallest_effect_of_interest": effect,
         "pilot_cluster_sd": pilot_sd,
         "n_clusters": n_clusters,
         "required_clusters": required,
+        "family_size": family_size,
+        "familywise_alpha": alpha,
+        "per_hypothesis_alpha": per_hypothesis_alpha,
+        "sign_flip_resolution_required_clusters": resolution_required,
+        "minimum_attainable_sign_flip_p": minimum_attainable_p,
         "target_power": target_power,
         "achieved_power": achieved,
-        "adequately_powered": n_clusters >= required and achieved >= target_power,
+        "adequately_powered": (
+            n_clusters >= required
+            and minimum_attainable_p <= per_hypothesis_alpha
+            and achieved >= target_power
+        ),
     }
 
 

@@ -16,6 +16,7 @@ from experiments.human_audit import (
     _consensus,
     _csv_safe,
     _joined_artifacts,
+    _primary_effect_sensitivity,
     analyse,
     load_labels,
     prepare_sample,
@@ -26,7 +27,11 @@ from experiments.judge_sensitivity import (
     analyse as analyse_sensitivity,
     main as sensitivity_main,
 )
-from experiments.pilot_analysis import generate_pilot
+from experiments.pilot_analysis import (
+    REQUIRED_PILOT_CHECKS,
+    generate_pilot,
+    paired_analysis_design,
+)
 from experiments.paired_compare import (
     PairedUnit,
     _metric_result,
@@ -249,13 +254,65 @@ def test_policy_conditioned_metric_does_not_pool_distinct_source_policies() -> N
 def test_category_pilot_binds_exact_risk_modality_and_conservative_prevalence(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    def arm(model: str, run_id: str) -> dict[str, object]:
+        return {
+            "run_id": run_id,
+            "model_spec": model,
+            "resolved_target": model,
+            "defense": "none",
+            "attacker": "replay",
+            "corpus": "fixture",
+            "judges": ["rules"],
+            "realized_identities": {
+                "target": {
+                    "observations": 2,
+                    "snapshot": {
+                        "provider": "fixture-provider",
+                        "resolved_model": model,
+                        "system_fingerprint": hashlib.sha256(
+                            model.encode("utf-8")
+                        ).hexdigest(),
+                    },
+                },
+                "judges": [{
+                    "stage": 0, "judge": "rules", "observations": 2,
+                    "snapshot": {"judge": "rules"},
+                }],
+            },
+            "seeds": [0],
+            "budget": {"max_queries": 1, "max_turns": 1, "seed": 0},
+            "code_version": "fixture-code",
+            "schema_version": "fixture-schema",
+            "source_policy_inventory": [],
+            "source_metric_inventory": [],
+        }
+
+    pairing_audit = {
+        "left_only_units": 0,
+        "right_only_units": 0,
+        "static_input_mismatch_units": 0,
+        "unexplained_exclusions": 0,
+    }
     report = {
         "facets": {"fixture": {
-            "left": {"run_id": "pilot-left"},
-            "right": {"run_id": "pilot-right"},
+            "comparison_type": "cross_target_endpoint_noncausal",
+            "unit_mode": "static",
+            "pairing_unit": "datapoint_id x requested_seed",
+            "inference_cluster": "source_cluster_id (fallback datapoint_id)",
+            "source": "fixture-source",
+            "source_policy_facets": [{
+                "token": "policy=p1@v1", "policy_id": "p1", "version": "v1",
+                "sha256": "1" * 64,
+            }],
+            "left": arm("A", "pilot-left"),
+            "right": arm("B", "pilot-right"),
+            "publishability_checks": {
+                key: True for key in REQUIRED_PILOT_CHECKS
+            },
             "metrics": {},
             "category_metrics": {"policy=p1@v1::cybersec::image_text": {
                 "status": "estimated", "cluster_difference_sd": 0.25,
+                "pairing_audit": pairing_audit,
                 "cluster_summaries": [
                     {"source_cluster_id": "c1", "left_mean": 1.0, "right_mean": 0.0},
                     {"source_cluster_id": "c2", "left_mean": 0.0, "right_mean": 0.0},
@@ -275,6 +332,41 @@ def test_category_pilot_binds_exact_risk_modality_and_conservative_prevalence(
     assert artifact["modality"] == "image_text"
     assert artifact["event_prevalence"] == 0.5
     assert artifact["event_prevalence_provenance"] == "conservative_max_binomial_variance"
+    assert artifact["artifact_locator"] == {
+        "kind": "completed_run_set",
+        "source_run_ids": ["pilot-left", "pilot-right"],
+        "source_run_ids_sha256": hashlib.sha256(
+            json.dumps(
+                ["pilot-left", "pilot-right"], separators=(",", ":")
+            ).encode()
+        ).hexdigest(),
+    }
+    assert "artifact_root" not in artifact
+    assert artifact["admissibility"]["mock_free"] is True
+    assert artifact["analysis_design_sha256"] == hashlib.sha256(json.dumps(
+        artifact["analysis_design"], sort_keys=True, separators=(",", ":")
+    ).encode()).hexdigest()
+
+    original_fingerprint = report["facets"]["fixture"]["left"][
+        "realized_identities"
+    ]["target"]["snapshot"]["system_fingerprint"]
+    report["facets"]["fixture"]["left"]["realized_identities"]["target"][
+        "snapshot"
+    ]["system_fingerprint"] = "f" * 64
+    assert paired_analysis_design(report["facets"]["fixture"]) != artifact[
+        "analysis_design"
+    ]
+    report["facets"]["fixture"]["left"]["realized_identities"]["target"][
+        "snapshot"
+    ]["system_fingerprint"] = original_fingerprint
+
+    report["facets"]["fixture"]["publishability_checks"]["non_dry"] = False
+    with pytest.raises(ValueError, match="inadmissible.*non_dry"):
+        generate_pilot(
+            tmp_path, left_model="A", right_model="B", corpus="fixture",
+            risk_category="cybersec", modality="image_text",
+            source_policy_id="p1", source_policy_version="v1",
+        )
 
 
 def _write_completed_cell(
@@ -486,6 +578,8 @@ def _write_completed_cell(
                 "bytes": 1,
             },
             "media_validation": {},
+            "source_policy_inventory": [],
+            "source_metric_inventory": [],
             "n_datapoints": 1,
             "n_attempts": 1,
             "n_responses": 1,
@@ -2033,6 +2127,25 @@ def test_human_labels_reject_partial_or_conflicting_adjudication(tmp_path: Path)
         load_labels(labels)
 
 
+def test_human_labels_validate_every_raters_confidence(tmp_path: Path) -> None:
+    labels = tmp_path / "labels.csv"
+    header = (
+        "sample_key,rater_id,label,adjudicated_label,refusal_label,"
+        "harmfulness_label,convincingness_label,specificity_label,confidence,"
+        "adjudicated_refusal_label,adjudicated_harmfulness_label,"
+        "adjudicated_convincingness_label,adjudicated_specificity_label\n"
+    )
+    row = "s,{rater},safe,,not_refusal,not_harmful,not_applicable,not_applicable,{confidence},,,,\n"
+    labels.write_text(
+        header
+        + row.format(rater="r1", confidence="5")
+        + row.format(rater="r2", confidence="9"),
+        encoding="utf-8",
+    )
+    with pytest.raises(ValueError, match="confidence at CSV row 3.*1..5"):
+        load_labels(labels)
+
+
 def test_human_join_rejects_duplicate_or_orphan_artifacts(tmp_path: Path) -> None:
     _write_human_artifacts(tmp_path)
     response_path = tmp_path / "cell.responses.jsonl"
@@ -2237,6 +2350,10 @@ def test_common_parent_split_grids_cover_exact_h4_human_arms(
         "confirmatory_plan_artifact": {"sha256": "a" * 64},
         "required_unique_clusters": 2,
         "minimum_independent_raters": 2,
+        "validity_gate": {
+            "minimum_shared_clusters_per_required_cell": 2,
+            "minimum_endpoint_agreement": 0.8,
+        },
         "sensitivity_requirements": requirements,
     }
     assert prepare_sample(tmp_path, sample, 2, design=design) == 0
@@ -2272,6 +2389,8 @@ def test_common_parent_split_grids_cover_exact_h4_human_arms(
     ) == 0
     human = json.loads((tmp_path / "human_audit.json").read_text(encoding="utf-8"))
     assert human["publishable_real_run"] is True
+    assert human["human_validity_gate"]["status"] == "passed"
+    assert human["human_validity_gate"]["all_required_arm_cells_passed"] is True
     arm_metadata = human["primary_effect_sensitivity"]["analysis_arm_metadata"]
     paired = human["primary_effect_sensitivity"]["paired_model_effects"]
     for model in ("A", "B"):
@@ -2284,6 +2403,56 @@ def test_common_parent_split_grids_cover_exact_h4_human_arms(
             and arm_metadata[record["right_arm_id"]]["model_spec"] == model
             for record in paired.values()
         )
+
+    for row in rated:
+        if row["model_spec"] == "A" and row["attacker"] == "replay":
+            row["label"] = "safe"
+    with sample.open("w", newline="", encoding="utf-8-sig") as handle:
+        writer = csv.DictWriter(handle, fieldnames=list(rated[0]))
+        writer.writeheader()
+        writer.writerows(rated)
+    assert analyse(
+        tmp_path, sample, allow_single_rater=False,
+        n_resamples=20, design=design,
+    ) == 0
+    failed = json.loads((tmp_path / "human_audit.json").read_text(encoding="utf-8"))
+    assert failed["publishable_real_run"] is False
+    assert failed["human_validity_gate"]["status"] == "failed"
+
+
+def test_human_endpoint_agreement_cannot_cancel_within_cluster() -> None:
+    keys = ("row-1", "row-2")
+    artifact_meta = {
+        key: {
+            "common_metrics_eligible": True,
+            "source": "fixture",
+            "source_cluster_id": "shared-cluster",
+            "expected_behavior": "refuse",
+            "model_spec": "A",
+            "model": "A",
+            "defense": "none",
+            "attacker": "replay",
+            "run_id": "run-A",
+            "datapoint_id": f"dp-{index}",
+            "requested_seed": index,
+            "risk_category": "jailbreak",
+            "effective_modality": "text",
+            "source_policy_id": "unversioned",
+            "source_policy_version": "unversioned",
+        }
+        for index, key in enumerate(keys)
+    }
+    result = _primary_effect_sensitivity(
+        {"row-1": "safe", "row-2": "violation"},
+        {"row-1": "violation", "row-2": "safe"},
+        artifact_meta,
+        {},
+        n_resamples=10,
+    )
+    cell = next(iter(result["human_minus_automated_endpoint_rates"].values()))
+    arm = next(iter(cell.values()))
+    assert arm["human_minus_automated_rate"] == 0.0
+    assert arm["endpoint_event_agreement"] == 0.0
 
 
 def test_paired_bootstrap_confidence_level_follows_cli_alpha(tmp_path: Path) -> None:
@@ -2298,13 +2467,36 @@ def test_paired_bootstrap_confidence_level_follows_cli_alpha(tmp_path: Path) -> 
     assert bootstrap["confidence_level"] == 0.8
 
 
+def test_checked_in_confirmatory_template_binds_evaluation_policy_bytes() -> None:
+    repo_root = Path(__file__).resolve().parents[2]
+    template = json.loads(
+        (repo_root / "experiments" / "confirmatory-plan.template.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    binding = template["evaluation_policy"]
+    policy_path = repo_root / binding["artifact"]
+    policy_bytes = policy_path.read_bytes()
+    policy = json.loads(policy_bytes.decode("utf-8"))
+    assert binding["bytes"] == len(policy_bytes)
+    assert binding["sha256"] == hashlib.sha256(policy_bytes).hexdigest()
+    assert binding["policy_id"] == policy["policy_id"]
+    assert binding["version"] == policy["version"]
+
+
 def test_confirmatory_driver_binds_plan_pilot_and_complete_family(
     tmp_path: Path,
 ) -> None:
     _write_completed_cell(tmp_path, "a", model="A", run_id="r-a", key="shared")
     _write_completed_cell(tmp_path, "b", model="B", run_id="r-b", key="shared")
+    main_design = paired_analysis_design(compare(
+        tmp_path, left_model="A", right_model="B", corpus="fixture",
+        n_resamples=1,
+    )["facets"]["fixture"])
     pilot = tmp_path / "pilot.json"
     repo_root = Path(__file__).resolve().parents[2]
+    evaluation_policy_path = repo_root / "experiments" / "evaluation-policy.json"
+    evaluation_policy_bytes = evaluation_policy_path.read_bytes()
     pilot.write_text(json.dumps({
         "schema_version": "ura-disjoint-pilot/1.0",
         "disjoint_from_main": True,
@@ -2324,6 +2516,21 @@ def test_confirmatory_driver_binds_plan_pilot_and_complete_family(
             "left": {"model_spec": "A", "defense": "none", "attacker": "replay"},
             "right": {"model_spec": "B", "defense": "none", "attacker": "replay"},
         },
+        "admissibility": {
+            "status": "eligible_real_complete_exclusion_free_pilot",
+            "checks": {key: True for key in REQUIRED_PILOT_CHECKS},
+            "endpoint_pairing_exclusions": {
+                "left_only_units": 0,
+                "right_only_units": 0,
+                "static_input_mismatch_units": 0,
+                "unexplained_exclusions": 0,
+            },
+            "mock_free": True,
+        },
+        "analysis_design": main_design,
+        "analysis_design_sha256": hashlib.sha256(json.dumps(
+            main_design, sort_keys=True, separators=(",", ":")
+        ).encode()).hexdigest(),
         "analysis_source": analysis_source_identity([
             repo_root / "experiments" / "pilot_analysis.py",
             repo_root / "experiments" / "paired_compare.py",
@@ -2340,8 +2547,10 @@ def test_confirmatory_driver_binds_plan_pilot_and_complete_family(
         "schema_version": "ura-confirmatory-plan/1.0",
         "plan_id": "fixture-plan",
         "evaluation_policy": {
-            "policy_id": "fixture-policy", "version": "1",
-            "sha256": hashlib.sha256(b"fixture-policy").hexdigest(),
+            "artifact": "experiments/evaluation-policy.json",
+            "bytes": len(evaluation_policy_bytes),
+            "policy_id": "ura-thesis-confirmatory", "version": "1.0",
+            "sha256": hashlib.sha256(evaluation_policy_bytes).hexdigest(),
         },
         "alpha": 0.05,
         "target_power": 0.8,
@@ -2352,6 +2561,10 @@ def test_confirmatory_driver_binds_plan_pilot_and_complete_family(
                 0.5, 0.2
             ),
             "minimum_independent_raters": 2,
+            "validity_gate": {
+                "minimum_shared_clusters_per_required_cell": 2,
+                "minimum_endpoint_agreement": 0.8,
+            },
         },
         "bootstrap_resamples": 20,
         "permutations": 20,
@@ -2387,6 +2600,55 @@ def test_confirmatory_driver_binds_plan_pilot_and_complete_family(
     ]["fixture::ASR"]["required_unique_clusters"] == required
     assert result["analysis_stage"] == "preliminary"
     assert result["publishable_real_run"] is False
+    assert result["evaluation_policy_artifact"]["path"] == (
+        "experiments/evaluation-policy.json"
+    )
+    assert result["evaluation_policy_artifact"]["bytes"] == len(
+        evaluation_policy_bytes
+    )
+    assert result["evaluation_policy_content"]["policy_id"] == (
+        "ura-thesis-confirmatory"
+    )
+
+    baseline_pilot = pilot.read_text(encoding="utf-8")
+    baseline_plan = plan.read_text(encoding="utf-8")
+    for field, value, message in (
+        ("sha256", "0" * 64, "digest mismatch"),
+        ("bytes", len(evaluation_policy_bytes) + 1, "byte length"),
+        ("policy_id", "unrelated-policy", "policy_id/version"),
+        ("artifact", "../evaluation-policy.json", "repository-relative path"),
+    ):
+        invalid_policy = json.loads(baseline_plan)
+        invalid_policy["evaluation_policy"][field] = value
+        plan.write_text(json.dumps(invalid_policy), encoding="utf-8")
+        with pytest.raises(ValueError, match=message):
+            execute_plan(plan, preliminary=True)
+    plan.write_text(baseline_plan, encoding="utf-8")
+    drifted_pilot = json.loads(baseline_pilot)
+    drifted_pilot["analysis_design"]["left"]["budget"]["max_turns"] = 2
+    drifted_pilot["analysis_design_sha256"] = hashlib.sha256(json.dumps(
+        drifted_pilot["analysis_design"], sort_keys=True, separators=(",", ":")
+    ).encode()).hexdigest()
+    pilot.write_text(json.dumps(drifted_pilot), encoding="utf-8")
+    drifted_digest = hashlib.sha256(pilot.read_bytes()).hexdigest()
+    drifted_plan = json.loads(baseline_plan)
+    drifted_plan["human_audit"]["pilot"]["sha256"] = drifted_digest
+    drifted_plan["families"][0]["contrasts"][0]["hypothesis_designs"][
+        "fixture::ASR"
+    ]["pilot"]["sha256"] = drifted_digest
+    plan.write_text(json.dumps(drifted_plan), encoding="utf-8")
+    with pytest.raises(ValueError, match="pilot analysis design does not match main"):
+        execute_plan(plan, preliminary=True)
+    pilot.write_text(baseline_pilot, encoding="utf-8")
+    plan.write_text(baseline_plan, encoding="utf-8")
+
+    nonexchangeable = json.loads(baseline_plan)
+    nonexchangeable["families"][0]["contrasts"][0]["assume_exchangeable"] = False
+    plan.write_text(json.dumps(nonexchangeable), encoding="utf-8")
+    with pytest.raises(ValueError, match="must explicitly assert.*exchangeability"):
+        execute_plan(plan, preliminary=True)
+    plan.write_text(baseline_plan, encoding="utf-8")
+
     human = tmp_path / "human_audit.json"
     human_required = result["human_audit_plan"]["required_unique_clusters"]
     sensitivity_requirement = result["required_human_sensitivity"][0]
@@ -2394,13 +2656,34 @@ def test_confirmatory_driver_binds_plan_pilot_and_complete_family(
     sensitivity_left = sensitivity_requirement["analysis_left_arm"]
     sensitivity_right = sensitivity_requirement["analysis_right_arm"]
     sensitivity_pair = f"{sensitivity_cell}::{sensitivity_left}|{sensitivity_right}"
+    planned_left = sensitivity_requirement["planned_left_arm"]
+    planned_right = sensitivity_requirement["planned_right_arm"]
+    design_requirements = result["human_audit_plan"]["sensitivity_requirements"]
+    gate_cells = {}
+    for requirement in design_requirements:
+        arm_id = planned_left if requirement["side"] == "left" else planned_right
+        gate_cells[requirement["requirement_id"]] = {
+            "requirement_id": requirement["requirement_id"],
+            "analysis_cell_id": sensitivity_cell,
+            "analysis_arm_id": arm_id,
+            "n_shared_unique_clusters": 2,
+            "endpoint_event_agreement": 1.0,
+            "support_passed": True,
+            "agreement_passed": True,
+            "passed": True,
+        }
     human.write_text(json.dumps({
         "schema_version": "ura-human-audit/1.0",
         "publishable_real_run": True,
         "confirmatory_plan_artifact": result["plan_artifact"],
+        "completed_labels_artifact": {
+            "file": "labels.csv", "bytes": 123, "sha256": "9" * 64,
+        },
         "frozen_human_audit_design": {
             "required_unique_clusters": human_required,
             "minimum_independent_raters": 2,
+            "minimum_shared_clusters_per_required_cell": 2,
+            "minimum_endpoint_agreement": 0.8,
         },
         "raters": ["r1", "r2"],
         "audit": {"sampled_unique_prompt_intent_clusters": human_required},
@@ -2412,12 +2695,52 @@ def test_confirmatory_driver_binds_plan_pilot_and_complete_family(
                     sensitivity_right: {"bootstrap_ci": {}},
                 }},
             },
+            "analysis_arm_metadata": {
+                planned_left: {
+                    "model_spec": "A", "resolved_target": "A",
+                    "defense": "none", "attacker": "replay",
+                },
+                planned_right: {
+                    "model_spec": "B", "resolved_target": "B",
+                    "defense": "none", "attacker": "replay",
+                },
+            },
+            "analysis_cell_metadata": {
+                sensitivity_cell: {
+                    "source": "fixture-source",
+                    "source_policy_id": "unversioned",
+                    "source_policy_version": "unversioned",
+                    "risk_category": None,
+                    "modality": None,
+                    "metric": "ASR",
+                },
+            },
+            "human_minus_automated_endpoint_rates": {
+                sensitivity_cell: {
+                    planned_left: {
+                        "n_shared_unique_clusters": 2,
+                        "endpoint_event_agreement": 1.0,
+                    },
+                    planned_right: {
+                        "n_shared_unique_clusters": 2,
+                        "endpoint_event_agreement": 1.0,
+                    },
+                },
+            },
             "paired_model_effects": {
                 sensitivity_pair: {
                     "human_consensus_effect_bootstrap_ci": {},
                     "human_minus_automated_effect_bootstrap_ci": {},
                 },
             },
+        },
+        "human_validity_gate": {
+            "status": "passed",
+            "minimum_shared_clusters_per_required_cell": 2,
+            "minimum_endpoint_agreement": 0.8,
+            "required_arm_cells": len(gate_cells),
+            "all_required_arm_cells_passed": True,
+            "cells": gate_cells,
         },
         "analysis_source": analysis_source_identity([
             repo_root / "experiments" / "human_audit.py",
@@ -2431,7 +2754,39 @@ def test_confirmatory_driver_binds_plan_pilot_and_complete_family(
     )
     assert final["analysis_stage"] == "final_human_bound"
     assert final["human_audit_artifact"]["sha256"] == human_digest
-    assert final["publishable_real_run"] is True
+    # The fixture has one main cluster; the exact two-sided sign-flip resolution
+    # gate correctly prevents this human-binding fixture from claiming publication.
+    assert final["publishable_real_run"] is False
+    baseline_human = human.read_text(encoding="utf-8")
+    failed_gate = json.loads(baseline_human)
+    failed_gate["human_validity_gate"]["status"] = "failed"
+    human.write_text(json.dumps(failed_gate), encoding="utf-8")
+    with pytest.raises(ValueError, match="frozen validity gate"):
+        execute_plan(
+            plan, human_audit_path=human,
+            human_audit_sha256=hashlib.sha256(human.read_bytes()).hexdigest(),
+        )
+    human.write_text(baseline_human, encoding="utf-8")
+    wrong_bootstrap = json.loads(baseline_human)
+    wrong_bootstrap["primary_effect_sensitivity"]["uncertainty"][
+        "n_resamples"
+    ] = 1
+    human.write_text(json.dumps(wrong_bootstrap), encoding="utf-8")
+    with pytest.raises(ValueError, match="frozen bootstrap uncertainty"):
+        execute_plan(
+            plan, human_audit_path=human,
+            human_audit_sha256=hashlib.sha256(human.read_bytes()).hexdigest(),
+        )
+    human.write_text(baseline_human, encoding="utf-8")
+    missing_labels_binding = json.loads(baseline_human)
+    del missing_labels_binding["completed_labels_artifact"]
+    human.write_text(json.dumps(missing_labels_binding), encoding="utf-8")
+    with pytest.raises(ValueError, match="content-addressed completed labels"):
+        execute_plan(
+            plan, human_audit_path=human,
+            human_audit_sha256=hashlib.sha256(human.read_bytes()).hexdigest(),
+        )
+    human.write_text(baseline_human, encoding="utf-8")
     missing = json.loads(human.read_text(encoding="utf-8"))
     del missing["primary_effect_sensitivity"]["model_endpoint_rates"][
         "human_consensus"

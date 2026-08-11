@@ -6,11 +6,12 @@ marker named by a fully completed matrix grid.  Every core artifact is validated
 against the Pydantic release schema and every Attempt -> Response -> Judgment ->
 trail join is reconstructed before analysis.
 
-Corpora are always separate facets.  The model figure reports exact paired
-cross-target endpoint differences, the category figure reports the same paired
-difference within risk/effective-modality cells, and the safety--utility figure
-reports same-target paired defense effects.  No marginal model ranking and no
-cross-corpus denominator is produced here.
+Corpora are always separate facets.  The canonical confirmatory loader maps the
+frozen families to a primary model contrast, policy-qualified multimodal/utility
+proxy endpoints, and within-target adaptivity contrasts.  It routes points by
+their explicit endpoint semantics, so benign false-refusal endpoints cannot be
+presented as harmful ASR.  No marginal model ranking and no cross-corpus
+denominator is produced here.
 """
 from __future__ import annotations
 
@@ -50,6 +51,20 @@ _REQUIRED_ARTIFACTS = frozenset({
 _COMPLETE_STATUSES = frozenset({"complete", "complete_existing"})
 _EXPECTED_BEHAVIORS = frozenset({"refuse", "safe_answer", "comply_safely"})
 _HEX = frozenset("0123456789abcdef")
+_MM_POLICY_VERSION = "b80eedea3db312c09ded2082813390f68e750ef3:evaluation.py"
+_MM_POLICY_IDS = frozenset({
+    "mmsafety:content_safety",
+    "mmsafety:political_lobbying_refusal",
+    "mmsafety:legal_advice_caution",
+    "mmsafety:financial_advice_caution",
+    "mmsafety:health_advice_caution",
+    "mmsafety:government_decision_refusal",
+})
+_MOSS_POLICY = (
+    "mossbench:benign-refusal-rate",
+    "8d68b0614b39d8990a508e03d99975832f399db2:"
+    "Evaluator.py+evaluation_prompts.py",
+)
 
 
 def _valid_sha256(value: Any) -> bool:
@@ -1161,78 +1176,50 @@ def load_defense_results(
     return points
 
 
-def load_results(
-    model_path: Path, defense_path: Path, *, model_left: str, model_right: str,
-    model_defense: str, model_corpora: list[str], defense_model: str,
-    defense_left: str, defense_right: str, defense_corpora: list[str], attacker: str,
-    policy_label: str, multiplicity_family: str, minimum_cell_n: int,
-    n_resamples: int = 2000, seed: int = 0,
-) -> dict[str, Any]:
-    """Load all three Chapter V measured figure inputs without pooling corpora."""
-    model_results = load_model_results(
-        model_path,
-        left_model=model_left,
-        right_model=model_right,
-        corpora=model_corpora,
-        attacker=attacker,
-        defense=model_defense,
-        policy_label=policy_label,
-        multiplicity_family=multiplicity_family,
-        minimum_cell_n=minimum_cell_n,
-        n_resamples=n_resamples,
-        seed=seed,
+def _confirmatory_figure_group(
+    *, local_id: str, comparison_type: Any, metric: dict[str, Any], n_parts: int,
+) -> str:
+    """Return the frozen Chapter V figure group for one typed endpoint."""
+    metric_name = local_id.split("::")[1]
+    expected = {
+        "ASR": ("ASR", "harmful_expected_refusal"),
+        "over_refusal_rate": ("FRR", "benign_expected_answer"),
+    }.get(metric_name)
+    if expected is None:
+        raise ValueError(f"figure hypothesis {local_id!r} uses an unsupported endpoint")
+    observed_metric = metric.get("metric")
+    observed_alias = metric.get("metric_alias")
+    observed_population = metric.get("population")
+    if observed_metric != metric_name:
+        raise ValueError(
+            f"figure hypothesis {local_id!r} resolved to metric {observed_metric!r}"
+        )
+    if (observed_alias, observed_population) != expected:
+        raise ValueError(
+            f"figure hypothesis {local_id!r} has inconsistent endpoint semantics: "
+            f"alias/population={(observed_alias, observed_population)!r}, "
+            f"expected={expected!r}"
+        )
+
+    policy_qualified = n_parts in {3, 5}
+    if comparison_type == "cross_target_endpoint_noncausal":
+        if expected[0] == "ASR" and not policy_qualified:
+            return "overall_model"
+        if policy_qualified:
+            return "policy_proxies"
+        raise ValueError(
+            f"cross-target benign endpoint {local_id!r} must be policy-qualified"
+        )
+    if comparison_type == "within_target_adaptivity_endpoint":
+        if expected == ("ASR", "harmful_expected_refusal") and n_parts == 2:
+            return "adaptivity"
+        raise ValueError(
+            f"adaptivity figure hypothesis {local_id!r} must be an overall harmful ASR"
+        )
+    raise ValueError(
+        f"figure hypothesis {local_id!r} has unsupported comparison_type "
+        f"{comparison_type!r}"
     )
-    defense_results = load_defense_results(
-        defense_path,
-        model=defense_model,
-        left_defense=defense_left,
-        right_defense=defense_right,
-        corpora=defense_corpora,
-        attacker=attacker,
-        policy_label=policy_label,
-        multiplicity_family=multiplicity_family,
-        minimum_cell_n=minimum_cell_n,
-        n_resamples=n_resamples,
-        seed=seed,
-    )
-    figures = {
-        "fig-v-asr-by-model.png": {
-            "estimand": "paired harmful ASR risk difference, left model minus right model",
-            "points": model_results["overall"],
-        },
-        "fig-v-asr-by-category.png": {
-            "estimand": (
-                "paired harmful ASR risk difference by benchmark, risk, and "
-                "effective modality"
-            ),
-            "points": model_results["categories"],
-        },
-        "fig-v-safety-utility.png": {
-            "estimand": (
-                "same-base paired defense effects on harmful ASR and benign false refusal"
-            ),
-            "points": defense_results,
-        },
-    }
-    policy_binding = _bind_policy_label(
-        model_results["overall"] + model_results["categories"] + defense_results,
-        policy_label,
-    )
-    return {
-        "schema_version": "ura-chapter-v-figures/1.0",
-        "illustrative": False,
-        "analysis": {
-            "attacker": attacker,
-            **policy_binding,
-            "multiplicity_family": multiplicity_family,
-            "minimum_clusters_per_cell": minimum_cell_n,
-            "bootstrap_resamples": n_resamples,
-            "bootstrap_seed": seed,
-            "corpus_pooling": "forbidden; every point is one explicit corpus facet",
-            "effect_direction": "left_minus_right",
-        },
-        "figures": figures,
-    }
 
 
 def load_confirmatory_results(
@@ -1267,6 +1254,37 @@ def load_confirmatory_results(
         or not _valid_sha256(policy.get("sha256"))
     ):
         raise ValueError("confirmatory artifact lacks typed evaluation-policy identity")
+    policy_artifact = artifact.get("evaluation_policy_artifact")
+    if not isinstance(policy_artifact, dict) or set(policy_artifact) != {
+        "path", "bytes", "sha256", "content_sha256",
+    }:
+        raise ValueError("confirmatory artifact lacks evaluation-policy artifact identity")
+    policy_path = policy_artifact.get("path")
+    logical_policy_path = Path(policy_path) if isinstance(policy_path, str) else None
+    if (
+        logical_policy_path is None
+        or not policy_path
+        or "\\" in policy_path
+        or logical_policy_path.is_absolute()
+        or logical_policy_path.drive
+        or logical_policy_path.as_posix() != policy_path
+        or any(part in {"", ".", ".."} for part in logical_policy_path.parts)
+        or not isinstance(policy_artifact.get("bytes"), int)
+        or isinstance(policy_artifact.get("bytes"), bool)
+        or not 0 < policy_artifact["bytes"] <= 64 * 1024
+        or policy_artifact.get("sha256") != policy["sha256"]
+        or not _valid_sha256(policy_artifact.get("content_sha256"))
+    ):
+        raise ValueError("confirmatory evaluation-policy artifact identity is invalid")
+    policy_content = artifact.get("evaluation_policy_content")
+    if (
+        not isinstance(policy_content, dict)
+        or policy_content.get("schema_version") != "ura-evaluation-policy/1.0"
+        or policy_content.get("policy_id") != policy["policy_id"]
+        or policy_content.get("version") != policy["version"]
+        or _sha256_json(policy_content) != policy_artifact["content_sha256"]
+    ):
+        raise ValueError("confirmatory evaluation-policy content is invalid or drifted")
     source = artifact.get("analysis_source")
     validated_source = validate_analysis_source_identity(source)
     expected_source_paths = {
@@ -1316,9 +1334,9 @@ def load_confirmatory_results(
             hypothesis_adjustment[hypothesis] = adjustment
             hypothesis_family[hypothesis] = str(family_id)
 
-    overall: list[dict[str, Any]] = []
-    categories: list[dict[str, Any]] = []
-    defenses: list[dict[str, Any]] = []
+    overall_model: list[dict[str, Any]] = []
+    policy_proxies: list[dict[str, Any]] = []
+    adaptivity: list[dict[str, Any]] = []
     policy_inventories: list[Any] = []
     for contrast_id, report in sorted(contrasts.items()):
         if not isinstance(report, dict):
@@ -1401,6 +1419,13 @@ def load_confirmatory_results(
                 left_arm.get("source_policy_inventory"),
                 right_arm.get("source_policy_inventory"),
             ])
+            comparison_type = facet.get("comparison_type")
+            figure_group = _confirmatory_figure_group(
+                local_id=local_id,
+                comparison_type=comparison_type,
+                metric=metric,
+                n_parts=len(parts),
+            )
             point = {
                 "point_id": global_id,
                 "status": "estimated_publishable_confirmatory",
@@ -1419,6 +1444,9 @@ def load_confirmatory_results(
                 "source_policy_id": metric.get("source_policy_id"),
                 "source_policy_version": metric.get("source_policy_version"),
                 "metric": metric.get("metric_alias", metric_name),
+                "requested_metric": metric_name,
+                "comparison_type": comparison_type,
+                "figure_group": figure_group,
                 "multiplicity_family": hypothesis_family[global_id],
                 "multiplicity_adjustment": adjustment,
                 "power_gate": preregistered_power,
@@ -1432,24 +1460,46 @@ def load_confirmatory_results(
                     ],
                 },
             }
-            comparison_type = facet.get("comparison_type")
-            if comparison_type == "cross_target_endpoint_noncausal":
-                (categories if len(parts) == 5 else overall).append(point)
-            elif (
-                comparison_type == "within_target_defense_intervention"
-                and len(parts) in {2, 3}
-            ):
-                defenses.append(point)
+            {
+                "overall_model": overall_model,
+                "policy_proxies": policy_proxies,
+                "adaptivity": adaptivity,
+            }[figure_group].append(point)
 
-    if not overall or not categories or not defenses:
+    mm_proxy_inventory = {
+        (point.get("source_policy_id"), point.get("source_policy_version"))
+        for point in policy_proxies
+        if point.get("corpus") == "mmsafety" and point.get("metric") == "ASR"
+    }
+    moss_proxy_inventory = {
+        (point.get("source_policy_id"), point.get("source_policy_version"))
+        for point in policy_proxies
+        if point.get("corpus") == "mossbench" and point.get("metric") == "FRR"
+    }
+    if (
+        len(overall_model) != 1
+        or len(policy_proxies) != 7
+        or len(adaptivity) != 2
+        or any(point.get("corpus") != "strongreject" for point in overall_model)
+        or any(point.get("corpus") != "strongreject" for point in adaptivity)
+        or mm_proxy_inventory
+        != {(policy_id, _MM_POLICY_VERSION) for policy_id in _MM_POLICY_IDS}
+        or moss_proxy_inventory != {_MOSS_POLICY}
+    ):
         raise ValueError(
-            "publishable figure artifact must include model-overall, model-category, "
-            "and defense hypotheses"
+            "publishable figure artifact must contain the exact frozen Chapter V "
+            "inventory: one StrongREJECT model point, six versioned MM-SafetyBench "
+            "ASR policy points, one versioned MOSSBench FRR point, and two "
+            "StrongREJECT adaptivity points"
         )
     policy_binding = {
         "evaluation_policy": policy,
+        "evaluation_policy_artifact": policy_artifact,
+        "evaluation_policy_content": policy_content,
         "policy_fingerprint": _sha256_json({
             "evaluation_policy": policy,
+            "evaluation_policy_artifact": policy_artifact,
+            "evaluation_policy_content": policy_content,
             "source_policy_inventories": sorted(
                 policy_inventories,
                 key=lambda value: json.dumps(value, sort_keys=True, default=str),
@@ -1457,7 +1507,7 @@ def load_confirmatory_results(
         }),
     }
     return {
-        "schema_version": "ura-chapter-v-figures/1.1",
+        "schema_version": "ura-chapter-v-figures/1.2",
         "illustrative": False,
         "analysis": {
             **policy_binding,
@@ -1475,20 +1525,28 @@ def load_confirmatory_results(
         "figures": {
             "fig-v-asr-by-model.png": {
                 "estimand": "paired harmful ASR risk difference, left model minus right model",
-                "points": overall,
+                "figure_role": "primary_model",
+                "points": overall_model,
             },
-            "fig-v-asr-by-category.png": {
-                "estimand": "paired harmful ASR difference by corpus/risk/modality",
-                "points": categories,
+            "fig-v-policy-proxies.png": {
+                "estimand": (
+                    "paired policy-qualified common-proxy differences: MM-SafetyBench "
+                    "harmful ASR and MOSSBench benign false-refusal rate"
+                ),
+                "figure_role": "secondary_policy_proxies",
+                "points": policy_proxies,
             },
-            "fig-v-safety-utility.png": {
-                "estimand": "same-base paired defense effects on ASR and false refusal",
-                "points": defenses,
+            "fig-v-adaptivity.png": {
+                "estimand": (
+                    "within-target replay-versus-Crescendo harmful-ASR endpoint differences"
+                ),
+                "figure_role": "h4_adaptivity",
+                "points": adaptivity,
             },
         },
     }
 
 
 __all__ = [
-    "load_confirmatory_results", "load_defense_results", "load_model_results", "load_results",
+    "load_confirmatory_results", "load_defense_results", "load_model_results",
 ]

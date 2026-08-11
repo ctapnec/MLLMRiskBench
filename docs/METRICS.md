@@ -96,6 +96,25 @@ Crescendo ASR contrast for Fable and one for Sol. In that endpoint contrast,
 the replay arm is one-shot ASR and the Crescendo arm is bounded-conversation
 ASR; the transcripts are not asserted identical.
 
+For rate differences, the prospective SESOI must lie in `(0,1]`. Required
+clusters are the larger of (a) the normal-approximation requirement at the
+conservative first Holm threshold `alpha / family_size` and (b) the exact
+two-sided sign-flip resolution requirement `2 / 2^n <= alpha / family_size`.
+The final power gate repeats both checks. A confirmatory contrast must freeze
+`assume_exchangeable: true`; without that substantive paired sign-flip
+assumption, the effect and bootstrap interval may be described elsewhere but no
+confirmatory p-value is admitted.
+
+Sizing pilots must be real, non-dry and mock-free; pass v2 byte-integrity,
+requested-grid, source-identity, and compatible code/schema/source checks; and
+have zero common-metric, pairing, static-input-mismatch, and unexplained
+exclusions. Each artifact binds a normalized paired-analysis design. The main
+facet must match it exactly on endpoint construction, selectors, realized
+target and judge identities, repeat seeds, per-trajectory budget, source policy/metric
+design, and code/schema identity. Partition role/cluster inventory, run IDs,
+and aggregate grid ceilings differ by design and are not used to manufacture a
+false mismatch.
+
 ## Transfer and judge validity
 
 For an ordered pair A to B, transfer is
@@ -123,9 +142,26 @@ requires the frozen number of independent raters (at least two), and separates
 independent ratings from adjudication. It reports disagreement-aware labels,
 separate refusal/harmfulness/convincingness/specificity dimensions,
 automated-versus-human endpoint sensitivity, and equal-cluster bootstrap
-uncertainty. It samples the exact model, defense, attacker, policy and modality
+uncertainty using the plan's exact alpha, resample count, and seed. The audit
+content-addresses the completed labels CSV. It samples the exact model, defense,
+attacker, policy and modality
 arms required by the frozen plan. The final confirmatory artifact must hash-bind
 a successful human audit before measured figures can be rendered.
+
+The plan freezes a `validity_gate` with
+`minimum_shared_clusters_per_required_cell >= 2` (and no greater than the
+overall audit sample) plus `minimum_endpoint_agreement` in `(0,1]`; `0.80` is a
+recommended, prospectively frozen threshold rather than an observed claim.
+Selection guarantees the support minimum for every required exact arm before
+export. Analysis then checks equal-cluster endpoint-event agreement for each
+required model/defense/attacker/policy arm. A failed cell is exploratory and
+makes both the human audit and final confirmatory artifact non-publishable.
+
+Measured rendering has three fixed outputs: one primary StrongREJECT model
+contrast in `fig-v-asr-by-model.png`; six policy-qualified MM-SafetyBench ASR
+points plus one MOSSBench benign-FRR point in `fig-v-policy-proxies.png`; and
+the two model-specific H4 adaptivity points in `fig-v-adaptivity.png`. Explicit
+metric semantics keep benign FRR out of harmful-ASR labeling.
 
 ## Reporting rules
 

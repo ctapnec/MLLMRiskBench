@@ -4,10 +4,12 @@ import hashlib
 import json
 from pathlib import Path
 from typing import Any
+from urllib.parse import quote
 
 import pytest
 
 from experiments import figure_results
+from experiments.analysis_integrity import analysis_source_identity
 from ura.data_models import SCHEMA_VERSION, Response
 from ura.runner import CODE_VERSION, realized_identity_summary
 
@@ -865,3 +867,360 @@ def test_underpowered_category_cell_is_explicitly_unestimated(tmp_path: Path) ->
     assert point["status"] == "not_estimable_underpowered"
     assert point["value"] is point["ci_low"] is point["ci_high"] is None
     assert point["n_pairs"] == point["n_clusters"] == 1
+
+
+_MM_POLICIES = (
+    "content_safety",
+    "political_lobbying_refusal",
+    "legal_advice_caution",
+    "financial_advice_caution",
+    "health_advice_caution",
+    "government_decision_refusal",
+)
+_MM_VERSION = "b80eedea3db312c09ded2082813390f68e750ef3:evaluation.py"
+_MOSS_POLICY = "mossbench:benign-refusal-rate"
+_MOSS_VERSION = (
+    "8d68b0614b39d8990a508e03d99975832f399db2:"
+    "Evaluator.py+evaluation_prompts.py"
+)
+
+
+def _runbook_policy_token(policy_id: str, version: str) -> str:
+    return f"policy={quote(policy_id, safe='')}@{quote(version, safe='')}"
+
+
+_RUNBOOK_PROXY_ENDPOINTS = tuple(
+    (
+        f"mmsafety::ASR::{_runbook_policy_token(f'mmsafety:{name}', _MM_VERSION)}",
+        f"mmsafety:{name}",
+        _MM_VERSION,
+        "ASR",
+        "harmful_expected_refusal",
+    )
+    for name in _MM_POLICIES
+) + ((
+    f"mossbench::over_refusal_rate::{_runbook_policy_token(_MOSS_POLICY, _MOSS_VERSION)}",
+    _MOSS_POLICY,
+    _MOSS_VERSION,
+    "FRR",
+    "benign_expected_answer",
+),)
+
+
+def _confirmatory_metric(
+    metric_name: str,
+    *,
+    alias: str,
+    population: str,
+    source: str,
+    policy_id: str,
+    policy_version: str,
+    value: float,
+) -> dict[str, Any]:
+    return {
+        "metric": metric_name,
+        "metric_alias": alias,
+        "population": population,
+        "source": source,
+        "source_policy_id": policy_id,
+        "source_policy_version": policy_version,
+        "status": "estimated",
+        "left_value": 0.4 + value,
+        "right_value": 0.4,
+        "effect_left_minus_right": value,
+        "ci_low": value - 0.05,
+        "ci_high": value + 0.05,
+        "n_matched": 80,
+        "n_clusters": 40,
+        "preregistered_power_gate": {"adequately_powered": True},
+    }
+
+
+def _confirmatory_arm(model: str, attacker: str, corpus: str) -> dict[str, Any]:
+    required_metric = {
+        "mmsafety": "mmsafety_official_attack_rate",
+        "mossbench": "mossbench_refusal_rate",
+    }.get(corpus, "strongreject_score")
+    return {
+        "model_spec": model,
+        "resolved_target": f"resolved:{model}",
+        "defense": "none",
+        "attacker": attacker,
+        "source_metric_inventory": [{
+            "required_metric": required_metric,
+            "source_metric_emitted": False,
+            "official_evaluator_executed": False,
+        }],
+        "source_policy_inventory": [{"corpus": corpus}],
+    }
+
+
+def _confirmatory_facet(
+    *,
+    corpus: str,
+    left_model: str,
+    right_model: str,
+    left_attacker: str,
+    right_attacker: str,
+    comparison_type: str,
+    metrics: dict[str, dict[str, Any]] | None = None,
+    policy_metrics: dict[str, dict[str, Any]] | None = None,
+) -> dict[str, Any]:
+    return {
+        "comparison_type": comparison_type,
+        "publishability_checks": {
+            "non_dry": True,
+            "v2_integrity": True,
+            "grid_accounted": True,
+            "zero_common_metric_exclusions": True,
+            "zero_pairing_exclusions": True,
+            "adequately_powered": True,
+        },
+        "left": _confirmatory_arm(left_model, left_attacker, corpus),
+        "right": _confirmatory_arm(right_model, right_attacker, corpus),
+        "metrics": metrics or {},
+        "policy_metrics": policy_metrics or {},
+        "category_metrics": {},
+    }
+
+
+def _write_runbook_confirmatory_artifact(
+    tmp_path: Path, *, corrupt_moss_alias: bool = False,
+    proxy_limit: int | None = None,
+) -> tuple[Path, str]:
+    primary_local = "strongreject::ASR"
+    primary_global = f"model-fable-vs-sol::{primary_local}"
+    primary_metric = _confirmatory_metric(
+        "ASR",
+        alias="ASR",
+        population="harmful_expected_refusal",
+        source="strongreject",
+        policy_id="strongreject:default",
+        policy_version="frozen",
+        value=-0.08,
+    )
+
+    proxy_endpoints = (
+        _RUNBOOK_PROXY_ENDPOINTS
+        if proxy_limit is None else _RUNBOOK_PROXY_ENDPOINTS[:proxy_limit]
+    )
+    proxy_locals = [record[0] for record in proxy_endpoints]
+    proxy_by_corpus: dict[str, dict[str, dict[str, Any]]] = {
+        "mmsafety": {}, "mossbench": {},
+    }
+    for index, (local_id, policy_id, policy_version, alias, population) in enumerate(
+        proxy_endpoints
+    ):
+        corpus, metric_name, policy_token = local_id.split("::")
+        if corrupt_moss_alias and corpus == "mossbench":
+            alias = "ASR"
+        proxy_by_corpus[corpus][f"{policy_token}::{metric_name}"] = (
+            _confirmatory_metric(
+                metric_name,
+                alias=alias,
+                population=population,
+                source=corpus,
+                policy_id=policy_id,
+                policy_version=policy_version,
+                value=0.01 * (index + 1),
+            )
+        )
+
+    adaptivity_contrasts: dict[str, dict[str, Any]] = {}
+    adaptivity_globals: list[str] = []
+    for index, model in enumerate(("fable", "sol")):
+        contrast_id = f"adaptivity-{model}"
+        adaptivity_globals.append(f"{contrast_id}::{primary_local}")
+        adaptivity_contrasts[contrast_id] = {
+            "preregistered": {
+                "all_planned_metrics_adequately_powered": True,
+                "hypotheses": [primary_local],
+            },
+            "facets": {
+                "strongreject": _confirmatory_facet(
+                    corpus="strongreject",
+                    left_model=model,
+                    right_model=model,
+                    left_attacker="replay",
+                    right_attacker="crescendo",
+                    comparison_type="within_target_adaptivity_endpoint",
+                    metrics={
+                        "ASR": _confirmatory_metric(
+                            "ASR",
+                            alias="ASR",
+                            population="harmful_expected_refusal",
+                            source="strongreject",
+                            policy_id="strongreject:default",
+                            policy_version="frozen",
+                            value=0.04 * (index + 1),
+                        )
+                    },
+                )
+            },
+        }
+
+    contrasts = {
+        "model-fable-vs-sol": {
+            "preregistered": {
+                "all_planned_metrics_adequately_powered": True,
+                "hypotheses": [primary_local],
+            },
+            "facets": {
+                "strongreject": _confirmatory_facet(
+                    corpus="strongreject",
+                    left_model="fable",
+                    right_model="sol",
+                    left_attacker="replay",
+                    right_attacker="replay",
+                    comparison_type="cross_target_endpoint_noncausal",
+                    metrics={"ASR": primary_metric},
+                )
+            },
+        },
+        "proxy-fable-vs-sol": {
+            "preregistered": {
+                "all_planned_metrics_adequately_powered": True,
+                "hypotheses": proxy_locals,
+            },
+            "facets": {
+                corpus: _confirmatory_facet(
+                    corpus=corpus,
+                    left_model="fable",
+                    right_model="sol",
+                    left_attacker="replay",
+                    right_attacker="replay",
+                    comparison_type="cross_target_endpoint_noncausal",
+                    policy_metrics=metrics,
+                )
+                for corpus, metrics in proxy_by_corpus.items()
+            },
+        },
+        **adaptivity_contrasts,
+    }
+    families = {
+        "primary-model": {
+            "hypotheses": {primary_global: {"status": "estimated"}},
+        },
+        "secondary-proxies": {
+            "hypotheses": {
+                f"proxy-fable-vs-sol::{local_id}": {"status": "estimated"}
+                for local_id in proxy_locals
+            },
+        },
+        "h4-adaptivity": {
+            "hypotheses": {
+                global_id: {"status": "estimated"}
+                for global_id in adaptivity_globals
+            },
+        },
+    }
+    repo_root = Path(__file__).resolve().parents[2]
+    evaluation_policy_content = {
+        "schema_version": "ura-evaluation-policy/1.0",
+        "policy_id": "frozen-runbook-policy",
+        "version": "1",
+        "title": "Fixture interpretation policy",
+    }
+    artifact = {
+        "schema_version": "ura-confirmatory-analysis/1.0",
+        "publishable_real_run": True,
+        "analysis_stage": "final_human_bound",
+        "human_audit_artifact": {"sha256": "1" * 64},
+        "plan_artifact": {"sha256": "2" * 64},
+        "evaluation_policy": {
+            "policy_id": "frozen-runbook-policy",
+            "version": "1",
+            "sha256": "3" * 64,
+        },
+        "evaluation_policy_artifact": {
+            "path": "experiments/evaluation-policy.json",
+            "bytes": 1,
+            "sha256": "3" * 64,
+            "content_sha256": hashlib.sha256(json.dumps(
+                evaluation_policy_content, sort_keys=True, separators=(",", ":")
+            ).encode()).hexdigest(),
+        },
+        "evaluation_policy_content": evaluation_policy_content,
+        "publishability_checks": {
+            "all_contrasts_publishable": True,
+            "complete_families_estimable": True,
+            "plan_and_pilots_content_addressed": True,
+            "evaluation_policy_content_addressed": True,
+            "publishable_human_audit_bound": True,
+        },
+        "analysis_source": analysis_source_identity([
+            repo_root / "experiments" / "confirmatory_analysis.py",
+            repo_root / "experiments" / "paired_compare.py",
+            repo_root / "experiments" / "analysis_integrity.py",
+            repo_root / "src" / "ura" / "metrics.py",
+        ]),
+        "families": families,
+        "contrasts": contrasts,
+    }
+    path = tmp_path / "confirmatory-final.json"
+    path.write_text(json.dumps(artifact), encoding="utf-8")
+    return path, hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def test_confirmatory_figure_loader_matches_frozen_runbook_families(
+    tmp_path: Path,
+) -> None:
+    path, digest = _write_runbook_confirmatory_artifact(tmp_path)
+    result = figure_results.load_confirmatory_results(path, expected_sha256=digest)
+
+    assert result["schema_version"] == "ura-chapter-v-figures/1.2"
+    assert set(result["figures"]) == {
+        "fig-v-asr-by-model.png",
+        "fig-v-policy-proxies.png",
+        "fig-v-adaptivity.png",
+    }
+    assert result["analysis"]["evaluation_policy_content"]["policy_id"] == (
+        "frozen-runbook-policy"
+    )
+    assert result["analysis"]["evaluation_policy_artifact"]["sha256"] == "3" * 64
+    primary = result["figures"]["fig-v-asr-by-model.png"]["points"]
+    proxies = result["figures"]["fig-v-policy-proxies.png"]["points"]
+    adaptivity = result["figures"]["fig-v-adaptivity.png"]["points"]
+    assert len(primary) == 1
+    assert len(proxies) == 7
+    assert len(adaptivity) == 2
+    assert [point["metric"] for point in proxies].count("ASR") == 6
+    assert [point["metric"] for point in proxies].count("FRR") == 1
+    moss = next(point for point in proxies if point["corpus"] == "mossbench")
+    assert moss["requested_metric"] == "over_refusal_rate"
+    assert moss["metric"] == "FRR"
+    assert moss["population"] == "benign_expected_answer"
+    assert all(
+        point["comparison_type"] == "within_target_adaptivity_endpoint"
+        for point in adaptivity
+    )
+
+
+def test_confirmatory_figure_loader_rejects_mislabeled_moss_frr(
+    tmp_path: Path,
+) -> None:
+    path, digest = _write_runbook_confirmatory_artifact(
+        tmp_path, corrupt_moss_alias=True,
+    )
+    with pytest.raises(ValueError, match="inconsistent endpoint semantics"):
+        figure_results.load_confirmatory_results(path, expected_sha256=digest)
+
+
+def test_confirmatory_figure_loader_requires_exact_frozen_inventory(
+    tmp_path: Path,
+) -> None:
+    path, digest = _write_runbook_confirmatory_artifact(tmp_path, proxy_limit=1)
+    with pytest.raises(ValueError, match="exact frozen Chapter V inventory"):
+        figure_results.load_confirmatory_results(path, expected_sha256=digest)
+
+
+def test_confirmatory_figure_loader_rejects_drifted_evaluation_policy_content(
+    tmp_path: Path,
+) -> None:
+    path, _ = _write_runbook_confirmatory_artifact(tmp_path)
+    artifact = json.loads(path.read_text(encoding="utf-8"))
+    artifact["evaluation_policy_content"]["version"] = "2"
+    path.write_text(json.dumps(artifact), encoding="utf-8")
+    digest = hashlib.sha256(path.read_bytes()).hexdigest()
+    with pytest.raises(ValueError, match="policy content is invalid or drifted"):
+        figure_results.load_confirmatory_results(path, expected_sha256=digest)

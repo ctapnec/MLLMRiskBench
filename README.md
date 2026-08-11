@@ -26,7 +26,11 @@ effect, compliance finding, or other empirical result yet.
 - Confirmatory results require a disjoint pilot, a frozen complete-family plan,
   a hash-bound whole-cluster human audit, and a final publishable analysis
   artifact. Primary endpoints and secondary cross-benchmark proxies occupy
-  separate multiplicity families.
+  separate multiplicity families. Rate-difference SESOIs must lie in `(0,1]`;
+  prospective sizing uses the first Holm threshold `alpha / family_size` and
+  also requires enough clusters for the two-sided sign-flip test to attain that
+  threshold. Every confirmatory contrast explicitly asserts paired sign-flip
+  exchangeability.
 
 See [metrics](docs/METRICS.md), [schema](docs/SCHEMA.md),
 [architecture](docs/ARCHITECTURE.md), and the
@@ -98,8 +102,10 @@ substitutes a caption inside the registered run.
   `--limit 0`. The partition binds a portable source locator, full converted
   release population, disjoint source clusters, and exact per-policy pilot/main
   counts. Both roles default to at least two clusters per observed policy
-  stratum. StrongREJECT, MM-SafetyBench, and MOSSBench enforce pinned official
-  release identities.
+  stratum. On load, the driver recomputes the declared scoped-seed assignment
+  from the complete sorted cluster inventory and rejects any altered role list.
+  StrongREJECT, MM-SafetyBench, and MOSSBench enforce pinned official release
+  identities.
 - The StrongREJECT gate is the official CSV at commit
   `f7cad6c17e624e21d8df2278e918ae1dddb4cb56`: normalized SHA-256
   `4dd70357e4ff8b5d0ba5ebafecab5d6dd5633ce8046e3dd1c8bd93e64de44381`,
@@ -110,6 +116,11 @@ substitutes a caption inside the registered run.
 - Finite matrix-wide target-call, judge-call, HTTP-attempt, and wall-clock
   ceilings are persisted before calls. Locks, durable dependency circuits, and
   append-only checkpoints make interruption and resume fail closed.
+- Before each paid grid, run the same arguments through
+  `python -m experiments.rig_check`. It executes the corpus, release, policy,
+  target, judge, attacker, modality, and budget preflights in temporary storage,
+  prints exact selected source-policy cluster counts plus conservative complete-
+  grid call/HTTP upper bounds, and stops before model or judge generation calls.
 - A real LLM judge needs an exact non-mock `--judge-model`. A model guard needs
   an immutable `--guardrail-revision`.
 - Optional local targets use `--local-config` keyed by the exact local spec,
@@ -136,6 +147,21 @@ benign setup turns receive typed `not_applicable` judgments and no judge call or
 metric contribution. Policy challenges are numbered contiguously from zero,
 share one declared challenge horizon, and a harmful authoritative violation is
 terminal.
+
+A pilot can size a main hypothesis only when it is real and mock-free, all v2
+integrity/grid/source/code/schema checks pass, and common-metric, pairing, and
+unexplained exclusions are zero. Its normalized paired-analysis design is
+hash-bound and must exactly match the main facet's model, target, defense,
+attacker, realized target snapshot, judge identities, repeat seeds,
+per-trajectory budget, source-policy/
+metric design, and code/schema identity. Run IDs, partition assignments, and
+aggregate call ceilings are intentionally allowed to differ.
+
+The frozen human plan includes `validity_gate.minimum_shared_clusters_per_required_cell`
+(at least two) and `validity_gate.minimum_endpoint_agreement` in `(0,1]`.
+Sampling guarantees the frozen support for every required exact arm before the
+label export is emitted. A failed support or endpoint-agreement cell remains
+exploratory and prevents a publishable final artifact.
 
 ## Source-specific tracks
 

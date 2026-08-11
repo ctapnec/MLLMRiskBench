@@ -93,7 +93,35 @@ official evaluator actually ran and its provenance says so.
   combination; a tag without byte-backed delivery is insufficient;
 - a content-addressed modality companion proves only completed Attempt/Response
   evidence for the same target component and defense condition;
+- a loaded partition recomputes its declared scoped-seed pilot/main membership
+  from the complete sorted cluster inventory rather than trusting stored role
+  lists;
 - missing or unsupported constructs fail explicitly rather than becoming zero.
+
+Grid requests also bind `source_policy_cluster_counts` for every selected corpus
+and a `call_projection` using
+`conservative_complete_grid_upper_bound_v1`. The latter reports trajectory,
+target-call, model-judge-call, and declared provider-HTTP-attempt upper bounds,
+including per-attacker subtotals. It is an exposure/budget planning record, not
+a price, token, latency, or expected-usage estimate.
 
 Agentic tool fields represent source-benchmark traces. The core harness does not
 execute model-produced commands or infer that a represented tool effect occurred.
+
+Post-run planning artifacts are separately content-addressed. A sizing-pilot
+artifact records its admissibility checks, zero endpoint exclusions, mock-free
+status, normalized paired-analysis design and design digest. The confirmatory
+plan freezes `assume_exchangeable: true` for each tested contrast and a human
+`validity_gate` containing minimum shared-cluster support and endpoint-event
+agreement. The resulting human-audit artifact records the completed labels CSV
+name, byte count, and SHA-256, and its uncertainty settings must equal the plan.
+These are analysis contracts rather than additions to schema v1.3's runtime
+record types.
+
+The confirmatory plan also binds the checked-in interpretation policy by a
+canonical repository-relative path, exact byte count, raw SHA-256, policy ID and
+version. Confirmatory output embeds the verified JSON and its canonical-content
+digest so measured-figure provenance consumes the resolved policy rather than a
+self-asserted label. This compact provenance contract is not a policy engine;
+the realized target snapshot plus requested and realized judge identities remain
+independently bound by the pilot/main analysis design.

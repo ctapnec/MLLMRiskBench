@@ -75,6 +75,19 @@ def test_power_gate_uses_supplied_pilot_sd():
     assert power_gate(0.1, 0.5, 3)["adequately_powered"] is False
 
 
+def test_power_gate_respects_holm_and_two_sided_sign_flip_resolution():
+    single = required_clusters_for_power(1.0, 0.01, family_size=1)
+    family_four = required_clusters_for_power(1.0, 0.01, family_size=4)
+    assert single == 6  # 2 / 2**5 cannot reach alpha=.05
+    assert family_four == 8  # 2 / 2**7 cannot reach .05 / 4
+    gate = power_gate(1.0, 0.01, 7, family_size=4)
+    assert gate["adequately_powered"] is False
+    assert gate["per_hypothesis_alpha"] == pytest.approx(0.0125)
+    assert gate["minimum_attainable_sign_flip_p"] == pytest.approx(2 / 2**7)
+    with pytest.raises(ValueError, match=r"\(0,1\]"):
+        required_clusters_for_power(1.01, 0.1)
+
+
 def test_paired_effect_manski_bounds_bracket_matched_estimate():
     b = paired_effect_manski_bounds(
         matched_diffs=[0.5, -0.5],        # matched mean effect 0
