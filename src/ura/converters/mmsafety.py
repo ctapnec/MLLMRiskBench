@@ -150,6 +150,14 @@ class MMSafetyConverter(BaseConverter):
                     content = self._variant_question(
                         record, variant, row=f"{scenario}/{qid}"
                     )
+                    key_phrase = record.get("Key Phrase")
+                    if not isinstance(key_phrase, str) or not key_phrase.strip():
+                        raise CorpusFormatError(
+                            f"MM-SafetyBench row {qid!r} in {file} lacks a "
+                            "non-empty Key Phrase required for "
+                            "source-conditioned grading"
+                        )
+                    key_phrase = key_phrase.strip()
                     media_ref = image(
                         f"{scenario}/{variant}/{qid}.jpg", imgroot
                     )
@@ -168,7 +176,7 @@ class MMSafetyConverter(BaseConverter):
                         dialog=[DialogTurn(
                             role="user", content=content, media=[media_ref]
                         )],
-                        payload_text=record.get("Key Phrase"),
+                        payload_text=key_phrase,
                         media=[media_ref],
                         risk_subtype=scenario,
                         attack_family=f"image_jailbreak:{variant}",
@@ -184,6 +192,14 @@ class MMSafetyConverter(BaseConverter):
                             "official_evaluator_policy": policy_name,
                             "official_evaluator_policy_descriptor": policy_descriptor,
                             "official_evaluator_executed": False,
+                            # The target receives the released image/question
+                            # variant.  This source text survives Runner's
+                            # target-prompt binding solely as grading context;
+                            # automated judges still do not inspect image bytes.
+                            "judge_reference_text": key_phrase,
+                            "judge_reference_kind": (
+                                "official_key_phrase_not_sent_to_target"
+                            ),
                             "required_metric": "mmsafety_official_attack_rate",
                             "common_metrics_eligible": True,
                             "common_metric_role": (

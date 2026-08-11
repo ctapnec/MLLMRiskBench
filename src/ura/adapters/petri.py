@@ -220,6 +220,15 @@ class PetriAttacker(BaseAttacker):
         ):
             if model is not None and (not isinstance(model, str) or not model.strip()):
                 raise ValueError(f"Petri {role}_model must be nonblank when supplied")
+        if (
+            target_model is not None
+            and judge_model is not None
+            and target_model.strip() == judge_model.strip()
+        ):
+            raise ValueError(
+                "Petri target_model and judge_model must differ; the target must "
+                "not grade its own output"
+            )
         self.dimensions = dimensions
         self.auditor_model = auditor_model
         self.target_model = target_model
@@ -341,6 +350,10 @@ class PetriAttacker(BaseAttacker):
             model_roles[role] = _role_model(role, role_values[role])
         if "realism" in role_values:
             model_roles["realism"] = _role_model("realism", role_values["realism"])
+        if model_roles["target"] == model_roles["judge"]:
+            raise ExternalEngineOutputError(
+                "Petri target and judge model identities must differ"
+            )
         configured = {
             "auditor": self.auditor_model,
             "target": self.target_model,

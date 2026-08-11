@@ -2,7 +2,7 @@
 
 `ura.data_models` is the typed Pydantic v2 contract shared by converters,
 attackers, targets, judges, persistence, and analysis. `SCHEMA_VERSION = "1.4"`
-is stamped on datapoints, checkpoints, and manifests. Runner 2.4 rejects mixed
+is stamped on datapoints, checkpoints, and manifests. Runner 2.5 rejects mixed
 schema versions and duplicate datapoint IDs before a target call.
 
 ## Records
@@ -82,6 +82,30 @@ keeps that policy's identity separate from URA's common-metric judge. A common
 ASR/FRR result must not be renamed as an official source metric unless the
 official evaluator actually ran and its provenance says so.
 
+## Model and source-instance configuration provenance
+
+The matrix accepts reusable inventories without treating an inventory entry as
+an executed cell:
+
+- `--source-config` maps a stable corpus-arm ID to a converter plus an
+  environment-variable path locator and optional source label/split. The full
+  file hash is provenance; the normalized selected subset digest enters
+  execution identity. The environment's resolved absolute path is not retained.
+- `--api-config` maps an exact generic hosted model specification to declared
+  modalities and request controls, with a compatibility base URL only where
+  required. The full file byte count/SHA-256 and normalized selected-subset
+  digest are retained, but only the selected subset enters execution identity.
+  Capability declarations are planning inputs and require live attestation
+  before measured use.
+- `--local-config` binds an exact local specification to one immutable model
+  revision or digest, declared modalities, tensor-parallel size, memory
+  utilization, and output bound. One local target is admitted per runner
+  process so server lifetime and GPU ownership stay explicit.
+
+Unselected inventory entries are neither evidence nor requested cells. Secret
+values are environment-indirected and rejected from persisted configuration.
+The manifest keeps requested and realized target identities distinct.
+
 ## Enforced invariants
 
 - modalities and required identifiers are non-empty and non-duplicated;
@@ -108,10 +132,26 @@ estimate.
 Agentic tool fields represent source-benchmark traces. The core harness does not
 execute model-produced commands or infer that a represented tool effect occurred.
 
+Complete upstream evaluator outputs use an
+`ura-native-import-envelope/2` rather than `EvalResult`. It binds a relative
+import-config locator/hash/size and the derived `NativeEngineRun`. Validation
+re-runs that exact importer over the returned authoritative files and requires
+all case joins, outcomes, scores, aggregates, roles, hashes, byte counts, and
+record counts to match; physical paths may relocate with the complete tree.
+`experiments.suite_summary` joins completion-validated runner cells and these
+revalidated native envelopes only at an evidence-inventory layer; it does not
+coerce native outcomes into schema-v1.4 common metrics.
+
 Human-audit outputs are separately content-addressed after ratings are complete.
 The audit artifact records the labels CSV name, byte count, and SHA-256;
-complete-rater coverage; pairwise policy-endpoint agreement and support; and
-automated-versus-consensus performance. Static rows are endpoint units directly,
+complete-rater coverage; completed and directly labelled run inventories;
+achieved common-arm endpoint coverage; pairwise policy-endpoint agreement and
+support; and automated-versus-consensus performance stratified primarily by
+exact run and response-producing arm, logical corpus arm, source policy,
+effective modality, expected population, and common-metric eligibility. Each
+primary stratum retains total/decided/abstained support and decision coverage;
+harmful violation and benign over-refusal remain distinct adverse endpoints.
+Cross-stratum pooled values are composition-dependent diagnostics. Static rows are endpoint units directly,
 while live challenge rows collapse to conversation endpoints before equal
 conversation-within-cluster and equal-cluster weighting. Pair records expose
 `n_shared_endpoint_conversations`, `endpoint_unit`, and `weighting` alongside

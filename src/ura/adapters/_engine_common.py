@@ -368,10 +368,42 @@ def _require(module: str, feature: str, pip_name: str | None = None):
 
 
 def _seed_dialog(datapoint: DataPoint, prompt: str) -> list[DialogTurn]:
-    """Render an engine-produced prompt as a dialog, preserving prior history."""
+    """Replace the source objective with an engine-produced prompt.
+
+    Runner-compatible external engines transform the source request; they do
+    not add a second request after it.  Appending here exposed both the raw
+    objective and the transformed attack to the target and changed the
+    experiment.  Preserve only conditioning turns before the final authored
+    user request, and carry that request's physical media onto the transformed
+    request.  Tool/response-conditioned histories need a native integration
+    rather than this prompt-transfer boundary and therefore fail closed.
+    """
+    if not isinstance(prompt, str) or not prompt.strip():
+        raise ValueError("engine-produced prompt must be non-blank text")
     history = list(datapoint.dialog_history)
-    history.append(DialogTurn(role="user", content=prompt))
-    return history
+    user_indexes = [
+        index for index, turn in enumerate(history) if turn.role == "user"
+    ]
+    if not user_indexes:
+        if history:
+            raise ValueError(
+                "engine prompt transfer requires an identifiable source user request"
+            )
+        return [DialogTurn(role="user", content=prompt)]
+    source_index = user_indexes[-1]
+    if source_index != len(history) - 1:
+        raise ValueError(
+            "engine prompt transfer cannot replace a response-conditioned/tool history"
+        )
+    source_turn = history[source_index]
+    if source_turn.tool_call is not None or source_turn.tool_result is not None:
+        raise ValueError("engine prompt transfer cannot replace a tool-bearing user turn")
+    replacement = DialogTurn(
+        role="user",
+        content=prompt,
+        media=list(source_turn.media),
+    )
+    return [*history[:source_index], replacement]
 
 
 def _attempt(

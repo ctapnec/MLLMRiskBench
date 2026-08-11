@@ -97,7 +97,9 @@ from ura.runner import (                              # noqa: E402
 )
 from ura import source_metrics                        # noqa: E402
 from ura.targets.api import (                              # noqa: E402
+    api_target_requires_config,
     build_api_target,
+    normalize_api_target_config,
     preflight_api_target_runtime,
 )
 
@@ -413,6 +415,209 @@ def _load_attacker_config(
     }
 
 
+def _load_api_config(
+    path_value: str, selected_specs: list[str]
+) -> tuple[dict[str, dict[str, object]], dict[str, object] | None]:
+    """Load exact, credential-free execution conditions for generic API targets."""
+
+    required_specs = [
+        spec for spec in selected_specs if api_target_requires_config(spec)
+    ]
+    if not path_value:
+        if required_specs:
+            raise ValueError(
+                "measured generic API targets and judges require --api-config "
+                "containing each exact selected spec"
+            )
+        return {}, None
+
+    unresolved = Path(path_value)
+    if unresolved.is_symlink():
+        raise ValueError("--api-config must be a regular non-symlink JSON file")
+    path = unresolved.resolve(strict=True)
+    if not path.is_file() or path.is_symlink() or path.stat().st_size > 1024 * 1024:
+        raise ValueError("--api-config must be a regular <=1 MiB JSON file")
+    try:
+        value = _json_loads_strict(path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, json.JSONDecodeError) as exc:
+        raise ValueError(f"invalid --api-config JSON: {exc}") from exc
+    if not isinstance(value, dict) or not set(required_specs).issubset(value):
+        missing = sorted(set(required_specs) - set(value if isinstance(value, dict) else {}))
+        raise ValueError(
+            "--api-config is missing selected generic API target/judge specs: "
+            + ", ".join(missing)
+        )
+
+    normalized: dict[str, dict[str, object]] = {}
+    for spec in required_specs:
+        config = value[spec]
+        if not isinstance(config, dict):
+            raise ValueError(f"API config {spec!r} must be a JSON object")
+        normalized[spec] = normalize_api_target_config(spec, config)
+    return normalized, {
+        "file": path.name,
+        "sha256": _sha256_file(path),
+        "bytes": path.stat().st_size,
+        "normalized_selected_sha256": _sha256_json(normalized),
+    }
+
+
+_SOURCE_CONFIG_FIELDS = frozenset({
+    "converter", "path_env", "synth", "source_label", "split",
+})
+_ENV_NAME = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
+
+
+def _default_source_instance(arm_id: str) -> dict[str, object]:
+    """Return the backward-compatible source mapping for one corpus arm."""
+
+    if arm_id == "synth":
+        return {
+            "converter": "synth",
+            "synth": True,
+        }
+    return {
+        "converter": arm_id,
+        "synth": False,
+        "path_env": f"URA_{arm_id.upper()}_PATH",
+        "path_env_required": False,
+        "default_relative_path": f"datasets/samples/{arm_id}.jsonl",
+    }
+
+
+def _load_source_config(
+    path_value: str, selected_arms: list[str],
+) -> tuple[dict[str, dict[str, object]], dict[str, object] | None]:
+    """Load logical source arms without persisting checkout-specific paths.
+
+    A configured real source names an environment variable containing its path;
+    the environment variable's value is deliberately never copied into an
+    artifact. Unconfigured converter-name arms retain the historical
+    ``URA_<CONVERTER>_PATH`` or ``datasets/samples/<converter>.jsonl`` behavior.
+    """
+
+    raw_configs: dict[str, object] = {}
+    artifact: dict[str, object] | None = None
+    if path_value:
+        unresolved = Path(path_value).expanduser()
+        if unresolved.is_symlink():
+            raise ValueError("--source-config must not be a symlink")
+        path = unresolved.resolve(strict=True)
+        if not path.is_file() or path.stat().st_size > 1024 * 1024:
+            raise ValueError("--source-config must be a regular <=1 MiB JSON file")
+        try:
+            value = _json_loads_strict(path.read_text(encoding="utf-8"))
+        except (OSError, UnicodeError, json.JSONDecodeError) as exc:
+            raise ValueError(f"invalid --source-config JSON: {exc}") from exc
+        if not isinstance(value, dict):
+            raise ValueError("--source-config must be an object keyed by corpus arm id")
+        raw_configs = value
+        artifact = {
+            "file": path.name,
+            "sha256": _sha256_file(path),
+            "bytes": path.stat().st_size,
+        }
+
+    for raw_arm in raw_configs:
+        if (
+            not isinstance(raw_arm, str)
+            or not raw_arm.strip()
+            or raw_arm != raw_arm.strip()
+            or "," in raw_arm
+        ):
+            raise ValueError(
+                "source config arm ids must be non-blank, unpadded strings "
+                "without commas"
+            )
+    normalized: dict[str, dict[str, object]] = {}
+    for arm_id in selected_arms:
+        if arm_id not in raw_configs:
+            normalized[arm_id] = _default_source_instance(arm_id)
+            continue
+        raw_config = raw_configs[arm_id]
+        if not isinstance(raw_config, dict):
+            raise ValueError(f"source config {arm_id!r} must be an object")
+        unknown = sorted(set(raw_config) - _SOURCE_CONFIG_FIELDS)
+        if unknown:
+            raise ValueError(
+                f"source config {arm_id!r} contains unsupported fields: "
+                + ", ".join(unknown)
+            )
+        converter = raw_config.get("converter")
+        if not isinstance(converter, str) or not converter.strip():
+            raise ValueError(
+                f"source config {arm_id!r} requires a non-blank converter"
+            )
+        converter = converter.strip().lower()
+        synth = raw_config.get("synth", False)
+        if not isinstance(synth, bool):
+            raise ValueError(f"source config {arm_id!r} synth marker must be boolean")
+        if converter == "synth":
+            if synth is not True or "path_env" in raw_config:
+                raise ValueError(
+                    f"synthetic source config {arm_id!r} requires synth=true and "
+                    "forbids path_env"
+                )
+        else:
+            if synth or "path_env" not in raw_config:
+                raise ValueError(
+                    f"real source config {arm_id!r} requires path_env and forbids "
+                    "synth=true"
+                )
+            path_env = raw_config["path_env"]
+            if not isinstance(path_env, str) or _ENV_NAME.fullmatch(path_env) is None:
+                raise ValueError(
+                    f"source config {arm_id!r} path_env must be an environment "
+                    "variable name"
+                )
+            # Validate the converter now, while CLI configuration errors can
+            # still stop the whole grid before any target construction.
+            get_converter(converter)
+
+        item: dict[str, object] = {
+            "converter": converter,
+            "synth": synth,
+        }
+        if converter != "synth":
+            item.update({
+                "path_env": raw_config["path_env"],
+                "path_env_required": True,
+            })
+        for field in ("source_label", "split"):
+            optional = raw_config.get(field)
+            if optional is not None:
+                if not isinstance(optional, str) or not optional.strip():
+                    raise ValueError(
+                        f"source config {arm_id!r} {field} must be a non-blank string"
+                    )
+                item[field] = optional.strip()
+        normalized[arm_id] = item
+
+    if artifact is not None:
+        artifact["normalized_selected_sha256"] = _sha256_json(normalized)
+    return normalized, artifact
+
+
+def _selected_config_artifact_identity(
+    artifact: dict[str, object] | None,
+) -> dict[str, str] | None:
+    """Return only the selected execution subset's content identity.
+
+    Reusable API/source registries may contain entries for other experiment
+    lanes.  Their full file hash is useful acquisition provenance, but an edit
+    to an unselected entry must not invalidate this grid or repeat paid calls.
+    The normalized selected configuration is already persisted separately and
+    is the only artifact digest admitted to execution identity.
+    """
+
+    if artifact is None:
+        return None
+    digest = artifact.get("normalized_selected_sha256")
+    if not isinstance(digest, str) or re.fullmatch(r"[0-9a-f]{64}", digest) is None:
+        raise ValueError("selected config artifact identity requires a SHA-256 digest")
+    return {"normalized_selected_sha256": digest}
+
+
 def _record_executed_modality_evidence(
     target_name: str,
     attempts: list[Attempt],
@@ -481,10 +686,11 @@ def _load_local_config(
     for spec in selected_specs:
         config = value[spec]
         if not isinstance(config, dict) or set(config) - {
-            "revision", "digest", "modalities",
+            "revision", "digest", "modalities", "tensor_parallel_size",
+            "gpu_memory_utilization", "max_tokens",
         }:
             raise ValueError(
-                f"local config {spec!r} may contain only revision/digest/modalities"
+                f"local config {spec!r} contains unsupported execution fields"
             )
         modalities = config.get("modalities")
         if (
@@ -505,10 +711,45 @@ def _load_local_config(
                 raise ValueError(
                     f"vLLM config {spec!r} requires exactly one revision or digest"
                 )
-        elif backend == "ollama":
-            if revision is not None or not isinstance(digest, str):
+            tensor_parallel_size = config.get("tensor_parallel_size")
+            if (
+                isinstance(tensor_parallel_size, bool)
+                or tensor_parallel_size not in {1, 2}
+            ):
                 raise ValueError(
-                    f"Ollama config {spec!r} requires digest and forbids revision"
+                    f"vLLM config {spec!r} requires tensor_parallel_size 1 or 2"
+                )
+            utilization = config.get("gpu_memory_utilization", 0.90)
+            if (
+                isinstance(utilization, bool)
+                or not isinstance(utilization, (int, float))
+                or not 0.1 <= float(utilization) <= 0.95
+            ):
+                raise ValueError(
+                    f"vLLM config {spec!r} gpu_memory_utilization must be in [0.1, 0.95]"
+                )
+            max_tokens = config.get("max_tokens", 512)
+            if (
+                isinstance(max_tokens, bool)
+                or not isinstance(max_tokens, int)
+                or not 1 <= max_tokens <= 25_000
+            ):
+                raise ValueError(
+                    f"vLLM config {spec!r} max_tokens must be an integer in 1..25000"
+                )
+        elif backend == "ollama":
+            if (
+                revision is not None
+                or not isinstance(digest, str)
+                or any(
+                    field in config
+                    for field in (
+                        "tensor_parallel_size", "gpu_memory_utilization", "max_tokens"
+                    )
+                )
+            ):
+                raise ValueError(
+                    f"Ollama config {spec!r} requires digest and forbids vLLM fields"
                 )
         else:
             raise ValueError(f"unsupported local backend in {spec!r}")
@@ -1175,6 +1416,7 @@ def build_target(
     quantization: str = "",
     dtype: str = "auto",
     local_identity: dict[str, object] | None = None,
+    api_config: dict[str, object] | None = None,
 ):
     """Resolve a target spec to a :class:`BaseTarget`.
 
@@ -1212,6 +1454,11 @@ def build_target(
                     "modality_support": modalities,
                     "revision": local_identity.get("revision"),
                     "model_digest": local_identity.get("digest"),
+                    "tensor_parallel_size": local_identity["tensor_parallel_size"],
+                    "gpu_memory_utilization": local_identity.get(
+                        "gpu_memory_utilization", 0.90
+                    ),
+                    "max_tokens": local_identity.get("max_tokens", 512),
                 }
                 if quantization:
                     kwargs["quantization"] = quantization
@@ -1227,9 +1474,9 @@ def build_target(
             target.validate_research_identity()
             return target
         # provider:model (anthropic/openai/google/gemini)
-        return build_api_target(spec)
+        return build_api_target(spec, config=api_config)
     # bare id: resolve against the verified hosted/mock registry
-    return build_api_target(spec)
+    return build_api_target(spec, config=api_config)
 
 
 def _persisted_model_spec(
@@ -1277,6 +1524,7 @@ def build_judges(
     names: list[str],
     judge_model: str,
     *,
+    judge_api_config: dict[str, object] | None = None,
     guardrail_model: str = "meta-llama/Llama-Guard-3-8B",
     guardrail_revision: str = "",
     guardrail_device: str = "",
@@ -1300,7 +1548,9 @@ def build_judges(
             # build_api_target resolves both bare registered ids and provider:model
             # forms, so the judge can be any provider (e.g. kimi:kimi-k3), not only a
             # registry default; falls back to REGISTRY.create for bare ids like "mock".
-            stages.append(LLMJudge(judge_target=build_api_target(judge_model)))
+            stages.append(LLMJudge(judge_target=build_api_target(
+                judge_model, config=judge_api_config
+            )))
         elif n == "guardrail":
             from ura.judges.guardrail import GuardrailJudge
             stages.append(GuardrailJudge(
@@ -1358,6 +1608,21 @@ def _declared_transport_attempts(component: object) -> int:
     return value
 
 
+def _precall_model_identity(component: object) -> tuple[str, str]:
+    """Canonical provider/model identity for anti-self-certification checks."""
+
+    provider = str(getattr(component, "provider", "")).strip().lower()
+    provider = {
+        "claude": "anthropic",
+        "gemini": "google",
+        "gpt": "openai",
+    }.get(provider, provider)
+    model = str(getattr(component, "model", "")).strip()
+    if provider and model:
+        return provider, model
+    return "runtime-name", str(getattr(component, "name", "")).strip()
+
+
 def _project_grid_call_upper_bounds(
     *,
     targets: dict[str, object],
@@ -1411,8 +1676,17 @@ def _project_grid_call_upper_bounds(
             trajectories = sum(len(rows) for rows in corpora.values()) * len(seeds)
             target_calls = trajectories * target_turns
             judge_calls = trajectories * evaluable_turns * judge_calls_per_evaluable
+            defense_guard = getattr(target, "guard", None)
+            defense_mode = getattr(target, "mode", None)
+            defense_guardrails_per_target_turn = (
+                int(defense_mode in {"input", "both"})
+                + int(defense_mode in {"output", "both"})
+                if getattr(defense_guard, "name", "") == "guardrail"
+                else 0
+            )
             local_guardrail_evaluations = (
                 trajectories * evaluable_turns * local_guardrails_per_evaluable
+                + trajectories * target_turns * defense_guardrails_per_target_turn
             )
             http_attempts = (
                 target_calls * _declared_transport_attempts(target)
@@ -1548,23 +1822,56 @@ def _corpus_path(name: str) -> Path:
     ))
 
 
+def _source_instance_path(
+    arm_id: str, source_instance: dict[str, object],
+) -> Path:
+    """Resolve a real source at runtime while keeping the value out of artifacts."""
+
+    path_env = source_instance.get("path_env")
+    if not isinstance(path_env, str) or not path_env:
+        raise ValueError(f"real source arm {arm_id!r} lacks a path_env locator")
+    if source_instance.get("path_env_required") is not True:
+        converter = source_instance.get("converter")
+        if not isinstance(converter, str) or not converter:
+            raise ValueError(f"source arm {arm_id!r} lacks a converter")
+        return _corpus_path(converter)
+    configured = os.environ.get(path_env)
+    if configured is not None and configured.strip():
+        return Path(configured)
+    raise ValueError(
+        f"source arm {arm_id!r} requires non-blank environment variable {path_env}"
+    )
+
+
 def _stable_source_locator(
-    name: str, source_kind: str | None,
+    name: str,
+    source_kind: str | None,
+    source_instance: dict[str, object] | None = None,
 ) -> dict[str, object]:
     """Configuration-level locator with no checkout- or author-specific path."""
-    if name == "synth":
+    instance = dict(source_instance or _default_source_instance(name))
+    converter = str(instance["converter"])
+    if instance.get("synth") is True:
         return {
-            "corpus": "synth",
+            "corpus": name,
+            "converter": converter,
             "configuration_env": None,
             "source_kind": "generated_fixture",
             "required_layout": [],
+            "source_label": instance.get("source_label"),
+            "split": instance.get("split"),
         }
-    release = CORPUS_RELEASE_SPECS.get(name)
+    release = CORPUS_RELEASE_SPECS.get(converter)
     return {
         "corpus": name,
-        "configuration_env": f"URA_{name.upper()}_PATH",
+        "converter": converter,
+        "configuration_env": instance.get("path_env"),
+        "configuration_env_required": instance.get("path_env_required") is True,
+        "default_relative_path": instance.get("default_relative_path"),
         "source_kind": source_kind,
         "required_layout": list(release.required_layout) if release else [],
+        "source_label": instance.get("source_label"),
+        "split": instance.get("split"),
     }
 
 
@@ -1591,17 +1898,31 @@ def load_corpus_with_audit(
     name: str,
     limit: int,
     sample_seed: int = 0,
+    *,
+    source_instance: dict[str, object] | None = None,
 ) -> tuple[list[DataPoint], dict[str, object]]:
     """Load one source and retain enough information to audit the selected sample."""
     if limit < 0:
         raise ValueError("limit must be non-negative")
-    if name == "synth":
+    instance = dict(source_instance or _default_source_instance(name))
+    converter = instance.get("converter")
+    if not isinstance(converter, str) or not converter:
+        raise ValueError(f"source arm {name!r} lacks a converter")
+    if instance.get("synth") is True:
+        if converter != "synth":
+            raise ValueError(
+                f"source arm {name!r} has synth=true but converter={converter!r}"
+            )
         selected = synth_corpus(12 if limit == 0 else limit)
         cluster_ids = [_cluster_key(index, row) for index, row in enumerate(selected)]
         full_digest = canonical_converted_corpus_sha256(selected)
         return selected, {
             "corpus": name,
-            "source_locator": _stable_source_locator(name, "generated_fixture"),
+            "converter": converter,
+            "source_instance": instance,
+            "source_locator": _stable_source_locator(
+                name, "generated_fixture", instance
+            ),
             "full_converted_corpus_sha256": full_digest,
             "total_records": len(selected),
             "selected_records": len(selected),
@@ -1615,8 +1936,12 @@ def load_corpus_with_audit(
             "sample_seed": sample_seed,
             "limit": limit,
         }
-    path = _corpus_path(name)
-    full = get_converter(name).parse(path)
+    if converter == "synth":
+        raise ValueError(
+            f"source arm {name!r} uses converter='synth' without synth=true"
+        )
+    path = _source_instance_path(name, instance)
+    full = get_converter(converter).parse(path)
     selected, indices, selected_clusters, total_clusters = _select_corpus(
         name,
         full,
@@ -1627,8 +1952,10 @@ def load_corpus_with_audit(
     full_digest = canonical_converted_corpus_sha256(full)
     return selected, {
         "corpus": name,
+        "converter": converter,
+        "source_instance": instance,
         "source_locator": _stable_source_locator(
-            name, "directory" if resolved.is_dir() else "file"
+            name, "directory" if resolved.is_dir() else "file", instance
         ),
         "full_converted_corpus_sha256": full_digest,
         "total_records": len(full),
@@ -1654,6 +1981,16 @@ def main(argv=None) -> int:
         help="validate and project the complete grid without model/judge calls",
     )
     ap.add_argument("--api", default="", help="comma list of API model ids")
+    ap.add_argument(
+        "--api-config",
+        default="",
+            help=(
+                "JSON containing each selected generic API target/judge spec with "
+                "modalities, max_tokens, and temperature (null omits it); Claude 5 "
+                "adaptive models also require thinking+effort, and compatible "
+                "providers may declare an HTTPS base_url"
+            ),
+    )
     ap.add_argument("--local", default="", help="comma list of backend:model specs")
     ap.add_argument(
         "--local-config",
@@ -1689,7 +2026,34 @@ def main(argv=None) -> int:
         default="",
         help="optional torch device for guardrail inference (empty uses device_map=auto)",
     )
+    ap.add_argument(
+        "--defense-guardrail-model",
+        default="",
+        help=(
+            "exact Hugging Face model id for a model-backed defense; required "
+            "with --defense-guard guardrail and separate from the scoring guard"
+        ),
+    )
+    ap.add_argument(
+        "--defense-guardrail-revision",
+        default="",
+        help="immutable 40-64 hex commit for the model-backed defense",
+    )
+    ap.add_argument(
+        "--defense-guardrail-device",
+        default="",
+        help="explicit torch device for the model-backed defense (for example cuda:0)",
+    )
     ap.add_argument("--corpora", default="synth")
+    ap.add_argument(
+        "--source-config",
+        default="",
+        help=(
+            "optional JSON mapping corpus arm ids to {converter,path_env} or "
+            "{converter:'synth',synth:true}, plus optional source_label/split; "
+            "path values stay in environment variables"
+        ),
+    )
     ap.add_argument(
         "--limit", type=int, default=50,
         help=(
@@ -1772,6 +2136,11 @@ def main(argv=None) -> int:
         ap.error("--api specs must be unique")
     if len(set(local_specs)) != len(local_specs):
         ap.error("--local specs must be unique")
+    if len(local_specs) > 1:
+        ap.error(
+            "one local target is allowed per process; cached vLLM/Ollama engines "
+            "must not accumulate on the two-GPU rig"
+        )
     model_specs = ["mock"] if args.dry_run else (api_specs + local_specs)
     if len(set(model_specs)) != len(model_specs):
         ap.error("target specs must be unique across --api and --local")
@@ -1797,10 +2166,23 @@ def main(argv=None) -> int:
         attacker_configs, attacker_config_artifact = _load_attacker_config(
             args.attacker_config, attacker_names
         )
+        configured_api_specs = list(api_specs)
+        if (
+            not args.dry_run
+            and "llm" in judge_names
+            and args.judge_model not in configured_api_specs
+        ):
+            configured_api_specs.append(args.judge_model)
+        api_configs, api_config_artifact = _load_api_config(
+            args.api_config, [] if args.dry_run else configured_api_specs
+        )
         local_configs, local_config_artifact = _load_local_config(
             args.local_config, [] if args.dry_run else local_specs
         )
-    except (OSError, ValueError) as exc:
+        source_instances, source_config_artifact = _load_source_config(
+            args.source_config, corpora
+        )
+    except (OSError, KeyError, ValueError) as exc:
         ap.error(str(exc))
     persisted_model_specs = {
         spec: _persisted_model_spec(spec, local_configs.get(spec))
@@ -1808,16 +2190,40 @@ def main(argv=None) -> int:
     }
     if not args.dry_run and "llm" in judge_names and args.judge_model == "mock":
         ap.error("a real run with the llm judge requires an explicit non-mock --judge-model")
-    guardrail_selected = "guardrail" in judge_names or (
+    scoring_guardrail_selected = "guardrail" in judge_names
+    defense_guardrail_selected = (
         args.defense != "none" and args.defense_guard == "guardrail"
     )
-    if guardrail_selected:
+    if scoring_guardrail_selected:
         if not args.guardrail_model.strip():
-            ap.error("guardrail cells require a non-blank --guardrail-model")
+            ap.error("scoring guardrail cells require a non-blank --guardrail-model")
         if re.fullmatch(r"[0-9a-fA-F]{40,64}", args.guardrail_revision) is None:
             ap.error(
-                "guardrail cells require --guardrail-revision as an immutable "
+                "scoring guardrail cells require --guardrail-revision as an immutable "
                 "40-64 hex Hugging Face commit"
+            )
+    if defense_guardrail_selected:
+        if not args.defense_guardrail_model.strip():
+            ap.error("model-backed defense cells require --defense-guardrail-model")
+        if re.fullmatch(
+            r"[0-9a-fA-F]{40,64}", args.defense_guardrail_revision
+        ) is None:
+            ap.error(
+                "model-backed defense cells require --defense-guardrail-revision "
+                "as an immutable 40-64 hex Hugging Face commit"
+            )
+        if not args.defense_guardrail_device.strip():
+            ap.error(
+                "model-backed defense cells require an explicit "
+                "--defense-guardrail-device"
+            )
+        if (
+            scoring_guardrail_selected
+            and args.defense_guardrail_model.strip() == args.guardrail_model.strip()
+        ):
+            ap.error(
+                "the defense guard and scoring guard must be different models; "
+                "a guard must not grade its own defense decisions"
             )
 
     group_keys = [k.strip() for k in args.group.split(",") if k.strip()]
@@ -1858,6 +2264,7 @@ def main(argv=None) -> int:
                 corpus_name,
                 args.limit,
                 args.sample_seed,
+                source_instance=source_instances[corpus_name],
             )
             if not corpus:
                 raise ValueError("requested corpus converted to zero datapoints")
@@ -1880,7 +2287,24 @@ def main(argv=None) -> int:
             missing_ok=True
         )
 
+    # One defense model is shared by every target in this process. Constructing
+    # a model-backed guard inside the target loop would retain one multi-GB copy
+    # per roster member and makes a broad defense grid needlessly unrunnable.
+    shared_defense_guard: object | None = None
+    if args.defense != "none":
+        if defense_guardrail_selected:
+            from ura.judges.guardrail import GuardrailJudge
+
+            shared_defense_guard = GuardrailJudge(
+                model=args.defense_guardrail_model,
+                revision=args.defense_guardrail_revision,
+                device=args.defense_guardrail_device,
+            )
+        else:
+            shared_defense_guard = RuleJudge()
+
     prebuilt_targets: dict[str, object] = {}
+    base_target_identities: list[tuple[str, str]] = []
     hosted_runtime_checks: list[dict[str, str]] = []
     for spec in model_specs:
         setup_phase = "target_construction"
@@ -1890,7 +2314,9 @@ def main(argv=None) -> int:
                 quantization=args.quantization,
                 dtype=args.dtype,
                 local_identity=local_configs.get(spec),
+                api_config=api_configs.get(spec),
             )
+            base_target_identities.append(_precall_model_identity(target))
             if args.preflight_only:
                 setup_phase = "hosted_runtime_preflight"
                 readiness = preflight_api_target_runtime(target)
@@ -1901,16 +2327,9 @@ def main(argv=None) -> int:
             setup_phase = "target_construction"
             if args.defense != "none":
                 from ura.targets.guarded import GuardedTarget
-                if args.defense_guard == "guardrail":
-                    from ura.judges.guardrail import GuardrailJudge
-                    defense_guard = GuardrailJudge(
-                        model=args.guardrail_model,
-                        revision=args.guardrail_revision,
-                        device=args.guardrail_device or None,
-                    )
-                else:
-                    defense_guard = RuleJudge()
-                target = GuardedTarget(target, defense_guard, mode=args.defense)
+                if shared_defense_guard is None:  # pragma: no cover - invariant
+                    raise RuntimeError("defense guard was not constructed")
+                target = GuardedTarget(target, shared_defense_guard, mode=args.defense)
             prebuilt_targets[spec] = target
             persisted_model_specs[spec] = str(getattr(target, "name"))
         except Exception as exc:  # noqa: BLE001 - fail pre-call preflight
@@ -1941,16 +2360,26 @@ def main(argv=None) -> int:
     target_names = [str(getattr(target, "name", "")) for target in prebuilt_targets.values()]
     if len(set(target_names)) != len(target_names):
         ap.error("target specs resolve to duplicate runtime target identities")
-    if args.preflight_only and "llm" in judge_names:
+    if "llm" in judge_names:
         try:
-            judge_target = build_api_target(args.judge_model)
-            readiness = preflight_api_target_runtime(judge_target)
-            if readiness is not None:
-                hosted_runtime_checks.append({
-                    "role": "judge",
-                    "model_spec": args.judge_model,
-                    **readiness,
-                })
+            judge_target = build_api_target(
+                args.judge_model,
+                config=api_configs.get(args.judge_model),
+            )
+            judge_identity = _precall_model_identity(judge_target)
+            if not args.dry_run and judge_identity in base_target_identities:
+                raise ValueError(
+                    "the LLM judge must differ from every model under test; "
+                    f"resolved identity {judge_identity!r} is self-certifying"
+                )
+            if args.preflight_only:
+                readiness = preflight_api_target_runtime(judge_target)
+                if readiness is not None:
+                    hosted_runtime_checks.append({
+                        "role": "judge",
+                        "model_spec": args.judge_model,
+                        **readiness,
+                    })
         except Exception as exc:  # noqa: BLE001 - fail no-call preflight
             error_path = out / "judge-hosted-runtime-preflight.error.json"
             _write_json(error_path, {
@@ -1992,6 +2421,17 @@ def main(argv=None) -> int:
             validator = getattr(target, "validate_research_identity", None)
             if callable(validator):
                 validator()
+        # vLLM documents that CUDA should be initialized before an unrelated
+        # Torch model in the same process. With one local target per process,
+        # preload that base engine first; scoring/defense guards follow below.
+        for target in prebuilt_targets.values():
+            base_preflight = getattr(target, "preflight_base", None)
+            if callable(base_preflight):
+                base_preflight()
+        if shared_defense_guard is not None:
+            preflight = getattr(shared_defense_guard, "preflight", None)
+            if callable(preflight):
+                preflight()
         planned_attackers = {}
         for attacker_name in attacker_names:
             attacker = get_attacker(
@@ -2008,6 +2448,7 @@ def main(argv=None) -> int:
         planned_cascade = build_judges(
             judge_names,
             args.judge_model,
+            judge_api_config=api_configs.get(args.judge_model),
             guardrail_model=args.guardrail_model,
             guardrail_revision=args.guardrail_revision,
             guardrail_device=args.guardrail_device,
@@ -2064,9 +2505,13 @@ def main(argv=None) -> int:
     grid_request = {
         "models": [persisted_model_specs[spec] for spec in model_specs],
         "corpora": corpora,
+        "source_instances": source_instances,
+        "source_config_artifact": source_config_artifact,
         "attackers": attacker_names,
         "attacker_configs": attacker_configs,
         "attacker_config_artifact": attacker_config_artifact,
+        "api_configs": api_configs,
+        "api_config_artifact": api_config_artifact,
         "local_configs": {
             persisted_model_specs[spec]: config
             for spec, config in local_configs.items()
@@ -2074,11 +2519,26 @@ def main(argv=None) -> int:
         "local_config_artifact": local_config_artifact,
         "judges": judge_names,
         "judge_model": args.judge_model,
-        "guardrail_model": args.guardrail_model if guardrail_selected else None,
-        "guardrail_revision": (
-            args.guardrail_revision.lower() if guardrail_selected else None
+        "judge_api_config": api_configs.get(args.judge_model),
+        "guardrail_model": (
+            args.guardrail_model if scoring_guardrail_selected else None
         ),
-        "guardrail_device": args.guardrail_device or None,
+        "guardrail_revision": (
+            args.guardrail_revision.lower() if scoring_guardrail_selected else None
+        ),
+        "guardrail_device": (
+            (args.guardrail_device or None) if scoring_guardrail_selected else None
+        ),
+        "defense_guardrail_model": (
+            args.defense_guardrail_model if defense_guardrail_selected else None
+        ),
+        "defense_guardrail_revision": (
+            args.defense_guardrail_revision.lower()
+            if defense_guardrail_selected else None
+        ),
+        "defense_guardrail_device": (
+            args.defense_guardrail_device if defense_guardrail_selected else None
+        ),
         "seeds": seeds,
         "sample_seed": args.sample_seed,
         "limit": args.limit,
@@ -2104,8 +2564,21 @@ def main(argv=None) -> int:
         "source_policy_cluster_counts": policy_strata,
         "call_projection": call_projection,
     }
+    # Keep complete reusable-registry provenance in the grid artifact while
+    # excluding unselected roster entries from execution identity.  The
+    # normalized selected configs above, plus these selected-subset digests,
+    # still bind every requested execution condition exactly.
+    grid_identity_request = {
+        **grid_request,
+        "source_config_artifact": _selected_config_artifact_identity(
+            source_config_artifact
+        ),
+        "api_config_artifact": _selected_config_artifact_identity(
+            api_config_artifact
+        ),
+    }
     grid_material = json.dumps(
-        grid_request, sort_keys=True, separators=(",", ":")
+        grid_identity_request, sort_keys=True, separators=(",", ":")
     ).encode("utf-8")
     grid_id = f"grid-{hashlib.sha256(grid_material).hexdigest()[:24]}"
     grid_path = out / f"{grid_id}.grid.json"
@@ -2368,19 +2841,40 @@ def main(argv=None) -> int:
                         "sample_seed": args.sample_seed,
                         "sampling_audit": sampling_audit,
                         "model_spec": persisted_model_specs[spec],
+                        "api_config": api_configs.get(spec),
+                        "api_config_artifact": _selected_config_artifact_identity(
+                            api_config_artifact
+                        ),
                         "local_identity": local_configs.get(spec),
                         "attacker": attacker_name,
                         "attacker_config": attacker_config,
                         "judge_names": judge_names,
                         "judge_model": args.judge_model,
+                        "judge_api_config": api_configs.get(args.judge_model),
                         "guardrail_model": (
-                            args.guardrail_model if guardrail_selected else None
+                            args.guardrail_model
+                            if scoring_guardrail_selected else None
                         ),
                         "guardrail_revision": (
                             args.guardrail_revision.lower()
-                            if guardrail_selected else None
+                            if scoring_guardrail_selected else None
                         ),
-                        "guardrail_device": args.guardrail_device or None,
+                        "guardrail_device": (
+                            (args.guardrail_device or None)
+                            if scoring_guardrail_selected else None
+                        ),
+                        "defense_guardrail_model": (
+                            args.defense_guardrail_model
+                            if defense_guardrail_selected else None
+                        ),
+                        "defense_guardrail_revision": (
+                            args.defense_guardrail_revision.lower()
+                            if defense_guardrail_selected else None
+                        ),
+                        "defense_guardrail_device": (
+                            args.defense_guardrail_device
+                            if defense_guardrail_selected else None
+                        ),
                         "group_keys": group_keys,
                         "defense": args.defense,
                         "defense_guard": args.defense_guard,

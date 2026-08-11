@@ -254,9 +254,10 @@ def _dialog_to_ollama_messages(
 class VLLMTarget(BaseTarget):
     """A model served by the in-process vLLM engine (thesis III.2.2).
 
-    Tuned for the 2x RTX 4090 rig by defaulting to ``tensor_parallel_size=2``.
-    The :class:`vllm.LLM` engine is heavyweight, so it is constructed lazily on
-    the first :meth:`generate` call and cached for the lifetime of the target.
+    The :class:`vllm.LLM` engine is heavyweight, so it is constructed lazily and
+    cached for the lifetime of the target. Measured orchestration supplies an
+    explicit one- or two-GPU tensor-parallel condition and admits only one local
+    target per process.
     """
 
     name = "vllm"
@@ -385,6 +386,11 @@ class VLLMTarget(BaseTarget):
                 **self.engine_kwargs,
             )
         return self._llm
+
+    def preflight_base(self) -> None:
+        """Load the engine before any separate Torch guard initializes CUDA."""
+
+        self._engine()
 
     def generate(
         self, dialog: list[DialogTurn], *, seed: int | None = None

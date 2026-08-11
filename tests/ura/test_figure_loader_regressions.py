@@ -867,7 +867,8 @@ def test_underpowered_category_cell_is_explicitly_unestimated(tmp_path: Path) ->
 
 
 def _direct_metric(
-    metric: str, *, policy_id: str | None = None, policy_version: str | None = None,
+    metric: str, *, source: str, policy_id: str | None = None,
+    policy_version: str | None = None,
 ) -> dict[str, Any]:
     alias = "ASR" if metric == "ASR" else "FRR"
     return {
@@ -879,6 +880,7 @@ def _direct_metric(
         ),
         "risk_category": None,
         "modality": None,
+        "source": source,
         "source_policy_id": policy_id,
         "source_policy_version": policy_version,
         "status": "estimated",
@@ -916,24 +918,32 @@ def _direct_arm(run_id: str, model: str, attacker: str, corpus: str) -> dict[str
 def _direct_facet(
     corpus: str, left_model: str, right_model: str, *, attacker: str = "replay",
 ) -> dict[str, Any]:
-    harmful = _direct_metric("ASR")
-    benign = _direct_metric("over_refusal_rate")
+    kind = corpus.split("_", 1)[0]
+    source = f"fixture-source-{kind}"
+    harmful = _direct_metric(
+        "ASR", source=source,
+        policy_id=("strongreject:unsafe-assistance" if kind == "strongreject" else None),
+        policy_version=("fixture-v1" if kind == "strongreject" else None),
+    )
+    benign = _direct_metric("over_refusal_rate", source=source)
     policy_metrics: dict[str, Any] = {}
-    if corpus == "mmsafety":
+    if kind == "mmsafety":
         for name in figure_results.MM_SAFETYBENCH_POLICY_DESCRIPTORS:
             policy = figure_results.mm_safetybench_policy(name)
             policy_metrics[
                 f"{figure_results.source_policy_token(policy.policy_id, policy.version)}::ASR"
             ] = _direct_metric(
-                "ASR", policy_id=policy.policy_id, policy_version=policy.version,
+                "ASR", source=source, policy_id=policy.policy_id,
+                policy_version=policy.version,
             )
-    if corpus == "mossbench":
+    if kind == "mossbench":
         policy = figure_results.mossbench_policy()
         policy_metrics[
             f"{figure_results.source_policy_token(policy.policy_id, policy.version)}::"
             "over_refusal_rate"
         ] = _direct_metric(
             "over_refusal_rate",
+            source=source,
             policy_id=policy.policy_id,
             policy_version=policy.version,
         )
@@ -954,7 +964,10 @@ def _direct_facet(
     }
 
 
-def _write_direct_human_audit(path: Path, run_ids: list[str]) -> str:
+def _write_direct_human_audit(
+    path: Path, run_ids: list[str], *, completed_run_ids: list[str] | None = None,
+    primary_effect_sensitivity: dict[str, Any] | None = None,
+) -> str:
     artifact = {
         "schema_version": "ura-human-audit/1.1",
         "analysis_ready_real_run": True,
@@ -963,11 +976,109 @@ def _write_direct_human_audit(path: Path, run_ids: list[str]) -> str:
             "checks": {"multi_rater": True, "integrity": True},
             "population_validity_claimed": False,
         },
-        "results_identity": {"completed_run_ids": sorted(run_ids)},
+        "results_identity": {
+            "completed_run_ids": sorted(completed_run_ids or run_ids),
+            "labelled_run_ids": sorted(run_ids),
+        },
         "analysis_source": {"fixture": True},
     }
+    if primary_effect_sensitivity is not None:
+        artifact["primary_effect_sensitivity"] = primary_effect_sensitivity
     path.write_text(json.dumps(artifact), encoding="utf-8")
     return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def _direct_primary_sensitivity(
+    left: str, right: str, *, strong: str, mm: str, moss: str,
+) -> dict[str, Any]:
+    arm_metadata: dict[str, Any] = {}
+    cell_metadata: dict[str, Any] = {}
+    human_rates: dict[str, Any] = {}
+    paired: dict[str, Any] = {}
+
+    def add_effect(
+        *, source: str, policy_id: str, policy_version: str, metric: str,
+        left_arm: dict[str, Any], right_arm: dict[str, Any], name: str,
+    ) -> None:
+        cell_id = figure_results.human_analysis_cell_id(
+            left_arm["corpus"], source, policy_id, policy_version,
+            None, None, metric,
+        )
+        cell_metadata[cell_id] = {
+            "corpus": left_arm["corpus"],
+            "source": source,
+            "source_policy_id": policy_id,
+            "source_policy_version": policy_version,
+            "risk_category": None,
+            "modality": None,
+            "metric": metric,
+        }
+        arm_ids = []
+        for arm in (left_arm, right_arm):
+            arm_id = figure_results.human_analysis_arm_id(
+                arm["model_spec"], arm["resolved_target"],
+                arm["defense"], arm["attacker"],
+            )
+            arm_metadata[arm_id] = {
+                "model_spec": arm["model_spec"],
+                "resolved_target": arm["resolved_target"],
+                "defense": arm["defense"],
+                "attacker": arm["attacker"],
+            }
+            human_rates.setdefault(cell_id, {})[arm_id] = {
+                "rate": 0.5, "n_unique_clusters": 1,
+            }
+            arm_ids.append(arm_id)
+        paired[name] = {
+            "analysis_cell_id": cell_id,
+            "left_arm_id": arm_ids[0],
+            "right_arm_id": arm_ids[1],
+            "human_consensus_effect": 0.0,
+            "n_shared_unique_clusters": 1,
+        }
+
+    replay = {
+        corpus: _direct_facet(corpus, left, right)
+        for corpus in (strong, mm, moss)
+    }
+    strong_policy = ("strongreject:unsafe-assistance", "fixture-v1")
+    add_effect(
+        source="fixture-source-strongreject", policy_id=strong_policy[0],
+        policy_version=strong_policy[1], metric="ASR",
+        left_arm=replay[strong]["left"], right_arm=replay[strong]["right"],
+        name="strong-model",
+    )
+    for policy_name in figure_results.MM_SAFETYBENCH_POLICY_DESCRIPTORS:
+        descriptor = figure_results.mm_safetybench_policy(policy_name)
+        add_effect(
+            source="fixture-source-mmsafety", policy_id=descriptor.policy_id,
+            policy_version=descriptor.version, metric="ASR",
+            left_arm=replay[mm]["left"], right_arm=replay[mm]["right"],
+            name=f"mm-{policy_name}",
+        )
+    moss_policy = figure_results.mossbench_policy()
+    add_effect(
+        source="fixture-source-mossbench", policy_id=moss_policy.policy_id,
+        policy_version=moss_policy.version, metric="FRR",
+        left_arm=replay[moss]["left"], right_arm=replay[moss]["right"],
+        name="moss",
+    )
+    for model in (left, right):
+        add_effect(
+            source="fixture-source-strongreject", policy_id=strong_policy[0],
+            policy_version=strong_policy[1], metric="ASR",
+            left_arm=_direct_arm(f"{strong}-{model}-replay", model, "replay", strong),
+            right_arm=_direct_arm(
+                f"{strong}-{model}-crescendo", model, "crescendo", strong,
+            ),
+            name=f"adaptive-{model}",
+        )
+    return {
+        "analysis_arm_metadata": arm_metadata,
+        "analysis_cell_metadata": cell_metadata,
+        "model_endpoint_rates": {"human_consensus": human_rates},
+        "paired_model_effects": paired,
+    }
 
 
 def test_direct_figure_loader_emits_exact_sample_conditional_inventory(
@@ -980,7 +1091,8 @@ def test_direct_figure_loader_emits_exact_sample_conditional_inventory(
     }
 
     def fake_compare(*args: Any, **kwargs: Any) -> dict[str, Any]:
-        return {"facets": replay_facets, "unavailable_facets": {}}
+        corpus = kwargs["corpus"]
+        return {"facets": {corpus: replay_facets[corpus]}, "unavailable_facets": {}}
 
     def fake_adaptivity(*args: Any, model: str, **kwargs: Any) -> dict[str, Any]:
         facet = _direct_facet("strongreject", model, model, attacker="crescendo")
@@ -1001,7 +1113,12 @@ def test_direct_figure_loader_emits_exact_sample_conditional_inventory(
             "strongreject-" + model + "-crescendo",
         })
     audit = tmp_path / "human_audit.json"
-    digest = _write_direct_human_audit(audit, sorted(run_ids))
+    digest = _write_direct_human_audit(
+        audit, sorted(run_ids),
+        primary_effect_sensitivity=_direct_primary_sensitivity(
+            left, right, strong="strongreject", mm="mmsafety", moss="mossbench",
+        ),
+    )
 
     result = figure_results.load_postrun_results(
         tmp_path,
@@ -1028,6 +1145,88 @@ def test_direct_figure_loader_emits_exact_sample_conditional_inventory(
     )
 
 
+def test_direct_figures_use_logical_aliases_and_audited_broad_cohort_subset(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    left, right = "provider:left", "provider:right"
+    aliases = {
+        "strong": "strongreject_official",
+        "mm": "mmsafety_official",
+        "moss": "mossbench_official",
+    }
+    replay_facets = {
+        corpus: _direct_facet(corpus, left, right) for corpus in aliases.values()
+    }
+    compared: list[str] = []
+
+    def fake_compare(*args: Any, **kwargs: Any) -> dict[str, Any]:
+        corpus = kwargs["corpus"]
+        compared.append(corpus)
+        return {"facets": {corpus: replay_facets[corpus]}, "unavailable_facets": {}}
+
+    def fake_adaptivity(
+        *args: Any, model: str, corpus: str, **kwargs: Any,
+    ) -> dict[str, Any]:
+        facet = _direct_facet(corpus, model, model, attacker="crescendo")
+        facet["left"] = _direct_arm(
+            f"{corpus}-{model}-replay", model, "replay", corpus,
+        )
+        return {"facets": {corpus: facet}, "unavailable_facets": {}}
+
+    monkeypatch.setattr(figure_results, "compare", fake_compare)
+    monkeypatch.setattr(figure_results, "compare_adaptivity", fake_adaptivity)
+    monkeypatch.setattr(
+        figure_results, "validate_analysis_source_identity", lambda value: value,
+    )
+    run_ids = {
+        arm["run_id"]
+        for facet in replay_facets.values()
+        for arm in (facet["left"], facet["right"])
+    }
+    for model in (left, right):
+        run_ids.update({
+            f"{aliases['strong']}-{model}-replay",
+            f"{aliases['strong']}-{model}-crescendo",
+        })
+    sensitivity = _direct_primary_sensitivity(
+        left, right, strong=aliases["strong"], mm=aliases["mm"], moss=aliases["moss"],
+    )
+    audit = tmp_path / "human_audit.json"
+    digest = _write_direct_human_audit(
+        audit, sorted(run_ids),
+        completed_run_ids=sorted({*run_ids, "unrelated-broad-run"}),
+        primary_effect_sensitivity=sensitivity,
+    )
+
+    result = figure_results.load_postrun_results(
+        tmp_path, left_model=left, right_model=right,
+        human_audit=audit, human_audit_sha256=digest, n_resamples=10,
+        strongreject_corpus=aliases["strong"],
+        mmsafety_corpus=aliases["mm"], mossbench_corpus=aliases["moss"],
+    )
+
+    assert compared == [aliases["strong"], aliases["mm"], aliases["moss"]]
+    assert result["analysis"]["corpus_arm_aliases"] == {
+        "strongreject": aliases["strong"],
+        "mmsafety": aliases["mm"],
+        "mossbench": aliases["moss"],
+    }
+    binding = result["analysis"]["human_coverage_binding"]
+    assert binding["mode"] == "exact_human_sensitivity_for_selected_figure_effects"
+    assert binding["cohort_relation"] == (
+        "selected_figure_runs_within_broader_audit_cohort"
+    )
+    assert len(binding["verified_points"]) == 10
+
+    missing_pair = json.loads(json.dumps(sensitivity))
+    missing_pair["paired_model_effects"].pop(next(iter(missing_pair["paired_model_effects"])))
+    point = result["figures"]["fig-v-asr-by-model.png"]["points"][0]
+    with pytest.raises(ValueError, match="exact paired figure effect"):
+        figure_results._validate_human_figure_coverage(
+            {"primary_effect_sensitivity": missing_pair}, [point],
+        )
+
+
 def test_direct_figure_loader_rejects_unbound_human_audit(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -1038,7 +1237,10 @@ def test_direct_figure_loader_rejects_unbound_human_audit(
     }
     monkeypatch.setattr(
         figure_results, "compare",
-        lambda *args, **kwargs: {"facets": replay_facets, "unavailable_facets": {}},
+        lambda *args, **kwargs: {
+            "facets": {kwargs["corpus"]: replay_facets[kwargs["corpus"]]},
+            "unavailable_facets": {},
+        },
     )
     monkeypatch.setattr(
         figure_results, "compare_adaptivity",
@@ -1052,7 +1254,7 @@ def test_direct_figure_loader_rejects_unbound_human_audit(
     monkeypatch.setattr(figure_results, "validate_analysis_source_identity", lambda value: value)
     audit = tmp_path / "human_audit.json"
     digest = _write_direct_human_audit(audit, ["wrong-run"])
-    with pytest.raises(ValueError, match="exact completed figure run cohort"):
+    with pytest.raises(ValueError, match="bind every completed figure run"):
         figure_results.load_postrun_results(
             tmp_path,
             left_model=left,

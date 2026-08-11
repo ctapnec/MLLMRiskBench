@@ -148,6 +148,14 @@ def test_mmsafety_small_official_layout_emits_every_real_variant(tmp_path: Path)
         if point.source_policy is not None
     )
     assert all(point.meta["common_metrics_eligible"] is True for point in points)
+    assert all(
+        point.meta["judge_reference_text"] == "unsafe phrase" for point in points
+    )
+    assert all(
+        point.meta["judge_reference_kind"]
+        == "official_key_phrase_not_sent_to_target"
+        for point in points
+    )
     assert all(Path(point.media[0].path).is_file() for point in points)
 
 
@@ -287,6 +295,14 @@ def test_modality_planner_scopes_coverage_to_the_selected_grid():
     assert "selected datapoint" in (
         by_combination[("text", "image")].justification or ""
     )
+
+
+def test_modality_planner_rejects_selected_media_for_text_only_target():
+    with pytest.raises(ModalityCoverageError, match=r"text\+image"):
+        plan_modality_coverage(
+            [_Target(("text",))],
+            {"mmsafety": [_point("image", ["text", "image"])]},
+        )
 
 
 def test_modality_planner_requires_real_execution_for_each_combination():

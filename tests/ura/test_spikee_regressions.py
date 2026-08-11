@@ -11,7 +11,7 @@ import ura.adapters.spikee as spikee_module
 from ura.adapters._engine_common import ExternalEngineOutputError
 from ura.adapters.base import AttackBudget
 from ura.adapters.spikee import SpikeeAttacker
-from ura.data_models import DataPoint, RiskCategory
+from ura.data_models import DataPoint, DialogTurn, RiskCategory
 
 
 def _datapoint() -> DataPoint:
@@ -93,6 +93,33 @@ def test_spikee_preserves_exact_v091_rows_and_plugin_semantics(
     assert len(attempts[1].params["dataset_sha256"]) == 64
     assert attempts[1].rendered_input[0].role == "system"
     assert attempts[1].rendered_input[-1].content == rows[1]["content"]
+
+
+def test_spikee_system_message_does_not_restore_raw_source_objective(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    row = _row(row_id=1, plugin=None, position="start")
+    monkeypatch.setattr(shutil, "which", lambda _name: "spikee")
+    monkeypatch.setattr(spikee_module, "run_engine_command", _fake_generator([row]))
+    datapoint = _datapoint().model_copy(update={
+        "dialog_history": [
+            DialogTurn(role="system", content="Original context."),
+            DialogTurn(role="user", content="RAW SOURCE OBJECTIVE"),
+        ]
+    })
+
+    attacker = SpikeeAttacker(
+        plugins=[], positions=["start"], include_system_message=True
+    )
+    assert "RAW SOURCE OBJECTIVE" not in attacker._document_context(datapoint)
+    attempt = next(iter(attacker.generate(
+        datapoint, AttackBudget(max_queries=1, max_turns=1, seed=4)
+    )))
+
+    contents = [turn.content for turn in attempt.rendered_input]
+    assert contents[0] == row["system_message"]
+    assert contents[-1] == row["content"]
+    assert "RAW SOURCE OBJECTIVE" not in contents
 
 
 def test_spikee_fails_when_a_configured_plugin_variant_disappears(

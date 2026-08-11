@@ -12,7 +12,7 @@ from ura.adapters._engine_common import ExternalEngineOutputError
 from ura.adapters.base import AttackBudget
 from ura.adapters.deepteam import DeepTeamAttacker
 from ura.adapters.pyrit import PyRITAttacker
-from ura.data_models import DataPoint, RiskCategory
+from ura.data_models import DataPoint, DialogTurn, RiskCategory
 
 
 def _datapoint(text: str = "harmful objective") -> DataPoint:
@@ -57,6 +57,32 @@ def test_pyrit_uses_pinned_async_converter_contract(
     assert attempt.params["pyrit_version"] == "0.14.0"
     assert attempt.params["full_pyrit_scenario_executed"] is False
     assert attempt.params["source_model_conditioned"] is False
+
+
+def test_transformed_attack_replaces_source_request_instead_of_appending_it(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(pyrit_module, "_installed_pyrit_version", lambda: "0.14.0")
+    monkeypatch.setattr(
+        pyrit_module,
+        "_require",
+        lambda *_args, **_kwargs: SimpleNamespace(Base64Converter=_PyRITBase64),
+    )
+    point = _datapoint()
+    point.dialog_history = [
+        DialogTurn(role="system", content="Retain this conditioning."),
+        DialogTurn(role="user", content="harmful objective"),
+    ]
+
+    attempt = list(PyRITAttacker().generate(point, _budget()))[0]
+
+    assert [turn.role for turn in attempt.rendered_input] == ["system", "user"]
+    assert attempt.rendered_input[0].content == "Retain this conditioning."
+    assert attempt.rendered_input[-1].content == "encoded::harmful objective"
+    assert sum(
+        "harmful objective" == (turn.content or "")
+        for turn in attempt.rendered_input
+    ) == 0
 
 
 @pytest.mark.parametrize("failure", ["version", "identity", "modality"])

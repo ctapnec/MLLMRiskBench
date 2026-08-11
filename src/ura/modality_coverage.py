@@ -4,8 +4,9 @@ Flat ``modality_support`` declarations say which media encoders an adapter can
 actually invoke.  They do not prove that every cross-media combination works,
 so this module infers only text and text+one-physical-medium combinations unless
 the target explicitly declares ``modality_combinations``. Unsupported
-combinations are recorded. Every combination present in the selected grid is
-verified before calls and must have real execution evidence afterward. Coverage
+combinations declared by a target but absent from a grid are recorded; selected
+inputs unsupported by any target are rejected. Every combination present in the
+selected grid is verified before calls and must have real execution evidence afterward. Coverage
 across separate grids does not require each grid to repeat every corpus.
 """
 from __future__ import annotations
@@ -271,10 +272,18 @@ def plan_modality_coverage(
             raise ModalityCoverageError(f"duplicate coverage target {target_name!r}")
         target_names.add(target_name)
         support = set(getattr(target, "modality_support", ("text",)))
+        declared = set(declared_target_combinations(target))
+        incompatible = sorted(set(points_by_combination) - declared)
+        if incompatible:
+            rendered = ", ".join("+".join(item) for item in incompatible)
+            raise ModalityCoverageError(
+                f"target {target_name!r} cannot receive selected input "
+                f"combination(s): {rendered}"
+            )
         if not support.intersection(_PHYSICAL):
             continue
 
-        for combination in declared_target_combinations(target):
+        for combination in sorted(declared):
             selected = points_by_combination.get(combination, [])
             selected_corpora = tuple(sorted({name for name, _ in selected}))
             ids = tuple(sorted({point.id for _, point in selected}))

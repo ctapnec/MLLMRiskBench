@@ -26,6 +26,10 @@ _INK_2 = "#52514e"
 _CATEGORICAL = ["#2a78d6", "#eb6834", "#1baf7a", "#eda100", "#e87ba4", "#7a5cc8"]
 _WATERMARK = "ILLUSTRATIVE \u2014 NOT MEASURED"
 _PROVENANCE_NAME = "fig-v-provenance.json"
+_MEASURED_QUALIFICATION = (
+    "Post-experiment, sample-conditional; paired source prompt/intent-cluster "
+    "percentile interval; exact identities and details in fig-v-provenance.json."
+)
 _FIGURE_NAMES = (
     "fig-v-asr-by-model.png",
     "fig-v-policy-proxies.png",
@@ -238,6 +242,12 @@ def _contrast_figure(
     ax.xaxis.set_major_formatter(lambda x, _: f"{x:+.0%}")
     ax.set_xlabel("paired adverse-endpoint difference (left minus right; lower favours left)")
     ax.set_title(title)
+    if not illustrative:
+        fig.subplots_adjust(bottom=0.14)
+        fig.text(
+            0.5, 0.015, _MEASURED_QUALIFICATION,
+            ha="center", va="bottom", fontsize=7, color=_INK_2,
+        )
     _tag(fig, illustrative)
     fig.savefig(out / filename, dpi=200, bbox_inches="tight")
     plt.close(fig)
@@ -261,11 +271,7 @@ def fig_policy_proxies(data: dict[str, Any], out: Path) -> None:
     analysis = data.get("analysis") or {}
     detail = ""
     if not data["illustrative"]:
-        detail = (
-            "\npost-experiment, sample-conditional; "
-            f"judge policy [{analysis['policy_fingerprint'][:12]}]; "
-            "exact run and audit identities are in the provenance sidecar"
-        )
+        detail = f"\njudge policy [{analysis['policy_fingerprint'][:12]}]"
     _contrast_figure(
         data["figures"][_FIGURE_NAMES[1]]["points"],
         out,
@@ -342,6 +348,18 @@ def main(argv: list[str] | None = None) -> int:
         help="required SHA-256 of --human-audit",
     )
     parser.add_argument(
+        "--strongreject-corpus", default="strongreject",
+        help="exact run.corpus arm carrying StrongREJECT (default: strongreject)",
+    )
+    parser.add_argument(
+        "--mmsafety-corpus", default="mmsafety",
+        help="exact run.corpus arm carrying MM-SafetyBench (default: mmsafety)",
+    )
+    parser.add_argument(
+        "--mossbench-corpus", default="mossbench",
+        help="exact run.corpus arm carrying MOSSBench (default: mossbench)",
+    )
+    parser.add_argument(
         "--bootstrap", type=int, default=2000,
         help="paired prompt/intent-cluster bootstrap resamples (default: 2000)",
     )
@@ -385,6 +403,9 @@ def main(argv: list[str] | None = None) -> int:
                 human_audit_sha256=args.human_audit_sha256,
                 n_resamples=args.bootstrap,
                 seed=args.seed,
+                strongreject_corpus=args.strongreject_corpus,
+                mmsafety_corpus=args.mmsafety_corpus,
+                mossbench_corpus=args.mossbench_corpus,
             )
         except ValueError as exc:
             print(f"figure input validation failed: {exc}", file=sys.stderr)

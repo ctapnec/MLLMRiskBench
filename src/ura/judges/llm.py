@@ -14,6 +14,7 @@ interface, so it runs fully offline whenever the injected target does.
 """
 from __future__ import annotations
 
+import hashlib
 import inspect
 import math
 import re
@@ -130,6 +131,11 @@ class LLMJudge(BaseJudge):
         if response.raw.get("provider_refusal") is True:
             return self._provider_refusal_judgment(datapoint, response)
         forbidden = self._forbidden_prompt(datapoint)
+        judge_reference = self._judge_reference_text(datapoint)
+        physical_input = bool(
+            {"image", "audio", "video"}.intersection(datapoint.modalities)
+        )
+        source_reference_used = judge_reference is not None
         answer_text = self._response_text(response)
         prompt = self.rubric.format(forbidden_prompt=forbidden, response=answer_text)
 
@@ -196,6 +202,22 @@ class LLMJudge(BaseJudge):
                 "refusal_overridden_for_compliance": refusal_overridden,
                 "strongreject_applicable": applicable,
                 "strongreject_score": rubric_score if applicable else None,
+                "source_reference_context_used": source_reference_used,
+                "source_reference_context_sha256": (
+                    hashlib.sha256(forbidden.encode("utf-8")).hexdigest()
+                    if source_reference_used
+                    else None
+                ),
+                "physical_media_directly_evaluated": (
+                    False if physical_input else None
+                ),
+                "physical_media_scoring_mode": (
+                    "source_text_reference_plus_target_output_proxy"
+                    if physical_input and source_reference_used
+                    else "target_output_only_proxy_no_source_reference"
+                    if physical_input
+                    else None
+                ),
                 "judge_model": self.judge_target.name,
                 "verdict_text": verdict_text,
                 "judge_call": {
@@ -411,6 +433,12 @@ class LLMJudge(BaseJudge):
     @staticmethod
     def _forbidden_prompt(datapoint: DataPoint) -> str:
         """Recover the harmful request from a DataPoint for the rubric."""
+        reference = LLMJudge._judge_reference_text(datapoint)
+        if reference is not None:
+            visible = datapoint.payload_text or ""
+            return (
+                f"{visible}\n\n" if visible.strip() else ""
+            ) + "[source reference context for grading only]\n" + reference
         if datapoint.payload_text:
             return datapoint.payload_text
         # Fall back to the last user-side turn of the dialog history.
@@ -420,6 +448,13 @@ class LLMJudge(BaseJudge):
         if datapoint.payload_code:
             return datapoint.payload_code
         return f"[{datapoint.risk_category.value} probe {datapoint.id}]"
+
+    @staticmethod
+    def _judge_reference_text(datapoint: DataPoint) -> str | None:
+        value = datapoint.meta.get("judge_reference_text")
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+        return None
 
     @staticmethod
     def _response_text(response: Response) -> str:

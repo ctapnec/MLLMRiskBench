@@ -17,9 +17,10 @@ For folder-based evaluation the repo documents a companion JSON/JSONL manifest
 whose records reference audio *files* by name (``{"id": "1.mp3",
 "original_text": ...}``), audio stored as sibling ``.mp3`` / ``.wav`` files.
 
-This converter reads that JSON/JSONL/CSV manifest (stdlib only - Parquet audio
-bytes are out of scope), resolving and content-addressing each audio filename
-under the manifest's declared root.
+This converter reads that JSON/JSONL/CSV manifest with the standard library,
+resolving and content-addressing each audio filename under the manifest's
+declared root. ``python -m experiments.export_jalmbench`` is the bounded,
+offline PyArrow bridge from the official Parquet release to this file layout.
 """
 from __future__ import annotations
 
@@ -114,6 +115,12 @@ class JALMBenchConverter(BaseConverter):
                 raise CorpusFormatError(f"JALMBench row {i} in {path} is not an object")
             rid_raw = rec.get("id", rec.get("index", i))
             text = _first(rec, _TEXT_FIELDS)
+            if not isinstance(text, str) or not text.strip():
+                raise CorpusFormatError(
+                    f"JALMBench row {i} in {path} lacks the reference transcript "
+                    "required for source-conditioned automated grading"
+                )
+            reference_transcript = text.strip()
 
             # Locate the audio asset. Explicit audio field wins; otherwise the
             # folder-based manifest uses ``id`` as the audio filename (e.g. 1.mp3).
@@ -148,7 +155,9 @@ class JALMBenchConverter(BaseConverter):
                 meta={
                     "origin_source": rec.get("source"),
                     "original_text": rec.get("original_text"),
-                    "reference_transcript": str(text) if text is not None else None,
+                    "reference_transcript": reference_transcript,
+                    "judge_reference_text": reference_transcript,
+                    "judge_reference_kind": "audio_transcript_not_sent_to_target",
                     "transcript_sent_to_target": False,
                     "audio_condition": "audio_only_harmful_intent",
                     "attack_method": str(method) if method else None,

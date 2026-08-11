@@ -29,6 +29,8 @@ from pydantic import ValidationError
 from experiments.paired_compare import compare, compare_adaptivity, compare_cells
 from experiments.analysis_integrity import (
     analysis_source_identity,
+    human_analysis_arm_id,
+    human_analysis_cell_id,
     read_bound_json,
     source_policy_token,
     validate_analysis_source_identity,
@@ -1283,6 +1285,7 @@ def _measured_point(
         "n_clusters": n_clusters,
         "population": metric.get("population"),
         "corpus": corpus,
+        "source": metric.get("source"),
         "risk_category": metric.get("risk_category"),
         "modality": metric.get("modality"),
         "source_policy_id": metric.get("source_policy_id"),
@@ -1359,54 +1362,194 @@ def _load_human_audit(
     return artifact, identity
 
 
+def _validate_human_figure_coverage(
+    audit: dict[str, Any], points: list[dict[str, Any]],
+) -> dict[str, Any]:
+    """Require exact audited human sensitivity for every selected figure effect."""
+    sensitivity = audit.get("primary_effect_sensitivity")
+    if not isinstance(sensitivity, dict):
+        raise ValueError(
+            "broader human-audit cohort lacks primary effect sensitivity evidence"
+        )
+    arm_metadata = sensitivity.get("analysis_arm_metadata")
+    cell_metadata = sensitivity.get("analysis_cell_metadata")
+    pairwise = sensitivity.get("paired_model_effects")
+    model_rates = sensitivity.get("model_endpoint_rates")
+    human_rates = (
+        model_rates.get("human_consensus") if isinstance(model_rates, dict) else None
+    )
+    if not all(isinstance(value, dict) for value in (
+        arm_metadata, cell_metadata, pairwise, human_rates,
+    )):
+        raise ValueError(
+            "broader human-audit cohort has incomplete primary sensitivity inventories"
+        )
+
+    verified: list[dict[str, Any]] = []
+    for point in points:
+        source = point.get("source")
+        corpus = point.get("corpus")
+        policy_id = point.get("source_policy_id")
+        policy_version = point.get("source_policy_version")
+        metric = point.get("metric")
+        if any(
+            not isinstance(value, str) or not value
+            for value in (corpus, source, policy_id, policy_version, metric)
+        ):
+            raise ValueError(
+                f"figure point {point.get('point_id')!r} lacks an exact human-analysis cell"
+            )
+        cell_id = human_analysis_cell_id(
+            corpus, source, policy_id, policy_version,
+            point.get("risk_category"), point.get("modality"), metric,
+        )
+        expected_cell = {
+            "corpus": corpus,
+            "source": source,
+            "source_policy_id": policy_id,
+            "source_policy_version": policy_version,
+            "risk_category": point.get("risk_category"),
+            "modality": point.get("modality"),
+            "metric": metric,
+        }
+        observed_cell = cell_metadata.get(cell_id)
+        if not isinstance(observed_cell, dict) or any(
+            observed_cell.get(key) != value for key, value in expected_cell.items()
+        ):
+            raise ValueError(
+                f"human audit lacks exact figure analysis cell {cell_id!r}"
+            )
+
+        arm_ids: list[str] = []
+        for side in ("left_arm", "right_arm"):
+            arm = point.get(side)
+            if not isinstance(arm, dict):
+                raise ValueError(f"figure point {point.get('point_id')!r} lacks {side}")
+            model_spec = arm.get("model_spec", arm.get("requested_model_spec"))
+            values = {
+                "model_spec": model_spec,
+                "resolved_target": arm.get("resolved_target"),
+                "defense": arm.get("defense"),
+                "attacker": arm.get("attacker"),
+            }
+            if any(not isinstance(value, str) or not value for value in values.values()):
+                raise ValueError(
+                    f"figure point {point.get('point_id')!r} has incomplete {side} identity"
+                )
+            arm_id = human_analysis_arm_id(
+                values["model_spec"], values["resolved_target"],
+                values["defense"], values["attacker"],
+            )
+            observed_arm = arm_metadata.get(arm_id)
+            if not isinstance(observed_arm, dict) or any(
+                observed_arm.get(key) != value for key, value in values.items()
+            ):
+                raise ValueError(
+                    f"human audit lacks exact figure analysis arm {arm_id!r}"
+                )
+            rate = human_rates.get(cell_id, {}).get(arm_id)
+            if (
+                not isinstance(rate, dict)
+                or not isinstance(rate.get("n_unique_clusters"), int)
+                or isinstance(rate.get("n_unique_clusters"), bool)
+                or rate["n_unique_clusters"] < 1
+                or not isinstance(rate.get("rate"), (int, float))
+                or isinstance(rate.get("rate"), bool)
+                or not math.isfinite(float(rate["rate"]))
+            ):
+                raise ValueError(
+                    f"human audit lacks supported human endpoint rate for {cell_id!r}/{arm_id!r}"
+                )
+            arm_ids.append(arm_id)
+
+        matches = [
+            record for record in pairwise.values()
+            if isinstance(record, dict)
+            and record.get("analysis_cell_id") == cell_id
+            and {record.get("left_arm_id"), record.get("right_arm_id")} == set(arm_ids)
+        ]
+        if len(matches) != 1:
+            raise ValueError(
+                "human audit does not prove the exact paired figure effect for "
+                f"{point.get('point_id')!r}"
+            )
+        record = matches[0]
+        if (
+            not isinstance(record.get("n_shared_unique_clusters"), int)
+            or isinstance(record.get("n_shared_unique_clusters"), bool)
+            or record["n_shared_unique_clusters"] < 1
+            or not isinstance(record.get("human_consensus_effect"), (int, float))
+            or isinstance(record.get("human_consensus_effect"), bool)
+            or not math.isfinite(float(record["human_consensus_effect"]))
+        ):
+            raise ValueError(
+                f"human audit paired figure effect lacks shared human support for {cell_id!r}"
+            )
+        verified.append({
+            "point_id": point["point_id"],
+            "analysis_cell_id": cell_id,
+            "analysis_arm_ids": arm_ids,
+            "n_shared_unique_clusters": record["n_shared_unique_clusters"],
+        })
+    return {
+        "mode": "exact_human_sensitivity_for_selected_figure_effects",
+        "verified_points": verified,
+    }
+
+
 def load_postrun_results(
     results: Path, *, left_model: str, right_model: str,
     human_audit: Path, human_audit_sha256: str, n_resamples: int = 2000,
-    seed: int = 0,
+    seed: int = 0, strongreject_corpus: str = "strongreject",
+    mmsafety_corpus: str = "mmsafety", mossbench_corpus: str = "mossbench",
 ) -> dict[str, Any]:
     """Build the measured figure payload directly from completed run artifacts."""
     results = Path(results)
     if left_model == right_model:
         raise ValueError("measured figures require two different exact model specifications")
+    corpus_aliases = {
+        "strongreject": strongreject_corpus,
+        "mmsafety": mmsafety_corpus,
+        "mossbench": mossbench_corpus,
+    }
+    if any(
+        not isinstance(value, str) or not value.strip()
+        for value in corpus_aliases.values()
+    ) or len(set(corpus_aliases.values())) != len(corpus_aliases):
+        raise ValueError("figure corpus-arm aliases must be three distinct non-blank names")
     if not _valid_sha256(human_audit_sha256.lower()):
         raise ValueError("--human-audit-sha256 must be a lowercase SHA-256 digest")
     audit, audit_identity = _load_human_audit(
         results, human_audit, expected_sha256=human_audit_sha256.lower(),
     )
 
-    model_report = compare(
-        results,
-        left_model=left_model,
-        right_model=right_model,
-        attacker="replay",
-        n_resamples=n_resamples,
-        seed=seed,
-    )
-    facets = model_report.get("facets")
-    if not isinstance(facets, dict) or set(facets) != {
-        "strongreject", "mmsafety", "mossbench",
-    } or model_report.get("unavailable_facets") not in ({}, None):
-        raise ValueError(
-            "replay results must contain exactly StrongREJECT, MM-SafetyBench, "
-            "and MOSSBench for both models"
+    replay_reports = {
+        name: compare(
+            results,
+            left_model=left_model,
+            right_model=right_model,
+            attacker="replay",
+            corpus=corpus,
+            n_resamples=n_resamples,
+            seed=seed,
         )
+        for name, corpus in corpus_aliases.items()
+    }
 
     strong_facet, strong_metric = _require_ready_facet(
-        {"facets": {"strongreject": facets["strongreject"]}, "unavailable_facets": {}},
-        "strongreject",
+        replay_reports["strongreject"], strongreject_corpus,
         metric_name="ASR",
     )
     overall_model = [_measured_point(
         point_id="model:strongreject:replay:ASR",
-        corpus="strongreject",
+        corpus=strongreject_corpus,
         metric=strong_metric,
         facet=strong_facet,
         figure_group="overall_model",
     )]
 
     mm_facet, _ = _require_ready_facet(
-        {"facets": {"mmsafety": facets["mmsafety"]}, "unavailable_facets": {}},
-        "mmsafety",
+        replay_reports["mmsafety"], mmsafety_corpus,
         metric_name="ASR",
     )
     policy_proxies: list[dict[str, Any]] = []
@@ -1420,21 +1563,20 @@ def load_postrun_results(
         )
         policy_proxies.append(_measured_point(
             point_id=f"proxy:mmsafety:{policy_name}:ASR",
-            corpus="mmsafety",
+            corpus=mmsafety_corpus,
             metric=metric,
             facet=mm_facet,
             figure_group="policy_proxies",
         ))
 
     moss_facet, _ = _require_ready_facet(
-        {"facets": {"mossbench": facets["mossbench"]}, "unavailable_facets": {}},
-        "mossbench",
+        replay_reports["mossbench"], mossbench_corpus,
         metric_name="over_refusal_rate",
     )
     moss_policy = mossbench_policy()
     policy_proxies.append(_measured_point(
         point_id="proxy:mossbench:benign-refusal-rate:FRR",
-        corpus="mossbench",
+        corpus=mossbench_corpus,
         metric=_require_policy_metric(
             moss_facet,
             policy_id=moss_policy.policy_id,
@@ -1451,17 +1593,17 @@ def load_postrun_results(
         report = compare_adaptivity(
             results,
             model=model,
-            corpus="strongreject",
+            corpus=strongreject_corpus,
             n_resamples=n_resamples,
             seed=seed,
         )
         facet, metric = _require_ready_facet(
-            report, "strongreject", metric_name="ASR",
+            report, strongreject_corpus, metric_name="ASR",
         )
         adaptivity_reports.append(report)
         adaptivity.append(_measured_point(
             point_id=f"adaptivity:{model}:replay-minus-crescendo:ASR",
-            corpus="strongreject",
+            corpus=strongreject_corpus,
             metric=metric,
             facet=facet,
             figure_group="adaptivity",
@@ -1475,11 +1617,34 @@ def load_postrun_results(
         if isinstance(arm, dict) and arm.get("run_id")
     })
     results_identity = audit.get("results_identity")
+    completed_run_ids = (
+        results_identity.get("completed_run_ids")
+        if isinstance(results_identity, dict) else None
+    )
+    labelled_run_ids = (
+        results_identity.get("labelled_run_ids")
+        if isinstance(results_identity, dict) else None
+    )
     if (
-        not isinstance(results_identity, dict)
-        or results_identity.get("completed_run_ids") != run_ids
+        not isinstance(completed_run_ids, list)
+        or completed_run_ids != sorted(set(completed_run_ids))
+        or any(not isinstance(value, str) or not value for value in completed_run_ids)
+        or not set(run_ids).issubset(completed_run_ids)
     ):
-        raise ValueError("human audit does not bind the exact completed figure run cohort")
+        raise ValueError("human audit does not bind every completed figure run")
+    if (
+        not isinstance(labelled_run_ids, list)
+        or labelled_run_ids != sorted(set(labelled_run_ids))
+        or any(not isinstance(value, str) or not value for value in labelled_run_ids)
+        or not set(run_ids).issubset(labelled_run_ids)
+    ):
+        raise ValueError("human audit does not directly label every completed figure run")
+    human_coverage_binding = _validate_human_figure_coverage(audit, all_points)
+    human_coverage_binding["cohort_relation"] = (
+        "exact_completed_figure_run_cohort"
+        if completed_run_ids == run_ids
+        else "selected_figure_runs_within_broader_audit_cohort"
+    )
     binding = _decision_binding(all_points)
     return {
         "schema_version": "ura-chapter-v-figures/1.3",
@@ -1495,6 +1660,10 @@ def load_postrun_results(
             "human_audit_artifact": audit_identity,
             "human_audit_readiness": audit["analysis_readiness"],
             "completed_run_ids": run_ids,
+            "human_audit_completed_run_ids": completed_run_ids,
+            "human_audit_labelled_run_ids": labelled_run_ids,
+            "human_coverage_binding": human_coverage_binding,
+            "corpus_arm_aliases": corpus_aliases,
             "results_locator": ".",
             **binding,
             "analysis_source": analysis_source_identity([

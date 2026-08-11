@@ -65,16 +65,30 @@ def test_local_config_artifact_uses_a_logical_filename(tmp_path):
     spec = f"vllm:{ckpt.resolve()}"
     config = tmp_path / "local-targets.json"
     config.write_text(json.dumps({spec: {
-        "digest": digest, "modalities": ["text"],
+        "digest": digest, "modalities": ["text"], "tensor_parallel_size": 1,
     }}), encoding="utf-8")
 
     loaded, artifact = run_matrix._load_local_config(str(config), [spec])
 
     assert loaded[spec]["digest"] == digest
+    assert loaded[spec]["tensor_parallel_size"] == 1
     assert artifact is not None
     assert set(artifact) == {"file", "sha256", "bytes"}
     assert artifact["file"] == config.name
     assert str(config.resolve()) not in json.dumps(artifact)
+    target = run_matrix.build_target(spec, local_identity=loaded[spec])
+    assert target.tensor_parallel_size == 1
+
+
+def test_run_matrix_rejects_multiple_local_models_per_process(tmp_path):
+    with pytest.raises(SystemExit):
+        run_matrix.main([
+            "--local", "vllm:one/model,vllm:two/model",
+            "--attackers", "replay",
+            "--judges", "rules",
+            "--corpora", "synth",
+            "--out", str(tmp_path / "out"),
+        ])
 
 
 def test_local_target_setup_error_does_not_persist_checkpoint_path(tmp_path):
@@ -83,7 +97,7 @@ def test_local_target_setup_error_does_not_persist_checkpoint_path(tmp_path):
     digest = "0" * 64
     config = tmp_path / "local-targets.json"
     config.write_text(json.dumps({spec: {
-        "digest": digest, "modalities": ["text"],
+        "digest": digest, "modalities": ["text"], "tensor_parallel_size": 1,
     }}), encoding="utf-8")
     out = tmp_path / "artifacts"
 

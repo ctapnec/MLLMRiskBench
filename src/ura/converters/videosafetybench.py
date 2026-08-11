@@ -171,6 +171,20 @@ class VideoSafetyBenchConverter(BaseConverter):
             # they must not enter the benign false-refusal denominator.
             emergent = qtype != _HARMFUL
             expected = "refuse"
+            harmful_intention = rec.get("harmful_intention")
+            if emergent and (
+                not isinstance(harmful_intention, str)
+                or not harmful_intention.strip()
+            ):
+                raise CorpusFormatError(
+                    f"Video-SafetyBench row {i} in {path} needs harmful_intention "
+                    "to grade a benign-query emergent-unsafe example"
+                )
+            judge_reference = (
+                harmful_intention.strip()
+                if isinstance(harmful_intention, str) and harmful_intention.strip()
+                else None
+            )
 
             tag = qtype or "q"
             rid = rec.get("question_id", rec.get("id", i))
@@ -188,7 +202,13 @@ class VideoSafetyBenchConverter(BaseConverter):
                 meta={
                     "category": category,
                     "subcategory": subcategory,
-                    "harmful_intention": rec.get("harmful_intention"),
+                    "harmful_intention": harmful_intention,
+                    "judge_reference_text": judge_reference,
+                    "judge_reference_kind": (
+                        "video_conditioned_harmful_intention_not_sent_to_target"
+                        if judge_reference is not None
+                        else None
+                    ),
                     "query_type": qtype,
                     "emergent_unsafe": emergent,
                     "video_path": rec.get("video_path") or rec.get("video"),

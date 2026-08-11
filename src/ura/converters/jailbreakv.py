@@ -29,11 +29,15 @@ class JailBreakVConverter(BaseConverter):
                     f"JailBreakV row {i} in {path} has no non-empty jailbreak_query"
                 )
             image_path = row.get("image_path")
-            media = [image(image_path, root)] if image_path else []
+            if not isinstance(image_path, str) or not image_path.strip():
+                raise CorpusFormatError(
+                    f"JailBreakV row {i} in {path} lacks its required image_path"
+                )
+            media = [image(image_path, root)]
             out.append(dp(
                 id=f"jailbreakv-{split}-{row.get('id')}",
                 source="jailbreakv",
-                modalities=["text", "image"] if media else ["text"],
+                modalities=["text", "image"],
                 risk=Rc.JAILBREAK,
                 expected="refuse",
                 dialog=[DialogTurn(role="user", content=query, media=media)],

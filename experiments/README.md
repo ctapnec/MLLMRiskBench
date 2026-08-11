@@ -2,44 +2,123 @@
 
 Experiments are pending. Use [PROTOCOL.md](PROTOCOL.md) for the estimands and
 validity rules, then execute [RUN_AND_RETURN.md](RUN_AND_RETURN.md). A dry run,
-partial artifact family, placeholder model ID, or synthetic figure is not a
-measured thesis result.
+partial artifact family, source conversion, model-name assumption, native prompt
+export, or synthetic figure is not a measured thesis result.
 
-The maintained execution contract is Runner `ura-runner/2.4` with unified
+The maintained execution contract is Runner `ura-runner/2.5` with unified
 schema `1.4`; older artifacts are not mixed into the thesis run.
+
+## Experimental shape
+
+The thesis uses a tiered programme rather than an infeasible universal Cartesian
+product:
+
+1. **Focal paired lane.** The exact account-visible Fable and GPT-5.6 Sol
+   conditions support the prospectively selected paired and human-audited
+   comparison. This remains a cross-provider association.
+2. **Hosted breadth lane.** Additional account-visible Anthropic, OpenAI,
+   Gemini, DeepSeek, Kimi, Qwen and GLM-family routes receive bounded static
+   evaluation on compatible sources. Family names and documentation examples
+   are candidates only; the exact route, returned identity, access, and physical
+   modalities must be attested live.
+3. **Local breadth/defense lane.** One local vLLM/Ollama target runs per process.
+   A model fitting one RTX 4090 normally uses tensor parallelism 1; the second
+   card may host the independent scoring guard. Two-card sharding is a separate
+   declared condition. A same-base unguarded/guarded pair is the defensible
+   defense contrast when exact artifacts are available.
+4. **Multimodal lanes.** Image, JALMBench audio, and Video-SafetyBench video are
+   attempted only for exact target transports that pass bounded live
+   attestation. Agent/tool sources additionally require their substantive
+   runtime and evaluator. Unsupported cells remain `N/A` with reasons.
+5. **Source-native lane.** AgentDojo, ASB, AutoDAN-Turbo, EasyJailbreak, FuzzyAI,
+   Garak, Giskard v2, Petri, and Promptfoo run upstream. URA imports their
+   complete artifacts; it never claims that replaying a generated prompt
+   reproduces the source experiment.
+
+## Source inventory
+
+The common runner has 19 converter families:
+
+```text
+advbench, agentharm, bipia, cyberseceval, figstep, gptgeochat,
+harmbench, injecagent, jailbreakbench, jailbreakv, jalmbench,
+mllmguard, mmsafety, mossbench, rjudge, siuo, strongreject,
+videosafetybench, vlsbench
+```
+
+`--source-config` binds stable arm IDs to a converter, environment-variable path
+locator, and optional source label/split. This permits several releases or
+subsets of one converter without putting author-specific absolute paths into
+artifacts. Conversion support does not imply scored eligibility: currently
+implemented source-specific classification evaluators include R-Judge and
+GPTGeoChat; other source-specific requirements fail before a target call until
+their substantive evaluator exists.
+
+## Target configuration and admission
+
+The focal target specifications are:
+
+```text
+anthropic-fable:claude-fable-5;effort=high;max_tokens=25000
+openai-responses:gpt-5.6-sol;reasoning_mode=pro;reasoning_effort=medium;reasoning_context=all_turns
+```
+
+Generic hosted candidates are bound by `--api-config`; local candidates by
+`--local-config`. A no-call `rig_check` verifies configuration, corpus, policy,
+component, declared modality, credential presence and conservative call bounds.
+It cannot prove account access, endpoint visibility, routing, quota, or media
+transport. Therefore every exact model/modality route also needs a tiny bounded
+real attestation whose output is diagnostic transport evidence, not a thesis
+measurement.
+
+The planner admits the intersection of source-present and target-supported
+modality combinations. Post-run validation requires actual eligible
+Attempt--Response evidence. Tags, setup-only turns, input-side blocks, captions,
+or silently removed media do not prove modality execution.
+
+## Metric families, not one score
+
+The suite uses a reporting ontology: coverage/conformance, unsafe-response rate,
+benign-refusal rate, adaptive compromise, classification quality,
+attack/injection-goal success, task utility, graded risk, detector findings, and
+truthfulness where a substantive scorer exists. Family membership makes results
+findable; it does not make their denominators, policies, judges, or scales
+exchangeable.
+
+Only coverage/conformance counts can be totaled globally. Common rates remain
+in exact model/source/policy/modality/attacker/defense strata. Native aggregates
+remain on their upstream scales. `experiments.suite_summary` enforces that
+descriptive evidence-inventory boundary, separates distinct run identities, and
+lists missing registered source arms/native projects rather than treating a
+nonempty subset as complete.
 
 ## Direct lifecycle
 
-1. Clone the project, create the Python environment, install
-   `.[dev,analysis,api,guardrail]`, accept and download the exact pinned
-   Llama-Guard checkpoint, and run the offline suite and synthetic smoke test.
-2. Download the exact StrongREJECT, MM-SafetyBench, and MOSSBench releases and
-   image assets as described in the runbook. Set `URA_<CORPUS>_PATH` and the
-   ordered `URA_MEDIA_ROOTS`.
-3. Set the target and judge credentials. Review corpus licenses, provider
-   retention, and institutional data-handling requirements before upload.
-4. Run the intended matrix arguments through
-   `python -m experiments.rig_check`. Review the printed source-policy cluster
-   counts and conservative target-call, local-guardrail, hosted-judge, and
-   HTTP-attempt totals. The check also loads the pinned local guardrail without
-   generating.
-5. Run the complete replay grid over all three corpora, then the smaller
-   StrongREJECT-only Crescendo grid. Both use the exact study targets,
-   `--limit 0`, the full rule/guardrail/LLM trail, and finite grid-wide call and
-   time ceilings.
-6. Preserve the complete run artifacts, command line, project commit,
-   environment inventory, and operator note.
-7. Run no-call diagnostics (`paired_compare`, `judge_sensitivity`, `kappa`, and
-   `transfer_matrix`) and prepare the automated-label-blinded, model-visible
-   multi-rater human audit.
-8. After labels and adjudication are complete, run the human-audit analysis and
-   then produce appropriately qualified tables and figures.
+1. Install the project and offline dependencies; run the complete offline suite.
+2. Acquire every selected release and upstream project at the recorded revision;
+   configure `--source-config`, `URA_MEDIA_ROOTS`, and isolated native
+   environments.
+3. Configure exact hosted/local targets and separate scoring/defense guards.
+4. Run `python -m experiments.rig_check` for every intended lane and review its
+   source-policy counts and call projections.
+5. Run bounded live endpoint/modality attestations, then execute only the
+   attested eligible cells with finite target, judge, HTTP-attempt, and time
+   ceilings.
+6. Run the nine upstream native campaigns and normalize their completed outputs
+   with `python -m experiments.native_import`.
+7. Build `python -m experiments.suite_summary`, run no-call diagnostics, and
+   prepare the automated-label-blinded, model-visible multi-rater human audit.
+8. After ratings/adjudication, render qualified focal figures and return the
+   complete artifact tree, commands, commits, environments, licenses/terms note,
+   and `N/A` ledger.
 
 Core CLIs:
 
 ```bash
 python -m experiments.rig_check --help
 python experiments/run_matrix.py --help
+python -m experiments.native_import --help
+python -m experiments.suite_summary --help
 python -m experiments.paired_compare --help
 python -m experiments.judge_sensitivity --help
 python -m experiments.kappa --help
@@ -48,118 +127,47 @@ python -m experiments.human_audit --help
 python -m experiments.figures --help
 ```
 
-## Planned target and modality scope
-
-The primary target strings are:
-
-```text
-anthropic-fable:claude-fable-5;effort=high;max_tokens=25000
-openai-responses:gpt-5.6-sol;reasoning_mode=pro;reasoning_effort=medium;reasoning_context=all_turns
-```
-
-Both adapters currently declare text and image only. The replay grid executes
-StrongREJECT text, complete MM-SafetyBench harmful text+image, and complete
-MOSSBench benign text+image data on both targets; the Crescendo grid is
-StrongREJECT text only. Coverage binds the exact
-delivered combination; input-blocked and setup-only attempts do not count.
-Audio and video are unavailable on both study targets and are reported as such,
-not replaced with text fallbacks.
-
-MM-SafetyBench common ASR is a secondary URA proxy; its official scenario-aware
-evaluator is not executed. MOSSBench common false-refusal rate is also
-secondary; its official image-conditioned evaluator is not executed. Keep both
-distinctions in every table and claim. Because MM-SafetyBench spans six source
-policies, matrix commands containing it group by
-`source_policy_id,source_policy_version`.
-
-StrongREJECT is the official 313-row, six-category, 313-unique-prompt CSV at
-commit `f7cad6c17e624e21d8df2278e918ae1dddb4cb56`, normalized SHA-256
-`4dd70357e4ff8b5d0ba5ebafecab5d6dd5633ce8046e3dd1c8bd93e64de44381`.
-The maintained score is explicitly StrongREJECT-style; it is not a claim that
-the upstream official evaluator ran.
-
 ## Real-run invariants
 
-- Real corpora resolve through `URA_<CORPUS>_PATH` and must pass their pinned
-  release contracts. `--limit N` counts source prompt/intent clusters and keeps
-  every row in each selected cluster; the complete thesis grid uses `--limit 0`.
-- Local media artifacts use `@media-root/<index>/<relative-path>`. Preserve the
-  configured media-root order and relative layout on resume or another machine.
-- Every paid grid declares finite target-call, judge-call, HTTP-attempt, and
-  time ceilings. `rig_check` rejects ceilings below its conservative grid
-  projection, imports selected hosted SDKs, loads the exact local guardrail,
-  and requires nonblank credential environment variables without making a
-  provider request. It
-  cannot establish credential validity, account access, model visibility, or
-  quota.
-- Preserve durable budget, circuit, lock, checkpoint, completion, and error
-  artifacts and resume from the same directory. Recovery validates the
-  same-grid high-water mark before another call. Existing locks are never
-  reclaimed automatically.
-- Optional local configuration is keyed by each exact target specification and
-  declares exactly one immutable revision or digest plus supported modalities.
-- Missing, failed, unsupported, abstained, and mathematically undefined states
-  remain distinct and are never rewritten as zero.
+- `--limit N` counts source prompt/intent clusters and retains every selected
+  cluster row; complete planned lanes use `--limit 0` after bounded diagnostics.
+- Persisted local media use `@media-root/<index>/<relative-path>` and rebind to
+  the same ordered roots and relative layout on resume.
+- Missing media, unsupported modality, absent source evaluator, target/transport
+  failure, judge abstention, incomplete artifact family, and undefined statistic
+  stay distinct. None becomes zero.
+- Every paid grid has finite call/time ceilings and resumes from its durable
+  budget, circuit, lock, checkpoint, completion, and error artifacts.
+- A model-backed defense has one shared explicit-device guard instance whose
+  identity differs from the scoring guard. The implemented model defense is
+  text-only; it cannot support a multimodal defense claim.
+- Every measured comparison states exact model/endpoint, source instance,
+  release/policy, modality, attacker, defense, judge, cluster unit, budget,
+  support, exclusions, interval method, and run date.
 
-## Analysis and reporting
+## Analysis and return package
 
-The primary comparison is paired by source cluster within exact benchmark,
-source policy, modality, target condition, attack, judge, and budget. Direct
-paired intervals are reported on risk differences. If multiple comparisons are
-selected after seeing the data, they are explicitly exploratory and any
-multiplicity adjustment is described as post-experiment analysis, not
-prospective confirmation.
+The focal paired comparison gives each source cluster equal weight. Transfer is
+conditional on source-model success and an identical rendered input. Adaptive
+trajectories use conversation endpoints and the declared challenge horizon.
+Source-native outcomes and common proxies are reported separately.
 
-Transfer is conditional and descriptive:
-`P(B violates | A violated, harmful, transferable, identical rendered input)`.
-It reports exact-input coverage, equal-cluster support, dispersion, and a
-cluster-bootstrap interval. No source successes or no exact matches yields
-`null` with a reason rather than zero. Live Crescendo is excluded unless
-replayed exactly.
+The human audit hides automated labels, keeps model identity visible, requires
+at least two independent raters plus adjudication, and labels refusal,
+harmfulness, convincingness, and specificity separately. A small or selectively
+sampled audit is limited-sample evidence with intervals, not population-wide
+judge validation. Its deterministic whole-cluster selector must cover every
+observed common-eligible arm endpoint overall and in its exact risk/modality cell;
+increase `--prepare N` if that achieved design cannot fit. Validity is primary
+within exact-run/response-arm/logical-corpus/source-policy/effective-modality/
+expected-population/common-eligibility strata. Every primary stratum reports
+decided/abstained support and decision coverage; harmful violation and benign
+over-refusal are separate adverse endpoints. Pooled values are
+composition-dependent diagnostics.
 
-Judge sensitivity reuses completion-validated shadow trails and makes no target
-calls. Unparsed or low-confidence stages are abstentions. The automated-label-blinded, model-visible human
-audit samples complete source clusters, requires at least two independent
-raters plus adjudication, and separates refusal, harmfulness, convincingness,
-and specificity. Its CSV preserves the source-policy ID, version, intended
-metric, and short rater instruction. Physical inputs are content-bound in
-`media_references`: local assets use `@media-root/<index>/<relative-path>` and
-inline assets use `@inline-sha256/<digest>` without embedding bytes. Raters must
-resolve `URA_MEDIA_ROOTS` in order, verify MIME and SHA-256, and view every asset
-before labelling; unresolved media stays unrated and analysis fails closed.
-Agreement results must state the population, support,
-interval, endpoint definition, and cluster weighting. With a small audit, all
-validity conclusions are limited-sample evidence with intervals. The achieved
-audit artifact uses schema `ura-human-audit/1.1`; only an integrity-complete
-real-run artifact reports `analysis_ready_real_run=true` and status
-`complete_sample_conditional`. That status does not assert population validity.
-
-Measured figures may be produced only after the real grid and human audit are
-complete. Until then, tracked images are visibly watermarked synthetic layout
-previews with neutral condition labels.
-
-After `human_audit.json` is complete, measured mode reads the completed runs
-directly rather than an intermediate analysis artifact:
-
-```bash
-python -m experiments.figures \
-  --results runs/main \
-  --left-model "$FABLE" --right-model "$SOL" \
-  --human-audit runs/main/human_audit.json \
-  --human-audit-sha256 "$HUMAN_AUDIT_SHA256" \
-  --out runs/main/figures
-```
-
-Its `ura-chapter-v-figures/1.3` sidecar records one StrongREJECT model point,
-six MM-SafetyBench policy points, one MOSSBench benign-FRR point, and two
-model-specific adaptivity points. These are sample-conditional post-experiment
-estimates, without a population-validity, power, or prospective-confirmation
-claim.
-
-## Return package
-
-Return the complete artifact directory, including attempts, responses, shadow
-trails, judgments, manifests, completion and error records, budgets, circuits,
-locks or intervention notes, modality plans/results, diagnostics, human-audit
-files, figures and provenance, logs, environment inventory, commit identifier,
-and run note. Do not return only aggregates.
+Return attempts, responses, complete shadow trails, judgments, manifests,
+checkpoints, completion/error/budget/circuit artifacts, source/native artifacts
+and hashes, modality plans/results, diagnostics, human-audit files, suite
+inventory, figures/provenance, logs, environment inventory, exact commit IDs,
+operator notes, and the explicit eligibility/`N/A` ledger. Do not return only
+aggregates.

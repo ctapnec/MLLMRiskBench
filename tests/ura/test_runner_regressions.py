@@ -36,6 +36,7 @@ from ura.runner import (
 )
 from ura.targets.api import MockTarget
 from ura.targets.base import BaseTarget
+from ura.targets.guarded import GuardedTarget
 
 
 _PNG = base64.b64decode(
@@ -51,6 +52,16 @@ def _finite_budget_args() -> list[str]:
         "--max-total-http-attempts", "100000",
         "--deadline-seconds", "3600",
     ]
+
+
+def _api_config_args(tmp_path: Path, *specs: str) -> list[str]:
+    path = tmp_path / "api-targets.json"
+    path.write_text(json.dumps({spec: {
+        "modalities": ["text"],
+        "max_tokens": 256,
+        "temperature": 0.0,
+    } for spec in specs}), encoding="utf-8")
+    return ["--api-config", str(path)]
 
 
 def test_real_corpus_limit_is_seeded_not_first_n(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -144,8 +155,10 @@ def test_real_corpus_runs_directly_and_records_source_identity(
 
     monkeypatch.setattr(run_matrix, "build_target", lambda *_a, **_kw: _RefusingTarget())
     out = tmp_path / "run"
+    target_spec = "openai:fixture-model"
     assert run_matrix.main([
-        "--api", "fixture:model", "--attackers", "replay",
+        "--api", target_spec, *_api_config_args(tmp_path, target_spec),
+        "--attackers", "replay",
         "--judges", "rules", "--corpora", "fixture", "--limit", "0",
         "--max-queries", "1", "--max-turns", "1", "--out", str(out),
         *_finite_budget_args(),
@@ -159,6 +172,28 @@ def test_real_corpus_runs_directly_and_records_source_identity(
     assert run_config["sampling_audit"]["full_converted_corpus_sha256"] == (
         run_matrix.canonical_converted_corpus_sha256(records)
     )
+    assert run_config["api_config"] == {
+        "modalities": ["text"],
+        "max_tokens": 256,
+        "temperature": 0.0,
+    }
+    assert set(run_config["api_config_artifact"]) == {
+        "normalized_selected_sha256"
+    }
+    assert len(
+        run_config["api_config_artifact"]["normalized_selected_sha256"]
+    ) == 64
+    grid = json.loads(next(out.glob("*.grid.json")).read_text(encoding="utf-8"))
+    assert grid["request"]["api_configs"][target_spec] == {
+        "modalities": ["text"],
+        "max_tokens": 256,
+        "temperature": 0.0,
+    }
+    api_artifact = grid["request"]["api_config_artifact"]
+    assert set(api_artifact) == {
+        "file", "sha256", "bytes", "normalized_selected_sha256"
+    }
+    assert len(api_artifact["sha256"]) == 64
 
 
 def test_matrix_requires_real_target_and_judge_for_real_runs(tmp_path: Path) -> None:
@@ -243,6 +278,7 @@ def test_preflight_only_checks_hosted_sdks_and_keys_without_provider_calls(
     judge_spec = "openai:judge-fixture"
     args = [
         "--preflight-only", "--api", target_spec,
+        *_api_config_args(tmp_path, target_spec, judge_spec),
         "--attackers", "replay", "--judges", "llm",
         "--judge-model", judge_spec, "--corpora", "synth",
         "--limit", "1", "--max-queries", "1", "--max-turns", "1",
@@ -277,8 +313,10 @@ def test_real_grid_requires_finite_limits_before_generation(
 
     target = _NeverCalledTarget()
     monkeypatch.setattr(run_matrix, "build_target", lambda *_a, **_kw: target)
+    target_spec = "openai:fixture-model"
     args = [
-        "--api", "fixture:model", "--attackers", "replay", "--judges", "rules",
+        "--api", target_spec, *_api_config_args(tmp_path, target_spec),
+        "--attackers", "replay", "--judges", "rules",
         "--corpora", "synth", "--limit", "1", "--out", str(tmp_path / "run"),
         *_finite_budget_args(),
         "--max-total-target-calls", "0",
@@ -316,6 +354,32 @@ def test_call_projection_reports_local_guardrail_work_separately() -> None:
     assert projection["local_guardrail_evaluations"] == 2
 
 
+def test_call_projection_includes_input_and_output_defense_guard_work() -> None:
+    class _Guard(BaseJudge):
+        name = "guardrail"
+
+        def judge(self, datapoint, response):  # pragma: no cover - planning only
+            raise AssertionError("projection must not execute the guard")
+
+    target = GuardedTarget(MockTarget(), _Guard(), mode="both")
+    cascade = run_matrix.build_judges(
+        ["rules", "guardrail"],
+        "mock",
+        guardrail_revision="b" * 40,
+    )
+    projection = run_matrix._project_grid_call_upper_bounds(
+        targets={"guarded": target},
+        corpora={"synth": [_datapoint("one")]},
+        attackers={"replay": run_matrix.get_attacker("replay")},
+        cascade=cascade,
+        seeds=[0],
+        max_queries=1,
+        max_turns=1,
+    )
+
+    assert projection["local_guardrail_evaluations"] == 3
+
+
 def test_matrix_guardrail_requires_and_records_immutable_revision(
     tmp_path: Path,
 ) -> None:
@@ -338,6 +402,58 @@ def test_matrix_guardrail_requires_and_records_immutable_revision(
     assert guard.revision == revision
     assert guard.device == "cuda:0"
 
+
+def test_model_defense_requires_separate_guard_identity_and_device(
+    tmp_path: Path,
+) -> None:
+    with pytest.raises(SystemExit):
+        run_matrix.main([
+            "--dry-run", "--judges", "rules", "--defense", "input",
+            "--defense-guard", "guardrail", "--corpora", "synth",
+            "--limit", "1", "--out", str(tmp_path / "missing-defense-id"),
+        ])
+
+    scoring_model = "meta-llama/Llama-Guard-3-8B"
+    with pytest.raises(SystemExit):
+        run_matrix.main([
+            "--dry-run", "--judges", "rules,guardrail",
+            "--guardrail-model", scoring_model,
+            "--guardrail-revision", "a" * 40,
+            "--guardrail-device", "cuda:1",
+            "--defense", "input", "--defense-guard", "guardrail",
+            "--defense-guardrail-model", scoring_model,
+            "--defense-guardrail-revision", "b" * 40,
+            "--defense-guardrail-device", "cuda:0",
+            "--corpora", "synth", "--limit", "1",
+            "--out", str(tmp_path / "self-certifying"),
+        ])
+
+
+def test_matrix_rejects_a_target_that_is_also_the_llm_judge(tmp_path: Path) -> None:
+    spec = "anthropic:claude-haiku-4-5-20251001"
+    judge_spec = "claude:claude-haiku-4-5-20251001"
+    config = tmp_path / "api.json"
+    config.write_text(json.dumps({
+        selected: {
+            "modalities": ["text", "image"],
+            "max_tokens": 64,
+            "temperature": 0.0,
+        }
+        for selected in (spec, judge_spec)
+    }), encoding="utf-8")
+
+    result = run_matrix.main([
+        "--api", spec,
+        "--api-config", str(config),
+        "--judges", "rules,llm",
+        "--judge-model", judge_spec,
+        "--corpora", "synth",
+        "--limit", "1",
+        "--out", str(tmp_path / "self-judged"),
+        *_finite_budget_args(),
+    ])
+
+    assert result == 1
 
 def test_target_construction_failure_writes_error_artifact(tmp_path: Path) -> None:
     result = run_matrix.main([
@@ -440,8 +556,10 @@ def test_failed_call_errors_and_circuits_are_budget_recovery_evidence(
 
     target = FailingTarget()
     monkeypatch.setattr(run_matrix, "build_target", lambda *_a, **_kw: target)
+    target_spec = "openai:fixture-model"
     args = [
-        "--api", "fixture:model", "--attackers", "replay",
+        "--api", target_spec, *_api_config_args(tmp_path, target_spec),
+        "--attackers", "replay",
         "--judges", "rules", "--corpora", "synth", "--limit", "1",
         "--max-queries", "1", "--max-turns", "1", "--out", str(tmp_path),
         *_finite_budget_args(),
@@ -771,8 +889,10 @@ def test_systemic_target_failure_opens_circuit_before_next_cell(
     target = FailingTarget()
     monkeypatch.setattr(run_matrix, "build_target", lambda *_a, **_kw: target)
 
+    target_spec = "openai:fixture-model"
     result = run_matrix.main([
-        "--api", "fixture:model", "--attackers", "replay,crescendo",
+        "--api", target_spec, *_api_config_args(tmp_path, target_spec),
+        "--attackers", "replay,crescendo",
         "--judges", "rules", "--corpora", "synth", "--limit", "1",
         "--max-queries", "2", "--max-turns", "2", "--out", str(tmp_path),
         *_finite_budget_args(),

@@ -52,6 +52,12 @@ class VLSBenchConverter(BaseConverter):
                 )
             cat = rec.get("category") or ""
             sub = rec.get("sub_category") or ""
+            safety_reason = rec.get("safety_reason")
+            if not isinstance(safety_reason, str) or not safety_reason.strip():
+                raise CorpusFormatError(
+                    f"VLSBench row {i} in {path} has no non-empty safety_reason; "
+                    "visual-leakless rows require the source grading reference"
+                )
             risk = CATEGORY_MAP.get(cat, Rc.LEGALITY)
             if "cyber" in sub.lower():
                 risk = Rc.CYBERSEC
@@ -67,7 +73,14 @@ class VLSBenchConverter(BaseConverter):
                 media=media,
                 risk_subtype=sub,
                 attack_family="visual_leakage",
-                meta={"safety_reason": rec.get("safety_reason")},
+                meta={
+                    "safety_reason": safety_reason.strip(),
+                    "judge_reference_text": safety_reason.strip(),
+                    "judge_reference_kind": (
+                        "source_safety_reason_not_sent_to_target"
+                    ),
+                    "physical_media_directly_evaluated_by_automated_judges": False,
+                },
             ))
         if not out:
             raise CorpusFormatError(f"VLSBench conversion produced no rows from {path}")

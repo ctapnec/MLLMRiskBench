@@ -132,10 +132,14 @@ def test_declared_but_unimplemented_source_scorer_is_visible() -> None:
         {
             "required_metric": "official_agentharm_tool_grading",
             "source_cluster_id": "agentharm:1",
+            "source_metric_runtime": "upstream_agentharm_environment",
+            "source_metric_fidelity": "requires_native_tool_execution",
         },
     )
     observation = evaluate_source_response(point, _response("any response"))
     assert observation is not None
+    assert observation["required_runtime"] == "upstream_agentharm_environment"
+    assert observation["source_metric_fidelity"] == "requires_native_tool_execution"
     summaries = aggregate_source_metrics(
         [_judgment("agentharm:1", observation)], seed=0
     )
@@ -200,6 +204,28 @@ def test_scored_preflight_rejects_registered_but_unimplemented_pairs(
     with pytest.raises(
         ValueError,
         match=rf"source-metric preflight.*{source}.*{required_metric}",
+    ):
+        validate_scored_source_metrics([point])
+
+
+def test_scored_preflight_reports_the_exact_missing_source_runtime() -> None:
+    point = _point(
+        "cyberseceval",
+        "cyberseceval:prompt-injection:pending",
+        {
+            "required_metric": "cyberseceval_prompt_injection_judge_question",
+            "source_metric_runtime": (
+                "separate_judge_LLM_with_per-record_judge_question_then_"
+                "case-insensitive_yes-substring_parser"
+            ),
+        },
+    )
+    with pytest.raises(
+        ValueError,
+        match=(
+            "required_runtime=.*separate_judge_LLM_with_per-record_"
+            "judge_question"
+        ),
     ):
         validate_scored_source_metrics([point])
 

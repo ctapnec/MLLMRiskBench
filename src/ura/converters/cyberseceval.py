@@ -92,15 +92,26 @@ class CyberSecEvalConverter(BaseConverter):
             if dataset == "prompt_injection":
                 system = _as_text(rec.get("test_case_prompt"))
                 user = _as_text(rec.get("user_input") or rec.get("mutated_prompt"))
+                judge_question = _as_text(rec.get("judge_question"))
+                if not system.strip():
+                    raise CorpusFormatError(
+                        f"CyberSecEval prompt-injection row {i} in {path} "
+                        "has no application system prompt"
+                    )
                 if not user.strip():
                     raise CorpusFormatError(
                         f"CyberSecEval prompt-injection row {i} in {path} "
                         "has no user input"
                     )
-                dialog = []
-                if system:
-                    dialog.append(DialogTurn(role="system", content=system))
-                dialog.append(DialogTurn(role="user", content=user))
+                if not judge_question.strip():
+                    raise CorpusFormatError(
+                        f"CyberSecEval prompt-injection row {i} in {path} "
+                        "has no judge_question required by the source evaluator"
+                    )
+                dialog = [
+                    DialogTurn(role="system", content=system),
+                    DialogTurn(role="user", content=user),
+                ]
                 payload = user
                 subtype = (
                     _as_text(rec.get("injection_type"))
@@ -108,6 +119,7 @@ class CyberSecEvalConverter(BaseConverter):
                     or None
                 )
             else:
+                judge_question = ""
                 text = _as_text(
                     rec.get("mutated_prompt")
                     or rec.get("test_case_prompt")
@@ -148,7 +160,7 @@ class CyberSecEvalConverter(BaseConverter):
                     "ttp": rec.get("ttp_id_name_mapping"),
                     "attack_type": rec.get("attack_type"),
                     "injection_variant": rec.get("injection_variant"),
-                    "judge_question": rec.get("judge_question"),
+                    "judge_question": judge_question or None,
                     "speaking_language": rec.get("speaking_language"),
                     "cwe_identifier": rec.get("cwe_identifier"),
                     # The released prompt-injection suite supplies a
@@ -163,6 +175,23 @@ class CyberSecEvalConverter(BaseConverter):
                     ),
                     "source_metric_attackers": (
                         ["replay", "purplellama"]
+                        if is_prompt_injection else None
+                    ),
+                    "source_cluster_id": (
+                        f"cyberseceval:prompt_injection:{rid}"
+                        if is_prompt_injection else f"cyberseceval:{dataset}:{rid}"
+                    ),
+                    "source_metric_runtime": (
+                        "separate_judge_LLM_with_per-record_judge_question_then_"
+                        "case-insensitive_yes-substring_parser"
+                        if is_prompt_injection else None
+                    ),
+                    "source_metric_semantics": (
+                        "source_injection_success_not_refusal_or_common_ASR"
+                        if is_prompt_injection else None
+                    ),
+                    "source_metric_fidelity": (
+                        "requires_upstream_second-stage_judge_call"
                         if is_prompt_injection else None
                     ),
                     "execution_adapters": ["replay", "purplellama"],

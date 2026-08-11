@@ -155,6 +155,9 @@ def evaluate_source_response(
         "source_cluster_id": str(
             datapoint.meta.get("source_cluster_id") or datapoint.id
         ),
+        "required_runtime": datapoint.meta.get("source_metric_runtime"),
+        "source_metric_semantics": datapoint.meta.get("source_metric_semantics"),
+        "source_metric_fidelity": datapoint.meta.get("source_metric_fidelity"),
         "reason": "declared source-specific scorer/runtime is not implemented",
     }
 
@@ -168,7 +171,7 @@ def validate_scored_source_metrics(corpus: list[DataPoint]) -> None:
     evaluator registered in this module.
     """
 
-    unavailable: list[tuple[str, str, str]] = []
+    unavailable: list[tuple[str, str, str, str]] = []
     for datapoint in corpus:
         if datapoint.meta.get("common_metrics_eligible", True) is not False:
             continue
@@ -182,14 +185,23 @@ def validate_scored_source_metrics(corpus: list[DataPoint]) -> None:
             )
         key = (datapoint.source, required)
         if key not in _IMPLEMENTED_SOURCE_EVALUATORS:
-            unavailable.append((datapoint.id, datapoint.source, required))
+            runtime = datapoint.meta.get("source_metric_runtime")
+            unavailable.append((
+                datapoint.id,
+                datapoint.source,
+                required,
+                runtime.strip()
+                if isinstance(runtime, str) and runtime.strip()
+                else "source evaluator/runtime not specified by converter",
+            ))
 
     if not unavailable:
         return
 
     details = "; ".join(
-        f"id={ident!r}, source={source!r}, required_metric={required!r}"
-        for ident, source, required in unavailable[:8]
+        f"id={ident!r}, source={source!r}, required_metric={required!r}, "
+        f"required_runtime={runtime!r}"
+        for ident, source, required, runtime in unavailable[:8]
     )
     if len(unavailable) > 8:
         details += f"; ... and {len(unavailable) - 8} more"

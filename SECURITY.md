@@ -21,6 +21,11 @@ and optional local media. Treat run artifacts as sensitive research data.
 - A hosted judge receives the evaluated prompt and response. Use a local judge,
   a same-provider approved endpoint, or an explicit data-processing approval for
   private, personal, gated, or export-controlled material.
+- The broad roster is a set of separate provider/data-processing decisions, not
+  one approval inherited from the focal pair. Before each exact hosted route is
+  enabled, record its current retention, training/use, regional routing, abuse
+  monitoring, media handling and account terms. An `--api-config` entry proves
+  none of those facts and must not contain a credential.
 - Claude Fable is a Covered Model with mandatory 30-day provider retention and
   is not available under Zero Data Retention. Obtain explicit institutional or
   operator approval for that retention before sending any corpus row; do not
@@ -50,6 +55,10 @@ and optional local media. Treat run artifacts as sensitive research data.
   absolute path. Preserve the approved-root order when rebinding a resumed or
   relocated run; changing an alias index changes what the artifact names and is
   rejected by the digest/lineage gates.
+- On the two-GPU rig, bind each local target process and each model-backed guard
+  to the intended CUDA topology. Run only one local target server per matrix
+  process. A defense guard and a scoring guard must have distinct identities;
+  do not give a tested guard the authority to grade its own blocks or outputs.
 - Human-audit exports may contain harmful or personal content. Encrypt or
   access-control them, disclose the exposure to raters, and delete them under the
   study's retention schedule.
@@ -68,7 +77,10 @@ owner, then remove only that exact lock and record the intervention. Recovery
 validates the budget ledger against same-grid completion, checkpoint, error, and
 circuit high-water evidence before any new call or circuit reset. These controls
 bound declared call exposure, not dollars, tokens, provider-side retries outside
-the declared transport, or billing reconciliation.
+the declared transport, or billing reconciliation. Upstream native frameworks
+run outside this ledger. Give each one an isolated provider credential/project
+with a provider-side hard quota, configure its own retry/concurrency/test bounds,
+and validate a one-case canary before authorizing the full native campaign.
 
 ## Reporting vulnerabilities
 

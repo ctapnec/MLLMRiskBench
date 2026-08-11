@@ -143,16 +143,17 @@ def parse_source_policy_token(token: str) -> tuple[str, str]:
 
 
 def human_analysis_cell_id(
-    source: str, policy_id: str, policy_version: str,
+    corpus: str, source: str, policy_id: str, policy_version: str,
     risk_category: str | None, modality: str | None, metric: str,
 ) -> str:
     """Canonical human-sensitivity cell matching a confirmatory endpoint scope."""
-    values = (source, policy_id, policy_version, metric)
+    values = (corpus, source, policy_id, policy_version, metric)
     if any(not isinstance(value, str) or not value for value in values):
         raise ValueError("human analysis cell components must be non-blank")
     risk = risk_category or "all"
     channel = modality or "all"
     return "::".join((
+        f"corpus={quote(corpus, safe='')}",
         f"source={quote(source, safe='')}",
         source_policy_token(policy_id, policy_version),
         f"risk={quote(risk, safe='')}",

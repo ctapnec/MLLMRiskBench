@@ -138,9 +138,18 @@ class SpikeeAttacker(BaseAttacker):
             )
             system_message = entry.get("system_message")
             if system_message:
-                rendered = [DialogTurn(role="system", content=system_message)]
-                rendered.extend(datapoint.dialog_history)
-                rendered.append(DialogTurn(role="user", content=entry["content"]))
+                # ``_attempt`` has already replaced the source objective with the
+                # generated indirect-injection prompt. Rebuilding from the raw
+                # DataPoint here used to send both objectives whenever Spikee
+                # supplied a system message. Preserve the transformed dialog and
+                # replace/prepend only its system instruction.
+                rendered = list(attempt.rendered_input)
+                if rendered and rendered[0].role == "system":
+                    rendered[0] = DialogTurn(role="system", content=system_message)
+                else:
+                    rendered.insert(
+                        0, DialogTurn(role="system", content=system_message)
+                    )
                 attempt = attempt.model_copy(update={"rendered_input": rendered})
             yield attempt
 
@@ -151,8 +160,19 @@ class SpikeeAttacker(BaseAttacker):
         else a generic document container. Spikee applies each configured
         injection position to this untrusted document.
         """
+        history = list(datapoint.dialog_history)
+        source_index = next(
+            (
+                index for index in range(len(history) - 1, -1, -1)
+                if history[index].role == "user"
+            ),
+            None,
+        )
+        conditioning = (
+            history[:source_index] if source_index is not None else history
+        )
         parts: list[str] = []
-        for turn in datapoint.dialog_history:
+        for turn in conditioning:
             if turn.content:
                 parts.append(f"{turn.role}: {turn.content}")
             if turn.tool_result:

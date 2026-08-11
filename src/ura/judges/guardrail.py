@@ -23,6 +23,7 @@ the pinned model, or on the first direct library call if preflight was skipped.
 """
 from __future__ import annotations
 
+import hashlib
 import re
 import unicodedata
 from typing import Any, Optional
@@ -226,6 +227,15 @@ class GuardrailJudge(BaseJudge):
         )
         if payload_key and payload_key not in represented_text:
             conv.append({"role": "user", "content": datapoint.payload_text})
+        reference = datapoint.meta.get("judge_reference_text")
+        if isinstance(reference, str) and reference.strip():
+            conv.append({
+                "role": "user",
+                "content": (
+                    "[source reference context for grading only] "
+                    + reference.strip()
+                ),
+            })
         for turn in response.output_turns:
             text = self._turn_text(turn)
             if text:
@@ -349,9 +359,41 @@ class GuardrailJudge(BaseJudge):
         self._ensure_loaded()
         conversation = self._build_conversation(datapoint, response)
         raw_output = self._run_guard(conversation)
-        return self._make_judgment(
+        judgment = self._make_judgment(
             raw_output, attempt_id=response.attempt_id, subject="assistant_response"
         )
+        reference = datapoint.meta.get("judge_reference_text")
+        physical_input = bool(
+            {"image", "audio", "video"}.intersection(datapoint.modalities)
+        )
+        scoring_reference = (
+            reference.strip()
+            if isinstance(reference, str) and reference.strip()
+            else (datapoint.payload_text or "").strip()
+        )
+        if scoring_reference or physical_input:
+            judgment = judgment.model_copy(update={
+                "raw": {
+                    **judgment.raw,
+                    "source_reference_context_used": bool(scoring_reference),
+                    "source_reference_context_sha256": (
+                        hashlib.sha256(scoring_reference.encode("utf-8")).hexdigest()
+                        if scoring_reference
+                        else None
+                    ),
+                    "physical_media_directly_evaluated": (
+                        False if physical_input else None
+                    ),
+                    "physical_media_scoring_mode": (
+                        "source_text_reference_plus_target_output_proxy"
+                        if physical_input and scoring_reference
+                        else "target_output_only_proxy_no_source_reference"
+                        if physical_input
+                        else None
+                    ),
+                }
+            })
+        return judgment
 
     def _make_judgment(
         self, raw_output: str, *, attempt_id: str, subject: str

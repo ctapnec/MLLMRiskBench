@@ -63,6 +63,12 @@ class SIUOConverter(BaseConverter):
                 raise CorpusFormatError(
                     f"SIUO row {i} in {path} lacks the required question or image"
                 )
+            safety_warning = rec.get("safety_warning")
+            if not isinstance(safety_warning, str) or not safety_warning.strip():
+                raise CorpusFormatError(
+                    f"SIUO row {i} in {path} has no non-empty safety_warning; "
+                    "jointly harmful rows require the source grading reference"
+                )
             # The official archive uses data/images; tolerate manifests that
             # already include the images/ prefix, but never fabricate a fallback.
             img_ref = Path(str(img_name))
@@ -83,7 +89,7 @@ class SIUOConverter(BaseConverter):
                 risk_subtype=cat or None,
                 attack_family="cross_modal_composition",
                 meta={
-                    "safety_warning": rec.get("safety_warning"),
+                    "safety_warning": safety_warning.strip(),
                     "reference_answer": (
                         rec.get("reference_answer")
                         or rec.get("reference")
@@ -93,6 +99,11 @@ class SIUOConverter(BaseConverter):
                     "joint_input_harmful": True,
                     "single_channel_inputs_benign": True,
                     "reference_status": "source_provided_not_revalidated",
+                    "judge_reference_text": safety_warning.strip(),
+                    "judge_reference_kind": (
+                        "source_safety_warning_not_sent_to_target"
+                    ),
+                    "physical_media_directly_evaluated_by_automated_judges": False,
                 },
             ))
         if not out:

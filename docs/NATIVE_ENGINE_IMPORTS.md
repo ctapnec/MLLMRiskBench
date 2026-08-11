@@ -13,6 +13,45 @@ The returned `NativeEngineRun` is intentionally marked
 outcomes remain reportable in their own track, but cannot enter URA ASR/FRR by
 accident.
 
+The operator first runs each pinned upstream project in its isolated
+environment, using that project's supported target, attack, runtime and
+evaluator. URA does not download or execute those projects through the common
+runner. After the upstream run completes, a strict JSON configuration dispatches
+the corresponding audited importer:
+
+```text
+python -m experiments.native_import --config native-config.json --out native-run.json
+python -m experiments.native_import --validate native-run.json
+```
+
+The import command writes `ura-native-import-envelope/2`: a relative
+content-addressed reference to the strict import config plus the derived
+`NativeEngineRun`. Validation re-runs the importer over the authoritative files
+and rejects any changed case, outcome, score, aggregate, role, hash, byte count,
+record count, join, or target identity. It never runs an upstream attacker,
+target or judge. Keep the envelope, import config, and all config-referenced raw
+artifacts together when returning or relocating evidence; config-relative paths
+remain portable across extraction roots. The nine supported engine keys are
+`agentdojo`, `asb`, `autodan_turbo`, `easyjailbreak`, `fuzzyai`, `garak`,
+`giskard`, `petri`, and `promptfoo`.
+
+After common-run cells and native imports are complete, the descriptive suite
+inventory can be built with repeated inputs:
+
+```text
+python -m experiments.suite_summary \
+  --results runs/hosted-text \
+  --results runs/multimodal \
+  --native runs/native/garak.json \
+  --native runs/native/agentdojo.json \
+  --out runs/suite-evidence.json
+```
+
+This is not a cross-framework leaderboard. Native rates and scores retain their
+own task, detector, oracle, target and scale; common runner rates retain exact
+model/source/policy/modality/attacker/defense strata. Only coverage and
+conformance counts can be totaled globally.
+
 ## FuzzyAI
 
 Run the official end-to-end fuzzer outside URA and retain its entire timestamped

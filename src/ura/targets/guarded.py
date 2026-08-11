@@ -66,6 +66,13 @@ class GuardedTarget(BaseTarget):
             if callable(validator):
                 validator()
 
+    def preflight_base(self) -> None:
+        """Preload only the wrapped target; guard loading is ordered separately."""
+
+        preflight = getattr(self.base, "preflight_base", None)
+        if callable(preflight):
+            preflight()
+
     def _blocked(
         self, target: str, stage: str, *, seed: int | None = None
     ) -> Response:

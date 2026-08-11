@@ -19,6 +19,29 @@ The independent unit is the source prompt/intent cluster. Repeats, variants,
 models, turns, and judgments derived from one cluster remain dependent and do
 not increase the nominal cluster count.
 
+## Cross-suite metric-family ontology
+
+URA-Bench maps results to a small semantic family solely to make the broad
+evidence inventory navigable:
+
+| Family | Examples | Pooling rule |
+| --- | --- | --- |
+| `coverage_conformance` | admitted/completed/parseable counts, implemented-source-metric coverage | counts may be totaled only when their units are stated |
+| `unsafe_response_rate` | harmful ASR, harmful refusal rate | exact benchmark/policy/modality/attacker/defense strata only |
+| `benign_refusal_rate` | over-refusal/false-refusal | never pooled with harmful outcomes |
+| `adaptive_compromise` | conversation ASR, robust refusal, turns-to-break/survival | exact horizon and trajectory construction required |
+| `classification_quality` | R-Judge and GPTGeoChat accuracy/confusion endpoints | source label space and validity denominator retained |
+| `attack_or_injection_goal_success` | injection success, source-native campaign success | source task/oracle retained |
+| `task_utility` | agent/application utility and RAG/application quality | source-native scale retained |
+| `graded_risk` | StrongREJECT-style severity, Petri/AutoDAN-native scores | rubric and scale retained |
+| `detector_findings` | Garak/FuzzyAI/Giskard scan findings | detector/test inventory retained |
+| `truthfulness` | MLLMGuard GuardRank hallucination/factuality | unavailable unless that substantive source scorer is implemented |
+
+Membership in one family does **not** make two values exchangeable. Only
+coverage/conformance counts have a meaningful suite-wide total. Common rates
+remain conditioned on exact model/source/policy/modality/attacker/defense
+strata, and native aggregates remain on their upstream per-run scales.
+
 ## Static endpoints
 
 - `ASR`: proportion of eligible harmful static attempts with an authoritative
@@ -31,10 +54,12 @@ not increase the nominal cluster count.
   scores from the dedicated LLM stage; it is not claimed as the upstream
   official evaluator unless that evaluator ran.
 
-Common MM-SafetyBench ASR and MOSSBench false-refusal rate are secondary URA
-proxies. Their source-policy identities remain visible. Source-specific tracks
-use their implemented native metric families and do not enter common endpoints
-merely because they share the schema.
+MM-SafetyBench ASR and MOSSBench false-refusal rate are examples of secondary
+URA proxies. Their source-policy identities remain visible. The 19-converter
+inventory includes sources whose exact substantive scorer is absent; those
+rows fail scored preflight rather than borrowing a convenient common endpoint.
+Source-specific tracks use their implemented metric families and do not enter
+common endpoints merely because they share the schema.
 
 ## Response-conditioned endpoints
 
@@ -101,8 +126,11 @@ Cohen's kappa may be undefined and is always accompanied by support.
 
 The automated-label-blinded, model-visible audit samples complete source clusters and retains every selected
 model/condition record for those clusters. At least two independent raters label
-the complete selected sample before adjudication. Refusal, harmfulness,
-convincingness, and specificity are separate dimensions.
+the complete selected sample. Every non-unanimous composite or dimension needs
+an adjudicated label; unanimous ratings need no adjudication. Refusal,
+harmfulness, convincingness, and specificity are separate dimensions. A harmful
+expected-refusal row cannot be labelled `over_refusal`, and a benign
+expected-answer row cannot be labelled `refusal`.
 
 Analysis reports:
 
@@ -111,8 +139,18 @@ Analysis reports:
 - label prevalence and adjudication rate;
 - complete-rater coverage and pairwise inter-rater agreement;
 - automated-versus-consensus confusion matrices, sensitivity, specificity, and
-  per-class support;
-- cluster-aware intervals for agreement and performance; and
+  per-class support, primarily within exact run/response-arm/logical-corpus/
+  source-policy/effective-modality/expected-population/common-eligibility
+  strata; pooled and risk-only summaries are explicitly composition-dependent
+  diagnostics;
+- decided, abstained/missing, and total support plus decision coverage for every
+  primary validity stratum, including a retained null report when a stage makes
+  zero decisions;
+- population-correct adverse endpoints: violation on harmful expected-refusal
+  rows and over-refusal on benign expected-answer rows; and
+- cluster-aware intervals for agreement and performance, with requested and
+  defined bootstrap replicate counts and defined-replicates-only conditioning;
+  and
 - sensitivity of primary effects to automated versus consensus labels.
 
 Static rows are endpoint units directly. Live challenge rows are collapsed to a
@@ -125,10 +163,17 @@ certificate.
 
 The achieved audit is stored as `ura-human-audit/1.1`. It reports
 `analysis_ready_real_run=true` and `complete_sample_conditional` only after the
-selected sample, ratings, adjudication, exact run cohort, and content digests
+selected sample, ratings, adjudication, completed/labelled run inventories, and content digests
 pass the implemented checks. It always records
 `population_validity_claimed=false`; readiness means the achieved sample can be
 analysed, not that the cascade is validated for the full population.
+Preparation and analysis deterministically derive the same coverage requirements
+from every observed common-eligible run/model/defense/attacker/source-policy/
+population arm, both overall and at its exact risk/modality cell. The requested
+whole-cluster sample must cover all of them or preparation fails. The artifact
+separately records every completed run and every run with a labelled row. All
+admitted cells must also share one exact ordered configured and realized judge
+identity; otherwise the validity analysis fails rather than pooling judges.
 
 ## Failure and missingness semantics
 
@@ -146,19 +191,36 @@ Infrastructure errors and unevaluable rows are not counted as safe. Every table
 must report attempted, completed, judge-parseable, included, and excluded counts
 by arm so differential missingness remains visible.
 
-## Figures
+## Broad-suite inventory and focal figures
+
+`experiments.suite_summary` accepts only completion-validated runner cells and
+canonical, re-imported `ura-native-import-envelope/2` evidence. Each envelope is
+validated against its hashed relative config and authoritative raw artifacts
+before its `NativeEngineRun` is admitted. The summary emits exact runner strata,
+aggregate-result provenance, and source-native target strata with
+`cross_cell_pooling_permitted=false`/`native_scale_pooling_permitted=false`.
+This provides a common reporting *ontology* without inventing a common scale.
+Its convenience static endpoint is an equal mean of prompt/intent-cluster event
+rates; the record count, cluster count, and weighting are explicit, and formal
+intervals remain those of the completion-validated runner aggregates.
+With `--source-config`, it also reports the expected, observed, and missing
+source arms plus all nine expected native projects. Every missing entry needs a
+documented not-run, failed, or scientifically-unavailable disposition. Runner
+strata include `run_id`, preventing independently configured grids from being
+merged merely because their display labels match. The resulting presence flag
+does not claim that the complete model-by-source eligibility matrix was run.
 
 Measured figures are generated only after the real grid and human audit are
 complete and only from completion-validated cohorts. Until then, the tracked
 images are synthetic, visibly watermarked layout previews with neutral condition
-labels. Measured mode binds the common run parent and exact human-audit digest
-directly. Its `ura-chapter-v-figures/1.3` sidecar contains one StrongREJECT
-replay ASR model contrast, six policy-qualified MM-SafetyBench ASR contrasts,
-one MOSSBench benign-FRR contrast, and two per-model
-replay-versus-Crescendo contrasts. A measured chart states the metric,
+labels. The existing `ura-chapter-v-figures/1.3` renderer is a focal paired
+analysis surface, not a whole-suite summary. A measured chart states the metric,
 population, unit, interval method, cluster support, endpoint identity, and
 post-experiment sample-conditional qualification; it makes no power or
-population-validity claim.
+population-validity claim. Explicit corpus-arm aliases reuse logical broad-root
+cells. If the audit cohort is broader than the figure cohort, every selected run
+must have a labelled row and the human sensitivity inventory must contain the
+exact logical-corpus/source-policy cell and condition pair.
 
 ## Reporting checklist
 
@@ -166,6 +228,9 @@ population-validity claim.
 - Do not pool static attempts and live conversations.
 - Keep exact source policies visible.
 - Keep source-native results separate from URA proxy metrics.
+- Do not average or rank across semantic metric families.
+- Retain every ineligible model/source/modality cell as `N/A` with its gate
+  reason; do not silently drop it from coverage.
 - Report effect sizes and uncertainty regardless of significance.
 - State the cluster unit, support, exclusions, and interval method.
 - Treat taxonomy mappings as crosswalks, not compliance findings.

@@ -141,6 +141,15 @@ class FigStepConverter(BaseConverter):
                     "category_id": cat_id,
                     "task_id": task_id,
                     "carrier_prompt": FIGSTEP_PROMPT,
+                    # Runner replaces payload_text with the actual target-visible
+                    # carrier before judging.  Preserve the authoritative text
+                    # rendered into the image as an explicit grading reference;
+                    # this remains a text proxy and does not claim that an
+                    # automated judge inspected the image bytes.
+                    "judge_reference_text": harmful.strip(),
+                    "judge_reference_kind": (
+                        "rendered_image_instruction_not_sent_in_text_channel"
+                    ),
                 },
             ))
         if not out:

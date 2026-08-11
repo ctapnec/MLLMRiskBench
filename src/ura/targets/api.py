@@ -8,7 +8,8 @@ Concrete :class:`~ura.targets.base.BaseTarget` implementations:
 * :class:`AnthropicTarget`, :class:`OpenAITarget`, :class:`GeminiTarget` - thin
   gateways over the hosted SDKs. Each lazily imports its SDK, reads its API key
   from the environment, converts :class:`~ura.data_models.DialogTurn` histories
-  (including image :class:`~ura.data_models.MediaRef`) into the provider format,
+  (including supported physical :class:`~ura.data_models.MediaRef` inputs) into
+  the provider format,
   calls the API, and maps the reply back onto :class:`~ura.data_models.Response`.
 
 Only pydantic + the standard library are imported at module load time; every
@@ -21,6 +22,7 @@ import binascii
 import hashlib
 import hmac
 import json
+import math
 import mimetypes
 import os
 import time
@@ -67,6 +69,88 @@ _MOCK_REFUSAL_CUES: tuple[str, ...] = (
     "can't assist",
     "must decline",
 )
+
+
+# Capabilities below describe what this adapter actually serializes, capped by
+# the named model's documented inputs. Unknown/account-private IDs default to
+# text rather than inheriting a provider-wide vision claim. This keeps a broad
+# roster honest: an image/video cell is admitted only for an exact attested ID.
+_PROVIDER_ALIASES = {
+    "claude": "anthropic",
+    "gpt": "openai",
+    "gemini": "google",
+    "zhipu": "glm",
+    "moonshot": "kimi",
+    "dashscope": "qwen",
+    "alibaba": "qwen",
+    "bytedance": "doubao",
+}
+_MODEL_ADAPTER_MODALITIES: dict[tuple[str, str], tuple[str, ...]] = {
+    ("anthropic", "claude-opus-5"): ("text", "image"),
+    ("anthropic", "claude-sonnet-5"): ("text", "image"),
+    ("anthropic", "claude-fable-5"): ("text", "image"),
+    ("anthropic", "claude-haiku-4-5-20251001"): ("text", "image"),
+    ("openai", "gpt-5.6-sol"): ("text", "image"),
+    ("openai", "gpt-5.6-terra"): ("text", "image"),
+    ("openai", "gpt-5.6-luna"): ("text", "image"),
+    ("openai", "gpt-5.1-2025-11-13"): ("text", "image"),
+    ("openai", "gpt-5-mini-2025-08-07"): ("text", "image"),
+    ("openai", "gpt-4.1-2025-04-14"): ("text", "image"),
+    # Gemini supports richer inputs and this adapter now emits all three
+    # physical-media part types. Keep aliases explicit so preview drift cannot
+    # silently change the experiment.
+    ("google", "gemini-3.1-pro-preview"): ("text", "image", "audio", "video"),
+    ("google", "gemini-3.6-flash"): ("text", "image", "audio", "video"),
+    ("google", "gemini-3.5-flash"): ("text", "image", "audio", "video"),
+    ("google", "gemini-3.5-flash-lite"): ("text", "image", "audio", "video"),
+    ("deepseek", "deepseek-v4-pro"): ("text",),
+    ("deepseek", "deepseek-v4-flash"): ("text",),
+    ("glm", "glm-5.2"): ("text",),
+    ("glm", "glm-5.1"): ("text",),
+    ("kimi", "kimi-k3"): ("text", "image"),
+    ("qwen", "qwen3.7-max-2026-06-08"): ("text", "image"),
+    ("qwen", "qwen3.7-plus"): ("text", "image"),
+}
+
+
+def _adapter_modalities(provider: str, model: str) -> tuple[str, ...]:
+    canonical = _PROVIDER_ALIASES.get(provider.lower(), provider.lower())
+    return _MODEL_ADAPTER_MODALITIES.get((canonical, model), ("text",))
+
+
+def _validated_modalities(value: Iterable[str]) -> tuple[str, ...]:
+    modalities = tuple(value)
+    allowed = {"text", "image", "audio", "video"}
+    if (
+        not modalities
+        or modalities[0] != "text"
+        or set(modalities) - allowed
+        or len(set(modalities)) != len(modalities)
+    ):
+        raise ValueError("target modalities require unique text[/image/audio/video]")
+    return modalities
+
+
+def _provider_serialized_modalities(provider: str) -> frozenset[str]:
+    """Return physical inputs that the selected provider adapter can encode."""
+
+    canonical = _PROVIDER_ALIASES.get(provider.lower(), provider.lower())
+    if canonical == "google":
+        return frozenset({"text", "image", "audio", "video"})
+    return frozenset({"text", "image"})
+
+
+def _validated_provider_modalities(
+    provider: str, value: Iterable[str]
+) -> tuple[str, ...]:
+    modalities = _validated_modalities(value)
+    unsupported = set(modalities) - _provider_serialized_modalities(provider)
+    if unsupported:
+        raise ValueError(
+            f"{provider} adapter cannot serialize declared modalities: "
+            + ",".join(sorted(unsupported))
+        )
+    return modalities
 
 
 class OpenAIResponsesOutputError(RuntimeError):
@@ -454,14 +538,20 @@ def _encode_media(
     allowed_roots: Optional[Iterable[str | Path]] = None,
     max_bytes: int = _MAX_MEDIA_BYTES,
 ) -> tuple[str, str, Optional[str]]:
-    """Return ``(mime, base64_data_or_empty, url_or_none)`` for an image ref.
+    """Return ``(mime, base64_data_or_empty, url_or_none)`` for physical media.
 
     Local reads are hash-verified and constrained to an explicit root allow-list.
     Inline ``data:`` URIs are decoded and hash-verified. Remote references must
     use HTTPS and contain no embedded credentials.
     """
-    if media.modality != "image":
-        raise ValueError(f"image target cannot encode {media.modality!r} media")
+    if media.modality not in {"image", "audio", "video"}:
+        raise ValueError(f"target cannot encode {media.modality!r} media")
+    mime_prefix = f"{media.modality}/"
+    default_mime = {
+        "image": "image/png",
+        "audio": "audio/wav",
+        "video": "video/mp4",
+    }[media.modality]
     if bool(media.path) == bool(media.uri):
         raise ValueError("MediaRef must contain exactly one of path or uri")
     if media.path:
@@ -477,9 +567,11 @@ def _encode_media(
             raise ValueError(f"media exceeds {max_bytes} byte limit: {path}")
         raw = path.read_bytes()
         _verify_hash(raw, media.sha256, str(path))
-        mime = media.mime or mimetypes.guess_type(str(path))[0] or "image/png"
-        if not mime.startswith("image/"):
-            raise ValueError(f"unsupported image MIME type {mime!r}: {path}")
+        mime = media.mime or mimetypes.guess_type(str(path))[0] or default_mime
+        if not mime.startswith(mime_prefix):
+            raise ValueError(
+                f"unsupported {media.modality} MIME type {mime!r}: {path}"
+            )
         data = base64.b64encode(raw).decode("ascii")
         return mime, data, None
     if media.uri:
@@ -490,17 +582,21 @@ def _encode_media(
                 raise ValueError(
                     f"inline media MIME mismatch: declared {media.mime!r}, URI {mime!r}"
                 )
-            if not mime.startswith("image/"):
-                raise ValueError(f"unsupported inline image MIME type {mime!r}")
+            if not mime.startswith(mime_prefix):
+                raise ValueError(
+                    f"unsupported inline {media.modality} MIME type {mime!r}"
+                )
             return mime, base64.b64encode(raw).decode("ascii"), None
         parsed = urlsplit(media.uri)
         if parsed.scheme.lower() != "https" or not parsed.hostname:
             raise ValueError("remote media URI must be an absolute HTTPS URL")
         if parsed.username is not None or parsed.password is not None:
             raise ValueError("remote media URI must not contain credentials")
-        mime = media.mime or mimetypes.guess_type(parsed.path)[0] or "image/png"
-        if not mime.startswith("image/"):
-            raise ValueError(f"unsupported remote image MIME type {mime!r}")
+        mime = media.mime or mimetypes.guess_type(parsed.path)[0] or default_mime
+        if not mime.startswith(mime_prefix):
+            raise ValueError(
+                f"unsupported remote {media.modality} MIME type {mime!r}"
+            )
         return mime, "", media.uri
     raise ValueError("MediaRef has neither path nor uri to encode")
 
@@ -634,17 +730,20 @@ class AnthropicTarget(BaseTarget):
         max_tokens: int = 1024,
         *,
         requested_spec: Optional[str] = None,
-        temperature: float = 0.0,
+        temperature: float | None = 0.0,
         timeout: float = 120.0,
         max_retries: int = 2,
         media_roots: Optional[Iterable[str | Path]] = None,
+        modality_support: Optional[Iterable[str]] = None,
+        adaptive_thinking: bool = False,
+        effort: str | None = None,
     ) -> None:
         self.model = model
         self.provider = "anthropic"
         self.requested_spec = requested_spec or f"anthropic:{model}"
         self.name = self.requested_spec
         self.max_tokens = max_tokens
-        self.temperature = float(temperature)
+        self.temperature = None if temperature is None else float(temperature)
         self.timeout = float(timeout)
         self.max_retries = int(max_retries)
         # SDK retries are opaque to the harness budget and provenance. Disable
@@ -652,6 +751,29 @@ class AnthropicTarget(BaseTarget):
         self.sdk_max_retries = 0
         self.max_transport_attempts_per_call = self.max_retries + 1
         self.media_roots = _media_roots(media_roots)
+        self.modality_support = _validated_provider_modalities(
+            "anthropic",
+            modality_support or _adapter_modalities("anthropic", model)
+        )
+        self.modality_combinations = tuple(
+            [("text",)]
+            + [
+                ("text", modality)
+                for modality in ("image", "audio", "video")
+                if modality in self.modality_support
+            ]
+        )
+        self.accepts_provider_thinking = bool(adaptive_thinking)
+        self.adaptive_thinking = bool(adaptive_thinking)
+        if effort is not None and effort not in {
+            "low", "medium", "high", "xhigh", "max"
+        }:
+            raise ValueError("Anthropic effort must be low/medium/high/xhigh/max")
+        if effort is not None and not self.adaptive_thinking:
+            raise ValueError("Anthropic effort requires adaptive thinking")
+        if self.adaptive_thinking and self.temperature is not None:
+            raise ValueError("Anthropic adaptive thinking requires omitted temperature")
+        self.effort = effort
         self._client = None
 
     def _get_client(self):
@@ -722,6 +844,10 @@ class AnthropicTarget(BaseTarget):
                     raise ValueError(
                         f"AnthropicTarget cannot render {media.modality!r} media"
                     )
+                if "image" not in self.modality_support:
+                    raise ValueError(
+                        f"Anthropic model {self.model!r} is not attested for image input"
+                    )
                 mime, data, url = _encode_media(
                     media, allowed_roots=self.media_roots
                 )
@@ -753,9 +879,13 @@ class AnthropicTarget(BaseTarget):
         kwargs: dict[str, Any] = {
             "model": self.model,
             "max_tokens": self.max_tokens,
-            "temperature": self.temperature,
             "messages": messages,
         }
+        if self.temperature is not None:
+            kwargs["temperature"] = self.temperature
+        if self.adaptive_thinking:
+            kwargs["thinking"] = {"type": "adaptive"}
+            kwargs["output_config"] = {"effort": self.effort or "high"}
         if system:
             kwargs["system"] = system
 
@@ -785,27 +915,56 @@ class AnthropicTarget(BaseTarget):
         content = _provider_field(resp, "content")
         if not isinstance(content, (list, tuple)):
             raise AnthropicOutputError("Anthropic response content is not a block list")
-        unsupported = [
-            _provider_field(block, "type")
-            for block in content
-            if _provider_field(block, "type") != "text"
-        ]
-        if unsupported:
-            raise AnthropicOutputError(
-                "Anthropic returned unsupported content blocks while tools and "
-                f"thinking were disabled: {unsupported!r}"
-            )
-        text_parts = [_provider_field(block, "text") for block in content]
-        if any(not isinstance(part, str) for part in text_parts):
-            raise AnthropicOutputError("Anthropic text block lacks string text")
+        text_parts: list[str] = []
+        thinking_blocks: list[dict[str, Any]] = []
+        saw_text = False
+        for block in content:
+            block_type = _provider_field(block, "type")
+            if block_type == "text":
+                part = _provider_field(block, "text")
+                if not isinstance(part, str):
+                    raise AnthropicOutputError(
+                        "Anthropic text block lacks string text"
+                    )
+                saw_text = True
+                text_parts.append(part)
+                continue
+            if not self.adaptive_thinking or block_type not in {
+                "thinking", "redacted_thinking"
+            }:
+                raise AnthropicOutputError(
+                    "Anthropic returned unsupported content block "
+                    f"{block_type!r} for this execution condition"
+                )
+            if saw_text:
+                raise AnthropicOutputError(
+                    "Anthropic returned thinking after visible text"
+                )
+            if block_type == "thinking":
+                thinking_blocks.append({
+                    "type": "thinking",
+                    "thinking": _provider_field(block, "thinking"),
+                    "signature": _provider_field(block, "signature"),
+                })
+            else:
+                thinking_blocks.append({
+                    "type": "redacted_thinking",
+                    "data": _provider_field(block, "data"),
+                })
+        if thinking_blocks:
+            try:
+                thinking_blocks = _validated_anthropic_thinking_blocks(
+                    thinking_blocks
+                )
+            except ValueError as exc:
+                raise AnthropicOutputError(str(exc)) from exc
         text = "".join(text_parts)
         stop_reason = _provider_field(resp, "stop_reason")
         provider_refusal = stop_reason == "refusal"
         if provider_refusal:
-            if text.strip():
-                raise AnthropicOutputError(
-                    "Anthropic typed refusal contained visible partial output"
-                )
+            # Anthropic documents typed refusals both before and during a
+            # generation. Partial text/thinking is not a model answer and must
+            # be discarded rather than turning the refusal into a failed cell.
             output_turns: list[DialogTurn] = []
         else:
             if stop_reason != "end_turn":
@@ -817,7 +976,11 @@ class AnthropicTarget(BaseTarget):
                 raise AnthropicOutputError(
                     "Anthropic end_turn response contained no visible text"
                 )
-            output_turns = [DialogTurn(role="assistant", content=text)]
+            output_turns = [DialogTurn(
+                role="assistant",
+                content=text,
+                provider_thinking=thinking_blocks,
+            )]
         if _provider_field(resp, "stop_sequence") is not None:
             raise AnthropicOutputError(
                 "Anthropic named a stop sequence although none was requested"
@@ -861,12 +1024,26 @@ class AnthropicTarget(BaseTarget):
                     "anthropic_stop_reason_refusal" if provider_refusal else None
                 ),
                 "provider_refusal_reason": None,
+                "discarded_partial_text_blocks": (
+                    len(text_parts) if provider_refusal else 0
+                ),
+                "discarded_partial_thinking_blocks": (
+                    len(thinking_blocks) if provider_refusal else 0
+                ),
                 "transport_attempt_count": len(transport_attempts),
                 "transport_attempts": transport_attempts,
                 "generation": {
-                    "temperature": self.temperature,
+                    "temperature": (
+                        self.temperature
+                        if self.temperature is not None
+                        else "omitted"
+                    ),
                     "max_tokens": self.max_tokens,
                     "max_retries": self.max_retries,
+                    "thinking": (
+                        "adaptive" if self.adaptive_thinking else "disabled"
+                    ),
+                    "effort": self.effort,
                 },
             },
         )
@@ -916,6 +1093,7 @@ class AnthropicFableTarget(AnthropicTarget):
         # Fable rejects non-default sampling parameters.  ``None`` documents
         # omission in the component snapshot; generate() never sends it.
         self.temperature = None
+        self.accepts_provider_thinking = True
         self.effort = self.EFFORT
         self.thinking_type = self.THINKING_TYPE
         self.sdk_max_retries = 0
@@ -1288,18 +1466,19 @@ class OpenAITarget(BaseTarget):
         *,
         provider: str = "openai",
         requested_spec: Optional[str] = None,
-        temperature: float = 0.0,
+        temperature: float | None = 0.0,
         timeout: float = 120.0,
         max_retries: int = 2,
         media_roots: Optional[Iterable[str | Path]] = None,
         supports_seed: bool = True,
+        modality_support: Optional[Iterable[str]] = None,
     ) -> None:
         self.model = model
         self.provider = provider
         self.requested_spec = requested_spec or f"{provider}:{model}"
         self.name = self.requested_spec
         self.max_tokens = max_tokens
-        self.temperature = float(temperature)
+        self.temperature = None if temperature is None else float(temperature)
         self.timeout = float(timeout)
         self.max_retries = int(max_retries)
         # Keep the SDK at one HTTP attempt; the wrapper below owns retries and
@@ -1308,6 +1487,18 @@ class OpenAITarget(BaseTarget):
         self.max_transport_attempts_per_call = self.max_retries + 1
         self.media_roots = _media_roots(media_roots)
         self.supports_seed = bool(supports_seed)
+        self.modality_support = _validated_provider_modalities(
+            provider,
+            modality_support or _adapter_modalities(provider, model)
+        )
+        self.modality_combinations = tuple(
+            [("text",)]
+            + [
+                ("text", modality)
+                for modality in ("image", "audio", "video")
+                if modality in self.modality_support
+            ]
+        )
         self._client = None
 
     def _get_client(self):
@@ -1348,6 +1539,10 @@ class OpenAITarget(BaseTarget):
                     raise ValueError(
                         f"OpenAITarget cannot render {media.modality!r} media"
                     )
+                if "image" not in self.modality_support:
+                    raise ValueError(
+                        f"model {self.model!r} is not attested for image input"
+                    )
                 mime, data, url = _encode_media(
                     media, allowed_roots=self.media_roots
                 )
@@ -1371,8 +1566,9 @@ class OpenAITarget(BaseTarget):
             "model": self.model,
             "messages": messages,
             token_key: self.max_tokens,
-            "temperature": self.temperature,
         }
+        if self.temperature is not None:
+            request["temperature"] = self.temperature
         if seed is not None and self.supports_seed:
             request["seed"] = int(seed)
         start = time.perf_counter()
@@ -1497,7 +1693,11 @@ class OpenAITarget(BaseTarget):
                 "transport_attempts": transport_attempts,
                 "generation": {
                     "max_tokens": self.max_tokens,
-                    "temperature": self.temperature,
+                    "temperature": (
+                        self.temperature
+                        if self.temperature is not None
+                        else "omitted"
+                    ),
                     "seed": seed if self.supports_seed else None,
                     "max_retries": self.max_retries,
                 },
@@ -2115,11 +2315,12 @@ class OpenAICompatibleTarget(OpenAITarget):
         *,
         provider: str = "openai-compatible",
         requested_spec: Optional[str] = None,
-        temperature: float = 0.0,
+        temperature: float | None = 0.0,
         timeout: float = 120.0,
         max_retries: int = 2,
         media_roots: Optional[Iterable[str | Path]] = None,
         supports_seed: bool = False,
+        modality_support: Optional[Iterable[str]] = None,
     ) -> None:
         super().__init__(
             model,
@@ -2131,6 +2332,9 @@ class OpenAICompatibleTarget(OpenAITarget):
             max_retries=max_retries,
             media_roots=media_roots,
             supports_seed=supports_seed,
+            modality_support=(
+                modality_support or _adapter_modalities(provider, model)
+            ),
         )
         self.base_url = base_url
         self.key_env = key_env
@@ -2165,23 +2369,36 @@ class GeminiTarget(BaseTarget):
         *,
         requested_spec: Optional[str] = None,
         max_tokens: int = 1024,
-        temperature: float = 0.0,
+        temperature: float | None = 0.0,
         timeout: float = 120.0,
         max_retries: int = 2,
         media_roots: Optional[Iterable[str | Path]] = None,
         supports_seed: bool = False,
+        modality_support: Optional[Iterable[str]] = None,
     ) -> None:
         self.model = model
         self.provider = "google"
         self.requested_spec = requested_spec or f"google:{model}"
         self.name = self.requested_spec
         self.max_tokens = int(max_tokens)
-        self.temperature = float(temperature)
+        self.temperature = None if temperature is None else float(temperature)
         self.timeout = float(timeout)
         self.max_retries = int(max_retries)
         self.max_transport_attempts_per_call = self.max_retries + 1
         self.media_roots = _media_roots(media_roots)
         self.supports_seed = bool(supports_seed)
+        self.modality_support = _validated_provider_modalities(
+            "google",
+            modality_support or _adapter_modalities("google", model)
+        )
+        self.modality_combinations = tuple(
+            [("text",)]
+            + [
+                ("text", modality)
+                for modality in ("image", "audio", "video")
+                if modality in self.modality_support
+            ]
+        )
         self._client = None
 
     def _get_client(self):
@@ -2236,9 +2453,14 @@ class GeminiTarget(BaseTarget):
                 {"text": text} for text in _recorded_trace_text(turn)
             )
             for media in turn.media:
-                if media.modality != "image":
+                if media.modality not in {"image", "audio", "video"}:
                     raise ValueError(
                         f"GeminiTarget cannot render {media.modality!r} media"
+                    )
+                if media.modality not in self.modality_support:
+                    raise ValueError(
+                        f"Gemini model {self.model!r} is not attested for "
+                        f"{media.modality!r} input"
                     )
                 mime, data, url = _encode_media(
                     media, allowed_roots=self.media_roots
@@ -2266,8 +2488,9 @@ class GeminiTarget(BaseTarget):
         system, contents = self._to_contents(dialog)
         config: dict[str, Any] = {
             "max_output_tokens": self.max_tokens,
-            "temperature": self.temperature,
         }
+        if self.temperature is not None:
+            config["temperature"] = self.temperature
         if system:
             config["system_instruction"] = system
         if seed is not None and self.supports_seed:
@@ -2445,7 +2668,11 @@ class GeminiTarget(BaseTarget):
                 "transport_attempts": transport_attempts,
                 "generation": {
                     "max_tokens": self.max_tokens,
-                    "temperature": self.temperature,
+                    "temperature": (
+                        self.temperature
+                        if self.temperature is not None
+                        else "omitted"
+                    ),
                     "seed": seed if self.supports_seed else None,
                     "max_retries": self.max_retries,
                 },
@@ -2513,8 +2740,8 @@ _COMPAT: dict[str, tuple[str, str]] = {
     "deepseek": ("https://api.deepseek.com", "DEEPSEEK_API_KEY"),
     "glm": ("https://open.bigmodel.cn/api/paas/v4", "ZHIPU_API_KEY"),
     "zhipu": ("https://open.bigmodel.cn/api/paas/v4", "ZHIPU_API_KEY"),
-    "kimi": ("https://api.moonshot.cn/v1", "MOONSHOT_API_KEY"),
-    "moonshot": ("https://api.moonshot.cn/v1", "MOONSHOT_API_KEY"),
+    "kimi": ("https://api.moonshot.ai/v1", "MOONSHOT_API_KEY"),
+    "moonshot": ("https://api.moonshot.ai/v1", "MOONSHOT_API_KEY"),
     "qwen": ("https://dashscope.aliyuncs.com/compatible-mode/v1", "DASHSCOPE_API_KEY"),
     "dashscope": ("https://dashscope.aliyuncs.com/compatible-mode/v1", "DASHSCOPE_API_KEY"),
     "alibaba": ("https://dashscope.aliyuncs.com/compatible-mode/v1", "DASHSCOPE_API_KEY"),
@@ -2542,6 +2769,204 @@ _PROVIDERS = {
     "openai": OpenAITarget, "gpt": OpenAITarget,
     "google": GeminiTarget, "gemini": GeminiTarget,
 }
+
+_COMPAT_ENDPOINT_ENV = {
+    "deepseek": "URA_DEEPSEEK_BASE_URL",
+    "glm": "URA_GLM_BASE_URL",
+    "zhipu": "URA_GLM_BASE_URL",
+    "kimi": "URA_KIMI_BASE_URL",
+    "moonshot": "URA_KIMI_BASE_URL",
+    "qwen": "URA_QWEN_BASE_URL",
+    "dashscope": "URA_QWEN_BASE_URL",
+    "alibaba": "URA_QWEN_BASE_URL",
+    "doubao": "URA_DOUBAO_BASE_URL",
+    "bytedance": "URA_DOUBAO_BASE_URL",
+}
+
+
+def _validated_https_base_url(value: str, *, source: str) -> str:
+    """Validate one non-secret provider endpoint for safe manifest persistence."""
+
+    parsed = urlsplit(value)
+    if (
+        parsed.scheme != "https"
+        or not parsed.hostname
+        or parsed.username is not None
+        or parsed.password is not None
+        or parsed.query
+        or parsed.fragment
+    ):
+        raise ValueError(
+            f"{source} must be a credential-free HTTPS base URL"
+        )
+    return value.rstrip("/")
+
+
+def _compat_endpoint(provider: str, default: str) -> str:
+    """Resolve a region/account endpoint without accepting credential-bearing URLs."""
+
+    configured = os.environ.get(_COMPAT_ENDPOINT_ENV[provider], "").strip()
+    return _validated_https_base_url(
+        configured or default,
+        source=_COMPAT_ENDPOINT_ENV[provider],
+    )
+
+
+def api_target_requires_config(spec: str) -> bool:
+    """Whether a measured target needs an explicit exact-spec API condition."""
+
+    if spec in {_ANTHROPIC_FABLE_SPEC, _OPENAI_SOL_PRO_SPEC, _ANTHROPIC_FABLE_MODEL}:
+        return False
+    if ":" in spec:
+        return True
+    registered_generic = {
+        *_ANTHROPIC_DEFAULTS,
+        *_OPENAI_DEFAULTS,
+        *_GEMINI_DEFAULTS,
+        *(
+            model
+            for models in _COMPAT_DEFAULTS.values()
+            for model in models
+        ),
+    }
+    return spec in registered_generic
+
+
+def normalize_api_target_config(
+    spec: str, config: dict[str, object]
+) -> dict[str, object]:
+    """Validate and canonicalize one measured generic API target condition.
+
+    Credentials are deliberately absent. The returned object is safe to persist
+    verbatim in the grid request and is also the exact constructor input.
+    """
+
+    if not api_target_requires_config(spec):
+        raise ValueError(f"API target {spec!r} uses inherent config or is unregistered")
+    allowed = {
+        "modalities", "base_url", "max_tokens", "temperature",
+        "thinking", "effort",
+    }
+    if set(config) - allowed:
+        raise ValueError(f"API config {spec!r} contains unsupported execution fields")
+    missing = {"modalities", "max_tokens", "temperature"} - set(config)
+    if missing:
+        raise ValueError(
+            f"API config {spec!r} is missing: " + ", ".join(sorted(missing))
+        )
+
+    if ":" in spec:
+        provider, _model = spec.split(":", 1)
+        provider = provider.lower().strip()
+    elif spec in _ANTHROPIC_DEFAULTS:
+        provider = "anthropic"
+    elif spec in _OPENAI_DEFAULTS:
+        provider = "openai"
+    elif spec in _GEMINI_DEFAULTS:
+        provider = "google"
+    else:
+        provider = next(
+            name for name, models in _COMPAT_DEFAULTS.items() if spec in models
+        )
+    canonical_provider = _PROVIDER_ALIASES.get(provider, provider)
+    known_native = {"anthropic", "openai", "google"}
+    if canonical_provider not in known_native and provider not in _COMPAT:
+        raise ValueError(f"unknown API provider {provider!r} in {spec!r}")
+
+    raw_modalities = config["modalities"]
+    if not isinstance(raw_modalities, list) or any(
+        not isinstance(item, str) for item in raw_modalities
+    ):
+        raise ValueError(
+            f"API config {spec!r} modalities must be a JSON string list"
+        )
+    modalities = _validated_provider_modalities(provider, raw_modalities)
+    selected_model = spec.split(":", 1)[-1] if ":" in spec else spec
+    documented_modalities = _MODEL_ADAPTER_MODALITIES.get(
+        (canonical_provider, selected_model)
+    )
+    if documented_modalities is not None:
+        overstated = set(modalities) - set(documented_modalities)
+        if overstated:
+            raise ValueError(
+                f"API config {spec!r} overstates the implemented/documented model "
+                "modalities: " + ",".join(sorted(overstated))
+            )
+
+    max_tokens = config["max_tokens"]
+    if (
+        isinstance(max_tokens, bool)
+        or not isinstance(max_tokens, int)
+        or not 1 <= max_tokens <= 25_000
+    ):
+        raise ValueError(
+            f"API config {spec!r} max_tokens must be an integer in 1..25000"
+        )
+    temperature = config["temperature"]
+    if temperature is not None and (
+        isinstance(temperature, bool)
+        or not isinstance(temperature, (int, float))
+        or not math.isfinite(float(temperature))
+        or not 0.0 <= float(temperature) <= 2.0
+    ):
+        raise ValueError(
+            f"API config {spec!r} temperature must be null or finite in [0, 2]"
+        )
+    thinking = config.get("thinking")
+    effort = config.get("effort")
+    if thinking is not None and thinking != "adaptive":
+        raise ValueError(
+            f"API config {spec!r} thinking must be omitted or 'adaptive'"
+        )
+    if effort is not None and effort not in {
+        "low", "medium", "high", "xhigh", "max"
+    }:
+        raise ValueError(
+            f"API config {spec!r} effort must be low/medium/high/xhigh/max"
+        )
+    if (thinking is not None or effort is not None) and canonical_provider != "anthropic":
+        raise ValueError(
+            f"API config {spec!r} thinking/effort are Anthropic-only"
+        )
+    adaptive_default_models = {"claude-opus-5", "claude-sonnet-5"}
+    if selected_model in adaptive_default_models:
+        if thinking != "adaptive" or effort is None or temperature is not None:
+            raise ValueError(
+                f"API config {spec!r} requires thinking='adaptive', explicit "
+                "effort, and temperature=null"
+            )
+    elif thinking is not None or effort is not None:
+        raise ValueError(
+            f"API config {spec!r} does not have an implemented adaptive-thinking "
+            "contract"
+        )
+
+    normalized: dict[str, object] = {
+        "modalities": list(modalities),
+        "max_tokens": max_tokens,
+        "temperature": None if temperature is None else float(temperature),
+    }
+    if thinking is not None:
+        normalized["thinking"] = thinking
+        normalized["effort"] = effort
+    configured_url = config.get("base_url")
+    if provider in _COMPAT:
+        default_url, _key = _COMPAT[provider]
+        if configured_url is not None and not isinstance(configured_url, str):
+            raise ValueError(f"API config {spec!r} base_url must be a string")
+        normalized["base_url"] = (
+            _validated_https_base_url(
+                configured_url,
+                source=f"API config {spec!r} base_url",
+            )
+            if isinstance(configured_url, str)
+            else _compat_endpoint(provider, default_url)
+        )
+    elif configured_url is not None:
+        raise ValueError(
+            f"API config {spec!r} base_url is allowed only for compatible providers"
+        )
+    return normalized
 
 
 def preflight_api_target_runtime(target: BaseTarget) -> dict[str, str] | None:
@@ -2583,7 +3008,9 @@ def preflight_api_target_runtime(target: BaseTarget) -> dict[str, str] | None:
     }
 
 
-def build_api_target(spec: str) -> BaseTarget:
+def build_api_target(
+    spec: str, *, config: dict[str, object] | None = None
+) -> BaseTarget:
     """Build a hosted target from ``"<provider>:<model>"`` or a bare registered id.
 
     Native providers: anthropic/claude, openai/gpt, google/gemini. OpenAI-compatible
@@ -2592,6 +3019,17 @@ def build_api_target(spec: str) -> BaseTarget:
     ``"qwen:<account-visible-id>"``. Bare IDs are limited to the conservative
     registry above.
     """
+    normalized = (
+        normalize_api_target_config(spec, config) if config is not None else None
+    )
+    constructor_kwargs: dict[str, Any] = {}
+    if normalized is not None:
+        constructor_kwargs = {
+            "max_tokens": normalized["max_tokens"],
+            "temperature": normalized["temperature"],
+            "modality_support": normalized["modalities"],
+        }
+
     if ":" in spec:
         provider, model = spec.split(":", 1)
         provider = provider.lower()
@@ -2620,17 +3058,63 @@ def build_api_target(spec: str) -> BaseTarget:
                     "temperature parameter; use the canonical spec "
                     f"{_ANTHROPIC_FABLE_SPEC!r}"
                 )
-            return AnthropicTarget(model, requested_spec=spec)
+            return AnthropicTarget(
+                model,
+                requested_spec=spec,
+                adaptive_thinking=(
+                    normalized is not None
+                    and normalized.get("thinking") == "adaptive"
+                ),
+                effort=(str(normalized["effort"]) if normalized is not None
+                        and normalized.get("effort") is not None else None),
+                **constructor_kwargs,
+            )
         if provider in {"openai", "gpt"}:
-            return OpenAITarget(model, requested_spec=spec)
+            return OpenAITarget(model, requested_spec=spec, **constructor_kwargs)
         if provider in {"google", "gemini"}:
-            return GeminiTarget(model, requested_spec=spec)
+            return GeminiTarget(model, requested_spec=spec, **constructor_kwargs)
         if provider in _COMPAT:
             url, key = _COMPAT[provider]
             return OpenAICompatibleTarget(
-                model, url, key, provider=provider, requested_spec=spec
+                model,
+                str(normalized["base_url"]) if normalized else _compat_endpoint(
+                    provider, url
+                ),
+                key,
+                provider=provider,
+                requested_spec=spec,
+                **constructor_kwargs,
             )
         raise KeyError(f"unknown API provider '{provider}' in '{spec}'")
+    if normalized is not None:
+        if spec in _ANTHROPIC_DEFAULTS:
+            return AnthropicTarget(
+                spec,
+                requested_spec=f"anthropic:{spec}",
+                adaptive_thinking=(normalized.get("thinking") == "adaptive"),
+                effort=(str(normalized["effort"])
+                        if normalized.get("effort") is not None else None),
+                **constructor_kwargs,
+            )
+        if spec in _OPENAI_DEFAULTS:
+            return OpenAITarget(
+                spec, requested_spec=f"openai:{spec}", **constructor_kwargs
+            )
+        if spec in _GEMINI_DEFAULTS:
+            return GeminiTarget(
+                spec, requested_spec=f"google:{spec}", **constructor_kwargs
+            )
+        for provider, models in _COMPAT_DEFAULTS.items():
+            if spec in models:
+                _url, key = _COMPAT[provider]
+                return OpenAICompatibleTarget(
+                    spec,
+                    str(normalized["base_url"]),
+                    key,
+                    provider=provider,
+                    requested_spec=f"{provider}:{spec}",
+                    **constructor_kwargs,
+                )
     return REGISTRY.create(spec)
 
 
@@ -2645,6 +3129,8 @@ __all__ = [
     "ProviderTransportError",
     "OpenAICompatibleTarget",
     "GeminiTarget",
+    "api_target_requires_config",
+    "normalize_api_target_config",
     "preflight_api_target_runtime",
     "build_api_target",
 ]

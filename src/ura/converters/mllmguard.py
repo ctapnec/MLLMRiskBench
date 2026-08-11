@@ -110,6 +110,32 @@ class MLLMGuardConverter(BaseConverter):
                 attack_family = "multimodal_harm"
 
             rid = rec.get("id") or (Path(str(img_name)).stem if img_name else i)
+            meta = {
+                "language": lan,
+                "jailbreak_type": jb,
+                "category_1": cat1 or None,
+                "category_2": cat2,
+                "dimension": dim or None,
+                "source_cluster_id": f"mllmguard:{dim or 'x'}:{rid}",
+            }
+            if dim == "hallucination" or split == "hallucination":
+                # Hallucination is a truthfulness construct, not a benign-utility
+                # probe. Treating ``safe_answer`` rows as common-metric eligible
+                # silently turns them into false-refusal observations. Keep the
+                # prompts convertible, but require a substantive source scorer;
+                # the scored Runner preflight then rejects them until one exists.
+                meta.update({
+                    "common_metrics_eligible": False,
+                    "required_metric": "mllmguard_hallucination_truthfulness",
+                    "source_metric_runtime": (
+                        "upstream_GuardRank_RoBERTa-large_hallucination_classifier_"
+                        "with_official_weights"
+                    ),
+                    "source_metric_semantics": (
+                        "GuardRank_hallucination_component_not_false-refusal_rate"
+                    ),
+                    "source_metric_fidelity": "requires_upstream_GuardRank_checkpoint",
+                })
             out.append(dp(
                 id=f"mllmguard:{dim or 'x'}:{rid}",
                 source="mllmguard",
@@ -121,13 +147,7 @@ class MLLMGuardConverter(BaseConverter):
                 media=media,
                 risk_subtype=(str(cat2).strip() if cat2 else (cat1 or None)),
                 attack_family=attack_family,
-                meta={
-                    "language": lan,
-                    "jailbreak_type": jb,
-                    "category_1": cat1 or None,
-                    "category_2": cat2,
-                    "dimension": dim or None,
-                },
+                meta=meta,
             ))
         if not out:
             raise CorpusFormatError(f"MLLMGuard conversion produced no rows from {path}")

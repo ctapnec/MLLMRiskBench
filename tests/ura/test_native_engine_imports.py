@@ -497,6 +497,18 @@ def test_petri_imports_complete_inspect_audit_without_binary_crosswalk(
     assert imported.import_accounting["native_score_coverage"] == 1.0
 
 
+def test_petri_rejects_a_target_that_grades_its_own_output(tmp_path: Path) -> None:
+    with pytest.raises(ValueError, match="target_model and judge_model must differ"):
+        PetriAttacker(target_model="same/model", judge_model="same/model")
+
+    log = _petri_log()
+    log["eval"]["model_roles"]["judge"] = log["eval"]["model_roles"]["target"]
+    path = tmp_path / "petri-self-judged.json"
+    path.write_text(json.dumps(log), encoding="utf-8")
+    with pytest.raises(ExternalEngineOutputError, match="must differ"):
+        PetriAttacker().import_run(path)
+
+
 def test_petri_preserves_explicit_judge_refusal_as_unscored(tmp_path: Path) -> None:
     log = _petri_log()
     score = log["samples"][0]["scores"]["audit_judge"]

@@ -1,0 +1,236 @@
+{
+  "advbench_harmful": {
+    "converter": "advbench",
+    "path_env": "URA_ADVBENCH_HARMFUL_PATH",
+    "source_label": "AdvBench harmful behaviors",
+    "split": "official-full"
+  },
+  "agentharm_harmful": {
+    "converter": "agentharm",
+    "path_env": "URA_AGENTHARM_HARMFUL_PATH",
+    "source_label": "AgentHarm harmful behaviors",
+    "split": "official-evaluation-harmful"
+  },
+  "agentharm_benign": {
+    "converter": "agentharm",
+    "path_env": "URA_AGENTHARM_BENIGN_PATH",
+    "source_label": "AgentHarm benign behaviors",
+    "split": "official-evaluation-benign"
+  },
+  "bipia_test_email": {
+    "converter": "bipia",
+    "path_env": "URA_BIPIA_TEST_EMAIL_PATH",
+    "source_label": "BIPIA email task",
+    "split": "official-test"
+  },
+  "bipia_test_qa": {
+    "converter": "bipia",
+    "path_env": "URA_BIPIA_TEST_QA_PATH",
+    "source_label": "BIPIA question-answering task",
+    "split": "official-test"
+  },
+  "bipia_test_abstract": {
+    "converter": "bipia",
+    "path_env": "URA_BIPIA_TEST_ABSTRACT_PATH",
+    "source_label": "BIPIA abstract task",
+    "split": "official-test"
+  },
+  "bipia_test_table": {
+    "converter": "bipia",
+    "path_env": "URA_BIPIA_TEST_TABLE_PATH",
+    "source_label": "BIPIA table task",
+    "split": "official-test"
+  },
+  "bipia_test_code": {
+    "converter": "bipia",
+    "path_env": "URA_BIPIA_TEST_CODE_PATH",
+    "source_label": "BIPIA code task",
+    "split": "official-test"
+  },
+  "cyberseceval_mitre": {
+    "converter": "cyberseceval",
+    "path_env": "URA_CYBERSECEVAL_MITRE_PATH",
+    "source_label": "CyberSecEval MITRE suite",
+    "split": "official-evaluation"
+  },
+  "cyberseceval_interpreter": {
+    "converter": "cyberseceval",
+    "path_env": "URA_CYBERSECEVAL_INTERPRETER_PATH",
+    "source_label": "CyberSecEval interpreter suite",
+    "split": "official-evaluation"
+  },
+  "cyberseceval_insecure_coding": {
+    "converter": "cyberseceval",
+    "path_env": "URA_CYBERSECEVAL_INSECURE_CODING_PATH",
+    "source_label": "CyberSecEval insecure-coding prompt suite",
+    "split": "official-evaluation"
+  },
+  "cyberseceval_prompt_injection": {
+    "converter": "cyberseceval",
+    "path_env": "URA_CYBERSECEVAL_PROMPT_INJECTION_PATH",
+    "source_label": "CyberSecEval prompt-injection suite",
+    "split": "official-evaluation"
+  },
+  "figstep_full": {
+    "converter": "figstep",
+    "path_env": "URA_FIGSTEP_FULL_PATH",
+    "source_label": "FigStep SafeBench full",
+    "split": "official-full"
+  },
+  "gptgeochat_release": {
+    "converter": "gptgeochat",
+    "path_env": "URA_GPTGEOCHAT_RELEASE_PATH",
+    "source_label": "GPTGeoChat annotated conversations",
+    "split": "official-release"
+  },
+  "harmbench_text": {
+    "converter": "harmbench",
+    "path_env": "URA_HARMBENCH_TEXT_PATH",
+    "source_label": "HarmBench text behaviors",
+    "split": "official-text"
+  },
+  "harmbench_multimodal": {
+    "converter": "harmbench",
+    "path_env": "URA_HARMBENCH_MULTIMODAL_PATH",
+    "source_label": "HarmBench multimodal behaviors",
+    "split": "official-multimodal"
+  },
+  "injecagent_direct_harm_base": {
+    "converter": "injecagent",
+    "path_env": "URA_INJECAGENT_DH_BASE_PATH",
+    "source_label": "InjecAgent direct harm base",
+    "split": "official-test"
+  },
+  "injecagent_direct_harm_enhanced": {
+    "converter": "injecagent",
+    "path_env": "URA_INJECAGENT_DH_ENHANCED_PATH",
+    "source_label": "InjecAgent direct harm enhanced",
+    "split": "official-test"
+  },
+  "injecagent_data_stealing_base": {
+    "converter": "injecagent",
+    "path_env": "URA_INJECAGENT_DS_BASE_PATH",
+    "source_label": "InjecAgent data stealing base",
+    "split": "official-test"
+  },
+  "injecagent_data_stealing_enhanced": {
+    "converter": "injecagent",
+    "path_env": "URA_INJECAGENT_DS_ENHANCED_PATH",
+    "source_label": "InjecAgent data stealing enhanced",
+    "split": "official-test"
+  },
+  "jailbreakbench_harmful": {
+    "converter": "jailbreakbench",
+    "path_env": "URA_JAILBREAKBENCH_HARMFUL_PATH",
+    "source_label": "JBB-Behaviors harmful",
+    "split": "official-harmful"
+  },
+  "jailbreakbench_benign": {
+    "converter": "jailbreakbench",
+    "path_env": "URA_JAILBREAKBENCH_BENIGN_PATH",
+    "source_label": "JBB-Behaviors benign",
+    "split": "official-benign"
+  },
+  "jailbreakv_full": {
+    "converter": "jailbreakv",
+    "path_env": "URA_JAILBREAKV_FULL_PATH",
+    "source_label": "JailBreakV-28K full image release",
+    "split": "official-full"
+  },
+  "jalmbench_audio": {
+    "converter": "jalmbench",
+    "path_env": "URA_JALMBENCH_AUDIO_MANIFEST_PATH",
+    "source_label": "JALMBench audio-bearing export",
+    "split": "official-audio-bearing"
+  },
+  "mllmguard_privacy": {
+    "converter": "mllmguard",
+    "path_env": "URA_MLLMGUARD_PRIVACY_PATH",
+    "source_label": "MLLMGuard privacy",
+    "split": "official-privacy"
+  },
+  "mllmguard_bias": {
+    "converter": "mllmguard",
+    "path_env": "URA_MLLMGUARD_BIAS_PATH",
+    "source_label": "MLLMGuard bias",
+    "split": "official-bias"
+  },
+  "mllmguard_toxicity": {
+    "converter": "mllmguard",
+    "path_env": "URA_MLLMGUARD_TOXICITY_PATH",
+    "source_label": "MLLMGuard toxicity",
+    "split": "official-toxicity"
+  },
+  "mllmguard_hallucination": {
+    "converter": "mllmguard",
+    "path_env": "URA_MLLMGUARD_HALLUCINATION_PATH",
+    "source_label": "MLLMGuard hallucination",
+    "split": "official-hallucination"
+  },
+  "mllmguard_legality": {
+    "converter": "mllmguard",
+    "path_env": "URA_MLLMGUARD_LEGALITY_PATH",
+    "source_label": "MLLMGuard legality",
+    "split": "official-legality"
+  },
+  "mllmguard_position_swapping": {
+    "converter": "mllmguard",
+    "path_env": "URA_MLLMGUARD_POSITION_SWAPPING_PATH",
+    "source_label": "MLLMGuard position swapping",
+    "split": "official-position-swapping"
+  },
+  "mllmguard_noise_injection": {
+    "converter": "mllmguard",
+    "path_env": "URA_MLLMGUARD_NOISE_INJECTION_PATH",
+    "source_label": "MLLMGuard noise injection",
+    "split": "official-noise-injection"
+  },
+  "mmsafety_official": {
+    "converter": "mmsafety",
+    "path_env": "URA_MMSAFETY_OFFICIAL_PATH",
+    "source_label": "MM-SafetyBench all scenarios and image variants",
+    "split": "official-complete"
+  },
+  "mossbench_official": {
+    "converter": "mossbench",
+    "path_env": "URA_MOSSBENCH_OFFICIAL_PATH",
+    "source_label": "MOSSBench complete release",
+    "split": "official-complete"
+  },
+  "rjudge_release": {
+    "converter": "rjudge",
+    "path_env": "URA_RJUDGE_RELEASE_PATH",
+    "source_label": "R-Judge trajectory records",
+    "split": "official-release"
+  },
+  "siuo_release": {
+    "converter": "siuo",
+    "path_env": "URA_SIUO_RELEASE_PATH",
+    "source_label": "SIUO cross-modal safety",
+    "split": "official-release"
+  },
+  "strongreject_official": {
+    "converter": "strongreject",
+    "path_env": "URA_STRONGREJECT_OFFICIAL_PATH",
+    "source_label": "StrongREJECT pinned harmful prompts",
+    "split": "official-complete"
+  },
+  "videosafetybench_benign_query": {
+    "converter": "videosafetybench",
+    "path_env": "URA_VIDEOSAFETYBENCH_BENIGN_QUERY_PATH",
+    "source_label": "Video-SafetyBench benign-query composition",
+    "split": "official-benign-query"
+  },
+  "videosafetybench_harmful_query": {
+    "converter": "videosafetybench",
+    "path_env": "URA_VIDEOSAFETYBENCH_HARMFUL_QUERY_PATH",
+    "source_label": "Video-SafetyBench harmful-query composition",
+    "split": "official-harmful-query"
+  },
+  "vlsbench_release": {
+    "converter": "vlsbench",
+    "path_env": "URA_VLSBENCH_RELEASE_PATH",
+    "source_label": "VLSBench leakage-free image safety",
+    "split": "official-release"
+  }
+}
