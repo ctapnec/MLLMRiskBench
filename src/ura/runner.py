@@ -23,6 +23,7 @@ import json
 import math
 import os
 import platform
+import time
 from dataclasses import replace
 from itertools import islice
 from pathlib import Path
@@ -53,6 +54,53 @@ CheckpointRecord = dict[str, Any]
 CheckpointCallback = Callable[[CheckpointRecord], None]
 
 
+class BudgetExhausted(RuntimeError):
+    """Raised when a process-wide billable ceiling or deadline is reached."""
+
+
+class GlobalCallBudget:
+    """Process-wide billable ceiling shared across all matrix cells.
+
+    Charged at the single paid target site and before the judge cascade, so an
+    exhausted budget stops further billing: the charge raises BEFORE the paid
+    call is made. Uses a monotonic clock so it is immune to wall-clock skew.
+    """
+
+    def __init__(
+        self, *, max_target_calls: Optional[int] = None,
+        deadline_monotonic: Optional[float] = None,
+    ) -> None:
+        self.max_target_calls = max_target_calls
+        self.deadline_monotonic = deadline_monotonic
+        self.target_calls = 0
+        self.judge_calls = 0
+
+    def _check_deadline(self) -> None:
+        if (
+            self.deadline_monotonic is not None
+            and time.monotonic() >= self.deadline_monotonic
+        ):
+            raise BudgetExhausted(
+                f"wall-clock deadline reached after {self.target_calls} target "
+                f"and {self.judge_calls} judge calls"
+            )
+
+    def charge_target(self) -> None:
+        self._check_deadline()
+        if (
+            self.max_target_calls is not None
+            and self.target_calls >= self.max_target_calls
+        ):
+            raise BudgetExhausted(
+                f"global target-call ceiling {self.max_target_calls} reached"
+            )
+        self.target_calls += 1
+
+    def charge_judge(self, count: int) -> None:
+        self._check_deadline()
+        self.judge_calls += count
+
+
 class Runner:
     """Execute an (attacker, target, judge-cascade) triple over a corpus."""
 
@@ -63,11 +111,13 @@ class Runner:
         judge_cascade: JudgeCascade,
         budget: AttackBudget,
         seeds: list[int],
+        call_budget: Optional["GlobalCallBudget"] = None,
     ) -> None:
         self.attacker = attacker
         self.target = target
         self.judge_cascade = judge_cascade
         self.budget = budget
+        self.call_budget = call_budget
         self.seeds = list(seeds) if seeds else [budget.seed]
         if len(set(self.seeds)) != len(self.seeds):
             raise ValueError("Runner seeds must be unique")
@@ -253,6 +303,8 @@ class Runner:
             )
         else:
             response = self._respond(attempt, run_id=run_id)
+            if self.call_budget is not None:
+                self.call_budget.charge_judge(len(self.judge_cascade.stages))
             final, raw_trail = self.judge_cascade.judge(datapoint, response)
             trail = [self._stamp_judgment(j, run_id) for j in raw_trail]
             final = _attach_strongreject_shadow(final, trail)
@@ -348,6 +400,8 @@ class Runner:
 
     def _respond(self, attempt: Attempt, *, run_id: str) -> Response:
         """Query the target and guarantee the response is linked to the attempt."""
+        if self.call_budget is not None:
+            self.call_budget.charge_target()  # raises before the paid call
         response, call_route = self._target_generate(
             attempt.rendered_input, attempt.seed
         )

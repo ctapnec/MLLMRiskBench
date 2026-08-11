@@ -50,6 +50,7 @@ import platform
 import random
 import re
 import sys
+import time
 from collections import Counter, defaultdict
 from datetime import datetime, timezone
 from importlib import metadata
@@ -75,6 +76,7 @@ from ura.judges.llm import LLMJudge                   # noqa: E402
 from ura.judges.rules import RuleJudge                # noqa: E402
 from ura.runner import (                              # noqa: E402
     CODE_VERSION,
+    GlobalCallBudget,
     Runner,
     realized_identity_summary,
 )
@@ -876,6 +878,11 @@ def main(argv=None) -> int:
                          "empty auto-detects from a pre-quantized checkpoint")
     ap.add_argument("--dtype", default="auto",
                     help="vLLM dtype for local models (auto, bfloat16, float16)")
+    ap.add_argument("--max-total-target-calls", type=int, default=0,
+                    help="process-wide ceiling on model-under-test generate() calls "
+                         "across the whole matrix (0 = unbounded)")
+    ap.add_argument("--deadline-seconds", type=int, default=0,
+                    help="wall-clock stop for the whole matrix in seconds (0 = none)")
     ap.add_argument("--out", default="runs/exp")
     args = ap.parse_args(argv)
 
@@ -883,6 +890,8 @@ def main(argv=None) -> int:
         ap.error("--limit must be non-negative")
     if args.max_queries <= 0 or args.max_turns <= 0:
         ap.error("--max-queries and --max-turns must be positive")
+    if args.max_total_target_calls < 0 or args.deadline_seconds < 0:
+        ap.error("--max-total-target-calls and --deadline-seconds must be non-negative")
 
     seeds = [int(s) for s in args.seeds.split(",") if s.strip()]
     if not seeds:
@@ -896,6 +905,14 @@ def main(argv=None) -> int:
     # OUT of the run_id hash, so runs stay reproducible while the date is captured.
     run_started = datetime.now(timezone.utc).isoformat(timespec="seconds")
     run_env = _runtime_env()
+    # Process-wide billable ceiling shared across every cell (charged before the
+    # paid target call, so an exhausted budget stops further billing).
+    call_budget = GlobalCallBudget(
+        max_target_calls=args.max_total_target_calls or None,
+        deadline_monotonic=(
+            time.monotonic() + args.deadline_seconds if args.deadline_seconds else None
+        ),
+    )
 
     api_specs = [s.strip() for s in args.api.split(",") if s.strip()]
     local_specs = [s.strip() for s in args.local.split(",") if s.strip()]
@@ -1197,6 +1214,7 @@ def main(argv=None) -> int:
                             seed=seeds[0],
                         ),
                         seeds,
+                        call_budget=call_budget,
                     )
                     cell_config = {
                         "corpus": corpus_name,
