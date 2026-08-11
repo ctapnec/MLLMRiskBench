@@ -21,6 +21,9 @@ the whole category. In particular:
 * CATASTROPHIC is an umbrella (CBRN, weapons, self-harm, CSEM). No single hazard
   applies to every member, so its category default is empty and the specific
   hazard is attached per DataPoint.
+* AGENTIC_MISUSE is likewise broader than either goal hijack or tool misuse.
+  ASI01/ASI02 attach only when a source record establishes the corresponding
+  construct; benign utility and post-hoc monitoring rows must not inherit both.
 """
 from __future__ import annotations
 
@@ -50,7 +53,7 @@ TAXONOMY_MAP: dict[RiskCategory, dict[str, list[str]]] = {
     RiskCategory.GEO: {
         "OWASP_LLM": ["LLM02"], "NIST_GENAI": ["Data Privacy"], "MLCOMMONS": ["Privacy"]},
     RiskCategory.AGENTIC_MISUSE: {
-        "OWASP_ASI": ["ASI01", "ASI02"], "NIST_GENAI": ["Human-AI Configuration"],
+        "OWASP_ASI": [], "NIST_GENAI": ["Human-AI Configuration"],
         "MLCOMMONS": []},
     # Umbrella: the specific hazard (CBRN / weapons / self-harm / CSEM) is attached
     # per DataPoint by the converter via dp(extra_refs=...), not forced here.

@@ -14,7 +14,7 @@ import math
 import mimetypes
 import os
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any, Optional, Sequence
 
 from ..data_models import (
     DataPoint,
@@ -238,7 +238,11 @@ def read_csv(path: Path) -> list[dict]:
                 f"CSV header contains blank or duplicate column names: {path}"
             )
         rows: list[dict] = []
-        for row in reader:
+        for row_number, row in enumerate(reader, start=2):
+            if None in row:
+                raise CorpusFormatError(
+                    f"CSV row {row_number} has fields beyond the declared header: {path}"
+                )
             if any(
                 isinstance(value, str) and len(value) > DEFAULT_MAX_CSV_FIELD_CHARS
                 for value in row.values()
@@ -265,6 +269,58 @@ def sha256_file(path: Path) -> str:
     return digest.hexdigest()
 
 
+def _canonical_media_identity(ref: MediaRef, rendered: dict[str, Any]) -> None:
+    """Remove host-specific local paths from a converted-corpus identity.
+
+    The bytes, declared type, and position in the DataPoint remain bound by the
+    full SHA-256 and the rest of the serialized MediaRef.  A checkout location
+    is operational provenance, not part of the released input population.
+    """
+
+    if ref.path is None:
+        return
+    digest = ref.sha256
+    if (
+        not isinstance(digest, str)
+        or len(digest) != 64
+        or any(character not in "0123456789abcdef" for character in digest)
+    ):
+        raise CorpusFormatError(
+            "local converted media requires a full lowercase SHA-256 identity"
+        )
+    rendered["path"] = f"sha256:{digest}"
+
+
+def canonical_converted_corpus_sha256(datapoints: Sequence[DataPoint]) -> str:
+    """Hash converted inputs without binding identity to an absolute checkout.
+
+    Local MediaRef paths are replaced by their already verified content
+    addresses.  Inline/remote URIs are retained verbatim because they are the
+    actual serialized byte source presented to the execution boundary.
+    """
+
+    rendered_points: list[dict[str, Any]] = []
+    for datapoint in datapoints:
+        rendered = datapoint.model_dump(mode="json")
+        for index, ref in enumerate(datapoint.media):
+            _canonical_media_identity(ref, rendered["media"][index])
+        for turn_index, turn in enumerate(datapoint.dialog_history):
+            for media_index, ref in enumerate(turn.media):
+                _canonical_media_identity(
+                    ref,
+                    rendered["dialog_history"][turn_index]["media"][media_index],
+                )
+        rendered_points.append(rendered)
+    payload = json.dumps(
+        rendered_points,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+        allow_nan=False,
+    ).encode("utf-8")
+    return hashlib.sha256(payload).hexdigest()
+
+
 def sha256_normalized_text_file(path: Path) -> str:
     """Hash pinned UTF-8 source text with Git-safe LF normalization."""
 
@@ -275,6 +331,50 @@ def sha256_normalized_text_file(path: Path) -> str:
         raise CorpusFormatError(f"pinned source is not valid UTF-8: {path}") from exc
     normalized = text.replace("\r\n", "\n").replace("\r", "\n")
     return hashlib.sha256(normalized.encode("utf-8")).hexdigest()
+
+
+def media_signature_matches(payload: bytes, mime: str) -> bool:
+    """Check maintained media types by magic bytes; unknown types remain neutral."""
+
+    signatures = {
+        "image/jpeg": lambda value: value.startswith(b"\xff\xd8\xff"),
+        "image/png": lambda value: value.startswith(b"\x89PNG\r\n\x1a\n"),
+        "image/gif": lambda value: value.startswith((b"GIF87a", b"GIF89a")),
+        "image/webp": lambda value: (
+            len(value) >= 12 and value[:4] == b"RIFF" and value[8:12] == b"WEBP"
+        ),
+        "image/bmp": lambda value: value.startswith(b"BM"),
+        "image/tiff": lambda value: value.startswith((b"II*\x00", b"MM\x00*")),
+        "audio/wav": lambda value: (
+            len(value) >= 12 and value[:4] == b"RIFF" and value[8:12] == b"WAVE"
+        ),
+        "audio/x-wav": lambda value: (
+            len(value) >= 12 and value[:4] == b"RIFF" and value[8:12] == b"WAVE"
+        ),
+        "audio/mpeg": lambda value: (
+            value.startswith(b"ID3")
+            or (len(value) >= 2 and value[0] == 0xFF and value[1] & 0xE0 == 0xE0)
+        ),
+        "audio/flac": lambda value: value.startswith(b"fLaC"),
+        "audio/ogg": lambda value: value.startswith(b"OggS"),
+        "audio/mp4": lambda value: len(value) >= 12 and value[4:8] == b"ftyp",
+        "audio/x-m4a": lambda value: len(value) >= 12 and value[4:8] == b"ftyp",
+        "audio/aac": lambda value: (
+            len(value) >= 2 and value[0] == 0xFF and value[1] & 0xF6 == 0xF0
+        ),
+        "video/mp4": lambda value: len(value) >= 12 and value[4:8] == b"ftyp",
+        "video/quicktime": lambda value: len(value) >= 12 and value[4:8] == b"ftyp",
+        "video/webm": lambda value: value.startswith(b"\x1aE\xdf\xa3"),
+        "video/x-matroska": lambda value: value.startswith(b"\x1aE\xdf\xa3"),
+        "video/x-msvideo": lambda value: (
+            len(value) >= 12 and value[:4] == b"RIFF" and value[8:12] == b"AVI "
+        ),
+        "video/mpeg": lambda value: value.startswith(
+            (b"\x00\x00\x01\xba", b"\x00\x00\x01\xb3")
+        ),
+    }
+    validator = signatures.get(mime)
+    return validator(payload) if validator is not None else True
 
 
 def local_media(
@@ -315,11 +415,13 @@ def local_media(
         ) from exc
     if not resolved.is_file():
         raise MediaAssetError(f"media asset is not a file: {resolved}")
-    size = resolved.stat().st_size
-    if size > max_bytes:
+
+    try:
+        _, payload = _read_bounded_bytes(resolved, max_bytes=max_bytes)
+    except ConverterError as exc:
         raise MediaAssetError(
-            f"media asset exceeds the {max_bytes}-byte scored-input limit: {resolved}"
-        )
+            f"cannot admit stable media bytes for {resolved}: {exc}"
+        ) from exc
 
     mime = mimetypes.guess_type(resolved.name)[0]
     expected_prefix = {
@@ -333,10 +435,14 @@ def local_media(
         raise MediaAssetError(
             f"{resolved} has MIME {mime!r}, incompatible with {modality!r}"
         )
+    if not media_signature_matches(payload, mime):
+        raise MediaAssetError(
+            f"media bytes do not match the declared {mime!r} type: {resolved}"
+        )
     return MediaRef(
         modality=modality,  # type: ignore[arg-type]
         path=str(resolved),
-        sha256=sha256_file(resolved),
+        sha256=hashlib.sha256(payload).hexdigest(),
         mime=mime,
     )
 
@@ -433,8 +539,10 @@ __all__ = [
     "MediaRef",
     "Rc",
     "dp",
+    "canonical_converted_corpus_sha256",
     "image",
     "local_media",
+    "media_signature_matches",
     "missing",
     "read_csv",
     "read_json",

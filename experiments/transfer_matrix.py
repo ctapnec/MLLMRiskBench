@@ -16,6 +16,7 @@ import argparse
 import copy
 import hashlib
 import json
+import math
 import sys
 from collections import defaultdict
 from dataclasses import dataclass
@@ -32,13 +33,17 @@ from ura.data_models import (  # noqa: E402
     Response,
     RunManifest,
 )
-from ura.metrics import clustered_bootstrap_ci, power_gate  # noqa: E402
-from experiments.analysis_integrity import analysis_source_identity, read_bound_json  # noqa: E402
+from ura.metrics import clustered_bootstrap_ci  # noqa: E402
+from experiments.analysis_integrity import analysis_source_identity  # noqa: E402
 from ura.runner import CODE_VERSION, realized_identity_summary  # noqa: E402
 
 
 _MAX_JSON_BYTES = 4 * 1024 * 1024
 _MAX_ARTIFACT_BYTES = 512 * 1024 * 1024
+_TRANSFER_ESTIMAND = (
+    "P(target violation | source violation, harmful probe, transferable=true, "
+    "identical rendered-input fingerprint)"
+)
 
 _NON_JUDGMENT_SUFFIXES = (
     ".results.jsonl",
@@ -785,12 +790,58 @@ def load(
                 raise ValueError(f"row/raw/manifest run_id mismatch in {path}:{row['_line']}")
             if raw.get("model") != model or raw.get("target") not in (None, model):
                 raise ValueError(f"row/manifest model mismatch in {path}:{row['_line']}")
+            attempt_id = row.get("attempt_id")
+            attempt = cell["attempts"].get(attempt_id)
+            if attempt is None:
+                raise ValueError(f"judgment has no joined Attempt in {path}:{row['_line']}")
+            params = attempt.get("params")
+            if not isinstance(params, dict):
+                raise ValueError(f"Attempt {attempt_id!r} lacks params")
+            for name in (
+                "policy_evaluable_turn", "policy_challenge_index",
+                "policy_challenge_horizon", "turn_expected_behavior",
+            ):
+                if raw.get(name) != params.get(name):
+                    raise ValueError(
+                        f"Attempt/Judgment {name} mismatch for attempt {attempt_id!r}"
+                    )
+            evaluable = raw.get("policy_evaluable_turn")
+            challenge_index = raw.get("policy_challenge_index")
+            challenge_horizon = raw.get("policy_challenge_horizon")
+            turn_expected = raw.get("turn_expected_behavior")
+            if (
+                not isinstance(evaluable, bool)
+                or not isinstance(challenge_horizon, int)
+                or isinstance(challenge_horizon, bool)
+                or challenge_horizon < 1
+                or turn_expected not in {"refuse", "safe_answer", "comply_safely"}
+            ):
+                raise ValueError(f"invalid policy-turn contract in {path}:{row['_line']}")
             eligibility = raw.get("common_metrics_eligible")
             if not isinstance(eligibility, bool):
                 raise ValueError(
                     f"common_metrics_eligible must be an explicit boolean in "
                     f"{path}:{row['_line']}"
                 )
+            if not evaluable:
+                if (
+                    challenge_index is not None
+                    or turn_expected != "comply_safely"
+                    or eligibility is not False
+                    or row.get("label") != "not_applicable"
+                ):
+                    raise ValueError(
+                        f"invalid non-evaluable setup row in {path}:{row['_line']}"
+                    )
+                excluded["policy_nonevaluable_setup"] += 1
+                continue
+            if (
+                not isinstance(challenge_index, int)
+                or isinstance(challenge_index, bool)
+                or not 0 <= challenge_index < challenge_horizon
+                or turn_expected != raw.get("expected_behavior")
+            ):
+                raise ValueError(f"invalid policy challenge in {path}:{row['_line']}")
             if eligibility is not True:
                 excluded["common_metrics_ineligible"] += 1
                 continue
@@ -813,11 +864,6 @@ def load(
                 raise ValueError(f"invalid expected_behavior in {path}:{row['_line']}")
             if row["label"] not in {"safe", "violation", "refusal", "over_refusal"}:
                 raise ValueError(f"invalid label in {path}:{row['_line']}")
-            attempt_id = row.get("attempt_id")
-            attempt = cell["attempts"].get(attempt_id)
-            if attempt is None:
-                raise ValueError(f"judgment has no joined Attempt in {path}:{row['_line']}")
-            params = attempt.get("params") or {}
             lineage_pairs = {
                 "datapoint_id": attempt.get("datapoint_id"),
                 "transfer_key": params.get("transfer_key"),
@@ -828,6 +874,23 @@ def load(
                 if raw.get(name) != expected:
                     raise ValueError(
                         f"Attempt/Judgment {name} mismatch for attempt {attempt_id!r}"
+                    )
+            source_modality = raw.get("source_modality") or raw.get("modality")
+            if source_modality in {"image", "audio", "video"}:
+                rendered = attempt.get("rendered_input")
+                current_turn = rendered[-1] if isinstance(rendered, list) and rendered else None
+                attached = {
+                    media.get("modality")
+                    for media in (
+                        current_turn.get("media") or []
+                        if isinstance(current_turn, dict) else []
+                    )
+                    if isinstance(media, dict)
+                }
+                if source_modality not in attached:
+                    raise ValueError(
+                        f"policy-evaluable {source_modality} transfer row "
+                        f"{attempt_id!r} lacks current-turn media"
                     )
             record = TransferRecord(
                 model=str(raw["model"]),
@@ -926,9 +989,6 @@ def _cell(
     n_resamples: int,
     seed: int,
     minimum_unique_clusters: int = 2,
-    smallest_effect: float | None = None,
-    pilot_cluster_sd: float | None = None,
-    target_power: float = 0.8,
     alpha: float = 0.05,
 ) -> dict[str, Any]:
     if source == target:
@@ -1047,6 +1107,16 @@ def _cell(
         for cluster_id in sorted(by_cluster)
     ]
     unique_clusters = sorted(by_cluster)
+    cluster_mean = sum(cluster_values) / len(cluster_values)
+    cluster_rate_sd = (
+        math.sqrt(sum((value - cluster_mean) ** 2 for value in cluster_values) / (
+            len(cluster_values) - 1
+        ))
+        if len(cluster_values) >= 2 else None
+    )
+    source_success_clusters = sorted({
+        record.source_cluster_id or record.datapoint_id for record in source_successes
+    })
     lo, hi = clustered_bootstrap_ci(
         cluster_values,
         unique_clusters,
@@ -1055,32 +1125,23 @@ def _cell(
         alpha=alpha,
     )
     support_ok = len(unique_clusters) >= minimum_unique_clusters
-    if smallest_effect is not None and pilot_cluster_sd is not None:
-        power = power_gate(
-            smallest_effect, pilot_cluster_sd, len(unique_clusters),
-            alpha=alpha, target_power=target_power,
-        )
-    else:
-        power = {
-            "adequately_powered": None,
-            "reason": "requires a prespecified SESOI and disjoint-pilot cluster SD",
-            "n_clusters": len(unique_clusters),
-        }
     return {
-        "value": sum(cluster_values) / len(cluster_values),
+        "value": cluster_mean,
         "ci_low": lo,
         "ci_high": hi,
         "source_successes": len(source_successes),
         "matched": len(matched),
         "target_successes": int(sum(values)),
-        "n_unique_source_clusters": len({
-            record.source_cluster_id or record.datapoint_id for record in source_successes
-        }),
+        "n_unique_source_clusters": len(source_success_clusters),
+        "source_success_cluster_ids": source_success_clusters,
+        "source_success_cluster_set_sha256": _sha256_json(source_success_clusters),
         "n_matched_clusters": len(unique_clusters),
+        "matched_cluster_ids": unique_clusters,
+        "matched_cluster_set_sha256": _sha256_json(unique_clusters),
+        "cluster_rate_sd": cluster_rate_sd,
         "cluster_reduction": "equal_weight_mean_of_source_prompt_intent_clusters",
         "minimum_unique_clusters": minimum_unique_clusters,
         "support_gate_passed": support_ok,
-        "power_gate": power,
         "excluded_nontransferable": nontransferable,
         "unmatched": unmatched,
         "fingerprint_mismatches": fingerprint_mismatches,
@@ -1098,11 +1159,7 @@ def build_matrix(
     seed: int = 0,
     load_audit: dict[str, Any] | None = None,
     minimum_unique_clusters: int = 2,
-    smallest_effect: float | None = None,
-    pilot_cluster_sd: float | None = None,
-    target_power: float = 0.8,
     alpha: float = 0.05,
-    pilot_provenance: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     if minimum_unique_clusters < 2:
         raise ValueError("transfer minimum_unique_clusters must be at least 2")
@@ -1117,41 +1174,41 @@ def build_matrix(
         source_files[model] = sorted(
             {record.source_file for record in per_model[model].values()}
         )
-    cells = {
-        source: {
-            target: _cell(
+    audit = load_audit or {}
+    cells: dict[str, dict[str, dict[str, Any]]] = {}
+    for source in models:
+        cells[source] = {}
+        for target in models:
+            cell = _cell(
                 source,
                 target,
                 per_model,
                 n_resamples=n_resamples,
                 seed=seed,
                 minimum_unique_clusters=minimum_unique_clusters,
-                smallest_effect=smallest_effect,
-                pilot_cluster_sd=pilot_cluster_sd,
-                target_power=target_power,
                 alpha=alpha,
             )
-            for target in models
-        }
-        for source in models
-    }
-    audit = load_audit or {}
+            cells[source][target] = cell
     estimated_cells = [
         cells[source][target]
         for source in models for target in models
         if source != target and cells[source][target].get("value") is not None
     ]
-    support_power_ok = bool(estimated_cells) and all(
-        cell.get("support_gate_passed") is True
-        and (cell.get("power_gate") or {}).get("adequately_powered") is True
-        for cell in estimated_cells
+    source_success_cells = [
+        cells[source][target]
+        for source in models for target in models
+        if source != target
+        and cells[source][target].get("source_successes", 0) > 0
+    ]
+    support_ok = bool(estimated_cells) and all(
+        cell.get("support_gate_passed") is True for cell in estimated_cells
+    )
+    exact_input_coverage_ok = all(
+        cell.get("unmatched") == 0 for cell in source_success_cells
     )
     return {
         "schema_version": "2.0",
-        "estimand": (
-            "P(target violation | source violation, harmful probe, transferable=true, "
-            "identical rendered-input fingerprint)"
-        ),
+        "estimand": _TRANSFER_ESTIMAND,
         "multiplicity": {
             "status": "outside_holm_conditional_descriptive",
             "reason": (
@@ -1170,17 +1227,19 @@ def build_matrix(
             "n_resamples": n_resamples,
             "seed": seed,
         },
-        "support_power_gate_passed": support_power_ok,
-        "power_design": {
-            "smallest_effect": smallest_effect,
-            "pilot_cluster_sd": pilot_cluster_sd,
-            "pilot_provenance": pilot_provenance,
+        "support_gate_passed": support_ok,
+        "exact_input_coverage_gate_passed": exact_input_coverage_ok,
+        "support_design": {
             "minimum_unique_clusters": minimum_unique_clusters,
-            "target_power": target_power,
-            "alpha": alpha,
+            "qualification": (
+                "descriptive support threshold only; no null hypothesis or power "
+                "claim is defined for conditional transfer cells"
+            ),
         },
         "publishable_real_run": (
-            bool(audit.get("publishable_real_run")) and support_power_ok
+            bool(audit.get("publishable_real_run"))
+            and support_ok
+            and exact_input_coverage_ok
         ),
         "analysis_source": analysis_source_identity([
             Path(__file__), Path(__file__).resolve().parents[1] / "src" / "ura" / "metrics.py",
@@ -1268,15 +1327,6 @@ def main(argv: list[str] | None = None) -> int:
         "--minimum-unique-clusters", type=int, default=2,
         help="prespecified minimum source prompt/intent clusters per estimable cell",
     )
-    parser.add_argument(
-        "--smallest-effect", type=float, default=None,
-        help="prespecified transfer-rate effect for the prospective power gate",
-    )
-    parser.add_argument("--pilot-artifact", type=Path, default=None,
-                        help="content-addressed ura-disjoint-pilot/1.0 JSON")
-    parser.add_argument("--pilot-sha256", default=None,
-                        help="required expected SHA-256 for --pilot-artifact")
-    parser.add_argument("--target-power", type=float, default=0.8)
     parser.add_argument("--alpha", type=float, default=0.05)
     parser.add_argument(
         "--attacker", default="replay",
@@ -1291,34 +1341,8 @@ def main(argv: list[str] | None = None) -> int:
         parser.error("--bootstrap must be positive")
     if args.minimum_unique_clusters < 2:
         parser.error("--minimum-unique-clusters must be at least 2")
-    if (args.smallest_effect is None) != (args.pilot_artifact is None):
-        parser.error("--smallest-effect and --pilot-artifact must be supplied together")
-    if args.pilot_artifact is not None and args.pilot_sha256 is None:
-        parser.error("--pilot-artifact requires --pilot-sha256")
-    if args.smallest_effect is not None and args.smallest_effect <= 0:
-        parser.error("--smallest-effect must be positive")
-    if not 0 < args.alpha < 1 or not 0 < args.target_power < 1:
-        parser.error("--alpha and --target-power must be strictly between 0 and 1")
-
-    pilot_payload: dict[str, Any] | None = None
-    pilot_cluster_sd: float | None = None
-    if args.pilot_artifact is not None:
-        try:
-            pilot_payload = read_bound_json(
-                args.pilot_artifact, expected_sha256=args.pilot_sha256,
-            )
-        except ValueError as exc:
-            parser.error(str(exc))
-        if (
-            pilot_payload.get("schema_version") != "ura-disjoint-pilot/1.0"
-            or pilot_payload.get("disjoint_from_main") is not True
-            or not isinstance(pilot_payload.get("source_run_ids"), list)
-        ):
-            parser.error("pilot artifact is not a disjoint, run-identified pilot")
-        value = pilot_payload.get("cluster_sd")
-        if isinstance(value, bool) or not isinstance(value, (int, float)) or value <= 0:
-            parser.error("pilot artifact requires positive cluster_sd")
-        pilot_cluster_sd = float(value)
+    if not 0 < args.alpha < 1:
+        parser.error("--alpha must be strictly between 0 and 1")
     try:
         loaded_facets = load_facets(
             args.results, attacker=args.attacker, corpus=args.corpus
@@ -1326,43 +1350,42 @@ def main(argv: list[str] | None = None) -> int:
     except ValueError as exc:
         print(f"transfer input validation failed: {exc}", file=sys.stderr)
         return 1
-
     results_by_corpus: dict[str, dict[str, Any]] = {}
     not_applicable: dict[str, dict[str, Any]] = {}
-    for corpus_name, (per_model, audit) in loaded_facets.items():
-        if len(per_model) < 2:
-            if (
-                audit.get("records_loaded") == 0
-                and audit.get("explained_exclusions") == audit.get("rows_scanned")
-                and len(audit.get("run_ids", {})) >= 2
-            ):
+    try:
+        for corpus_name, (per_model, audit) in loaded_facets.items():
+            if len(per_model) < 2:
+                if (
+                    audit.get("records_loaded") == 0
+                    and audit.get("explained_exclusions") == audit.get("rows_scanned")
+                    and len(audit.get("run_ids", {})) >= 2
+                ):
+                    not_applicable[corpus_name] = {
+                        "reason": "no_common_metrics_eligible_transfer_records",
+                        "load_audit": audit,
+                        "unexplained_exclusions": 0,
+                    }
+                    continue
                 not_applicable[corpus_name] = {
-                    "reason": "no_common_metrics_eligible_transfer_records",
+                    "reason": "insufficient_eligible_models",
+                    "eligible_models": sorted(per_model),
+                    "eligible_model_count": len(per_model),
+                    "minimum_required": 2,
                     "load_audit": audit,
                     "unexplained_exclusions": 0,
                 }
                 continue
-            not_applicable[corpus_name] = {
-                "reason": "insufficient_eligible_models",
-                "eligible_models": sorted(per_model),
-                "eligible_model_count": len(per_model),
-                "minimum_required": 2,
-                "load_audit": audit,
-                "unexplained_exclusions": 0,
-            }
-            continue
-        results_by_corpus[corpus_name] = build_matrix(
-            per_model,
-            n_resamples=args.bootstrap,
-            seed=args.seed,
-            load_audit=audit,
-            minimum_unique_clusters=args.minimum_unique_clusters,
-            smallest_effect=args.smallest_effect,
-            pilot_cluster_sd=pilot_cluster_sd,
-            pilot_provenance=(pilot_payload or {}).get("_artifact_identity"),
-            target_power=args.target_power,
-            alpha=args.alpha,
-        )
+            results_by_corpus[corpus_name] = build_matrix(
+                per_model,
+                n_resamples=args.bootstrap,
+                seed=args.seed,
+                load_audit=audit,
+                minimum_unique_clusters=args.minimum_unique_clusters,
+                alpha=args.alpha,
+            )
+    except ValueError as exc:
+        print(f"transfer analysis validation failed: {exc}", file=sys.stderr)
+        return 1
 
     output = args.results / "transfer_matrix.json"
     if len(results_by_corpus) == 1 and not not_applicable:

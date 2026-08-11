@@ -38,6 +38,10 @@ def test_datapoint_rejects_empty_modalities():
 def test_mediaref_rejects_text_modality():
     with pytest.raises(ValidationError):
         MediaRef(modality="text", uri="http://x/y.png")
+    with pytest.raises(ValidationError, match="physical image, audio, or video"):
+        MediaRef(modality="tool", uri="data:application/json;base64,e30=")
+    with pytest.raises(ValidationError, match="physical image, audio, or video"):
+        MediaRef(modality="multi", uri="data:application/octet-stream;base64,AA==")
     ok = MediaRef(modality="image", path="a.png", sha256="deadbeef")
     assert ok.modality == "image"
 
@@ -82,6 +86,13 @@ def test_refs_for_privacy():
     assert "OWASP_LLM:LLM02" in refs and "MLCOMMONS:Privacy" in refs
 
 
+def test_agentic_defaults_do_not_overclaim_goal_hijack_or_tool_misuse():
+    refs = taxonomy.refs_for(RiskCategory.AGENTIC_MISUSE)
+    assert "OWASP_ASI:ASI01" not in refs
+    assert "OWASP_ASI:ASI02" not in refs
+    assert "NIST_GENAI:Human-AI Configuration" in refs
+
+
 def test_eu_systemic_risks_present():
     assert "loss of control" in taxonomy.EU_AI_ACT_SYSTEMIC_RISKS
 
@@ -91,8 +102,21 @@ def test_eu_systemic_risks_present():
 # --------------------------------------------------------------------------- #
 
 def _judgments(labels):
-    return [Judgment(attempt_id=str(i), judge="j", label=lbl, score=0.8)
-            for i, lbl in enumerate(labels)]
+    return [
+        Judgment(
+            attempt_id=str(i),
+            judge="j",
+            label=lbl,
+            score=0.8,
+            raw={
+                "policy_evaluable_turn": True,
+                "policy_challenge_index": i,
+                "policy_challenge_horizon": len(labels),
+                "turn_expected_behavior": "refuse",
+            },
+        )
+        for i, lbl in enumerate(labels)
+    ]
 
 
 def test_asr_and_dsr_complement():

@@ -25,12 +25,14 @@ from ura.converters import (
     VideoSafetyBenchConverter,
     synth_corpus,
 )
-from ura.converters._common import local_media
+from ura.converters._common import local_media, read_csv
 
 _PNG = base64.b64decode(
     "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk"
     "+A8AAQUBAScY42YAAAAASUVORK5CYII="
 )
+_JPEG = b"\xff\xd8\xff\xe0\x00\x10JFIF"
+_WAV = b"RIFF\x04\x00\x00\x00WAVE"
 
 
 def _write_json(path: Path, value: object) -> None:
@@ -58,6 +60,21 @@ def test_local_media_is_confined_content_addressed_and_typed(tmp_path: Path):
         local_media("images/missing.png", root, modality="image")
 
 
+def test_local_media_rejects_extension_spoofed_bytes(tmp_path: Path):
+    root = tmp_path / "corpus"
+    root.mkdir()
+    (root / "fake.png").write_bytes(_JPEG)
+    with pytest.raises(MediaAssetError, match="do not match"):
+        local_media("fake.png", root, modality="image")
+
+
+def test_csv_rejects_fields_beyond_declared_header(tmp_path: Path):
+    source = tmp_path / "shifted.csv"
+    source.write_text("id,prompt\n1,probe,unexpected\n", encoding="utf-8")
+    with pytest.raises(CorpusFormatError, match="beyond the declared header"):
+        read_csv(source)
+
+
 def test_synthetic_images_are_inline_and_content_addressed():
     corpus = synth_corpus(12)
     refs = [ref for point in corpus for ref in point.media]
@@ -68,6 +85,16 @@ def test_synthetic_images_are_inline_and_content_addressed():
         encoded = ref.uri.split(",", 1)[1]
         assert hashlib.sha256(base64.b64decode(encoded)).hexdigest() == ref.sha256
         assert ref.mime == "image/png"
+    harmful_agentic = next(
+        point for point in corpus
+        if point.is_agentic and point.expected_behavior == "refuse"
+    )
+    benign_agentic = next(
+        point for point in corpus
+        if point.is_agentic and point.expected_behavior == "comply_safely"
+    )
+    assert "OWASP_ASI:ASI02" in harmful_agentic.taxonomy_refs
+    assert "OWASP_ASI:ASI02" not in benign_agentic.taxonomy_refs
 
 
 def test_siuo_jointly_harmful_input_is_not_a_benign_frr_item(tmp_path: Path):
@@ -179,6 +206,8 @@ def test_agentharm_preserves_requirements_without_claiming_tool_execution(tmp_pa
     assert point.meta["evaluation_scope"] == "prompt_only_proxy"
     assert point.meta["common_metrics_eligible"] is False
     assert point.meta["required_metric"] == "official_agentharm_tool_grading"
+    assert "OWASP_ASI:ASI02" in point.taxonomy_refs
+    assert "OWASP_ASI:ASI01" not in point.taxonomy_refs
 
 
 def test_rjudge_is_a_monitoring_task_not_a_replayed_agent_attack(tmp_path: Path):
@@ -218,7 +247,7 @@ def test_gptgeochat_emits_turn_level_moderation_examples(tmp_path: Path):
     annotation = split / "annotations" / "annotation_42.json"
     image_path = split / "images" / "42.jpg"
     image_path.parent.mkdir(parents=True)
-    image_path.write_bytes(b"not-decoded-by-converter")
+    image_path.write_bytes(_JPEG)
     messages = [
         {"role": "user", "content": "Which country?"},
         {
@@ -291,7 +320,7 @@ def test_jalmbench_keeps_harmful_transcript_out_of_audio_only_arm(
     tmp_path: Path,
 ) -> None:
     audio = tmp_path / "probe.wav"
-    audio.write_bytes(b"RIFF-stable-fixture")
+    audio.write_bytes(_WAV)
     source = tmp_path / "jalm.json"
     harmful = "harmful spoken request"
     _write_json(source, [{
@@ -379,6 +408,25 @@ def test_mossbench_json_resolves_image(tmp_path: Path):
     assert points[0].modalities == ["text", "image"]
     assert Path(points[0].media[0].path).is_file()
     assert points[0].risk_subtype == "Exaggerated Risk"
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [("metadata_human", 0.5), ("metadata_harm", 1.5)],
+)
+def test_mossbench_rejects_fractional_integer_dimensions(
+    tmp_path: Path, field: str, value: float
+):
+    (tmp_path / "1.jpg").write_bytes(_JPEG)
+    source = tmp_path / "moss.json"
+    _write_json(source, [{
+        "pid": 1,
+        "question": "Is this safe?",
+        "image": "1.jpg",
+        field: value,
+    }])
+    with pytest.raises(CorpusFormatError, match="invalid"):
+        MOSSBenchConverter(require_complete_release=False).parse(source)
 
 
 def test_mossbench_reads_official_information_csv(tmp_path: Path):

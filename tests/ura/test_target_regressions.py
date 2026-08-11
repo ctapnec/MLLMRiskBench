@@ -14,6 +14,7 @@ from ura.data_models import (
     DialogTurn,
     Judgment,
     MediaRef,
+    ProviderContinuationState,
     RiskCategory,
     ToolCall,
 )
@@ -36,7 +37,11 @@ from ura.targets.api import (
     build_api_target,
 )
 from ura.targets.guarded import GuardedTarget
-from ura.targets.local import OllamaTarget
+from ura.targets.local import (
+    OllamaTarget,
+    _dialog_to_messages,
+    _dialog_to_ollama_messages,
+)
 
 
 def _media(path: Path, data: bytes) -> MediaRef:
@@ -113,6 +118,57 @@ def test_hosted_renderer_preserves_recorded_tool_evidence_as_proxy_text() -> Non
     assert "recorded_tool_call" in rendered
     assert "send_mail" in rendered
     assert "recorded_tool_result" in rendered
+
+
+def test_nonmatching_targets_reject_provider_native_continuation_state() -> None:
+    state = ProviderContinuationState(
+        provider="openai",
+        api_surface="responses",
+        items=[{
+            "type": "message",
+            "role": "assistant",
+            "content": [{"type": "output_text", "text": "prior"}],
+        }],
+    )
+    openai_turn = DialogTurn(
+        role="assistant", content="prior", provider_state=state
+    )
+    thinking_turn = DialogTurn(
+        role="assistant",
+        content="prior",
+        provider_thinking=[{
+            "type": "thinking", "thinking": "reason", "signature": "sig"
+        }],
+    )
+    with pytest.raises(ValueError, match="provider-native continuation"):
+        OpenAITarget("fixture")._to_messages([openai_turn])
+    with pytest.raises(ValueError, match="OpenAI provider state"):
+        AnthropicTarget("fixture")._to_messages([openai_turn])
+    with pytest.raises(ValueError, match="provider-native continuation"):
+        GeminiTarget("fixture")._to_contents([openai_turn])
+    with pytest.raises(ValueError, match="provider-native continuation"):
+        _dialog_to_messages([thinking_turn])
+    with pytest.raises(ValueError, match="provider-native continuation"):
+        _dialog_to_ollama_messages([thinking_turn])
+
+
+@pytest.mark.parametrize(
+    "target, method",
+    [
+        (AnthropicTarget("fixture"), "_to_messages"),
+        (GeminiTarget("fixture"), "_to_contents"),
+    ],
+)
+def test_single_system_instruction_providers_reject_overwrite(
+    target, method: str
+) -> None:
+    dialog = [
+        DialogTurn(role="system", content="first"),
+        DialogTurn(role="system", content="second"),
+        DialogTurn(role="user", content="request"),
+    ]
+    with pytest.raises(ValueError, match="exactly one system turn"):
+        getattr(target, method)(dialog)
 
 
 def test_seed_provenance_is_reported_by_targets() -> None:
@@ -262,7 +318,9 @@ def _fable_result(
         output_tokens = 0
         output_tokens_details = None
     else:
-        content = [SimpleNamespace(type="thinking", thinking="", signature="sig")]
+        content = [SimpleNamespace(
+            type="thinking", thinking="fixture reasoning", signature="sig"
+        )]
         if text is not None:
             content.append(SimpleNamespace(type="text", text=text))
         stop_details = None
@@ -314,6 +372,28 @@ def test_fable_captures_verbatim_thinking_blocks_on_the_assistant_turn() -> None
     assert response.output_turns[0].provider_thinking == [
         {"type": "thinking", "thinking": "step by step", "signature": "sig-xyz"}
     ]
+    continuation = json.dumps(
+        response.output_turns[0].provider_thinking,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
+    assert response.raw["continuation_state_bytes"] == len(continuation)
+    assert response.raw["continuation_state_sha256"] == hashlib.sha256(
+        continuation
+    ).hexdigest()
+
+
+def test_fable_rejects_thinking_reordered_after_visible_text() -> None:
+    result = _fable_result()
+    result.content = [
+        SimpleNamespace(type="text", text="visible"),
+        SimpleNamespace(type="thinking", thinking="late", signature="sig"),
+    ]
+    target = AnthropicFableTarget()
+    _install_fable_fixture(target, result)
+    with pytest.raises(AnthropicFableOutputError, match="thinking after visible text"):
+        target.generate([DialogTurn(role="user", content="request")])
 
 
 def test_fable_returns_prior_thinking_blocks_unchanged_in_multiturn() -> None:
@@ -443,6 +523,8 @@ def test_fable_typed_refusal_is_preserved_without_fabricated_output() -> None:
     assert response.raw["provider_refusal_reason"] == (
         "The classifier declined this request."
     )
+    assert response.raw["continuation_state_sha256"] is None
+    assert response.raw["continuation_state_bytes"] == 0
     refusal = RuleJudge().judge(
         # RuleJudge must use the typed signal even though no text was invented.
         DataPoint(
@@ -467,10 +549,13 @@ def test_fable_discards_partial_refusal_output_but_rejects_untyped_refusal() -> 
         explanation="declined",
     )
     partial.content = [
-        SimpleNamespace(
-            type="thinking", thinking="partial reasoning", signature="sig-partial"
-        ),
+        # A typed mid-generation refusal can arrive after partial visible output.
+        # The discarded reasoning need not be continuation-valid or ordered.
         SimpleNamespace(type="text", text="partial answer"),
+        SimpleNamespace(
+            type="thinking", thinking="partial reasoning", signature=None
+        ),
+        SimpleNamespace(type="redacted_thinking", data=""),
     ]
     target = AnthropicFableTarget()
     _install_fable_fixture(target, partial)
@@ -482,7 +567,7 @@ def test_fable_discards_partial_refusal_output_but_rejects_untyped_refusal() -> 
     assert response.raw["discarded_partial_text_sha256"] == hashlib.sha256(
         b"partial answer"
     ).hexdigest()
-    assert response.raw["discarded_partial_thinking_blocks"] == 1
+    assert response.raw["discarded_partial_thinking_blocks"] == 2
     serialized = json.dumps(response.model_dump(mode="json"))
     assert "partial answer" not in serialized
     assert "partial reasoning" not in serialized
@@ -504,7 +589,9 @@ def test_fable_discards_partial_refusal_output_but_rejects_untyped_refusal() -> 
         ),
         (
             lambda result: setattr(result, "content", [
-                SimpleNamespace(type="thinking", thinking="", signature="sig")
+                SimpleNamespace(
+                    type="thinking", thinking="valid reasoning", signature="sig"
+                )
             ]),
             "no visible text",
         ),

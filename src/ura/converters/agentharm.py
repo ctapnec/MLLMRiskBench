@@ -83,6 +83,7 @@ class AgentHarmConverter(BaseConverter):
                         else None
                     ),
                     is_agentic=bool(tools),
+                    extra_refs=["OWASP_ASI:ASI02"] if tools and not benign else None,
                     meta={
                         "target_functions": tools,
                         "grading_function": grading_function,

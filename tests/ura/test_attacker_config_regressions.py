@@ -67,7 +67,11 @@ def test_run_matrix_applies_and_persists_attacker_config(tmp_path: Path) -> None
     assert result == 0
     grid = json.loads(next(out.glob("*.grid.json")).read_text(encoding="utf-8"))
     assert grid["request"]["attacker_configs"] == config_value
-    assert len(grid["request"]["attacker_config_artifact"]["sha256"]) == 64
+    config_artifact = grid["request"]["attacker_config_artifact"]
+    assert set(config_artifact) == {"file", "sha256", "bytes"}
+    assert config_artifact["file"] == config.name
+    assert len(config_artifact["sha256"]) == 64
+    assert str(config.resolve()) not in json.dumps(grid)
     manifest = json.loads(
         next(out.glob("*.manifest.json")).read_text(encoding="utf-8")
     )

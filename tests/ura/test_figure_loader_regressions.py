@@ -15,6 +15,30 @@ _HASH_A = "a" * 64
 _HASH_B = "b" * 64
 
 
+def test_figure_point_and_bootstrap_equal_weight_prompt_clusters() -> None:
+    paired = {}
+    for index, (datapoint, left_value) in enumerate([
+        ("repeated", 1.0),
+        ("repeated", 1.0),
+        ("repeated", 1.0),
+        ("single", 0.0),
+    ]):
+        common = dict(
+            corpus="fixture", source="source", datapoint_id=datapoint,
+            seed=index, expected_behavior="refuse", risk_category="cybersec",
+            declared_modality="text", effective_modality="text", eligible=True,
+            attack_fingerprint=f"fp-{index}", transfer_key=f"key-{index}",
+        )
+        left = figure_results._Unit(value=left_value, **common)
+        right = figure_results._Unit(value=0.0, **common)
+        paired[left.key] = (left, right)
+    left_value, right_value = figure_results._equal_cluster_arm_values(
+        list(paired.values())
+    )
+    assert left_value - right_value == 0.5
+    assert left_value == 0.5
+
+
 def _write_jsonl(path: Path, rows: list[dict[str, Any]]) -> None:
     path.write_text(
         "".join(json.dumps(row, sort_keys=True) + "\n" for row in rows),
@@ -103,6 +127,16 @@ def _cell(
         attempt_id = f"{datapoint_id}::{attacker}::s{seed}"
         fingerprint = _canonical_sha256([corpus, datapoint_id, seed, "prompt"])
         transfer_key = _canonical_sha256([corpus, datapoint_id, seed, attacker])
+        effective_modality = datapoint.get("effective_modality", "text")
+        media = (
+            [{
+                "modality": effective_modality,
+                "path": f"fixture-{datapoint_id}.{effective_modality}",
+                "sha256": _canonical_sha256([datapoint_id, effective_modality]),
+            }]
+            if effective_modality in {"image", "audio", "video"}
+            else []
+        )
         attempt = {
             "id": attempt_id,
             "datapoint_id": datapoint_id,
@@ -110,7 +144,11 @@ def _cell(
             "strategy": "replay",
             "target": resolved_model,
             "turn_index": 0,
-            "rendered_input": [{"role": "user", "content": f"prompt {datapoint_id}"}],
+            "rendered_input": [{
+                "role": "user",
+                "content": f"prompt {datapoint_id}",
+                "media": media,
+            }],
             "seed": seed,
             "params": {
                 "attack_fingerprint": fingerprint,
@@ -119,6 +157,10 @@ def _cell(
                 "response_conditioned": False,
                 "replayed_transcript": False,
                 "attempt_media_hashes": {},
+                "policy_evaluable_turn": True,
+                "policy_challenge_index": 0,
+                "policy_challenge_horizon": 1,
+                "turn_expected_behavior": datapoint.get("expected", "refuse"),
             },
             "run_id": run_id,
         }
@@ -152,12 +194,16 @@ def _cell(
             "risk_category": datapoint.get("risk", "cybersec"),
             "risk": datapoint.get("risk", "cybersec"),
             "modality": datapoint.get("modality", "text"),
-            "effective_modality": datapoint.get("effective_modality", "text"),
+            "effective_modality": effective_modality,
             "expected_behavior": expected,
             "common_metrics_eligible": datapoint.get("eligible", True),
             "seed": seed,
             "requested_seed": seed,
             "turn_index": 0,
+            "policy_evaluable_turn": True,
+            "policy_challenge_index": 0,
+            "policy_challenge_horizon": 1,
+            "turn_expected_behavior": expected,
             "attack_fingerprint": fingerprint,
             "transfer_key": transfer_key,
             "transferable": True,
@@ -199,6 +245,10 @@ def _cell(
             "seed": seed,
             "requested_seed": seed,
             "turn_index": 0,
+            "policy_evaluable_turn": True,
+            "policy_challenge_index": 0,
+            "policy_challenge_horizon": 1,
+            "turn_expected_behavior": expected,
             "run_id": run_id,
             "attack_fingerprint": fingerprint,
             "transfer_key": transfer_key,

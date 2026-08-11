@@ -6,10 +6,13 @@ working directory; only an explicit path is a local checkpoint.
 """
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import pytest
 
+import experiments.run_matrix as run_matrix
+from ura.runner import _component_config
 from ura.targets.local import VLLMTarget, _is_explicit_local_path, _tree_sha256
 
 
@@ -38,7 +41,64 @@ def test_explicit_local_path_requires_matching_digest(tmp_path):
     ckpt.mkdir()
     (ckpt / "weights.bin").write_bytes(b"abc")
     digest = _tree_sha256(ckpt.resolve())
-    VLLMTarget(str(ckpt), modality_support=("text",), model_digest=digest).validate_research_identity()
+    target = VLLMTarget(
+        str(ckpt), modality_support=("text",), model_digest=digest
+    )
+    target.validate_research_identity()
+    persisted = json.dumps(_component_config(target), sort_keys=True)
+    assert target.name == f"vllm:local-checkpoint@sha256:{digest}"
+    assert target.model == "local-checkpoint"
+    assert str(ckpt.resolve()) not in persisted
+    assert run_matrix._persisted_model_spec(
+        f"vllm:{ckpt}", {"digest": digest}
+    ) == target.name
     wrong = VLLMTarget(str(ckpt), modality_support=("text",), model_digest="0" * 64)
     with pytest.raises(ValueError, match="digest does not match"):
         wrong.validate_research_identity()
+
+
+def test_local_config_artifact_uses_a_logical_filename(tmp_path):
+    ckpt = tmp_path / "ckpt"
+    ckpt.mkdir()
+    (ckpt / "weights.bin").write_bytes(b"abc")
+    digest = _tree_sha256(ckpt.resolve())
+    spec = f"vllm:{ckpt.resolve()}"
+    config = tmp_path / "local-targets.json"
+    config.write_text(json.dumps({spec: {
+        "digest": digest, "modalities": ["text"],
+    }}), encoding="utf-8")
+
+    loaded, artifact = run_matrix._load_local_config(str(config), [spec])
+
+    assert loaded[spec]["digest"] == digest
+    assert artifact is not None
+    assert set(artifact) == {"file", "sha256", "bytes"}
+    assert artifact["file"] == config.name
+    assert str(config.resolve()) not in json.dumps(artifact)
+
+
+def test_local_target_setup_error_does_not_persist_checkpoint_path(tmp_path):
+    missing = (tmp_path / "private-workstation" / "missing-ckpt").resolve()
+    spec = f"vllm:{missing}"
+    digest = "0" * 64
+    config = tmp_path / "local-targets.json"
+    config.write_text(json.dumps({spec: {
+        "digest": digest, "modalities": ["text"],
+    }}), encoding="utf-8")
+    out = tmp_path / "artifacts"
+
+    result = run_matrix.main([
+        "--local", spec,
+        "--local-config", str(config),
+        "--attackers", "replay",
+        "--judges", "rules",
+        "--corpora", "synth",
+        "--limit", "1",
+        "--out", str(out),
+    ])
+
+    assert result == 1
+    error = json.loads(next(out.glob("*.error.json")).read_text(encoding="utf-8"))
+    serialized_values = "\n".join(str(value) for value in error.values())
+    assert str(missing) not in serialized_values
+    assert error["model_spec"] == f"vllm:local-checkpoint@sha256:{digest}"

@@ -1,45 +1,51 @@
 # Run and return: Fable versus GPT-5.6 Sol
 
 This is the operator path from a clean machine to a Chapter V-ready artifact
-tree. Experiments are pending. Do not use dry-run, partial, preliminary, or
-placeholder output as a measured result.
+tree. Experiments are pending. Dry-run, partial, preliminary, placeholder and
+failed output is not measured evidence.
 
-All commands below target Runner `ura-runner/2.2`, unified schema `1.2`, and the
-current CLI contracts. Do not resume an older-schema artifact tree.
+The executable contract is Runner `ura-runner/2.3`, unified schema `1.3`,
+partition schema `ura-cluster-partition/1.2`, and modality-proof schema
+`ura-modality-coverage-proof/1.0`. Do not resume an older artifact tree.
 
-The primary conditions are:
+The exact target conditions are:
 
 ```text
-FABLE=anthropic-fable:claude-fable-5;effort=high;max_tokens=25000
-SOL=openai-responses:gpt-5.6-sol;reasoning_mode=pro;reasoning_effort=medium;reasoning_context=all_turns
+anthropic-fable:claude-fable-5;effort=high;max_tokens=25000
+openai-responses:gpt-5.6-sol;reasoning_mode=pro;reasoning_effort=medium;reasoning_context=all_turns
 ```
 
-Mythos is not executed because access is unavailable. It remains literature and
-a future separately authorized replication target.
+This is a cross-provider endpoint comparison, not a same-base ablation. Mythos
+is literature and a future separately authorized replication target; it has no
+executed row in this study.
 
 ## 1. Install and verify
 
 ```bash
 git clone https://github.com/ctapnec/MLLMRiskBench.git
 cd MLLMRiskBench
-git checkout <frozen-commit>
+git checkout <frozen-experiment-commit>
 python3.12 -m venv .venv
 source .venv/bin/activate                 # PowerShell: .venv\Scripts\Activate.ps1
 python -m pip install -U pip
 python -m pip install -e ".[dev,analysis,api]"
-python -m pytest
-python experiments/run_matrix.py --dry-run --attackers replay --judges rules,llm --corpora synth --limit 12 --out runs/dry
+python -m pytest -p no:cacheprovider
+python -m ruff check --no-cache .
+python -m compileall src experiments
+python -m experiments.run_matrix --dry-run --attackers replay \
+  --judges rules,llm --corpora synth --limit 12 --out runs/dry
 python -m experiments.figures --synth --out runs/_figcheck
 ```
 
-Record the observed test result, commit, worktree state, environment, UTC date,
-account tier/region, exact endpoint IDs, and protocol choices in `RUNNOTE.md`.
-The synthetic run and watermarked figures are plumbing checks only.
+Record the commit, clean/dirty worktree state, dependency freeze, UTC date,
+endpoint access tier/region, observed verification output, and every protocol
+choice in `RUNNOTE.md`. Synthetic artifacts and watermarked figures prove only
+that plumbing works.
 
-## 2. Resolve complete releases and media
+## 2. Resolve the pinned releases and ordered media roots
 
-Keep keys in the process environment or an approved secret manager. Do not put
-them in JSON, commands, logs, filenames, manifests, or archives.
+Keep keys in the process environment or an approved secret manager. Never place
+them in JSON, commands, filenames, logs, manifests or return archives.
 
 ```bash
 export ANTHROPIC_API_KEY='<secret>'
@@ -50,28 +56,35 @@ export URA_MOSSBENCH_PATH='/data/MOSSBench'
 export URA_MEDIA_ROOTS='/data/MM-SafetyBench/data/imgs:/data/MOSSBench'
 ```
 
-PowerShell uses `$env:NAME='value'` and separates media roots with `;`.
-For a normal Windows clone, the StrongREJECT value is
-`<clone>\strongreject_dataset\strongreject_dataset.csv`, not the repository
-directory and not `<clone>\strongreject_dataset.csv`.
+PowerShell uses `$env:NAME='value'` and separates media roots with `;`. Root
+ordering is part of the artifact contract. Prepared paths become
+`@media-root/<index>/<relative-path>`; on resume or another machine, configure
+the same ordered roots and relative layouts. The bytes and MIME are rechecked.
 
-- StrongREJECT points at the released CSV.
-- MM-SafetyBench points at the root containing
-  `data/processed_questions` and `data/imgs`. The converter requires the pinned
-  13-scenario release, 1,680 source questions and all three official variants
-  (5,040 text+image datapoints), with the maintained manifest hashes.
-- MOSSBench points at the pinned release containing `information.csv` and all
-  300 images. The maintained normalized/raw table identities are checked.
+The converters fail before paid calls unless all release facts hold:
 
-Every real scored run is additionally bound to the full converted-corpus digest
-and complete source-cluster inventory in the partition artifact below. A partial
-or modified release fails before a target call.
+- StrongREJECT: official commit
+  `f7cad6c17e624e21d8df2278e918ae1dddb4cb56`, file
+  `strongreject_dataset/strongreject_dataset.csv`, normalized SHA-256
+  `4dd70357e4ff8b5d0ba5ebafecab5d6dd5633ce8046e3dd1c8bd93e64de44381`,
+  313 rows, the exact six categories, 313 unique prompts, and no blank required
+  fields. URA uses a StrongREJECT-style judge, not the official evaluator.
+- MM-SafetyBench: pinned commit
+  `b80eedea3db312c09ded2082813390f68e750ef3`, all 13 official scenario
+  manifests, 1,680 source questions, and all SD/TYPO/SD_TYPO variants (5,040
+  text+image datapoints).
+- MOSSBench: pinned commit
+  `8d68b0614b39d8990a508e03d99975832f399db2`, its pinned table identity,
+  300 rows, and all 300 images.
 
-## 3. Freeze the hosted-provider approval
+MM-SafetyBench common ASR and MOSSBench common FRR are secondary URA proxies.
+Their official evaluators are not executed and must not be claimed.
 
-Create `runs/freeze/provider-policy.json` with exactly this shape. Replace every
-angle-bracketed value and the judge specification. Write the actual accepted
-terms; do not copy a statement you have not approved.
+## 3. Freeze hosted-provider approval
+
+Create `runs/freeze/provider-policy.json` with exactly the following structure.
+Replace every angle-bracketed value with terms actually accepted by the operator
+or institution.
 
 ```json
 {
@@ -92,15 +105,15 @@ terms; do not copy a statement you have not approved.
       "model_spec": "anthropic:<exact-account-visible-judge-id>",
       "provider": "anthropic",
       "roles": ["judge"],
-      "retention_terms": "<accepted judge-endpoint retention terms>",
-      "data_use_terms": "<accepted judge-endpoint data-use terms>",
-      "policy_urls": ["<https-policy-url>"]
+      "retention_terms": "<accepted judge retention terms>",
+      "data_use_terms": "<accepted judge data-use terms>",
+      "policy_urls": ["<provider-policy-https-url>"]
     },
     {
       "model_spec": "openai-responses:gpt-5.6-sol;reasoning_mode=pro;reasoning_effort=medium;reasoning_context=all_turns",
       "provider": "openai-responses",
       "roles": ["target"],
-      "retention_terms": "<accepted effective organization retention terms; store=false is not zero retention>",
+      "retention_terms": "<accepted effective organization terms; store=false is not zero retention>",
       "data_use_terms": "<accepted effective organization data-use terms>",
       "policy_urls": ["https://developers.openai.com/api/docs/guides/your-data"]
     }
@@ -108,380 +121,456 @@ terms; do not copy a statement you have not approved.
 }
 ```
 
-If one exact model spec has both roles, use one entry with
-`["judge","target"]`. The selected hosted specifications and role lists must
-match exactly. Hash the bytes without editing them afterward:
+If one exact specification has both roles, use one entry with
+`["judge","target"]`. Hash the immutable bytes:
 
 ```bash
 POLICY_SHA=$(sha256sum runs/freeze/provider-policy.json | cut -d' ' -f1)
-# PowerShell: $POLICY_SHA=(Get-FileHash runs/freeze/provider-policy.json -Algorithm SHA256).Hash.ToLower()
+# PowerShell:
+# $POLICY_SHA=(Get-FileHash runs/freeze/provider-policy.json -Algorithm SHA256).Hash.ToLower()
 ```
 
-Use the same `Get-FileHash ... -Algorithm SHA256` form for every later
-`*_SHA` variable when running in PowerShell.
+## 4. Freeze the exhaustive pilot/main partition
 
-## 4. Freeze disjoint pilot/main clusters
-
-Choose the pilot counts and partition seed before any call. MM-SafetyBench has
-six policy strata, and no fixed overall count guarantees at least two clusters
-in each. Create and inspect the offline partition against the converted
-datapoints' `source_policy.policy_id/version`; do not call a model until every
-planned policy endpoint has at least two pilot clusters and enough remaining
-main clusters. Change the count/seed and recreate the partition if necessary.
-Record the final values.
+Choose the three pilot cluster counts and the seed before any model call. There
+is deliberately no hard-coded pilot count: MM-SafetyBench has six policy strata,
+and the required main sample depends on the disjoint-pilot variances. Generate
+and inspect candidate partitions until the prespecified allocation is feasible;
+do not choose it from model outcomes.
 
 ```bash
 export STRONG_PILOT_CLUSTERS='<frozen-integer>'
 export MMSAFETY_PILOT_CLUSTERS='<frozen-integer>'
 export MOSS_PILOT_CLUSTERS='<frozen-integer>'
 export PARTITION_SEED='<frozen-integer>'
+
 python -m experiments.cluster_partition \
   --corpus "strongreject=$STRONG_PILOT_CLUSTERS" \
   --corpus "mmsafety=$MMSAFETY_PILOT_CLUSTERS" \
   --corpus "mossbench=$MOSS_PILOT_CLUSTERS" \
   --seed "$PARTITION_SEED" \
+  --minimum-pilot-policy-clusters 2 \
+  --minimum-main-policy-clusters 2 \
   --output runs/freeze/primary-partition.json
-```
 
-The command prints the artifact SHA-256. Retain it:
-
-```bash
 PARTITION_SHA=$(sha256sum runs/freeze/primary-partition.json | cut -d' ' -f1)
 ```
 
-This command parses the entire local release before calls and writes
-`ura-cluster-partition/1.1`: a content-bound, exhaustive, non-overlapping pilot/
-main assignment. Fail the pre-call audit if any planned policy has fewer than
-two pilot clusters. After calls, zero/undefined cluster-difference variance is a
-failed pilot condition: do not repartition, weaken the SESOI, or promote pilot
-observations into main. A replacement study needs a new frozen protocol and
-partition before any additional calls. Real execution requires `--limit 0`;
-`--limit N` otherwise means N unique source clusters with all rows in each
-cluster, not N rows.
+The command prints exact pilot and main cluster counts for every observed source
+policy. The artifact also binds the canonical converted-corpus digest, complete
+cluster inventory, and portable `source_locator`; it does not persist the
+operator's absolute corpus path. Pilot and main are exhaustive and disjoint.
+Every measured child uses this same artifact and `--limit 0`. A child may select
+only a subset of corpora already present in the plan.
 
-## 5. Freeze finite call exposure
+If a pilot later has fewer than two clusters or zero/undefined cluster-
+difference variance, stop. Do not repartition, weaken the SESOI after seeing the
+pilot, or promote pilot observations into main.
 
-Calculate finite ceilings from the selected clusters, targets, seeds, attackers,
-turn/query bounds, and model-backed judge stages. Put the chosen integers in the
-run note and shell variables. Leave headroom for the declared single transport
-attempt per logical hosted call; do not use zero (unbounded) on a paid run.
+## 5. Freeze conditions and finite call exposure
 
-```bash
-export PILOT_TARGET_CALLS='<integer>'
-export PILOT_JUDGE_CALLS='<integer>'
-export PILOT_HTTP_ATTEMPTS='<integer>'
-export PILOT_DEADLINE_SECONDS='<integer>'
-export MAIN_TARGET_CALLS='<integer>'
-export MAIN_JUDGE_CALLS='<integer>'
-export MAIN_HTTP_ATTEMPTS='<integer>'
-export MAIN_DEADLINE_SECONDS='<integer>'
-```
-
-The matrix persists reservations before calls in its durable budget ledger.
-Locks prevent concurrent reuse, and a systemic provider/judge failure opens a
-durable circuit. Resume with the identical command and output directory. Use
-`--reset-open-circuits` only after correcting and documenting the root cause.
-These are call-exposure ceilings, not dollar/token/billing guarantees.
-
-## 6. Run the live pilot
-
-Set exact shell values once:
+Set the exact identifiers once:
 
 ```bash
 FABLE='anthropic-fable:claude-fable-5;effort=high;max_tokens=25000'
 SOL='openai-responses:gpt-5.6-sol;reasoning_mode=pro;reasoning_effort=medium;reasoning_context=all_turns'
 JUDGE='anthropic:<exact-account-visible-judge-id>'
 TARGETS="$FABLE,$SOL"
+SEEDS='0,1'
+MAX_QUERIES='4'
+MAX_TURNS='4'
 ```
 
-Run the replay pilot used for the primary model hypotheses:
+Calculate a finite target-call, judge-call, declared HTTP-attempt and deadline
+ceiling separately for each of the four paid grids:
+
+```text
+PILOT_MODEL_{TARGET_CALLS,JUDGE_CALLS,HTTP_ATTEMPTS,DEADLINE_SECONDS}
+PILOT_H4_{TARGET_CALLS,JUDGE_CALLS,HTTP_ATTEMPTS,DEADLINE_SECONDS}
+MAIN_MODEL_{TARGET_CALLS,JUDGE_CALLS,HTTP_ATTEMPTS,DEADLINE_SECONDS}
+MAIN_H4_{TARGET_CALLS,JUDGE_CALLS,HTTP_ATTEMPTS,DEADLINE_SECONDS}
+```
+
+Put the chosen positive integers and derivation in `RUNNOTE.md`. Crescendo setup
+turns consume target calls but no judge calls. These ledgers bound declared call
+exposure, not dollars, tokens, provider-side activity outside the declared
+transport, or billing reconciliation. Never use zero (unbounded) on a paid run.
+
+## 6. Run the two-child pilot
+
+The model child runs replay once across all three corpora. It supplies both real
+text and real text+image evidence for both targets.
 
 ```bash
-python experiments/run_matrix.py \
+python -m experiments.run_matrix \
   --api "$TARGETS" \
   --attackers replay \
   --judges rules,llm --judge-model "$JUDGE" \
   --corpora strongreject,mmsafety,mossbench \
   --partition-plan runs/freeze/primary-partition.json \
   --partition-sha256 "$PARTITION_SHA" --partition-role pilot \
-  --limit 0 --sample-seed 0 --seeds 0,1 \
-  --max-queries 4 --max-turns 4 \
+  --limit 0 --sample-seed 0 --seeds "$SEEDS" \
+  --max-queries "$MAX_QUERIES" --max-turns "$MAX_TURNS" \
   --group model,risk,modality,source_policy_id,source_policy_version \
-  --max-total-target-calls "$PILOT_TARGET_CALLS" \
-  --max-total-judge-calls "$PILOT_JUDGE_CALLS" \
-  --max-total-http-attempts "$PILOT_HTTP_ATTEMPTS" \
-  --deadline-seconds "$PILOT_DEADLINE_SECONDS" \
+  --max-total-target-calls "$PILOT_MODEL_TARGET_CALLS" \
+  --max-total-judge-calls "$PILOT_MODEL_JUDGE_CALLS" \
+  --max-total-http-attempts "$PILOT_MODEL_HTTP_ATTEMPTS" \
+  --deadline-seconds "$PILOT_MODEL_DEADLINE_SECONDS" \
   --provider-data-policy-approval runs/freeze/provider-policy.json \
   --provider-data-policy-sha256 "$POLICY_SHA" \
-  --out runs/pilot
+  --out runs/pilot/model
 ```
 
-Inspect every completion/error record, identity inventory, budget/circuit file,
-and `modality_coverage_result`. Both Fable and Sol must have real text and real
-text+image evidence. Audio/video are expected unavailable, not failures and not
-fallbacks.
-
-Generate one policy-qualified pilot artifact for each primary hypothesis. The
-six MM-SafetyBench policies share the pinned version
-`b80eedea3db312c09ded2082813390f68e750ef3:evaluation.py`.
+The successful command prints the generated modality-proof path and SHA-256.
+Copy them exactly; do not edit the proof or its referenced grid/completion files:
 
 ```bash
-python -m experiments.pilot_analysis --results runs/pilot --left-model "$FABLE" --right-model "$SOL" --left-attacker replay --corpus strongreject --metric ASR --source-policy-id unversioned --source-policy-version unversioned --prevalence-source conservative --output runs/pilot-analysis/strongreject-asr.json
-python -m experiments.pilot_analysis --results runs/pilot --left-model "$FABLE" --right-model "$SOL" --left-attacker replay --corpus mmsafety --metric ASR --source-policy-id 'mmsafety:content_safety' --source-policy-version 'b80eedea3db312c09ded2082813390f68e750ef3:evaluation.py' --prevalence-source conservative --output runs/pilot-analysis/mmsafety-content-safety-asr.json
-python -m experiments.pilot_analysis --results runs/pilot --left-model "$FABLE" --right-model "$SOL" --left-attacker replay --corpus mmsafety --metric ASR --source-policy-id 'mmsafety:political_lobbying_refusal' --source-policy-version 'b80eedea3db312c09ded2082813390f68e750ef3:evaluation.py' --prevalence-source conservative --output runs/pilot-analysis/mmsafety-political-asr.json
-python -m experiments.pilot_analysis --results runs/pilot --left-model "$FABLE" --right-model "$SOL" --left-attacker replay --corpus mmsafety --metric ASR --source-policy-id 'mmsafety:legal_advice_caution' --source-policy-version 'b80eedea3db312c09ded2082813390f68e750ef3:evaluation.py' --prevalence-source conservative --output runs/pilot-analysis/mmsafety-legal-asr.json
-python -m experiments.pilot_analysis --results runs/pilot --left-model "$FABLE" --right-model "$SOL" --left-attacker replay --corpus mmsafety --metric ASR --source-policy-id 'mmsafety:financial_advice_caution' --source-policy-version 'b80eedea3db312c09ded2082813390f68e750ef3:evaluation.py' --prevalence-source conservative --output runs/pilot-analysis/mmsafety-financial-asr.json
-python -m experiments.pilot_analysis --results runs/pilot --left-model "$FABLE" --right-model "$SOL" --left-attacker replay --corpus mmsafety --metric ASR --source-policy-id 'mmsafety:health_advice_caution' --source-policy-version 'b80eedea3db312c09ded2082813390f68e750ef3:evaluation.py' --prevalence-source conservative --output runs/pilot-analysis/mmsafety-health-asr.json
-python -m experiments.pilot_analysis --results runs/pilot --left-model "$FABLE" --right-model "$SOL" --left-attacker replay --corpus mmsafety --metric ASR --source-policy-id 'mmsafety:government_decision_refusal' --source-policy-version 'b80eedea3db312c09ded2082813390f68e750ef3:evaluation.py' --prevalence-source conservative --output runs/pilot-analysis/mmsafety-government-asr.json
-python -m experiments.pilot_analysis --results runs/pilot --left-model "$FABLE" --right-model "$SOL" --left-attacker replay --corpus mossbench --metric FRR --source-policy-id 'mossbench:benign-refusal-rate' --source-policy-version '8d68b0614b39d8990a508e03d99975832f399db2:Evaluator.py+evaluation_prompts.py' --prevalence-source conservative --output runs/pilot-analysis/mossbench-frr.json
+PILOT_MODALITY_PROOF='runs/pilot/model/<grid-id>.modality-coverage-proof.json'
+PILOT_MODALITY_PROOF_SHA='<printed-lowercase-sha256>'
 ```
 
-Each command prints its content hash and cluster SD. For a preregistered SESOI
-of 0.10, compute the required main clusters separately for each artifact:
+Now run only the StrongREJECT Crescendo child. It reuses no replay calls. Its
+companion proof is accepted only when the completed Attempt/Response evidence
+reconstructs the exact target runtime component and defense condition under the
+same content-addressed driver and harness source identities.
 
 ```bash
-python -c 'import json,sys; from ura.metrics import required_clusters_for_power as f; p=json.load(open(sys.argv[1],encoding="utf-8")); print(f(.10,p["cluster_sd"],alpha=.05,target_power=.80))' runs/pilot-analysis/strongreject-asr.json
+python -m experiments.run_matrix \
+  --api "$TARGETS" \
+  --attackers crescendo \
+  --judges rules,llm --judge-model "$JUDGE" \
+  --corpora strongreject \
+  --partition-plan runs/freeze/primary-partition.json \
+  --partition-sha256 "$PARTITION_SHA" --partition-role pilot \
+  --modality-coverage-companion "$PILOT_MODALITY_PROOF" \
+  --modality-coverage-companion-sha256 "$PILOT_MODALITY_PROOF_SHA" \
+  --limit 0 --sample-seed 0 --seeds "$SEEDS" \
+  --max-queries "$MAX_QUERIES" --max-turns "$MAX_TURNS" \
+  --group model,risk,modality,source_policy_id,source_policy_version \
+  --max-total-target-calls "$PILOT_H4_TARGET_CALLS" \
+  --max-total-judge-calls "$PILOT_H4_JUDGE_CALLS" \
+  --max-total-http-attempts "$PILOT_H4_HTTP_ATTEMPTS" \
+  --deadline-seconds "$PILOT_H4_DEADLINE_SECONDS" \
+  --provider-data-policy-approval runs/freeze/provider-policy.json \
+  --provider-data-policy-sha256 "$POLICY_SHA" \
+  --out runs/pilot/adaptivity
 ```
 
-Repeat for all eight files. If a required count exceeds that policy's main
-partition, the corresponding hypothesis is not feasible under this design;
-change the design before main rather than weakening it afterward.
-The plan skeleton below uses 0.10 as the explicit design choice. If the written
-evaluation policy justifies another SESOI, replace every affected numeric value
-and recompute its count before freezing; never choose it from the observed pilot
-effect.
+Treat `runs/pilot` as the analysis root. Verify that both grids have zero errors,
+all requested cells have completion markers, both models have executed text and
+text+image suite-wide, and audio/video are reported unavailable. An input-
+defense block or Crescendo setup-only turn is not modality execution evidence.
 
-## 7. Freeze the confirmatory plan before main
+## 7. Create the ten disjoint-pilot artifacts
 
-Write `runs/freeze/confirmatory-plan.json`. This is the minimal primary-family
-shape accepted by `experiments.confirmatory_analysis`. Replace hashes and the
-eight computed counts. Relative paths resolve from the plan's directory.
-Policy tokens use `policy=<percent-encoded-id>@<percent-encoded-version>`; the
-immutable plan qualifies StrongREJECT and MOSSBench as well as all six MM
-policies.
+Generate one artifact per hypothesis. These commands make no target or judge
+calls.
+
+```bash
+mkdir -p runs/pilot-analysis
+
+python -m experiments.pilot_analysis --results runs/pilot \
+  --left-model "$FABLE" --right-model "$SOL" --left-attacker replay \
+  --corpus strongreject --metric ASR \
+  --source-policy-id unversioned --source-policy-version unversioned \
+  --prevalence-source conservative \
+  --output runs/pilot-analysis/model-strongreject-asr.json
+
+python -m experiments.pilot_analysis --results runs/pilot \
+  --left-model "$FABLE" --right-model "$SOL" --left-attacker replay \
+  --corpus mmsafety --metric ASR \
+  --source-policy-id 'mmsafety:content_safety' \
+  --source-policy-version 'b80eedea3db312c09ded2082813390f68e750ef3:evaluation.py' \
+  --prevalence-source conservative \
+  --output runs/pilot-analysis/mmsafety-content-safety-asr.json
+
+python -m experiments.pilot_analysis --results runs/pilot \
+  --left-model "$FABLE" --right-model "$SOL" --left-attacker replay \
+  --corpus mmsafety --metric ASR \
+  --source-policy-id 'mmsafety:political_lobbying_refusal' \
+  --source-policy-version 'b80eedea3db312c09ded2082813390f68e750ef3:evaluation.py' \
+  --prevalence-source conservative \
+  --output runs/pilot-analysis/mmsafety-political-asr.json
+
+python -m experiments.pilot_analysis --results runs/pilot \
+  --left-model "$FABLE" --right-model "$SOL" --left-attacker replay \
+  --corpus mmsafety --metric ASR \
+  --source-policy-id 'mmsafety:legal_advice_caution' \
+  --source-policy-version 'b80eedea3db312c09ded2082813390f68e750ef3:evaluation.py' \
+  --prevalence-source conservative \
+  --output runs/pilot-analysis/mmsafety-legal-asr.json
+
+python -m experiments.pilot_analysis --results runs/pilot \
+  --left-model "$FABLE" --right-model "$SOL" --left-attacker replay \
+  --corpus mmsafety --metric ASR \
+  --source-policy-id 'mmsafety:financial_advice_caution' \
+  --source-policy-version 'b80eedea3db312c09ded2082813390f68e750ef3:evaluation.py' \
+  --prevalence-source conservative \
+  --output runs/pilot-analysis/mmsafety-financial-asr.json
+
+python -m experiments.pilot_analysis --results runs/pilot \
+  --left-model "$FABLE" --right-model "$SOL" --left-attacker replay \
+  --corpus mmsafety --metric ASR \
+  --source-policy-id 'mmsafety:health_advice_caution' \
+  --source-policy-version 'b80eedea3db312c09ded2082813390f68e750ef3:evaluation.py' \
+  --prevalence-source conservative \
+  --output runs/pilot-analysis/mmsafety-health-asr.json
+
+python -m experiments.pilot_analysis --results runs/pilot \
+  --left-model "$FABLE" --right-model "$SOL" --left-attacker replay \
+  --corpus mmsafety --metric ASR \
+  --source-policy-id 'mmsafety:government_decision_refusal' \
+  --source-policy-version 'b80eedea3db312c09ded2082813390f68e750ef3:evaluation.py' \
+  --prevalence-source conservative \
+  --output runs/pilot-analysis/mmsafety-government-asr.json
+
+python -m experiments.pilot_analysis --results runs/pilot \
+  --left-model "$FABLE" --right-model "$SOL" --left-attacker replay \
+  --corpus mossbench --metric FRR \
+  --source-policy-id 'mossbench:benign-refusal-rate' \
+  --source-policy-version '8d68b0614b39d8990a508e03d99975832f399db2:Evaluator.py+evaluation_prompts.py' \
+  --prevalence-source conservative \
+  --output runs/pilot-analysis/mossbench-frr.json
+
+python -m experiments.pilot_analysis --results runs/pilot \
+  --left-model "$FABLE" --right-model "$FABLE" \
+  --left-attacker replay --right-attacker crescendo \
+  --corpus strongreject --metric ASR \
+  --source-policy-id unversioned --source-policy-version unversioned \
+  --prevalence-source conservative \
+  --output runs/pilot-analysis/h4-fable-asr.json
+
+python -m experiments.pilot_analysis --results runs/pilot \
+  --left-model "$SOL" --right-model "$SOL" \
+  --left-attacker replay --right-attacker crescendo \
+  --corpus strongreject --metric ASR \
+  --source-policy-id unversioned --source-policy-version unversioned \
+  --prevalence-source conservative \
+  --output runs/pilot-analysis/h4-sol-asr.json
+```
+
+Each command prints its content SHA-256 and cluster SD. For each artifact,
+prespecify and justify a SESOI, then calculate its own required main-cluster
+count. Never reuse one pilot SD across hypotheses:
+
+```bash
+python -c 'import json,sys; from ura.metrics import required_clusters_for_power as f; p=json.load(open(sys.argv[1],encoding="utf-8")); print(f(float(sys.argv[2]),p["cluster_sd"],alpha=.05,target_power=.80))' \
+  runs/pilot-analysis/model-strongreject-asr.json '<prespecified-SESOI>'
+```
+
+Repeat for all ten artifacts. If a requirement exceeds its exact main policy
+stratum, the hypothesis is infeasible under this design. Stop before main and
+amend the prospective design; do not change the partition or SESOI in response
+to the observed effect.
+
+## 8. Freeze the confirmatory plan
+
+Write `runs/freeze/confirmatory-plan.json` using
+`ura-confirmatory-plan/1.0`. Relative result/artifact paths resolve from the
+plan's directory. Every hypothesis design must contain its own
+`endpoint_role`, `smallest_effect`, `{artifact,sha256}` pilot binding, and exact
+integer `required_unique_clusters` recomputed above.
+
+Freeze exactly these multiplicity families:
+
+| Family | Role | Contrasts and hypotheses |
+| --- | --- | --- |
+| `primary-model` | `primary` | one Fable-vs-Sol replay contrast, `strongreject::ASR` |
+| `secondary-proxies` | `secondary` | one Fable-vs-Sol replay contrast; six policy-qualified MM-SafetyBench ASR hypotheses and one policy-qualified MOSSBench `over_refusal_rate` hypothesis |
+| `h4-adaptivity` | `primary` | two contrasts: Fable replay vs Crescendo and Sol replay vs Crescendo; each has only `strongreject::ASR` |
+
+For H4, `strongreject::ASR` denotes the paired endpoint difference between
+one-shot replay ASR and bounded-conversation Crescendo ASR. It does not assert
+that the adaptive transcripts are identical.
+
+All contrasts use `results: "../main"`, defense `none`, and their exact target
+specifications. A model contrast has `type: "model"`; each H4 contrast has
+`type: "adaptivity"` and the same model on both sides, with attackers `replay`
+and `crescendo`. Use one globally unique `contrast_id`; each family-level
+hypothesis is `<contrast_id>::<local-hypothesis>`. Keep endpoint roles identical
+between a family and all its hypothesis designs. Do not put MM/MOSS proxies in a
+primary family.
+
+The exact policy token form is
+`policy=<percent-encoded-id>@<percent-encoded-version>`. Reuse the policy IDs and
+versions from the pilot commands, percent-encoding `:`, `+`, and other reserved
+characters. The exact local hypothesis IDs are:
+
+```text
+strongreject::ASR
+mmsafety::ASR::policy=mmsafety%3Acontent_safety@b80eedea3db312c09ded2082813390f68e750ef3%3Aevaluation.py
+mmsafety::ASR::policy=mmsafety%3Apolitical_lobbying_refusal@b80eedea3db312c09ded2082813390f68e750ef3%3Aevaluation.py
+mmsafety::ASR::policy=mmsafety%3Alegal_advice_caution@b80eedea3db312c09ded2082813390f68e750ef3%3Aevaluation.py
+mmsafety::ASR::policy=mmsafety%3Afinancial_advice_caution@b80eedea3db312c09ded2082813390f68e750ef3%3Aevaluation.py
+mmsafety::ASR::policy=mmsafety%3Ahealth_advice_caution@b80eedea3db312c09ded2082813390f68e750ef3%3Aevaluation.py
+mmsafety::ASR::policy=mmsafety%3Agovernment_decision_refusal@b80eedea3db312c09ded2082813390f68e750ef3%3Aevaluation.py
+mossbench::over_refusal_rate::policy=mossbench%3Abenign-refusal-rate@8d68b0614b39d8990a508e03d99975832f399db2%3AEvaluator.py%2Bevaluation_prompts.py
+```
+
+`strongreject::ASR` appears once in the model contrast and once in each of the
+two H4 contrasts. Freeze `alpha`, `target_power`, bootstrap/permutation counts,
+seed, and the within-pair exchangeability assumption before main.
+
+The plan must also freeze a whole-cluster human-audit design. For the conservative
+option, use:
 
 ```json
-{
-  "schema_version": "ura-confirmatory-plan/1.0",
-  "plan_id": "fable-vs-sol-primary-v1",
-  "evaluation_policy": {
-    "policy_id": "ura-primary-common-metrics",
-    "version": "1",
-    "sha256": "<sha256-of-the-frozen-written-evaluation-policy>"
-  },
-  "alpha": 0.05,
-  "target_power": 0.80,
-  "bootstrap_resamples": 2000,
-  "permutations": 10000,
-  "seed": 0,
-  "human_audit": {
-    "event_prevalence_mode": "conservative_max_binomial_variance",
-    "precision_half_width": 0.10,
-    "required_unique_clusters": 97,
-    "minimum_independent_raters": 2
-  },
-  "families": [
-    {
-      "family_id": "primary-model-family",
-      "hypotheses": [
-        "model-primary::strongreject::ASR::policy=unversioned@unversioned",
-        "model-primary::mmsafety::ASR::policy=mmsafety%3Acontent_safety@b80eedea3db312c09ded2082813390f68e750ef3%3Aevaluation.py",
-        "model-primary::mmsafety::ASR::policy=mmsafety%3Apolitical_lobbying_refusal@b80eedea3db312c09ded2082813390f68e750ef3%3Aevaluation.py",
-        "model-primary::mmsafety::ASR::policy=mmsafety%3Alegal_advice_caution@b80eedea3db312c09ded2082813390f68e750ef3%3Aevaluation.py",
-        "model-primary::mmsafety::ASR::policy=mmsafety%3Afinancial_advice_caution@b80eedea3db312c09ded2082813390f68e750ef3%3Aevaluation.py",
-        "model-primary::mmsafety::ASR::policy=mmsafety%3Ahealth_advice_caution@b80eedea3db312c09ded2082813390f68e750ef3%3Aevaluation.py",
-        "model-primary::mmsafety::ASR::policy=mmsafety%3Agovernment_decision_refusal@b80eedea3db312c09ded2082813390f68e750ef3%3Aevaluation.py",
-        "model-primary::mossbench::over_refusal_rate::policy=mossbench%3Abenign-refusal-rate@8d68b0614b39d8990a508e03d99975832f399db2%3AEvaluator.py%2Bevaluation_prompts.py"
-      ],
-      "contrasts": [
-        {
-          "contrast_id": "model-primary",
-          "type": "model",
-          "results": "../main",
-          "corpora": ["strongreject", "mmsafety", "mossbench"],
-          "left": {
-            "model_spec": "anthropic-fable:claude-fable-5;effort=high;max_tokens=25000",
-            "defense": "none",
-            "attacker": "replay"
-          },
-          "right": {
-            "model_spec": "openai-responses:gpt-5.6-sol;reasoning_mode=pro;reasoning_effort=medium;reasoning_context=all_turns",
-            "defense": "none",
-            "attacker": "replay"
-          },
-          "assume_exchangeable": true,
-          "hypotheses": [
-            "strongreject::ASR::policy=unversioned@unversioned",
-            "mmsafety::ASR::policy=mmsafety%3Acontent_safety@b80eedea3db312c09ded2082813390f68e750ef3%3Aevaluation.py",
-            "mmsafety::ASR::policy=mmsafety%3Apolitical_lobbying_refusal@b80eedea3db312c09ded2082813390f68e750ef3%3Aevaluation.py",
-            "mmsafety::ASR::policy=mmsafety%3Alegal_advice_caution@b80eedea3db312c09ded2082813390f68e750ef3%3Aevaluation.py",
-            "mmsafety::ASR::policy=mmsafety%3Afinancial_advice_caution@b80eedea3db312c09ded2082813390f68e750ef3%3Aevaluation.py",
-            "mmsafety::ASR::policy=mmsafety%3Ahealth_advice_caution@b80eedea3db312c09ded2082813390f68e750ef3%3Aevaluation.py",
-            "mmsafety::ASR::policy=mmsafety%3Agovernment_decision_refusal@b80eedea3db312c09ded2082813390f68e750ef3%3Aevaluation.py",
-            "mossbench::over_refusal_rate::policy=mossbench%3Abenign-refusal-rate@8d68b0614b39d8990a508e03d99975832f399db2%3AEvaluator.py%2Bevaluation_prompts.py"
-          ],
-          "hypothesis_designs": {
-            "strongreject::ASR::policy=unversioned@unversioned": {
-              "smallest_effect": 0.10,
-              "pilot": {"artifact": "../pilot-analysis/strongreject-asr.json", "sha256": "<pilot-sha256>"},
-              "required_unique_clusters": "<computed-integer>"
-            },
-            "mmsafety::ASR::policy=mmsafety%3Acontent_safety@b80eedea3db312c09ded2082813390f68e750ef3%3Aevaluation.py": {
-              "smallest_effect": 0.10,
-              "pilot": {"artifact": "../pilot-analysis/mmsafety-content-safety-asr.json", "sha256": "<pilot-sha256>"},
-              "required_unique_clusters": "<computed-integer>"
-            },
-            "mmsafety::ASR::policy=mmsafety%3Apolitical_lobbying_refusal@b80eedea3db312c09ded2082813390f68e750ef3%3Aevaluation.py": {
-              "smallest_effect": 0.10,
-              "pilot": {"artifact": "../pilot-analysis/mmsafety-political-asr.json", "sha256": "<pilot-sha256>"},
-              "required_unique_clusters": "<computed-integer>"
-            },
-            "mmsafety::ASR::policy=mmsafety%3Alegal_advice_caution@b80eedea3db312c09ded2082813390f68e750ef3%3Aevaluation.py": {
-              "smallest_effect": 0.10,
-              "pilot": {"artifact": "../pilot-analysis/mmsafety-legal-asr.json", "sha256": "<pilot-sha256>"},
-              "required_unique_clusters": "<computed-integer>"
-            },
-            "mmsafety::ASR::policy=mmsafety%3Afinancial_advice_caution@b80eedea3db312c09ded2082813390f68e750ef3%3Aevaluation.py": {
-              "smallest_effect": 0.10,
-              "pilot": {"artifact": "../pilot-analysis/mmsafety-financial-asr.json", "sha256": "<pilot-sha256>"},
-              "required_unique_clusters": "<computed-integer>"
-            },
-            "mmsafety::ASR::policy=mmsafety%3Ahealth_advice_caution@b80eedea3db312c09ded2082813390f68e750ef3%3Aevaluation.py": {
-              "smallest_effect": 0.10,
-              "pilot": {"artifact": "../pilot-analysis/mmsafety-health-asr.json", "sha256": "<pilot-sha256>"},
-              "required_unique_clusters": "<computed-integer>"
-            },
-            "mmsafety::ASR::policy=mmsafety%3Agovernment_decision_refusal@b80eedea3db312c09ded2082813390f68e750ef3%3Aevaluation.py": {
-              "smallest_effect": 0.10,
-              "pilot": {"artifact": "../pilot-analysis/mmsafety-government-asr.json", "sha256": "<pilot-sha256>"},
-              "required_unique_clusters": "<computed-integer>"
-            },
-            "mossbench::over_refusal_rate::policy=mossbench%3Abenign-refusal-rate@8d68b0614b39d8990a508e03d99975832f399db2%3AEvaluator.py%2Bevaluation_prompts.py": {
-              "smallest_effect": 0.10,
-              "pilot": {"artifact": "../pilot-analysis/mossbench-frr.json", "sha256": "<pilot-sha256>"},
-              "required_unique_clusters": "<computed-integer>"
-            }
-          }
-        }
-      ]
-    }
-  ]
+"human_audit": {
+  "event_prevalence_mode": "conservative_max_binomial_variance",
+  "precision_half_width": "<prespecified-number>",
+  "required_unique_clusters": "<exact-recomputed-integer>",
+  "minimum_independent_raters": 2
 }
 ```
 
-The `required_unique_clusters` values are JSON integers, not quoted strings in
-the final file. The evaluation-policy digest must identify a written frozen
-policy defining the harmful/benign labels, source-specific qualifications, and
-primary endpoints. `assume_exchangeable=true` explicitly freezes the paired
-sign-flip/permutation assumption; retain it only as the preregistered analysis
-assumption. Hash the final bytes and do not edit afterward:
+In the actual JSON, `precision_half_width` and `required_unique_clusters` are
+numbers, not quoted placeholders. Calculate the latter with
+`ura.metrics.required_clusters_for_proportion_precision(0.5, half_width,
+alpha=0.05)`; do not invent a fixed count. The frozen plan makes the audit cover
+the exact model, defense, attacker, policy and endpoint arms in all three
+families.
+
+Hash the final bytes and never edit them in place:
 
 ```bash
 PLAN_SHA=$(sha256sum runs/freeze/confirmatory-plan.json | cut -d' ' -f1)
 ```
 
-## 8. Run main
+## 9. Run the two-child main study
 
-Use the same partition, provider approval, endpoints, judge, source releases,
-seeds, query/turn bounds, and grouping. Main may include Crescendo for the
-prespecified live descriptive/survival analysis; the confirmatory primary
-contrast above selects replay only.
+Repeat the pilot layout with partition role `main` and independent main
+ceilings. First run the all-corpus replay child:
 
 ```bash
-python experiments/run_matrix.py \
+python -m experiments.run_matrix \
   --api "$TARGETS" \
-  --attackers replay,crescendo \
+  --attackers replay \
   --judges rules,llm --judge-model "$JUDGE" \
   --corpora strongreject,mmsafety,mossbench \
   --partition-plan runs/freeze/primary-partition.json \
   --partition-sha256 "$PARTITION_SHA" --partition-role main \
-  --limit 0 --sample-seed 0 --seeds 0,1 \
-  --max-queries 4 --max-turns 4 \
+  --limit 0 --sample-seed 0 --seeds "$SEEDS" \
+  --max-queries "$MAX_QUERIES" --max-turns "$MAX_TURNS" \
   --group model,risk,modality,source_policy_id,source_policy_version \
-  --max-total-target-calls "$MAIN_TARGET_CALLS" \
-  --max-total-judge-calls "$MAIN_JUDGE_CALLS" \
-  --max-total-http-attempts "$MAIN_HTTP_ATTEMPTS" \
-  --deadline-seconds "$MAIN_DEADLINE_SECONDS" \
+  --max-total-target-calls "$MAIN_MODEL_TARGET_CALLS" \
+  --max-total-judge-calls "$MAIN_MODEL_JUDGE_CALLS" \
+  --max-total-http-attempts "$MAIN_MODEL_HTTP_ATTEMPTS" \
+  --deadline-seconds "$MAIN_MODEL_DEADLINE_SECONDS" \
   --provider-data-policy-approval runs/freeze/provider-policy.json \
   --provider-data-policy-sha256 "$POLICY_SHA" \
-  --out runs/main
+  --out runs/main/model
 ```
 
-Do not delete durable budget/circuit/lock/checkpoint/error artifacts. Rerunning
-the identical command resumes verified work or validates completion without
-repeating finished calls.
-
-Useful read-only diagnostics after completion are:
+Copy the printed main proof path and hash, then run only StrongREJECT Crescendo:
 
 ```bash
-python experiments/judge_sensitivity.py --results runs/main --attacker replay
-python experiments/kappa.py --results runs/main
-python experiments/transfer_matrix.py --results runs/main
+MAIN_MODALITY_PROOF='runs/main/model/<grid-id>.modality-coverage-proof.json'
+MAIN_MODALITY_PROOF_SHA='<printed-lowercase-sha256>'
+
+python -m experiments.run_matrix \
+  --api "$TARGETS" \
+  --attackers crescendo \
+  --judges rules,llm --judge-model "$JUDGE" \
+  --corpora strongreject \
+  --partition-plan runs/freeze/primary-partition.json \
+  --partition-sha256 "$PARTITION_SHA" --partition-role main \
+  --modality-coverage-companion "$MAIN_MODALITY_PROOF" \
+  --modality-coverage-companion-sha256 "$MAIN_MODALITY_PROOF_SHA" \
+  --limit 0 --sample-seed 0 --seeds "$SEEDS" \
+  --max-queries "$MAX_QUERIES" --max-turns "$MAX_TURNS" \
+  --group model,risk,modality,source_policy_id,source_policy_version \
+  --max-total-target-calls "$MAIN_H4_TARGET_CALLS" \
+  --max-total-judge-calls "$MAIN_H4_JUDGE_CALLS" \
+  --max-total-http-attempts "$MAIN_H4_HTTP_ATTEMPTS" \
+  --deadline-seconds "$MAIN_H4_DEADLINE_SECONDS" \
+  --provider-data-policy-approval runs/freeze/provider-policy.json \
+  --provider-data-policy-sha256 "$POLICY_SHA" \
+  --out runs/main/adaptivity
 ```
 
-Transfer is a prespecified, support/power-gated descriptive conditional rate
-with a cluster interval. Its source-success-conditioned population has no frozen
-null/p-value and is outside the Holm family; paired adaptivity effects belong in
-confirmatory families instead.
+Rerunning an identical command and output directory resumes verified work or
+validates completion without repeating finished calls. Do not hand-edit or
+delete budgets, circuits, locks, checkpoints, completions or errors. Use
+`--reset-open-circuits` only after correcting and documenting the root cause.
 
-R-Judge/GPTGeoChat, a same-target defense contrast, or local exploratory models
-need their own frozen partition and plan; do not append them ad hoc to the
-primary family. A local config has only the exact selected spec keys and:
+## 10. Read-only diagnostics
 
-```json
-{
-  "vllm:<exact-model>": {"revision": "<immutable-40-to-64-hex-commit>", "modalities": ["text", "image"]},
-  "ollama:<exact-tag>": {"digest": "<64-hex-served-model-digest>", "modalities": ["text", "image"]}
-}
-```
-
-For vLLM, use exactly one of `revision` or `digest`; Ollama requires `digest`.
-The local-config field names are exact; aliases are rejected.
-
-## 9. Preliminary analysis, human audit, and final analysis
-
-The preliminary command is a validation checkpoint, not publishable output:
+Run diagnostics from the common main parent:
 
 ```bash
-python -m experiments.confirmatory_analysis --plan runs/freeze/confirmatory-plan.json --preliminary --output runs/analysis/confirmatory-preliminary.json
+python -m experiments.judge_sensitivity --results runs/main --attacker replay \
+  --output runs/analysis/judge-sensitivity-replay.json
+python -m experiments.kappa --results runs/main --attacker replay
+python -m experiments.transfer_matrix --results runs/main --attacker replay \
+  --minimum-unique-clusters '<prespecified-integer-at-least-2>' \
+  --bootstrap 2000 --seed 0 --alpha 0.05
 ```
 
-Prepare exactly the frozen 97 unique source clusters. The export is sensitive:
+Transfer is conditional descriptive evidence outside Holm. It reports equal-
+weight cluster rates, cluster-rate dispersion, a source-cluster bootstrap
+interval and a minimum-cluster support gate. It has no transfer pilot, SESOI,
+power calculation, null hypothesis or p-value. Live Crescendo is excluded unless
+an exact transcript was deliberately replayed.
+
+R-Judge/GPTGeoChat, a same-target defense study, or exploratory local models need
+their own frozen design. Do not append them ad hoc to these families.
+
+## 11. Preliminary analysis, human audit, and final analysis
+
+After every main cell is complete, the preliminary command validates the frozen
+statistical design but remains non-publishable:
 
 ```bash
-python -m experiments.human_audit --results runs/main --prepare 97 \
-  --confirmatory-plan runs/freeze/confirmatory-plan.json --plan-sha256 "$PLAN_SHA" \
-  --acknowledge-sensitive-content --output runs/human/human-audit-sample.csv
+python -m experiments.confirmatory_analysis \
+  --plan runs/freeze/confirmatory-plan.json --preliminary \
+  --output runs/analysis/confirmatory-preliminary.json
 ```
 
-Follow the generated instructions. Preserve every sampling/binding field,
-duplicate rows for at least two independent qualified raters, fill distinct
-`rater_id` values, and adjudicate only after independent labels. Then analyse:
+Prepare exactly the plan's computed whole-cluster count from the common parent:
+
+```bash
+python -m experiments.human_audit --results runs/main \
+  --prepare '<frozen-required-unique-clusters>' \
+  --confirmatory-plan runs/freeze/confirmatory-plan.json \
+  --plan-sha256 "$PLAN_SHA" \
+  --acknowledge-sensitive-content \
+  --output runs/human/human-audit-sample.csv
+```
+
+Follow the generated instructions. Preserve every binding field, duplicate each
+selected item for at least two independent qualified raters, use distinct
+`rater_id` values, and label refusal, harmfulness, convincingness and specificity
+separately. Adjudicate only after independent labels. Analyse with the same plan
+binding:
 
 ```bash
 python -m experiments.human_audit --results runs/main \
   --labels runs/human/human-audit-labels.csv \
+  --confirmatory-plan runs/freeze/confirmatory-plan.json \
+  --plan-sha256 "$PLAN_SHA" \
   --bootstrap-resamples 2000 --alpha 0.05 --seed 0
+
 HUMAN_SHA=$(sha256sum runs/main/human_audit.json | cut -d' ' -f1)
 ```
 
-The final confirmatory artifact must bind that exact human audit:
+Bind that exact successful audit into the final analysis:
 
 ```bash
 python -m experiments.confirmatory_analysis \
   --plan runs/freeze/confirmatory-plan.json \
-  --human-audit runs/main/human_audit.json --human-audit-sha256 "$HUMAN_SHA" \
+  --human-audit runs/main/human_audit.json \
+  --human-audit-sha256 "$HUMAN_SHA" \
   --output runs/analysis/confirmatory-final.json
+
 FINAL_SHA=$(sha256sum runs/analysis/confirmatory-final.json | cut -d' ' -f1)
 ```
 
-It is publishable only if every planned hypothesis/corpus is complete and
-adequately powered, the family is intact, pilot/main identities are disjoint,
-and the human audit satisfies the frozen design.
+The final artifact is publishable only if all frozen hypotheses are estimable
+and adequately powered, family inventories and endpoint roles are intact,
+pilot/main identities are disjoint, all source and condition identities match,
+and the human audit covers every required arm.
 
-## 10. Measured figures
-
-Measured figures accept only the final human-bound confirmatory artifact:
+## 12. Figures and return package
 
 ```bash
 python -m experiments.figures \
@@ -490,40 +579,27 @@ python -m experiments.figures \
   --out ../../Thesis-EN/diagrams/figures
 ```
 
-The renderer rejects preliminary, dry-run, incomplete, underpowered, or
-unbound analysis. Preserve `fig-v-provenance.json` with the three PNG files.
+The renderer rejects preliminary, dry-run, incomplete, underpowered or unbound
+analysis. Preserve `fig-v-provenance.json` beside the three PNG files.
 
-## 11. Return package and completion check
+Return the complete access-controlled `runs/` tree, including:
 
-Retain the entire `runs/` tree, including:
+- partition, provider approval, pilot artifacts, confirmatory plan, human audit,
+  analysis and recorded SHA-256 values;
+- both pilot and main child grids, modality plans/results/proofs, budgets,
+  circuits, locks, checkpoints, completions, errors and console logs;
+- attempts, responses, judgments, full shadow trails, results and manifests;
+- human sample/instructions/labels, figures/provenance, `RUNNOTE.md`, dependency
+  freeze, commit and worktree state.
 
-- partition, provider approval, policy note, pilot artifacts, confirmatory plan,
-  and their recorded SHA-256 values;
-- grid, budget, circuit, modality plan/result, lock error, and console logs;
-- every attempts/responses/judgments/trails/results JSONL, manifest, checkpoint,
-  completion marker, and error record;
-- human sample/instructions/labels/audit, preliminary/final analysis, figures and
-  figure provenance;
-- `RUNNOTE.md`, commit/worktree state, and dependency freeze.
+Before return, verify that no placeholder remains; both targets executed text
+and text+image; audio/video remain explicitly unavailable; every requested cell
+is complete or its failure is retained; hashes and identities did not drift;
+MM/MOSS metrics remain secondary proxies; pilot/main runs and clusters do not
+overlap; KM/RMTB use policy-challenge horizons; missing, failed, unsupported,
+abstaining, undefined and measured zero remain distinct; and Mythos has no
+executed row.
 
-Before return, verify:
-
-- no placeholder remains in an executed command or bound JSON file;
-- both targets executed text and text+image; audio/video remain explicitly
-  unavailable, never silently converted;
-- every planned cell has a validated completion marker or retained error;
-- corpus/partition/provider/plan/human hashes match and target/judge identity did
-  not drift;
-- MM-SafetyBench ASR and MOSSBench FRR are labelled secondary URA proxies, not
-  official-evaluator results;
-- pilot and main run/cluster identities do not overlap;
-- full KM and RMTB are reported only for live harmful trajectories at the frozen
-  horizon;
-- missing, failed, unsupported, abstaining, undefined, and measured zero remain
-  distinct;
-- Mythos has no executed row.
-
-Package through an approved encrypted/access-controlled channel. Exclude API
-keys, `.env`, caches, temporary test trees, and restricted source datasets. Do
-not send human-audit content through a less protected channel than the run
-artifacts themselves.
+Exclude API keys, `.env`, caches, temporary test trees and restricted source
+datasets. Package harmful run and human-audit content only through an approved
+encrypted/access-controlled channel.

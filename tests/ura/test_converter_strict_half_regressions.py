@@ -1,6 +1,7 @@
 """Fail-closed source-schema regressions for the first converter group."""
 from __future__ import annotations
 
+import csv
 import json
 from pathlib import Path
 
@@ -17,6 +18,12 @@ from ura.converters import (
     MMSafetyConverter,
     StrongRejectConverter,
 )
+from ura.converters.release_specs import (
+    STRONGREJECT_CATEGORIES,
+    STRONGREJECT_DATASET_SHA256,
+    STRONGREJECT_REVISION,
+)
+from ura.data_models import RiskCategory
 
 
 def _write_json(path: Path, value: object) -> None:
@@ -24,12 +31,34 @@ def _write_json(path: Path, value: object) -> None:
     path.write_text(json.dumps(value), encoding="utf-8")
 
 
+def _write_strongreject_csv(path: Path, rows: list[dict[str, str]]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("w", encoding="utf-8", newline="") as handle:
+        writer = csv.DictWriter(
+            handle,
+            fieldnames=["category", "source", "forbidden_prompt"],
+        )
+        writer.writeheader()
+        writer.writerows(rows)
+
+
+def _strongreject_fixture_rows(count: int = 313) -> list[dict[str, str]]:
+    return [
+        {
+            "category": STRONGREJECT_CATEGORIES[index % len(STRONGREJECT_CATEGORIES)],
+            "source": "release-contract-fixture",
+            "forbidden_prompt": f"unique fixture prompt {index}",
+        }
+        for index in range(count)
+    ]
+
+
 @pytest.mark.parametrize(
     ("converter", "filename", "header"),
     [
         (AdvBenchConverter(), "advbench.csv", "goal,target\n"),
         (
-            StrongRejectConverter(),
+            StrongRejectConverter(require_complete_release=False),
             "strongreject.csv",
             "category,source,forbidden_prompt\n",
         ),
@@ -47,6 +76,90 @@ def test_header_only_csv_corpora_fail_closed(
     source.write_text(header, encoding="utf-8")
     with pytest.raises(CorpusFormatError, match="produced no rows"):
         converter.parse(source)  # type: ignore[attr-defined]
+
+
+def test_strongreject_partial_release_fails_closed(tmp_path: Path):
+    source = tmp_path / "strongreject_dataset.csv"
+    _write_strongreject_csv(source, _strongreject_fixture_rows(1))
+
+    with pytest.raises(CorpusFormatError, match="pinned release requires 313"):
+        StrongRejectConverter().parse(source)
+
+
+def test_strongreject_complete_but_modified_release_fails_hash_gate(tmp_path: Path):
+    source = tmp_path / "strongreject_dataset.csv"
+    _write_strongreject_csv(source, _strongreject_fixture_rows())
+
+    with pytest.raises(CorpusFormatError, match="dataset SHA-256 mismatch"):
+        StrongRejectConverter().parse(source)
+
+
+def test_strongreject_requires_exact_official_csv_schema(tmp_path: Path):
+    source = tmp_path / "strongreject_dataset.csv"
+    source.write_text(
+        "category,source,forbidden_prompt,unexpected\n"
+        "Violence,fixture,unique prompt,value\n",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(CorpusFormatError, match="must contain exactly"):
+        StrongRejectConverter(require_complete_release=False).parse(source)
+
+
+def test_strongreject_accepts_pinned_layout_and_contract_without_corpus_copy(
+    tmp_path: Path,
+):
+    source = (
+        tmp_path
+        / "strongreject_dataset"
+        / "strongreject_dataset.csv"
+    )
+    _write_strongreject_csv(source, _strongreject_fixture_rows())
+
+    points = StrongRejectConverter(verify_manifest_hash=False).parse(tmp_path)
+
+    assert len(points) == 313
+    assert len({point.id for point in points}) == 313
+    assert {point.risk_subtype for point in points} == set(STRONGREJECT_CATEGORIES)
+    assert points[1].risk_category is RiskCategory.TOXICITY
+    assert points[0].meta["release_revision"] == STRONGREJECT_REVISION
+    assert points[0].meta["release_manifest_sha256"] == STRONGREJECT_DATASET_SHA256
+    assert points[0].meta["official_evaluator_executed"] is False
+    assert points[0].meta["evaluator_scope"] == (
+        "strongreject_style_not_official_runtime"
+    )
+
+
+def test_strongreject_requires_exact_six_category_inventory(tmp_path: Path):
+    source = tmp_path / "strongreject_dataset.csv"
+    rows = _strongreject_fixture_rows()
+    for row in rows:
+        row["category"] = "Violence"
+    _write_strongreject_csv(source, rows)
+
+    with pytest.raises(CorpusFormatError, match="six-category inventory"):
+        StrongRejectConverter(verify_manifest_hash=False).parse(source)
+
+
+def test_strongreject_rejects_duplicate_prompts(tmp_path: Path):
+    source = tmp_path / "strongreject_dataset.csv"
+    rows = _strongreject_fixture_rows(2)
+    rows[1]["forbidden_prompt"] = rows[0]["forbidden_prompt"]
+    _write_strongreject_csv(source, rows)
+
+    with pytest.raises(CorpusFormatError, match="duplicate forbidden_prompt"):
+        StrongRejectConverter(require_complete_release=False).parse(source)
+
+
+@pytest.mark.parametrize("field", ["category", "source"])
+def test_strongreject_rejects_blank_required_fields(tmp_path: Path, field: str):
+    source = tmp_path / "strongreject_dataset.csv"
+    rows = _strongreject_fixture_rows(1)
+    rows[0][field] = "   "
+    _write_strongreject_csv(source, rows)
+
+    with pytest.raises(CorpusFormatError, match=f"non-empty {field}"):
+        StrongRejectConverter(require_complete_release=False).parse(source)
 
 
 @pytest.mark.parametrize(
@@ -151,7 +264,7 @@ def test_every_json_record_must_be_an_object(
             "harmful prompt",
         ),
         (
-            StrongRejectConverter(),
+            StrongRejectConverter(require_complete_release=False),
             "strongreject.csv",
             "category,source,forbidden_prompt\nViolence,test,   \n",
             "forbidden_prompt",

@@ -34,6 +34,10 @@ and optional local media. Treat run artifacts as sensitive research data.
   for continuation. Treat those opaque items as sensitive response data: retain
   them only in access-controlled, hash-verified run artifacts and never paste
   them into reports or issue trackers.
+- A typed Fable mid-generation refusal is not permission to retain the preceding
+  partial generation. The adapter discards partial visible, thinking and
+  redacted-thinking blocks and persists only the refusal plus bounded hashes and
+  counts for audit.
 - A real hosted run is rejected unless `--provider-data-policy-approval` and
   `--provider-data-policy-sha256` identify one bounded regular JSON file. It must
   name every exact hosted target/judge specification once, with its provider,
@@ -42,7 +46,11 @@ and optional local media. Treat run artifacts as sensitive research data.
   template is in [RUN_AND_RETURN.md](experiments/RUN_AND_RETURN.md). This is an
   auditable operator approval, not a claim that a provider offers zero retention.
 - Local media must resolve beneath an operator-approved dataset root and match
-  its recorded SHA-256 digest before it may be uploaded to a provider.
+  its recorded SHA-256 digest before it may be uploaded to a provider. Prepared
+  artifacts store `@media-root/<index>/<relative-path>` rather than the local
+  absolute path. Preserve the approved-root order when rebinding a resumed or
+  relocated run; changing an alias index changes what the artifact names and is
+  rejected by the digest/lineage gates.
 - Human-audit exports may contain harmful or personal content. Encrypt or
   access-control them, disclose the exposure to raters, and delete them under the
   study's retention schedule.

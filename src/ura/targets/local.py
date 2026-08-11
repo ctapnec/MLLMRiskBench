@@ -154,6 +154,10 @@ def _dialog_to_messages(
     """
     messages: list[dict[str, Any]] = []
     for turn in dialog:
+        if turn.provider_state is not None or turn.provider_thinking:
+            raise ValueError(
+                "local vLLM target cannot consume provider-native continuation state"
+            )
         role = _ROLE_MAP.get(turn.role, "user")
         parts: list[str] = []
         if turn.content:
@@ -204,6 +208,10 @@ def _dialog_to_ollama_messages(
 
     messages: list[dict[str, Any]] = []
     for turn in dialog:
+        if turn.provider_state is not None or turn.provider_thinking:
+            raise ValueError(
+                "Ollama target cannot consume provider-native continuation state"
+            )
         role = _ROLE_MAP.get(turn.role, "user")
         parts: list[str] = []
         if turn.content:
@@ -270,17 +278,20 @@ class VLLMTarget(BaseTarget):
         media_roots: Optional[Iterable[str | Path]] = None,
         **engine_kwargs: Any,
     ) -> None:
-        self.model = model
         self.revision = revision.lower() if isinstance(revision, str) else revision
         self.model_digest = (
             model_digest.lower() if isinstance(model_digest, str) else model_digest
         )
+        self._runtime_model = model
+        self.model = "local-checkpoint" if _is_explicit_local_path(model) else model
         if self.revision is not None and self.model_digest is not None:
             raise ValueError("VLLMTarget accepts revision or model_digest, not both")
         identity = self.revision or (
             f"sha256:{self.model_digest}" if self.model_digest else "unresolved"
         )
-        self.name = f"vllm:{model}@{identity}"
+        # The runtime path is private process state. Persisted target/response
+        # identities bind the checkpoint bytes without leaking a workstation path.
+        self.name = f"vllm:{self.model}@{identity}"
         # A vision-language model declares ("text", "image") so image datapoints
         # are forwarded. A text-only target remains ("text",); scored image cells
         # are rejected rather than flattened or relabelled as text-only.
@@ -327,8 +338,8 @@ class VLLMTarget(BaseTarget):
         # Local vs remote (hub) identity is decided by an explicit path signal, not
         # by cwd-relative existence, so a bare hub id can never be silently treated
         # as a local checkpoint that shadows a same-named working-directory folder.
-        if _is_explicit_local_path(self.model):
-            local_path = Path(self.model).expanduser()
+        if _is_explicit_local_path(self._runtime_model):
+            local_path = Path(self._runtime_model).expanduser()
             if not isinstance(self.model_digest, str) or not _SHA256.fullmatch(
                 self.model_digest
             ):
@@ -365,7 +376,7 @@ class VLLMTarget(BaseTarget):
                 # so it cannot drift independently of the model weights.
                 identity_kwargs["tokenizer_revision"] = self.revision
             self._llm = LLM(
-                model=self.model,
+                model=self._runtime_model,
                 tensor_parallel_size=self.tensor_parallel_size,
                 quantization=self.quantization,
                 dtype=self.dtype,
@@ -514,7 +525,6 @@ class OllamaTarget(BaseTarget):
 
         self.media_roots = _media_roots(media_roots)
         self.options = options
-        self._verified_digest: Optional[str] = None
 
     def validate_research_identity(self) -> None:
         if not isinstance(self.model_digest, str) or not _SHA256.fullmatch(
@@ -541,8 +551,6 @@ class OllamaTarget(BaseTarget):
         return normalized if _SHA256.fullmatch(normalized) else None
 
     def _verify_daemon_identity(self) -> str:
-        if self._verified_digest is not None:
-            return self._verified_digest
         self.validate_research_identity()
         request = urllib.request.Request(f"{self.host}/api/tags", method="GET")
         inventory = self._bounded_json_request(
@@ -564,7 +572,6 @@ class OllamaTarget(BaseTarget):
             raise LocalTargetOutputError(
                 "Ollama daemon model digest does not match declared model_digest"
             )
-        self._verified_digest = resolved
         return resolved
 
     def _sampling_options(self, seed: int | None = None) -> dict[str, Any]:

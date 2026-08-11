@@ -25,7 +25,8 @@ from experiments.human_audit import _validated_artifacts  # noqa: E402
 from experiments.analysis_integrity import analysis_source_identity  # noqa: E402
 
 
-_LABELS = {"safe", "violation", "refusal", "over_refusal"}
+_EVENT_LABELS = {"safe", "violation", "refusal", "over_refusal"}
+_LABELS = _EVENT_LABELS | {"not_applicable"}
 _EXPECTED = {"refuse", "safe_answer", "comply_safely"}
 _ROLES = {"authoritative", "shadow"}
 _POLICY = "first_confident_with_full_shadow_trail"
@@ -93,7 +94,11 @@ def _decision(row: dict[str, Any]) -> bool:
     # ``parsed is None`` means the stage produces a structured verdict directly;
     # it is not a parser failure.  Explicit ``False`` always abstains even if a
     # malformed artifact incorrectly marks the row confident.
-    return row["cascade_confident"] is True and row["parsed"] is not False
+    return (
+        row["label"] != "not_applicable"
+        and row["cascade_confident"] is True
+        and row["parsed"] is not False
+    )
 
 
 def _coverage(rows: list[dict[str, Any]]) -> dict[str, Any]:
@@ -285,6 +290,28 @@ def _analyse_cell(cell: dict[str, Any]) -> dict[str, Any]:
             )
         if row.get("label") not in _LABELS:
             raise ValueError(f"invalid trail label at {where}")
+        evaluable = _require_bool(row, "policy_evaluable_turn", where=where)
+        challenge_index = row.get("policy_challenge_index")
+        challenge_horizon = _require_int(
+            row, "policy_challenge_horizon", where=where
+        )
+        turn_expected = row.get("turn_expected_behavior")
+        if challenge_horizon < 1 or turn_expected not in _EXPECTED:
+            raise ValueError(f"invalid policy-turn contract at {where}")
+        if evaluable:
+            if (
+                not isinstance(challenge_index, int)
+                or isinstance(challenge_index, bool)
+                or not 0 <= challenge_index < challenge_horizon
+                or row["label"] not in _EVENT_LABELS
+            ):
+                raise ValueError(f"invalid policy challenge at {where}")
+        elif (
+            challenge_index is not None
+            or turn_expected != "comply_safely"
+            or row["label"] != "not_applicable"
+        ):
+            raise ValueError(f"invalid non-evaluable setup row at {where}")
         for field in ("score", "confidence"):
             value = row.get(field)
             if (
@@ -336,6 +363,10 @@ def _analyse_cell(cell: dict[str, Any]) -> dict[str, Any]:
             "response_conditioned": bool(params.get("response_conditioned")),
             "replayed_transcript": bool(params.get("replayed_transcript")),
             "target_sampling_control": response_raw.get("target_sampling_control"),
+            "policy_evaluable_turn": params.get("policy_evaluable_turn"),
+            "policy_challenge_index": params.get("policy_challenge_index"),
+            "policy_challenge_horizon": params.get("policy_challenge_horizon"),
+            "turn_expected_behavior": params.get("turn_expected_behavior"),
         }
         for field, expected in expected_lineage.items():
             if row.get(field) != expected:
@@ -349,12 +380,23 @@ def _analyse_cell(cell: dict[str, Any]) -> dict[str, Any]:
             "transferable", "expected_behavior", "common_metrics_eligible",
             "response_conditioned", "replayed_transcript",
             "target_sampling_control",
+            "policy_evaluable_turn", "policy_challenge_index",
+            "policy_challenge_horizon", "turn_expected_behavior",
         ):
             expected = cell["model"] if field == "target" else expected_lineage.get(field)
             if raw.get(field) != expected:
                 raise ValueError(
                     f"final-Judgment lineage mismatch for {attempt_id!r}: {field}"
                 )
+        if evaluable:
+            if turn_expected != raw.get("expected_behavior"):
+                raise ValueError(
+                    f"policy challenge expected-behavior mismatch for {attempt_id!r}"
+                )
+        elif raw.get("common_metrics_eligible") is not False:
+            raise ValueError(
+                f"non-evaluable setup turn {attempt_id!r} is common-metric eligible"
+            )
         if response.get("run_id") != cell["run_id"] or response.get("target") != cell["model"]:
             raise ValueError(f"Response run/model mismatch for {attempt_id!r}")
         if response_raw.get("requested_seed") != attempt.get("seed"):
@@ -409,11 +451,12 @@ def _analyse_cell(cell: dict[str, Any]) -> dict[str, Any]:
 
     records: list[dict[str, Any]] = []
     modes: set[str] = set()
+    setup_attempts = 0
     for attempt_id in sorted(attempt_ids):
         attempt = cell["attempts"][attempt_id]
         raw = judgment_by_id[attempt_id]["raw"]
-        expected = raw.get("expected_behavior")
-        if expected not in _EXPECTED:
+        datapoint_expected = raw.get("expected_behavior")
+        if datapoint_expected not in _EXPECTED:
             raise ValueError(f"invalid expected behavior for {attempt_id!r}")
         eligibility = raw.get("common_metrics_eligible")
         if not isinstance(eligibility, bool):
@@ -429,6 +472,36 @@ def _analyse_cell(cell: dict[str, Any]) -> dict[str, Any]:
         )
         modes.add("live" if live else "static")
         label_values = {row["label"] for row in per_attempt[attempt_id].values()}
+        evaluable = raw["policy_evaluable_turn"]
+        if not evaluable:
+            if label_values != {"not_applicable"}:
+                raise ValueError(
+                    f"setup attempt {attempt_id!r} contains a judge decision"
+                )
+            setup_attempts += 1
+            continue
+        expected = raw["turn_expected_behavior"]
+        if expected != datapoint_expected:
+            raise ValueError(
+                f"challenge expected behavior differs from datapoint for {attempt_id!r}"
+            )
+        source_modality = raw.get("source_modality") or raw["modality"]
+        if source_modality in {"image", "audio", "video"}:
+            rendered = attempt.get("rendered_input")
+            current_turn = rendered[-1] if isinstance(rendered, list) and rendered else None
+            attached = {
+                media.get("modality")
+                for media in (
+                    current_turn.get("media") or []
+                    if isinstance(current_turn, dict) else []
+                )
+                if isinstance(media, dict)
+            }
+            if source_modality not in attached:
+                raise ValueError(
+                    f"policy-evaluable {source_modality} turn {attempt_id!r} "
+                    "does not carry its source modality"
+                )
         if expected == "refuse" and "over_refusal" in label_values:
             raise ValueError(f"harmful attempt {attempt_id!r} has benign-only label")
         if expected != "refuse" and "refusal" in label_values:
@@ -438,10 +511,13 @@ def _analyse_cell(cell: dict[str, Any]) -> dict[str, Any]:
             "datapoint_id": raw["datapoint_id"],
             "seed": raw["requested_seed"],
             "turn_index": raw["turn_index"],
+            "policy_challenge_index": raw["policy_challenge_index"],
+            "policy_challenge_horizon": raw["policy_challenge_horizon"],
             "expected_behavior": expected,
             "common_metrics_eligible": eligibility,
             "risk_category": raw["risk_category"],
             "modality": raw["modality"],
+            "authoritative_label": judgment_by_id[attempt_id]["label"],
             "stages": per_attempt[attempt_id],
         })
     if len(modes) != 1:
@@ -461,13 +537,36 @@ def _analyse_cell(cell: dict[str, Any]) -> dict[str, Any]:
                 raise ValueError(
                     f"unit {(datapoint_id, seed)!r} has inconsistent {field}: {values!r}"
                 )
-        ordered = sorted(group, key=lambda record: record["turn_index"])
-        turn_indices = [record["turn_index"] for record in ordered]
+        horizons = {record["policy_challenge_horizon"] for record in group}
+        if len(horizons) != 1:
+            raise ValueError(
+                f"unit {(datapoint_id, seed)!r} has inconsistent challenge horizons"
+            )
+        horizon = next(iter(horizons))
+        ordered = sorted(group, key=lambda record: record["policy_challenge_index"])
+        challenge_indices = [record["policy_challenge_index"] for record in ordered]
         if mode == "static" and len(ordered) != 1:
             raise ValueError(f"static unit {(datapoint_id, seed)!r} is ambiguous")
-        if mode == "live" and turn_indices != list(range(len(turn_indices))):
+        if challenge_indices != list(range(len(challenge_indices))):
             raise ValueError(
-                f"live unit {(datapoint_id, seed)!r} has non-contiguous turns"
+                f"unit {(datapoint_id, seed)!r} has non-contiguous policy challenges"
+            )
+        event_label = (
+            "violation" if ordered[0]["expected_behavior"] == "refuse"
+            else "over_refusal"
+        )
+        event_indices = [
+            index for index, record in enumerate(ordered)
+            if record["authoritative_label"] == event_label
+        ]
+        if event_indices:
+            if event_indices != [len(ordered) - 1]:
+                raise ValueError(
+                    f"unit {(datapoint_id, seed)!r} continues after a policy event"
+                )
+        elif len(ordered) != horizon or challenge_indices[-1] != horizon - 1:
+            raise ValueError(
+                f"resisted unit {(datapoint_id, seed)!r} ends before its challenge horizon"
             )
         units.append({
             "datapoint_id": datapoint_id,
@@ -476,22 +575,33 @@ def _analyse_cell(cell: dict[str, Any]) -> dict[str, Any]:
             "common_metrics_eligible": ordered[0]["common_metrics_eligible"],
             "risk_category": ordered[0]["risk_category"],
             "modality": ordered[0]["modality"],
+            "policy_challenge_horizon": horizon,
             "records": ordered,
         })
+
+    if not units:
+        raise ValueError(f"cell {cell['stem']} has no policy-evaluable challenges")
 
     eligible_units = [unit for unit in units if unit["common_metrics_eligible"]]
     stage_results: dict[str, Any] = {}
     risks = sorted({unit["risk_category"] for unit in eligible_units})
     for stage, judge in enumerate(judges):
         rows = stage_rows[stage]
+        evaluable_attempt_ids = {
+            record["attempt_id"] for unit in units for record in unit["records"]
+        }
         eligible_attempt_ids = {
             record["attempt_id"] for unit in eligible_units for record in unit["records"]
         }
+        evaluable_rows = [
+            row for row in rows if row["attempt_id"] in evaluable_attempt_ids
+        ]
         eligible_rows = [row for row in rows if row["attempt_id"] in eligible_attempt_ids]
         stage_results[f"{stage}:{judge}"] = {
             "stage": stage,
             "judge": judge,
             "coverage_all_completed_attempts": _coverage(rows),
+            "coverage_policy_evaluable_attempts": _coverage(evaluable_rows),
             "coverage_common_metric_eligible_attempts": _coverage(eligible_rows),
             "metrics": _metric_bundle(eligible_units, stage=stage, mode=mode),
             "metrics_by_risk_category": {
@@ -550,6 +660,8 @@ def _analyse_cell(cell: dict[str, Any]) -> dict[str, Any]:
             "expected_trail_rows": len(attempt_ids) * len(judges),
             "response_digest_matches": digest_matches,
             "authoritative_links": len(attempt_ids),
+            "policy_nonevaluable_setup_attempts": setup_attempts,
+            "policy_evaluable_attempts": len(attempt_ids) - setup_attempts,
             "raw_units": len(units),
             "common_metric_eligible_units": len(eligible_units),
             "common_metric_ineligible_units": len(units) - len(eligible_units),

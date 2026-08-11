@@ -55,6 +55,7 @@ import secrets
 import sys
 import time
 from collections import Counter, defaultdict
+from dataclasses import replace
 from datetime import datetime, timezone
 from importlib import metadata
 from pathlib import Path
@@ -65,6 +66,10 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 from ura.adapters.base import AttackBudget           # noqa: E402
 from ura.adapters.engines import get_attacker         # noqa: E402
 from ura.converters import get_converter, synth_corpus  # noqa: E402
+from ura.converters._common import (                    # noqa: E402
+    canonical_converted_corpus_sha256,
+)
+from ura.converters.release_specs import CORPUS_RELEASE_SPECS  # noqa: E402
 from ura.data_models import (                         # noqa: E402
     SCHEMA_VERSION,
     Attempt,
@@ -79,6 +84,7 @@ from ura.judges.llm import LLMJudge                   # noqa: E402
 from ura.judges.rules import RuleJudge                # noqa: E402
 from ura.modality_coverage import (                    # noqa: E402
     ModalityCoverageError,
+    ModalityCoveragePlan,
     plan_modality_coverage,
     verify_executed_modality_coverage,
 )
@@ -88,6 +94,9 @@ from ura.runner import (                              # noqa: E402
     ExternalCallFailure,
     GlobalCallBudget,
     Runner,
+    _component_config,
+    _harness_source_identity,
+    _portable_attempt_dump,
     realized_identity_summary,
 )
 from ura.targets.api import build_api_target              # noqa: E402
@@ -100,7 +109,7 @@ _WINDOWS_RESERVED = {
 }
 
 _PROVIDER_DATA_POLICY_SCHEMA = "ura-provider-data-policy-approval/1.0"
-_PARTITION_SCHEMA = "ura-cluster-partition/1.1"
+_PARTITION_SCHEMA = "ura-cluster-partition/1.2"
 _ALLOWED_GROUP_KEYS = {
     "model",
     "target",
@@ -578,7 +587,8 @@ def _load_partition_plan(
     if not isinstance(value, dict):
         raise ValueError("--partition-plan must contain a JSON object")
     if set(value) != {
-        "schema_version", "seed", "algorithm", "corpora", "analysis_source",
+        "schema_version", "seed", "algorithm", "minimum_pilot_policy_clusters",
+        "minimum_main_policy_clusters", "corpora", "analysis_source",
     }:
         raise ValueError("partition plan has an invalid top-level field inventory")
     schema = value.get("schema_version")
@@ -586,28 +596,70 @@ def _load_partition_plan(
         raise ValueError(f"partition plan schema must be {_PARTITION_SCHEMA!r}")
     algorithm = value.get("algorithm")
     seed = value.get("seed")
+    minimum_pilot_policy_clusters = value.get("minimum_pilot_policy_clusters")
+    minimum_main_policy_clusters = value.get("minimum_main_policy_clusters")
     plan_corpora = value.get("corpora")
     if algorithm != "sha256_scoped_seed_random_partition_v1":
         raise ValueError("partition plan algorithm is unsupported")
     if isinstance(seed, bool) or not isinstance(seed, int):
         raise ValueError("partition plan seed must be an integer")
-    expected_corpora = {name for name in corpora if name != "synth"}
-    if not isinstance(plan_corpora, dict) or set(plan_corpora) != expected_corpora:
+    if (
+        isinstance(minimum_pilot_policy_clusters, bool)
+        or not isinstance(minimum_pilot_policy_clusters, int)
+        or minimum_pilot_policy_clusters < 1
+    ):
         raise ValueError(
-            "partition plan corpus keys must exactly match selected non-synthetic corpora"
+            "partition plan minimum_pilot_policy_clusters must be positive"
+        )
+    if (
+        isinstance(minimum_main_policy_clusters, bool)
+        or not isinstance(minimum_main_policy_clusters, int)
+        or minimum_main_policy_clusters < 1
+    ):
+        raise ValueError(
+            "partition plan minimum_main_policy_clusters must be positive"
+        )
+    expected_corpora = {name for name in corpora if name != "synth"}
+    if (
+        not isinstance(plan_corpora, dict)
+        or any(
+            not isinstance(name, str) or not name.strip()
+            for name in plan_corpora
+        )
+        or not expected_corpora.issubset(plan_corpora)
+    ):
+        raise ValueError(
+            "partition plan must contain every selected non-synthetic corpus"
         )
     assignments: dict[str, dict[str, object]] = {}
-    for name in sorted(expected_corpora):
+    for name in sorted(plan_corpora):
         entry = plan_corpora[name]
         if not isinstance(entry, dict):
             raise ValueError(f"partition plan corpus {name!r} must be an object")
         if set(entry) != {
-            "source_kind", "source_path", "source_tree_sha256", "source_file_count",
-            "full_converted_corpus_sha256", "total_records", "total_clusters",
+            "source_locator", "full_converted_corpus_sha256", "total_records",
+            "total_clusters",
             "total_cluster_ids", "total_cluster_ids_sha256", "pilot", "main",
         }:
             raise ValueError(
                 f"partition plan corpus {name!r} has an invalid field inventory"
+            )
+        source_locator = entry.get("source_locator")
+        expected_locator = _stable_source_locator(name, None)
+        if (
+            not isinstance(source_locator, dict)
+            or set(source_locator) != {
+                "corpus", "configuration_env", "source_kind", "required_layout"
+            }
+            or source_locator.get("corpus") != expected_locator["corpus"]
+            or source_locator.get("configuration_env")
+            != expected_locator["configuration_env"]
+            or source_locator.get("required_layout")
+            != expected_locator["required_layout"]
+            or source_locator.get("source_kind") not in {"file", "directory"}
+        ):
+            raise ValueError(
+                f"partition plan corpus {name!r} has an invalid source locator"
             )
         converted_sha = entry.get("full_converted_corpus_sha256")
         total_records = entry.get("total_records")
@@ -641,6 +693,7 @@ def _load_partition_plan(
                 not isinstance(selection, dict)
                 or set(selection) != {
                     "n_clusters", "cluster_ids", "cluster_ids_sha256",
+                    "source_policy_cluster_counts",
                 }
             ):
                 raise ValueError(
@@ -649,6 +702,7 @@ def _load_partition_plan(
             ids = selection.get("cluster_ids")
             count = selection.get("n_clusters")
             digest = selection.get("cluster_ids_sha256")
+            policy_counts = selection.get("source_policy_cluster_counts")
             if (
                 not isinstance(ids, list) or not ids
                 or any(not isinstance(item, str) or not item.strip() for item in ids)
@@ -656,15 +710,41 @@ def _load_partition_plan(
                 or ids != sorted(ids)
                 or count != len(ids)
                 or digest != _sha256_json(ids)
+                or not isinstance(policy_counts, dict)
+                or not policy_counts
+                or any(
+                    not isinstance(key, str) or not key.strip()
+                    or isinstance(value, bool) or not isinstance(value, int)
+                    or value <= 0
+                    for key, value in policy_counts.items()
+                )
+                or sum(policy_counts.values()) != len(ids)
             ):
                 raise ValueError(
                     f"partition plan corpus {name!r} has invalid {partition_role} clusters"
+                )
+            if partition_role == "pilot" and any(
+                value < minimum_pilot_policy_clusters
+                for value in policy_counts.values()
+            ):
+                raise ValueError(
+                    f"partition plan corpus {name!r} pilot source-policy strata "
+                    "are below minimum_pilot_policy_clusters"
+                )
+            if partition_role == "main" and any(
+                value < minimum_main_policy_clusters
+                for value in policy_counts.values()
+            ):
+                raise ValueError(
+                    f"partition plan corpus {name!r} main source-policy strata "
+                    "are below minimum_main_policy_clusters"
                 )
             role_sets[partition_role] = set(ids)
             role_payloads[partition_role] = {
                 "n_clusters": len(ids),
                 "cluster_ids": list(ids),
                 "cluster_ids_sha256": digest,
+                "source_policy_cluster_counts": dict(sorted(policy_counts.items())),
             }
         union = role_sets["pilot"] | role_sets["main"]
         if role_sets["pilot"] & role_sets["main"]:
@@ -673,20 +753,24 @@ def _load_partition_plan(
             raise ValueError(
                 f"partition plan corpus {name!r} is not exhaustive over source clusters"
             )
-        assignments[name] = {
-            "full_converted_corpus_sha256": converted_sha,
-            "total_records": total_records,
-            "total_clusters": total_clusters,
-            "total_cluster_ids": list(total_cluster_ids),
-            "total_cluster_ids_sha256": total_cluster_digest,
-            "partition_role": role,
-            **role_payloads[role],
-        }
+        if name in expected_corpora:
+            assignments[name] = {
+                "source_locator": source_locator,
+                "full_converted_corpus_sha256": converted_sha,
+                "total_records": total_records,
+                "total_clusters": total_clusters,
+                "total_cluster_ids": list(total_cluster_ids),
+                "total_cluster_ids_sha256": total_cluster_digest,
+                "partition_role": role,
+                **role_payloads[role],
+            }
     binding = {
         "status": "bound",
         "schema_version": schema,
         "algorithm": algorithm,
         "seed": seed,
+        "minimum_pilot_policy_clusters": minimum_pilot_policy_clusters,
+        "minimum_main_policy_clusters": minimum_main_policy_clusters,
         "partition_role": role,
         "artifact": artifact,
     }
@@ -760,19 +844,19 @@ def _load_attacker_config(
             "--attacker-config contains unselected attackers: " + ", ".join(unused)
         )
     return normalized, {
-        "path": str(path),
+        "file": path.name,
         "sha256": _sha256_file(path),
         "bytes": path.stat().st_size,
     }
 
 
-def _record_executed_modality_ids(
+def _record_executed_modality_evidence(
     target_name: str,
     attempts: list[Attempt],
     responses: list[Response],
-    destination: dict[str, set[str]],
+    destination: dict[str, set[tuple[str, tuple[str, ...]]]],
 ) -> None:
-    """Record actual base-target modality probes, excluding input-side blocks."""
+    """Record exact evaluable combinations that reached the base target."""
     response_by_attempt = {response.attempt_id: response for response in responses}
     if len(response_by_attempt) != len(responses):
         raise ValueError("duplicate response attempt id in modality evidence")
@@ -784,8 +868,303 @@ def _record_executed_modality_ids(
             response.raw.get("defense") == "blocked"
             and response.raw.get("stage") == "input"
         )
-        if not input_blocked:
-            destination[target_name].add(attempt.datapoint_id)
+        policy_evaluable = attempt.params.get("policy_evaluable_turn")
+        if not isinstance(policy_evaluable, bool):
+            raise ValueError(
+                "modality evidence attempt lacks boolean policy_evaluable_turn"
+            )
+        if not input_blocked and policy_evaluable:
+            physical = {
+                media.modality
+                for turn in attempt.rendered_input
+                for media in turn.media
+            }
+            has_text = any(
+                bool((turn.content or "").strip())
+                or turn.tool_call is not None
+                or bool((turn.tool_result or "").strip())
+                for turn in attempt.rendered_input
+            )
+            combination = tuple(
+                modality
+                for modality in ("text", "image", "audio", "video")
+                if modality in physical or (modality == "text" and has_text)
+            )
+            destination[target_name].add((attempt.datapoint_id, combination))
+
+
+_COVERAGE_PROOF_SCHEMA = "ura-modality-coverage-proof/1.0"
+
+
+def _coverage_condition(
+    target_name: str,
+    target_component: object,
+    defense: str,
+    defense_guard: str,
+) -> tuple[str, str, str, str | None]:
+    return (
+        target_name,
+        _sha256_json(target_component),
+        defense,
+        defense_guard if defense != "none" else None,
+    )
+
+
+def _verified_relative_artifact(
+    root: Path,
+    descriptor: object,
+    *,
+    label: str,
+    max_bytes: int,
+) -> Path:
+    if not isinstance(descriptor, dict):
+        raise ValueError(f"{label} lacks an artifact descriptor")
+    name = descriptor.get("file")
+    if (
+        not isinstance(name, str)
+        or not name
+        or Path(name).name != name
+    ):
+        raise ValueError(f"{label} has an unsafe artifact name")
+    path = root / name
+    if path.is_symlink() or not path.is_file():
+        raise ValueError(f"{label} artifact is missing or not regular")
+    size = path.stat().st_size
+    if size <= 0 or size > max_bytes or descriptor.get("bytes") != size:
+        raise ValueError(f"{label} artifact byte count is invalid")
+    if descriptor.get("sha256") != _sha256_file(path):
+        raise ValueError(f"{label} artifact digest mismatch")
+    records = descriptor.get("records")
+    if records is not None and records != _record_count(path):
+        raise ValueError(f"{label} artifact record count mismatch")
+    return path
+
+
+def _reconstruct_companion_conditions(
+    root: Path,
+    grid_descriptor: object,
+    marker_descriptors: object,
+    *,
+    expected_driver_source: dict[str, object],
+    expected_harness_source: dict[str, object],
+) -> list[dict[str, object]]:
+    grid_path = _verified_relative_artifact(
+        root, grid_descriptor, label="companion grid", max_bytes=16 * 1024 * 1024
+    )
+    grid = _json_loads_strict(grid_path.read_text(encoding="utf-8"))
+    if (
+        not isinstance(grid, dict)
+        or grid.get("status") != "complete"
+        or grid.get("n_errors") != 0
+        or not isinstance(grid.get("cells"), list)
+    ):
+        raise ValueError("companion grid is not a completed zero-error grid")
+    request = grid.get("request")
+    if (
+        not isinstance(request, dict)
+        or request.get("driver_source") != expected_driver_source
+    ):
+        raise ValueError("companion grid was produced by stale experiment-driver source")
+    if not isinstance(marker_descriptors, list) or not marker_descriptors:
+        raise ValueError("companion proof has no completion markers")
+    expected_markers = {
+        cell.get("completion_marker")
+        for cell in grid["cells"]
+        if isinstance(cell, dict)
+        and cell.get("status") in {"complete", "complete_existing"}
+    }
+    described_markers = {
+        item.get("file") for item in marker_descriptors if isinstance(item, dict)
+    }
+    if None in expected_markers or described_markers != expected_markers:
+        raise ValueError(
+            "companion proof completion markers do not exactly cover its grid"
+        )
+
+    evidence_by_condition: dict[
+        tuple[str, str, str, str | None],
+        set[tuple[str, tuple[str, ...]]],
+    ] = defaultdict(set)
+    required = {
+        "attempts", "responses", "judgments", "trails", "results", "manifest"
+    }
+    for marker_descriptor in marker_descriptors:
+        marker_path = _verified_relative_artifact(
+            root, marker_descriptor,
+            label="companion completion marker", max_bytes=1024 * 1024,
+        )
+        marker = _json_loads_strict(marker_path.read_text(encoding="utf-8"))
+        if (
+            not isinstance(marker, dict)
+            or marker.get("status") != "complete"
+            or marker.get("format_version") != 2
+            or marker.get("code_version") != CODE_VERSION
+            or marker.get("schema_version") != SCHEMA_VERSION
+            or not isinstance(marker.get("artifacts"), dict)
+            or set(marker["artifacts"]) != required
+        ):
+            raise ValueError("companion completion marker is stale or malformed")
+        paths = {
+            name: _verified_relative_artifact(
+                root, marker["artifacts"][name],
+                label=f"companion {name}", max_bytes=512 * 1024 * 1024,
+            )
+            for name in required
+        }
+        manifest = RunManifest.model_validate_json(
+            paths["manifest"].read_text(encoding="utf-8")
+        )
+        if (
+            manifest.run_id != marker.get("run_id")
+            or manifest.code_version != CODE_VERSION
+            or manifest.schema_version != SCHEMA_VERSION
+            or len(manifest.models) != 1
+        ):
+            raise ValueError("companion manifest identity is inconsistent")
+        run_config = manifest.config.get("run")
+        components = manifest.config.get("components")
+        if not isinstance(run_config, dict) or not isinstance(components, dict):
+            raise ValueError("companion manifest lacks run/component identity")
+        if (
+            run_config.get("driver_source") != expected_driver_source
+            or manifest.config.get("harness_source") != expected_harness_source
+        ):
+            raise ValueError("companion manifest was produced by stale source code")
+        condition = _coverage_condition(
+            manifest.models[0],
+            components.get("target"),
+            str(run_config.get("defense")),
+            str(run_config.get("defense_guard")),
+        )
+        attempts = [Attempt.model_validate(row) for row in _read_jsonl(
+            paths["attempts"]
+        )]
+        responses = [Response.model_validate(row) for row in _read_jsonl(
+            paths["responses"]
+        )]
+        if (
+            not attempts
+            or Counter(row.id for row in attempts)
+            != Counter(row.attempt_id for row in responses)
+            or any(row.target != manifest.models[0] for row in attempts)
+            or any(row.target != manifest.models[0] for row in responses)
+            or any(row.run_id != manifest.run_id for row in attempts)
+            or any(row.run_id != manifest.run_id for row in responses)
+        ):
+            raise ValueError("companion Attempt/Response lineage is inconsistent")
+        observed = {manifest.models[0]: set()}
+        _record_executed_modality_evidence(
+            manifest.models[0], attempts, responses, observed
+        )
+        evidence_by_condition[condition].update(observed[manifest.models[0]])
+
+    return [
+        {
+            "target": condition[0],
+            "target_component_sha256": condition[1],
+            "defense": condition[2],
+            "defense_guard": condition[3],
+            "evidence": [
+                {"datapoint_id": datapoint_id, "combination": list(combination)}
+                for datapoint_id, combination in sorted(evidence)
+            ],
+        }
+        for condition, evidence in sorted(evidence_by_condition.items())
+    ]
+
+
+def _load_companion_coverage(
+    path_value: str,
+    sha256_value: str,
+    expected_conditions: set[tuple[str, str, str, str | None]],
+    *,
+    expected_driver_source: dict[str, object],
+    expected_harness_source: dict[str, object],
+) -> tuple[dict[str, object], dict[str, set[tuple[str, tuple[str, ...]]]]]:
+    value, artifact = _read_content_addressed_json(
+        path_value, sha256_value,
+        flag_name="--modality-coverage-companion", max_bytes=16 * 1024 * 1024,
+    )
+    if (
+        not isinstance(value, dict)
+        or set(value) != {
+            "schema_version", "grid", "completion_markers", "conditions"
+        }
+        or value.get("schema_version") != _COVERAGE_PROOF_SCHEMA
+    ):
+        raise ValueError("modality companion proof has an invalid schema")
+    root = Path(path_value).resolve(strict=True).parent
+    reconstructed = _reconstruct_companion_conditions(
+        root, value["grid"], value["completion_markers"],
+        expected_driver_source=expected_driver_source,
+        expected_harness_source=expected_harness_source,
+    )
+    if reconstructed != value.get("conditions"):
+        raise ValueError("modality companion proof evidence does not reconstruct")
+    found: set[tuple[str, str, str, str | None]] = set()
+    evidence: dict[str, set[tuple[str, tuple[str, ...]]]] = defaultdict(set)
+    for row in reconstructed:
+        condition = (
+            str(row["target"]), str(row["target_component_sha256"]),
+            str(row["defense"]),
+            row["defense_guard"] if row["defense_guard"] is None
+            else str(row["defense_guard"]),
+        )
+        if condition not in expected_conditions:
+            continue
+        found.add(condition)
+        for item in row["evidence"]:
+            evidence[condition[0]].add((
+                str(item["datapoint_id"]), tuple(item["combination"])
+            ))
+    if found != expected_conditions:
+        raise ValueError(
+            "modality companion does not prove every exact target/defense condition"
+        )
+    binding = {
+        "status": "verified",
+        "artifact": artifact,
+        "grid_sha256": value["grid"]["sha256"],
+        "conditions_sha256": _sha256_json(reconstructed),
+    }
+    return binding, evidence
+
+
+def _apply_companion_coverage(
+    plan: ModalityCoveragePlan,
+    evidence: dict[str, set[tuple[str, tuple[str, ...]]]],
+    proof_sha256: str,
+) -> ModalityCoveragePlan:
+    items = []
+    missing: list[str] = []
+    for item in plan.items:
+        if item.status != "available_but_unselected":
+            items.append(item)
+            continue
+        matching_ids = sorted({
+            datapoint_id
+            for datapoint_id, combination in evidence.get(item.target, set())
+            if combination == item.combination
+        })
+        if not matching_ids:
+            missing.append(f"{item.target}:{'+'.join(item.combination)}")
+            items.append(item)
+            continue
+        items.append(replace(
+            item,
+            status="executed",
+            eligible_datapoint_ids=tuple(matching_ids),
+            justification=(
+                "executed in content-addressed companion modality proof "
+                f"sha256:{proof_sha256.lower()}"
+            ),
+        ))
+    if missing:
+        raise ModalityCoverageError(
+            "companion modality proof lacks required combinations: "
+            + ", ".join(missing)
+        )
+    return replace(plan, enforcement="strict", items=tuple(items))
 
 
 def _load_local_config(
@@ -846,7 +1225,7 @@ def _load_local_config(
             raise ValueError(f"unsupported local backend in {spec!r}")
         normalized[spec] = dict(config)
     return normalized, {
-        "path": str(path),
+        "file": path.name,
         "sha256": _sha256_file(path),
         "bytes": path.stat().st_size,
     }
@@ -969,7 +1348,7 @@ def _validate_completion_marker(
         if manifest.config.get(key) != planned.config.get(key):
             raise ValueError(f"stored manifest config field {key!r} changed")
     if manifest.config.get("realized_attempts_sha256") != _sha256_json(
-        [row.model_dump(mode="json") for row in attempts]
+        [_portable_attempt_dump(row) for row in attempts]
     ):
         raise ValueError("stored manifest realized_attempts_sha256 mismatch")
     realized_media: dict[str, str] = {}
@@ -1147,11 +1526,11 @@ def _validate_completion_marker(
 
 
 def _source_tree_digest(path: Path) -> tuple[str | None, int]:
-    """Hash a bounded regular source tree for diagnostics only.
+    """Hash a bounded regular source tree for portable source identity.
 
-    Scored corpus identity is the canonical converted-corpus digest in the
-    partition plan. This helper deliberately rejects symlinks and omits common
-    mutable tool/cache directories; it is never an experiment release gate.
+    Scored corpus identity remains the canonical converted-corpus digest in the
+    partition plan. This separate digest binds the experiment driver used by a
+    completion or companion proof while omitting mutable tool/cache directories.
     """
     if not path.exists():
         return None, 0
@@ -1254,6 +1633,47 @@ def build_target(
     return build_api_target(spec)
 
 
+def _persisted_model_spec(
+    spec: str, local_identity: dict[str, object] | None,
+) -> str:
+    """Return a research identity that never embeds a local checkpoint path."""
+    if local_identity is None or ":" not in spec:
+        return spec
+    backend, model = spec.split(":", 1)
+    if backend.lower() != "vllm":
+        return spec
+    from ura.targets.local import _is_explicit_local_path
+    if not _is_explicit_local_path(model):
+        return spec
+    digest = local_identity.get("digest")
+    if not isinstance(digest, str) or re.fullmatch(r"[0-9a-fA-F]{64}", digest) is None:
+        raise ValueError("local vLLM path requires a content digest identity")
+    return f"vllm:local-checkpoint@sha256:{digest.lower()}"
+
+
+def _artifact_safe_model_error(
+    exc: Exception, spec: str, persisted_spec: str,
+) -> str:
+    """Remove an explicit local checkpoint locator from persisted diagnostics."""
+    message = str(exc)[:2000]
+    if spec == persisted_spec or ":" not in spec:
+        return message
+    backend, runtime_model = spec.split(":", 1)
+    if backend.lower() != "vllm":
+        return message
+    logical_model = persisted_spec.split(":", 1)[-1]
+    message = message.replace(spec, persisted_spec)
+    candidates = {runtime_model}
+    try:
+        candidates.add(str(Path(runtime_model).expanduser().resolve(strict=False)))
+    except (OSError, RuntimeError):
+        pass
+    for candidate in sorted(candidates, key=len, reverse=True):
+        if candidate:
+            message = message.replace(candidate, logical_model)
+    return message
+
+
 def build_judges(
     names: list[str],
     judge_model: str,
@@ -1307,6 +1727,27 @@ def _cluster_key(index: int, record: object) -> str:
     if isinstance(identifier, str) and identifier.strip():
         return identifier
     return f"__row_{index}__"
+
+
+def _source_policy_key(record: object) -> str:
+    policy = getattr(record, "source_policy", None)
+    if policy is None:
+        return "__untyped_source_policy__"
+    return f"{policy.policy_id}@{policy.version}#sha256:{policy.sha256}"
+
+
+def _source_policy_cluster_counts(records: list[DataPoint]) -> dict[str, int]:
+    """Count homogeneous source-policy strata at prompt/intent-cluster scale."""
+    cluster_policies: dict[str, str] = {}
+    for index, record in enumerate(records):
+        cluster_id = _cluster_key(index, record)
+        policy_key = _source_policy_key(record)
+        previous = cluster_policies.setdefault(cluster_id, policy_key)
+        if previous != policy_key:
+            raise ValueError(
+                f"source cluster {cluster_id!r} mixes source-evaluation policies"
+            )
+    return dict(sorted(Counter(cluster_policies.values()).items()))
 
 
 def _select_corpus(
@@ -1420,6 +1861,26 @@ def _corpus_path(name: str) -> Path:
     ))
 
 
+def _stable_source_locator(
+    name: str, source_kind: str | None,
+) -> dict[str, object]:
+    """Configuration-level locator with no checkout- or author-specific path."""
+    if name == "synth":
+        return {
+            "corpus": "synth",
+            "configuration_env": None,
+            "source_kind": "generated_fixture",
+            "required_layout": [],
+        }
+    release = CORPUS_RELEASE_SPECS.get(name)
+    return {
+        "corpus": name,
+        "configuration_env": f"URA_{name.upper()}_PATH",
+        "source_kind": source_kind,
+        "required_layout": list(release.required_layout) if release else [],
+    }
+
+
 def load_corpus(name: str, limit: int, sample_seed: int = 0) -> list[DataPoint]:
     """Load a corpus and take a deterministic seeded subset when limited.
 
@@ -1452,15 +1913,10 @@ def load_corpus_with_audit(
     if name == "synth":
         selected = synth_corpus(12 if limit == 0 else limit)
         cluster_ids = [_cluster_key(index, row) for index, row in enumerate(selected)]
-        full_digest = _sha256_json([
-            datapoint.model_dump(mode="json") for datapoint in selected
-        ])
+        full_digest = canonical_converted_corpus_sha256(selected)
         return selected, {
             "corpus": name,
-            "source_kind": "generated_fixture",
-            "source_path": None,
-            "source_tree_sha256": None,
-            "source_file_count": 0,
+            "source_locator": _stable_source_locator(name, "generated_fixture"),
             "full_converted_corpus_sha256": full_digest,
             "total_records": len(selected),
             "selected_records": len(selected),
@@ -1484,15 +1940,12 @@ def load_corpus_with_audit(
         exact_cluster_ids=exact_cluster_ids,
     )
     resolved = path.expanduser().resolve(strict=True)
-    full_digest = _sha256_json([
-        datapoint.model_dump(mode="json") for datapoint in full
-    ])
+    full_digest = canonical_converted_corpus_sha256(full)
     return selected, {
         "corpus": name,
-        "source_kind": "directory" if resolved.is_dir() else "file",
-        "source_path": str(resolved),
-        "source_tree_sha256": None,
-        "source_file_count": None,
+        "source_locator": _stable_source_locator(
+            name, "directory" if resolved.is_dir() else "file"
+        ),
         "full_converted_corpus_sha256": full_digest,
         "total_records": len(full),
         "selected_records": len(selected),
@@ -1515,11 +1968,13 @@ def load_corpus_with_audit(
 
 def _validate_partitioned_corpus(
     name: str,
+    records: list[DataPoint],
     audit: dict[str, object],
     assignment: dict[str, object],
 ) -> None:
     """Bind converted records and the exact executed cluster role to its plan."""
     checks = {
+        "source_locator": audit.get("source_locator"),
         "full_converted_corpus_sha256": audit.get(
             "full_converted_corpus_sha256"
         ),
@@ -1548,6 +2003,13 @@ def _validate_partitioned_corpus(
         != assignment.get("cluster_ids_sha256")
     ):
         raise ValueError(f"corpus {name!r} selected partition identity mismatch")
+    actual_policy_counts = _source_policy_cluster_counts(records)
+    if actual_policy_counts != assignment.get("source_policy_cluster_counts"):
+        raise ValueError(
+            f"corpus {name!r} selected source-policy strata mismatch: plan "
+            f"{assignment.get('source_policy_cluster_counts')!r}, converted "
+            f"{actual_policy_counts!r}"
+        )
 
 
 def main(argv=None) -> int:
@@ -1603,7 +2065,7 @@ def main(argv=None) -> int:
     )
     ap.add_argument(
         "--partition-plan", default="",
-        help="content-addressed ura-cluster-partition/1.1 JSON for scored corpora",
+        help="content-addressed ura-cluster-partition/1.2 JSON for scored corpora",
     )
     ap.add_argument(
         "--partition-sha256", default="",
@@ -1612,6 +2074,14 @@ def main(argv=None) -> int:
     ap.add_argument(
         "--partition-role", default="", choices=["", "pilot", "main"],
         help="execute exactly the pilot or main source-cluster assignment",
+    )
+    ap.add_argument(
+        "--modality-coverage-companion", default="",
+        help="content-addressed completed companion-grid modality proof",
+    )
+    ap.add_argument(
+        "--modality-coverage-companion-sha256", default="",
+        help="exact SHA-256 of --modality-coverage-companion bytes",
     )
     ap.add_argument("--seeds", default="0")
     ap.add_argument("--max-queries", type=int, default=4,
@@ -1640,8 +2110,9 @@ def main(argv=None) -> int:
                     help="durable ceiling on declared provider transport-attempt "
                          "exposure across target and judge calls (0 = unbounded)")
     ap.add_argument("--deadline-seconds", type=int, default=0,
-                    help="durable wall-clock deadline from the matrix's first "
-                         "invocation (0 = none)")
+                    help="durable call-start admission deadline from the matrix's "
+                         "first invocation; an admitted in-flight call retains its "
+                         "configured provider timeout (0 = none)")
     ap.add_argument("--lock-stale-seconds", type=int, default=86400,
                     help="age at which a non-live/cross-host artifact lock may be "
                          "reclaimed (default: 86400)")
@@ -1719,6 +2190,10 @@ def main(argv=None) -> int:
         )
     except (OSError, ValueError) as exc:
         ap.error(str(exc))
+    persisted_model_specs = {
+        spec: _persisted_model_spec(spec, local_configs.get(spec))
+        for spec in model_specs
+    }
     if not args.dry_run and "llm" in judge_names and args.judge_model == "mock":
         ap.error("a real run with the llm judge requires an explicit non-mock --judge-model")
     guardrail_selected = "guardrail" in judge_names or (
@@ -1802,6 +2277,15 @@ def main(argv=None) -> int:
         }
         partition_assignments: dict[str, dict[str, object]] = {}
 
+    companion_flags = (
+        bool(args.modality_coverage_companion),
+        bool(args.modality_coverage_companion_sha256),
+    )
+    if any(companion_flags) and not all(companion_flags):
+        ap.error(
+            "--modality-coverage-companion and its --sha256 must be supplied together"
+        )
+
     # The experiment driver controls sampling, grid accounting, and completion
     # semantics that the runner's src/ura source hash does not cover. Content-
     # address it so a changed driver yields a different grid_id and cannot reuse
@@ -1812,6 +2296,7 @@ def main(argv=None) -> int:
         "sha256": driver_digest,
         "file_count": driver_file_count,
     }
+    harness_source = _harness_source_identity()
 
     # Preload the complete selected corpus set and construct lazy target objects
     # before any target/judge call. Modality coverage is a grid-wide property:
@@ -1834,7 +2319,7 @@ def main(argv=None) -> int:
                 raise ValueError("requested corpus converted to zero datapoints")
             if assignment is not None:
                 _validate_partitioned_corpus(
-                    corpus_name, sampling_audit, assignment
+                    corpus_name, corpus, sampling_audit, assignment
                 )
                 sampling_audit["partition_assignment"] = assignment
         except Exception as exc:  # noqa: BLE001 - fail pre-call preflight
@@ -1878,12 +2363,13 @@ def main(argv=None) -> int:
                     defense_guard = RuleJudge()
                 target = GuardedTarget(target, defense_guard, mode=args.defense)
             prebuilt_targets[spec] = target
+            persisted_model_specs[spec] = str(getattr(target, "name"))
         except Exception as exc:  # noqa: BLE001 - fail pre-call preflight
             for corpus_name in corpora:
                 setup_error = out / (
                     "__".join((
                         _safe_component(corpus_name),
-                        _safe_component(spec),
+                        _safe_component(persisted_model_specs[spec]),
                         "target-setup",
                     )) + ".error.json"
                 )
@@ -1892,9 +2378,11 @@ def main(argv=None) -> int:
                     "phase": "target_construction",
                     "preflight": True,
                     "corpus": corpus_name,
-                    "model_spec": spec,
+                    "model_spec": persisted_model_specs[spec],
                     "exception_type": type(exc).__name__,
-                    "message": str(exc),
+                    "message": _artifact_safe_model_error(
+                        exc, spec, persisted_model_specs[spec]
+                    ),
                 })
             print(
                 f"target '{spec}' preflight failed: {type(exc).__name__}: {exc}",
@@ -1904,12 +2392,36 @@ def main(argv=None) -> int:
     target_names = [str(getattr(target, "name", "")) for target in prebuilt_targets.values()]
     if len(set(target_names)) != len(target_names):
         ap.error("target specs resolve to duplicate runtime target identities")
+    companion_binding: dict[str, object] | None = None
+    companion_evidence: dict[
+        str, set[tuple[str, tuple[str, ...]]]
+    ] = {}
+    expected_coverage_conditions = {
+        _coverage_condition(
+            str(getattr(target, "name")), _component_config(target),
+            args.defense, args.defense_guard,
+        )
+        for target in prebuilt_targets.values()
+    }
     try:
+        if all(companion_flags):
+            companion_binding, companion_evidence = _load_companion_coverage(
+                args.modality_coverage_companion,
+                args.modality_coverage_companion_sha256,
+                expected_coverage_conditions,
+                expected_driver_source=driver_source,
+                expected_harness_source=harness_source,
+            )
         modality_plan = plan_modality_coverage(
             list(prebuilt_targets.values()), loaded_corpora,
-            enforce_available=not args.dry_run,
+            enforce_available=not args.dry_run and companion_binding is None,
         )
-    except ModalityCoverageError as exc:
+        if companion_binding is not None:
+            modality_plan = _apply_companion_coverage(
+                modality_plan, companion_evidence,
+                args.modality_coverage_companion_sha256,
+            )
+    except (OSError, ValueError, ModalityCoverageError) as exc:
         _write_json(out / "modality-coverage.error.json", {
             "status": "error",
             "phase": "modality_coverage_preflight",
@@ -1922,12 +2434,15 @@ def main(argv=None) -> int:
     (out / "modality-coverage.error.json").unlink(missing_ok=True)
 
     grid_request = {
-        "models": model_specs,
+        "models": [persisted_model_specs[spec] for spec in model_specs],
         "corpora": corpora,
         "attackers": attacker_names,
         "attacker_configs": attacker_configs,
         "attacker_config_artifact": attacker_config_artifact,
-        "local_configs": local_configs,
+        "local_configs": {
+            persisted_model_specs[spec]: config
+            for spec, config in local_configs.items()
+        },
         "local_config_artifact": local_config_artifact,
         "judges": judge_names,
         "judge_model": args.judge_model,
@@ -1945,7 +2460,9 @@ def main(argv=None) -> int:
             "max_target_calls": args.max_total_target_calls or None,
             "max_judge_calls": args.max_total_judge_calls or None,
             "max_http_attempts": args.max_total_http_attempts or None,
-            "deadline_seconds_from_first_invocation": args.deadline_seconds or None,
+            "call_start_deadline_seconds_from_first_invocation": (
+                args.deadline_seconds or None
+            ),
             "accounting_semantics": "durable_pre_call_logical_reservation_v1",
         },
         "group_keys": group_keys,
@@ -1959,6 +2476,7 @@ def main(argv=None) -> int:
         "partition_plan": partition_binding,
         "partition_assignments": partition_assignments,
         "modality_coverage_plan": modality_plan_payload,
+        "modality_coverage_companion": companion_binding,
     }
     grid_material = json.dumps(
         grid_request, sort_keys=True, separators=(",", ":")
@@ -1968,11 +2486,58 @@ def main(argv=None) -> int:
     grid_lock = out / f"{grid_id}.grid.lock"
     budget_path = out / f"{grid_id}.budget.json"
     circuit_path = out / f"{grid_id}.circuits.json"
-    if args.reset_open_circuits:
-        circuit_path.unlink(missing_ok=True)
     circuits: dict[str, dict[str, object]] = {}
-    if circuit_path.exists():
-        try:
+
+    def persist_circuits() -> None:
+        _write_json(circuit_path, {
+            "format_version": 1,
+            "grid_id": grid_id,
+            "circuits": circuits,
+        })
+
+    def open_circuit(
+        key: str, exc: Exception, *, model_spec: str | None = None,
+    ) -> None:
+        if key in circuits:
+            return
+        circuits[key] = {
+            "opened_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+            "exception_type": type(exc).__name__,
+            "phase": getattr(exc, "phase", "unknown"),
+            "message": (
+                _artifact_safe_model_error(
+                    exc, model_spec, persisted_model_specs[model_spec]
+                )
+                if model_spec is not None else str(exc)[:2000]
+            ),
+            "call_audit": _safe_external_audit(exc),
+            "budget_snapshot": call_budget.snapshot(),
+        }
+        persist_circuits()
+
+    def blocking_circuit(spec: str) -> tuple[str, dict[str, object]] | None:
+        target_key = f"target:{persisted_model_specs[spec]}"
+        for key in ("budget", "judge", target_key):
+            if key in circuits:
+                return key, circuits[key]
+        return None
+
+    try:
+        grid_lock_token = _acquire_artifact_lock(
+            grid_lock,
+            {"grid_id": grid_id, "started_at": run_started},
+            stale_seconds=args.lock_stale_seconds,
+        )
+    except (OSError, ValueError, LockHeldError) as exc:
+        print(f"cannot initialize matrix lifecycle: {exc}", file=sys.stderr)
+        return 1
+    try:
+        # Circuit reset/read and budget-ledger initialization are protected by
+        # the grid lock.  A concurrent operator can neither erase an active
+        # circuit nor race the first durable budget reservation.
+        if args.reset_open_circuits:
+            circuit_path.unlink(missing_ok=True)
+        if circuit_path.exists():
             circuit_payload = _json_loads_strict(
                 circuit_path.read_text(encoding="utf-8")
             )
@@ -1984,54 +2549,21 @@ def main(argv=None) -> int:
             ):
                 raise ValueError("invalid circuit state")
             circuits = dict(circuit_payload["circuits"])
-        except (OSError, ValueError) as exc:
-            print(f"invalid durable circuit state: {exc}", file=sys.stderr)
-            return 1
 
-    def persist_circuits() -> None:
-        _write_json(circuit_path, {
-            "format_version": 1,
-            "grid_id": grid_id,
-            "circuits": circuits,
-        })
-
-    def open_circuit(key: str, exc: Exception) -> None:
-        if key in circuits:
-            return
-        circuits[key] = {
-            "opened_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
-            "exception_type": type(exc).__name__,
-            "phase": getattr(exc, "phase", "unknown"),
-            "message": str(exc)[:2000],
-            "call_audit": _safe_external_audit(exc),
-            "budget_snapshot": call_budget.snapshot(),
-        }
-        persist_circuits()
-
-    def blocking_circuit(spec: str) -> tuple[str, dict[str, object]] | None:
-        for key in ("budget", "judge", f"target:{spec}"):
-            if key in circuits:
-                return key, circuits[key]
-        return None
-
-    budget_ledger_existed = budget_path.exists()
-    if budget_ledger_existed:
-        try:
+        budget_ledger_existed = budget_path.exists()
+        if budget_ledger_existed:
             existing_budget = _json_loads_strict(
                 budget_path.read_text(encoding="utf-8")
             )
-        except (OSError, ValueError) as exc:
-            print(f"invalid durable budget ledger: {exc}", file=sys.stderr)
-            return 1
-        deadline_epoch = (
-            existing_budget.get("deadline_epoch")
-            if isinstance(existing_budget, dict) else None
-        )
-    else:
-        deadline_epoch = (
-            time.time() + args.deadline_seconds if args.deadline_seconds else None
-        )
-    try:
+            deadline_epoch = (
+                existing_budget.get("deadline_epoch")
+                if isinstance(existing_budget, dict) else None
+            )
+        else:
+            deadline_epoch = (
+                time.time() + args.deadline_seconds
+                if args.deadline_seconds else None
+            )
         call_budget = GlobalCallBudget(
             max_target_calls=args.max_total_target_calls or None,
             max_judge_calls=args.max_total_judge_calls or None,
@@ -2040,12 +2572,8 @@ def main(argv=None) -> int:
             state_path=budget_path,
             budget_id=grid_id,
         )
-        grid_lock_token = _acquire_artifact_lock(
-            grid_lock,
-            {"grid_id": grid_id, "started_at": run_started},
-            stale_seconds=args.lock_stale_seconds,
-        )
-    except (OSError, ValueError, LockHeldError) as exc:
+    except (OSError, ValueError) as exc:
+        _release_artifact_lock(grid_lock, grid_lock_token)
         print(f"cannot initialize matrix lifecycle: {exc}", file=sys.stderr)
         return 1
     atexit.register(_release_artifact_lock, grid_lock, grid_lock_token)
@@ -2063,7 +2591,9 @@ def main(argv=None) -> int:
     n_cells = 0
     n_skipped = 0
     n_errors = 0
-    executed_datapoint_ids: dict[str, set[str]] = {
+    executed_modality_evidence: dict[
+        str, set[tuple[str, tuple[str, ...]]]
+    ] = {
         str(getattr(target, "name")): set()
         for target in prebuilt_targets.values()
     }
@@ -2082,7 +2612,7 @@ def main(argv=None) -> int:
                 circuit_error = out / (
                     "__".join((
                         _safe_component(corpus_name),
-                        _safe_component(spec),
+                        _safe_component(persisted_model_specs[spec]),
                         "circuit-open",
                     ))
                     + ".error.json"
@@ -2091,7 +2621,7 @@ def main(argv=None) -> int:
                     "status": "error",
                     "phase": "circuit_open",
                     "corpus": corpus_name,
-                    "model_spec": spec,
+                    "model_spec": persisted_model_specs[spec],
                     "circuit_key": circuit_key,
                     "circuit": circuit,
                     "call_budget_snapshot": call_budget.snapshot(),
@@ -2099,7 +2629,7 @@ def main(argv=None) -> int:
                 for attacker_name in attacker_names:
                     cell_statuses.append({
                         "corpus": corpus_name,
-                        "model_spec": spec,
+                        "model_spec": persisted_model_specs[spec],
                         "attacker": attacker_name,
                         "status": "error",
                         "phase": "circuit_open",
@@ -2110,14 +2640,14 @@ def main(argv=None) -> int:
             (out / (
                 "__".join((
                     _safe_component(corpus_name),
-                    _safe_component(spec),
+                    _safe_component(persisted_model_specs[spec]),
                     "target-setup",
                 )) + ".error.json"
             )).unlink(missing_ok=True)
             (out / (
                 "__".join((
                     _safe_component(corpus_name),
-                    _safe_component(spec),
+                    _safe_component(persisted_model_specs[spec]),
                     "circuit-open",
                 )) + ".error.json"
             )).unlink(missing_ok=True)
@@ -2134,7 +2664,7 @@ def main(argv=None) -> int:
                 fallback_error = out / (
                     "__".join((
                         _safe_component(corpus_name),
-                        _safe_component(spec),
+                        _safe_component(persisted_model_specs[spec]),
                         _safe_component(attacker_name),
                         "unplanned",
                     ))
@@ -2148,7 +2678,7 @@ def main(argv=None) -> int:
                         "status": "error",
                         "phase": "circuit_open",
                         "corpus": corpus_name,
-                        "model_spec": spec,
+                        "model_spec": persisted_model_specs[spec],
                         "attacker": attacker_name,
                         "circuit_key": circuit_key,
                         "circuit": circuit,
@@ -2156,7 +2686,7 @@ def main(argv=None) -> int:
                     })
                     cell_statuses.append({
                         "corpus": corpus_name,
-                        "model_spec": spec,
+                        "model_spec": persisted_model_specs[spec],
                         "attacker": attacker_name,
                         "status": "error",
                         "phase": "circuit_open",
@@ -2198,7 +2728,7 @@ def main(argv=None) -> int:
                         "limit": args.limit,
                         "sample_seed": args.sample_seed,
                         "sampling_audit": sampling_audit,
-                        "model_spec": spec,
+                        "model_spec": persisted_model_specs[spec],
                         "local_identity": local_configs.get(spec),
                         "attacker": attacker_name,
                         "attacker_config": attacker_config,
@@ -2226,6 +2756,7 @@ def main(argv=None) -> int:
                         ),
                         "global_call_budget": grid_request["global_call_budget"],
                         "modality_coverage_plan": modality_plan_payload,
+                        "modality_coverage_companion": companion_binding,
                     }
                     planned = runner.plan_manifest(
                         corpus,
@@ -2283,7 +2814,7 @@ def main(argv=None) -> int:
                         )
                     if paths["complete"].is_file():
                         _validate_completion_marker(paths, planned, required)
-                        _record_executed_modality_ids(
+                        _record_executed_modality_evidence(
                             target.name,
                             [Attempt.model_validate(row) for row in _read_jsonl(
                                 paths["attempts"]
@@ -2291,7 +2822,7 @@ def main(argv=None) -> int:
                             [Response.model_validate(row) for row in _read_jsonl(
                                 paths["responses"]
                             )],
-                            executed_datapoint_ids,
+                            executed_modality_evidence,
                         )
                         # A fully verified success supersedes a stale same-stem
                         # failure from an earlier retry.
@@ -2300,7 +2831,8 @@ def main(argv=None) -> int:
                         paths["response_checkpoint"].unlink(missing_ok=True)
                         fallback_error.unlink(missing_ok=True)
                         _remove_superseded_cell_errors(
-                            out, corpus=corpus_name, model_spec=spec,
+                            out, corpus=corpus_name,
+                            model_spec=persisted_model_specs[spec],
                             attacker=attacker_name,
                         )
                         for stale in out.glob("*.lock.error.json"):
@@ -2310,7 +2842,7 @@ def main(argv=None) -> int:
                         n_skipped += 1
                         cell_statuses.append({
                             "corpus": corpus_name,
-                            "model_spec": spec,
+                            "model_spec": persisted_model_specs[spec],
                             "target": target.name,
                             "attacker": attacker_name,
                             "run_id": planned.run_id,
@@ -2342,9 +2874,9 @@ def main(argv=None) -> int:
                         ),
                     )
                     results = runner.aggregate(judgments, group_keys=group_keys)
-                    _record_executed_modality_ids(
+                    _record_executed_modality_evidence(
                         target.name, runner.attempts, runner.responses,
-                        executed_datapoint_ids,
+                        executed_modality_evidence,
                     )
 
                     runner.save_attempts(paths["attempts"])
@@ -2395,7 +2927,8 @@ def main(argv=None) -> int:
                     paths["response_checkpoint"].unlink(missing_ok=True)
                     fallback_error.unlink(missing_ok=True)
                     _remove_superseded_cell_errors(
-                        out, corpus=corpus_name, model_spec=spec,
+                        out, corpus=corpus_name,
+                        model_spec=persisted_model_specs[spec],
                         attacker=attacker_name,
                     )
                     for stale in out.glob("*.lock.error.json"):
@@ -2408,7 +2941,7 @@ def main(argv=None) -> int:
                     n_cells += 1
                     cell_statuses.append({
                         "corpus": corpus_name,
-                        "model_spec": spec,
+                        "model_spec": persisted_model_specs[spec],
                         "target": target.name,
                         "attacker": attacker_name,
                         "run_id": manifest.run_id,
@@ -2420,9 +2953,13 @@ def main(argv=None) -> int:
                     if isinstance(exc, BudgetExhausted):
                         open_circuit("budget", exc)
                     elif isinstance(exc, ExternalCallFailure):
+                        target_failure = exc.phase != "judge_call"
                         open_circuit(
-                            "judge" if exc.phase == "judge_call" else f"target:{spec}",
+                            "judge" if not target_failure else (
+                                f"target:{persisted_model_specs[spec]}"
+                            ),
                             exc,
+                            model_spec=spec if target_failure else None,
                         )
                     run_id = planned.run_id if planned is not None else None
                     if execution_started and runner is not None and paths:
@@ -2454,19 +2991,25 @@ def main(argv=None) -> int:
                             "status": "error",
                             "run_id": run_id,
                             "corpus": corpus_name,
-                            "model_spec": spec,
-                            "target": getattr(target, "name", spec),
+                            "model_spec": persisted_model_specs[spec],
+                            "target": getattr(
+                                target, "name", persisted_model_specs[spec]
+                            ),
                             "attacker": attacker_name,
                             "exception_type": type(exc).__name__,
-                            "message": str(exc),
+                            "message": _artifact_safe_model_error(
+                                exc, spec, persisted_model_specs[spec]
+                            ),
                             "completed_attempts": len(runner.attempts) if runner else 0,
                             "call_budget_snapshot": call_budget.snapshot(),
                             "call_audit": _safe_external_audit(exc),
                         })
                     cell_statuses.append({
                         "corpus": corpus_name,
-                        "model_spec": spec,
-                        "target": getattr(target, "name", spec),
+                        "model_spec": persisted_model_specs[spec],
+                        "target": getattr(
+                            target, "name", persisted_model_specs[spec]
+                        ),
                         "attacker": attacker_name,
                         "run_id": run_id,
                         "status": "error",
@@ -2498,7 +3041,7 @@ def main(argv=None) -> int:
         })
     try:
         modality_result = verify_executed_modality_coverage(
-            modality_plan, executed_datapoint_ids
+            modality_plan, executed_modality_evidence
         )
         modality_result_payload = modality_result.manifest_payload()
     except ModalityCoverageError as exc:
@@ -2506,11 +3049,18 @@ def main(argv=None) -> int:
         modality_result_payload = {
             "status": "failed",
             "error": str(exc),
-            "executed_datapoint_ids": {
-                key: sorted(value) for key, value in executed_datapoint_ids.items()
+            "executed_modality_evidence": {
+                key: [
+                    {
+                        "datapoint_id": datapoint_id,
+                        "combination": list(combination),
+                    }
+                    for datapoint_id, combination in sorted(value)
+                ]
+                for key, value in executed_modality_evidence.items()
             },
         }
-    _write_json(grid_path, {
+    final_grid = {
         "status": "complete" if n_errors == 0 else "partial",
         "grid_id": grid_id,
         "started_at": run_started,
@@ -2525,7 +3075,45 @@ def main(argv=None) -> int:
         "modality_coverage_plan": modality_plan_payload,
         "modality_coverage_result": modality_result_payload,
         "cells": cell_statuses,
-    })
+    }
+    _write_json(grid_path, final_grid)
+    coverage_proof_path = out / f"{grid_id}.modality-coverage-proof.json"
+    coverage_proof_sha256: str | None = None
+    if n_errors == 0:
+        try:
+            marker_paths = sorted({
+                out / str(cell["completion_marker"])
+                for cell in cell_statuses
+                if cell.get("status") in {"complete", "complete_existing"}
+            })
+            marker_descriptors = [
+                _artifact_descriptor(path) for path in marker_paths
+            ]
+            grid_descriptor = _artifact_descriptor(grid_path)
+            proof_payload = {
+                "schema_version": _COVERAGE_PROOF_SCHEMA,
+                "grid": grid_descriptor,
+                "completion_markers": marker_descriptors,
+                "conditions": _reconstruct_companion_conditions(
+                    out, grid_descriptor, marker_descriptors,
+                    expected_driver_source=driver_source,
+                    expected_harness_source=harness_source,
+                ),
+            }
+            _write_json(coverage_proof_path, proof_payload)
+            coverage_proof_sha256 = _sha256_file(coverage_proof_path)
+        except Exception as exc:  # noqa: BLE001 - proof is a release artifact
+            n_errors += 1
+            final_grid["status"] = "partial"
+            final_grid["n_errors"] = n_errors
+            cell_statuses.append({
+                "status": "error",
+                "phase": "modality_coverage_proof",
+                "exception_type": type(exc).__name__,
+                "message": str(exc),
+            })
+            _write_json(grid_path, final_grid)
+            coverage_proof_path.unlink(missing_ok=True)
     _release_artifact_lock(grid_lock, grid_lock_token)
 
     print(
@@ -2536,6 +3124,11 @@ def main(argv=None) -> int:
         "figures: python -m experiments.figures --help  "
         "# pass explicit model/defense grid roots and preregistered corpus facets"
     )
+    if coverage_proof_sha256 is not None:
+        print(
+            f"modality companion proof: {coverage_proof_path} "
+            f"sha256={coverage_proof_sha256}"
+        )
     return 1 if n_errors else 0
 
 

@@ -22,6 +22,8 @@ _REPO_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(_REPO_ROOT))
 sys.path.insert(0, str(_REPO_ROOT / "src"))
 from experiments.human_audit import (  # noqa: E402
+    _kappa_ci as _cluster_kappa_ci,
+    _record_key,
     _validated_artifacts,
     load_trails as _strict_load_trails,
 )
@@ -64,6 +66,40 @@ def load_trail_facets(
             )
         files = [Path(cell["artifacts"]["trails"]) for cell in cohort]
         per_judge, metadata = _strict_load_trails(results, files=files)
+        cluster_metadata: dict[str, dict[str, str]] = {}
+        for cell in cohort:
+            for judgment in cell["judgments"]:
+                raw = judgment.get("raw")
+                if not isinstance(raw, dict):
+                    raise ValueError(f"judgment in {cell['stem']} lacks raw provenance")
+                key = _record_key(judgment)
+                if raw.get("policy_evaluable_turn") is not True:
+                    continue
+                source = raw.get("source")
+                datapoint = raw.get("datapoint_id")
+                source_cluster = raw.get("source_cluster_id") or datapoint
+                if not all(
+                    isinstance(value, str) and value
+                    for value in (source, datapoint, source_cluster)
+                ):
+                    raise ValueError(
+                        f"policy-evaluable judgment {key!r} lacks cluster provenance"
+                    )
+                current = {
+                    "source": source,
+                    "datapoint_id": datapoint,
+                    "source_cluster_id": source_cluster,
+                    "cluster_key": f"{source}|{source_cluster}",
+                }
+                if key in cluster_metadata and cluster_metadata[key] != current:
+                    raise ValueError(f"conflicting cluster provenance for {key!r}")
+                cluster_metadata[key] = current
+        if set(cluster_metadata) != set(metadata):
+            raise ValueError(
+                "trail/judgment policy-evaluable populations differ for kappa"
+            )
+        for key, current in cluster_metadata.items():
+            metadata[key].update(current)
         facets[corpus_name] = (
             per_judge,
             metadata,
@@ -125,21 +161,32 @@ def _fmt(value: float | None) -> str:
     return "undefined" if value is None else f"{value:+.3f}"
 
 
-def _pair_stats(a: str, b: str, ids: list[str], per_judge: dict[str, dict[str, str]]) -> dict:
+def _pair_stats(
+    a: str,
+    b: str,
+    ids: list[str],
+    per_judge: dict[str, dict[str, str]],
+    metadata: dict[str, dict],
+) -> dict:
     labels_a = [per_judge[a][sample] for sample in ids]
     labels_b = [per_judge[b][sample] for sample in ids]
     unsafe_a = [_unsafe(label) for label in labels_a]
     unsafe_b = [_unsafe(label) for label in labels_b]
-    ci = metrics.cohen_kappa_ci(unsafe_a, unsafe_b, n_resamples=2000, seed=0)
+    clusters = [metadata[sample]["cluster_key"] for sample in ids]
+    ci = _cluster_kappa_ci(
+        unsafe_a, unsafe_b, clusters, n_resamples=2000, seed=0
+    )
     return {
         "unsafe_kappa": _kappa(unsafe_a, unsafe_b),
         "unsafe_kappa_ci": (
-            {"ci_low": ci[1], "ci_high": ci[2], "confidence_level": 0.95}
+            ci
             if ci is not None else None
         ),
         "exact_label_kappa_diagnostic": _kappa(labels_a, labels_b),
         "raw_agreement": sum(x == y for x, y in zip(labels_a, labels_b)) / len(ids),
         "n": len(ids),
+        "n_unique_clusters": len(set(clusters)),
+        "uncertainty_unit": "source_prompt_intent_cluster",
     }
 
 
@@ -178,13 +225,13 @@ def _analyse_facet(
                 "coverage_audit": coverage_audit,
             }
             continue
-        pooled = _pair_stats(a, b, shared, per_judge)
+        pooled = _pair_stats(a, b, shared, per_judge, metadata)
         print(f"  {a:>12} vs {b:<12}  kappa={_fmt(pooled['unsafe_kappa'])}  (n={len(shared)})")
 
         by_category: dict[str, dict] = {}
         for category in sorted({metadata.get(sample, {}).get("risk_category", "unknown") for sample in shared}):
             ids = [sample for sample in shared if metadata.get(sample, {}).get("risk_category", "unknown") == category]
-            stats = _pair_stats(a, b, ids, per_judge)
+            stats = _pair_stats(a, b, ids, per_judge, metadata)
             by_category[category] = stats
             print(f"        - {category:<26} kappa={_fmt(stats['unsafe_kappa'])}  (n={len(ids)})")
 

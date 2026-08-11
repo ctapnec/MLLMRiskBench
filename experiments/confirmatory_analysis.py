@@ -8,6 +8,7 @@ of silently reducing the Holm denominator.
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import math
 import sys
@@ -20,9 +21,11 @@ sys.path.insert(0, str(_REPO_ROOT / "src"))
 
 from experiments.analysis_integrity import (  # noqa: E402
     analysis_source_identity,
+    human_analysis_arm_id,
     human_analysis_cell_id,
     parse_source_policy_token,
     read_bound_json,
+    validate_analysis_source_identity,
 )
 from experiments.paired_compare import compare, compare_adaptivity  # noqa: E402
 from ura.metrics import (  # noqa: E402
@@ -34,6 +37,29 @@ from ura.metrics import (  # noqa: E402
 
 PLAN_SCHEMA = "ura-confirmatory-plan/1.0"
 RESULT_SCHEMA = "ura-confirmatory-analysis/1.0"
+_PILOT_ANALYSIS_SOURCES = {
+    "experiments/analysis_integrity.py",
+    "experiments/paired_compare.py",
+    "experiments/pilot_analysis.py",
+    "src/ura/metrics.py",
+}
+_HUMAN_ANALYSIS_SOURCES = {
+    "experiments/human_audit.py",
+    "experiments/transfer_matrix.py",
+    "src/ura/metrics.py",
+}
+
+
+def _validate_exact_analysis_sources(
+    identity: Any, expected: set[str], *, label: str,
+) -> dict[str, Any]:
+    observed = validate_analysis_source_identity(identity)
+    paths = {record["path"] for record in observed["files"]}
+    if paths != expected:
+        raise ValueError(
+            f"{label} analysis-source inventory differs from {sorted(expected)!r}"
+        )
+    return observed
 
 
 def _nonblank(value: Any, label: str) -> str:
@@ -79,7 +105,112 @@ def _pilot(plan_dir: Path, contrast: dict[str, Any]) -> tuple[dict[str, Any], fl
     n = payload.get("n_unique_clusters")
     if not isinstance(n, int) or isinstance(n, bool) or n < 2:
         raise ValueError(f"pilot {artifact} requires at least two unique clusters")
+    cluster_ids = payload.get("cluster_ids")
+    if (
+        not isinstance(cluster_ids, list)
+        or len(cluster_ids) != n
+        or any(not isinstance(value, str) or not value for value in cluster_ids)
+        or len(set(cluster_ids)) != n
+    ):
+        raise ValueError(f"pilot {artifact} lacks its exact unique-cluster inventory")
+    expected_population_digest = hashlib.sha256(json.dumps(
+        sorted(cluster_ids), ensure_ascii=False, sort_keys=True, separators=(",", ":")
+    ).encode("utf-8")).hexdigest()
+    if payload.get("cluster_population_sha256") != expected_population_digest:
+        raise ValueError(f"pilot {artifact} has an invalid cluster-population digest")
+    _validate_exact_analysis_sources(
+        payload.get("analysis_source"), _PILOT_ANALYSIS_SOURCES, label="pilot"
+    )
     return payload, sd
+
+
+def _human_sensitivity_requirements(
+    plan: dict[str, Any], *, plan_dir: Path,
+) -> list[dict[str, Any]]:
+    """Normalize every planned endpoint into pre-labelling arm coverage."""
+    families = plan.get("families")
+    if not isinstance(families, list) or not families:
+        raise ValueError("plan requires families before human-audit preparation")
+    requirements: list[dict[str, Any]] = []
+    seen_contrasts: set[str] = set()
+    for family in families:
+        if not isinstance(family, dict) or not isinstance(family.get("contrasts"), list):
+            raise ValueError("human-audit planning found an invalid contrast family")
+        for contrast in family["contrasts"]:
+            if not isinstance(contrast, dict):
+                raise ValueError("human-audit planning found a malformed contrast")
+            if contrast.get("type") not in {"model", "defense", "adaptivity"}:
+                continue
+            contrast_id = _nonblank(contrast.get("contrast_id"), "contrast_id")
+            if contrast_id in seen_contrasts:
+                raise ValueError(f"duplicate contrast_id {contrast_id!r}")
+            seen_contrasts.add(contrast_id)
+            left, right = contrast.get("left"), contrast.get("right")
+            hypotheses = contrast.get("hypotheses")
+            designs = contrast.get("hypothesis_designs")
+            if (
+                not isinstance(left, dict)
+                or not isinstance(right, dict)
+                or not isinstance(hypotheses, list)
+                or not hypotheses
+                or any(not isinstance(value, str) or not value for value in hypotheses)
+                or not isinstance(designs, dict)
+                or set(designs) != set(hypotheses)
+            ):
+                raise ValueError(f"contrast {contrast_id!r} is incomplete")
+            for local_id in hypotheses:
+                parts = local_id.split("::")
+                if len(parts) not in {2, 3, 5}:
+                    raise ValueError(f"invalid model hypothesis {local_id!r}")
+                metric_name = parts[1]
+                if metric_name in {"ASR", "conversation_ASR"}:
+                    endpoint, expected = "ASR", "refuse"
+                elif metric_name in {
+                    "FRR", "over_refusal_rate", "conversation_over_refusal_rate",
+                }:
+                    endpoint, expected = "FRR", "benign"
+                else:
+                    raise ValueError(f"unsupported human endpoint {local_id!r}")
+                if len(parts) in {3, 5}:
+                    policy_id, policy_version = parse_source_policy_token(parts[2])
+                else:
+                    pilot, _ = _pilot(plan_dir, designs[local_id])
+                    policy_id = _nonblank(
+                        pilot.get("source_policy_id"), "pilot.source_policy_id"
+                    )
+                    policy_version = _nonblank(
+                        pilot.get("source_policy_version"),
+                        "pilot.source_policy_version",
+                    )
+                risk = parts[3] if len(parts) == 5 else None
+                modality = parts[4] if len(parts) == 5 else None
+                for side, selector in (("left", left), ("right", right)):
+                    requirement_id = f"{contrast_id}::{local_id}::{side}"
+                    requirements.append({
+                        "requirement_id": requirement_id,
+                        "hypothesis": f"{contrast_id}::{local_id}",
+                        "side": side,
+                        "corpus": parts[0],
+                        "model_spec": _nonblank(
+                            selector.get("model_spec"), f"{side}.model_spec"
+                        ),
+                        "defense": _nonblank(
+                            selector.get("defense"), f"{side}.defense"
+                        ),
+                        "attacker": _nonblank(
+                            selector.get("attacker"), f"{side}.attacker"
+                        ),
+                        "source_policy_id": policy_id,
+                        "source_policy_version": policy_version,
+                        "risk_category": risk,
+                        "modality": modality,
+                        "metric": endpoint,
+                        "expected_population": expected,
+                    })
+    identifiers = [item["requirement_id"] for item in requirements]
+    if len(set(identifiers)) != len(identifiers):
+        raise ValueError("human sensitivity requirements contain duplicate identities")
+    return sorted(requirements, key=lambda item: item["requirement_id"])
 
 
 def _human_design(
@@ -124,6 +255,15 @@ def _human_design(
             raise ValueError(
                 "human-audit pilot must be disjoint, run-identified, and cluster-identified"
             )
+        expected_population_digest = hashlib.sha256(json.dumps(
+            sorted(cluster_ids), ensure_ascii=False, sort_keys=True, separators=(",", ":")
+        ).encode("utf-8")).hexdigest()
+        if pilot.get("cluster_population_sha256") != expected_population_digest:
+            raise ValueError("human-audit pilot has an invalid cluster-population digest")
+        _validate_exact_analysis_sources(
+            pilot.get("analysis_source"), _PILOT_ANALYSIS_SOURCES,
+            label="human-audit pilot",
+        )
         pilot_run_ids = pilot["source_run_ids"]
         prevalence = _number(
             pilot.get("event_prevalence"), "human pilot event_prevalence"
@@ -157,6 +297,9 @@ def _human_design(
         "pilot_source_run_ids": pilot_run_ids,
         "pilot_cluster_ids": cluster_ids,
         "confirmatory_plan_artifact": plan_artifact,
+        "sensitivity_requirements": _human_sensitivity_requirements(
+            plan, plan_dir=plan_dir,
+        ),
     }
 
 
@@ -276,6 +419,7 @@ def _contrast(
 
     pvalues: dict[str, float | None] = {}
     frozen_design_records: dict[str, Any] = {}
+    hypothesis_endpoint_roles: dict[str, str] = {}
     planned_powered = True
     for local_id in hypotheses:
         parts = local_id.split("::")
@@ -285,6 +429,31 @@ def _contrast(
         design = hypothesis_designs[local_id]
         if not isinstance(design, dict):
             raise ValueError(f"hypothesis design {local_id!r} must be an object")
+        endpoint_role = design.get("endpoint_role")
+        if endpoint_role not in {"primary", "secondary"}:
+            raise ValueError(
+                f"hypothesis design {local_id!r} requires endpoint_role=primary|secondary"
+            )
+        if facet is not None:
+            inventories = [
+                (facet.get(side) or {}).get("source_metric_inventory") or []
+                for side in ("left", "right")
+            ]
+            if any(not isinstance(inventory, list) for inventory in inventories):
+                raise ValueError(f"hypothesis {local_id!r} has invalid source metrics")
+            proxy_source_metrics = {
+                "mmsafety_official_attack_rate", "mossbench_refusal_rate",
+            }
+            is_secondary_proxy = any(
+                isinstance(entry, dict)
+                and entry.get("required_metric") in proxy_source_metrics
+                for inventory in inventories for entry in inventory
+            )
+            if is_secondary_proxy and endpoint_role != "secondary":
+                raise ValueError(
+                    f"hypothesis {local_id!r} is a common URA proxy for a benchmark "
+                    "with a distinct official evaluator and cannot be labelled primary"
+                )
         sesoi = _number(
             design.get("smallest_effect"), f"{local_id}.smallest_effect", positive=True
         )
@@ -430,6 +599,7 @@ def _contrast(
         )
         planned_powered = planned_powered and powered
         frozen_design_records[local_id] = {
+            "endpoint_role": endpoint_role,
             "smallest_effect": sesoi,
             "pilot": pilot["_artifact_identity"],
             "pilot_source_run_ids": pilot["source_run_ids"],
@@ -444,11 +614,13 @@ def _contrast(
             "power_gate": power,
         }
         pvalues[f"{contrast_id}::{local_id}"] = value
+        hypothesis_endpoint_roles[f"{contrast_id}::{local_id}"] = endpoint_role
     report["preregistered"] = {
         "contrast_id": contrast_id,
         "contrast_type": contrast_type,
         "hypotheses": hypotheses,
         "hypothesis_designs": frozen_design_records,
+        "hypothesis_endpoint_roles": hypothesis_endpoint_roles,
         "all_planned_metrics_adequately_powered": planned_powered,
     }
     return report, pvalues
@@ -457,7 +629,7 @@ def _contrast(
 def _validated_human_audit(
     path: Path, *, expected_sha256: str, plan_artifact: dict[str, Any],
     design: dict[str, Any], alpha: float,
-    required_sensitivity: list[dict[str, str]],
+    required_sensitivity: list[dict[str, Any]],
 ) -> tuple[dict[str, Any], dict[str, Any]]:
     human = read_bound_json(path, expected_sha256=expected_sha256)
     identity = human.pop("_artifact_identity")
@@ -465,6 +637,10 @@ def _validated_human_audit(
         raise ValueError("final human audit has an unsupported schema_version")
     if human.get("publishable_real_run") is not True:
         raise ValueError("final human audit is not publishable")
+    _validate_exact_analysis_sources(
+        human.get("analysis_source"), _HUMAN_ANALYSIS_SOURCES,
+        label="human audit",
+    )
     binding = human.get("confirmatory_plan_artifact")
     if not isinstance(binding, dict) or binding.get("sha256") != plan_artifact["sha256"]:
         raise ValueError("human audit is not bound to this confirmatory plan")
@@ -509,8 +685,8 @@ def _validated_human_audit(
         raise ValueError("human primary paired-effect sensitivity lacks bootstrap CIs")
     for requirement in required_sensitivity:
         cell_id = requirement["analysis_cell_id"]
-        left = requirement["left_model"]
-        right = requirement["right_model"]
+        left = requirement["analysis_left_arm"]
+        right = requirement["analysis_right_arm"]
         cell_rates = human_rates.get(cell_id)
         if (
             not isinstance(cell_rates, dict)
@@ -584,15 +760,29 @@ def execute_plan(
     reports: dict[str, dict[str, Any]] = {}
     family_results: dict[str, dict[str, Any]] = {}
     seen_contrasts: set[str] = set()
+    seen_families: set[str] = set()
     for family in families:
         if not isinstance(family, dict):
             raise ValueError("family entries must be objects")
         family_id = _nonblank(family.get("family_id"), "family_id")
+        if family_id in seen_families:
+            raise ValueError(f"duplicate family_id {family_id!r}")
+        seen_families.add(family_id)
+        family_endpoint_role = family.get("endpoint_role")
+        if family_endpoint_role not in {"primary", "secondary"}:
+            raise ValueError(
+                f"family {family_id!r} requires endpoint_role=primary|secondary"
+            )
         contrasts = family.get("contrasts")
         frozen = family.get("hypotheses")
         if not isinstance(contrasts, list) or not contrasts:
             raise ValueError(f"family {family_id!r} lacks contrasts")
-        if not isinstance(frozen, list) or not frozen or len(set(frozen)) != len(frozen):
+        if (
+            not isinstance(frozen, list)
+            or not frozen
+            or any(not isinstance(value, str) or not value for value in frozen)
+            or len(set(frozen)) != len(frozen)
+        ):
             raise ValueError(f"family {family_id!r} lacks unique frozen hypotheses")
         pvalues: dict[str, float | None] = {}
         for contrast in contrasts:
@@ -608,6 +798,13 @@ def execute_plan(
             )
             reports[contrast_id] = report
             pvalues.update(contrast_p)
+            roles = (report.get("preregistered") or {}).get(
+                "hypothesis_endpoint_roles", {}
+            )
+            if any(role != family_endpoint_role for role in roles.values()):
+                raise ValueError(
+                    f"family {family_id!r} mixes or mislabels endpoint roles"
+                )
         if set(frozen) != set(pvalues):
             raise ValueError(
                 f"family {family_id!r} complete hypothesis inventory mismatch: "
@@ -617,6 +814,7 @@ def execute_plan(
         family_results[family_id] = {
             "method": "holm_bonferroni_complete_frozen_family",
             "alpha": alpha,
+            "endpoint_role": family_endpoint_role,
             "hypotheses": holm_bonferroni_complete_family(pvalues, alpha=alpha),
             "family_size": len(frozen),
             "frozen_hypothesis_order": frozen,
@@ -660,11 +858,9 @@ def execute_plan(
         )
     human_design["pilot_main_run_disjoint"] = True
     human_design["pilot_main_cluster_disjoint"] = True
-    required_human_sensitivity: list[dict[str, str]] = []
+    required_human_sensitivity: list[dict[str, Any]] = []
     for report in reports.values():
         preregistered = report.get("preregistered") or {}
-        if preregistered.get("contrast_type") != "model":
-            continue
         for local_id in preregistered.get("hypotheses") or []:
             parts = local_id.split("::")
             facet = report.get("facets", {}).get(parts[0])
@@ -686,6 +882,15 @@ def execute_plan(
             policy_version = metric.get("source_policy_version")
             if not isinstance(policy_id, str) or not isinstance(policy_version, str):
                 raise ValueError(f"planned human endpoint {local_id!r} lacks source policy")
+            planned_left = human_analysis_arm_id(
+                facet["left"]["model_spec"], facet["left"]["resolved_target"],
+                facet["left"]["defense"], facet["left"]["attacker"],
+            )
+            planned_right = human_analysis_arm_id(
+                facet["right"]["model_spec"], facet["right"]["resolved_target"],
+                facet["right"]["defense"], facet["right"]["attacker"],
+            )
+            analysis_left, analysis_right = sorted((planned_left, planned_right))
             required_human_sensitivity.append({
                 "hypothesis": local_id,
                 "analysis_cell_id": human_analysis_cell_id(
@@ -693,8 +898,14 @@ def execute_plan(
                     metric.get("risk_category"), metric.get("modality"),
                     metric["metric_alias"],
                 ),
-                "left_model": facet["left"]["resolved_target"],
-                "right_model": facet["right"]["resolved_target"],
+                "planned_left_arm": planned_left,
+                "planned_right_arm": planned_right,
+                "analysis_left_arm": analysis_left,
+                "analysis_right_arm": analysis_right,
+                "analysis_to_planned_effect_multiplier": (
+                    1 if (analysis_left, analysis_right) == (planned_left, planned_right)
+                    else -1
+                ),
             })
     if preliminary:
         if human_audit_path is not None or human_audit_sha256 is not None:

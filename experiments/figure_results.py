@@ -26,7 +26,11 @@ from typing import Any, Callable, Iterator
 from pydantic import ValidationError
 
 from experiments.paired_compare import compare_cells
-from experiments.analysis_integrity import analysis_source_identity, read_bound_json
+from experiments.analysis_integrity import (
+    analysis_source_identity,
+    read_bound_json,
+    validate_analysis_source_identity,
+)
 from ura.data_models import (
     SCHEMA_VERSION,
     Attempt,
@@ -800,13 +804,34 @@ def _paired_cluster_ci(
     for pair in pairs:
         clusters[pair[0].cluster].append(pair)
     keys = sorted(clusters)
+    cluster_differences = {
+        key: sum(left.value - right.value for left, right in clusters[key])
+        / len(clusters[key])
+        for key in keys
+    }
     rng = random.Random(int(hashlib.sha256(seed_material.encode()).hexdigest()[:16], 16))
     draws: list[float] = []
     for _ in range(n_resamples):
-        sampled = [clusters[keys[rng.randrange(len(keys))]] for _ in keys]
-        flat = [pair for cluster_pairs in sampled for pair in cluster_pairs]
-        draws.append(sum(left.value - right.value for left, right in flat) / len(flat))
+        sampled = [keys[rng.randrange(len(keys))] for _ in keys]
+        draws.append(sum(cluster_differences[key] for key in sampled) / len(sampled))
     return _quantile(draws, 0.025), _quantile(draws, 0.975)
+
+
+def _equal_cluster_arm_values(
+    pairs: list[tuple[_Unit, _Unit]],
+) -> tuple[float, float]:
+    by_cluster: dict[tuple[str, str, str], list[tuple[_Unit, _Unit]]] = defaultdict(list)
+    for pair in pairs:
+        by_cluster[pair[0].cluster].append(pair)
+    left = sum(
+        sum(pair[0].value for pair in cluster_pairs) / len(cluster_pairs)
+        for cluster_pairs in by_cluster.values()
+    ) / len(by_cluster)
+    right = sum(
+        sum(pair[1].value for pair in cluster_pairs) / len(cluster_pairs)
+        for cluster_pairs in by_cluster.values()
+    ) / len(by_cluster)
+    return left, right
 
 
 def _arm_provenance(cell: dict[str, Any]) -> dict[str, Any]:
@@ -914,8 +939,7 @@ def _estimate(
     left_value: float | None = None
     right_value: float | None = None
     if status == "estimated":
-        left_value = sum(pair[0].value for pair in pairs) / len(pairs)
-        right_value = sum(pair[1].value for pair in pairs) / len(pairs)
+        left_value, right_value = _equal_cluster_arm_values(pairs)
         value = left_value - right_value
         ci_low, ci_high = _paired_cluster_ci(
             pairs,
@@ -1244,8 +1268,15 @@ def load_confirmatory_results(
     ):
         raise ValueError("confirmatory artifact lacks typed evaluation-policy identity")
     source = artifact.get("analysis_source")
-    if not isinstance(source, dict) or not _valid_sha256(source.get("sha256")):
-        raise ValueError("confirmatory artifact lacks analysis-source identity")
+    validated_source = validate_analysis_source_identity(source)
+    expected_source_paths = {
+        "experiments/analysis_integrity.py",
+        "experiments/confirmatory_analysis.py",
+        "experiments/paired_compare.py",
+        "src/ura/metrics.py",
+    }
+    if {record["path"] for record in validated_source["files"]} != expected_source_paths:
+        raise ValueError("confirmatory artifact has the wrong analysis-source inventory")
     source_files = source.get("files")
     if not isinstance(source_files, list) or source.get("file_count") != len(source_files):
         raise ValueError("confirmatory artifact has an invalid analysis-source inventory")
@@ -1309,7 +1340,18 @@ def load_confirmatory_results(
             parts = local_id.split("::")
             corpus = parts[0]
             facet = facets.get(corpus)
-            if not isinstance(facet, dict) or facet.get("publishable_real_run") is not True:
+            facet_checks = (
+                facet.get("publishability_checks") if isinstance(facet, dict) else None
+            )
+            if (
+                not isinstance(facet, dict)
+                or not isinstance(facet_checks, dict)
+                or not facet_checks
+                or any(
+                    value is not True for key, value in facet_checks.items()
+                    if key != "adequately_powered"
+                )
+            ):
                 raise ValueError(f"figure facet {contrast_id!r}/{corpus!r} is not publishable")
             if len(parts) == 2:
                 metric_name = parts[1]
@@ -1393,7 +1435,10 @@ def load_confirmatory_results(
             comparison_type = facet.get("comparison_type")
             if comparison_type == "cross_target_endpoint_noncausal":
                 (categories if len(parts) == 5 else overall).append(point)
-            elif comparison_type == "within_target_defense_intervention" and len(parts) == 2:
+            elif (
+                comparison_type == "within_target_defense_intervention"
+                and len(parts) in {2, 3}
+            ):
                 defenses.append(point)
 
     if not overall or not categories or not defenses:

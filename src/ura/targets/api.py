@@ -24,7 +24,7 @@ import json
 import mimetypes
 import os
 import time
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Any, Iterable, Optional
 from urllib.parse import unquote_to_bytes, urlsplit
 
@@ -347,6 +347,7 @@ def _require(module: str, feature: str):
 
 
 _MAX_MEDIA_BYTES = 25 * 1024 * 1024
+_MEDIA_ROOT_ALIAS_PREFIX = "@media-root/"
 
 
 def _media_roots(roots: Optional[Iterable[str | Path]] = None) -> tuple[Path, ...]:
@@ -372,8 +373,50 @@ def _media_roots(roots: Optional[Iterable[str | Path]] = None) -> tuple[Path, ..
     return tuple(resolved)
 
 
-def _inside(path: Path, roots: tuple[Path, ...]) -> bool:
-    return any(path == root or root in path.parents for root in roots)
+def _resolve_local_media_path(
+    value: str, roots: tuple[Path, ...]
+) -> tuple[Path, int]:
+    """Resolve an absolute input or portable ``@media-root/<n>/...`` alias."""
+    if value.startswith(_MEDIA_ROOT_ALIAS_PREFIX):
+        suffix = value[len(_MEDIA_ROOT_ALIAS_PREFIX):]
+        index_text, separator, relative_text = suffix.partition("/")
+        if (
+            not separator
+            or not index_text.isdigit()
+            or not relative_text
+            or int(index_text) >= len(roots)
+        ):
+            raise ValueError("invalid logical media-root alias")
+        relative = PurePosixPath(relative_text)
+        if relative.is_absolute() or ".." in relative.parts:
+            raise ValueError("logical media-root alias escapes its approved root")
+        root_index = int(index_text)
+        root = roots[root_index]
+        path = root.joinpath(*relative.parts).resolve(strict=True)
+        if path != root and root not in path.parents:
+            raise PermissionError("logical media-root alias escapes approved root")
+        return path, root_index
+
+    path = Path(value).expanduser().resolve(strict=True)
+    matches = [
+        (index, root) for index, root in enumerate(roots)
+        if path == root or root in path.parents
+    ]
+    if not matches:
+        raise PermissionError(f"media path is outside approved roots: {path}")
+    # Prefer the narrowest containing root; retain its configured index in the
+    # alias so rebinding does not depend on an absolute workstation path.
+    root_index, _ = max(matches, key=lambda item: len(item[1].parts))
+    return path, root_index
+
+
+def _logical_media_root_alias(
+    path: Path, root_index: int, roots: tuple[Path, ...]
+) -> str:
+    relative = path.relative_to(roots[root_index]).as_posix()
+    if not relative or relative == ".":
+        raise ValueError("media reference must name a file below its approved root")
+    return f"{_MEDIA_ROOT_ALIAS_PREFIX}{root_index}/{relative}"
 
 
 def _verify_hash(data: bytes, expected: Optional[str], source: str) -> str:
@@ -427,11 +470,9 @@ def _encode_media(
             raise PermissionError(
                 "local media upload is disabled; configure media_roots or URA_MEDIA_ROOTS"
             )
-        path = Path(media.path).expanduser().resolve(strict=True)
+        path, _root_index = _resolve_local_media_path(media.path, roots)
         if not path.is_file():
             raise ValueError(f"media path is not a regular file: {path}")
-        if not _inside(path, roots):
-            raise PermissionError(f"media path is outside approved roots: {path}")
         if path.stat().st_size > max_bytes:
             raise ValueError(f"media exceeds {max_bytes} byte limit: {path}")
         raw = path.read_bytes()
@@ -477,6 +518,41 @@ def _recorded_trace_text(turn: DialogTurn) -> list[str]:
     if turn.tool_result is not None:
         parts.append(f"[recorded_tool_result] {turn.tool_result}")
     return parts
+
+
+def _validated_anthropic_thinking_blocks(
+    blocks: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Validate the exact provider-native continuation projection for Fable."""
+    validated: list[dict[str, Any]] = []
+    for block in blocks:
+        block_type = block.get("type")
+        if block_type == "thinking":
+            if set(block) != {"type", "thinking", "signature"} or any(
+                not isinstance(block.get(field), str)
+                or not str(block[field]).strip()
+                for field in ("thinking", "signature")
+            ):
+                raise ValueError("invalid Anthropic thinking continuation block")
+        elif block_type == "redacted_thinking":
+            if (
+                set(block) != {"type", "data"}
+                or not isinstance(block.get("data"), str)
+                or not str(block["data"]).strip()
+            ):
+                raise ValueError("invalid Anthropic redacted-thinking block")
+        else:
+            raise ValueError(
+                f"unsupported Anthropic thinking continuation type {block_type!r}"
+            )
+        validated.append(dict(block))
+    encoded = json.dumps(
+        validated, ensure_ascii=False, sort_keys=True, separators=(",", ":"),
+        allow_nan=False,
+    ).encode("utf-8")
+    if len(encoded) > 2 * 1024 * 1024:
+        raise ValueError("Anthropic thinking continuation exceeds 2 MiB")
+    return validated
 
 
 # --------------------------------------------------------------------------- #
@@ -550,6 +626,7 @@ class AnthropicTarget(BaseTarget):
     name = "anthropic"
     modality_support = ("text", "image")
     tool_serialization = "recorded_text_proxy_no_execution"
+    accepts_provider_thinking = False
 
     def __init__(
         self,
@@ -600,7 +677,30 @@ class AnthropicTarget(BaseTarget):
         system: Optional[str] = None
         messages: list[dict[str, Any]] = []
         for turn in dialog:
+            if turn.provider_state is not None:
+                raise ValueError(
+                    "Anthropic Messages cannot consume OpenAI provider state"
+                )
+            if turn.provider_thinking and not self.accepts_provider_thinking:
+                raise ValueError(
+                    "generic Anthropic target cannot consume provider thinking; "
+                    "use the matching Fable target"
+                )
             if turn.role == "system":
+                if system is not None:
+                    raise ValueError(
+                        "Anthropic Messages accepts exactly one system turn"
+                    )
+                if (
+                    not (turn.content or "").strip()
+                    or turn.media
+                    or turn.tool_call is not None
+                    or turn.tool_result is not None
+                    or turn.provider_thinking
+                ):
+                    raise ValueError(
+                        "Anthropic system turn must be non-empty plain text"
+                    )
                 system = turn.content
                 continue
             role = "assistant" if turn.role == "assistant" else "user"
@@ -608,7 +708,9 @@ class AnthropicTarget(BaseTarget):
             if role == "assistant" and turn.provider_thinking:
                 # Return preserved thinking blocks unchanged (signatures intact),
                 # ahead of the visible text, per the extended-thinking contract.
-                blocks.extend(turn.provider_thinking)
+                blocks.extend(
+                    _validated_anthropic_thinking_blocks(turn.provider_thinking)
+                )
             if turn.content:
                 blocks.append({"type": "text", "text": turn.content})
             blocks.extend(
@@ -639,6 +741,8 @@ class AnthropicTarget(BaseTarget):
                         }
                     )
             messages.append({"role": role, "content": blocks or (turn.content or "")})
+        if not messages:
+            raise ValueError("AnthropicTarget requires at least one non-system message")
         return system, messages
 
     def generate(
@@ -781,6 +885,7 @@ class AnthropicFableTarget(AnthropicTarget):
     MAX_TOKENS = 25_000
     EFFORT = "high"
     THINKING_TYPE = "adaptive"
+    accepts_provider_thinking = True
 
     def __init__(
         self,
@@ -903,7 +1008,9 @@ class AnthropicFableTarget(AnthropicTarget):
         }
 
     @staticmethod
-    def _visible_text(resp: Any) -> tuple[str, list[dict[str, Any]]]:
+    def _visible_text(
+        resp: Any, *, continuation_required: bool = True
+    ) -> tuple[str, list[dict[str, Any]]]:
         content = _provider_field(resp, "content")
         if not isinstance(content, (list, tuple)):
             raise AnthropicFableOutputError(
@@ -911,6 +1018,7 @@ class AnthropicFableTarget(AnthropicTarget):
             )
         text_blocks: list[str] = []
         thinking_blocks: list[dict[str, Any]] = []
+        saw_text = False
         for block in content:
             block_type = _provider_field(block, "type")
             if block_type == "text":
@@ -919,8 +1027,13 @@ class AnthropicFableTarget(AnthropicTarget):
                     raise AnthropicFableOutputError(
                         "Anthropic Fable text block is not a string"
                     )
+                saw_text = True
                 text_blocks.append(value)
             elif block_type == "thinking":
+                if saw_text and continuation_required:
+                    raise AnthropicFableOutputError(
+                        "Anthropic Fable returned thinking after visible text"
+                    )
                 # Preserve the verbatim thinking block (including its signature)
                 # so a multi-turn continuation returns it to the provider
                 # unchanged, rather than discarding the model's reasoning.
@@ -930,6 +1043,10 @@ class AnthropicFableTarget(AnthropicTarget):
                     "signature": _provider_field(block, "signature"),
                 })
             elif block_type == "redacted_thinking":
+                if saw_text and continuation_required:
+                    raise AnthropicFableOutputError(
+                        "Anthropic Fable returned redacted thinking after visible text"
+                    )
                 thinking_blocks.append({
                     "type": "redacted_thinking",
                     "data": _provider_field(block, "data"),
@@ -938,6 +1055,34 @@ class AnthropicFableTarget(AnthropicTarget):
                 raise AnthropicFableOutputError(
                     "Anthropic Fable returned unsupported content block "
                     f"{block_type!r} without any tools enabled"
+                )
+        if continuation_required:
+            try:
+                thinking_blocks = _validated_anthropic_thinking_blocks(
+                    thinking_blocks
+                )
+            except ValueError as exc:
+                raise AnthropicFableOutputError(str(exc)) from exc
+        else:
+            # Typed mid-generation refusals discard partial output.  Do not
+            # impose continuation-only signature/nonblank requirements on data
+            # that will never be returned to the provider, but still bound the
+            # parsed provider material before counting it.
+            try:
+                encoded = json.dumps(
+                    {"text": text_blocks, "thinking": thinking_blocks},
+                    ensure_ascii=False,
+                    sort_keys=True,
+                    separators=(",", ":"),
+                    allow_nan=False,
+                ).encode("utf-8")
+            except (TypeError, ValueError) as exc:
+                raise AnthropicFableOutputError(
+                    "Anthropic Fable partial refusal output is not bounded JSON"
+                ) from exc
+            if len(encoded) > 2 * 1024 * 1024:
+                raise AnthropicFableOutputError(
+                    "Anthropic Fable partial refusal output exceeds 2 MiB"
                 )
         return "".join(text_blocks), thinking_blocks
 
@@ -995,7 +1140,9 @@ class AnthropicFableTarget(AnthropicTarget):
         stop_reason = _provider_field(resp, "stop_reason")
         stop_details = _provider_field(resp, "stop_details")
         stop_sequence = _provider_field(resp, "stop_sequence")
-        text, thinking_blocks = self._visible_text(resp)
+        text, thinking_blocks = self._visible_text(
+            resp, continuation_required=stop_reason != "refusal"
+        )
         thinking_block_count = len(thinking_blocks)
         tokens = self._usage_tokens(resp)
 
@@ -1058,6 +1205,17 @@ class AnthropicFableTarget(AnthropicTarget):
             output_turns = [DialogTurn(
                 role="assistant", content=text, provider_thinking=thinking_blocks,
             )]
+        continuation_json = (
+            None
+            if provider_refusal
+            else json.dumps(
+                thinking_blocks,
+                ensure_ascii=False,
+                sort_keys=True,
+                separators=(",", ":"),
+                allow_nan=False,
+            ).encode("utf-8")
+        )
 
         return Response(
             attempt_id=_dialog_fingerprint(dialog),
@@ -1091,6 +1249,13 @@ class AnthropicFableTarget(AnthropicTarget):
                     discarded_partial_thinking_blocks
                 ),
                 "thinking_block_count": thinking_block_count,
+                "continuation_state_sha256": (
+                    hashlib.sha256(continuation_json).hexdigest()
+                    if continuation_json is not None else None
+                ),
+                "continuation_state_bytes": (
+                    len(continuation_json) if continuation_json is not None else 0
+                ),
                 "transport_attempt_count": len(transport_attempts),
                 "transport_attempts": transport_attempts,
                 "usage": dict(tokens),
@@ -1165,6 +1330,11 @@ class OpenAITarget(BaseTarget):
         """Render ``dialog`` as OpenAI chat messages with mixed-content parts."""
         messages: list[dict[str, Any]] = []
         for turn in dialog:
+            if turn.provider_state is not None or turn.provider_thinking:
+                raise ValueError(
+                    "OpenAI Chat cannot consume provider-native continuation "
+                    "state from another API surface"
+                )
             role = turn.role if turn.role in ("system", "user", "assistant") else "user"
             parts: list[dict[str, Any]] = []
             if turn.content:
@@ -1404,6 +1574,10 @@ class OpenAIResponsesTarget(OpenAITarget):
             raise ValueError("OpenAI Responses input dialog must not be empty")
         rendered: list[dict[str, Any]] = []
         for turn in dialog:
+            if turn.provider_thinking:
+                raise ValueError(
+                    "OpenAI Responses cannot consume Anthropic provider thinking"
+                )
             if turn.provider_state is not None:
                 state = turn.provider_state
                 if state.provider != "openai" or state.api_surface != "responses":
@@ -2037,7 +2211,21 @@ class GeminiTarget(BaseTarget):
         system: Optional[str] = None
         contents: list[dict[str, Any]] = []
         for turn in dialog:
+            if turn.provider_state is not None or turn.provider_thinking:
+                raise ValueError(
+                    "Gemini cannot consume provider-native continuation state "
+                    "from another API surface"
+                )
             if turn.role == "system":
+                if system is not None:
+                    raise ValueError("Gemini accepts exactly one system turn")
+                if (
+                    not (turn.content or "").strip()
+                    or turn.media
+                    or turn.tool_call is not None
+                    or turn.tool_result is not None
+                ):
+                    raise ValueError("Gemini system turn must be non-empty plain text")
                 system = turn.content
                 continue
             role = "model" if turn.role == "assistant" else "user"
@@ -2067,6 +2255,8 @@ class GeminiTarget(BaseTarget):
                 elif url:
                     parts.append({"file_data": {"mime_type": mime, "file_uri": url}})
             contents.append({"role": role, "parts": parts})
+        if not contents:
+            raise ValueError("GeminiTarget requires at least one non-system message")
         return system, contents
 
     def generate(

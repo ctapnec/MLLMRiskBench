@@ -18,11 +18,14 @@ from __future__ import annotations
 import base64
 import binascii
 import hashlib
+import hmac
 import inspect
 import json
 import math
+import mimetypes
 import os
 import platform
+import re
 import time
 from dataclasses import replace
 from itertools import islice
@@ -32,6 +35,10 @@ from urllib.parse import unquote_to_bytes
 
 from . import metrics, source_metrics
 from .adapters.base import AttackBudget, BaseAttacker
+from .converters._common import (
+    canonical_converted_corpus_sha256,
+    media_signature_matches,
+)
 from .data_models import (
     Attempt,
     DataPoint,
@@ -45,9 +52,10 @@ from .data_models import (
 )
 from .judges.base import JudgeCascade
 from .targets.base import BaseTarget
+from .targets.api import _logical_media_root_alias, _resolve_local_media_path
 
 #: Bumped when the orchestration semantics change (recorded in every manifest).
-CODE_VERSION = "ura-runner/2.2"
+CODE_VERSION = "ura-runner/2.3"
 _MAX_SCORED_MEDIA_BYTES = 25 * 1024 * 1024
 
 CheckpointRecord = dict[str, Any]
@@ -77,7 +85,7 @@ class ExternalCallFailure(RuntimeError):
 
 
 class GlobalCallBudget:
-    """Durable logical-call and transport-exposure ceilings for one matrix.
+    """Durable logical-call, transport-exposure, and call-start ceilings.
 
     Reservations are persisted *before* an external call.  Canonical provider
     clients disable hidden SDK retries, making one logical reservation equal to
@@ -139,7 +147,7 @@ class GlobalCallBudget:
             or (self.deadline_epoch is not None and time.time() >= self.deadline_epoch)
         ):
             raise BudgetExhausted(
-                f"wall-clock deadline reached after {self.target_calls} target "
+                f"call-start deadline reached after {self.target_calls} target "
                 f"calls, {self.judge_calls} model-judge calls, and "
                 f"{self.http_attempts} logical HTTP-attempt exposures"
             )
@@ -371,6 +379,8 @@ class Runner:
 
                 if session is not None:
                     previous: Optional[Response] = None
+                    next_policy_challenge = 0
+                    policy_challenge_horizon: Optional[int] = None
                     for logical_turn in range(logical_limit):
                         generated = session.next_attempt(previous)
                         if generated is None:
@@ -384,6 +394,24 @@ class Runner:
                             corpus_hash=corpus_hash,
                             stateful=True,
                         )
+                        observed_horizon = attempt.params["policy_challenge_horizon"]
+                        if policy_challenge_horizon is None:
+                            policy_challenge_horizon = observed_horizon
+                        elif observed_horizon != policy_challenge_horizon:
+                            raise ValueError(
+                                "stateful attacker changed policy challenge horizon "
+                                "within one trajectory"
+                            )
+                        if attempt.params["policy_evaluable_turn"]:
+                            if (
+                                attempt.params["policy_challenge_index"]
+                                != next_policy_challenge
+                            ):
+                                raise ValueError(
+                                    "stateful attacker policy challenge indices must "
+                                    "be contiguous from zero"
+                                )
+                            next_policy_challenge += 1
                         self._claim_attempt_id(attempt.id, seen_attempt_ids)
                         if attempt.id in skip and attempt.id not in resume:
                             raise ValueError(
@@ -407,7 +435,8 @@ class Runner:
                         # state.  Do not spend further calls or let post-break
                         # turns alter the trajectory's maximum severity.
                         if (
-                            dp.expected_behavior == "refuse"
+                            attempt.params["policy_evaluable_turn"] is True
+                            and attempt.params["turn_expected_behavior"] == "refuse"
                             and self.judgments[-1].label == "violation"
                         ):
                             break
@@ -486,6 +515,7 @@ class Runner:
                 datapoint, attempt, record, run_id
             )
         else:
+            evaluation_datapoint = self._evaluation_datapoint(datapoint, attempt)
             if response_record is not None:
                 # Resume judging from an already-paid, checkpointed response so a
                 # judge failure never re-bills the target on the next attempt.
@@ -503,50 +533,69 @@ class Runner:
                     # The already-paid response is durable before an unexpected
                     # provider retry excess stops the cell.
                     self.call_budget.raise_if_overrun()
-            judge_calls, judge_http_exposure = _model_judge_exposure(
-                self.judge_cascade, response
-            )
-            if self.call_budget is not None:
-                self.call_budget.charge_judge(
-                    judge_calls, http_exposure=judge_http_exposure
+            if attempt.params["policy_evaluable_turn"] is False:
+                final, raw_trail = self._non_evaluable_setup_outcome(
+                    response
                 )
-            try:
-                final, raw_trail = self.judge_cascade.judge(datapoint, response)
-            except Exception as exc:
+            else:
+                judge_calls, judge_http_exposure = _model_judge_exposure(
+                    self.judge_cascade, response
+                )
                 if self.call_budget is not None:
-                    audit = _safe_call_audit(getattr(exc, "call_audit", None))
-                    observed = audit.get("transport_attempt_count")
-                    if isinstance(observed, int) and not isinstance(observed, bool):
-                        self.call_budget.reconcile_http_attempts(
-                            reserved=judge_http_exposure, observed=observed
-                        )
-                raise ExternalCallFailure("judge_call", exc) from exc
-            if self.call_budget is not None:
-                observed = sum(
-                    _transport_attempt_count(j.raw.get("judge_call"))
-                    for j in raw_trail
-                )
-                self.call_budget.reconcile_http_attempts(
-                    reserved=judge_http_exposure, observed=observed
-                )
+                    self.call_budget.charge_judge(
+                        judge_calls, http_exposure=judge_http_exposure
+                    )
+                try:
+                    final, raw_trail = self.judge_cascade.judge(
+                        evaluation_datapoint, response
+                    )
+                except Exception as exc:
+                    if self.call_budget is not None:
+                        audit = _safe_call_audit(getattr(exc, "call_audit", None))
+                        observed = audit.get("transport_attempt_count")
+                        if isinstance(observed, int) and not isinstance(observed, bool):
+                            self.call_budget.reconcile_http_attempts(
+                                reserved=judge_http_exposure, observed=observed
+                            )
+                    raise ExternalCallFailure("judge_call", exc) from exc
+                if any(
+                    item.label == "not_applicable"
+                    or item.raw.get("stage_queried") is False
+                    for item in raw_trail
+                ):
+                    raise ValueError(
+                        "an evaluable turn cannot emit a non-evaluable judge stage"
+                    )
+                if self.call_budget is not None:
+                    observed = sum(
+                        _transport_attempt_count(j.raw.get("judge_call"))
+                        for j in raw_trail
+                    )
+                    self.call_budget.reconcile_http_attempts(
+                        reserved=judge_http_exposure, observed=observed
+                    )
             trail = [self._stamp_judgment(j, run_id) for j in raw_trail]
             final = _attach_strongreject_shadow(final, trail)
             target_modalities = tuple(
                 getattr(self.target, "modality_support", ("text",))
             )
-            source_evaluation = source_metrics.evaluate_source_response(
-                datapoint, response
+            source_evaluation = (
+                source_metrics.evaluate_source_response(datapoint, response)
+                if attempt.params["policy_evaluable_turn"] is True
+                else None
             )
             final = self._annotate(
                 self._stamp_judgment(final, run_id),
-                datapoint,
+                evaluation_datapoint,
                 attempt,
                 response,
                 run_id,
                 target_modalities,
                 source_evaluation,
             )
-            meta = self._trail_metadata(datapoint, attempt, response, run_id)
+            meta = self._trail_metadata(
+                evaluation_datapoint, attempt, response, run_id
+            )
 
         identity_rows = _identity_rows_with_candidate(self.trails, attempt.id, trail)
         realized_identities = realized_identity_summary(
@@ -567,6 +616,41 @@ class Runner:
             # is durable, so resume cannot repeat the paid judge call.
             self.call_budget.raise_if_overrun()
         return response
+
+    def _non_evaluable_setup_outcome(
+        self, response: Response
+    ) -> tuple[Judgment, list[Judgment]]:
+        """Persist setup provenance without invoking or fabricating a judge verdict."""
+        trail: list[Judgment] = []
+        for index, stage in enumerate(self.judge_cascade.stages):
+            judge_target = getattr(stage, "judge_target", None)
+            requested_model = getattr(judge_target, "name", None)
+            if requested_model is None:
+                requested_model = getattr(stage, "model_id", None)
+            raw: dict[str, Any] = {
+                "confidence": 1.0,
+                "parsed": None,
+                "stage_queried": False,
+                "policy_evaluation_status": "not_evaluable",
+                "cascade_stage": index,
+                "cascade_confident": True,
+                "cascade_role": "authoritative" if index == 0 else "shadow",
+                "cascade_policy": "first_confident_with_full_shadow_trail",
+            }
+            if isinstance(requested_model, str) and requested_model.strip():
+                raw["judge_model"] = requested_model
+            trail.append(Judgment(
+                attempt_id=response.attempt_id,
+                judge=stage.name,
+                label="not_applicable",
+                score=0.0,
+                rationale=(
+                    "conversation setup turn retained for conditioning; "
+                    "policy judge not queried"
+                ),
+                raw=raw,
+            ))
+        return trail[0], trail
 
     def _response_checkpoint_record(
         self, attempt: Attempt, response: Response
@@ -594,7 +678,7 @@ class Runner:
         """
         saved_attempt = Attempt.model_validate(record["attempt"])
         response = Response.model_validate(record["response"])
-        if saved_attempt.model_dump(mode="json") != expected.model_dump(mode="json"):
+        if _portable_attempt_dump(saved_attempt) != _portable_attempt_dump(expected):
             raise ValueError(
                 f"response checkpoint attempt is not an exact match for planned "
                 f"attempt {expected.id!r}"
@@ -685,7 +769,7 @@ class Runner:
             "n_attempt_media_hashes": len(realized_media),
             "attempt_media_hashes": dict(sorted(realized_media.items())),
             "realized_attempts_sha256": _sha256_json([
-                attempt.model_dump(mode="json") for attempt in self.attempts
+                _portable_attempt_dump(attempt) for attempt in self.attempts
             ]),
             # Provider-resolved identities cannot be known before the first call,
             # and therefore are deliberately not material in ``run_id``.  The
@@ -866,6 +950,64 @@ class Runner:
         )
         explicitly_replayed = bool(attempt.params.get("replayed_transcript"))
         transferable = not response_conditioned or explicitly_replayed
+        if stateful:
+            policy_evaluable = attempt.params.get("policy_evaluable_turn")
+            policy_challenge_index = attempt.params.get("policy_challenge_index")
+            policy_challenge_horizon = attempt.params.get(
+                "policy_challenge_horizon"
+            )
+            turn_expected_behavior = attempt.params.get("turn_expected_behavior")
+            if not isinstance(policy_evaluable, bool):
+                raise ValueError(
+                    "stateful attackers must declare boolean "
+                    "params.policy_evaluable_turn"
+                )
+            if (
+                isinstance(policy_challenge_horizon, bool)
+                or not isinstance(policy_challenge_horizon, int)
+                or policy_challenge_horizon <= 0
+            ):
+                raise ValueError(
+                    "stateful attackers must declare a positive integer "
+                    "params.policy_challenge_horizon"
+                )
+            if policy_evaluable:
+                if (
+                    isinstance(policy_challenge_index, bool)
+                    or not isinstance(policy_challenge_index, int)
+                    or policy_challenge_index < 0
+                ):
+                    raise ValueError(
+                        "an evaluable stateful turn requires a non-negative "
+                        "params.policy_challenge_index"
+                    )
+                if policy_challenge_index >= policy_challenge_horizon:
+                    raise ValueError(
+                        "stateful policy challenge index must be below its horizon"
+                    )
+                if turn_expected_behavior != dp.expected_behavior:
+                    raise ValueError(
+                        "an evaluable stateful turn must retain the DataPoint's "
+                        "expected behavior"
+                    )
+            else:
+                if policy_challenge_index is not None:
+                    raise ValueError(
+                        "a non-evaluable setup turn must have a null "
+                        "params.policy_challenge_index"
+                    )
+                if turn_expected_behavior != "comply_safely":
+                    raise ValueError(
+                        "a non-evaluable setup turn must declare "
+                        "params.turn_expected_behavior='comply_safely'"
+                    )
+        else:
+            policy_evaluable = True
+            # Stateless attempts are independent one-challenge trajectories;
+            # ``logical_turn`` enumerates variants rather than a shared horizon.
+            policy_challenge_index = 0
+            policy_challenge_horizon = 1
+            turn_expected_behavior = dp.expected_behavior
         params = {
             **attempt.params,
             "response_conditioned": response_conditioned,
@@ -873,6 +1015,10 @@ class Runner:
             "transfer_key": transfer_key,
             "transferable": transferable,
             "transfer_match_required": "attack_fingerprint",
+            "policy_evaluable_turn": policy_evaluable,
+            "policy_challenge_index": policy_challenge_index,
+            "policy_challenge_horizon": policy_challenge_horizon,
+            "turn_expected_behavior": turn_expected_behavior,
             # Attack adapters may synthesize media after the corpus manifest has
             # been planned (IDEATOR is the canonical example).  Content-address
             # those bytes before the target sees them and retain the exact digest
@@ -889,6 +1035,16 @@ class Runner:
                 if dp.source_policy is not None else None
             ),
         }
+        source_physical = set(dp.modalities) & {"image", "audio", "video"}
+        delivered_physical = {
+            media.modality for turn in rendered_input for media in turn.media
+        }
+        if policy_evaluable and not source_physical <= delivered_physical:
+            missing = ",".join(sorted(source_physical - delivered_physical))
+            raise ValueError(
+                "policy-evaluable turn omitted source physical modalities: "
+                + missing
+            )
         return attempt.model_copy(
             update={
                 "seed": seed,
@@ -898,6 +1054,37 @@ class Runner:
                 "target": self.target.name,
             }
         )
+
+    @staticmethod
+    def _evaluation_datapoint(
+        datapoint: DataPoint, attempt: Attempt
+    ) -> DataPoint:
+        """Bind judging to the actual turn and its policy-evaluation scope."""
+        evaluable = attempt.params.get("policy_evaluable_turn")
+        expected = attempt.params.get("turn_expected_behavior")
+        if not isinstance(evaluable, bool):
+            raise ValueError("attempt omitted boolean policy_evaluable_turn")
+        if expected not in {"refuse", "safe_answer", "comply_safely"}:
+            raise ValueError("attempt omitted a valid turn_expected_behavior")
+        actual_prompt = next(
+            (
+                turn.content
+                for turn in reversed(attempt.rendered_input)
+                if turn.role in {"user", "env"} and (turn.content or "").strip()
+            ),
+            None,
+        )
+        meta = dict(datapoint.meta)
+        if not evaluable:
+            meta["common_metrics_eligible"] = False
+            meta["required_metric"] = "conversation_setup_observation"
+            meta["source_construct"] = "non_evaluable_conversation_setup"
+        return datapoint.model_copy(update={
+            "payload_text": actual_prompt,
+            "payload_code": None,
+            "expected_behavior": expected,
+            "meta": meta,
+        })
 
     def _prepare_attempt_media(
         self,
@@ -978,8 +1165,18 @@ class Runner:
         reported on its ``effective_modality`` rather than silently counted as
         full-modality (thesis II.3.1 Family E / III.2.1 future-work scope).
         """
-        declared = _modality_label(datapoint.modalities)
-        effective = _effective_modality(datapoint.modalities, target_modalities)
+        source_modality = _modality_label(datapoint.modalities)
+        delivered_modalities = _dialog_modalities(attempt.rendered_input)
+        delivered_modality = _modality_label(delivered_modalities)
+        target_input_delivered = not (
+            response.raw.get("defense") == "blocked"
+            and response.raw.get("stage") == "input"
+        )
+        effective = (
+            _effective_modality(delivered_modalities, target_modalities)
+            if target_input_delivered
+            else "none"
+        )
         provenance = {
             "datapoint_id": datapoint.id,
             "source_cluster_id": str(
@@ -1000,8 +1197,11 @@ class Runner:
             ),
             "risk_category": datapoint.risk_category.value,
             "risk": datapoint.risk_category.value,  # short alias for grouping/figures
-            "modality": declared,                    # declared corpus modality
-            "effective_modality": effective,         # what the target could consume (m-ASR)
+            "modality": source_modality,
+            "source_modality": source_modality,
+            "delivered_modality": delivered_modality,
+            "effective_modality": effective,
+            "target_input_delivered": target_input_delivered,
             "target_modalities": list(target_modalities),
             "is_multimodal": len(set(datapoint.modalities) - {"text"}) > 0,
             "risk_subtype": datapoint.risk_subtype,
@@ -1017,6 +1217,12 @@ class Runner:
             "strategy": attempt.strategy,
             "seed": attempt.seed,
             "turn_index": attempt.turn_index,   # orders multi-turn escalations (V.2.4)
+            "policy_evaluable_turn": attempt.params["policy_evaluable_turn"],
+            "policy_challenge_index": attempt.params["policy_challenge_index"],
+            "policy_challenge_horizon": attempt.params[
+                "policy_challenge_horizon"
+            ],
+            "turn_expected_behavior": attempt.params["turn_expected_behavior"],
             "target": response.target,
             "model": response.target,
             "run_id": run_id,
@@ -1048,6 +1254,14 @@ class Runner:
         return {
             "risk_category": datapoint.risk_category.value,
             "modality": _modality_label(datapoint.modalities),
+            "source_modality": _modality_label(datapoint.modalities),
+            "delivered_modality": _modality_label(
+                _dialog_modalities(attempt.rendered_input)
+            ),
+            "target_input_delivered": str(not (
+                response.raw.get("defense") == "blocked"
+                and response.raw.get("stage") == "input"
+            )).lower(),
             "model": response.target,
             "datapoint_id": datapoint.id,
             "source_cluster_id": str(
@@ -1060,6 +1274,20 @@ class Runner:
             "attacker": attempt.attacker,
             "seed": str(attempt.seed),
             "turn_index": str(attempt.turn_index),
+            "policy_evaluable_turn": str(
+                bool(attempt.params["policy_evaluable_turn"])
+            ).lower(),
+            "policy_challenge_index": (
+                "null"
+                if attempt.params["policy_challenge_index"] is None
+                else str(attempt.params["policy_challenge_index"])
+            ),
+            "policy_challenge_horizon": str(
+                attempt.params["policy_challenge_horizon"]
+            ),
+            "turn_expected_behavior": str(
+                attempt.params["turn_expected_behavior"]
+            ),
             "run_id": run_id,
             "attack_fingerprint": str(attempt.params["attack_fingerprint"]),
             "transfer_key": str(attempt.params["transfer_key"]),
@@ -1155,7 +1383,7 @@ class Runner:
                 f"expected {len(expected_stage_names)}"
             )
 
-        if saved_attempt.model_dump(mode="json") != expected.model_dump(mode="json"):
+        if _portable_attempt_dump(saved_attempt) != _portable_attempt_dump(expected):
             raise ValueError(
                 f"checkpoint attempt is not an exact match for planned attempt "
                 f"{expected.id!r}"
@@ -1201,6 +1429,7 @@ class Runner:
         _validate_response_accounting(response)
 
         authorities: list[Judgment] = []
+        policy_evaluable = expected.params["policy_evaluable_turn"]
         for index, (item, stage_name) in enumerate(zip(trail, expected_stage_names)):
             if item.judge != stage_name:
                 raise ValueError(
@@ -1233,22 +1462,46 @@ class Runner:
                         f"{expected.id!r}"
                     )
                 authorities.append(item)
+            if policy_evaluable:
+                if (
+                    item.label == "not_applicable"
+                    or raw.get("stage_queried") is False
+                    or raw.get("policy_evaluation_status") == "not_evaluable"
+                ):
+                    raise ValueError(
+                        f"checkpoint evaluable turn contains a non-evaluable "
+                        f"judge stage for {expected.id!r}"
+                    )
+            elif (
+                item.label != "not_applicable"
+                or raw.get("stage_queried") is not False
+                or raw.get("policy_evaluation_status") != "not_evaluable"
+            ):
+                raise ValueError(
+                    f"checkpoint setup turn contains a fabricated judge verdict "
+                    f"for {expected.id!r}"
+                )
         if len(authorities) != 1:
             raise ValueError(
                 f"checkpoint must contain exactly one authoritative judge for "
                 f"{expected.id!r}"
             )
 
+        evaluation_datapoint = self._evaluation_datapoint(datapoint, expected)
         target_modalities = tuple(getattr(self.target, "modality_support", ("text",)))
         reconstructed = _attach_strongreject_shadow(authorities[0], trail)
         reconstructed = self._annotate(
             reconstructed,
-            datapoint,
+            evaluation_datapoint,
             expected,
             response,
             run_id,
             target_modalities,
-            source_metrics.evaluate_source_response(datapoint, response),
+            (
+                source_metrics.evaluate_source_response(datapoint, response)
+                if expected.params["policy_evaluable_turn"] is True
+                else None
+            ),
         )
         if reconstructed.model_dump(mode="json") != judgment.model_dump(mode="json"):
             raise ValueError(
@@ -1263,7 +1516,9 @@ class Runner:
                for key, value in meta_raw.items()):
             raise ValueError(f"checkpoint metadata is not a string map for {expected.id!r}")
         meta = dict(meta_raw)
-        expected_meta = self._trail_metadata(datapoint, expected, response, run_id)
+        expected_meta = self._trail_metadata(
+            evaluation_datapoint, expected, response, run_id
+        )
         if meta != expected_meta:
             raise ValueError(
                 f"checkpoint metadata does not exactly bind attempt/response "
@@ -1336,7 +1591,7 @@ class Runner:
             **(_config_value(env or {}) or {}),
         }
         effective_run_config = _config_value(run_config or {}) or {}
-        media_validation = _media_validation_summary(corpus)
+        media_validation = _media_validation_summary(corpus, media_hashes)
         source_policies = sorted(
             {
                 json.dumps(
@@ -1348,6 +1603,7 @@ class Runner:
                 if dp.source_policy is not None
             }
         )
+
         source_policy_inventory = [json.loads(item) for item in source_policies]
         source_policy_digest = _sha256_json(source_policy_inventory)
         source_metric_plan = _source_metric_plan(corpus)
@@ -1408,12 +1664,12 @@ class Runner:
     ) -> dict[str, str]:
         """Content hash of the corpus, sources, and available media bytes."""
         hashes: dict[str, str] = {}
-        hashes["corpus"] = _sha256_json([dp.model_dump(mode="json") for dp in corpus])
-        by_source: dict[str, list[dict[str, Any]]] = {}
+        hashes["corpus"] = canonical_converted_corpus_sha256(corpus)
+        by_source: dict[str, list[DataPoint]] = {}
         for dp in corpus:
-            by_source.setdefault(dp.source, []).append(dp.model_dump(mode="json"))
+            by_source.setdefault(dp.source, []).append(dp)
         for source, rows in sorted(by_source.items()):
-            hashes[f"source:{source}"] = _sha256_json(rows)
+            hashes[f"source:{source}"] = canonical_converted_corpus_sha256(rows)
         hashes.update(sorted((media_hashes or {}).items()))
         return hashes
 
@@ -1839,7 +2095,17 @@ class Runner:
                             observations=escalation_observations,
                         )
                     )
-                horizon = min(self.budget.max_queries, self.budget.max_turns)
+                horizons = {
+                    int(judgment.raw["policy_challenge_horizon"])
+                    for escalation in escalations.values()
+                    for judgment in escalation
+                }
+                if len(horizons) != 1:
+                    raise ValueError(
+                        "live aggregate bucket mixes policy challenge horizons; "
+                        "group by modality/attack condition"
+                    )
+                horizon = horizons.pop()
                 mttb = metrics.median_turns_to_break(escalations)
                 if mttb is not None:
                     median_result = _result(
@@ -1855,6 +2121,8 @@ class Runner:
                         "provenance": {
                             **median_result.provenance,
                             "horizon_turns": horizon,
+                            "policy_challenge_turns": horizon,
+                            "turn_unit": "policy_evaluable_challenge",
                             "value_domain": [1.0, float(horizon)],
                         }
                     })
@@ -1885,6 +2153,8 @@ class Runner:
                     "provenance": {
                         **rmtb_result.provenance,
                         "horizon_turns": horizon,
+                        "policy_challenge_turns": horizon,
+                        "turn_unit": "policy_evaluable_challenge",
                         "estimand": "area_under_kaplan_meier_survival_through_horizon",
                         "censoring": "right_censored_at_last_observed_turn",
                         "value_domain": [0.0, float(horizon)],
@@ -1928,6 +2198,8 @@ class Runner:
                         "provenance": {
                             **km_result.provenance,
                             "horizon_turns": horizon,
+                            "policy_challenge_turns": horizon,
+                            "turn_unit": "policy_evaluable_challenge",
                             "turn": turn,
                             "at_risk": at_risk,
                             "events": events,
@@ -2126,12 +2398,33 @@ class Runner:
                         "cascade_policy": j.raw.get("cascade_policy"),
                         "risk_category": meta.get("risk_category", "unknown"),
                         "modality": meta.get("modality", "unknown"),
+                        "source_modality": meta.get("source_modality", "unknown"),
+                        "delivered_modality": meta.get(
+                            "delivered_modality", "unknown"
+                        ),
+                        "target_input_delivered": (
+                            meta.get("target_input_delivered", "false") == "true"
+                        ),
                         "model": meta.get("model", "unknown"),
                         "datapoint_id": meta.get("datapoint_id"),
                         "attacker": meta.get("attacker"),
                         "seed": int(meta["seed"]),
                         "requested_seed": int(meta["requested_seed"]),
                         "turn_index": int(meta["turn_index"]),
+                        "policy_evaluable_turn": (
+                            meta.get("policy_evaluable_turn", "false") == "true"
+                        ),
+                        "policy_challenge_index": (
+                            None
+                            if meta.get("policy_challenge_index") == "null"
+                            else int(meta["policy_challenge_index"])
+                        ),
+                        "policy_challenge_horizon": int(
+                            meta["policy_challenge_horizon"]
+                        ),
+                        "turn_expected_behavior": meta.get(
+                            "turn_expected_behavior"
+                        ),
                         "run_id": meta.get("run_id", j.run_id),
                         "attack_fingerprint": meta.get("attack_fingerprint"),
                         "transfer_key": meta.get("transfer_key"),
@@ -2691,25 +2984,86 @@ def _validate_response_accounting(response: Response) -> None:
         not math.isfinite(float(response.latency_ms)) or response.latency_ms < 0
     ):
         raise ValueError("target response latency_ms must be finite and non-negative")
-    if response.tokens is None:
-        return
-    if not response.tokens:
-        raise ValueError("target response tokens must not be an empty mapping")
-    for key, value in response.tokens.items():
-        if not isinstance(key, str) or not key.strip():
-            raise ValueError("target response token keys must be non-blank strings")
-        if isinstance(value, bool) or not isinstance(value, int) or value < 0:
-            raise ValueError(
-                f"target response token count {key!r} must be a non-negative integer"
-            )
-    for input_key, output_key in (("input", "output"), ("prompt", "completion")):
-        if {input_key, output_key, "total"} <= set(response.tokens):
-            if response.tokens["total"] < (
-                response.tokens[input_key] + response.tokens[output_key]
-            ):
+    if response.tokens is not None:
+        if not response.tokens:
+            raise ValueError("target response tokens must not be an empty mapping")
+        for key, value in response.tokens.items():
+            if not isinstance(key, str) or not key.strip():
+                raise ValueError("target response token keys must be non-blank strings")
+            if isinstance(value, bool) or not isinstance(value, int) or value < 0:
                 raise ValueError(
-                    "target response total tokens cannot be smaller than input + output"
+                    f"target response token count {key!r} must be a non-negative integer"
                 )
+        for input_key, output_key in (
+            ("input", "output"), ("prompt", "completion")
+        ):
+            if {input_key, output_key, "total"} <= set(response.tokens):
+                if response.tokens["total"] < (
+                    response.tokens[input_key] + response.tokens[output_key]
+                ):
+                    raise ValueError(
+                        "target response total tokens cannot be smaller than "
+                        "input + output"
+                    )
+
+    raw = response.raw
+    has_digest = "continuation_state_sha256" in raw
+    has_size = "continuation_state_bytes" in raw
+    if has_digest != has_size:
+        raise ValueError(
+            "target response continuation accounting must include digest and bytes"
+        )
+    if not has_digest:
+        return
+    expected_digest = raw["continuation_state_sha256"]
+    expected_size = raw["continuation_state_bytes"]
+    if (
+        isinstance(expected_size, bool)
+        or not isinstance(expected_size, int)
+        or expected_size < 0
+    ):
+        raise ValueError("target response continuation_state_bytes is invalid")
+    native_turns = [
+        turn for turn in [*response.output_turns, *response.tool_trace]
+        if turn.provider_state is not None or turn.provider_thinking
+    ]
+    if expected_digest is None:
+        if expected_size != 0 or native_turns:
+            raise ValueError(
+                "target response discarded continuation state accounting is inconsistent"
+            )
+        return
+    if (
+        not isinstance(expected_digest, str)
+        or re.fullmatch(r"[0-9a-f]{64}", expected_digest) is None
+    ):
+        raise ValueError("target response continuation_state_sha256 is invalid")
+    provider_states = [
+        turn.provider_state for turn in native_turns
+        if turn.provider_state is not None
+    ]
+    thinking_turns = [turn for turn in native_turns if turn.provider_thinking]
+    if provider_states and thinking_turns:
+        raise ValueError("target response mixes incompatible continuation state types")
+    if provider_states:
+        if len(provider_states) != 1 or len(native_turns) != 1:
+            raise ValueError("target response has ambiguous provider continuation state")
+        projection: Any = provider_states[0].model_dump(mode="json")
+    else:
+        if len(thinking_turns) > 1:
+            raise ValueError("target response has ambiguous thinking continuation state")
+        projection = thinking_turns[0].provider_thinking if thinking_turns else []
+    encoded = json.dumps(
+        projection,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+        allow_nan=False,
+    ).encode("utf-8")
+    if len(encoded) != expected_size:
+        raise ValueError("target response continuation state byte count mismatch")
+    if not hmac.compare_digest(hashlib.sha256(encoded).hexdigest(), expected_digest):
+        raise ValueError("target response continuation state digest mismatch")
 
 
 def _sha256_file(path: Path) -> str:
@@ -2735,10 +3089,6 @@ def _runner_media_roots(target: BaseTarget) -> tuple[Path, ...]:
     return tuple(roots)
 
 
-def _inside_media_roots(path: Path, roots: tuple[Path, ...]) -> bool:
-    return any(path == root or root in path.parents for root in roots)
-
-
 def _prepare_media_ref(
     media: MediaRef,
     manifest_key: str,
@@ -2756,6 +3106,8 @@ def _prepare_media_ref(
             f"{media.path or media.uri or manifest_key}"
         )
     digest: Optional[str] = None
+    logical_path: Optional[str] = None
+    effective_mime: Optional[str] = media.mime
     if media.path:
         if not allowed_roots:
             raise PermissionError(
@@ -2763,7 +3115,7 @@ def _prepare_media_ref(
                 "media_roots or URA_MEDIA_ROOTS"
             )
         try:
-            path = Path(media.path).expanduser().resolve(strict=True)
+            path, root_index = _resolve_local_media_path(media.path, allowed_roots)
         except FileNotFoundError as exc:
             raise FileNotFoundError(f"media path does not exist: {media.path}") from exc
         if not path.is_file():
@@ -2773,9 +3125,24 @@ def _prepare_media_ref(
                 f"media exceeds {_MAX_SCORED_MEDIA_BYTES} byte scored-input limit: "
                 f"{path}"
             )
-        if not _inside_media_roots(path, allowed_roots):
-            raise PermissionError(f"media path is outside approved roots: {path}")
         digest = _sha256_file(path)
+        effective_mime = effective_mime or mimetypes.guess_type(path.name)[0]
+        if (
+            not isinstance(effective_mime, str)
+            or not effective_mime.startswith(f"{media.modality}/")
+        ):
+            raise ValueError(
+                f"media lacks a MIME type matching {media.modality!r}: {media.path}"
+            )
+        with path.open("rb") as handle:
+            signature = handle.read(16)
+        if not media_signature_matches(signature, effective_mime):
+            raise ValueError(
+                f"media MIME/signature mismatch for {media.path}: {effective_mime}"
+            )
+        logical_path = _logical_media_root_alias(
+            path, root_index, allowed_roots
+        )
     elif media.uri and media.uri.lower().startswith("data:"):
         header, separator, payload = media.uri.partition(",")
         if not separator:
@@ -2805,6 +3172,24 @@ def _prepare_media_ref(
                 f"inline media exceeds {_MAX_SCORED_MEDIA_BYTES} byte "
                 "scored-input limit"
             )
+        header_mime = header[5:].split(";", 1)[0]
+        if media.mime is not None and media.mime != header_mime:
+            raise ValueError(
+                "inline media MIME mismatch: declared "
+                f"{media.mime!r}, URI {header_mime!r}"
+            )
+        effective_mime = media.mime or header_mime
+        if (
+            not effective_mime
+            or not effective_mime.startswith(f"{media.modality}/")
+        ):
+            raise ValueError(
+                f"inline media lacks a MIME type matching {media.modality!r}"
+            )
+        if not media_signature_matches(raw, effective_mime):
+            raise ValueError(
+                f"inline media MIME/signature mismatch: {effective_mime}"
+            )
         digest = hashlib.sha256(raw).hexdigest()
     elif media.uri:
         raise ValueError(
@@ -2819,8 +3204,15 @@ def _prepare_media_ref(
     effective = digest or media.sha256
     if effective is not None:
         hashes[manifest_key] = effective
+        updates: dict[str, Any] = {}
         if media.sha256 != effective:
-            return media.model_copy(update={"sha256": effective})
+            updates["sha256"] = effective
+        if logical_path is not None and media.path != logical_path:
+            updates["path"] = logical_path
+        if effective_mime is not None and media.mime != effective_mime:
+            updates["mime"] = effective_mime
+        if updates:
+            return media.model_copy(update=updates)
     return media
 
 
@@ -2864,22 +3256,34 @@ def _validate_declared_media_modalities(datapoint: DataPoint) -> None:
         )
 
 
-def _media_validation_summary(corpus: list[DataPoint]) -> dict[str, int]:
-    refs: list[MediaRef] = []
+def _media_validation_summary(
+    corpus: list[DataPoint], media_hashes: dict[str, str]
+) -> dict[str, int]:
+    refs: list[tuple[str, MediaRef]] = []
     for datapoint in corpus:
-        refs.extend(datapoint.media)
-        for turn in datapoint.dialog_history:
-            refs.extend(turn.media)
+        refs.extend(
+            (f"media:{datapoint.id}:root:{index}", media)
+            for index, media in enumerate(datapoint.media)
+        )
+        for turn_index, turn in enumerate(datapoint.dialog_history):
+            refs.extend(
+                (f"media:{datapoint.id}:turn:{turn_index}:{index}", media)
+                for index, media in enumerate(turn.media)
+            )
     verified_local = 0
     verified_inline = 0
-    for media in refs:
-        if media.path:
-            path = Path(media.path).expanduser()
-            if path.is_file():
-                verified_local += 1
+    for key, media in refs:
+        # `_prepare_media_ref` already resolved each local alias under an approved
+        # root, hashed the bytes, and recorded the exact manifest-key digest.
+        # Rechecking Path("@media-root/...") would incorrectly classify all
+        # portable aliases as missing.
+        verified = media.sha256 is not None and media_hashes.get(key) == media.sha256
+        if media.path and verified:
+            verified_local += 1
         elif media.uri and media.uri.lower().startswith("data:"):
-            verified_inline += 1
-    content_addressed = sum(1 for media in refs if media.sha256 is not None)
+            if verified:
+                verified_inline += 1
+    content_addressed = sum(1 for _, media in refs if media.sha256 is not None)
     verified_total = verified_local + verified_inline
     return {
         "total_refs": len(refs),
@@ -2908,7 +3312,9 @@ _CONFIG_CLASS_ATTRS = {
     "rubric",
     "violation_threshold",
 }
-_RUNTIME_ATTRS = {"client", "session", "pipeline", "tokenizer", "model_object"}
+_RUNTIME_ATTRS = {
+    "client", "session", "pipeline", "tokenizer", "model_object", "media_roots"
+}
 _SECRET_NAMES = {
     "api_key",
     "access_token",
@@ -3014,8 +3420,28 @@ def _component_config(
 
 
 def _attack_fingerprint(dialog: list[DialogTurn]) -> str:
-    material = [turn.model_dump(mode="json") for turn in dialog]
+    material = _portable_dialog_dump(dialog)
     return f"attack-{_sha256_json(material)}"
+
+
+def _portable_dialog_dump(dialog: list[DialogTurn]) -> list[dict[str, Any]]:
+    """Canonicalize local media locators to verified content identities."""
+    material = [turn.model_dump(mode="json") for turn in dialog]
+    for turn, rendered in zip(dialog, material):
+        for media, rendered_media in zip(turn.media, rendered["media"]):
+            if media.path:
+                if not media.sha256:
+                    raise ValueError(
+                        "portable media identity requires a verified sha256"
+                    )
+                rendered_media["path"] = f"sha256:{media.sha256}"
+    return material
+
+
+def _portable_attempt_dump(attempt: Attempt) -> dict[str, Any]:
+    rendered = attempt.model_dump(mode="json")
+    rendered["rendered_input"] = _portable_dialog_dump(attempt.rendered_input)
+    return rendered
 
 
 def _transfer_key(
@@ -3058,6 +3484,23 @@ def _modality_label(modalities: list[str]) -> str:
     if "tool" in modalities:
         return "tool"
     return "text"
+
+
+def _dialog_modalities(dialog: list[DialogTurn]) -> list[str]:
+    """Return modalities actually present in one rendered target request."""
+    observed = {media.modality for turn in dialog for media in turn.media}
+    if any(
+        bool((turn.content or "").strip())
+        or turn.tool_call is not None
+        or bool((turn.tool_result or "").strip())
+        for turn in dialog
+    ):
+        observed.add("text")
+    return [
+        modality
+        for modality in ("text", "image", "audio", "video")
+        if modality in observed
+    ]
 
 
 def _effective_modality(modalities: list[str], target_modalities: tuple[str, ...]) -> str:

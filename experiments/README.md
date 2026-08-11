@@ -5,21 +5,30 @@ validity rules, then execute [RUN_AND_RETURN.md](RUN_AND_RETURN.md). A dry run,
 partial artifact family, placeholder model ID, or preliminary analysis is not a
 measured thesis result.
 
-The maintained execution contract is Runner `ura-runner/2.2` with unified
-schema `1.2`; older artifacts are not mixed into this workflow.
+The maintained execution contract is Runner `ura-runner/2.3` with unified
+schema `1.3`; older artifacts are not mixed into this workflow.
 
 ## Minimal lifecycle
 
 1. Install `.[dev,analysis,api]`, run the offline suite and synthetic smoke test.
 2. Place real releases at `URA_<CORPUS>_PATH`; approve media roots.
-3. Create one content-addressed, exhaustive pilot/main cluster partition.
+3. Create one content-addressed, exhaustive
+   `ura-cluster-partition/1.2`. It records portable source locators and exact
+   per-policy pilot/main counts; both minimums default to two clusters.
 4. Create and SHA-256-bind the provider retention/data-use approval for every
    exact hosted target and LLM judge.
-5. Run the `pilot` partition with finite durable call/HTTP/deadline ceilings.
+5. Under `runs/pilot/`, run a replay child over StrongREJECT+MM-SafetyBench+
+   MOSSBench and a StrongREJECT-only Crescendo child. Feed the replay child's
+   content-addressed modality proof to the Crescendo child; do not duplicate
+   replay cells.
 6. Generate one `pilot_analysis` artifact per planned hypothesis; freeze SESOI,
-   required cluster count, exact source-policy token, complete Holm family, and
-   human-audit design in the confirmatory plan.
-7. Run the `main` partition with the same partition and exact conditions.
+   required cluster count, endpoint role, exact source-policy token, complete
+   Holm family, and human-audit design in the confirmatory plan. StrongREJECT is
+   the primary model endpoint; MM/MOSS common proxies occupy a separate
+   secondary family. H4 is a primary two-hypothesis family with one replay-
+   versus-Crescendo contrast per model.
+7. Repeat the two-child layout under `runs/main/` with the same partition and
+   exact conditions.
 8. Optionally emit a non-publishable preliminary analysis, prepare/rate/analyse
    the frozen whole-cluster human sample, then emit the final human-bound
    confirmatory artifact.
@@ -47,9 +56,12 @@ openai-responses:gpt-5.6-sol;reasoning_mode=pro;reasoning_effort=medium;reasonin
 
 Both adapters currently declare text and image only. The main study must execute
 StrongREJECT text plus complete MM-SafetyBench harmful text+image and MOSSBench
-benign text+image data on both targets. Pre-call and post-run modality coverage
-artifacts enforce this. Audio and video are explicit unavailable combinations,
-not text fallbacks.
+benign text+image data on both targets. Coverage binds the exact delivered
+combination; input-blocked and setup-only attempts do not count. The completed
+replay grid can supply suite-wide image coverage to the exact target/defense-
+matched StrongREJECT-only Crescendo child through
+`ura-modality-coverage-proof/1.0`. Audio and video are unavailable on both study
+targets, not text fallbacks.
 
 MM-SafetyBench common ASR is a secondary URA proxy; its official scenario-aware
 evaluator is not executed. MOSSBench common FRR is also secondary; its official
@@ -58,13 +70,20 @@ in every table and claim. Because MM-SafetyBench spans six source policies, all
 matrix commands containing MM/MOSS also group by
 `source_policy_id,source_policy_version`.
 
+StrongREJECT is the official 313-row, six-category, 313-unique-prompt CSV at
+commit `f7cad6c17e624e21d8df2278e918ae1dddb4cb56`, normalized SHA-256
+`4dd70357e4ff8b5d0ba5ebafecab5d6dd5633ce8046e3dd1c8bd93e64de44381`.
+The maintained score is explicitly StrongREJECT-style; it is not a claim that
+the upstream official evaluator ran.
+
 ## Real-run invariants
 
 - Real non-synthetic scored runs require
   `--partition-plan/--partition-sha256/--partition-role` together and
   `--limit 0`. A partition binds the full converted release and exact source
-  clusters. MM-SafetyBench and MOSSBench also enforce pinned official release
-  identities.
+  clusters. StrongREJECT, MM-SafetyBench and MOSSBench enforce pinned official
+  release identities. A child may select a corpus subset from the same complete
+  plan; it may not introduce another corpus.
 - Hosted calls require the content-addressed provider approval. Fable's covered-
   model retention and the effective OpenAI organization controls must be
   explicitly accepted; `store=false` does not mean zero provider retention.
@@ -76,7 +95,13 @@ matrix commands containing MM/MOSS also group by
   it is not a row count.
 - Optional local config is keyed by each exact `--local` spec and uses exactly
   one immutable `revision` or `digest`, plus `modalities`.
+- Local media artifacts use `@media-root/<index>/<relative-path>`; preserve the
+  configured root order and relative layout on resume or another machine.
 - Missing/failed/unsupported/undefined is never rewritten as zero.
+
+Transfer analysis is conditional and descriptive: set a prespecified
+`--minimum-unique-clusters`, report equal-cluster rates/dispersion/bootstrap CI,
+and keep it outside Holm. It has no pilot, SESOI, power gate or p-value.
 
 ## Artifacts
 

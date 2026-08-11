@@ -6,6 +6,7 @@ without inventing meanings for the numeric ``harm`` codes 0--7.
 """
 from __future__ import annotations
 
+import re
 from pathlib import Path
 from typing import Any
 
@@ -70,12 +71,14 @@ def _dimension(
 def _binary_dimension(value: Any, *, field: str, row: int) -> int:
     if isinstance(value, bool):
         return int(value)
-    try:
+    if isinstance(value, int):
+        parsed = value
+    elif isinstance(value, str) and re.fullmatch(r"[+-]?\d+", value.strip()):
         parsed = int(value)
-    except (TypeError, ValueError) as exc:
+    else:
         raise CorpusFormatError(
             f"MOSSBench row {row} has invalid {field} dimension {value!r}"
-        ) from exc
+        )
     if parsed not in {0, 1}:
         raise CorpusFormatError(
             f"MOSSBench row {row} has non-binary {field} dimension {value!r}"
@@ -84,12 +87,14 @@ def _binary_dimension(value: Any, *, field: str, row: int) -> int:
 
 
 def _harm_dimension(value: Any, *, row: int) -> int:
-    try:
+    if isinstance(value, int) and not isinstance(value, bool):
+        parsed = value
+    elif isinstance(value, str) and re.fullmatch(r"[+-]?\d+", value.strip()):
         parsed = int(value)
-    except (TypeError, ValueError) as exc:
+    else:
         raise CorpusFormatError(
             f"MOSSBench row {row} has invalid harm dimension {value!r}"
-        ) from exc
+        )
     if not 0 <= parsed <= 7:
         raise CorpusFormatError(
             f"MOSSBench row {row} has harm dimension outside 0..7: {value!r}"

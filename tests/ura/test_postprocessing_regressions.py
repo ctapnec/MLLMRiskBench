@@ -11,6 +11,7 @@ import pytest
 from ura.data_models import SCHEMA_VERSION, Response
 from ura.runner import realized_identity_summary
 
+from experiments.analysis_integrity import analysis_source_identity
 from experiments.human_audit import (
     _consensus,
     _csv_safe,
@@ -148,13 +149,43 @@ def test_transfer_equal_weights_prompt_intent_clusters() -> None:
                 label=label, expected_behavior="refuse", transferable=True,
                 source_file="fixture", source_cluster_id=cluster,
             )
-    cell = build_matrix(
+    matrix = build_matrix(
         records, n_resamples=50, minimum_unique_clusters=2,
-        smallest_effect=0.5, pilot_cluster_sd=0.1,
-    )["cells"]["A"]["B"]
+    )
+    cell = matrix["cells"]["A"]["B"]
     assert cell["value"] == 0.5  # not row-weighted 3/4
     assert cell["n_matched_clusters"] == 2
     assert cell["support_gate_passed"] is True
+    assert "power_gate" not in cell
+    assert "power_design" not in matrix
+    assert matrix["multiplicity"]["status"] == "outside_holm_conditional_descriptive"
+
+
+def test_transfer_publishability_requires_complete_exact_input_coverage() -> None:
+    records: dict[str, dict[str, TransferRecord]] = {"A": {}, "B": {}}
+    for index in range(3):
+        key = f"k-{index}"
+        records["A"][key] = TransferRecord(
+            model="A", run_id="run-A", transfer_key=key,
+            attack_fingerprint=f"fp-{index}", datapoint_id=f"dp-{index}",
+            label="violation", expected_behavior="refuse", transferable=True,
+            source_file="fixture", source_cluster_id=f"c-{index}",
+        )
+        if index < 2:
+            records["B"][key] = TransferRecord(
+                model="B", run_id="run-B", transfer_key=key,
+                attack_fingerprint=f"fp-{index}", datapoint_id=f"dp-{index}",
+                label="violation", expected_behavior="refuse", transferable=True,
+                source_file="fixture", source_cluster_id=f"c-{index}",
+            )
+    matrix = build_matrix(
+        records, n_resamples=20, minimum_unique_clusters=2,
+        load_audit={"publishable_real_run": True},
+    )
+    assert matrix["support_gate_passed"] is True
+    assert matrix["cells"]["A"]["B"]["unmatched"] == 1
+    assert matrix["exact_input_coverage_gate_passed"] is False
+    assert matrix["publishable_real_run"] is False
 
 
 def test_paired_compare_equal_weights_clusters_with_unequal_seed_counts() -> None:
@@ -305,6 +336,10 @@ def _write_completed_cell(
             "seed": seed,
             "requested_seed": seed,
             "turn_index": 0,
+            "policy_evaluable_turn": True,
+            "policy_challenge_index": 0,
+            "policy_challenge_horizon": 1,
+            "turn_expected_behavior": expected,
             "response_conditioned": response_conditioned,
             "replayed_transcript": False,
             "target_sampling_control": "provider_seed",
@@ -328,6 +363,10 @@ def _write_completed_cell(
             "transferable": True,
             "response_conditioned": response_conditioned,
             "replayed_transcript": False,
+            "policy_evaluable_turn": True,
+            "policy_challenge_index": 0,
+            "policy_challenge_horizon": 1,
+            "turn_expected_behavior": expected,
         },
         "seed": seed,
         "turn_index": 0,
@@ -373,6 +412,10 @@ def _write_completed_cell(
         "seed": seed,
         "requested_seed": seed,
         "turn_index": 0,
+        "policy_evaluable_turn": True,
+        "policy_challenge_index": 0,
+        "policy_challenge_horizon": 1,
+        "turn_expected_behavior": expected,
         "run_id": run_id,
         "attack_fingerprint": fingerprint,
         "transfer_key": key,
@@ -578,7 +621,7 @@ def _refresh_identity_metadata(root: Path, stem: str) -> None:
     ]
     response_digests = {
         row["attempt_id"]: hashlib.sha256(json.dumps(
-            Response.model_validate(row, strict=True).model_dump(mode="json"),
+            row,
             ensure_ascii=False,
             sort_keys=True,
             separators=(",", ":"),
@@ -615,10 +658,16 @@ def _append_live_turn(root: Path, stem: str, *, label: str) -> None:
         second = json.loads(json.dumps(first))
         second[id_field] = "a-1"
         if filename.endswith(".attempts.jsonl"):
+            first["params"]["policy_challenge_horizon"] = 2
             second["turn_index"] = 1
+            second["params"]["policy_challenge_index"] = 1
+            second["params"]["policy_challenge_horizon"] = 2
         elif filename.endswith(".trails.jsonl"):
+            first["policy_challenge_horizon"] = 2
             second["label"] = label
             second["turn_index"] = 1
+            second["policy_challenge_index"] = 1
+            second["policy_challenge_horizon"] = 2
             response_rows = [
                 json.loads(line) for line in (root / f"{stem}.responses.jsonl")
                 .read_text(encoding="utf-8").splitlines() if line.strip()
@@ -631,8 +680,11 @@ def _append_live_turn(root: Path, stem: str, *, label: str) -> None:
         elif filename.endswith(".jsonl") and not filename.endswith((
             ".attempts.jsonl", ".responses.jsonl", ".trails.jsonl",
         )):
+            first["raw"]["policy_challenge_horizon"] = 2
             second["label"] = label
             second["raw"]["turn_index"] = 1
+            second["raw"]["policy_challenge_index"] = 1
+            second["raw"]["policy_challenge_horizon"] = 2
         path.write_text(
             json.dumps(first) + "\n" + json.dumps(second) + "\n", encoding="utf-8"
         )
@@ -664,6 +716,154 @@ def _append_live_turn(root: Path, stem: str, *, label: str) -> None:
     })
     marker_path.write_text(json.dumps(marker), encoding="utf-8")
     _refresh_descriptors(root, stem)
+
+
+def _append_independent_cluster(root: Path, stem: str) -> None:
+    """Add a second one-turn prompt/intent cluster to a completed fixture cell."""
+    attempts_path = root / f"{stem}.attempts.jsonl"
+    attempts = [
+        json.loads(line) for line in attempts_path.read_text(encoding="utf-8").splitlines()
+        if line.strip()
+    ]
+    second_attempt = json.loads(json.dumps(attempts[0]))
+    second_attempt.update({"id": "a-2", "datapoint_id": "dp-2", "seed": 1})
+    second_attempt["params"].update({
+        "transfer_key": "shared-2", "attack_fingerprint": "fp-2",
+    })
+    attempts_path.write_text(
+        "".join(json.dumps(row) + "\n" for row in [*attempts, second_attempt]),
+        encoding="utf-8",
+    )
+
+    responses_path = root / f"{stem}.responses.jsonl"
+    responses = [
+        json.loads(line) for line in responses_path.read_text(encoding="utf-8").splitlines()
+        if line.strip()
+    ]
+    second_response = json.loads(json.dumps(responses[0]))
+    second_response["attempt_id"] = "a-2"
+    second_response["raw"]["requested_seed"] = 1
+    responses_path.write_text(
+        "".join(json.dumps(row) + "\n" for row in [*responses, second_response]),
+        encoding="utf-8",
+    )
+
+    judgments_path = root / f"{stem}.jsonl"
+    judgments = [
+        json.loads(line) for line in judgments_path.read_text(encoding="utf-8").splitlines()
+        if line.strip()
+    ]
+    second_judgment = json.loads(json.dumps(judgments[0]))
+    second_judgment["attempt_id"] = "a-2"
+    second_judgment["raw"].update({
+        "datapoint_id": "dp-2", "source_cluster_id": "cluster-2",
+        "seed": 1, "requested_seed": 1,
+        "transfer_key": "shared-2", "attack_fingerprint": "fp-2",
+    })
+    judgments_path.write_text(
+        "".join(json.dumps(row) + "\n" for row in [*judgments, second_judgment]),
+        encoding="utf-8",
+    )
+
+    trails_path = root / f"{stem}.trails.jsonl"
+    trails = [
+        json.loads(line) for line in trails_path.read_text(encoding="utf-8").splitlines()
+        if line.strip()
+    ]
+    second_trail = json.loads(json.dumps(trails[0]))
+    second_trail.update({
+        "attempt_id": "a-2", "datapoint_id": "dp-2",
+        "source_cluster_id": "cluster-2", "seed": 1, "requested_seed": 1,
+        "transfer_key": "shared-2", "attack_fingerprint": "fp-2",
+    })
+    trails_path.write_text(
+        "".join(json.dumps(row) + "\n" for row in [*trails, second_trail]),
+        encoding="utf-8",
+    )
+
+    manifest_path = root / f"{stem}.manifest.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    manifest["seeds"] = [0, 1]
+    manifest["config"].update({
+        "n_datapoints": 2, "n_attempts": 2, "n_responses": 2,
+        "n_judgments": 2,
+    })
+    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+    marker_path = root / f"{stem}.complete.json"
+    marker = json.loads(marker_path.read_text(encoding="utf-8"))
+    marker.update({"n_attempts": 2, "n_responses": 2, "n_judgments": 2})
+    marker_path.write_text(json.dumps(marker), encoding="utf-8")
+    _refresh_identity_metadata(root, stem)
+
+
+def _make_setup_then_physical_challenge(root: Path, stem: str, *, label: str) -> None:
+    """Turn a two-challenge fixture into text setup + one image challenge."""
+    _append_live_turn(root, stem, label=label)
+    attempts_path = root / f"{stem}.attempts.jsonl"
+    attempts = [json.loads(line) for line in attempts_path.read_text(
+        encoding="utf-8"
+    ).splitlines() if line.strip()]
+    attempts[0]["params"].update({
+        "policy_evaluable_turn": False,
+        "policy_challenge_index": None,
+        "policy_challenge_horizon": 1,
+        "turn_expected_behavior": "comply_safely",
+    })
+    attempts[1]["params"].update({
+        "policy_evaluable_turn": True,
+        "policy_challenge_index": 0,
+        "policy_challenge_horizon": 1,
+        "turn_expected_behavior": "refuse",
+    })
+    attempts[1]["rendered_input"][-1]["media"] = [{
+        "modality": "image", "path": "fixture.png", "sha256": "a" * 64,
+    }]
+    attempts_path.write_text(
+        "".join(json.dumps(row) + "\n" for row in attempts), encoding="utf-8"
+    )
+
+    judgments_path = root / f"{stem}.jsonl"
+    judgments = [json.loads(line) for line in judgments_path.read_text(
+        encoding="utf-8"
+    ).splitlines() if line.strip()]
+    judgments[0].update({"label": "not_applicable", "score": 0.0})
+    for index, row in enumerate(judgments):
+        raw = row["raw"]
+        raw.update({
+            "modality": "image",
+            "source_modality": "image",
+            "effective_modality": "text" if index == 0 else "image",
+            "expected_behavior": "comply_safely" if index == 0 else "refuse",
+            "common_metrics_eligible": index == 1,
+            "policy_evaluable_turn": index == 1,
+            "policy_challenge_index": None if index == 0 else 0,
+            "policy_challenge_horizon": 1,
+            "turn_expected_behavior": "comply_safely" if index == 0 else "refuse",
+        })
+    judgments_path.write_text(
+        "".join(json.dumps(row) + "\n" for row in judgments), encoding="utf-8"
+    )
+
+    trails_path = root / f"{stem}.trails.jsonl"
+    trails = [json.loads(line) for line in trails_path.read_text(
+        encoding="utf-8"
+    ).splitlines() if line.strip()]
+    trails[0].update({"label": "not_applicable", "score": 0.0})
+    for index, row in enumerate(trails):
+        row.update({
+            "modality": "image",
+            "source_modality": "image",
+            "expected_behavior": "comply_safely" if index == 0 else "refuse",
+            "common_metrics_eligible": index == 1,
+            "policy_evaluable_turn": index == 1,
+            "policy_challenge_index": None if index == 0 else 0,
+            "policy_challenge_horizon": 1,
+            "turn_expected_behavior": "comply_safely" if index == 0 else "refuse",
+        })
+    trails_path.write_text(
+        "".join(json.dumps(row) + "\n" for row in trails), encoding="utf-8"
+    )
+    _refresh_identity_metadata(root, stem)
 
 
 def _configure_two_stage_sensitivity_fixture(
@@ -1254,6 +1454,46 @@ def test_paired_compare_live_arms_may_realize_different_turn_counts(
     assert facet["metrics"]["conversation_ASR"]["effect_left_minus_right"] == 1.0
 
 
+def test_live_setup_is_excluded_and_physical_challenge_defines_modality(
+    tmp_path: Path,
+) -> None:
+    _write_completed_cell(
+        tmp_path, "a", model="A", run_id="r-a", key="live-a",
+        attacker="crescendo", response_conditioned=True,
+        fingerprint="arm-a", label="safe",
+    )
+    _write_completed_cell(
+        tmp_path, "b", model="B", run_id="r-b", key="live-b",
+        attacker="crescendo", response_conditioned=True,
+        fingerprint="arm-b", label="safe",
+    )
+    _make_setup_then_physical_challenge(tmp_path, "a", label="violation")
+    _make_setup_then_physical_challenge(tmp_path, "b", label="refusal")
+
+    result = compare(
+        tmp_path, left_model="A", right_model="B", attacker="crescendo",
+        corpus="fixture", n_resamples=20,
+    )
+    facet = result["facets"]["fixture"]
+    metric = facet["metrics"]["conversation_ASR"]
+    assert metric["effect_left_minus_right"] == 1.0
+    image_metric = facet["category_metrics"][
+        "policy=unversioned@unversioned::cybersec::image"
+    ]
+    assert image_metric["modality"] == "image"
+    assert image_metric["effect_left_minus_right"] == 1.0
+    assert facet["arm_audits"]["left"]["policy_nonevaluable_setup_rows"] == 1
+
+    sensitivity = analyse_sensitivity(
+        tmp_path, attacker="crescendo", corpus="fixture",
+    )
+    for cell in sensitivity["facets"].values():
+        accounting = cell["artifact_accounting"]
+        assert accounting["policy_nonevaluable_setup_attempts"] == 1
+        assert accounting["policy_evaluable_attempts"] == 1
+        assert cell["stages"]["0:rules"]["metrics"]["harmful"]["n_units"] == 1
+
+
 def test_kappa_cohort_identity_ignores_adaptive_realized_turn_counts(
     tmp_path: Path,
 ) -> None:
@@ -1465,6 +1705,14 @@ def _write_human_artifacts(root: Path, *, descriptor_marker: bool = True) -> str
         "attacker": "replay",
         "target": model,
         "rendered_input": [{"role": "user", "content": "probe"}],
+        "params": {
+            "policy_evaluable_turn": True,
+            "policy_challenge_index": 0,
+            "policy_challenge_horizon": 1,
+            "turn_expected_behavior": "refuse",
+        },
+        "seed": 0,
+        "turn_index": 0,
         "run_id": run_id,
     }) + "\n", encoding="utf-8")
     response_payload = {
@@ -1492,7 +1740,18 @@ def _write_human_artifacts(root: Path, *, descriptor_marker: bool = True) -> str
         "source_policy": None,
         "source_policy_id": "unversioned",
         "source_policy_version": "unversioned",
+        "source": "fixture-source",
+        "source_cluster_id": "dp-1",
         "expected_behavior": "refuse",
+        "effective_modality": "text",
+        "common_metrics_eligible": True,
+        "seed": 0,
+        "requested_seed": 0,
+        "turn_index": 0,
+        "policy_evaluable_turn": True,
+        "policy_challenge_index": 0,
+        "policy_challenge_horizon": 1,
+        "turn_expected_behavior": "refuse",
     }
     (root / "cell.jsonl").write_text(json.dumps({
         "attempt_id": attempt_id,
@@ -1515,6 +1774,10 @@ def _write_human_artifacts(root: Path, *, descriptor_marker: bool = True) -> str
         "modality": "text",
         "model": model,
         "run_id": run_id,
+        "policy_evaluable_turn": True,
+        "policy_challenge_index": 0,
+        "policy_challenge_horizon": 1,
+        "turn_expected_behavior": "refuse",
     }, {
         "attempt_id": attempt_id,
         "stage": 1,
@@ -1528,6 +1791,10 @@ def _write_human_artifacts(root: Path, *, descriptor_marker: bool = True) -> str
         "modality": "text",
         "model": model,
         "run_id": run_id,
+        "policy_evaluable_turn": True,
+        "policy_challenge_index": 0,
+        "policy_challenge_horizon": 1,
+        "turn_expected_behavior": "refuse",
     }]
     (root / "cell.trails.jsonl").write_text(
         "".join(json.dumps(row) + "\n" for row in trail_rows), encoding="utf-8"
@@ -1649,17 +1916,26 @@ def test_human_audit_includes_authoritative_cascade_and_reports_join_audit(
     assert audit["unexplained_exclusions"] == 0
 
     labels = tmp_path / "labels.csv"
-    header = (
-        "sample_key,run_id,model,attempt_id,risk_category,modality,"
-        "source_policy_id,source_policy_version,"
-        "stratum_population,stratum_selected,selection_probability,"
-        "rater_id,label,adjudicated_label\n"
-    )
-    common = f"{key},run-1,model-A,attempt-1,cybersec,text,unversioned,unversioned,1,1,1.0,"
-    labels.write_text(
-        header + common + "r1,violation,\n" + common + "r2,violation,\n",
-        encoding="utf-8",
-    )
+    assert prepare_sample(tmp_path, labels, 1) == 0
+    with labels.open(newline="", encoding="utf-8-sig") as handle:
+        base = next(csv.DictReader(handle))
+    rated = []
+    for rater in ("r1", "r2"):
+        row = dict(base)
+        row.update({
+            "rater_id": rater,
+            "label": "violation",
+            "refusal_label": "not_refusal",
+            "harmfulness_label": "harmful",
+            "convincingness_label": "convincing",
+            "specificity_label": "specific_actionable",
+            "confidence": "5",
+        })
+        rated.append(row)
+    with labels.open("w", newline="", encoding="utf-8-sig") as handle:
+        writer = csv.DictWriter(handle, fieldnames=list(rated[0]))
+        writer.writeheader()
+        writer.writerows(rated)
     assert analyse(tmp_path, labels, allow_single_rater=False) == 0
     report = json.loads((tmp_path / "human_audit.json").read_text(encoding="utf-8"))
     assert "cascade_authoritative" in report["automated_vs_consensus"]
@@ -1680,20 +1956,29 @@ def test_human_audit_includes_authoritative_cascade_and_reports_join_audit(
 def test_human_audit_reports_adjudication_rate_when_raters_disagree(
     tmp_path: Path,
 ) -> None:
-    key = _write_human_artifacts(tmp_path)
+    _write_human_artifacts(tmp_path)
     labels = tmp_path / "labels.csv"
-    header = (
-        "sample_key,run_id,model,attempt_id,risk_category,modality,"
-        "source_policy_id,source_policy_version,"
-        "stratum_population,stratum_selected,selection_probability,"
-        "rater_id,label,adjudicated_label\n"
-    )
-    common = f"{key},run-1,model-A,attempt-1,cybersec,text,unversioned,unversioned,1,1,1.0,"
-    # Raters disagree; an adjudicated_label breaks the tie on every duplicate row.
-    labels.write_text(
-        header + common + "r1,violation,violation\n" + common + "r2,safe,violation\n",
-        encoding="utf-8",
-    )
+    assert prepare_sample(tmp_path, labels, 1) == 0
+    with labels.open(newline="", encoding="utf-8-sig") as handle:
+        base = next(csv.DictReader(handle))
+    rated = []
+    for rater, label in (("r1", "violation"), ("r2", "safe")):
+        row = dict(base)
+        row.update({
+            "rater_id": rater,
+            "label": label,
+            "adjudicated_label": "violation",
+            "refusal_label": "not_refusal",
+            "harmfulness_label": "harmful",
+            "convincingness_label": "convincing",
+            "specificity_label": "specific_actionable",
+            "confidence": "5",
+        })
+        rated.append(row)
+    with labels.open("w", newline="", encoding="utf-8-sig") as handle:
+        writer = csv.DictWriter(handle, fieldnames=list(rated[0]))
+        writer.writeheader()
+        writer.writerows(rated)
     assert analyse(tmp_path, labels, allow_single_rater=False) == 0
     report = json.loads((tmp_path / "human_audit.json").read_text(encoding="utf-8"))
     adjudication = report["audit"]["adjudication"]
@@ -1809,6 +2094,198 @@ def test_replay_vs_crescendo_adaptivity_is_executable_and_clustered(
     )
 
 
+def test_split_grid_adaptivity_normalizes_only_execution_bookkeeping(
+    tmp_path: Path,
+) -> None:
+    _write_completed_cell(
+        tmp_path, "replay", model="A", run_id="r-replay", key="shared",
+        attacker="replay", response_conditioned=False,
+    )
+    _write_completed_cell(
+        tmp_path, "crescendo", model="A", run_id="r-crescendo", key="adaptive",
+        attacker="crescendo", response_conditioned=True,
+    )
+    plan = {
+        "status": "bound",
+        "partition_role": "main",
+        "artifact": {"sha256": "a" * 64},
+    }
+    assignment = {
+        "partition_role": "main",
+        "full_converted_corpus_sha256": "b" * 64,
+        "cluster_ids_sha256": "c" * 64,
+        "cluster_ids": ["cluster-1"],
+    }
+    policy = {
+        "max_target_calls": 100,
+        "max_judge_calls": 100,
+        "max_http_attempts": 200,
+        "call_start_deadline_seconds_from_first_invocation": 3600,
+        "accounting_semantics": "durable_pre_call_logical_reservation_v1",
+    }
+
+    def configure(stem: str, *, grid: str, calls: int, coverage: str) -> None:
+        manifest_path = tmp_path / f"{stem}.manifest.json"
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        manifest["config"]["call_budget_snapshot"] = {
+            "budget_id": grid, "target_calls": calls,
+        }
+        manifest["config"]["run"].update({
+            "grid_id": grid,
+            "global_call_budget": policy,
+            "partition_plan": plan,
+            "partition_assignment": assignment,
+            "modality_coverage_plan": {"status": coverage},
+        })
+        manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+        _refresh_descriptors(tmp_path, stem)
+
+    configure("replay", grid="grid-parent", calls=1, coverage="full-parent")
+    configure("crescendo", grid="grid-child", calls=2, coverage="companion-child")
+    result = compare_adaptivity(
+        tmp_path, model="A", corpus="fixture", n_resamples=20,
+    )
+    facet = result["facets"]["fixture"]
+    assert facet["left"]["call_budget_snapshot"] != (
+        facet["right"]["call_budget_snapshot"]
+    )
+    assert facet["left"]["global_call_budget"] == policy
+    assert facet["right"]["global_call_budget"] == policy
+    assert facet["right"]["partition_assignment"] == assignment
+
+    manifest_path = tmp_path / "crescendo.manifest.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    manifest["config"]["run"]["global_call_budget"] = {
+        **policy, "max_target_calls": 101,
+    }
+    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+    _refresh_descriptors(tmp_path, "crescendo")
+    result = compare_adaptivity(
+        tmp_path, model="A", corpus="fixture", n_resamples=20,
+    )
+    facet = result["facets"]["fixture"]
+    assert facet["right"]["global_call_budget"]["max_target_calls"] == 101
+
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    manifest["config"]["run"]["global_call_budget"] = policy
+    manifest["config"]["run"]["partition_assignment"] = {
+        **assignment, "cluster_ids_sha256": "d" * 64,
+    }
+    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+    _refresh_descriptors(tmp_path, "crescendo")
+    with pytest.raises(ValueError, match="incompatible manifests"):
+        compare_adaptivity(
+            tmp_path, model="A", corpus="fixture", n_resamples=20,
+        )
+
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    manifest["config"]["run"]["partition_assignment"] = assignment
+    manifest["config"]["run"]["partition_plan"] = {
+        **plan, "artifact": {"sha256": "e" * 64},
+    }
+    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+    _refresh_descriptors(tmp_path, "crescendo")
+    with pytest.raises(ValueError, match="incompatible manifests"):
+        compare_adaptivity(
+            tmp_path, model="A", corpus="fixture", n_resamples=20,
+        )
+
+
+def test_common_parent_split_grids_cover_exact_h4_human_arms(
+    tmp_path: Path,
+) -> None:
+    model_root = tmp_path / "model"
+    adaptivity_root = tmp_path / "adaptivity"
+    model_root.mkdir()
+    adaptivity_root.mkdir()
+    for model in ("A", "B"):
+        _write_completed_cell(
+            model_root, f"replay-{model}", model=model,
+            run_id=f"r-replay-{model}", key="shared", attacker="replay",
+        )
+        _append_independent_cluster(model_root, f"replay-{model}")
+        _write_completed_cell(
+            adaptivity_root, f"crescendo-{model}", model=model,
+            run_id=f"r-crescendo-{model}", key=f"adaptive-{model}",
+            attacker="crescendo", response_conditioned=True,
+        )
+        _append_independent_cluster(adaptivity_root, f"crescendo-{model}")
+
+    report = compare_adaptivity(
+        tmp_path, model="A", corpus="fixture", n_resamples=20,
+    )
+    assert report["facets"]["fixture"]["metrics"]["ASR"]["n_clusters"] == 2
+
+    requirements = []
+    for model in ("A", "B"):
+        for attacker in ("replay", "crescendo"):
+            requirements.append({
+                "requirement_id": f"h4::{model}::{attacker}",
+                "corpus": "fixture",
+                "model_spec": model,
+                "defense": "none",
+                "attacker": attacker,
+                "source_policy_id": "unversioned",
+                "source_policy_version": "unversioned",
+                "risk_category": None,
+                "modality": None,
+                "metric": "ASR",
+                "expected_population": "refuse",
+            })
+    sample = tmp_path / "h4.csv"
+    design = {
+        "confirmatory_plan_artifact": {"sha256": "a" * 64},
+        "required_unique_clusters": 2,
+        "minimum_independent_raters": 2,
+        "sensitivity_requirements": requirements,
+    }
+    assert prepare_sample(tmp_path, sample, 2, design=design) == 0
+    with sample.open(newline="", encoding="utf-8-sig") as handle:
+        rows = list(csv.DictReader(handle))
+    assert len(rows) == 8
+    assert {(row["model_spec"], row["attacker"]) for row in rows} == {
+        ("A", "replay"), ("B", "replay"),
+        ("A", "crescendo"), ("B", "crescendo"),
+    }
+    assert sum(row["attacker"] == "replay" for row in rows) == 4
+    rated = []
+    for row in rows:
+        for rater in ("r1", "r2"):
+            current = dict(row)
+            current.update({
+                "rater_id": rater,
+                "label": "violation",
+                "refusal_label": "not_refusal",
+                "harmfulness_label": "harmful",
+                "convincingness_label": "convincing",
+                "specificity_label": "specific_actionable",
+                "confidence": "5",
+            })
+            rated.append(current)
+    with sample.open("w", newline="", encoding="utf-8-sig") as handle:
+        writer = csv.DictWriter(handle, fieldnames=list(rated[0]))
+        writer.writeheader()
+        writer.writerows(rated)
+    assert analyse(
+        tmp_path, sample, allow_single_rater=False,
+        n_resamples=20, design=design,
+    ) == 0
+    human = json.loads((tmp_path / "human_audit.json").read_text(encoding="utf-8"))
+    assert human["publishable_real_run"] is True
+    arm_metadata = human["primary_effect_sensitivity"]["analysis_arm_metadata"]
+    paired = human["primary_effect_sensitivity"]["paired_model_effects"]
+    for model in ("A", "B"):
+        assert any(
+            {
+                arm_metadata[record["left_arm_id"]]["attacker"],
+                arm_metadata[record["right_arm_id"]]["attacker"],
+            } == {"replay", "crescendo"}
+            and arm_metadata[record["left_arm_id"]]["model_spec"] == model
+            and arm_metadata[record["right_arm_id"]]["model_spec"] == model
+            for record in paired.values()
+        )
+
+
 def test_paired_bootstrap_confidence_level_follows_cli_alpha(tmp_path: Path) -> None:
     _write_completed_cell(tmp_path, "a", model="A", run_id="r-a", key="shared")
     _write_completed_cell(tmp_path, "b", model="B", run_id="r-b", key="shared")
@@ -1827,6 +2304,7 @@ def test_confirmatory_driver_binds_plan_pilot_and_complete_family(
     _write_completed_cell(tmp_path, "a", model="A", run_id="r-a", key="shared")
     _write_completed_cell(tmp_path, "b", model="B", run_id="r-b", key="shared")
     pilot = tmp_path / "pilot.json"
+    repo_root = Path(__file__).resolve().parents[2]
     pilot.write_text(json.dumps({
         "schema_version": "ura-disjoint-pilot/1.0",
         "disjoint_from_main": True,
@@ -1846,6 +2324,12 @@ def test_confirmatory_driver_binds_plan_pilot_and_complete_family(
             "left": {"model_spec": "A", "defense": "none", "attacker": "replay"},
             "right": {"model_spec": "B", "defense": "none", "attacker": "replay"},
         },
+        "analysis_source": analysis_source_identity([
+            repo_root / "experiments" / "pilot_analysis.py",
+            repo_root / "experiments" / "paired_compare.py",
+            repo_root / "experiments" / "analysis_integrity.py",
+            repo_root / "src" / "ura" / "metrics.py",
+        ]),
     }), encoding="utf-8")
     pilot_digest = hashlib.sha256(pilot.read_bytes()).hexdigest()
     sesoi = 0.5
@@ -1874,6 +2358,7 @@ def test_confirmatory_driver_binds_plan_pilot_and_complete_family(
         "seed": 0,
         "families": [{
             "family_id": "model-family",
+            "endpoint_role": "primary",
             "hypotheses": [hypothesis],
             "contrasts": [{
                 "contrast_id": "model-main", "type": "model",
@@ -1884,6 +2369,7 @@ def test_confirmatory_driver_binds_plan_pilot_and_complete_family(
                 "hypotheses": ["fixture::ASR"],
                 "hypothesis_designs": {
                     "fixture::ASR": {
+                        "endpoint_role": "primary",
                         "smallest_effect": sesoi,
                         "pilot": {"artifact": str(pilot), "sha256": pilot_digest},
                         "required_unique_clusters": required,
@@ -1905,7 +2391,9 @@ def test_confirmatory_driver_binds_plan_pilot_and_complete_family(
     human_required = result["human_audit_plan"]["required_unique_clusters"]
     sensitivity_requirement = result["required_human_sensitivity"][0]
     sensitivity_cell = sensitivity_requirement["analysis_cell_id"]
-    sensitivity_pair = f"{sensitivity_cell}::A|B"
+    sensitivity_left = sensitivity_requirement["analysis_left_arm"]
+    sensitivity_right = sensitivity_requirement["analysis_right_arm"]
+    sensitivity_pair = f"{sensitivity_cell}::{sensitivity_left}|{sensitivity_right}"
     human.write_text(json.dumps({
         "schema_version": "ura-human-audit/1.0",
         "publishable_real_run": True,
@@ -1920,7 +2408,8 @@ def test_confirmatory_driver_binds_plan_pilot_and_complete_family(
             "uncertainty": {"alpha": 0.05, "n_resamples": 20, "seed": 0},
             "model_endpoint_rates": {
                 "human_consensus": {sensitivity_cell: {
-                    "A": {"bootstrap_ci": {}}, "B": {"bootstrap_ci": {}},
+                    sensitivity_left: {"bootstrap_ci": {}},
+                    sensitivity_right: {"bootstrap_ci": {}},
                 }},
             },
             "paired_model_effects": {
@@ -1930,6 +2419,11 @@ def test_confirmatory_driver_binds_plan_pilot_and_complete_family(
                 },
             },
         },
+        "analysis_source": analysis_source_identity([
+            repo_root / "experiments" / "human_audit.py",
+            repo_root / "src" / "ura" / "metrics.py",
+            repo_root / "experiments" / "transfer_matrix.py",
+        ]),
     }), encoding="utf-8")
     human_digest = hashlib.sha256(human.read_bytes()).hexdigest()
     final = execute_plan(
@@ -1941,7 +2435,7 @@ def test_confirmatory_driver_binds_plan_pilot_and_complete_family(
     missing = json.loads(human.read_text(encoding="utf-8"))
     del missing["primary_effect_sensitivity"]["model_endpoint_rates"][
         "human_consensus"
-    ][sensitivity_cell]["B"]
+    ][sensitivity_cell][sensitivity_right]
     human.write_text(json.dumps(missing), encoding="utf-8")
     with pytest.raises(ValueError, match="does not cover planned model cell"):
         execute_plan(
@@ -1988,7 +2482,6 @@ def test_human_audit_samples_whole_clusters_and_rates_all_dimensions(
         "complete_consensus"
     ] is True
     pairs = report["primary_effect_sensitivity"]["paired_model_effects"]
-    assert any(
-        key.endswith("::A|B") and "policy=unversioned@unversioned" in key
-        for key in pairs
-    )
+    arms = report["primary_effect_sensitivity"]["analysis_arm_metadata"]
+    assert pairs
+    assert {metadata["model_spec"] for metadata in arms.values()} == {"A", "B"}

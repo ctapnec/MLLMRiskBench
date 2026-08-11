@@ -67,6 +67,11 @@ def synth_corpus(n: int = 12) -> list[DataPoint]:
             attack_family="synthetic",
             turns=1,
             is_agentic=agentic,
+            extra_refs=(
+                ["OWASP_ASI:ASI02"]
+                if agentic and expected == "refuse"
+                else None
+            ),
             meta={
                 "fixture": True,
                 "execution_mode": (

@@ -13,7 +13,11 @@ import ura.converters.mmsafety as mmsafety_module
 from ura.adapters._engine_common import _sanitised_child_env
 from ura.adapters._native_artifacts import read_binary_artifact
 from ura.converters import CorpusFormatError, MMSafetyConverter, MOSSBenchConverter
-from ura.converters._common import _read_bounded_bytes, read_json
+from ura.converters._common import (
+    _read_bounded_bytes,
+    canonical_converted_corpus_sha256,
+    read_json,
+)
 from ura.converters.release_specs import (
     CORPUS_RELEASE_SPECS,
     MM_SAFETYBENCH_SCENARIO_COUNTS,
@@ -68,11 +72,31 @@ class _Target(BaseTarget):
 
 
 def _point(ident: str, modalities: list[str]) -> DataPoint:
+    payloads = {
+        "image": ("image/png", _PNG),
+        "audio": ("audio/wav", b"RIFF\x04\x00\x00\x00WAVE"),
+        "video": ("video/mp4", b"\x00\x00\x00\x18ftypmp42"),
+    }
+    media: list[MediaRef] = []
+    for modality in ("image", "audio", "video"):
+        if modality not in modalities:
+            continue
+        mime, payload = payloads[modality]
+        media.append(MediaRef(
+            modality=modality,  # type: ignore[arg-type]
+            uri=(
+                f"data:{mime};base64,"
+                + base64.b64encode(payload).decode("ascii")
+            ),
+            mime=mime,
+            sha256=hashlib.sha256(payload).hexdigest(),
+        ))
     return DataPoint(
         id=ident,
         source="fixture",
         modalities=modalities,
-        dialog_history=[DialogTurn(role="user", content="probe")],
+        dialog_history=[DialogTurn(role="user", content="probe", media=media)],
+        media=media,
         risk_category=RiskCategory.JAILBREAK,
         expected_behavior="refuse",
     )
@@ -118,6 +142,11 @@ def test_mmsafety_small_official_layout_emits_every_real_variant(tmp_path: Path)
         "legal_advice_caution"
     }
     assert all(point.source_policy is not None for point in points)
+    assert all(
+        point.source_policy.intended_metric == "mmsafety_official_attack_rate"
+        for point in points
+        if point.source_policy is not None
+    )
     assert all(point.meta["common_metrics_eligible"] is True for point in points)
     assert all(Path(point.media[0].path).is_file() for point in points)
 
@@ -218,6 +247,35 @@ def test_mossbench_full_official_layout_preserves_every_dimension(tmp_path: Path
     assert first.source_policy.intended_metric == "mossbench_refusal_rate"
 
 
+def test_converted_identity_is_independent_of_checkout_root(tmp_path: Path):
+    digest = hashlib.sha256(_PNG).hexdigest()
+
+    def converted_at(root: Path) -> list[DataPoint]:
+        asset = root / "images" / "probe.png"
+        asset.parent.mkdir(parents=True)
+        asset.write_bytes(_PNG)
+        return [DataPoint(
+            id="portable",
+            source="fixture",
+            modalities=["text", "image"],
+            dialog_history=[DialogTurn(role="user", content="probe")],
+            media=[MediaRef(
+                modality="image",
+                path=str(asset.resolve()),
+                sha256=digest,
+                mime="image/png",
+            )],
+            risk_category=RiskCategory.JAILBREAK,
+            expected_behavior="refuse",
+        )]
+
+    assert canonical_converted_corpus_sha256(
+        converted_at(tmp_path / "checkout-a")
+    ) == canonical_converted_corpus_sha256(
+        converted_at(tmp_path / "checkout-b")
+    )
+
+
 def test_modality_planner_fails_when_supported_released_data_is_unselected():
     target = _Target(("text", "image"))
     with pytest.raises(ModalityCoverageError, match="silently incomplete.*image"):
@@ -238,10 +296,14 @@ def test_modality_planner_requires_real_execution_for_each_combination():
     }
     with pytest.raises(ModalityCoverageError, match=r"text\+image"):
         verify_executed_modality_coverage(
-            plan, {target.name: {"text"}}
+            plan, {target.name: {("text", ("text",))}}
         )
     result = verify_executed_modality_coverage(
-        plan, {target.name: {"text", "image"}}
+        plan,
+        {target.name: {
+            ("text", ("text",)),
+            ("image", ("text", "image")),
+        }},
     )
     assert {item.status for item in result.items} == {"executed"}
 
@@ -269,7 +331,12 @@ def test_every_declared_text_image_audio_video_capability_can_be_proven():
     )
     result = verify_executed_modality_coverage(
         plan,
-        {target.name: {"p-text", "p-image", "p-audio", "p-video"}},
+        {target.name: {
+            ("p-text", ("text",)),
+            ("p-image", ("text", "image")),
+            ("p-audio", ("text", "audio")),
+            ("p-video", ("text", "video")),
+        }},
     )
     assert {item.combination for item in result.items} == {
         ("text",),
@@ -289,6 +356,118 @@ def test_explicit_unavailable_combination_is_recorded_with_justification():
     assert len(plan.items) == 1
     assert plan.items[0].status == "unavailable"
     assert plan.items[0].justification
+
+
+def test_modality_planner_rejects_tag_only_physical_datapoints():
+    malformed = DataPoint(
+        id="tag-only",
+        source="fixture",
+        modalities=["text", "image"],
+        dialog_history=[DialogTurn(role="user", content="probe")],
+        risk_category=RiskCategory.JAILBREAK,
+        expected_behavior="refuse",
+    )
+    with pytest.raises(ModalityCoverageError, match="byte-backed MediaRefs"):
+        plan_modality_coverage(
+            [_Target(("text", "image"))], {"mmsafety": [malformed]}
+        )
+
+
+def test_modality_planner_rejects_inline_mime_spoofing():
+    media = [MediaRef(
+        modality="image",
+        uri=(
+            "data:image/png;base64,"
+            + base64.b64encode(_JPEG).decode("ascii")
+        ),
+        mime="image/png",
+        sha256=hashlib.sha256(_JPEG).hexdigest(),
+    )]
+    malformed = DataPoint(
+        id="spoofed-inline",
+        source="fixture",
+        modalities=["text", "image"],
+        dialog_history=[DialogTurn(role="user", content="probe", media=media)],
+        media=media,
+        risk_category=RiskCategory.JAILBREAK,
+        expected_behavior="refuse",
+    )
+    with pytest.raises(ModalityCoverageError, match="MIME/signature mismatch"):
+        plan_modality_coverage(
+            [_Target(("text", "image"))], {"mmsafety": [malformed]}
+        )
+
+
+def test_modality_planner_revalidates_duplicate_content_with_changed_mime(
+    tmp_path: Path,
+):
+    asset = tmp_path / "probe.png"
+    asset.write_bytes(_PNG)
+    digest = hashlib.sha256(_PNG).hexdigest()
+    valid = MediaRef(
+        modality="image", path=str(asset), mime="image/png", sha256=digest,
+    )
+    spoofed = MediaRef(
+        modality="image", path=str(asset), mime="image/gif", sha256=digest,
+    )
+    malformed = DataPoint(
+        id="duplicate-content-changed-mime",
+        source="fixture",
+        modalities=["text", "image"],
+        # The valid top-level reference comes first. The actually replayed dialog
+        # reference must still be checked rather than deduplicated by bytes alone.
+        media=[valid],
+        dialog_history=[DialogTurn(
+            role="user", content="probe", media=[spoofed],
+        )],
+        risk_category=RiskCategory.JAILBREAK,
+        expected_behavior="refuse",
+    )
+
+    with pytest.raises(ModalityCoverageError, match="MIME/signature mismatch"):
+        plan_modality_coverage(
+            [_Target(("text", "image"), (("text", "image"),))],
+            {"mmsafety": [malformed]},
+        )
+
+
+def test_modality_planner_rehashes_local_media_before_accepting_plan(
+    tmp_path: Path,
+):
+    asset = tmp_path / "probe.png"
+    asset.write_bytes(_PNG)
+    media = [MediaRef(
+        modality="image",
+        path=str(asset),
+        mime="image/png",
+        sha256=hashlib.sha256(_PNG).hexdigest(),
+    )]
+    point = DataPoint(
+        id="changed-local-media",
+        source="fixture",
+        modalities=["text", "image"],
+        dialog_history=[DialogTurn(role="user", content="probe", media=media)],
+        media=media,
+        risk_category=RiskCategory.JAILBREAK,
+        expected_behavior="refuse",
+    )
+    asset.write_bytes(_JPEG)
+
+    with pytest.raises(ModalityCoverageError, match="SHA-256 mismatch"):
+        plan_modality_coverage(
+            [_Target(("text", "image"))], {"mmsafety": [point]}
+        )
+
+
+def test_modality_planner_rejects_duplicate_ids_before_evidence_can_cross_prove():
+    with pytest.raises(ModalityCoverageError, match="duplicate datapoint id 'same'"):
+        plan_modality_coverage(
+            [_Target(("text", "image"))],
+            {
+                "strongreject": [_point("same", ["text"])],
+                "mmsafety": [_point("same", ["text", "image"])],
+            },
+        )
 
 
 def test_bounded_corpus_and_native_readers_reject_oversized_and_symlinked_inputs(
@@ -378,6 +557,24 @@ def test_ollama_transport_rejects_duplicate_json_keys(
     )
     target = OllamaTarget("fixture", model_digest="0" * 64)
     with pytest.raises(LocalTargetOutputError, match="standards-conforming JSON"):
+        target._verify_daemon_identity()
+
+
+def test_ollama_reverifies_daemon_digest_before_each_generation_boundary(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    expected = "a" * 64
+    inventories = iter([
+        {"models": [{"model": "fixture", "digest": f"sha256:{expected}"}]},
+        {"models": [{"model": "fixture", "digest": "sha256:" + "b" * 64}]},
+    ])
+    target = OllamaTarget("fixture", model_digest=expected)
+    monkeypatch.setattr(
+        target, "_bounded_json_request", lambda *_args, **_kwargs: next(inventories)
+    )
+
+    assert target._verify_daemon_identity() == expected
+    with pytest.raises(LocalTargetOutputError, match="does not match"):
         target._verify_daemon_identity()
 
 

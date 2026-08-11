@@ -1,8 +1,8 @@
-# Unified schema v1.2
+# Unified schema v1.3
 
 `ura.data_models` is the typed Pydantic v2 contract shared by converters,
-attackers, targets, judges, persistence, and analysis. `SCHEMA_VERSION = "1.2"`
-is stamped on datapoints, checkpoints, and manifests. Runner 2.2 rejects mixed
+attackers, targets, judges, persistence, and analysis. `SCHEMA_VERSION = "1.3"`
+is stamped on datapoints, checkpoints, and manifests. Runner 2.3 rejects mixed
 schema versions and duplicate datapoint IDs before a target call.
 
 ## Records
@@ -17,7 +17,7 @@ schema versions and duplicate datapoint IDs before a target call.
 | `DataPoint` | source, modalities, history/payload/media, risk, expected behavior, source policy, taxonomy and attack metadata | atomic converted corpus item |
 | `Attempt` | datapoint, attacker, target, turn, exact rendered input, seed, params, run ID | one submitted input |
 | `Response` | attempt, target, output/tool turns, latency/tokens, raw provenance, run ID | one target outcome, including a typed provider refusal |
-| `Judgment` | attempt, judge, label, score, rationale, raw provenance, run ID | one automated or human verdict |
+| `Judgment` | attempt, judge, label, score, rationale, raw provenance, run ID | one automated/human verdict, or typed non-evaluable setup record |
 | `EvalResult` | metric, value/CI, support, grouping, provenance, run ID | one aggregate estimand |
 | `RunManifest` | run/code/config identity, seeds, components, data hashes, time and environment | re-derivation and audit record |
 
@@ -35,9 +35,15 @@ model/target, attempt_id)`; an attempt ID alone is not globally unique.
 Judgment provenance includes source/risk/expectation, declared and effective
 modality, source-cluster identity, attacker/strategy/seed/turn, target, exact
 input fingerprint and transfer key, source-policy identity, and effective
-sampling control. Trail rows additionally bind every judge stage to the exact
-persisted response SHA-256 and record confidence, parse status, cascade role,
-and provider identity.
+sampling control. Stateful attempts also carry a Boolean
+`policy_evaluable_turn`, nullable zero-based `policy_challenge_index`, positive
+`policy_challenge_horizon`, and `turn_expected_behavior`. Policy challenges are
+contiguous from zero. Crescendo setup turns use `comply_safely`, have no
+challenge index, receive `Judgment.label="not_applicable"`, and record
+`stage_queried=false` for every shadow stage; no judge is called and the row is
+ineligible for common or source metrics. Trail rows additionally bind every
+queried judge stage to the exact persisted response SHA-256 and record
+confidence, parse status, cascade role, and provider identity.
 
 Provider-native continuation data is explicit rather than hidden:
 
@@ -60,6 +66,13 @@ recheck the digest, MIME, URI form, and size. Scored cells reject provider-fetch
 remote media because the bytes cannot be verified; materialize it locally or use
 a bounded hashed data URI.
 
+Before persistence, an approved local path becomes
+`@media-root/<index>/<relative-path>`. The index refers to the explicit order in
+`URA_MEDIA_ROOTS` (or the target's equivalent root list), so a resumed or moved
+run must configure roots in the same order and preserve each relative layout.
+Artifacts thereby bind content and logical location without retaining an
+author-specific absolute path.
+
 Where a source has a distinct official evaluator, `SourceEvaluationPolicy`
 keeps that policy's identity separate from URA's common-metric judge. A common
 ASR/FRR result must not be renamed as an official source metric unless the
@@ -76,6 +89,10 @@ official evaluator actually ran and its provenance says so.
   identity stays stable across calls and resume;
 - source-policy inventories and realized identity digests reconstruct from the
   hashed artifacts and match the manifest/completion marker;
+- modality evidence binds the datapoint ID to its exact delivered modality
+  combination; a tag without byte-backed delivery is insufficient;
+- a content-addressed modality companion proves only completed Attempt/Response
+  evidence for the same target component and defense condition;
 - missing or unsupported constructs fail explicitly rather than becoming zero.
 
 Agentic tool fields represent source-benchmark traces. The core harness does not

@@ -1,4 +1,4 @@
-"""URA-Bench unified schema - version 1.2.
+"""URA-Bench unified schema - version 1.3.
 
 Typed data contract shared by every layer of the harness (see thesis III.3).
 Extends the pre-2025 prototype schema (v0.3: DataPoint / DialogTurn / EvalResult)
@@ -16,7 +16,7 @@ from typing import Any, Literal, Optional
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
-SCHEMA_VERSION = "1.2"
+SCHEMA_VERSION = "1.3"
 
 _HEX = frozenset("0123456789abcdef")
 
@@ -34,7 +34,9 @@ def _nonblank(value: str, label: str) -> str:
 Modality = Literal["text", "image", "audio", "video", "tool", "multi"]
 Role = Literal["system", "user", "assistant", "tool", "env"]
 ExpectedBehavior = Literal["refuse", "safe_answer", "comply_safely"]
-JudgeLabel = Literal["safe", "violation", "refusal", "over_refusal"]
+JudgeLabel = Literal[
+    "safe", "violation", "refusal", "over_refusal", "not_applicable"
+]
 
 
 class RiskCategory(str, Enum):
@@ -74,9 +76,11 @@ class MediaRef(BaseModel):
 
     @field_validator("modality")
     @classmethod
-    def _media_is_not_text(cls, v: str) -> str:
-        if v == "text":
-            raise ValueError("MediaRef.modality must be a non-text modality")
+    def _media_is_physical(cls, v: str) -> str:
+        if v not in {"image", "audio", "video"}:
+            raise ValueError(
+                "MediaRef.modality must be a physical image, audio, or video modality"
+            )
         return v
 
     @field_validator("sha256")

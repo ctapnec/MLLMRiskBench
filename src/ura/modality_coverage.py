@@ -9,11 +9,21 @@ but-unexecuted combinations fail closed.
 """
 from __future__ import annotations
 
+import base64
+import binascii
 from dataclasses import asdict, dataclass
+import hashlib
+from pathlib import Path
 from typing import Iterable, Literal, Mapping, Sequence
 
+from .converters._common import (
+    DEFAULT_MAX_MEDIA_ASSET_BYTES,
+    ConverterError,
+    _read_bounded_bytes,
+    media_signature_matches,
+)
 from .converters.release_specs import KNOWN_CORPUS_MODALITY_COMBINATIONS
-from .data_models import DataPoint
+from .data_models import DataPoint, MediaRef
 from .targets.base import BaseTarget
 
 
@@ -44,11 +54,100 @@ def canonical_modality_combination(values: Iterable[str]) -> tuple[str, ...]:
 
 
 def datapoint_modality_combination(datapoint: DataPoint) -> tuple[str, ...]:
-    """Physical combination really delivered by a converted datapoint."""
+    """Physical combination backed by admitted media bytes in a datapoint."""
+
+    declared_physical = set(datapoint.modalities).intersection(_PHYSICAL)
+    refs = [
+        *datapoint.media,
+        *(
+            ref
+            for turn in datapoint.dialog_history
+            for ref in turn.media
+        ),
+    ]
+    observed_physical: set[str] = set()
+    validated_sources: set[
+        tuple[str, str | None, str | None, str | None, str | None]
+    ] = set()
+    for ref in refs:
+        if ref.modality not in _PHYSICAL:
+            raise ModalityCoverageError(
+                f"datapoint {datapoint.id!r} contains a non-physical MediaRef"
+            )
+        observed_physical.add(ref.modality)
+        source_key = (ref.modality, ref.path, ref.uri, ref.sha256, ref.mime)
+        if source_key not in validated_sources:
+            _validate_byte_backed_ref(datapoint.id, ref)
+            validated_sources.add(source_key)
+    if declared_physical != observed_physical:
+        raise ModalityCoverageError(
+            f"datapoint {datapoint.id!r} physical modality declaration does not "
+            f"match byte-backed MediaRefs: declared={sorted(declared_physical)}, "
+            f"observed={sorted(observed_physical)}"
+        )
 
     return canonical_modality_combination(
         item for item in datapoint.modalities if item in _ALLOWED
     )
+
+
+def _validate_byte_backed_ref(datapoint_id: str, ref: MediaRef) -> None:
+    digest = ref.sha256
+    if (
+        not isinstance(digest, str)
+        or len(digest) != 64
+        or any(character not in "0123456789abcdef" for character in digest)
+    ):
+        raise ModalityCoverageError(
+            f"datapoint {datapoint_id!r} physical MediaRef lacks a full SHA-256"
+        )
+    if (
+        not isinstance(ref.mime, str)
+        or not ref.mime.startswith(f"{ref.modality}/")
+    ):
+        raise ModalityCoverageError(
+            f"datapoint {datapoint_id!r} physical MediaRef lacks a matching MIME type"
+        )
+    if ref.path is not None:
+        try:
+            _, payload = _read_bounded_bytes(
+                Path(ref.path), max_bytes=DEFAULT_MAX_MEDIA_ASSET_BYTES
+            )
+        except ConverterError as exc:
+            raise ModalityCoverageError(
+                f"datapoint {datapoint_id!r} physical MediaRef path cannot be "
+                "admitted as stable bounded bytes"
+            ) from exc
+    else:
+        uri = ref.uri or ""
+        try:
+            header, encoded = uri.split(",", 1)
+            header_parts = header[5:].split(";")
+            if (
+                not header.startswith("data:")
+                or len(header_parts) < 2
+                or header_parts[0] != ref.mime
+                or header_parts[-1].lower() != "base64"
+                or len(encoded) > (4 * ((DEFAULT_MAX_MEDIA_ASSET_BYTES + 2) // 3) + 4)
+            ):
+                raise ValueError
+            payload = base64.b64decode(encoded, validate=True)
+        except (ValueError, binascii.Error) as exc:
+            raise ModalityCoverageError(
+                f"datapoint {datapoint_id!r} physical MediaRef is not bounded base64 data"
+            ) from exc
+    if not payload or len(payload) > DEFAULT_MAX_MEDIA_ASSET_BYTES:
+        raise ModalityCoverageError(
+            f"datapoint {datapoint_id!r} physical MediaRef bytes are empty or oversized"
+        )
+    if hashlib.sha256(payload).hexdigest() != digest:
+        raise ModalityCoverageError(
+            f"datapoint {datapoint_id!r} physical MediaRef SHA-256 mismatch"
+        )
+    if not media_signature_matches(payload, ref.mime):
+        raise ModalityCoverageError(
+            f"datapoint {datapoint_id!r} physical MediaRef MIME/signature mismatch"
+        )
 
 
 def declared_target_combinations(target: BaseTarget) -> tuple[tuple[str, ...], ...]:
@@ -145,10 +244,18 @@ def plan_modality_coverage(
     """
 
     points_by_combination: dict[tuple[str, ...], list[tuple[str, DataPoint]]] = {}
+    datapoint_owners: dict[str, str] = {}
     for corpus_name, points in corpora.items():
         if not isinstance(corpus_name, str) or not corpus_name.strip():
             raise ModalityCoverageError("corpus names must be non-blank strings")
         for datapoint in points:
+            previous_owner = datapoint_owners.get(datapoint.id)
+            if previous_owner is not None:
+                raise ModalityCoverageError(
+                    f"duplicate datapoint id {datapoint.id!r} across selected "
+                    f"corpora/rows ({previous_owner!r}, {corpus_name!r})"
+                )
+            datapoint_owners[datapoint.id] = corpus_name
             combination = datapoint_modality_combination(datapoint)
             points_by_combination.setdefault(combination, []).append(
                 (corpus_name, datapoint)
@@ -219,13 +326,26 @@ def plan_modality_coverage(
 
 def verify_executed_modality_coverage(
     plan: ModalityCoveragePlan,
-    executed_datapoint_ids: Mapping[str, Iterable[str]],
+    executed_evidence: Mapping[
+        str, Iterable[tuple[str, tuple[str, ...]]]
+    ],
 ) -> ModalityCoveragePlan:
-    """Require at least one real executed probe for every planned combination."""
+    """Require exact delivered-combination evidence for every planned item.
+
+    An eligible datapoint id alone is insufficient: a response-conditioned
+    setup turn can share that id while omitting its physical payload.  Evidence
+    therefore binds the id to the combination actually sent to the base target.
+    """
 
     executed = {
-        target: {str(datapoint_id) for datapoint_id in ids}
-        for target, ids in executed_datapoint_ids.items()
+        target: {
+            (
+                str(datapoint_id),
+                canonical_modality_combination(combination),
+            )
+            for datapoint_id, combination in evidence
+        }
+        for target, evidence in executed_evidence.items()
     }
     updated: list[ModalityCoverageItem] = []
     missing: list[ModalityCoverageItem] = []
@@ -234,7 +354,11 @@ def verify_executed_modality_coverage(
             updated.append(item)
             continue
         observed = executed.get(item.target, set())
-        if observed.intersection(item.eligible_datapoint_ids):
+        if any(
+            datapoint_id in item.eligible_datapoint_ids
+            and combination == item.combination
+            for datapoint_id, combination in observed
+        ):
             updated.append(ModalityCoverageItem(
                 **{**asdict(item), "status": "executed"}
             ))

@@ -325,6 +325,8 @@ def main(argv: list[str] | None = None) -> int:
             parser.error("--synth cannot be combined with measured-analysis arguments")
         data = synth_matrix()
     else:
+        if args.analysis_sha256 is None:
+            parser.error("measured figures require --analysis-sha256")
         try:
             data = load_confirmatory_results(
                 args.analysis_artifact, expected_sha256=args.analysis_sha256,

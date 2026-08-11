@@ -1,7 +1,7 @@
 # Architecture
 
 URA-Bench separates corpus meaning, attack generation, model execution,
-judgment, and analysis. The shared boundary is schema 1.2 in
+judgment, and analysis. The shared boundary is schema 1.3 in
 `ura.data_models`; targets do not define success, and judges do not generate
 attacks.
 
@@ -12,7 +12,7 @@ flowchart LR
     C --> A[Replay or stateful attacker]
     A --> T[Hosted or local target]
     T --> J[Full-shadow judge cascade]
-    J --> R[Runner 2.2 artifacts]
+    J --> R[Runner 2.3 artifacts]
     R --> D[Disjoint pilot + frozen confirmatory plan]
     D --> H[Main analysis + human audit]
     H --> F[Final artifact and measured figures]
@@ -40,7 +40,10 @@ they are not silently pooled into common URA ASR/FRR.
 A static attacker produces complete rendered attempts. A stateful attacker opens
 a bounded session: Runner submits one turn, returns the actual response to the
 session, and only then requests the next. `max_queries` and `max_turns` are hard
-per-datapoint bounds; a harmful violation ends the trajectory immediately.
+per-datapoint bounds. Crescendo separates conditioning setup from policy
+challenges: setup is persisted as typed `not_applicable`, invokes no judge, and
+enters no metric; challenge indices are contiguous within one declared horizon,
+and a harmful authoritative violation ends the trajectory immediately.
 
 Before external calls, the matrix persists reservations against durable
 matrix-wide target-call, judge-call, transport-attempt, and deadline ceilings.
@@ -56,15 +59,31 @@ is reconstructed separately from responses and trails. Any conflicting non-null
 provider/model/fingerprint/revision/digest fails the cell, including across
 resume. Completion is atomic and validated before postprocessing.
 
+The Fable transport preserves signed thinking only for successful continuation.
+If the provider emits a typed mid-generation refusal, all partial visible,
+thinking and redacted-thinking blocks from that generation are discarded and
+only the refusal plus bounded discard audit is persisted. The Sol study spec is
+`reasoning_context=all_turns`; with `store=false`, bounded encrypted reasoning
+and assistant-message items are hash-verified in typed continuation state and
+returned on the next request.
+
 ## Release, partition, and provider gates
 
 Every real non-synthetic scored run must use the SHA-256-bound
-`ura-cluster-partition/1.1` artifact and select exactly `pilot` or `main`. The
+`ura-cluster-partition/1.2` artifact and select exactly `pilot` or `main`. The
 partition is exhaustive and disjoint over source prompt/intent clusters and
-binds the full converted-corpus digest and population. MM-SafetyBench and
-MOSSBench additionally enforce their maintained pinned release counts and
-manifest/table hashes. Measured execution uses `--limit 0`; ad hoc cluster caps
-are diagnostics, not a substitute for the frozen partition.
+binds a portable `source_locator`, the full converted-corpus digest and
+population, and exact pilot/main counts for every observed source-policy
+stratum. The default minimum is two clusters per policy in each role. A child
+grid may select only the corpus entries it needs while retaining the identical
+full-plan digest; it cannot introduce a corpus absent from the plan.
+StrongREJECT enforces official commit
+`f7cad6c17e624e21d8df2278e918ae1dddb4cb56`, normalized CSV SHA-256
+`4dd70357e4ff8b5d0ba5ebafecab5d6dd5633ce8046e3dd1c8bd93e64de44381`,
+313 rows, six categories and 313 unique prompts. MM-SafetyBench and MOSSBench
+enforce their maintained pinned counts and manifest/table hashes. Measured
+execution uses `--limit 0`; ad hoc cluster caps are diagnostics, not a
+substitute for the frozen partition.
 
 Every hosted target and hosted LLM judge must also appear exactly once in a
 SHA-256-bound provider data-policy approval, including its role and accepted
@@ -74,16 +93,34 @@ grid and every cell.
 ## Modality behavior
 
 Coverage is planned from actual adapter capabilities and available converted
-data. The pre-call plan requires text and each explicitly implemented physical
-combination; the post-run result requires at least one real eligible execution
-for each planned combination. It never infers arbitrary media cross-products or
-treats a blocked input as execution evidence.
+data. Evidence is keyed by datapoint and the exact delivered modality
+combination, not a declaration alone. The pre-call plan requires text and each
+explicitly implemented physical combination; the post-run result requires at
+least one real policy-evaluable execution for each planned combination. A
+pre-input defense block and a setup-only turn do not count; a target execution
+whose output is subsequently blocked does. It never infers arbitrary media
+cross-products.
 
 The canonical Fable and Sol adapters currently support text and text+image.
 StrongREJECT supplies text; MM-SafetyBench and MOSSBench supply text+image.
 Audio and video remain explicit unavailable combinations until a target adapter
 implements and declares them. Media is never dropped, captioned, or coerced to
 text inside the registered run.
+
+The efficient study layout has two children under each pilot/main parent: one
+replay grid over StrongREJECT, MM-SafetyBench and MOSSBench, and one
+StrongREJECT-only Crescendo grid. The replay grid emits a content-addressed
+`ura-modality-coverage-proof/1.0`; the Crescendo child may use it only when its
+target runtime component, defense condition, driver identity and harness source
+identity reconstruct exactly. Thus both Fable and Sol execute text and
+text+image suite-wide without duplicating replay calls or expanding Crescendo
+across the two proxy corpora.
+
+Local media is prepared once, content-hashed, and persisted as
+`@media-root/<index>/<relative-path>`. The target resolves the alias against the
+same explicitly ordered approved roots on execution or resume. This makes an
+artifact portable across machines while keeping path traversal, unapproved
+reads, digest drift and MIME spoofing fail-closed.
 
 ## Safety and scope
 

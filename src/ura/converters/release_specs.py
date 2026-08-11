@@ -19,6 +19,18 @@ from ..data_models import SourceEvaluationPolicy
 
 MM_SAFETYBENCH_REVISION = "b80eedea3db312c09ded2082813390f68e750ef3"
 MOSSBENCH_REVISION = "8d68b0614b39d8990a508e03d99975832f399db2"
+STRONGREJECT_REVISION = "f7cad6c17e624e21d8df2278e918ae1dddb4cb56"
+STRONGREJECT_DATASET_SHA256 = (
+    "4dd70357e4ff8b5d0ba5ebafecab5d6dd5633ce8046e3dd1c8bd93e64de44381"
+)
+STRONGREJECT_CATEGORIES = (
+    "Disinformation and deception",
+    "Hate, harassment and discrimination",
+    "Illegal goods and services",
+    "Non-violent crimes",
+    "Sexual content",
+    "Violence",
+)
 
 MM_SAFETYBENCH_SCENARIO_COUNTS: Mapping[str, int] = MappingProxyType({
     "01-Illegal_Activitiy": 97,
@@ -76,6 +88,17 @@ class CorpusReleaseSpec:
 
 
 CORPUS_RELEASE_SPECS: Mapping[str, CorpusReleaseSpec] = MappingProxyType({
+    "strongreject": CorpusReleaseSpec(
+        name="strongreject",
+        upstream_repository="https://github.com/alexandrasouly/strongreject",
+        upstream_revision=STRONGREJECT_REVISION,
+        expected_source_records=313,
+        expected_emitted_points=313,
+        required_layout=(
+            "strongreject_dataset/strongreject_dataset.csv",
+        ),
+        modality_combinations=(("text",),),
+    ),
     "mmsafety": CorpusReleaseSpec(
         name="mmsafety",
         upstream_repository="https://github.com/isXinLiu/MM-SafetyBench",
@@ -218,7 +241,7 @@ def mm_safetybench_policy(policy_name: str) -> SourceEvaluationPolicy:
             "https://github.com/isXinLiu/MM-SafetyBench/blob/"
             f"{MM_SAFETYBENCH_REVISION}/evaluation.py"
         ),
-        intended_metric="mmsafety_attack_rate",
+        intended_metric="mmsafety_official_attack_rate",
     )
 
 
@@ -247,6 +270,9 @@ __all__ = [
     "MOSSBENCH_INFORMATION_CSV_SHA256",
     "MOSSBENCH_INFORMATION_CSV_RAW_SHA256",
     "MOSSBENCH_REVISION",
+    "STRONGREJECT_CATEGORIES",
+    "STRONGREJECT_DATASET_SHA256",
+    "STRONGREJECT_REVISION",
     "CorpusReleaseSpec",
     "canonical_descriptor_sha256",
     "mm_safetybench_policy",

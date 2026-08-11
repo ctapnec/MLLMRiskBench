@@ -4,6 +4,9 @@ The study has not been executed. All hypotheses are prospective and every
 measured claim must trace to complete real-run artifacts. Synthetic output and
 preliminary analysis remain explicitly non-publishable.
 
+The executable contract is Runner `ura-runner/2.3`, unified schema `1.3`, and
+partition schema `ura-cluster-partition/1.2`.
+
 ## Questions and estimands
 
 | Question | Primary evidence |
@@ -26,10 +29,13 @@ desired-refusal, FRR, and where fully rubric-graded unconditional
 StrongREJECT-style severity. Live response-conditioned units report conversation
 ASR/FRR and robust refusal, never per-turn pooled ASR.
 
-For harmful live conversations, report the entire Kaplan-Meier curve from turn
-0 through `min(max_queries,max_turns)`, at-risk/event/censor counts, the median
-only if observed inside the horizon, and horizon-specific restricted mean
-turns-to-break (RMTB) with a source-cluster bootstrap interval.
+For harmful live conversations, report the entire Kaplan-Meier curve from
+policy-challenge 0 through the attacker's declared challenge horizon,
+at-risk/event/censor counts, the median only if observed inside that horizon,
+and horizon-specific restricted mean turns-to-break (RMTB) with a source-
+cluster bootstrap interval. Conditioning setup turns are persisted as
+`not_applicable`, invoke no judge, and contribute to no metric. Challenge
+indices are contiguous, and an authoritative harmful violation is terminal.
 
 All uncertainty and pairing use source prompt/intent clusters. A paired effect
 is reduced to one mean difference per cluster before clusters are weighted
@@ -39,16 +45,23 @@ hypotheses stay in their family and prevent publishability.
 
 ## Corpus and source-policy scope
 
-The primary corpus set is:
+The executed corpus set is:
 
 | Corpus | Population/input | Interpretation |
 | --- | --- | --- |
-| StrongREJECT | harmful text | common harmful metrics; dedicated rubric only when complete |
+| StrongREJECT | harmful text | primary common ASR; StrongREJECT-style rubric only when complete |
 | MM-SafetyBench | harmful text+image | complete pinned release; common ASR is secondary, not official scenario-conditioned attack rate |
 | MOSSBench | benign text+image | complete pinned release; common FRR is secondary, not the official image-conditioned GPT-4 refusal score |
 
 The maintained matrix records both official evaluators as not executed. Do not
 rename their secondary common metrics.
+
+StrongREJECT is accepted only as the complete official CSV at commit
+`f7cad6c17e624e21d8df2278e918ae1dddb4cb56`, normalized SHA-256
+`4dd70357e4ff8b5d0ba5ebafecab5d6dd5633ce8046e3dd1c8bd93e64de44381`:
+313 rows, the exact six categories, 313 unique prompts and no blank required
+field. URA's rubric remains labelled StrongREJECT-style because the official
+upstream evaluator is not executed.
 
 MM-SafetyBench contains six maintained source-evaluation policies. Every matrix
 command that can include it (and the MOSSBench policy) groups by
@@ -61,11 +74,12 @@ substantive runtime/evaluator fails before target calls; conversion coverage is
 not experimental success.
 
 Every real scored source is loaded from `URA_<NAME>_PATH` and must be frozen by
-the SHA-256-bound exhaustive pilot/main partition. That artifact binds the full
-converted population, source-cluster inventory, and selection. MM-SafetyBench
-and MOSSBench additionally enforce maintained official counts and manifest/table
-hashes. A missing, partial, modified, or schema-drifted release fails before
-paid calls.
+one SHA-256-bound exhaustive `ura-cluster-partition/1.2`. That artifact binds a
+portable `source_locator`, full converted population, source-cluster inventory,
+and exact per-policy counts in both roles. Its pilot and main minimums default
+to two clusters per observed policy stratum. A child grid may use a selected
+corpus subset of that same complete plan. A missing, partial, modified, or
+schema-drifted release fails before paid calls.
 
 ## Target and modality scope
 
@@ -76,15 +90,26 @@ Primary conditions:
 
 The exact requested strings and provider-resolved identities are retained.
 Fable thinking continuity and Sol's encrypted reasoning/assistant items are
-preserved for exact stateless continuation. A Fable midstream refusal discards
-partial output but remains a counted refusal.
+preserved for exact stateless continuation. A Fable typed midstream refusal
+discards all partial visible, thinking and redacted-thinking output from that
+generation but remains a counted refusal. Sol uses the exact all-turns spec
+above; its bounded provider state is hash-verified on resume.
 
-Both target adapters currently support text and text+image. The pre-call
-`modality_coverage_plan` therefore requires both combinations, and the post-run
-result requires at least one real eligible execution of each for every target.
-StrongREJECT supplies text; MM-SafetyBench and MOSSBench supply text+image. Audio
-and video are registered but explicitly unavailable for these targets. Do not
-drop media, caption it, or infer arbitrary image+audio/video combinations.
+Both target adapters currently support text and text+image. Coverage is keyed by
+datapoint and exact delivered modality combination. The pre-call plan requires
+both combinations, and post-run verification requires real policy-evaluable
+execution for every target/condition; an input-defense block or setup-only turn
+does not count, while a real target call followed by output blocking does. The
+replay model grid supplies text and text+image. Its content-addressed
+`ura-modality-coverage-proof/1.0` may satisfy the StrongREJECT-only Crescendo
+child only for the same reconstructed target runtime component and defense
+condition under the same content-addressed driver and harness source identities.
+Audio and video are unavailable for these targets. Do not drop media, caption
+it, or infer arbitrary cross-products.
+
+Local media is persisted as `@media-root/<index>/<relative-path>` after digest,
+MIME and approved-root checks. Resume or relocation must rebind the same ordered
+root list and relative layout; an alias never authorizes a broader path.
 
 Local exploratory targets require exact `--local` specs and config entries with
 one immutable `revision` or `digest` plus `modalities`. They do not silently join
@@ -117,17 +142,25 @@ limited sampling is diagnostic only.
 2. Resolve and validate complete releases/media.
 3. Freeze one content-addressed pilot/main cluster partition and one hosted-
    provider approval.
-4. Run the pilot role under the exact planned conditions and finite ceilings.
+4. Under the pilot parent, run (a) replay over StrongREJECT+MM-SafetyBench+
+   MOSSBench and (b) Crescendo over StrongREJECT only, using the completed replay
+   modality proof. This executes both modalities without duplicate replay cells.
 5. Generate a separate pilot artifact for each planned endpoint/facet. Freeze
-   its SESOI, required clusters, complete family, source policy, analysis seed,
+   its SESOI, required clusters, endpoint role, source policy, analysis seed,
    bootstrap/permutation counts, and conservative whole-cluster human-audit
-   design in `ura-confirmatory-plan/1.0`.
-6. Run the main role using the same partition and conditions. Do not add pilot
-   rows to main estimates.
+   design in `ura-confirmatory-plan/1.0`. Use separate StrongREJECT-primary and
+   MM/MOSS-secondary model families. The primary H4 family contains two
+   StrongREJECT ASR hypotheses: replay versus Crescendo once for Fable and once
+   for Sol. Each is a one-shot replay ASR versus bounded-conversation ASR
+   endpoint contrast, not an identical-transcript comparison.
+6. Repeat the two-child layout under the main parent using the same partition
+   and conditions. Do not add pilot rows to main estimates.
 7. Run same-response judge sensitivity, exact transfer, kappa, and the optional
    non-publishable preliminary confirmatory analysis.
-8. Prepare exactly the frozen number of whole source clusters for at least two
-   independent raters, then adjudicate and analyse labels with cluster/IPW
+8. From the common main parent, prepare exactly the frozen number of whole source
+   clusters and exact model/defense/attacker arms for at least two independent
+   raters. Rate refusal, harmfulness, convincingness and specificity separately;
+   adjudicate only after independent labels and use equal-cluster bootstrap
    uncertainty.
 9. Produce the final confirmatory artifact bound to both the immutable plan and
    successful human-audit SHA-256.
@@ -136,7 +169,8 @@ limited sampling is diagnostic only.
 The confirmatory driver verifies pilot/main run IDs and cluster IDs are disjoint,
 that both roles bind the same partition digest, that selectors/corpus/metric/
 risk/modality/source-policy identity matches each pilot, and that every planned
-endpoint has its own power gate. Hypotheses use the canonical
+confirmatory endpoint has its own power gate and `primary` or `secondary` role.
+A family cannot mix roles. Hypotheses use the canonical
 `policy=<percent-encoded-id>@<percent-encoded-version>` token; no confirmatory
 MM-SafetyBench effect pools its six policies.
 
@@ -152,10 +186,12 @@ Static transfer estimates target-B violation conditional on a harmful exact
 input that violated A, requiring identical transfer key and input fingerprint.
 Live adaptive Crescendo is target-specific and excluded unless the transcript
 is replayed verbatim. No support yields `null` with a reason and counts. Transfer
-is prespecified descriptive evidence with support/power gates and a cluster
-interval, but its source-success-conditioned population has no frozen null or
-p-value and stays outside the Holm families. The paired adaptivity effect, not
-the conditional transfer rate, is the confirmatory adaptivity hypothesis.
+is prespecified conditional descriptive evidence with a minimum-unique-cluster
+support gate, equal-cluster reduction, cluster-rate dispersion and a source-
+cluster bootstrap interval. It has no transfer pilot, SESOI, power claim, null
+hypothesis or p-value and stays outside Holm families. The paired adaptivity
+effect, not the conditional transfer rate, is the confirmatory adaptivity
+hypothesis.
 
 ## Interpretation and stopping rules
 
