@@ -2544,6 +2544,45 @@ _PROVIDERS = {
 }
 
 
+def preflight_api_target_runtime(target: BaseTarget) -> dict[str, str] | None:
+    """Verify local hosted-client readiness without constructing a client.
+
+    This deliberately stops at importing the selected SDK and confirming that
+    one of its credential environment variables is non-blank.  It performs no
+    network request, so it cannot establish account access or model visibility.
+    Offline/test targets return ``None`` because they have no hosted runtime.
+    """
+    requirement: tuple[str, tuple[str, ...]] | None
+    if isinstance(target, OpenAICompatibleTarget):
+        requirement = ("openai", (target.key_env,))
+    elif isinstance(target, OpenAITarget):
+        requirement = ("openai", ("OPENAI_API_KEY",))
+    elif isinstance(target, AnthropicTarget):
+        requirement = ("anthropic", ("ANTHROPIC_API_KEY",))
+    elif isinstance(target, GeminiTarget):
+        requirement = ("google.genai", ("GEMINI_API_KEY", "GOOGLE_API_KEY"))
+    else:
+        return None
+
+    module, credential_envs = requirement
+    _require(module, f"{target.name} local preflight")
+    present_env = next(
+        (name for name in credential_envs if os.environ.get(name, "").strip()),
+        None,
+    )
+    if present_env is None:
+        rendered = " or ".join(credential_envs)
+        raise RuntimeError(
+            f"local hosted preflight requires non-blank {rendered}; "
+            "credential presence was checked without contacting the provider"
+        )
+    return {
+        "target": target.name,
+        "sdk_module": module,
+        "credential_env": present_env,
+    }
+
+
 def build_api_target(spec: str) -> BaseTarget:
     """Build a hosted target from ``"<provider>:<model>"`` or a bare registered id.
 
@@ -2606,5 +2645,6 @@ __all__ = [
     "ProviderTransportError",
     "OpenAICompatibleTarget",
     "GeminiTarget",
+    "preflight_api_target_runtime",
     "build_api_target",
 ]

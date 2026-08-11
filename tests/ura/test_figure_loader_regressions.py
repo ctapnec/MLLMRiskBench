@@ -883,6 +883,11 @@ _MOSS_VERSION = (
     "8d68b0614b39d8990a508e03d99975832f399db2:"
     "Evaluator.py+evaluation_prompts.py"
 )
+_FABLE_MODEL_SPEC = "anthropic-fable:claude-fable-5;effort=high;max_tokens=25000"
+_SOL_MODEL_SPEC = (
+    "openai-responses:gpt-5.6-sol;reasoning_mode=pro;reasoning_effort=medium;"
+    "reasoning_context=all_turns"
+)
 
 
 def _runbook_policy_token(policy_id: str, version: str) -> str:
@@ -984,6 +989,38 @@ def _confirmatory_facet(
     }
 
 
+def _confirmatory_preregistered(
+    contrast_id: str, contrast_type: str, local_ids: list[str], endpoint_role: str,
+) -> dict[str, Any]:
+    return {
+        "contrast_id": contrast_id,
+        "contrast_type": contrast_type,
+        "all_planned_metrics_adequately_powered": True,
+        "hypotheses": local_ids,
+        "hypothesis_designs": {
+            local_id: {"endpoint_role": endpoint_role} for local_id in local_ids
+        },
+        "hypothesis_endpoint_roles": {
+            f"{contrast_id}::{local_id}": endpoint_role for local_id in local_ids
+        },
+    }
+
+
+def _confirmatory_family(
+    endpoint_role: str, global_ids: list[str],
+) -> dict[str, Any]:
+    return {
+        "method": "holm_bonferroni_complete_frozen_family",
+        "alpha": 0.05,
+        "endpoint_role": endpoint_role,
+        "family_size": len(global_ids),
+        "frozen_hypothesis_order": global_ids,
+        "hypotheses": {
+            global_id: {"status": "estimated"} for global_id in global_ids
+        },
+    }
+
+
 def _write_runbook_confirmatory_artifact(
     tmp_path: Path, *, corrupt_moss_alias: bool = False,
     proxy_limit: int | None = None,
@@ -1028,19 +1065,21 @@ def _write_runbook_confirmatory_artifact(
 
     adaptivity_contrasts: dict[str, dict[str, Any]] = {}
     adaptivity_globals: list[str] = []
-    for index, model in enumerate(("fable", "sol")):
-        contrast_id = f"adaptivity-{model}"
+    for index, (model_name, model_spec) in enumerate((
+        ("fable", _FABLE_MODEL_SPEC),
+        ("sol", _SOL_MODEL_SPEC),
+    )):
+        contrast_id = f"h4-{model_name}"
         adaptivity_globals.append(f"{contrast_id}::{primary_local}")
         adaptivity_contrasts[contrast_id] = {
-            "preregistered": {
-                "all_planned_metrics_adequately_powered": True,
-                "hypotheses": [primary_local],
-            },
+            "preregistered": _confirmatory_preregistered(
+                contrast_id, "adaptivity", [primary_local], "primary",
+            ),
             "facets": {
                 "strongreject": _confirmatory_facet(
                     corpus="strongreject",
-                    left_model=model,
-                    right_model=model,
+                    left_model=model_spec,
+                    right_model=model_spec,
                     left_attacker="replay",
                     right_attacker="crescendo",
                     comparison_type="within_target_adaptivity_endpoint",
@@ -1061,15 +1100,14 @@ def _write_runbook_confirmatory_artifact(
 
     contrasts = {
         "model-fable-vs-sol": {
-            "preregistered": {
-                "all_planned_metrics_adequately_powered": True,
-                "hypotheses": [primary_local],
-            },
+            "preregistered": _confirmatory_preregistered(
+                "model-fable-vs-sol", "model", [primary_local], "primary",
+            ),
             "facets": {
                 "strongreject": _confirmatory_facet(
                     corpus="strongreject",
-                    left_model="fable",
-                    right_model="sol",
+                    left_model=_FABLE_MODEL_SPEC,
+                    right_model=_SOL_MODEL_SPEC,
                     left_attacker="replay",
                     right_attacker="replay",
                     comparison_type="cross_target_endpoint_noncausal",
@@ -1078,15 +1116,14 @@ def _write_runbook_confirmatory_artifact(
             },
         },
         "proxy-fable-vs-sol": {
-            "preregistered": {
-                "all_planned_metrics_adequately_powered": True,
-                "hypotheses": proxy_locals,
-            },
+            "preregistered": _confirmatory_preregistered(
+                "proxy-fable-vs-sol", "model", proxy_locals, "secondary",
+            ),
             "facets": {
                 corpus: _confirmatory_facet(
                     corpus=corpus,
-                    left_model="fable",
-                    right_model="sol",
+                    left_model=_FABLE_MODEL_SPEC,
+                    right_model=_SOL_MODEL_SPEC,
                     left_attacker="replay",
                     right_attacker="replay",
                     comparison_type="cross_target_endpoint_noncausal",
@@ -1098,44 +1135,34 @@ def _write_runbook_confirmatory_artifact(
         **adaptivity_contrasts,
     }
     families = {
-        "primary-model": {
-            "hypotheses": {primary_global: {"status": "estimated"}},
-        },
-        "secondary-proxies": {
-            "hypotheses": {
-                f"proxy-fable-vs-sol::{local_id}": {"status": "estimated"}
-                for local_id in proxy_locals
-            },
-        },
-        "h4-adaptivity": {
-            "hypotheses": {
-                global_id: {"status": "estimated"}
-                for global_id in adaptivity_globals
-            },
-        },
+        "primary-model": _confirmatory_family("primary", [primary_global]),
+        "secondary-proxies": _confirmatory_family("secondary", [
+            f"proxy-fable-vs-sol::{local_id}" for local_id in proxy_locals
+        ]),
+        "h4-adaptivity": _confirmatory_family("primary", adaptivity_globals),
     }
     repo_root = Path(__file__).resolve().parents[2]
-    evaluation_policy_content = {
-        "schema_version": "ura-evaluation-policy/1.0",
-        "policy_id": "frozen-runbook-policy",
-        "version": "1",
-        "title": "Fixture interpretation policy",
-    }
+    evaluation_policy_path = repo_root / "experiments" / "evaluation-policy.json"
+    evaluation_policy_bytes = evaluation_policy_path.read_bytes()
+    evaluation_policy_sha256 = hashlib.sha256(evaluation_policy_bytes).hexdigest()
+    evaluation_policy_content = json.loads(evaluation_policy_bytes.decode("utf-8"))
     artifact = {
         "schema_version": "ura-confirmatory-analysis/1.0",
         "publishable_real_run": True,
         "analysis_stage": "final_human_bound",
+        "alpha": 0.05,
+        "target_power": 0.8,
         "human_audit_artifact": {"sha256": "1" * 64},
         "plan_artifact": {"sha256": "2" * 64},
         "evaluation_policy": {
-            "policy_id": "frozen-runbook-policy",
-            "version": "1",
-            "sha256": "3" * 64,
+            "policy_id": evaluation_policy_content["policy_id"],
+            "version": evaluation_policy_content["version"],
+            "sha256": evaluation_policy_sha256,
         },
         "evaluation_policy_artifact": {
             "path": "experiments/evaluation-policy.json",
-            "bytes": 1,
-            "sha256": "3" * 64,
+            "bytes": len(evaluation_policy_bytes),
+            "sha256": evaluation_policy_sha256,
             "content_sha256": hashlib.sha256(json.dumps(
                 evaluation_policy_content, sort_keys=True, separators=(",", ":")
             ).encode()).hexdigest(),
@@ -1162,6 +1189,11 @@ def _write_runbook_confirmatory_artifact(
     return path, hashlib.sha256(path.read_bytes()).hexdigest()
 
 
+def _rewrite_confirmatory_artifact(path: Path, artifact: dict[str, Any]) -> str:
+    path.write_text(json.dumps(artifact), encoding="utf-8")
+    return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
 def test_confirmatory_figure_loader_matches_frozen_runbook_families(
     tmp_path: Path,
 ) -> None:
@@ -1174,10 +1206,15 @@ def test_confirmatory_figure_loader_matches_frozen_runbook_families(
         "fig-v-policy-proxies.png",
         "fig-v-adaptivity.png",
     }
-    assert result["analysis"]["evaluation_policy_content"]["policy_id"] == (
-        "frozen-runbook-policy"
+    policy_path = Path(__file__).resolve().parents[2] / "experiments" / (
+        "evaluation-policy.json"
     )
-    assert result["analysis"]["evaluation_policy_artifact"]["sha256"] == "3" * 64
+    assert result["analysis"]["evaluation_policy_content"]["policy_id"] == (
+        "ura-thesis-confirmatory"
+    )
+    assert result["analysis"]["evaluation_policy_artifact"]["sha256"] == (
+        hashlib.sha256(policy_path.read_bytes()).hexdigest()
+    )
     primary = result["figures"]["fig-v-asr-by-model.png"]["points"]
     proxies = result["figures"]["fig-v-policy-proxies.png"]["points"]
     adaptivity = result["figures"]["fig-v-adaptivity.png"]["points"]
@@ -1210,7 +1247,121 @@ def test_confirmatory_figure_loader_requires_exact_frozen_inventory(
     tmp_path: Path,
 ) -> None:
     path, digest = _write_runbook_confirmatory_artifact(tmp_path, proxy_limit=1)
-    with pytest.raises(ValueError, match="exact frozen Chapter V inventory"):
+    with pytest.raises(ValueError, match="frozen Chapter V plan"):
+        figure_results.load_confirmatory_results(path, expected_sha256=digest)
+
+
+@pytest.mark.parametrize(
+    ("field", "value", "family_field", "family_value", "message"),
+    [
+        ("alpha", 0.10, None, None, "frozen Chapter V alpha/power"),
+        ("target_power", 0.79, None, None, "frozen Chapter V alpha/power"),
+        (
+            None, None, "method", "not_holm",
+            "differs from the frozen Chapter V plan",
+        ),
+        (
+            None, None, "alpha", 0.10,
+            "differs from the frozen Chapter V plan",
+        ),
+    ],
+)
+def test_confirmatory_figure_loader_rejects_drifted_inferential_design(
+    tmp_path: Path,
+    field: str | None,
+    value: object,
+    family_field: str | None,
+    family_value: object,
+    message: str,
+) -> None:
+    path, _ = _write_runbook_confirmatory_artifact(tmp_path)
+    artifact = json.loads(path.read_text(encoding="utf-8"))
+    if field is not None:
+        artifact[field] = value
+    if family_field is not None:
+        artifact["families"]["primary-model"][family_field] = family_value
+    digest = _rewrite_confirmatory_artifact(path, artifact)
+    with pytest.raises(ValueError, match=message):
+        figure_results.load_confirmatory_results(path, expected_sha256=digest)
+
+
+@pytest.mark.parametrize(("contrast_id", "side", "field", "value"), [
+    ("model-fable-vs-sol", "left", "model_spec", "not-the-frozen-fable-model"),
+    ("h4-sol", "right", "attacker", "replay"),
+])
+def test_confirmatory_figure_loader_rejects_drifted_frozen_arms(
+    tmp_path: Path, contrast_id: str, side: str, field: str, value: str,
+) -> None:
+    path, _ = _write_runbook_confirmatory_artifact(tmp_path)
+    artifact = json.loads(path.read_text(encoding="utf-8"))
+    artifact["contrasts"][contrast_id]["facets"]["strongreject"][side][field] = value
+    digest = _rewrite_confirmatory_artifact(path, artifact)
+    with pytest.raises(ValueError, match="wrong frozen arms"):
+        figure_results.load_confirmatory_results(path, expected_sha256=digest)
+
+
+def test_confirmatory_figure_loader_rejects_wrong_family_id(tmp_path: Path) -> None:
+    path, _ = _write_runbook_confirmatory_artifact(tmp_path)
+    artifact = json.loads(path.read_text(encoding="utf-8"))
+    artifact["families"]["renamed-primary"] = artifact["families"].pop(
+        "primary-model"
+    )
+    digest = _rewrite_confirmatory_artifact(path, artifact)
+    with pytest.raises(ValueError, match="wrong frozen Chapter V families"):
+        figure_results.load_confirmatory_results(path, expected_sha256=digest)
+
+
+def test_confirmatory_figure_loader_rejects_wrong_contrast_id(tmp_path: Path) -> None:
+    path, _ = _write_runbook_confirmatory_artifact(tmp_path)
+    artifact = json.loads(path.read_text(encoding="utf-8"))
+    artifact["contrasts"]["renamed-model"] = artifact["contrasts"].pop(
+        "model-fable-vs-sol"
+    )
+    digest = _rewrite_confirmatory_artifact(path, artifact)
+    with pytest.raises(ValueError, match="wrong frozen Chapter V contrasts"):
+        figure_results.load_confirmatory_results(path, expected_sha256=digest)
+
+
+def test_confirmatory_figure_loader_rejects_proxy_category_substitution(
+    tmp_path: Path,
+) -> None:
+    path, _ = _write_runbook_confirmatory_artifact(tmp_path)
+    artifact = json.loads(path.read_text(encoding="utf-8"))
+    contrast_id = "proxy-fable-vs-sol"
+    report = artifact["contrasts"][contrast_id]
+    preregistered = report["preregistered"]
+    old_local = preregistered["hypotheses"][0]
+    new_local = f"{old_local}::cybersec::text"
+    preregistered["hypotheses"][0] = new_local
+    preregistered["hypothesis_designs"][new_local] = preregistered[
+        "hypothesis_designs"
+    ].pop(old_local)
+    old_global = f"{contrast_id}::{old_local}"
+    new_global = f"{contrast_id}::{new_local}"
+    preregistered["hypothesis_endpoint_roles"][new_global] = preregistered[
+        "hypothesis_endpoint_roles"
+    ].pop(old_global)
+    family = artifact["families"]["secondary-proxies"]
+    family["frozen_hypothesis_order"][0] = new_global
+    family["hypotheses"][new_global] = family["hypotheses"].pop(old_global)
+    _, metric_name, policy_token = old_local.split("::")
+    facet = report["facets"]["mmsafety"]
+    metric = facet["policy_metrics"].pop(f"{policy_token}::{metric_name}")
+    facet["category_metrics"][f"{policy_token}::cybersec::text"] = metric
+    digest = _rewrite_confirmatory_artifact(path, artifact)
+    with pytest.raises(ValueError, match="frozen Chapter V plan"):
+        figure_results.load_confirmatory_results(path, expected_sha256=digest)
+
+
+def test_confirmatory_figure_loader_rejects_bogus_raw_policy_descriptor(
+    tmp_path: Path,
+) -> None:
+    path, _ = _write_runbook_confirmatory_artifact(tmp_path)
+    artifact = json.loads(path.read_text(encoding="utf-8"))
+    artifact["evaluation_policy"]["sha256"] = "0" * 64
+    artifact["evaluation_policy_artifact"]["sha256"] = "0" * 64
+    digest = _rewrite_confirmatory_artifact(path, artifact)
+    with pytest.raises(ValueError, match="raw bytes do not match"):
         figure_results.load_confirmatory_results(path, expected_sha256=digest)
 
 

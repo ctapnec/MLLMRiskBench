@@ -16,8 +16,9 @@
     "required_unique_clusters": "REPLACE_WITH_RECOMPUTED_INTEGER",
     "minimum_independent_raters": 2,
     "validity_gate": {
-      "minimum_shared_clusters_per_required_cell": 2,
-      "minimum_endpoint_agreement": 0.8
+      "minimum_shared_clusters_per_required_cell": "REPLACE_WITH_BALANCED_CELL_SUPPORT_INTEGER",
+      "minimum_endpoint_agreement": 0.8,
+      "minimum_inter_rater_endpoint_agreement": 0.8
     }
   },
   "bootstrap_resamples": 2000,

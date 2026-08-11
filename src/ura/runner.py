@@ -26,6 +26,7 @@ import mimetypes
 import os
 import platform
 import re
+import stat
 import time
 from dataclasses import replace
 from itertools import islice
@@ -55,8 +56,11 @@ from .targets.base import BaseTarget
 from .targets.api import _logical_media_root_alias, _resolve_local_media_path
 
 #: Bumped when the orchestration semantics change (recorded in every manifest).
-CODE_VERSION = "ura-runner/2.3"
+CODE_VERSION = "ura-runner/2.4"
 _MAX_SCORED_MEDIA_BYTES = 25 * 1024 * 1024
+_MAX_FULL_CHECKPOINT_BYTES = 512 * 1024 * 1024
+_MAX_RESPONSE_CHECKPOINT_BYTES = 512 * 1024 * 1024
+_MAX_CHECKPOINT_RECORD_BYTES = 8 * 1024 * 1024
 
 CheckpointRecord = dict[str, Any]
 CheckpointCallback = Callable[[CheckpointRecord], None]
@@ -1313,8 +1317,8 @@ class Runner:
             "response_sha256": _sha256_json(response.model_dump(mode="json")),
         }
 
-    @staticmethod
     def _checkpoint_record(
+        self,
         attempt: Attempt,
         response: Response,
         judgment: Judgment,
@@ -1329,6 +1333,9 @@ class Runner:
             "judgment": judgment.model_dump(mode="json"),
             "trail": [item.model_dump(mode="json") for item in trail],
             "meta": dict(meta),
+            "budget_after_attempt": (
+                self.call_budget.snapshot() if self.call_budget is not None else None
+            ),
         }
 
     @staticmethod
@@ -1341,7 +1348,7 @@ class Runner:
                 raise ValueError(f"invalid checkpoint record for {key!r}")
             required_fields = {
                 "schema_version", "run_id", "attempt", "response",
-                "judgment", "trail", "meta",
+                "judgment", "trail", "meta", "budget_after_attempt",
             }
             if set(record) != required_fields:
                 raise ValueError(
@@ -1358,6 +1365,11 @@ class Runner:
                     f"not {expected_run_id!r}"
                 )
             attempt = Attempt.model_validate(record.get("attempt"))
+            budget = record.get("budget_after_attempt")
+            if budget is not None and not isinstance(budget, dict):
+                raise ValueError(
+                    f"checkpoint {key!r} has an invalid budget snapshot"
+                )
             if attempt.id != key:
                 raise ValueError(
                     f"checkpoint key {key!r} does not match attempt {attempt.id!r}"
@@ -1427,6 +1439,16 @@ class Runner:
                 f"{expected.id!r}"
             )
         _validate_response_accounting(response)
+        saved_budget = record.get("budget_after_attempt")
+        if self.call_budget is not None:
+            if not isinstance(saved_budget, dict):
+                raise ValueError(
+                    f"checkpoint lacks durable budget accounting for {expected.id!r}"
+                )
+            if saved_budget.get("budget_id") != self.call_budget.budget_id:
+                raise ValueError(
+                    f"checkpoint budget lineage mismatch for {expected.id!r}"
+                )
 
         authorities: list[Judgment] = []
         policy_evaluable = expected.params["policy_evaluable_turn"]
@@ -2472,39 +2494,66 @@ class Runner:
         """
         p = Path(path)
         p.parent.mkdir(parents=True, exist_ok=True)
-        line = json.dumps(record, ensure_ascii=False, sort_keys=True) + "\n"
-        if p.exists():
-            with p.open("rb+") as fh:
-                fh.seek(0, os.SEEK_END)
-                size = fh.tell()
-                if size:
-                    fh.seek(size - 1)
-                    if fh.read(1) != b"\n":
-                        window = min(size, 8 * 1024 * 1024)
-                        fh.seek(size - window)
-                        tail_window = fh.read(window)
-                        boundary = tail_window.rfind(b"\n")
-                        if boundary < 0 and size > window:
+        if p.is_symlink() or (p.exists() and not p.is_file()):
+            raise ValueError(
+                f"checkpoint must be a regular non-symlink file: {p}"
+            )
+        line = (
+            json.dumps(record, ensure_ascii=False, sort_keys=True) + "\n"
+        ).encode("utf-8")
+        if len(line) > _MAX_CHECKPOINT_RECORD_BYTES:
+            raise ValueError("checkpoint record exceeds the 8 MiB bound")
+
+        flags = os.O_CREAT | os.O_RDWR | getattr(os, "O_BINARY", 0)
+        if hasattr(os, "O_NOFOLLOW"):
+            flags |= os.O_NOFOLLOW
+        try:
+            descriptor = os.open(p, flags, 0o666)
+        except OSError as exc:
+            if p.is_symlink() or (p.exists() and not p.is_file()):
+                raise ValueError(
+                    f"checkpoint must be a regular non-symlink file: {p}"
+                ) from exc
+            raise
+        with os.fdopen(descriptor, "r+b") as fh:
+            opened = os.fstat(fh.fileno())
+            if not stat.S_ISREG(opened.st_mode):
+                raise ValueError(f"checkpoint must be a regular file: {p}")
+            if opened.st_size > _MAX_FULL_CHECKPOINT_BYTES:
+                raise ValueError(
+                    f"checkpoint exceeds the 512 MiB recovery bound: {p}"
+                )
+            size = opened.st_size
+            if size:
+                fh.seek(size - 1)
+                if fh.read(1) != b"\n":
+                    window = min(size, _MAX_CHECKPOINT_RECORD_BYTES)
+                    fh.seek(size - window)
+                    tail_window = fh.read(window)
+                    boundary = tail_window.rfind(b"\n")
+                    if boundary < 0 and size > window:
+                        raise ValueError(
+                            "unterminated checkpoint record exceeds the 8 MiB "
+                            "recovery inspection bound"
+                        )
+                    tail = tail_window[boundary + 1:]
+                    try:
+                        parsed = json.loads(tail.decode("utf-8"))
+                    except (UnicodeDecodeError, json.JSONDecodeError):
+                        truncate_at = size - window + boundary + 1
+                        fh.truncate(truncate_at)
+                    else:
+                        if not isinstance(parsed, dict):
                             raise ValueError(
-                                "unterminated checkpoint record exceeds the 8 MiB "
-                                "recovery inspection bound"
+                                "checkpoint final record must be a JSON object"
                             )
-                        tail = tail_window[boundary + 1:]
-                        try:
-                            parsed = json.loads(tail.decode("utf-8"))
-                        except (UnicodeDecodeError, json.JSONDecodeError):
-                            truncate_at = size - window + boundary + 1
-                            fh.truncate(truncate_at)
-                        else:
-                            if not isinstance(parsed, dict):
-                                raise ValueError(
-                                    "checkpoint final record must be a JSON object"
-                                )
-                            fh.seek(0, os.SEEK_END)
-                            fh.write(b"\n")
-                        fh.flush()
-                        os.fsync(fh.fileno())
-        with p.open("a", encoding="utf-8") as fh:
+                        fh.seek(0, os.SEEK_END)
+                        fh.write(b"\n")
+            fh.seek(0, os.SEEK_END)
+            if fh.tell() + len(line) > _MAX_FULL_CHECKPOINT_BYTES:
+                raise ValueError(
+                    f"checkpoint exceeds the 512 MiB recovery bound: {p}"
+                )
             fh.write(line)
             fh.flush()
             os.fsync(fh.fileno())
@@ -2519,40 +2568,122 @@ class Runner:
         write possible with append-only checkpointing.  Duplicate attempt ids,
         mixed run ids, and mixed schema versions are rejected.
         """
+        return {
+            attempt_id: record
+            for attempt_id, record in Runner._iter_checkpoint_records(
+                path, expected_run_id=expected_run_id
+            )
+        }
+
+    @staticmethod
+    def checkpoint_budget_snapshots(path: str | Path) -> list[object]:
+        """Strictly scan completed bundles while retaining budget snapshots."""
+        return [
+            record.get("budget_after_attempt")
+            for _, record in Runner._iter_checkpoint_records(path)
+        ]
+
+    @staticmethod
+    def _iter_checkpoint_records(
+        path: str | Path, *, expected_run_id: Optional[str] = None
+    ):
+        """Yield validated completed rows with bounded, regular-file I/O."""
         p = Path(path)
+        if p.is_symlink():
+            raise ValueError(
+                f"checkpoint must be a regular non-symlink file: {p}"
+            )
         if not p.exists():
-            return {}
-        lines = p.read_text(encoding="utf-8").splitlines()
-        records: dict[str, CheckpointRecord] = {}
-        observed_run_id: Optional[str] = expected_run_id
-        for index, line in enumerate(lines):
-            if not line.strip():
-                continue
-            try:
-                record = json.loads(line)
-            except json.JSONDecodeError as exc:
-                if index == len(lines) - 1:
-                    break
+            return
+        if not p.is_file():
+            raise ValueError(f"checkpoint must be a regular file: {p}")
+
+        flags = os.O_RDONLY | getattr(os, "O_BINARY", 0)
+        if hasattr(os, "O_NOFOLLOW"):
+            flags |= os.O_NOFOLLOW
+        try:
+            descriptor = os.open(p, flags)
+        except OSError as exc:
+            if p.is_symlink() or (p.exists() and not p.is_file()):
                 raise ValueError(
-                    f"invalid checkpoint JSON at {p}:{index + 1}"
+                    f"checkpoint must be a regular non-symlink file: {p}"
                 ) from exc
-            if not isinstance(record, dict):
-                raise ValueError(f"invalid checkpoint row at {p}:{index + 1}")
-            if record.get("schema_version") != SCHEMA_VERSION:
+            raise
+
+        observed_run_id: Optional[str] = expected_run_id
+        attempt_ids: set[str] = set()
+        with os.fdopen(descriptor, "rb") as handle:
+            opened = os.fstat(handle.fileno())
+            if not stat.S_ISREG(opened.st_mode):
+                raise ValueError(f"checkpoint must be a regular file: {p}")
+            if opened.st_size > _MAX_FULL_CHECKPOINT_BYTES:
                 raise ValueError(
-                    f"checkpoint schema mismatch at {p}:{index + 1}: "
-                    f"{record.get('schema_version')!r}"
+                    f"checkpoint exceeds the 512 MiB recovery bound: {p}"
                 )
-            row_run_id = record.get("run_id")
-            if observed_run_id is None:
-                observed_run_id = row_run_id
-            if row_run_id != observed_run_id:
-                raise ValueError(f"mixed run ids in checkpoint {p}")
-            attempt = Attempt.model_validate(record.get("attempt"))
-            if attempt.id in records:
-                raise ValueError(f"duplicate attempt id {attempt.id!r} in checkpoint {p}")
-            records[attempt.id] = record
-        return records
+            bytes_read = 0
+            line_number = 0
+            while True:
+                raw_line = handle.readline(_MAX_CHECKPOINT_RECORD_BYTES + 1)
+                if not raw_line:
+                    break
+                line_number += 1
+                bytes_read += len(raw_line)
+                if len(raw_line) > _MAX_CHECKPOINT_RECORD_BYTES:
+                    raise ValueError(
+                        "checkpoint record exceeds the 8 MiB bound at "
+                        f"{p}:{line_number}"
+                    )
+                if not raw_line.strip():
+                    continue
+                try:
+                    record = json.loads(raw_line.decode("utf-8"))
+                except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+                    if (
+                        not raw_line.endswith(b"\n")
+                        and bytes_read == opened.st_size
+                    ):
+                        break
+                    raise ValueError(
+                        f"invalid checkpoint JSON at {p}:{line_number}"
+                    ) from exc
+                if not isinstance(record, dict):
+                    raise ValueError(
+                        f"invalid checkpoint row at {p}:{line_number}"
+                    )
+                if set(record) != {
+                    "schema_version", "run_id", "attempt", "response",
+                    "judgment", "trail", "meta", "budget_after_attempt",
+                }:
+                    raise ValueError(
+                        "checkpoint has an invalid field inventory at "
+                        f"{p}:{line_number}"
+                    )
+                if record.get("schema_version") != SCHEMA_VERSION:
+                    raise ValueError(
+                        f"checkpoint schema mismatch at {p}:{line_number}: "
+                        f"{record.get('schema_version')!r}"
+                    )
+                row_run_id = record.get("run_id")
+                if observed_run_id is None:
+                    observed_run_id = row_run_id
+                if row_run_id != observed_run_id:
+                    raise ValueError(f"mixed run ids in checkpoint {p}")
+                attempt = Attempt.model_validate(record.get("attempt"))
+                budget = record.get("budget_after_attempt")
+                if budget is not None and not isinstance(budget, dict):
+                    raise ValueError(
+                        "checkpoint has invalid budget snapshot at "
+                        f"{p}:{line_number}"
+                    )
+                if attempt.id in attempt_ids:
+                    raise ValueError(
+                        f"duplicate attempt id {attempt.id!r} in checkpoint {p}"
+                    )
+                attempt_ids.add(attempt.id)
+                yield attempt.id, record
+            closed = os.fstat(handle.fileno())
+            if closed.st_size != opened.st_size or bytes_read != opened.st_size:
+                raise ValueError(f"checkpoint changed while being read: {p}")
 
     @staticmethod
     def load_response_checkpoint(
@@ -2564,56 +2695,115 @@ class Runner:
         ids are rejected even when byte-identical; a paid response has exactly one
         authoritative record and last-write-wins would conceal corruption.
         """
+        return {
+            attempt_id: record
+            for attempt_id, record in Runner._iter_response_checkpoint_records(
+                path, expected_run_id=expected_run_id
+            )
+        }
+
+    @staticmethod
+    def response_checkpoint_budget_snapshots(
+        path: str | Path,
+    ) -> list[object]:
+        """Strictly scan a sidecar while retaining only budget snapshots."""
+        return [
+            record.get("budget_after_target")
+            for _, record in Runner._iter_response_checkpoint_records(path)
+        ]
+
+    @staticmethod
+    def _iter_response_checkpoint_records(
+        path: str | Path, *, expected_run_id: Optional[str] = None
+    ):
+        """Yield validated response rows with bounded, regular-file I/O."""
         p = Path(path)
+        if p.is_symlink():
+            raise ValueError(
+                f"response checkpoint must be a regular non-symlink file: {p}"
+            )
         if not p.exists():
-            return {}
-        lines = p.read_text(encoding="utf-8").splitlines()
-        records: dict[str, CheckpointRecord] = {}
+            return
+        if not p.is_file():
+            raise ValueError(f"response checkpoint must be a regular file: {p}")
+
         observed_run_id: Optional[str] = expected_run_id
-        for index, line in enumerate(lines):
-            if not line.strip():
-                continue
-            try:
-                record = json.loads(line)
-            except json.JSONDecodeError as exc:
-                if index == len(lines) - 1:
+        attempt_ids: set[str] = set()
+        with p.open("rb") as handle:
+            opened = os.fstat(handle.fileno())
+            if not stat.S_ISREG(opened.st_mode):
+                raise ValueError(f"response checkpoint must be a regular file: {p}")
+            if opened.st_size > _MAX_RESPONSE_CHECKPOINT_BYTES:
+                raise ValueError(
+                    "response checkpoint exceeds the 512 MiB recovery bound: "
+                    f"{p}"
+                )
+            bytes_read = 0
+            line_number = 0
+            while True:
+                raw_line = handle.readline(_MAX_CHECKPOINT_RECORD_BYTES + 1)
+                if not raw_line:
                     break
-                raise ValueError(
-                    f"invalid response checkpoint JSON at {p}:{index + 1}"
-                ) from exc
-            if not isinstance(record, dict):
-                raise ValueError(f"invalid response checkpoint row at {p}:{index + 1}")
-            if set(record) != {
-                "schema_version", "run_id", "attempt", "response",
-                "budget_after_target",
-            }:
-                raise ValueError(
-                    f"response checkpoint has an invalid field inventory at "
-                    f"{p}:{index + 1}"
-                )
-            if record.get("schema_version") != SCHEMA_VERSION:
-                raise ValueError(
-                    f"response checkpoint schema mismatch at {p}:{index + 1}: "
-                    f"{record.get('schema_version')!r}"
-                )
-            row_run_id = record.get("run_id")
-            if observed_run_id is None:
-                observed_run_id = row_run_id
-            if row_run_id != observed_run_id:
-                raise ValueError(f"mixed run ids in response checkpoint {p}")
-            attempt = Attempt.model_validate(record.get("attempt"))
-            budget = record.get("budget_after_target")
-            if budget is not None and not isinstance(budget, dict):
-                raise ValueError(
-                    f"response checkpoint has invalid budget snapshot at "
-                    f"{p}:{index + 1}"
-                )
-            if attempt.id in records:
-                raise ValueError(
-                    f"duplicate attempt id {attempt.id!r} in response checkpoint {p}"
-                )
-            records[attempt.id] = record
-        return records
+                line_number += 1
+                bytes_read += len(raw_line)
+                if len(raw_line) > _MAX_CHECKPOINT_RECORD_BYTES:
+                    raise ValueError(
+                        "response checkpoint record exceeds the 8 MiB bound at "
+                        f"{p}:{line_number}"
+                    )
+                if not raw_line.strip():
+                    continue
+                try:
+                    record = json.loads(raw_line.decode("utf-8"))
+                except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+                    # A crash can leave only the final row unterminated and torn.
+                    # A terminated malformed row is corruption, not a torn write.
+                    if (
+                        not raw_line.endswith(b"\n")
+                        and bytes_read == opened.st_size
+                    ):
+                        break
+                    raise ValueError(
+                        f"invalid response checkpoint JSON at {p}:{line_number}"
+                    ) from exc
+                if not isinstance(record, dict):
+                    raise ValueError(
+                        f"invalid response checkpoint row at {p}:{line_number}"
+                    )
+                if set(record) != {
+                    "schema_version", "run_id", "attempt", "response",
+                    "budget_after_target",
+                }:
+                    raise ValueError(
+                        "response checkpoint has an invalid field inventory at "
+                        f"{p}:{line_number}"
+                    )
+                if record.get("schema_version") != SCHEMA_VERSION:
+                    raise ValueError(
+                        f"response checkpoint schema mismatch at {p}:{line_number}: "
+                        f"{record.get('schema_version')!r}"
+                    )
+                row_run_id = record.get("run_id")
+                if observed_run_id is None:
+                    observed_run_id = row_run_id
+                if row_run_id != observed_run_id:
+                    raise ValueError(f"mixed run ids in response checkpoint {p}")
+                attempt = Attempt.model_validate(record.get("attempt"))
+                budget = record.get("budget_after_target")
+                if budget is not None and not isinstance(budget, dict):
+                    raise ValueError(
+                        "response checkpoint has invalid budget snapshot at "
+                        f"{p}:{line_number}"
+                    )
+                if attempt.id in attempt_ids:
+                    raise ValueError(
+                        f"duplicate attempt id {attempt.id!r} in response checkpoint {p}"
+                    )
+                attempt_ids.add(attempt.id)
+                yield attempt.id, record
+            closed = os.fstat(handle.fileno())
+            if closed.st_size != opened.st_size or bytes_read != opened.st_size:
+                raise ValueError(f"response checkpoint changed while being read: {p}")
 
 
 # --------------------------------------------------------------------------- #

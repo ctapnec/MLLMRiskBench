@@ -1,7 +1,7 @@
 # Architecture
 
 URA-Bench separates corpus meaning, attack generation, model execution,
-judgment, and analysis. The shared boundary is schema 1.3 in
+judgment, and analysis. The shared boundary is schema 1.4 in
 `ura.data_models`; targets do not define success, and judges do not generate
 attacks.
 
@@ -12,7 +12,7 @@ flowchart LR
     C --> A[Replay or stateful attacker]
     A --> T[Hosted or local target]
     T --> J[Full-shadow judge cascade]
-    J --> R[Runner 2.3 artifacts]
+    J --> R[Runner 2.4 artifacts]
     R --> D[Disjoint pilot + frozen confirmatory plan]
     D --> H[Main analysis + human audit]
     H --> F[Final artifact and measured figures]
@@ -47,12 +47,20 @@ and a harmful authoritative violation ends the trajectory immediately.
 
 Before external calls, the matrix persists reservations against durable
 matrix-wide target-call, judge-call, transport-attempt, and deadline ceilings.
-Grid and cell locks prevent concurrent reuse of one artifact namespace. A
-systemic provider/judge failure opens a durable circuit so sibling cells do not
-repeat it; `--reset-open-circuits` is an explicit operator acknowledgement after
-the cause is fixed. Append-only checkpoints resume verified completed attempts,
-including provider continuation state, without repeating them. These are call-
-exposure controls, not dollar, token, or provider-billing guarantees.
+Grid and cell locks prevent concurrent reuse of one artifact namespace; any
+existing lock fails closed and is not reclaimed automatically. Manual removal
+is permitted only after the operator verifies that no owner remains and targets
+that exact lock. A systemic provider/judge failure opens a durable circuit so
+sibling cells do not repeat it; `--reset-open-circuits` is an explicit operator
+acknowledgement after the cause is fixed. Before a reset, the matrix validates
+the budget ledger against the greatest same-grid value found in completion,
+full completed-attempt checkpoint, response-checkpoint, error, and circuit
+evidence. Full checkpoint files must be bounded regular non-symlink files and
+each completed row carries `budget_after_attempt`. Malformed, oversized, or
+symlinked recovery candidates fail instead of disappearing from that comparison.
+Append-only checkpoints resume verified completed attempts, including provider
+continuation state, without repeating them. These are call-exposure controls,
+not dollar, token, or provider-billing guarantees.
 
 Run identity binds corpus/configuration/source code; provider-resolved identity
 is reconstructed separately from responses and trails. Any conflicting non-null
@@ -91,7 +99,10 @@ substitute for the frozen partition.
 Every hosted target and hosted LLM judge must also appear exactly once in a
 SHA-256-bound provider data-policy approval, including its role and accepted
 retention/data-use terms. The normalized approval and artifact digest enter the
-grid and every cell.
+grid and every cell. The no-call rig preflight also imports each selected hosted
+SDK and requires its credential environment variable to be nonblank. It does
+not contact a provider and therefore cannot establish account access or model
+visibility.
 
 Pilot reduction admits only real, mock-free, integrity-valid, grid-complete,
 source-validated, exclusion-free evidence. It hash-binds a normalized analysis
@@ -102,12 +113,28 @@ rate-difference SESOI, the first Holm threshold, and the discrete two-sided
 sign-flip resolution; every confirmatory contrast explicitly asserts paired
 exchangeability.
 
-The human-audit plan freezes minimum shared-cluster support and endpoint-event
-agreement for every required exact arm. Sampling satisfies the support
-constraint before export, and a failed support/agreement cell remains
-exploratory and blocks the final publishable artifact. That final artifact feeds
-exactly the primary StrongREJECT model, seven policy-qualified MM/MOSS proxy,
-and two H4 adaptivity points used by the three measured figures.
+The human-audit plan sizes one total whole-cluster sample for its stated overall
+precision target and freezes a per-required-population-cell support minimum no
+smaller than `max(2, total_clusters // population_cells)`. That is a balanced
+coverage floor, not a per-cell precision or power claim. Sampling satisfies the
+support constraint before export. Publication additionally requires complete
+sample coverage by every independent rater, preregistered cluster-equal-weight
+policy-endpoint agreement for every rater pair (violation on harmful rows and
+over-refusal on benign rows), and the separate required-arm automated-versus-
+consensus support/agreement checks; kappa remains diagnostic. Static rows are
+direct endpoint units; live rows are first collapsed to conversation endpoints,
+then conversations and source clusters are equally weighted.
+
+A failed gate blocks the final publishable artifact.
+
+The measured-figure loader reopens and rehashes the repository's frozen
+evaluation-policy bytes and accepts only the exact three families, ten global
+hypotheses, canonical Fable/Sol model selectors, defense `none`, and prescribed
+replay/Crescendo arms. Artifact alpha must equal `0.05`, target power must be at
+least `0.80`, and each family must use
+`holm_bonferroni_complete_frozen_family` at alpha `0.05`. It then feeds exactly the primary StrongREJECT model,
+seven policy-overall MM/MOSS proxy, and two H4 adaptivity points to the three
+figures; a risk-category or modality slice cannot stand in for a proxy endpoint.
 
 ## Modality behavior
 

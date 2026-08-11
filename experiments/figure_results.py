@@ -23,6 +23,7 @@ from collections import Counter, defaultdict
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable, Iterator
+from urllib.parse import quote
 
 from pydantic import ValidationError
 
@@ -52,19 +53,116 @@ _COMPLETE_STATUSES = frozenset({"complete", "complete_existing"})
 _EXPECTED_BEHAVIORS = frozenset({"refuse", "safe_answer", "comply_safely"})
 _HEX = frozenset("0123456789abcdef")
 _MM_POLICY_VERSION = "b80eedea3db312c09ded2082813390f68e750ef3:evaluation.py"
-_MM_POLICY_IDS = frozenset({
+_MM_POLICY_IDS = (
     "mmsafety:content_safety",
     "mmsafety:political_lobbying_refusal",
     "mmsafety:legal_advice_caution",
     "mmsafety:financial_advice_caution",
     "mmsafety:health_advice_caution",
     "mmsafety:government_decision_refusal",
-})
+)
 _MOSS_POLICY = (
     "mossbench:benign-refusal-rate",
     "8d68b0614b39d8990a508e03d99975832f399db2:"
     "Evaluator.py+evaluation_prompts.py",
 )
+_FABLE_MODEL_SPEC = "anthropic-fable:claude-fable-5;effort=high;max_tokens=25000"
+_SOL_MODEL_SPEC = (
+    "openai-responses:gpt-5.6-sol;reasoning_mode=pro;reasoning_effort=medium;"
+    "reasoning_context=all_turns"
+)
+_EVALUATION_POLICY_PATH = "experiments/evaluation-policy.json"
+_FROZEN_ALPHA = 0.05
+_MINIMUM_TARGET_POWER = 0.80
+_FROZEN_FAMILY_METHOD = "holm_bonferroni_complete_frozen_family"
+
+
+def _policy_token(policy_id: str, version: str) -> str:
+    return f"policy={quote(policy_id, safe='')}@{quote(version, safe='')}"
+
+
+_FROZEN_PROXY_ENDPOINTS = tuple(
+    (
+        f"mmsafety::ASR::{_policy_token(policy_id, _MM_POLICY_VERSION)}",
+        policy_id,
+        _MM_POLICY_VERSION,
+    )
+    for policy_id in _MM_POLICY_IDS
+) + ((
+    f"mossbench::over_refusal_rate::{_policy_token(*_MOSS_POLICY)}",
+    *_MOSS_POLICY,
+),)
+_FROZEN_CONTRASTS: dict[str, dict[str, Any]] = {
+    "model-fable-vs-sol": {
+        "family": "primary-model",
+        "endpoint_role": "primary",
+        "contrast_type": "model",
+        "hypotheses": ("strongreject::ASR",),
+        "facets": {
+            "strongreject": (
+                (_FABLE_MODEL_SPEC, "none", "replay"),
+                (_SOL_MODEL_SPEC, "none", "replay"),
+                "cross_target_endpoint_noncausal",
+            ),
+        },
+    },
+    "proxy-fable-vs-sol": {
+        "family": "secondary-proxies",
+        "endpoint_role": "secondary",
+        "contrast_type": "model",
+        "hypotheses": tuple(endpoint[0] for endpoint in _FROZEN_PROXY_ENDPOINTS),
+        "facets": {
+            corpus: (
+                (_FABLE_MODEL_SPEC, "none", "replay"),
+                (_SOL_MODEL_SPEC, "none", "replay"),
+                "cross_target_endpoint_noncausal",
+            )
+            for corpus in ("mmsafety", "mossbench")
+        },
+    },
+    "h4-fable": {
+        "family": "h4-adaptivity",
+        "endpoint_role": "primary",
+        "contrast_type": "adaptivity",
+        "hypotheses": ("strongreject::ASR",),
+        "facets": {
+            "strongreject": (
+                (_FABLE_MODEL_SPEC, "none", "replay"),
+                (_FABLE_MODEL_SPEC, "none", "crescendo"),
+                "within_target_adaptivity_endpoint",
+            ),
+        },
+    },
+    "h4-sol": {
+        "family": "h4-adaptivity",
+        "endpoint_role": "primary",
+        "contrast_type": "adaptivity",
+        "hypotheses": ("strongreject::ASR",),
+        "facets": {
+            "strongreject": (
+                (_SOL_MODEL_SPEC, "none", "replay"),
+                (_SOL_MODEL_SPEC, "none", "crescendo"),
+                "within_target_adaptivity_endpoint",
+            ),
+        },
+    },
+}
+_FROZEN_FAMILIES = {
+    family_id: {
+        "endpoint_role": spec["endpoint_role"],
+        "hypotheses": tuple(
+            f"{contrast_id}::{local_id}"
+            for contrast_id, contrast in _FROZEN_CONTRASTS.items()
+            if contrast["family"] == family_id
+            for local_id in contrast["hypotheses"]
+        ),
+    }
+    for family_id, spec in {
+        "primary-model": {"endpoint_role": "primary"},
+        "secondary-proxies": {"endpoint_role": "secondary"},
+        "h4-adaptivity": {"endpoint_role": "primary"},
+    }.items()
+}
 
 
 def _valid_sha256(value: Any) -> bool:
@@ -1222,6 +1320,134 @@ def _confirmatory_figure_group(
     )
 
 
+def _verify_checked_evaluation_policy(
+    *, policy: dict[str, Any], descriptor: dict[str, Any], embedded: dict[str, Any],
+) -> None:
+    """Re-read the frozen repository policy instead of trusting copied metadata."""
+    locator = descriptor["path"]
+    if locator != _EVALUATION_POLICY_PATH:
+        raise ValueError(
+            "confirmatory evaluation-policy artifact is not the checked frozen policy"
+        )
+    logical = Path(locator)
+    repo_root = Path(__file__).resolve().parents[1]
+    current = repo_root
+    for part in logical.parts:
+        current = current / part
+        if current.is_symlink():
+            raise ValueError("confirmatory evaluation-policy artifact traverses a symlink")
+    resolved = repo_root.joinpath(*logical.parts).resolve()
+    try:
+        canonical = resolved.relative_to(repo_root).as_posix()
+    except ValueError as exc:
+        raise ValueError("confirmatory evaluation-policy artifact escapes the repository") from exc
+    if canonical != locator or not resolved.is_file() or resolved.is_symlink():
+        raise ValueError("confirmatory evaluation-policy artifact is not a regular canonical file")
+    size = resolved.stat().st_size
+    raw = resolved.read_bytes()
+    observed_sha256 = hashlib.sha256(raw).hexdigest()
+    if (
+        len(raw) != size
+        or size != descriptor["bytes"]
+        or observed_sha256 != descriptor["sha256"]
+        or observed_sha256 != policy["sha256"]
+    ):
+        raise ValueError(
+            "confirmatory evaluation-policy raw bytes do not match the embedded binding"
+        )
+    try:
+        checked_content = _strict_loads(raw.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise ValueError("checked evaluation-policy artifact is not valid UTF-8 JSON") from exc
+    if (
+        not isinstance(checked_content, dict)
+        or checked_content != embedded
+        or _sha256_json(checked_content) != descriptor["content_sha256"]
+    ):
+        raise ValueError(
+            "checked evaluation-policy content does not match the embedded binding"
+        )
+
+
+def _validate_frozen_chapter_v_design(
+    families: dict[str, Any], contrasts: dict[str, Any],
+) -> None:
+    """Require the exact identities frozen in confirmatory-plan.template.json."""
+    if set(families) != set(_FROZEN_FAMILIES):
+        raise ValueError("confirmatory artifact has the wrong frozen Chapter V families")
+    for family_id, expected in _FROZEN_FAMILIES.items():
+        family = families[family_id]
+        expected_hypotheses = expected["hypotheses"]
+        if (
+            not isinstance(family, dict)
+            or family.get("method") != _FROZEN_FAMILY_METHOD
+            or family.get("alpha") != _FROZEN_ALPHA
+            or family.get("endpoint_role") != expected["endpoint_role"]
+            or family.get("family_size") != len(expected_hypotheses)
+            or family.get("frozen_hypothesis_order") != list(expected_hypotheses)
+            or not isinstance(family.get("hypotheses"), dict)
+            or set(family["hypotheses"]) != set(expected_hypotheses)
+        ):
+            raise ValueError(
+                f"multiplicity family {family_id!r} differs from the frozen Chapter V plan"
+            )
+
+    if set(contrasts) != set(_FROZEN_CONTRASTS):
+        raise ValueError("confirmatory artifact has the wrong frozen Chapter V contrasts")
+    for contrast_id, expected in _FROZEN_CONTRASTS.items():
+        report = contrasts[contrast_id]
+        preregistered = report.get("preregistered") if isinstance(report, dict) else None
+        local_ids = expected["hypotheses"]
+        global_roles = {
+            f"{contrast_id}::{local_id}": expected["endpoint_role"]
+            for local_id in local_ids
+        }
+        designs = (
+            preregistered.get("hypothesis_designs")
+            if isinstance(preregistered, dict) else None
+        )
+        if (
+            not isinstance(preregistered, dict)
+            or preregistered.get("contrast_id") != contrast_id
+            or preregistered.get("contrast_type") != expected["contrast_type"]
+            or preregistered.get("hypotheses") != list(local_ids)
+            or preregistered.get("hypothesis_endpoint_roles") != global_roles
+            or not isinstance(designs, dict)
+            or set(designs) != set(local_ids)
+            or any(
+                not isinstance(design, dict)
+                or design.get("endpoint_role") != expected["endpoint_role"]
+                for design in designs.values()
+            )
+        ):
+            raise ValueError(
+                f"contrast {contrast_id!r} differs from its frozen Chapter V hypotheses"
+            )
+        facets = report.get("facets")
+        if not isinstance(facets, dict) or set(facets) != set(expected["facets"]):
+            raise ValueError(
+                f"contrast {contrast_id!r} has the wrong frozen corpus facets"
+            )
+        for corpus, (left_signature, right_signature, comparison_type) in expected[
+            "facets"
+        ].items():
+            facet = facets[corpus]
+            left = facet.get("left") if isinstance(facet, dict) else None
+            right = facet.get("right") if isinstance(facet, dict) else None
+            if (
+                not isinstance(left, dict)
+                or not isinstance(right, dict)
+                or tuple(left.get(key) for key in ("model_spec", "defense", "attacker"))
+                != left_signature
+                or tuple(right.get(key) for key in ("model_spec", "defense", "attacker"))
+                != right_signature
+                or facet.get("comparison_type") != comparison_type
+            ):
+                raise ValueError(
+                    f"contrast {contrast_id!r}/{corpus!r} has the wrong frozen arms"
+                )
+
+
 def load_confirmatory_results(
     path: Path, *, expected_sha256: str | None = None,
 ) -> dict[str, Any]:
@@ -1234,6 +1460,21 @@ def load_confirmatory_results(
         raise ValueError("figures refuse a non-publishable confirmatory analysis artifact")
     if artifact.get("analysis_stage") != "final_human_bound":
         raise ValueError("figures require the final human-bound confirmatory stage")
+    alpha = artifact.get("alpha")
+    target_power = artifact.get("target_power")
+    if (
+        isinstance(alpha, bool)
+        or not isinstance(alpha, (int, float))
+        or float(alpha) != _FROZEN_ALPHA
+        or isinstance(target_power, bool)
+        or not isinstance(target_power, (int, float))
+        or not math.isfinite(float(target_power))
+        or not _MINIMUM_TARGET_POWER <= float(target_power) < 1.0
+    ):
+        raise ValueError(
+            "confirmatory artifact differs from the frozen Chapter V "
+            "alpha/power design"
+        )
     human_artifact = artifact.get("human_audit_artifact")
     if (
         not isinstance(human_artifact, dict)
@@ -1285,6 +1526,9 @@ def load_confirmatory_results(
         or _sha256_json(policy_content) != policy_artifact["content_sha256"]
     ):
         raise ValueError("confirmatory evaluation-policy content is invalid or drifted")
+    _verify_checked_evaluation_policy(
+        policy=policy, descriptor=policy_artifact, embedded=policy_content,
+    )
     source = artifact.get("analysis_source")
     validated_source = validate_analysis_source_identity(source)
     expected_source_paths = {
@@ -1320,6 +1564,7 @@ def load_confirmatory_results(
     contrasts = artifact.get("contrasts")
     if not isinstance(families, dict) or not isinstance(contrasts, dict):
         raise ValueError("confirmatory artifact lacks families/contrasts")
+    _validate_frozen_chapter_v_design(families, contrasts)
     hypothesis_adjustment: dict[str, dict[str, Any]] = {}
     hypothesis_family: dict[str, str] = {}
     for family_id, family in families.items():
@@ -1426,6 +1671,18 @@ def load_confirmatory_results(
                 metric=metric,
                 n_parts=len(parts),
             )
+            if figure_group == "policy_proxies":
+                expected_policy = {
+                    endpoint: (policy_id, version)
+                    for endpoint, policy_id, version in _FROZEN_PROXY_ENDPOINTS
+                }.get(local_id)
+                if expected_policy is None or (
+                    metric.get("source_policy_id"),
+                    metric.get("source_policy_version"),
+                ) != expected_policy:
+                    raise ValueError(
+                        f"figure hypothesis {local_id!r} has the wrong frozen source policy"
+                    )
             point = {
                 "point_id": global_id,
                 "status": "estimated_publishable_confirmatory",
@@ -1482,6 +1739,10 @@ def load_confirmatory_results(
         or len(adaptivity) != 2
         or any(point.get("corpus") != "strongreject" for point in overall_model)
         or any(point.get("corpus") != "strongreject" for point in adaptivity)
+        or any(
+            point.get("risk_category") is not None or point.get("modality") is not None
+            for point in policy_proxies
+        )
         or mm_proxy_inventory
         != {(policy_id, _MM_POLICY_VERSION) for policy_id in _MM_POLICY_IDS}
         or moss_proxy_inventory != {_MOSS_POLICY}

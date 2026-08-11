@@ -12,6 +12,7 @@ import pytest
 import experiments.run_matrix as run_matrix
 import ura.cli as cli_module
 import ura.runner as runner_module
+import ura.targets.api as target_api_module
 from experiments.run_matrix import _safe_component
 from ura.adapters.base import AttackBudget, BaseAttacker
 from ura.adapters.crescendo import CrescendoAttacker
@@ -686,6 +687,42 @@ def test_rig_check_runs_preflights_and_projects_calls_without_generation(
     assert target.calls == 0
 
 
+def test_preflight_only_checks_hosted_sdks_and_keys_without_provider_calls(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture,
+) -> None:
+    imported: list[str] = []
+
+    def fake_require(module: str, _feature: str):
+        imported.append(module)
+        return object()
+
+    monkeypatch.setattr(target_api_module, "_require", fake_require)
+    monkeypatch.setattr(target_api_module.OpenAITarget, "modality_support", ("text",))
+    monkeypatch.setenv("OPENAI_API_KEY", "present-only-not-used")
+    target_spec = "openai:target-fixture"
+    judge_spec = "openai:judge-fixture"
+    args = [
+        "--preflight-only", "--api", target_spec,
+        "--attackers", "replay", "--judges", "llm",
+        "--judge-model", judge_spec, "--corpora", "synth",
+        "--limit", "1", "--max-queries", "1", "--max-turns", "1",
+        "--out", str(tmp_path / "run"),
+        *_provider_policy_args(tmp_path, [
+            (target_spec, "openai", ["target"]),
+            (judge_spec, "openai", ["judge"]),
+        ]),
+    ]
+
+    assert run_matrix.main(args) == 0
+    output = capsys.readouterr().out
+    assert imported == ["openai", "openai"]
+    assert "SDK import and credential presence only" in output
+    assert "account access and model visibility were not checked" in output
+    assert "no target or judge generation calls were made" in output
+
+
 def test_real_grid_requires_finite_limits_before_generation(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -823,6 +860,245 @@ def test_rolled_back_budget_ledger_fails_before_generation(
     assert "ledger is behind trustworthy same-grid" in capsys.readouterr().err
 
 
+def test_failed_call_errors_and_circuits_are_budget_recovery_evidence(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture,
+) -> None:
+    class ProviderError(RuntimeError):
+        call_audit = {
+            "transport_attempt_count": 1,
+            "logical_call_count": 1,
+            "provider": "fixture",
+            "operation": "generate",
+            "error_type": "service_unavailable",
+        }
+
+    class FailingTarget(BaseTarget):
+        name = "recovery-failure-target"
+        modality_support = ("text",)
+        max_transport_attempts_per_call = 1
+
+        def __init__(self) -> None:
+            self.calls = 0
+
+        def generate(self, dialog, *, seed=None):
+            self.calls += 1
+            raise ProviderError("provider unavailable")
+
+    target = FailingTarget()
+    monkeypatch.setattr(run_matrix, "build_target", lambda *_a, **_kw: target)
+    args = [
+        "--api", "fixture:model", "--attackers", "replay",
+        "--judges", "rules", "--corpora", "synth", "--limit", "1",
+        "--max-queries", "1", "--max-turns", "1", "--out", str(tmp_path),
+        *_provider_policy_args(tmp_path, [
+            ("fixture:model", "fixture", ["target"]),
+        ]),
+    ]
+    assert run_matrix.main(args) == 1
+    assert target.calls == 1
+
+    budget_path = next(tmp_path.glob("grid-*.budget.json"))
+    budget = json.loads(budget_path.read_text(encoding="utf-8"))
+    for field in ("target_calls", "judge_calls", "http_attempts"):
+        budget[field] = 0
+    run_matrix._write_json(budget_path, budget)
+    circuit_path = next(tmp_path.glob("grid-*.circuits.json"))
+    circuit_payload = json.loads(circuit_path.read_text(encoding="utf-8"))
+
+    # The per-cell failed-call artifact independently preserves the high-water
+    # mark if the circuit file is absent.
+    circuit_path.unlink()
+    assert run_matrix.main(args) == 1
+    assert target.calls == 1
+    assert "error artifact" in capsys.readouterr().err
+
+    # A reset acknowledgement cannot erase circuit evidence before validating
+    # it against the durable ledger.
+    run_matrix._write_json(circuit_path, circuit_payload)
+    for path in tmp_path.glob("*.error.json"):
+        path.unlink()
+    assert run_matrix.main([*args, "--reset-open-circuits"]) == 1
+    assert target.calls == 1
+    assert circuit_path.exists()
+    assert "circuit state" in capsys.readouterr().err
+
+
+def test_budget_recovery_fails_closed_on_malformed_or_oversized_response_sidecar(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    current = GlobalCallBudget(budget_id="grid-test").snapshot()
+    sidecar = tmp_path / "cell.responses.checkpoint.jsonl"
+    sidecar.write_bytes(b"{malformed}\n")
+    with pytest.raises(ValueError, match="invalid response checkpoint JSON"):
+        run_matrix._response_checkpoint_budget_snapshots(tmp_path, current)
+
+    sidecar.write_bytes(b"{}\n")
+    monkeypatch.setattr(runner_module, "_MAX_RESPONSE_CHECKPOINT_BYTES", 2)
+    with pytest.raises(ValueError, match="exceeds the 512 MiB recovery bound"):
+        run_matrix._response_checkpoint_budget_snapshots(tmp_path, current)
+
+
+def test_budget_recovery_fails_closed_on_symlinked_response_sidecar(
+    tmp_path: Path,
+) -> None:
+    current = GlobalCallBudget(budget_id="grid-test").snapshot()
+    source = tmp_path / "source.jsonl"
+    source.write_text("{}\n", encoding="utf-8")
+    sidecar = tmp_path / "cell.responses.checkpoint.jsonl"
+    try:
+        sidecar.symlink_to(source)
+    except OSError:
+        pytest.skip("this Windows account cannot create symlinks")
+    with pytest.raises(ValueError, match="non-symlink"):
+        run_matrix._response_checkpoint_budget_snapshots(tmp_path, current)
+
+
+def test_completed_checkpoint_preserves_post_judge_budget_high_water(
+    tmp_path: Path,
+) -> None:
+    budget = GlobalCallBudget(
+        max_target_calls=2,
+        max_judge_calls=2,
+        max_http_attempts=2,
+        state_path=tmp_path / "grid-test.budget.json",
+        budget_id="grid-test",
+    )
+    judge = _SafeBinaryJudge()
+    judge.judge_target = MockTarget()
+    runner = Runner(
+        _FloodAttacker(),
+        _RecordingTarget(),
+        JudgeCascade([judge]),
+        AttackBudget(max_queries=1, max_turns=1, seed=0),
+        [0],
+        call_budget=budget,
+    )
+    checkpoint = tmp_path / "cell.checkpoint.jsonl"
+    runner.run(
+        [_datapoint()],
+        on_record=lambda record: Runner.append_checkpoint(checkpoint, record),
+    )
+    persisted = budget.snapshot()
+    assert persisted["target_calls"] == 1
+    assert persisted["judge_calls"] == 1
+
+    rolled_back = dict(persisted)
+    rolled_back["judge_calls"] = 0
+    with pytest.raises(ValueError, match="checkpoint .*judge_calls ledger=0 artifact=1"):
+        run_matrix._validate_budget_recovery_high_water(tmp_path, rolled_back)
+
+
+def test_post_judge_checkpoint_blocks_rolled_back_grid_before_another_call(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture,
+) -> None:
+    out = tmp_path / "matrix"
+    args = [
+        "--dry-run", "--attackers", "replay", "--judges", "rules",
+        "--corpora", "synth", "--limit", "1", "--seeds", "0",
+        "--max-queries", "1", "--max-turns", "1",
+        "--max-total-target-calls", "2",
+        "--max-total-judge-calls", "2",
+        "--max-total-http-attempts", "2",
+        "--out", str(out),
+    ]
+    assert run_matrix.main(args) == 0
+    capsys.readouterr()
+    grid_id = next(out.glob("grid-*.budget.json")).name.removesuffix(
+        ".budget.json"
+    )
+
+    evidence_budget = GlobalCallBudget(
+        max_target_calls=2,
+        max_judge_calls=2,
+        max_http_attempts=2,
+        budget_id=grid_id,
+    )
+    judge = _SafeBinaryJudge()
+    judge.judge_target = MockTarget()
+    evidence_runner = Runner(
+        _FloodAttacker(),
+        _RecordingTarget(),
+        JudgeCascade([judge]),
+        AttackBudget(max_queries=1, max_turns=1, seed=0),
+        [0],
+        call_budget=evidence_budget,
+    )
+    records: list[dict] = []
+    evidence_runner.run([_datapoint()], on_record=records.append)
+    assert records[0]["budget_after_attempt"]["judge_calls"] == 1
+    Runner.append_checkpoint(out / "orphan.checkpoint.jsonl", records[0])
+
+    calls = 0
+
+    def forbidden_generate(self, dialog, *, seed=None):
+        nonlocal calls
+        calls += 1
+        raise AssertionError("budget rollback must fail before generation")
+
+    monkeypatch.setattr(MockTarget, "generate", forbidden_generate)
+    assert run_matrix.main(args) == 1
+    assert calls == 0
+    assert "checkpoint orphan.checkpoint.jsonl" in capsys.readouterr().err
+
+
+def test_full_checkpoint_recovery_rejects_malformed_and_oversized_files(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    current = GlobalCallBudget(budget_id="grid-test").snapshot()
+    checkpoint = tmp_path / "cell.checkpoint.jsonl"
+    checkpoint.write_bytes(b"{malformed but newline-terminated}\n")
+    with pytest.raises(ValueError, match="invalid checkpoint JSON"):
+        run_matrix._checkpoint_budget_snapshots(tmp_path, current)
+
+    checkpoint.write_bytes(b"{}\n")
+    monkeypatch.setattr(runner_module, "_MAX_FULL_CHECKPOINT_BYTES", 2)
+    with pytest.raises(ValueError, match="exceeds the 512 MiB recovery bound"):
+        run_matrix._checkpoint_budget_snapshots(tmp_path, current)
+
+
+def test_full_checkpoint_load_and_append_reject_symlinks_and_nonfiles(
+    tmp_path: Path,
+) -> None:
+    directory = tmp_path / "directory.checkpoint.jsonl"
+    directory.mkdir()
+    with pytest.raises(ValueError, match="regular non-symlink|regular file"):
+        Runner.load_checkpoint(directory)
+    with pytest.raises(ValueError, match="regular non-symlink"):
+        Runner.append_checkpoint(directory, {})
+
+    source = tmp_path / "source.jsonl"
+    source.write_text("{}\n", encoding="utf-8")
+    checkpoint = tmp_path / "linked.checkpoint.jsonl"
+    try:
+        checkpoint.symlink_to(source)
+    except OSError:
+        pytest.skip("this Windows account cannot create symlinks")
+    with pytest.raises(ValueError, match="non-symlink"):
+        Runner.load_checkpoint(checkpoint)
+    with pytest.raises(ValueError, match="non-symlink"):
+        Runner.append_checkpoint(checkpoint, {})
+    assert source.read_text(encoding="utf-8") == "{}\n"
+
+
+def test_budget_recovery_fails_closed_on_uninspectable_completion_marker(
+    tmp_path: Path,
+) -> None:
+    current = GlobalCallBudget(budget_id="grid-test").snapshot()
+    marker = tmp_path / "candidate.complete.json"
+    marker.mkdir()
+    with pytest.raises(ValueError, match="regular non-symlink JSON file"):
+        run_matrix._completion_budget_snapshots(tmp_path, current)
+
+    marker.rmdir()
+    marker.write_bytes(b"x" * (1024 * 1024 + 1))
+    with pytest.raises(ValueError, match="no larger than 1048576 bytes"):
+        run_matrix._completion_budget_snapshots(tmp_path, current)
+
+
 def test_budget_ledger_dominating_completion_allows_call_free_resume(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -891,20 +1167,26 @@ def test_matrix_completion_recomputes_realized_identity_manifest(
 
 
 @pytest.mark.parametrize("name", ["grid.lock", "cell.lock"])
-def test_dead_artifact_locks_are_reclaimed_and_owner_checked(
+def test_existing_artifact_locks_fail_closed_until_manually_removed(
     tmp_path: Path, name: str,
 ) -> None:
     path = tmp_path / name
-    path.write_text(json.dumps({
+    original = json.dumps({
         "owner_token": "dead-owner",
         "pid": 2_147_483_647,
         "host": run_matrix.platform.node(),
         "created_epoch": 0,
-    }), encoding="utf-8")
+    })
+    path.write_text(original, encoding="utf-8")
 
-    token = run_matrix._acquire_artifact_lock(
-        path, {"kind": name}, stale_seconds=86_400
-    )
+    with pytest.raises(run_matrix.LockHeldError, match="remove this lock manually"):
+        run_matrix._acquire_artifact_lock(
+            path, {"kind": name}, stale_seconds=86_400
+        )
+    assert path.read_text(encoding="utf-8") == original
+
+    path.unlink()
+    token = run_matrix._acquire_artifact_lock(path, {"kind": name}, stale_seconds=1)
     assert token != "dead-owner"
     run_matrix._release_artifact_lock(path, "wrong-owner")
     assert path.exists()
@@ -989,8 +1271,21 @@ def test_completion_is_atomic_and_stale_errors_are_removed(
     stale_error = tmp_path / f"{stem}.error.json"
     stale_lock_error = tmp_path / f"{stem}__old.lock.error.json"
     stale_response_checkpoint = tmp_path / f"{stem}.responses.checkpoint.jsonl"
-    for path in (stale_error, stale_lock_error, stale_response_checkpoint):
+    for path in (stale_error, stale_lock_error):
         path.write_text("{}\n", encoding="utf-8")
+    stale_response_checkpoint.write_text(json.dumps({
+        "schema_version": SCHEMA_VERSION,
+        "run_id": marker.name.removesuffix(".complete.json").rsplit("__", 1)[-1],
+        "attempt": json.loads((tmp_path / f"{stem}.attempts.jsonl").read_text(
+            encoding="utf-8"
+        ).splitlines()[0]),
+        "response": json.loads((tmp_path / f"{stem}.responses.jsonl").read_text(
+            encoding="utf-8"
+        ).splitlines()[0]),
+        "budget_after_target": json.loads(next(
+            tmp_path.glob("grid-*.budget.json")
+        ).read_text(encoding="utf-8")),
+    }, sort_keys=True) + "\n", encoding="utf-8")
 
     assert run_matrix.main(args) == 0
     assert not stale_error.exists()
@@ -2430,10 +2725,27 @@ def test_checkpoint_loader_rejects_duplicate_attempt_ids(tmp_path: Path):
     runner = _runner(_FloodAttacker(), _RecordingTarget())
     records: list[dict] = []
     _, manifest = runner.run([_datapoint()], on_record=records.append)
+    assert "budget_after_attempt" in records[0]
     checkpoint = tmp_path / "checkpoint.jsonl"
     Runner.append_checkpoint(checkpoint, records[0])
     Runner.append_checkpoint(checkpoint, records[0])
     with pytest.raises(ValueError, match="duplicate attempt id"):
+        Runner.load_checkpoint(checkpoint, expected_run_id=manifest.run_id)
+
+
+def test_checkpoint_loader_requires_a_valid_post_attempt_budget_snapshot(
+    tmp_path: Path,
+) -> None:
+    runner = _runner(_FloodAttacker(), _RecordingTarget())
+    records: list[dict] = []
+    _, manifest = runner.run([_datapoint()], on_record=records.append)
+    tampered = json.loads(json.dumps(records[0]))
+    tampered["budget_after_attempt"] = "not-a-budget-snapshot"
+    checkpoint = tmp_path / "checkpoint.jsonl"
+    checkpoint.write_text(
+        json.dumps(tampered, sort_keys=True) + "\n", encoding="utf-8"
+    )
+    with pytest.raises(ValueError, match="invalid budget snapshot"):
         Runner.load_checkpoint(checkpoint, expected_run_id=manifest.run_id)
 
 

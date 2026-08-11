@@ -1,8 +1,8 @@
-# Unified schema v1.3
+# Unified schema v1.4
 
 `ura.data_models` is the typed Pydantic v2 contract shared by converters,
-attackers, targets, judges, persistence, and analysis. `SCHEMA_VERSION = "1.3"`
-is stamped on datapoints, checkpoints, and manifests. Runner 2.3 rejects mixed
+attackers, targets, judges, persistence, and analysis. `SCHEMA_VERSION = "1.4"`
+is stamped on datapoints, checkpoints, and manifests. Runner 2.4 rejects mixed
 schema versions and duplicate datapoint IDs before a target call.
 
 ## Records
@@ -31,6 +31,10 @@ Each cell persists attempts, responses, authoritative judgments, full shadow
 judge trails, aggregate results, a manifest, an append-only checkpoint, and
 only after validation a completion marker. Records join on `(run_id,
 model/target, attempt_id)`; an attempt ID alone is not globally unique.
+Every completed-attempt checkpoint row includes `budget_after_attempt` when a
+durable grid budget is active. Full checkpoint files are bounded regular
+non-symlink JSONL, with bounded rows, and their same-grid snapshots participate
+in budget high-water recovery before another external call.
 
 Judgment provenance includes source/risk/expectation, declared and effective
 modality, source-cluster identity, attacker/strategy/seed/turn, target, exact
@@ -83,8 +87,8 @@ official evaluator actually ran and its provenance says so.
 - modalities and required identifiers are non-empty and non-duplicated;
 - executable media uses full 64-character SHA-256 digests;
 - scores lie in `[0,1]`, aggregate values are finite, and intervals are coherent;
-- checkpoints match run identity, attempt lineage, and rendered-input
-  fingerprints before resume;
+- checkpoints match schema/run identity, exact field inventory, attempt lineage,
+  rendered-input fingerprints, and post-attempt budget lineage before resume;
 - non-null target and ordered judge-stage provider/model/fingerprint/revision
   identity stays stable across calls and resume;
 - source-policy inventories and realized identity digests reconstruct from the
@@ -112,16 +116,27 @@ Post-run planning artifacts are separately content-addressed. A sizing-pilot
 artifact records its admissibility checks, zero endpoint exclusions, mock-free
 status, normalized paired-analysis design and design digest. The confirmatory
 plan freezes `assume_exchangeable: true` for each tested contrast and a human
-`validity_gate` containing minimum shared-cluster support and endpoint-event
-agreement. The resulting human-audit artifact records the completed labels CSV
-name, byte count, and SHA-256, and its uncertainty settings must equal the plan.
-These are analysis contracts rather than additions to schema v1.3's runtime
+`validity_gate` containing the derived balanced population-cell support floor,
+the frozen required-arm automated-versus-consensus threshold, and the frozen
+inter-rater endpoint-agreement threshold. The resulting human-audit artifact
+records the completed labels CSV name, byte count, and SHA-256; complete rater
+coverage; pairwise policy-endpoint agreement and support, with static rows used
+directly and live challenge rows collapsed to conversation endpoints before
+equal conversation-within-cluster and equal-cluster weighting; required-arm gate
+results; and uncertainty settings that must equal the plan. Its pair records
+therefore expose `n_shared_endpoint_conversations`, `endpoint_unit`, and
+`weighting` alongside agreement and unique-cluster support.
+
+The total audit precision design is not a per-cell precision or power claim.
+These are analysis contracts rather than additions to schema v1.4's runtime
 record types.
 
 The confirmatory plan also binds the checked-in interpretation policy by a
 canonical repository-relative path, exact byte count, raw SHA-256, policy ID and
 version. Confirmatory output embeds the verified JSON and its canonical-content
-digest so measured-figure provenance consumes the resolved policy rather than a
-self-asserted label. This compact provenance contract is not a policy engine;
+digest. Measured loading reopens that canonical path, rejects symlink/path drift,
+and verifies the current raw bytes, SHA-256, and parsed content against the
+embedded binding before figure provenance consumes it. This compact provenance
+contract is not a policy engine;
 the realized target snapshot plus requested and realized judge identities remain
 independently bound by the pilot/main analysis design.

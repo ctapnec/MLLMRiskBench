@@ -9,6 +9,7 @@ from types import SimpleNamespace
 
 import pytest
 
+import ura.targets.api as api_module
 from ura.data_models import (
     DataPoint,
     DialogTurn,
@@ -35,6 +36,7 @@ from ura.targets.api import (
     ProviderTransportError,
     _encode_media,
     build_api_target,
+    preflight_api_target_runtime,
 )
 from ura.targets.guarded import GuardedTarget
 from ura.targets.local import (
@@ -52,6 +54,36 @@ def _media(path: Path, data: bytes) -> MediaRef:
         sha256=hashlib.sha256(data).hexdigest(),
         mime="image/png",
     )
+
+
+def test_hosted_runtime_preflight_checks_import_and_key_without_building_client(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    imports: list[tuple[str, str]] = []
+
+    def fake_require(module: str, feature: str):
+        imports.append((module, feature))
+        return object()
+
+    monkeypatch.setattr(api_module, "_require", fake_require)
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    target = OpenAITarget("fixture", requested_spec="openai:fixture")
+
+    with pytest.raises(RuntimeError, match="credential presence was checked"):
+        preflight_api_target_runtime(target)
+    assert target._client is None
+
+    monkeypatch.setenv("OPENAI_API_KEY", "present-only-not-used")
+    assert preflight_api_target_runtime(target) == {
+        "target": "openai:fixture",
+        "sdk_module": "openai",
+        "credential_env": "OPENAI_API_KEY",
+    }
+    assert imports == [
+        ("openai", "openai:fixture local preflight"),
+        ("openai", "openai:fixture local preflight"),
+    ]
+    assert target._client is None
 
 
 def test_local_media_is_allowlisted_and_hash_verified(tmp_path: Path) -> None:

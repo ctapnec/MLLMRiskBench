@@ -61,8 +61,13 @@ For every live grid, set finite `--max-total-target-calls`,
 `--max-total-judge-calls`, `--max-total-http-attempts`, and
 `--deadline-seconds`. Reservations are durably recorded before external calls;
 systemic provider/judge failures open a durable circuit. Fix the cause before
-using `--reset-open-circuits`. Do not delete or hand-edit budget, circuit, lock,
-checkpoint, completion, or error artifacts to force a run onward. These controls
+using `--reset-open-circuits`. Do not delete or hand-edit budget, circuit,
+checkpoint, completion, or error artifacts to force a run onward. Existing
+locks fail closed and are never reclaimed automatically. If an abandoned lock
+must be cleared, first verify that its PID/host/process identity has no active
+owner, then remove only that exact lock and record the intervention. Recovery
+validates the budget ledger against same-grid completion, checkpoint, error, and
+circuit high-water evidence before any new call or circuit reset. These controls
 bound declared call exposure, not dollars, tokens, provider-side retries outside
 the declared transport, or billing reconciliation.
 

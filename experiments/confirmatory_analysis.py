@@ -416,25 +416,47 @@ def _human_design(
         or minimum_raters < 2
     ):
         raise ValueError("human_audit.minimum_independent_raters must be an integer >=2")
+    sensitivity_requirements = _human_sensitivity_requirements(
+        plan, plan_dir=plan_dir,
+    )
+    population_cells = {
+        (
+            item["corpus"], item["source_policy_id"],
+            item["source_policy_version"], item.get("risk_category"),
+            item.get("modality"), item["metric"], item["expected_population"],
+        )
+        for item in sensitivity_requirements
+    }
+    if not population_cells or required < 2 * len(population_cells):
+        raise ValueError(
+            "human-audit precision design cannot provide at least two clusters "
+            "to every required population cell"
+        )
+    balanced_support_floor = max(2, required // len(population_cells))
     validity_gate = human_plan.get("validity_gate")
     if not isinstance(validity_gate, dict) or set(validity_gate) != {
         "minimum_shared_clusters_per_required_cell",
         "minimum_endpoint_agreement",
+        "minimum_inter_rater_endpoint_agreement",
     }:
         raise ValueError(
-            "human_audit.validity_gate must freeze shared-cluster support and "
-            "endpoint agreement"
+            "human_audit.validity_gate must freeze balanced shared-cluster "
+            "support, automated-consensus agreement, and inter-rater agreement"
         )
     minimum_shared = validity_gate.get(
         "minimum_shared_clusters_per_required_cell"
     )
     minimum_agreement = validity_gate.get("minimum_endpoint_agreement")
+    minimum_inter_rater_agreement = validity_gate.get(
+        "minimum_inter_rater_endpoint_agreement"
+    )
     if (
         not isinstance(minimum_shared, int) or isinstance(minimum_shared, bool)
-        or minimum_shared < 2 or minimum_shared > required
+        or minimum_shared < balanced_support_floor or minimum_shared > required
     ):
         raise ValueError(
-            "human_audit validity support must be an integer between 2 and "
+            "human_audit validity support must be an integer between the "
+            f"balanced population-cell floor ({balanced_support_floor}) and "
             "required_unique_clusters"
         )
     if (
@@ -445,6 +467,14 @@ def _human_design(
         raise ValueError(
             "human_audit minimum_endpoint_agreement must lie in (0,1]"
         )
+    if (
+        not isinstance(minimum_inter_rater_agreement, (int, float))
+        or isinstance(minimum_inter_rater_agreement, bool)
+        or not 0 < float(minimum_inter_rater_agreement) <= 1
+    ):
+        raise ValueError(
+            "human_audit minimum_inter_rater_endpoint_agreement must lie in (0,1]"
+        )
     return {
         "required_unique_clusters": required,
         "precision_half_width": half_width,
@@ -454,14 +484,17 @@ def _human_design(
         "validity_gate": {
             "minimum_shared_clusters_per_required_cell": minimum_shared,
             "minimum_endpoint_agreement": float(minimum_agreement),
+            "minimum_inter_rater_endpoint_agreement": float(
+                minimum_inter_rater_agreement
+            ),
+            "minimum_required_cell_support_floor": balanced_support_floor,
+            "n_required_population_cells": len(population_cells),
         },
         "pilot_artifact": pilot["_artifact_identity"] if pilot is not None else None,
         "pilot_source_run_ids": pilot_run_ids,
         "pilot_cluster_ids": cluster_ids,
         "confirmatory_plan_artifact": plan_artifact,
-        "sensitivity_requirements": _human_sensitivity_requirements(
-            plan, plan_dir=plan_dir,
-        ),
+        "sensitivity_requirements": sensitivity_requirements,
     }
 
 
@@ -840,6 +873,15 @@ def _validated_human_audit(
         "minimum_endpoint_agreement": design["validity_gate"][
             "minimum_endpoint_agreement"
         ],
+        "minimum_inter_rater_endpoint_agreement": design["validity_gate"][
+            "minimum_inter_rater_endpoint_agreement"
+        ],
+        "minimum_required_cell_support_floor": design["validity_gate"][
+            "minimum_required_cell_support_floor"
+        ],
+        "n_required_population_cells": design["validity_gate"][
+            "n_required_population_cells"
+        ],
     }
     if frozen != expected_frozen:
         raise ValueError("human audit does not match the frozen cluster/rater design")
@@ -904,6 +946,14 @@ def _validated_human_audit(
         != expected_gate["minimum_shared_clusters_per_required_cell"]
         or validity_gate.get("minimum_endpoint_agreement")
         != expected_gate["minimum_endpoint_agreement"]
+        or validity_gate.get("minimum_inter_rater_endpoint_agreement")
+        != expected_gate["minimum_inter_rater_endpoint_agreement"]
+        or validity_gate.get("minimum_required_cell_support_floor")
+        != expected_gate["minimum_required_cell_support_floor"]
+        or validity_gate.get("n_required_population_cells")
+        != expected_gate["n_required_population_cells"]
+        or validity_gate.get("full_rater_coverage") is not True
+        or validity_gate.get("all_inter_rater_pairs_passed") is not True
         or not isinstance(gate_cells, dict)
         or set(gate_cells) != expected_requirement_ids
     ):

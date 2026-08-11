@@ -5,8 +5,8 @@ validity rules, then execute [RUN_AND_RETURN.md](RUN_AND_RETURN.md). A dry run,
 partial artifact family, placeholder model ID, or preliminary analysis is not a
 measured thesis result.
 
-The maintained execution contract is Runner `ura-runner/2.3` with unified
-schema `1.3`; older artifacts are not mixed into this workflow.
+The maintained execution contract is Runner `ura-runner/2.4` with unified
+schema `1.4`; older artifacts are not mixed into this workflow.
 
 ## Minimal lifecycle
 
@@ -105,7 +105,17 @@ the upstream official evaluator ran.
 - Set finite matrix-wide call, transport-attempt, and wall-clock ceilings.
   Preserve the durable budget/circuit/lock artifacts and resume from the same
   directory. `rig_check` rejects a ceiling below its conservative complete-grid
-  projection. Reset a circuit only after fixing its cause.
+  projection, imports the selected hosted SDKs, and requires their credential
+  environment variables to be nonblank without making a provider request; it
+  cannot establish account access or model visibility. Same-grid completion,
+  full completed-attempt checkpoint, response-checkpoint, error, and circuit
+  evidence sets the recoverable budget high-water mark before a circuit reset.
+  Full checkpoints are bounded regular non-symlink files whose completed rows
+  carry `budget_after_attempt`. Malformed, oversized, or symlinked recovery
+  candidates fail closed. Existing locks are never reclaimed
+  automatically; remove one exact lock only after verifying that no owner is
+  running and recording the intervention. Reset a circuit only after fixing its
+  cause.
 - `--limit N` counts unique prompt/intent clusters and keeps every row in each
   selected cluster. It is for diagnostics when no measured partition is in use;
   it is not a row count.
@@ -126,15 +136,27 @@ clusters with the complete frozen `family_size`. Sizing uses
 `"assume_exchangeable": true`; otherwise it is descriptive, not a confirmatory
 p-value.
 
-Freeze `human_audit.validity_gate` with at least two shared clusters per required
-cell and a prospective endpoint-agreement threshold (`0.80` is recommended).
-The selector guarantees that support before export. Human uncertainty uses the
-plan's exact alpha, resample count, and seed, and the audit content-addresses the
-completed labels CSV. Failure in any required arm makes the audit/final artifact
-non-publishable. Measured rendering then emits
+Freeze `human_audit.validity_gate` with a shared-cluster minimum at least equal
+to `max(2, required_unique_clusters // n_required_population_cells)`, plus
+prospective automated-versus-consensus and inter-rater endpoint-agreement
+thresholds (`0.80` is recommended for each). The total audit size targets
+overall precision; the balanced cell floor is support, not per-cell precision
+or power. The selector guarantees support before export. Every independent
+rater must cover the complete sample, and every rater pair must pass the
+cluster-equal-weight policy-endpoint gate (violation for harmful rows,
+over-refusal for benign rows). Static rows are direct endpoint units; live
+challenge rows are collapsed with `any` to conversation endpoints before equal
+conversation-within-cluster and equal-cluster weighting. Kappa remains
+diagnostic. Human uncertainty uses the plan's exact alpha, resample count, and
+seed, and the audit content-addresses the completed labels CSV. Failure in any
+required gate makes the audit/final artifact non-publishable. Measured rendering then emits
 `fig-v-asr-by-model.png` (one StrongREJECT model point),
 `fig-v-policy-proxies.png` (six MM ASR plus one MOSS FRR point), and
-`fig-v-adaptivity.png` (two H4 points).
+`fig-v-adaptivity.png` (two H4 points). Its loader reopens and rehashes the
+checked evaluation policy and requires the exact frozen families, hypotheses,
+canonical Fable/Sol specifications, defense `none`, replay/Crescendo selectors,
+policy-overall proxy endpoints, artifact `alpha=0.05`, `target_power>=0.80`, and
+family method `holm_bonferroni_complete_frozen_family` at `alpha=0.05`.
 
 ## Artifacts
 

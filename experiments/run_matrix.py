@@ -100,7 +100,10 @@ from ura.runner import (                              # noqa: E402
     realized_identity_summary,
 )
 from ura import source_metrics                        # noqa: E402
-from ura.targets.api import build_api_target              # noqa: E402
+from ura.targets.api import (                              # noqa: E402
+    build_api_target,
+    preflight_api_target_runtime,
+)
 
 
 _WINDOWS_RESERVED = {
@@ -142,12 +145,15 @@ class CircuitOpenError(RuntimeError):
 def _acquire_artifact_lock(
     path: Path, payload: dict[str, object], *, stale_seconds: int
 ) -> str:
-    """Atomically acquire a PID/host/age-aware lock, reclaiming dead owners.
+    """Atomically acquire a lock; existing locks require manual removal.
 
-    Same-host dead PIDs are reclaimed immediately. Cross-host or malformed
-    locks are reclaimed only after the explicit stale interval. A live
-    same-host PID is always respected, regardless of age.
+    An earlier implementation inspected and then unlinked apparently stale
+    locks.  That compare/delete sequence cannot be made ownership-safe across
+    all supported filesystems.  Fail closed instead: PID/host/age metadata is
+    diagnostic only, and an operator must verify and remove an abandoned lock.
     """
+    if stale_seconds < 0:
+        raise ValueError("lock stale interval must not be negative")
     token = secrets.token_hex(16)
     body = {
         **payload,
@@ -159,66 +165,19 @@ def _acquire_artifact_lock(
     }
     encoded = (json.dumps(body, sort_keys=True, allow_nan=False) + "\n").encode("utf-8")
     flags = os.O_CREAT | os.O_EXCL | os.O_WRONLY
-    for _ in range(2):
-        try:
-            descriptor = os.open(str(path), flags)
-        except FileExistsError as exc:
-            try:
-                if path.stat().st_size > 64 * 1024:
-                    raise ValueError("lock payload too large")
-                existing_bytes = path.read_bytes()
-                holder = _json_loads_strict(existing_bytes.decode("utf-8"))
-                if not isinstance(holder, dict):
-                    holder = {}
-            except (OSError, UnicodeDecodeError, ValueError):
-                existing_bytes = b""
-                holder = {}
-            same_host = holder.get("host") == platform.node()
-            pid = holder.get("pid")
-            pid_is_live = (
-                same_host and isinstance(pid, int) and not isinstance(pid, bool)
-                and _pid_alive(pid)
-            )
-            saved_process_identity = holder.get("process_identity")
-            current_process_identity = (
-                _process_identity(pid) if pid_is_live else None
-            )
-            process_identity_matches = (
-                saved_process_identity is None
-                or current_process_identity is None
-                or saved_process_identity == current_process_identity
-            )
-            live_same_host = (
-                pid_is_live and process_identity_matches
-            )
-            dead_same_host = (
-                same_host and isinstance(pid, int) and not isinstance(pid, bool)
-                and (not pid_is_live or not process_identity_matches)
-            )
-            created = holder.get("created_epoch")
-            if not isinstance(created, (int, float)) or isinstance(created, bool):
-                try:
-                    created = path.stat().st_mtime
-                except OSError:
-                    created = time.time()
-            age = max(0.0, time.time() - float(created))
-            stale_by_age = not live_same_host and age >= stale_seconds
-            if not (dead_same_host or stale_by_age):
-                raise LockHeldError(f"artifact lock is held: {path}") from exc
-            # Compare-and-delete: never unlink a lock that changed after inspection.
-            try:
-                if existing_bytes and path.read_bytes() != existing_bytes:
-                    raise LockHeldError(f"artifact lock changed during reclaim: {path}")
-                path.unlink()
-            except FileNotFoundError:
-                pass
-            continue
-        with os.fdopen(descriptor, "wb") as handle:
-            handle.write(encoded)
-            handle.flush()
-            os.fsync(handle.fileno())
-        return token
-    raise LockHeldError(f"artifact lock could not be acquired after reclaim: {path}")
+    try:
+        descriptor = os.open(str(path), flags)
+    except FileExistsError as exc:
+        raise LockHeldError(
+            f"artifact lock already exists: {path}; automatic stale-lock "
+            "reclamation is disabled. Verify that no owner is active, then "
+            "remove this lock manually"
+        ) from exc
+    with os.fdopen(descriptor, "wb") as handle:
+        handle.write(encoded)
+        handle.flush()
+        os.fsync(handle.fileno())
+    return token
 
 
 def _release_artifact_lock(path: Path, token: str) -> None:
@@ -1278,6 +1237,86 @@ def _read_jsonl(path: Path) -> list[dict]:
 
 
 _BUDGET_COUNTER_FIELDS = ("target_calls", "judge_calls", "http_attempts")
+_CALL_AUDIT_FIELDS = {
+    "transport_attempt_count", "logical_call_count", "provider", "operation",
+    "resolved_model", "status_code", "error_type", "provider_request_id",
+    "provider_response_id",
+}
+_CIRCUIT_ENTRY_FIELDS = {
+    "opened_at", "exception_type", "phase", "message", "call_audit",
+    "budget_snapshot",
+}
+
+
+def _read_bounded_recovery_json(
+    path: Path, *, label: str, max_bytes: int = 1024 * 1024,
+) -> dict[str, object]:
+    """Read one bounded regular recovery artifact without following symlinks."""
+    if path.is_symlink() or not path.is_file():
+        raise ValueError(f"{label} must be a regular non-symlink JSON file")
+    size = path.stat().st_size
+    if size <= 0 or size > max_bytes:
+        raise ValueError(
+            f"{label} must be non-empty and no larger than {max_bytes} bytes"
+        )
+    raw = path.read_bytes()
+    if len(raw) != size:
+        raise ValueError(f"{label} changed while being read")
+    try:
+        payload = _json_loads_strict(raw.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError, ValueError) as exc:
+        raise ValueError(f"{label} is malformed JSON") from exc
+    if not isinstance(payload, dict):
+        raise ValueError(f"{label} must contain a JSON object")
+    return payload
+
+
+def _validate_recovery_call_audit(value: object, *, label: str) -> None:
+    if not isinstance(value, dict) or set(value) - _CALL_AUDIT_FIELDS:
+        raise ValueError(f"{label} has invalid failed-call audit provenance")
+    for key, item in value.items():
+        if key in {"transport_attempt_count", "logical_call_count"}:
+            if isinstance(item, bool) or not isinstance(item, int) or item < 0:
+                raise ValueError(f"{label} has invalid failed-call audit {key}")
+        elif not (
+            (isinstance(item, int) and not isinstance(item, bool))
+            or (isinstance(item, str) and len(item) <= 512)
+        ):
+            raise ValueError(f"{label} has invalid failed-call audit {key}")
+
+
+def _validate_circuit_entry(value: object, *, label: str) -> dict[str, object]:
+    if not isinstance(value, dict) or set(value) != _CIRCUIT_ENTRY_FIELDS:
+        raise ValueError(f"{label} has an invalid circuit entry")
+    for field in ("opened_at", "exception_type", "phase", "message"):
+        item = value.get(field)
+        if not isinstance(item, str) or not item or len(item) > 2000:
+            raise ValueError(f"{label} has invalid circuit {field}")
+    _validate_recovery_call_audit(
+        value.get("call_audit"), label=f"{label} circuit"
+    )
+    if not isinstance(value.get("budget_snapshot"), dict):
+        raise ValueError(f"{label} lacks a circuit budget snapshot")
+    return dict(value)
+
+
+def _load_circuit_state(path: Path, *, grid_id: str) -> dict[str, dict[str, object]]:
+    payload = _read_bounded_recovery_json(path, label="circuit state")
+    if (
+        set(payload) != {"format_version", "grid_id", "circuits"}
+        or payload.get("format_version") != 1
+        or payload.get("grid_id") != grid_id
+        or not isinstance(payload.get("circuits"), dict)
+    ):
+        raise ValueError("invalid circuit state")
+    circuits: dict[str, dict[str, object]] = {}
+    for key, value in payload["circuits"].items():
+        if not isinstance(key, str) or not key.strip():
+            raise ValueError("circuit state has an invalid dependency key")
+        circuits[key] = _validate_circuit_entry(
+            value, label=f"circuit state {key!r}"
+        )
+    return circuits
 
 
 def _same_grid_budget_snapshot(
@@ -1306,15 +1345,11 @@ def _completion_budget_snapshots(
     grid_id = str(current["budget_id"])
     suffix = ".complete.json"
     for marker_path in sorted(out.glob(f"*{suffix}")):
-        if (
-            marker_path.is_symlink()
-            or not marker_path.is_file()
-            or marker_path.stat().st_size > 1024 * 1024
-        ):
-            continue
-        marker = _json_loads_strict(marker_path.read_text(encoding="utf-8"))
-        if not isinstance(marker, dict):
-            continue
+        # The filename does not carry a grid id. We therefore cannot safely
+        # discard an uninspectable candidate before parsing its lineage.
+        marker = _read_bounded_recovery_json(
+            marker_path, label=f"completion marker {marker_path.name!r}"
+        )
         snapshot = _same_grid_budget_snapshot(
             marker.get("call_budget_snapshot"), current,
             label=f"completion marker {marker_path.name!r}",
@@ -1368,20 +1403,12 @@ def _response_checkpoint_budget_snapshots(
 ) -> list[tuple[str, dict[str, object]]]:
     """Read budget high-water marks from strict response recovery records."""
     found: list[tuple[str, dict[str, object]]] = []
-    grid_id = str(current["budget_id"])
     for path in sorted(out.glob("*.responses.checkpoint.jsonl")):
-        if path.is_symlink() or not path.is_file():
-            continue
-        size = path.stat().st_size
-        if size <= 0 or size > 512 * 1024 * 1024:
-            continue
-        # Checkpoint names do not contain the grid id. Avoid parsing unrelated
-        # old-grid recovery files unless their bytes claim the active lineage.
-        raw = path.read_text(encoding="utf-8")
-        if grid_id not in raw:
-            continue
-        records = Runner.load_response_checkpoint(path)
-        snapshots = [record.get("budget_after_target") for record in records.values()]
+        # The filename does not identify a grid, so every candidate must be
+        # safely parsed before its lineage can be known. The runner scanner is
+        # bounded and streaming; malformed, oversized, and symlinked candidates
+        # fail closed instead of disappearing from the high-water calculation.
+        snapshots = Runner.response_checkpoint_budget_snapshots(path)
         matching = [
             _same_grid_budget_snapshot(
                 value, current, label=f"response checkpoint {path.name!r}"
@@ -1401,13 +1428,106 @@ def _response_checkpoint_budget_snapshots(
     return found
 
 
-def _validate_budget_recovery_high_water(
+def _checkpoint_budget_snapshots(
     out: Path, current: dict[str, object],
+) -> list[tuple[str, dict[str, object]]]:
+    """Read post-attempt high-water marks from strict completed bundles."""
+    found: list[tuple[str, dict[str, object]]] = []
+    paths = (
+        path for path in sorted(out.glob("*.checkpoint.jsonl"))
+        if not path.name.endswith(".responses.checkpoint.jsonl")
+    )
+    for path in paths:
+        snapshots = Runner.checkpoint_budget_snapshots(path)
+        matching = [
+            _same_grid_budget_snapshot(
+                value, current, label=f"checkpoint {path.name!r}"
+            )
+            for value in snapshots
+        ]
+        matching = [value for value in matching if value is not None]
+        if not matching:
+            continue
+        if len(matching) != len(snapshots):
+            raise ValueError(
+                f"checkpoint {path.name!r} mixes call-budget lineages"
+            )
+        found.extend((f"checkpoint {path.name}", value) for value in matching)
+    return found
+
+
+def _error_budget_snapshots(
+    out: Path, current: dict[str, object],
+) -> list[tuple[str, dict[str, object]]]:
+    """Read strictly validated same-grid failure snapshots."""
+    found: list[tuple[str, dict[str, object]]] = []
+    for path in sorted(out.glob("*.error.json")):
+        payload = _read_bounded_recovery_json(
+            path, label=f"error artifact {path.name!r}"
+        )
+        snapshot = _same_grid_budget_snapshot(
+            payload.get("call_budget_snapshot"), current,
+            label=f"error artifact {path.name!r}",
+        )
+        if snapshot is None:
+            continue
+        if payload.get("status") != "error":
+            raise ValueError(
+                f"same-grid error artifact {path.name!r} is not trustworthy"
+            )
+        audit = payload.get("call_audit")
+        nested_circuit = payload.get("circuit")
+        if audit is None and nested_circuit is None:
+            raise ValueError(
+                f"same-grid error artifact {path.name!r} lacks failure provenance"
+            )
+        if audit is not None:
+            _validate_recovery_call_audit(
+                audit, label=f"error artifact {path.name!r}"
+            )
+        if nested_circuit is not None:
+            circuit = _validate_circuit_entry(
+                nested_circuit, label=f"error artifact {path.name!r}"
+            )
+            circuit_snapshot = _same_grid_budget_snapshot(
+                circuit["budget_snapshot"], current,
+                label=f"error artifact {path.name!r} nested circuit",
+            )
+            if circuit_snapshot is None:
+                raise ValueError(
+                    f"same-grid error artifact {path.name!r} mixes budget lineages"
+                )
+            found.append((f"error artifact {path.name} nested circuit", circuit_snapshot))
+        found.append((f"error artifact {path.name}", snapshot))
+    return found
+
+
+def _circuit_budget_snapshots(
+    circuits: dict[str, dict[str, object]], current: dict[str, object],
+) -> list[tuple[str, dict[str, object]]]:
+    found: list[tuple[str, dict[str, object]]] = []
+    for key, circuit in circuits.items():
+        snapshot = _same_grid_budget_snapshot(
+            circuit.get("budget_snapshot"), current,
+            label=f"circuit state {key!r}",
+        )
+        if snapshot is None:
+            raise ValueError(f"circuit state {key!r} mixes budget lineages")
+        found.append((f"circuit state {key}", snapshot))
+    return found
+
+
+def _validate_budget_recovery_high_water(
+    out: Path, current: dict[str, object], *,
+    circuits: dict[str, dict[str, object]] | None = None,
 ) -> None:
     """Reject a rolled-back ledger before another external call can start."""
     snapshots = [
         *_completion_budget_snapshots(out, current),
+        *_checkpoint_budget_snapshots(out, current),
         *_response_checkpoint_budget_snapshots(out, current),
+        *_error_budget_snapshots(out, current),
+        *_circuit_budget_snapshots(circuits or {}, current),
     ]
     for label, snapshot in snapshots:
         ahead = {
@@ -2096,34 +2216,8 @@ def _select_corpus(
     return [dps[index] for index in indices], indices, selected_cluster_ids, keys
 
 
-def _pid_alive(pid: int) -> bool:
-    """Best-effort liveness check for a lock holder's pid (Windows-safe)."""
-    if os.name == "nt":
-        import ctypes
-        query = 0x1000  # PROCESS_QUERY_LIMITED_INFORMATION
-        still_active = 259
-        kernel32 = ctypes.windll.kernel32
-        handle = kernel32.OpenProcess(query, False, pid)
-        if not handle:
-            return False
-        try:
-            code = ctypes.c_ulong()
-            if not kernel32.GetExitCodeProcess(handle, ctypes.byref(code)):
-                return True  # cannot determine: assume alive (fail safe)
-            return code.value == still_active
-        finally:
-            kernel32.CloseHandle(handle)
-    try:
-        os.kill(pid, 0)
-    except ProcessLookupError:
-        return False
-    except PermissionError:
-        return True
-    return True
-
-
 def _process_identity(pid: int) -> str | None:
-    """Best-effort process creation identity, preventing PID-reuse lock poison."""
+    """Best-effort process creation identity for manual lock diagnosis."""
     if os.name == "nt":
         import ctypes
 
@@ -2420,8 +2514,8 @@ def main(argv=None) -> int:
                          "first invocation; an admitted in-flight call retains its "
                          "configured provider timeout (0 = none)")
     ap.add_argument("--lock-stale-seconds", type=int, default=86400,
-                    help="age at which a non-live/cross-host artifact lock may be "
-                         "reclaimed (default: 86400)")
+                    help="diagnostic stale-age metadata only; locks are never "
+                         "removed automatically (default: 86400)")
     ap.add_argument("--reset-open-circuits", action="store_true",
                     help="operator acknowledgement: clear the durable provider/"
                          "judge circuit after correcting its root cause")
@@ -2648,7 +2742,9 @@ def main(argv=None) -> int:
         )
 
     prebuilt_targets: dict[str, object] = {}
+    hosted_runtime_checks: list[dict[str, str]] = []
     for spec in model_specs:
+        setup_phase = "target_construction"
         try:
             target = build_target(
                 spec,
@@ -2656,6 +2752,14 @@ def main(argv=None) -> int:
                 dtype=args.dtype,
                 local_identity=local_configs.get(spec),
             )
+            if args.preflight_only:
+                setup_phase = "hosted_runtime_preflight"
+                readiness = preflight_api_target_runtime(target)
+                if readiness is not None:
+                    hosted_runtime_checks.append({
+                        "role": "target", "model_spec": spec, **readiness,
+                    })
+            setup_phase = "target_construction"
             if args.defense != "none":
                 from ura.targets.guarded import GuardedTarget
                 if args.defense_guard == "guardrail":
@@ -2681,7 +2785,7 @@ def main(argv=None) -> int:
                 )
                 _write_json(setup_error, {
                     "status": "error",
-                    "phase": "target_construction",
+                    "phase": setup_phase,
                     "preflight": True,
                     "corpus": corpus_name,
                     "model_spec": persisted_model_specs[spec],
@@ -2698,6 +2802,33 @@ def main(argv=None) -> int:
     target_names = [str(getattr(target, "name", "")) for target in prebuilt_targets.values()]
     if len(set(target_names)) != len(target_names):
         ap.error("target specs resolve to duplicate runtime target identities")
+    if args.preflight_only and "llm" in judge_names:
+        try:
+            judge_target = build_api_target(args.judge_model)
+            readiness = preflight_api_target_runtime(judge_target)
+            if readiness is not None:
+                hosted_runtime_checks.append({
+                    "role": "judge",
+                    "model_spec": args.judge_model,
+                    **readiness,
+                })
+        except Exception as exc:  # noqa: BLE001 - fail no-call preflight
+            error_path = out / "judge-hosted-runtime-preflight.error.json"
+            _write_json(error_path, {
+                "status": "error",
+                "phase": "hosted_runtime_preflight",
+                "preflight": True,
+                "role": "judge",
+                "model_spec": args.judge_model,
+                "exception_type": type(exc).__name__,
+                "message": str(exc)[:2000],
+            })
+            print(
+                "judge hosted runtime preflight failed: "
+                f"{type(exc).__name__}: {exc}",
+                file=sys.stderr,
+            )
+            return 1
     companion_binding: dict[str, object] | None = None
     companion_evidence: dict[
         str, set[tuple[str, tuple[str, ...]]]
@@ -2866,6 +2997,17 @@ def main(argv=None) -> int:
     circuits: dict[str, dict[str, object]] = {}
 
     if args.preflight_only:
+        if hosted_runtime_checks:
+            print(
+                "local hosted readiness passed (SDK import and credential "
+                "presence only; provider account access and model visibility "
+                "were not checked): "
+                + json.dumps(
+                    hosted_runtime_checks,
+                    sort_keys=True,
+                    separators=(",", ":"),
+                )
+            )
         print(
             f"rig preflight passed for {grid_id}; no target or judge generation "
             "calls were made"
@@ -2919,20 +3061,11 @@ def main(argv=None) -> int:
         # Circuit reset/read and budget-ledger initialization are protected by
         # the grid lock.  A concurrent operator can neither erase an active
         # circuit nor race the first durable budget reservation.
-        if args.reset_open_circuits:
-            circuit_path.unlink(missing_ok=True)
-        if circuit_path.exists():
-            circuit_payload = _json_loads_strict(
-                circuit_path.read_text(encoding="utf-8")
-            )
-            if (
-                not isinstance(circuit_payload, dict)
-                or circuit_payload.get("format_version") != 1
-                or circuit_payload.get("grid_id") != grid_id
-                or not isinstance(circuit_payload.get("circuits"), dict)
-            ):
-                raise ValueError("invalid circuit state")
-            circuits = dict(circuit_payload["circuits"])
+        persisted_circuits = (
+            _load_circuit_state(circuit_path, grid_id=grid_id)
+            if circuit_path.exists() or circuit_path.is_symlink()
+            else {}
+        )
 
         budget_ledger_existed = budget_path.exists()
         if budget_ledger_existed:
@@ -2957,8 +3090,16 @@ def main(argv=None) -> int:
             budget_id=grid_id,
         )
         _validate_budget_recovery_high_water(
-            out, call_budget.snapshot()
+            out, call_budget.snapshot(), circuits=persisted_circuits,
         )
+        # Reset only after every durable failure/recovery artifact has been
+        # validated against the ledger. Otherwise reset could erase the sole
+        # high-water evidence for a paid failed call.
+        if args.reset_open_circuits:
+            circuit_path.unlink(missing_ok=True)
+            circuits = {}
+        else:
+            circuits = persisted_circuits
     except (OSError, ValueError) as exc:
         _release_artifact_lock(grid_lock, grid_lock_token)
         print(f"cannot initialize matrix lifecycle: {exc}", file=sys.stderr)
