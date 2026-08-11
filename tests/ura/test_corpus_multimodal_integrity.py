@@ -276,10 +276,17 @@ def test_converted_identity_is_independent_of_checkout_root(tmp_path: Path):
     )
 
 
-def test_modality_planner_fails_when_supported_released_data_is_unselected():
+def test_modality_planner_scopes_coverage_to_the_selected_grid():
     target = _Target(("text", "image"))
-    with pytest.raises(ModalityCoverageError, match="silently incomplete.*image"):
-        plan_modality_coverage([target], {"strongreject": [_point("text", ["text"])]})
+    plan = plan_modality_coverage(
+        [target], {"strongreject": [_point("text", ["text"])]}
+    )
+    by_combination = {item.combination: item for item in plan.items}
+    assert by_combination[("text",)].status == "planned"
+    assert by_combination[("text", "image")].status == "unavailable"
+    assert "selected datapoint" in (
+        by_combination[("text", "image")].justification or ""
+    )
 
 
 def test_modality_planner_requires_real_execution_for_each_combination():

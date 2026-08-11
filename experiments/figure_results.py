@@ -6,12 +6,12 @@ marker named by a fully completed matrix grid.  Every core artifact is validated
 against the Pydantic release schema and every Attempt -> Response -> Judgment ->
 trail join is reconstructed before analysis.
 
-Corpora are always separate facets.  The canonical confirmatory loader maps the
-frozen families to a primary model contrast, policy-qualified multimodal/utility
-proxy endpoints, and within-target adaptivity contrasts.  It routes points by
-their explicit endpoint semantics, so benign false-refusal endpoints cannot be
-presented as harmful ASR.  No marginal model ranking and no cross-corpus
-denominator is produced here.
+Corpora are always separate facets.  The post-experiment loader maps completed
+paired comparisons to a primary model contrast, policy-qualified multimodal and
+utility proxy endpoints, and within-target adaptivity contrasts.  It routes
+points by explicit endpoint semantics, so benign false-refusal endpoints cannot
+be presented as harmful ASR.  The output is descriptive and exploratory: no
+prospective power, multiplicity, or confirmation claim is manufactured.
 """
 from __future__ import annotations
 
@@ -23,15 +23,20 @@ from collections import Counter, defaultdict
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable, Iterator
-from urllib.parse import quote
 
 from pydantic import ValidationError
 
-from experiments.paired_compare import compare_cells
+from experiments.paired_compare import compare, compare_adaptivity, compare_cells
 from experiments.analysis_integrity import (
     analysis_source_identity,
     read_bound_json,
+    source_policy_token,
     validate_analysis_source_identity,
+)
+from ura.converters.release_specs import (
+    MM_SAFETYBENCH_POLICY_DESCRIPTORS,
+    mm_safetybench_policy,
+    mossbench_policy,
 )
 from ura.data_models import (
     SCHEMA_VERSION,
@@ -52,117 +57,11 @@ _REQUIRED_ARTIFACTS = frozenset({
 _COMPLETE_STATUSES = frozenset({"complete", "complete_existing"})
 _EXPECTED_BEHAVIORS = frozenset({"refuse", "safe_answer", "comply_safely"})
 _HEX = frozenset("0123456789abcdef")
-_MM_POLICY_VERSION = "b80eedea3db312c09ded2082813390f68e750ef3:evaluation.py"
-_MM_POLICY_IDS = (
-    "mmsafety:content_safety",
-    "mmsafety:political_lobbying_refusal",
-    "mmsafety:legal_advice_caution",
-    "mmsafety:financial_advice_caution",
-    "mmsafety:health_advice_caution",
-    "mmsafety:government_decision_refusal",
+_FIGURE_NAMES = (
+    "fig-v-asr-by-model.png",
+    "fig-v-policy-proxies.png",
+    "fig-v-adaptivity.png",
 )
-_MOSS_POLICY = (
-    "mossbench:benign-refusal-rate",
-    "8d68b0614b39d8990a508e03d99975832f399db2:"
-    "Evaluator.py+evaluation_prompts.py",
-)
-_FABLE_MODEL_SPEC = "anthropic-fable:claude-fable-5;effort=high;max_tokens=25000"
-_SOL_MODEL_SPEC = (
-    "openai-responses:gpt-5.6-sol;reasoning_mode=pro;reasoning_effort=medium;"
-    "reasoning_context=all_turns"
-)
-_EVALUATION_POLICY_PATH = "experiments/evaluation-policy.json"
-_FROZEN_ALPHA = 0.05
-_MINIMUM_TARGET_POWER = 0.80
-_FROZEN_FAMILY_METHOD = "holm_bonferroni_complete_frozen_family"
-
-
-def _policy_token(policy_id: str, version: str) -> str:
-    return f"policy={quote(policy_id, safe='')}@{quote(version, safe='')}"
-
-
-_FROZEN_PROXY_ENDPOINTS = tuple(
-    (
-        f"mmsafety::ASR::{_policy_token(policy_id, _MM_POLICY_VERSION)}",
-        policy_id,
-        _MM_POLICY_VERSION,
-    )
-    for policy_id in _MM_POLICY_IDS
-) + ((
-    f"mossbench::over_refusal_rate::{_policy_token(*_MOSS_POLICY)}",
-    *_MOSS_POLICY,
-),)
-_FROZEN_CONTRASTS: dict[str, dict[str, Any]] = {
-    "model-fable-vs-sol": {
-        "family": "primary-model",
-        "endpoint_role": "primary",
-        "contrast_type": "model",
-        "hypotheses": ("strongreject::ASR",),
-        "facets": {
-            "strongreject": (
-                (_FABLE_MODEL_SPEC, "none", "replay"),
-                (_SOL_MODEL_SPEC, "none", "replay"),
-                "cross_target_endpoint_noncausal",
-            ),
-        },
-    },
-    "proxy-fable-vs-sol": {
-        "family": "secondary-proxies",
-        "endpoint_role": "secondary",
-        "contrast_type": "model",
-        "hypotheses": tuple(endpoint[0] for endpoint in _FROZEN_PROXY_ENDPOINTS),
-        "facets": {
-            corpus: (
-                (_FABLE_MODEL_SPEC, "none", "replay"),
-                (_SOL_MODEL_SPEC, "none", "replay"),
-                "cross_target_endpoint_noncausal",
-            )
-            for corpus in ("mmsafety", "mossbench")
-        },
-    },
-    "h4-fable": {
-        "family": "h4-adaptivity",
-        "endpoint_role": "primary",
-        "contrast_type": "adaptivity",
-        "hypotheses": ("strongreject::ASR",),
-        "facets": {
-            "strongreject": (
-                (_FABLE_MODEL_SPEC, "none", "replay"),
-                (_FABLE_MODEL_SPEC, "none", "crescendo"),
-                "within_target_adaptivity_endpoint",
-            ),
-        },
-    },
-    "h4-sol": {
-        "family": "h4-adaptivity",
-        "endpoint_role": "primary",
-        "contrast_type": "adaptivity",
-        "hypotheses": ("strongreject::ASR",),
-        "facets": {
-            "strongreject": (
-                (_SOL_MODEL_SPEC, "none", "replay"),
-                (_SOL_MODEL_SPEC, "none", "crescendo"),
-                "within_target_adaptivity_endpoint",
-            ),
-        },
-    },
-}
-_FROZEN_FAMILIES = {
-    family_id: {
-        "endpoint_role": spec["endpoint_role"],
-        "hypotheses": tuple(
-            f"{contrast_id}::{local_id}"
-            for contrast_id, contrast in _FROZEN_CONTRASTS.items()
-            if contrast["family"] == family_id
-            for local_id in contrast["hypotheses"]
-        ),
-    }
-    for family_id, spec in {
-        "primary-model": {"endpoint_role": "primary"},
-        "secondary-proxies": {"endpoint_role": "secondary"},
-        "h4-adaptivity": {"endpoint_role": "primary"},
-    }.items()
-}
 
 
 def _valid_sha256(value: Any) -> bool:
@@ -861,7 +760,7 @@ def _paired_units(
 ) -> tuple[
     dict[tuple[str, str, str, int], tuple[_Unit, _Unit]], dict[str, Any]
 ]:
-    # Reuse the prespecified comparison implementation for configuration-factor,
+    # Reuse the shared comparison implementation for configuration-factor,
     # exact-input and construct validation.  Figure estimates below strengthen
     # its cluster identity with explicit corpus and source components.
     semantic = compare_cells(left, right, mode="static", n_resamples=1, seed=seed)
@@ -1274,540 +1173,362 @@ def load_defense_results(
     return points
 
 
-def _confirmatory_figure_group(
-    *, local_id: str, comparison_type: Any, metric: dict[str, Any], n_parts: int,
-) -> str:
-    """Return the frozen Chapter V figure group for one typed endpoint."""
-    metric_name = local_id.split("::")[1]
-    expected = {
-        "ASR": ("ASR", "harmful_expected_refusal"),
-        "over_refusal_rate": ("FRR", "benign_expected_answer"),
-    }.get(metric_name)
-    if expected is None:
-        raise ValueError(f"figure hypothesis {local_id!r} uses an unsupported endpoint")
-    observed_metric = metric.get("metric")
-    observed_alias = metric.get("metric_alias")
-    observed_population = metric.get("population")
-    if observed_metric != metric_name:
+def _require_ready_facet(
+    report: dict[str, Any], corpus: str, *, metric_name: str,
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    facets = report.get("facets")
+    unavailable = report.get("unavailable_facets")
+    if not isinstance(facets, dict) or set(facets) != {corpus}:
         raise ValueError(
-            f"figure hypothesis {local_id!r} resolved to metric {observed_metric!r}"
+            f"figure contrast must resolve exactly the {corpus!r} corpus facet"
         )
-    if (observed_alias, observed_population) != expected:
-        raise ValueError(
-            f"figure hypothesis {local_id!r} has inconsistent endpoint semantics: "
-            f"alias/population={(observed_alias, observed_population)!r}, "
-            f"expected={expected!r}"
-        )
-
-    policy_qualified = n_parts in {3, 5}
-    if comparison_type == "cross_target_endpoint_noncausal":
-        if expected[0] == "ASR" and not policy_qualified:
-            return "overall_model"
-        if policy_qualified:
-            return "policy_proxies"
-        raise ValueError(
-            f"cross-target benign endpoint {local_id!r} must be policy-qualified"
-        )
-    if comparison_type == "within_target_adaptivity_endpoint":
-        if expected == ("ASR", "harmful_expected_refusal") and n_parts == 2:
-            return "adaptivity"
-        raise ValueError(
-            f"adaptivity figure hypothesis {local_id!r} must be an overall harmful ASR"
-        )
-    raise ValueError(
-        f"figure hypothesis {local_id!r} has unsupported comparison_type "
-        f"{comparison_type!r}"
-    )
-
-
-def _verify_checked_evaluation_policy(
-    *, policy: dict[str, Any], descriptor: dict[str, Any], embedded: dict[str, Any],
-) -> None:
-    """Re-read the frozen repository policy instead of trusting copied metadata."""
-    locator = descriptor["path"]
-    if locator != _EVALUATION_POLICY_PATH:
-        raise ValueError(
-            "confirmatory evaluation-policy artifact is not the checked frozen policy"
-        )
-    logical = Path(locator)
-    repo_root = Path(__file__).resolve().parents[1]
-    current = repo_root
-    for part in logical.parts:
-        current = current / part
-        if current.is_symlink():
-            raise ValueError("confirmatory evaluation-policy artifact traverses a symlink")
-    resolved = repo_root.joinpath(*logical.parts).resolve()
-    try:
-        canonical = resolved.relative_to(repo_root).as_posix()
-    except ValueError as exc:
-        raise ValueError("confirmatory evaluation-policy artifact escapes the repository") from exc
-    if canonical != locator or not resolved.is_file() or resolved.is_symlink():
-        raise ValueError("confirmatory evaluation-policy artifact is not a regular canonical file")
-    size = resolved.stat().st_size
-    raw = resolved.read_bytes()
-    observed_sha256 = hashlib.sha256(raw).hexdigest()
+    if unavailable not in ({}, None):
+        raise ValueError("figure contrast contains unavailable corpus facets")
+    facet = facets[corpus]
+    checks = facet.get("analysis_readiness_checks")
     if (
-        len(raw) != size
-        or size != descriptor["bytes"]
-        or observed_sha256 != descriptor["sha256"]
-        or observed_sha256 != policy["sha256"]
+        facet.get("analysis_ready_real_run") is not True
+        or not isinstance(checks, dict)
+        or not checks
+        or not all(value is True for value in checks.values())
+        or facet.get("unexplained_exclusions") != 0
     ):
+        raise ValueError(f"figure contrast for {corpus!r} is not analysis-ready")
+    metrics = facet.get("metrics")
+    metric = metrics.get(metric_name) if isinstance(metrics, dict) else None
+    if not isinstance(metric, dict) or metric.get("status") != "estimated":
         raise ValueError(
-            "confirmatory evaluation-policy raw bytes do not match the embedded binding"
+            f"figure endpoint {corpus!r}/{metric_name!r} is not estimable"
         )
-    try:
-        checked_content = _strict_loads(raw.decode("utf-8"))
-    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
-        raise ValueError("checked evaluation-policy artifact is not valid UTF-8 JSON") from exc
+    audit = metric.get("pairing_audit")
     if (
-        not isinstance(checked_content, dict)
-        or checked_content != embedded
-        or _sha256_json(checked_content) != descriptor["content_sha256"]
-    ):
-        raise ValueError(
-            "checked evaluation-policy content does not match the embedded binding"
-        )
-
-
-def _validate_frozen_chapter_v_design(
-    families: dict[str, Any], contrasts: dict[str, Any],
-) -> None:
-    """Require the exact identities frozen in confirmatory-plan.template.json."""
-    if set(families) != set(_FROZEN_FAMILIES):
-        raise ValueError("confirmatory artifact has the wrong frozen Chapter V families")
-    for family_id, expected in _FROZEN_FAMILIES.items():
-        family = families[family_id]
-        expected_hypotheses = expected["hypotheses"]
-        if (
-            not isinstance(family, dict)
-            or family.get("method") != _FROZEN_FAMILY_METHOD
-            or family.get("alpha") != _FROZEN_ALPHA
-            or family.get("endpoint_role") != expected["endpoint_role"]
-            or family.get("family_size") != len(expected_hypotheses)
-            or family.get("frozen_hypothesis_order") != list(expected_hypotheses)
-            or not isinstance(family.get("hypotheses"), dict)
-            or set(family["hypotheses"]) != set(expected_hypotheses)
-        ):
-            raise ValueError(
-                f"multiplicity family {family_id!r} differs from the frozen Chapter V plan"
-            )
-
-    if set(contrasts) != set(_FROZEN_CONTRASTS):
-        raise ValueError("confirmatory artifact has the wrong frozen Chapter V contrasts")
-    for contrast_id, expected in _FROZEN_CONTRASTS.items():
-        report = contrasts[contrast_id]
-        preregistered = report.get("preregistered") if isinstance(report, dict) else None
-        local_ids = expected["hypotheses"]
-        global_roles = {
-            f"{contrast_id}::{local_id}": expected["endpoint_role"]
-            for local_id in local_ids
-        }
-        designs = (
-            preregistered.get("hypothesis_designs")
-            if isinstance(preregistered, dict) else None
-        )
-        if (
-            not isinstance(preregistered, dict)
-            or preregistered.get("contrast_id") != contrast_id
-            or preregistered.get("contrast_type") != expected["contrast_type"]
-            or preregistered.get("hypotheses") != list(local_ids)
-            or preregistered.get("hypothesis_endpoint_roles") != global_roles
-            or not isinstance(designs, dict)
-            or set(designs) != set(local_ids)
-            or any(
-                not isinstance(design, dict)
-                or design.get("endpoint_role") != expected["endpoint_role"]
-                for design in designs.values()
-            )
-        ):
-            raise ValueError(
-                f"contrast {contrast_id!r} differs from its frozen Chapter V hypotheses"
-            )
-        facets = report.get("facets")
-        if not isinstance(facets, dict) or set(facets) != set(expected["facets"]):
-            raise ValueError(
-                f"contrast {contrast_id!r} has the wrong frozen corpus facets"
-            )
-        for corpus, (left_signature, right_signature, comparison_type) in expected[
-            "facets"
-        ].items():
-            facet = facets[corpus]
-            left = facet.get("left") if isinstance(facet, dict) else None
-            right = facet.get("right") if isinstance(facet, dict) else None
-            if (
-                not isinstance(left, dict)
-                or not isinstance(right, dict)
-                or tuple(left.get(key) for key in ("model_spec", "defense", "attacker"))
-                != left_signature
-                or tuple(right.get(key) for key in ("model_spec", "defense", "attacker"))
-                != right_signature
-                or facet.get("comparison_type") != comparison_type
-            ):
-                raise ValueError(
-                    f"contrast {contrast_id!r}/{corpus!r} has the wrong frozen arms"
-                )
-
-
-def load_confirmatory_results(
-    path: Path, *, expected_sha256: str | None = None,
-) -> dict[str, Any]:
-    """Build measured figure data only from a publishable analysis artifact."""
-    artifact = read_bound_json(Path(path), expected_sha256=expected_sha256)
-    artifact_identity = artifact.pop("_artifact_identity")
-    if artifact.get("schema_version") != "ura-confirmatory-analysis/1.0":
-        raise ValueError("figure analysis artifact has an unsupported schema_version")
-    if artifact.get("publishable_real_run") is not True:
-        raise ValueError("figures refuse a non-publishable confirmatory analysis artifact")
-    if artifact.get("analysis_stage") != "final_human_bound":
-        raise ValueError("figures require the final human-bound confirmatory stage")
-    alpha = artifact.get("alpha")
-    target_power = artifact.get("target_power")
-    if (
-        isinstance(alpha, bool)
-        or not isinstance(alpha, (int, float))
-        or float(alpha) != _FROZEN_ALPHA
-        or isinstance(target_power, bool)
-        or not isinstance(target_power, (int, float))
-        or not math.isfinite(float(target_power))
-        or not _MINIMUM_TARGET_POWER <= float(target_power) < 1.0
-    ):
-        raise ValueError(
-            "confirmatory artifact differs from the frozen Chapter V "
-            "alpha/power design"
-        )
-    human_artifact = artifact.get("human_audit_artifact")
-    if (
-        not isinstance(human_artifact, dict)
-        or not _valid_sha256(human_artifact.get("sha256"))
-    ):
-        raise ValueError("confirmatory artifact lacks a content-addressed human audit")
-    checks = artifact.get("publishability_checks")
-    if not isinstance(checks, dict) or not checks or not all(value is True for value in checks.values()):
-        raise ValueError("confirmatory artifact has incomplete publishability checks")
-    plan_artifact = artifact.get("plan_artifact")
-    if not isinstance(plan_artifact, dict) or not _valid_sha256(plan_artifact.get("sha256")):
-        raise ValueError("confirmatory artifact lacks a content-addressed plan")
-    policy = artifact.get("evaluation_policy")
-    if (
-        not isinstance(policy, dict)
-        or set(policy) != {"policy_id", "version", "sha256"}
-        or not all(isinstance(policy.get(name), str) and policy[name] for name in policy)
-        or not _valid_sha256(policy.get("sha256"))
-    ):
-        raise ValueError("confirmatory artifact lacks typed evaluation-policy identity")
-    policy_artifact = artifact.get("evaluation_policy_artifact")
-    if not isinstance(policy_artifact, dict) or set(policy_artifact) != {
-        "path", "bytes", "sha256", "content_sha256",
-    }:
-        raise ValueError("confirmatory artifact lacks evaluation-policy artifact identity")
-    policy_path = policy_artifact.get("path")
-    logical_policy_path = Path(policy_path) if isinstance(policy_path, str) else None
-    if (
-        logical_policy_path is None
-        or not policy_path
-        or "\\" in policy_path
-        or logical_policy_path.is_absolute()
-        or logical_policy_path.drive
-        or logical_policy_path.as_posix() != policy_path
-        or any(part in {"", ".", ".."} for part in logical_policy_path.parts)
-        or not isinstance(policy_artifact.get("bytes"), int)
-        or isinstance(policy_artifact.get("bytes"), bool)
-        or not 0 < policy_artifact["bytes"] <= 64 * 1024
-        or policy_artifact.get("sha256") != policy["sha256"]
-        or not _valid_sha256(policy_artifact.get("content_sha256"))
-    ):
-        raise ValueError("confirmatory evaluation-policy artifact identity is invalid")
-    policy_content = artifact.get("evaluation_policy_content")
-    if (
-        not isinstance(policy_content, dict)
-        or policy_content.get("schema_version") != "ura-evaluation-policy/1.0"
-        or policy_content.get("policy_id") != policy["policy_id"]
-        or policy_content.get("version") != policy["version"]
-        or _sha256_json(policy_content) != policy_artifact["content_sha256"]
-    ):
-        raise ValueError("confirmatory evaluation-policy content is invalid or drifted")
-    _verify_checked_evaluation_policy(
-        policy=policy, descriptor=policy_artifact, embedded=policy_content,
-    )
-    source = artifact.get("analysis_source")
-    validated_source = validate_analysis_source_identity(source)
-    expected_source_paths = {
-        "experiments/analysis_integrity.py",
-        "experiments/confirmatory_analysis.py",
-        "experiments/paired_compare.py",
-        "src/ura/metrics.py",
-    }
-    if {record["path"] for record in validated_source["files"]} != expected_source_paths:
-        raise ValueError("confirmatory artifact has the wrong analysis-source inventory")
-    source_files = source.get("files")
-    if not isinstance(source_files, list) or source.get("file_count") != len(source_files):
-        raise ValueError("confirmatory artifact has an invalid analysis-source inventory")
-    for record in source_files:
-        if not isinstance(record, dict) or not _valid_sha256(record.get("sha256")):
-            raise ValueError("confirmatory artifact has an invalid source-file record")
-        relative = record.get("path")
-        if not isinstance(relative, str) or not relative:
-            raise ValueError("confirmatory source record lacks a relative path")
-        candidate = (Path(__file__).resolve().parents[1] / relative).resolve()
-        try:
-            candidate.relative_to(Path(__file__).resolve().parents[1])
-        except ValueError as exc:
-            raise ValueError("confirmatory source path escapes the repository") from exc
-        if (
-            candidate.is_symlink() or not candidate.is_file()
-            or candidate.stat().st_size != record.get("bytes")
-            or hashlib.sha256(candidate.read_bytes()).hexdigest() != record["sha256"]
-        ):
-            raise ValueError(f"confirmatory analysis source has drifted: {relative}")
-
-    families = artifact.get("families")
-    contrasts = artifact.get("contrasts")
-    if not isinstance(families, dict) or not isinstance(contrasts, dict):
-        raise ValueError("confirmatory artifact lacks families/contrasts")
-    _validate_frozen_chapter_v_design(families, contrasts)
-    hypothesis_adjustment: dict[str, dict[str, Any]] = {}
-    hypothesis_family: dict[str, str] = {}
-    for family_id, family in families.items():
-        hypotheses = family.get("hypotheses") if isinstance(family, dict) else None
-        if not isinstance(hypotheses, dict):
-            raise ValueError(f"multiplicity family {family_id!r} is invalid")
-        for hypothesis, adjustment in hypotheses.items():
-            if hypothesis in hypothesis_adjustment:
-                raise ValueError(f"hypothesis {hypothesis!r} appears in multiple families")
-            if not isinstance(adjustment, dict) or adjustment.get("status") != "estimated":
-                raise ValueError(f"figure hypothesis {hypothesis!r} was not estimable")
-            hypothesis_adjustment[hypothesis] = adjustment
-            hypothesis_family[hypothesis] = str(family_id)
-
-    overall_model: list[dict[str, Any]] = []
-    policy_proxies: list[dict[str, Any]] = []
-    adaptivity: list[dict[str, Any]] = []
-    policy_inventories: list[Any] = []
-    for contrast_id, report in sorted(contrasts.items()):
-        if not isinstance(report, dict):
-            raise ValueError(f"contrast {contrast_id!r} is invalid")
-        preregistered = report.get("preregistered")
-        if (
-            not isinstance(preregistered, dict)
-            or preregistered.get("all_planned_metrics_adequately_powered") is not True
-        ):
-            raise ValueError(f"contrast {contrast_id!r} failed its frozen power gate")
-        facets = report.get("facets")
-        if not isinstance(facets, dict) or not facets:
-            raise ValueError(f"contrast {contrast_id!r} has no facets")
-        for local_id in preregistered.get("hypotheses", []):
-            global_id = f"{contrast_id}::{local_id}"
-            adjustment = hypothesis_adjustment.get(global_id)
-            if adjustment is None:
-                raise ValueError(f"planned hypothesis {global_id!r} lacks family adjustment")
-            parts = local_id.split("::")
-            corpus = parts[0]
-            facet = facets.get(corpus)
-            facet_checks = (
-                facet.get("publishability_checks") if isinstance(facet, dict) else None
-            )
-            if (
-                not isinstance(facet, dict)
-                or not isinstance(facet_checks, dict)
-                or not facet_checks
-                or any(
-                    value is not True for key, value in facet_checks.items()
-                    if key != "adequately_powered"
-                )
-            ):
-                raise ValueError(f"figure facet {contrast_id!r}/{corpus!r} is not publishable")
-            if len(parts) == 2:
-                metric_name = parts[1]
-                metric = (facet.get("metrics") or {}).get(metric_name)
-                risk = modality = None
-            elif len(parts) == 3:
-                metric_name, policy_token = parts[1:]
-                metric = (facet.get("policy_metrics") or {}).get(
-                    f"{policy_token}::{metric_name}"
-                )
-                risk = modality = None
-            elif len(parts) == 5:
-                metric_name, policy_token, risk, modality = parts[1:]
-                metric = (facet.get("category_metrics") or {}).get(
-                    f"{policy_token}::{risk}::{modality}"
-                )
-            else:
-                raise ValueError(f"invalid planned figure hypothesis {local_id!r}")
-            if not isinstance(metric, dict) or metric.get("status") != "estimated":
-                raise ValueError(f"figure metric {global_id!r} is not estimated")
-            preregistered_power = metric.get("preregistered_power_gate")
-            if not isinstance(preregistered_power, dict) or preregistered_power.get(
-                "adequately_powered"
-            ) is not True:
-                raise ValueError(f"figure metric {global_id!r} is underpowered")
-            left_arm, right_arm = facet.get("left"), facet.get("right")
-            if not isinstance(left_arm, dict) or not isinstance(right_arm, dict):
-                raise ValueError(f"figure metric {global_id!r} lacks arm provenance")
-            for arm in (left_arm, right_arm):
-                inventory = arm.get("source_metric_inventory") or []
-                if not isinstance(inventory, list):
-                    raise ValueError("source_metric_inventory must be a list")
-                for source_metric in inventory:
-                    if not isinstance(source_metric, dict):
-                        raise ValueError("source-metric inventory entries must be objects")
-                    metric_id = str(source_metric.get("required_metric") or "")
-                    if (
-                        metric_id == "mmsafety_official_attack_rate"
-                        and source_metric.get("source_metric_emitted") is True
-                        and source_metric.get("official_evaluator_executed") is not True
-                    ):
-                        raise ValueError(
-                            "MM-SafetyBench official attack rate was emitted without the "
-                            "official evaluator executing"
-                        )
-            policy_inventories.extend([
-                left_arm.get("source_policy_inventory"),
-                right_arm.get("source_policy_inventory"),
-            ])
-            comparison_type = facet.get("comparison_type")
-            figure_group = _confirmatory_figure_group(
-                local_id=local_id,
-                comparison_type=comparison_type,
-                metric=metric,
-                n_parts=len(parts),
-            )
-            if figure_group == "policy_proxies":
-                expected_policy = {
-                    endpoint: (policy_id, version)
-                    for endpoint, policy_id, version in _FROZEN_PROXY_ENDPOINTS
-                }.get(local_id)
-                if expected_policy is None or (
-                    metric.get("source_policy_id"),
-                    metric.get("source_policy_version"),
-                ) != expected_policy:
-                    raise ValueError(
-                        f"figure hypothesis {local_id!r} has the wrong frozen source policy"
-                    )
-            point = {
-                "point_id": global_id,
-                "status": "estimated_publishable_confirmatory",
-                "value": metric["effect_left_minus_right"],
-                "ci_low": metric["ci_low"],
-                "ci_high": metric["ci_high"],
-                "effect_direction": "left_minus_right",
-                "left_value": metric["left_value"],
-                "right_value": metric["right_value"],
-                "n_pairs": metric["n_matched"],
-                "n_clusters": metric["n_clusters"],
-                "population": metric["population"],
-                "corpus": corpus,
-                "risk_category": risk,
-                "modality": modality,
-                "source_policy_id": metric.get("source_policy_id"),
-                "source_policy_version": metric.get("source_policy_version"),
-                "metric": metric.get("metric_alias", metric_name),
-                "requested_metric": metric_name,
-                "comparison_type": comparison_type,
-                "figure_group": figure_group,
-                "multiplicity_family": hypothesis_family[global_id],
-                "multiplicity_adjustment": adjustment,
-                "power_gate": preregistered_power,
-                "left_arm": left_arm,
-                "right_arm": right_arm,
-                "source_metric_qualification": {
-                    "common_ura_metric": True,
-                    "source_metric_inventories": [
-                        left_arm.get("source_metric_inventory") or [],
-                        right_arm.get("source_metric_inventory") or [],
-                    ],
-                },
-            }
-            {
-                "overall_model": overall_model,
-                "policy_proxies": policy_proxies,
-                "adaptivity": adaptivity,
-            }[figure_group].append(point)
-
-    mm_proxy_inventory = {
-        (point.get("source_policy_id"), point.get("source_policy_version"))
-        for point in policy_proxies
-        if point.get("corpus") == "mmsafety" and point.get("metric") == "ASR"
-    }
-    moss_proxy_inventory = {
-        (point.get("source_policy_id"), point.get("source_policy_version"))
-        for point in policy_proxies
-        if point.get("corpus") == "mossbench" and point.get("metric") == "FRR"
-    }
-    if (
-        len(overall_model) != 1
-        or len(policy_proxies) != 7
-        or len(adaptivity) != 2
-        or any(point.get("corpus") != "strongreject" for point in overall_model)
-        or any(point.get("corpus") != "strongreject" for point in adaptivity)
+        not isinstance(audit, dict)
+        or audit.get("unexplained_exclusions") != 0
         or any(
-            point.get("risk_category") is not None or point.get("modality") is not None
-            for point in policy_proxies
+            audit.get(name) != 0
+            for name in (
+                "left_only_units", "right_only_units", "static_input_mismatch_units",
+            )
         )
-        or mm_proxy_inventory
-        != {(policy_id, _MM_POLICY_VERSION) for policy_id in _MM_POLICY_IDS}
-        or moss_proxy_inventory != {_MOSS_POLICY}
     ):
         raise ValueError(
-            "publishable figure artifact must contain the exact frozen Chapter V "
-            "inventory: one StrongREJECT model point, six versioned MM-SafetyBench "
-            "ASR policy points, one versioned MOSSBench FRR point, and two "
-            "StrongREJECT adaptivity points"
+            f"figure endpoint {corpus!r}/{metric_name!r} has pairing exclusions"
         )
-    policy_binding = {
-        "evaluation_policy": policy,
-        "evaluation_policy_artifact": policy_artifact,
-        "evaluation_policy_content": policy_content,
-        "policy_fingerprint": _sha256_json({
-            "evaluation_policy": policy,
-            "evaluation_policy_artifact": policy_artifact,
-            "evaluation_policy_content": policy_content,
-            "source_policy_inventories": sorted(
-                policy_inventories,
-                key=lambda value: json.dumps(value, sort_keys=True, default=str),
-            ),
-        }),
-    }
+    return facet, metric
+
+
+def _require_policy_metric(
+    facet: dict[str, Any], *, policy_id: str, policy_version: str, metric_name: str,
+) -> dict[str, Any]:
+    metrics = facet.get("policy_metrics")
+    key = f"{source_policy_token(policy_id, policy_version)}::{metric_name}"
+    metric = metrics.get(key) if isinstance(metrics, dict) else None
+    if (
+        not isinstance(metric, dict)
+        or metric.get("status") != "estimated"
+        or metric.get("source_policy_id") != policy_id
+        or metric.get("source_policy_version") != policy_version
+    ):
+        raise ValueError(f"required policy endpoint {key!r} is not estimable")
+    audit = metric.get("pairing_audit")
+    if (
+        not isinstance(audit, dict)
+        or audit.get("unexplained_exclusions") != 0
+        or any(
+            audit.get(name) != 0
+            for name in (
+                "left_only_units", "right_only_units", "static_input_mismatch_units",
+            )
+        )
+    ):
+        raise ValueError(f"required policy endpoint {key!r} has pairing exclusions")
+    return metric
+
+
+def _measured_point(
+    *, point_id: str, corpus: str, metric: dict[str, Any], facet: dict[str, Any],
+    figure_group: str,
+) -> dict[str, Any]:
+    numeric = (
+        metric.get("effect_left_minus_right"), metric.get("ci_low"),
+        metric.get("ci_high"), metric.get("left_value"), metric.get("right_value"),
+    )
+    if any(
+        isinstance(value, bool)
+        or not isinstance(value, (int, float))
+        or not math.isfinite(float(value))
+        for value in numeric
+    ):
+        raise ValueError(f"figure endpoint {point_id!r} has non-finite estimates")
+    if any(not -1.0 <= float(value) <= 1.0 for value in numeric[:3]):
+        raise ValueError(f"figure endpoint {point_id!r} lies outside the effect range")
+    n_matched = metric.get("n_matched")
+    n_clusters = metric.get("n_clusters")
+    if (
+        not isinstance(n_matched, int) or isinstance(n_matched, bool) or n_matched < 1
+        or not isinstance(n_clusters, int) or isinstance(n_clusters, bool)
+        or n_clusters < 1 or n_clusters > n_matched
+    ):
+        raise ValueError(f"figure endpoint {point_id!r} has invalid sample counts")
     return {
-        "schema_version": "ura-chapter-v-figures/1.2",
+        "point_id": point_id,
+        "status": "estimated_sample_conditional",
+        "value": float(numeric[0]),
+        "ci_low": float(numeric[1]),
+        "ci_high": float(numeric[2]),
+        "effect_direction": "left_minus_right",
+        "left_value": float(numeric[3]),
+        "right_value": float(numeric[4]),
+        "n_pairs": n_matched,
+        "n_clusters": n_clusters,
+        "population": metric.get("population"),
+        "corpus": corpus,
+        "risk_category": metric.get("risk_category"),
+        "modality": metric.get("modality"),
+        "source_policy_id": metric.get("source_policy_id"),
+        "source_policy_version": metric.get("source_policy_version"),
+        "metric": metric.get("metric_alias"),
+        "requested_metric": metric.get("metric"),
+        "comparison_type": facet.get("comparison_type"),
+        "figure_group": figure_group,
+        "left_arm": facet.get("left"),
+        "right_arm": facet.get("right"),
+        "bootstrap": metric.get("bootstrap"),
+        "missingness_sensitivity": metric.get("missingness_sensitivity"),
+    }
+
+
+def _decision_binding(points: list[dict[str, Any]]) -> dict[str, Any]:
+    configurations: dict[str, dict[str, Any]] = {}
+    for point in points:
+        for side in ("left_arm", "right_arm"):
+            arm = point.get(side)
+            if not isinstance(arm, dict):
+                raise ValueError("figure endpoint lacks arm provenance")
+            identities = arm.get("realized_identities")
+            judges = identities.get("judges") if isinstance(identities, dict) else None
+            normalized_judges = None
+            if isinstance(judges, list):
+                normalized_judges = [
+                    {
+                        "stage": judge.get("stage"),
+                        "judge": judge.get("judge"),
+                        "snapshot": judge.get("snapshot"),
+                    }
+                    for judge in judges if isinstance(judge, dict)
+                ]
+            value = {
+                "judges": arm.get("judges"),
+                "judge_configuration": arm.get("judge_configuration"),
+                "realized_judges": normalized_judges,
+            }
+            configurations.setdefault(_sha256_json(value), value)
+    if len(configurations) != 1:
+        raise ValueError("figure cells mix judge-cascade decision configurations")
+    (digest, configuration), = configurations.items()
+    return {"policy_fingerprint": digest, "policy_defining_fields": configuration}
+
+
+def _load_human_audit(
+    results: Path, path: Path, *, expected_sha256: str,
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    results = results.resolve()
+    path = Path(path)
+    if path.name != "human_audit.json" or path.resolve().parent != results:
+        raise ValueError(
+            "measured figures require human_audit.json directly under --results"
+        )
+    artifact = read_bound_json(path, expected_sha256=expected_sha256)
+    identity = artifact.pop("_artifact_identity")
+    readiness = artifact.get("analysis_readiness")
+    checks = readiness.get("checks") if isinstance(readiness, dict) else None
+    if (
+        artifact.get("schema_version") != "ura-human-audit/1.1"
+        or artifact.get("analysis_ready_real_run") is not True
+        or not isinstance(readiness, dict)
+        or readiness.get("status") != "complete_sample_conditional"
+        or readiness.get("population_validity_claimed") is not False
+        or not isinstance(checks, dict)
+        or not checks
+        or not all(value is True for value in checks.values())
+    ):
+        raise ValueError(
+            "human audit is not integrity-complete, real-run, and sample-conditional"
+        )
+    validate_analysis_source_identity(artifact.get("analysis_source"))
+    return artifact, identity
+
+
+def load_postrun_results(
+    results: Path, *, left_model: str, right_model: str,
+    human_audit: Path, human_audit_sha256: str, n_resamples: int = 2000,
+    seed: int = 0,
+) -> dict[str, Any]:
+    """Build the measured figure payload directly from completed run artifacts."""
+    results = Path(results)
+    if left_model == right_model:
+        raise ValueError("measured figures require two different exact model specifications")
+    if not _valid_sha256(human_audit_sha256.lower()):
+        raise ValueError("--human-audit-sha256 must be a lowercase SHA-256 digest")
+    audit, audit_identity = _load_human_audit(
+        results, human_audit, expected_sha256=human_audit_sha256.lower(),
+    )
+
+    model_report = compare(
+        results,
+        left_model=left_model,
+        right_model=right_model,
+        attacker="replay",
+        n_resamples=n_resamples,
+        seed=seed,
+    )
+    facets = model_report.get("facets")
+    if not isinstance(facets, dict) or set(facets) != {
+        "strongreject", "mmsafety", "mossbench",
+    } or model_report.get("unavailable_facets") not in ({}, None):
+        raise ValueError(
+            "replay results must contain exactly StrongREJECT, MM-SafetyBench, "
+            "and MOSSBench for both models"
+        )
+
+    strong_facet, strong_metric = _require_ready_facet(
+        {"facets": {"strongreject": facets["strongreject"]}, "unavailable_facets": {}},
+        "strongreject",
+        metric_name="ASR",
+    )
+    overall_model = [_measured_point(
+        point_id="model:strongreject:replay:ASR",
+        corpus="strongreject",
+        metric=strong_metric,
+        facet=strong_facet,
+        figure_group="overall_model",
+    )]
+
+    mm_facet, _ = _require_ready_facet(
+        {"facets": {"mmsafety": facets["mmsafety"]}, "unavailable_facets": {}},
+        "mmsafety",
+        metric_name="ASR",
+    )
+    policy_proxies: list[dict[str, Any]] = []
+    for policy_name in MM_SAFETYBENCH_POLICY_DESCRIPTORS:
+        policy = mm_safetybench_policy(policy_name)
+        metric = _require_policy_metric(
+            mm_facet,
+            policy_id=policy.policy_id,
+            policy_version=policy.version,
+            metric_name="ASR",
+        )
+        policy_proxies.append(_measured_point(
+            point_id=f"proxy:mmsafety:{policy_name}:ASR",
+            corpus="mmsafety",
+            metric=metric,
+            facet=mm_facet,
+            figure_group="policy_proxies",
+        ))
+
+    moss_facet, _ = _require_ready_facet(
+        {"facets": {"mossbench": facets["mossbench"]}, "unavailable_facets": {}},
+        "mossbench",
+        metric_name="over_refusal_rate",
+    )
+    moss_policy = mossbench_policy()
+    policy_proxies.append(_measured_point(
+        point_id="proxy:mossbench:benign-refusal-rate:FRR",
+        corpus="mossbench",
+        metric=_require_policy_metric(
+            moss_facet,
+            policy_id=moss_policy.policy_id,
+            policy_version=moss_policy.version,
+            metric_name="over_refusal_rate",
+        ),
+        facet=moss_facet,
+        figure_group="policy_proxies",
+    ))
+
+    adaptivity: list[dict[str, Any]] = []
+    adaptivity_reports: list[dict[str, Any]] = []
+    for model in (left_model, right_model):
+        report = compare_adaptivity(
+            results,
+            model=model,
+            corpus="strongreject",
+            n_resamples=n_resamples,
+            seed=seed,
+        )
+        facet, metric = _require_ready_facet(
+            report, "strongreject", metric_name="ASR",
+        )
+        adaptivity_reports.append(report)
+        adaptivity.append(_measured_point(
+            point_id=f"adaptivity:{model}:replay-minus-crescendo:ASR",
+            corpus="strongreject",
+            metric=metric,
+            facet=facet,
+            figure_group="adaptivity",
+        ))
+
+    all_points = [*overall_model, *policy_proxies, *adaptivity]
+    run_ids = sorted({
+        str(arm["run_id"])
+        for point in all_points
+        for arm in (point["left_arm"], point["right_arm"])
+        if isinstance(arm, dict) and arm.get("run_id")
+    })
+    results_identity = audit.get("results_identity")
+    if (
+        not isinstance(results_identity, dict)
+        or results_identity.get("completed_run_ids") != run_ids
+    ):
+        raise ValueError("human audit does not bind the exact completed figure run cohort")
+    binding = _decision_binding(all_points)
+    return {
+        "schema_version": "ura-chapter-v-figures/1.3",
         "illustrative": False,
         "analysis": {
-            **policy_binding,
-            "confirmatory_analysis_artifact": artifact_identity,
-            "confirmatory_plan_artifact": plan_artifact,
-            "human_audit_artifact": human_artifact,
-            "multiplicity": families,
-            "analysis_source": source,
-            "figure_loader_source": analysis_source_identity([
+            "status": "post_experiment_sample_conditional",
+            "qualification": (
+                "measured endpoints are conditional on the completed benchmark, "
+                "judge cascade, and achieved human-audit sample; no population-wide "
+                "judge-validity claim is made"
+            ),
+            "population_validity_claimed": False,
+            "human_audit_artifact": audit_identity,
+            "human_audit_readiness": audit["analysis_readiness"],
+            "completed_run_ids": run_ids,
+            "results_locator": ".",
+            **binding,
+            "analysis_source": analysis_source_identity([
                 Path(__file__), Path(__file__).resolve().parent / "figures.py",
+                Path(__file__).resolve().parent / "paired_compare.py",
+                Path(__file__).resolve().parents[1] / "src" / "ura" / "metrics.py",
             ]),
             "effect_direction": "left_minus_right",
             "corpus_pooling": "forbidden; every point is one explicit corpus facet",
         },
         "figures": {
-            "fig-v-asr-by-model.png": {
-                "estimand": "paired harmful ASR risk difference, left model minus right model",
+            _FIGURE_NAMES[0]: {
+                "estimand": "paired StrongREJECT replay ASR difference, left minus right",
                 "figure_role": "primary_model",
                 "points": overall_model,
             },
-            "fig-v-policy-proxies.png": {
+            _FIGURE_NAMES[1]: {
                 "estimand": (
-                    "paired policy-qualified common-proxy differences: MM-SafetyBench "
-                    "harmful ASR and MOSSBench benign false-refusal rate"
+                    "paired policy-qualified proxy differences: six MM-SafetyBench "
+                    "ASR strata and MOSSBench benign FRR"
                 ),
                 "figure_role": "secondary_policy_proxies",
                 "points": policy_proxies,
             },
-            "fig-v-adaptivity.png": {
+            _FIGURE_NAMES[2]: {
                 "estimand": (
-                    "within-target replay-versus-Crescendo harmful-ASR endpoint differences"
+                    "per-model StrongREJECT replay-minus-Crescendo ASR difference"
                 ),
-                "figure_role": "h4_adaptivity",
+                "figure_role": "adaptivity",
                 "points": adaptivity,
             },
         },
     }
 
-
 __all__ = [
-    "load_confirmatory_results", "load_defense_results", "load_model_results",
+    "load_defense_results", "load_model_results", "load_postrun_results",
 ]

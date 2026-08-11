@@ -3,9 +3,10 @@
 Flat ``modality_support`` declarations say which media encoders an adapter can
 actually invoke.  They do not prove that every cross-media combination works,
 so this module infers only text and text+one-physical-medium combinations unless
-the target explicitly declares ``modality_combinations``.  Unsupported or
-unavailable combinations are recorded; available-but-unselected and planned-
-but-unexecuted combinations fail closed.
+the target explicitly declares ``modality_combinations``. Unsupported
+combinations are recorded. Every combination present in the selected grid is
+verified before calls and must have real execution evidence afterward. Coverage
+across separate grids does not require each grid to repeat every corpus.
 """
 from __future__ import annotations
 
@@ -22,7 +23,6 @@ from .converters._common import (
     _read_bounded_bytes,
     media_signature_matches,
 )
-from .converters.release_specs import KNOWN_CORPUS_MODALITY_COMBINATIONS
 from .data_models import DataPoint, MediaRef
 from .targets.base import BaseTarget
 
@@ -200,9 +200,7 @@ def declared_target_combinations(target: BaseTarget) -> tuple[tuple[str, ...], .
     return tuple(combinations)
 
 
-CoverageStatus = Literal[
-    "planned", "unavailable", "available_but_unselected", "executed"
-]
+CoverageStatus = Literal["planned", "unavailable", "executed"]
 
 
 @dataclass(frozen=True)
@@ -236,11 +234,13 @@ def plan_modality_coverage(
     *,
     enforce_available: bool = True,
 ) -> ModalityCoveragePlan:
-    """Plan every actually supported combination for selected multimodal targets.
+    """Plan supported combinations that are present in the selected grid.
 
     A target is considered multimodal only when its adapter declares at least one
-    physical modality.  Known released data that was not selected is an error;
-    genuinely unavailable combinations are retained with an explicit reason.
+    physical modality. A declared combination absent from this grid is recorded
+    as unavailable in this grid; another grid may exercise it. Selected inputs
+    remain byte-validated here and planned combinations must later be proven by
+    actual delivery evidence.
     """
 
     points_by_combination: dict[tuple[str, ...], list[tuple[str, DataPoint]]] = {}
@@ -278,20 +278,13 @@ def plan_modality_coverage(
             selected = points_by_combination.get(combination, [])
             selected_corpora = tuple(sorted({name for name, _ in selected}))
             ids = tuple(sorted({point.id for _, point in selected}))
-            known = tuple(KNOWN_CORPUS_MODALITY_COMBINATIONS.get(combination, ()))
             if ids:
                 status: CoverageStatus = "planned"
                 justification = None
-            elif known:
-                status = "available_but_unselected"
-                justification = (
-                    "released compatible data exists but no selected, converted "
-                    "datapoint exercises this combination"
-                )
             else:
                 status = "unavailable"
                 justification = (
-                    "no maintained released corpus is registered for this exact "
+                    "no selected datapoint in this grid exercises this exact "
                     "adapter-supported combination"
                 )
             items.append(ModalityCoverageItem(
@@ -300,7 +293,7 @@ def plan_modality_coverage(
                 status=status,
                 selected_corpora=selected_corpora,
                 eligible_datapoint_ids=ids,
-                known_eligible_corpora=known,
+                known_eligible_corpora=(),
                 justification=justification,
             ))
 
@@ -309,18 +302,6 @@ def plan_modality_coverage(
         enforcement="strict" if enforce_available else "diagnostic",
         items=tuple(items),
     )
-    missing = [
-        item for item in plan.items if item.status == "available_but_unselected"
-    ]
-    if missing and enforce_available:
-        detail = "; ".join(
-            f"{item.target}:{'+'.join(item.combination)} "
-            f"(eligible corpora: {','.join(item.known_eligible_corpora)})"
-            for item in missing
-        )
-        raise ModalityCoverageError(
-            "multimodal capability coverage would be silently incomplete: " + detail
-        )
     return plan
 
 

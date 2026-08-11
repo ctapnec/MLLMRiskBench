@@ -2,59 +2,48 @@
 
 Experiments are pending. Use [PROTOCOL.md](PROTOCOL.md) for the estimands and
 validity rules, then execute [RUN_AND_RETURN.md](RUN_AND_RETURN.md). A dry run,
-partial artifact family, placeholder model ID, or preliminary analysis is not a
+partial artifact family, placeholder model ID, or synthetic figure is not a
 measured thesis result.
 
 The maintained execution contract is Runner `ura-runner/2.4` with unified
-schema `1.4`; older artifacts are not mixed into this workflow.
+schema `1.4`; older artifacts are not mixed into the thesis run.
 
-## Minimal lifecycle
+## Direct lifecycle
 
-1. Install `.[dev,analysis,api]`, run the offline suite and synthetic smoke test.
-2. Place real releases at `URA_<CORPUS>_PATH`; approve media roots.
-3. Create one content-addressed, exhaustive
-   `ura-cluster-partition/1.2`. It records portable source locators and exact
-   per-policy pilot/main counts; both minimums default to two clusters. Loading
-   recomputes the exact scoped-seed assignment from the complete cluster
-   inventory.
-4. Create and SHA-256-bind the provider retention/data-use approval for every
-   exact hosted target and LLM judge.
-5. Run each intended grid's exact arguments first through
-   `python -m experiments.rig_check`; approve the printed policy-stratum counts
-   and conservative target/judge/HTTP upper bounds before calls.
-6. Under `runs/pilot/`, run a replay child over StrongREJECT+MM-SafetyBench+
-   MOSSBench and a StrongREJECT-only Crescendo child. Feed the replay child's
-   content-addressed modality proof to the Crescendo child; do not duplicate
-   replay cells.
-7. Generate one `pilot_analysis` artifact per planned hypothesis; freeze SESOI,
-   required cluster count, endpoint role, exact source-policy token, complete
-   Holm family, and human-audit design in the confirmatory plan. StrongREJECT is
-   the primary model endpoint; MM/MOSS common proxies occupy a separate
-   secondary family. H4 is a primary two-hypothesis family with one replay-
-   versus-Crescendo contrast per model. Pilots must be real, mock-free,
-   integrity/grid/source-valid and exclusion-free, and their normalized
-   analysis design, including the realized target and judge snapshots, must
-   match the main facet exactly.
-   Use `confirmatory-plan.template.json` as the reviewable three-family,
-   ten-hypothesis starting point and replace every `REPLACE_*` sentinel before
-   hashing it. The template also byte-binds the checked-in
-   `evaluation-policy.json`; its repository-relative path, byte count, SHA-256,
-   policy ID and version are verified before any analysis runs.
-8. Repeat the two-child layout under `runs/main/` with the same partition and
-   exact conditions.
-9. Optionally emit a non-publishable preliminary analysis, prepare/rate/analyse
-   the frozen whole-cluster human sample, then emit the final human-bound
-   confirmatory artifact.
-10. Render measured figures only from that final artifact.
+1. Clone the project, create the Python environment, install
+   `.[dev,analysis,api,guardrail]`, accept and download the exact pinned
+   Llama-Guard checkpoint, and run the offline suite and synthetic smoke test.
+2. Download the exact StrongREJECT, MM-SafetyBench, and MOSSBench releases and
+   image assets as described in the runbook. Set `URA_<CORPUS>_PATH` and the
+   ordered `URA_MEDIA_ROOTS`.
+3. Set the target and judge credentials. Review corpus licenses, provider
+   retention, and institutional data-handling requirements before upload.
+4. Run the intended matrix arguments through
+   `python -m experiments.rig_check`. Review the printed source-policy cluster
+   counts and conservative target-call, local-guardrail, hosted-judge, and
+   HTTP-attempt totals. The check also loads the pinned local guardrail without
+   generating.
+5. Run the complete replay grid over all three corpora, then the smaller
+   StrongREJECT-only Crescendo grid. Both use the exact study targets,
+   `--limit 0`, the full rule/guardrail/LLM trail, and finite grid-wide call and
+   time ceilings.
+6. Preserve the complete run artifacts, command line, project commit,
+   environment inventory, and operator note.
+7. Run no-call diagnostics (`paired_compare`, `judge_sensitivity`, `kappa`, and
+   `transfer_matrix`) and prepare the automated-label-blinded, model-visible
+   multi-rater human audit.
+8. After labels and adjudication are complete, run the human-audit analysis and
+   then produce appropriately qualified tables and figures.
 
-The core CLIs are:
+Core CLIs:
 
 ```bash
-python -m experiments.cluster_partition --help
 python -m experiments.rig_check --help
 python experiments/run_matrix.py --help
-python -m experiments.pilot_analysis --help
-python -m experiments.confirmatory_analysis --help
+python -m experiments.paired_compare --help
+python -m experiments.judge_sensitivity --help
+python -m experiments.kappa --help
+python -m experiments.transfer_matrix --help
 python -m experiments.human_audit --help
 python -m experiments.figures --help
 ```
@@ -68,20 +57,19 @@ anthropic-fable:claude-fable-5;effort=high;max_tokens=25000
 openai-responses:gpt-5.6-sol;reasoning_mode=pro;reasoning_effort=medium;reasoning_context=all_turns
 ```
 
-Both adapters currently declare text and image only. The main study must execute
-StrongREJECT text plus complete MM-SafetyBench harmful text+image and MOSSBench
-benign text+image data on both targets. Coverage binds the exact delivered
-combination; input-blocked and setup-only attempts do not count. The completed
-replay grid can supply suite-wide image coverage to the exact target/defense-
-matched StrongREJECT-only Crescendo child through
-`ura-modality-coverage-proof/1.0`. Audio and video are unavailable on both study
-targets, not text fallbacks.
+Both adapters currently declare text and image only. The replay grid executes
+StrongREJECT text, complete MM-SafetyBench harmful text+image, and complete
+MOSSBench benign text+image data on both targets; the Crescendo grid is
+StrongREJECT text only. Coverage binds the exact
+delivered combination; input-blocked and setup-only attempts do not count.
+Audio and video are unavailable on both study targets and are reported as such,
+not replaced with text fallbacks.
 
 MM-SafetyBench common ASR is a secondary URA proxy; its official scenario-aware
-evaluator is not executed. MOSSBench common FRR is also secondary; its official
-image-conditioned GPT-4 refusal evaluator is not executed. Keep both distinctions
-in every table and claim. Because MM-SafetyBench spans six source policies, all
-matrix commands containing MM/MOSS also group by
+evaluator is not executed. MOSSBench common false-refusal rate is also
+secondary; its official image-conditioned evaluator is not executed. Keep both
+distinctions in every table and claim. Because MM-SafetyBench spans six source
+policies, matrix commands containing it group by
 `source_policy_id,source_policy_version`.
 
 StrongREJECT is the official 313-row, six-category, 313-unique-prompt CSV at
@@ -92,80 +80,86 @@ the upstream official evaluator ran.
 
 ## Real-run invariants
 
-- Real non-synthetic scored runs require
-  `--partition-plan/--partition-sha256/--partition-role` together and
-  `--limit 0`. A partition binds the full converted release and exact source
-  clusters. StrongREJECT, MM-SafetyBench and MOSSBench enforce pinned official
-  release identities. A child may select a corpus subset from the same complete
-  plan; it may not introduce another corpus. The loader recomputes the declared
-  SHA-256-scoped-seed role assignment and rejects membership drift.
-- Hosted calls require the content-addressed provider approval. Fable's covered-
-  model retention and the effective OpenAI organization controls must be
-  explicitly accepted; `store=false` does not mean zero provider retention.
-- Set finite matrix-wide call, transport-attempt, and wall-clock ceilings.
-  Preserve the durable budget/circuit/lock artifacts and resume from the same
-  directory. `rig_check` rejects a ceiling below its conservative complete-grid
-  projection, imports the selected hosted SDKs, and requires their credential
-  environment variables to be nonblank without making a provider request; it
-  cannot establish account access or model visibility. Same-grid completion,
-  full completed-attempt checkpoint, response-checkpoint, error, and circuit
-  evidence sets the recoverable budget high-water mark before a circuit reset.
-  Full checkpoints are bounded regular non-symlink files whose completed rows
-  carry `budget_after_attempt`. Malformed, oversized, or symlinked recovery
-  candidates fail closed. Existing locks are never reclaimed
-  automatically; remove one exact lock only after verifying that no owner is
-  running and recording the intervention. Reset a circuit only after fixing its
-  cause.
-- `--limit N` counts unique prompt/intent clusters and keeps every row in each
-  selected cluster. It is for diagnostics when no measured partition is in use;
-  it is not a row count.
-- Optional local config is keyed by each exact `--local` spec and uses exactly
-  one immutable `revision` or `digest`, plus `modalities`.
-- Local media artifacts use `@media-root/<index>/<relative-path>`; preserve the
-  configured root order and relative layout on resume or another machine.
-- Missing/failed/unsupported/undefined is never rewritten as zero.
+- Real corpora resolve through `URA_<CORPUS>_PATH` and must pass their pinned
+  release contracts. `--limit N` counts source prompt/intent clusters and keeps
+  every row in each selected cluster; the complete thesis grid uses `--limit 0`.
+- Local media artifacts use `@media-root/<index>/<relative-path>`. Preserve the
+  configured media-root order and relative layout on resume or another machine.
+- Every paid grid declares finite target-call, judge-call, HTTP-attempt, and
+  time ceilings. `rig_check` rejects ceilings below its conservative grid
+  projection, imports selected hosted SDKs, loads the exact local guardrail,
+  and requires nonblank credential environment variables without making a
+  provider request. It
+  cannot establish credential validity, account access, model visibility, or
+  quota.
+- Preserve durable budget, circuit, lock, checkpoint, completion, and error
+  artifacts and resume from the same directory. Recovery validates the
+  same-grid high-water mark before another call. Existing locks are never
+  reclaimed automatically.
+- Optional local configuration is keyed by each exact target specification and
+  declares exactly one immutable revision or digest plus supported modalities.
+- Missing, failed, unsupported, abstained, and mathematically undefined states
+  remain distinct and are never rewritten as zero.
 
-Transfer analysis is conditional and descriptive: set a prespecified
-`--minimum-unique-clusters`, report equal-cluster rates/dispersion/bootstrap CI,
-and keep it outside Holm. It has no pilot, SESOI, power gate or p-value.
+## Analysis and reporting
 
-For powered rate differences, freeze SESOI in `(0,1]` and calculate required
-clusters with the complete frozen `family_size`. Sizing uses
-`alpha / family_size` and also enforces the exact two-sided sign-flip resolution
-`2 / 2^n <= alpha / family_size`. Every confirmatory contrast must state
-`"assume_exchangeable": true`; otherwise it is descriptive, not a confirmatory
-p-value.
+The primary comparison is paired by source cluster within exact benchmark,
+source policy, modality, target condition, attack, judge, and budget. Direct
+paired intervals are reported on risk differences. If multiple comparisons are
+selected after seeing the data, they are explicitly exploratory and any
+multiplicity adjustment is described as post-experiment analysis, not
+prospective confirmation.
 
-Freeze `human_audit.validity_gate` with a shared-cluster minimum at least equal
-to `max(2, required_unique_clusters // n_required_population_cells)`, plus
-prospective automated-versus-consensus and inter-rater endpoint-agreement
-thresholds (`0.80` is recommended for each). The total audit size targets
-overall precision; the balanced cell floor is support, not per-cell precision
-or power. The selector guarantees support before export. Every independent
-rater must cover the complete sample, and every rater pair must pass the
-cluster-equal-weight policy-endpoint gate (violation for harmful rows,
-over-refusal for benign rows). Static rows are direct endpoint units; live
-challenge rows are collapsed with `any` to conversation endpoints before equal
-conversation-within-cluster and equal-cluster weighting. Kappa remains
-diagnostic. Human uncertainty uses the plan's exact alpha, resample count, and
-seed, and the audit content-addresses the completed labels CSV. Failure in any
-required gate makes the audit/final artifact non-publishable. Measured rendering then emits
-`fig-v-asr-by-model.png` (one StrongREJECT model point),
-`fig-v-policy-proxies.png` (six MM ASR plus one MOSS FRR point), and
-`fig-v-adaptivity.png` (two H4 points). Its loader reopens and rehashes the
-checked evaluation policy and requires the exact frozen families, hypotheses,
-canonical Fable/Sol specifications, defense `none`, replay/Crescendo selectors,
-policy-overall proxy endpoints, artifact `alpha=0.05`, `target_power>=0.80`, and
-family method `holm_bonferroni_complete_frozen_family` at `alpha=0.05`.
+Transfer is conditional and descriptive:
+`P(B violates | A violated, harmful, transferable, identical rendered input)`.
+It reports exact-input coverage, equal-cluster support, dispersion, and a
+cluster-bootstrap interval. No source successes or no exact matches yields
+`null` with a reason rather than zero. Live Crescendo is excluded unless
+replayed exactly.
 
-## Artifacts
+Judge sensitivity reuses completion-validated shadow trails and makes no target
+calls. Unparsed or low-confidence stages are abstentions. The automated-label-blinded, model-visible human
+audit samples complete source clusters, requires at least two independent
+raters plus adjudication, and separates refusal, harmfulness, convincingness,
+and specificity. Its CSV preserves the source-policy ID, version, intended
+metric, and short rater instruction. Physical inputs are content-bound in
+`media_references`: local assets use `@media-root/<index>/<relative-path>` and
+inline assets use `@inline-sha256/<digest>` without embedding bytes. Raters must
+resolve `URA_MEDIA_ROOTS` in order, verify MIME and SHA-256, and view every asset
+before labelling; unresolved media stays unrated and analysis fails closed.
+Agreement results must state the population, support,
+interval, endpoint definition, and cluster weighting. With a small audit, all
+validity conclusions are limited-sample evidence with intervals. The achieved
+audit artifact uses schema `ura-human-audit/1.1`; only an integrity-complete
+real-run artifact reports `analysis_ready_real_run=true` and status
+`complete_sample_conditional`. That status does not assert population validity.
 
-Retain the entire run tree: grid, budget, circuit and modality summaries;
-attempt/response/judgment/trail/result JSONL; manifests; checkpoints;
-completion/error records; partition, provider approval, pilot artifacts,
-confirmatory plan, human sample/labels/audit, final analysis, figure provenance,
-logs, environment freeze, commit, and run note. Treat provider continuation
-state and human-audit exports as sensitive.
+Measured figures may be produced only after the real grid and human audit are
+complete. Until then, tracked images are visibly watermarked synthetic layout
+previews with neutral condition labels.
 
-Mythos remains literature and a future authorized replication target only; it
-must not appear as an executed condition.
+After `human_audit.json` is complete, measured mode reads the completed runs
+directly rather than an intermediate analysis artifact:
+
+```bash
+python -m experiments.figures \
+  --results runs/main \
+  --left-model "$FABLE" --right-model "$SOL" \
+  --human-audit runs/main/human_audit.json \
+  --human-audit-sha256 "$HUMAN_AUDIT_SHA256" \
+  --out runs/main/figures
+```
+
+Its `ura-chapter-v-figures/1.3` sidecar records one StrongREJECT model point,
+six MM-SafetyBench policy points, one MOSSBench benign-FRR point, and two
+model-specific adaptivity points. These are sample-conditional post-experiment
+estimates, without a population-validity, power, or prospective-confirmation
+claim.
+
+## Return package
+
+Return the complete artifact directory, including attempts, responses, shadow
+trails, judgments, manifests, completion and error records, budgets, circuits,
+locks or intervention notes, modality plans/results, diagnostics, human-audit
+files, figures and provenance, logs, environment inventory, commit identifier,
+and run note. Do not return only aggregates.

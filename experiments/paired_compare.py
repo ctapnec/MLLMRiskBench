@@ -9,7 +9,7 @@ never pooled into an attempt denominator or presented as identical transcripts.
 Only completion-validated, common-metric-eligible Runner artifacts are used.
 The reported effect is always ``left - right``. Cross-target effects are paired
 endpoint comparisons, not causal defense effects. A defense contrast is accepted
-only when the frozen base ``model_spec`` is identical in both arms.
+only when the declared base ``model_spec`` is identical in both arms.
 """
 from __future__ import annotations
 
@@ -38,7 +38,6 @@ from ura.metrics import (  # noqa: E402
     paired_cluster_permutation_test,
     paired_clustered_bootstrap_ci,
     paired_effect_manski_bounds,
-    power_gate,
 )
 
 
@@ -118,12 +117,9 @@ def _cell_summary(cell: dict[str, Any]) -> dict[str, Any]:
         "source_metric_inventory": (manifest.get("config") or {}).get(
             "source_metric_inventory"
         ),
-        "partition_plan": run.get("partition_plan"),
-        "partition_assignment": run.get("partition_assignment"),
         "grid_id": run.get("grid_id"),
         "global_call_budget": run.get("global_call_budget"),
         "modality_coverage_plan": run.get("modality_coverage_plan"),
-        "modality_coverage_companion": run.get("modality_coverage_companion"),
         "code_version": manifest.get("code_version"),
         "schema_version": manifest.get("schema_version"),
         "started_at": manifest.get("started_at"),
@@ -266,7 +262,7 @@ def _comparison_payload(
         # These values are realized after execution.  In particular, live
         # response-conditioned arms may legitimately realize different turn
         # counts.  Their exact rows and all unmatched units remain audited in
-        # the paired output; frozen design fields (dataset, seeds, budget,
+        # the paired output; declared design fields (dataset, seeds, budget,
         # sampling, judge, environment, code/schema) remain in this payload.
         config.pop(field, None)
     # The durable snapshot is realized grid bookkeeping: its budget id and
@@ -290,17 +286,15 @@ def _comparison_payload(
         # expensive replay parent is not called again for a StrongREJECT-only
         # adaptive child. These fields describe that enclosing execution suite,
         # not a datapoint-level treatment. Their exact values remain in each arm
-        # summary, while the content-addressed partition plan and this corpus's
-        # exact partition_assignment deliberately remain compatibility factors.
+        # summary.
         for field in (
             "attacker_config",
             "grid_id",
             "global_call_budget",
-            "modality_coverage_companion",
             "modality_coverage_plan",
         ):
             run.pop(field, None)
-        # The attack protocol and its query/turn horizon are the prespecified
+        # The attack protocol and its query/turn horizon are the declared
         # intervention in this contrast, not cohort incompatibilities.
         payload.pop("adapters", None)
         if isinstance(components, dict):
@@ -365,7 +359,7 @@ def _validate_pair_configuration(
     if left_payload != right_payload:
         raise ValueError(
             "paired arms have incompatible manifests after removing only the "
-            f"prespecified comparison factor: {left_signature} != {right_signature}"
+            f"declared comparison factor: {left_signature} != {right_signature}"
         )
     return comparison_type, left_signature, right_signature, identity_qualification
 
@@ -742,9 +736,6 @@ def _metric_result(
     seed: int,
     n_permutations: int = 10000,
     assume_exchangeable: bool = False,
-    smallest_effect: float | None = None,
-    pilot_cluster_sd: float | None = None,
-    target_power: float = 0.8,
     alpha: float = 0.05,
     risk_category: str | None = None,
     modality: str | None = None,
@@ -835,7 +826,7 @@ def _metric_result(
     left_values = [left[key].value for key in matched]
     right_values = [right[key].value for key in matched]
     clusters = [left[key].source_cluster_id for key in matched]
-    # --- confirmatory analysis (V.1.7) ---
+    # Equal-weight prompt/intent-cluster analysis.
     per_cluster: dict[str, list[float]] = defaultdict(list)
     per_cluster_left: dict[str, list[float]] = defaultdict(list)
     per_cluster_right: dict[str, list[float]] = defaultdict(list)
@@ -894,19 +885,6 @@ def _metric_result(
             "status": "gated_exchangeability_not_asserted",
             "note": "paired cluster-bootstrap interval is primary; assert "
                     "--assume-exchangeable to compute the randomization p-value",
-            "n_clusters": len(cluster_diffs),
-        }
-    # Prospective power gate from a DISJOINT pilot's cluster SD (never the tested
-    # comparison's own SD); withheld until both are supplied.
-    if smallest_effect and pilot_cluster_sd and pilot_cluster_sd > 0:
-        power = power_gate(
-            smallest_effect, pilot_cluster_sd, len(cluster_diffs),
-            alpha=alpha, target_power=target_power,
-        )
-    else:
-        power = {
-            "adequately_powered": None,
-            "reason": "requires --smallest-effect and a disjoint --pilot-cluster-sd",
             "n_clusters": len(cluster_diffs),
         }
     # Worst/best-case missingness bounds use the same equal-cluster estimand.
@@ -978,7 +956,6 @@ def _metric_result(
             ),
         },
         "permutation_test": permutation,
-        "power_gate": power,
         "missingness_sensitivity": missingness,
         "pairing_audit": audit,
     }
@@ -993,9 +970,6 @@ def compare_cells(
     seed: int = 0,
     n_permutations: int = 10000,
     assume_exchangeable: bool = False,
-    smallest_effect: float | None = None,
-    pilot_cluster_sd: float | None = None,
-    target_power: float = 0.8,
     alpha: float = 0.05,
     comparison_axis: str = "auto",
 ) -> dict[str, Any]:
@@ -1074,9 +1048,6 @@ def compare_cells(
             seed=seed,
             n_permutations=n_permutations,
             assume_exchangeable=assume_exchangeable,
-            smallest_effect=smallest_effect,
-            pilot_cluster_sd=pilot_cluster_sd,
-            target_power=target_power,
             alpha=alpha,
             source=source,
             source_policy_id=policies[0][0] if len(policies) == 1 else None,
@@ -1087,7 +1058,7 @@ def compare_cells(
     overall_policy_scope = (
         "single_policy"
         if len(policies) == 1
-        else "descriptive_pooled_multiple_policies_not_confirmatory"
+        else "descriptive_pooled_multiple_policies"
     )
     for result in metric_results.values():
         result["source_policy_scope"] = overall_policy_scope
@@ -1099,9 +1070,7 @@ def compare_cells(
             n_resamples=n_resamples, seed=seed,
             n_permutations=n_permutations,
             assume_exchangeable=assume_exchangeable,
-            smallest_effect=smallest_effect,
-            pilot_cluster_sd=pilot_cluster_sd,
-            target_power=target_power, alpha=alpha,
+            alpha=alpha,
             source_policy_id=policy_id, source_policy_version=policy_version,
             source=source,
         )
@@ -1123,9 +1092,7 @@ def compare_cells(
             n_resamples=n_resamples, seed=seed,
             n_permutations=n_permutations,
             assume_exchangeable=assume_exchangeable,
-            smallest_effect=smallest_effect,
-            pilot_cluster_sd=pilot_cluster_sd,
-            target_power=target_power, alpha=alpha,
+            alpha=alpha,
             risk_category=risk, modality=modality,
             source_policy_id=policy_id, source_policy_version=policy_version,
             source=source,
@@ -1169,18 +1136,11 @@ def compare_cells(
                 for metric in metric_results.values()
             )
         ),
-        # A confirmatory publishable run must pass the prospective power gate on
-        # every estimated metric (requires --smallest-effect + disjoint pilot SD).
-        "adequately_powered": (
-            any(m.get("status") == "estimated" for m in metric_results.values())
-            and all(
-                m["power_gate"].get("adequately_powered") is True
-                for m in metric_results.values()
-                if m.get("status") == "estimated"
-            )
+        "has_estimable_metric": any(
+            m.get("status") == "estimated" for m in metric_results.values()
         ),
     }
-    publishable = all(checks.values())
+    analysis_ready = all(checks.values())
     return {
         "schema_version": "1.0",
         "comparison_type": comparison_type,
@@ -1190,7 +1150,7 @@ def compare_cells(
         "causal_effect_established": False,
         "causal_qualification": (
             "within-target defense intervention estimate; interpretation remains "
-            "conditional on frozen endpoints, judge validity, and effective sampling control"
+            "conditional on declared endpoints, judge validity, and effective sampling control"
             if comparison_type == "within_target_defense_intervention"
             else "cross-target/provider endpoint contrast; not a causal defense effect"
         ),
@@ -1204,8 +1164,8 @@ def compare_cells(
             if left_mode == "static" and not adaptivity
             else "shared protocol unit; response-conditioned transcripts may differ by arm"
         ),
-        "publishable_real_run": publishable,
-        "publishability_checks": checks,
+        "analysis_ready_real_run": analysis_ready,
+        "analysis_readiness_checks": checks,
         "comparison_config_signature": left_signature,
         "right_comparison_config_signature": right_signature,
         "defense_identity_qualification": defense_identity_qualification,
@@ -1244,9 +1204,6 @@ def compare(
     seed: int = 0,
     n_permutations: int = 10000,
     assume_exchangeable: bool = False,
-    smallest_effect: float | None = None,
-    pilot_cluster_sd: float | None = None,
-    target_power: float = 0.8,
     alpha: float = 0.05,
 ) -> dict[str, Any]:
     _, cells = _validated_artifacts(results)
@@ -1296,14 +1253,10 @@ def compare(
             seed=seed,
             n_permutations=n_permutations,
             assume_exchangeable=assume_exchangeable,
-            smallest_effect=smallest_effect,
-            pilot_cluster_sd=pilot_cluster_sd,
-            target_power=target_power,
             alpha=alpha,
         )
-    # Holm-Bonferroni across this contrast's (corpus x metric) randomization
-    # p-values (V.1.7); cross-contrast families are adjusted by the top-level
-    # confirmatory driver, not here.
+    # Holm-Bonferroni is reported only across this contrast's available
+    # (corpus x metric) randomization p-values.
     family_p: dict[str, float] = {}
     for corpus_name, facet in facets.items():
         for metric_name, res in facet["metrics"].items():
@@ -1336,7 +1289,7 @@ def compare(
             "alpha": alpha,
             "note": (
                 "adjusted across this contrast's (corpus x metric) randomization "
-                "p-values; cross-contrast families require the confirmatory driver"
+                "p-values; no cross-contrast family adjustment is claimed"
             ),
         },
         "artifact_root": str(results),
@@ -1361,9 +1314,6 @@ def compare_adaptivity(
     seed: int = 0,
     n_permutations: int = 10000,
     assume_exchangeable: bool = False,
-    smallest_effect: float | None = None,
-    pilot_cluster_sd: float | None = None,
-    target_power: float = 0.8,
     alpha: float = 0.05,
 ) -> dict[str, Any]:
     """Compare a static replay endpoint with a live adaptive endpoint.
@@ -1410,9 +1360,7 @@ def compare_adaptivity(
             n_resamples=n_resamples, seed=seed,
             n_permutations=n_permutations,
             assume_exchangeable=assume_exchangeable,
-            smallest_effect=smallest_effect,
-            pilot_cluster_sd=pilot_cluster_sd,
-            target_power=target_power, alpha=alpha,
+            alpha=alpha,
         )
     if corpus is not None and corpus in unavailable:
         raise ValueError(f"requested corpus {corpus!r} lacks one adaptivity arm")
@@ -1478,11 +1426,6 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--assume-exchangeable", action="store_true",
                         help="assert within-pair exchangeability so the randomization "
                              "p-value is computed; otherwise the bootstrap CI is primary")
-    parser.add_argument("--smallest-effect", type=float, default=None,
-                        help="prespecified smallest effect of interest for the power gate")
-    parser.add_argument("--pilot-cluster-sd", type=float, default=None,
-                        help="cluster-SD from a DISJOINT pilot run for the power gate")
-    parser.add_argument("--target-power", type=float, default=0.8)
     parser.add_argument("--alpha", type=float, default=0.05)
     parser.add_argument("--output", type=Path, default=None)
     args = parser.parse_args(argv)
@@ -1505,9 +1448,7 @@ def main(argv: list[str] | None = None) -> int:
                 corpus=args.corpus, n_resamples=args.bootstrap, seed=args.seed,
                 n_permutations=args.permutations,
                 assume_exchangeable=args.assume_exchangeable,
-                smallest_effect=args.smallest_effect,
-                pilot_cluster_sd=args.pilot_cluster_sd,
-                target_power=args.target_power, alpha=args.alpha,
+                alpha=args.alpha,
             )
         else:
             result = compare(
@@ -1523,9 +1464,6 @@ def main(argv: list[str] | None = None) -> int:
                 seed=args.seed,
                 n_permutations=args.permutations,
                 assume_exchangeable=args.assume_exchangeable,
-                smallest_effect=args.smallest_effect,
-                pilot_cluster_sd=args.pilot_cluster_sd,
-                target_power=args.target_power,
                 alpha=args.alpha,
             )
     except ValueError as exc:

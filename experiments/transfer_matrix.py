@@ -212,7 +212,7 @@ def _cohort_payload(manifest: dict[str, Any]) -> dict[str, Any]:
     if not isinstance(components, dict) or "target" not in components:
         raise ValueError("manifest lacks config.components.target")
     components.pop("target")
-    # These are realized outputs, not frozen design factors.  Stateful attacks
+    # These are realized outputs, not declared design factors.  Stateful attacks
     # can legitimately stop at different turns on different targets, and target-
     # generated media can likewise differ.  Exact row joins, fingerprints, and
     # completion descriptors remain the authority for every downstream
@@ -918,6 +918,22 @@ def load(
     if loaded + total_excluded != rows:
         raise AssertionError("internal transfer-loader accounting error")
     source_files = sorted({str(path) for cell in cells for path in cell["artifacts"].values()})
+    artifact_integrity_checks = {
+        "non_dry": all(
+            not bool(((cell["manifest"].get("config") or {}).get("run") or {}).get(
+                "dry_run"
+            ))
+            for cell in cells
+        ),
+        "v2_integrity": all(
+            cell["integrity_mode"] == "v2_sha256_bytes_records" for cell in cells
+        ),
+        "grid_accounted": grid_audit["mode"] == "grid_accounted",
+        "source_identity_validated": all(
+            cell["source_identity_validated"] is True for cell in cells
+        ),
+        "zero_unexplained_exclusions": True,
+    }
     audit = {
         "completed_cells": len(cells),
         "files_scanned": len(cells),
@@ -945,16 +961,8 @@ def load(
         "source_identity_validated": all(
             cell["source_identity_validated"] is True for cell in cells
         ),
-        "publishable_real_run": (
-            total_excluded == 0
-            and all(cell["integrity_mode"] == "v2_sha256_bytes_records" for cell in cells)
-            and grid_audit["mode"] == "grid_accounted"
-            and all(cell["source_identity_validated"] is True for cell in cells)
-            and all(
-                not bool(((cell["manifest"].get("config") or {}).get("run") or {}).get("dry_run"))
-                for cell in cells
-            )
-        ),
+        "artifact_integrity_ready_real_run": all(artifact_integrity_checks.values()),
+        "artifact_integrity_checks": artifact_integrity_checks,
     }
     return dict(per_model), audit
 
@@ -1206,14 +1214,32 @@ def build_matrix(
     exact_input_coverage_ok = all(
         cell.get("unmatched") == 0 for cell in source_success_cells
     )
+    analysis_readiness_checks = {
+        "artifact_integrity_ready_real_run": bool(
+            audit.get("artifact_integrity_ready_real_run")
+        ),
+        "at_least_one_estimable_ordered_cell": bool(estimated_cells),
+        "all_estimated_cells_have_cluster_support": support_ok,
+        "complete_exact_input_coverage": exact_input_coverage_ok,
+        "complete_transfer_population": audit.get("explained_exclusions", 0) == 0,
+    }
     return {
-        "schema_version": "2.0",
+        "schema_version": "2.1",
+        "analysis_kind": "diagnostic_conditional_transfer",
+        "analysis_scope": (
+            "descriptive_ordered_source_to_target_cells_conditioned_on_source_success"
+        ),
+        "analysis_status": (
+            "conditional_descriptive_ready"
+            if all(analysis_readiness_checks.values())
+            else "conditional_descriptive_not_estimable_or_incomplete"
+        ),
         "estimand": _TRANSFER_ESTIMAND,
         "multiplicity": {
             "status": "outside_holm_conditional_descriptive",
             "reason": (
                 "ordered source-target cells condition on different source-success "
-                "populations and have no frozen null p-value"
+                "populations and have no declared null p-value"
             ),
         },
         "models": models,
@@ -1236,11 +1262,8 @@ def build_matrix(
                 "claim is defined for conditional transfer cells"
             ),
         },
-        "publishable_real_run": (
-            bool(audit.get("publishable_real_run"))
-            and support_ok
-            and exact_input_coverage_ok
-        ),
+        "analysis_ready_real_run": all(analysis_readiness_checks.values()),
+        "analysis_readiness_checks": analysis_readiness_checks,
         "analysis_source": analysis_source_identity([
             Path(__file__), Path(__file__).resolve().parents[1] / "src" / "ura" / "metrics.py",
         ]),
@@ -1325,7 +1348,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument(
         "--minimum-unique-clusters", type=int, default=2,
-        help="prespecified minimum source prompt/intent clusters per estimable cell",
+        help="required minimum source prompt/intent clusters per estimable cell",
     )
     parser.add_argument("--alpha", type=float, default=0.05)
     parser.add_argument(

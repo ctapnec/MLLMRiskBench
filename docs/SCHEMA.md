@@ -95,48 +95,29 @@ official evaluator actually ran and its provenance says so.
   hashed artifacts and match the manifest/completion marker;
 - modality evidence binds the datapoint ID to its exact delivered modality
   combination; a tag without byte-backed delivery is insufficient;
-- a content-addressed modality companion proves only completed Attempt/Response
-  evidence for the same target component and defense condition;
-- a loaded partition recomputes its declared scoped-seed pilot/main membership
-  from the complete sorted cluster inventory rather than trusting stored role
-  lists;
 - missing or unsupported constructs fail explicitly rather than becoming zero.
 
 Grid requests also bind `source_policy_cluster_counts` for every selected corpus
 and a `call_projection` using
 `conservative_complete_grid_upper_bound_v1`. The latter reports trajectory,
-target-call, model-judge-call, and declared provider-HTTP-attempt upper bounds,
-including per-attacker subtotals. It is an exposure/budget planning record, not
-a price, token, latency, or expected-usage estimate.
+target-call, local-guardrail-evaluation, model-judge-call, and declared
+provider-HTTP-attempt upper bounds, including per-attacker subtotals. It is an
+exposure/budget planning record, not a price, token, latency, or expected-usage
+estimate.
 
 Agentic tool fields represent source-benchmark traces. The core harness does not
 execute model-produced commands or infer that a represented tool effect occurred.
 
-Post-run planning artifacts are separately content-addressed. A sizing-pilot
-artifact records its admissibility checks, zero endpoint exclusions, mock-free
-status, normalized paired-analysis design and design digest. The confirmatory
-plan freezes `assume_exchangeable: true` for each tested contrast and a human
-`validity_gate` containing the derived balanced population-cell support floor,
-the frozen required-arm automated-versus-consensus threshold, and the frozen
-inter-rater endpoint-agreement threshold. The resulting human-audit artifact
-records the completed labels CSV name, byte count, and SHA-256; complete rater
-coverage; pairwise policy-endpoint agreement and support, with static rows used
-directly and live challenge rows collapsed to conversation endpoints before
-equal conversation-within-cluster and equal-cluster weighting; required-arm gate
-results; and uncertainty settings that must equal the plan. Its pair records
-therefore expose `n_shared_endpoint_conversations`, `endpoint_unit`, and
-`weighting` alongside agreement and unique-cluster support.
+Human-audit outputs are separately content-addressed after ratings are complete.
+The audit artifact records the labels CSV name, byte count, and SHA-256;
+complete-rater coverage; pairwise policy-endpoint agreement and support; and
+automated-versus-consensus performance. Static rows are endpoint units directly,
+while live challenge rows collapse to conversation endpoints before equal
+conversation-within-cluster and equal-cluster weighting. Pair records expose
+`n_shared_endpoint_conversations`, `endpoint_unit`, and `weighting` alongside
+agreement and unique-cluster support. These are analysis artifacts rather than
+additions to schema v1.4's runtime record types.
 
-The total audit precision design is not a per-cell precision or power claim.
-These are analysis contracts rather than additions to schema v1.4's runtime
-record types.
-
-The confirmatory plan also binds the checked-in interpretation policy by a
-canonical repository-relative path, exact byte count, raw SHA-256, policy ID and
-version. Confirmatory output embeds the verified JSON and its canonical-content
-digest. Measured loading reopens that canonical path, rejects symlink/path drift,
-and verifies the current raw bytes, SHA-256, and parsed content against the
-embedded binding before figure provenance consumes it. This compact provenance
-contract is not a policy engine;
-the realized target snapshot plus requested and realized judge identities remain
-independently bound by the pilot/main analysis design.
+The exact target snapshot, requested and realized judge identities, source and
+policy digests, code/schema identity, and analysis inputs remain independently
+bound in runtime and postprocessing provenance.

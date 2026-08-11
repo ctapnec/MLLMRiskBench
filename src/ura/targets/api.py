@@ -879,7 +879,7 @@ _ANTHROPIC_FABLE_SPEC = (
 
 
 class AnthropicFableTarget(AnthropicTarget):
-    """Frozen Claude Fable 5 high-effort adaptive-thinking condition."""
+    """Fixed Claude Fable 5 high-effort adaptive-thinking condition."""
 
     name = _ANTHROPIC_FABLE_SPEC
     MAX_TOKENS = 25_000
@@ -898,7 +898,7 @@ class AnthropicFableTarget(AnthropicTarget):
     ) -> None:
         if model != _ANTHROPIC_FABLE_MODEL:
             raise ValueError(
-                "the frozen Fable condition requires model 'claude-fable-5'"
+                "the fixed Fable condition requires model 'claude-fable-5'"
             )
         if requested_spec is not None and requested_spec != _ANTHROPIC_FABLE_SPEC:
             raise ValueError(
@@ -1513,13 +1513,13 @@ _OPENAI_SOL_PRO_SPEC = (
 
 
 class OpenAIResponsesTarget(OpenAITarget):
-    """Frozen GPT-5.6 Sol Pro condition over the OpenAI Responses API.
+    """Fixed GPT-5.6 Sol Pro condition over the OpenAI Responses API.
 
     OpenAI exposes Pro as ``reasoning.mode='pro'`` on a GPT-5.6 model, not as
     a separate model slug.  This target intentionally has one canonical public
     identity so standard Chat Completions and the Pro condition cannot collapse
     into the same metric group.  Reasoning effort/context and the initial
-    output-token budget are frozen for reproducible comparison.
+    output-token budget are explicit for reproducible comparison.
     """
 
     name = _OPENAI_SOL_PRO_SPEC
@@ -1539,7 +1539,7 @@ class OpenAIResponsesTarget(OpenAITarget):
     ) -> None:
         if model != _OPENAI_SOL_PRO_MODEL:
             raise ValueError(
-                "the frozen Sol Pro condition requires model 'gpt-5.6-sol'"
+                "the fixed Sol Pro condition requires model 'gpt-5.6-sol'"
             )
         if requested_spec is not None and requested_spec != _OPENAI_SOL_PRO_SPEC:
             raise ValueError(
@@ -2013,12 +2013,12 @@ class OpenAIResponsesTarget(OpenAITarget):
         if _provider_field(resp, "max_output_tokens") != self.max_output_tokens:
             raise OpenAIResponsesOutputError(
                 "OpenAI Responses effective max_output_tokens disagrees with "
-                "the frozen request"
+                "the fixed request"
             )
         if _provider_field(resp, "truncation") != self.truncation:
             raise OpenAIResponsesOutputError(
                 "OpenAI Responses effective truncation disagrees with the "
-                "frozen request"
+                "fixed request"
             )
         tokens = self._usage_tokens(resp)
         (
@@ -2598,7 +2598,7 @@ def build_api_target(spec: str) -> BaseTarget:
         if provider == "anthropic-fable":
             if spec != _ANTHROPIC_FABLE_SPEC:
                 raise ValueError(
-                    "the only frozen Anthropic Fable condition is "
+                    "the only fixed Anthropic Fable condition is "
                     f"{_ANTHROPIC_FABLE_SPEC!r}"
                 )
             return AnthropicFableTarget(
@@ -2607,7 +2607,7 @@ def build_api_target(spec: str) -> BaseTarget:
         if provider == "openai-responses":
             if spec != _OPENAI_SOL_PRO_SPEC:
                 raise ValueError(
-                    "the only frozen OpenAI Responses condition is "
+                    "the only fixed OpenAI Responses condition is "
                     f"{_OPENAI_SOL_PRO_SPEC!r}"
                 )
             return OpenAIResponsesTarget(

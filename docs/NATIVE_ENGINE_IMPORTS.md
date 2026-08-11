@@ -44,7 +44,7 @@ upstream report's harmful/failed categorisation, deduplication, counters and
 integer success rates, and requires the reconstruction to match `report.json`
 exactly. It also verifies the configured model and attack-mode set, rejects blank
 prompts/responses, and records file/record SHA-256 lineage. Optional expected
-file hashes support preregistered artifacts.
+file hashes support auditable artifact admission.
 
 FuzzyAI's classifier map and harmful/failed/uncategorized outcome are retained
 as native evidence. They are not relabelled as a URA judge verdict.
@@ -65,8 +65,8 @@ python -m garak --target_type openai.OpenAICompatible \
   --report_prefix <absolute-run-prefix>
 ```
 
-Retain the resulting `<prefix>.report.jsonl`. Preregister its exact record count
-and, where available, its SHA-256:
+Retain the resulting `<prefix>.report.jsonl`. Record its expected count and,
+where available, its SHA-256 before import:
 
 ```python
 from ura.adapters.garak import GARAK_REVISION, GarakAttacker
@@ -82,8 +82,8 @@ native = GarakAttacker(
 ).import_run(
     "runs/garak/native.report.jsonl",
     upstream_revision=GARAK_REVISION,
-    expected_records=<preregistered-line-count>,
-    expected_sha256="<optional-preregistered-sha256>",
+    expected_records=<expected-line-count>,
+    expected_sha256="<optional-expected-sha256>",
 )
 ```
 
@@ -119,7 +119,7 @@ For reproducible admission, the config must bind the target provider(s),
 through Promptfoo's `defaultTest.provider`/`defaultTest.options.provider` chain.
 Configure the adapter with those exact identities, resolved (not collection
 alias) plugin IDs, configured strategy IDs, and injection variable. If
-Promptfoo inferred and omitted `redteam.injectVar`, the preregistered adapter
+Promptfoo inferred and omitted `redteam.injectVar`, the explicitly configured adapter
 value is checked against every generated test and result.
 
 ```python
@@ -137,7 +137,7 @@ native = PromptfooAttacker(
     "runs/promptfoo/results.json",
     generated_config="runs/promptfoo/generated-redteam.yaml",
     upstream_revision=PROMPTFOO_REVISION,
-    expected_results=<preregistered-result-count>,
+    expected_results=<expected-result-count>,
     expected_results_sha256="<optional-results-sha256>",
     expected_config_sha256="<optional-generated-config-sha256>",
 )
@@ -196,14 +196,14 @@ native = EasyJailbreakAttacker(
     "runs/easyjailbreak/attack_results.jsonl",
     upstream_revision="<40-character EasyJailbreak Git commit>",
     expected_records=100,
-    expected_sha256="<preregistered file SHA-256>",
+    expected_sha256="<expected-file-SHA-256>",
 )
 ```
 
 The adapter accepts only the exact recipe classes exported by the upstream
 0.1.3 package. It validates the precise `save_to_jsonl` schema, requires every
 target response to have one binary native evaluation, rejects truncated record
-counts and optionally enforces a preregistered digest. Recipe class, all three
+counts and optionally enforces an expected digest. Recipe class, all three
 model roles, native responses, evaluations, per-record hashes and aggregate
 native success fraction remain explicit. The importer does not execute the GPL
 package, and this process boundary is not a conclusion about license duties.
@@ -277,7 +277,7 @@ from ura.adapters.autodan import AutoDANTurboAttacker
 
 AutoDANTurboAttacker.write_run_manifest(
     "upstream/AutoDAN-Turbo/logs",
-    run_id="preregistered-run-id",
+    run_id="recorded-run-id",
     variant="standard",
     model_roles={
         "attacker": "provider/attacker",
@@ -295,7 +295,7 @@ AutoDANTurboAttacker.write_run_manifest(
 )
 native = AutoDANTurboAttacker(target_model="provider/target").import_run(
     "upstream/AutoDAN-Turbo/logs",
-    expected_manifest_sha256="<preregistered manifest SHA-256>",
+    expected_manifest_sha256="<expected-manifest-SHA-256>",
 )
 ```
 

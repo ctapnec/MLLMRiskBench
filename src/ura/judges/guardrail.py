@@ -17,8 +17,9 @@ the classifier prompt. A :class:`~ura.targets.guarded.GuardedTarget` therefore
 rejects physical-media cells before using this class as a defense (a
 Llama-Guard-3-Vision / ShieldGemma-2 image path is future work).
 
-The module imports with only pydantic + the stdlib present; ``transformers`` and
-``torch`` are imported lazily the first time :meth:`GuardrailJudge.judge` runs.
+The module imports with only pydantic + the stdlib present. ``transformers`` and
+``torch`` are imported when the experiment driver's call-free preflight loads
+the pinned model, or on the first direct library call if preflight was skipped.
 """
 from __future__ import annotations
 
@@ -103,7 +104,7 @@ class GuardrailJudge(BaseJudge):
         self.device = device
         self.escalate_below = float(escalate_below)
         self.max_new_tokens = int(max_new_tokens)
-        # Lazily populated on first judge() call.
+        # Populated by preflight or, for direct library use, the first judge call.
         self._tokenizer: Any = None
         self._model: Any = None
 
@@ -139,6 +140,22 @@ class GuardrailJudge(BaseJudge):
         if self.device is not None:
             self._model = self._model.to(self.device)
         self._model.eval()
+
+    def preflight(self) -> dict[str, str]:
+        """Load the pinned tokenizer and model without evaluating a response.
+
+        The experiment driver calls this before any paid target request.  It
+        catches a missing optional dependency, gated-repository access problem,
+        unavailable revision, or device-memory failure while recovery is still
+        call-free.
+        """
+        self._ensure_loaded()
+        return {
+            "component": self.name,
+            "model": self.model_id,
+            "revision": self.revision,
+            "device": self.device or "auto",
+        }
 
     # ------------------------------------------------------------------ #
     # Conversation formatting

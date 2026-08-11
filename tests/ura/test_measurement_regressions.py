@@ -248,6 +248,26 @@ def test_guardrail_requires_and_records_immutable_revision() -> None:
     assert result.raw["model_identity"].endswith(f"@{_GUARD_REVISION}")
 
 
+def test_guardrail_preflight_loads_without_generating(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    guard = GuardrailJudge(revision="a" * 40, device="cuda:0")
+    loaded = 0
+
+    def _load() -> None:
+        nonlocal loaded
+        loaded += 1
+
+    monkeypatch.setattr(guard, "_ensure_loaded", _load)
+    assert guard.preflight() == {
+        "component": "guardrail",
+        "model": "meta-llama/Llama-Guard-3-8B",
+        "revision": "a" * 40,
+        "device": "cuda:0",
+    }
+    assert loaded == 1
+
+
 def test_guardrail_uses_bounded_media_sentinel_and_deduplicates_payload() -> None:
     secret_uri = "data:image/png;base64,THIS-MUST-NEVER-ENTER-THE-GUARD-PROMPT"
     digest = "b" * 64

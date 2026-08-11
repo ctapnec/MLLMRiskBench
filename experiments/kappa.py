@@ -241,16 +241,40 @@ def _analyse_facet(
             "by_category": by_category,
             "coverage_audit": coverage_audit,
         }
+    pair_estimability = {
+        pair: (
+            result.get("pooled") is not None
+            and result["pooled"].get("unsafe_kappa") is not None
+            and result["pooled"].get("n_unique_clusters", 0) >= 2
+        )
+        for pair, result in results.items()
+    }
+    analysis_readiness_checks = {
+        "non_dry": audit["dry_run_cells"] == 0,
+        "v2_integrity": (
+            audit["completion_integrity_modes"] == ["v2_sha256_bytes_records"]
+        ),
+        "grid_accounted": audit["grid_accounting_modes"] == ["grid_accounted"],
+        "source_identity_validated": audit["source_identity_validated"] is True,
+        "zero_unexplained_exclusions": audit["unexplained_exclusions"] == 0,
+        "all_stage_pairs_estimable_with_cluster_support": (
+            bool(pair_estimability) and all(pair_estimability.values())
+        ),
+    }
     return {
+        "schema_version": "2.2",
         "pairs": results,
         "artifact_audit": audit,
-        "publishable_real_run": (
-            audit["completion_integrity_modes"] == ["v2_sha256_bytes_records"]
-            and audit["grid_accounting_modes"] == ["grid_accounted"]
-            and audit["source_identity_validated"] is True
-            and audit["dry_run_cells"] == 0
-            and audit["unexplained_exclusions"] == 0
+        "analysis_kind": "diagnostic_inter_judge_agreement",
+        "analysis_scope": "descriptive_within_completed_judge_trails",
+        "analysis_ready_real_run": all(analysis_readiness_checks.values()),
+        "analysis_status": (
+            "diagnostic_ready"
+            if all(analysis_readiness_checks.values())
+            else "diagnostic_not_estimable_or_incomplete"
         ),
+        "analysis_readiness_checks": analysis_readiness_checks,
+        "pair_estimability": pair_estimability,
         "unexplained_exclusions": 0,
     }
 
@@ -284,9 +308,28 @@ def main(argv=None) -> int:
         next(iter(analysed.values()))
         if len(analysed) == 1
         else {
-            "schema_version": "2.1-faceted",
+            "schema_version": "2.2-faceted",
             "attacker": args.attacker,
             "facets": analysed,
+            "analysis_kind": "diagnostic_inter_judge_agreement",
+            "analysis_scope": "descriptive_within_completed_judge_trails",
+            "analysis_ready_real_run": all(
+                facet["analysis_ready_real_run"] for facet in analysed.values()
+            ),
+            "analysis_status": (
+                "diagnostic_ready"
+                if all(
+                    facet["analysis_ready_real_run"]
+                    for facet in analysed.values()
+                )
+                else "diagnostic_not_estimable_or_incomplete"
+            ),
+            "analysis_readiness_checks": {
+                "all_corpus_facets_ready": all(
+                    facet["analysis_ready_real_run"]
+                    for facet in analysed.values()
+                )
+            },
             "unexplained_exclusions": 0,
         }
     )

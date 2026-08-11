@@ -614,22 +614,42 @@ def _analyse_cell(cell: dict[str, Any]) -> dict[str, Any]:
             },
         }
 
+    stage_estimability = {
+        stage_name: any(
+            metric["n_units"] > 0
+            and metric["known_event_units"] + metric["known_non_event_units"] > 0
+            for metric in stage_result["metrics"].values()
+        )
+        for stage_name, stage_result in stage_results.items()
+    }
     run_dry = bool(run.get("dry_run"))
-    publishability_checks = {
+    analysis_readiness_checks = {
         "non_dry": not run_dry,
         "v2_integrity": cell["integrity_mode"] == "v2_sha256_bytes_records",
         "grid_accounted": cell["grid_audit"]["mode"] == "grid_accounted",
         "source_identity_validated": cell["source_identity_validated"] is True,
         "zero_common_metric_exclusions": len(units) == len(eligible_units),
         "zero_unexplained_exclusions": True,
+        "at_least_two_judge_stages": len(stage_results) >= 2,
+        "all_stages_have_estimable_metric": (
+            bool(stage_estimability) and all(stage_estimability.values())
+        ),
     }
     return {
-        "schema_version": "1.0",
+        "schema_version": "1.1",
         "analysis": "same_response_shadow_judge_sensitivity",
+        "analysis_kind": "diagnostic_same_response_sensitivity",
+        "analysis_scope": "descriptive_within_completed_judge_trails",
         "no_new_target_calls": True,
         "unit_mode": mode,
-        "publishable_real_run": all(publishability_checks.values()),
-        "publishability_checks": publishability_checks,
+        "analysis_ready_real_run": all(analysis_readiness_checks.values()),
+        "analysis_status": (
+            "diagnostic_ready"
+            if all(analysis_readiness_checks.values())
+            else "diagnostic_not_estimable_or_incomplete"
+        ),
+        "analysis_readiness_checks": analysis_readiness_checks,
+        "stage_estimability": stage_estimability,
         "lineage": {
             "run_id": cell["run_id"],
             "model_spec": run["model_spec"],
@@ -712,10 +732,24 @@ def analyse(
             raise ValueError(
                 f"malformed sensitivity artifact in completed cell {cell['stem']!r}: {exc}"
             ) from exc
+    all_facets_ready = all(
+        facet["analysis_ready_real_run"] for facet in facets.values()
+    )
     return {
-        "schema_version": "1.0-faceted",
+        "schema_version": "1.1-faceted",
         "experiment_status": "computed_only_from_supplied_completed_R1_artifacts",
         "analysis": "same_response_shadow_judge_sensitivity",
+        "analysis_kind": "diagnostic_same_response_sensitivity",
+        "analysis_scope": "descriptive_within_completed_judge_trails",
+        "analysis_ready_real_run": all_facets_ready,
+        "analysis_status": (
+            "diagnostic_ready"
+            if all_facets_ready
+            else "diagnostic_not_estimable_or_incomplete"
+        ),
+        "analysis_readiness_checks": {
+            "all_selected_cells_ready": all_facets_ready,
+        },
         "no_new_target_calls": True,
         "abstention_rule": (
             "a stage decides only when cascade_confident=true and parsed is not false; "

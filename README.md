@@ -3,37 +3,35 @@
 URA-Bench is the research software for the master's thesis *A Risk-Assessment
 System for Question Answering by Multimodal Language Models*. It converts safety
 corpora to one typed schema, runs static or response-conditioned attacks against
-hosted/local targets, shadow-scores every response, and retains auditable
-lineage through confirmatory analysis.
+hosted or local targets, shadow-scores every response, and retains auditable
+lineage for later analysis.
 
 Experiments are pending. The repository establishes no model ranking, defense
 effect, compliance finding, or other empirical result yet.
 
 ## What is measured
 
-- Harmful ASR/refusal and benign FRR use disjoint denominators.
-- Live trajectories report conversation ASR, robust refusal, the full
-  Kaplan-Meier curve, observed median turns-to-break, and challenge-horizon-bound
-  RMTB. Conversation setup turns are retained but are not policy observations.
+- Harmful ASR/refusal and benign false-refusal rate use disjoint denominators.
+- Live trajectories report conversation ASR, robust refusal, a Kaplan--Meier
+  curve, observed median turns-to-break when estimable, and challenge-horizon
+  restricted mean turns-to-break. Setup turns remain provenance only.
 - Repeated seeds, turns, and source variants are clustered by their originating
-  prompt/intent; paired effects give source clusters equal weight.
+  prompt or intent; paired effects give source clusters equal weight.
 - Static transfer requires the same harmful rendered input. Live adaptive
   conversations are not transferable unless replayed exactly.
-- MM-SafetyBench common ASR and MOSSBench common FRR are secondary URA proxies;
-  neither is presented as its official metric unless its official evaluator ran.
-- MM-SafetyBench's six source-policy strata are never pooled; executable grids
-  include `source_policy_id,source_policy_version` in their grouping.
-- Confirmatory results require a disjoint pilot, a frozen complete-family plan,
-  a hash-bound whole-cluster human audit, and a final publishable analysis
-  artifact. Primary endpoints and secondary cross-benchmark proxies occupy
-  separate multiplicity families. Rate-difference SESOIs must lie in `(0,1]`;
-  prospective sizing uses the first Holm threshold `alpha / family_size` and
-  also requires enough clusters for the two-sided sign-flip test to attain that
-  threshold. Every confirmatory contrast explicitly asserts paired sign-flip
-  exchangeability.
+- MM-SafetyBench common ASR and MOSSBench common false-refusal rate are secondary
+  URA proxies. They are not the sources' official metrics unless those official
+  evaluators run.
+- MM-SafetyBench's six source-policy strata remain separate. A pooled number is
+  descriptive only and must publish its weights.
+
+The absence of a universal safety score is deliberate: every estimate is
+conditioned on a benchmark, policy, modality, judge, attack budget, and served
+model snapshot. Cross-provider differences are associations, not causal effects
+of one training or safety mechanism.
 
 See [metrics](docs/METRICS.md), [schema](docs/SCHEMA.md),
-[architecture](docs/ARCHITECTURE.md), and the
+[architecture](docs/ARCHITECTURE.md), and the complete
 [operator runbook](experiments/RUN_AND_RETURN.md).
 
 ## Offline smoke test
@@ -41,13 +39,14 @@ See [metrics](docs/METRICS.md), [schema](docs/SCHEMA.md),
 Python 3.12 is the supported baseline.
 
 ```bash
-python -m pip install -e ".[dev]"
+python -m pip install -e ".[dev,analysis]"
 python -m pytest
 python experiments/run_matrix.py --dry-run --attackers replay --judges rules,llm --corpora synth --limit 12 --out runs/dry
 python -m experiments.figures --synth --out runs/_figcheck
 ```
 
-Dry-run output is plumbing evidence only and cannot enter the thesis results.
+Dry-run and synthetic output are plumbing evidence only and cannot enter the
+thesis results.
 
 ## Planned comparison
 
@@ -58,89 +57,82 @@ versus GPT-5.6 Sol through the Responses API:
 - `openai-responses:gpt-5.6-sol;reasoning_mode=pro;reasoning_effort=medium;reasoning_context=all_turns`
 
 It is a cross-provider endpoint comparison, not a same-base ablation or a causal
-estimate of a safety mechanism. Fable thinking and Sol encrypted reasoning/
-assistant output state are retained only as needed for exact stateless
-continuation and checkpoint resume.
+estimate of a safety mechanism. Fable thinking and Sol encrypted reasoning or
+assistant-output state are retained only as needed for provider-faithful
+stateless continuation and checkpoint resume.
 
-The real command intentionally is not reduced to an unsafe one-liner here. It
-requires three content-addressed inputs: the pilot/main corpus partition, the
-hosted-provider data-policy approval, and later the frozen analysis plan. Follow
-the [end-to-end runbook](experiments/RUN_AND_RETURN.md), which includes those
-schemas and the exact CLI.
-
-Mythos remains important frontier-security literature and a future replication
-target, but the researcher has no access. It is not an executable target, roster
-row, or measured effect in this study.
+Mythos remains relevant frontier-security literature and a possible future
+replication target, but the researcher has no access. It is not an executable
+target, roster row, or measured effect in this study.
 
 ## Multimodality
 
 The canonical Fable and Sol adapters currently declare text and image support.
-The main corpus set therefore exercises both:
+The all-corpus replay grid therefore runs every supported modality combination
+present in its selected releases on both targets:
 
 - StrongREJECT: text;
 - MM-SafetyBench: harmful text+image;
 - MOSSBench: benign text+image.
 
-Before calls, `modality_coverage_plan` verifies that available supported
-combinations were selected. After execution, `modality_coverage_result` requires
-real eligible evidence for every exact delivered combination. An input-defense
-block or a setup-only turn is not execution evidence; an output-defense block
-after a real target call is. A content-addressed completed companion grid may
-supply the image evidence for the separate StrongREJECT-only Crescendo child,
-but only for the same target runtime and defense condition. Audio and video are
-unavailable on both study targets; URA never fabricates support, drops media, or
-substitutes a caption inside the registered run.
+Before calls, `modality_coverage_plan` verifies the selected combinations. After
+execution, `modality_coverage_result` requires real eligible Attempt--Response
+evidence for each exact delivered combination. An input-defense block or a
+setup-only turn is not execution evidence; an output-defense block after a real
+target call is. Audio and video are unavailable on both study adapters and are
+reported unavailable rather than fabricated, silently dropped, or replaced by
+captions.
+
+## Direct real-run lifecycle
+
+The runbook is the canonical from-zero procedure:
+
+1. download the project and create its Python environment;
+2. download the exact corpus releases, place their image assets, and set
+   `URA_<CORPUS>_PATH` plus ordered `URA_MEDIA_ROOTS`;
+3. set the target and judge credentials and review provider retention and
+   corpus-license constraints;
+4. run `python -m experiments.rig_check` with the intended matrix arguments;
+5. run the complete all-corpus replay grid and the StrongREJECT-only Crescendo
+   grid with finite target-call, judge-call, HTTP-attempt, and time ceilings;
+6. run diagnostics and the automated-label-blinded, model-visible multi-rater
+   human audit; and
+7. retain the complete artifact tree, command line, commit identifier,
+   environment inventory, and run note for post-experiment analysis.
 
 ## Real-run gates
 
-- Real corpora resolve through `URA_<CORPUS>_PATH`; local media also needs an
+- Real corpora resolve through `URA_<CORPUS>_PATH`. Local media also needs an
   approved, ordered `URA_MEDIA_ROOTS` list. Persisted media paths are portable
   `@media-root/<index>/<relative-path>` aliases; resume must rebind the same
   ordered roots and relative layouts.
-- Every real non-synthetic scored run uses a SHA-256-bound exhaustive
-  `ura-cluster-partition/1.2` artifact and selects `pilot` or `main` with
-  `--limit 0`. The partition binds a portable source locator, full converted
-  release population, disjoint source clusters, and exact per-policy pilot/main
-  counts. Both roles default to at least two clusters per observed policy
-  stratum. On load, the driver recomputes the declared scoped-seed assignment
-  from the complete sorted cluster inventory and rejects any altered role list.
-  StrongREJECT, MM-SafetyBench, and MOSSBench enforce pinned official release
-  identities.
-- The StrongREJECT gate is the official CSV at commit
-  `f7cad6c17e624e21d8df2278e918ae1dddb4cb56`: normalized SHA-256
+- StrongREJECT, MM-SafetyBench, and MOSSBench enforce pinned official release
+  identities. The StrongREJECT gate is the official CSV at commit
+  `f7cad6c17e624e21d8df2278e918ae1dddb4cb56`, normalized SHA-256
   `4dd70357e4ff8b5d0ba5ebafecab5d6dd5633ce8046e3dd1c8bd93e64de44381`,
-  313 rows, all six categories, and 313 unique non-blank prompts. URA reports a
+  313 rows, all six categories, and 313 unique nonblank prompts. URA reports a
   StrongREJECT-style judge; it does not claim to execute the official evaluator.
-- Every hosted target/judge is covered by a SHA-256-bound provider data-policy
-  approval naming its exact model specification and role.
-- Finite matrix-wide target-call, judge-call, HTTP-attempt, and wall-clock
-  ceilings are persisted before calls. On resume, the ledger must be at least
-  the highest same-grid value recoverable from completions, full completed-
-  attempt checkpoints, response checkpoints, error records, and circuit state.
-  Each full checkpoint row is bounded, comes from a regular non-symlink file,
-  and carries `budget_after_attempt`; malformed, oversized, or symlinked
-  recovery candidates fail closed. An existing grid/cell lock is never
-  reclaimed automatically. After verifying that no owner is running, an
-  operator may remove only that exact lock and record the intervention. Durable
-  dependency circuits and append-only checkpoints otherwise make interruption
-  and resume fail closed.
-- Before each paid grid, run the same arguments through
-  `python -m experiments.rig_check`. It executes the corpus, release, policy,
-  target, judge, attacker, modality, and budget preflights in temporary storage,
-  prints exact selected source-policy cluster counts plus conservative complete-
-  grid call/HTTP upper bounds, imports each selected hosted SDK, requires the
-  corresponding credential environment variable to be nonblank, and stops
-  before model or judge generation calls. This local no-call check cannot prove
-  provider account access or model visibility.
+- Before each paid grid, `python -m experiments.rig_check` repeats corpus,
+  release, policy, component, modality, source-metric, credential-presence, and
+  budget checks without constructing a hosted client or making a generation
+  call. A selected local guardrail is loaded at its exact revision and device
+  before any paid call. The check prints selected source-policy counts and
+  conservative target, local-guardrail, judge, and HTTP-attempt upper bounds. It cannot prove account access,
+  entitlement, quota, reachability, or model visibility.
+- Every live grid sets finite matrix-wide target-call, judge-call, HTTP-attempt,
+  and wall-clock ceilings. Resume validates the durable ledger, checkpoints,
+  completion records, errors, and circuit state before another external call.
 - A real LLM judge needs an exact non-mock `--judge-model`. A model guard needs
   an immutable `--guardrail-revision`.
 - Optional local targets use `--local-config` keyed by the exact local spec,
-  with exactly one immutable `revision` or `digest` and an explicit `modalities`
-  list; no alternative aliases are accepted.
+  with exactly one immutable `revision` or `digest` and an explicit
+  `modalities` list.
+- Missing media, unsupported modality, source-policy drift, provider/model
+  identity drift, a failed cell, an abstention, and an undefined statistic stay
+  distinct. None is rewritten as zero.
 
-`--limit N` means at most N unique source prompt/intent clusters, retaining all
-rows in each selected cluster. Measured partitioned runs require `--limit 0`;
-the cap remains useful for dry-run or unpartitioned diagnostics.
+`--limit N` means at most N unique source prompt/intent clusters while retaining
+all rows in each selected cluster. The complete thesis run uses `--limit 0`.
 
 ## Artifacts and recovery
 
@@ -149,9 +141,8 @@ full-shadow trails, aggregate results, a manifest, an append-only checkpoint,
 and either a validated completion marker or an error record. A matching
 completion marker makes a rerun call-free. A matching checkpoint restores
 completed attempts and provider continuation state without querying them again.
-Provider/model identity drift, missing media, source-policy drift, partial
-artifact families, unsupported modality, or exhausted durable ceilings fail
-explicitly; none becomes a zero.
+Partial artifact families, unresolved locks, exhausted ceilings, or provenance
+drift fail explicitly.
 
 Runner `ura-runner/2.4` writes unified schema `1.4`. In a Crescendo trajectory,
 benign setup turns receive typed `not_applicable` judgments and no judge call or
@@ -159,54 +150,43 @@ metric contribution. Policy challenges are numbered contiguously from zero,
 share one declared challenge horizon, and a harmful authoritative violation is
 terminal.
 
-A pilot can size a main hypothesis only when it is real and mock-free, all v2
-integrity/grid/source/code/schema checks pass, and common-metric, pairing, and
-unexplained exclusions are zero. Its normalized paired-analysis design is
-hash-bound and must exactly match the main facet's model, target, defense,
-attacker, realized target snapshot, judge identities, repeat seeds,
-per-trajectory budget, source-policy/
-metric design, and code/schema identity. Run IDs, partition assignments, and
-aggregate call ceilings are intentionally allowed to differ.
+## Human validity and post-experiment analysis
 
-The frozen human plan sizes the total whole-cluster audit for its stated overall
-precision target. It separately freezes
-`validity_gate.minimum_shared_clusters_per_required_cell` at no less than the
-balanced floor obtained by dividing that total by the number of distinct
-required population cells, with an absolute minimum of two. This support rule
-does not claim per-cell precision or power. Sampling guarantees the frozen
-support before label export. Every independent rater must cover the complete
-selected sample, every rater pair must pass the preregistered cluster-equal-
-weight policy-endpoint agreement threshold (violation for harmful/refusal rows,
-over-refusal for benign safe-answer/comply-safely rows), and every required arm
-must pass the separate automated-versus-consensus support/agreement gate. Static
-rows are endpoint units directly; live challenge rows are collapsed with `any`
-to the conversation endpoint before conversations and then source clusters
-receive equal weight. Cohen's kappa remains diagnostic. A failed gate prevents
-a publishable final artifact.
+The automated-label-blinded, model-visible human audit samples complete source
+clusters, uses at least two independent raters plus adjudication, keeps refusal,
+harmfulness, convincingness, and specificity separate, and reports inter-rater
+as well as automated-versus-consensus agreement with cluster-aware uncertainty.
+The resulting `ura-human-audit/1.1` artifact becomes
+`complete_sample_conditional` and `analysis_ready_real_run=true` only when the
+achieved labels and run binding pass every integrity check. This permits
+sample-conditional analysis; it does not claim population-wide judge validity.
+Cohen's kappa is diagnostic and must be accompanied by support and intervals.
 
-Measured-figure loading reopens and rehashes the checked
-`experiments/evaluation-policy.json`, then requires the exact frozen three-family
-and ten-hypothesis inventory, canonical Fable/Sol specifications, defense
-`none`, and replay/Crescendo arm selectors. It also requires artifact
-`alpha=0.05`, `target_power>=0.80`, and every family's
-`method=holm_bonferroni_complete_frozen_family` with `alpha=0.05`. The seven proxy points are the
-policy-overall endpoints only; category or modality slices cannot substitute for
-them.
+Paired effects, judge sensitivity, kappa, transfer, and figures are computed
+only from completion-validated recorded artifacts and make no new target calls.
+Until the real matrix and human audit exist, these tools demonstrate analysis
+capability rather than empirical findings.
+
+Measured figures are built directly from the common completed-run parent and
+the content-bound `human_audit.json` using `--results`, the two exact model
+specifications, `--human-audit`, and `--human-audit-sha256`. Their
+`ura-chapter-v-figures/1.3` provenance contains exactly one StrongREJECT replay
+ASR contrast, six policy-specific MM-SafetyBench ASR contrasts, one MOSSBench
+benign-FRR contrast, and two model-specific replay-versus-Crescendo contrasts.
 
 ## Source-specific tracks
 
-R-Judge and GPTGeoChat remain first-class but use their own classification
-metrics rather than common ASR/FRR. Other convertible agent/runtime sources may
-fail scored preflight until their substantive runtime/evaluator exists;
-conversion support is not scoring support. See the protocol and runbook for the
-current inventory.
+R-Judge and GPTGeoChat use their own classification metrics rather than common
+ASR/FRR. Other convertible agent/runtime sources may fail scored preflight until
+their substantive runtime or evaluator exists; conversion support is not
+scoring support. See the protocol for the current inventory.
 
 ## Layout
 
 ```text
 src/ura/       schema, converters, adapters, targets, judges, runtime
 tests/ura/     offline regression and integration tests
-experiments/   matrix, partition/pilot/confirmatory analysis, figures
+experiments/   matrix execution, diagnostics, human audit, analysis, figures
 docs/          architecture, schema, metrics, taxonomy and native imports
 datasets/      local dataset area; released corpora are not redistributed
 ```

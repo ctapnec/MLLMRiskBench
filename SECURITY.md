@@ -38,13 +38,12 @@ and optional local media. Treat run artifacts as sensitive research data.
   partial generation. The adapter discards partial visible, thinking and
   redacted-thinking blocks and persists only the refusal plus bounded hashes and
   counts for audit.
-- A real hosted run is rejected unless `--provider-data-policy-approval` and
-  `--provider-data-policy-sha256` identify one bounded regular JSON file. It must
-  name every exact hosted target/judge specification once, with its provider,
-  role(s), accepted retention terms, accepted data-use terms, and HTTPS policy
-  references. Its schema is `ura-provider-data-policy-approval/1.0`; the exact
-  template is in [RUN_AND_RETURN.md](experiments/RUN_AND_RETURN.md). This is an
-  auditable operator approval, not a claim that a provider offers zero retention.
+- Before a hosted run, the operator must review and record the applicable corpus
+  license, institutional handling decision, provider retention/data-use terms,
+  exact target and judge specifications, and date in the run note. Do not send a
+  corpus to an endpoint whose terms or handling requirements are incompatible.
+  This ordinary provenance is not a claim that any provider offers zero
+  retention.
 - Local media must resolve beneath an operator-approved dataset root and match
   its recorded SHA-256 digest before it may be uploaded to a provider. Prepared
   artifacts store `@media-root/<index>/<relative-path>` rather than the local

@@ -2,8 +2,7 @@
 
 Runs the model x attacker x judge matrix over one or more corpora, aggregates the
 metrics, and writes per-cell JSONL plus a completed-grid directory consumed by
-the integrity-checked analysis commands. Measured figures consume only the final
-human-audit-bound confirmatory artifact, not raw grid roots.
+the integrity-checked analysis commands.
 Each cell also writes joinable Attempt/Response artifacts and an append-only
 checkpoint. A matching completion marker makes reruns call-free; an interrupted
 cell restores completed responses locally, including state needed by native
@@ -21,7 +20,7 @@ Examples
 # offline smoke of the whole matrix (no keys, no GPU):
 python experiments/run_matrix.py --dry-run --limit 12 --out runs/dry
 
-# cross-provider run: use the frozen Fable and Responses conditions (Pro is a
+# cross-provider run: use explicit Fable and Responses conditions (Pro is a
 # mode, not a model slug):
 # POSIX shell environment syntax is shown here. In PowerShell use
 # ``$env:ANTHROPIC_API_KEY='...'`` and ``$env:OPENAI_API_KEY='...'``; see README.
@@ -37,7 +36,7 @@ Hosted comparison ids should be provider-qualified. The Fable case is the public
 token output ceiling, and no temperature parameter; live account access still
 must pass preflight. The OpenAI case is the exact public ``gpt-5.6-sol`` model via
 the Responses API with Pro mode, medium effort, and current-turn reasoning
-context frozen as ``all_turns`` in the target specification; no Sol-Pro slug is
+context configured as ``all_turns`` in the target specification; no Sol-Pro slug is
 inferred. Such a
 comparison is cross-provider and is not a causal same-base-model defense ablation.
 """
@@ -55,7 +54,6 @@ import secrets
 import sys
 import time
 from collections import Counter, defaultdict
-from dataclasses import replace
 from datetime import datetime, timezone
 from importlib import metadata
 from pathlib import Path
@@ -84,7 +82,6 @@ from ura.judges.llm import LLMJudge                   # noqa: E402
 from ura.judges.rules import RuleJudge                # noqa: E402
 from ura.modality_coverage import (                    # noqa: E402
     ModalityCoverageError,
-    ModalityCoveragePlan,
     plan_modality_coverage,
     verify_executed_modality_coverage,
 )
@@ -95,7 +92,6 @@ from ura.runner import (                              # noqa: E402
     GlobalCallBudget,
     Runner,
     _component_config,
-    _harness_source_identity,
     _portable_attempt_dump,
     realized_identity_summary,
 )
@@ -112,8 +108,6 @@ _WINDOWS_RESERVED = {
     *(f"lpt{i}" for i in range(1, 10)),
 }
 
-_PROVIDER_DATA_POLICY_SCHEMA = "ura-provider-data-policy-approval/1.0"
-_PARTITION_SCHEMA = "ura-cluster-partition/1.2"
 _ALLOWED_GROUP_KEYS = {
     "model",
     "target",
@@ -279,26 +273,6 @@ def _sha256_json(value: object) -> str:
     return hashlib.sha256(material).hexdigest()
 
 
-def _partition_cluster_ids(
-    cluster_ids: list[str], *, seed: int, corpus: str, pilot_count: int,
-) -> tuple[list[str], list[str]]:
-    """Reproduce the declared scoped-seed pilot/main assignment exactly."""
-    if (
-        not corpus
-        or isinstance(seed, bool) or not isinstance(seed, int)
-        or isinstance(pilot_count, bool) or not isinstance(pilot_count, int)
-        or pilot_count < 1 or pilot_count >= len(cluster_ids)
-        or len(set(cluster_ids)) != len(cluster_ids)
-    ):
-        raise ValueError("invalid deterministic cluster-partition inputs")
-    scoped = int.from_bytes(hashlib.sha256(
-        f"ura-pilot-main-partition-v1\0{seed}\0{corpus}".encode()
-    ).digest()[:8], "big")
-    shuffled = sorted(cluster_ids)
-    random.Random(scoped).shuffle(shuffled)
-    return sorted(shuffled[:pilot_count]), sorted(shuffled[pilot_count:])
-
-
 def _record_count(path: Path) -> int:
     if path.name.endswith(".manifest.json"):
         return 1
@@ -364,409 +338,6 @@ def _read_content_addressed_json(
         "sha256": actual_sha256,
         "bytes": size,
     }
-
-
-def _hosted_provider(spec: str) -> str | None:
-    """Return a stable provider namespace for a hosted model specification."""
-    rendered = spec.strip()
-    if not rendered or rendered == "mock":
-        return None
-    if ":" in rendered:
-        provider = rendered.split(":", 1)[0].strip().lower()
-        if provider in {"vllm", "ollama", "mock"}:
-            return None
-        return provider
-    lowered = rendered.lower()
-    if lowered.startswith("claude-"):
-        return "anthropic"
-    if lowered.startswith(("gpt-", "o1", "o3", "o4")):
-        return "openai"
-    if lowered.startswith("gemini-"):
-        return "google"
-    # A bare non-mock id is resolved through the hosted registry. Preserve that
-    # fact explicitly when its provider cannot be inferred from the id alone.
-    return "hosted-registry"
-
-
-def _provider_policy_requirements(
-    api_specs: list[str], judge_names: list[str], judge_model: str, *, dry_run: bool
-) -> list[dict[str, object]]:
-    if dry_run:
-        return []
-    roles_by_spec: dict[str, set[str]] = {}
-    providers: dict[str, str] = {}
-    for spec in api_specs:
-        provider = _hosted_provider(spec)
-        if provider is not None:
-            roles_by_spec.setdefault(spec, set()).add("target")
-            providers[spec] = provider
-    if "llm" in judge_names:
-        provider = _hosted_provider(judge_model)
-        if provider is not None:
-            roles_by_spec.setdefault(judge_model, set()).add("judge")
-            providers[judge_model] = provider
-    return [
-        {
-            "model_spec": spec,
-            "provider": providers[spec],
-            "roles": sorted(roles_by_spec[spec]),
-        }
-        for spec in sorted(roles_by_spec)
-    ]
-
-
-def _load_provider_data_policy_approval(
-    path_value: str,
-    sha256_value: str,
-    requirements: list[dict[str, object]],
-) -> dict[str, object]:
-    """Validate explicit retention/data-use approval for every hosted call arm."""
-    if not requirements:
-        if path_value or sha256_value:
-            raise ValueError(
-                "provider data-policy approval was supplied, but this run makes no "
-                "hosted provider calls"
-            )
-        return {
-            "status": "not_applicable",
-            "reason": "no_hosted_provider_calls",
-        }
-    if not path_value or not sha256_value:
-        raise ValueError(
-            "real hosted calls require both --provider-data-policy-approval and "
-            "--provider-data-policy-sha256"
-        )
-    value, artifact = _read_content_addressed_json(
-        path_value,
-        sha256_value,
-        flag_name="--provider-data-policy-approval",
-        max_bytes=256 * 1024,
-    )
-    top_level = {
-        "schema_version", "approval_id", "approved_by", "approved_at", "approvals",
-    }
-    if not isinstance(value, dict) or set(value) != top_level:
-        raise ValueError(
-            "provider data-policy approval must contain exactly schema_version, "
-            "approval_id, approved_by, approved_at, and approvals"
-        )
-    if value.get("schema_version") != _PROVIDER_DATA_POLICY_SCHEMA:
-        raise ValueError(
-            f"provider data-policy schema must be {_PROVIDER_DATA_POLICY_SCHEMA!r}"
-        )
-    for field in ("approval_id", "approved_by"):
-        item = value.get(field)
-        if not isinstance(item, str) or not item.strip() or len(item) > 256:
-            raise ValueError(f"provider data-policy {field} must be a bounded string")
-    approved_at = value.get("approved_at")
-    if not isinstance(approved_at, str) or len(approved_at) > 128:
-        raise ValueError("provider data-policy approved_at must be an ISO-8601 string")
-    try:
-        timestamp = datetime.fromisoformat(approved_at.replace("Z", "+00:00"))
-    except ValueError as exc:
-        raise ValueError("provider data-policy approved_at is not valid ISO-8601") from exc
-    if timestamp.tzinfo is None or timestamp.utcoffset() is None:
-        raise ValueError("provider data-policy approved_at must include a timezone")
-
-    approvals = value.get("approvals")
-    if not isinstance(approvals, list) or not approvals:
-        raise ValueError("provider data-policy approvals must be a non-empty list")
-    expected = {
-        str(item["model_spec"]): {
-            "provider": item["provider"], "roles": item["roles"]
-        }
-        for item in requirements
-    }
-    normalized: list[dict[str, object]] = []
-    seen: set[str] = set()
-    approval_fields = {
-        "model_spec", "provider", "roles", "retention_terms",
-        "data_use_terms", "policy_urls",
-    }
-    for index, item in enumerate(approvals):
-        if not isinstance(item, dict) or set(item) != approval_fields:
-            raise ValueError(
-                f"provider data-policy approvals[{index}] has an invalid field inventory"
-            )
-        spec = item.get("model_spec")
-        provider = item.get("provider")
-        roles = item.get("roles")
-        if not isinstance(spec, str) or spec not in expected or spec in seen:
-            raise ValueError(
-                "provider data-policy approvals must name each selected hosted "
-                "model specification exactly once"
-            )
-        seen.add(spec)
-        if provider != expected[spec]["provider"]:
-            raise ValueError(f"provider data-policy provider mismatch for {spec!r}")
-        if (
-            not isinstance(roles, list)
-            or any(role not in {"target", "judge"} for role in roles)
-            or len(set(roles)) != len(roles)
-            or sorted(roles) != expected[spec]["roles"]
-        ):
-            raise ValueError(f"provider data-policy roles mismatch for {spec!r}")
-        for field in ("retention_terms", "data_use_terms"):
-            term = item.get(field)
-            if not isinstance(term, str) or not term.strip() or len(term) > 4096:
-                raise ValueError(
-                    f"provider data-policy {field} for {spec!r} must be an "
-                    "explicit bounded acceptance string"
-                )
-        urls = item.get("policy_urls")
-        if (
-            not isinstance(urls, list) or not urls or len(urls) > 16
-            or any(
-                not isinstance(url, str) or not url.startswith("https://")
-                or len(url) > 2048 for url in urls
-            )
-            or len(set(urls)) != len(urls)
-        ):
-            raise ValueError(
-                f"provider data-policy policy_urls for {spec!r} must be unique "
-                "HTTPS URLs"
-            )
-        normalized.append({
-            "model_spec": spec,
-            "provider": provider,
-            "roles": sorted(roles),
-            "retention_terms": item["retention_terms"].strip(),
-            "data_use_terms": item["data_use_terms"].strip(),
-            "policy_urls": list(urls),
-        })
-    if seen != set(expected):
-        missing = sorted(set(expected) - seen)
-        raise ValueError(
-            "provider data-policy approval is missing selected model specs: "
-            + ", ".join(missing)
-        )
-    return {
-        "status": "approved",
-        "schema_version": _PROVIDER_DATA_POLICY_SCHEMA,
-        "approval_id": value["approval_id"].strip(),
-        "approved_by": value["approved_by"].strip(),
-        "approved_at": timestamp.isoformat(),
-        "approvals": sorted(normalized, key=lambda item: str(item["model_spec"])),
-        "artifact": artifact,
-    }
-
-
-def _load_partition_plan(
-    path_value: str,
-    sha256_value: str,
-    role: str,
-    corpora: list[str],
-) -> tuple[dict[str, object], dict[str, dict[str, object]]]:
-    """Validate and normalize an exhaustive pilot/main source-cluster plan."""
-    value, artifact = _read_content_addressed_json(
-        path_value,
-        sha256_value,
-        flag_name="--partition-plan",
-        max_bytes=16 * 1024 * 1024,
-    )
-    if not isinstance(value, dict):
-        raise ValueError("--partition-plan must contain a JSON object")
-    if set(value) != {
-        "schema_version", "seed", "algorithm", "minimum_pilot_policy_clusters",
-        "minimum_main_policy_clusters", "corpora", "analysis_source",
-    }:
-        raise ValueError("partition plan has an invalid top-level field inventory")
-    schema = value.get("schema_version")
-    if schema != _PARTITION_SCHEMA:
-        raise ValueError(f"partition plan schema must be {_PARTITION_SCHEMA!r}")
-    algorithm = value.get("algorithm")
-    seed = value.get("seed")
-    minimum_pilot_policy_clusters = value.get("minimum_pilot_policy_clusters")
-    minimum_main_policy_clusters = value.get("minimum_main_policy_clusters")
-    plan_corpora = value.get("corpora")
-    if algorithm != "sha256_scoped_seed_random_partition_v1":
-        raise ValueError("partition plan algorithm is unsupported")
-    if isinstance(seed, bool) or not isinstance(seed, int):
-        raise ValueError("partition plan seed must be an integer")
-    if (
-        isinstance(minimum_pilot_policy_clusters, bool)
-        or not isinstance(minimum_pilot_policy_clusters, int)
-        or minimum_pilot_policy_clusters < 1
-    ):
-        raise ValueError(
-            "partition plan minimum_pilot_policy_clusters must be positive"
-        )
-    if (
-        isinstance(minimum_main_policy_clusters, bool)
-        or not isinstance(minimum_main_policy_clusters, int)
-        or minimum_main_policy_clusters < 1
-    ):
-        raise ValueError(
-            "partition plan minimum_main_policy_clusters must be positive"
-        )
-    expected_corpora = {name for name in corpora if name != "synth"}
-    if (
-        not isinstance(plan_corpora, dict)
-        or any(
-            not isinstance(name, str) or not name.strip()
-            for name in plan_corpora
-        )
-        or not expected_corpora.issubset(plan_corpora)
-    ):
-        raise ValueError(
-            "partition plan must contain every selected non-synthetic corpus"
-        )
-    assignments: dict[str, dict[str, object]] = {}
-    for name in sorted(plan_corpora):
-        entry = plan_corpora[name]
-        if not isinstance(entry, dict):
-            raise ValueError(f"partition plan corpus {name!r} must be an object")
-        if set(entry) != {
-            "source_locator", "full_converted_corpus_sha256", "total_records",
-            "total_clusters",
-            "total_cluster_ids", "total_cluster_ids_sha256", "pilot", "main",
-        }:
-            raise ValueError(
-                f"partition plan corpus {name!r} has an invalid field inventory"
-            )
-        source_locator = entry.get("source_locator")
-        expected_locator = _stable_source_locator(name, None)
-        if (
-            not isinstance(source_locator, dict)
-            or set(source_locator) != {
-                "corpus", "configuration_env", "source_kind", "required_layout"
-            }
-            or source_locator.get("corpus") != expected_locator["corpus"]
-            or source_locator.get("configuration_env")
-            != expected_locator["configuration_env"]
-            or source_locator.get("required_layout")
-            != expected_locator["required_layout"]
-            or source_locator.get("source_kind") not in {"file", "directory"}
-        ):
-            raise ValueError(
-                f"partition plan corpus {name!r} has an invalid source locator"
-            )
-        converted_sha = entry.get("full_converted_corpus_sha256")
-        total_records = entry.get("total_records")
-        total_clusters = entry.get("total_clusters")
-        total_cluster_ids = entry.get("total_cluster_ids")
-        total_cluster_digest = entry.get("total_cluster_ids_sha256")
-        if re.fullmatch(r"[0-9a-f]{64}", str(converted_sha or "")) is None:
-            raise ValueError(f"partition plan corpus {name!r} has invalid converted digest")
-        if (
-            isinstance(total_records, bool) or not isinstance(total_records, int)
-            or total_records <= 0
-            or isinstance(total_clusters, bool) or not isinstance(total_clusters, int)
-            or total_clusters <= 1
-            or not isinstance(total_cluster_ids, list)
-            or any(
-                not isinstance(item, str) or not item.strip()
-                for item in total_cluster_ids
-            )
-            or len(total_cluster_ids) != total_clusters
-            or len(set(total_cluster_ids)) != len(total_cluster_ids)
-            or total_cluster_ids != sorted(total_cluster_ids)
-            or _sha256_json(total_cluster_ids) != total_cluster_digest
-            or re.fullmatch(r"[0-9a-f]{64}", str(total_cluster_digest or "")) is None
-        ):
-            raise ValueError(f"partition plan corpus {name!r} has invalid totals")
-        role_payloads: dict[str, dict[str, object]] = {}
-        role_sets: dict[str, set[str]] = {}
-        for partition_role in ("pilot", "main"):
-            selection = entry.get(partition_role)
-            if (
-                not isinstance(selection, dict)
-                or set(selection) != {
-                    "n_clusters", "cluster_ids", "cluster_ids_sha256",
-                    "source_policy_cluster_counts",
-                }
-            ):
-                raise ValueError(
-                    f"partition plan corpus {name!r} lacks {partition_role!r} selection"
-                )
-            ids = selection.get("cluster_ids")
-            count = selection.get("n_clusters")
-            digest = selection.get("cluster_ids_sha256")
-            policy_counts = selection.get("source_policy_cluster_counts")
-            if (
-                not isinstance(ids, list) or not ids
-                or any(not isinstance(item, str) or not item.strip() for item in ids)
-                or len(set(ids)) != len(ids)
-                or ids != sorted(ids)
-                or count != len(ids)
-                or digest != _sha256_json(ids)
-                or not isinstance(policy_counts, dict)
-                or not policy_counts
-                or any(
-                    not isinstance(key, str) or not key.strip()
-                    or isinstance(value, bool) or not isinstance(value, int)
-                    or value <= 0
-                    for key, value in policy_counts.items()
-                )
-                or sum(policy_counts.values()) != len(ids)
-            ):
-                raise ValueError(
-                    f"partition plan corpus {name!r} has invalid {partition_role} clusters"
-                )
-            if partition_role == "pilot" and any(
-                value < minimum_pilot_policy_clusters
-                for value in policy_counts.values()
-            ):
-                raise ValueError(
-                    f"partition plan corpus {name!r} pilot source-policy strata "
-                    "are below minimum_pilot_policy_clusters"
-                )
-            if partition_role == "main" and any(
-                value < minimum_main_policy_clusters
-                for value in policy_counts.values()
-            ):
-                raise ValueError(
-                    f"partition plan corpus {name!r} main source-policy strata "
-                    "are below minimum_main_policy_clusters"
-                )
-            role_sets[partition_role] = set(ids)
-            role_payloads[partition_role] = {
-                "n_clusters": len(ids),
-                "cluster_ids": list(ids),
-                "cluster_ids_sha256": digest,
-                "source_policy_cluster_counts": dict(sorted(policy_counts.items())),
-            }
-        union = role_sets["pilot"] | role_sets["main"]
-        if role_sets["pilot"] & role_sets["main"]:
-            raise ValueError(f"partition plan corpus {name!r} pilot/main overlap")
-        if union != set(total_cluster_ids):
-            raise ValueError(
-                f"partition plan corpus {name!r} is not exhaustive over source clusters"
-            )
-        expected_pilot, expected_main = _partition_cluster_ids(
-            list(total_cluster_ids), seed=seed, corpus=name,
-            pilot_count=len(role_payloads["pilot"]["cluster_ids"]),
-        )
-        if (
-            role_payloads["pilot"]["cluster_ids"] != expected_pilot
-            or role_payloads["main"]["cluster_ids"] != expected_main
-        ):
-            raise ValueError(
-                f"partition plan corpus {name!r} does not match its declared "
-                "scoped-seed random assignment"
-            )
-        if name in expected_corpora:
-            assignments[name] = {
-                "source_locator": source_locator,
-                "full_converted_corpus_sha256": converted_sha,
-                "total_records": total_records,
-                "total_clusters": total_clusters,
-                "total_cluster_ids": list(total_cluster_ids),
-                "total_cluster_ids_sha256": total_cluster_digest,
-                "partition_role": role,
-                **role_payloads[role],
-            }
-    binding = {
-        "status": "bound",
-        "schema_version": schema,
-        "algorithm": algorithm,
-        "seed": seed,
-        "minimum_pilot_policy_clusters": minimum_pilot_policy_clusters,
-        "minimum_main_policy_clusters": minimum_main_policy_clusters,
-        "partition_role": role,
-        "artifact": artifact,
-    }
-    return binding, assignments
 
 
 _SECRET_CONFIG_KEY = re.compile(
@@ -883,280 +454,6 @@ def _record_executed_modality_evidence(
                 if modality in physical or (modality == "text" and has_text)
             )
             destination[target_name].add((attempt.datapoint_id, combination))
-
-
-_COVERAGE_PROOF_SCHEMA = "ura-modality-coverage-proof/1.0"
-
-
-def _coverage_condition(
-    target_name: str,
-    target_component: object,
-    defense: str,
-    defense_guard: str,
-) -> tuple[str, str, str, str | None]:
-    return (
-        target_name,
-        _sha256_json(target_component),
-        defense,
-        defense_guard if defense != "none" else None,
-    )
-
-
-def _verified_relative_artifact(
-    root: Path,
-    descriptor: object,
-    *,
-    label: str,
-    max_bytes: int,
-) -> Path:
-    if not isinstance(descriptor, dict):
-        raise ValueError(f"{label} lacks an artifact descriptor")
-    name = descriptor.get("file")
-    if (
-        not isinstance(name, str)
-        or not name
-        or Path(name).name != name
-    ):
-        raise ValueError(f"{label} has an unsafe artifact name")
-    path = root / name
-    if path.is_symlink() or not path.is_file():
-        raise ValueError(f"{label} artifact is missing or not regular")
-    size = path.stat().st_size
-    if size <= 0 or size > max_bytes or descriptor.get("bytes") != size:
-        raise ValueError(f"{label} artifact byte count is invalid")
-    if descriptor.get("sha256") != _sha256_file(path):
-        raise ValueError(f"{label} artifact digest mismatch")
-    records = descriptor.get("records")
-    if records is not None and records != _record_count(path):
-        raise ValueError(f"{label} artifact record count mismatch")
-    return path
-
-
-def _reconstruct_companion_conditions(
-    root: Path,
-    grid_descriptor: object,
-    marker_descriptors: object,
-    *,
-    expected_driver_source: dict[str, object],
-    expected_harness_source: dict[str, object],
-) -> list[dict[str, object]]:
-    grid_path = _verified_relative_artifact(
-        root, grid_descriptor, label="companion grid", max_bytes=16 * 1024 * 1024
-    )
-    grid = _json_loads_strict(grid_path.read_text(encoding="utf-8"))
-    if (
-        not isinstance(grid, dict)
-        or grid.get("status") != "complete"
-        or grid.get("n_errors") != 0
-        or not isinstance(grid.get("cells"), list)
-    ):
-        raise ValueError("companion grid is not a completed zero-error grid")
-    request = grid.get("request")
-    if (
-        not isinstance(request, dict)
-        or request.get("driver_source") != expected_driver_source
-    ):
-        raise ValueError("companion grid was produced by stale experiment-driver source")
-    if not isinstance(marker_descriptors, list) or not marker_descriptors:
-        raise ValueError("companion proof has no completion markers")
-    expected_markers = {
-        cell.get("completion_marker")
-        for cell in grid["cells"]
-        if isinstance(cell, dict)
-        and cell.get("status") in {"complete", "complete_existing"}
-    }
-    described_markers = {
-        item.get("file") for item in marker_descriptors if isinstance(item, dict)
-    }
-    if None in expected_markers or described_markers != expected_markers:
-        raise ValueError(
-            "companion proof completion markers do not exactly cover its grid"
-        )
-
-    evidence_by_condition: dict[
-        tuple[str, str, str, str | None],
-        set[tuple[str, tuple[str, ...]]],
-    ] = defaultdict(set)
-    required = {
-        "attempts", "responses", "judgments", "trails", "results", "manifest"
-    }
-    for marker_descriptor in marker_descriptors:
-        marker_path = _verified_relative_artifact(
-            root, marker_descriptor,
-            label="companion completion marker", max_bytes=1024 * 1024,
-        )
-        marker = _json_loads_strict(marker_path.read_text(encoding="utf-8"))
-        if (
-            not isinstance(marker, dict)
-            or marker.get("status") != "complete"
-            or marker.get("format_version") != 2
-            or marker.get("code_version") != CODE_VERSION
-            or marker.get("schema_version") != SCHEMA_VERSION
-            or not isinstance(marker.get("artifacts"), dict)
-            or set(marker["artifacts"]) != required
-        ):
-            raise ValueError("companion completion marker is stale or malformed")
-        paths = {
-            name: _verified_relative_artifact(
-                root, marker["artifacts"][name],
-                label=f"companion {name}", max_bytes=512 * 1024 * 1024,
-            )
-            for name in required
-        }
-        manifest = RunManifest.model_validate_json(
-            paths["manifest"].read_text(encoding="utf-8")
-        )
-        if (
-            manifest.run_id != marker.get("run_id")
-            or manifest.code_version != CODE_VERSION
-            or manifest.schema_version != SCHEMA_VERSION
-            or len(manifest.models) != 1
-        ):
-            raise ValueError("companion manifest identity is inconsistent")
-        run_config = manifest.config.get("run")
-        components = manifest.config.get("components")
-        if not isinstance(run_config, dict) or not isinstance(components, dict):
-            raise ValueError("companion manifest lacks run/component identity")
-        if (
-            run_config.get("driver_source") != expected_driver_source
-            or manifest.config.get("harness_source") != expected_harness_source
-        ):
-            raise ValueError("companion manifest was produced by stale source code")
-        condition = _coverage_condition(
-            manifest.models[0],
-            components.get("target"),
-            str(run_config.get("defense")),
-            str(run_config.get("defense_guard")),
-        )
-        attempts = [Attempt.model_validate(row) for row in _read_jsonl(
-            paths["attempts"]
-        )]
-        responses = [Response.model_validate(row) for row in _read_jsonl(
-            paths["responses"]
-        )]
-        if (
-            not attempts
-            or Counter(row.id for row in attempts)
-            != Counter(row.attempt_id for row in responses)
-            or any(row.target != manifest.models[0] for row in attempts)
-            or any(row.target != manifest.models[0] for row in responses)
-            or any(row.run_id != manifest.run_id for row in attempts)
-            or any(row.run_id != manifest.run_id for row in responses)
-        ):
-            raise ValueError("companion Attempt/Response lineage is inconsistent")
-        observed = {manifest.models[0]: set()}
-        _record_executed_modality_evidence(
-            manifest.models[0], attempts, responses, observed
-        )
-        evidence_by_condition[condition].update(observed[manifest.models[0]])
-
-    return [
-        {
-            "target": condition[0],
-            "target_component_sha256": condition[1],
-            "defense": condition[2],
-            "defense_guard": condition[3],
-            "evidence": [
-                {"datapoint_id": datapoint_id, "combination": list(combination)}
-                for datapoint_id, combination in sorted(evidence)
-            ],
-        }
-        for condition, evidence in sorted(evidence_by_condition.items())
-    ]
-
-
-def _load_companion_coverage(
-    path_value: str,
-    sha256_value: str,
-    expected_conditions: set[tuple[str, str, str, str | None]],
-    *,
-    expected_driver_source: dict[str, object],
-    expected_harness_source: dict[str, object],
-) -> tuple[dict[str, object], dict[str, set[tuple[str, tuple[str, ...]]]]]:
-    value, artifact = _read_content_addressed_json(
-        path_value, sha256_value,
-        flag_name="--modality-coverage-companion", max_bytes=16 * 1024 * 1024,
-    )
-    if (
-        not isinstance(value, dict)
-        or set(value) != {
-            "schema_version", "grid", "completion_markers", "conditions"
-        }
-        or value.get("schema_version") != _COVERAGE_PROOF_SCHEMA
-    ):
-        raise ValueError("modality companion proof has an invalid schema")
-    root = Path(path_value).resolve(strict=True).parent
-    reconstructed = _reconstruct_companion_conditions(
-        root, value["grid"], value["completion_markers"],
-        expected_driver_source=expected_driver_source,
-        expected_harness_source=expected_harness_source,
-    )
-    if reconstructed != value.get("conditions"):
-        raise ValueError("modality companion proof evidence does not reconstruct")
-    found: set[tuple[str, str, str, str | None]] = set()
-    evidence: dict[str, set[tuple[str, tuple[str, ...]]]] = defaultdict(set)
-    for row in reconstructed:
-        condition = (
-            str(row["target"]), str(row["target_component_sha256"]),
-            str(row["defense"]),
-            row["defense_guard"] if row["defense_guard"] is None
-            else str(row["defense_guard"]),
-        )
-        if condition not in expected_conditions:
-            continue
-        found.add(condition)
-        for item in row["evidence"]:
-            evidence[condition[0]].add((
-                str(item["datapoint_id"]), tuple(item["combination"])
-            ))
-    if found != expected_conditions:
-        raise ValueError(
-            "modality companion does not prove every exact target/defense condition"
-        )
-    binding = {
-        "status": "verified",
-        "artifact": artifact,
-        "grid_sha256": value["grid"]["sha256"],
-        "conditions_sha256": _sha256_json(reconstructed),
-    }
-    return binding, evidence
-
-
-def _apply_companion_coverage(
-    plan: ModalityCoveragePlan,
-    evidence: dict[str, set[tuple[str, tuple[str, ...]]]],
-    proof_sha256: str,
-) -> ModalityCoveragePlan:
-    items = []
-    missing: list[str] = []
-    for item in plan.items:
-        if item.status != "available_but_unselected":
-            items.append(item)
-            continue
-        matching_ids = sorted({
-            datapoint_id
-            for datapoint_id, combination in evidence.get(item.target, set())
-            if combination == item.combination
-        })
-        if not matching_ids:
-            missing.append(f"{item.target}:{'+'.join(item.combination)}")
-            items.append(item)
-            continue
-        items.append(replace(
-            item,
-            status="executed",
-            eligible_datapoint_ids=tuple(matching_ids),
-            justification=(
-                "executed in content-addressed companion modality proof "
-                f"sha256:{proof_sha256.lower()}"
-            ),
-        ))
-    if missing:
-        raise ModalityCoverageError(
-            "companion modality proof lacks required combinations: "
-            + ", ".join(missing)
-        )
-    return replace(plan, enforcement="strict", items=tuple(items))
 
 
 def _load_local_config(
@@ -1831,8 +1128,8 @@ def _source_tree_digest(path: Path) -> tuple[str | None, int]:
     """Hash a bounded regular source tree for portable source identity.
 
     Scored corpus identity remains the canonical converted-corpus digest in the
-    partition plan. This separate digest binds the experiment driver used by a
-    completion or companion proof while omitting mutable tool/cache directories.
+    sampling audit. This separate digest binds the experiment driver used by a
+    completion while omitting mutable tool/cache directories.
     """
     if not path.exists():
         return None, 0
@@ -2085,11 +1382,16 @@ def _project_grid_call_upper_bounds(
         if getattr(stage, "judge_target", None) is not None
     ]
     judge_calls_per_evaluable = len(model_judges)
+    local_guardrails_per_evaluable = sum(
+        int(getattr(stage, "name", "") == "guardrail")
+        for stage in cascade.stages
+    )
     judge_http_per_evaluable = sum(
         _declared_transport_attempts(target) for target in model_judges
     )
     by_attacker: dict[str, dict[str, int]] = {}
     total_target = total_judge = total_http = total_trajectories = 0
+    total_local_guardrail = 0
     for name, attacker in attackers.items():
         canonical_name = str(getattr(attacker, "name", name)).lower()
         if canonical_name == "replay":
@@ -2104,10 +1406,14 @@ def _project_grid_call_upper_bounds(
             # make a planning estimate.
             target_turns = evaluable_turns = logical_limit
         attacker_target = attacker_judge = attacker_http = attacker_trajectories = 0
+        attacker_local_guardrail = 0
         for target in targets.values():
             trajectories = sum(len(rows) for rows in corpora.values()) * len(seeds)
             target_calls = trajectories * target_turns
             judge_calls = trajectories * evaluable_turns * judge_calls_per_evaluable
+            local_guardrail_evaluations = (
+                trajectories * evaluable_turns * local_guardrails_per_evaluable
+            )
             http_attempts = (
                 target_calls * _declared_transport_attempts(target)
                 + trajectories * evaluable_turns * judge_http_per_evaluable
@@ -2115,22 +1421,26 @@ def _project_grid_call_upper_bounds(
             attacker_trajectories += trajectories
             attacker_target += target_calls
             attacker_judge += judge_calls
+            attacker_local_guardrail += local_guardrail_evaluations
             attacker_http += http_attempts
         by_attacker[name] = {
             "trajectories": attacker_trajectories,
             "target_calls": attacker_target,
             "judge_calls": attacker_judge,
+            "local_guardrail_evaluations": attacker_local_guardrail,
             "http_attempts": attacker_http,
         }
         total_trajectories += attacker_trajectories
         total_target += attacker_target
         total_judge += attacker_judge
+        total_local_guardrail += attacker_local_guardrail
         total_http += attacker_http
     return {
         "semantics": "conservative_complete_grid_upper_bound_v1",
         "trajectories": total_trajectories,
         "target_calls": total_target,
         "judge_calls": total_judge,
+        "local_guardrail_evaluations": total_local_guardrail,
         "http_attempts": total_http,
         "by_attacker": by_attacker,
     }
@@ -2177,31 +1487,12 @@ def _select_corpus(
     dps: list[DataPoint],
     limit: int,
     sample_seed: int,
-    *,
-    exact_cluster_ids: list[str] | None = None,
 ) -> tuple[list[DataPoint], list[int], list[str], list[str]]:
     """Select exactly ``limit`` prompt/intent clusters, retaining every row."""
     clusters: dict[str, list[int]] = {}
     for index, record in enumerate(dps):
         clusters.setdefault(_cluster_key(index, record), []).append(index)
     keys = list(clusters)
-    if exact_cluster_ids is not None:
-        if limit != 0:
-            raise ValueError("exact partition selection requires limit=0")
-        if (
-            not exact_cluster_ids
-            or len(set(exact_cluster_ids)) != len(exact_cluster_ids)
-            or any(key not in clusters for key in exact_cluster_ids)
-        ):
-            raise ValueError("partition names missing or duplicate source clusters")
-        selected_set = set(exact_cluster_ids)
-        selected_cluster_ids = [key for key in keys if key in selected_set]
-        if set(selected_cluster_ids) != selected_set:
-            raise ValueError("partition cluster selection is not exact")
-        indices = [
-            index for key in selected_cluster_ids for index in clusters[key]
-        ]
-        return [dps[index] for index in indices], indices, selected_cluster_ids, keys
     if not limit or limit >= len(keys):
         return dps, list(range(len(dps))), keys, keys
     seed_material = f"ura-corpus-cluster-sample-v3\0{name}\0{sample_seed}".encode(
@@ -2300,10 +1591,8 @@ def load_corpus_with_audit(
     name: str,
     limit: int,
     sample_seed: int = 0,
-    *,
-    exact_cluster_ids: list[str] | None = None,
 ) -> tuple[list[DataPoint], dict[str, object]]:
-    """Load one source and retain enough information to audit the frozen sample."""
+    """Load one source and retain enough information to audit the selected sample."""
     if limit < 0:
         raise ValueError("limit must be non-negative")
     if name == "synth":
@@ -2333,7 +1622,6 @@ def load_corpus_with_audit(
         full,
         limit,
         sample_seed,
-        exact_cluster_ids=exact_cluster_ids,
     )
     resolved = path.expanduser().resolve(strict=True)
     full_digest = canonical_converted_corpus_sha256(full)
@@ -2354,58 +1642,8 @@ def load_corpus_with_audit(
         "selected_cluster_ids": selected_clusters,
         "sample_seed": sample_seed,
         "limit": limit,
-        "selection_method": (
-            "content_addressed_partition_plan"
-            if exact_cluster_ids is not None
-            else "seeded_source_cluster_sample"
-        ),
+        "selection_method": "seeded_source_cluster_sample",
     }
-
-
-def _validate_partitioned_corpus(
-    name: str,
-    records: list[DataPoint],
-    audit: dict[str, object],
-    assignment: dict[str, object],
-) -> None:
-    """Bind converted records and the exact executed cluster role to its plan."""
-    checks = {
-        "source_locator": audit.get("source_locator"),
-        "full_converted_corpus_sha256": audit.get(
-            "full_converted_corpus_sha256"
-        ),
-        "total_records": audit.get("total_records"),
-        "total_clusters": audit.get("total_clusters"),
-        "n_clusters": audit.get("selected_clusters"),
-    }
-    for field, actual in checks.items():
-        if assignment.get(field) != actual:
-            raise ValueError(
-                f"corpus {name!r} partition {field} mismatch: plan "
-                f"{assignment.get(field)!r}, converted {actual!r}"
-            )
-    total_ids = audit.get("total_cluster_ids")
-    selected_ids = audit.get("selected_cluster_ids")
-    if (
-        not isinstance(total_ids, list)
-        or _sha256_json(sorted(total_ids))
-        != assignment.get("total_cluster_ids_sha256")
-    ):
-        raise ValueError(f"corpus {name!r} full source-cluster identity mismatch")
-    if (
-        not isinstance(selected_ids, list)
-        or sorted(selected_ids) != assignment.get("cluster_ids")
-        or _sha256_json(sorted(selected_ids))
-        != assignment.get("cluster_ids_sha256")
-    ):
-        raise ValueError(f"corpus {name!r} selected partition identity mismatch")
-    actual_policy_counts = _source_policy_cluster_counts(records)
-    if actual_policy_counts != assignment.get("source_policy_cluster_counts"):
-        raise ValueError(
-            f"corpus {name!r} selected source-policy strata mismatch: plan "
-            f"{assignment.get('source_policy_cluster_counts')!r}, converted "
-            f"{actual_policy_counts!r}"
-        )
 
 
 def main(argv=None) -> int:
@@ -2463,26 +1701,6 @@ def main(argv=None) -> int:
         "--sample-seed", type=int, default=0,
         help="seed for deterministic corpus subsampling (real corpora only)",
     )
-    ap.add_argument(
-        "--partition-plan", default="",
-        help="content-addressed ura-cluster-partition/1.2 JSON for scored corpora",
-    )
-    ap.add_argument(
-        "--partition-sha256", default="",
-        help="exact SHA-256 of --partition-plan bytes",
-    )
-    ap.add_argument(
-        "--partition-role", default="", choices=["", "pilot", "main"],
-        help="execute exactly the pilot or main source-cluster assignment",
-    )
-    ap.add_argument(
-        "--modality-coverage-companion", default="",
-        help="content-addressed completed companion-grid modality proof",
-    )
-    ap.add_argument(
-        "--modality-coverage-companion-sha256", default="",
-        help="exact SHA-256 of --modality-coverage-companion bytes",
-    )
     ap.add_argument("--seeds", default="0")
     ap.add_argument("--max-queries", type=int, default=4,
                     help="maximum target calls per datapoint and seed")
@@ -2502,31 +1720,25 @@ def main(argv=None) -> int:
                     help="vLLM dtype for local models (auto, bfloat16, float16)")
     ap.add_argument("--max-total-target-calls", type=int, default=0,
                     help="durable matrix-wide ceiling on model-under-test logical "
-                         "calls (0 = unbounded)")
+                         "calls (real grids require a finite positive value)")
     ap.add_argument("--max-total-judge-calls", type=int, default=0,
                     help="durable matrix-wide ceiling on model-backed judge calls "
-                         "(0 = unbounded)")
+                         "(real grids require a finite positive value)")
     ap.add_argument("--max-total-http-attempts", type=int, default=0,
                     help="durable ceiling on declared provider transport-attempt "
-                         "exposure across target and judge calls (0 = unbounded)")
+                         "exposure across target and judge calls (real grids require "
+                         "a finite positive value)")
     ap.add_argument("--deadline-seconds", type=int, default=0,
                     help="durable call-start admission deadline from the matrix's "
                          "first invocation; an admitted in-flight call retains its "
-                         "configured provider timeout (0 = none)")
+                         "configured provider timeout (real grids require a positive "
+                         "value)")
     ap.add_argument("--lock-stale-seconds", type=int, default=86400,
                     help="diagnostic stale-age metadata only; locks are never "
                          "removed automatically (default: 86400)")
     ap.add_argument("--reset-open-circuits", action="store_true",
                     help="operator acknowledgement: clear the durable provider/"
                          "judge circuit after correcting its root cause")
-    ap.add_argument(
-        "--provider-data-policy-approval", default="",
-        help="content-addressed JSON accepting hosted-provider retention/data-use terms",
-    )
-    ap.add_argument(
-        "--provider-data-policy-sha256", default="",
-        help="exact SHA-256 of --provider-data-policy-approval bytes",
-    )
     ap.add_argument("--out", default="runs/exp")
     args = ap.parse_args(argv)
 
@@ -2625,67 +1837,6 @@ def main(argv=None) -> int:
             "--group contains unsupported keys: " + ", ".join(unknown_group_keys)
         )
 
-    try:
-        provider_data_policy = _load_provider_data_policy_approval(
-            args.provider_data_policy_approval,
-            args.provider_data_policy_sha256,
-            _provider_policy_requirements(
-                api_specs, judge_names, args.judge_model, dry_run=args.dry_run
-            ),
-        )
-    except (OSError, ValueError) as exc:
-        ap.error(str(exc))
-
-    partition_flags = (
-        bool(args.partition_plan),
-        bool(args.partition_sha256),
-        bool(args.partition_role),
-    )
-    partition_required = not args.dry_run and any(
-        name != "synth" for name in corpora
-    )
-    if any(partition_flags) and not all(partition_flags):
-        ap.error(
-            "--partition-plan, --partition-sha256, and --partition-role must be "
-            "supplied together"
-        )
-    if partition_required and not all(partition_flags):
-        ap.error(
-            "real scored non-synthetic corpora require --partition-plan, "
-            "--partition-sha256, and --partition-role"
-        )
-    if all(partition_flags) and args.limit != 0:
-        ap.error("content-addressed partition execution requires --limit 0")
-    if all(partition_flags):
-        try:
-            partition_binding, partition_assignments = _load_partition_plan(
-                args.partition_plan,
-                args.partition_sha256,
-                args.partition_role,
-                corpora,
-            )
-        except (OSError, ValueError) as exc:
-            ap.error(str(exc))
-    else:
-        partition_binding = {
-            "status": "not_applicable",
-            "reason": (
-                "offline_or_synthetic_fixture"
-                if args.dry_run or set(corpora) == {"synth"}
-                else "no_partitioned_corpora"
-            ),
-        }
-        partition_assignments: dict[str, dict[str, object]] = {}
-
-    companion_flags = (
-        bool(args.modality_coverage_companion),
-        bool(args.modality_coverage_companion_sha256),
-    )
-    if any(companion_flags) and not all(companion_flags):
-        ap.error(
-            "--modality-coverage-companion and its --sha256 must be supplied together"
-        )
-
     # The experiment driver controls sampling, grid accounting, and completion
     # semantics that the runner's src/ura source hash does not cover. Content-
     # address it so a changed driver yields a different grid_id and cannot reuse
@@ -2696,8 +1847,6 @@ def main(argv=None) -> int:
         "sha256": driver_digest,
         "file_count": driver_file_count,
     }
-    harness_source = _harness_source_identity()
-
     # Preload the complete selected corpus set and construct lazy target objects
     # before any target/judge call. Modality coverage is a grid-wide property:
     # planning it one corpus at a time can silently omit an available image arm.
@@ -2705,23 +1854,13 @@ def main(argv=None) -> int:
     sampling_audits: dict[str, dict[str, object]] = {}
     for corpus_name in corpora:
         try:
-            assignment = partition_assignments.get(corpus_name)
             corpus, sampling_audit = load_corpus_with_audit(
                 corpus_name,
                 args.limit,
                 args.sample_seed,
-                exact_cluster_ids=(
-                    list(assignment["cluster_ids"])
-                    if assignment is not None else None
-                ),
             )
             if not corpus:
                 raise ValueError("requested corpus converted to zero datapoints")
-            if assignment is not None:
-                _validate_partitioned_corpus(
-                    corpus_name, corpus, sampling_audit, assignment
-                )
-                sampling_audit["partition_assignment"] = assignment
         except Exception as exc:  # noqa: BLE001 - fail pre-call preflight
             _write_json(out / f"{_safe_component(corpus_name)}.corpus.error.json", {
                 "status": "error",
@@ -2829,35 +1968,11 @@ def main(argv=None) -> int:
                 file=sys.stderr,
             )
             return 1
-    companion_binding: dict[str, object] | None = None
-    companion_evidence: dict[
-        str, set[tuple[str, tuple[str, ...]]]
-    ] = {}
-    expected_coverage_conditions = {
-        _coverage_condition(
-            str(getattr(target, "name")), _component_config(target),
-            args.defense, args.defense_guard,
-        )
-        for target in prebuilt_targets.values()
-    }
     try:
-        if all(companion_flags):
-            companion_binding, companion_evidence = _load_companion_coverage(
-                args.modality_coverage_companion,
-                args.modality_coverage_companion_sha256,
-                expected_coverage_conditions,
-                expected_driver_source=driver_source,
-                expected_harness_source=harness_source,
-            )
         modality_plan = plan_modality_coverage(
             list(prebuilt_targets.values()), loaded_corpora,
-            enforce_available=not args.dry_run and companion_binding is None,
+            enforce_available=not args.dry_run,
         )
-        if companion_binding is not None:
-            modality_plan = _apply_companion_coverage(
-                modality_plan, companion_evidence,
-                args.modality_coverage_companion_sha256,
-            )
     except (OSError, ValueError, ModalityCoverageError) as exc:
         _write_json(out / "modality-coverage.error.json", {
             "status": "error",
@@ -2897,6 +2012,13 @@ def main(argv=None) -> int:
             guardrail_revision=args.guardrail_revision,
             guardrail_device=args.guardrail_device,
         )
+        # Load local model-backed judges now, before the first paid target call.
+        # Reusing this cascade across cells also avoids repeatedly loading the
+        # same multi-gigabyte checkpoint.
+        for stage in planned_cascade.stages:
+            preflight = getattr(stage, "preflight", None)
+            if callable(preflight):
+                preflight()
         _component_config(planned_cascade)
         policy_strata = {
             name: _source_policy_cluster_counts(rows)
@@ -2978,11 +2100,7 @@ def main(argv=None) -> int:
         "dtype": args.dtype,
         "dry_run": bool(args.dry_run),
         "driver_source": driver_source,
-        "provider_data_policy_approval": provider_data_policy,
-        "partition_plan": partition_binding,
-        "partition_assignments": partition_assignments,
         "modality_coverage_plan": modality_plan_payload,
-        "modality_coverage_companion": companion_binding,
         "source_policy_cluster_counts": policy_strata,
         "call_projection": call_projection,
     }
@@ -3231,17 +2349,10 @@ def main(argv=None) -> int:
                             f"attacker {attacker_name!r} is a native-artifact "
                             "integration and cannot be replayed through Runner"
                         )
-                    cascade = build_judges(
-                        judge_names,
-                        args.judge_model,
-                        guardrail_model=args.guardrail_model,
-                        guardrail_revision=args.guardrail_revision,
-                        guardrail_device=args.guardrail_device,
-                    )
                     runner = Runner(
                         attacker,
                         target,
-                        cascade,
+                        planned_cascade,
                         AttackBudget(
                             max_queries=args.max_queries,
                             max_turns=args.max_turns,
@@ -3277,14 +2388,8 @@ def main(argv=None) -> int:
                         "dtype": args.dtype,
                         "dry_run": bool(args.dry_run),
                         "driver_source": driver_source,
-                        "provider_data_policy_approval": provider_data_policy,
-                        "partition_plan": partition_binding,
-                        "partition_assignment": partition_assignments.get(
-                            corpus_name
-                        ),
                         "global_call_budget": grid_request["global_call_budget"],
                         "modality_coverage_plan": modality_plan_payload,
-                        "modality_coverage_companion": companion_binding,
                     }
                     planned = runner.plan_manifest(
                         corpus,
@@ -3605,43 +2710,6 @@ def main(argv=None) -> int:
         "cells": cell_statuses,
     }
     _write_json(grid_path, final_grid)
-    coverage_proof_path = out / f"{grid_id}.modality-coverage-proof.json"
-    coverage_proof_sha256: str | None = None
-    if n_errors == 0:
-        try:
-            marker_paths = sorted({
-                out / str(cell["completion_marker"])
-                for cell in cell_statuses
-                if cell.get("status") in {"complete", "complete_existing"}
-            })
-            marker_descriptors = [
-                _artifact_descriptor(path) for path in marker_paths
-            ]
-            grid_descriptor = _artifact_descriptor(grid_path)
-            proof_payload = {
-                "schema_version": _COVERAGE_PROOF_SCHEMA,
-                "grid": grid_descriptor,
-                "completion_markers": marker_descriptors,
-                "conditions": _reconstruct_companion_conditions(
-                    out, grid_descriptor, marker_descriptors,
-                    expected_driver_source=driver_source,
-                    expected_harness_source=harness_source,
-                ),
-            }
-            _write_json(coverage_proof_path, proof_payload)
-            coverage_proof_sha256 = _sha256_file(coverage_proof_path)
-        except Exception as exc:  # noqa: BLE001 - proof is a release artifact
-            n_errors += 1
-            final_grid["status"] = "partial"
-            final_grid["n_errors"] = n_errors
-            cell_statuses.append({
-                "status": "error",
-                "phase": "modality_coverage_proof",
-                "exception_type": type(exc).__name__,
-                "message": str(exc),
-            })
-            _write_json(grid_path, final_grid)
-            coverage_proof_path.unlink(missing_ok=True)
     _release_artifact_lock(grid_lock, grid_lock_token)
 
     print(
@@ -3650,13 +2718,8 @@ def main(argv=None) -> int:
     )
     print(
         "figures: python -m experiments.figures --help  "
-        "# pass explicit model/defense grid roots and preregistered corpus facets"
+        "# pass explicit completed result artifacts and corpus facets"
     )
-    if coverage_proof_sha256 is not None:
-        print(
-            f"modality companion proof: {coverage_proof_path} "
-            f"sha256={coverage_proof_sha256}"
-        )
     return 1 if n_errors else 0
 
 

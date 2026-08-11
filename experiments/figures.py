@@ -1,9 +1,9 @@
 """Render the three Chapter V figures and their machine-readable provenance.
 
 ``--synth`` creates exactly three neutral, conspicuously watermarked layout
-placeholders.  Measured mode consumes one final human-bound confirmatory
-artifact and renders the prospectively frozen primary-model, policy-proxy, and
-adaptivity families validated by :mod:`experiments.figure_results`.
+placeholders. Measured mode reads the completed run tree directly and requires
+the achieved, content-addressed human audit before rendering sample-conditional
+model, policy-proxy, and adaptivity estimates.
 """
 from __future__ import annotations
 
@@ -19,7 +19,7 @@ import matplotlib
 matplotlib.use("Agg")  # headless and deterministic
 import matplotlib.pyplot as plt  # noqa: E402
 
-from experiments.figure_results import load_confirmatory_results  # noqa: E402
+from experiments.figure_results import load_postrun_results  # noqa: E402
 
 _ACCENT = "#2a78d6"
 _INK_2 = "#52514e"
@@ -261,18 +261,10 @@ def fig_policy_proxies(data: dict[str, Any], out: Path) -> None:
     analysis = data.get("analysis") or {}
     detail = ""
     if not data["illustrative"]:
-        policy = analysis.get("evaluation_policy") or {}
-        policy_label = analysis.get("policy_label") or (
-            f"{policy.get('policy_id')}@{policy.get('version')}"
-        )
-        multiplicity = analysis.get("multiplicity_family")
-        if multiplicity is None:
-            multiplicity = ",".join(sorted((analysis.get("multiplicity") or {}).keys()))
         detail = (
-            f"\npolicy={policy_label} "
-            f"[{analysis['policy_fingerprint'][:12]}]; "
-            f"multiplicity family={multiplicity}; "
-            "judge/run versions are bound per cell in the provenance sidecar"
+            "\npost-experiment, sample-conditional; "
+            f"judge policy [{analysis['policy_fingerprint'][:12]}]; "
+            "exact run and audit identities are in the provenance sidecar"
         )
     _contrast_figure(
         data["figures"][_FIGURE_NAMES[1]]["points"],
@@ -334,13 +326,27 @@ def main(argv: list[str] | None = None) -> int:
     )
     mode = parser.add_mutually_exclusive_group(required=True)
     mode.add_argument("--synth", action="store_true", help="render three layout placeholders")
-    mode.add_argument(
-        "--analysis-artifact", type=Path,
-        help="publishable output from experiments.confirmatory_analysis",
+    mode.add_argument("--results", type=Path, help="common parent of completed run grids")
+    parser.add_argument(
+        "--left-model", help="exact manifest run.model_spec for the left model"
     )
     parser.add_argument(
-        "--analysis-sha256",
-        help="optional expected SHA-256 of --analysis-artifact (recommended for handoff)",
+        "--right-model", help="exact manifest run.model_spec for the right model"
+    )
+    parser.add_argument(
+        "--human-audit", type=Path,
+        help="achieved human_audit.json directly under --results",
+    )
+    parser.add_argument(
+        "--human-audit-sha256",
+        help="required SHA-256 of --human-audit",
+    )
+    parser.add_argument(
+        "--bootstrap", type=int, default=2000,
+        help="paired prompt/intent-cluster bootstrap resamples (default: 2000)",
+    )
+    parser.add_argument(
+        "--seed", type=int, default=0, help="analysis resampling seed"
     )
     parser.add_argument(
         "--out",
@@ -351,15 +357,34 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     if args.synth:
-        if args.analysis_sha256 is not None:
+        if any(value is not None for value in (
+            args.left_model, args.right_model, args.human_audit,
+            args.human_audit_sha256,
+        )):
             parser.error("--synth cannot be combined with measured-analysis arguments")
         data = synth_matrix()
     else:
-        if args.analysis_sha256 is None:
-            parser.error("measured figures require --analysis-sha256")
+        missing = [
+            option for option, value in (
+                ("--left-model", args.left_model),
+                ("--right-model", args.right_model),
+                ("--human-audit", args.human_audit),
+                ("--human-audit-sha256", args.human_audit_sha256),
+            ) if value is None
+        ]
+        if missing:
+            parser.error("measured figures require " + ", ".join(missing))
+        if args.bootstrap < 1:
+            parser.error("--bootstrap must be positive")
         try:
-            data = load_confirmatory_results(
-                args.analysis_artifact, expected_sha256=args.analysis_sha256,
+            data = load_postrun_results(
+                args.results,
+                left_model=args.left_model,
+                right_model=args.right_model,
+                human_audit=args.human_audit,
+                human_audit_sha256=args.human_audit_sha256,
+                n_resamples=args.bootstrap,
+                seed=args.seed,
             )
         except ValueError as exc:
             print(f"figure input validation failed: {exc}", file=sys.stderr)

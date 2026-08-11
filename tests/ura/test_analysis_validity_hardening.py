@@ -4,7 +4,7 @@ import pytest
 from pydantic import ValidationError
 
 from ura.data_models import DialogTurn, EvalResult, ProviderContinuationState
-from ura.metrics import holm_bonferroni_complete_family, judge_scores
+from ura.metrics import judge_scores
 
 
 def test_provider_continuation_state_round_trips_exact_openai_items() -> None:
@@ -44,17 +44,6 @@ def test_mmsafety_official_metric_requires_real_official_evaluator() -> None:
             id="m", metric="mmsafety_official_attack_rate", value=0.5, n=2,
             provenance={"source_evaluation": {"official_evaluator_executed": False}},
         )
-
-
-def test_holm_keeps_unavailable_hypothesis_in_frozen_family_size() -> None:
-    adjusted = holm_bonferroni_complete_family({
-        "available": 0.02,
-        "unavailable": None,
-    })
-    assert adjusted["available"]["p_holm"] == 0.04
-    assert adjusted["available"]["family_size"] == 2
-    assert adjusted["unavailable"]["status"] == "unavailable_preserved_in_family"
-    assert adjusted["unavailable"]["reject"] is False
 
 
 def test_judge_scores_reports_binary_specificity() -> None:

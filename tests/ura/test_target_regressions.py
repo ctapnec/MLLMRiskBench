@@ -466,11 +466,11 @@ def test_fable_has_one_canonical_adaptive_high_effort_condition() -> None:
     assert target.temperature is None
     assert target.timeout == 600.0
 
-    # The bare registered convenience resolves to the same frozen condition.
+    # The bare registered convenience resolves to the same fixed condition.
     assert isinstance(build_api_target("claude-fable-5"), AnthropicFableTarget)
     with pytest.raises(ValueError, match="use the canonical spec"):
         build_api_target("anthropic:claude-fable-5")
-    with pytest.raises(ValueError, match="only frozen Anthropic Fable condition"):
+    with pytest.raises(ValueError, match="only fixed Anthropic Fable condition"):
         build_api_target("anthropic-fable:claude-fable-5")
 
 
@@ -734,7 +734,7 @@ def test_sol_pro_has_one_explicit_nonconflating_public_target_spec() -> None:
     ordinary = build_api_target("openai:gpt-5.6-sol")
     assert type(ordinary) is OpenAITarget
     assert ordinary.name == "openai:gpt-5.6-sol"
-    with pytest.raises(ValueError, match="only frozen OpenAI Responses condition"):
+    with pytest.raises(ValueError, match="only fixed OpenAI Responses condition"):
         build_api_target("openai-responses:gpt-5.6-sol")
 
 

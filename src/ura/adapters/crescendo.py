@@ -244,7 +244,7 @@ class CrescendoAttacker(BaseAttacker):
             return [0, *middle, last]
         # Use the deepest available interior rungs.  The seed may vary wording,
         # but it must not change the number of policy-evaluable challenges in a
-        # frozen cell (otherwise survival horizons differ across seeds).
+        # fixed cell (otherwise survival horizons differ across seeds).
         interior = list(range(last - (n_turns - 2), last)) if n_turns > 2 else []
         return [0, *interior, last]
 

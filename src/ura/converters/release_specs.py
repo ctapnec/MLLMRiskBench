@@ -126,28 +126,8 @@ CORPUS_RELEASE_SPECS: Mapping[str, CorpusReleaseSpec] = MappingProxyType({
 })
 
 
-# This inventory is intentionally about physical inputs the adapters can deliver.
-# It neither claims that a target supports them nor substitutes a real converted
-# corpus.  The modality coverage planner uses it only to distinguish "no released
-# source exists" from "available data was silently omitted from this run".
-KNOWN_CORPUS_MODALITY_COMBINATIONS: Mapping[
-    tuple[str, ...], tuple[str, ...]
-] = MappingProxyType({
-    ("text",): (
-        "advbench", "bipia", "cyberseceval", "jailbreakbench", "rjudge",
-        "strongreject",
-    ),
-    ("text", "image"): (
-        "figstep", "gptgeochat", "harmbench", "jailbreakv", "mllmguard",
-        "mmsafety", "mossbench", "siuo", "vlsbench",
-    ),
-    ("text", "audio"): ("jalmbench",),
-    ("text", "video"): ("videosafetybench",),
-})
-
-
 def canonical_descriptor_sha256(descriptor: Mapping[str, Any]) -> str:
-    """Digest a frozen policy descriptor using canonical JSON."""
+    """Digest a pinned policy descriptor using canonical JSON."""
 
     encoded = json.dumps(
         dict(descriptor),
@@ -260,7 +240,6 @@ def mossbench_policy() -> SourceEvaluationPolicy:
 
 __all__ = [
     "CORPUS_RELEASE_SPECS",
-    "KNOWN_CORPUS_MODALITY_COMBINATIONS",
     "MM_SAFETYBENCH_POLICY_DESCRIPTORS",
     "MM_SAFETYBENCH_MANIFEST_SHA256",
     "MM_SAFETYBENCH_REVISION",
