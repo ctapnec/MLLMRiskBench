@@ -28,7 +28,13 @@ sys.path.insert(0, str(_REPO_ROOT / "src"))
 
 from experiments.human_audit import _validated_artifacts  # noqa: E402
 from experiments.transfer_matrix import _cohort_payload  # noqa: E402
-from ura.metrics import paired_clustered_bootstrap_ci  # noqa: E402
+from ura.metrics import (  # noqa: E402
+    holm_bonferroni,
+    paired_cluster_permutation_test,
+    paired_clustered_bootstrap_ci,
+    paired_effect_manski_bounds,
+    power_gate,
+)
 
 
 _LABELS = {"safe", "violation", "refusal", "over_refusal"}
@@ -502,6 +508,12 @@ def _metric_result(
     mode: str,
     n_resamples: int,
     seed: int,
+    n_permutations: int = 10000,
+    assume_exchangeable: bool = False,
+    smallest_effect: float | None = None,
+    pilot_cluster_sd: float | None = None,
+    target_power: float = 0.8,
+    alpha: float = 0.05,
 ) -> dict[str, Any]:
     harmful_metric = metric in {"ASR", "conversation_ASR"}
     metric_alias = metric if harmful_metric else "FRR"
@@ -567,6 +579,47 @@ def _metric_result(
         n_resamples=n_resamples,
         seed=seed,
     )
+    # --- confirmatory analysis (V.1.7) ---
+    per_cluster: dict[str, list[float]] = defaultdict(list)
+    for a, b, cluster in zip(left_values, right_values, clusters):
+        per_cluster[cluster].append(a - b)
+    cluster_diffs = [sum(v) / len(v) for v in per_cluster.values()]
+    # The randomization test is reported as primary only when within-pair
+    # exchangeability is asserted; otherwise the paired cluster bootstrap is
+    # primary (V.1.7) and the permutation p-value is withheld, not invented.
+    if assume_exchangeable:
+        permutation = paired_cluster_permutation_test(
+            cluster_diffs, n_permutations=n_permutations, seed=seed
+        )
+        permutation["status"] = "computed_exchangeability_asserted"
+    else:
+        permutation = {
+            "status": "gated_exchangeability_not_asserted",
+            "note": "paired cluster-bootstrap interval is primary; assert "
+                    "--assume-exchangeable to compute the randomization p-value",
+            "n_clusters": len(cluster_diffs),
+        }
+    # Prospective power gate from a DISJOINT pilot's cluster SD (never the tested
+    # comparison's own SD); withheld until both are supplied.
+    if smallest_effect and pilot_cluster_sd and pilot_cluster_sd > 0:
+        power = power_gate(
+            smallest_effect, pilot_cluster_sd, len(cluster_diffs),
+            alpha=alpha, target_power=target_power,
+        )
+    else:
+        power = {
+            "adequately_powered": None,
+            "reason": "requires --smallest-effect and a disjoint --pilot-cluster-sd",
+            "n_clusters": len(cluster_diffs),
+        }
+    # Worst/best-case missingness bounds on the paired effect over the union of
+    # matched, one-sided-observed, and fingerprint-invalid units.
+    missingness = paired_effect_manski_bounds(
+        [a - b for a, b in zip(left_values, right_values)],
+        [left[key].value for key in left_only],
+        [right[key].value for key in right_only],
+        n_invalid=len(fingerprint_mismatches),
+    )
     return {
         "metric": metric,
         "metric_alias": metric_alias,
@@ -590,6 +643,9 @@ def _metric_result(
             "effect_direction": "left_minus_right",
             "statistic": "mean(left paired indicators) - mean(right paired indicators)",
         },
+        "permutation_test": permutation,
+        "power_gate": power,
+        "missingness_sensitivity": missingness,
         "pairing_audit": audit,
     }
 
@@ -601,6 +657,12 @@ def compare_cells(
     mode: str = "auto",
     n_resamples: int = 2000,
     seed: int = 0,
+    n_permutations: int = 10000,
+    assume_exchangeable: bool = False,
+    smallest_effect: float | None = None,
+    pilot_cluster_sd: float | None = None,
+    target_power: float = 0.8,
+    alpha: float = 0.05,
 ) -> dict[str, Any]:
     if mode not in {"auto", "static", "live"}:
         raise ValueError("mode must be auto, static, or live")
@@ -634,6 +696,12 @@ def compare_cells(
             mode=left_mode,
             n_resamples=n_resamples,
             seed=seed,
+            n_permutations=n_permutations,
+            assume_exchangeable=assume_exchangeable,
+            smallest_effect=smallest_effect,
+            pilot_cluster_sd=pilot_cluster_sd,
+            target_power=target_power,
+            alpha=alpha,
         )
         for metric in metrics
     }
@@ -672,6 +740,16 @@ def compare_cells(
             and all(
                 metric["pairing_audit"]["unexplained_exclusions"] == 0
                 for metric in metric_results.values()
+            )
+        ),
+        # A confirmatory publishable run must pass the prospective power gate on
+        # every estimated metric (requires --smallest-effect + disjoint pilot SD).
+        "adequately_powered": (
+            any(m.get("status") == "estimated" for m in metric_results.values())
+            and all(
+                m["power_gate"].get("adequately_powered") is True
+                for m in metric_results.values()
+                if m.get("status") == "estimated"
             )
         ),
     }
@@ -723,6 +801,12 @@ def compare(
     mode: str = "auto",
     n_resamples: int = 2000,
     seed: int = 0,
+    n_permutations: int = 10000,
+    assume_exchangeable: bool = False,
+    smallest_effect: float | None = None,
+    pilot_cluster_sd: float | None = None,
+    target_power: float = 0.8,
+    alpha: float = 0.05,
 ) -> dict[str, Any]:
     _, cells = _validated_artifacts(results)
     by_corpus: dict[str, list[dict[str, Any]]] = defaultdict(list)
@@ -769,7 +853,27 @@ def compare(
             mode=mode,
             n_resamples=n_resamples,
             seed=seed,
+            n_permutations=n_permutations,
+            assume_exchangeable=assume_exchangeable,
+            smallest_effect=smallest_effect,
+            pilot_cluster_sd=pilot_cluster_sd,
+            target_power=target_power,
+            alpha=alpha,
         )
+    # Holm-Bonferroni across this contrast's (corpus x metric) randomization
+    # p-values (V.1.7); cross-contrast families are adjusted by the top-level
+    # confirmatory driver, not here.
+    family_p: dict[str, float] = {}
+    for corpus_name, facet in facets.items():
+        for metric_name, res in facet["metrics"].items():
+            perm = res.get("permutation_test") or {}
+            if isinstance(perm.get("p_value"), (int, float)):
+                family_p[f"{corpus_name}::{metric_name}"] = perm["p_value"]
+    for key, adjusted in holm_bonferroni(family_p, alpha=alpha).items():
+        c_name, m_name = key.split("::", 1)
+        perm = facets[c_name]["metrics"][m_name]["permutation_test"]
+        perm["p_holm"] = adjusted["p_holm"]
+        perm["reject_holm"] = adjusted["reject"]
     if corpus is not None and corpus in unavailable:
         raise ValueError(
             f"requested corpus {corpus!r} lacks one or both exact comparison arms"
@@ -785,6 +889,15 @@ def compare(
         "right_selector": {"model_spec": right_model, "defense": right_defense},
         "facets": facets,
         "unavailable_facets": unavailable,
+        "multiplicity": {
+            "method": "holm_bonferroni_within_contrast",
+            "family": sorted(family_p),
+            "alpha": alpha,
+            "note": (
+                "adjusted across this contrast's (corpus x metric) randomization "
+                "p-values; cross-contrast families require the confirmatory driver"
+            ),
+        },
         "artifact_root": str(results),
         "unexplained_exclusions": 0,
     }
@@ -804,10 +917,25 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--mode", choices=["auto", "static", "live"], default="auto")
     parser.add_argument("--bootstrap", type=int, default=2000)
     parser.add_argument("--seed", type=int, default=0)
+    parser.add_argument("--permutations", type=int, default=10000,
+                        help="paired sign-flip randomization iterations (V.1.7)")
+    parser.add_argument("--assume-exchangeable", action="store_true",
+                        help="assert within-pair exchangeability so the randomization "
+                             "p-value is computed; otherwise the bootstrap CI is primary")
+    parser.add_argument("--smallest-effect", type=float, default=None,
+                        help="prespecified smallest effect of interest for the power gate")
+    parser.add_argument("--pilot-cluster-sd", type=float, default=None,
+                        help="cluster-SD from a DISJOINT pilot run for the power gate")
+    parser.add_argument("--target-power", type=float, default=0.8)
+    parser.add_argument("--alpha", type=float, default=0.05)
     parser.add_argument("--output", type=Path, default=None)
     args = parser.parse_args(argv)
     if args.bootstrap < 1:
         parser.error("--bootstrap must be positive")
+    if args.permutations < 1:
+        parser.error("--permutations must be positive")
+    if not 0.0 < args.alpha < 1.0:
+        parser.error("--alpha must be strictly between 0 and 1")
     try:
         result = compare(
             args.results,
@@ -820,6 +948,12 @@ def main(argv: list[str] | None = None) -> int:
             mode=args.mode,
             n_resamples=args.bootstrap,
             seed=args.seed,
+            n_permutations=args.permutations,
+            assume_exchangeable=args.assume_exchangeable,
+            smallest_effect=args.smallest_effect,
+            pilot_cluster_sd=args.pilot_cluster_sd,
+            target_power=args.target_power,
+            alpha=args.alpha,
         )
     except ValueError as exc:
         print(f"paired comparison validation failed: {exc}", file=sys.stderr)

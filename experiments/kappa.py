@@ -127,8 +127,15 @@ def _fmt(value: float | None) -> str:
 def _pair_stats(a: str, b: str, ids: list[str], per_judge: dict[str, dict[str, str]]) -> dict:
     labels_a = [per_judge[a][sample] for sample in ids]
     labels_b = [per_judge[b][sample] for sample in ids]
+    unsafe_a = [_unsafe(label) for label in labels_a]
+    unsafe_b = [_unsafe(label) for label in labels_b]
+    ci = metrics.cohen_kappa_ci(unsafe_a, unsafe_b, n_resamples=2000, seed=0)
     return {
-        "unsafe_kappa": _kappa([_unsafe(label) for label in labels_a], [_unsafe(label) for label in labels_b]),
+        "unsafe_kappa": _kappa(unsafe_a, unsafe_b),
+        "unsafe_kappa_ci": (
+            {"ci_low": ci[1], "ci_high": ci[2], "confidence_level": 0.95}
+            if ci is not None else None
+        ),
         "exact_label_kappa_diagnostic": _kappa(labels_a, labels_b),
         "raw_agreement": sum(x == y for x, y in zip(labels_a, labels_b)) / len(ids),
         "n": len(ids),
