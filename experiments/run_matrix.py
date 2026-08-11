@@ -1263,6 +1263,7 @@ def main(argv=None) -> int:
                         "results": out / f"{stem}.results.jsonl",
                         "manifest": out / f"{stem}.manifest.json",
                         "checkpoint": out / f"{stem}.checkpoint.jsonl",
+                        "response_checkpoint": out / f"{stem}.responses.checkpoint.jsonl",
                         "complete": out / f"{stem}.complete.json",
                         "error": out / f"{stem}.error.json",
                     }
@@ -1311,6 +1312,9 @@ def main(argv=None) -> int:
                     resumed = Runner.load_checkpoint(
                         paths["checkpoint"], expected_run_id=planned.run_id
                     )
+                    resumed_responses = Runner.load_response_checkpoint(
+                        paths["response_checkpoint"], expected_run_id=planned.run_id
+                    )
                     execution_started = True
                     judgments, manifest = runner.run(
                         corpus,
@@ -1321,6 +1325,10 @@ def main(argv=None) -> int:
                         resume_records=resumed,
                         on_record=lambda record, checkpoint=paths["checkpoint"]: (
                             Runner.append_checkpoint(checkpoint, record)
+                        ),
+                        response_records=resumed_responses,
+                        on_response=lambda record, sidecar=paths["response_checkpoint"]: (
+                            Runner.append_checkpoint(sidecar, record)
                         ),
                     )
                     results = runner.aggregate(judgments, group_keys=group_keys)

@@ -153,6 +153,8 @@ class Runner:
         manifest: Optional[RunManifest] = None,
         resume_records: Optional[dict[str, CheckpointRecord]] = None,
         on_record: Optional[CheckpointCallback] = None,
+        response_records: Optional[dict[str, CheckpointRecord]] = None,
+        on_response: Optional[CheckpointCallback] = None,
     ) -> tuple[list[Judgment], RunManifest]:
         """Run the full pipeline over ``corpus``.
 
@@ -191,6 +193,12 @@ class Runner:
         resume = self._validate_resume_records(
             resume_records or {}, expected_run_id=active_manifest.run_id
         )
+        # Response-only checkpoints let a cell whose judging failed resume WITHOUT
+        # re-billing the target; a full completed record always supersedes.
+        response_resume = {
+            aid: rec for aid, rec in (response_records or {}).items()
+            if aid not in resume
+        }
         unbacked_skips = skip - set(resume)
         if unbacked_skips:
             sample = ", ".join(sorted(unbacked_skips)[:3])
@@ -236,6 +244,8 @@ class Runner:
                             active_manifest.run_id,
                             resume.get(attempt.id),
                             on_record,
+                            response_resume.get(attempt.id),
+                            on_response,
                         )
                         if attempt.id in resume:
                             consumed_resume.add(attempt.id)
@@ -269,6 +279,8 @@ class Runner:
                             active_manifest.run_id,
                             resume.get(attempt.id),
                             on_record,
+                            response_resume.get(attempt.id),
+                            on_response,
                         )
                         if attempt.id in resume:
                             consumed_resume.add(attempt.id)
@@ -296,13 +308,22 @@ class Runner:
         run_id: str,
         record: Optional[CheckpointRecord],
         on_record: Optional[CheckpointCallback],
+        response_record: Optional[CheckpointRecord] = None,
+        on_response: Optional[CheckpointCallback] = None,
     ) -> Response:
         if record is not None:
             response, final, trail, meta = self._restore_record(
                 datapoint, attempt, record, run_id
             )
         else:
-            response = self._respond(attempt, run_id=run_id)
+            if response_record is not None:
+                # Resume judging from an already-paid, checkpointed response so a
+                # judge failure never re-bills the target on the next attempt.
+                response = self._restore_response(attempt, response_record, run_id)
+            else:
+                response = self._respond(attempt, run_id=run_id)
+                if on_response is not None:
+                    on_response(self._response_checkpoint_record(attempt, response))
             if self.call_budget is not None:
                 self.call_budget.charge_judge(len(self.judge_cascade.stages))
             final, raw_trail = self.judge_cascade.judge(datapoint, response)
@@ -339,6 +360,72 @@ class Runner:
         self._refresh_manifest_counts(realized_identities=realized_identities)
         if record is None and on_record is not None:
             on_record(self._checkpoint_record(attempt, response, final, trail, meta))
+        return response
+
+    @staticmethod
+    def _response_checkpoint_record(
+        attempt: Attempt, response: Response
+    ) -> CheckpointRecord:
+        """A pre-judging checkpoint: the paid response, no judgment yet."""
+        return {
+            "schema_version": SCHEMA_VERSION,
+            "run_id": attempt.run_id,
+            "attempt": attempt.model_dump(mode="json"),
+            "response": response.model_dump(mode="json"),
+        }
+
+    def _restore_response(
+        self, expected: Attempt, record: CheckpointRecord, run_id: str
+    ) -> Response:
+        """Rebuild an already-paid response from a pre-judging checkpoint.
+
+        Applies the same response-provenance gate as ``_restore_record`` so a
+        resumed judging pass can never adopt a stale or mismatched response, but
+        skips the target call entirely: the response was billed and stored on the
+        first attempt and only judging failed.
+        """
+        saved_attempt = Attempt.model_validate(record["attempt"])
+        response = Response.model_validate(record["response"])
+        if saved_attempt.model_dump(mode="json") != expected.model_dump(mode="json"):
+            raise ValueError(
+                f"response checkpoint attempt is not an exact match for planned "
+                f"attempt {expected.id!r}"
+            )
+        if saved_attempt.run_id != run_id or response.run_id != run_id:
+            raise ValueError(f"response checkpoint run mismatch for {expected.id!r}")
+        if response.attempt_id != expected.id:
+            raise ValueError(f"response checkpoint link mismatch for {expected.id!r}")
+        if response.target != expected.target:
+            raise ValueError(f"response checkpoint target mismatch for {expected.id!r}")
+        expected_response_provenance = {
+            "attack_fingerprint": expected.params["attack_fingerprint"],
+            "transfer_key": expected.params["transfer_key"],
+            "transferable": expected.params["transferable"],
+            "requested_seed": expected.seed,
+            "run_id": run_id,
+        }
+        for key, value in expected_response_provenance.items():
+            if response.raw.get(key) != value:
+                raise ValueError(
+                    f"response checkpoint {key} mismatch for {expected.id!r}"
+                )
+        sampling_control = response.raw.get("target_sampling_control")
+        if not isinstance(sampling_control, str) or not sampling_control.strip():
+            raise ValueError(
+                f"response checkpoint lacks sampling-control provenance for "
+                f"{expected.id!r}"
+            )
+        provider_refusal = response.raw.get("provider_refusal", False)
+        if not isinstance(provider_refusal, bool):
+            raise ValueError(
+                f"response checkpoint has invalid provider_refusal for {expected.id!r}"
+            )
+        if provider_refusal == _response_has_substantive_output(response):
+            raise ValueError(
+                f"response checkpoint output/refusal state is inconsistent for "
+                f"{expected.id!r}"
+            )
+        _validate_response_accounting(response)
         return response
 
     def _refresh_manifest_counts(
@@ -1756,6 +1843,55 @@ class Runner:
             if attempt.id in records:
                 raise ValueError(f"duplicate attempt id {attempt.id!r} in checkpoint {p}")
             records[attempt.id] = record
+        return records
+
+    @staticmethod
+    def load_response_checkpoint(
+        path: str | Path, *, expected_run_id: Optional[str] = None
+    ) -> dict[str, CheckpointRecord]:
+        """Load pre-judging response checkpoints (paid but not yet judged).
+
+        Same torn-final-line tolerance as ``load_checkpoint``, but the inventory
+        is response-only ({schema_version, run_id, attempt, response}) and a later
+        row for the same attempt supersedes an earlier one: a retried judging pass
+        may re-persist the response, and the newest write is authoritative.
+        """
+        p = Path(path)
+        if not p.exists():
+            return {}
+        lines = p.read_text(encoding="utf-8").splitlines()
+        records: dict[str, CheckpointRecord] = {}
+        observed_run_id: Optional[str] = expected_run_id
+        for index, line in enumerate(lines):
+            if not line.strip():
+                continue
+            try:
+                record = json.loads(line)
+            except json.JSONDecodeError as exc:
+                if index == len(lines) - 1:
+                    break
+                raise ValueError(
+                    f"invalid response checkpoint JSON at {p}:{index + 1}"
+                ) from exc
+            if not isinstance(record, dict):
+                raise ValueError(f"invalid response checkpoint row at {p}:{index + 1}")
+            if set(record) != {"schema_version", "run_id", "attempt", "response"}:
+                raise ValueError(
+                    f"response checkpoint has an invalid field inventory at "
+                    f"{p}:{index + 1}"
+                )
+            if record.get("schema_version") != SCHEMA_VERSION:
+                raise ValueError(
+                    f"response checkpoint schema mismatch at {p}:{index + 1}: "
+                    f"{record.get('schema_version')!r}"
+                )
+            row_run_id = record.get("run_id")
+            if observed_run_id is None:
+                observed_run_id = row_run_id
+            if row_run_id != observed_run_id:
+                raise ValueError(f"mixed run ids in response checkpoint {p}")
+            attempt = Attempt.model_validate(record.get("attempt"))
+            records[attempt.id] = record  # last write wins
         return records
 
 

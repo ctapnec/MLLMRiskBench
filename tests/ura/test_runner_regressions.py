@@ -349,6 +349,28 @@ class _ConfidentBinaryJudge(BaseJudge):
         )
 
 
+class _FailOnceJudge(BaseJudge):
+    """Judge that raises for its first ``fail_times`` calls, then grades."""
+
+    name = "binary"
+
+    def __init__(self, *, fail_times: int = 1) -> None:
+        self.calls = 0
+        self._fail_times = fail_times
+
+    def judge(self, datapoint: DataPoint, response: Response) -> Judgment:
+        self.calls += 1
+        if self.calls <= self._fail_times:
+            raise RuntimeError("intentional judge interruption")
+        return Judgment(
+            attempt_id=response.attempt_id,
+            judge=self.name,
+            label="violation",
+            score=0.97,
+            raw={"confidence": 1.0},
+        )
+
+
 class _RubricShadowJudge(BaseJudge):
     name = "rubric"
 
@@ -1136,6 +1158,55 @@ def test_checkpoint_resume_rejects_realized_target_identity_drift() -> None:
     # The restored response was admitted, but the conflicting live response was
     # rejected before it could enter the scored cell or append a checkpoint row.
     assert len(resumed.responses) == 1
+
+
+def test_response_checkpoint_resumes_judging_without_rebilling_target(
+    tmp_path: Path,
+) -> None:
+    corpus = [_datapoint()]
+    sidecar = tmp_path / "responses.checkpoint.jsonl"
+
+    # Run 1: the target answers (a paid call) and the response is checkpointed
+    # BEFORE judging, then judging fails - no completed record is ever written.
+    paid_target = _RecordingTarget()
+    interrupted = Runner(
+        _FloodAttacker(),
+        paid_target,
+        JudgeCascade([_FailOnceJudge(fail_times=99)]),
+        AttackBudget(max_queries=1, max_turns=1, seed=0),
+        [0],
+    )
+    completed: list[dict] = []
+    with pytest.raises(RuntimeError, match="intentional judge interruption"):
+        interrupted.run(
+            corpus,
+            on_record=completed.append,
+            on_response=lambda rec: Runner.append_checkpoint(sidecar, rec),
+        )
+    assert completed == []  # nothing finished judging
+    assert len(paid_target._dialogs) == 1  # the target was billed exactly once
+    resumed_responses = Runner.load_response_checkpoint(sidecar)
+    assert len(resumed_responses) == 1  # the paid response was checkpointed
+
+    # Run 2 (resume): a fresh target proves the response is reused, not re-billed.
+    fresh_target = _RecordingTarget()
+    resumed = Runner(
+        _FloodAttacker(),
+        fresh_target,
+        # Same judge class (identical run config) so the resumed run_id matches;
+        # fail_times=0 means it grades on the first call this time.
+        JudgeCascade([_FailOnceJudge(fail_times=0)]),
+        AttackBudget(max_queries=1, max_turns=1, seed=0),
+        [0],
+    )
+    judgments, _ = resumed.run(
+        corpus,
+        response_records=resumed_responses,
+        on_response=lambda rec: Runner.append_checkpoint(sidecar, rec),
+    )
+    assert fresh_target._dialogs == []  # ZERO additional target calls on resume
+    assert len(judgments) == 1
+    assert resumed.responses[0].output_turns[0].content == "live reply 1"
 
 
 def test_checkpoint_loader_rejects_duplicate_attempt_ids(tmp_path: Path):
