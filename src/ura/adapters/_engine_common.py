@@ -60,6 +60,22 @@ _RUNTIME_INJECTION_NAMES = {
     "RUBYOPT",
 }
 
+# Names that CARRY credentials in their value (authenticated proxy/index URLs)
+# or point at credential-config files, even though the name is not itself a
+# secret. These are dropped unless explicitly allowlisted.
+_CREDENTIAL_URL_NAME = re.compile(
+    r"(?:^|_)(?:(?:HTTP|HTTPS|ALL|FTP)_PROXY|PROXY|INDEX_URL|EXTRA_INDEX_URL"
+    r"|REPOSITORY_URL|REGISTRY)(?:_|$)",
+    re.IGNORECASE,
+)
+_CREDENTIAL_CONFIG_NAMES = {
+    "NETRC", "PIP_CONFIG_FILE", "GIT_CONFIG_GLOBAL", "GIT_CONFIG_SYSTEM",
+    "AWS_SHARED_CREDENTIALS_FILE", "AWS_CONFIG_FILE", "BOTO_CONFIG",
+    "GOOGLE_APPLICATION_CREDENTIALS", "CLOUDSDK_CONFIG", "AZURE_CONFIG_DIR",
+    "KUBECONFIG", "DOCKER_CONFIG", "NPM_CONFIG_USERCONFIG",
+    "NPM_CONFIG_GLOBALCONFIG", "GH_CONFIG_DIR", "HF_TOKEN_PATH",
+}
+
 
 class ExternalEngineError(RuntimeError):
     """An external engine failed without exposing unbounded child output."""
@@ -135,12 +151,16 @@ def _sanitised_child_env(
 
     for upper_name, (name, value) in source_by_upper.items():
         is_credential = bool(_CREDENTIAL_NAME.search(upper_name))
+        is_carrier = (
+            bool(_CREDENTIAL_URL_NAME.search(upper_name))
+            or upper_name in _CREDENTIAL_CONFIG_NAMES
+        )
         is_runtime_injection = (
             upper_name in _RUNTIME_INJECTION_NAMES or upper_name.startswith("DYLD_")
         )
         if is_runtime_injection:
             continue
-        if is_credential and upper_name not in allowed:
+        if (is_credential or is_carrier) and upper_name not in allowed:
             continue
         child[name] = value
 

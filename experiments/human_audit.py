@@ -42,6 +42,7 @@ _NON_JUDGMENT_SUFFIXES = (
     ".responses.jsonl",
     ".checkpoint.jsonl",
 )
+_MAX_ARTIFACT_BYTES = 512 * 1024 * 1024
 _RATING_FIELDS = {
     "rater_id", "label", "confidence", "notes", "adjudicated_label",
 }
@@ -89,6 +90,10 @@ def _attempt_key(row: dict) -> str:
 def _read_jsonl_paths(files: list[Path]) -> list[dict]:
     rows: list[dict] = []
     for file in sorted(files):
+        if file.is_symlink() or not file.is_file():
+            raise ValueError(f"refusing non-regular/symlinked audit artifact: {file}")
+        if file.stat().st_size > _MAX_ARTIFACT_BYTES:
+            raise ValueError(f"audit artifact exceeds {_MAX_ARTIFACT_BYTES} bytes: {file}")
         for line_no, line in enumerate(file.read_text(encoding="utf-8").splitlines(), 1):
             if line.strip():
                 try:

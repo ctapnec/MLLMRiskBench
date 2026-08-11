@@ -205,13 +205,13 @@ class HarmBenchAttacker(BaseAttacker):
                 "HarmBench checkout HEAD does not match upstream_revision"
             )
         status = run_engine_command(
-            [git, "-C", str(root), "status", "--porcelain", "--untracked-files=no"],
+            [git, "-C", str(root), "status", "--porcelain", "--untracked-files=all"],
             feature="HarmBench checkout cleanliness",
             timeout_seconds=self.timeout_seconds,
         ).stdout
         if status.strip():
             raise ExternalEngineConformanceError(
-                "HarmBench checkout has tracked modifications"
+                "HarmBench checkout has tracked or untracked modifications"
             )
         return head.lower()
 
@@ -336,8 +336,17 @@ class HarmBenchAttacker(BaseAttacker):
 
     @staticmethod
     def _read_test_cases(path: Path, behavior_id: str) -> list[str]:
+        path = Path(path)
+        if path.is_symlink() or not path.is_file():
+            raise ExternalEngineOutputError(
+                f"HarmBench merged output is missing or not a regular file: {path}"
+            )
+        if path.stat().st_size > _MAX_FILE_BYTES:
+            raise ExternalEngineOutputError(
+                f"HarmBench merged output exceeds {_MAX_FILE_BYTES} bytes: {path}"
+            )
         try:
-            raw = Path(path).read_text(encoding="utf-8")
+            raw = path.read_text(encoding="utf-8")
             data = json.loads(
                 raw,
                 parse_constant=lambda value: (_ for _ in ()).throw(

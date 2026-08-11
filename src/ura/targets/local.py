@@ -259,6 +259,9 @@ class VLLMTarget(BaseTarget):
             identity_kwargs: dict[str, Any] = {}
             if self.revision is not None:
                 identity_kwargs["revision"] = self.revision
+                # Pin the tokenizer/chat-template to the SAME immutable revision
+                # so it cannot drift independently of the model weights.
+                identity_kwargs["tokenizer_revision"] = self.revision
             self._llm = LLM(
                 model=self.model,
                 tensor_parallel_size=self.tensor_parallel_size,
@@ -578,7 +581,14 @@ class OllamaTarget(BaseTarget):
         )
         try:
             with urllib.request.urlopen(req, timeout=self.timeout) as resp:
-                body = resp.read().decode("utf-8")
+                if resp.headers.get("Content-Length") and int(
+                    resp.headers["Content-Length"]
+                ) > 4 * 1024 * 1024:
+                    raise RuntimeError("Ollama response exceeds the 4 MiB cap")
+                raw = resp.read(4 * 1024 * 1024 + 1)
+                if len(raw) > 4 * 1024 * 1024:
+                    raise RuntimeError("Ollama response exceeds the 4 MiB cap")
+                body = raw.decode("utf-8")
         except urllib.error.URLError as exc:  # pragma: no cover - network path
             raise RuntimeError(
                 f"could not reach Ollama daemon at {self.host}; "

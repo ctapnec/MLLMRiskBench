@@ -473,10 +473,18 @@ class T3MP3STAttacker(BaseAttacker):
         pin: str,
     ) -> tuple[dict[str, Any], dict[str, object]]:
         assert self.response_artifact is not None
+        if self.response_artifact.expanduser().is_symlink():
+            raise ExternalEngineConformanceError(
+                f"T3MP3ST replay artifact must not be a symlink: {self.response_artifact}"
+            )
         try:
             path = self.response_artifact.expanduser().resolve(strict=True)
-            if not path.is_file():
+            if not path.is_file() or path.is_symlink():
                 raise OSError("not a regular file")
+            if path.stat().st_size > _MAX_RESPONSE_BYTES:
+                raise ExternalEngineOutputError(
+                    f"T3MP3ST replay artifact exceeds {_MAX_RESPONSE_BYTES} bytes"
+                )
             raw = path.read_bytes()
         except OSError as exc:
             raise ExternalEngineConformanceError(

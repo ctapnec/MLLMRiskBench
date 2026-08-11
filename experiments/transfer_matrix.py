@@ -36,6 +36,9 @@ from ura.metrics import clustered_bootstrap_ci  # noqa: E402
 from ura.runner import CODE_VERSION, realized_identity_summary  # noqa: E402
 
 
+_MAX_JSON_BYTES = 4 * 1024 * 1024
+_MAX_ARTIFACT_BYTES = 512 * 1024 * 1024
+
 _NON_JUDGMENT_SUFFIXES = (
     ".results.jsonl",
     ".trails.jsonl",
@@ -67,6 +70,10 @@ def _truth(value: Any) -> bool:
 
 
 def _read_object(path: Path) -> dict[str, Any]:
+    if path.is_symlink() or not path.is_file():
+        raise ValueError(f"expected a regular non-symlink JSON file: {path}")
+    if path.stat().st_size > _MAX_JSON_BYTES:
+        raise ValueError(f"JSON object exceeds {_MAX_JSON_BYTES} bytes: {path}")
     try:
         value = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as exc:
@@ -92,8 +99,8 @@ def _artifact_path(directory: Path, value: Any, *, marker: Path, role: str) -> P
     if not isinstance(value, str) or not value or Path(value).name != value:
         raise ValueError(f"unsafe or missing {role} artifact name in {marker}")
     path = directory / value
-    if not path.is_file():
-        raise ValueError(f"completion marker {marker} references missing artifact {path}")
+    if path.is_symlink() or not path.is_file():
+        raise ValueError(f"completion marker {marker} references invalid artifact {path}")
     expected_hash = descriptor["sha256"]
     expected_bytes = descriptor["bytes"]
     expected_records = descriptor["records"]
@@ -111,9 +118,12 @@ def _artifact_path(directory: Path, value: Any, *, marker: Path, role: str) -> P
         or expected_records < 0
     ):
         raise ValueError(f"invalid record count descriptor for {role} in {marker}")
-    payload = path.read_bytes()
-    if len(payload) != expected_bytes:
+    actual_size = path.stat().st_size
+    if actual_size != expected_bytes:
         raise ValueError(f"artifact byte-count mismatch for {role}: {path}")
+    if actual_size > _MAX_ARTIFACT_BYTES:
+        raise ValueError(f"artifact exceeds {_MAX_ARTIFACT_BYTES} bytes for {role}: {path}")
+    payload = path.read_bytes()
     observed_hash = hashlib.sha256(payload).hexdigest()
     if observed_hash != expected_hash:
         raise ValueError(f"artifact sha256 mismatch for {role}: {path}")

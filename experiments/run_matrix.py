@@ -797,6 +797,8 @@ def main(argv=None) -> int:
     seeds = [int(s) for s in args.seeds.split(",") if s.strip()]
     if not seeds:
         ap.error("--seeds must contain at least one integer")
+    if len(set(seeds)) != len(seeds):
+        ap.error("--seeds must be unique")
     out = Path(args.out)
     out.mkdir(parents=True, exist_ok=True)
 
@@ -807,9 +809,13 @@ def main(argv=None) -> int:
 
     api_specs = [s.strip() for s in args.api.split(",") if s.strip()]
     local_specs = [s.strip() for s in args.local.split(",") if s.strip()]
+    if len(set(api_specs)) != len(api_specs):
+        ap.error("--api specs must be unique")
     if len(set(local_specs)) != len(local_specs):
         ap.error("--local specs must be unique")
     model_specs = ["mock"] if args.dry_run else (api_specs + local_specs)
+    if len(set(model_specs)) != len(model_specs):
+        ap.error("target specs must be unique across --api and --local")
     if not model_specs:
         ap.error("a real run requires at least one --api or --local target; use --dry-run for mock")
 
@@ -822,6 +828,12 @@ def main(argv=None) -> int:
         ap.error("--judges must contain at least one judge name")
     if not corpora:
         ap.error("--corpora must contain at least one corpus name")
+    for _label, _values in (
+        ("--attackers", attacker_names), ("--judges", judge_names),
+        ("--corpora", corpora),
+    ):
+        if len(set(_values)) != len(_values):
+            ap.error(f"{_label} entries must be unique")
     try:
         attacker_configs, attacker_config_artifact = _load_attacker_config(
             args.attacker_config, attacker_names

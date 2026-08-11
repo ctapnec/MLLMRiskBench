@@ -38,6 +38,8 @@ from ..data_models import Attempt, DataPoint, DialogTurn
 from .base import AttackBudget, BaseAttacker
 from ._engine_common import ExternalEngineOutputError, _attempt, run_engine_command
 
+_MAX_DATASET_BYTES = 256 * 1024 * 1024
+
 
 class SpikeeAttacker(BaseAttacker):
     """Drive ``spikee generate`` to splice the DataPoint payload into a document
@@ -298,6 +300,14 @@ class SpikeeAttacker(BaseAttacker):
                     "Spikee must emit exactly one generated JSONL dataset"
                 )
             dataset = Path(produced[0])
+            if dataset.is_symlink() or not dataset.is_file():
+                raise ExternalEngineOutputError(
+                    f"Spikee dataset must be a regular file: {dataset}"
+                )
+            if dataset.stat().st_size > _MAX_DATASET_BYTES:
+                raise ExternalEngineOutputError(
+                    f"Spikee dataset exceeds {_MAX_DATASET_BYTES} bytes"
+                )
             dataset_bytes = dataset.read_bytes()
             dataset_sha256 = hashlib.sha256(dataset_bytes).hexdigest()
             entries: list[dict] = []
