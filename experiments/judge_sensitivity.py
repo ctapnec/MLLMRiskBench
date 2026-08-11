@@ -22,6 +22,7 @@ sys.path.insert(0, str(_REPO_ROOT))
 sys.path.insert(0, str(_REPO_ROOT / "src"))
 
 from experiments.human_audit import _validated_artifacts  # noqa: E402
+from experiments.analysis_integrity import analysis_source_identity  # noqa: E402
 
 
 _LABELS = {"safe", "violation", "refusal", "over_refusal"}
@@ -610,6 +611,9 @@ def analyse(
         ),
         "selector": {"attacker": attacker, "corpus": corpus},
         "artifact_root": str(results),
+        "analysis_source": analysis_source_identity([
+            Path(__file__), _REPO_ROOT / "experiments" / "human_audit.py",
+        ]),
         "selection_accounting": {
             "validated_completed_cells": len(cells),
             "selected_cells": len(selected),

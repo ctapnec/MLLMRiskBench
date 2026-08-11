@@ -195,6 +195,8 @@ def test_llm_judge_passes_and_persists_judge_call_seed_provenance() -> None:
         "model_digest": None,
         "latency_ms": 12.5,
         "tokens": {"input": 10, "output": 3, "total": 13},
+        "transport_attempt_count": 0,
+        "transport_attempts": [],
     }
 
 

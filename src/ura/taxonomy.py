@@ -55,11 +55,18 @@ TAXONOMY_MAP: dict[RiskCategory, dict[str, list[str]]] = {
     # Umbrella: the specific hazard (CBRN / weapons / self-harm / CSEM) is attached
     # per DataPoint by the converter via dp(extra_refs=...), not forced here.
     RiskCategory.CATASTROPHIC: {},
+    # Utility/safety calibration construct, not itself an external harm class.
+    RiskCategory.OVER_REFUSAL: {},
 }
 
 # Umbrella categories whose specific standard hazard is established per DataPoint
 # rather than at the category level (see TAXONOMY_MAP note above).
-UMBRELLA_CATEGORIES = frozenset({RiskCategory.CATASTROPHIC})
+UMBRELLA_CATEGORIES = frozenset({
+    RiskCategory.CATASTROPHIC,
+    # Explicitly exempt from category-level harm mappings: excessive refusal is
+    # a benchmark utility construct, not an external safety-harm category.
+    RiskCategory.OVER_REFUSAL,
+})
 
 # EU AI Act GPAI systemic-risk names attach at report level for frontier runs.
 EU_AI_ACT_SYSTEMIC_RISKS = [

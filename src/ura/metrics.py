@@ -244,7 +244,7 @@ def judge_scores(
     """External-validity scores of a judge stage against a human-labelled slice.
 
     Treats ``violation`` as the positive class and reports accuracy, precision,
-    recall, and F1 (the informedness-style external-validity measures of II.5.2,
+    recall, specificity, and F1 (the external-validity measures of II.5.2,
     complementing the judge-vs-judge Cohen's kappa). ``pred``/``gold`` are equal
     length sequences of JudgeLabels over the same items.
     """
@@ -253,9 +253,11 @@ def judge_scores(
     tp = sum(1 for p, g in zip(pred, gold) if p == "violation" and g == "violation")
     fp = sum(1 for p, g in zip(pred, gold) if p == "violation" and g != "violation")
     fn = sum(1 for p, g in zip(pred, gold) if p != "violation" and g == "violation")
+    tn = sum(1 for p, g in zip(pred, gold) if p != "violation" and g != "violation")
     correct = sum(1 for p, g in zip(pred, gold) if p == g)
     precision = tp / (tp + fp) if tp + fp else None
     recall = tp / (tp + fn) if tp + fn else None
+    specificity = tn / (tn + fp) if tn + fp else None
     f1 = (
         2 * tp / (2 * tp + fp + fn)
         if 2 * tp + fp + fn
@@ -265,6 +267,7 @@ def judge_scores(
         "accuracy": _frac(correct, len(pred)),
         "precision": precision,
         "recall": recall,
+        "specificity": specificity,
         "f1": f1,
     }
 
@@ -574,6 +577,56 @@ def holm_bonferroni(
     }
 
 
+def holm_bonferroni_complete_family(
+    pvalues: dict[str, float | None], *, alpha: float = 0.05,
+) -> dict[str, dict[str, float | bool | str | None]]:
+    """Holm correction whose denominator is the frozen *complete* family.
+
+    ``None`` means the preregistered hypothesis could not be estimated.  Such a
+    hypothesis remains in the family size and is explicitly non-rejectable; it
+    is never silently removed to make the remaining correction less stringent.
+    """
+    if not pvalues:
+        raise ValueError("Holm family must contain at least one hypothesis")
+    if not 0.0 < alpha < 1.0:
+        raise ValueError("alpha must be strictly between 0 and 1")
+    invalid = {
+        key: value for key, value in pvalues.items()
+        if value is not None
+        and (not isinstance(value, (int, float)) or not math.isfinite(value)
+             or not 0.0 <= float(value) <= 1.0)
+    }
+    if invalid:
+        raise ValueError(f"invalid p-values in Holm family: {invalid!r}")
+    total = len(pvalues)
+    observed = sorted(
+        ((key, float(value)) for key, value in pvalues.items() if value is not None),
+        key=lambda item: (item[1], item[0]),
+    )
+    output: dict[str, dict[str, float | bool | str | None]] = {
+        key: {
+            "status": "unavailable_preserved_in_family",
+            "p_value": None,
+            "p_holm": None,
+            "reject": False,
+            "family_size": total,
+        }
+        for key, value in pvalues.items() if value is None
+    }
+    running = 0.0
+    for rank, (key, pvalue) in enumerate(observed, start=1):
+        adjusted = min(1.0, (total - rank + 1) * pvalue)
+        running = max(running, adjusted)
+        output[key] = {
+            "status": "estimated",
+            "p_value": pvalue,
+            "p_holm": running,
+            "reject": running <= alpha,
+            "family_size": total,
+        }
+    return {key: output[key] for key in sorted(output)}
+
+
 def power_for_paired_difference(
     effect: float, sd: float, n_clusters: int, *,
     alpha: float = 0.05, two_sided: bool = True,
@@ -607,6 +660,28 @@ def required_clusters_for_power(
     z_alpha = _norm_ppf(1 - alpha / 2) if two_sided else _norm_ppf(1 - alpha)
     z_power = _norm_ppf(target_power)
     return int(math.ceil((((z_alpha + z_power) * sd / abs(effect)) ** 2)))
+
+
+def required_clusters_for_proportion_precision(
+    prevalence: float, half_width: float, *, alpha: float = 0.05,
+) -> int:
+    """Approximate cluster count for a binary proportion's target half-width.
+
+    This is a prospective normal-approximation calculation over *independent
+    cluster summaries*. The prevalence must come from a disjoint pilot; callers
+    must not substitute the main audit sample's observed prevalence.
+    """
+    if not 0.0 <= prevalence <= 1.0:
+        raise ValueError("pilot prevalence must lie in [0,1]")
+    if not 0.0 < half_width < 1.0:
+        raise ValueError("proportion half-width must lie in (0,1)")
+    if not 0.0 < alpha < 1.0:
+        raise ValueError("alpha must be strictly between 0 and 1")
+    z = _norm_ppf(1 - alpha / 2)
+    # A zero/one pilot event rate is fragile; the conservative 0.5 variance
+    # prevents a degenerate pilot from claiming that one cluster is enough.
+    variance = max(prevalence * (1 - prevalence), 0.25 if prevalence in {0.0, 1.0} else 0.0)
+    return max(2, int(math.ceil((z * z * variance) / (half_width * half_width))))
 
 
 def power_gate(
@@ -801,7 +876,9 @@ __all__ = [
     "asr_with_ci", "group_by_key",
     # confirmatory primitives (V.1.7)
     "paired_cluster_permutation_test", "holm_bonferroni",
+    "holm_bonferroni_complete_family",
     "power_for_paired_difference", "required_clusters_for_power", "power_gate",
+    "required_clusters_for_proportion_precision",
     "paired_effect_manski_bounds", "kaplan_meier_curve",
     "restricted_mean_turns_to_break", "rmtb_with_ci", "cohen_kappa_ci",
 ]

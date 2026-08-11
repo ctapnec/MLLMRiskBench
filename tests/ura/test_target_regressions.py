@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import base64
 import hashlib
+import json
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -30,6 +31,7 @@ from ura.targets.api import (
     OpenAIResponsesOutputError,
     OpenAIResponsesTarget,
     OpenAITarget,
+    ProviderTransportError,
     _encode_media,
     build_api_target,
 )
@@ -237,7 +239,7 @@ def test_guarded_target_rejects_unparsed_guard_verdict() -> None:
 
 _SOL_PRO_SPEC = (
     "openai-responses:gpt-5.6-sol;reasoning_mode=pro;"
-    "reasoning_effort=medium;reasoning_context=current_turn"
+    "reasoning_effort=medium;reasoning_context=all_turns"
 )
 
 _FABLE_SPEC = (
@@ -411,8 +413,11 @@ def test_fable_omits_temperature_and_records_request_and_usage_provenance() -> N
         "fallbacks": "disabled",
         "tools": "disabled",
         "timeout_seconds": 600.0,
-        "max_retries": 2,
+        "max_retries": 0,
     }
+    assert target.max_transport_attempts_per_call == 1
+    assert response.raw["transport_attempt_count"] == 1
+    assert response.raw["transport_attempts"][0]["outcome"] == "success"
     assert response.raw["provider_usage"]["input_tokens"] == 11
     assert response.raw["provider_usage"]["output_tokens_details"] == {
         "thinking_tokens": 5
@@ -454,18 +459,33 @@ def test_fable_typed_refusal_is_preserved_without_fabricated_output() -> None:
     assert refusal.raw["provider_signal_authoritative"] is True
 
 
-def test_fable_rejects_partial_or_untyped_refusal_results() -> None:
+def test_fable_discards_partial_refusal_output_but_rejects_untyped_refusal() -> None:
     partial = _fable_result(
         text=None,
         stop_reason="refusal",
         category="cyber",
         explanation="declined",
     )
-    partial.content = [SimpleNamespace(type="text", text="partial answer")]
+    partial.content = [
+        SimpleNamespace(
+            type="thinking", thinking="partial reasoning", signature="sig-partial"
+        ),
+        SimpleNamespace(type="text", text="partial answer"),
+    ]
     target = AnthropicFableTarget()
     _install_fable_fixture(target, partial)
-    with pytest.raises(AnthropicFableOutputError, match="visible partial text"):
-        target.generate([DialogTurn(role="user", content="request")])
+    response = target.generate([DialogTurn(role="user", content="request")])
+    assert response.output_turns == []
+    assert response.raw["provider_refusal"] is True
+    assert response.raw["provider_refusal_partial_output_discarded"] is True
+    assert response.raw["discarded_partial_text_bytes"] == len("partial answer")
+    assert response.raw["discarded_partial_text_sha256"] == hashlib.sha256(
+        b"partial answer"
+    ).hexdigest()
+    assert response.raw["discarded_partial_thinking_blocks"] == 1
+    serialized = json.dumps(response.model_dump(mode="json"))
+    assert "partial answer" not in serialized
+    assert "partial reasoning" not in serialized
 
     untyped = _fable_result(text=None, stop_reason="refusal")
     untyped.stop_details = None
@@ -536,7 +556,7 @@ def _responses_result(
         truncation="disabled",
         service_tier="default",
         reasoning=SimpleNamespace(
-            mode="pro", effort="medium", context="current_turn"
+            mode="pro", effort="medium", context="all_turns"
         ),
         usage=SimpleNamespace(
             input_tokens=11,
@@ -549,7 +569,11 @@ def _responses_result(
         ),
         output=[
             SimpleNamespace(
-                type="reasoning", id="rs_fixture_1", status="completed"
+                type="reasoning",
+                id="rs_fixture_1",
+                status="completed",
+                encrypted_content="encrypted-fixture-reasoning",
+                summary=[],
             ),
             SimpleNamespace(
                 type="message",
@@ -583,9 +607,10 @@ def test_sol_pro_has_one_explicit_nonconflating_public_target_spec() -> None:
     assert target.model == "gpt-5.6-sol"
     assert target.reasoning_mode == "pro"
     assert target.reasoning_effort == "medium"
-    assert target.reasoning_context == "current_turn"
+    assert target.reasoning_context == "all_turns"
     assert target.max_output_tokens == 25_000
     assert target.timeout == 600.0
+    assert target.max_transport_attempts_per_call == 1
 
     ordinary = build_api_target("openai:gpt-5.6-sol")
     assert type(ordinary) is OpenAITarget
@@ -621,7 +646,7 @@ def test_sol_pro_renders_recorded_multimodal_input_and_persists_provenance(
     assert captured["reasoning"] == {
         "mode": "pro",
         "effort": "medium",
-        "context": "current_turn",
+        "context": "all_turns",
     }
     assert captured["max_output_tokens"] == 25_000
     assert captured["store"] is False
@@ -657,6 +682,89 @@ def test_sol_pro_renders_recorded_multimodal_input_and_persists_provenance(
         "uncontrolled_responses_api_no_seed"
     )
     assert response.raw["provider_refusal"] is False
+    assert response.raw["transport_attempt_count"] == 1
+    assert response.raw["continuation_state_bytes"] > 0
+    assert len(response.raw["continuation_state_sha256"]) == 64
+    assert response.output_turns[0].provider_state is not None
+
+
+def test_sol_pro_replays_every_stateless_output_item_for_all_turns() -> None:
+    first_target = OpenAIResponsesTarget()
+    _install_responses_fixture(first_target, _responses_result(text="first answer"))
+    first = first_target.generate([DialogTurn(role="user", content="first")])
+    assistant = first.output_turns[0]
+    assert assistant.provider_state is not None
+
+    second_target = OpenAIResponsesTarget()
+    captured = _install_responses_fixture(
+        second_target, _responses_result(text="second answer")
+    )
+    second_target.generate(
+        [
+            DialogTurn(role="user", content="first"),
+            assistant,
+            DialogTurn(role="user", content="second"),
+        ]
+    )
+
+    assert captured["input"][1:3] == assistant.provider_state.items
+    assert captured["input"][1]["type"] == "reasoning"
+    assert captured["input"][1]["encrypted_content"] == (
+        "encrypted-fixture-reasoning"
+    )
+    assert captured["input"][2]["type"] == "message"
+    assert captured["input"][3] == {"role": "user", "content": "second"}
+
+
+def test_sol_pro_rejects_missing_encrypted_stateless_reasoning() -> None:
+    result = _responses_result()
+    del result.output[0].encrypted_content
+    target = OpenAIResponsesTarget()
+    _install_responses_fixture(target, result)
+    with pytest.raises(OpenAIResponsesOutputError, match="encrypted_content"):
+        target.generate([DialogTurn(role="user", content="request")])
+
+
+@pytest.mark.parametrize("target_type", [AnthropicFableTarget, OpenAIResponsesTarget])
+def test_frontier_targets_disable_hidden_retries_and_audit_failure(
+    target_type,
+) -> None:
+    target = target_type()
+
+    def fail(**_kwargs):
+        raise TimeoutError("fixture transport failure")
+
+    if isinstance(target, AnthropicFableTarget):
+        target._client = SimpleNamespace(messages=SimpleNamespace(create=fail))
+    else:
+        target._client = SimpleNamespace(responses=SimpleNamespace(create=fail))
+
+    assert target.max_transport_attempts_per_call == 1
+    with pytest.raises(ProviderTransportError) as caught:
+        target.generate([DialogTurn(role="user", content="request")])
+    expected_provider = (
+        "anthropic-fable"
+        if isinstance(target, AnthropicFableTarget)
+        else "openai-responses"
+    )
+    assert caught.value.call_audit == {
+        "transport_attempt_count": 1,
+        "logical_call_count": 1,
+        "provider": expected_provider,
+        "operation": "generate",
+        "status_code": None,
+        "error_type": "TimeoutError",
+        "provider_request_id": None,
+    }
+    assert caught.value.transport_attempts == [{
+        "attempt": 1,
+        "outcome": "error",
+        "error_type": "TimeoutError",
+        "status_code": None,
+        "request_id": None,
+        "retryable": False,
+        "latency_ms": caught.value.transport_attempts[0]["latency_ms"],
+    }]
 
 
 def test_sol_pro_accepts_an_explicit_refusal_but_rejects_ambiguous_output() -> None:
@@ -750,6 +858,9 @@ def test_generic_anthropic_terminal_states_fail_closed() -> None:
     assert response.output_turns[0].content == "complete"
     assert response.raw["response_id"] == "msg-generic-1"
     assert response.raw["resolved_model"] == "claude-generic-20260801"
+    assert target.max_transport_attempts_per_call == 3
+    assert response.raw["transport_attempt_count"] == 1
+    assert response.raw["generation"]["max_retries"] == 2
 
     _install_anthropic_fixture(
         target, _anthropic_result(text="partial", stop_reason="max_tokens")
@@ -805,6 +916,9 @@ def test_generic_openai_chat_terminal_states_fail_closed() -> None:
     assert response.raw["target_sampling_control"] == (
         "provider_seed_requested_best_effort"
     )
+    assert target.max_transport_attempts_per_call == 3
+    assert response.raw["transport_attempt_count"] == 1
+    assert response.raw["generation"]["max_retries"] == 2
 
     _install_chat_fixture(
         target, _chat_result(content="partial", finish_reason="length")
@@ -865,6 +979,9 @@ def test_generic_gemini_terminal_states_fail_closed() -> None:
     response = target.generate([DialogTurn(role="user", content="request")])
     assert response.raw["response_id"] == "gemini-response-1"
     assert response.raw["finish_reason"] == "STOP"
+    assert target.max_transport_attempts_per_call == 3
+    assert response.raw["transport_attempt_count"] == 1
+    assert response.raw["generation"]["max_retries"] == 2
 
     _install_gemini_fixture(
         target, _gemini_result(text="partial", finish_reason="MAX_TOKENS")

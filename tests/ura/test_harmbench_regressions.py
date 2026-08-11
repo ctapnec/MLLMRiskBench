@@ -162,3 +162,37 @@ def test_harmbench_rejects_modified_pinned_checkout(
                 _datapoint(), AttackBudget(max_queries=1, max_turns=1, seed=0)
             )
         )
+
+
+def test_harmbench_rejects_ignored_files_in_pinned_checkout(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    _checkout(tmp_path)
+    observed_status_command: list[str] = []
+
+    def runner(command, **_kwargs):
+        nonlocal observed_status_command
+        if "rev-parse" in command:
+            return subprocess.CompletedProcess(
+                command, returncode=0, stdout=_REVISION, stderr=""
+            )
+        if "status" in command:
+            observed_status_command = [str(part) for part in command]
+            return subprocess.CompletedProcess(
+                command, returncode=0, stdout="!! ignored-config.json", stderr=""
+            )
+        raise AssertionError("generation must not start for a dirty checkout")
+
+    monkeypatch.setattr(shutil, "which", lambda _name: "git")
+    monkeypatch.setattr(harmbench_module, "run_engine_command", runner)
+    with pytest.raises(ExternalEngineConformanceError, match="ignored files"):
+        list(
+            HarmBenchAttacker(
+                methods=["PEZ"],
+                repo=str(tmp_path),
+                upstream_revision=_REVISION,
+            ).generate(
+                _datapoint(), AttackBudget(max_queries=1, max_turns=1, seed=0)
+            )
+        )
+    assert "--ignored=matching" in observed_status_command

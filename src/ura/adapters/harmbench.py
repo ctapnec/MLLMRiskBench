@@ -30,6 +30,7 @@ from ._engine_common import (
     _attempt,
     run_engine_command,
 )
+from ._native_artifacts import read_binary_artifact, read_utf8_artifact
 from .base import AttackBudget, BaseAttacker
 
 _COMMIT_RE = re.compile(r"^[0-9a-fA-F]{40}$")
@@ -40,7 +41,9 @@ _SUPPORTED_METHODS = frozenset({
 })
 _IDENTITY_METHODS = frozenset({"DirectRequest"})
 _MAX_FILE_BYTES = 128 * 1024 * 1024
+_MAX_BEHAVIOR_CSV_BYTES = 1024 * 1024
 _MAX_TREE_BYTES = 512 * 1024 * 1024
+_MAX_TREE_FILES = 10_000
 
 
 def _canonical_sha256(value: Any) -> str:
@@ -205,13 +208,17 @@ class HarmBenchAttacker(BaseAttacker):
                 "HarmBench checkout HEAD does not match upstream_revision"
             )
         status = run_engine_command(
-            [git, "-C", str(root), "status", "--porcelain", "--untracked-files=all"],
+            [
+                git, "-C", str(root), "status", "--porcelain=v1",
+                "--untracked-files=all", "--ignored=matching",
+            ],
             feature="HarmBench checkout cleanliness",
             timeout_seconds=self.timeout_seconds,
         ).stdout
         if status.strip():
             raise ExternalEngineConformanceError(
-                "HarmBench checkout has tracked or untracked modifications"
+                "HarmBench checkout has tracked modifications, untracked files, "
+                "or ignored files"
             )
         return head.lower()
 
@@ -227,7 +234,12 @@ class HarmBenchAttacker(BaseAttacker):
             tmp_root = Path(tmp)
             behaviors_csv = tmp_root / "behaviors.csv"
             behavior_id = self._write_behaviors_csv(datapoint, seed, behaviors_csv)
-            behavior_csv_sha256 = hashlib.sha256(behaviors_csv.read_bytes()).hexdigest()
+            _, behavior_csv_bytes = read_binary_artifact(
+                behaviors_csv, max_bytes=_MAX_BEHAVIOR_CSV_BYTES
+            )
+            behavior_csv_sha256 = hashlib.sha256(
+                behavior_csv_bytes
+            ).hexdigest()
 
             for method in self.methods:
                 save_dir = tmp_root / method
@@ -336,17 +348,8 @@ class HarmBenchAttacker(BaseAttacker):
 
     @staticmethod
     def _read_test_cases(path: Path, behavior_id: str) -> list[str]:
-        path = Path(path)
-        if path.is_symlink() or not path.is_file():
-            raise ExternalEngineOutputError(
-                f"HarmBench merged output is missing or not a regular file: {path}"
-            )
-        if path.stat().st_size > _MAX_FILE_BYTES:
-            raise ExternalEngineOutputError(
-                f"HarmBench merged output exceeds {_MAX_FILE_BYTES} bytes: {path}"
-            )
         try:
-            raw = path.read_text(encoding="utf-8")
+            _, _, raw = read_utf8_artifact(path, max_bytes=_MAX_FILE_BYTES)
             data = json.loads(
                 raw,
                 parse_constant=lambda value: (_ for _ in ()).throw(
@@ -389,26 +392,35 @@ class HarmBenchAttacker(BaseAttacker):
             raise ExternalEngineOutputError("HarmBench method output directory is missing")
         descriptors: list[dict[str, Any]] = []
         total = 0
+        file_count = 0
+        entry_count = 0
         for path in sorted(root.rglob("*")):
+            entry_count += 1
+            if entry_count > _MAX_TREE_FILES * 4:
+                raise ExternalEngineOutputError(
+                    "HarmBench output tree contains too many filesystem entries"
+                )
             if path.is_symlink():
                 raise ExternalEngineOutputError(
                     "HarmBench output tree contains a symbolic link"
                 )
             if not path.is_file():
                 continue
-            size = path.stat().st_size
-            if size > _MAX_FILE_BYTES:
+            file_count += 1
+            if file_count > _MAX_TREE_FILES:
                 raise ExternalEngineOutputError(
-                    f"HarmBench output artifact exceeds {_MAX_FILE_BYTES} bytes"
+                    f"HarmBench output tree exceeds {_MAX_TREE_FILES} files"
                 )
-            total += size
+            resolved, payload = read_binary_artifact(
+                path, max_bytes=_MAX_FILE_BYTES
+            )
+            total += len(payload)
             if total > _MAX_TREE_BYTES:
                 raise ExternalEngineOutputError(
                     f"HarmBench output tree exceeds {_MAX_TREE_BYTES} bytes"
                 )
-            payload = path.read_bytes()
             descriptors.append({
-                "file": path.relative_to(root).as_posix(),
+                "file": resolved.relative_to(root.resolve(strict=True)).as_posix(),
                 "sha256": hashlib.sha256(payload).hexdigest(),
                 "bytes": len(payload),
             })

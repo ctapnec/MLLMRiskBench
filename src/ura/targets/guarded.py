@@ -46,6 +46,16 @@ class GuardedTarget(BaseTarget):
         self.mode = mode
         self.name = f"{base.name}+guard"
         self.modality_support = base.modality_support
+        if hasattr(base, "modality_combinations"):
+            # Preserve the adapter's tested combination contract. Re-inferring
+            # it from a flat capability list could either lose an explicitly
+            # supported cross-media combination or claim one the base adapter
+            # never implemented.
+            self.modality_combinations = getattr(base, "modality_combinations")
+        if hasattr(base, "max_transport_attempts_per_call"):
+            self.max_transport_attempts_per_call = getattr(
+                base, "max_transport_attempts_per_call"
+            )
         if hasattr(base, "media_roots"):
             self.media_roots = getattr(base, "media_roots")
 
@@ -135,8 +145,25 @@ class GuardedTarget(BaseTarget):
             self._require_valid_guard_verdict(verdict)
             if verdict.label == "violation":
                 blocked = self._blocked(self.base.name, "output", seed=seed)
-                blocked.raw["suppressed_output"] = True
-                return blocked
+                # The base target was queried and billed even though the guard
+                # suppresses its text. Preserve its sanitized identity,
+                # generation and transport audit so durable accounting and
+                # modality-execution evidence do not mistake this for an input
+                # block. The unsafe output turns themselves remain discarded.
+                return blocked.model_copy(update={
+                    "latency_ms": response.latency_ms,
+                    "tokens": response.tokens,
+                    "raw": {
+                        **response.raw,
+                        **blocked.raw,
+                        "target_sampling_control": response.raw.get(
+                            "target_sampling_control",
+                            response.raw.get("sampling_control"),
+                        ),
+                        "base_target_queried": True,
+                        "suppressed_output": True,
+                    },
+                })
         return response
 
 

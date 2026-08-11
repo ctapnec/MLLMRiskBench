@@ -26,6 +26,7 @@ from typing import Any, Callable, Iterator
 from pydantic import ValidationError
 
 from experiments.paired_compare import compare_cells
+from experiments.analysis_integrity import analysis_source_identity, read_bound_json
 from ura.data_models import (
     SCHEMA_VERSION,
     Attempt,
@@ -45,6 +46,14 @@ _REQUIRED_ARTIFACTS = frozenset({
 _COMPLETE_STATUSES = frozenset({"complete", "complete_existing"})
 _EXPECTED_BEHAVIORS = frozenset({"refuse", "safe_answer", "comply_safely"})
 _HEX = frozenset("0123456789abcdef")
+
+
+def _valid_sha256(value: Any) -> bool:
+    return (
+        isinstance(value, str)
+        and len(value) == 64
+        and all(character in _HEX for character in value)
+    )
 
 
 @dataclass(frozen=True)
@@ -818,6 +827,8 @@ def _arm_provenance(cell: dict[str, Any]) -> dict[str, Any]:
         "judges": manifest["judges"],
         "judge_model": run.get("judge_model"),
         "judge_configuration": components.get("judge_cascade"),
+        "source_policy_inventory": manifest["config"].get("source_policy_inventory"),
+        "source_metric_inventory": manifest["config"].get("source_metric_inventory"),
         "realized_identities": cell.get("realized_identities"),
         "budget": manifest["config"].get("budget"),
         "sampling_audit": run.get("sampling_audit"),
@@ -842,6 +853,7 @@ def _policy_fingerprint(arm: dict[str, Any]) -> str:
     return _sha256_json({
         "judges": arm.get("judges"),
         "judge_configuration": arm.get("judge_configuration"),
+        "source_policy_inventory": arm.get("source_policy_inventory"),
     })
 
 
@@ -863,6 +875,7 @@ def _bind_policy_label(
             fingerprints.setdefault(_policy_fingerprint(arm), {
                 "judges": arm.get("judges"),
                 "judge_configuration": arm.get("judge_configuration"),
+                "source_policy_inventory": arm.get("source_policy_inventory"),
             })
     if not fingerprints:
         raise ValueError("cannot bind a policy label: no arm provenance to fingerprint")
@@ -1198,6 +1211,239 @@ def load_results(
     }
 
 
+def load_confirmatory_results(
+    path: Path, *, expected_sha256: str | None = None,
+) -> dict[str, Any]:
+    """Build measured figure data only from a publishable analysis artifact."""
+    artifact = read_bound_json(Path(path), expected_sha256=expected_sha256)
+    artifact_identity = artifact.pop("_artifact_identity")
+    if artifact.get("schema_version") != "ura-confirmatory-analysis/1.0":
+        raise ValueError("figure analysis artifact has an unsupported schema_version")
+    if artifact.get("publishable_real_run") is not True:
+        raise ValueError("figures refuse a non-publishable confirmatory analysis artifact")
+    if artifact.get("analysis_stage") != "final_human_bound":
+        raise ValueError("figures require the final human-bound confirmatory stage")
+    human_artifact = artifact.get("human_audit_artifact")
+    if (
+        not isinstance(human_artifact, dict)
+        or not _valid_sha256(human_artifact.get("sha256"))
+    ):
+        raise ValueError("confirmatory artifact lacks a content-addressed human audit")
+    checks = artifact.get("publishability_checks")
+    if not isinstance(checks, dict) or not checks or not all(value is True for value in checks.values()):
+        raise ValueError("confirmatory artifact has incomplete publishability checks")
+    plan_artifact = artifact.get("plan_artifact")
+    if not isinstance(plan_artifact, dict) or not _valid_sha256(plan_artifact.get("sha256")):
+        raise ValueError("confirmatory artifact lacks a content-addressed plan")
+    policy = artifact.get("evaluation_policy")
+    if (
+        not isinstance(policy, dict)
+        or set(policy) != {"policy_id", "version", "sha256"}
+        or not all(isinstance(policy.get(name), str) and policy[name] for name in policy)
+        or not _valid_sha256(policy.get("sha256"))
+    ):
+        raise ValueError("confirmatory artifact lacks typed evaluation-policy identity")
+    source = artifact.get("analysis_source")
+    if not isinstance(source, dict) or not _valid_sha256(source.get("sha256")):
+        raise ValueError("confirmatory artifact lacks analysis-source identity")
+    source_files = source.get("files")
+    if not isinstance(source_files, list) or source.get("file_count") != len(source_files):
+        raise ValueError("confirmatory artifact has an invalid analysis-source inventory")
+    for record in source_files:
+        if not isinstance(record, dict) or not _valid_sha256(record.get("sha256")):
+            raise ValueError("confirmatory artifact has an invalid source-file record")
+        relative = record.get("path")
+        if not isinstance(relative, str) or not relative:
+            raise ValueError("confirmatory source record lacks a relative path")
+        candidate = (Path(__file__).resolve().parents[1] / relative).resolve()
+        try:
+            candidate.relative_to(Path(__file__).resolve().parents[1])
+        except ValueError as exc:
+            raise ValueError("confirmatory source path escapes the repository") from exc
+        if (
+            candidate.is_symlink() or not candidate.is_file()
+            or candidate.stat().st_size != record.get("bytes")
+            or hashlib.sha256(candidate.read_bytes()).hexdigest() != record["sha256"]
+        ):
+            raise ValueError(f"confirmatory analysis source has drifted: {relative}")
+
+    families = artifact.get("families")
+    contrasts = artifact.get("contrasts")
+    if not isinstance(families, dict) or not isinstance(contrasts, dict):
+        raise ValueError("confirmatory artifact lacks families/contrasts")
+    hypothesis_adjustment: dict[str, dict[str, Any]] = {}
+    hypothesis_family: dict[str, str] = {}
+    for family_id, family in families.items():
+        hypotheses = family.get("hypotheses") if isinstance(family, dict) else None
+        if not isinstance(hypotheses, dict):
+            raise ValueError(f"multiplicity family {family_id!r} is invalid")
+        for hypothesis, adjustment in hypotheses.items():
+            if hypothesis in hypothesis_adjustment:
+                raise ValueError(f"hypothesis {hypothesis!r} appears in multiple families")
+            if not isinstance(adjustment, dict) or adjustment.get("status") != "estimated":
+                raise ValueError(f"figure hypothesis {hypothesis!r} was not estimable")
+            hypothesis_adjustment[hypothesis] = adjustment
+            hypothesis_family[hypothesis] = str(family_id)
+
+    overall: list[dict[str, Any]] = []
+    categories: list[dict[str, Any]] = []
+    defenses: list[dict[str, Any]] = []
+    policy_inventories: list[Any] = []
+    for contrast_id, report in sorted(contrasts.items()):
+        if not isinstance(report, dict):
+            raise ValueError(f"contrast {contrast_id!r} is invalid")
+        preregistered = report.get("preregistered")
+        if (
+            not isinstance(preregistered, dict)
+            or preregistered.get("all_planned_metrics_adequately_powered") is not True
+        ):
+            raise ValueError(f"contrast {contrast_id!r} failed its frozen power gate")
+        facets = report.get("facets")
+        if not isinstance(facets, dict) or not facets:
+            raise ValueError(f"contrast {contrast_id!r} has no facets")
+        for local_id in preregistered.get("hypotheses", []):
+            global_id = f"{contrast_id}::{local_id}"
+            adjustment = hypothesis_adjustment.get(global_id)
+            if adjustment is None:
+                raise ValueError(f"planned hypothesis {global_id!r} lacks family adjustment")
+            parts = local_id.split("::")
+            corpus = parts[0]
+            facet = facets.get(corpus)
+            if not isinstance(facet, dict) or facet.get("publishable_real_run") is not True:
+                raise ValueError(f"figure facet {contrast_id!r}/{corpus!r} is not publishable")
+            if len(parts) == 2:
+                metric_name = parts[1]
+                metric = (facet.get("metrics") or {}).get(metric_name)
+                risk = modality = None
+            elif len(parts) == 3:
+                metric_name, policy_token = parts[1:]
+                metric = (facet.get("policy_metrics") or {}).get(
+                    f"{policy_token}::{metric_name}"
+                )
+                risk = modality = None
+            elif len(parts) == 5:
+                metric_name, policy_token, risk, modality = parts[1:]
+                metric = (facet.get("category_metrics") or {}).get(
+                    f"{policy_token}::{risk}::{modality}"
+                )
+            else:
+                raise ValueError(f"invalid planned figure hypothesis {local_id!r}")
+            if not isinstance(metric, dict) or metric.get("status") != "estimated":
+                raise ValueError(f"figure metric {global_id!r} is not estimated")
+            preregistered_power = metric.get("preregistered_power_gate")
+            if not isinstance(preregistered_power, dict) or preregistered_power.get(
+                "adequately_powered"
+            ) is not True:
+                raise ValueError(f"figure metric {global_id!r} is underpowered")
+            left_arm, right_arm = facet.get("left"), facet.get("right")
+            if not isinstance(left_arm, dict) or not isinstance(right_arm, dict):
+                raise ValueError(f"figure metric {global_id!r} lacks arm provenance")
+            for arm in (left_arm, right_arm):
+                inventory = arm.get("source_metric_inventory") or []
+                if not isinstance(inventory, list):
+                    raise ValueError("source_metric_inventory must be a list")
+                for source_metric in inventory:
+                    if not isinstance(source_metric, dict):
+                        raise ValueError("source-metric inventory entries must be objects")
+                    metric_id = str(source_metric.get("required_metric") or "")
+                    if (
+                        metric_id == "mmsafety_official_attack_rate"
+                        and source_metric.get("source_metric_emitted") is True
+                        and source_metric.get("official_evaluator_executed") is not True
+                    ):
+                        raise ValueError(
+                            "MM-SafetyBench official attack rate was emitted without the "
+                            "official evaluator executing"
+                        )
+            policy_inventories.extend([
+                left_arm.get("source_policy_inventory"),
+                right_arm.get("source_policy_inventory"),
+            ])
+            point = {
+                "point_id": global_id,
+                "status": "estimated_publishable_confirmatory",
+                "value": metric["effect_left_minus_right"],
+                "ci_low": metric["ci_low"],
+                "ci_high": metric["ci_high"],
+                "effect_direction": "left_minus_right",
+                "left_value": metric["left_value"],
+                "right_value": metric["right_value"],
+                "n_pairs": metric["n_matched"],
+                "n_clusters": metric["n_clusters"],
+                "population": metric["population"],
+                "corpus": corpus,
+                "risk_category": risk,
+                "modality": modality,
+                "source_policy_id": metric.get("source_policy_id"),
+                "source_policy_version": metric.get("source_policy_version"),
+                "metric": metric.get("metric_alias", metric_name),
+                "multiplicity_family": hypothesis_family[global_id],
+                "multiplicity_adjustment": adjustment,
+                "power_gate": preregistered_power,
+                "left_arm": left_arm,
+                "right_arm": right_arm,
+                "source_metric_qualification": {
+                    "common_ura_metric": True,
+                    "source_metric_inventories": [
+                        left_arm.get("source_metric_inventory") or [],
+                        right_arm.get("source_metric_inventory") or [],
+                    ],
+                },
+            }
+            comparison_type = facet.get("comparison_type")
+            if comparison_type == "cross_target_endpoint_noncausal":
+                (categories if len(parts) == 5 else overall).append(point)
+            elif comparison_type == "within_target_defense_intervention" and len(parts) == 2:
+                defenses.append(point)
+
+    if not overall or not categories or not defenses:
+        raise ValueError(
+            "publishable figure artifact must include model-overall, model-category, "
+            "and defense hypotheses"
+        )
+    policy_binding = {
+        "evaluation_policy": policy,
+        "policy_fingerprint": _sha256_json({
+            "evaluation_policy": policy,
+            "source_policy_inventories": sorted(
+                policy_inventories,
+                key=lambda value: json.dumps(value, sort_keys=True, default=str),
+            ),
+        }),
+    }
+    return {
+        "schema_version": "ura-chapter-v-figures/1.1",
+        "illustrative": False,
+        "analysis": {
+            **policy_binding,
+            "confirmatory_analysis_artifact": artifact_identity,
+            "confirmatory_plan_artifact": plan_artifact,
+            "human_audit_artifact": human_artifact,
+            "multiplicity": families,
+            "analysis_source": source,
+            "figure_loader_source": analysis_source_identity([
+                Path(__file__), Path(__file__).resolve().parent / "figures.py",
+            ]),
+            "effect_direction": "left_minus_right",
+            "corpus_pooling": "forbidden; every point is one explicit corpus facet",
+        },
+        "figures": {
+            "fig-v-asr-by-model.png": {
+                "estimand": "paired harmful ASR risk difference, left model minus right model",
+                "points": overall,
+            },
+            "fig-v-asr-by-category.png": {
+                "estimand": "paired harmful ASR difference by corpus/risk/modality",
+                "points": categories,
+            },
+            "fig-v-safety-utility.png": {
+                "estimand": "same-base paired defense effects on ASR and false refusal",
+                "points": defenses,
+            },
+        },
+    }
+
+
 __all__ = [
-    "load_defense_results", "load_model_results", "load_results",
+    "load_confirmatory_results", "load_defense_results", "load_model_results", "load_results",
 ]

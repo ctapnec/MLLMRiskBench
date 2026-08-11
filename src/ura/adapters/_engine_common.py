@@ -71,10 +71,22 @@ _CREDENTIAL_URL_NAME = re.compile(
 _CREDENTIAL_CONFIG_NAMES = {
     "NETRC", "PIP_CONFIG_FILE", "GIT_CONFIG_GLOBAL", "GIT_CONFIG_SYSTEM",
     "AWS_SHARED_CREDENTIALS_FILE", "AWS_CONFIG_FILE", "BOTO_CONFIG",
+    "AWS_PROFILE", "AWS_DEFAULT_PROFILE",
     "GOOGLE_APPLICATION_CREDENTIALS", "CLOUDSDK_CONFIG", "AZURE_CONFIG_DIR",
     "KUBECONFIG", "DOCKER_CONFIG", "NPM_CONFIG_USERCONFIG",
     "NPM_CONFIG_GLOBALCONFIG", "GH_CONFIG_DIR", "HF_TOKEN_PATH",
+    "PGPASSFILE", "PGSERVICEFILE", "PGSYSCONFDIR", "GNUPGHOME",
+    "SSH_AUTH_SOCK", "GIT_ASKPASS", "SSH_ASKPASS",
 }
+
+
+def _is_credential_or_carrier(name: str) -> bool:
+    upper_name = name.upper()
+    return bool(
+        _CREDENTIAL_NAME.search(upper_name)
+        or _CREDENTIAL_URL_NAME.search(upper_name)
+        or upper_name in _CREDENTIAL_CONFIG_NAMES
+    )
 
 
 class ExternalEngineError(RuntimeError):
@@ -150,17 +162,13 @@ def _sanitised_child_env(
     source_by_upper = {name.upper(): (name, value) for name, value in os.environ.items()}
 
     for upper_name, (name, value) in source_by_upper.items():
-        is_credential = bool(_CREDENTIAL_NAME.search(upper_name))
-        is_carrier = (
-            bool(_CREDENTIAL_URL_NAME.search(upper_name))
-            or upper_name in _CREDENTIAL_CONFIG_NAMES
-        )
+        is_sensitive = _is_credential_or_carrier(upper_name)
         is_runtime_injection = (
             upper_name in _RUNTIME_INJECTION_NAMES or upper_name.startswith("DYLD_")
         )
         if is_runtime_injection:
             continue
-        if (is_credential or is_carrier) and upper_name not in allowed:
+        if is_sensitive and upper_name not in allowed:
             continue
         child[name] = value
 
@@ -177,7 +185,7 @@ def _sanitised_child_env(
             raise ValueError(f"invalid child environment variable name: {name!r}")
         if not isinstance(value, str):
             raise TypeError(f"child environment value for {name!r} must be a string")
-        if _CREDENTIAL_NAME.search(name) and name.upper() not in allowed:
+        if _is_credential_or_carrier(name) and name.upper() not in allowed:
             raise ValueError(
                 f"credential-like child variable {name!r} must be explicitly allowlisted"
             )

@@ -28,7 +28,12 @@ from pathlib import Path
 from typing import Any, Iterable, Optional
 from urllib.parse import unquote_to_bytes, urlsplit
 
-from ..data_models import DialogTurn, MediaRef, Response
+from ..data_models import (
+    DialogTurn,
+    MediaRef,
+    ProviderContinuationState,
+    Response,
+)
 from .base import REGISTRY, BaseTarget
 
 # --------------------------------------------------------------------------- #
@@ -82,6 +87,110 @@ class OpenAIChatOutputError(RuntimeError):
 
 class GeminiOutputError(RuntimeError):
     """A Gemini GenerateContent result is incomplete or lacks provenance."""
+
+
+class ProviderTransportError(RuntimeError):
+    """A hosted request exhausted its explicit, auditable retry policy."""
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        provider: str,
+        transport_attempts: list[dict[str, Any]],
+    ) -> None:
+        super().__init__(message)
+        self.transport_attempts = list(transport_attempts)
+        last = self.transport_attempts[-1] if self.transport_attempts else {}
+        # Runner persists this deliberately small summary in error artifacts.
+        # The detailed attempt list remains available on the immediate cause
+        # without placing request payloads or credentials in the exception.
+        self.call_audit = {
+            "transport_attempt_count": len(self.transport_attempts),
+            "logical_call_count": 1,
+            "provider": provider,
+            "operation": "generate",
+            "status_code": last.get("status_code"),
+            "error_type": last.get("error_type"),
+            "provider_request_id": last.get("request_id"),
+        }
+
+
+def _transport_status_code(exc: BaseException) -> int | None:
+    value = getattr(exc, "status_code", None)
+    if isinstance(value, int) and not isinstance(value, bool):
+        return value
+    response = getattr(exc, "response", None)
+    value = getattr(response, "status_code", None)
+    return value if isinstance(value, int) and not isinstance(value, bool) else None
+
+
+def _transport_request_id(value: Any) -> str | None:
+    for name in ("request_id", "_request_id"):
+        request_id = getattr(value, name, None)
+        if isinstance(request_id, str) and request_id.strip():
+            return request_id.strip()
+    return None
+
+
+def _retryable_transport_error(exc: BaseException) -> bool:
+    status = _transport_status_code(exc)
+    if status in {408, 409, 429} or (status is not None and status >= 500):
+        return True
+    return type(exc).__name__ in {
+        "APIConnectionError",
+        "APITimeoutError",
+        "InternalServerError",
+        "RateLimitError",
+    }
+
+
+def _call_with_retry(
+    call: Any,
+    request: dict[str, Any],
+    *,
+    provider: str,
+    max_retries: int,
+) -> tuple[Any, list[dict[str, Any]]]:
+    """Run one provider call with bounded, secret-free attempt provenance."""
+    audit: list[dict[str, Any]] = []
+    for attempt_number in range(1, max_retries + 2):
+        started = time.perf_counter()
+        try:
+            result = call(**request)
+        except Exception as exc:
+            elapsed_ms = (time.perf_counter() - started) * 1000.0
+            retryable = _retryable_transport_error(exc)
+            audit.append({
+                "attempt": attempt_number,
+                "outcome": "error",
+                "error_type": type(exc).__name__,
+                "status_code": _transport_status_code(exc),
+                "request_id": _transport_request_id(exc),
+                "retryable": retryable,
+                "latency_ms": elapsed_ms,
+            })
+            if not retryable or attempt_number > max_retries:
+                raise ProviderTransportError(
+                    f"{provider} transport failed after {attempt_number} attempt(s): "
+                    f"{type(exc).__name__}",
+                    provider=provider,
+                    transport_attempts=audit,
+                ) from exc
+            time.sleep(0.5 * (2 ** (attempt_number - 1)))
+            continue
+        elapsed_ms = (time.perf_counter() - started) * 1000.0
+        audit.append({
+            "attempt": attempt_number,
+            "outcome": "success",
+            "error_type": None,
+            "status_code": None,
+            "request_id": _transport_request_id(result),
+            "retryable": None,
+            "latency_ms": elapsed_ms,
+        })
+        return result, audit
+    raise AssertionError("unreachable provider retry loop")
 
 
 def _last_user_text(dialog: list[DialogTurn]) -> str:
@@ -461,6 +570,10 @@ class AnthropicTarget(BaseTarget):
         self.temperature = float(temperature)
         self.timeout = float(timeout)
         self.max_retries = int(max_retries)
+        # SDK retries are opaque to the harness budget and provenance. Disable
+        # them and perform any configured retries through `_call_with_retry`.
+        self.sdk_max_retries = 0
+        self.max_transport_attempts_per_call = self.max_retries + 1
         self.media_roots = _media_roots(media_roots)
         self._client = None
 
@@ -474,7 +587,9 @@ class AnthropicTarget(BaseTarget):
                     "set it in the environment"
                 )
             self._client = anthropic.Anthropic(
-                api_key=key, timeout=self.timeout, max_retries=self.max_retries
+                api_key=key,
+                timeout=self.timeout,
+                max_retries=self.sdk_max_retries,
             )
         return self._client
 
@@ -541,7 +656,12 @@ class AnthropicTarget(BaseTarget):
             kwargs["system"] = system
 
         start = time.perf_counter()
-        resp = client.messages.create(**kwargs)  # provider-specific call
+        resp, transport_attempts = _call_with_retry(
+            client.messages.create,
+            kwargs,
+            provider=self.provider,
+            max_retries=self.max_retries,
+        )
         latency_ms = (time.perf_counter() - start) * 1000.0
 
         response_id = _required_provider_string(
@@ -637,9 +757,12 @@ class AnthropicTarget(BaseTarget):
                     "anthropic_stop_reason_refusal" if provider_refusal else None
                 ),
                 "provider_refusal_reason": None,
+                "transport_attempt_count": len(transport_attempts),
+                "transport_attempts": transport_attempts,
                 "generation": {
                     "temperature": self.temperature,
                     "max_tokens": self.max_tokens,
+                    "max_retries": self.max_retries,
                 },
             },
         )
@@ -665,7 +788,7 @@ class AnthropicFableTarget(AnthropicTarget):
         *,
         requested_spec: Optional[str] = None,
         timeout: float = 600.0,
-        max_retries: int = 2,
+        max_retries: int = 0,
         media_roots: Optional[Iterable[str | Path]] = None,
     ) -> None:
         if model != _ANTHROPIC_FABLE_MODEL:
@@ -690,6 +813,7 @@ class AnthropicFableTarget(AnthropicTarget):
         self.temperature = None
         self.effort = self.EFFORT
         self.thinking_type = self.THINKING_TYPE
+        self.sdk_max_retries = 0
 
     @staticmethod
     def _usage_tokens(resp: Any) -> dict[str, int]:
@@ -835,7 +959,12 @@ class AnthropicFableTarget(AnthropicTarget):
             kwargs["system"] = system
 
         start = time.perf_counter()
-        resp = client.messages.create(**kwargs)
+        resp, transport_attempts = _call_with_retry(
+            client.messages.create,
+            kwargs,
+            provider="anthropic-fable",
+            max_retries=self.max_retries,
+        )
         latency_ms = (time.perf_counter() - start) * 1000.0
 
         response_id = _provider_field(resp, "id")
@@ -873,15 +1002,20 @@ class AnthropicFableTarget(AnthropicTarget):
         provider_refusal = stop_reason == "refusal"
         refusal_category: Optional[str] = None
         refusal_reason: Optional[str] = None
+        discarded_partial_text_sha256: Optional[str] = None
+        discarded_partial_text_bytes = 0
+        discarded_partial_thinking_blocks = 0
         if provider_refusal:
-            if text.strip():
-                raise AnthropicFableOutputError(
-                    "Anthropic Fable refusal contained visible partial text"
-                )
-            if thinking_block_count:
-                raise AnthropicFableOutputError(
-                    "Anthropic Fable refusal contained partial thinking output"
-                )
+            # A Fable classifier may refuse either before generation or while a
+            # response is already in flight. Anthropic requires clients to
+            # discard partial output and handle both cases as typed refusals.
+            if text:
+                encoded_partial = text.encode("utf-8")
+                discarded_partial_text_sha256 = hashlib.sha256(
+                    encoded_partial
+                ).hexdigest()
+                discarded_partial_text_bytes = len(encoded_partial)
+            discarded_partial_thinking_blocks = thinking_block_count
             if _provider_field(stop_details, "type") != "refusal":
                 raise AnthropicFableOutputError(
                     "Anthropic Fable refusal omitted typed stop details"
@@ -947,7 +1081,18 @@ class AnthropicFableTarget(AnthropicTarget):
                 "provider_refusal": provider_refusal,
                 "provider_refusal_category": refusal_category,
                 "provider_refusal_reason": refusal_reason,
+                "provider_refusal_partial_output_discarded": bool(
+                    discarded_partial_text_bytes
+                    or discarded_partial_thinking_blocks
+                ),
+                "discarded_partial_text_sha256": discarded_partial_text_sha256,
+                "discarded_partial_text_bytes": discarded_partial_text_bytes,
+                "discarded_partial_thinking_blocks": (
+                    discarded_partial_thinking_blocks
+                ),
                 "thinking_block_count": thinking_block_count,
+                "transport_attempt_count": len(transport_attempts),
+                "transport_attempts": transport_attempts,
                 "usage": dict(tokens),
                 "provider_usage": self._provider_usage(resp),
                 "generation": {
@@ -992,6 +1137,10 @@ class OpenAITarget(BaseTarget):
         self.temperature = float(temperature)
         self.timeout = float(timeout)
         self.max_retries = int(max_retries)
+        # Keep the SDK at one HTTP attempt; the wrapper below owns retries and
+        # records each one for the global billable-attempt ceiling.
+        self.sdk_max_retries = 0
+        self.max_transport_attempts_per_call = self.max_retries + 1
         self.media_roots = _media_roots(media_roots)
         self.supports_seed = bool(supports_seed)
         self._client = None
@@ -1006,7 +1155,9 @@ class OpenAITarget(BaseTarget):
                     "set it in the environment"
                 )
             self._client = openai.OpenAI(
-                api_key=key, timeout=self.timeout, max_retries=self.max_retries
+                api_key=key,
+                timeout=self.timeout,
+                max_retries=self.sdk_max_retries,
             )
         return self._client
 
@@ -1055,7 +1206,12 @@ class OpenAITarget(BaseTarget):
         if seed is not None and self.supports_seed:
             request["seed"] = int(seed)
         start = time.perf_counter()
-        resp = client.chat.completions.create(**request)  # provider-specific call
+        resp, transport_attempts = _call_with_retry(
+            client.chat.completions.create,
+            request,
+            provider=self.provider,
+            max_retries=self.max_retries,
+        )
         latency_ms = (time.perf_counter() - start) * 1000.0
 
         response_id = _required_provider_string(
@@ -1167,10 +1323,13 @@ class OpenAITarget(BaseTarget):
                 "provider_refusal": provider_refusal,
                 "provider_refusal_category": refusal_category,
                 "provider_refusal_reason": refusal_text or None,
+                "transport_attempt_count": len(transport_attempts),
+                "transport_attempts": transport_attempts,
                 "generation": {
                     "max_tokens": self.max_tokens,
                     "temperature": self.temperature,
                     "seed": seed if self.supports_seed else None,
+                    "max_retries": self.max_retries,
                 },
             },
         )
@@ -1179,7 +1338,7 @@ class OpenAITarget(BaseTarget):
 _OPENAI_SOL_PRO_MODEL = "gpt-5.6-sol"
 _OPENAI_SOL_PRO_SPEC = (
     "openai-responses:gpt-5.6-sol;reasoning_mode=pro;"
-    "reasoning_effort=medium;reasoning_context=current_turn"
+    "reasoning_effort=medium;reasoning_context=all_turns"
 )
 
 
@@ -1197,7 +1356,7 @@ class OpenAIResponsesTarget(OpenAITarget):
     MAX_OUTPUT_TOKENS = 25_000
     REASONING_MODE = "pro"
     REASONING_EFFORT = "medium"
-    REASONING_CONTEXT = "current_turn"
+    REASONING_CONTEXT = "all_turns"
 
     def __init__(
         self,
@@ -1205,7 +1364,7 @@ class OpenAIResponsesTarget(OpenAITarget):
         *,
         requested_spec: Optional[str] = None,
         timeout: float = 600.0,
-        max_retries: int = 2,
+        max_retries: int = 0,
         media_roots: Optional[Iterable[str | Path]] = None,
     ) -> None:
         if model != _OPENAI_SOL_PRO_MODEL:
@@ -1235,15 +1394,50 @@ class OpenAIResponsesTarget(OpenAITarget):
         self.reasoning_context = self.REASONING_CONTEXT
         self.store = False
         self.truncation = "disabled"
+        self.sdk_max_retries = 0
 
     def _to_responses_input(
         self, dialog: list[DialogTurn]
     ) -> list[dict[str, Any]]:
-        """Render recorded turns as Responses easy-input messages."""
+        """Render messages and exact stateless Responses continuation items."""
         if not dialog:
             raise ValueError("OpenAI Responses input dialog must not be empty")
         rendered: list[dict[str, Any]] = []
         for turn in dialog:
+            if turn.provider_state is not None:
+                state = turn.provider_state
+                if state.provider != "openai" or state.api_surface != "responses":
+                    raise ValueError(
+                        "OpenAI Responses received incompatible provider state"
+                    )
+                if turn.media or turn.tool_call is not None or turn.tool_result:
+                    raise ValueError(
+                        "OpenAI Responses continuation turns cannot mix provider "
+                        "state with media or recorded tool fields"
+                    )
+                messages = [
+                    item for item in state.items if item.get("type") == "message"
+                ]
+                if len(messages) != 1:
+                    raise ValueError(
+                        "OpenAI Responses continuation state must contain exactly "
+                        "one assistant message"
+                    )
+                visible = "".join(
+                    part.get("text", "")
+                    for part in messages[0].get("content", [])
+                    if isinstance(part, dict) and part.get("type") == "output_text"
+                )
+                if visible != (turn.content or ""):
+                    raise ValueError(
+                        "OpenAI Responses continuation message disagrees with the "
+                        "recorded assistant text"
+                    )
+                # ``model_dump``/validation has already reduced this to bounded
+                # JSON.  Round-trip it to avoid handing mutable artifact objects
+                # to the provider SDK.
+                rendered.extend(json.loads(json.dumps(state.items)))
+                continue
             role = {
                 "system": "developer",
                 "tool": "user",
@@ -1280,6 +1474,67 @@ class OpenAIResponsesTarget(OpenAITarget):
                 content = parts
             rendered.append({"role": role, "content": content})
         return rendered
+
+    @staticmethod
+    def _json_output_item(value: Any) -> dict[str, Any]:
+        """Convert one SDK output item to an exact JSON object."""
+
+        def convert(node: Any) -> Any:
+            if node is None or isinstance(node, (str, int, float, bool)):
+                return node
+            if isinstance(node, dict):
+                return {str(key): convert(child) for key, child in node.items()}
+            if isinstance(node, (list, tuple)):
+                return [convert(child) for child in node]
+            dump = getattr(node, "model_dump", None)
+            if callable(dump):
+                try:
+                    return convert(dump(mode="json"))
+                except TypeError:
+                    return convert(dump())
+            values = getattr(node, "__dict__", None)
+            if isinstance(values, dict):
+                return {
+                    str(key): convert(child)
+                    for key, child in values.items()
+                    if not str(key).startswith("_")
+                }
+            raise OpenAIResponsesOutputError(
+                "OpenAI Responses output item is not JSON serializable"
+            )
+
+        converted = convert(value)
+        if not isinstance(converted, dict):
+            raise OpenAIResponsesOutputError(
+                "OpenAI Responses output item did not serialize to an object"
+            )
+        return converted
+
+    def _continuation_state(self, resp: Any) -> ProviderContinuationState:
+        """Validate and retain every output item needed by ``all_turns``."""
+        output = _provider_field(resp, "output")
+        if not isinstance(output, (list, tuple)):
+            raise OpenAIResponsesOutputError(
+                "OpenAI Responses completed without continuation output items"
+            )
+        items = [self._json_output_item(item) for item in output]
+        for item in items:
+            if item.get("type") != "reasoning":
+                continue
+            encrypted = item.get("encrypted_content")
+            if not isinstance(encrypted, str) or not encrypted.strip():
+                raise OpenAIResponsesOutputError(
+                    "OpenAI Responses stateless all_turns reasoning omitted "
+                    "encrypted_content"
+                )
+        try:
+            return ProviderContinuationState(
+                provider="openai", api_surface="responses", items=items
+            )
+        except ValueError as exc:
+            raise OpenAIResponsesOutputError(
+                "OpenAI Responses returned invalid continuation state"
+            ) from exc
 
     @staticmethod
     def _extract_completed_output(
@@ -1529,7 +1784,12 @@ class OpenAIResponsesTarget(OpenAITarget):
             "truncation": self.truncation,
         }
         start = time.perf_counter()
-        resp = client.responses.create(**request)
+        resp, transport_attempts = _call_with_retry(
+            client.responses.create,
+            request,
+            provider="openai-responses",
+            max_retries=self.max_retries,
+        )
         latency_ms = (time.perf_counter() - start) * 1000.0
 
         response_id = _provider_field(resp, "id")
@@ -1594,10 +1854,25 @@ class OpenAIResponsesTarget(OpenAITarget):
             reasoning_item_count,
             message_item_count,
         ) = self._extract_completed_output(resp)
-        output_turns = (
-            []
-            if provider_refusal
-            else [DialogTurn(role="assistant", content=text)]
+        continuation_state = (
+            None if provider_refusal else self._continuation_state(resp)
+        )
+        output_turns = [] if provider_refusal else [
+            DialogTurn(
+                role="assistant",
+                content=text,
+                provider_state=continuation_state,
+            )
+        ]
+        continuation_json = (
+            None
+            if continuation_state is None
+            else json.dumps(
+                continuation_state.model_dump(mode="json"),
+                ensure_ascii=False,
+                sort_keys=True,
+                separators=(",", ":"),
+            ).encode("utf-8")
         )
 
         return Response(
@@ -1629,6 +1904,16 @@ class OpenAIResponsesTarget(OpenAITarget):
                 "output_item_count": output_item_count,
                 "reasoning_item_count": reasoning_item_count,
                 "message_item_count": message_item_count,
+                "continuation_state_sha256": (
+                    hashlib.sha256(continuation_json).hexdigest()
+                    if continuation_json is not None
+                    else None
+                ),
+                "continuation_state_bytes": (
+                    len(continuation_json) if continuation_json is not None else 0
+                ),
+                "transport_attempt_count": len(transport_attempts),
+                "transport_attempts": transport_attempts,
                 "generation": {
                     "max_output_tokens": self.max_output_tokens,
                     "store": self.store,
@@ -1688,7 +1973,7 @@ class OpenAICompatibleTarget(OpenAITarget):
                 api_key=key,
                 base_url=self.base_url,
                 timeout=self.timeout,
-                max_retries=self.max_retries,
+                max_retries=self.sdk_max_retries,
             )
         return self._client
 
@@ -1708,6 +1993,7 @@ class GeminiTarget(BaseTarget):
         max_tokens: int = 1024,
         temperature: float = 0.0,
         timeout: float = 120.0,
+        max_retries: int = 2,
         media_roots: Optional[Iterable[str | Path]] = None,
         supports_seed: bool = False,
     ) -> None:
@@ -1718,6 +2004,8 @@ class GeminiTarget(BaseTarget):
         self.max_tokens = int(max_tokens)
         self.temperature = float(temperature)
         self.timeout = float(timeout)
+        self.max_retries = int(max_retries)
+        self.max_transport_attempts_per_call = self.max_retries + 1
         self.media_roots = _media_roots(media_roots)
         self.supports_seed = bool(supports_seed)
         self._client = None
@@ -1733,7 +2021,12 @@ class GeminiTarget(BaseTarget):
                 )
             self._client = genai.Client(
                 api_key=key,
-                http_options={"timeout": int(self.timeout * 1000)},
+                http_options={
+                    "timeout": int(self.timeout * 1000),
+                    # One SDK attempt. The harness wrapper performs and records
+                    # any requested retry itself.
+                    "retry_options": {"attempts": 1},
+                },
             )
         return self._client
 
@@ -1791,10 +2084,15 @@ class GeminiTarget(BaseTarget):
             config["seed"] = int(seed)
 
         start = time.perf_counter()
-        resp = client.models.generate_content(
-            model=self.model,
-            contents=contents,
-            config=config or None,
+        resp, transport_attempts = _call_with_retry(
+            client.models.generate_content,
+            {
+                "model": self.model,
+                "contents": contents,
+                "config": config or None,
+            },
+            provider=self.provider,
+            max_retries=self.max_retries,
         )
         latency_ms = (time.perf_counter() - start) * 1000.0
 
@@ -1953,10 +2251,13 @@ class GeminiTarget(BaseTarget):
                 "provider_refusal": provider_refusal,
                 "provider_refusal_category": refusal_category,
                 "provider_refusal_reason": refusal_reason,
+                "transport_attempt_count": len(transport_attempts),
+                "transport_attempts": transport_attempts,
                 "generation": {
                     "max_tokens": self.max_tokens,
                     "temperature": self.temperature,
                     "seed": seed if self.supports_seed else None,
+                    "max_retries": self.max_retries,
                 },
             },
         )
@@ -2112,6 +2413,7 @@ __all__ = [
     "OpenAITarget",
     "OpenAIResponsesTarget",
     "OpenAIResponsesOutputError",
+    "ProviderTransportError",
     "OpenAICompatibleTarget",
     "GeminiTarget",
     "build_api_target",

@@ -37,8 +37,10 @@ from collections.abc import Iterable
 from ..data_models import Attempt, DataPoint, DialogTurn
 from .base import AttackBudget, BaseAttacker
 from ._engine_common import ExternalEngineOutputError, _attempt, run_engine_command
+from ._native_artifacts import read_utf8_artifact
 
 _MAX_DATASET_BYTES = 256 * 1024 * 1024
+_MAX_DATASET_RECORDS = 1_000_000
 
 
 class SpikeeAttacker(BaseAttacker):
@@ -300,25 +302,22 @@ class SpikeeAttacker(BaseAttacker):
                     "Spikee must emit exactly one generated JSONL dataset"
                 )
             dataset = Path(produced[0])
-            if dataset.is_symlink() or not dataset.is_file():
-                raise ExternalEngineOutputError(
-                    f"Spikee dataset must be a regular file: {dataset}"
-                )
-            if dataset.stat().st_size > _MAX_DATASET_BYTES:
-                raise ExternalEngineOutputError(
-                    f"Spikee dataset exceeds {_MAX_DATASET_BYTES} bytes"
-                )
-            dataset_bytes = dataset.read_bytes()
+            dataset, dataset_bytes, dataset_text = read_utf8_artifact(
+                dataset, max_bytes=_MAX_DATASET_BYTES
+            )
             dataset_sha256 = hashlib.sha256(dataset_bytes).hexdigest()
             entries: list[dict] = []
-            for line_no, line in enumerate(
-                dataset_bytes.decode("utf-8").splitlines(), 1
-            ):
+            for line_no, line in enumerate(dataset_text.splitlines(), 1):
                 if not line.strip():
                     continue
                 try:
-                    raw = json.loads(line)
-                except json.JSONDecodeError as exc:
+                    raw = json.loads(
+                        line,
+                        parse_constant=lambda value: (_ for _ in ()).throw(
+                            ValueError(f"invalid JSON constant {value}")
+                        ),
+                    )
+                except (json.JSONDecodeError, RecursionError, ValueError) as exc:
                     raise ExternalEngineOutputError(
                         f"Spikee dataset has invalid JSON at line {line_no}"
                     ) from exc
@@ -327,6 +326,10 @@ class SpikeeAttacker(BaseAttacker):
                 entry["_dataset_sha256"] = dataset_sha256
                 entry["_dataset_bytes"] = len(dataset_bytes)
                 entries.append(entry)
+                if len(entries) > _MAX_DATASET_RECORDS:
+                    raise ExternalEngineOutputError(
+                        "Spikee dataset exceeds the 1000000-record parser limit"
+                    )
 
             if not entries:
                 raise ExternalEngineOutputError(

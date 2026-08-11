@@ -2,8 +2,8 @@
 
 Runs the model x attacker x judge matrix over one or more corpora, aggregates the
 metrics, and writes per-cell JSONL plus a completed-grid directory consumed by
-``python -m experiments.figures`` through its explicit model/defense roots and
-corpus facets.
+the integrity-checked analysis commands. Measured figures consume only the final
+human-audit-bound confirmatory artifact, not raw grid roots.
 Each cell also writes joinable Attempt/Response artifacts and an append-only
 checkpoint. A matching completion marker makes reruns call-free; an interrupted
 cell restores completed responses locally, including state needed by native
@@ -27,7 +27,7 @@ python experiments/run_matrix.py --dry-run --limit 12 --out runs/dry
 # ``$env:ANTHROPIC_API_KEY='...'`` and ``$env:OPENAI_API_KEY='...'``; see README.
 export ANTHROPIC_API_KEY=...  OPENAI_API_KEY=...  GOOGLE_API_KEY=...
 python experiments/run_matrix.py \
-    --api "anthropic-fable:claude-fable-5;effort=high;max_tokens=25000,openai-responses:gpt-5.6-sol;reasoning_mode=pro;reasoning_effort=medium;reasoning_context=current_turn" \
+    --api "anthropic-fable:claude-fable-5;effort=high;max_tokens=25000,openai-responses:gpt-5.6-sol;reasoning_mode=pro;reasoning_effort=medium;reasoning_context=all_turns" \
     --local vllm:Qwen/Qwen3-VL-8B-Instruct,vllm:google/gemma-3-27b-it,ollama:llama3.3:70b \
     --attackers replay,crescendo --judges rules,llm --judge-model claude-haiku-4-5-20251001 \
     --corpora synth --limit 200 --seeds 0,1 --out runs/full
@@ -37,18 +37,21 @@ Hosted comparison ids should be provider-qualified. The Fable case is the public
 token output ceiling, and no temperature parameter; live account access still
 must pass preflight. The OpenAI case is the exact public ``gpt-5.6-sol`` model via
 the Responses API with Pro mode, medium effort, and current-turn reasoning
-context frozen in the target specification; no Sol-Pro slug is inferred. Such a
+context frozen as ``all_turns`` in the target specification; no Sol-Pro slug is
+inferred. Such a
 comparison is cross-provider and is not a causal same-base-model defense ablation.
 """
 from __future__ import annotations
 
 import argparse
+import atexit
 import hashlib
 import json
 import os
 import platform
 import random
 import re
+import secrets
 import sys
 import time
 from collections import Counter, defaultdict
@@ -74,8 +77,15 @@ from ura.data_models import (                         # noqa: E402
 from ura.judges.base import JudgeCascade              # noqa: E402
 from ura.judges.llm import LLMJudge                   # noqa: E402
 from ura.judges.rules import RuleJudge                # noqa: E402
+from ura.modality_coverage import (                    # noqa: E402
+    ModalityCoverageError,
+    plan_modality_coverage,
+    verify_executed_modality_coverage,
+)
 from ura.runner import (                              # noqa: E402
+    BudgetExhausted,
     CODE_VERSION,
+    ExternalCallFailure,
     GlobalCallBudget,
     Runner,
     realized_identity_summary,
@@ -88,6 +98,153 @@ _WINDOWS_RESERVED = {
     *(f"com{i}" for i in range(1, 10)),
     *(f"lpt{i}" for i in range(1, 10)),
 }
+
+_PROVIDER_DATA_POLICY_SCHEMA = "ura-provider-data-policy-approval/1.0"
+_PARTITION_SCHEMA = "ura-cluster-partition/1.1"
+_ALLOWED_GROUP_KEYS = {
+    "model",
+    "target",
+    "attacker",
+    "strategy",
+    "source",
+    "risk",
+    "risk_category",
+    "risk_subtype",
+    "modality",
+    "effective_modality",
+    "is_multimodal",
+    "expected_behavior",
+    "attack_family",
+    "seed",
+    "source_policy_id",
+    "source_policy_version",
+}
+
+
+class LockHeldError(RuntimeError):
+    """An artifact lock has a live or not-yet-stale owner."""
+
+
+class CircuitOpenError(RuntimeError):
+    """A durable dependency circuit blocked a repeated external call."""
+
+
+def _acquire_artifact_lock(
+    path: Path, payload: dict[str, object], *, stale_seconds: int
+) -> str:
+    """Atomically acquire a PID/host/age-aware lock, reclaiming dead owners.
+
+    Same-host dead PIDs are reclaimed immediately. Cross-host or malformed
+    locks are reclaimed only after the explicit stale interval. A live
+    same-host PID is always respected, regardless of age.
+    """
+    token = secrets.token_hex(16)
+    body = {
+        **payload,
+        "owner_token": token,
+        "pid": os.getpid(),
+        "host": platform.node(),
+        "process_identity": _process_identity(os.getpid()),
+        "created_epoch": time.time(),
+    }
+    encoded = (json.dumps(body, sort_keys=True, allow_nan=False) + "\n").encode("utf-8")
+    flags = os.O_CREAT | os.O_EXCL | os.O_WRONLY
+    for _ in range(2):
+        try:
+            descriptor = os.open(str(path), flags)
+        except FileExistsError as exc:
+            try:
+                if path.stat().st_size > 64 * 1024:
+                    raise ValueError("lock payload too large")
+                existing_bytes = path.read_bytes()
+                holder = _json_loads_strict(existing_bytes.decode("utf-8"))
+                if not isinstance(holder, dict):
+                    holder = {}
+            except (OSError, UnicodeDecodeError, ValueError):
+                existing_bytes = b""
+                holder = {}
+            same_host = holder.get("host") == platform.node()
+            pid = holder.get("pid")
+            pid_is_live = (
+                same_host and isinstance(pid, int) and not isinstance(pid, bool)
+                and _pid_alive(pid)
+            )
+            saved_process_identity = holder.get("process_identity")
+            current_process_identity = (
+                _process_identity(pid) if pid_is_live else None
+            )
+            process_identity_matches = (
+                saved_process_identity is None
+                or current_process_identity is None
+                or saved_process_identity == current_process_identity
+            )
+            live_same_host = (
+                pid_is_live and process_identity_matches
+            )
+            dead_same_host = (
+                same_host and isinstance(pid, int) and not isinstance(pid, bool)
+                and (not pid_is_live or not process_identity_matches)
+            )
+            created = holder.get("created_epoch")
+            if not isinstance(created, (int, float)) or isinstance(created, bool):
+                try:
+                    created = path.stat().st_mtime
+                except OSError:
+                    created = time.time()
+            age = max(0.0, time.time() - float(created))
+            stale_by_age = not live_same_host and age >= stale_seconds
+            if not (dead_same_host or stale_by_age):
+                raise LockHeldError(f"artifact lock is held: {path}") from exc
+            # Compare-and-delete: never unlink a lock that changed after inspection.
+            try:
+                if existing_bytes and path.read_bytes() != existing_bytes:
+                    raise LockHeldError(f"artifact lock changed during reclaim: {path}")
+                path.unlink()
+            except FileNotFoundError:
+                pass
+            continue
+        with os.fdopen(descriptor, "wb") as handle:
+            handle.write(encoded)
+            handle.flush()
+            os.fsync(handle.fileno())
+        return token
+    raise LockHeldError(f"artifact lock could not be acquired after reclaim: {path}")
+
+
+def _release_artifact_lock(path: Path, token: str) -> None:
+    """Remove only the lock still owned by ``token``."""
+    try:
+        payload = _json_loads_strict(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return
+    if isinstance(payload, dict) and payload.get("owner_token") == token:
+        path.unlink(missing_ok=True)
+
+
+def _safe_external_audit(exc: Exception) -> dict[str, object]:
+    value = getattr(exc, "call_audit", None)
+    return dict(value) if isinstance(value, dict) else {}
+
+
+def _remove_superseded_cell_errors(
+    out: Path, *, corpus: str, model_spec: str, attacker: str
+) -> None:
+    """Remove old-code failure artifacts only after the same axis succeeds."""
+    for path in out.glob("*.error.json"):
+        try:
+            if path.is_symlink() or path.stat().st_size > 1024 * 1024:
+                continue
+            payload = _json_loads_strict(path.read_text(encoding="utf-8"))
+        except (OSError, UnicodeError, ValueError):
+            continue
+        if not isinstance(payload, dict) or payload.get("status") != "error":
+            continue
+        if (
+            payload.get("corpus") == corpus
+            and payload.get("model_spec") == model_spec
+            and payload.get("attacker") == attacker
+        ):
+            path.unlink(missing_ok=True)
 
 
 def _safe_component(value: str, *, max_base: int = 48) -> str:
@@ -176,6 +333,366 @@ def _json_loads_strict(text: str) -> object:
     return json.loads(text, parse_constant=reject_constant)
 
 
+def _read_content_addressed_json(
+    path_value: str,
+    expected_sha256: str,
+    *,
+    flag_name: str,
+    max_bytes: int,
+) -> tuple[object, dict[str, object]]:
+    """Read a bounded regular JSON file only when its exact bytes are approved."""
+    if re.fullmatch(r"[0-9a-fA-F]{64}", expected_sha256 or "") is None:
+        raise ValueError(f"{flag_name}-sha256 must be exactly 64 hexadecimal digits")
+    path = Path(path_value)
+    if path.is_symlink():
+        raise ValueError(f"{flag_name} must be a regular non-symlink JSON file")
+    path = path.resolve(strict=True)
+    if not path.is_file() or path.is_symlink():
+        raise ValueError(f"{flag_name} must be a regular non-symlink JSON file")
+    size = path.stat().st_size
+    if size <= 0 or size > max_bytes:
+        raise ValueError(
+            f"{flag_name} must be non-empty and no larger than {max_bytes} bytes"
+        )
+    try:
+        raw = path.read_bytes()
+    except OSError as exc:
+        raise ValueError(f"cannot read {flag_name}: {exc}") from exc
+    if len(raw) != size:
+        raise ValueError(f"{flag_name} changed while being read")
+    actual_sha256 = hashlib.sha256(raw).hexdigest()
+    if actual_sha256 != expected_sha256.lower():
+        raise ValueError(
+            f"{flag_name} sha256 mismatch: expected {expected_sha256.lower()}, "
+            f"got {actual_sha256}"
+        )
+    try:
+        value = _json_loads_strict(raw.decode("utf-8"))
+    except (OSError, UnicodeError, json.JSONDecodeError) as exc:
+        raise ValueError(f"invalid {flag_name} JSON: {exc}") from exc
+    return value, {
+        "file": path.name,
+        "sha256": actual_sha256,
+        "bytes": size,
+    }
+
+
+def _hosted_provider(spec: str) -> str | None:
+    """Return a stable provider namespace for a hosted model specification."""
+    rendered = spec.strip()
+    if not rendered or rendered == "mock":
+        return None
+    if ":" in rendered:
+        provider = rendered.split(":", 1)[0].strip().lower()
+        if provider in {"vllm", "ollama", "mock"}:
+            return None
+        return provider
+    lowered = rendered.lower()
+    if lowered.startswith("claude-"):
+        return "anthropic"
+    if lowered.startswith(("gpt-", "o1", "o3", "o4")):
+        return "openai"
+    if lowered.startswith("gemini-"):
+        return "google"
+    # A bare non-mock id is resolved through the hosted registry. Preserve that
+    # fact explicitly when its provider cannot be inferred from the id alone.
+    return "hosted-registry"
+
+
+def _provider_policy_requirements(
+    api_specs: list[str], judge_names: list[str], judge_model: str, *, dry_run: bool
+) -> list[dict[str, object]]:
+    if dry_run:
+        return []
+    roles_by_spec: dict[str, set[str]] = {}
+    providers: dict[str, str] = {}
+    for spec in api_specs:
+        provider = _hosted_provider(spec)
+        if provider is not None:
+            roles_by_spec.setdefault(spec, set()).add("target")
+            providers[spec] = provider
+    if "llm" in judge_names:
+        provider = _hosted_provider(judge_model)
+        if provider is not None:
+            roles_by_spec.setdefault(judge_model, set()).add("judge")
+            providers[judge_model] = provider
+    return [
+        {
+            "model_spec": spec,
+            "provider": providers[spec],
+            "roles": sorted(roles_by_spec[spec]),
+        }
+        for spec in sorted(roles_by_spec)
+    ]
+
+
+def _load_provider_data_policy_approval(
+    path_value: str,
+    sha256_value: str,
+    requirements: list[dict[str, object]],
+) -> dict[str, object]:
+    """Validate explicit retention/data-use approval for every hosted call arm."""
+    if not requirements:
+        if path_value or sha256_value:
+            raise ValueError(
+                "provider data-policy approval was supplied, but this run makes no "
+                "hosted provider calls"
+            )
+        return {
+            "status": "not_applicable",
+            "reason": "no_hosted_provider_calls",
+        }
+    if not path_value or not sha256_value:
+        raise ValueError(
+            "real hosted calls require both --provider-data-policy-approval and "
+            "--provider-data-policy-sha256"
+        )
+    value, artifact = _read_content_addressed_json(
+        path_value,
+        sha256_value,
+        flag_name="--provider-data-policy-approval",
+        max_bytes=256 * 1024,
+    )
+    top_level = {
+        "schema_version", "approval_id", "approved_by", "approved_at", "approvals",
+    }
+    if not isinstance(value, dict) or set(value) != top_level:
+        raise ValueError(
+            "provider data-policy approval must contain exactly schema_version, "
+            "approval_id, approved_by, approved_at, and approvals"
+        )
+    if value.get("schema_version") != _PROVIDER_DATA_POLICY_SCHEMA:
+        raise ValueError(
+            f"provider data-policy schema must be {_PROVIDER_DATA_POLICY_SCHEMA!r}"
+        )
+    for field in ("approval_id", "approved_by"):
+        item = value.get(field)
+        if not isinstance(item, str) or not item.strip() or len(item) > 256:
+            raise ValueError(f"provider data-policy {field} must be a bounded string")
+    approved_at = value.get("approved_at")
+    if not isinstance(approved_at, str) or len(approved_at) > 128:
+        raise ValueError("provider data-policy approved_at must be an ISO-8601 string")
+    try:
+        timestamp = datetime.fromisoformat(approved_at.replace("Z", "+00:00"))
+    except ValueError as exc:
+        raise ValueError("provider data-policy approved_at is not valid ISO-8601") from exc
+    if timestamp.tzinfo is None or timestamp.utcoffset() is None:
+        raise ValueError("provider data-policy approved_at must include a timezone")
+
+    approvals = value.get("approvals")
+    if not isinstance(approvals, list) or not approvals:
+        raise ValueError("provider data-policy approvals must be a non-empty list")
+    expected = {
+        str(item["model_spec"]): {
+            "provider": item["provider"], "roles": item["roles"]
+        }
+        for item in requirements
+    }
+    normalized: list[dict[str, object]] = []
+    seen: set[str] = set()
+    approval_fields = {
+        "model_spec", "provider", "roles", "retention_terms",
+        "data_use_terms", "policy_urls",
+    }
+    for index, item in enumerate(approvals):
+        if not isinstance(item, dict) or set(item) != approval_fields:
+            raise ValueError(
+                f"provider data-policy approvals[{index}] has an invalid field inventory"
+            )
+        spec = item.get("model_spec")
+        provider = item.get("provider")
+        roles = item.get("roles")
+        if not isinstance(spec, str) or spec not in expected or spec in seen:
+            raise ValueError(
+                "provider data-policy approvals must name each selected hosted "
+                "model specification exactly once"
+            )
+        seen.add(spec)
+        if provider != expected[spec]["provider"]:
+            raise ValueError(f"provider data-policy provider mismatch for {spec!r}")
+        if (
+            not isinstance(roles, list)
+            or any(role not in {"target", "judge"} for role in roles)
+            or len(set(roles)) != len(roles)
+            or sorted(roles) != expected[spec]["roles"]
+        ):
+            raise ValueError(f"provider data-policy roles mismatch for {spec!r}")
+        for field in ("retention_terms", "data_use_terms"):
+            term = item.get(field)
+            if not isinstance(term, str) or not term.strip() or len(term) > 4096:
+                raise ValueError(
+                    f"provider data-policy {field} for {spec!r} must be an "
+                    "explicit bounded acceptance string"
+                )
+        urls = item.get("policy_urls")
+        if (
+            not isinstance(urls, list) or not urls or len(urls) > 16
+            or any(
+                not isinstance(url, str) or not url.startswith("https://")
+                or len(url) > 2048 for url in urls
+            )
+            or len(set(urls)) != len(urls)
+        ):
+            raise ValueError(
+                f"provider data-policy policy_urls for {spec!r} must be unique "
+                "HTTPS URLs"
+            )
+        normalized.append({
+            "model_spec": spec,
+            "provider": provider,
+            "roles": sorted(roles),
+            "retention_terms": item["retention_terms"].strip(),
+            "data_use_terms": item["data_use_terms"].strip(),
+            "policy_urls": list(urls),
+        })
+    if seen != set(expected):
+        missing = sorted(set(expected) - seen)
+        raise ValueError(
+            "provider data-policy approval is missing selected model specs: "
+            + ", ".join(missing)
+        )
+    return {
+        "status": "approved",
+        "schema_version": _PROVIDER_DATA_POLICY_SCHEMA,
+        "approval_id": value["approval_id"].strip(),
+        "approved_by": value["approved_by"].strip(),
+        "approved_at": timestamp.isoformat(),
+        "approvals": sorted(normalized, key=lambda item: str(item["model_spec"])),
+        "artifact": artifact,
+    }
+
+
+def _load_partition_plan(
+    path_value: str,
+    sha256_value: str,
+    role: str,
+    corpora: list[str],
+) -> tuple[dict[str, object], dict[str, dict[str, object]]]:
+    """Validate and normalize an exhaustive pilot/main source-cluster plan."""
+    value, artifact = _read_content_addressed_json(
+        path_value,
+        sha256_value,
+        flag_name="--partition-plan",
+        max_bytes=16 * 1024 * 1024,
+    )
+    if not isinstance(value, dict):
+        raise ValueError("--partition-plan must contain a JSON object")
+    if set(value) != {
+        "schema_version", "seed", "algorithm", "corpora", "analysis_source",
+    }:
+        raise ValueError("partition plan has an invalid top-level field inventory")
+    schema = value.get("schema_version")
+    if schema != _PARTITION_SCHEMA:
+        raise ValueError(f"partition plan schema must be {_PARTITION_SCHEMA!r}")
+    algorithm = value.get("algorithm")
+    seed = value.get("seed")
+    plan_corpora = value.get("corpora")
+    if algorithm != "sha256_scoped_seed_random_partition_v1":
+        raise ValueError("partition plan algorithm is unsupported")
+    if isinstance(seed, bool) or not isinstance(seed, int):
+        raise ValueError("partition plan seed must be an integer")
+    expected_corpora = {name for name in corpora if name != "synth"}
+    if not isinstance(plan_corpora, dict) or set(plan_corpora) != expected_corpora:
+        raise ValueError(
+            "partition plan corpus keys must exactly match selected non-synthetic corpora"
+        )
+    assignments: dict[str, dict[str, object]] = {}
+    for name in sorted(expected_corpora):
+        entry = plan_corpora[name]
+        if not isinstance(entry, dict):
+            raise ValueError(f"partition plan corpus {name!r} must be an object")
+        if set(entry) != {
+            "source_kind", "source_path", "source_tree_sha256", "source_file_count",
+            "full_converted_corpus_sha256", "total_records", "total_clusters",
+            "total_cluster_ids", "total_cluster_ids_sha256", "pilot", "main",
+        }:
+            raise ValueError(
+                f"partition plan corpus {name!r} has an invalid field inventory"
+            )
+        converted_sha = entry.get("full_converted_corpus_sha256")
+        total_records = entry.get("total_records")
+        total_clusters = entry.get("total_clusters")
+        total_cluster_ids = entry.get("total_cluster_ids")
+        total_cluster_digest = entry.get("total_cluster_ids_sha256")
+        if re.fullmatch(r"[0-9a-f]{64}", str(converted_sha or "")) is None:
+            raise ValueError(f"partition plan corpus {name!r} has invalid converted digest")
+        if (
+            isinstance(total_records, bool) or not isinstance(total_records, int)
+            or total_records <= 0
+            or isinstance(total_clusters, bool) or not isinstance(total_clusters, int)
+            or total_clusters <= 1
+            or not isinstance(total_cluster_ids, list)
+            or any(
+                not isinstance(item, str) or not item.strip()
+                for item in total_cluster_ids
+            )
+            or len(total_cluster_ids) != total_clusters
+            or len(set(total_cluster_ids)) != len(total_cluster_ids)
+            or total_cluster_ids != sorted(total_cluster_ids)
+            or _sha256_json(total_cluster_ids) != total_cluster_digest
+            or re.fullmatch(r"[0-9a-f]{64}", str(total_cluster_digest or "")) is None
+        ):
+            raise ValueError(f"partition plan corpus {name!r} has invalid totals")
+        role_payloads: dict[str, dict[str, object]] = {}
+        role_sets: dict[str, set[str]] = {}
+        for partition_role in ("pilot", "main"):
+            selection = entry.get(partition_role)
+            if (
+                not isinstance(selection, dict)
+                or set(selection) != {
+                    "n_clusters", "cluster_ids", "cluster_ids_sha256",
+                }
+            ):
+                raise ValueError(
+                    f"partition plan corpus {name!r} lacks {partition_role!r} selection"
+                )
+            ids = selection.get("cluster_ids")
+            count = selection.get("n_clusters")
+            digest = selection.get("cluster_ids_sha256")
+            if (
+                not isinstance(ids, list) or not ids
+                or any(not isinstance(item, str) or not item.strip() for item in ids)
+                or len(set(ids)) != len(ids)
+                or ids != sorted(ids)
+                or count != len(ids)
+                or digest != _sha256_json(ids)
+            ):
+                raise ValueError(
+                    f"partition plan corpus {name!r} has invalid {partition_role} clusters"
+                )
+            role_sets[partition_role] = set(ids)
+            role_payloads[partition_role] = {
+                "n_clusters": len(ids),
+                "cluster_ids": list(ids),
+                "cluster_ids_sha256": digest,
+            }
+        union = role_sets["pilot"] | role_sets["main"]
+        if role_sets["pilot"] & role_sets["main"]:
+            raise ValueError(f"partition plan corpus {name!r} pilot/main overlap")
+        if union != set(total_cluster_ids):
+            raise ValueError(
+                f"partition plan corpus {name!r} is not exhaustive over source clusters"
+            )
+        assignments[name] = {
+            "full_converted_corpus_sha256": converted_sha,
+            "total_records": total_records,
+            "total_clusters": total_clusters,
+            "total_cluster_ids": list(total_cluster_ids),
+            "total_cluster_ids_sha256": total_cluster_digest,
+            "partition_role": role,
+            **role_payloads[role],
+        }
+    binding = {
+        "status": "bound",
+        "schema_version": schema,
+        "algorithm": algorithm,
+        "seed": seed,
+        "partition_role": role,
+        "artifact": artifact,
+    }
+    return binding, assignments
+
+
 _SECRET_CONFIG_KEY = re.compile(
     r"(?:api[_-]?key|token|secret|password|authorization|cookie|private[_-]?key)",
     re.IGNORECASE,
@@ -249,6 +766,28 @@ def _load_attacker_config(
     }
 
 
+def _record_executed_modality_ids(
+    target_name: str,
+    attempts: list[Attempt],
+    responses: list[Response],
+    destination: dict[str, set[str]],
+) -> None:
+    """Record actual base-target modality probes, excluding input-side blocks."""
+    response_by_attempt = {response.attempt_id: response for response in responses}
+    if len(response_by_attempt) != len(responses):
+        raise ValueError("duplicate response attempt id in modality evidence")
+    for attempt in attempts:
+        response = response_by_attempt.get(attempt.id)
+        if response is None:
+            raise ValueError("modality evidence lacks an Attempt/Response join")
+        input_blocked = (
+            response.raw.get("defense") == "blocked"
+            and response.raw.get("stage") == "input"
+        )
+        if not input_blocked:
+            destination[target_name].add(attempt.datapoint_id)
+
+
 def _load_local_config(
     path_value: str, selected_specs: list[str]
 ) -> tuple[dict[str, dict[str, object]], dict[str, object] | None]:
@@ -303,8 +842,6 @@ def _load_local_config(
                 raise ValueError(
                     f"Ollama config {spec!r} requires digest and forbids revision"
                 )
-            if modalities != ["text"]:
-                raise ValueError("OllamaTarget currently declares text capability only")
         else:
             raise ValueError(f"unsupported local backend in {spec!r}")
         normalized[spec] = dict(config)
@@ -369,6 +906,10 @@ def _validate_completion_marker(
         raise ValueError("stored manifest run_id differs from planned cell")
     if manifest.code_version != CODE_VERSION or manifest.schema_version != SCHEMA_VERSION:
         raise ValueError("stored manifest code/schema version is stale")
+    if marker.get("call_budget_snapshot") != manifest.config.get(
+        "call_budget_snapshot"
+    ):
+        raise ValueError("completion marker call-budget snapshot mismatch")
 
     attempt_rows = _read_jsonl(paths["attempts"])
     response_rows = _read_jsonl(paths["responses"])
@@ -422,7 +963,8 @@ def _validate_completion_marker(
             raise ValueError(f"stored manifest immutable field {field!r} changed")
     for key in (
         "budget", "components", "run", "media_validation", "n_datapoints",
-        "n_media_hashes", "harness_source",
+        "n_media_hashes", "harness_source", "source_policy_inventory",
+        "source_policy_inventory_sha256", "source_metric_plan",
     ):
         if manifest.config.get(key) != planned.config.get(key):
             raise ValueError(f"stored manifest config field {key!r} changed")
@@ -460,6 +1002,81 @@ def _validate_completion_marker(
             raise ValueError("completed Judgment raw lineage lacks the run_id")
         if judgment.raw.get("target") not in planned.models:
             raise ValueError("completed Judgment names an unexpected target")
+    policy_inventory = sorted(
+        {
+            json.dumps(
+                attempt.params["source_policy"],
+                sort_keys=True,
+                separators=(",", ":"),
+            )
+            for attempt in attempts
+            if attempt.params.get("source_policy") is not None
+        }
+    )
+    reconstructed_policies = [json.loads(item) for item in policy_inventory]
+    if manifest.config.get("source_policy_inventory") != reconstructed_policies:
+        raise ValueError("stored manifest source-policy inventory mismatch")
+    if manifest.config.get("source_policy_inventory_sha256") != _sha256_json(
+        reconstructed_policies
+    ):
+        raise ValueError("stored manifest source-policy digest mismatch")
+    attempt_policy = {row.id: row.params.get("source_policy") for row in attempts}
+    if any(
+        judgment.raw.get("source_policy") != attempt_policy[judgment.attempt_id]
+        for judgment in judgments
+    ):
+        raise ValueError("Judgment source-policy lineage mismatch")
+    source_metric_inventory = manifest.config.get("source_metric_inventory")
+    if not isinstance(source_metric_inventory, list):
+        raise ValueError("stored manifest lacks source-metric execution inventory")
+    realized_source_metrics: dict[tuple[str, str], int] = {}
+    for judgment in judgments:
+        observation = judgment.raw.get("source_evaluation")
+        if not isinstance(observation, dict) or observation.get("implemented") is not True:
+            continue
+        key = (
+            str(judgment.raw.get("source", "")),
+            str(observation.get("family", "")),
+        )
+        realized_source_metrics[key] = realized_source_metrics.get(key, 0) + 1
+    for entry in source_metric_inventory:
+        if not isinstance(entry, dict):
+            raise ValueError("source-metric inventory entries must be objects")
+        key = (str(entry.get("source")), str(entry.get("required_metric")))
+        emitted = key in realized_source_metrics
+        if entry.get("source_metric_emitted") is not emitted:
+            raise ValueError("stored source-metric emitted status mismatch")
+        if entry.get("n_source_evaluations") != realized_source_metrics.get(key, 0):
+            raise ValueError("stored source-metric evaluation count mismatch")
+        if (
+            key == ("mmsafety", "mmsafety_official_attack_rate")
+            and emitted
+            and entry.get("official_evaluator_executed") is not True
+        ):
+            raise ValueError(
+                "MM-SafetyBench official attack rate lacks official-evaluator evidence"
+            )
+
+    # A response-conditioned trajectory ends at its first authoritative harmful
+    # completion; post-break turns would be extra paid calls and alter severity.
+    live: dict[tuple[str, object], list[Judgment]] = defaultdict(list)
+    for judgment in judgments:
+        if (
+            judgment.raw.get("response_conditioned") is True
+            and judgment.raw.get("expected_behavior") == "refuse"
+        ):
+            live[(
+                str(judgment.raw.get("datapoint_id")),
+                judgment.raw.get("seed"),
+            )].append(judgment)
+    for key, conversation in live.items():
+        ordered = sorted(conversation, key=lambda row: row.raw.get("turn_index", -1))
+        first_break = next(
+            (index for index, row in enumerate(ordered) if row.label == "violation"),
+            None,
+        )
+        if first_break is not None and first_break != len(ordered) - 1:
+            raise ValueError(f"live trajectory {key!r} continues after harmful completion")
 
     trails_by_attempt: dict[str, list[dict]] = defaultdict(list)
     for row in trails:
@@ -511,7 +1128,16 @@ def _validate_completion_marker(
     for result in results:
         if result.n <= 0:
             raise ValueError("completed aggregate has a non-positive population")
-        if not 0.0 <= result.value <= 1.0 and result.metric != "median_turns_to_break":
+        horizon = result.provenance.get("horizon_turns")
+        if result.metric in {
+            "median_turns_to_break", "restricted_mean_turns_to_break"
+        }:
+            if (
+                isinstance(horizon, bool) or not isinstance(horizon, int)
+                or horizon <= 0 or not 0.0 <= result.value <= float(horizon)
+            ):
+                raise ValueError("turn metric is outside its explicit horizon domain")
+        elif not 0.0 <= result.value <= 1.0:
             raise ValueError("completed aggregate value is outside its metric domain")
         if (result.ci_low is None) != (result.ci_high is None):
             raise ValueError("completed aggregate has a half-defined confidence interval")
@@ -521,23 +1147,47 @@ def _validate_completion_marker(
 
 
 def _source_tree_digest(path: Path) -> tuple[str | None, int]:
-    """Hash the complete released source tree, including relative filenames."""
+    """Hash a bounded regular source tree for diagnostics only.
+
+    Scored corpus identity is the canonical converted-corpus digest in the
+    partition plan. This helper deliberately rejects symlinks and omits common
+    mutable tool/cache directories; it is never an experiment release gate.
+    """
     if not path.exists():
         return None, 0
+    if path.is_symlink():
+        raise ValueError(f"refusing to hash symlink source path: {path}")
     if path.is_file():
         return _sha256_file(path), 1
     digest = hashlib.sha256()
     count = 0
-    for file_path in sorted(candidate for candidate in path.rglob("*") if candidate.is_file()):
+    total_bytes = 0
+    excluded = {
+        ".git", ".pytest_cache", ".ruff_cache", "__pycache__", ".mypy_cache",
+    }
+    candidates = sorted(path.rglob("*"))
+    for file_path in candidates:
+        relative_parts = file_path.relative_to(path).parts
+        if any(part in excluded or part.startswith((".tmp-", ".smoke-"))
+               for part in relative_parts):
+            continue
+        if file_path.is_symlink():
+            raise ValueError(f"refusing to hash symlink source member: {file_path}")
+        if not file_path.is_file():
+            continue
+        size = file_path.stat().st_size
+        count += 1
+        total_bytes += size
+        if count > 100_000 or size > 2 * 1024**3 or total_bytes > 16 * 1024**3:
+            raise ValueError("source tree exceeds diagnostic hashing bounds")
         relative = file_path.relative_to(path).as_posix()
         file_digest = _sha256_file(file_path)
         digest.update(relative.encode("utf-8"))
         digest.update(b"\0")
-        digest.update(str(file_path.stat().st_size).encode("ascii"))
+        digest.update(str(size).encode("ascii"))
         digest.update(b"\0")
         digest.update(file_digest.encode("ascii"))
         digest.update(b"\n")
-        count += 1
     return digest.hexdigest(), count
 
 
@@ -592,7 +1242,9 @@ def build_target(
                 return target
             from ura.targets.local import OllamaTarget
             target = OllamaTarget(
-                model=model, model_digest=str(local_identity["digest"])
+                model=model,
+                model_digest=str(local_identity["digest"]),
+                modality_support=modalities,
             )
             target.validate_research_identity()
             return target
@@ -658,62 +1310,47 @@ def _cluster_key(index: int, record: object) -> str:
 
 
 def _select_corpus(
-    name: str, dps: list[DataPoint], limit: int, sample_seed: int
-) -> tuple[list[DataPoint], list[int]]:
-    if not limit or limit >= len(dps):
-        return dps, list(range(len(dps)))
-    # Sample whole clusters, never splitting a conversation/threshold cluster,
-    # so per-cluster classification denominators stay intact.
+    name: str,
+    dps: list[DataPoint],
+    limit: int,
+    sample_seed: int,
+    *,
+    exact_cluster_ids: list[str] | None = None,
+) -> tuple[list[DataPoint], list[int], list[str], list[str]]:
+    """Select exactly ``limit`` prompt/intent clusters, retaining every row."""
     clusters: dict[str, list[int]] = {}
     for index, record in enumerate(dps):
         clusters.setdefault(_cluster_key(index, record), []).append(index)
     keys = list(clusters)
-    seed_material = f"ura-corpus-sample-v2\0{name}\0{sample_seed}".encode("utf-8")
+    if exact_cluster_ids is not None:
+        if limit != 0:
+            raise ValueError("exact partition selection requires limit=0")
+        if (
+            not exact_cluster_ids
+            or len(set(exact_cluster_ids)) != len(exact_cluster_ids)
+            or any(key not in clusters for key in exact_cluster_ids)
+        ):
+            raise ValueError("partition names missing or duplicate source clusters")
+        selected_set = set(exact_cluster_ids)
+        selected_cluster_ids = [key for key in keys if key in selected_set]
+        if set(selected_cluster_ids) != selected_set:
+            raise ValueError("partition cluster selection is not exact")
+        indices = [
+            index for key in selected_cluster_ids for index in clusters[key]
+        ]
+        return [dps[index] for index in indices], indices, selected_cluster_ids, keys
+    if not limit or limit >= len(keys):
+        return dps, list(range(len(dps))), keys, keys
+    seed_material = f"ura-corpus-cluster-sample-v3\0{name}\0{sample_seed}".encode(
+        "utf-8"
+    )
     scoped_seed = int.from_bytes(hashlib.sha256(seed_material).digest()[:8], "big")
-    order = random.Random(scoped_seed).sample(range(len(keys)), k=len(keys))
-    chosen: list[int] = []
-    total = 0
-    for position in order:
-        members = clusters[keys[position]]
-        if chosen and total + len(members) > limit:
-            continue  # never split a cluster; skip an overflowing one
-        chosen.extend(members)
-        total += len(members)
-        if total >= limit:
-            break
-    indices = sorted(chosen)
-    return [dps[index] for index in indices], indices
-
-
-def _verify_expected_release(
-    name: str, *, source_tree_sha256: str, total_records: int
-) -> None:
-    """Optional preregistered release check: URA_<CORPUS>_EXPECT_COUNT / _SHA256.
-
-    Unset means no check. A mismatch fails closed so a truncated or altered
-    corpus tree cannot silently shrink the evaluation denominator.
-    """
-    prefix = f"URA_{name.upper()}_EXPECT"
-    want_count = os.environ.get(f"{prefix}_COUNT")
-    if want_count and want_count.strip():
-        try:
-            expected = int(want_count)
-        except ValueError as exc:
-            raise ValueError(
-                f"{prefix}_COUNT must be an integer, got {want_count!r}"
-            ) from exc
-        if expected != total_records:
-            raise ValueError(
-                f"corpus {name!r} release record-count mismatch: expected "
-                f"{expected}, converted {total_records} (partial or altered tree)"
-            )
-    want_sha = os.environ.get(f"{prefix}_SHA256")
-    if want_sha and want_sha.strip() and want_sha.strip().lower() != (source_tree_sha256 or ""):
-        raise ValueError(
-            f"corpus {name!r} source-tree sha256 mismatch: expected "
-            f"{want_sha.strip().lower()!r}, got {source_tree_sha256!r} "
-            "(partial or altered corpus tree)"
-        )
+    positions = set(random.Random(scoped_seed).sample(range(len(keys)), k=limit))
+    selected_cluster_ids = [key for index, key in enumerate(keys) if index in positions]
+    indices = sorted(
+        index for key in selected_cluster_ids for index in clusters[key]
+    )
+    return [dps[index] for index in indices], indices, selected_cluster_ids, keys
 
 
 def _pid_alive(pid: int) -> bool:
@@ -742,6 +1379,41 @@ def _pid_alive(pid: int) -> bool:
     return True
 
 
+def _process_identity(pid: int) -> str | None:
+    """Best-effort process creation identity, preventing PID-reuse lock poison."""
+    if os.name == "nt":
+        import ctypes
+
+        query = 0x1000
+        kernel32 = ctypes.windll.kernel32
+        handle = kernel32.OpenProcess(query, False, pid)
+        if not handle:
+            return None
+        try:
+            creation = ctypes.c_ulonglong()
+            exit_time = ctypes.c_ulonglong()
+            kernel = ctypes.c_ulonglong()
+            user = ctypes.c_ulonglong()
+            if not kernel32.GetProcessTimes(
+                handle,
+                ctypes.byref(creation),
+                ctypes.byref(exit_time),
+                ctypes.byref(kernel),
+                ctypes.byref(user),
+            ):
+                return None
+            return f"win-filetime:{creation.value}"
+        finally:
+            kernel32.CloseHandle(handle)
+    stat = Path(f"/proc/{pid}/stat")
+    try:
+        fields = stat.read_text(encoding="utf-8").split()
+    except OSError:
+        return None
+    # Linux /proc stat field 22 is the process start time in clock ticks.
+    return f"proc-start:{fields[21]}" if len(fields) > 21 else None
+
+
 def _corpus_path(name: str) -> Path:
     return Path(os.environ.get(
         f"URA_{name.upper()}_PATH", f"datasets/samples/{name}.jsonl"
@@ -763,57 +1435,119 @@ def load_corpus(name: str, limit: int, sample_seed: int = 0) -> list[DataPoint]:
     # expects data under datasets/<name>.jsonl by default; override via env
     path = _corpus_path(name)
     dps = conv.parse(path)
-    selected, _ = _select_corpus(name, dps, limit, sample_seed)
+    selected, _, _, _ = _select_corpus(name, dps, limit, sample_seed)
     return selected
 
 
 def load_corpus_with_audit(
-    name: str, limit: int, sample_seed: int = 0
+    name: str,
+    limit: int,
+    sample_seed: int = 0,
+    *,
+    exact_cluster_ids: list[str] | None = None,
 ) -> tuple[list[DataPoint], dict[str, object]]:
     """Load one source and retain enough information to audit the frozen sample."""
     if limit < 0:
         raise ValueError("limit must be non-negative")
     if name == "synth":
         selected = synth_corpus(12 if limit == 0 else limit)
+        cluster_ids = [_cluster_key(index, row) for index, row in enumerate(selected)]
+        full_digest = _sha256_json([
+            datapoint.model_dump(mode="json") for datapoint in selected
+        ])
         return selected, {
             "corpus": name,
             "source_kind": "generated_fixture",
             "source_path": None,
             "source_tree_sha256": None,
             "source_file_count": 0,
+            "full_converted_corpus_sha256": full_digest,
             "total_records": len(selected),
+            "selected_records": len(selected),
             "selected_indices": list(range(len(selected))),
             "selected_ids": [datapoint.id for datapoint in selected],
+            "limit_unit": "source_prompt_or_intent_clusters",
+            "total_clusters": len(cluster_ids),
+            "selected_clusters": len(cluster_ids),
+            "total_cluster_ids": cluster_ids,
+            "selected_cluster_ids": cluster_ids,
             "sample_seed": sample_seed,
             "limit": limit,
         }
     path = _corpus_path(name)
     full = get_converter(name).parse(path)
-    selected, indices = _select_corpus(name, full, limit, sample_seed)
+    selected, indices, selected_clusters, total_clusters = _select_corpus(
+        name,
+        full,
+        limit,
+        sample_seed,
+        exact_cluster_ids=exact_cluster_ids,
+    )
     resolved = path.expanduser().resolve(strict=True)
-    tree_digest, file_count = _source_tree_digest(resolved)
-    _verify_expected_release(name, source_tree_sha256=tree_digest, total_records=len(full))
-    full_digest = hashlib.sha256(
-        json.dumps(
-            [datapoint.model_dump(mode="json") for datapoint in full],
-            ensure_ascii=False,
-            sort_keys=True,
-            separators=(",", ":"),
-        ).encode("utf-8")
-    ).hexdigest()
+    full_digest = _sha256_json([
+        datapoint.model_dump(mode="json") for datapoint in full
+    ])
     return selected, {
         "corpus": name,
         "source_kind": "directory" if resolved.is_dir() else "file",
         "source_path": str(resolved),
-        "source_tree_sha256": tree_digest,
-        "source_file_count": file_count,
+        "source_tree_sha256": None,
+        "source_file_count": None,
         "full_converted_corpus_sha256": full_digest,
         "total_records": len(full),
+        "selected_records": len(selected),
         "selected_indices": indices,
         "selected_ids": [datapoint.id for datapoint in selected],
+        "limit_unit": "source_prompt_or_intent_clusters",
+        "total_clusters": len(total_clusters),
+        "selected_clusters": len(selected_clusters),
+        "total_cluster_ids": total_clusters,
+        "selected_cluster_ids": selected_clusters,
         "sample_seed": sample_seed,
         "limit": limit,
+        "selection_method": (
+            "content_addressed_partition_plan"
+            if exact_cluster_ids is not None
+            else "seeded_source_cluster_sample"
+        ),
     }
+
+
+def _validate_partitioned_corpus(
+    name: str,
+    audit: dict[str, object],
+    assignment: dict[str, object],
+) -> None:
+    """Bind converted records and the exact executed cluster role to its plan."""
+    checks = {
+        "full_converted_corpus_sha256": audit.get(
+            "full_converted_corpus_sha256"
+        ),
+        "total_records": audit.get("total_records"),
+        "total_clusters": audit.get("total_clusters"),
+        "n_clusters": audit.get("selected_clusters"),
+    }
+    for field, actual in checks.items():
+        if assignment.get(field) != actual:
+            raise ValueError(
+                f"corpus {name!r} partition {field} mismatch: plan "
+                f"{assignment.get(field)!r}, converted {actual!r}"
+            )
+    total_ids = audit.get("total_cluster_ids")
+    selected_ids = audit.get("selected_cluster_ids")
+    if (
+        not isinstance(total_ids, list)
+        or _sha256_json(sorted(total_ids))
+        != assignment.get("total_cluster_ids_sha256")
+    ):
+        raise ValueError(f"corpus {name!r} full source-cluster identity mismatch")
+    if (
+        not isinstance(selected_ids, list)
+        or sorted(selected_ids) != assignment.get("cluster_ids")
+        or _sha256_json(sorted(selected_ids))
+        != assignment.get("cluster_ids_sha256")
+    ):
+        raise ValueError(f"corpus {name!r} selected partition identity mismatch")
 
 
 def main(argv=None) -> int:
@@ -856,10 +1590,28 @@ def main(argv=None) -> int:
         help="optional torch device for guardrail inference (empty uses device_map=auto)",
     )
     ap.add_argument("--corpora", default="synth")
-    ap.add_argument("--limit", type=int, default=50)
+    ap.add_argument(
+        "--limit", type=int, default=50,
+        help=(
+            "maximum unique source prompt/intent clusters per corpus; every row "
+            "in each selected cluster is retained (0 = all clusters)"
+        ),
+    )
     ap.add_argument(
         "--sample-seed", type=int, default=0,
         help="seed for deterministic corpus subsampling (real corpora only)",
+    )
+    ap.add_argument(
+        "--partition-plan", default="",
+        help="content-addressed ura-cluster-partition/1.1 JSON for scored corpora",
+    )
+    ap.add_argument(
+        "--partition-sha256", default="",
+        help="exact SHA-256 of --partition-plan bytes",
+    )
+    ap.add_argument(
+        "--partition-role", default="", choices=["", "pilot", "main"],
+        help="execute exactly the pilot or main source-cluster assignment",
     )
     ap.add_argument("--seeds", default="0")
     ap.add_argument("--max-queries", type=int, default=4,
@@ -879,10 +1631,31 @@ def main(argv=None) -> int:
     ap.add_argument("--dtype", default="auto",
                     help="vLLM dtype for local models (auto, bfloat16, float16)")
     ap.add_argument("--max-total-target-calls", type=int, default=0,
-                    help="process-wide ceiling on model-under-test generate() calls "
-                         "across the whole matrix (0 = unbounded)")
+                    help="durable matrix-wide ceiling on model-under-test logical "
+                         "calls (0 = unbounded)")
+    ap.add_argument("--max-total-judge-calls", type=int, default=0,
+                    help="durable matrix-wide ceiling on model-backed judge calls "
+                         "(0 = unbounded)")
+    ap.add_argument("--max-total-http-attempts", type=int, default=0,
+                    help="durable ceiling on declared provider transport-attempt "
+                         "exposure across target and judge calls (0 = unbounded)")
     ap.add_argument("--deadline-seconds", type=int, default=0,
-                    help="wall-clock stop for the whole matrix in seconds (0 = none)")
+                    help="durable wall-clock deadline from the matrix's first "
+                         "invocation (0 = none)")
+    ap.add_argument("--lock-stale-seconds", type=int, default=86400,
+                    help="age at which a non-live/cross-host artifact lock may be "
+                         "reclaimed (default: 86400)")
+    ap.add_argument("--reset-open-circuits", action="store_true",
+                    help="operator acknowledgement: clear the durable provider/"
+                         "judge circuit after correcting its root cause")
+    ap.add_argument(
+        "--provider-data-policy-approval", default="",
+        help="content-addressed JSON accepting hosted-provider retention/data-use terms",
+    )
+    ap.add_argument(
+        "--provider-data-policy-sha256", default="",
+        help="exact SHA-256 of --provider-data-policy-approval bytes",
+    )
     ap.add_argument("--out", default="runs/exp")
     args = ap.parse_args(argv)
 
@@ -890,8 +1663,13 @@ def main(argv=None) -> int:
         ap.error("--limit must be non-negative")
     if args.max_queries <= 0 or args.max_turns <= 0:
         ap.error("--max-queries and --max-turns must be positive")
-    if args.max_total_target_calls < 0 or args.deadline_seconds < 0:
-        ap.error("--max-total-target-calls and --deadline-seconds must be non-negative")
+    if any(value < 0 for value in (
+        args.max_total_target_calls, args.max_total_judge_calls,
+        args.max_total_http_attempts, args.deadline_seconds,
+    )):
+        ap.error("call ceilings and --deadline-seconds must be non-negative")
+    if args.lock_stale_seconds <= 0:
+        ap.error("--lock-stale-seconds must be positive")
 
     seeds = [int(s) for s in args.seeds.split(",") if s.strip()]
     if not seeds:
@@ -905,15 +1683,6 @@ def main(argv=None) -> int:
     # OUT of the run_id hash, so runs stay reproducible while the date is captured.
     run_started = datetime.now(timezone.utc).isoformat(timespec="seconds")
     run_env = _runtime_env()
-    # Process-wide billable ceiling shared across every cell (charged before the
-    # paid target call, so an exhausted budget stops further billing).
-    call_budget = GlobalCallBudget(
-        max_target_calls=args.max_total_target_calls or None,
-        deadline_monotonic=(
-            time.monotonic() + args.deadline_seconds if args.deadline_seconds else None
-        ),
-    )
-
     api_specs = [s.strip() for s in args.api.split(",") if s.strip()]
     local_specs = [s.strip() for s in args.local.split(",") if s.strip()]
     if len(set(api_specs)) != len(api_specs):
@@ -967,6 +1736,71 @@ def main(argv=None) -> int:
     group_keys = [k.strip() for k in args.group.split(",") if k.strip()]
     if not group_keys:
         ap.error("--group must contain at least one grouping key")
+    duplicate_group_keys = sorted(
+        key for key, count in Counter(group_keys).items() if count > 1
+    )
+    if duplicate_group_keys:
+        ap.error(
+            "--group keys must be unique; duplicates: "
+            + ", ".join(duplicate_group_keys)
+        )
+    unknown_group_keys = sorted(set(group_keys) - _ALLOWED_GROUP_KEYS)
+    if unknown_group_keys:
+        ap.error(
+            "--group contains unsupported keys: " + ", ".join(unknown_group_keys)
+        )
+
+    try:
+        provider_data_policy = _load_provider_data_policy_approval(
+            args.provider_data_policy_approval,
+            args.provider_data_policy_sha256,
+            _provider_policy_requirements(
+                api_specs, judge_names, args.judge_model, dry_run=args.dry_run
+            ),
+        )
+    except (OSError, ValueError) as exc:
+        ap.error(str(exc))
+
+    partition_flags = (
+        bool(args.partition_plan),
+        bool(args.partition_sha256),
+        bool(args.partition_role),
+    )
+    partition_required = not args.dry_run and any(
+        name != "synth" for name in corpora
+    )
+    if any(partition_flags) and not all(partition_flags):
+        ap.error(
+            "--partition-plan, --partition-sha256, and --partition-role must be "
+            "supplied together"
+        )
+    if partition_required and not all(partition_flags):
+        ap.error(
+            "real scored non-synthetic corpora require --partition-plan, "
+            "--partition-sha256, and --partition-role"
+        )
+    if all(partition_flags) and args.limit != 0:
+        ap.error("content-addressed partition execution requires --limit 0")
+    if all(partition_flags):
+        try:
+            partition_binding, partition_assignments = _load_partition_plan(
+                args.partition_plan,
+                args.partition_sha256,
+                args.partition_role,
+                corpora,
+            )
+        except (OSError, ValueError) as exc:
+            ap.error(str(exc))
+    else:
+        partition_binding = {
+            "status": "not_applicable",
+            "reason": (
+                "offline_or_synthetic_fixture"
+                if args.dry_run or set(corpora) == {"synth"}
+                else "no_partitioned_corpora"
+            ),
+        }
+        partition_assignments: dict[str, dict[str, object]] = {}
 
     # The experiment driver controls sampling, grid accounting, and completion
     # semantics that the runner's src/ura source hash does not cover. Content-
@@ -978,6 +1812,114 @@ def main(argv=None) -> int:
         "sha256": driver_digest,
         "file_count": driver_file_count,
     }
+
+    # Preload the complete selected corpus set and construct lazy target objects
+    # before any target/judge call. Modality coverage is a grid-wide property:
+    # planning it one corpus at a time can silently omit an available image arm.
+    loaded_corpora: dict[str, list[DataPoint]] = {}
+    sampling_audits: dict[str, dict[str, object]] = {}
+    for corpus_name in corpora:
+        try:
+            assignment = partition_assignments.get(corpus_name)
+            corpus, sampling_audit = load_corpus_with_audit(
+                corpus_name,
+                args.limit,
+                args.sample_seed,
+                exact_cluster_ids=(
+                    list(assignment["cluster_ids"])
+                    if assignment is not None else None
+                ),
+            )
+            if not corpus:
+                raise ValueError("requested corpus converted to zero datapoints")
+            if assignment is not None:
+                _validate_partitioned_corpus(
+                    corpus_name, sampling_audit, assignment
+                )
+                sampling_audit["partition_assignment"] = assignment
+        except Exception as exc:  # noqa: BLE001 - fail pre-call preflight
+            _write_json(out / f"{_safe_component(corpus_name)}.corpus.error.json", {
+                "status": "error",
+                "phase": "corpus_preflight",
+                "corpus": corpus_name,
+                "exception_type": type(exc).__name__,
+                "message": str(exc),
+            })
+            print(
+                f"corpus '{corpus_name}' preflight failed: "
+                f"{type(exc).__name__}: {exc}", file=sys.stderr,
+            )
+            return 1
+        loaded_corpora[corpus_name] = corpus
+        sampling_audits[corpus_name] = sampling_audit
+        (out / f"{_safe_component(corpus_name)}.corpus.error.json").unlink(
+            missing_ok=True
+        )
+
+    prebuilt_targets: dict[str, object] = {}
+    for spec in model_specs:
+        try:
+            target = build_target(
+                spec,
+                quantization=args.quantization,
+                dtype=args.dtype,
+                local_identity=local_configs.get(spec),
+            )
+            if args.defense != "none":
+                from ura.targets.guarded import GuardedTarget
+                if args.defense_guard == "guardrail":
+                    from ura.judges.guardrail import GuardrailJudge
+                    defense_guard = GuardrailJudge(
+                        model=args.guardrail_model,
+                        revision=args.guardrail_revision,
+                        device=args.guardrail_device or None,
+                    )
+                else:
+                    defense_guard = RuleJudge()
+                target = GuardedTarget(target, defense_guard, mode=args.defense)
+            prebuilt_targets[spec] = target
+        except Exception as exc:  # noqa: BLE001 - fail pre-call preflight
+            for corpus_name in corpora:
+                setup_error = out / (
+                    "__".join((
+                        _safe_component(corpus_name),
+                        _safe_component(spec),
+                        "target-setup",
+                    )) + ".error.json"
+                )
+                _write_json(setup_error, {
+                    "status": "error",
+                    "phase": "target_construction",
+                    "preflight": True,
+                    "corpus": corpus_name,
+                    "model_spec": spec,
+                    "exception_type": type(exc).__name__,
+                    "message": str(exc),
+                })
+            print(
+                f"target '{spec}' preflight failed: {type(exc).__name__}: {exc}",
+                file=sys.stderr,
+            )
+            return 1
+    target_names = [str(getattr(target, "name", "")) for target in prebuilt_targets.values()]
+    if len(set(target_names)) != len(target_names):
+        ap.error("target specs resolve to duplicate runtime target identities")
+    try:
+        modality_plan = plan_modality_coverage(
+            list(prebuilt_targets.values()), loaded_corpora,
+            enforce_available=not args.dry_run,
+        )
+    except ModalityCoverageError as exc:
+        _write_json(out / "modality-coverage.error.json", {
+            "status": "error",
+            "phase": "modality_coverage_preflight",
+            "exception_type": type(exc).__name__,
+            "message": str(exc),
+        })
+        print(f"modality coverage preflight failed: {exc}", file=sys.stderr)
+        return 1
+    modality_plan_payload = modality_plan.manifest_payload()
+    (out / "modality-coverage.error.json").unlink(missing_ok=True)
 
     grid_request = {
         "models": model_specs,
@@ -999,6 +1941,13 @@ def main(argv=None) -> int:
         "limit": args.limit,
         "max_queries": args.max_queries,
         "max_turns": args.max_turns,
+        "global_call_budget": {
+            "max_target_calls": args.max_total_target_calls or None,
+            "max_judge_calls": args.max_total_judge_calls or None,
+            "max_http_attempts": args.max_total_http_attempts or None,
+            "deadline_seconds_from_first_invocation": args.deadline_seconds or None,
+            "accounting_semantics": "durable_pre_call_logical_reservation_v1",
+        },
         "group_keys": group_keys,
         "defense": args.defense,
         "defense_guard": args.defense_guard,
@@ -1006,6 +1955,10 @@ def main(argv=None) -> int:
         "dtype": args.dtype,
         "dry_run": bool(args.dry_run),
         "driver_source": driver_source,
+        "provider_data_policy_approval": provider_data_policy,
+        "partition_plan": partition_binding,
+        "partition_assignments": partition_assignments,
+        "modality_coverage_plan": modality_plan_payload,
     }
     grid_material = json.dumps(
         grid_request, sort_keys=True, separators=(",", ":")
@@ -1013,52 +1966,96 @@ def main(argv=None) -> int:
     grid_id = f"grid-{hashlib.sha256(grid_material).hexdigest()[:24]}"
     grid_path = out / f"{grid_id}.grid.json"
     grid_lock = out / f"{grid_id}.grid.lock"
-    lock_payload = json.dumps({
-        "grid_id": grid_id,
-        "pid": os.getpid(),
-        "host": platform.node(),
-        "started_at": run_started,
-    }) + "\n"
-    lock_flags = os.O_CREAT | os.O_EXCL | os.O_WRONLY
-    try:
-        descriptor = os.open(str(grid_lock), lock_flags)
-    except FileExistsError:
-        descriptor = -1
-        # Reclaim only a same-host lock whose holder process is dead; otherwise
-        # refuse (a live holder or a lock from another host is respected).
+    budget_path = out / f"{grid_id}.budget.json"
+    circuit_path = out / f"{grid_id}.circuits.json"
+    if args.reset_open_circuits:
+        circuit_path.unlink(missing_ok=True)
+    circuits: dict[str, dict[str, object]] = {}
+    if circuit_path.exists():
         try:
-            holder = json.loads(grid_lock.read_text(encoding="utf-8"))
-        except (OSError, ValueError):
-            holder = {}
-        if (
-            holder.get("host") == platform.node()
-            and isinstance(holder.get("pid"), int)
-            and not _pid_alive(holder["pid"])
-        ):
-            print(
-                f"reclaiming stale grid lock from dead pid {holder.get('pid')}: "
-                f"{grid_lock}",
-                file=sys.stderr,
+            circuit_payload = _json_loads_strict(
+                circuit_path.read_text(encoding="utf-8")
             )
-            grid_lock.unlink(missing_ok=True)
-            try:
-                descriptor = os.open(str(grid_lock), lock_flags)
-            except FileExistsError:
-                descriptor = -1
-        if descriptor == -1:
-            print(
-                f"grid lock already exists; refusing concurrent execution: {grid_lock}",
-                file=sys.stderr,
-            )
+            if (
+                not isinstance(circuit_payload, dict)
+                or circuit_payload.get("format_version") != 1
+                or circuit_payload.get("grid_id") != grid_id
+                or not isinstance(circuit_payload.get("circuits"), dict)
+            ):
+                raise ValueError("invalid circuit state")
+            circuits = dict(circuit_payload["circuits"])
+        except (OSError, ValueError) as exc:
+            print(f"invalid durable circuit state: {exc}", file=sys.stderr)
             return 1
-    with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
-        handle.write(lock_payload)
+
+    def persist_circuits() -> None:
+        _write_json(circuit_path, {
+            "format_version": 1,
+            "grid_id": grid_id,
+            "circuits": circuits,
+        })
+
+    def open_circuit(key: str, exc: Exception) -> None:
+        if key in circuits:
+            return
+        circuits[key] = {
+            "opened_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+            "exception_type": type(exc).__name__,
+            "phase": getattr(exc, "phase", "unknown"),
+            "message": str(exc)[:2000],
+            "call_audit": _safe_external_audit(exc),
+            "budget_snapshot": call_budget.snapshot(),
+        }
+        persist_circuits()
+
+    def blocking_circuit(spec: str) -> tuple[str, dict[str, object]] | None:
+        for key in ("budget", "judge", f"target:{spec}"):
+            if key in circuits:
+                return key, circuits[key]
+        return None
+
+    budget_ledger_existed = budget_path.exists()
+    if budget_ledger_existed:
+        try:
+            existing_budget = _json_loads_strict(
+                budget_path.read_text(encoding="utf-8")
+            )
+        except (OSError, ValueError) as exc:
+            print(f"invalid durable budget ledger: {exc}", file=sys.stderr)
+            return 1
+        deadline_epoch = (
+            existing_budget.get("deadline_epoch")
+            if isinstance(existing_budget, dict) else None
+        )
+    else:
+        deadline_epoch = (
+            time.time() + args.deadline_seconds if args.deadline_seconds else None
+        )
+    try:
+        call_budget = GlobalCallBudget(
+            max_target_calls=args.max_total_target_calls or None,
+            max_judge_calls=args.max_total_judge_calls or None,
+            max_http_attempts=args.max_total_http_attempts or None,
+            deadline_epoch=deadline_epoch,
+            state_path=budget_path,
+            budget_id=grid_id,
+        )
+        grid_lock_token = _acquire_artifact_lock(
+            grid_lock,
+            {"grid_id": grid_id, "started_at": run_started},
+            stale_seconds=args.lock_stale_seconds,
+        )
+    except (OSError, ValueError, LockHeldError) as exc:
+        print(f"cannot initialize matrix lifecycle: {exc}", file=sys.stderr)
+        return 1
+    atexit.register(_release_artifact_lock, grid_lock, grid_lock_token)
     cell_statuses: list[dict[str, object]] = []
     _write_json(grid_path, {
         "status": "running",
         "grid_id": grid_id,
         "started_at": run_started,
         "request": grid_request,
+        "call_budget_snapshot": call_budget.snapshot(),
         "requested_cells": len(model_specs) * len(corpora) * len(attacker_names),
         "cells": cell_statuses,
     })
@@ -1066,109 +2063,64 @@ def main(argv=None) -> int:
     n_cells = 0
     n_skipped = 0
     n_errors = 0
+    executed_datapoint_ids: dict[str, set[str]] = {
+        str(getattr(target, "name")): set()
+        for target in prebuilt_targets.values()
+    }
     for corpus_name in corpora:
-        try:
-            corpus, sampling_audit = load_corpus_with_audit(
-                corpus_name, args.limit, args.sample_seed
-            )
-        except Exception as exc:  # noqa: BLE001 - requested source failure
-            n_errors += 1
-            _write_json(out / f"{_safe_component(corpus_name)}.corpus.error.json", {
-                "status": "error",
-                "phase": "corpus_loading",
-                "corpus": corpus_name,
-                "exception_type": type(exc).__name__,
-                "message": str(exc),
-            })
-            for spec in model_specs:
-                for attacker_name in attacker_names:
-                    cell_statuses.append({
-                        "corpus": corpus_name,
-                        "model_spec": spec,
-                        "attacker": attacker_name,
-                        "status": "error",
-                        "phase": "corpus_loading",
-                    })
-            print(
-                f"corpus '{corpus_name}' failed: {type(exc).__name__}: {exc}",
-                file=sys.stderr,
-            )
-            continue
-        if not corpus:
-            n_errors += 1
-            _write_json(out / f"{_safe_component(corpus_name)}.corpus.error.json", {
-                "status": "error",
-                "phase": "corpus_loading",
-                "corpus": corpus_name,
-                "exception_type": "EmptyCorpusError",
-                "message": "requested corpus converted to zero datapoints",
-            })
-            for spec in model_specs:
-                for attacker_name in attacker_names:
-                    cell_statuses.append({
-                        "corpus": corpus_name,
-                        "model_spec": spec,
-                        "attacker": attacker_name,
-                        "status": "error",
-                        "phase": "empty_corpus",
-                    })
-            print(f"corpus '{corpus_name}' is empty; requested cells failed")
-            continue
+        corpus = loaded_corpora[corpus_name]
+        sampling_audit = sampling_audits[corpus_name]
         print(f"corpus '{corpus_name}': {len(corpus)} datapoints")
+        (out / f"{_safe_component(corpus_name)}.corpus.error.json").unlink(
+            missing_ok=True
+        )
         for spec in model_specs:
-            try:
-                target = build_target(
-                    spec,
-                    quantization=args.quantization,
-                    dtype=args.dtype,
-                    local_identity=local_configs.get(spec),
-                )
-            except Exception as exc:  # noqa: BLE001 - isolate requested targets
-                n_errors += 1
-                setup_error = out / (
+            blocked = blocking_circuit(spec)
+            if blocked is not None:
+                circuit_key, circuit = blocked
+                n_errors += len(attacker_names)
+                circuit_error = out / (
                     "__".join((
                         _safe_component(corpus_name),
                         _safe_component(spec),
-                        "target-setup",
+                        "circuit-open",
                     ))
                     + ".error.json"
                 )
-                _write_json(setup_error, {
+                _write_json(circuit_error, {
                     "status": "error",
-                    "phase": "target_construction",
+                    "phase": "circuit_open",
                     "corpus": corpus_name,
                     "model_spec": spec,
-                    "exception_type": type(exc).__name__,
-                    "message": str(exc),
+                    "circuit_key": circuit_key,
+                    "circuit": circuit,
+                    "call_budget_snapshot": call_budget.snapshot(),
                 })
                 for attacker_name in attacker_names:
                     cell_statuses.append({
                         "corpus": corpus_name,
                         "model_spec": spec,
-                        "local_identity": local_configs.get(spec),
                         "attacker": attacker_name,
                         "status": "error",
-                        "phase": "target_construction",
-                        "error_artifact": setup_error.name,
+                        "phase": "circuit_open",
+                        "error_artifact": circuit_error.name,
                     })
-                print(
-                    f"  ! cannot construct target '{spec}': "
-                    f"{type(exc).__name__}: {exc}",
-                    file=sys.stderr,
-                )
                 continue
-            if args.defense != "none":  # E4: wrap in a guardrail pre/post-filter
-                from ura.targets.guarded import GuardedTarget
-                if args.defense_guard == "guardrail":
-                    from ura.judges.guardrail import GuardrailJudge
-                    guard = GuardrailJudge(
-                        model=args.guardrail_model,
-                        revision=args.guardrail_revision,
-                        device=args.guardrail_device or None,
-                    )
-                else:
-                    guard = RuleJudge()
-                target = GuardedTarget(target, guard, mode=args.defense)
+            target = prebuilt_targets[spec]
+            (out / (
+                "__".join((
+                    _safe_component(corpus_name),
+                    _safe_component(spec),
+                    "target-setup",
+                )) + ".error.json"
+            )).unlink(missing_ok=True)
+            (out / (
+                "__".join((
+                    _safe_component(corpus_name),
+                    _safe_component(spec),
+                    "circuit-open",
+                )) + ".error.json"
+            )).unlink(missing_ok=True)
             for attacker_name in attacker_names:
                 runner = None
                 planned = None
@@ -1177,6 +2129,7 @@ def main(argv=None) -> int:
                 cell_lock_acquired = False
                 cell_lock_conflict = False
                 cell_lock: Path | None = None
+                cell_lock_token: str | None = None
                 paths: dict[str, Path] = {}
                 fallback_error = out / (
                     "__".join((
@@ -1187,6 +2140,29 @@ def main(argv=None) -> int:
                     ))
                     + ".error.json"
                 )
+                blocked = blocking_circuit(spec)
+                if blocked is not None:
+                    circuit_key, circuit = blocked
+                    n_errors += 1
+                    _write_json(fallback_error, {
+                        "status": "error",
+                        "phase": "circuit_open",
+                        "corpus": corpus_name,
+                        "model_spec": spec,
+                        "attacker": attacker_name,
+                        "circuit_key": circuit_key,
+                        "circuit": circuit,
+                        "call_budget_snapshot": call_budget.snapshot(),
+                    })
+                    cell_statuses.append({
+                        "corpus": corpus_name,
+                        "model_spec": spec,
+                        "attacker": attacker_name,
+                        "status": "error",
+                        "phase": "circuit_open",
+                        "error_artifact": fallback_error.name,
+                    })
+                    continue
                 try:
                     attacker_config = attacker_configs.get(
                         attacker_name.lower(), {}
@@ -1217,6 +2193,7 @@ def main(argv=None) -> int:
                         call_budget=call_budget,
                     )
                     cell_config = {
+                        "grid_id": grid_id,
                         "corpus": corpus_name,
                         "limit": args.limit,
                         "sample_seed": args.sample_seed,
@@ -1242,6 +2219,13 @@ def main(argv=None) -> int:
                         "dtype": args.dtype,
                         "dry_run": bool(args.dry_run),
                         "driver_source": driver_source,
+                        "provider_data_policy_approval": provider_data_policy,
+                        "partition_plan": partition_binding,
+                        "partition_assignment": partition_assignments.get(
+                            corpus_name
+                        ),
+                        "global_call_budget": grid_request["global_call_budget"],
+                        "modality_coverage_plan": modality_plan_payload,
                     }
                     planned = runner.plan_manifest(
                         corpus,
@@ -1269,33 +2253,59 @@ def main(argv=None) -> int:
                     }
                     cell_lock = out / f"{stem}.cell.lock"
                     try:
-                        cell_descriptor = os.open(
-                            str(cell_lock), os.O_CREAT | os.O_EXCL | os.O_WRONLY
+                        cell_lock_token = _acquire_artifact_lock(
+                            cell_lock,
+                            {
+                                "grid_id": grid_id,
+                                "run_id": planned.run_id,
+                                "started_at": run_started,
+                            },
+                            stale_seconds=args.lock_stale_seconds,
                         )
-                    except FileExistsError as exc:
+                    except LockHeldError as exc:
                         cell_lock_conflict = True
-                        raise RuntimeError(
-                            f"cell lock already exists; another grid may be writing "
-                            f"this exact run: {cell_lock}"
-                        ) from exc
-                    with os.fdopen(cell_descriptor, "w", encoding="utf-8") as handle:
-                        handle.write(json.dumps({
-                            "grid_id": grid_id,
-                            "run_id": planned.run_id,
-                            "pid": os.getpid(),
-                            "started_at": run_started,
-                        }, allow_nan=False) + "\n")
+                        raise RuntimeError(str(exc)) from exc
                     cell_lock_acquired = True
 
                     required = (
                         "attempts", "responses", "judgments", "trails",
                         "results", "manifest",
                     )
+                    if (
+                        not budget_ledger_existed
+                        and any(paths[name].exists() for name in (
+                            "checkpoint", "response_checkpoint", "complete",
+                        ))
+                    ):
+                        raise ValueError(
+                            "resume/completion artifacts exist but the durable "
+                            "call-budget ledger is missing; manual audit required"
+                        )
                     if paths["complete"].is_file():
                         _validate_completion_marker(paths, planned, required)
+                        _record_executed_modality_ids(
+                            target.name,
+                            [Attempt.model_validate(row) for row in _read_jsonl(
+                                paths["attempts"]
+                            )],
+                            [Response.model_validate(row) for row in _read_jsonl(
+                                paths["responses"]
+                            )],
+                            executed_datapoint_ids,
+                        )
                         # A fully verified success supersedes a stale same-stem
                         # failure from an earlier retry.
                         paths["error"].unlink(missing_ok=True)
+                        paths["checkpoint"].unlink(missing_ok=True)
+                        paths["response_checkpoint"].unlink(missing_ok=True)
+                        fallback_error.unlink(missing_ok=True)
+                        _remove_superseded_cell_errors(
+                            out, corpus=corpus_name, model_spec=spec,
+                            attacker=attacker_name,
+                        )
+                        for stale in out.glob("*.lock.error.json"):
+                            if stale.name.startswith(f"{stem}__"):
+                                stale.unlink(missing_ok=True)
                         print(f"  [{stem}] already complete; no calls made")
                         n_skipped += 1
                         cell_statuses.append({
@@ -1332,6 +2342,10 @@ def main(argv=None) -> int:
                         ),
                     )
                     results = runner.aggregate(judgments, group_keys=group_keys)
+                    _record_executed_modality_ids(
+                        target.name, runner.attempts, runner.responses,
+                        executed_datapoint_ids,
+                    )
 
                     runner.save_attempts(paths["attempts"])
                     runner.save_responses(paths["responses"])
@@ -1344,7 +2358,7 @@ def main(argv=None) -> int:
                     paths["manifest"].write_text(
                         manifest.model_dump_json(indent=1), encoding="utf-8"
                     )
-                    _write_json(paths["complete"], {
+                    completion_payload = {
                         "status": "complete",
                         "format_version": 2,
                         "run_id": manifest.run_id,
@@ -1357,13 +2371,36 @@ def main(argv=None) -> int:
                         "realized_identities_sha256": manifest.config[
                             "realized_identities_sha256"
                         ],
+                        "call_budget_snapshot": call_budget.snapshot(),
                         "artifacts": {
                             name: _artifact_descriptor(paths[name])
                             for name in required
                         },
-                    })
-                    _validate_completion_marker(paths, planned, required)
+                    }
+                    pending_complete = paths["complete"].with_name(
+                        f".{paths['complete'].name}.pending-{os.getpid()}"
+                    )
+                    _write_json(pending_complete, completion_payload)
+                    validation_paths = {**paths, "complete": pending_complete}
+                    try:
+                        _validate_completion_marker(
+                            validation_paths, planned, required
+                        )
+                    except Exception:
+                        pending_complete.unlink(missing_ok=True)
+                        raise
+                    pending_complete.replace(paths["complete"])
                     paths["error"].unlink(missing_ok=True)
+                    paths["checkpoint"].unlink(missing_ok=True)
+                    paths["response_checkpoint"].unlink(missing_ok=True)
+                    fallback_error.unlink(missing_ok=True)
+                    _remove_superseded_cell_errors(
+                        out, corpus=corpus_name, model_spec=spec,
+                        attacker=attacker_name,
+                    )
+                    for stale in out.glob("*.lock.error.json"):
+                        if stale.name.startswith(f"{stem}__"):
+                            stale.unlink(missing_ok=True)
                     print(
                         f"  [{stem}] {len(judgments)} judgments -> {len(results)} "
                         f"results (run {manifest.run_id}; resumed {len(resumed)})"
@@ -1380,6 +2417,13 @@ def main(argv=None) -> int:
                     })
                 except Exception as exc:  # noqa: BLE001 - isolate matrix cells
                     n_errors += 1
+                    if isinstance(exc, BudgetExhausted):
+                        open_circuit("budget", exc)
+                    elif isinstance(exc, ExternalCallFailure):
+                        open_circuit(
+                            "judge" if exc.phase == "judge_call" else f"target:{spec}",
+                            exc,
+                        )
                     run_id = planned.run_id if planned is not None else None
                     if execution_started and runner is not None and paths:
                         # These snapshots are diagnostic fallbacks; the append-only
@@ -1416,6 +2460,8 @@ def main(argv=None) -> int:
                             "exception_type": type(exc).__name__,
                             "message": str(exc),
                             "completed_attempts": len(runner.attempts) if runner else 0,
+                            "call_budget_snapshot": call_budget.snapshot(),
+                            "call_audit": _safe_external_audit(exc),
                         })
                     cell_statuses.append({
                         "corpus": corpus_name,
@@ -1433,8 +2479,11 @@ def main(argv=None) -> int:
                         file=sys.stderr,
                     )
                 finally:
-                    if cell_lock_acquired and cell_lock is not None:
-                        cell_lock.unlink(missing_ok=True)
+                    if (
+                        cell_lock_acquired and cell_lock is not None
+                        and cell_lock_token is not None
+                    ):
+                        _release_artifact_lock(cell_lock, cell_lock_token)
 
     requested_cells = len(model_specs) * len(corpora) * len(attacker_names)
     if len(cell_statuses) != requested_cells:
@@ -1447,6 +2496,20 @@ def main(argv=None) -> int:
                 "requested cells"
             ),
         })
+    try:
+        modality_result = verify_executed_modality_coverage(
+            modality_plan, executed_datapoint_ids
+        )
+        modality_result_payload = modality_result.manifest_payload()
+    except ModalityCoverageError as exc:
+        n_errors += 1
+        modality_result_payload = {
+            "status": "failed",
+            "error": str(exc),
+            "executed_datapoint_ids": {
+                key: sorted(value) for key, value in executed_datapoint_ids.items()
+            },
+        }
     _write_json(grid_path, {
         "status": "complete" if n_errors == 0 else "partial",
         "grid_id": grid_id,
@@ -1458,9 +2521,12 @@ def main(argv=None) -> int:
         "n_new_complete": n_cells,
         "n_existing_complete": n_skipped,
         "n_errors": n_errors,
+        "call_budget_snapshot": call_budget.snapshot(),
+        "modality_coverage_plan": modality_plan_payload,
+        "modality_coverage_result": modality_result_payload,
         "cells": cell_statuses,
     })
-    grid_lock.unlink(missing_ok=True)
+    _release_artifact_lock(grid_lock, grid_lock_token)
 
     print(
         f"\ndone: {n_cells} cells written, {n_skipped} already complete, "

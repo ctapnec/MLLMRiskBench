@@ -15,6 +15,7 @@ environment and tool-result placement and would not be an AgentDojo run.
 from __future__ import annotations
 
 import math
+import os
 import re
 import sys
 from collections.abc import Iterable, Mapping, Sequence
@@ -27,7 +28,8 @@ from ._engine_common import (
     ExternalEngineOutputError,
 )
 from ._native_artifacts import (
-    DEFAULT_MAX_ARTIFACT_BYTES,
+    DEFAULT_MAX_RUN_ARTIFACT_BYTES,
+    DEFAULT_MAX_RUN_ARTIFACT_FILES,
     NativeArtifactFile,
     NativeEngineCase,
     NativeEngineRun,
@@ -66,6 +68,104 @@ _TRACE_FIELDS = {
     "utility",
     "security",
 }
+_MAX_AGENTDOJO_TRACE_BYTES = 32 * 1024 * 1024
+_MAX_AGENTDOJO_TOTAL_BYTES = 256 * 1024 * 1024
+_MAX_AGENTDOJO_TRACES = DEFAULT_MAX_RUN_ARTIFACT_FILES
+
+
+def _is_link_or_junction(path: Path) -> bool:
+    is_junction = getattr(path, "is_junction", None)
+    return path.is_symlink() or bool(callable(is_junction) and is_junction())
+
+
+def _without_link_components(path: Path) -> Path:
+    candidate = Path(path).expanduser().absolute()
+    current = Path(candidate.anchor)
+    try:
+        for part in candidate.parts[1:]:
+            current /= part
+            if _is_link_or_junction(current):
+                raise ExternalEngineOutputError(
+                    f"AgentDojo trace path contains a symbolic link or junction: {current}"
+                )
+        return candidate.resolve(strict=True)
+    except ExternalEngineOutputError:
+        raise
+    except OSError as exc:
+        raise ExternalEngineOutputError(
+            f"AgentDojo trace root cannot be resolved safely: {path}"
+        ) from exc
+
+
+def _enumerate_trace_files(
+    trace_root: Path,
+    *,
+    max_traces: int,
+    max_artifact_bytes: int,
+    max_total_bytes: int,
+) -> tuple[Path, list[Path]]:
+    """Enumerate regular JSON traces without following mutable indirections."""
+
+    root = _without_link_components(trace_root)
+    if root.is_file():
+        paths = [root]
+        root_for_names = root.parent
+    elif root.is_dir():
+        paths = []
+        for directory, dirnames, filenames in os.walk(
+            root, topdown=True, followlinks=False
+        ):
+            here = Path(directory)
+            for name in sorted((*dirnames, *filenames)):
+                child = here / name
+                if _is_link_or_junction(child):
+                    raise ExternalEngineOutputError(
+                        "AgentDojo trace subtree contains a symbolic link or "
+                        f"junction: {child}"
+                    )
+            for name in sorted(filenames):
+                child = here / name
+                if child.suffix.lower() == ".json":
+                    if not child.is_file():
+                        raise ExternalEngineOutputError(
+                            f"AgentDojo trace is not a regular file: {child}"
+                        )
+                    paths.append(child)
+                    if len(paths) > max_traces:
+                        raise ExternalEngineOutputError(
+                            "AgentDojo trace count exceeds the "
+                            f"{max_traces}-file import limit"
+                        )
+        root_for_names = root
+    else:
+        raise ExternalEngineOutputError(
+            f"AgentDojo trace root is not a regular file or directory: {root}"
+        )
+    if not paths:
+        raise ExternalEngineOutputError(
+            "AgentDojo trace root contains no JSON traces"
+        )
+
+    declared_total = 0
+    for path in paths:
+        try:
+            size = path.stat(follow_symlinks=False).st_size
+        except OSError as exc:
+            raise ExternalEngineOutputError(
+                f"AgentDojo trace metadata cannot be read: {path}"
+            ) from exc
+        if size < 1 or size > max_artifact_bytes:
+            raise ExternalEngineOutputError(
+                f"AgentDojo trace exceeds the {max_artifact_bytes}-byte "
+                f"per-file limit: {path}"
+            )
+        declared_total += size
+        if declared_total > max_total_bytes:
+            raise ExternalEngineOutputError(
+                "AgentDojo trace family exceeds the "
+                f"{max_total_bytes}-byte aggregate limit"
+            )
+    return root_for_names, sorted(paths)
 
 
 def _nonblank(value: object, *, field: str) -> str:
@@ -359,8 +459,9 @@ class AgentDojoAttacker(BaseAttacker):
         trace_root: str | Path,
         *,
         expected_trace_sha256: Mapping[str, str] | None = None,
-        max_artifact_bytes: int = DEFAULT_MAX_ARTIFACT_BYTES,
-        max_traces: int = 20_000,
+        max_artifact_bytes: int = _MAX_AGENTDOJO_TRACE_BYTES,
+        max_traces: int = _MAX_AGENTDOJO_TRACES,
+        max_total_bytes: int = _MAX_AGENTDOJO_TOTAL_BYTES,
     ) -> NativeEngineRun:
         """Import a fresh official trace subtree and reconstruct SuiteResults.
 
@@ -370,23 +471,37 @@ class AgentDojoAttacker(BaseAttacker):
         result maps: utility, security, and injection-task utility.
         """
 
-        root = Path(trace_root).resolve(strict=True)
-        if root.is_file():
-            paths = [root]
-            relative_names = {root: root.name}
-        elif root.is_dir():
-            paths = sorted(path.resolve() for path in root.rglob("*.json"))
-            relative_names = {path: path.relative_to(root).as_posix() for path in paths}
-        else:  # pragma: no cover - resolve(strict=True) covers this
-            raise ExternalEngineOutputError(f"AgentDojo trace root is invalid: {root}")
-        if not paths:
-            raise ExternalEngineOutputError("AgentDojo trace root contains no JSON traces")
-        if not isinstance(max_traces, int) or max_traces < 1:
-            raise ValueError("AgentDojo max_traces must be a positive integer")
-        if len(paths) > max_traces:
-            raise ExternalEngineOutputError(
-                f"AgentDojo trace count exceeds the {max_traces}-file import limit"
+        for label, value, ceiling in (
+            ("max_artifact_bytes", max_artifact_bytes, _MAX_AGENTDOJO_TRACE_BYTES),
+            ("max_traces", max_traces, _MAX_AGENTDOJO_TRACES),
+            ("max_total_bytes", max_total_bytes, _MAX_AGENTDOJO_TOTAL_BYTES),
+        ):
+            if (
+                isinstance(value, bool)
+                or not isinstance(value, int)
+                or value < 1
+                or value > ceiling
+            ):
+                raise ValueError(
+                    f"AgentDojo {label} must be in 1..{ceiling}"
+                )
+        if max_traces > DEFAULT_MAX_RUN_ARTIFACT_FILES:
+            raise ValueError("AgentDojo trace count exceeds native-run file ceiling")
+        if max_total_bytes > DEFAULT_MAX_RUN_ARTIFACT_BYTES:
+            raise ValueError("AgentDojo aggregate bytes exceed native-run ceiling")
+        root, paths = _enumerate_trace_files(
+            Path(trace_root),
+            max_traces=max_traces,
+            max_artifact_bytes=max_artifact_bytes,
+            max_total_bytes=max_total_bytes,
+        )
+        relative_names = {
+            path: (
+                path.name if root == path.parent and len(paths) == 1
+                else path.relative_to(root).as_posix()
             )
+            for path in paths
+        }
         if expected_trace_sha256 is not None:
             expected_keys = set(expected_trace_sha256)
             observed_keys = set(relative_names.values())
@@ -396,6 +511,7 @@ class AgentDojoAttacker(BaseAttacker):
                 )
 
         loaded: list[dict[str, Any]] = []
+        total_bytes = 0
         for path in paths:
             resolved, data, text = read_utf8_artifact(
                 path, max_bytes=max_artifact_bytes
@@ -408,6 +524,12 @@ class AgentDojoAttacker(BaseAttacker):
             digest = require_expected_sha256(
                 data, expected, role=f"AgentDojo trace {relative_names[path]}"
             )
+            total_bytes += len(data)
+            if total_bytes > max_total_bytes:
+                raise ExternalEngineOutputError(
+                    "AgentDojo trace family changed or exceeds the "
+                    f"{max_total_bytes}-byte aggregate limit"
+                )
             try:
                 raw = strict_json_loads(text)
             except Exception as exc:  # noqa: BLE001 - normalize JSON errors

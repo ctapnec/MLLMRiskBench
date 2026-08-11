@@ -35,6 +35,7 @@ from ._engine_common import (
     ExternalEngineOutputError,
     _attempt,
 )
+from ._native_artifacts import read_binary_artifact
 from .base import AttackBudget, BaseAttacker
 
 
@@ -473,30 +474,22 @@ class T3MP3STAttacker(BaseAttacker):
         pin: str,
     ) -> tuple[dict[str, Any], dict[str, object]]:
         assert self.response_artifact is not None
-        if self.response_artifact.expanduser().is_symlink():
-            raise ExternalEngineConformanceError(
-                f"T3MP3ST replay artifact must not be a symlink: {self.response_artifact}"
-            )
         try:
-            path = self.response_artifact.expanduser().resolve(strict=True)
-            if not path.is_file() or path.is_symlink():
-                raise OSError("not a regular file")
-            if path.stat().st_size > _MAX_RESPONSE_BYTES:
-                raise ExternalEngineOutputError(
-                    f"T3MP3ST replay artifact exceeds {_MAX_RESPONSE_BYTES} bytes"
-                )
-            raw = path.read_bytes()
-        except OSError as exc:
+            path, raw = read_binary_artifact(
+                self.response_artifact.expanduser(), max_bytes=_MAX_RESPONSE_BYTES
+            )
+        except ExternalEngineOutputError as exc:
             raise ExternalEngineConformanceError(
                 f"cannot read T3MP3ST replay artifact: {self.response_artifact}"
             ) from exc
-        if len(raw) > _MAX_RESPONSE_BYTES:
-            raise ExternalEngineOutputError(
-                f"T3MP3ST replay artifact exceeds {_MAX_RESPONSE_BYTES} bytes"
-            )
         try:
-            wrapper = json.loads(raw.decode("utf-8"))
-        except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+            wrapper = json.loads(
+                raw.decode("utf-8"),
+                parse_constant=lambda value: (_ for _ in ()).throw(
+                    ValueError(f"invalid JSON constant {value}")
+                ),
+            )
+        except (UnicodeDecodeError, json.JSONDecodeError, RecursionError, ValueError) as exc:
             raise ExternalEngineOutputError(
                 "T3MP3ST replay artifact is not valid UTF-8 JSON"
             ) from exc

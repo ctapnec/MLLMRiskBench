@@ -18,6 +18,9 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
+import os
+import stat
 from pathlib import Path
 from typing import Any, Literal
 
@@ -28,6 +31,10 @@ from ._engine_common import ExternalEngineOutputError
 
 NATIVE_RUN_SCHEMA = "ura-native-engine-run/1"
 DEFAULT_MAX_ARTIFACT_BYTES = 512 * 1024 * 1024
+DEFAULT_MAX_RUN_ARTIFACT_BYTES = 1024 * 1024 * 1024
+DEFAULT_MAX_RUN_ARTIFACT_FILES = 256
+DEFAULT_MAX_JSON_NODES = 2_000_000
+DEFAULT_MAX_JSON_DEPTH = 64
 
 
 class NativeArtifactFile(BaseModel):
@@ -135,6 +142,16 @@ class NativeEngineRun(BaseModel):
             raise ValueError("native_run_id must not be blank")
         if not self.source_artifacts:
             raise ValueError("a native run requires source artifacts")
+        if len(self.source_artifacts) > DEFAULT_MAX_RUN_ARTIFACT_FILES:
+            raise ValueError(
+                "native run exceeds the source-artifact file-count limit"
+            )
+        if sum(artifact.bytes for artifact in self.source_artifacts) > (
+            DEFAULT_MAX_RUN_ARTIFACT_BYTES
+        ):
+            raise ValueError(
+                "native run exceeds the aggregate source-artifact byte limit"
+            )
         if not self.target_models or any(
             not model.strip() for model in self.target_models
         ):
@@ -163,12 +180,154 @@ def json_sha256(value: Any) -> str:
 
 
 def strict_json_loads(text: str) -> Any:
-    """Parse standards-conforming JSON and reject NaN/Infinity extensions."""
+    """Parse bounded-complexity JSON and reject duplicate/non-finite values."""
 
     def reject_constant(value: str) -> None:
         raise ValueError(f"non-standard JSON numeric constant {value!r}")
 
-    return json.loads(text, parse_constant=reject_constant)
+    def object_without_duplicates(
+        pairs: list[tuple[str, Any]],
+    ) -> dict[str, Any]:
+        value: dict[str, Any] = {}
+        for key, item in pairs:
+            if key in value:
+                raise ValueError(f"duplicate JSON object key {key!r}")
+            value[key] = item
+        return value
+
+    value = json.loads(
+        text,
+        parse_constant=reject_constant,
+        object_pairs_hook=object_without_duplicates,
+    )
+    nodes = 0
+    pending: list[tuple[Any, int]] = [(value, 0)]
+    while pending:
+        item, depth = pending.pop()
+        nodes += 1
+        if nodes > DEFAULT_MAX_JSON_NODES:
+            raise ValueError(
+                f"JSON artifact exceeds {DEFAULT_MAX_JSON_NODES} value nodes"
+            )
+        if depth > DEFAULT_MAX_JSON_DEPTH:
+            raise ValueError(
+                f"JSON artifact nesting exceeds {DEFAULT_MAX_JSON_DEPTH}"
+            )
+        if isinstance(item, float) and not math.isfinite(item):
+            raise ValueError("JSON artifact contains a non-finite number")
+        if isinstance(item, dict):
+            pending.extend((child, depth + 1) for child in item.values())
+        elif isinstance(item, list):
+            pending.extend((child, depth + 1) for child in item)
+    return value
+
+
+def _resolved_without_symlinks(path: Path) -> tuple[Path, os.stat_result]:
+    """Resolve an existing artifact while rejecting symlinked path components."""
+
+    candidate = Path(path).expanduser().absolute()
+    current = Path(candidate.anchor)
+    try:
+        for part in candidate.parts[1:]:
+            current /= part
+            if current.is_symlink():
+                raise ExternalEngineOutputError(
+                    f"native artifact path contains a symbolic link: {current}"
+                )
+        resolved = candidate.resolve(strict=True)
+        observed = os.stat(resolved, follow_symlinks=False)
+    except ExternalEngineOutputError:
+        raise
+    except OSError as exc:
+        raise ExternalEngineOutputError(
+            f"native artifact cannot be resolved: {path}"
+        ) from exc
+    if not stat.S_ISREG(observed.st_mode):
+        raise ExternalEngineOutputError(
+            f"native artifact is not a regular file: {resolved}"
+        )
+    return resolved, observed
+
+
+def _read_stable_artifact(
+    path: Path,
+    *,
+    max_bytes: int,
+    collect: bool,
+) -> tuple[Path, bytes | None, str, int]:
+    """Read/hash one descriptor and reject symlinks, growth, or replacement."""
+
+    if not isinstance(max_bytes, int) or isinstance(max_bytes, bool) or max_bytes < 1:
+        raise ValueError("max_bytes must be a positive integer")
+    resolved, path_stat = _resolved_without_symlinks(path)
+    if path_stat.st_size < 1:
+        raise ExternalEngineOutputError(f"native artifact is empty: {resolved}")
+    if path_stat.st_size > max_bytes:
+        raise ExternalEngineOutputError(
+            f"native artifact exceeds the {max_bytes}-byte import limit: {resolved}"
+        )
+
+    flags = os.O_RDONLY | getattr(os, "O_BINARY", 0)
+    if hasattr(os, "O_NOFOLLOW"):
+        flags |= os.O_NOFOLLOW
+    digest = hashlib.sha256()
+    chunks: list[bytes] | None = [] if collect else None
+    total = 0
+    try:
+        descriptor = os.open(resolved, flags)
+        with os.fdopen(descriptor, "rb") as handle:
+            before = os.fstat(handle.fileno())
+            if not stat.S_ISREG(before.st_mode):
+                raise ExternalEngineOutputError(
+                    f"native artifact is not a regular file: {resolved}"
+                )
+            if (
+                before.st_dev != path_stat.st_dev
+                or before.st_ino != path_stat.st_ino
+                or before.st_size != path_stat.st_size
+            ):
+                raise ExternalEngineOutputError(
+                    f"native artifact changed before it could be read: {resolved}"
+                )
+            while True:
+                chunk = handle.read(min(1024 * 1024, max_bytes + 1 - total))
+                if not chunk:
+                    break
+                total += len(chunk)
+                if total > max_bytes:
+                    raise ExternalEngineOutputError(
+                        f"native artifact exceeds the {max_bytes}-byte import limit: "
+                        f"{resolved}"
+                    )
+                digest.update(chunk)
+                if chunks is not None:
+                    chunks.append(chunk)
+            after = os.fstat(handle.fileno())
+        current = os.stat(resolved, follow_symlinks=False)
+    except ExternalEngineOutputError:
+        raise
+    except OSError as exc:
+        raise ExternalEngineOutputError(
+            f"native artifact could not be read safely: {resolved}"
+        ) from exc
+
+    identity = (before.st_dev, before.st_ino)
+    stable = (
+        identity == (after.st_dev, after.st_ino)
+        == (current.st_dev, current.st_ino)
+        and before.st_size == after.st_size == current.st_size == total
+        and before.st_mtime_ns == after.st_mtime_ns == current.st_mtime_ns
+    )
+    if not stable:
+        raise ExternalEngineOutputError(
+            f"native artifact changed while it was being read: {resolved}"
+        )
+    return (
+        resolved,
+        b"".join(chunks) if chunks is not None else None,
+        digest.hexdigest(),
+        total,
+    )
 
 
 def describe_artifact(
@@ -180,26 +339,13 @@ def describe_artifact(
 ) -> NativeArtifactFile:
     """Bound and stream-hash an already-validated, non-empty artifact."""
 
-    if not isinstance(max_bytes, int) or isinstance(max_bytes, bool) or max_bytes < 1:
-        raise ValueError("max_bytes must be a positive integer")
-    resolved = path.resolve(strict=True)
-    if not resolved.is_file():
-        raise ExternalEngineOutputError(f"native artifact is not a file: {resolved}")
-    size = resolved.stat().st_size
-    if size < 1:
-        raise ExternalEngineOutputError(f"native artifact is empty: {resolved}")
-    if size > max_bytes:
-        raise ExternalEngineOutputError(
-            f"native artifact exceeds the {max_bytes}-byte import limit: {resolved}"
-        )
-    digest = hashlib.sha256()
-    with resolved.open("rb") as handle:
-        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
-            digest.update(chunk)
+    resolved, _, digest, size = _read_stable_artifact(
+        path, max_bytes=max_bytes, collect=False
+    )
     return NativeArtifactFile(
         role=role,
         path=str(resolved),
-        sha256=digest.hexdigest(),
+        sha256=digest,
         bytes=size,
         records=records,
     )
@@ -212,19 +358,10 @@ def read_utf8_artifact(
 ) -> tuple[Path, bytes, str]:
     """Read one bounded UTF-8 artifact and reject empty/oversized input."""
 
-    if not isinstance(max_bytes, int) or max_bytes < 1:
-        raise ValueError("max_bytes must be a positive integer")
-    resolved = path.resolve(strict=True)
-    if not resolved.is_file():
-        raise ExternalEngineOutputError(f"native artifact is not a file: {resolved}")
-    size = resolved.stat().st_size
-    if size < 1:
-        raise ExternalEngineOutputError(f"native artifact is empty: {resolved}")
-    if size > max_bytes:
-        raise ExternalEngineOutputError(
-            f"native artifact exceeds the {max_bytes}-byte import limit: {resolved}"
-        )
-    data = resolved.read_bytes()
+    resolved, data, _, _ = _read_stable_artifact(
+        path, max_bytes=max_bytes, collect=True
+    )
+    assert data is not None
     try:
         text = data.decode("utf-8")
     except UnicodeDecodeError as exc:
@@ -246,19 +383,11 @@ def read_binary_artifact(
     but must never deserialize untrusted pickle content.
     """
 
-    if not isinstance(max_bytes, int) or max_bytes < 1:
-        raise ValueError("max_bytes must be a positive integer")
-    resolved = path.resolve(strict=True)
-    if not resolved.is_file():
-        raise ExternalEngineOutputError(f"native artifact is not a file: {resolved}")
-    size = resolved.stat().st_size
-    if size < 1:
-        raise ExternalEngineOutputError(f"native artifact is empty: {resolved}")
-    if size > max_bytes:
-        raise ExternalEngineOutputError(
-            f"native artifact exceeds the {max_bytes}-byte import limit: {resolved}"
-        )
-    return resolved, resolved.read_bytes()
+    resolved, data, _, _ = _read_stable_artifact(
+        path, max_bytes=max_bytes, collect=True
+    )
+    assert data is not None
+    return resolved, data
 
 
 def require_expected_sha256(data: bytes, expected: str | None, *, role: str) -> str:
@@ -280,6 +409,8 @@ def require_expected_sha256(data: bytes, expected: str | None, *, role: str) -> 
 
 __all__ = [
     "DEFAULT_MAX_ARTIFACT_BYTES",
+    "DEFAULT_MAX_RUN_ARTIFACT_BYTES",
+    "DEFAULT_MAX_RUN_ARTIFACT_FILES",
     "NATIVE_RUN_SCHEMA",
     "NativeArtifactFile",
     "NativeEngineCase",

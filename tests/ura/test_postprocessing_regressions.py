@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import csv
 from pathlib import Path
 
 import pytest
@@ -16,13 +17,22 @@ from experiments.human_audit import (
     _joined_artifacts,
     analyse,
     load_labels,
+    prepare_sample,
 )
+from experiments.confirmatory_analysis import execute_plan
 from experiments.kappa import load_trail_facets, main as kappa_main
 from experiments.judge_sensitivity import (
     analyse as analyse_sensitivity,
     main as sensitivity_main,
 )
-from experiments.paired_compare import compare, main as paired_main
+from experiments.pilot_analysis import generate_pilot
+from experiments.paired_compare import (
+    PairedUnit,
+    _metric_result,
+    compare,
+    compare_adaptivity,
+    main as paired_main,
+)
 from experiments.transfer_matrix import (
     CODE_VERSION,
     TransferRecord,
@@ -31,6 +41,7 @@ from experiments.transfer_matrix import (
     load_facets,
     main as transfer_main,
 )
+from ura.metrics import required_clusters_for_power, required_clusters_for_proportion_precision
 
 
 def _record(
@@ -121,6 +132,120 @@ def test_transfer_missing_denominator_is_null_not_zero() -> None:
     assert cell["reason"] == "no_transferable_harmful_source_successes"
 
 
+def test_transfer_equal_weights_prompt_intent_clusters() -> None:
+    records: dict[str, dict[str, TransferRecord]] = {"A": {}, "B": {}}
+    for index, (cluster, target_label) in enumerate([
+        ("repeated", "violation"),
+        ("repeated", "violation"),
+        ("repeated", "violation"),
+        ("single", "refusal"),
+    ]):
+        key = f"k-{index}"
+        for model, label in (("A", "violation"), ("B", target_label)):
+            records[model][key] = TransferRecord(
+                model=model, run_id=f"run-{model}", transfer_key=key,
+                attack_fingerprint=f"fp-{index}", datapoint_id=f"dp-{index}",
+                label=label, expected_behavior="refuse", transferable=True,
+                source_file="fixture", source_cluster_id=cluster,
+            )
+    cell = build_matrix(
+        records, n_resamples=50, minimum_unique_clusters=2,
+        smallest_effect=0.5, pilot_cluster_sd=0.1,
+    )["cells"]["A"]["B"]
+    assert cell["value"] == 0.5  # not row-weighted 3/4
+    assert cell["n_matched_clusters"] == 2
+    assert cell["support_gate_passed"] is True
+
+
+def test_paired_compare_equal_weights_clusters_with_unequal_seed_counts() -> None:
+    left: dict[tuple[str, int], PairedUnit] = {}
+    right: dict[tuple[str, int], PairedUnit] = {}
+    for index, (cluster, effect) in enumerate([
+        ("many", 1.0), ("many", 1.0), ("many", 1.0), ("one", 0.0),
+    ]):
+        key = (f"dp-{index}", index)
+        common = dict(
+            datapoint_id=key[0], source_cluster_id=cluster, seed=key[1],
+            population="harmful_expected_refusal", metric="ASR", source="fixture",
+            source_policy_id="unversioned", source_policy_version="unversioned",
+            source_policy_sha256="unversioned",
+            risk_category="cybersec", modality="text", n_turns=1,
+            attack_fingerprint=f"fp-{index}", transfer_key=f"tk-{index}",
+            sampling_controls=(),
+        )
+        left[key] = PairedUnit(value=effect, **common)
+        right[key] = PairedUnit(value=0.0, **common)
+    result = _metric_result(
+        "ASR", left, right, mode="static", n_resamples=50, seed=7,
+    )
+    assert result["effect_left_minus_right"] == 0.5  # not flattened 3/4
+    assert result["left_value"] == 0.5
+    assert result["n_clusters"] == 2
+    assert [row["n_paired_units"] for row in result["cluster_summaries"]] == [3, 1]
+
+
+def test_policy_conditioned_metric_does_not_pool_distinct_source_policies() -> None:
+    left: dict[tuple[str, int], PairedUnit] = {}
+    right: dict[tuple[str, int], PairedUnit] = {}
+    for index, (policy, value) in enumerate((("p1", 1.0), ("p2", 0.0))):
+        key = (f"dp-{index}", 0)
+        common = dict(
+            datapoint_id=key[0], source_cluster_id=f"c-{index}", seed=0,
+            population="harmful_expected_refusal", metric="ASR", source="mmsafety",
+            source_policy_id=policy, source_policy_version="v1",
+            source_policy_sha256=hashlib.sha256(policy.encode()).hexdigest(),
+            risk_category="jailbreak", modality="image_text", n_turns=1,
+            attack_fingerprint=f"fp-{index}", transfer_key=f"tk-{index}",
+            sampling_controls=(),
+        )
+        left[key] = PairedUnit(value=value, **common)
+        right[key] = PairedUnit(value=0.0, **common)
+    pooled = _metric_result("ASR", left, right, mode="static", n_resamples=20, seed=0)
+    policy_one = _metric_result(
+        "ASR", left, right, mode="static", n_resamples=20, seed=0,
+        source_policy_id="p1", source_policy_version="v1",
+    )
+    policy_two = _metric_result(
+        "ASR", left, right, mode="static", n_resamples=20, seed=0,
+        source_policy_id="p2", source_policy_version="v1",
+    )
+    assert pooled["effect_left_minus_right"] == 0.5
+    assert policy_one["effect_left_minus_right"] == 1.0
+    assert policy_two["effect_left_minus_right"] == 0.0
+    assert policy_one["source_policy_id"] == "p1"
+
+
+def test_category_pilot_binds_exact_risk_modality_and_conservative_prevalence(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    report = {
+        "facets": {"fixture": {
+            "left": {"run_id": "pilot-left"},
+            "right": {"run_id": "pilot-right"},
+            "metrics": {},
+            "category_metrics": {"policy=p1@v1::cybersec::image_text": {
+                "status": "estimated", "cluster_difference_sd": 0.25,
+                "cluster_summaries": [
+                    {"source_cluster_id": "c1", "left_mean": 1.0, "right_mean": 0.0},
+                    {"source_cluster_id": "c2", "left_mean": 0.0, "right_mean": 0.0},
+                ],
+            }},
+        }},
+        "analysis_source": {"sha256": "0" * 64},
+    }
+    monkeypatch.setattr("experiments.pilot_analysis.compare", lambda *args, **kwargs: report)
+    artifact = generate_pilot(
+        tmp_path, left_model="A", right_model="B", corpus="fixture",
+        risk_category="cybersec", modality="image_text",
+        source_policy_id="p1", source_policy_version="v1",
+        prevalence_source="conservative",
+    )
+    assert artifact["risk_category"] == "cybersec"
+    assert artifact["modality"] == "image_text"
+    assert artifact["event_prevalence"] == 0.5
+    assert artifact["event_prevalence_provenance"] == "conservative_max_binomial_variance"
+
+
 def _write_completed_cell(
     root: Path,
     stem: str,
@@ -141,6 +266,8 @@ def _write_completed_cell(
     seed: int = 0,
     fingerprint: str = "fp",
     response_conditioned: bool = False,
+    source_policy_id: str = "unversioned",
+    source_policy_version: str = "unversioned",
 ) -> None:
     model_spec = model if model_spec is None else model_spec
     path = root / f"{stem}.jsonl"
@@ -158,6 +285,17 @@ def _write_completed_cell(
             "attack_fingerprint": fingerprint,
             "datapoint_id": datapoint,
             "source": "fixture-source",
+            "source_policy": (
+                None if source_policy_id == "unversioned" else {
+                    "policy_id": source_policy_id,
+                    "version": source_policy_version,
+                    "sha256": hashlib.sha256(
+                        f"{source_policy_id}@{source_policy_version}".encode()
+                    ).hexdigest(),
+                }
+            ),
+            "source_policy_id": source_policy_id,
+            "source_policy_version": source_policy_version,
             "attacker": attacker,
             "risk_category": "cybersec",
             "modality": "text",
@@ -1351,6 +1489,9 @@ def _write_human_artifacts(root: Path, *, descriptor_marker: bool = True) -> str
         "risk_category": "cybersec",
         "risk": "cybersec",
         "modality": "text",
+        "source_policy": None,
+        "source_policy_id": "unversioned",
+        "source_policy_version": "unversioned",
         "expected_behavior": "refuse",
     }
     (root / "cell.jsonl").write_text(json.dumps({
@@ -1510,10 +1651,11 @@ def test_human_audit_includes_authoritative_cascade_and_reports_join_audit(
     labels = tmp_path / "labels.csv"
     header = (
         "sample_key,run_id,model,attempt_id,risk_category,modality,"
+        "source_policy_id,source_policy_version,"
         "stratum_population,stratum_selected,selection_probability,"
         "rater_id,label,adjudicated_label\n"
     )
-    common = f"{key},run-1,model-A,attempt-1,cybersec,text,1,1,1.0,"
+    common = f"{key},run-1,model-A,attempt-1,cybersec,text,unversioned,unversioned,1,1,1.0,"
     labels.write_text(
         header + common + "r1,violation,\n" + common + "r2,violation,\n",
         encoding="utf-8",
@@ -1542,10 +1684,11 @@ def test_human_audit_reports_adjudication_rate_when_raters_disagree(
     labels = tmp_path / "labels.csv"
     header = (
         "sample_key,run_id,model,attempt_id,risk_category,modality,"
+        "source_policy_id,source_policy_version,"
         "stratum_population,stratum_selected,selection_probability,"
         "rater_id,label,adjudicated_label\n"
     )
-    common = f"{key},run-1,model-A,attempt-1,cybersec,text,1,1,1.0,"
+    common = f"{key},run-1,model-A,attempt-1,cybersec,text,unversioned,unversioned,1,1,1.0,"
     # Raters disagree; an adjudicated_label breaks the tie on every duplicate row.
     labels.write_text(
         header + common + "r1,violation,violation\n" + common + "r2,safe,violation\n",
@@ -1639,3 +1782,213 @@ def test_human_audit_rejects_partial_or_error_cells(tmp_path: Path) -> None:
     )
     with pytest.raises(ValueError, match="containing failed cells"):
         _joined_artifacts(tmp_path)
+
+
+def test_replay_vs_crescendo_adaptivity_is_executable_and_clustered(
+    tmp_path: Path,
+) -> None:
+    _write_completed_cell(
+        tmp_path, "replay", model="A", run_id="r-replay", key="shared",
+        attacker="replay", response_conditioned=False,
+    )
+    _write_completed_cell(
+        tmp_path, "crescendo", model="A", run_id="r-crescendo", key="adaptive",
+        attacker="crescendo", response_conditioned=True,
+    )
+    result = compare_adaptivity(
+        tmp_path, model="A", corpus="fixture", n_resamples=20,
+        assume_exchangeable=True, smallest_effect=0.5, pilot_cluster_sd=0.1,
+    )
+    facet = result["facets"]["fixture"]
+    assert facet["comparison_type"] == "within_target_adaptivity_endpoint"
+    assert facet["unit_mode"] == "static_vs_live_adaptivity"
+    assert facet["metrics"]["ASR"]["n_clusters"] == 1
+    assert (
+        "policy=unversioned@unversioned::cybersec::text"
+        in facet["category_metrics"]
+    )
+
+
+def test_paired_bootstrap_confidence_level_follows_cli_alpha(tmp_path: Path) -> None:
+    _write_completed_cell(tmp_path, "a", model="A", run_id="r-a", key="shared")
+    _write_completed_cell(tmp_path, "b", model="B", run_id="r-b", key="shared")
+    result = compare(
+        tmp_path, left_model="A", right_model="B", corpus="fixture",
+        n_resamples=20, alpha=0.2,
+    )
+    bootstrap = result["facets"]["fixture"]["metrics"]["ASR"]["bootstrap"]
+    assert bootstrap["alpha"] == 0.2
+    assert bootstrap["confidence_level"] == 0.8
+
+
+def test_confirmatory_driver_binds_plan_pilot_and_complete_family(
+    tmp_path: Path,
+) -> None:
+    _write_completed_cell(tmp_path, "a", model="A", run_id="r-a", key="shared")
+    _write_completed_cell(tmp_path, "b", model="B", run_id="r-b", key="shared")
+    pilot = tmp_path / "pilot.json"
+    pilot.write_text(json.dumps({
+        "schema_version": "ura-disjoint-pilot/1.0",
+        "disjoint_from_main": True,
+        "source_run_ids": ["pilot-run"],
+        "cluster_ids": ["pilot-c1", "pilot-c2"],
+        "cluster_population_sha256": hashlib.sha256(
+            json.dumps(["pilot-c1", "pilot-c2"], separators=(",", ":")).encode()
+        ).hexdigest(),
+        "cluster_sd": 0.1,
+        "event_prevalence": 0.5,
+        "n_unique_clusters": 2,
+        "metric": "ASR",
+        "corpus": "fixture",
+        "source_policy_id": "unversioned",
+        "source_policy_version": "unversioned",
+        "selectors": {
+            "left": {"model_spec": "A", "defense": "none", "attacker": "replay"},
+            "right": {"model_spec": "B", "defense": "none", "attacker": "replay"},
+        },
+    }), encoding="utf-8")
+    pilot_digest = hashlib.sha256(pilot.read_bytes()).hexdigest()
+    sesoi = 0.5
+    required = required_clusters_for_power(sesoi, 0.1)
+    plan = tmp_path / "plan.json"
+    hypothesis = "model-main::fixture::ASR"
+    plan.write_text(json.dumps({
+        "schema_version": "ura-confirmatory-plan/1.0",
+        "plan_id": "fixture-plan",
+        "evaluation_policy": {
+            "policy_id": "fixture-policy", "version": "1",
+            "sha256": hashlib.sha256(b"fixture-policy").hexdigest(),
+        },
+        "alpha": 0.05,
+        "target_power": 0.8,
+        "human_audit": {
+            "pilot": {"artifact": str(pilot), "sha256": pilot_digest},
+            "precision_half_width": 0.2,
+            "required_unique_clusters": required_clusters_for_proportion_precision(
+                0.5, 0.2
+            ),
+            "minimum_independent_raters": 2,
+        },
+        "bootstrap_resamples": 20,
+        "permutations": 20,
+        "seed": 0,
+        "families": [{
+            "family_id": "model-family",
+            "hypotheses": [hypothesis],
+            "contrasts": [{
+                "contrast_id": "model-main", "type": "model",
+                "results": str(tmp_path), "corpora": ["fixture"],
+                "left": {"model_spec": "A", "defense": "none", "attacker": "replay"},
+                "right": {"model_spec": "B", "defense": "none", "attacker": "replay"},
+                "assume_exchangeable": True,
+                "hypotheses": ["fixture::ASR"],
+                "hypothesis_designs": {
+                    "fixture::ASR": {
+                        "smallest_effect": sesoi,
+                        "pilot": {"artifact": str(pilot), "sha256": pilot_digest},
+                        "required_unique_clusters": required,
+                    },
+                },
+            }],
+        }],
+    }), encoding="utf-8")
+    result = execute_plan(plan, preliminary=True)
+    assert result["plan_artifact"]["sha256"] == hashlib.sha256(plan.read_bytes()).hexdigest()
+    hypothesis_result = result["families"]["model-family"]["hypotheses"][hypothesis]
+    assert hypothesis_result["family_size"] == 1
+    assert result["contrasts"]["model-main"]["preregistered"][
+        "hypothesis_designs"
+    ]["fixture::ASR"]["required_unique_clusters"] == required
+    assert result["analysis_stage"] == "preliminary"
+    assert result["publishable_real_run"] is False
+    human = tmp_path / "human_audit.json"
+    human_required = result["human_audit_plan"]["required_unique_clusters"]
+    sensitivity_requirement = result["required_human_sensitivity"][0]
+    sensitivity_cell = sensitivity_requirement["analysis_cell_id"]
+    sensitivity_pair = f"{sensitivity_cell}::A|B"
+    human.write_text(json.dumps({
+        "schema_version": "ura-human-audit/1.0",
+        "publishable_real_run": True,
+        "confirmatory_plan_artifact": result["plan_artifact"],
+        "frozen_human_audit_design": {
+            "required_unique_clusters": human_required,
+            "minimum_independent_raters": 2,
+        },
+        "raters": ["r1", "r2"],
+        "audit": {"sampled_unique_prompt_intent_clusters": human_required},
+        "primary_effect_sensitivity": {
+            "uncertainty": {"alpha": 0.05, "n_resamples": 20, "seed": 0},
+            "model_endpoint_rates": {
+                "human_consensus": {sensitivity_cell: {
+                    "A": {"bootstrap_ci": {}}, "B": {"bootstrap_ci": {}},
+                }},
+            },
+            "paired_model_effects": {
+                sensitivity_pair: {
+                    "human_consensus_effect_bootstrap_ci": {},
+                    "human_minus_automated_effect_bootstrap_ci": {},
+                },
+            },
+        },
+    }), encoding="utf-8")
+    human_digest = hashlib.sha256(human.read_bytes()).hexdigest()
+    final = execute_plan(
+        plan, human_audit_path=human, human_audit_sha256=human_digest,
+    )
+    assert final["analysis_stage"] == "final_human_bound"
+    assert final["human_audit_artifact"]["sha256"] == human_digest
+    assert final["publishable_real_run"] is True
+    missing = json.loads(human.read_text(encoding="utf-8"))
+    del missing["primary_effect_sensitivity"]["model_endpoint_rates"][
+        "human_consensus"
+    ][sensitivity_cell]["B"]
+    human.write_text(json.dumps(missing), encoding="utf-8")
+    with pytest.raises(ValueError, match="does not cover planned model cell"):
+        execute_plan(
+            plan, human_audit_path=human,
+            human_audit_sha256=hashlib.sha256(human.read_bytes()).hexdigest(),
+        )
+
+
+def test_human_audit_samples_whole_clusters_and_rates_all_dimensions(
+    tmp_path: Path,
+) -> None:
+    _write_completed_cell(tmp_path, "a", model="A", run_id="r-a", key="shared")
+    _write_completed_cell(tmp_path, "b", model="B", run_id="r-b", key="shared")
+    sample = tmp_path / "sample.csv"
+    assert prepare_sample(tmp_path, sample, 1) == 0
+    with sample.open(newline="", encoding="utf-8-sig") as handle:
+        rows = list(csv.DictReader(handle))
+    assert len(rows) == 2  # both model rows in the selected prompt/intent cluster
+    assert len({row["cluster_key"] for row in rows}) == 1
+    rated: list[dict[str, str]] = []
+    for row in rows:
+        for rater in ("r1", "r2"):
+            current = dict(row)
+            current.update({
+                "rater_id": rater,
+                "label": "violation",
+                "refusal_label": "not_refusal",
+                "harmfulness_label": "harmful",
+                "convincingness_label": "convincing",
+                "specificity_label": "specific_actionable",
+                "confidence": "5",
+            })
+            rated.append(current)
+    labels = tmp_path / "labels.csv"
+    with labels.open("w", newline="", encoding="utf-8-sig") as handle:
+        writer = csv.DictWriter(handle, fieldnames=list(rated[0]))
+        writer.writeheader()
+        writer.writerows(rated)
+    assert analyse(tmp_path, labels, allow_single_rater=False) == 0
+    report = json.loads((tmp_path / "human_audit.json").read_text(encoding="utf-8"))
+    assert report["publishable_real_run"] is False  # exploratory: no frozen plan binding
+    assert report["audit"]["whole_cluster_sample_verified"] is True
+    assert report["separate_rating_dimensions"]["specificity_label"][
+        "complete_consensus"
+    ] is True
+    pairs = report["primary_effect_sensitivity"]["paired_model_effects"]
+    assert any(
+        key.endswith("::A|B") and "policy=unversioned@unversioned" in key
+        for key in pairs
+    )

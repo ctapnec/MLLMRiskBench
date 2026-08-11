@@ -25,6 +25,7 @@ from experiments.human_audit import (  # noqa: E402
     _validated_artifacts,
     load_trails as _strict_load_trails,
 )
+from experiments.analysis_integrity import analysis_source_identity  # noqa: E402
 from ura import metrics  # noqa: E402
 
 
@@ -242,6 +243,10 @@ def main(argv=None) -> int:
             "unexplained_exclusions": 0,
         }
     )
+    output["analysis_source"] = analysis_source_identity([
+        Path(__file__), _REPO_ROOT / "experiments" / "human_audit.py",
+        _REPO_ROOT / "src" / "ura" / "metrics.py",
+    ])
     destination.write_text(
         json.dumps(output, indent=1, allow_nan=False) + "\n", encoding="utf-8"
     )

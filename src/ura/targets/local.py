@@ -1,10 +1,10 @@
 """Local open-weight targets: vLLM and Ollama backends (thesis III.2.2).
 
 These wrap self-hosted inference so open-weight models can be evaluated on the
-same footing as hosted APIs. Heavy dependencies (``vllm``, ``ollama``) are
-imported lazily inside the call path, so this module imports cleanly on a box
-with only pydantic + the stdlib. The Ollama target additionally ships a
-dependency-free HTTP fallback against ``localhost:11434`` using ``urllib``.
+same footing as hosted APIs. Heavy vLLM dependencies are imported lazily inside
+the call path. Ollama uses a dependency-free, size-bounded HTTP transport against
+``localhost:11434``; avoiding the convenience SDK is intentional because its
+eager response decoding cannot enforce the harness's byte ceiling.
 
 Factories are registered in the shared ``REGISTRY`` under ``"vllm"`` and
 ``"ollama"`` so the orchestrator can address either backend by id.
@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 import re
 import time
 import urllib.error
@@ -33,6 +34,50 @@ _ROLE_MAP = {
 
 _IMMUTABLE_REVISION = re.compile(r"[0-9a-f]{40,64}")
 _SHA256 = re.compile(r"[0-9a-f]{64}")
+_MAX_OLLAMA_RESPONSE_BYTES = 4 * 1024 * 1024
+_MAX_OLLAMA_JSON_NODES = 250_000
+_MAX_OLLAMA_JSON_DEPTH = 64
+
+
+def _strict_bounded_json_bytes(data: bytes) -> Any:
+    """Decode one standards-conforming, structurally bounded JSON value."""
+
+    def object_pairs(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+        value: dict[str, Any] = {}
+        for key, child in pairs:
+            if key in value:
+                raise ValueError(f"duplicate JSON object key {key!r}")
+            value[key] = child
+        return value
+
+    def parse_float(number: str) -> float:
+        value = float(number)
+        if not math.isfinite(value):
+            raise ValueError("JSON numbers must be finite")
+        return value
+
+    value = json.loads(
+        data.decode("utf-8"),
+        object_pairs_hook=object_pairs,
+        parse_float=parse_float,
+        parse_constant=lambda constant: (_ for _ in ()).throw(
+            ValueError(f"invalid JSON constant {constant}")
+        ),
+    )
+    nodes = 0
+    stack: list[tuple[Any, int]] = [(value, 0)]
+    while stack:
+        current, depth = stack.pop()
+        nodes += 1
+        if nodes > _MAX_OLLAMA_JSON_NODES:
+            raise ValueError("JSON node count exceeds the configured limit")
+        if depth > _MAX_OLLAMA_JSON_DEPTH:
+            raise ValueError("JSON nesting exceeds the configured limit")
+        if isinstance(current, dict):
+            stack.extend((child, depth + 1) for child in current.values())
+        elif isinstance(current, list):
+            stack.extend((child, depth + 1) for child in current)
+    return value
 
 
 def _is_explicit_local_path(model: str) -> bool:
@@ -149,6 +194,55 @@ def _dialog_to_messages(
     return messages
 
 
+def _dialog_to_ollama_messages(
+    dialog: list[DialogTurn],
+    *,
+    multimodal: bool = False,
+    media_roots: Optional[Iterable[str | Path]] = None,
+) -> list[dict[str, Any]]:
+    """Render Ollama ``/api/chat`` messages with bounded base64 images."""
+
+    messages: list[dict[str, Any]] = []
+    for turn in dialog:
+        role = _ROLE_MAP.get(turn.role, "user")
+        parts: list[str] = []
+        if turn.content:
+            parts.append(turn.content)
+        if turn.tool_call is not None:
+            parts.append(
+                f"[tool_call {turn.tool_call.name}"
+                f"({json.dumps(turn.tool_call.arguments)})]"
+            )
+        if turn.tool_result is not None:
+            parts.append(f"[tool_result] {turn.tool_result}")
+        message: dict[str, Any] = {"role": role, "content": "\n".join(parts)}
+        if turn.media and not multimodal:
+            raise ValueError("text-only Ollama target cannot render physical media")
+        unsupported = [media.modality for media in turn.media if media.modality != "image"]
+        if unsupported:
+            raise ValueError(
+                "Ollama target cannot encode media modalities: "
+                + ",".join(sorted(set(unsupported)))
+            )
+        if turn.media:
+            from .api import _encode_media
+
+            images: list[str] = []
+            for media in turn.media:
+                _mime, encoded, remote_url = _encode_media(
+                    media, allowed_roots=media_roots
+                )
+                if remote_url is not None:
+                    raise ValueError(
+                        "Ollama image input requires content-addressed local or "
+                        "inline bytes; remote image URLs are not admitted"
+                    )
+                images.append(encoded)
+            message["images"] = images
+        messages.append(message)
+    return messages
+
+
 class VLLMTarget(BaseTarget):
     """A model served by the in-process vLLM engine (thesis III.2.2).
 
@@ -187,11 +281,19 @@ class VLLMTarget(BaseTarget):
             f"sha256:{self.model_digest}" if self.model_digest else "unresolved"
         )
         self.name = f"vllm:{model}@{identity}"
-        # A vision-language model (e.g. Qwen3-VL) declares ("text", "image") so image
-        # datapoints are forwarded; a text-only local model stays ("text",) and image
-        # corpora are run text-only (documented; excluded from m-ASR in the protocol).
+        # A vision-language model declares ("text", "image") so image datapoints
+        # are forwarded. A text-only target remains ("text",); scored image cells
+        # are rejected rather than flattened or relabelled as text-only.
         self.capabilities_declared = modality_support is not None
         self.modality_support = tuple(modality_support or ("text",))
+        self.modality_combinations = tuple(
+            [("text",)]
+            + (
+                [("text", "image")]
+                if "image" in self.modality_support
+                else []
+            )
+        )
         from .api import _media_roots
         self.media_roots = _media_roots(media_roots)
         self.tensor_parallel_size = tensor_parallel_size
@@ -372,9 +474,9 @@ class VLLMTarget(BaseTarget):
 class OllamaTarget(BaseTarget):
     """A model served by a local Ollama daemon (thesis III.2.2).
 
-    Uses the ``ollama`` Python client when installed; otherwise falls back to a
-    dependency-free HTTP call against the daemon's ``/api/chat`` endpoint via
-    ``urllib``, so the common case works with only the stdlib.
+    Uses a dependency-free HTTP call against the daemon's ``/api/chat`` endpoint
+    via ``urllib`` so both model-inventory and completion bodies are bounded
+    before JSON decoding, regardless of whether the optional SDK is installed.
     """
 
     name = "ollama"
@@ -389,6 +491,8 @@ class OllamaTarget(BaseTarget):
         temperature: float = 0.0,
         num_predict: int = 512,
         timeout: float = 300.0,
+        modality_support: tuple[str, ...] = ("text",),
+        media_roots: Optional[Iterable[str | Path]] = None,
         **options: Any,
     ) -> None:
         self.model = model
@@ -401,6 +505,14 @@ class OllamaTarget(BaseTarget):
         self.temperature = temperature
         self.num_predict = num_predict
         self.timeout = timeout
+        self.modality_support = tuple(modality_support)
+        self.modality_combinations = tuple(
+            [("text",)]
+            + ([("text", "image")] if "image" in self.modality_support else [])
+        )
+        from .api import _media_roots
+
+        self.media_roots = _media_roots(media_roots)
         self.options = options
         self._verified_digest: Optional[str] = None
 
@@ -410,6 +522,15 @@ class OllamaTarget(BaseTarget):
         ):
             raise ValueError(
                 "OllamaTarget measured runs require an explicit 64-hex model_digest"
+            )
+        if (
+            not self.modality_support
+            or "text" not in self.modality_support
+            or set(self.modality_support) - {"text", "image"}
+            or len(set(self.modality_support)) != len(self.modality_support)
+        ):
+            raise ValueError(
+                "OllamaTarget modality_support must be a unique text[/image] declaration"
             )
 
     @staticmethod
@@ -423,33 +544,10 @@ class OllamaTarget(BaseTarget):
         if self._verified_digest is not None:
             return self._verified_digest
         self.validate_research_identity()
-        try:
-            import ollama  # type: ignore
-        except ImportError:
-            request = urllib.request.Request(
-                f"{self.host}/api/tags", method="GET"
-            )
-            try:
-                with urllib.request.urlopen(request, timeout=self.timeout) as response:
-                    if response.headers.get("Content-Length") and int(
-                        response.headers["Content-Length"]
-                    ) > 4 * 1024 * 1024:
-                        raise LocalTargetOutputError(
-                            "Ollama model inventory exceeds the 4 MiB limit"
-                        )
-                    body = response.read(4 * 1024 * 1024 + 1)
-            except urllib.error.URLError as exc:  # pragma: no cover - network path
-                raise RuntimeError(
-                    f"could not query Ollama model identity at {self.host}"
-                ) from exc
-            if len(body) > 4 * 1024 * 1024:
-                raise LocalTargetOutputError(
-                    "Ollama model inventory exceeds the 4 MiB limit"
-                )
-            inventory = json.loads(body.decode("utf-8"))
-        else:
-            result = ollama.Client(host=self.host).list()
-            inventory = result.model_dump() if hasattr(result, "model_dump") else dict(result)
+        request = urllib.request.Request(f"{self.host}/api/tags", method="GET")
+        inventory = self._bounded_json_request(
+            request, purpose="model inventory"
+        )
         if not isinstance(inventory, dict) or not isinstance(inventory.get("models"), list):
             raise LocalTargetOutputError("Ollama returned an invalid model inventory")
         matches = [
@@ -483,7 +581,11 @@ class OllamaTarget(BaseTarget):
         self, dialog: list[DialogTurn], *, seed: int | None = None
     ) -> Response:
         verified_digest = self._verify_daemon_identity()
-        messages = _dialog_to_messages(dialog)
+        messages = _dialog_to_ollama_messages(
+            dialog,
+            multimodal="image" in self.modality_support,
+            media_roots=self.media_roots,
+        )
         t0 = time.perf_counter()
         data = self._chat(messages, seed=seed)
         latency_ms = (time.perf_counter() - t0) * 1000.0
@@ -543,23 +645,8 @@ class OllamaTarget(BaseTarget):
     def _chat(
         self, messages: list[dict[str, Any]], *, seed: int | None = None
     ) -> dict[str, Any]:
-        """Send a chat request via the ollama client, or HTTP fallback."""
-        try:
-            import ollama  # type: ignore
-        except ImportError:
-            return self._chat_http(messages, seed=seed)
-
-        client = ollama.Client(host=self.host)
-        result = client.chat(
-            model=self.model,
-            messages=messages,
-            options=self._sampling_options(seed),
-            stream=False,
-        )
-        # Newer clients return a pydantic-like object; normalize to a dict.
-        if hasattr(result, "model_dump"):
-            return result.model_dump()  # type: ignore[no-any-return]
-        return dict(result)
+        """Send a timeout- and byte-bounded chat request."""
+        return self._chat_http(messages, seed=seed)
 
     def _chat_http(
         self, messages: list[dict[str, Any]], *, seed: int | None = None
@@ -579,25 +666,48 @@ class OllamaTarget(BaseTarget):
             headers={"Content-Type": "application/json"},
             method="POST",
         )
-        try:
-            with urllib.request.urlopen(req, timeout=self.timeout) as resp:
-                if resp.headers.get("Content-Length") and int(
-                    resp.headers["Content-Length"]
-                ) > 4 * 1024 * 1024:
-                    raise RuntimeError("Ollama response exceeds the 4 MiB cap")
-                raw = resp.read(4 * 1024 * 1024 + 1)
-                if len(raw) > 4 * 1024 * 1024:
-                    raise RuntimeError("Ollama response exceeds the 4 MiB cap")
-                body = raw.decode("utf-8")
-        except urllib.error.URLError as exc:  # pragma: no cover - network path
-            raise RuntimeError(
-                f"could not reach Ollama daemon at {self.host}; "
-                "start it with `ollama serve` or install the ollama client"
-            ) from exc
-        value = json.loads(body)
+        value = self._bounded_json_request(req, purpose="chat response")
         if not isinstance(value, dict):
             raise LocalTargetOutputError("Ollama HTTP response is not a JSON object")
         return value
+
+    def _bounded_json_request(
+        self, request: urllib.request.Request, *, purpose: str
+    ) -> Any:
+        """Read one Ollama JSON body with a hard pre-parse byte ceiling."""
+
+        try:
+            with urllib.request.urlopen(request, timeout=self.timeout) as response:
+                declared = response.headers.get("Content-Length")
+                if declared is not None:
+                    try:
+                        declared_size = int(declared)
+                    except (TypeError, ValueError) as exc:
+                        raise LocalTargetOutputError(
+                            f"Ollama {purpose} has invalid Content-Length"
+                        ) from exc
+                    if declared_size < 0 or declared_size > _MAX_OLLAMA_RESPONSE_BYTES:
+                        raise LocalTargetOutputError(
+                            f"Ollama {purpose} exceeds the 4 MiB limit"
+                        )
+                body = response.read(_MAX_OLLAMA_RESPONSE_BYTES + 1)
+        except LocalTargetOutputError:
+            raise
+        except (TimeoutError, urllib.error.URLError, OSError) as exc:
+            raise RuntimeError(
+                f"could not obtain Ollama {purpose} from {self.host} within "
+                f"the configured {self.timeout:g}s timeout"
+            ) from exc
+        if len(body) > _MAX_OLLAMA_RESPONSE_BYTES:
+            raise LocalTargetOutputError(
+                f"Ollama {purpose} exceeds the 4 MiB limit"
+            )
+        try:
+            return _strict_bounded_json_bytes(body)
+        except (UnicodeDecodeError, json.JSONDecodeError, RecursionError, ValueError) as exc:
+            raise LocalTargetOutputError(
+                f"Ollama {purpose} is not bounded standards-conforming JSON"
+            ) from exc
 
     @staticmethod
     def _token_counts(data: dict[str, Any]) -> dict[str, int]:

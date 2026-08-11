@@ -224,6 +224,12 @@ class LLMJudge(BaseJudge):
                     ),
                     "latency_ms": verdict.latency_ms,
                     "tokens": verdict.tokens,
+                    "transport_attempt_count": verdict.raw.get(
+                        "transport_attempt_count", 0
+                    ),
+                    "transport_attempts": verdict.raw.get(
+                        "transport_attempts", []
+                    ),
                 },
             },
         )
@@ -275,6 +281,8 @@ class LLMJudge(BaseJudge):
                     "model_digest": None,
                     "latency_ms": None,
                     "tokens": None,
+                    "transport_attempt_count": 0,
+                    "transport_attempts": [],
                 },
             },
         )

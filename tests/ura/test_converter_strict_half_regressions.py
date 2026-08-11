@@ -79,18 +79,24 @@ def test_mmsafety_resolves_images_under_official_data_imgs(tmp_path: Path):
     root = tmp_path
     _write_json(
         root / "data" / "processed_questions" / "01-Illegal_Activity.json",
-        {"1": {"Question": "q", "Rephrased Question": "rq", "Key Phrase": "kp"}},
+        {"1": {
+            "Question": "q", "Rephrased Question": "rq",
+            "Rephrased Question(SD)": "rq sd", "Key Phrase": "kp",
+        }},
     )
-    imgdir = root / "data" / "imgs" / "01-Illegal_Activity" / "SD_TYPO"
-    imgdir.mkdir(parents=True)
-    (imgdir / "1.jpg").write_bytes(b"\xff\xd8\xff\xe0\x00\x10JFIF")
-    points = MMSafetyConverter().parse(root)
-    assert len(points) == 1
-    media_path = Path(points[0].media[0].path)
-    assert media_path.parts[-4:] == (
-        "imgs", "01-Illegal_Activity", "SD_TYPO", "1.jpg",
-    )
-    assert media_path.is_file()
+    for variant in ("SD", "SD_TYPO", "TYPO"):
+        imgdir = root / "data" / "imgs" / "01-Illegal_Activity" / variant
+        imgdir.mkdir(parents=True)
+        (imgdir / "1.jpg").write_bytes(b"\xff\xd8\xff\xe0\x00\x10JFIF")
+    points = MMSafetyConverter(require_complete_release=False).parse(root)
+    assert len(points) == 3
+    assert {point.meta["official_variant"] for point in points} == {
+        "SD", "SD_TYPO", "TYPO",
+    }
+    for point in points:
+        media_path = Path(point.media[0].path)
+        assert media_path.parts[-4] == "imgs"
+        assert media_path.is_file()
 
 
 def test_empty_bipia_jsonl_fails_closed(tmp_path: Path):
@@ -199,18 +205,18 @@ def test_mmsafety_requires_object_rows_and_non_empty_questions(tmp_path: Path):
     qdir = tmp_path / "data" / "processed_questions"
     _write_json(qdir / "01-Illegal_Activity.json", {"1": "not-an-object"})
     with pytest.raises(CorpusFormatError, match="not an object"):
-        MMSafetyConverter().parse(tmp_path)
+        MMSafetyConverter(require_complete_release=False).parse(tmp_path)
 
     _write_json(qdir / "01-Illegal_Activity.json", {"1": {"Question": "  "}})
     with pytest.raises(CorpusFormatError, match="non-empty question"):
-        MMSafetyConverter().parse(tmp_path)
+        MMSafetyConverter(require_complete_release=False).parse(tmp_path)
 
 
 def test_mmsafety_scenario_top_level_must_be_an_object(tmp_path: Path):
     source = tmp_path / "processed_questions"
     _write_json(source / "01-Illegal_Activity.json", [])
     with pytest.raises(CorpusFormatError, match="scenario is not an object"):
-        MMSafetyConverter().parse(source)
+        MMSafetyConverter(require_complete_release=False).parse(source)
 
 
 def test_figstep_requires_the_harmful_image_instruction(tmp_path: Path):

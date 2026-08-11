@@ -685,6 +685,35 @@ def test_agentdojo_fails_closed_on_incomplete_or_unpinned_traces(
         AgentDojoAttacker().import_run(suite_root)
 
 
+def test_agentdojo_enforces_pre_read_file_and_aggregate_caps(
+    tmp_path: Path,
+) -> None:
+    suite_root = _dojo_result(tmp_path)
+    with pytest.raises(ExternalEngineOutputError, match="trace count exceeds"):
+        AgentDojoAttacker().import_run(suite_root, max_traces=1)
+    with pytest.raises(ExternalEngineOutputError, match="aggregate limit"):
+        AgentDojoAttacker().import_run(suite_root, max_total_bytes=1)
+
+
+def test_agentdojo_rejects_symlinks_before_import(tmp_path: Path) -> None:
+    suite_root = _dojo_result(tmp_path)
+    source = (
+        suite_root
+        / "user_task_0"
+        / "important_instructions"
+        / "injection_task_0.json"
+    )
+    link = suite_root / "linked-trace.json"
+    try:
+        link.symlink_to(source)
+    except OSError:
+        pytest.skip("this Windows account cannot create symlinks")
+    with pytest.raises(
+        ExternalEngineOutputError, match="symbolic link or junction"
+    ):
+        AgentDojoAttacker().import_run(suite_root)
+
+
 def test_native_command_builders_use_documented_end_to_end_surfaces(
     tmp_path: Path,
 ) -> None:

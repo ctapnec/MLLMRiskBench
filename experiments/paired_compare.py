@@ -16,9 +16,10 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import math
 import sys
 from collections import Counter, defaultdict
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any
 
@@ -27,6 +28,10 @@ sys.path.insert(0, str(_REPO_ROOT))
 sys.path.insert(0, str(_REPO_ROOT / "src"))
 
 from experiments.human_audit import _validated_artifacts  # noqa: E402
+from experiments.analysis_integrity import (  # noqa: E402
+    analysis_source_identity,
+    source_policy_token,
+)
 from experiments.transfer_matrix import _cohort_payload  # noqa: E402
 from ura.metrics import (  # noqa: E402
     holm_bonferroni,
@@ -44,11 +49,15 @@ _EXPECTED = {"refuse", "safe_answer", "comply_safely"}
 @dataclass(frozen=True)
 class PairedUnit:
     datapoint_id: str
+    source_cluster_id: str
     seed: int
     population: str
     metric: str
     value: float
     source: str
+    source_policy_id: str
+    source_policy_version: str
+    source_policy_sha256: str
     risk_category: str
     modality: str
     n_turns: int
@@ -100,6 +109,14 @@ def _cell_summary(cell: dict[str, Any]) -> dict[str, Any]:
         "seeds": manifest.get("seeds"),
         "budget": (manifest.get("config") or {}).get("budget"),
         "dataset_hashes": manifest.get("dataset_hashes"),
+        "source_policy_inventory": (manifest.get("config") or {}).get(
+            "source_policy_inventory"
+        ),
+        "source_metric_inventory": (manifest.get("config") or {}).get(
+            "source_metric_inventory"
+        ),
+        "partition_plan": run.get("partition_plan"),
+        "partition_assignment": run.get("partition_assignment"),
         "code_version": manifest.get("code_version"),
         "schema_version": manifest.get("schema_version"),
         "started_at": manifest.get("started_at"),
@@ -221,6 +238,7 @@ def _defense_identity_qualification(
 
 def _comparison_payload(
     manifest: dict[str, Any], *, defense_is_contrast: bool,
+    attacker_is_contrast: bool = False,
 ) -> dict[str, Any]:
     payload = _cohort_payload(manifest)
     # Runner's realized-attempt digest includes stamped run/target identity.
@@ -249,33 +267,72 @@ def _comparison_payload(
         if not isinstance(run, dict) or "defense" not in run:
             raise ValueError("comparison manifest lacks defense configuration")
         run.pop("defense")
+    if attacker_is_contrast:
+        run = config.get("run")
+        components = config.get("components")
+        budget = config.get("budget")
+        if not isinstance(run, dict) or "attacker" not in run:
+            raise ValueError("adaptivity comparison manifest lacks run.attacker")
+        run.pop("attacker")
+        # The attack protocol and its query/turn horizon are the prespecified
+        # intervention in this contrast, not cohort incompatibilities.
+        payload.pop("adapters", None)
+        if isinstance(components, dict):
+            components.pop("attacker", None)
+        if isinstance(budget, dict):
+            budget.pop("max_queries", None)
+            budget.pop("max_turns", None)
     return payload
 
 
 def _validate_pair_configuration(
-    left: dict[str, Any], right: dict[str, Any],
+    left: dict[str, Any], right: dict[str, Any], *, comparison_axis: str = "auto",
 ) -> tuple[str, str, str, dict[str, Any] | None]:
     left_run = _run_config(left)
     right_run = _run_config(right)
     model_differs = left_run["model_spec"] != right_run["model_spec"]
     defense_differs = left_run["defense"] != right_run["defense"]
-    if model_differs and defense_differs:
+    attacker_differs = left_run["attacker"] != right_run["attacker"]
+    differing = {
+        name for name, changed in (
+            ("model", model_differs), ("defense", defense_differs),
+            ("attacker", attacker_differs),
+        ) if changed
+    }
+    if comparison_axis != "auto" and comparison_axis not in {"model", "defense", "attacker"}:
+        raise ValueError("comparison_axis must be auto, model, defense, or attacker")
+    if comparison_axis == "auto":
+        if len(differing) != 1:
+            if model_differs and defense_differs:
+                raise ValueError(
+                    "paired arms differ in both model_spec and defense; this is a "
+                    f"confounded contrast (changed={sorted(differing)!r})"
+                )
+            raise ValueError(
+                "paired arms must differ in exactly one of model_spec, defense, or "
+                f"attacker; changed={sorted(differing)!r}"
+            )
+        comparison_axis = next(iter(differing))
+    elif differing != {comparison_axis}:
         raise ValueError(
-            "paired arms differ in both model_spec and defense; this confounded "
-            "contrast is not an eligible target or defense comparison"
+            f"requested {comparison_axis} contrast is confounded or unchanged; "
+            f"changed={sorted(differing)!r}"
         )
-    if not model_differs and not defense_differs:
-        raise ValueError("paired arms have identical model_spec and defense")
-    comparison_type = (
-        "cross_target_endpoint_noncausal" if model_differs
-        else "within_target_defense_intervention"
-    )
+    comparison_type = {
+        "model": "cross_target_endpoint_noncausal",
+        "defense": "within_target_defense_intervention",
+        "attacker": "within_target_adaptivity_endpoint",
+    }[comparison_axis]
     identity_qualification = (
         _defense_identity_qualification(left, right) if defense_differs else None
     )
-    left_payload = _comparison_payload(left["manifest"], defense_is_contrast=defense_differs)
+    left_payload = _comparison_payload(
+        left["manifest"], defense_is_contrast=defense_differs,
+        attacker_is_contrast=attacker_differs,
+    )
     right_payload = _comparison_payload(
-        right["manifest"], defense_is_contrast=defense_differs
+        right["manifest"], defense_is_contrast=defense_differs,
+        attacker_is_contrast=attacker_differs,
     )
     left_signature = _sha256_json(left_payload)
     right_signature = _sha256_json(right_payload)
@@ -397,12 +454,60 @@ def _build_units(
         expected = _require_consistent(rows, "expected_behavior")
         source = _require_consistent(rows, "source")
         risk = _require_consistent(rows, "risk_category")
-        modality = _require_consistent(rows, "modality")
+        declared_modality = _require_consistent(rows, "modality")
+        effective_values = {
+            (row.get("raw") or {}).get("effective_modality") for row in rows
+        }
+        if len(effective_values) != 1:
+            raise ValueError(f"unit {key!r} has inconsistent raw.effective_modality")
+        effective_modality = next(iter(effective_values)) or declared_modality
+        policy_id = _require_consistent(rows, "source_policy_id")
+        policy_version = _require_consistent(rows, "source_policy_version")
+        policy_values = {
+            json.dumps(
+                (row.get("raw") or {}).get("source_policy"),
+                ensure_ascii=False, sort_keys=True, separators=(",", ":"),
+            )
+            for row in rows
+        }
+        if len(policy_values) != 1:
+            raise ValueError(f"unit {key!r} has inconsistent raw.source_policy")
+        policy_payload = json.loads(next(iter(policy_values)))
+        if not all(isinstance(value, str) and value for value in (policy_id, policy_version)):
+            raise ValueError(f"unit {key!r} lacks source policy id/version provenance")
+        if policy_id == "unversioned" and policy_version == "unversioned":
+            if policy_payload is not None:
+                raise ValueError(f"unit {key!r} has payload for an unversioned policy")
+            policy_sha256 = "unversioned"
+        else:
+            if (
+                not isinstance(policy_payload, dict)
+                or policy_payload.get("policy_id") != policy_id
+                or policy_payload.get("version") != policy_version
+                or not isinstance(policy_payload.get("sha256"), str)
+                or len(policy_payload["sha256"]) != 64
+                or any(c not in "0123456789abcdef" for c in policy_payload["sha256"])
+            ):
+                raise ValueError(f"unit {key!r} has invalid source policy payload")
+            policy_sha256 = policy_payload["sha256"]
         if expected not in _EXPECTED:
             raise ValueError(f"unit {key!r} has invalid expected_behavior={expected!r}")
-        if not all(isinstance(value, str) and value for value in (source, risk, modality)):
+        if not all(
+            isinstance(value, str) and value
+            for value in (source, risk, declared_modality, effective_modality)
+        ):
             raise ValueError(f"unit {key!r} lacks source/risk/modality provenance")
-        constructs[key] = (eligibility, expected, source, risk, modality)
+        cluster_values = {
+            (row.get("raw") or {}).get("source_cluster_id") for row in rows
+        }
+        if len(cluster_values) != 1:
+            raise ValueError(f"unit {key!r} has inconsistent raw.source_cluster_id")
+        source_cluster_id = str(next(iter(cluster_values)) or key[0])
+        constructs[key] = (
+            eligibility, expected, source, risk, declared_modality,
+            effective_modality, source_cluster_id, policy_id, policy_version,
+            policy_sha256,
+        )
         if not eligibility:
             excluded_ineligible_units.append(key)
             excluded_ineligible_rows += len(rows)
@@ -457,13 +562,17 @@ def _build_units(
         }))
         units[key] = PairedUnit(
             datapoint_id=key[0],
+            source_cluster_id=source_cluster_id,
             seed=key[1],
             population=population,
             metric=metric,
             value=value,
             source=str(source),
+            source_policy_id=str(policy_id),
+            source_policy_version=str(policy_version),
+            source_policy_sha256=policy_sha256,
             risk_category=str(risk),
-            modality=str(modality),
+            modality=str(effective_modality),
             n_turns=len(ordered),
             attack_fingerprint=fingerprint,
             transfer_key=transfer_key,
@@ -514,12 +623,33 @@ def _metric_result(
     pilot_cluster_sd: float | None = None,
     target_power: float = 0.8,
     alpha: float = 0.05,
+    risk_category: str | None = None,
+    modality: str | None = None,
+    source_policy_id: str | None = None,
+    source_policy_version: str | None = None,
+    source: str | None = None,
 ) -> dict[str, Any]:
     harmful_metric = metric in {"ASR", "conversation_ASR"}
     metric_alias = metric if harmful_metric else "FRR"
     population = "harmful_expected_refusal" if harmful_metric else "benign_expected_answer"
-    left_keys = {key for key, unit in left.items() if unit.metric == metric}
-    right_keys = {key for key, unit in right.items() if unit.metric == metric}
+    def selected(unit: PairedUnit) -> bool:
+        return (
+            unit.metric == metric
+            and (risk_category is None or unit.risk_category == risk_category)
+            and (modality is None or unit.modality == modality)
+            and (
+                source_policy_id is None
+                or unit.source_policy_id == source_policy_id
+            )
+            and (
+                source_policy_version is None
+                or unit.source_policy_version == source_policy_version
+            )
+            and (source is None or unit.source == source)
+        )
+
+    left_keys = {key for key, unit in left.items() if selected(unit)}
+    right_keys = {key for key, unit in right.items() if selected(unit)}
     shared = left_keys & right_keys
     fingerprint_mismatches: list[tuple[str, int]] = []
     if mode == "static":
@@ -538,6 +668,12 @@ def _metric_result(
         "right_population_units": len(right_keys),
         "matched_units": len(matched),
         "matched_datapoint_clusters": len({key[0] for key in matched}),
+        "matched_prompt_intent_clusters": len({
+            left[key].source_cluster_id for key in matched
+        }),
+        "matched_prompt_intent_cluster_ids": sorted({
+            left[key].source_cluster_id for key in matched
+        }),
         "left_only_units": len(left_only),
         "right_only_units": len(right_only),
         "static_input_mismatch_units": len(fingerprint_mismatches),
@@ -560,6 +696,11 @@ def _metric_result(
             "metric": metric,
             "metric_alias": metric_alias,
             "population": population,
+            "risk_category": risk_category,
+            "modality": modality,
+            "source_policy_id": source_policy_id,
+            "source_policy_version": source_policy_version,
+            "source": source,
             "status": status,
             "left_value": None,
             "right_value": None,
@@ -570,20 +711,53 @@ def _metric_result(
         }
     left_values = [left[key].value for key in matched]
     right_values = [right[key].value for key in matched]
-    clusters = [key[0] for key in matched]
-    effect = sum(a - b for a, b in zip(left_values, right_values)) / len(matched)
-    lo, hi = paired_clustered_bootstrap_ci(
-        left_values,
-        right_values,
-        clusters,
-        n_resamples=n_resamples,
-        seed=seed,
-    )
+    clusters = [left[key].source_cluster_id for key in matched]
     # --- confirmatory analysis (V.1.7) ---
     per_cluster: dict[str, list[float]] = defaultdict(list)
+    per_cluster_left: dict[str, list[float]] = defaultdict(list)
+    per_cluster_right: dict[str, list[float]] = defaultdict(list)
     for a, b, cluster in zip(left_values, right_values, clusters):
         per_cluster[cluster].append(a - b)
-    cluster_diffs = [sum(v) / len(v) for v in per_cluster.values()]
+        per_cluster_left[cluster].append(a)
+        per_cluster_right[cluster].append(b)
+    cluster_keys = sorted(per_cluster)
+    cluster_left = [
+        sum(per_cluster_left[cluster]) / len(per_cluster_left[cluster])
+        for cluster in cluster_keys
+    ]
+    cluster_right = [
+        sum(per_cluster_right[cluster]) / len(per_cluster_right[cluster])
+        for cluster in cluster_keys
+    ]
+    cluster_diffs = [left_value - right_value for left_value, right_value in zip(
+        cluster_left, cluster_right
+    )]
+    effect = sum(cluster_diffs) / len(cluster_diffs)
+    lo, hi = paired_clustered_bootstrap_ci(
+        cluster_left,
+        cluster_right,
+        cluster_keys,
+        n_resamples=n_resamples,
+        seed=seed,
+        alpha=alpha,
+    )
+    cluster_summaries = [
+        {
+            "source_cluster_id": cluster,
+            "left_mean": sum(per_cluster_left[cluster]) / len(per_cluster_left[cluster]),
+            "right_mean": sum(per_cluster_right[cluster]) / len(per_cluster_right[cluster]),
+            "difference": sum(per_cluster[cluster]) / len(per_cluster[cluster]),
+            "n_paired_units": len(per_cluster[cluster]),
+        }
+        for cluster in cluster_keys
+    ]
+    cluster_difference_sd = None
+    if len(cluster_diffs) >= 2:
+        mean_difference = sum(cluster_diffs) / len(cluster_diffs)
+        cluster_difference_sd = math.sqrt(
+            sum((value - mean_difference) ** 2 for value in cluster_diffs)
+            / (len(cluster_diffs) - 1)
+        )
     # The randomization test is reported as primary only when within-pair
     # exchangeability is asserted; otherwise the paired cluster bootstrap is
     # primary (V.1.7) and the permutation p-value is withheld, not invented.
@@ -612,21 +786,52 @@ def _metric_result(
             "reason": "requires --smallest-effect and a disjoint --pilot-cluster-sd",
             "n_clusters": len(cluster_diffs),
         }
-    # Worst/best-case missingness bounds on the paired effect over the union of
-    # matched, one-sided-observed, and fingerprint-invalid units.
-    missingness = paired_effect_manski_bounds(
-        [a - b for a, b in zip(left_values, right_values)],
-        [left[key].value for key in left_only],
-        [right[key].value for key in right_only],
-        n_invalid=len(fingerprint_mismatches),
+    # Worst/best-case missingness bounds use the same equal-cluster estimand.
+    left_missing: dict[str, list[float]] = defaultdict(list)
+    right_missing: dict[str, list[float]] = defaultdict(list)
+    for key in left_only:
+        left_missing[left[key].source_cluster_id].append(left[key].value)
+    for key in right_only:
+        right_missing[right[key].source_cluster_id].append(right[key].value)
+    affected_clusters = set(left_missing) | set(right_missing) | {
+        left[key].source_cluster_id for key in fingerprint_mismatches
+    }
+    known_diffs = [
+        summary["difference"] for summary in cluster_summaries
+        if summary["source_cluster_id"] not in affected_clusters
+    ]
+    left_only_cluster_values = [
+        sum(values) / len(values) for cluster, values in left_missing.items()
+        if cluster not in right_missing and cluster not in per_cluster
+    ]
+    right_only_cluster_values = [
+        sum(values) / len(values) for cluster, values in right_missing.items()
+        if cluster not in left_missing and cluster not in per_cluster
+    ]
+    represented = (
+        len(known_diffs) + len(left_only_cluster_values)
+        + len(right_only_cluster_values)
     )
+    total_cluster_union = len(set(cluster_keys) | affected_clusters)
+    missingness = paired_effect_manski_bounds(
+        known_diffs,
+        left_only_cluster_values,
+        right_only_cluster_values,
+        n_invalid=total_cluster_union - represented,
+    )
+    missingness["unit"] = "source_cluster_id (fallback datapoint_id)"
     return {
         "metric": metric,
         "metric_alias": metric_alias,
         "population": population,
+        "risk_category": risk_category,
+        "modality": modality,
+        "source_policy_id": source_policy_id,
+        "source_policy_version": source_policy_version,
+        "source": source,
         "status": "estimated",
-        "left_value": sum(left_values) / len(left_values),
-        "right_value": sum(right_values) / len(right_values),
+        "left_value": sum(cluster_left) / len(cluster_left),
+        "right_value": sum(cluster_right) / len(cluster_right),
         "effect_left_minus_right": effect,
         "ci_low": lo,
         "ci_high": hi,
@@ -634,14 +839,20 @@ def _metric_result(
         "right_events": int(sum(right_values)),
         "n_matched": len(matched),
         "n_clusters": len(set(clusters)),
+        "cluster_difference_sd": cluster_difference_sd,
+        "cluster_summaries": cluster_summaries,
         "bootstrap": {
-            "method": "paired datapoint-cluster percentile bootstrap",
-            "unit": "datapoint_id",
-            "confidence_level": 0.95,
+            "method": "paired source prompt/intent-cluster percentile bootstrap",
+            "unit": "source_cluster_id (fallback datapoint_id)",
+            "confidence_level": 1.0 - alpha,
+            "alpha": alpha,
             "n_resamples": n_resamples,
             "seed": seed,
             "effect_direction": "left_minus_right",
-            "statistic": "mean(left paired indicators) - mean(right paired indicators)",
+            "statistic": (
+                "equal-weight mean of within-source-cluster left means minus "
+                "equal-weight mean of within-source-cluster right means"
+            ),
         },
         "permutation_test": permutation,
         "power_gate": power,
@@ -663,6 +874,7 @@ def compare_cells(
     pilot_cluster_sd: float | None = None,
     target_power: float = 0.8,
     alpha: float = 0.05,
+    comparison_axis: str = "auto",
 ) -> dict[str, Any]:
     if mode not in {"auto", "static", "live"}:
         raise ValueError("mode must be auto, static, or live")
@@ -673,27 +885,68 @@ def compare_cells(
         left_signature,
         right_signature,
         defense_identity_qualification,
-    ) = _validate_pair_configuration(left, right)
+    ) = _validate_pair_configuration(left, right, comparison_axis=comparison_axis)
     left_units, left_audit, left_mode, left_constructs = _build_units(
         left, requested_mode=mode
     )
     right_units, right_audit, right_mode, right_constructs = _build_units(
         right, requested_mode=mode
     )
-    if left_mode != right_mode:
+    adaptivity = comparison_type == "within_target_adaptivity_endpoint"
+    if left_mode != right_mode and not adaptivity:
         raise ValueError(f"paired arms mix unit modes: {left_mode!r} != {right_mode!r}")
+    if adaptivity:
+        if {left_mode, right_mode} != {"static", "live"}:
+            raise ValueError(
+                "adaptivity contrast requires one static/replay and one live/response-"
+                f"conditioned arm, observed {left_mode!r} and {right_mode!r}"
+            )
+        # Collapse the live arm to its conversation endpoint and align its
+        # metric name with the one-shot endpoint.  Exact rendered inputs are not
+        # required because response conditioning is the experimental factor.
+        left_units = {
+            key: replace(
+                unit,
+                metric=("ASR" if unit.metric == "conversation_ASR" else
+                        "over_refusal_rate" if unit.metric == "conversation_over_refusal_rate"
+                        else unit.metric),
+            ) for key, unit in left_units.items()
+        }
+        right_units = {
+            key: replace(
+                unit,
+                metric=("ASR" if unit.metric == "conversation_ASR" else
+                        "over_refusal_rate" if unit.metric == "conversation_over_refusal_rate"
+                        else unit.metric),
+            ) for key, unit in right_units.items()
+        }
     _validate_shared_metadata(left_constructs, right_constructs)
     metrics = (
         ["ASR", "over_refusal_rate"]
-        if left_mode == "static"
+        if left_mode == "static" or adaptivity
         else ["conversation_ASR", "conversation_over_refusal_rate"]
     )
+    construct_rows = [*left_constructs.values(), *right_constructs.values()]
+    sources = sorted({str(row[2]) for row in construct_rows})
+    if len(sources) != 1:
+        raise ValueError(f"paired corpus facet mixes source identities: {sources!r}")
+    source = sources[0]
+    policy_digests: dict[tuple[str, str], set[str]] = defaultdict(set)
+    for row in construct_rows:
+        policy_digests[(str(row[7]), str(row[8]))].add(str(row[9]))
+    drifted = {
+        key: sorted(values) for key, values in policy_digests.items()
+        if len(values) != 1
+    }
+    if drifted:
+        raise ValueError(f"source policy id/version maps to multiple digests: {drifted!r}")
+    policies = sorted(policy_digests)
     metric_results = {
         metric: _metric_result(
             metric,
             left_units,
             right_units,
-            mode=left_mode,
+            mode="live" if adaptivity else left_mode,
             n_resamples=n_resamples,
             seed=seed,
             n_permutations=n_permutations,
@@ -702,8 +955,59 @@ def compare_cells(
             pilot_cluster_sd=pilot_cluster_sd,
             target_power=target_power,
             alpha=alpha,
+            source=source,
+            source_policy_id=policies[0][0] if len(policies) == 1 else None,
+            source_policy_version=policies[0][1] if len(policies) == 1 else None,
         )
         for metric in metrics
+    }
+    overall_policy_scope = (
+        "single_policy"
+        if len(policies) == 1
+        else "descriptive_pooled_multiple_policies_not_confirmatory"
+    )
+    for result in metric_results.values():
+        result["source_policy_scope"] = overall_policy_scope
+        result["n_source_policies"] = len(policies)
+    policy_metrics = {
+        f"{source_policy_token(policy_id, policy_version)}::{metric}": _metric_result(
+            metric, left_units, right_units,
+            mode="live" if adaptivity else left_mode,
+            n_resamples=n_resamples, seed=seed,
+            n_permutations=n_permutations,
+            assume_exchangeable=assume_exchangeable,
+            smallest_effect=smallest_effect,
+            pilot_cluster_sd=pilot_cluster_sd,
+            target_power=target_power, alpha=alpha,
+            source_policy_id=policy_id, source_policy_version=policy_version,
+            source=source,
+        )
+        for policy_id, policy_version in policies for metric in metrics
+    }
+    harmful_name = "ASR" if adaptivity or left_mode == "static" else "conversation_ASR"
+    category_cells = sorted({
+        (
+            unit.source_policy_id, unit.source_policy_version,
+            unit.risk_category, unit.modality,
+        )
+        for unit in [*left_units.values(), *right_units.values()]
+        if unit.metric == harmful_name
+    })
+    category_metrics = {
+        f"{source_policy_token(policy_id, policy_version)}::{risk}::{modality}": _metric_result(
+            harmful_name, left_units, right_units,
+            mode="live" if adaptivity else left_mode,
+            n_resamples=n_resamples, seed=seed,
+            n_permutations=n_permutations,
+            assume_exchangeable=assume_exchangeable,
+            smallest_effect=smallest_effect,
+            pilot_cluster_sd=pilot_cluster_sd,
+            target_power=target_power, alpha=alpha,
+            risk_category=risk, modality=modality,
+            source_policy_id=policy_id, source_policy_version=policy_version,
+            source=source,
+        )
+        for policy_id, policy_version, risk, modality in category_cells
     }
     left_summary = _cell_summary(left)
     right_summary = _cell_summary(right)
@@ -768,12 +1072,13 @@ def compare_cells(
             else "cross-target/provider endpoint contrast; not a causal defense effect"
         ),
         "effect_direction": "left_minus_right",
-        "unit_mode": left_mode,
-        "pairing_unit": "datapoint_id×requested_seed",
-        "static_exact_input_required": left_mode == "static",
+        "unit_mode": "static_vs_live_adaptivity" if adaptivity else left_mode,
+        "pairing_unit": "datapoint_id x requested_seed",
+        "inference_cluster": "source_cluster_id (fallback datapoint_id)",
+        "static_exact_input_required": left_mode == "static" and not adaptivity,
         "live_pairing_qualification": (
             "not_applicable"
-            if left_mode == "static"
+            if left_mode == "static" and not adaptivity
             else "shared protocol unit; response-conditioned transcripts may differ by arm"
         ),
         "publishable_real_run": publishable,
@@ -785,6 +1090,19 @@ def compare_cells(
         "right": right_summary,
         "arm_audits": {"left": left_audit, "right": right_audit},
         "metrics": metric_results,
+        "policy_metrics": policy_metrics,
+        "category_metrics": category_metrics,
+        "source": source,
+        "overall_metric_source_policy_scope": overall_policy_scope,
+        "source_policy_facets": [
+            {
+                "token": source_policy_token(policy_id, policy_version),
+                "policy_id": policy_id,
+                "version": policy_version,
+                "sha256": next(iter(policy_digests[(policy_id, policy_version)])),
+            }
+            for policy_id, policy_version in policies
+        ],
         "unexplained_exclusions": 0,
     }
 
@@ -899,6 +1217,117 @@ def compare(
             ),
         },
         "artifact_root": str(results),
+        "analysis_source": analysis_source_identity([
+            Path(__file__), _REPO_ROOT / "src" / "ura" / "metrics.py",
+            _REPO_ROOT / "experiments" / "transfer_matrix.py",
+            _REPO_ROOT / "experiments" / "human_audit.py",
+        ]),
+        "unexplained_exclusions": 0,
+    }
+
+
+def compare_adaptivity(
+    results: Path,
+    *,
+    model: str,
+    defense: str = "none",
+    left_attacker: str = "replay",
+    right_attacker: str = "crescendo",
+    corpus: str | None = None,
+    n_resamples: int = 2000,
+    seed: int = 0,
+    n_permutations: int = 10000,
+    assume_exchangeable: bool = False,
+    smallest_effect: float | None = None,
+    pilot_cluster_sd: float | None = None,
+    target_power: float = 0.8,
+    alpha: float = 0.05,
+) -> dict[str, Any]:
+    """Compare a static replay endpoint with a live adaptive endpoint.
+
+    Pairing remains at ``datapoint_id x requested_seed``.  The replay arm uses
+    its one-shot outcome and the live arm uses its whole-conversation outcome;
+    their transcripts are deliberately not asserted identical because response
+    conditioning is the factor being estimated.
+    """
+    if left_attacker == right_attacker:
+        raise ValueError("adaptivity contrast requires two different attackers")
+    _, cells = _validated_artifacts(results)
+    by_corpus: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    for cell in cells:
+        run = _run_config(cell)
+        if run["corpus"] == corpus or corpus is None:
+            by_corpus[run["corpus"]].append(cell)
+    facets: dict[str, dict[str, Any]] = {}
+    unavailable: dict[str, dict[str, Any]] = {}
+    for corpus_name, cohort in sorted(by_corpus.items()):
+        def selected(attacker: str) -> list[dict[str, Any]]:
+            return [
+                cell for cell in cohort
+                if _run_config(cell)["model_spec"] == model
+                and _run_config(cell)["defense"] == defense
+                and _run_config(cell)["attacker"] == attacker
+            ]
+
+        left, right = selected(left_attacker), selected(right_attacker)
+        if len(left) > 1 or len(right) > 1:
+            raise ValueError(
+                f"ambiguous adaptivity arms in corpus {corpus_name!r}: "
+                f"left={len(left)}, right={len(right)}"
+            )
+        if not left or not right:
+            unavailable[corpus_name] = {
+                "reason": "requested_adaptivity_arm_missing",
+                "left_cells": len(left), "right_cells": len(right),
+                "unexplained_exclusions": 0,
+            }
+            continue
+        facets[corpus_name] = compare_cells(
+            left[0], right[0], comparison_axis="attacker", mode="auto",
+            n_resamples=n_resamples, seed=seed,
+            n_permutations=n_permutations,
+            assume_exchangeable=assume_exchangeable,
+            smallest_effect=smallest_effect,
+            pilot_cluster_sd=pilot_cluster_sd,
+            target_power=target_power, alpha=alpha,
+        )
+    if corpus is not None and corpus in unavailable:
+        raise ValueError(f"requested corpus {corpus!r} lacks one adaptivity arm")
+    if not facets:
+        raise ValueError("no corpus contains both exact adaptivity arms")
+    family: dict[str, float] = {}
+    for corpus_name, facet in facets.items():
+        for metric_name, metric in facet["metrics"].items():
+            pvalue = (metric.get("permutation_test") or {}).get("p_value")
+            if isinstance(pvalue, (int, float)):
+                family[f"{corpus_name}::{metric_name}"] = float(pvalue)
+    for key, adjusted in holm_bonferroni(family, alpha=alpha).items():
+        corpus_name, metric_name = key.split("::", 1)
+        permutation = facets[corpus_name]["metrics"][metric_name]["permutation_test"]
+        permutation["p_holm"] = adjusted["p_holm"]
+        permutation["reject_holm"] = adjusted["reject"]
+    return {
+        "schema_version": "1.1-faceted",
+        "experiment_status": "computed_only_from_supplied_completed_artifacts",
+        "comparison_type": "within_target_adaptivity_endpoint",
+        "left_selector": {
+            "model_spec": model, "defense": defense, "attacker": left_attacker,
+        },
+        "right_selector": {
+            "model_spec": model, "defense": defense, "attacker": right_attacker,
+        },
+        "facets": facets,
+        "unavailable_facets": unavailable,
+        "multiplicity": {
+            "method": "holm_bonferroni_within_adaptivity_contrast",
+            "family": sorted(family), "alpha": alpha,
+        },
+        "analysis_source": analysis_source_identity([
+            Path(__file__), _REPO_ROOT / "src" / "ura" / "metrics.py",
+            _REPO_ROOT / "experiments" / "transfer_matrix.py",
+            _REPO_ROOT / "experiments" / "human_audit.py",
+        ]),
+        "artifact_root": str(results),
         "unexplained_exclusions": 0,
     }
 
@@ -913,6 +1342,10 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--left-defense", default="none")
     parser.add_argument("--right-defense", default="none")
     parser.add_argument("--attacker", default="replay")
+    parser.add_argument(
+        "--right-attacker", default=None,
+        help="enable replay-vs-adaptive comparison; --attacker is the left arm",
+    )
     parser.add_argument("--corpus", default=None)
     parser.add_argument("--mode", choices=["auto", "static", "live"], default="auto")
     parser.add_argument("--bootstrap", type=int, default=2000)
@@ -937,24 +1370,41 @@ def main(argv: list[str] | None = None) -> int:
     if not 0.0 < args.alpha < 1.0:
         parser.error("--alpha must be strictly between 0 and 1")
     try:
-        result = compare(
-            args.results,
-            left_model=args.left_model,
-            right_model=args.right_model,
-            left_defense=args.left_defense,
-            right_defense=args.right_defense,
-            attacker=args.attacker,
-            corpus=args.corpus,
-            mode=args.mode,
-            n_resamples=args.bootstrap,
-            seed=args.seed,
-            n_permutations=args.permutations,
-            assume_exchangeable=args.assume_exchangeable,
-            smallest_effect=args.smallest_effect,
-            pilot_cluster_sd=args.pilot_cluster_sd,
-            target_power=args.target_power,
-            alpha=args.alpha,
-        )
+        if args.right_attacker is not None:
+            if args.left_model != args.right_model or args.left_defense != args.right_defense:
+                parser.error(
+                    "adaptivity comparison requires identical --left/--right-model "
+                    "and --left/--right-defense selectors"
+                )
+            result = compare_adaptivity(
+                args.results, model=args.left_model, defense=args.left_defense,
+                left_attacker=args.attacker, right_attacker=args.right_attacker,
+                corpus=args.corpus, n_resamples=args.bootstrap, seed=args.seed,
+                n_permutations=args.permutations,
+                assume_exchangeable=args.assume_exchangeable,
+                smallest_effect=args.smallest_effect,
+                pilot_cluster_sd=args.pilot_cluster_sd,
+                target_power=args.target_power, alpha=args.alpha,
+            )
+        else:
+            result = compare(
+                args.results,
+                left_model=args.left_model,
+                right_model=args.right_model,
+                left_defense=args.left_defense,
+                right_defense=args.right_defense,
+                attacker=args.attacker,
+                corpus=args.corpus,
+                mode=args.mode,
+                n_resamples=args.bootstrap,
+                seed=args.seed,
+                n_permutations=args.permutations,
+                assume_exchangeable=args.assume_exchangeable,
+                smallest_effect=args.smallest_effect,
+                pilot_cluster_sd=args.pilot_cluster_sd,
+                target_power=args.target_power,
+                alpha=args.alpha,
+            )
     except ValueError as exc:
         print(f"paired comparison validation failed: {exc}", file=sys.stderr)
         return 1

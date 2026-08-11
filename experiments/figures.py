@@ -19,7 +19,7 @@ import matplotlib
 matplotlib.use("Agg")  # headless and deterministic
 import matplotlib.pyplot as plt  # noqa: E402
 
-from experiments.figure_results import load_results  # noqa: E402
+from experiments.figure_results import load_confirmatory_results  # noqa: E402
 
 _ACCENT = "#2a78d6"
 _INK_2 = "#52514e"
@@ -234,10 +234,17 @@ def fig_asr_by_category(data: dict[str, Any], out: Path) -> None:
     analysis = data.get("analysis") or {}
     detail = ""
     if not data["illustrative"]:
+        policy = analysis.get("evaluation_policy") or {}
+        policy_label = analysis.get("policy_label") or (
+            f"{policy.get('policy_id')}@{policy.get('version')}"
+        )
+        multiplicity = analysis.get("multiplicity_family")
+        if multiplicity is None:
+            multiplicity = ",".join(sorted((analysis.get("multiplicity") or {}).keys()))
         detail = (
-            f"\npolicy={analysis['policy_label']} "
+            f"\npolicy={policy_label} "
             f"[{analysis['policy_fingerprint'][:12]}]; "
-            f"multiplicity family={analysis['multiplicity_family']}; "
+            f"multiplicity family={multiplicity}; "
             "judge/run versions are bound per cell in the provenance sidecar"
         )
     _contrast_figure(
@@ -291,22 +298,6 @@ def render_all(data: dict[str, Any], out: Path) -> list[Path]:
     return [out / filename for filename in _FIGURE_NAMES]
 
 
-def _measured_args_missing(args: argparse.Namespace) -> list[str]:
-    required = {
-        "--defense-results": args.defense_results,
-        "--model-left": args.model_left,
-        "--model-right": args.model_right,
-        "--model-corpus": args.model_corpus,
-        "--defense-model": args.defense_model,
-        "--defense-right": args.defense_right,
-        "--defense-corpus": args.defense_corpus,
-        "--policy-label": args.policy_label,
-        "--multiplicity-family": args.multiplicity_family,
-        "--minimum-cell-n": args.minimum_cell_n,
-    }
-    return [flag for flag, value in required.items() if value is None or value == []]
-
-
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         description="Render paired, corpus-faceted Chapter V figures and provenance."
@@ -314,38 +305,13 @@ def main(argv: list[str] | None = None) -> int:
     mode = parser.add_mutually_exclusive_group(required=True)
     mode.add_argument("--synth", action="store_true", help="render three layout placeholders")
     mode.add_argument(
-        "--model-results",
-        type=Path,
-        help="completed grid root for the paired model contrast (measured mode)",
+        "--analysis-artifact", type=Path,
+        help="publishable output from experiments.confirmatory_analysis",
     )
     parser.add_argument(
-        "--defense-results", type=Path,
-        help="completed grid root for the same-base defense contrast",
+        "--analysis-sha256",
+        help="optional expected SHA-256 of --analysis-artifact (recommended for handoff)",
     )
-    parser.add_argument("--model-left", help="left requested model_spec for Figures V.1/V.2")
-    parser.add_argument("--model-right", help="right requested model_spec for Figures V.1/V.2")
-    parser.add_argument("--model-defense", default="none")
-    parser.add_argument(
-        "--model-corpus", action="append",
-        help="explicit model-contrast corpus facet; repeat for multiple benchmarks",
-    )
-    parser.add_argument("--defense-model", help="same model_spec in both Figure V.3 arms")
-    parser.add_argument("--defense-left", default="none")
-    parser.add_argument("--defense-right", help="right defense configuration for Figure V.3")
-    parser.add_argument(
-        "--defense-corpus", action="append",
-        help="explicit defense-contrast corpus facet; repeat for multiple benchmarks",
-    )
-    parser.add_argument("--attacker", default="replay")
-    parser.add_argument("--policy-label", help="frozen policy/decision-boundary label")
-    parser.add_argument("--multiplicity-family", help="frozen confirmatory/exploratory family")
-    parser.add_argument(
-        "--minimum-cell-n",
-        type=int,
-        help="pilot-frozen minimum unique corpus/source/datapoint clusters per plotted cell",
-    )
-    parser.add_argument("--bootstrap", type=int, default=2000)
-    parser.add_argument("--seed", type=int, default=0)
     parser.add_argument(
         "--out",
         type=Path,
@@ -355,47 +321,13 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     if args.synth:
-        supplied = [
-            args.defense_results,
-            args.model_left,
-            args.model_right,
-            args.model_corpus,
-            args.defense_model,
-            args.defense_right,
-            args.defense_corpus,
-            args.policy_label,
-            args.multiplicity_family,
-            args.minimum_cell_n,
-        ]
-        if any(value is not None and value != [] for value in supplied):
+        if args.analysis_sha256 is not None:
             parser.error("--synth cannot be combined with measured-analysis arguments")
         data = synth_matrix()
     else:
-        missing = _measured_args_missing(args)
-        if missing:
-            parser.error("measured mode requires " + ", ".join(missing))
-        if args.bootstrap < 1:
-            parser.error("--bootstrap must be positive")
-        if args.minimum_cell_n < 1:
-            parser.error("--minimum-cell-n must be positive")
         try:
-            data = load_results(
-                args.model_results,
-                args.defense_results,
-                model_left=args.model_left,
-                model_right=args.model_right,
-                model_defense=args.model_defense,
-                model_corpora=args.model_corpus,
-                defense_model=args.defense_model,
-                defense_left=args.defense_left,
-                defense_right=args.defense_right,
-                defense_corpora=args.defense_corpus,
-                attacker=args.attacker,
-                policy_label=args.policy_label,
-                multiplicity_family=args.multiplicity_family,
-                minimum_cell_n=args.minimum_cell_n,
-                n_resamples=args.bootstrap,
-                seed=args.seed,
+            data = load_confirmatory_results(
+                args.analysis_artifact, expected_sha256=args.analysis_sha256,
             )
         except ValueError as exc:
             print(f"figure input validation failed: {exc}", file=sys.stderr)

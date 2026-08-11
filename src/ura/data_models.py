@@ -1,4 +1,4 @@
-"""URA-Bench unified schema - version 1.0.
+"""URA-Bench unified schema - version 1.2.
 
 Typed data contract shared by every layer of the harness (see thesis III.3).
 Extends the pre-2025 prototype schema (v0.3: DataPoint / DialogTurn / EvalResult)
@@ -9,13 +9,14 @@ Pure Python + Pydantic v2 (no framework lock-in). Every artifact validates here.
 """
 from __future__ import annotations
 
+import json
 import math
 from enum import Enum
 from typing import Any, Literal, Optional
 
-from pydantic import BaseModel, Field, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
-SCHEMA_VERSION = "1.1"
+SCHEMA_VERSION = "1.2"
 
 _HEX = frozenset("0123456789abcdef")
 
@@ -54,6 +55,7 @@ class RiskCategory(str, Enum):
     GEO = "geo"
     AGENTIC_MISUSE = "agentic_misuse"
     CATASTROPHIC = "catastrophic"  # CBRN / weapons / self-harm / CSEM
+    OVER_REFUSAL = "over_refusal"  # benign utility / excessive-safety construct
 
 
 # --------------------------------------------------------------------------- #
@@ -102,6 +104,102 @@ class ToolCall(BaseModel):
     arguments: dict[str, Any] = Field(default_factory=dict)
 
 
+class ProviderContinuationState(BaseModel):
+    """Bounded provider-native state required for a stateless continuation.
+
+    OpenAI Responses with ``store=false`` cannot recover prior reasoning through
+    a server-side response id.  The encrypted reasoning and assistant-message
+    output items therefore have to be supplied again on the next request.  This
+    model keeps those opaque provider objects exact while refusing unrelated
+    item types, credential-bearing maps, non-JSON values and unbounded payloads.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    format_version: Literal["1"] = "1"
+    provider: Literal["openai"]
+    api_surface: Literal["responses"]
+    items: list[dict[str, Any]]
+
+    @field_validator("items")
+    @classmethod
+    def _validated_items(cls, value: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        if not value or len(value) > 128:
+            raise ValueError("provider continuation state requires 1..128 items")
+        denied_keys = {
+            "api_key", "apikey", "authorization", "password", "access_token",
+            "refresh_token", "client_secret", "cookie", "set_cookie",
+        }
+
+        def validate_json(item: Any, *, depth: int = 0) -> None:
+            if depth > 12:
+                raise ValueError("provider continuation state nesting exceeds 12")
+            if item is None or isinstance(item, (str, bool, int)):
+                return
+            if isinstance(item, float):
+                if not math.isfinite(item):
+                    raise ValueError("provider continuation state must be finite JSON")
+                return
+            if isinstance(item, list):
+                for child in item:
+                    validate_json(child, depth=depth + 1)
+                return
+            if isinstance(item, dict):
+                for key, child in item.items():
+                    if not isinstance(key, str):
+                        raise ValueError("provider continuation state keys must be strings")
+                    normalized = key.lower().replace("-", "_")
+                    if normalized in denied_keys:
+                        raise ValueError(
+                            "provider continuation state must not contain credentials"
+                        )
+                    validate_json(child, depth=depth + 1)
+                return
+            raise ValueError("provider continuation state must contain JSON values only")
+
+        for item in value:
+            item_type = item.get("type")
+            if item_type not in {"reasoning", "message"}:
+                raise ValueError(
+                    "provider continuation items must be reasoning or message objects"
+                )
+            if item_type == "message" and item.get("role") != "assistant":
+                raise ValueError("provider continuation message role must be assistant")
+            validate_json(item)
+        encoded = json.dumps(
+            value, ensure_ascii=False, sort_keys=True, separators=(",", ":"),
+            allow_nan=False,
+        ).encode("utf-8")
+        if len(encoded) > 2 * 1024 * 1024:
+            raise ValueError("provider continuation state exceeds 2 MiB")
+        return value
+
+
+class SourceEvaluationPolicy(BaseModel):
+    """Immutable identity of the source benchmark's evaluation policy."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    policy_id: str
+    version: str
+    sha256: str
+    source_uri: Optional[str] = None
+    intended_metric: Optional[str] = None
+
+    @field_validator("policy_id", "version")
+    @classmethod
+    def _policy_ids_nonblank(cls, value: str, info) -> str:
+        return _nonblank(value, f"SourceEvaluationPolicy.{info.field_name}")
+
+    @field_validator("sha256")
+    @classmethod
+    def _policy_digest(cls, value: str) -> str:
+        normalized = value.lower()
+        if len(normalized) != 64 or any(char not in _HEX for char in normalized):
+            raise ValueError("SourceEvaluationPolicy.sha256 must be 64-char SHA-256")
+        return normalized
+
+
 class DialogTurn(BaseModel):
     """One turn of a (possibly agentic) conversation."""
 
@@ -116,6 +214,13 @@ class DialogTurn(BaseModel):
     # unchanged, as the extended-thinking contract requires. Optional and
     # additive: empty for text-only providers and all pre-existing artifacts.
     provider_thinking: list[dict[str, Any]] = Field(default_factory=list)
+    provider_state: Optional[ProviderContinuationState] = None
+
+    @model_validator(mode="after")
+    def _provider_state_is_assistant_only(self) -> "DialogTurn":
+        if (self.provider_thinking or self.provider_state is not None) and self.role != "assistant":
+            raise ValueError("provider-native continuation state is assistant-only")
+        return self
 
 
 # --------------------------------------------------------------------------- #
@@ -135,6 +240,7 @@ class DataPoint(BaseModel):
     risk_category: RiskCategory
     risk_subtype: Optional[str] = None
     expected_behavior: ExpectedBehavior
+    source_policy: Optional[SourceEvaluationPolicy] = None
     taxonomy_refs: list[str] = Field(
         default_factory=list,
         description="external standard IDs, e.g. ['OWASP:LLM01', 'NIST:InformationSecurity']",
@@ -196,10 +302,10 @@ class Response(BaseModel):
     raw: dict[str, Any] = Field(default_factory=dict)
     run_id: Optional[str] = None
 
-    # Note: output_turns is intentionally allowed to be empty. A typed provider
-    # refusal / empty / truncation is a valid terminal state that carries no
-    # assistant turn; the Runner validates that state centrally via
-    # raw.provider_refusal, so it must not be rejected at the schema boundary.
+    # Note: output_turns is intentionally allowed to be empty so a typed provider
+    # refusal can carry no invented assistant text. The Runner admits that state
+    # only via raw.provider_refusal; an ordinary empty, partial, filtered, or
+    # truncated completion is an execution failure.
 
     @field_validator("attempt_id", "target")
     @classmethod
@@ -261,6 +367,17 @@ class EvalResult(BaseModel):
             tol = 1e-9
             if not (self.ci_low - tol <= self.value <= self.ci_high + tol):
                 raise ValueError("EvalResult.value must lie within [ci_low, ci_high]")
+        if self.metric == "mmsafety_official_attack_rate":
+            source_evaluation = self.provenance.get("source_evaluation")
+            if (
+                not isinstance(source_evaluation, dict)
+                or source_evaluation.get("official_evaluator_executed") is not True
+                or not isinstance(source_evaluation.get("source_policy"), dict)
+            ):
+                raise ValueError(
+                    "mmsafety_official_attack_rate requires executed official evaluator "
+                    "and typed source-policy provenance"
+                )
         return self
 
 
@@ -309,7 +426,8 @@ class RunManifest(BaseModel):
 __all__ = [
     "SCHEMA_VERSION",
     "Modality", "Role", "ExpectedBehavior", "JudgeLabel", "RiskCategory",
-    "MediaRef", "ToolCall", "DialogTurn",
+    "MediaRef", "ToolCall", "ProviderContinuationState", "SourceEvaluationPolicy",
+    "DialogTurn",
     "DataPoint", "Attempt", "Response", "Judgment",
     "EvalResult", "RunManifest",
 ]

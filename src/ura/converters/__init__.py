@@ -25,6 +25,7 @@ from .jalmbench import JALMBenchConverter
 from .mllmguard import MLLMGuardConverter
 from .mmsafety import MMSafetyConverter
 from .mossbench import MOSSBenchConverter
+from .release_specs import CORPUS_RELEASE_SPECS, KNOWN_CORPUS_MODALITY_COMBINATIONS
 from .rjudge import RJudgeConverter
 from .siuo import SIUOConverter
 from .strongreject import StrongRejectConverter
@@ -61,4 +62,5 @@ __all__ = [
     "JALMBenchConverter", "VideoSafetyBenchConverter",
     "get_converter", "synth_corpus",
     "ConverterError", "CorpusFormatError", "CorpusNotFoundError", "MediaAssetError",
+    "CORPUS_RELEASE_SPECS", "KNOWN_CORPUS_MODALITY_COMBINATIONS",
 ]

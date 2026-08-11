@@ -22,7 +22,11 @@ ASR/FRR labels.
 from __future__ import annotations
 
 import json
+import io
 import re
+import stat
+import tempfile
+import zipfile
 from collections.abc import Iterable, Mapping
 from pathlib import Path
 from typing import Any
@@ -39,6 +43,7 @@ from ._native_artifacts import (
     NativeEngineCase,
     NativeEngineRun,
     json_sha256,
+    read_binary_artifact,
     read_utf8_artifact,
     require_expected_sha256,
     strict_json_loads,
@@ -50,6 +55,7 @@ PETRI_REPOSITORY = "https://github.com/meridianlabs-ai/inspect_petri"
 PETRI_TASK = "inspect_petri/audit"
 PETRI_NATIVE_SCHEMA = "inspect-eval-log/petri-v3"
 _VERSION_3_RE = re.compile(r"^3(?:\.|$)")
+_MAX_EVAL_ARCHIVE_MEMBERS = 10_000
 
 
 def _mapping(value: Any, *, field: str) -> dict[str, Any]:
@@ -92,22 +98,14 @@ def _read_eval_log(
 ) -> tuple[Path, bytes, dict[str, Any]]:
     """Read an Inspect JSON or binary eval log without triggering model calls."""
 
-    resolved = path.resolve(strict=True)
-    if not resolved.is_file():
-        raise ExternalEngineOutputError(f"Petri log is not a file: {resolved}")
-    size = resolved.stat().st_size
-    if size < 1:
-        raise ExternalEngineOutputError(f"Petri log is empty: {resolved}")
     if not isinstance(max_artifact_bytes, int) or max_artifact_bytes < 1:
         raise ValueError("max_artifact_bytes must be a positive integer")
-    if size > max_artifact_bytes:
-        raise ExternalEngineOutputError(
-            f"Petri log exceeds the {max_artifact_bytes}-byte import limit: {resolved}"
-        )
 
-    suffix = resolved.suffix.lower()
+    suffix = path.suffix.lower()
     if suffix == ".json":
-        _, data, text = read_utf8_artifact(resolved, max_bytes=max_artifact_bytes)
+        resolved, data, text = read_utf8_artifact(
+            path, max_bytes=max_artifact_bytes
+        )
         try:
             value = strict_json_loads(text)
         except (json.JSONDecodeError, ValueError) as exc:
@@ -115,15 +113,61 @@ def _read_eval_log(
                 f"invalid Petri Inspect JSON log: {exc}"
             ) from exc
     elif suffix == ".eval":
-        data = resolved.read_bytes()
+        resolved, data = read_binary_artifact(
+            path, max_bytes=max_artifact_bytes
+        )
+        archive_stream = io.BytesIO(data)
+        if zipfile.is_zipfile(archive_stream):
+            archive_stream.seek(0)
+            try:
+                with zipfile.ZipFile(archive_stream) as archive:
+                    members = archive.infolist()
+                    if len(members) > _MAX_EVAL_ARCHIVE_MEMBERS:
+                        raise ExternalEngineOutputError(
+                            "Petri .eval archive exceeds the member-count limit"
+                        )
+                    total_uncompressed = 0
+                    for member in members:
+                        member_path = Path(member.filename.replace("\\", "/"))
+                        parts = member_path.parts
+                        if (
+                            not parts
+                            or member_path.is_absolute()
+                            or member.filename.startswith(("/", "\\"))
+                            or ".." in parts
+                            or any(":" in part for part in parts)
+                        ):
+                            raise ExternalEngineOutputError(
+                                "Petri .eval archive contains an unsafe member path"
+                            )
+                        mode = (member.external_attr >> 16) & 0xFFFF
+                        if stat.S_ISLNK(mode):
+                            raise ExternalEngineOutputError(
+                                "Petri .eval archive contains a symbolic link"
+                            )
+                        total_uncompressed += member.file_size
+                        if total_uncompressed > max_artifact_bytes:
+                            raise ExternalEngineOutputError(
+                                "Petri .eval archive exceeds the uncompressed byte limit"
+                            )
+            except (zipfile.BadZipFile, OSError) as exc:
+                raise ExternalEngineOutputError(
+                    "Petri .eval archive metadata is invalid"
+                ) from exc
         inspect_log = _require(
             "inspect_ai.log",
             "Petri .eval artifact import",
             "inspect-ai>=0.3.236",
         )
         try:
-            loaded = inspect_log.read_eval_log(resolved, format="eval")
-            value = loaded.model_dump(mode="json")
+            # Decode the exact stable bytes already admitted above.  Reopening
+            # the caller-controlled source path would reintroduce a check/use
+            # race between hashing and Inspect's parser.
+            with tempfile.TemporaryDirectory(prefix="ura-petri-import-") as tmp:
+                stable_copy = Path(tmp) / "captured.eval"
+                stable_copy.write_bytes(data)
+                loaded = inspect_log.read_eval_log(stable_copy, format="eval")
+                value = loaded.model_dump(mode="json")
         except Exception as exc:  # noqa: BLE001 - normalize optional backend errors
             raise ExternalEngineOutputError(
                 f"Inspect could not decode Petri .eval log {resolved}: {exc}"

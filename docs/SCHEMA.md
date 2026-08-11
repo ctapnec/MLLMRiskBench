@@ -1,87 +1,82 @@
-# Unified schema v1.0
+# Unified schema v1.2
 
 `ura.data_models` is the typed Pydantic v2 contract shared by converters,
-attackers, targets, judges, persistence, and analysis. `SCHEMA_VERSION = "1.0"`
-is stamped on datapoints and manifests. Runner rejects duplicate datapoint IDs
-and mixed schema versions before it calls a target.
-
-## Enumerations
-
-- `Modality`: `text`, `image`, `audio`, `video`, `tool`, `multi`
-- `Role`: `system`, `user`, `assistant`, `tool`, `env`
-- `ExpectedBehavior`: `refuse`, `safe_answer`, `comply_safely`
-- `JudgeLabel`: `safe`, `violation`, `refusal`, `over_refusal`
-- `RiskCategory`: the categories documented in [ATTACK_TAGS.md](ATTACK_TAGS.md)
+attackers, targets, judges, persistence, and analysis. `SCHEMA_VERSION = "1.2"`
+is stamped on datapoints, checkpoints, and manifests. Runner 2.2 rejects mixed
+schema versions and duplicate datapoint IDs before a target call.
 
 ## Records
 
 | Type | Important fields | Purpose |
 | --- | --- | --- |
-| `MediaRef` | `modality`, one of `uri`/`path`, `sha256`, `mime`, `meta` | content reference; local and inline media are verified before upload |
-| `ToolCall` | `name`, `arguments` | represented tool invocation |
-| `DialogTurn` | `role`, `content`, `media`, `tool_call`, `tool_result` | one conversation or represented agent trace turn |
-| `DataPoint` | `id`, `source`, `modalities`, `dialog_history`, payloads, media, risk, expectation, taxonomy refs, attack metadata | atomic corpus item |
-| `Attempt` | `id`, `datapoint_id`, `attacker`, `strategy`, `target`, `turn_index`, `rendered_input`, `seed`, `params`, `run_id` | exact input submitted for one target call |
-| `Response` | `attempt_id`, `target`, `output_turns`, `tool_trace`, latency, tokens, `raw`, `run_id` | target output and provider provenance |
-| `Judgment` | `attempt_id`, `judge`, `label`, `score`, rationale, `raw`, `run_id` | one automated or human verdict |
-| `EvalResult` | `id`, `metric`, value and CI, `n`, grouping, provenance, `run_id` | one aggregate estimand |
-| `RunManifest` | `run_id`, code/config identity, seeds, models, adapters, judges, dataset hashes, realized target/judge identity inventory and digest, time, environment | re-derivation and audit record |
+| `MediaRef` | `modality`, exactly one of `uri`/`path`, `sha256`, `mime`, `meta` | content-addressed physical input |
+| `ToolCall` | `name`, `arguments` | represented, inert tool invocation |
+| `ProviderContinuationState` | provider/API identity and bounded typed output items | exact stateless OpenAI Responses continuation state |
+| `SourceEvaluationPolicy` | policy ID, version, SHA-256, source URI, intended metric | immutable source-benchmark evaluation-policy identity |
+| `DialogTurn` | role, content, media, tool fields, provider thinking/state | one conversation or represented agent-trace turn |
+| `DataPoint` | source, modalities, history/payload/media, risk, expected behavior, source policy, taxonomy and attack metadata | atomic converted corpus item |
+| `Attempt` | datapoint, attacker, target, turn, exact rendered input, seed, params, run ID | one submitted input |
+| `Response` | attempt, target, output/tool turns, latency/tokens, raw provenance, run ID | one target outcome, including a typed provider refusal |
+| `Judgment` | attempt, judge, label, score, rationale, raw provenance, run ID | one automated or human verdict |
+| `EvalResult` | metric, value/CI, support, grouping, provenance, run ID | one aggregate estimand |
+| `RunManifest` | run/code/config identity, seeds, components, data hashes, time and environment | re-derivation and audit record |
 
-## Lineage and joins
+Enumerations are defined in code. In particular, expected behavior separates
+harmful `refuse` probes from benign `safe_answer` and `comply_safely` probes;
+that split controls ASR and FRR denominators.
 
-Runner persists separate `*.attempts.jsonl`, `*.responses.jsonl`, final judgment
-JSONL, `*.trails.jsonl`, aggregate `*.results.jsonl`, and a manifest for each
-cell. Records join on the composite identity `(run_id, model/target,
-attempt_id)`. An attempt ID alone is not assumed globally unique.
+## Lineage and continuation state
 
-Each final judgment additionally carries the fields required by downstream
-analysis in `raw`, including:
+Each cell persists attempts, responses, authoritative judgments, full shadow
+judge trails, aggregate results, a manifest, an append-only checkpoint, and
+only after validation a completion marker. Records join on `(run_id,
+model/target, attempt_id)`; an attempt ID alone is not globally unique.
 
-- datapoint/source/risk/expected behavior;
-- declared and effective modalities;
-- attacker, strategy, seed, and turn index;
-- target model and run ID;
-- rendered-input `attack_fingerprint`, stable `transfer_key`, and
-  `transferable` flag;
-- requested seed and effective target sampling control.
+Judgment provenance includes source/risk/expectation, declared and effective
+modality, source-cluster identity, attacker/strategy/seed/turn, target, exact
+input fingerprint and transfer key, source-policy identity, and effective
+sampling control. Trail rows additionally bind every judge stage to the exact
+persisted response SHA-256 and record confidence, parse status, cascade role,
+and provider identity.
 
-Each `*.trails.jsonl` row carries the same run/model/attempt, datapoint, seed,
-turn, construct, fingerprint, transfer, and sampling lineage, plus its manifest
-stage index and judge name. It also records numeric stage confidence, optional
-parse status (`null` means parsing is not applicable to a structured stage), the
-cascade confidence decision and authority role, and `response_sha256`. The last
-field is the canonical SHA-256 of the exact persisted `Response`; postprocessors
-recompute it before claiming that shadow stages evaluated the same output.
+Provider-native continuation data is explicit rather than hidden:
 
-Response-conditioned attempts are marked non-transferable unless they are an
-explicit replay. This prevents different live conversations from being paired
-as though their inputs were identical.
+- Anthropic thinking/redacted-thinking blocks are retained on assistant turns
+  so the next Fable request can return them unchanged.
+- OpenAI Responses with `store=false` retains only bounded `reasoning` and
+  assistant `message` items in `ProviderContinuationState`. Encrypted reasoning
+  is required for the stateless `all_turns` continuation used by the study.
+- Provider state is assistant-only, JSON-only, size bounded, and rejects
+  credential-bearing fields.
 
-## Media trust boundary
+Response-conditioned attempts are non-transferable unless an exact transcript
+is deliberately replayed.
 
-Converters resolve corpus media under the declared corpus root and compute
-SHA-256 digests. Runner preflight and hosted/local image encoders both restrict
-local reads to target `media_roots` or `URA_MEDIA_ROOTS` and verify the digest.
-Inline data URIs are decoded, size-limited, and hash-verified. Low-level target
-clients accept HTTPS references, but scored Runner cells reject them because the
-provider-fetched bytes cannot be verified against the manifest; materialize the
-asset locally or inline it first. A missing corpus or media file is an error, not
-an empty dataset.
+## Media and source-policy trust boundaries
+
+Converters resolve media under their declared corpus root and compute SHA-256.
+Runner and target encoders then restrict reads to approved media roots and
+recheck the digest, MIME, URI form, and size. Scored cells reject provider-fetched
+remote media because the bytes cannot be verified; materialize it locally or use
+a bounded hashed data URI.
+
+Where a source has a distinct official evaluator, `SourceEvaluationPolicy`
+keeps that policy's identity separate from URA's common-metric judge. A common
+ASR/FRR result must not be renamed as an official source metric unless the
+official evaluator actually ran and its provenance says so.
 
 ## Enforced invariants
 
-- datapoint modalities are non-empty;
-- a media modality cannot be `text`;
-- a supplied SHA-256 is 64 lowercase hexadecimal characters after normalization;
-- judgment scores are in `[0, 1]`;
-- run aggregation cannot mix run IDs;
-- checkpoints must match run identity and rendered-input fingerprints before
-  they can be resumed;
-- reported non-null target and ordered judge-stage provider/model/fingerprint,
-  revision, and digest identities must remain stable within the cell and resume;
-- a completion marker's realized-identity digest must match a reconstruction
-  from the hashed Response and trail artifacts.
+- modalities and required identifiers are non-empty and non-duplicated;
+- executable media uses full 64-character SHA-256 digests;
+- scores lie in `[0,1]`, aggregate values are finite, and intervals are coherent;
+- checkpoints match run identity, attempt lineage, and rendered-input
+  fingerprints before resume;
+- non-null target and ordered judge-stage provider/model/fingerprint/revision
+  identity stays stable across calls and resume;
+- source-policy inventories and realized identity digests reconstruct from the
+  hashed artifacts and match the manifest/completion marker;
+- missing or unsupported constructs fail explicitly rather than becoming zero.
 
-Agentic `tool_call` and `tool_result` fields represent source-benchmark traces.
-The core harness does not execute model-produced commands or claim successful
-tool effects merely because a trace contains them.
+Agentic tool fields represent source-benchmark traces. The core harness does not
+execute model-produced commands or infer that a represented tool effect occurred.

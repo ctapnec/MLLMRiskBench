@@ -47,7 +47,7 @@ from .judges.base import JudgeCascade
 from .targets.base import BaseTarget
 
 #: Bumped when the orchestration semantics change (recorded in every manifest).
-CODE_VERSION = "ura-runner/2.1"
+CODE_VERSION = "ura-runner/2.2"
 _MAX_SCORED_MEDIA_BYTES = 25 * 1024 * 1024
 
 CheckpointRecord = dict[str, Any]
@@ -58,47 +58,198 @@ class BudgetExhausted(RuntimeError):
     """Raised when a process-wide billable ceiling or deadline is reached."""
 
 
-class GlobalCallBudget:
-    """Process-wide billable ceiling shared across all matrix cells.
+class ExternalCallFailure(RuntimeError):
+    """A target or model-backed judge call failed after budget reservation.
 
-    Charged at the single paid target site and before the judge cascade, so an
-    exhausted budget stops further billing: the charge raises BEFORE the paid
-    call is made. Uses a monotonic clock so it is immune to wall-clock skew.
+    ``phase`` is deliberately machine-readable so the matrix driver can open a
+    durable circuit for the failing dependency instead of repeating a systemic
+    failure across every remaining paid cell.  ``call_audit`` is a bounded,
+    non-secret transport-attempt summary supplied by provider adapters.
+    """
+
+    def __init__(
+        self, phase: str, cause: Exception, *, call_audit: Optional[dict[str, Any]] = None
+    ) -> None:
+        self.phase = phase
+        self.cause_type = type(cause).__name__
+        self.call_audit = _safe_call_audit(call_audit or getattr(cause, "call_audit", None))
+        super().__init__(f"{phase} failed ({self.cause_type}): {cause}")
+
+
+class GlobalCallBudget:
+    """Durable logical-call and transport-exposure ceilings for one matrix.
+
+    Reservations are persisted *before* an external call.  Canonical provider
+    clients disable hidden SDK retries, making one logical reservation equal to
+    one possible HTTP attempt.  Adapters additionally report
+    ``transport_attempt_count``; reconciliation records any provider-observed
+    excess and fails closed before another call can begin.
     """
 
     def __init__(
         self, *, max_target_calls: Optional[int] = None,
+        max_judge_calls: Optional[int] = None,
+        max_http_attempts: Optional[int] = None,
         deadline_monotonic: Optional[float] = None,
+        deadline_epoch: Optional[float] = None,
+        state_path: Optional[str | Path] = None,
+        budget_id: Optional[str] = None,
     ) -> None:
+        for label, value in (
+            ("max_target_calls", max_target_calls),
+            ("max_judge_calls", max_judge_calls),
+            ("max_http_attempts", max_http_attempts),
+        ):
+            if value is not None and (
+                isinstance(value, bool) or not isinstance(value, int) or value <= 0
+            ):
+                raise ValueError(f"{label} must be a positive integer or None")
+        for label, value in (
+            ("deadline_monotonic", deadline_monotonic),
+            ("deadline_epoch", deadline_epoch),
+        ):
+            if value is not None and (
+                isinstance(value, bool)
+                or not isinstance(value, (int, float))
+                or not math.isfinite(float(value))
+            ):
+                raise ValueError(f"{label} must be finite or None")
+        if state_path is not None and (
+            not isinstance(budget_id, str) or not budget_id.strip()
+        ):
+            raise ValueError("a durable call budget requires a non-blank budget_id")
         self.max_target_calls = max_target_calls
+        self.max_judge_calls = max_judge_calls
+        self.max_http_attempts = max_http_attempts
         self.deadline_monotonic = deadline_monotonic
+        self.deadline_epoch = deadline_epoch
+        self.state_path = Path(state_path) if state_path is not None else None
+        self.budget_id = budget_id
         self.target_calls = 0
         self.judge_calls = 0
+        self.http_attempts = 0
+        if self.state_path is not None and self.state_path.exists():
+            self._load()
+        elif self.state_path is not None:
+            self._persist()
 
     def _check_deadline(self) -> None:
         if (
-            self.deadline_monotonic is not None
-            and time.monotonic() >= self.deadline_monotonic
+            (self.deadline_monotonic is not None and time.monotonic() >= self.deadline_monotonic)
+            or (self.deadline_epoch is not None and time.time() >= self.deadline_epoch)
         ):
             raise BudgetExhausted(
                 f"wall-clock deadline reached after {self.target_calls} target "
-                f"and {self.judge_calls} judge calls"
+                f"calls, {self.judge_calls} model-judge calls, and "
+                f"{self.http_attempts} logical HTTP-attempt exposures"
             )
 
-    def charge_target(self) -> None:
+    def _reserve(self, *, target: int = 0, judge: int = 0, http: int = 0) -> None:
         self._check_deadline()
-        if (
-            self.max_target_calls is not None
-            and self.target_calls >= self.max_target_calls
-        ):
+        if self.max_target_calls is not None and self.target_calls + target > self.max_target_calls:
             raise BudgetExhausted(
                 f"global target-call ceiling {self.max_target_calls} reached"
             )
-        self.target_calls += 1
+        if self.max_judge_calls is not None and self.judge_calls + judge > self.max_judge_calls:
+            raise BudgetExhausted(
+                f"global model-judge-call ceiling {self.max_judge_calls} reached"
+            )
+        if self.max_http_attempts is not None and self.http_attempts + http > self.max_http_attempts:
+            raise BudgetExhausted(
+                f"global logical HTTP-attempt ceiling {self.max_http_attempts} reached"
+            )
+        self.target_calls += target
+        self.judge_calls += judge
+        self.http_attempts += http
+        self._persist()
 
-    def charge_judge(self, count: int) -> None:
-        self._check_deadline()
-        self.judge_calls += count
+    def charge_target(self, *, http_exposure: int = 1) -> None:
+        self._reserve(target=1, http=http_exposure)
+
+    def charge_judge(self, count: int, *, http_exposure: Optional[int] = None) -> None:
+        if count < 0:
+            raise ValueError("judge-call charge cannot be negative")
+        self._reserve(judge=count, http=count if http_exposure is None else http_exposure)
+
+    def reconcile_http_attempts(self, *, reserved: int, observed: int) -> None:
+        """Record provider-observed transport attempts beyond a reservation.
+
+        An observed value below the conservative reservation does not refund the
+        ceiling: reservations measure exposure.  An excess is persisted and then
+        checked, ensuring the next call is blocked even if a non-canonical SDK
+        retried internally.
+        """
+        if isinstance(observed, bool) or not isinstance(observed, int) or observed < 0:
+            raise ValueError("transport_attempt_count must be a non-negative integer")
+        extra = max(0, observed - reserved)
+        if extra:
+            self.http_attempts += extra
+            self._persist()
+
+    def raise_if_overrun(self) -> None:
+        if self.max_http_attempts is not None and self.http_attempts > self.max_http_attempts:
+            raise BudgetExhausted(
+                "provider exceeded the reserved HTTP-attempt exposure; "
+                f"observed total {self.http_attempts} > ceiling {self.max_http_attempts}"
+            )
+
+    def snapshot(self) -> dict[str, Any]:
+        return {
+            "budget_id": self.budget_id,
+            "max_target_calls": self.max_target_calls,
+            "max_judge_calls": self.max_judge_calls,
+            "max_http_attempts": self.max_http_attempts,
+            "deadline_epoch": self.deadline_epoch,
+            "target_calls": self.target_calls,
+            "judge_calls": self.judge_calls,
+            "http_attempts": self.http_attempts,
+            "accounting_semantics": "durable_pre_call_logical_reservation_v1",
+        }
+
+    def _persist(self) -> None:
+        if self.state_path is None:
+            return
+        self.state_path.parent.mkdir(parents=True, exist_ok=True)
+        temporary = self.state_path.with_name(f".{self.state_path.name}.tmp-{os.getpid()}")
+        material = json.dumps(self.snapshot(), sort_keys=True, allow_nan=False) + "\n"
+        with temporary.open("w", encoding="utf-8") as handle:
+            handle.write(material)
+            handle.flush()
+            os.fsync(handle.fileno())
+        temporary.replace(self.state_path)
+
+    def _load(self) -> None:
+        assert self.state_path is not None
+        if self.state_path.is_symlink() or self.state_path.stat().st_size > 64 * 1024:
+            raise ValueError("durable budget ledger must be a bounded regular file")
+
+        def reject_constant(value: str) -> None:
+            raise ValueError(f"non-finite budget ledger value {value!r}")
+
+        payload = json.loads(
+            self.state_path.read_text(encoding="utf-8"),
+            parse_constant=reject_constant,
+        )
+        if not isinstance(payload, dict):
+            raise ValueError("durable budget ledger must be a JSON object")
+        if set(payload) != set(self.snapshot()):
+            raise ValueError("durable budget ledger has an invalid field inventory")
+        expected = {
+            "budget_id": self.budget_id,
+            "max_target_calls": self.max_target_calls,
+            "max_judge_calls": self.max_judge_calls,
+            "max_http_attempts": self.max_http_attempts,
+            "deadline_epoch": self.deadline_epoch,
+            "accounting_semantics": "durable_pre_call_logical_reservation_v1",
+        }
+        for key, value in expected.items():
+            if payload.get(key) != value:
+                raise ValueError(f"durable budget ledger {key} mismatch")
+        for field in ("target_calls", "judge_calls", "http_attempts"):
+            value = payload.get(field)
+            if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+                raise ValueError(f"durable budget ledger has invalid {field}")
+            setattr(self, field, value)
 
 
 class Runner:
@@ -207,6 +358,7 @@ class Runner:
                 f"checkpoint; missing checkpoint record(s): {sample}"
             )
         consumed_resume: set[str] = set()
+        consumed_response_resume: set[str] = set()
         seen_attempt_ids: set[str] = set()
         corpus_hash = active_manifest.dataset_hashes["corpus"]
 
@@ -249,6 +401,16 @@ class Runner:
                         )
                         if attempt.id in resume:
                             consumed_resume.add(attempt.id)
+                        if attempt.id in response_resume:
+                            consumed_response_resume.add(attempt.id)
+                        # A confidence-qualified harmful completion is a terminal
+                        # state.  Do not spend further calls or let post-break
+                        # turns alter the trajectory's maximum severity.
+                        if (
+                            dp.expected_behavior == "refuse"
+                            and self.judgments[-1].label == "violation"
+                        ):
+                            break
 
                 else:
                     generated_attempts = self.attacker.generate(dp, seeded_budget)
@@ -284,6 +446,8 @@ class Runner:
                         )
                         if attempt.id in resume:
                             consumed_resume.add(attempt.id)
+                        if attempt.id in response_resume:
+                            consumed_response_resume.add(attempt.id)
 
                 if len(self.attempts) == completed_before:
                     raise ValueError(
@@ -296,6 +460,12 @@ class Runner:
         if unused:
             sample = ", ".join(sorted(unused)[:3])
             raise ValueError(f"checkpoint contains attempts absent from this run: {sample}")
+        unused_responses = set(response_resume) - consumed_response_resume
+        if unused_responses:
+            sample = ", ".join(sorted(unused_responses)[:3])
+            raise ValueError(
+                "response checkpoint contains attempts absent from this run: " + sample
+            )
 
         self._refresh_manifest_counts(n_datapoints=len(prepared))
         active_manifest = self._last_manifest or active_manifest
@@ -322,11 +492,43 @@ class Runner:
                 response = self._restore_response(attempt, response_record, run_id)
             else:
                 response = self._respond(attempt, run_id=run_id)
+                if self.call_budget is not None:
+                    self.call_budget.reconcile_http_attempts(
+                        reserved=_target_http_exposure(self.target),
+                        observed=_transport_attempt_count(response.raw),
+                    )
                 if on_response is not None:
                     on_response(self._response_checkpoint_record(attempt, response))
+                if self.call_budget is not None:
+                    # The already-paid response is durable before an unexpected
+                    # provider retry excess stops the cell.
+                    self.call_budget.raise_if_overrun()
+            judge_calls, judge_http_exposure = _model_judge_exposure(
+                self.judge_cascade, response
+            )
             if self.call_budget is not None:
-                self.call_budget.charge_judge(len(self.judge_cascade.stages))
-            final, raw_trail = self.judge_cascade.judge(datapoint, response)
+                self.call_budget.charge_judge(
+                    judge_calls, http_exposure=judge_http_exposure
+                )
+            try:
+                final, raw_trail = self.judge_cascade.judge(datapoint, response)
+            except Exception as exc:
+                if self.call_budget is not None:
+                    audit = _safe_call_audit(getattr(exc, "call_audit", None))
+                    observed = audit.get("transport_attempt_count")
+                    if isinstance(observed, int) and not isinstance(observed, bool):
+                        self.call_budget.reconcile_http_attempts(
+                            reserved=judge_http_exposure, observed=observed
+                        )
+                raise ExternalCallFailure("judge_call", exc) from exc
+            if self.call_budget is not None:
+                observed = sum(
+                    _transport_attempt_count(j.raw.get("judge_call"))
+                    for j in raw_trail
+                )
+                self.call_budget.reconcile_http_attempts(
+                    reserved=judge_http_exposure, observed=observed
+                )
             trail = [self._stamp_judgment(j, run_id) for j in raw_trail]
             final = _attach_strongreject_shadow(final, trail)
             target_modalities = tuple(
@@ -360,11 +562,14 @@ class Runner:
         self._refresh_manifest_counts(realized_identities=realized_identities)
         if record is None and on_record is not None:
             on_record(self._checkpoint_record(attempt, response, final, trail, meta))
+        if self.call_budget is not None:
+            # A judge transport overrun is raised only after the complete bundle
+            # is durable, so resume cannot repeat the paid judge call.
+            self.call_budget.raise_if_overrun()
         return response
 
-    @staticmethod
     def _response_checkpoint_record(
-        attempt: Attempt, response: Response
+        self, attempt: Attempt, response: Response
     ) -> CheckpointRecord:
         """A pre-judging checkpoint: the paid response, no judgment yet."""
         return {
@@ -372,6 +577,9 @@ class Runner:
             "run_id": attempt.run_id,
             "attempt": attempt.model_dump(mode="json"),
             "response": response.model_dump(mode="json"),
+            "budget_after_target": (
+                self.call_budget.snapshot() if self.call_budget is not None else None
+            ),
         }
 
     def _restore_response(
@@ -426,6 +634,17 @@ class Runner:
                 f"{expected.id!r}"
             )
         _validate_response_accounting(response)
+        saved_budget = record.get("budget_after_target")
+        if self.call_budget is not None:
+            if not isinstance(saved_budget, dict):
+                raise ValueError(
+                    f"response checkpoint lacks durable budget accounting for "
+                    f"{expected.id!r}"
+                )
+            if saved_budget.get("budget_id") != self.call_budget.budget_id:
+                raise ValueError(
+                    f"response checkpoint budget lineage mismatch for {expected.id!r}"
+                )
         return response
 
     def _refresh_manifest_counts(
@@ -480,6 +699,13 @@ class Runner:
             ),
             "n_realized_judge_identity_observations": judge_observations,
             "n_realized_judge_identity_snapshots": len(identity_summary["judges"]),
+            "call_budget_snapshot": (
+                self.call_budget.snapshot() if self.call_budget is not None else None
+            ),
+            "source_metric_inventory": _realized_source_metric_inventory(
+                self._last_manifest.config.get("source_metric_plan", []),
+                self.judgments,
+            ),
         }
         if n_datapoints is not None:
             config["n_datapoints"] = n_datapoints
@@ -487,11 +713,22 @@ class Runner:
 
     def _respond(self, attempt: Attempt, *, run_id: str) -> Response:
         """Query the target and guarantee the response is linked to the attempt."""
+        http_exposure = _target_http_exposure(self.target)
         if self.call_budget is not None:
-            self.call_budget.charge_target()  # raises before the paid call
-        response, call_route = self._target_generate(
-            attempt.rendered_input, attempt.seed
-        )
+            self.call_budget.charge_target(http_exposure=http_exposure)
+        try:
+            response, call_route = self._target_generate(
+                attempt.rendered_input, attempt.seed
+            )
+        except Exception as exc:
+            if self.call_budget is not None:
+                audit = _safe_call_audit(getattr(exc, "call_audit", None))
+                observed = audit.get("transport_attempt_count")
+                if isinstance(observed, int) and not isinstance(observed, bool):
+                    self.call_budget.reconcile_http_attempts(
+                        reserved=http_exposure, observed=observed
+                    )
+            raise ExternalCallFailure("target_call", exc) from exc
         if response.target != self.target.name:
             raise ValueError(
                 f"target returned identity {response.target!r}; expected "
@@ -644,6 +881,13 @@ class Runner:
             # without invalidating the completed cell.
             "attempt_media_hashes": attempt_media_hashes,
             "attempt_media_refs": len(attempt_media_hashes),
+            "source_cluster_id": str(
+                dp.meta.get("source_cluster_id") or dp.id
+            ),
+            "source_policy": (
+                dp.source_policy.model_dump(mode="json", exclude_none=True)
+                if dp.source_policy is not None else None
+            ),
         }
         return attempt.model_copy(
             update={
@@ -738,7 +982,22 @@ class Runner:
         effective = _effective_modality(datapoint.modalities, target_modalities)
         provenance = {
             "datapoint_id": datapoint.id,
+            "source_cluster_id": str(
+                datapoint.meta.get("source_cluster_id") or datapoint.id
+            ),
             "source": datapoint.source,
+            "source_policy": (
+                datapoint.source_policy.model_dump(mode="json", exclude_none=True)
+                if datapoint.source_policy is not None else None
+            ),
+            "source_policy_id": (
+                datapoint.source_policy.policy_id
+                if datapoint.source_policy is not None else "unversioned"
+            ),
+            "source_policy_version": (
+                datapoint.source_policy.version
+                if datapoint.source_policy is not None else "unversioned"
+            ),
             "risk_category": datapoint.risk_category.value,
             "risk": datapoint.risk_category.value,  # short alias for grouping/figures
             "modality": declared,                    # declared corpus modality
@@ -791,6 +1050,13 @@ class Runner:
             "modality": _modality_label(datapoint.modalities),
             "model": response.target,
             "datapoint_id": datapoint.id,
+            "source_cluster_id": str(
+                datapoint.meta.get("source_cluster_id") or datapoint.id
+            ),
+            "source_policy": json.dumps(
+                datapoint.source_policy.model_dump(mode="json", exclude_none=True),
+                sort_keys=True,
+            ) if datapoint.source_policy is not None else "null",
             "attacker": attempt.attacker,
             "seed": str(attempt.seed),
             "turn_index": str(attempt.turn_index),
@@ -1071,6 +1337,20 @@ class Runner:
         }
         effective_run_config = _config_value(run_config or {}) or {}
         media_validation = _media_validation_summary(corpus)
+        source_policies = sorted(
+            {
+                json.dumps(
+                    dp.source_policy.model_dump(mode="json", exclude_none=True),
+                    sort_keys=True,
+                    separators=(",", ":"),
+                )
+                for dp in corpus
+                if dp.source_policy is not None
+            }
+        )
+        source_policy_inventory = [json.loads(item) for item in source_policies]
+        source_policy_digest = _sha256_json(source_policy_inventory)
+        source_metric_plan = _source_metric_plan(corpus)
         identity = {
             "code_version": CODE_VERSION,
             "schema_version": SCHEMA_VERSION,
@@ -1085,6 +1365,9 @@ class Runner:
             "env": effective_env,
             "media_validation": media_validation,
             "harness_source": source_identity,
+            "source_policy_inventory": source_policy_inventory,
+            "source_policy_inventory_sha256": source_policy_digest,
+            "source_metric_plan": source_metric_plan,
         }
         run_id = self._run_id(identity)
         return RunManifest(
@@ -1096,6 +1379,15 @@ class Runner:
                 "run": effective_run_config,
                 "media_validation": media_validation,
                 "harness_source": source_identity,
+                "source_policy_inventory": source_policy_inventory,
+                "source_policy_inventory_sha256": source_policy_digest,
+                "n_unversioned_source_policy_datapoints": sum(
+                    dp.source_policy is None for dp in corpus
+                ),
+                "source_metric_plan": source_metric_plan,
+                "source_metric_inventory": _realized_source_metric_inventory(
+                    source_metric_plan, []
+                ),
                 "n_datapoints": len(corpus),
                 "n_attempts": 0,
                 "n_media_hashes": len(media_hashes),
@@ -1320,6 +1612,20 @@ class Runner:
         for bucket_label in sorted(buckets):
             bucket = buckets[bucket_label]
             group_by = _decode_group(bucket_label, keys)
+            bucket_policies = {
+                (
+                    str(j.raw.get("source_policy_id", "unversioned")),
+                    str(j.raw.get("source_policy_version", "unversioned")),
+                    _sha256_json(j.raw.get("source_policy")),
+                )
+                for j in bucket
+            }
+            if len(bucket_policies) > 1:
+                raise ValueError(
+                    "multiple source evaluation policies would be pooled in "
+                    f"aggregate bucket {bucket_label!r}; group by "
+                    "source_policy_id,source_policy_version"
+                )
             for summary in source_metrics.aggregate_source_metrics(
                 bucket, seed=seed
             ):
@@ -1465,7 +1771,10 @@ class Runner:
                 ]
                 resisted_ind = [1.0 - value for value in success_ind]
                 escalation_clusters = [
-                    str(escalation[0].raw.get("datapoint_id", key))
+                    str(
+                        escalation[0].raw.get("source_cluster_id")
+                        or escalation[0].raw.get("datapoint_id", key)
+                    )
                     for key, escalation in escalations.items()
                 ]
                 escalation_observations = [
@@ -1530,10 +1839,10 @@ class Runner:
                             observations=escalation_observations,
                         )
                     )
+                horizon = min(self.budget.max_queries, self.budget.max_turns)
                 mttb = metrics.median_turns_to_break(escalations)
                 if mttb is not None:
-                    results.append(
-                        _result(
+                    median_result = _result(
                             "median_turns_to_break",
                             mttb,
                             group_by,
@@ -1542,7 +1851,92 @@ class Runner:
                             population="harmful_response_conditioned_conversations",
                             observations=escalation_observations,
                         )
+                    median_result = median_result.model_copy(update={
+                        "provenance": {
+                            **median_result.provenance,
+                            "horizon_turns": horizon,
+                            "value_domain": [1.0, float(horizon)],
+                        }
+                    })
+                    results.append(median_result)
+                cluster_map = {
+                    key: str(
+                        escalation[0].raw.get("source_cluster_id")
+                        or escalation[0].raw.get("datapoint_id", key)
                     )
+                    for key, escalation in escalations.items()
+                }
+                rmtb, rmtb_low, rmtb_high = metrics.rmtb_with_ci(
+                    escalations, cluster_map, horizon, seed=seed
+                )
+                rmtb_result = _result(
+                    "restricted_mean_turns_to_break",
+                    rmtb,
+                    group_by,
+                    len(escalations),
+                    ci=(rmtb_low, rmtb_high),
+                    bucket=bucket_label,
+                    population="harmful_response_conditioned_conversations",
+                    observations=escalation_observations,
+                    cluster_ids=escalation_clusters,
+                    ci_method="source_cluster_bootstrap",
+                )
+                rmtb_result = rmtb_result.model_copy(update={
+                    "provenance": {
+                        **rmtb_result.provenance,
+                        "horizon_turns": horizon,
+                        "estimand": "area_under_kaplan_meier_survival_through_horizon",
+                        "censoring": "right_censored_at_last_observed_turn",
+                        "value_domain": [0.0, float(horizon)],
+                    }
+                })
+                results.append(rmtb_result)
+
+                observations = [
+                    metrics.turns_to_break_observation(escalation)
+                    for escalation in escalations.values()
+                ]
+                curve = dict(metrics.kaplan_meier_curve(observations))
+                survival = 1.0
+                for turn in range(0, horizon + 1):
+                    if turn in curve:
+                        survival = curve[turn]
+                    at_risk = (
+                        len(observations)
+                        if turn == 0
+                        else sum(observed >= turn for observed, _ in observations)
+                    )
+                    events = sum(
+                        observed == turn and broke for observed, broke in observations
+                    )
+                    censored = sum(
+                        observed == turn and not broke
+                        for observed, broke in observations
+                    )
+                    km_result = _result(
+                        "kaplan_meier_survival",
+                        survival,
+                        {**group_by, "survival_turn": str(turn)},
+                        len(escalations),
+                        bucket=bucket_label,
+                        population="harmful_response_conditioned_conversations",
+                        observations=escalation_observations,
+                        cluster_ids=escalation_clusters,
+                        ci_method="none",
+                    )
+                    km_result = km_result.model_copy(update={
+                        "provenance": {
+                            **km_result.provenance,
+                            "horizon_turns": horizon,
+                            "turn": turn,
+                            "at_risk": at_risk,
+                            "events": events,
+                            "censored": censored,
+                            "survival_convention": "kaplan_meier_right_continuous",
+                            "value_domain": [0.0, 1.0],
+                        }
+                    })
+                    results.append(km_result)
 
             if static_benign:
                 over_ind = [
@@ -1777,11 +2171,11 @@ class Runner:
     def append_checkpoint(path: str | Path, record: CheckpointRecord) -> None:
         """Durably append one completed attempt bundle to a JSONL checkpoint.
 
-        A completed record always ends in a newline, so a missing trailing
-        newline unambiguously marks a torn (crash-truncated) final line. That
-        partial line is dropped before appending, so a resumed run never
-        concatenates a new record onto it (which would make the torn line a
-        non-final invalid line and render the cell permanently unresumable).
+        Before dropping a non-newline-terminated tail, parse it.  A complete
+        valid JSON object can exist without the final newline when the process
+        dies between the data and delimiter writes; it is preserved and merely
+        terminated.  Only a syntactically torn tail is truncated.  This avoids
+        losing an already-paid response on a second crash during recovery.
         """
         p = Path(path)
         p.parent.mkdir(parents=True, exist_ok=True)
@@ -1793,8 +2187,30 @@ class Runner:
                 if size:
                     fh.seek(size - 1)
                     if fh.read(1) != b"\n":
-                        data = p.read_bytes()
-                        fh.truncate(data.rfind(b"\n") + 1)
+                        window = min(size, 8 * 1024 * 1024)
+                        fh.seek(size - window)
+                        tail_window = fh.read(window)
+                        boundary = tail_window.rfind(b"\n")
+                        if boundary < 0 and size > window:
+                            raise ValueError(
+                                "unterminated checkpoint record exceeds the 8 MiB "
+                                "recovery inspection bound"
+                            )
+                        tail = tail_window[boundary + 1:]
+                        try:
+                            parsed = json.loads(tail.decode("utf-8"))
+                        except (UnicodeDecodeError, json.JSONDecodeError):
+                            truncate_at = size - window + boundary + 1
+                            fh.truncate(truncate_at)
+                        else:
+                            if not isinstance(parsed, dict):
+                                raise ValueError(
+                                    "checkpoint final record must be a JSON object"
+                                )
+                            fh.seek(0, os.SEEK_END)
+                            fh.write(b"\n")
+                        fh.flush()
+                        os.fsync(fh.fileno())
         with p.open("a", encoding="utf-8") as fh:
             fh.write(line)
             fh.flush()
@@ -1851,10 +2267,9 @@ class Runner:
     ) -> dict[str, CheckpointRecord]:
         """Load pre-judging response checkpoints (paid but not yet judged).
 
-        Same torn-final-line tolerance as ``load_checkpoint``, but the inventory
-        is response-only ({schema_version, run_id, attempt, response}) and a later
-        row for the same attempt supersedes an earlier one: a retried judging pass
-        may re-persist the response, and the newest write is authoritative.
+        Same torn-final-line tolerance as ``load_checkpoint``. Duplicate attempt
+        ids are rejected even when byte-identical; a paid response has exactly one
+        authoritative record and last-write-wins would conceal corruption.
         """
         p = Path(path)
         if not p.exists():
@@ -1875,7 +2290,10 @@ class Runner:
                 ) from exc
             if not isinstance(record, dict):
                 raise ValueError(f"invalid response checkpoint row at {p}:{index + 1}")
-            if set(record) != {"schema_version", "run_id", "attempt", "response"}:
+            if set(record) != {
+                "schema_version", "run_id", "attempt", "response",
+                "budget_after_target",
+            }:
                 raise ValueError(
                     f"response checkpoint has an invalid field inventory at "
                     f"{p}:{index + 1}"
@@ -1891,7 +2309,17 @@ class Runner:
             if row_run_id != observed_run_id:
                 raise ValueError(f"mixed run ids in response checkpoint {p}")
             attempt = Attempt.model_validate(record.get("attempt"))
-            records[attempt.id] = record  # last write wins
+            budget = record.get("budget_after_target")
+            if budget is not None and not isinstance(budget, dict):
+                raise ValueError(
+                    f"response checkpoint has invalid budget snapshot at "
+                    f"{p}:{index + 1}"
+                )
+            if attempt.id in records:
+                raise ValueError(
+                    f"duplicate attempt id {attempt.id!r} in response checkpoint {p}"
+                )
+            records[attempt.id] = record
         return records
 
 
@@ -2685,7 +3113,10 @@ def _clustered_ci(
     values: list[float], observations: list[Judgment], *, seed: int
 ) -> tuple[float, float]:
     clusters = [
-        str(judgment.raw.get("datapoint_id", judgment.attempt_id))
+        str(
+            judgment.raw.get("source_cluster_id")
+            or judgment.raw.get("datapoint_id", judgment.attempt_id)
+        )
         for judgment in observations
     ]
     return metrics.clustered_bootstrap_ci(values, clusters, seed=seed)
@@ -2713,7 +3144,7 @@ def _result(
     population: str = "all",
     observations: Optional[list[Judgment]] = None,
     cluster_ids: Optional[list[str]] = None,
-    cluster_unit: str = "datapoint_id",
+    cluster_unit: str = "source_cluster_id_fallback_datapoint_id",
     ci_method: str = "datapoint_cluster_bootstrap",
 ) -> EvalResult:
     ident = f"{metric}:{bucket}"
@@ -2721,7 +3152,10 @@ def _result(
     if cluster_ids is not None and len(cluster_ids) != len(items):
         raise ValueError("cluster_ids must align with result observations")
     clusters = set(cluster_ids) if cluster_ids is not None else {
-        str(judgment.raw.get("datapoint_id", judgment.attempt_id))
+        str(
+            judgment.raw.get("source_cluster_id")
+            or judgment.raw.get("datapoint_id", judgment.attempt_id)
+        )
         for judgment in items
     }
     return EvalResult(
@@ -2742,4 +3176,159 @@ def _result(
     )
 
 
-__all__ = ["Runner", "CODE_VERSION", "realized_identity_summary"]
+def _source_metric_plan(corpus: list[DataPoint]) -> list[dict[str, Any]]:
+    grouped: dict[str, dict[str, Any]] = {}
+    for datapoint in corpus:
+        required = datapoint.meta.get("required_metric")
+        if not isinstance(required, str) or not required.strip():
+            continue
+        policy = (
+            datapoint.source_policy.model_dump(mode="json", exclude_none=True)
+            if datapoint.source_policy is not None else None
+        )
+        execution_keys = sorted(
+            key for key in datapoint.meta
+            if key.startswith("official_")
+            and (key.endswith("_executed") or key.endswith("_protocol"))
+        )
+        official_executed = any(
+            datapoint.meta.get(key) is True for key in execution_keys
+        )
+        identity = _sha256_json({
+            "source": datapoint.source,
+            "required_metric": required,
+            "source_policy": policy,
+        })
+        entry = grouped.setdefault(identity, {
+            "source": datapoint.source,
+            "required_metric": required,
+            "source_policy": policy,
+            "n_datapoints": 0,
+            "official_evaluator_executed": True,
+            "official_execution_evidence_fields": set(),
+        })
+        entry["n_datapoints"] += 1
+        entry["official_evaluator_executed"] = bool(
+            entry["official_evaluator_executed"] and official_executed
+        )
+        entry["official_execution_evidence_fields"].update(execution_keys)
+    out: list[dict[str, Any]] = []
+    for key in sorted(grouped):
+        entry = grouped[key]
+        out.append({
+            **entry,
+            "official_execution_evidence_fields": sorted(
+                entry["official_execution_evidence_fields"]
+            ),
+        })
+    return out
+
+
+def _realized_source_metric_inventory(
+    plan: Any, judgments: list[Judgment]
+) -> list[dict[str, Any]]:
+    if not isinstance(plan, list):
+        raise ValueError("source_metric_plan must be a list")
+    realized: set[tuple[str, str]] = set()
+    counts: dict[tuple[str, str], int] = {}
+    for judgment in judgments:
+        observation = judgment.raw.get("source_evaluation")
+        if not isinstance(observation, dict):
+            continue
+        source = str(judgment.raw.get("source", ""))
+        family = str(observation.get("family", ""))
+        key = (source, family)
+        counts[key] = counts.get(key, 0) + 1
+        if observation.get("implemented") is True:
+            realized.add(key)
+    inventory: list[dict[str, Any]] = []
+    for entry in plan:
+        if not isinstance(entry, dict):
+            raise ValueError("source_metric_plan entries must be objects")
+        key = (str(entry.get("source")), str(entry.get("required_metric")))
+        emitted = key in realized
+        official_executed = entry.get("official_evaluator_executed") is True
+        if key == ("mmsafety", "mmsafety_official_attack_rate") and emitted and not official_executed:
+            raise ValueError(
+                "MM-SafetyBench official attack rate cannot be emitted without "
+                "the policy-bound official evaluator executing"
+            )
+        inventory.append({
+            **entry,
+            "source_metric_emitted": emitted,
+            "n_source_evaluations": counts.get(key, 0),
+        })
+    return inventory
+
+
+def _target_http_exposure(target: BaseTarget) -> int:
+    """Maximum transport attempts a target can start for one logical call.
+
+    Provider adapters opt in explicitly.  Local/mock targets omit the marker and
+    therefore do not consume an HTTP-attempt ceiling.
+    """
+    value = getattr(target, "max_transport_attempts_per_call", 0)
+    if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+        raise ValueError(
+            "target max_transport_attempts_per_call must be a non-negative integer"
+        )
+    return value
+
+
+def _model_judge_exposure(
+    cascade: JudgeCascade, response: Response
+) -> tuple[int, int]:
+    """Return model-backed judge calls and their maximum HTTP exposure.
+
+    Provider refusals are graded locally by :class:`LLMJudge`, so they reserve no
+    judge transport. Deterministic rules and local guardrails likewise do not
+    count as model-judge HTTP calls.
+    """
+    if response.raw.get("provider_refusal") is True:
+        return (0, 0)
+    calls = 0
+    http = 0
+    for stage in cascade.stages:
+        target = getattr(stage, "judge_target", None)
+        if target is None:
+            continue
+        calls += 1
+        http += _target_http_exposure(target)
+    return calls, http
+
+
+def _transport_attempt_count(raw: Any) -> int:
+    if not isinstance(raw, dict):
+        return 0
+    value = raw.get("transport_attempt_count", 0)
+    if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+        raise ValueError("transport_attempt_count must be a non-negative integer")
+    return value
+
+
+def _safe_call_audit(value: Any) -> dict[str, Any]:
+    """Retain a minimal non-secret provider-call audit from an exception."""
+    if not isinstance(value, dict):
+        return {}
+    allowed = {
+        "transport_attempt_count", "logical_call_count", "provider",
+        "operation", "resolved_model", "status_code", "error_type",
+        "provider_request_id", "provider_response_id",
+    }
+    audit: dict[str, Any] = {}
+    for key in sorted(allowed & set(value)):
+        item = value[key]
+        if isinstance(item, bool):
+            audit[key] = item
+        elif isinstance(item, int) and not isinstance(item, bool):
+            audit[key] = item
+        elif isinstance(item, str) and len(item) <= 512:
+            audit[key] = item
+    _transport_attempt_count(audit)
+    return audit
+
+
+__all__ = [
+    "Runner", "CODE_VERSION", "BudgetExhausted", "ExternalCallFailure",
+    "GlobalCallBudget", "realized_identity_summary",
+]

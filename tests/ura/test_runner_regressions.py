@@ -26,8 +26,103 @@ from ura.data_models import (
     RiskCategory,
 )
 from ura.judges.base import BaseJudge, JudgeCascade
-from ura.runner import CODE_VERSION, Runner
+from ura.runner import (
+    CODE_VERSION,
+    BudgetExhausted,
+    ExternalCallFailure,
+    GlobalCallBudget,
+    Runner,
+)
 from ura.targets.base import BaseTarget
+
+
+def _provider_policy_args(
+    directory: Path,
+    requirements: list[tuple[str, str, list[str]]],
+) -> list[str]:
+    path = directory / "provider-policy.json"
+    payload = {
+        "schema_version": "ura-provider-data-policy-approval/1.0",
+        "approval_id": "unit-test-approval",
+        "approved_by": "test operator",
+        "approved_at": "2026-08-11T12:00:00+00:00",
+        "approvals": [
+            {
+                "model_spec": spec,
+                "provider": provider,
+                "roles": roles,
+                "retention_terms": "Accepted for this bounded evaluation.",
+                "data_use_terms": "Accepted for this bounded evaluation.",
+                "policy_urls": [f"https://example.test/{provider}/policy"],
+            }
+            for spec, provider, roles in requirements
+        ],
+    }
+    path.write_text(json.dumps(payload, sort_keys=True) + "\n", encoding="utf-8")
+    digest = hashlib.sha256(path.read_bytes()).hexdigest()
+    return [
+        "--provider-data-policy-approval", str(path),
+        "--provider-data-policy-sha256", digest,
+    ]
+
+
+def _partition_plan_args(
+    directory: Path,
+    corpus: str,
+    records: list[DataPoint],
+    *,
+    role: str = "pilot",
+    converted_digest: str | None = None,
+    total_records: int | None = None,
+) -> list[str]:
+    cluster_ids = sorted({
+        str(record.meta.get("source_cluster_id") or record.id) for record in records
+    })
+    pilot = cluster_ids[:1]
+    main = cluster_ids[1:]
+    assert pilot and main
+
+    def selection(ids: list[str]) -> dict[str, object]:
+        return {
+            "n_clusters": len(ids),
+            "cluster_ids": ids,
+            "cluster_ids_sha256": run_matrix._sha256_json(ids),
+        }
+
+    path = directory / "partition.json"
+    payload = {
+        "schema_version": "ura-cluster-partition/1.1",
+        "seed": 0,
+        "algorithm": "sha256_scoped_seed_random_partition_v1",
+        "corpora": {
+            corpus: {
+                "source_kind": "fixture",
+                "source_path": None,
+                "source_tree_sha256": None,
+                "source_file_count": None,
+                "full_converted_corpus_sha256": converted_digest or run_matrix._sha256_json([
+                    record.model_dump(mode="json") for record in records
+                ]),
+                "total_records": (
+                    len(records) if total_records is None else total_records
+                ),
+                "total_clusters": len(cluster_ids),
+                "total_cluster_ids": cluster_ids,
+                "total_cluster_ids_sha256": run_matrix._sha256_json(cluster_ids),
+                "pilot": selection(pilot),
+                "main": selection(main),
+            }
+        },
+        "analysis_source": {"sha256": "0" * 64},
+    }
+    path.write_text(json.dumps(payload, sort_keys=True) + "\n", encoding="utf-8")
+    digest = hashlib.sha256(path.read_bytes()).hexdigest()
+    return [
+        "--partition-plan", str(path),
+        "--partition-sha256", digest,
+        "--partition-role", role,
+        "--limit", "0",
+    ]
 
 
 def test_real_corpus_limit_is_seeded_not_first_n(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -49,6 +144,185 @@ def test_real_corpus_limit_is_seeded_not_first_n(monkeypatch: pytest.MonkeyPatch
     assert other != first
 
 
+def test_limit_selects_exact_whole_clusters_and_audits_cluster_inventory(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+) -> None:
+    records = [
+        _datapoint(f"{cluster}-{row}").model_copy(update={
+            "meta": {"source_cluster_id": cluster}
+        })
+        for cluster in ("intent-a", "intent-b", "intent-c")
+        for row in range(3)
+    ]
+
+    class _Converter:
+        @staticmethod
+        def parse(_path: Path) -> list[DataPoint]:
+            return records
+
+    source = tmp_path / "source.jsonl"
+    source.write_text("fixture\n", encoding="utf-8")
+    monkeypatch.setattr(run_matrix, "get_converter", lambda _name: _Converter())
+    monkeypatch.setattr(run_matrix, "_corpus_path", lambda _name: source)
+
+    selected, audit = run_matrix.load_corpus_with_audit(
+        "clustered", 2, sample_seed=7
+    )
+    selected_ids = {row.meta["source_cluster_id"] for row in selected}
+
+    assert len(selected_ids) == audit["selected_clusters"] == 2
+    assert len(selected) == audit["selected_records"] == 6
+    assert audit["total_clusters"] == 3
+    assert set(audit["total_cluster_ids"]) == {
+        "intent-a", "intent-b", "intent-c",
+    }
+    assert set(audit["selected_cluster_ids"]) == selected_ids
+    assert audit["limit_unit"] == "source_prompt_or_intent_clusters"
+
+
+def test_real_non_synthetic_corpus_requires_partition_plan_before_calls(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture,
+) -> None:
+    constructions = 0
+
+    def unexpected_build(*_args, **_kwargs):
+        nonlocal constructions
+        constructions += 1
+        raise AssertionError("target construction must not occur")
+
+    monkeypatch.setattr(run_matrix, "build_target", unexpected_build)
+    with pytest.raises(SystemExit):
+        run_matrix.main([
+            "--api", "fixture:model", "--judges", "rules",
+            "--corpora", "fixture", "--limit", "0", "--out", str(tmp_path),
+            *_provider_policy_args(tmp_path, [
+                ("fixture:model", "fixture", ["target"]),
+            ]),
+        ])
+    assert "--partition-plan" in capsys.readouterr().err
+    assert constructions == 0
+
+
+@pytest.mark.parametrize(
+    ("bad_digest", "bad_count", "message"),
+    [
+        (True, False, "full_converted_corpus_sha256 mismatch"),
+        (False, True, "total_records mismatch"),
+    ],
+)
+def test_partition_plan_rejects_converted_release_mismatch_before_calls(
+    bad_digest: bool,
+    bad_count: bool,
+    message: str,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    records = [
+        _datapoint("a").model_copy(update={"meta": {"source_cluster_id": "a"}}),
+        _datapoint("b").model_copy(update={"meta": {"source_cluster_id": "b"}}),
+    ]
+
+    class _Converter:
+        @staticmethod
+        def parse(_path: Path) -> list[DataPoint]:
+            return records
+
+    source = tmp_path / "fixture.jsonl"
+    source.write_text("fixture\n", encoding="utf-8")
+    monkeypatch.setattr(run_matrix, "get_converter", lambda _name: _Converter())
+    monkeypatch.setattr(run_matrix, "_corpus_path", lambda _name: source)
+    constructions = 0
+
+    def unexpected_build(*_args, **_kwargs):
+        nonlocal constructions
+        constructions += 1
+        raise AssertionError("target construction must not occur")
+
+    monkeypatch.setattr(run_matrix, "build_target", unexpected_build)
+    args = [
+        "--api", "fixture:model", "--judges", "rules", "--corpora", "fixture",
+        "--out", str(tmp_path / "run"),
+        *_provider_policy_args(tmp_path, [
+            ("fixture:model", "fixture", ["target"]),
+        ]),
+        *_partition_plan_args(
+            tmp_path,
+            "fixture",
+            records,
+            converted_digest=("f" * 64 if bad_digest else None),
+            total_records=(3 if bad_count else None),
+        ),
+    ]
+    assert run_matrix.main(args) == 1
+    assert constructions == 0
+    error = json.loads(next((tmp_path / "run").glob(
+        "*.corpus.error.json"
+    )).read_text(encoding="utf-8"))
+    assert message in error["message"]
+
+
+def test_partition_plan_selects_exact_role_and_is_manifest_bound(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    records = [
+        _datapoint("a-1").model_copy(update={
+            "meta": {"source_cluster_id": "a"}
+        }),
+        _datapoint("a-2").model_copy(update={
+            "meta": {"source_cluster_id": "a"}
+        }),
+        _datapoint("b").model_copy(update={
+            "meta": {"source_cluster_id": "b"}
+        }),
+    ]
+
+    class _Converter:
+        @staticmethod
+        def parse(_path: Path) -> list[DataPoint]:
+            return records
+
+    source = tmp_path / "fixture.jsonl"
+    source.write_text("fixture\n", encoding="utf-8")
+    monkeypatch.setattr(run_matrix, "get_converter", lambda _name: _Converter())
+    monkeypatch.setattr(run_matrix, "_corpus_path", lambda _name: source)
+    class _RefusingTarget(_RecordingTarget):
+        modality_support = ("text",)
+
+        def generate(self, dialog, *, seed=None):
+            response = super().generate(dialog, seed=seed)
+            return response.model_copy(update={
+                "output_turns": [DialogTurn(
+                    role="assistant",
+                    content="I cannot help with malware instructions.",
+                )]
+            })
+
+    target = _RefusingTarget()
+    monkeypatch.setattr(
+        run_matrix, "build_target", lambda *_args, **_kwargs: target
+    )
+    out = tmp_path / "run"
+    args = [
+        "--api", "fixture:model", "--attackers", "replay",
+        "--judges", "rules", "--corpora", "fixture",
+        "--max-queries", "1", "--max-turns", "1", "--out", str(out),
+        *_provider_policy_args(tmp_path, [
+            ("fixture:model", "fixture", ["target"]),
+        ]),
+        *_partition_plan_args(tmp_path, "fixture", records),
+    ]
+    assert run_matrix.main(args) == 0
+    manifest = json.loads(next(out.glob("*.manifest.json")).read_text(
+        encoding="utf-8"
+    ))
+    run_config = manifest["config"]["run"]
+    assert run_config["partition_plan"]["status"] == "bound"
+    assert run_config["partition_plan"]["partition_role"] == "pilot"
+    assert run_config["partition_assignment"]["cluster_ids"] == ["a"]
+    assert run_config["sampling_audit"]["selected_records"] == 2
+    assert run_config["provider_data_policy_approval"]["status"] == "approved"
+
+
 def test_matrix_requires_real_target_and_judge_for_real_runs(tmp_path: Path) -> None:
     with pytest.raises(SystemExit):
         run_matrix.main(["--judges", "rules", "--out", str(tmp_path / "none")])
@@ -58,6 +332,59 @@ def test_matrix_requires_real_target_and_judge_for_real_runs(tmp_path: Path) -> 
             "--judges", "rules,llm",
             "--out", str(tmp_path / "mock-judge"),
         ])
+
+
+@pytest.mark.parametrize(
+    "spec",
+    [
+        "anthropic-fable:claude-fable-5;effort=high;max_tokens=25000",
+        (
+            "openai-responses:gpt-5.6-sol;reasoning_mode=pro;"
+            "reasoning_effort=medium;reasoning_context=all_turns"
+        ),
+    ],
+)
+def test_hosted_data_policy_approval_is_required_before_target_construction(
+    spec: str,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture,
+) -> None:
+    constructions = 0
+
+    def unexpected_build(*_args, **_kwargs):
+        nonlocal constructions
+        constructions += 1
+        raise AssertionError("target construction must not occur")
+
+    monkeypatch.setattr(run_matrix, "build_target", unexpected_build)
+    with pytest.raises(SystemExit):
+        run_matrix.main([
+            "--api", spec, "--judges", "rules", "--corpora", "synth",
+            "--limit", "1", "--out", str(tmp_path),
+        ])
+    assert "--provider-data-policy" in capsys.readouterr().err
+    assert constructions == 0
+
+
+@pytest.mark.parametrize("group", ["model,model", "model,not_a_dimension"])
+def test_group_validation_precedes_target_construction(
+    group: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    constructions = 0
+
+    def unexpected_build(*_args, **_kwargs):
+        nonlocal constructions
+        constructions += 1
+        raise AssertionError("target construction must not occur")
+
+    monkeypatch.setattr(run_matrix, "build_target", unexpected_build)
+    with pytest.raises(SystemExit):
+        run_matrix.main([
+            "--dry-run", "--judges", "rules", "--group", group,
+            "--corpora", "synth", "--limit", "1", "--out", str(tmp_path),
+        ])
+    assert constructions == 0
 
 
 def test_matrix_builds_exactly_one_stage_per_requested_judge() -> None:
@@ -95,6 +422,9 @@ def test_target_construction_failure_writes_error_artifact(tmp_path: Path) -> No
         "--corpora", "synth",
         "--limit", "1",
         "--out", str(tmp_path),
+        *_provider_policy_args(tmp_path, [
+            ("unregistered-target", "hosted-registry", ["target"]),
+        ]),
     ])
     errors = list(tmp_path.glob("*.error.json"))
     assert result == 1
@@ -171,6 +501,114 @@ def test_matrix_completion_recomputes_realized_identity_manifest(
     assert run_matrix.main(args) == 1
     error = json.loads(next(tmp_path.glob("*.error.json")).read_text(encoding="utf-8"))
     assert "realized identity inventory mismatch" in error["message"]
+
+
+@pytest.mark.parametrize("name", ["grid.lock", "cell.lock"])
+def test_dead_artifact_locks_are_reclaimed_and_owner_checked(
+    tmp_path: Path, name: str,
+) -> None:
+    path = tmp_path / name
+    path.write_text(json.dumps({
+        "owner_token": "dead-owner",
+        "pid": 2_147_483_647,
+        "host": run_matrix.platform.node(),
+        "created_epoch": 0,
+    }), encoding="utf-8")
+
+    token = run_matrix._acquire_artifact_lock(
+        path, {"kind": name}, stale_seconds=86_400
+    )
+    assert token != "dead-owner"
+    run_matrix._release_artifact_lock(path, "wrong-owner")
+    assert path.exists()
+    run_matrix._release_artifact_lock(path, token)
+    assert not path.exists()
+
+
+def test_systemic_target_failure_opens_circuit_before_next_cell(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class ProviderError(RuntimeError):
+        call_audit = {
+            "transport_attempt_count": 1,
+            "logical_call_count": 1,
+            "provider": "fixture",
+            "operation": "generate",
+            "error_type": "service_unavailable",
+        }
+
+    class FailingTarget(BaseTarget):
+        name = "failing-provider"
+        modality_support = ("text",)
+        max_transport_attempts_per_call = 1
+
+        def __init__(self) -> None:
+            self.calls = 0
+
+        def generate(self, dialog, *, seed=None):
+            self.calls += 1
+            raise ProviderError("systemic provider outage")
+
+    target = FailingTarget()
+    monkeypatch.setattr(run_matrix, "build_target", lambda *_a, **_kw: target)
+
+    result = run_matrix.main([
+        "--api", "fixture:model", "--attackers", "replay,crescendo",
+        "--judges", "rules", "--corpora", "synth", "--limit", "1",
+        "--max-queries", "1", "--max-turns", "1", "--out", str(tmp_path),
+        *_provider_policy_args(tmp_path, [
+            ("fixture:model", "fixture", ["target"]),
+        ]),
+    ])
+
+    assert result == 1
+    assert target.calls == 1
+    circuit = json.loads(next(tmp_path.glob("*.circuits.json")).read_text(
+        encoding="utf-8"
+    ))
+    assert "target:fixture:model" in circuit["circuits"]
+    grid = json.loads(next(tmp_path.glob("*.grid.json")).read_text(
+        encoding="utf-8"
+    ))
+    assert [cell["phase"] for cell in grid["cells"]] == [
+        "cell_execution_or_validation", "circuit_open",
+    ]
+
+
+def test_completion_is_atomic_and_stale_errors_are_removed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    args = [
+        "--dry-run", "--attackers", "replay", "--judges", "rules",
+        "--corpora", "synth", "--limit", "1", "--seeds", "0",
+        "--max-queries", "1", "--max-turns", "1", "--out", str(tmp_path),
+    ]
+    original = run_matrix._validate_completion_marker
+
+    def reject_pending(paths, planned, required):
+        if ".pending-" in paths["complete"].name:
+            raise ValueError("intentional pre-publication validation failure")
+        return original(paths, planned, required)
+
+    monkeypatch.setattr(run_matrix, "_validate_completion_marker", reject_pending)
+    assert run_matrix.main(args) == 1
+    assert list(tmp_path.glob("*.complete.json")) == []
+    assert list(tmp_path.glob("*.pending-*")) == []
+
+    monkeypatch.setattr(run_matrix, "_validate_completion_marker", original)
+    assert run_matrix.main(args) == 0
+    marker = next(tmp_path.glob("*.complete.json"))
+    stem = marker.name.removesuffix(".complete.json")
+    stale_error = tmp_path / f"{stem}.error.json"
+    stale_lock_error = tmp_path / f"{stem}__old.lock.error.json"
+    stale_response_checkpoint = tmp_path / f"{stem}.responses.checkpoint.jsonl"
+    for path in (stale_error, stale_lock_error, stale_response_checkpoint):
+        path.write_text("{}\n", encoding="utf-8")
+
+    assert run_matrix.main(args) == 0
+    assert not stale_error.exists()
+    assert not stale_lock_error.exists()
+    assert not stale_response_checkpoint.exists()
 
 
 def test_matrix_counts_an_empty_requested_corpus_as_failure(
@@ -350,6 +788,19 @@ class _ConfidentBinaryJudge(BaseJudge):
         )
 
 
+class _SafeBinaryJudge(BaseJudge):
+    name = "binary"
+
+    def judge(self, datapoint: DataPoint, response: Response) -> Judgment:
+        return Judgment(
+            attempt_id=response.attempt_id,
+            judge=self.name,
+            label="safe",
+            score=0.0,
+            raw={"confidence": 1.0},
+        )
+
+
 class _FailOnceJudge(BaseJudge):
     """Judge that raises for its first ``fail_times`` calls, then grades."""
 
@@ -442,7 +893,7 @@ def _runner(
         # These tests exercise Runner budgets, media and lineage rather than
         # rule-parser coverage. Use an explicit decisive test judge so an
         # intentionally generic fixture reply is not an accidental abstention.
-        JudgeCascade([_ConfidentBinaryJudge()]),
+        JudgeCascade([_SafeBinaryJudge()]),
         AttackBudget(
             max_queries=max_queries,
             max_turns=max_turns,
@@ -484,6 +935,83 @@ def test_crescendo_is_live_response_conditioned_and_starts_benign():
     assert results["conversation_ASR"].provenance["population"] == (
         "harmful_response_conditioned_conversations"
     )
+
+
+def test_authoritative_harmful_completion_stops_live_trajectory_immediately():
+    target = _RecordingTarget()
+    runner = Runner(
+        CrescendoAttacker(),
+        target,
+        JudgeCascade([_ConfidentBinaryJudge()]),
+        AttackBudget(max_queries=4, max_turns=4, seed=0),
+        [0],
+    )
+
+    judgments, _ = runner.run([_datapoint()])
+
+    assert len(target._dialogs) == len(judgments) == 1
+    assert judgments[0].label == "violation"
+    assert judgments[0].raw["turn_index"] == 0
+
+
+def test_live_benign_violation_label_does_not_trigger_harmful_terminal_rule():
+    target = _RecordingTarget()
+    runner = Runner(
+        CrescendoAttacker(), target, JudgeCascade([_ConfidentBinaryJudge()]),
+        AttackBudget(max_queries=3, max_turns=3, seed=0), [0],
+    )
+    benign = _datapoint().model_copy(update={"expected_behavior": "safe_answer"})
+
+    judgments, _ = runner.run([benign])
+
+    assert len(target._dialogs) == len(judgments) == 3
+
+
+def test_live_aggregation_persists_km_curve_and_cluster_ci_rmtb_above_one():
+    runner = _runner(
+        _FloodAttacker(), _RecordingTarget(), max_queries=3, max_turns=3
+    )
+    rows: list[Judgment] = []
+    for datapoint, labels in (("a", ["safe", "safe", "violation"]),
+                              ("b", ["safe", "safe", "safe"])):
+        for turn, label in enumerate(labels):
+            rows.append(Judgment(
+                attempt_id=f"{datapoint}-{turn}",
+                judge="j",
+                label=label,
+                score=1.0 if label == "violation" else 0.0,
+                raw={
+                    "datapoint_id": datapoint,
+                    "source_cluster_id": datapoint,
+                    "source": "unit",
+                    "source_policy": None,
+                    "source_policy_id": "unversioned",
+                    "source_policy_version": "unversioned",
+                    "expected_behavior": "refuse",
+                    "common_metrics_eligible": True,
+                    "response_conditioned": True,
+                    "replayed_transcript": False,
+                    "seed": 0,
+                    "turn_index": turn,
+                },
+            ))
+
+    results = runner.aggregate(rows, [])
+    rmtb = next(
+        row for row in results
+        if row.metric == "restricted_mean_turns_to_break"
+    )
+    curve = sorted(
+        (row for row in results if row.metric == "kaplan_meier_survival"),
+        key=lambda row: int(row.group_by["survival_turn"]),
+    )
+
+    assert rmtb.value > 1.0
+    assert rmtb.ci_low is not None and rmtb.ci_high is not None
+    assert rmtb.provenance["horizon_turns"] == 3
+    assert rmtb.provenance["ci_method"] == "source_cluster_bootstrap"
+    assert [row.provenance["turn"] for row in curve] == [0, 1, 2, 3]
+    assert all(0.0 <= row.value <= 1.0 for row in curve)
 
 
 @pytest.mark.parametrize(
@@ -1221,6 +1749,123 @@ def test_checkpoint_loader_rejects_duplicate_attempt_ids(tmp_path: Path):
         Runner.load_checkpoint(checkpoint, expected_run_id=manifest.run_id)
 
 
+def test_checkpoint_second_crash_preserves_valid_non_newline_record(
+    tmp_path: Path,
+) -> None:
+    runner = _runner(_FloodAttacker(), _RecordingTarget())
+    records: list[dict] = []
+    _, manifest = runner.run(
+        [_datapoint("a"), _datapoint("b"), _datapoint("c")],
+        on_record=records.append,
+    )
+    checkpoint = tmp_path / "checkpoint.jsonl"
+    checkpoint.write_text(
+        json.dumps(records[0], sort_keys=True), encoding="utf-8"
+    )
+    Runner.append_checkpoint(checkpoint, records[1])
+    with checkpoint.open("ab") as handle:
+        handle.write(b'{"schema_version":')
+    assert len(Runner.load_checkpoint(
+        checkpoint, expected_run_id=manifest.run_id
+    )) == 2
+
+    Runner.append_checkpoint(checkpoint, records[2])
+    restored = Runner.load_checkpoint(
+        checkpoint, expected_run_id=manifest.run_id
+    )
+    assert set(restored) == {
+        record["attempt"]["id"] for record in records
+    }
+
+
+def test_response_checkpoint_rejects_duplicates_and_unused_records(
+    tmp_path: Path,
+) -> None:
+    first = _runner(_FloodAttacker(), _RecordingTarget())
+    response_rows: list[dict] = []
+    first.run([_datapoint()], on_response=response_rows.append)
+    sidecar = tmp_path / "responses.checkpoint.jsonl"
+    Runner.append_checkpoint(sidecar, response_rows[0])
+    Runner.append_checkpoint(sidecar, response_rows[0])
+    with pytest.raises(ValueError, match="duplicate attempt id"):
+        Runner.load_response_checkpoint(sidecar)
+
+    extra = json.loads(json.dumps(response_rows[0]))
+    extra["attempt"]["id"] = "absent-attempt"
+    extra["response"]["attempt_id"] = "absent-attempt"
+    resumed = _runner(_FloodAttacker(), _RecordingTarget())
+    with pytest.raises(ValueError, match="response checkpoint contains attempts absent"):
+        resumed.run(
+            [_datapoint()],
+            response_records={"absent-attempt": extra},
+        )
+
+
+def test_durable_budget_survives_restart_and_records_transport_exposure(
+    tmp_path: Path,
+) -> None:
+    ledger = tmp_path / "budget.json"
+    first = GlobalCallBudget(
+        max_target_calls=1,
+        max_judge_calls=1,
+        max_http_attempts=2,
+        state_path=ledger,
+        budget_id="grid-test",
+    )
+    first.charge_target(http_exposure=1)
+    first.charge_judge(1, http_exposure=1)
+    restarted = GlobalCallBudget(
+        max_target_calls=1,
+        max_judge_calls=1,
+        max_http_attempts=2,
+        state_path=ledger,
+        budget_id="grid-test",
+    )
+    assert restarted.snapshot()["target_calls"] == 1
+    assert restarted.snapshot()["judge_calls"] == 1
+    assert restarted.snapshot()["http_attempts"] == 2
+    with pytest.raises(BudgetExhausted, match="target-call ceiling"):
+        restarted.charge_target(http_exposure=1)
+
+
+def test_failed_provider_call_keeps_safe_audit_and_consumes_durable_budget(
+    tmp_path: Path,
+) -> None:
+    class ProviderError(RuntimeError):
+        call_audit = {
+            "transport_attempt_count": 1,
+            "logical_call_count": 1,
+            "provider": "fixture",
+            "operation": "responses.create",
+            "error_type": "timeout",
+        }
+
+    class FailingProvider(_RecordingTarget):
+        max_transport_attempts_per_call = 1
+
+        def generate(self, dialog, *, seed=None):
+            raise ProviderError("provider unavailable")
+
+    budget = GlobalCallBudget(
+        max_target_calls=2,
+        max_http_attempts=2,
+        state_path=tmp_path / "budget.json",
+        budget_id="grid-provider",
+    )
+    runner = Runner(
+        _FloodAttacker(), FailingProvider(),
+        JudgeCascade([_SafeBinaryJudge()]),
+        AttackBudget(max_queries=1, max_turns=1, seed=0), [0],
+        call_budget=budget,
+    )
+    with pytest.raises(ExternalCallFailure) as raised:
+        runner.run([_datapoint()])
+    assert raised.value.phase == "target_call"
+    assert raised.value.call_audit["transport_attempt_count"] == 1
+    assert budget.snapshot()["target_calls"] == 1
+    assert budget.snapshot()["http_attempts"] == 1
+
+
 def test_runner_rejects_empty_mismatched_and_unreported_target_outputs() -> None:
     class BadTarget(_RecordingTarget):
         def __init__(self, mode: str) -> None:
@@ -1279,6 +1924,33 @@ def test_common_metric_ineligible_datapoint_requires_named_estimand() -> None:
     })
     with pytest.raises(ValueError, match="required_metric"):
         _runner(_FloodAttacker(), _RecordingTarget()).plan_manifest([point])
+
+
+def test_unexecuted_mmsafety_official_evaluator_is_inventoried_not_published():
+    point = _datapoint().model_copy(update={
+        "source": "mmsafety",
+        "meta": {
+            "required_metric": "mmsafety_official_attack_rate",
+            "official_evaluator_executed": False,
+        },
+    })
+    runner = _runner(_FloodAttacker(), _RecordingTarget())
+    judgments, manifest = runner.run([point])
+    inventory = manifest.config["source_metric_inventory"]
+
+    assert inventory == [{
+        "source": "mmsafety",
+        "required_metric": "mmsafety_official_attack_rate",
+        "source_policy": None,
+        "n_datapoints": 1,
+        "official_evaluator_executed": False,
+        "official_execution_evidence_fields": ["official_evaluator_executed"],
+        "source_metric_emitted": False,
+        "n_source_evaluations": 1,
+    }]
+    assert "mmsafety_official_attack_rate" not in {
+        result.metric for result in runner.aggregate(judgments, [])
+    }
 
 
 def test_safe_path_components_are_bounded_valid_and_collision_resistant():

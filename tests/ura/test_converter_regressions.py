@@ -311,7 +311,7 @@ def test_jalmbench_keeps_harmful_transcript_out_of_audio_only_arm(
     ("converter", "filename"),
     [
         (CyberSecEvalConverter(), "cyber.json"),
-        (MOSSBenchConverter(), "moss.json"),
+        (MOSSBenchConverter(require_complete_release=False), "moss.json"),
         (SIUOConverter(), "siuo.json"),
         (VideoSafetyBenchConverter(), "video.json"),
         (VLSBenchConverter(), "vls.json"),
@@ -340,7 +340,11 @@ def test_empty_jailbreakv_csv_fails_instead_of_becoming_an_empty_corpus(
     ("converter", "row", "message"),
     [
         (CyberSecEvalConverter(), {"attack_type": ["x"]}, "executable prompt"),
-        (MOSSBenchConverter(), {"pid": 1}, "non-empty question"),
+        (
+            MOSSBenchConverter(require_complete_release=False),
+            {"pid": 1},
+            "non-empty question",
+        ),
         (SIUOConverter(), {"image": "x.png"}, "question or image"),
         (VideoSafetyBenchConverter(), {"video": "x.mp4", "type": "harmful"}, "non-empty question"),
         (VLSBenchConverter(), {"instruction": "neutral"}, "image_path"),
@@ -360,7 +364,7 @@ def test_mossbench_missing_image_fails_closed_not_text_only(tmp_path: Path):
     source = tmp_path / "moss.json"
     _write_json(source, [{"pid": 1, "question": "Is this safe to handle?"}])
     with pytest.raises(CorpusFormatError, match="image reference"):
-        MOSSBenchConverter().parse(source)
+        MOSSBenchConverter(require_complete_release=False).parse(source)
 
 
 def test_mossbench_json_resolves_image(tmp_path: Path):
@@ -370,7 +374,7 @@ def test_mossbench_json_resolves_image(tmp_path: Path):
         "pid": 1, "question": "Is this safe?", "image": "1.jpg",
         "metadata": {"over": "Exaggerated Risk"},
     }])
-    points = MOSSBenchConverter().parse(source)
+    points = MOSSBenchConverter(require_complete_release=False).parse(source)
     assert len(points) == 1
     assert points[0].modalities == ["text", "image"]
     assert Path(points[0].media[0].path).is_file()
@@ -385,7 +389,7 @@ def test_mossbench_reads_official_information_csv(tmp_path: Path):
         "1,Is this safe?,1.jpg,a benign scene,longer text,Exaggerated Risk\n",
         encoding="utf-8",
     )
-    points = MOSSBenchConverter().parse(tmp_path)  # point at the release directory
+    points = MOSSBenchConverter(require_complete_release=False).parse(tmp_path)
     assert len(points) == 1
     assert points[0].modalities == ["text", "image"]
     assert points[0].risk_subtype == "Exaggerated Risk"
