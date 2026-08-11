@@ -714,6 +714,32 @@ def _verify_expected_release(
         )
 
 
+def _pid_alive(pid: int) -> bool:
+    """Best-effort liveness check for a lock holder's pid (Windows-safe)."""
+    if os.name == "nt":
+        import ctypes
+        query = 0x1000  # PROCESS_QUERY_LIMITED_INFORMATION
+        still_active = 259
+        kernel32 = ctypes.windll.kernel32
+        handle = kernel32.OpenProcess(query, False, pid)
+        if not handle:
+            return False
+        try:
+            code = ctypes.c_ulong()
+            if not kernel32.GetExitCodeProcess(handle, ctypes.byref(code)):
+                return True  # cannot determine: assume alive (fail safe)
+            return code.value == still_active
+        finally:
+            kernel32.CloseHandle(handle)
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    return True
+
+
 def _corpus_path(name: str) -> Path:
     return Path(os.environ.get(
         f"URA_{name.upper()}_PATH", f"datasets/samples/{name}.jsonl"
@@ -970,22 +996,46 @@ def main(argv=None) -> int:
     grid_id = f"grid-{hashlib.sha256(grid_material).hexdigest()[:24]}"
     grid_path = out / f"{grid_id}.grid.json"
     grid_lock = out / f"{grid_id}.grid.lock"
+    lock_payload = json.dumps({
+        "grid_id": grid_id,
+        "pid": os.getpid(),
+        "host": platform.node(),
+        "started_at": run_started,
+    }) + "\n"
+    lock_flags = os.O_CREAT | os.O_EXCL | os.O_WRONLY
     try:
-        descriptor = os.open(
-            str(grid_lock), os.O_CREAT | os.O_EXCL | os.O_WRONLY
-        )
+        descriptor = os.open(str(grid_lock), lock_flags)
     except FileExistsError:
-        print(
-            f"grid lock already exists; refusing concurrent execution: {grid_lock}",
-            file=sys.stderr,
-        )
-        return 1
+        descriptor = -1
+        # Reclaim only a same-host lock whose holder process is dead; otherwise
+        # refuse (a live holder or a lock from another host is respected).
+        try:
+            holder = json.loads(grid_lock.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            holder = {}
+        if (
+            holder.get("host") == platform.node()
+            and isinstance(holder.get("pid"), int)
+            and not _pid_alive(holder["pid"])
+        ):
+            print(
+                f"reclaiming stale grid lock from dead pid {holder.get('pid')}: "
+                f"{grid_lock}",
+                file=sys.stderr,
+            )
+            grid_lock.unlink(missing_ok=True)
+            try:
+                descriptor = os.open(str(grid_lock), lock_flags)
+            except FileExistsError:
+                descriptor = -1
+        if descriptor == -1:
+            print(
+                f"grid lock already exists; refusing concurrent execution: {grid_lock}",
+                file=sys.stderr,
+            )
+            return 1
     with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
-        handle.write(json.dumps({
-            "grid_id": grid_id,
-            "pid": os.getpid(),
-            "started_at": run_started,
-        }) + "\n")
+        handle.write(lock_payload)
     cell_statuses: list[dict[str, object]] = []
     _write_json(grid_path, {
         "status": "running",

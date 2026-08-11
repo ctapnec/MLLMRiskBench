@@ -1634,10 +1634,26 @@ class Runner:
 
     @staticmethod
     def append_checkpoint(path: str | Path, record: CheckpointRecord) -> None:
-        """Durably append one completed attempt bundle to a JSONL checkpoint."""
+        """Durably append one completed attempt bundle to a JSONL checkpoint.
+
+        A completed record always ends in a newline, so a missing trailing
+        newline unambiguously marks a torn (crash-truncated) final line. That
+        partial line is dropped before appending, so a resumed run never
+        concatenates a new record onto it (which would make the torn line a
+        non-final invalid line and render the cell permanently unresumable).
+        """
         p = Path(path)
         p.parent.mkdir(parents=True, exist_ok=True)
         line = json.dumps(record, ensure_ascii=False, sort_keys=True) + "\n"
+        if p.exists():
+            with p.open("rb+") as fh:
+                fh.seek(0, os.SEEK_END)
+                size = fh.tell()
+                if size:
+                    fh.seek(size - 1)
+                    if fh.read(1) != b"\n":
+                        data = p.read_bytes()
+                        fh.truncate(data.rfind(b"\n") + 1)
         with p.open("a", encoding="utf-8") as fh:
             fh.write(line)
             fh.flush()
