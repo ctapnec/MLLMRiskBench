@@ -31,10 +31,10 @@ current PowerShell process as follows; replace paths, but never paste secret
 values into a command, configuration file, run name, log, or commit:
 
 ```powershell
-$env:URA_STRONGREJECT_PATH = 'D:\datasets\strongreject'
-$env:URA_MMSAFETY_PATH = 'D:\datasets\mm-safetybench'
-$env:URA_MOSSBENCH_PATH = 'D:\datasets\mossbench'
-$env:URA_MEDIA_ROOTS = 'D:\datasets\mm-safetybench;D:\datasets\mossbench'
+$env:URA_STRONGREJECT_PATH = 'D:\datasets\strongreject\strongreject_dataset.csv'  # the CSV file, not a folder
+$env:URA_MMSAFETY_PATH = 'D:\datasets\mm-safetybench'                              # root with data\processed_questions + data\imgs
+$env:URA_MOSSBENCH_PATH = 'D:\datasets\mossbench'                                  # release dir with information.csv + images
+$env:URA_MEDIA_ROOTS = 'D:\datasets\mm-safetybench\data\imgs;D:\datasets\mossbench'
 $env:ANTHROPIC_API_KEY = (Get-Content -Raw '<approved-anthropic-secret-file>').Trim()
 $env:OPENAI_API_KEY = (Get-Content -Raw '<approved-openai-secret-file>').Trim()
 ```

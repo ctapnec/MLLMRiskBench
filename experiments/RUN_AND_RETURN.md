@@ -124,29 +124,30 @@ runbook:
 
 | `--corpora` | Env var | Source (verify against `references.bib`) | Get it | Point the env var at |
 | --- | --- | --- | --- | --- |
-| `strongreject` | `URA_STRONGREJECT_PATH` | StrongREJECT, Souly et al., NeurIPS 2024 D&B, arXiv:2402.10260 `[strongreject-2024]` | `git clone https://github.com/alexandra-souly/strongREJECT` | the dataset CSV `strongreject_dataset/strongreject_dataset.csv` (columns `category,source,forbidden_prompt`) |
-| `mmsafety` | `URA_MMSAFETY_PATH` | MM-SafetyBench, Liu et al., ECCV 2024, arXiv:2311.17600 `[mmsafetybench-2024]` | `git clone https://github.com/isXinLiu/MM-SafetyBench`, then fetch its released `data/` and `imgs/` per the repo README | the benchmark root (the directory that contains `data/processed_questions/<Scenario>.json` and `imgs/<Scenario>/SD_TYPO/<id>.jpg`) |
-| `mossbench` | `URA_MOSSBENCH_PATH` | MOSSBench, Li et al., ICLR 2025, arXiv:2406.17806 `[mossbench-2025]` | authors' release (GitHub / HuggingFace; first author Xirui Li) | the metadata JSON/JSONL (records with `pid, question, image, metadata{...}`); keep the referenced images beside it |
-| `rjudge` | `URA_RJUDGE_PATH` | R-Judge, Yuan et al., Findings EMNLP 2024, arXiv:2401.10019 `[rjudge-2024]` | `git clone https://github.com/Lordog/R-Judge` | the trajectory JSON under the repo's `data/` (each row is a `contents` trace plus a human safety label/description) |
-| `gptgeochat` | `URA_GPTGEOCHAT_PATH` | GPTGeoChat, Mendes et al., EMNLP 2024, arXiv:2407.04952 `[gptgeochat-2024]` | authors' released dataset (see the paper's linked repository) | the moderation JSON of image-grounded dialogues; keep the referenced images beside it |
+| `strongreject` | `URA_STRONGREJECT_PATH` | StrongREJECT, Souly et al., NeurIPS 2024 D&B, arXiv:2402.10260 `[strongreject-2024]` | authors' release (resolve the current repository from the citation) | the StrongREJECT dataset **CSV file** (columns `category,source,forbidden_prompt`), not its containing directory |
+| `mmsafety` | `URA_MMSAFETY_PATH` | MM-SafetyBench, Liu et al., ECCV 2024, arXiv:2311.17600 `[mmsafetybench-2024]` | `git clone https://github.com/isXinLiu/MM-SafetyBench`, then fetch its released `data/` and `imgs/` per the repo README | the benchmark root (the directory that contains `data/processed_questions/<Scenario>.json` and `data/imgs/<Scenario>/SD_TYPO/<id>.jpg`) |
+| `mossbench` | `URA_MOSSBENCH_PATH` | MOSSBench, Li et al., ICLR 2025, arXiv:2406.17806 `[mossbench-2025]` | authors' release (GitHub / HuggingFace; first author Xirui Li) | the release **directory** (its `information.csv`/`metadata.csv` plus the image assets) or the metadata table file directly; every item requires a resolvable image |
+| `rjudge` | `URA_RJUDGE_PATH` | R-Judge, Yuan et al., Findings EMNLP 2024, arXiv:2401.10019 `[rjudge-2024]` | `git clone https://github.com/Lordog/R-Judge` | the R-Judge **`data/` directory** (the converter recursively loads every `*.json` under it); not a single scenario file |
+| `gptgeochat` | `URA_GPTGEOCHAT_PATH` | GPTGeoChat, Mendes et al., EMNLP 2024, arXiv:2407.04952 `[gptgeochat-2024]` | authors' released dataset (see the paper's linked repository) | the split **root** that contains an `annotations/` directory of `annotation_*.json` files with an `images/` directory beside it |
 
 **Media roots.** The media-bearing corpora (`mmsafety`, `mossbench`,
 `gptgeochat`) reference local image files, and the runner reads local media only
 under an approved root. Add the directory that actually holds those images to
-`URA_MEDIA_ROOTS`; otherwise the media preflight fails closed. `strongreject` and
-`rjudge` are text-only and need no media root.
+`URA_MEDIA_ROOTS` (MM-SafetyBench keeps them under `data/imgs`, MOSSBench beside
+its table, GPTGeoChat under `images/`); otherwise the media preflight fails
+closed. `strongreject` and `rjudge` are text-only and need no media root.
 
 Concrete example once the releases are on disk (substitute the real filenames of
 your download; `<...>` marks a name that depends on the release):
 
 ```bash
 DATA=/path/to/corpora     # wherever you downloaded the releases
-export URA_STRONGREJECT_PATH="$DATA/strongREJECT/strongreject_dataset/strongreject_dataset.csv"
-export URA_MMSAFETY_PATH="$DATA/MM-SafetyBench"                 # root with data/processed_questions + imgs
-export URA_MOSSBENCH_PATH="$DATA/MOSSBench/<metadata>.json"
-export URA_RJUDGE_PATH="$DATA/R-Judge/data/<trajectories>.json"
-export URA_GPTGEOCHAT_PATH="$DATA/GPTGeoChat/<moderation>.json"
-export URA_MEDIA_ROOTS="$DATA/MM-SafetyBench/imgs:$DATA/MOSSBench:$DATA/GPTGeoChat"
+export URA_STRONGREJECT_PATH="$DATA/strongreject/strongreject_dataset/strongreject_dataset.csv"  # the CSV inside the repo's strongreject_dataset/ directory
+export URA_MMSAFETY_PATH="$DATA/MM-SafetyBench"          # root with data/processed_questions + data/imgs
+export URA_MOSSBENCH_PATH="$DATA/MOSSBench"              # release dir with information.csv (meta_data_over) + images
+export URA_RJUDGE_PATH="$DATA/R-Judge/data"              # the data/ directory (recursively loaded)
+export URA_GPTGEOCHAT_PATH="$DATA/GPTGeoChat/human/test" # a split root (e.g. human/test) with annotations/ + images/
+export URA_MEDIA_ROOTS="$DATA/MM-SafetyBench/data/imgs:$DATA/MOSSBench:$DATA/GPTGeoChat/human/test"
 ```
 
 Record the exact release, split/version, and file hashes in the freeze sheet; do
@@ -339,6 +340,12 @@ actual device/runtime environment. A branch, tag or omitted revision is rejected
 do not invent a commit for this template. An output that does not match the model
 guard's explicit verdict grammar is a cell error, not pass, block or an imputed
 safe decision.
+
+**The `GuardrailJudge` (Llama Guard) guard is text-only** and rejects any dialog
+carrying physical media before the target is queried, so the model-guard arm
+cannot use an image corpus. Drop `mossbench` from `--corpora` for this arm and use
+a text-only benign source paired with `strongreject`; `mossbench` stays only on
+the `rules`-guard arm above (the rule guard does not reject media).
 
 ---
 

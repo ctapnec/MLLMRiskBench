@@ -299,6 +299,48 @@ def _install_fable_fixture(target: AnthropicFableTarget, result):
     return captured
 
 
+def test_fable_captures_verbatim_thinking_blocks_on_the_assistant_turn() -> None:
+    target = AnthropicFableTarget()
+    result = _fable_result()
+    result.content[0] = SimpleNamespace(
+        type="thinking", thinking="step by step", signature="sig-xyz"
+    )
+    _install_fable_fixture(target, result)
+
+    response = target.generate([DialogTurn(role="user", content="go")], seed=0)
+
+    assert response.output_turns[0].provider_thinking == [
+        {"type": "thinking", "thinking": "step by step", "signature": "sig-xyz"}
+    ]
+
+
+def test_fable_returns_prior_thinking_blocks_unchanged_in_multiturn() -> None:
+    target = AnthropicFableTarget()
+    captured = _install_fable_fixture(target, _fable_result())
+    prior_thinking = [
+        {"type": "thinking", "thinking": "earlier reasoning", "signature": "sig-1"}
+    ]
+
+    target.generate(
+        [
+            DialogTurn(role="user", content="first"),
+            DialogTurn(
+                role="assistant", content="first answer",
+                provider_thinking=prior_thinking,
+            ),
+            DialogTurn(role="user", content="second"),
+        ],
+        seed=0,
+    )
+
+    assistant_messages = [m for m in captured["messages"] if m["role"] == "assistant"]
+    assert assistant_messages, "prior assistant turn must be sent back to the provider"
+    content = assistant_messages[0]["content"]
+    # Thinking block returned first and unchanged (signature intact), then the text.
+    assert content[0] == prior_thinking[0]
+    assert {"type": "text", "text": "first answer"} in content
+
+
 def test_fable_has_one_canonical_adaptive_high_effort_condition() -> None:
     target = build_api_target(_FABLE_SPEC)
     assert isinstance(target, AnthropicFableTarget)

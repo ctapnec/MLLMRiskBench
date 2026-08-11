@@ -110,6 +110,12 @@ class DialogTurn(BaseModel):
     media: list[MediaRef] = Field(default_factory=list)
     tool_call: Optional[ToolCall] = None
     tool_result: Optional[str] = None
+    # Verbatim provider-native reasoning blocks (e.g. Anthropic ``thinking`` /
+    # ``redacted_thinking``, with their signatures) captured on an assistant
+    # turn so a multi-turn continuation can return them to the provider
+    # unchanged, as the extended-thinking contract requires. Optional and
+    # additive: empty for text-only providers and all pre-existing artifacts.
+    provider_thinking: list[dict[str, Any]] = Field(default_factory=list)
 
 
 # --------------------------------------------------------------------------- #

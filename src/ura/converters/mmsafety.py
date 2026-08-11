@@ -31,7 +31,11 @@ class MMSafetyConverter(BaseConverter):
             qdir = path
         else:
             return missing(self.name, path)
-        imgroot = qdir.parent.parent / "imgs"
+        # Official layout keeps images beside the questions directory:
+        # <root>/data/processed_questions/<Scenario>.json and
+        # <root>/data/imgs/<Scenario>/<variant>/<id>.jpg. imgs is therefore the
+        # sibling of processed_questions, not one level higher.
+        imgroot = qdir.parent / "imgs"
 
         out: list[DataPoint] = []
         for f in sorted(qdir.glob("*.json")):

@@ -356,6 +356,42 @@ def test_required_construct_fields_fail_closed(
         converter.parse(source)
 
 
+def test_mossbench_missing_image_fails_closed_not_text_only(tmp_path: Path):
+    source = tmp_path / "moss.json"
+    _write_json(source, [{"pid": 1, "question": "Is this safe to handle?"}])
+    with pytest.raises(CorpusFormatError, match="image reference"):
+        MOSSBenchConverter().parse(source)
+
+
+def test_mossbench_json_resolves_image(tmp_path: Path):
+    (tmp_path / "1.jpg").write_bytes(b"\xff\xd8\xff\xe0img")
+    source = tmp_path / "moss.json"
+    _write_json(source, [{
+        "pid": 1, "question": "Is this safe?", "image": "1.jpg",
+        "metadata": {"over": "Exaggerated Risk"},
+    }])
+    points = MOSSBenchConverter().parse(source)
+    assert len(points) == 1
+    assert points[0].modalities == ["text", "image"]
+    assert Path(points[0].media[0].path).is_file()
+    assert points[0].risk_subtype == "Exaggerated Risk"
+
+
+def test_mossbench_reads_official_information_csv(tmp_path: Path):
+    # Official GitHub information.csv header (Hugging Face uses metadata_over).
+    (tmp_path / "1.jpg").write_bytes(b"\xff\xd8\xff\xe0img")
+    (tmp_path / "information.csv").write_text(
+        "pid,question,image_path,short description,description,meta_data_over\n"
+        "1,Is this safe?,1.jpg,a benign scene,longer text,Exaggerated Risk\n",
+        encoding="utf-8",
+    )
+    points = MOSSBenchConverter().parse(tmp_path)  # point at the release directory
+    assert len(points) == 1
+    assert points[0].modalities == ["text", "image"]
+    assert points[0].risk_subtype == "Exaggerated Risk"
+    assert points[0].meta["short_description"] == "a benign scene"
+
+
 def test_non_object_rows_fail_closed(tmp_path: Path):
     source = tmp_path / "cyber.json"
     _write_json(source, ["schema drift"])

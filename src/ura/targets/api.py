@@ -490,6 +490,10 @@ class AnthropicTarget(BaseTarget):
                 continue
             role = "assistant" if turn.role == "assistant" else "user"
             blocks: list[dict[str, Any]] = []
+            if role == "assistant" and turn.provider_thinking:
+                # Return preserved thinking blocks unchanged (signatures intact),
+                # ahead of the visible text, per the extended-thinking contract.
+                blocks.extend(turn.provider_thinking)
             if turn.content:
                 blocks.append({"type": "text", "text": turn.content})
             blocks.extend(
@@ -775,14 +779,14 @@ class AnthropicFableTarget(AnthropicTarget):
         }
 
     @staticmethod
-    def _visible_text(resp: Any) -> tuple[str, int]:
+    def _visible_text(resp: Any) -> tuple[str, list[dict[str, Any]]]:
         content = _provider_field(resp, "content")
         if not isinstance(content, (list, tuple)):
             raise AnthropicFableOutputError(
                 "Anthropic Fable response content is not a block list"
             )
         text_blocks: list[str] = []
-        thinking_blocks = 0
+        thinking_blocks: list[dict[str, Any]] = []
         for block in content:
             block_type = _provider_field(block, "type")
             if block_type == "text":
@@ -793,7 +797,19 @@ class AnthropicFableTarget(AnthropicTarget):
                     )
                 text_blocks.append(value)
             elif block_type == "thinking":
-                thinking_blocks += 1
+                # Preserve the verbatim thinking block (including its signature)
+                # so a multi-turn continuation returns it to the provider
+                # unchanged, rather than discarding the model's reasoning.
+                thinking_blocks.append({
+                    "type": "thinking",
+                    "thinking": _provider_field(block, "thinking"),
+                    "signature": _provider_field(block, "signature"),
+                })
+            elif block_type == "redacted_thinking":
+                thinking_blocks.append({
+                    "type": "redacted_thinking",
+                    "data": _provider_field(block, "data"),
+                })
             else:
                 raise AnthropicFableOutputError(
                     "Anthropic Fable returned unsupported content block "
@@ -850,7 +866,8 @@ class AnthropicFableTarget(AnthropicTarget):
         stop_reason = _provider_field(resp, "stop_reason")
         stop_details = _provider_field(resp, "stop_details")
         stop_sequence = _provider_field(resp, "stop_sequence")
-        text, thinking_block_count = self._visible_text(resp)
+        text, thinking_blocks = self._visible_text(resp)
+        thinking_block_count = len(thinking_blocks)
         tokens = self._usage_tokens(resp)
 
         provider_refusal = stop_reason == "refusal"
@@ -904,7 +921,9 @@ class AnthropicFableTarget(AnthropicTarget):
                 raise AnthropicFableOutputError(
                     "Anthropic Fable end_turn contained no visible text"
                 )
-            output_turns = [DialogTurn(role="assistant", content=text)]
+            output_turns = [DialogTurn(
+                role="assistant", content=text, provider_thinking=thinking_blocks,
+            )]
 
         return Response(
             attempt_id=_dialog_fingerprint(dialog),

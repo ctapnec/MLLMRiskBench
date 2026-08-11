@@ -73,6 +73,26 @@ def test_empty_mmsafety_directory_fails_closed(tmp_path: Path):
         MMSafetyConverter().parse(source)
 
 
+def test_mmsafety_resolves_images_under_official_data_imgs(tmp_path: Path):
+    # Official release: <root>/data/processed_questions/<Scenario>.json with
+    # images at <root>/data/imgs/<Scenario>/<variant>/<id>.jpg.
+    root = tmp_path
+    _write_json(
+        root / "data" / "processed_questions" / "01-Illegal_Activity.json",
+        {"1": {"Question": "q", "Rephrased Question": "rq", "Key Phrase": "kp"}},
+    )
+    imgdir = root / "data" / "imgs" / "01-Illegal_Activity" / "SD_TYPO"
+    imgdir.mkdir(parents=True)
+    (imgdir / "1.jpg").write_bytes(b"\xff\xd8\xff\xe0\x00\x10JFIF")
+    points = MMSafetyConverter().parse(root)
+    assert len(points) == 1
+    media_path = Path(points[0].media[0].path)
+    assert media_path.parts[-4:] == (
+        "imgs", "01-Illegal_Activity", "SD_TYPO", "1.jpg",
+    )
+    assert media_path.is_file()
+
+
 def test_empty_bipia_jsonl_fails_closed(tmp_path: Path):
     source = tmp_path / "email" / "test.jsonl"
     source.parent.mkdir()

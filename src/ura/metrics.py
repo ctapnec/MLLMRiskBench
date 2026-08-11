@@ -470,6 +470,325 @@ def group_by_key(judgments: Iterable[Judgment], key) -> dict[str, list[Judgment]
     return dict(out)
 
 
+# --------------------------------------------------------------------------- #
+# Confirmatory analysis primitives (thesis V.1.7). Pure Python, seeded RNG.
+# These are building blocks; the confirmatory driver (families, exchangeability
+# gating, disjoint-pilot power) composes them in the experiment-analysis layer.
+# --------------------------------------------------------------------------- #
+
+def _norm_cdf(x: float) -> float:
+    return 0.5 * (1.0 + math.erf(x / math.sqrt(2.0)))
+
+
+def _norm_ppf(p: float) -> float:
+    """Inverse standard-normal CDF (Acklam's rational approximation, ~1e-9)."""
+    if not 0.0 < p < 1.0:
+        raise ValueError("normal quantile requires 0 < p < 1")
+    a = (-3.969683028665376e+01, 2.209460984245205e+02, -2.759285104469687e+02,
+         1.383577518672690e+02, -3.066479806614716e+01, 2.506628277459239e+00)
+    b = (-5.447609879822406e+01, 1.615858368580409e+02, -1.556989798598866e+02,
+         6.680131188771972e+01, -1.328068155288572e+01)
+    c = (-7.784894002430293e-03, -3.223964580411365e-01, -2.400758277161838e+00,
+         -2.549732539343734e+00, 4.374664141464968e+00, 2.938163982698783e+00)
+    d = (7.784695709041462e-03, 3.224671290700398e-01, 2.445134137142996e+00,
+         3.754408661907416e+00)
+    plow, phigh = 0.02425, 1 - 0.02425
+    if p < plow:
+        q = math.sqrt(-2 * math.log(p))
+        num = ((((c[0] * q + c[1]) * q + c[2]) * q + c[3]) * q + c[4]) * q + c[5]
+        den = (((d[0] * q + d[1]) * q + d[2]) * q + d[3]) * q + 1
+        return num / den
+    if p <= phigh:
+        q = p - 0.5
+        r = q * q
+        num = (((((a[0] * r + a[1]) * r + a[2]) * r + a[3]) * r + a[4]) * r + a[5]) * q
+        den = ((((b[0] * r + b[1]) * r + b[2]) * r + b[3]) * r + b[4]) * r + 1
+        return num / den
+    q = math.sqrt(-2 * math.log(1 - p))
+    num = ((((c[0] * q + c[1]) * q + c[2]) * q + c[3]) * q + c[4]) * q + c[5]
+    den = (((d[0] * q + d[1]) * q + d[2]) * q + d[3]) * q + 1
+    return -num / den
+
+
+def paired_cluster_permutation_test(
+    cluster_diffs: Sequence[float], *, n_permutations: int = 10000,
+    seed: int = 0, two_sided: bool = True,
+) -> dict[str, object]:
+    """Sign-flip randomization test on per-cluster paired differences.
+
+    Each value is one datapoint cluster's mean paired difference. Under the null
+    the sign of each cluster difference is exchangeable, so the reference
+    distribution flips signs independently. The p-value uses the (+1)/(+1)
+    correction. This assumes within-pair exchangeability; the caller is
+    responsible for asserting that assumption (see the exchangeability gate).
+    """
+    diffs = [float(d) for d in cluster_diffs]
+    if not diffs:
+        raise ValueError("permutation test requires at least one cluster difference")
+    if any(not math.isfinite(d) for d in diffs):
+        raise ValueError("cluster differences must be finite")
+    if n_permutations <= 0:
+        raise ValueError("n_permutations must be positive")
+    n = len(diffs)
+    observed = sum(diffs) / n
+    rng = random.Random(seed)
+    hits = 0
+    for _ in range(n_permutations):
+        stat = sum(d if rng.random() < 0.5 else -d for d in diffs) / n
+        if (abs(stat) >= abs(observed) - 1e-12) if two_sided else (stat >= observed - 1e-12):
+            hits += 1
+    return {
+        "observed_mean_difference": observed,
+        "p_value": (hits + 1) / (n_permutations + 1),
+        "n_clusters": n,
+        "n_permutations": n_permutations,
+        "two_sided": two_sided,
+    }
+
+
+def holm_bonferroni(
+    pvalues: dict[str, float], *, alpha: float = 0.05,
+) -> dict[str, dict[str, object]]:
+    """Holm-Bonferroni step-down multiplicity control across a hypothesis family."""
+    if not 0.0 < alpha < 1.0:
+        raise ValueError("alpha must be strictly between 0 and 1")
+    items = list(pvalues.items())
+    for _, p in items:
+        if not math.isfinite(p) or not 0.0 <= p <= 1.0:
+            raise ValueError("p-values must be finite and within [0, 1]")
+    m = len(items)
+    if m == 0:
+        return {}
+    order = sorted(range(m), key=lambda i: items[i][1])
+    adjusted = [0.0] * m
+    running = 0.0
+    for rank, idx in enumerate(order):
+        running = max(running, min(1.0, (m - rank) * items[idx][1]))
+        adjusted[idx] = running
+    return {
+        items[i][0]: {
+            "p_value": items[i][1], "p_holm": adjusted[i],
+            "reject": adjusted[i] <= alpha,
+        }
+        for i in range(m)
+    }
+
+
+def power_for_paired_difference(
+    effect: float, sd: float, n_clusters: int, *,
+    alpha: float = 0.05, two_sided: bool = True,
+) -> float:
+    """Approximate power of a paired cluster-mean test (normal approximation).
+
+    For the two-sided test both rejection tails are included.
+    """
+    if sd <= 0:
+        raise ValueError("sd must be positive")
+    if n_clusters <= 0:
+        raise ValueError("n_clusters must be positive")
+    z = _norm_ppf(1 - alpha / 2) if two_sided else _norm_ppf(1 - alpha)
+    ncp = abs(effect) * math.sqrt(n_clusters) / sd
+    if two_sided:
+        return float(_norm_cdf(ncp - z) + _norm_cdf(-ncp - z))
+    return float(_norm_cdf(ncp - z))
+
+
+def required_clusters_for_power(
+    effect: float, sd: float, *, alpha: float = 0.05,
+    target_power: float = 0.8, two_sided: bool = True,
+) -> int:
+    """Smallest cluster count whose approximate power reaches ``target_power``."""
+    if effect == 0:
+        raise ValueError("a nonzero smallest effect of interest is required")
+    if sd <= 0:
+        raise ValueError("sd must be positive")
+    if not 0.0 < target_power < 1.0:
+        raise ValueError("target_power must be strictly between 0 and 1")
+    z_alpha = _norm_ppf(1 - alpha / 2) if two_sided else _norm_ppf(1 - alpha)
+    z_power = _norm_ppf(target_power)
+    return int(math.ceil((((z_alpha + z_power) * sd / abs(effect)) ** 2)))
+
+
+def power_gate(
+    effect: float, pilot_sd: float, n_clusters: int, *,
+    alpha: float = 0.05, target_power: float = 0.8, two_sided: bool = True,
+) -> dict[str, object]:
+    """Prospective power / minimum-effect gate from a DISJOINT pilot's cluster SD.
+
+    ``pilot_sd`` must come from a separate pilot run, never from the confirmatory
+    comparison being tested; the caller is responsible for supplying it.
+    """
+    required = required_clusters_for_power(
+        effect, pilot_sd, alpha=alpha, target_power=target_power, two_sided=two_sided
+    )
+    achieved = power_for_paired_difference(
+        effect, pilot_sd, n_clusters, alpha=alpha, two_sided=two_sided
+    )
+    return {
+        "smallest_effect_of_interest": effect,
+        "pilot_cluster_sd": pilot_sd,
+        "n_clusters": n_clusters,
+        "required_clusters": required,
+        "target_power": target_power,
+        "achieved_power": achieved,
+        "adequately_powered": n_clusters >= required and achieved >= target_power,
+    }
+
+
+def paired_effect_manski_bounds(
+    matched_diffs: Sequence[float],
+    left_only_values: Sequence[float],
+    right_only_values: Sequence[float],
+    *, n_invalid: int = 0, outcome_range: tuple[float, float] = (0.0, 1.0),
+) -> dict[str, object]:
+    """Worst/best-case bounds on the mean paired effect (left minus right) under
+    arbitrary missingness of the unmatched units.
+
+    Matched units contribute their known difference. A ``left_only`` unit has the
+    left value observed and the right value MISSING (so right ranges over the
+    outcome range); a ``right_only`` unit has the right observed and the left
+    missing. ``n_invalid`` units (for example fingerprint mismatches) have neither
+    side usable, so their difference ranges over the full outcome span. Bounds are
+    the mean over the union of all units.
+    """
+    lo, hi = outcome_range
+    if hi < lo:
+        raise ValueError("outcome_range must be (low, high)")
+    n = len(matched_diffs) + len(left_only_values) + len(right_only_values) + n_invalid
+    if n == 0:
+        raise ValueError("no units to bound")
+    base = sum(matched_diffs)
+    lower = (
+        base
+        + sum(v - hi for v in left_only_values)   # right imputed at its max
+        + sum(lo - v for v in right_only_values)  # left imputed at its min
+        + n_invalid * (lo - hi)
+    ) / n
+    upper = (
+        base
+        + sum(v - lo for v in left_only_values)   # right imputed at its min
+        + sum(hi - v for v in right_only_values)  # left imputed at its max
+        + n_invalid * (hi - lo)
+    ) / n
+    return {
+        "lower_bound": lower, "upper_bound": upper, "n_total": n,
+        "n_matched": len(matched_diffs), "n_left_only": len(left_only_values),
+        "n_right_only": len(right_only_values), "n_invalid": n_invalid,
+    }
+
+
+def kaplan_meier_curve(
+    observations: Sequence[tuple[int, bool]],
+) -> list[tuple[int, float]]:
+    """Kaplan-Meier survival estimate as ``(time, survival)`` step points.
+
+    ``observations`` are ``(observed_turn, broke)`` pairs (see
+    :func:`turns_to_break_observation`); fully resisted runs are right-censored.
+    """
+    obs = list(observations)
+    if not obs:
+        raise ValueError("survival curve requires at least one observation")
+    curve: list[tuple[int, float]] = []
+    survival = 1.0
+    for time in sorted({t for t, broke in obs if broke}):
+        at_risk = sum(1 for observed, _ in obs if observed >= time)
+        events = sum(1 for observed, broke in obs if observed == time and broke)
+        if at_risk:
+            survival *= 1.0 - events / at_risk
+        curve.append((time, survival))
+    return curve
+
+
+def restricted_mean_turns_to_break(
+    escalations: dict[str, Sequence[Judgment]], horizon: int,
+) -> float:
+    """Restricted mean turns-to-break: area under the KM curve up to ``horizon``."""
+    if horizon <= 0:
+        raise ValueError("horizon must be positive")
+    observations = [turns_to_break_observation(e) for e in escalations.values() if e]
+    if not observations:
+        raise ValueError("RMTTB requires at least one escalation")
+    area = 0.0
+    prev_time = 0
+    prev_survival = 1.0
+    for time, survival in kaplan_meier_curve(observations):
+        capped = min(time, horizon)
+        area += prev_survival * (capped - prev_time)
+        if time >= horizon:
+            return area
+        prev_time = time
+        prev_survival = survival
+    return area + prev_survival * (horizon - prev_time)
+
+
+def rmtb_with_ci(
+    escalations: dict[str, Sequence[Judgment]],
+    clusters: dict[str, str],
+    horizon: int, *, seed: int = 0, n_resamples: int = 2000, alpha: float = 0.05,
+) -> tuple[float, float, float]:
+    """RMTTB with a DATAPOINT-CLUSTER bootstrap CI.
+
+    ``clusters`` maps each escalation id to its datapoint-cluster id; the
+    bootstrap resamples whole datapoint clusters (all their escalations kept
+    together), never individual conversation/seed keys.
+    """
+    _validate_bootstrap(n_resamples, alpha)
+    ids = [k for k, e in escalations.items() if e]
+    if not ids:
+        raise ValueError("RMTTB CI requires at least one escalation")
+    by_cluster: dict[str, list[str]] = defaultdict(list)
+    for eid in ids:
+        by_cluster[str(clusters[eid])].append(eid)
+    cluster_keys = list(by_cluster)
+    point = restricted_mean_turns_to_break({e: escalations[e] for e in ids}, horizon)
+    rng = random.Random(seed)
+    stats: list[float] = []
+    for _ in range(n_resamples):
+        sample: dict[str, Sequence[Judgment]] = {}
+        counter = 0
+        for _ in range(len(cluster_keys)):
+            chosen = cluster_keys[rng.randrange(len(cluster_keys))]
+            for eid in by_cluster[chosen]:
+                sample[f"b{counter}"] = escalations[eid]
+                counter += 1
+        stats.append(restricted_mean_turns_to_break(sample, horizon))
+    lo, hi = _bootstrap_bounds(stats, n_resamples, alpha)
+    return (point, lo, hi)
+
+
+def cohen_kappa_ci(
+    labels_a: Sequence[str], labels_b: Sequence[str], *,
+    seed: int = 0, n_resamples: int = 2000, alpha: float = 0.05,
+) -> tuple[float, float, float] | None:
+    """Cohen's kappa point estimate plus a paired-item bootstrap CI.
+
+    Returns ``None`` when the point estimate is undefined or a majority of
+    resamples are degenerate (a constant label set), matching the convention
+    that a degenerate stratum is reported as absent rather than encoded as zero.
+    """
+    if len(labels_a) != len(labels_b):
+        raise ValueError("kappa requires equal-length label sequences")
+    if not labels_a:
+        return None
+    _validate_bootstrap(n_resamples, alpha)
+    point = cohen_kappa(labels_a, labels_b)
+    if not math.isfinite(point):
+        return None
+    rng = random.Random(seed)
+    n = len(labels_a)
+    finite: list[float] = []
+    for _ in range(n_resamples):
+        idx = [rng.randrange(n) for _ in range(n)]
+        value = cohen_kappa([labels_a[i] for i in idx], [labels_b[i] for i in idx])
+        if math.isfinite(value):
+            finite.append(value)
+    if len(finite) < n_resamples // 2:
+        return None
+    finite.sort()
+    m = len(finite)
+    return (point, finite[int((alpha / 2) * m)], finite[min(m - 1, int((1 - alpha / 2) * m))])
+
+
 __all__ = [
     "Population", "metric_population",
     "attack_success_rate", "defense_success_rate", "refusal_rate", "over_refusal_rate",
@@ -480,4 +799,9 @@ __all__ = [
     "bootstrap_ci", "clustered_bootstrap_ci", "paired_bootstrap_ci",
     "paired_clustered_bootstrap_ci",
     "asr_with_ci", "group_by_key",
+    # confirmatory primitives (V.1.7)
+    "paired_cluster_permutation_test", "holm_bonferroni",
+    "power_for_paired_difference", "required_clusters_for_power", "power_gate",
+    "paired_effect_manski_bounds", "kaplan_meier_curve",
+    "restricted_mean_turns_to_break", "rmtb_with_ci", "cohen_kappa_ci",
 ]
