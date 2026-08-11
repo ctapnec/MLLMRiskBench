@@ -462,6 +462,42 @@ def test_measured_loader_facets_multi_corpus_sampling_without_pooling(tmp_path: 
     assert all("sampling_audit" in point["left_arm"] for point in result["overall"])
 
 
+def test_policy_label_binds_to_single_judge_configuration() -> None:
+    arm = {"judges": ["rules"], "judge_configuration": {"stages": ["rules"]}}
+    binding = figure_results._bind_policy_label(
+        [{"left_arm": arm, "right_arm": arm}], "frozen-policy-v1"
+    )
+    assert binding["policy_label"] == "frozen-policy-v1"
+    assert binding["policy_fingerprint"]  # non-empty digest of the decision config
+    assert binding["policy_defining_fields"]["judges"] == ["rules"]
+
+
+def test_policy_fingerprint_excludes_the_contrasted_defense_axis() -> None:
+    # A same-base defense contrast changes only `defense`; the judge/decision
+    # configuration is identical, so both arms must share one policy fingerprint.
+    judge = {"judges": ["rules"], "judge_configuration": {"stages": ["rules"]}}
+    left = {**judge, "defense": "none"}
+    right = {**judge, "defense": "guard-input"}
+    binding = figure_results._bind_policy_label(
+        [{"left_arm": left, "right_arm": right}], "policy"
+    )
+    assert binding["policy_defining_fields"]["judges"] == ["rules"]
+
+
+def test_policy_label_binding_rejects_mixed_judge_configurations() -> None:
+    arm_a = {"judges": ["rules"], "judge_configuration": {"stages": ["rules"]}}
+    arm_b = {
+        "judges": ["rules", "llm"],
+        "judge_configuration": {"stages": ["rules", "llm"]},
+    }
+    points = [
+        {"left_arm": arm_a, "right_arm": arm_a},
+        {"left_arm": arm_b, "right_arm": arm_b},
+    ]
+    with pytest.raises(ValueError, match="mix judge/decision configurations"):
+        figure_results._bind_policy_label(points, "frozen-policy-v1")
+
+
 def test_loader_requires_grid_allowlist_and_rejects_orphan_marker(tmp_path: Path) -> None:
     _paired_model_grid(tmp_path)
     orphan = _cell(

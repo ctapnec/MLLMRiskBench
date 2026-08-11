@@ -235,7 +235,8 @@ def fig_asr_by_category(data: dict[str, Any], out: Path) -> None:
     detail = ""
     if not data["illustrative"]:
         detail = (
-            f"\npolicy={analysis['policy_label']}; "
+            f"\npolicy={analysis['policy_label']} "
+            f"[{analysis['policy_fingerprint'][:12]}]; "
             f"multiplicity family={analysis['multiplicity_family']}; "
             "judge/run versions are bound per cell in the provenance sidecar"
         )

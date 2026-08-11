@@ -832,6 +832,53 @@ def _arm_provenance(cell: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _policy_fingerprint(arm: dict[str, Any]) -> str:
+    """Digest the policy/decision-defining configuration of one arm.
+
+    The judge stage identities and the judge-cascade configuration define the
+    decision boundary. The contrasted defense axis is deliberately excluded so a
+    same-base defense contrast (Figure V.3) still shares one policy across arms.
+    """
+    return _sha256_json({
+        "judges": arm.get("judges"),
+        "judge_configuration": arm.get("judge_configuration"),
+    })
+
+
+def _bind_policy_label(
+    points: list[dict[str, Any]], policy_label: str
+) -> dict[str, Any]:
+    """Bind the free-form policy label to a single verified policy fingerprint.
+
+    A figure caption asserts one decision boundary; if the underlying cells mix
+    judge/cascade configurations the label is unverifiable, so this fails closed
+    rather than let a figure claim a policy its artifacts do not share.
+    """
+    fingerprints: dict[str, dict[str, Any]] = {}
+    for point in points:
+        for side in ("left_arm", "right_arm"):
+            arm = point.get(side)
+            if not arm:
+                continue
+            fingerprints.setdefault(_policy_fingerprint(arm), {
+                "judges": arm.get("judges"),
+                "judge_configuration": arm.get("judge_configuration"),
+            })
+    if not fingerprints:
+        raise ValueError("cannot bind a policy label: no arm provenance to fingerprint")
+    if len(fingerprints) != 1:
+        raise ValueError(
+            "figure inputs mix judge/decision configurations, so the policy label "
+            f"{policy_label!r} cannot be bound to one policy: {sorted(fingerprints)!r}"
+        )
+    (fingerprint, defining_fields), = fingerprints.items()
+    return {
+        "policy_label": policy_label,
+        "policy_fingerprint": fingerprint,
+        "policy_defining_fields": defining_fields,
+    }
+
+
 def _estimate(
     paired: dict[tuple[str, str, str, int], tuple[_Unit, _Unit]],
     predicate: Callable[[_Unit], bool], *, point_id: str, corpus: str,
@@ -1130,12 +1177,16 @@ def load_results(
             "points": defense_results,
         },
     }
+    policy_binding = _bind_policy_label(
+        model_results["overall"] + model_results["categories"] + defense_results,
+        policy_label,
+    )
     return {
         "schema_version": "ura-chapter-v-figures/1.0",
         "illustrative": False,
         "analysis": {
             "attacker": attacker,
-            "policy_label": policy_label,
+            **policy_binding,
             "multiplicity_family": multiplicity_family,
             "minimum_clusters_per_cell": minimum_cell_n,
             "bootstrap_resamples": n_resamples,
