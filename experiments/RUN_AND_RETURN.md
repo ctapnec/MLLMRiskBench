@@ -185,6 +185,15 @@ uses its dataset and a StrongREJECT-style judge; it does not claim to run the
 official evaluator. MM-SafetyBench common ASR and MOSSBench common FRR are also
 URA proxies, not executions of the upstream evaluators.
 
+These are the only corpora required for the Chapter V case study. Do not
+download every source or native engine registered by URA-Bench for this run.
+R-Judge and GPTGeoChat are optional source-specific classification tracks;
+AgentDojo and the other native integrations retain their upstream environments
+and metrics in a separate results root. They do not enter the main common
+ASR/FRR cohort, human-audit cohort, or figures. See the README's
+"Source-specific tracks" section and `docs/NATIVE_ENGINE_IMPORTS.md` when one of
+those separate evaluations is intentionally in scope.
+
 ## 4. Configure paths and credentials
 
 POSIX shell:
