@@ -1523,6 +1523,41 @@ def test_human_audit_includes_authoritative_cascade_and_reports_join_audit(
     assert "cascade_authoritative" in report["automated_vs_consensus"]
     assert report["audit"]["unexplained_exclusions"] == 0
 
+    pooled = report["automated_vs_consensus"]["cascade_authoritative"]["pooled_unweighted"]
+    # A degenerate single-class sample yields no defined bootstrap CI (None), but
+    # the field and the confusion matrix are always reported.
+    assert "unsafe_kappa_ci" in pooled
+    assert pooled["confusion"] == {"violation->violation": 1}
+    # Both raters agreed, so consensus was reached by majority, not adjudication.
+    adjudication = report["audit"]["adjudication"]
+    assert adjudication["adjudication_rate"] == 0.0
+    assert adjudication["resolved_by_majority"] == 1
+    assert adjudication["resolved_by_adjudication"] == 0
+
+
+def test_human_audit_reports_adjudication_rate_when_raters_disagree(
+    tmp_path: Path,
+) -> None:
+    key = _write_human_artifacts(tmp_path)
+    labels = tmp_path / "labels.csv"
+    header = (
+        "sample_key,run_id,model,attempt_id,risk_category,modality,"
+        "stratum_population,stratum_selected,selection_probability,"
+        "rater_id,label,adjudicated_label\n"
+    )
+    common = f"{key},run-1,model-A,attempt-1,cybersec,text,1,1,1.0,"
+    # Raters disagree; an adjudicated_label breaks the tie on every duplicate row.
+    labels.write_text(
+        header + common + "r1,violation,violation\n" + common + "r2,safe,violation\n",
+        encoding="utf-8",
+    )
+    assert analyse(tmp_path, labels, allow_single_rater=False) == 0
+    report = json.loads((tmp_path / "human_audit.json").read_text(encoding="utf-8"))
+    adjudication = report["audit"]["adjudication"]
+    assert adjudication["adjudication_rate"] == 1.0
+    assert adjudication["resolved_by_adjudication"] == 1
+    assert adjudication["resolved_by_majority"] == 0
+
 
 def test_human_audit_accepts_verified_completion_descriptors(tmp_path: Path) -> None:
     key = _write_human_artifacts(tmp_path, descriptor_marker=True)

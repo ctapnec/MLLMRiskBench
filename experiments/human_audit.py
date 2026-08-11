@@ -583,6 +583,35 @@ def _kappa(a: list[str], b: list[str]) -> float | None:
     return value if math.isfinite(value) else None
 
 
+def _kappa_ci(a: list[str], b: list[str]) -> dict | None:
+    """Kappa with a paired-item bootstrap CI over the labelled audit sample.
+
+    The resampling unit is the labelled sample itself (the human-audit design's
+    unit of observation), so this is an honest paired-item interval, not a
+    datapoint-clustered one. ``None`` when the estimate is undefined or a
+    majority of resamples are degenerate.
+    """
+    result = metrics.cohen_kappa_ci(a, b)
+    if result is None:
+        return None
+    point, ci_low, ci_high = result
+    if not all(math.isfinite(value) for value in (point, ci_low, ci_high)):
+        return None
+    return {
+        "point": point,
+        "ci_low": ci_low,
+        "ci_high": ci_high,
+        "method": "paired_item_bootstrap",
+        "alpha": 0.05,
+    }
+
+
+def _confusion(gold: list[str], pred: list[str]) -> dict[str, int]:
+    """Gold-consensus -> automated-prediction cell counts, as 'gold->pred'."""
+    cells = Counter(zip(gold, pred))
+    return {f"{g}->{p}": count for (g, p), count in sorted(cells.items())}
+
+
 def _consensus(
     by_rater: dict[str, dict[str, str]],
     metadata: dict[str, dict],
@@ -610,10 +639,16 @@ def _consensus(
 
 def _judge_report(pred: list[str], gold: list[str]) -> dict:
     scores = metrics.judge_scores(pred, gold)
-    return {"unsafe_kappa": _kappa(
-        ["violation" if label == "violation" else "other" for label in pred],
-        ["violation" if label == "violation" else "other" for label in gold],
-    ), "exact_label_kappa_diagnostic": _kappa(pred, gold), **scores, "n": len(gold)}
+    unsafe_pred = ["violation" if label == "violation" else "other" for label in pred]
+    unsafe_gold = ["violation" if label == "violation" else "other" for label in gold]
+    return {
+        "unsafe_kappa": _kappa(unsafe_pred, unsafe_gold),
+        "unsafe_kappa_ci": _kappa_ci(unsafe_pred, unsafe_gold),
+        "exact_label_kappa_diagnostic": _kappa(pred, gold),
+        "confusion": _confusion(gold, pred),
+        **scores,
+        "n": len(gold),
+    }
 
 
 def analyse(results: Path, labels_path: Path, allow_single_rater: bool) -> int:
@@ -657,11 +692,11 @@ def analyse(results: Path, labels_path: Path, allow_single_rater: bool) -> int:
         shared = sorted(set(by_rater[a]) & set(by_rater[b]))
         if not shared:
             continue
+        unsafe_a = ["violation" if by_rater[a][key] == "violation" else "other" for key in shared]
+        unsafe_b = ["violation" if by_rater[b][key] == "violation" else "other" for key in shared]
         inter_human[f"{a}|{b}"] = {
-            "unsafe_kappa": _kappa(
-                ["violation" if by_rater[a][key] == "violation" else "other" for key in shared],
-                ["violation" if by_rater[b][key] == "violation" else "other" for key in shared],
-            ),
+            "unsafe_kappa": _kappa(unsafe_a, unsafe_b),
+            "unsafe_kappa_ci": _kappa_ci(unsafe_a, unsafe_b),
             "exact_label_kappa_diagnostic": _kappa(
                 [by_rater[a][key] for key in shared],
                 [by_rater[b][key] for key in shared],
@@ -692,6 +727,19 @@ def analyse(results: Path, labels_path: Path, allow_single_rater: bool) -> int:
             consensus_exclusions["insufficient_independent_ratings"] += 1
         elif key not in consensus:
             consensus_exclusions["ambiguous_tie"] += 1
+
+    adjudicated_consensus = sum(
+        1 for key in consensus
+        if label_meta.get(key, {}).get("adjudicated_label") in VALID_LABELS
+    )
+    adjudication = {
+        "consensus_samples": len(consensus),
+        "resolved_by_adjudication": adjudicated_consensus,
+        "resolved_by_majority": len(consensus) - adjudicated_consensus,
+        "adjudication_rate": (
+            adjudicated_consensus / len(consensus) if consensus else 0.0
+        ),
+    }
 
     automated: dict[str, dict] = {}
     for judge in sorted(per_judge):
@@ -764,6 +812,7 @@ def analyse(results: Path, labels_path: Path, allow_single_rater: bool) -> int:
             "sampled_and_labelled": len(labelled_keys),
             "not_selected_for_human_audit": len(artifact_meta) - len(labelled_keys),
             "consensus_exclusions": consensus_exclusions,
+            "adjudication": adjudication,
             "unexplained_exclusions": 0,
         },
     }
