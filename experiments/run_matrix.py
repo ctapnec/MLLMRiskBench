@@ -81,6 +81,14 @@ from ura.eligibility import build_eligibility_plan    # noqa: E402
 from ura.judges.base import JudgeCascade              # noqa: E402
 from ura.judges.llm import LLMJudge                   # noqa: E402
 from ura.judges.rules import RuleJudge                # noqa: E402
+from ura.live_attestation import (                    # noqa: E402
+    load_live_attestation_file,
+    required_attestation_keys,
+    route_config_sha256,
+    stable_realized_target_identity,
+    validate_execution_scope_id,
+    validate_required_live_attestations,
+)
 from ura.modality_coverage import (                    # noqa: E402
     ModalityCoverageError,
     plan_modality_coverage,
@@ -93,6 +101,7 @@ from ura.runner import (                              # noqa: E402
     GlobalCallBudget,
     Runner,
     _component_config,
+    _harness_source_identity,
     _portable_attempt_dump,
     realized_identity_summary,
 )
@@ -2038,6 +2047,40 @@ def main(argv=None) -> int:
         "--preflight-only", action="store_true",
         help="validate and project the complete grid without model/judge calls",
     )
+    ap.add_argument(
+        "--attestation-probe",
+        action="store_true",
+        help=(
+            "mark one bounded non-dry target/corpus/attacker grid as live "
+            "route/transport prerequisite evidence, never measured evidence"
+        ),
+    )
+    ap.add_argument(
+        "--execution-scope-id",
+        default="",
+        help=(
+            "non-secret account/runtime scope label shared by a live probe and "
+            "the measured grid it may admit"
+        ),
+    )
+    ap.add_argument(
+        "--live-attestation",
+        action="append",
+        default=[],
+        help="repeatable content-addressed ura-live-attestation/1 receipt",
+    )
+    ap.add_argument(
+        "--live-attestation-sha256",
+        action="append",
+        default=[],
+        help="repeatable exact byte digest paired with --live-attestation",
+    )
+    ap.add_argument(
+        "--live-attestation-max-age-hours",
+        type=float,
+        default=0.0,
+        help="maximum receipt age at measured-grid admission (hosted/local policy)",
+    )
     ap.add_argument("--api", default="", help="comma list of API model ids")
     ap.add_argument(
         "--api-config",
@@ -2200,6 +2243,46 @@ def main(argv=None) -> int:
         ap.error("call ceilings and --deadline-seconds must be non-negative")
     if args.lock_stale_seconds <= 0:
         ap.error("--lock-stale-seconds must be positive")
+    scope_id = args.execution_scope_id.strip()
+    if args.execution_scope_id != scope_id:
+        ap.error("--execution-scope-id must not have surrounding whitespace")
+    if scope_id:
+        try:
+            scope_id = validate_execution_scope_id(scope_id)
+        except ValueError as exc:
+            ap.error(str(exc))
+    if len(args.live_attestation) != len(args.live_attestation_sha256):
+        ap.error(
+            "each --live-attestation requires one paired "
+            "--live-attestation-sha256"
+        )
+    if args.dry_run and (
+        args.attestation_probe
+        or scope_id
+        or args.live_attestation
+        or args.live_attestation_max_age_hours
+    ):
+        ap.error("diagnostic --dry-run cannot consume or produce live attestation")
+    if args.preflight_only and (
+        args.attestation_probe
+        or scope_id
+        or args.live_attestation
+        or args.live_attestation_max_age_hours
+    ):
+        ap.error("--preflight-only does not consume or produce live attestation")
+    if args.attestation_probe:
+        if not scope_id:
+            ap.error("--attestation-probe requires --execution-scope-id")
+        if args.live_attestation or args.live_attestation_max_age_hours:
+            ap.error("an attestation probe cannot consume prior live attestations")
+    elif not args.dry_run and not args.preflight_only:
+        if not scope_id:
+            ap.error("measured execution requires --execution-scope-id")
+        if not 0 < args.live_attestation_max_age_hours <= 24 * 365:
+            ap.error(
+                "measured execution requires --live-attestation-max-age-hours "
+                "in (0, 8760]"
+            )
 
     seeds = [int(s) for s in args.seeds.split(",") if s.strip()]
     if not seeds:
@@ -2209,7 +2292,7 @@ def main(argv=None) -> int:
     out = Path(args.out)
     out.mkdir(parents=True, exist_ok=True)
 
-    # Wall-clock provenance for V.2.6 (run date). Recorded in the manifest but kept
+    # Wall-clock provenance for Runner 2.7 (run date). Recorded in the manifest but kept
     # OUT of the run_id hash, so runs stay reproducible while the date is captured.
     run_started = datetime.now(timezone.utc).isoformat(timespec="seconds")
     run_env = _runtime_env()
@@ -2245,8 +2328,25 @@ def main(argv=None) -> int:
     ):
         if len(set(_values)) != len(_values):
             ap.error(f"{_label} entries must be unique")
+    if args.attestation_probe and (
+        len(model_specs) != 1
+        or len(corpora) != 1
+        or len(attacker_names) != 1
+        or attacker_names != ["replay"]
+        or args.defense != "none"
+        or len(seeds) != 1
+        or args.limit not in {1, 2}
+        or args.max_queries != 1
+        or args.max_turns != 1
+    ):
+        ap.error(
+            "--attestation-probe requires one target/corpus/replay attacker/seed, "
+            "--defense none, --limit 1 or 2, and one query/turn"
+        )
     source_conformance_manifest: dict[str, object] | None = None
     source_conformance_artifact: dict[str, object] | None = None
+    live_attestation_manifests: list[dict[str, object]] = []
+    live_attestation_artifacts: list[dict[str, object]] = []
     try:
         attacker_configs, attacker_config_artifact = _load_attacker_config(
             args.attacker_config, attacker_names
@@ -2311,6 +2411,36 @@ def main(argv=None) -> int:
                 stem="source-conformance",
             )
             source_conformance_artifact["file"] = retained.name
+        for path_value, expected_digest in zip(
+            args.live_attestation, args.live_attestation_sha256
+        ):
+            manifest, descriptor = load_live_attestation_file(
+                path_value, expected_digest
+            )
+            retained = _retain_content_addressed_input(
+                out,
+                path_value,
+                expected_digest,
+                stem="live-attestation",
+            )
+            live_attestation_manifests.append(manifest)
+            live_attestation_artifacts.append({
+                **descriptor,
+                "file": retained.name,
+                "attestation_id": manifest["attestation_id"],
+            })
+        live_attestation_artifacts.sort(
+            key=lambda item: (
+                str(item["attestation_id"]),
+                str(item["sha256"]),
+                str(item["file"]),
+            )
+        )
+        if len({
+            (item["attestation_id"], item["sha256"], item["bytes"])
+            for item in live_attestation_artifacts
+        }) != len(live_attestation_artifacts):
+            raise ValueError("duplicate --live-attestation receipt input")
     except (OSError, KeyError, ValueError) as exc:
         ap.error(str(exc))
     persisted_model_specs = {
@@ -2321,6 +2451,27 @@ def main(argv=None) -> int:
     # Some target constructors replace the display identity below, while the
     # eligibility ledger must retain both sides of that mapping.
     requested_model_specs = dict(persisted_model_specs)
+    if args.dry_run or args.preflight_only:
+        live_attestation_projection: dict[str, object] = {
+            "mode": "not_required",
+            "execution_scope_id": None,
+            "max_age_hours": None,
+            "artifacts": [],
+        }
+    elif args.attestation_probe:
+        live_attestation_projection = {
+            "mode": "probe",
+            "execution_scope_id": scope_id,
+            "max_age_hours": None,
+            "artifacts": [],
+        }
+    else:
+        live_attestation_projection = {
+            "mode": "measured",
+            "execution_scope_id": scope_id,
+            "max_age_hours": args.live_attestation_max_age_hours,
+            "artifacts": live_attestation_artifacts,
+        }
     if (
         not args.dry_run
         and real_source_arms
@@ -2394,6 +2545,7 @@ def main(argv=None) -> int:
         "sha256": driver_digest,
         "file_count": driver_file_count,
     }
+    harness_source = _harness_source_identity()
     # Rehash declared acquisition inputs before conversion. Selected conformance
     # is checked again afterward, so a file changed during conversion fails
     # closed before any target/judge construction.
@@ -2507,6 +2659,9 @@ def main(argv=None) -> int:
 
     prebuilt_targets: dict[str, object] = {}
     base_target_identities: list[tuple[str, str]] = []
+    base_resolved_targets: dict[str, str] = {}
+    route_kinds: dict[str, str] = {}
+    route_config_digests: dict[str, str] = {}
     hosted_runtime_checks: list[dict[str, str]] = []
     current_eligibility_path: Path | None = None
 
@@ -2601,6 +2756,7 @@ def main(argv=None) -> int:
             "dtype": args.dtype,
             "dry_run": bool(args.dry_run),
             "selected_config_identities": selected_artifact_identities,
+            "live_attestation": live_attestation_projection,
         }
         experiment_conditions = {
             "condition_id": (
@@ -2658,6 +2814,24 @@ def main(argv=None) -> int:
                 api_config=api_configs.get(spec),
             )
             base_target_identities.append(_precall_model_identity(target))
+            requested_spec = requested_model_specs[spec]
+            base_resolved_targets[requested_spec] = str(getattr(target, "name"))
+            route_kind = (
+                "local_runtime"
+                if spec.startswith(("vllm:", "ollama:"))
+                else "hosted_api"
+            )
+            route_kinds[requested_spec] = route_kind
+            route_config_digests[requested_spec] = route_config_sha256(
+                route_kind=route_kind,
+                requested_target_spec=requested_spec,
+                resolved_target=base_resolved_targets[requested_spec],
+                route_config=(
+                    local_configs.get(spec)
+                    if route_kind == "local_runtime"
+                    else api_configs.get(spec)
+                ),
+            )
             if args.preflight_only:
                 setup_phase = "hosted_runtime_preflight"
                 readiness = preflight_api_target_runtime(target)
@@ -2938,9 +3112,57 @@ def main(argv=None) -> int:
         })
         print(f"grid planning preflight failed: {exc}", file=sys.stderr)
         return 1
+    attested_target_identities: dict[str, dict[str, str]] = {}
+    if live_attestation_projection["mode"] == "measured":
+        try:
+            required_live_keys = required_attestation_keys(
+                execution_scope_id=scope_id,
+                requested_target_specs=requested_model_specs.values(),
+                eligibility_items=eligibility_plan["items"],
+            )
+            admitted_live_records = validate_required_live_attestations(
+                live_attestation_manifests,
+                required_keys=required_live_keys,
+                resolved_targets=base_resolved_targets,
+                route_config_sha256=route_config_digests,
+                route_kind=route_kinds,
+                current_harness_source_sha256=str(harness_source["sha256"]),
+                current_driver_source_sha256=str(driver_source["sha256"]),
+                reference_time=datetime.fromisoformat(run_started),
+                max_age_hours=args.live_attestation_max_age_hours,
+            )
+            for key, record in admitted_live_records.items():
+                requested_spec = key[1]
+                identity = dict(record["realized_target_identity"])
+                prior = attested_target_identities.setdefault(
+                    requested_spec, identity
+                )
+                if stable_realized_target_identity(
+                    prior
+                ) != stable_realized_target_identity(identity):
+                    raise ValueError(
+                        "one requested target has conflicting admitted identities"
+                    )
+        except (KeyError, TypeError, ValueError) as exc:
+            eligibility_plan, eligibility_path = persist_eligibility_plan(
+                global_failures=[{
+                    "gate": "live_attestation_preflight",
+                    "reason": str(exc)[:2000],
+                }]
+            )
+            _write_json(out / "live-attestation.error.json", {
+                "status": "error",
+                "phase": "live_attestation_preflight",
+                "exception_type": type(exc).__name__,
+                "message": str(exc)[:2000],
+                "live_attestation": live_attestation_projection,
+            })
+            print(f"live attestation preflight failed: {exc}", file=sys.stderr)
+            return 1
     eligibility_plan, eligibility_path = persist_eligibility_plan(
         whole_request_preflight_complete=True
     )
+    (out / "live-attestation.error.json").unlink(missing_ok=True)
     (out / "grid-planning.error.json").unlink(missing_ok=True)
     for corpus_name, counts in policy_strata.items():
         print(
@@ -3010,7 +3232,10 @@ def main(argv=None) -> int:
         "quantization": args.quantization,
         "dtype": args.dtype,
         "dry_run": bool(args.dry_run),
+        "attestation_probe": bool(args.attestation_probe),
+        "live_attestation": live_attestation_projection,
         "driver_source": driver_source,
+        "harness_source": harness_source,
         "eligibility_plan": {
             "plan_id": eligibility_plan["plan_id"],
             **_artifact_descriptor(eligibility_path),
@@ -3310,6 +3535,9 @@ def main(argv=None) -> int:
                         ),
                         seeds,
                         call_budget=call_budget,
+                        expected_target_identity=attested_target_identities.get(
+                            requested_model_specs[spec]
+                        ),
                     )
                     cell_config = {
                         "grid_id": grid_id,
@@ -3363,6 +3591,13 @@ def main(argv=None) -> int:
                         "quantization": args.quantization,
                         "dtype": args.dtype,
                         "dry_run": bool(args.dry_run),
+                        "attestation_probe": bool(args.attestation_probe),
+                        "live_attestation": live_attestation_projection,
+                        "expected_target_identity": (
+                            attested_target_identities.get(
+                                requested_model_specs[spec]
+                            )
+                        ),
                         "driver_source": driver_source,
                         "global_call_budget": grid_request["global_call_budget"],
                         "modality_coverage_plan": modality_plan_payload,

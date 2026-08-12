@@ -66,7 +66,24 @@ names are candidate families, not guaranteed endpoint identifiers. Every
 generic hosted route is bound by `--api-config`, every local route by
 `--local-config`, and each exact model/modality pair must pass a bounded live
 transport attestation before entering a measured cell. An inaccessible,
-silently aliased or capability-mismatched route becomes `N/A` with a reason.
+silently aliased or stale route is blocked with a reason; structural capability
+incompatibility remains `N/A` rather than being counted as a failed experiment.
+
+Runner 2.7 makes that prerequisite machine-checked. A bounded non-dry
+`--attestation-probe` grid is converted by `experiments.live_attestation` into a
+content-addressed `ura-live-attestation/1` receipt. An ordinary measured grid
+must supply the exact receipt bytes and digest, the same operator-declared
+execution scope, and a maximum permitted age. Requested/base-resolved target,
+secret-free route configuration, exact delivered modality combination,
+observation time, harness/driver source digests, and realized provider/runtime
+identity are matched before
+target calls; a newly returned or restored response must still match the stable
+attested identity. This is historical route/access/byte-backed-transport
+evidence only. It proves no safety, evaluator, benchmark, human-validity,
+account-equivalence, or future-availability claim.
+The recorded observation is the probe Runner manifest's content-bound UTC
+`started_at`, deliberately used as a conservative lower bound rather than the
+outer grid's mutable `finished_at` packaging field.
 
 The focal contrast is cross-provider and associational, not a same-base
 ablation or a causal estimate of a safety mechanism. Broader roster rows are
@@ -119,9 +136,13 @@ conditions, verifies the grid's exact plan descriptor and the content
 descriptors for grid/completion/error evidence, and writes
 `ura-level1-evidence/1` JSON plus a deterministic planning-stratum CSV. The
 report keeps materialized planning strata, whole-arm execution units, and
-judgment records as different units. Live attestation and downstream analysis
-inclusion are not yet inputs: their status is `not_supplied` and their counts are
-null, never zero or inferred from a directory name. Failures before corpus
+judgment records as different units. Repeatable typed live-attestation inputs
+are validated against every measured grid's content-bound receipt projection;
+matching planning strata receive record-qualified attestation references and
+counts. Probe grids remain diagnostic and are rejected as measured Level-1
+input. Downstream analysis inclusion is not yet an input: its status is
+`not_supplied` and its counts are null, never zero or inferred from a directory
+name. Failures before corpus
 materialization remain separately identified request-level errors because their
 exact source/modality strata cannot be reconstructed. The scope reports whether
 the homogeneous cohort is `evidence_kind=diagnostic_dry_run` or `measured_run`;
@@ -141,15 +162,18 @@ The runbook is the canonical from-zero procedure:
 3. set the target and judge credentials and review provider retention and
    corpus-license constraints;
 4. run `python -m experiments.rig_check` with the intended matrix arguments;
-5. run the eligibility-scoped static, adaptive, multimodal, local-defense,
+5. run bounded exact target/modality probes, derive and hash their typed
+   receipts, then pass the receipts and the same non-secret execution-scope ID
+   to every measured `run_matrix` lane;
+6. run the eligibility-scoped static, adaptive, multimodal, local-defense,
    source-specific, and native-engine lanes with finite call/time ceilings;
-6. import native outputs, build the unit-qualified Level-1 lifecycle artifact
+7. import native outputs, build the unit-qualified Level-1 lifecycle artifact
    and the separate no-pooling suite evidence inventory, run diagnostics, and
    perform the automated-label-blinded, model-visible
    multi-rater human audit across the achieved common-eligible arms; the declared
    focal conditions follow the same achieved-sample rule, not a reserved quota;
   and
-7. retain the complete artifact tree, command line, commit identifier,
+8. retain the complete artifact tree, command line, commit identifier,
    environment inventory, and run note for post-experiment analysis.
 
 ## Real-run gates
@@ -182,9 +206,27 @@ The runbook is the canonical from-zero procedure:
   before any paid call. The check prints selected source-policy counts and
   conservative target, local-guardrail, judge, and HTTP-attempt upper bounds. It cannot prove account access,
   entitlement, quota, reachability, or model visibility.
+- `rig_check` and `--dry-run` neither require nor accept live-attestation
+  arguments. A probe requires one real target, one source arm, replay, one seed,
+  one query/turn, no defense, `--limit 1` or `2`, and a non-secret
+  `--execution-scope-id`. A fully synthetic probe can attest text or the supplied
+  text+one-pixel-image transport without a source receipt or human work; it still
+  makes a real target call and is never benchmark evidence. There is currently
+  no synthetic audio/video probe.
+- Every ordinary non-dry `run_matrix` grid requires repeatable paired
+  `--live-attestation`/`--live-attestation-sha256` inputs, the same
+  `--execution-scope-id`, and a positive
+  `--live-attestation-max-age-hours`. Exact combinations are not substitutable:
+  text+image does not attest text alone. Missing, stale, future-dated,
+  scope/route/config/resolved-target-mismatched, ambiguous, or identity-drifting
+  evidence fails closed before a measured target call. The scope label is an
+  operator assertion, not a credential or independently verified proof that two
+  accounts/environments are equivalent.
 - Every live grid sets finite matrix-wide target-call, judge-call, HTTP-attempt,
   and wall-clock ceilings. Resume validates the durable ledger, checkpoints,
   completion records, errors, and circuit state before another external call.
+  Durable ledger replacement retries only a few bounded times for transient
+  Windows sharing violations, then still fails closed.
 - A real LLM judge needs an exact non-mock `--judge-model`. A model guard needs
   an immutable `--guardrail-revision`. A model-backed defense uses a separately
   identified guard and explicit device; it must not certify its own output via
@@ -217,7 +259,7 @@ completed attempts and provider continuation state without querying them again.
 Partial artifact families, unresolved locks, exhausted ceilings, or provenance
 drift fail explicitly.
 
-Runner `ura-runner/2.6` writes unified schema `1.4`. Immutable planning/source
+Runner `ura-runner/2.7` writes unified schema `1.4`. Immutable planning/source
 stratum identity is stored separately from adaptive per-turn evaluation
 identity. Thus a Crescendo setup turn remains joined to its original planning
 stratum while receiving a typed `not_applicable` judgment and no judge call or

@@ -426,6 +426,18 @@ def _grid(root: Path, *, name: str, cells: list[dict[str, Any]]) -> Path:
             "attackers": attackers,
             "defense": next(iter(defenses)),
             "dry_run": False,
+            "attestation_probe": False,
+            "live_attestation": {
+                "mode": "measured",
+                "execution_scope_id": "synthetic-figure-fixture",
+                "max_age_hours": 24.0,
+                "artifacts": [{
+                    "file": "synthetic-live-attestation.json",
+                    "sha256": "0" * 64,
+                    "bytes": 1,
+                    "attestation_id": "live-attestation-" + "0" * 24,
+                }],
+            },
         },
         "requested_cells": expected,
         "accounted_cells": expected,

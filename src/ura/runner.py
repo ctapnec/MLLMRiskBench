@@ -56,11 +56,12 @@ from .targets.base import BaseTarget
 from .targets.api import _logical_media_root_alias, _resolve_local_media_path
 
 #: Bumped when the orchestration semantics change (recorded in every manifest).
-CODE_VERSION = "ura-runner/2.6"
+CODE_VERSION = "ura-runner/2.7"
 _MAX_SCORED_MEDIA_BYTES = 25 * 1024 * 1024
 _MAX_FULL_CHECKPOINT_BYTES = 512 * 1024 * 1024
 _MAX_RESPONSE_CHECKPOINT_BYTES = 512 * 1024 * 1024
 _MAX_CHECKPOINT_RECORD_BYTES = 8 * 1024 * 1024
+_ATOMIC_REPLACE_ATTEMPTS = 5
 
 CheckpointRecord = dict[str, Any]
 CheckpointCallback = Callable[[CheckpointRecord], None]
@@ -228,7 +229,18 @@ class GlobalCallBudget:
             handle.write(material)
             handle.flush()
             os.fsync(handle.fileno())
-        temporary.replace(self.state_path)
+        for attempt in range(_ATOMIC_REPLACE_ATTEMPTS):
+            try:
+                temporary.replace(self.state_path)
+                break
+            except PermissionError:
+                # Windows scanners and filesystem filters can transiently hold
+                # the existing ledger between close and ReplaceFile. Retry the
+                # same fsynced temporary bytes for at most 100 ms; any persistent
+                # denial still fails closed before the next external call.
+                if attempt + 1 == _ATOMIC_REPLACE_ATTEMPTS:
+                    raise
+                time.sleep(0.01 * (attempt + 1))
 
     def _load(self) -> None:
         assert self.state_path is not None
@@ -275,12 +287,17 @@ class Runner:
         budget: AttackBudget,
         seeds: list[int],
         call_budget: Optional["GlobalCallBudget"] = None,
+        expected_target_identity: Optional[dict[str, str]] = None,
     ) -> None:
         self.attacker = attacker
         self.target = target
         self.judge_cascade = judge_cascade
         self.budget = budget
         self.call_budget = call_budget
+        self.expected_target_identity = (
+            dict(expected_target_identity)
+            if expected_target_identity is not None else None
+        )
         self.seeds = list(seeds) if seeds else [budget.seed]
         if len(set(self.seeds)) != len(self.seeds):
             raise ValueError("Runner seeds must be unique")
@@ -767,6 +784,7 @@ class Runner:
                 f"{expected.id!r}"
             )
         _validate_response_accounting(response)
+        self._validate_attested_target_identity(response)
         saved_budget = record.get("budget_after_target")
         if self.call_budget is not None:
             if not isinstance(saved_budget, dict):
@@ -915,9 +933,11 @@ class Runner:
             "target_sampling_control": actual_sampling_control,
             "target_call_route": call_route,
         }
-        return response.model_copy(
+        response = response.model_copy(
             update={"attempt_id": attempt.id, "run_id": run_id, "raw": raw}
         )
+        self._validate_attested_target_identity(response)
+        return response
 
     def _target_generate(
         self, dialog: list[DialogTurn], seed: Optional[int]
@@ -1416,6 +1436,39 @@ class Runner:
             ),
         }
 
+    def _validate_attested_target_identity(self, response: Response) -> None:
+        """Reject a live or restored response outside the admitted route identity."""
+
+        if self.expected_target_identity is None:
+            return
+        if (
+            response.raw.get("defense") == "blocked"
+            and response.raw.get("stage") == "input"
+            and response.raw.get("base_target_queried") is not True
+        ):
+            # No base-target call occurred, so this response neither confirms
+            # nor contradicts the previously attested base route.
+            return
+        from .live_attestation import (
+            realized_identity_matches,
+            stable_realized_target_identity,
+        )
+
+        observed_identity = _target_identity_snapshot(response)
+        if not realized_identity_matches(
+            self.expected_target_identity, observed_identity
+        ):
+            raise ExternalCallFailure(
+                "target_identity_attestation",
+                ValueError(
+                    "target response identity does not match the admitted "
+                    "live-attestation snapshot: expected="
+                    f"{stable_realized_target_identity(self.expected_target_identity)!r}, "
+                    "observed="
+                    f"{stable_realized_target_identity(observed_identity)!r}"
+                ),
+            )
+
     @staticmethod
     def _validate_resume_records(
         records: dict[str, CheckpointRecord], *, expected_run_id: str
@@ -1517,6 +1570,7 @@ class Runner:
                 f"{expected.id!r}"
             )
         _validate_response_accounting(response)
+        self._validate_attested_target_identity(response)
         saved_budget = record.get("budget_after_attempt")
         if self.call_budget is not None:
             if not isinstance(saved_budget, dict):

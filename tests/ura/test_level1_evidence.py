@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 from pathlib import Path
 
@@ -8,7 +9,9 @@ import pytest
 from experiments import run_matrix
 from experiments.level1_evidence import (
     _condition_from_plan,
+    _bind_live_attestations,
     _decision_state,
+    _load_live_attestation_artifact,
     _load_results,
     _plan_artifact,
     build_level1_evidence,
@@ -17,6 +20,10 @@ from experiments.level1_evidence import (
 )
 from ura.converters.synth import synth_corpus
 from ura.eligibility import build_eligibility_plan, canonical_json_sha256
+from ura.live_attestation import (
+    build_live_attestation_manifest,
+    route_config_sha256,
+)
 from ura.targets.api import MockTarget
 
 
@@ -27,7 +34,10 @@ class _Target:
 
 
 def _conditions(
-    *, defense: str = "none", dry_run: bool = True
+    *,
+    defense: str = "none",
+    dry_run: bool = True,
+    live_attestation: dict | None = None,
 ) -> tuple[dict, dict]:
     selected = {
         "source_config": None,
@@ -72,6 +82,12 @@ def _conditions(
         "dtype": "auto",
         "dry_run": dry_run,
         "selected_config_identities": selected,
+        "live_attestation": live_attestation or {
+            "mode": "not_required",
+            "execution_scope_id": None,
+            "max_age_hours": None,
+            "artifacts": [],
+        },
     }
     condition = {
         "condition_id": "condition-" + canonical_json_sha256(values)[:24],
@@ -97,12 +113,18 @@ def _write_plan(
     modalities: tuple[str, ...] = ("text",),
     whole_request_preflight_complete: bool = False,
     dry_run: bool = True,
+    live_attestation: dict | None = None,
+    corpus_size: int = 2,
 ) -> dict:
-    _condition, bindings = _conditions(defense=defense, dry_run=dry_run)
+    _condition, bindings = _conditions(
+        defense=defense,
+        dry_run=dry_run,
+        live_attestation=live_attestation,
+    )
     plan = build_eligibility_plan(
         requested_targets=["text-target"],
         targets={"text-target": _Target("resolved-text", modalities)},
-        corpora={"synth-arm": synth_corpus(2)},
+        corpora={"synth-arm": synth_corpus(corpus_size)},
         attackers=["replay"],
         bindings=bindings,
         dry_run=dry_run,
@@ -113,6 +135,64 @@ def _write_plan(
         encoding="utf-8",
     )
     return plan
+
+
+def _write_live_attestation(
+    path: Path, *, route_kind: str = "hosted_api"
+) -> tuple[dict, dict]:
+    route_digest = route_config_sha256(
+        route_kind=route_kind,
+        requested_target_spec="text-target",
+        resolved_target="resolved-text",
+        route_config=None,
+    )
+    realized_identity = {
+        "target": "resolved-text",
+        "provider": "openai",
+        "resolved_model": "fixture-model-2026-08-01",
+    }
+    if route_kind == "local_runtime":
+        realized_identity["model_digest"] = "a" * 64
+    manifest = build_live_attestation_manifest([{
+        "execution_scope_id": "openai-account:test-project",
+        "requested_target_spec": "text-target",
+        "resolved_target": "resolved-text",
+        "route_kind": route_kind,
+        "route_config_sha256": route_digest,
+        "exact_input_modalities": ["text"],
+        "realized_target_identity": realized_identity,
+        "observed_at_utc": "2026-08-12T10:00:00Z",
+        "probe": {
+            "evidence_kind": "synthetic_live_transport_probe",
+            "grid_id": "grid-probe",
+            "run_id": "run-probe",
+            "grid_artifact": {
+                "file": "grid-probe.grid.json",
+                "sha256": "b" * 64,
+                "bytes": 100,
+            },
+            "completion_artifact": {
+                "file": "run-probe.complete.json",
+                "sha256": "c" * 64,
+                "bytes": 200,
+            },
+            "realized_identities_sha256": "d" * 64,
+            "attempt_media_hashes_sha256": "e" * 64,
+            "harness_source_sha256": "1" * 64,
+            "driver_source_sha256": "2" * 64,
+        },
+    }])
+    payload = (json.dumps(manifest, sort_keys=True) + "\n").encode("utf-8")
+    path.write_bytes(payload)
+    digest = hashlib.sha256(payload).hexdigest()
+    artifact = _load_live_attestation_artifact(path, digest)
+    projection = {
+        "mode": "measured",
+        "execution_scope_id": "openai-account:test-project",
+        "max_age_hours": 4,
+        "artifacts": [dict(artifact["descriptor"])],
+    }
+    return artifact, projection
 
 
 def test_planning_only_keeps_structural_na_separate_from_missing(tmp_path: Path) -> None:
@@ -186,6 +266,202 @@ def test_planning_only_retains_unresolved_target_setup_as_blocked(
     assert report["counts"]["execution_units"]["missing"] == 0
     assert report["execution_units"][0]["resolved_target"] is None
     assert report["execution_units"][0]["final_disposition"] == "blocked_preflight"
+
+
+def test_measured_level1_binds_exact_typed_attestation_at_grid_start(
+    tmp_path: Path,
+) -> None:
+    live_artifact, projection = _write_live_attestation(
+        tmp_path / "live-attestation.json"
+    )
+    projection["artifacts"][0]["file"] = (
+        "live-attestation-retained-content-addressed.json"
+    )
+    plan_path = tmp_path / "measured-plan.json"
+    plan = _write_plan(
+        plan_path,
+        dry_run=False,
+        live_attestation=projection,
+        corpus_size=1,
+        whole_request_preflight_complete=True,
+    )
+    plan_artifact = _plan_artifact(plan_path)
+    grid = {
+        "grid_id": "grid-measured",
+        "grid_status": "complete",
+        "started_at": "2026-08-12T12:00:00+00:00",
+        "grid_artifact": {
+            "locator": "grid-measured.grid.json",
+            "sha256": "f" * 64,
+            "bytes": 100,
+        },
+        "request": {
+            "dry_run": False,
+            "attestation_probe": False,
+            "live_attestation": projection,
+            "harness_source": {"sha256": "1" * 64},
+            "driver_source": {"sha256": "2" * 64},
+        },
+        "cells": {},
+        "n_errors": 0,
+    }
+    grids = {plan["plan_id"]: grid}
+    availability = _bind_live_attestations(
+        grids,
+        {plan["plan_id"]: plan_artifact},
+        [live_artifact],
+    )
+
+    report = build_level1_evidence(
+        [plan_artifact], grids, [], availability
+    )
+
+    row = report["planning_strata"][0]
+    unit = report["execution_units"][0]
+    assert row["attestation_status"] == "attested"
+    assert row["attestation_reference"]["record_id"].startswith(
+        "live-attestation-record-"
+    )
+    assert row["attestation_reference"]["artifact"] == {
+        "attestation_id": live_artifact["descriptor"]["attestation_id"],
+        "sha256": live_artifact["descriptor"]["sha256"],
+        "bytes": live_artifact["descriptor"]["bytes"],
+        "supplied_file": "live-attestation.json",
+        "retained_grid_file": "live-attestation-retained-content-addressed.json",
+    }
+    assert unit["attestation_status"] == "attested"
+    assert report["counts"]["planning_strata"]["attested"] == 1
+    assert report["counts"]["execution_units"]["attested"] == 1
+    assert report["availability"]["live_attestation"]["status"] == "validated"
+    assert report["scope"]["empirical_validity_established"] is False
+
+
+def test_level1_attestation_rejects_stale_or_descriptor_substitution(
+    tmp_path: Path,
+) -> None:
+    live_artifact, projection = _write_live_attestation(
+        tmp_path / "live-attestation.json"
+    )
+    plan_path = tmp_path / "measured-plan.json"
+    plan = _write_plan(
+        plan_path,
+        dry_run=False,
+        live_attestation=projection,
+        corpus_size=1,
+        whole_request_preflight_complete=True,
+    )
+    plan_artifact = _plan_artifact(plan_path)
+
+    def grid(started_at: str, bound: dict = projection) -> dict:
+        return {
+            "grid_id": "grid-measured",
+            "grid_status": "complete",
+            "started_at": started_at,
+            "grid_artifact": {},
+            "request": {
+                "dry_run": False,
+                "attestation_probe": False,
+                "live_attestation": bound,
+                "harness_source": {"sha256": "1" * 64},
+                "driver_source": {"sha256": "2" * 64},
+            },
+            "cells": {},
+            "n_errors": 0,
+        }
+
+    with pytest.raises(ValueError, match="is stale"):
+        _bind_live_attestations(
+            {plan["plan_id"]: grid("2026-08-12T15:00:01+00:00")},
+            {plan["plan_id"]: plan_artifact},
+            [live_artifact],
+        )
+
+    substituted = json.loads(json.dumps(projection))
+    substituted["artifacts"][0]["sha256"] = "0" * 64
+    with pytest.raises(ValueError, match="was not supplied exactly"):
+        _bind_live_attestations(
+            {plan["plan_id"]: grid("2026-08-12T12:00:00+00:00", substituted)},
+            {plan["plan_id"]: plan_artifact},
+            [live_artifact],
+        )
+
+
+def test_level1_attestation_rejects_route_kind_or_mode_flag_substitution(
+    tmp_path: Path,
+) -> None:
+    live_artifact, projection = _write_live_attestation(
+        tmp_path / "wrong-route.json", route_kind="local_runtime"
+    )
+    plan_path = tmp_path / "measured-plan.json"
+    plan = _write_plan(
+        plan_path,
+        dry_run=False,
+        live_attestation=projection,
+        corpus_size=1,
+        whole_request_preflight_complete=True,
+    )
+    plan_artifact = _plan_artifact(plan_path)
+    grid = {
+        "grid_id": "grid-measured",
+        "grid_status": "complete",
+        "started_at": "2026-08-12T12:00:00+00:00",
+        "grid_artifact": {},
+        "request": {
+            "dry_run": False,
+            "attestation_probe": False,
+            "live_attestation": projection,
+        },
+        "cells": {},
+        "n_errors": 0,
+    }
+    with pytest.raises(ValueError, match="route kind differs"):
+        _bind_live_attestations(
+            {plan["plan_id"]: grid},
+            {plan["plan_id"]: plan_artifact},
+            [live_artifact],
+        )
+
+    grid["request"]["attestation_probe"] = None
+    with pytest.raises(ValueError, match="boolean attestation_probe"):
+        _bind_live_attestations(
+            {plan["plan_id"]: grid},
+            {plan["plan_id"]: plan_artifact},
+            [live_artifact],
+        )
+
+
+def test_plan_only_receipt_is_supplied_but_not_time_evaluated(
+    tmp_path: Path,
+) -> None:
+    live_artifact, projection = _write_live_attestation(
+        tmp_path / "live-attestation.json"
+    )
+    plan_path = tmp_path / "measured-plan.json"
+    _write_plan(
+        plan_path,
+        dry_run=False,
+        live_attestation=projection,
+        corpus_size=1,
+        whole_request_preflight_complete=True,
+    )
+    out_json = tmp_path / "level1.json"
+    out_csv = tmp_path / "level1.csv"
+
+    assert main([
+        "--eligibility", str(plan_path),
+        "--live-attestation", str(tmp_path / "live-attestation.json"),
+        "--live-attestation-sha256", live_artifact["descriptor"]["sha256"],
+        "--out-json", str(out_json),
+        "--out-csv", str(out_csv),
+    ]) == 0
+
+    report = json.loads(out_json.read_text(encoding="utf-8"))
+    assert report["availability"]["live_attestation"]["status"] == (
+        "not_evaluated_no_realized_measured_grid"
+    )
+    assert report["availability"]["live_attestation"]["counts"] is None
+    assert report["counts"]["planning_strata"]["attested"] is None
+    assert report["planning_strata"][0]["attestation_status"] == "not_evaluated"
 
 
 def test_completed_synthetic_grid_joins_exact_strata_and_decisions(

@@ -5,7 +5,8 @@ flowchart LR
     S[Verified source instances<br/>19 converter families] --> C[Converters]
     C --> U[Unified schema]
     U --> P[Release, policy, metric and modality preflight]
-    P --> A[Replay or response-conditioned attacker]
+    P --> L[Typed live route/transport receipt gate]
+    L --> A[Replay or response-conditioned attacker]
     A --> T[Hosted, local or guarded target]
     T --> J[Rule, guardrail and LLM judge cascade]
     J --> R[Artifacts, checkpoints, budgets and completion]
@@ -26,7 +27,7 @@ not model performance or judge validity.
 | Attacks | `src/ura/adapters/` | replay, transforms, response-conditioned escalation, native-result bridges |
 | Targets | `src/ura/targets/` | exact hosted/local invocation and provider continuation state |
 | Judgment | `src/ura/judges/`, `src/ura/source_metrics.py` | ordered full-shadow cascade for common responses; source evaluator and unqueried placeholders for classification |
-| Runtime | `src/ura/runner.py`, `experiments/run_matrix.py` | preflight, execution, budgets, checkpoints, recovery and manifests |
+| Runtime | `src/ura/runner.py`, `src/ura/live_attestation.py`, `experiments/run_matrix.py`, `experiments/live_attestation.py` | preflight, typed route/transport receipt production and admission, execution, budgets, checkpoints, recovery and manifests |
 | Analysis | `experiments/` | paired effects, transfer, judge sensitivity, human audit and figures |
 
 ## Direct operator flow
@@ -38,12 +39,14 @@ The complete run is intentionally linear:
    then bind labelled source instances and local media roots;
 3. set hosted credentials and review provider/data terms;
 4. execute the intended arguments with `experiments.rig_check`;
-5. execute the eligibility-scoped common-run lanes and source-native
+5. run bounded live target/modality probes, derive and hash their typed receipts,
+   and bind the same operator-declared execution scope to each measured grid;
+6. execute the eligibility-scoped common-run lanes and source-native
    campaigns with finite target, judge, transport-attempt, and time ceilings;
-6. import complete native artifacts and build the no-pooling suite evidence
+7. import complete native artifacts and build the no-pooling suite evidence
    inventory;
-7. preserve all artifacts and ordinary provenance; and
-8. perform diagnostics, the automated-label-blinded/model-visible human audit,
+8. preserve all artifacts and ordinary provenance; and
+9. perform diagnostics, the automated-label-blinded/model-visible human audit,
    post-experiment analysis, and measured rendering.
 
 ## Schema and source boundaries
@@ -110,8 +113,12 @@ selected-datapoint count and identity digest. Grid, completion, and error
 evidence remains bound through locator/SHA-256/byte descriptors; a mismatched
 embedded plan or artifact descriptor fails closed. The cohort's
 `evidence_kind` is either `diagnostic_dry_run` or `measured_run`, and those modes
-cannot be mixed in one artifact. The current boundary has no typed live-attestation or
-analysis-selection input, so both are recorded as `not_supplied` with null
+cannot be mixed in one artifact. For measured grids, the current boundary also
+consumes each grid-bound `ura-live-attestation/1` artifact by exact byte digest,
+reconstructs its route/config/scope/age and exact-modality prerequisite, checks
+the completed cell's stable realized identity, and reports matched record-level
+attestation support. Probe grids are diagnostic and cannot enter a measured
+Level-1 cohort. Analysis-selection evidence is still `not_supplied` with null
 counts. Pre-materialization failures remain unstratified request-level errors;
 the join never fabricates source/modality rows for them. It identifies
 diagnostic dry-run input but explicitly sets empirical validity to false.
@@ -138,13 +145,36 @@ resume.
 
 Generic account-visible routes are described by `--api-config`; fixed
 provider-specific routes retain their dedicated adapters. Exact identifiers and
-capabilities are provisional until a bounded live attestation proves routing
-and physical modality transport. Local vLLM/Ollama entries are content-bound by
+capabilities are provisional until a bounded non-dry probe yields a strict
+`ura-live-attestation/1` receipt. The receipt binds its producer grid/completion
+digests, operator-declared non-secret execution scope, requested and base-resolved
+target, hosted/local route kind, secret-free route-config digest, exact delivered
+combination, UTC observation, harness/driver source digests, and realized
+identity. Ordinary non-dry grids fail
+closed on a missing, stale, future-dated, ambiguous, or mismatched receipt before
+target calls; a returned or restored response must also match the attested stable
+provider/runtime identity. Exact combinations are not widened: text+image is not
+evidence for text alone. `rig_check` and dry-run remain no-attestation paths.
+The UTC observation is the probe Runner manifest's content-bound `started_at`,
+used as a conservative lower bound instead of mutable outer-grid `finished_at`
+metadata.
+Local vLLM/Ollama entries are content-bound by
 `--local-config`. The two-4090 operating topology admits one local model server
 per process: a model that fits one card normally uses tensor parallelism 1, the
 other card can host the scoring guard or independent evaluation, and two-card
 tensor parallelism is a separate explicit condition rather than an automatic
 optimization.
+
+This receipt is deliberately not a cryptographic identity or account credential.
+`execution_scope_id` is an operator assertion, so equivalence of accounts,
+regions, projects, or runtime environments is CANNOT-VERIFY from the receipt.
+It establishes only historical route/access and byte-backed delivery for the
+recorded target/combination. It does not establish safety, source fidelity,
+evaluator validity, benchmark validity, human validity, or future availability.
+A synthetic live text or text+one-pixel-image probe needs no source receipt or
+human rating and can exercise this transport boundary, but it remains diagnostic;
+audio/video currently require prepared real-source media because no synthetic
+audio/video fixture exists.
 
 The judge cascade retains every queried stage's label, score, confidence, parse
 status, rationale, role, and exact response binding. The first

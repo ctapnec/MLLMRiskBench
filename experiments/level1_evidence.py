@@ -14,6 +14,7 @@ import json
 import re
 import sys
 from collections import defaultdict
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterable, Mapping
 
@@ -36,11 +37,22 @@ from ura.eligibility import (  # noqa: E402
     lifecycle_stratum_id,
     validate_eligibility_plan,
 )
+from ura.live_attestation import (  # noqa: E402
+    load_live_attestation_file,
+    realized_identity_matches,
+    required_attestation_keys,
+    route_config_from_grid_request,
+    route_config_sha256,
+    stable_realized_target_identity,
+    validate_required_live_attestations,
+)
 
 
 LEVEL1_SCHEMA = "ura-level1-evidence/1"
 _HEX64 = re.compile(r"[0-9a-f]{64}")
 _CONDITION_ID = re.compile(r"condition-[0-9a-f]{24}")
+_LIVE_ATTESTATION_ID = re.compile(r"live-attestation-[0-9a-f]{24}")
+_EXECUTION_SCOPE_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}")
 _COMPLETE = frozenset({"complete", "complete_existing"})
 _STRUCTURAL_NA = frozenset({
     "transport_blocked",
@@ -71,6 +83,7 @@ _CONDITION_FIELDS = frozenset({
     "dtype",
     "dry_run",
     "selected_config_identities",
+    "live_attestation",
 })
 _CSV_FIELDS = (
     "lifecycle_stratum_id",
@@ -132,6 +145,96 @@ def _selected_identity(value: object, *, label: str) -> dict[str, str] | None:
     if not isinstance(digest, str) or _HEX64.fullmatch(digest) is None:
         raise ValueError(f"{label} lacks normalized selected SHA-256")
     return {"normalized_selected_sha256": digest}
+
+
+def _live_attestation_projection(value: object) -> dict[str, Any] | None:
+    """Validate the exact receipt projection bound into a run condition."""
+
+    if value is None:
+        return None
+    fields = {"mode", "execution_scope_id", "max_age_hours", "artifacts"}
+    if not isinstance(value, dict) or set(value) != fields:
+        raise ValueError("live-attestation condition has an invalid field inventory")
+    mode = value.get("mode")
+    if mode not in {"probe", "measured", "not_required"}:
+        raise ValueError("live-attestation mode is invalid")
+    scope = value.get("execution_scope_id")
+    max_age = value.get("max_age_hours")
+    artifacts = value.get("artifacts")
+    if not isinstance(artifacts, list):
+        raise ValueError("live-attestation artifacts must be a list")
+    if mode == "not_required":
+        if scope is not None or max_age is not None or artifacts:
+            raise ValueError(
+                "not-required live-attestation condition must be empty"
+            )
+    else:
+        if (
+            not isinstance(scope, str)
+            or scope != scope.strip()
+            or _EXECUTION_SCOPE_ID.fullmatch(scope) is None
+        ):
+            raise ValueError("live-attestation execution_scope_id is invalid")
+        if mode == "measured":
+            if (
+                isinstance(max_age, bool)
+                or not isinstance(max_age, (int, float))
+                or not 0 < float(max_age) <= 24 * 365
+            ):
+                raise ValueError("live-attestation max_age_hours is invalid")
+        elif max_age is not None or artifacts:
+            raise ValueError(
+                "probe live-attestation condition cannot consume artifacts or age"
+            )
+    normalized: list[dict[str, Any]] = []
+    for artifact in artifacts:
+        if not isinstance(artifact, dict) or set(artifact) != {
+            "file", "sha256", "bytes", "attestation_id",
+        }:
+            raise ValueError("live-attestation artifact descriptor is incomplete")
+        filename = artifact.get("file")
+        digest = artifact.get("sha256")
+        byte_count = artifact.get("bytes")
+        attestation_id = artifact.get("attestation_id")
+        if (
+            not isinstance(filename, str)
+            or not filename
+            or Path(filename).name != filename
+        ):
+            raise ValueError("live-attestation artifact filename is unsafe")
+        if not isinstance(digest, str) or _HEX64.fullmatch(digest) is None:
+            raise ValueError("live-attestation artifact SHA-256 is invalid")
+        if (
+            isinstance(byte_count, bool)
+            or not isinstance(byte_count, int)
+            or byte_count <= 0
+        ):
+            raise ValueError("live-attestation artifact byte count is invalid")
+        if (
+            not isinstance(attestation_id, str)
+            or _LIVE_ATTESTATION_ID.fullmatch(attestation_id) is None
+        ):
+            raise ValueError("live-attestation artifact ID is invalid")
+        normalized.append(dict(artifact))
+    canonical = sorted(
+        normalized,
+        key=lambda item: (
+            item["attestation_id"], item["sha256"], item["file"], item["bytes"]
+        ),
+    )
+    if normalized != canonical or len({
+        (item["attestation_id"], item["sha256"], item["bytes"])
+        for item in normalized
+    }) != len(normalized):
+        raise ValueError(
+            "live-attestation artifact descriptors must be unique and canonical"
+        )
+    return {
+        "mode": mode,
+        "execution_scope_id": scope,
+        "max_age_hours": max_age,
+        "artifacts": normalized,
+    }
 
 
 def _condition_values(value: object) -> dict[str, Any]:
@@ -197,6 +300,7 @@ def _condition_values(value: object) -> dict[str, Any]:
         raise ValueError("experiment condition selected-config identities are incomplete")
     for field in sorted(expected_selected):
         _selected_identity(selected[field], label=f"selected {field}")
+    _live_attestation_projection(value["live_attestation"])
     return value
 
 
@@ -287,6 +391,9 @@ def _grid_condition(request: Mapping[str, Any]) -> dict[str, Any]:
         "dtype": request.get("dtype"),
         "dry_run": request.get("dry_run"),
         "selected_config_identities": selected,
+        "live_attestation": _live_attestation_projection(
+            request.get("live_attestation")
+        ),
     }
     return {
         "condition_id": "condition-" + _strict_json_sha256(values)[:24],
@@ -328,6 +435,313 @@ def _plan_artifact(path: Path) -> tuple[dict[str, Any], str, str, int, int]:
     condition = _condition_from_plan(plan)
     del condition
     return plan, digest, locator, path.stat().st_size, _pretty_json_records(path)
+
+
+def _load_live_attestation_artifact(
+    path: Path, expected_sha256: str
+) -> dict[str, Any]:
+    manifest, descriptor = load_live_attestation_file(path, expected_sha256)
+    return {
+        "manifest": manifest,
+        "descriptor": {
+            **descriptor,
+            "attestation_id": manifest["attestation_id"],
+        },
+    }
+
+
+def _utc_timestamp(value: object, *, label: str) -> datetime:
+    text = _nonblank(value, label)
+    try:
+        parsed = datetime.fromisoformat(text.replace("Z", "+00:00"))
+    except ValueError as exc:
+        raise ValueError(f"{label} is not an ISO-8601 timestamp") from exc
+    if parsed.tzinfo is None or parsed.utcoffset() != timezone.utc.utcoffset(parsed):
+        raise ValueError(f"{label} must be timezone-aware UTC")
+    return parsed
+
+
+def _bind_live_attestations(
+    grids_by_plan: Mapping[str, dict[str, Any]],
+    plans: Mapping[str, tuple[dict[str, Any], str, str, int, int]],
+    artifacts: list[dict[str, Any]],
+) -> dict[str, Any] | None:
+    """Validate grid-bound receipts and attach exact prerequisite references."""
+
+    # The producer retains a content-addressed copy under a new basename.  The
+    # semantic receipt identity is therefore its typed ID plus exact bytes, not
+    # the packaging locator used by either command.
+    supplied: dict[tuple[object, ...], dict[str, Any]] = {}
+    seen_ids: dict[str, tuple[object, ...]] = {}
+    for artifact in artifacts:
+        descriptor = artifact["descriptor"]
+        key = (
+            descriptor["sha256"],
+            descriptor["bytes"],
+            descriptor["attestation_id"],
+        )
+        if key in supplied:
+            raise ValueError("duplicate --live-attestation input")
+        prior = seen_ids.setdefault(descriptor["attestation_id"], key)
+        if prior != key:
+            raise ValueError("one live-attestation ID has multiple byte descriptors")
+        supplied[key] = artifact
+
+    used: set[tuple[object, ...]] = set()
+    matched_record_ids: set[str] = set()
+    realized_measured_grids = 0
+    for plan_id, grid in grids_by_plan.items():
+        plan = plans[plan_id][0]
+        request = grid["request"]
+        projection = _live_attestation_projection(request.get("live_attestation"))
+        attestation_probe = request.get("attestation_probe")
+        if not isinstance(attestation_probe, bool):
+            raise ValueError("grid request lacks boolean attestation_probe")
+        if request.get("dry_run") is True:
+            if (
+                attestation_probe
+                or projection is None
+                or projection["mode"] != "not_required"
+            ):
+                raise ValueError("diagnostic dry-run grid cannot bind live attestations")
+            grid["live_attestations"] = {}
+            continue
+        if projection is None:
+            raise ValueError("measured grid lacks typed live-attestation prerequisites")
+        if projection["mode"] == "probe":
+            if not attestation_probe:
+                raise ValueError("live-attestation probe mode lacks probe declaration")
+            raise ValueError(
+                "attestation probe grids are diagnostic prerequisite evidence, "
+                "not Level-1 measured-result inputs"
+            )
+        if projection["mode"] != "measured":
+            raise ValueError("non-probe live grid must use measured attestation mode")
+        if attestation_probe:
+            raise ValueError("measured grid cannot declare attestation_probe=true")
+        realized_measured_grids += 1
+
+        selected_artifacts: list[dict[str, Any]] = []
+        for descriptor in projection["artifacts"]:
+            key = (
+                descriptor["sha256"],
+                descriptor["bytes"],
+                descriptor["attestation_id"],
+            )
+            artifact = supplied.get(key)
+            if artifact is None:
+                raise ValueError(
+                    "grid-bound live-attestation artifact was not supplied exactly"
+                )
+            used.add(key)
+            selected_artifacts.append(artifact)
+
+        scope = projection["execution_scope_id"]
+        required = required_attestation_keys(
+            execution_scope_id=scope,
+            requested_target_specs=plan["request"]["requested_target_specs"],
+            eligibility_items=plan["items"],
+        )
+        planned_resolved_targets: dict[str, str] = {}
+        for item in plan["items"]:
+            if item["status"] != "compatible_if_isolated":
+                continue
+            requested = item["requested_target_spec"]
+            resolved = item["resolved_target"]
+            if not isinstance(resolved, str) or not resolved:
+                raise ValueError("attestation-required planning row lacks resolved target")
+            prior = planned_resolved_targets.setdefault(requested, resolved)
+            if prior != resolved:
+                raise ValueError("one requested target has multiple resolved identities")
+
+        resolved_targets: dict[str, str] = {}
+        route_config: dict[str, str] = {}
+        route_kinds: dict[str, str] = {}
+        for artifact in selected_artifacts:
+            for record in artifact["manifest"]["records"]:
+                key = (
+                    record["execution_scope_id"],
+                    record["requested_target_spec"],
+                    tuple(record["exact_input_modalities"]),
+                )
+                if key not in required:
+                    continue
+                requested = record["requested_target_spec"]
+                planned_resolved = planned_resolved_targets[requested]
+                attested_resolved = record["resolved_target"]
+                if planned_resolved not in {
+                    attested_resolved,
+                    f"{attested_resolved}+guard",
+                }:
+                    raise ValueError(
+                        "live attestation does not resolve the planned base target"
+                    )
+                previous_resolved = resolved_targets.setdefault(
+                    requested, attested_resolved
+                )
+                if previous_resolved != attested_resolved:
+                    raise ValueError(
+                        "required live attestations disagree on resolved target"
+                    )
+                expected_route_kind = (
+                    "local_runtime"
+                    if requested.startswith(("vllm:", "ollama:"))
+                    else "hosted_api"
+                )
+                if record["route_kind"] != expected_route_kind:
+                    raise ValueError(
+                        "live attestation route kind differs from requested target"
+                    )
+                selected_route_config = route_config_from_grid_request(
+                    request,
+                    route_kind=expected_route_kind,
+                    requested_target_spec=requested,
+                    resolved_target=attested_resolved,
+                )
+                previous_config = route_config.setdefault(
+                    requested,
+                    route_config_sha256(
+                        route_kind=expected_route_kind,
+                        requested_target_spec=requested,
+                        resolved_target=attested_resolved,
+                        route_config=selected_route_config,
+                    ),
+                )
+                previous_kind = route_kinds.setdefault(
+                    requested, expected_route_kind
+                )
+                if (
+                    previous_config != record["route_config_sha256"]
+                    or previous_kind != record["route_kind"]
+                ):
+                    raise ValueError(
+                        "required live attestations disagree on target route identity"
+                    )
+        matched = validate_required_live_attestations(
+            [artifact["manifest"] for artifact in selected_artifacts],
+            required_keys=required,
+            resolved_targets=resolved_targets,
+            route_config_sha256=route_config,
+            route_kind=route_kinds,
+            current_harness_source_sha256=_nonblank(
+                request.get("harness_source", {}).get("sha256")
+                if isinstance(request.get("harness_source"), dict)
+                else None,
+                "measured grid harness source sha256",
+            ),
+            current_driver_source_sha256=_nonblank(
+                request.get("driver_source", {}).get("sha256")
+                if isinstance(request.get("driver_source"), dict)
+                else None,
+                "measured grid experiment driver source sha256",
+            ),
+            reference_time=_utc_timestamp(
+                grid.get("started_at"), label="measured grid started_at"
+            ),
+            max_age_hours=projection["max_age_hours"],
+        )
+        expected_identity_by_target: dict[str, dict[str, Any]] = {}
+        for key, record in matched.items():
+            expected_identity_by_target.setdefault(
+                key[1], record["realized_target_identity"]
+            )
+        for cell in grid["cells"].values():
+            if cell["status"] not in _COMPLETE:
+                continue
+            validated = cell["validated_cell"]
+            run = validated["manifest"]["config"]["run"]
+            requested = run.get("requested_model_spec") or run.get("model_spec")
+            if requested not in expected_identity_by_target:
+                # Current manifests persist the resolved model_spec; recover the
+                # requested key through the exact plan mapping.
+                matches = [
+                    key
+                    for key, resolved in planned_resolved_targets.items()
+                    if resolved == run.get("model_spec")
+                ]
+                if len(matches) != 1:
+                    raise ValueError(
+                        "completed cell cannot be mapped to one attested target"
+                    )
+                requested = matches[0]
+            observed_identity = validated["realized_identities"]["target"][
+                "snapshot"
+            ]
+            # An input-defense-only cell made no target call and therefore has
+            # no provider/runtime identity to compare. When one was observed,
+            # it must still match the admission receipt independently here.
+            if stable_realized_target_identity(observed_identity) and not (
+                realized_identity_matches(
+                    expected_identity_by_target[requested], observed_identity
+                )
+            ):
+                raise ValueError(
+                    "completed cell realized target identity differs from its "
+                    "live attestation"
+                )
+        references: dict[tuple[str, str, tuple[str, ...]], dict[str, Any]] = {}
+        for key, record in matched.items():
+            owners = [
+                artifact
+                for artifact in selected_artifacts
+                if any(
+                    candidate["record_id"] == record["record_id"]
+                    for candidate in artifact["manifest"]["records"]
+                )
+            ]
+            if len(owners) != 1:
+                raise ValueError("attested record does not have exactly one artifact owner")
+            owner = owners[0]
+            matched_record_ids.add(record["record_id"])
+            references[key] = {
+                "attestation_id": owner["manifest"]["attestation_id"],
+                "record_id": record["record_id"],
+                "artifact": {
+                    "attestation_id": owner["descriptor"]["attestation_id"],
+                    "sha256": owner["descriptor"]["sha256"],
+                    "bytes": owner["descriptor"]["bytes"],
+                    "supplied_file": owner["descriptor"]["file"],
+                    "retained_grid_file": next(
+                        descriptor["file"]
+                        for descriptor in projection["artifacts"]
+                        if (
+                            descriptor["attestation_id"],
+                            descriptor["sha256"],
+                            descriptor["bytes"],
+                        ) == (
+                            owner["descriptor"]["attestation_id"],
+                            owner["descriptor"]["sha256"],
+                            owner["descriptor"]["bytes"],
+                        )
+                    ),
+                },
+                "observed_at_utc": record["observed_at_utc"],
+                "evidence_kind": record["probe"]["evidence_kind"],
+                "probe_grid_id": record["probe"]["grid_id"],
+                "probe_run_id": record["probe"]["run_id"],
+            }
+        grid["live_attestations"] = references
+
+    unused = set(supplied) - used
+    if realized_measured_grids and unused:
+        raise ValueError("supplied live-attestation artifact is outside the grid cohort")
+    if not artifacts:
+        return None
+    descriptors = sorted(
+        (dict(artifact["descriptor"]) for artifact in artifacts),
+        key=lambda item: (item["attestation_id"], item["sha256"], item["file"]),
+    )
+    return {
+        "status": (
+            "validated"
+            if realized_measured_grids
+            else "not_evaluated_no_realized_measured_grid"
+        ),
+        "artifacts": descriptors,
+        "artifact_count": len(descriptors),
+        "matched_record_count": len(matched_record_ids),
+        "scope": "target_route_and_byte_backed_transport_only",
+    }
 
 
 def _artifact_path(
@@ -621,6 +1035,7 @@ def _load_results(
             grids_by_plan[plan_id] = {
                 "grid_id": grid_id,
                 "grid_status": grid["status"],
+                "started_at": grid.get("started_at"),
                 "grid_locator": str(grid_path.relative_to(root)),
                 "grid_artifact": _evidence_artifact(grid_path, root=root),
                 "root": str(root),
@@ -811,6 +1226,7 @@ def build_level1_evidence(
     plan_artifacts: list[tuple[dict[str, Any], str, str, int, int]],
     grids_by_plan: Mapping[str, dict[str, Any]],
     request_level_errors: list[dict[str, Any]],
+    live_attestation_availability: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Build one deterministic, unit-qualified lifecycle inventory."""
 
@@ -825,6 +1241,31 @@ def build_level1_evidence(
         )
     diagnostic_dry_run = next(iter(dry_run_modes))
     evidence_kind = "diagnostic_dry_run" if diagnostic_dry_run else "measured_run"
+    live_attestation_status = (
+        live_attestation_availability.get("status")
+        if live_attestation_availability is not None
+        else None
+    )
+    if live_attestation_status not in {
+        None,
+        "validated",
+        "not_evaluated_no_realized_measured_grid",
+    }:
+        raise ValueError("Level-1 live-attestation availability status is invalid")
+    live_attestation_evaluated = live_attestation_status == "validated"
+    supplied_attestation_identities = {
+        (
+            descriptor.get("attestation_id"),
+            descriptor.get("sha256"),
+            descriptor.get("bytes"),
+        )
+        for descriptor in (
+            live_attestation_availability.get("artifacts", [])
+            if live_attestation_availability is not None
+            else []
+        )
+        if isinstance(descriptor, dict)
+    }
     plans: dict[str, tuple[dict[str, Any], str, str, int, int]] = {}
     seen_requests: set[str] = set()
     seen_lifecycle: set[str] = set()
@@ -867,6 +1308,11 @@ def build_level1_evidence(
             "grid_id": grid["grid_id"] if grid else None,
             "grid_status": grid["grid_status"] if grid else "not_supplied",
             "grid_artifact": grid["grid_artifact"] if grid else None,
+            "live_attestation": (
+                _live_attestation_projection(grid["request"].get("live_attestation"))
+                if grid
+                else condition["values"]["live_attestation"]
+            ),
         })
         items_by_unit: dict[str, list[dict[str, Any]]] = defaultdict(list)
         for item in plan["items"]:
@@ -904,6 +1350,60 @@ def build_level1_evidence(
                 if grid_cell is not None and grid_cell["status"] in _COMPLETE
                 else {}
             )
+            item_attestations: dict[str, tuple[str, dict[str, Any] | None]] = {}
+            projection = (
+                _live_attestation_projection(
+                    grid["request"].get("live_attestation")
+                )
+                if grid is not None
+                else condition["values"]["live_attestation"]
+            )
+            projected_receipts_supplied = bool(
+                projection is not None
+                and projection["artifacts"]
+                and {
+                    (
+                        descriptor["attestation_id"],
+                        descriptor["sha256"],
+                        descriptor["bytes"],
+                    )
+                    for descriptor in projection["artifacts"]
+                }.issubset(supplied_attestation_identities)
+            )
+            for item in items:
+                if item["status"] != "compatible_if_isolated":
+                    item_attestations[item["cell_id"]] = ("not_required", None)
+                elif projection is not None and projection["mode"] == "not_required":
+                    item_attestations[item["cell_id"]] = ("not_required", None)
+                elif grid is None:
+                    item_attestations[item["cell_id"]] = (
+                        "not_evaluated"
+                        if projected_receipts_supplied
+                        else "not_supplied",
+                        None,
+                    )
+                else:
+                    if (
+                        not live_attestation_evaluated
+                        or projection is None
+                        or projection["mode"] != "measured"
+                    ):
+                        raise ValueError(
+                            "measured planning stratum lacks an attestation binding"
+                        )
+                    key = (
+                        projection["execution_scope_id"],
+                        item["requested_target_spec"],
+                        tuple(item["exact_modality_combination"]),
+                    )
+                    reference = grid.get("live_attestations", {}).get(key)
+                    if not isinstance(reference, dict):
+                        raise ValueError(
+                            "measured planning stratum lacks its exact live attestation"
+                        )
+                    item_attestations[item["cell_id"]] = (
+                        "attested", reference
+                    )
             unit_structural = all(
                 item["status"] == "N/A" and item["disposition"] in _STRUCTURAL_NA
                 for item in items
@@ -917,6 +1417,34 @@ def build_level1_evidence(
             )
             unit_completed = bool(
                 grid_cell is not None and grid_cell["status"] in _COMPLETE
+            )
+            compatible_attestations = [
+                item_attestations[item["cell_id"]]
+                for item in items
+                if item["status"] == "compatible_if_isolated"
+            ]
+            if not compatible_attestations:
+                unit_attestation_status = "not_required"
+            else:
+                unit_statuses = {
+                    status for status, _reference in compatible_attestations
+                }
+                if len(unit_statuses) != 1:
+                    raise ValueError(
+                        "execution unit has inconsistent live-attestation statuses"
+                    )
+                unit_attestation_status = next(iter(unit_statuses))
+            unit_attestation_references = sorted(
+                {
+                    canonical_json_sha256(reference): json.dumps(
+                        reference,
+                        ensure_ascii=False,
+                        sort_keys=True,
+                        separators=(",", ":"),
+                    )
+                    for status, reference in compatible_attestations
+                    if status == "attested" and reference is not None
+                }.values()
             )
             if unit_structural:
                 unit_final = "not_applicable_structural"
@@ -951,7 +1479,10 @@ def build_level1_evidence(
                     for item in items
                 ),
                 "execution_eligible": unit_eligible,
-                "attestation_status": "not_supplied",
+                "attestation_status": unit_attestation_status,
+                "attestation_references": [
+                    json.loads(value) for value in unit_attestation_references
+                ],
                 "grid_id": grid["grid_id"] if grid else None,
                 "grid_artifact": grid["grid_artifact"] if grid else None,
                 "run_id": grid_cell.get("run_id") if grid_cell else None,
@@ -1007,6 +1538,9 @@ def build_level1_evidence(
                 else:  # pragma: no cover - exact coverage validation rejects this
                     final = "missing_completed_stratum_evidence"
                 item_counts = support.get(item["cell_id"], {})
+                attestation_status, attestation_reference = item_attestations[
+                    item["cell_id"]
+                ]
                 rows.append({
                     "lifecycle_stratum_id": lifecycle_stratum_id(
                         plan["request_id"], item["cell_id"]
@@ -1039,8 +1573,8 @@ def build_level1_evidence(
                     "selected_datapoint_ids_sha256": item[
                         "selected_datapoint_ids_sha256"
                     ],
-                    "attestation_status": "not_supplied",
-                    "attestation_reference": None,
+                    "attestation_status": attestation_status,
+                    "attestation_reference": attestation_reference,
                     "grid_id": grid["grid_id"] if grid else None,
                     "grid_locator": (
                         grid["grid_artifact"]["locator"] if grid else None
@@ -1110,7 +1644,11 @@ def build_level1_evidence(
             for row in rows
         ),
         "attempted": None,
-        "attested": None,
+        "attested": (
+            sum(row["attestation_status"] == "attested" for row in rows)
+            if live_attestation_evaluated
+            else None
+        ),
         "included": None,
     }
     execution_counts = {
@@ -1127,7 +1665,14 @@ def build_level1_evidence(
             row["final_disposition"] == "not_applicable_structural"
             for row in unit_rows
         ),
-        "attested": None,
+        "attested": (
+            sum(
+                row["attestation_status"] == "attested"
+                for row in unit_rows
+            )
+            if live_attestation_evaluated
+            else None
+        ),
     }
     judgment_counts = {
         "unit": "judgment_record",
@@ -1165,9 +1710,55 @@ def build_level1_evidence(
         },
         "availability": {
             "live_attestation": {
-                "status": "not_supplied",
-                "counts": None,
-                "reason": "RUN-006 typed attestation binding is not implemented",
+                **(
+                    {
+                        "status": "not_supplied",
+                        "counts": None,
+                        "reason": (
+                            "no typed live-attestation artifacts were supplied"
+                        ),
+                    }
+                    if live_attestation_availability is None
+                    else {
+                        **dict(live_attestation_availability),
+                        "counts": (
+                            {
+                                "unit": "typed_transport_prerequisite",
+                                "planning_strata_attested": planning_counts[
+                                    "attested"
+                                ],
+                                "execution_units_attested": execution_counts[
+                                    "attested"
+                                ],
+                                "artifacts": live_attestation_availability[
+                                    "artifact_count"
+                                ],
+                                "matched_records": live_attestation_availability[
+                                    "matched_record_count"
+                                ],
+                            }
+                            if live_attestation_evaluated
+                            else None
+                        ),
+                        **(
+                            {}
+                            if live_attestation_evaluated
+                            else {
+                                "reason": (
+                                    "receipts were supplied, but no realized measured "
+                                    "grid provides a historical started_at binding"
+                                )
+                            }
+                        ),
+                        "limitations": {
+                            "safety_validity_established": False,
+                            "evaluator_validity_established": False,
+                            "benchmark_result_established": False,
+                            "human_validity_established": False,
+                            "future_route_availability_guaranteed": False,
+                        },
+                    }
+                )
             },
             "analysis_inclusion": {
                 "status": "not_supplied",
@@ -1257,18 +1848,52 @@ def main(argv: list[str] | None = None) -> int:
         default=[],
         help="run_matrix results root containing final complete/partial grids",
     )
+    parser.add_argument(
+        "--live-attestation",
+        type=Path,
+        action="append",
+        default=[],
+        help=(
+            "typed ura-live-attestation/1 JSON; repeat and pair positionally "
+            "with --live-attestation-sha256"
+        ),
+    )
+    parser.add_argument(
+        "--live-attestation-sha256",
+        action="append",
+        default=[],
+        help="approved byte SHA-256 paired with one --live-attestation input",
+    )
     parser.add_argument("--out-json", type=Path, required=True)
     parser.add_argument("--out-csv", type=Path, required=True)
     args = parser.parse_args(argv)
     if args.out_json.resolve() == args.out_csv.resolve():
         parser.error("--out-json and --out-csv must be different paths")
+    if len(args.live_attestation) != len(args.live_attestation_sha256):
+        parser.error(
+            "--live-attestation and --live-attestation-sha256 must be paired"
+        )
     try:
         artifacts = [_plan_artifact(path) for path in args.eligibility]
         plan_index = {artifact[0]["plan_id"]: artifact for artifact in artifacts}
         if len(plan_index) != len(artifacts):
             raise ValueError("duplicate eligibility plan input")
         grids, request_errors = _load_results(args.results, plan_index)
-        report = build_level1_evidence(artifacts, grids, request_errors)
+        live_artifacts = [
+            _load_live_attestation_artifact(path, digest)
+            for path, digest in zip(
+                args.live_attestation, args.live_attestation_sha256
+            )
+        ]
+        live_availability = _bind_live_attestations(
+            grids, plan_index, live_artifacts
+        )
+        report = build_level1_evidence(
+            artifacts,
+            grids,
+            request_errors,
+            live_availability,
+        )
         _write_json_new(args.out_json, report)
         try:
             write_csv(args.out_csv, report["planning_strata"])
@@ -1285,7 +1910,7 @@ def main(argv: list[str] | None = None) -> int:
         "csv": str(args.out_csv.resolve()),
         "planning_strata": report["counts"]["planning_strata"]["requested"],
         "execution_units": report["counts"]["execution_units"]["requested"],
-        "attestation_status": "not_supplied",
+        "attestation_status": report["availability"]["live_attestation"]["status"],
         "analysis_inclusion_status": "not_supplied",
     }, sort_keys=True))
     return 0

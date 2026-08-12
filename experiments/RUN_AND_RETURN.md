@@ -7,7 +7,7 @@ source-native evaluators. Experiments and the human audit are still pending.
 Preflight, dry-run, and one-record transport probes are diagnostics, not thesis
 results.
 
-The maintained artifact contract is Runner `ura-runner/2.6` with unified schema
+The maintained artifact contract is Runner `ura-runner/2.7` with unified schema
 `1.4`. Do not combine older-runner artifacts with this program.
 
 The program is deliberately lane-based. A model is tested on every physical
@@ -737,99 +737,134 @@ judgment lifecycle and deterministic export. It supplies no attestation,
 analysis-inclusion, source-release, provider, human-validity, or benchmark
 evidence.
 
-**B. Optional synthetic/live transport.** This path sends synthetic fixtures to
-one already selected real target and uses the rule stage plus the offline mock
-LLM fallback so a rule abstention cannot make the diagnostic unreachable. It
-requires target-provider credentials and makes target-provider calls, but it
-requires no source receipt or human audit because no released source is used.
-The mock judge is admitted only when the selected corpus set is entirely
-synthetic; a real or mixed corpus still rejects `--judge-model mock`. Its mock
-labels are scientifically meaningless. For a bounded text-only diagnostic:
+**B. Synthetic/live target transport with no human step.** This path sends only
+synthetic fixtures to one selected real target and uses only the deterministic
+rule stage to complete the typed response trail. It requires target credentials
+and makes real target calls, but needs no acquired source, source-conformance
+receipt, or human audit. The rule labels are diagnostic and carry no scientific
+validity claim. Choose one non-secret
+operator label for the account/project/region/runtime context and reuse it
+verbatim in the probe, receipt producer, and later measured grid:
 
 ```bash
+export EXECUTION_SCOPE_ID='rig-a-account-project-region'
 export TARGET='<one-exact-live-target-spec>'
 export TARGET_LABEL='<short-logical-label>'
+export TEXT_PROBE_ROOT="runs/thesis/attestation/$TARGET_LABEL/synthetic-text"
+export TEXT_RECEIPT="runs/thesis/attestation/receipts/$TARGET_LABEL-synthetic-text.json"
 
 python -m experiments.run_matrix \
+  --attestation-probe --execution-scope-id "$EXECUTION_SCOPE_ID" \
   --api "$TARGET" --api-config experiments/api-targets.json \
-  --attackers replay --judges rules,llm --judge-model mock \
+  --attackers replay --judges rules \
   --corpora synth --limit 1 --sample-seed 0 --seeds 0 \
   --max-queries 1 --max-turns 1 \
-  --max-total-target-calls 1 --max-total-judge-calls 1 \
+  --max-total-target-calls 1 \
   --max-total-http-attempts 4 --deadline-seconds 900 \
-  --out "runs/thesis/diagnostics/synth-live/$TARGET_LABEL/text"
+  --out "$TEXT_PROBE_ROOT"
+
+python -m experiments.live_attestation \
+  --probe-root "$TEXT_PROBE_ROOT" \
+  --execution-scope-id "$EXECUTION_SCOPE_ID" \
+  --out "$TEXT_RECEIPT"
+export TEXT_RECEIPT_SHA256="$(sha256sum -- "$TEXT_RECEIPT" | awk '{print $1}')"
+test "${#TEXT_RECEIPT_SHA256}" -eq 64
 ```
 
-For a target already declared and live-attested for text+image, `--limit 2`
-adds the first image-bearing fixture while retaining a two-call ceiling:
+For a target declared image-capable, `--limit 2` includes the text fixture and
+the verified text+one-pixel-image fixture. It can therefore emit separate exact
+text and text+image receipt records while retaining a two-call ceiling:
 
 ```bash
+export IMAGE_PROBE_ROOT="runs/thesis/attestation/$TARGET_LABEL/synthetic-text-image"
+export IMAGE_RECEIPT="runs/thesis/attestation/receipts/$TARGET_LABEL-synthetic-text-image.json"
+
 python -m experiments.run_matrix \
+  --attestation-probe --execution-scope-id "$EXECUTION_SCOPE_ID" \
   --api "$TARGET" --api-config experiments/api-targets.json \
-  --attackers replay --judges rules,llm --judge-model mock \
+  --attackers replay --judges rules \
   --corpora synth --limit 2 --sample-seed 0 --seeds 0 \
   --max-queries 1 --max-turns 1 \
-  --max-total-target-calls 2 --max-total-judge-calls 2 \
+  --max-total-target-calls 2 \
   --max-total-http-attempts 8 --deadline-seconds 900 \
-  --out "runs/thesis/diagnostics/synth-live/$TARGET_LABEL/text-image"
+  --out "$IMAGE_PROBE_ROOT"
+
+python -m experiments.live_attestation \
+  --probe-root "$IMAGE_PROBE_ROOT" \
+  --execution-scope-id "$EXECUTION_SCOPE_ID" \
+  --out "$IMAGE_RECEIPT"
+export IMAGE_RECEIPT_SHA256="$(sha256sum -- "$IMAGE_RECEIPT" | awk '{print $1}')"
+test "${#IMAGE_RECEIPT_SHA256}" -eq 64
 ```
 
-The synthetic image is a verified one-pixel, response-only transport fixture;
-it has no image-safety semantics. Synthetic tool calls are inert recorded
-constructs and are never executed. There is no synthetic audio or video
-fixture. Report this path only as a live-transport/automation diagnostic and
-exclude it from benchmark estimates, model comparisons, human-validity claims,
-and thesis results. Any later real-source run still requires the compact receipt
-and its human operator license/access and semantic review described in
-[section 4.1](#41-validate-the-compact-source-receipt).
+The producer performs no provider call. It strictly revalidates the completed
+single-cell probe and emits create-only `ura-live-attestation/1` JSON. Its UTC
+observation is the probe Runner manifest's content-bound `started_at`, a
+conservative lower bound on the successful transport event; mutable outer-grid
+`finished_at` metadata is not trusted as receipt time. Inspect the receipt and
+confirm its exact `requested_target_spec`, `resolved_target`,
+`route_config_sha256`, `exact_input_modalities`, realized identity, and probe
+artifact/harness/driver hashes before approval. A text+image record does not
+cover text alone. A harness or driver source change requires a new probe.
 
-Then run one real bounded transport check per claimed physical modality for each
-exact hosted model. This is the only way to catch account visibility and request
-serialization failures before the large grids. Use a stable `TARGET_LABEL` that
-contains no secret or local path.
+The synthetic image has no image-safety semantics. Synthetic tool calls are
+inert and never executed. There is no synthetic audio or video fixture. These
+two paths are fully automated after credentials/configuration are present, but
+they are target-route/byte-transport diagnostics only. They prove neither the
+judge path nor safety, evaluator, benchmark, human validity, account equivalence,
+or future route availability. Exclude their probe grids from benchmark
+estimates, comparisons, human-validity claims, Level-1 measured requests, and
+figures. A later real-source run still needs the source-conformance receipt and
+operator reviews in [section 4.1](#41-validate-the-compact-source-receipt).
+
+**C. Real-source audio/video and optional source-native transport probes.** Run
+one bounded check per exact target and exact input combination where no synthetic
+fixture exists or source-native transport is part of the claim. Use a stable
+label that contains no secret or path. The real source-conformance environment
+variables from section 4.1 remain mandatory.
 
 ```bash
 export TARGET='<one-exact-target-spec>'
 export TARGET_LABEL='<short-logical-label>'
-export PROBE_ARM='strongreject_official'  # image=mmsafety_official, audio=jalmbench_audio, video=videosafetybench_harmful_query
-export PROBE_MODALITY='text'     # text, image, audio, or video
+export PROBE_ARM='jalmbench_audio'  # or videosafetybench_harmful_query
+export PROBE_MODALITY='audio'       # or video; a directory label only
+export PROBE_ROOT="runs/thesis/attestation/$TARGET_LABEL/real-$PROBE_MODALITY"
+export PROBE_RECEIPT="runs/thesis/attestation/receipts/$TARGET_LABEL-real-$PROBE_MODALITY.json"
 
 python -m experiments.rig_check \
   --api "$TARGET" --api-config experiments/api-targets.json \
-  --attackers replay --judges rules,guardrail,llm --judge-model "$JUDGE" \
-  --guardrail-model "$SCORE_GUARD" --guardrail-revision "$SCORE_GUARD_REV" --guardrail-device "$SCORE_GUARD_DEVICE" \
+  --attackers replay --judges rules \
   --corpora "$PROBE_ARM" --source-config experiments/source-instances.json \
   --limit 1 --sample-seed 0 --seeds 0 --max-queries 1 --max-turns 1 \
-  --max-total-target-calls 16 --max-total-judge-calls 1 \
+  --max-total-target-calls 16 \
   --max-total-http-attempts 64 --deadline-seconds 3600 \
   --out "runs/thesis/preflight/attestation/$TARGET_LABEL/$PROBE_MODALITY"
 
 python -m experiments.run_matrix \
+  --attestation-probe --execution-scope-id "$EXECUTION_SCOPE_ID" \
   --api "$TARGET" --api-config experiments/api-targets.json \
-  --attackers replay --judges rules,guardrail,llm --judge-model "$JUDGE" \
-  --guardrail-model "$SCORE_GUARD" --guardrail-revision "$SCORE_GUARD_REV" --guardrail-device "$SCORE_GUARD_DEVICE" \
+  --attackers replay --judges rules \
   --corpora "$PROBE_ARM" --source-config experiments/source-instances.json \
   --limit 1 --sample-seed 0 --seeds 0 --max-queries 1 --max-turns 1 \
-  --max-total-target-calls 16 --max-total-judge-calls 1 \
+  --max-total-target-calls 16 \
   --max-total-http-attempts 64 --deadline-seconds 3600 \
-  --out "runs/thesis/attestation/$TARGET_LABEL/$PROBE_MODALITY"
+  --out "$PROBE_ROOT"
+
+python -m experiments.live_attestation \
+  --probe-root "$PROBE_ROOT" \
+  --execution-scope-id "$EXECUTION_SCOPE_ID" \
+  --out "$PROBE_RECEIPT"
+export PROBE_RECEIPT_SHA256="$(sha256sum -- "$PROBE_RECEIPT" | awk '{print $1}')"
+test "${#PROBE_RECEIPT_SHA256}" -eq 64
 ```
 
-Repeat as follows:
-
-- every hosted target: StrongREJECT text;
-- every target that declares image: MM-SafetyBench image;
-- every target that declares audio: JALMBench audio;
-- every target that declares video: Video-SafetyBench video.
-
-Fable and Sol do not require entries in `api-targets.json`; a generic target and
-the generic LLM judge do. The config may contain a reusable roster superset.
-Keep these probe artifacts under `attestation/`; do not include them in measured
-aggregates or present them as safety estimates.
-
-For a local target, use the same pattern with `--local` and its exact
-`--local-config`, and run one process at a time. Local audio/video claims are not
-supported by this code.
+For hosted text/image, the synthetic path above is the smallest no-human
+transport option; a real StrongREJECT or MM-SafetyBench probe is optional when
+source-specific route behavior itself is being checked. Repeat the real-source
+pattern for every planned audio/video-capable target. Fable and Sol do not
+require entries in `api-targets.json`; generic targets and a generic LLM judge
+do. For a local target, substitute `--local` plus its exact `--local-config` and
+run one process at a time. Local audio/video claims are unsupported.
 
 ## 9. Plan lanes with the no-call rig check
 
@@ -843,6 +878,8 @@ the later measured command. `rig_check` executes the no-call plan in temporary
 scratch storage but copies its content-addressed eligibility/`N/A` ledger into
 the requested `--out` directory, including when a later compatibility gate
 fails. That ledger is planning evidence only and is not a live attestation.
+`rig_check` and `run_matrix --dry-run` neither require nor accept
+`--execution-scope-id` or live-attestation arguments.
 
 Keep every no-call `rig_check` output under `runs/thesis/preflight/<lane>` and
 every measured `run_matrix` output under `runs/thesis/runner/<lane>`. Whenever a
@@ -850,6 +887,53 @@ lane below says to repeat a check with `run_matrix`, change both the module name
 and that output prefix. Never give the Level-1 join a preflight-only plan: its
 selected cohort is the measured `runner/` tree. The separate live transport
 probes remain under `attestation/` and are also excluded from that join.
+
+Before each measured lane, build a Bash array from the already approved receipt
+files and digests that cover every exact requested target and exact modality
+combination compatible in that lane. Do not add a receipt merely because it is
+nearby: text, text+image, text+audio, and text+video are distinct combinations,
+and route-config changes require a new probe. Do not supply overlapping records:
+the two-row synthetic text+image receipt already contains both a text record and
+a text+image record for that target, so it replaces rather than accompanies the
+one-row text receipt when both combinations are needed. The following example
+uses that single receipt; a text-only lane uses `TEXT_RECEIPT` instead. Extend
+both arrays positionally for the lane's other targets or real audio/video
+receipts:
+
+```bash
+export LIVE_ATTESTATION_MAX_AGE_HOURS='24'  # prospective operator policy
+LIVE_ATTESTATION_FILES=("$IMAGE_RECEIPT")
+LIVE_ATTESTATION_SHA256=("$IMAGE_RECEIPT_SHA256")
+test "${#LIVE_ATTESTATION_FILES[@]}" -eq "${#LIVE_ATTESTATION_SHA256[@]}"
+
+LIVE_ATTESTATION_ARGS=(
+  --execution-scope-id "$EXECUTION_SCOPE_ID"
+  --live-attestation-max-age-hours "$LIVE_ATTESTATION_MAX_AGE_HOURS"
+)
+for i in "${!LIVE_ATTESTATION_FILES[@]}"; do
+  receipt="${LIVE_ATTESTATION_FILES[$i]}"
+  digest="${LIVE_ATTESTATION_SHA256[$i]}"
+  test "$(sha256sum -- "$receipt" | awk '{print $1}')" = "$digest"
+  LIVE_ATTESTATION_ARGS+=(
+    --live-attestation "$receipt" --live-attestation-sha256 "$digest"
+  )
+done
+```
+
+Append `"${LIVE_ATTESTATION_ARGS[@]}"` to **every** measured `run_matrix`
+invocation below, never to `rig_check`. The driver retains content-addressed
+copies and fails before target calls if any compatible planning row lacks a
+fresh exact receipt. Its first newly executed or restored response must also
+match the receipt's stable realized provider/runtime identity. The non-secret
+scope is an operator assertion; account/project/region equivalence remains
+CANNOT-VERIFY. The receipt establishes target-route/access/byte-backed transport
+only, not judge execution, judge validity, safety, benchmark validity, human
+validity, or future availability.
+
+On Windows, the durable call-budget ledger retries the same fsynced atomic
+replacement for at most 100 ms when a scanner or filesystem filter briefly
+holds the prior ledger. Persistent denial still stops the grid before another
+external call; never delete or hand-edit the ledger to bypass that stop.
 
 For planning, use finite values larger than the projection. Copy the printed
 projection into the measured command's lane-specific ceilings; add capacity only
@@ -895,6 +979,7 @@ python -m experiments.rig_check \
   --out runs/thesis/preflight/static-text
 
 python -m experiments.run_matrix \
+  "${LIVE_ATTESTATION_ARGS[@]}" \
   --api "$TEXT_TARGETS" --api-config experiments/api-targets.json \
   --attackers replay --judges rules,guardrail,llm --judge-model "$JUDGE" \
   --guardrail-model "$SCORE_GUARD" --guardrail-revision "$SCORE_GUARD_REV" --guardrail-device "$SCORE_GUARD_DEVICE" \
@@ -933,7 +1018,8 @@ python -m experiments.rig_check \
 
 After the check succeeds, replace `experiments.rig_check` with
 `experiments.run_matrix` and replace all three planning ceilings with the printed
-totals; write the measured grid to `runs/thesis/runner/static-image`. Automated
+totals; append `"${LIVE_ATTESTATION_ARGS[@]}"` and write the measured grid to
+`runs/thesis/runner/static-image`. Automated
 stages do not inspect image pixels: for released image sources
 they grade the target output with the source-provided safety reason/reference,
 and record that proxy explicitly. Media-aware human review remains the validity
@@ -975,7 +1061,8 @@ python -m experiments.rig_check \
 ```
 
 For each, repeat with `experiments.run_matrix`, the exact successful projection,
-and measured outputs `runs/thesis/runner/static-audio` and
+`"${LIVE_ATTESTATION_ARGS[@]}"`, and measured outputs
+`runs/thesis/runner/static-audio` and
 `runs/thesis/runner/static-video`, respectively. Do not send transcripts,
 captions, or extracted frames to a target
 and label that as audio/video execution. The maintained automated judges never
@@ -1030,7 +1117,7 @@ python -m experiments.rig_check \
 The no-call projection must report zero model-judge calls and zero local
 guardrail evaluations. A non-zero value means this source-only lane is
 misconfigured and must not proceed. Repeat each successful check with
-`experiments.run_matrix`, the exact printed target-call and HTTP-attempt
+`experiments.run_matrix`, `"${LIVE_ATTESTATION_ARGS[@]}"`, and the exact printed target-call and HTTP-attempt
 ceilings, and the corresponding measured output under
 `runs/thesis/runner/rjudge` or `runs/thesis/runner/gptgeochat`; omission of
 `--max-total-judge-calls` is intentional because no
@@ -1065,7 +1152,7 @@ python -m experiments.rig_check \
   --out runs/thesis/preflight/crescendo-text
 ```
 
-Repeat with `experiments.run_matrix`, the printed totals, and
+Repeat with `experiments.run_matrix`, `"${LIVE_ATTESTATION_ARGS[@]}"`, the printed totals, and
 `--out runs/thesis/runner/crescendo-text`. This lane reports conversation
 endpoints; it does not enter static ASR.
 
@@ -1120,7 +1207,8 @@ configured maximum, establish the realized variant count.
 
 Because `attacker-config.json` must contain only selected attacker keys, create a
 one-attacker copy for each invocation or remove the unselected rows before the
-check. Repeat the successful check with `experiments.run_matrix`, its exact
+check. Repeat the successful check with `experiments.run_matrix`,
+`"${LIVE_ATTESTATION_ARGS[@]}"`, its exact
 totals, and `--out "runs/thesis/runner/transfer-$ATTACKER"`.
 
 The remaining runner bridges are specialized:
@@ -1170,7 +1258,7 @@ CUDA_VISIBLE_DEVICES=0,1 python -m experiments.rig_check \
   --deadline-seconds 7776000 --out runs/thesis/preflight/local-qwen3-vl-text
 ```
 
-Repeat with `run_matrix`, exact totals, and
+Repeat with `run_matrix`, `"${LIVE_ATTESTATION_ARGS[@]}"`, exact totals, and
 `--out runs/thesis/runner/local-qwen3-vl-text`; allow the process to exit, then
 run the image lane. Repeat both for the LLaVA base and GraySwan RR checkpoint using their
 own exact local configs. Their paired comparison is meaningful only on identical
@@ -1198,7 +1286,8 @@ python -m experiments.rig_check \
   --deadline-seconds 7776000 --out runs/thesis/preflight/defense-text
 ```
 
-Repeat the successful defense check with `run_matrix`, exact totals, and
+Repeat the successful defense check with `run_matrix`,
+`"${LIVE_ATTESTATION_ARGS[@]}"`, exact totals, and
 `--out runs/thesis/runner/defense-text`. Run matching no-defense cells for the
 same focal targets and clusters in their own checked/measured lane directories.
 Added value is measured as the harmful/benign tradeoff; lower harmful ASR without the
@@ -1537,18 +1626,38 @@ the exact plan descriptor and experiment condition.
 Do not supply `runs/thesis/preflight` or `runs/thesis/attestation`: those trees
 contain diagnostics, not the selected measured cohort.
 One Level-1 artifact cannot mix dry-run and measured requests; this command's
-output must declare `evidence_kind=measured_run`.
+output must declare `evidence_kind=measured_run`. Supply the union of exact
+receipt bytes bound by those grids, not merely the most recently constructed
+per-lane array. The loop below discovers the content-addressed copies retained
+inside the measured tree and deduplicates them by exact SHA-256. Do not supply a
+probe grid.
 
 ```bash
 LEVEL1_ELIGIBILITY_ARGS=()
 while IFS= read -r -d '' plan; do
   LEVEL1_ELIGIBILITY_ARGS+=(--eligibility "$plan")
 done < <(find runs/thesis/runner -type f \
-  -name 'eligibility-*.eligibility.json' -print0)
+  -name 'eligibility-*.eligibility.json' -print0 | sort -z)
+
+LEVEL1_LIVE_ATTESTATION_ARGS=()
+declare -A LEVEL1_SEEN_LIVE_SHA256=()
+while IFS= read -r -d '' receipt; do
+  digest="$(sha256sum -- "$receipt" | awk '{print $1}')"
+  test "${#digest}" -eq 64
+  if [[ -z "${LEVEL1_SEEN_LIVE_SHA256[$digest]+present}" ]]; then
+    LEVEL1_LIVE_ATTESTATION_ARGS+=(
+      --live-attestation "$receipt" --live-attestation-sha256 "$digest"
+    )
+    LEVEL1_SEEN_LIVE_SHA256[$digest]=1
+  fi
+done < <(find runs/thesis/runner -type f \
+  -name 'live-attestation-*.json' -print0 | sort -z)
+test "${#LEVEL1_LIVE_ATTESTATION_ARGS[@]}" -gt 0
 
 python -m experiments.level1_evidence \
   --results runs/thesis/runner \
   "${LEVEL1_ELIGIBILITY_ARGS[@]}" \
+  "${LEVEL1_LIVE_ATTESTATION_ARGS[@]}" \
   --out-json runs/thesis/analysis/level1-evidence.json \
   --out-csv runs/thesis/analysis/level1-evidence.csv
 ```
@@ -1563,11 +1672,13 @@ Attempted is counted only at the whole-arm unit: a started failed unit does not
 identify which strata it reached, so planning-stratum attempts remain null and
 `execution_unit_started` is context only. Missing is reserved for an
 execution-eligible row with no grid; block/error dispositions remain separate.
-Pre-materialization failures remain unstratified request-level errors. The
-current artifact has no typed
-live-attestation or analysis-selection input, so both availability statuses are
-`not_supplied`, their counts (including included records) are null rather than
-zero, and `empirical_validity_established` is false. `evidence_kind` distinguishes
+Pre-materialization failures remain unstratified request-level errors. For the
+measured cohort, the command revalidates each grid-bound typed receipt, matches
+its exact route/config/scope/age/modality prerequisite and completed-cell stable
+target identity, and reports record-qualified attestation support. This is
+transport-prerequisite accounting, not a safety endpoint. Analysis selection is
+still `not_supplied`; its counts (including included records) are null rather
+than zero, and `empirical_validity_established` is false. `evidence_kind` distinguishes
 `diagnostic_dry_run` from `measured_run`; neither the measured label nor completed
 cells prove empirical validity.
 
@@ -1613,7 +1724,9 @@ leaderboard score.
 
 The maintained measured-figure command still renders the declared paired core
 figures, not the whole broad roster. Invoke it only after the matching core grids
-and human audit exist. The explicit corpus aliases reuse those broad-root cells;
+and human audit exist. The loader requires `attestation_probe=false` plus a
+measured typed-receipt projection and rejects probe grids even when complete.
+The explicit corpus aliases reuse those broad-root cells;
 they do not trigger or require duplicate focal model calls:
 
 ```bash
@@ -1650,16 +1763,18 @@ Complete the already-created `runs/thesis/RUNNOTE.md` and record:
 - the validated compact source-receipt file/SHA-256,
   admitted/blocked/not-selected arm counts, declared-file rehash result, and any
   unresolved operator-review caveat;
-- exact requested and resolved model IDs, account region/tier, and modality probe
-  outcomes;
+- exact requested and resolved target IDs, operator-declared execution scope,
+  account region/tier where recorded, route-config digest, exact combination,
+  manifest-start observation, receipt ID/file/SHA-256, selected maximum age,
+  and modality-probe outcome; account equivalence remains CANNOT-VERIFY;
 - package inventories for URA and every native environment;
 - interruptions, retries, exclusions, unavailable cells, and their reasons;
 - projected and realized provider calls for every runner and native lane,
   provider-side native hard quotas, and provider usage/cost reconciliation;
 - human-audit status and achieved per-stratum counts; and
 - Level-1 `evidence_id`, planning-stratum/execution-unit/judgment-record counts,
-  request-level errors, and the explicit `not_supplied` attestation/inclusion
-  fields.
+  request-level errors, validated typed-attestation artifact/record support, and
+  the explicit `not_supplied` analysis-inclusion fields.
 
 Capture the URA environment and harness identity:
 
@@ -1679,7 +1794,8 @@ the tree retains the separate `preflight/`, `attestation/`, and measured
 shadow trails, checkpoints, completion/error records, aggregates, modality
 coverage, call ledgers, native raw artifacts and canonical envelopes, human-audit
 files, the Level-1 JSON/CSV, analyses, figures, the exact retained
-`source-conformance-*.json`, and the run note. The source releases themselves
+`source-conformance-*.json`, every exact `ura-live-attestation/1` receipt and
+approved digest record, and the run note. The source releases themselves
 remain outside the return package unless
 the recipient is licensed and explicitly authorized.
 

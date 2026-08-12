@@ -267,6 +267,18 @@ def _grid_allowlist(root: Path) -> dict[Path, list[_GridReference]]:
         _nonblank(request.get("defense"), f"request.defense in {grid_path}")
         if request.get("dry_run") is not False:
             raise ValueError(f"measured grid must explicitly declare dry_run=false: {grid_path}")
+        if request.get("attestation_probe") is not False:
+            raise ValueError(
+                f"live-attestation probe is not measured evidence: {grid_path}"
+            )
+        live_attestation = request.get("live_attestation")
+        if (
+            not isinstance(live_attestation, dict)
+            or live_attestation.get("mode") != "measured"
+        ):
+            raise ValueError(
+                f"measured grid lacks typed live-attestation admission: {grid_path}"
+            )
         requested = len(models) * len(corpora) * len(attackers)
         if grid.get("status") != "complete" or grid.get("n_errors") != 0:
             raise ValueError(f"grid is not an error-free completed grid: {grid_path}")

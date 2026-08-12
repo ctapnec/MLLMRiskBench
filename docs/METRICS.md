@@ -209,8 +209,14 @@ and identity digest before projecting
 completion, and reconciles completed judgment records into decided, abstained,
 and non-evaluable support.
 Pre-materialization failures remain separate request-level errors because their
-exact strata cannot be known. Live-attestation and analysis-inclusion inputs are
-not implemented in this schema; both remain `not_supplied` with null counts.
+exact strata cannot be known. Typed live-attestation inputs are implemented for
+measured cohorts: each exact grid-bound receipt is revalidated by bytes, scope,
+route/configuration, age, modality combination and stable realized target
+identity, and qualified planning/execution rows expose the matched record
+support. That support means only that the historical target route accepted the
+recorded byte-backed combination; it is not a numerator or denominator for a
+safety metric. Analysis-inclusion input is not implemented and remains
+`not_supplied` with null counts.
 The artifact declares a homogeneous `evidence_kind` of `diagnostic_dry_run` or
 `measured_run`, rejects a mixed cohort, and explicitly states that empirical
 validity is not established. This is coverage/provenance accounting,
@@ -246,7 +252,9 @@ merged merely because their display labels match. The resulting presence flag
 does not claim that the complete model-by-source eligibility matrix was run.
 
 Measured figures are generated only after the real grid and human audit are
-complete and only from completion-validated cohorts. Until then, the tracked
+complete and only from completion-validated cohorts whose request declares
+`attestation_probe=false` and a measured typed-receipt projection. Probe grids
+fail figure admission even if their one-cell artifacts are complete. Until then, the tracked
 images are synthetic, visibly watermarked layout previews with neutral condition
 labels. The existing `ura-chapter-v-figures/1.3` renderer is a focal paired
 analysis surface, not a whole-suite summary. A measured chart states the metric,

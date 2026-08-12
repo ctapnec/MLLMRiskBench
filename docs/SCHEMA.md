@@ -2,7 +2,7 @@
 
 `ura.data_models` is the typed Pydantic v2 contract shared by converters,
 attackers, targets, judges, persistence, and analysis. `SCHEMA_VERSION = "1.4"`
-is stamped on datapoints, checkpoints, and manifests. Runner 2.6 rejects mixed
+is stamped on datapoints, checkpoints, and manifests. Runner 2.7 rejects mixed
 schema versions and duplicate datapoint IDs before a target call.
 
 ## Records
@@ -42,6 +42,47 @@ corpus can materialize remain separate preflight error artifacts because their
 exact modality/source strata are not yet knowable. The Level-1 lifecycle
 artifact below joins only the evidence presently available rather than
 reinterpreting this plan as realized coverage.
+
+## Live route and transport attestation
+
+`python -m experiments.live_attestation` strictly revalidates one completed,
+single-cell, non-dry `run_matrix --attestation-probe` root and emits a create-only
+`ura-live-attestation/1` JSON receipt. The top-level object is strict and
+content-addressed by `attestation_id`; every record is likewise content-addressed
+by `record_id`. A record binds:
+
+- the operator-declared non-secret `execution_scope_id`;
+- exact requested target, unwrapped base-resolved target, hosted/local route
+  kind, and a SHA-256 over the secret-free selected route configuration;
+- one canonical exact delivered input combination, such as `['text']` or
+  `['text', 'image']`;
+- the probe Runner manifest's content-bound UTC `started_at` as a conservative
+  lower bound on successful transport, plus normalized realized target identity;
+- SHA-256/byte descriptors for the probe grid and completion marker, plus the
+  probe run, realized-identity, attempt-media-hash, harness-source, and
+  experiment-driver-source digests.
+
+Only `synthetic_live_transport_probe` and `real_source_live_transport_probe`
+are valid evidence kinds. Dry-run/mock transport cannot produce this schema.
+The manifest fixes its purpose as
+`target_route_and_byte_backed_transport_only` and carries explicit false flags
+for safety, evaluator, benchmark, human-validity, and future-route-availability
+claims. `execution_scope_id` is an operator assertion rather than a secret,
+credential, signature, or independently verified account-equivalence claim;
+that equivalence is CANNOT-VERIFY.
+
+An ordinary non-dry grid retains the selected receipt descriptors in its
+`live_attestation` request condition. Admission requires the exact receipt
+bytes/SHA-256, matching scope, requested/base-resolved route, route-config
+digest, route kind, exact modality combination, and age within the explicit
+`max_age_hours`. A future-dated, stale, missing, duplicate, ambiguous, or
+mismatched prerequisite fails before target calls. A changed harness or
+experiment-driver source digest requires a new probe. Stable provider/runtime
+identity fields from returned and restored responses must continue to match;
+display/wrapper target and provider-volatile fingerprint remain provenance but
+are not treated as stable equality fields. Exact combinations are not widened.
+`rig_check` and dry-run instead record `mode=not_required`, while a probe records
+`mode=probe`; neither is measured evidence.
 
 ## Level-1 lifecycle evidence
 
@@ -84,12 +125,20 @@ do not enter these authoritative-judgment counts. Adaptive setup and challenge
 turns retain the same immutable planning/source-stratum identity even when their
 per-turn expected behavior and policy-evaluation status differ.
 
-The current schema does not consume a typed live-attestation artifact or an
-explicit downstream analysis-selection artifact. Accordingly,
-`availability.live_attestation` and `availability.analysis_inclusion` are
-`not_supplied`, their counts are null, and stratum `included_records` is null.
-No consumer may convert these unavailable values to zero or infer them from
-folder placement. `scope.evidence_kind` is exactly `diagnostic_dry_run` or
+For a measured cohort, the current schema consumes repeatable typed
+live-attestation artifacts paired with their approved byte SHA-256 values. It
+matches each grid's exact bound descriptor, reruns the scope/route/config/age/
+modality checks, verifies completed-cell stable target identity, and records
+attestation artifact and record references on qualified planning strata and
+execution units. Its availability status is `validated` only for this exact
+supplied cohort; it is `not_supplied` for a diagnostic dry-run and may be
+`not_evaluated_no_realized_measured_grid` for a supplied plan-only cohort.
+Probe grids are rejected as measured Level-1 input, and a supplied receipt not
+used by the selected measured grid cohort is rejected. The schema still does
+not consume an explicit downstream analysis-selection artifact, so
+`availability.analysis_inclusion` and stratum `included_records` remain
+`not_supplied`/null. No consumer may convert unavailable values to zero or infer
+them from folder placement. `scope.evidence_kind` is exactly `diagnostic_dry_run` or
 `measured_run`, is repeated on request/execution-unit/planning-stratum records
 and in the CSV, and a mixed dry-run/measured cohort is rejected.
 `scope.contains_diagnostic_dry_run` is its boolean diagnostic projection and

@@ -37,6 +37,20 @@ not replaced with a nearby model. A failed/stale live attestation or silent
 identity drift is a missing/failed prerequisite, not a safe zero and not
 silently rewritten as structural incompatibility.
 
+Runner 2.7 operationalizes this distinction. One completed, bounded, non-dry
+`--attestation-probe` is converted without another provider call into a strict
+`ura-live-attestation/1` receipt. Each ordinary measured grid must supply the
+receipt's exact byte digest, the same operator-declared non-secret
+`execution_scope_id`, and an explicit maximum age. Admission matches requested
+and base-resolved identity, secret-free route configuration, hosted/local route
+kind, exact delivered modality combination, UTC observation time, and stable
+provider/runtime identity before target calls; each new or restored response is
+checked again. Exact combinations cannot substitute for one another. The scope
+label does not independently prove account/region/project equivalence
+(CANNOT-VERIFY), and the receipt proves only historical route/access and
+byte-backed transport—not safety, benchmark, evaluator, human validity, or
+future availability.
+
 Local rows use exact immutable vLLM/Ollama artifacts. Only one local target is
 started per runner process. On the two RTX 4090 rig, a model fitting one card
 normally uses tensor parallelism 1 and leaves the other card for an independent
@@ -152,9 +166,13 @@ Level 1 is materialized by `experiments.level1_evidence` as
 universe begins after selected corpora materialize: planning strata and
 whole-arm execution units remain separate, while completed/evaluable/decided/
 abstained/non-evaluable support is counted in judgment records. Earlier failures
-remain unstratified request-level errors. The current artifact does not consume
-typed live-attestation or downstream analysis-selection evidence, so attested
-and included counts remain null with status `not_supplied`; they are not zero.
+remain unstratified request-level errors. For measured cohorts, the current
+artifact consumes the exact typed live-attestation files and approved SHA-256
+values bound into the grids, revalidates their route/config/scope/age/modality
+and completed-cell identity joins, and reports record-qualified attestation
+support. Probe grids cannot enter the measured cohort. Downstream
+analysis-selection evidence remains unimplemented, so included counts remain
+null with status `not_supplied`; they are not zero.
 It binds grid and execution/error evidence with content descriptors, declares
 the homogeneous cohort as `evidence_kind=diagnostic_dry_run` or `measured_run`,
 rejects a mixed cohort, and states that empirical validity is not established.
@@ -189,14 +207,18 @@ are never pooled into one rate or ranking.
    and conservative target/judge/guard/HTTP call projections. Retain these
    diagnostic plans under a separate preflight tree; do not mix them with the
    measured runner cohort.
-4. Perform tiny bounded real endpoint/modality attestations. These diagnose
-   access and transport only and are excluded from results.
+4. Perform tiny bounded real endpoint/modality probes; derive and hash their
+   typed receipts. Synthetic live text/text+one-pixel-image probes require no
+   source receipt or human rating, while audio/video require prepared real media.
+   All probes diagnose target access and transport only and are excluded from
+   results.
 5. Execute eligible static, adaptive, multimodal, source-specific, and local
    defense lanes with finite budgets; retain every `N/A` reason.
 6. Execute the nine upstream native campaigns and import their complete outputs.
-7. Build Level-1 evidence from every final plan in the selected measured runner
-   cohort, including plan-only `N/A`/blocked requests and excluding preflight and
-   attestation trees. Then build the no-pooling suite inventory; run paired
+7. Build Level-1 evidence from every final plan and every exact grid-bound live
+   receipt in the selected measured runner cohort, including plan-only
+   `N/A`/blocked requests and excluding preflight and probe trees. Then build the
+   no-pooling suite inventory; run paired
    effects, transfer, judge sensitivity, and the independently labelled human
    audit.
 8. Render measured focal figures only from completion-validated runs bound to
@@ -212,6 +234,21 @@ Each live grid declares finite target, judge, HTTP-attempt, and call-start-time
 ceilings. `rig_check` is no-call: it can load a selected local guard and check
 credential presence, but cannot prove key validity, entitlement, quota,
 reachability, routing, model visibility, or physical-media transport.
+
+`rig_check` and dry-run neither consume nor produce live receipts. A probe is a
+separate real, single-target/single-source/replay/single-seed/no-defense command
+with one query and turn and `--limit 1` or `2`; it consumes no earlier receipt.
+Every other non-dry grid requires at least one exact paired
+`--live-attestation`/`--live-attestation-sha256`, the same
+`--execution-scope-id`, and a positive `--live-attestation-max-age-hours` no
+greater than one year. Missing, stale, future-dated, ambiguous, mismatched, or
+obsolete harness/driver evidence fails closed before target calls. The observation timestamp is the
+probe Runner manifest's content-bound UTC `started_at`, a conservative lower
+bound on successful transport—not mutable grid-package `finished_at` metadata.
+Harness or experiment-driver source drift requires a new probe rather than
+silently reusing transport evidence produced by different serialization code.
+This is a small admission control, not a workflow engine or cryptographic trust
+service.
 
 A model-backed defense uses one shared defense-guard instance on an explicit
 device. Its model identity differs from the scoring guard so the tested guard
@@ -272,7 +309,7 @@ undefined.
   judge abstention, incomplete artifact, and undefined statistic.
 - Treat cross-provider comparisons as associations and same-base defense pairs
   as the only planned defense-effect design.
-- Never promote synthetic, dry-run, transport-attestation, incomplete, or mock
+- Never promote synthetic, dry-run, transport-attestation probe, incomplete, or mock
   artifacts to empirical evidence.
 
 The complete setup and return checklist is in

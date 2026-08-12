@@ -104,6 +104,7 @@ def test_local_target_setup_error_does_not_persist_checkpoint_path(tmp_path):
     out = tmp_path / "artifacts"
 
     result = run_matrix.main([
+        "--preflight-only",
         "--local", spec,
         "--local-config", str(config),
         "--attackers", "replay",

@@ -533,6 +533,7 @@ def test_synthetic_transport_diagnostic_allows_offline_mock_judge(
     monkeypatch.setattr(run_matrix, "build_api_target", build_diagnostic_target)
 
     assert run_matrix.main([
+        "--attestation-probe", "--execution-scope-id", "test-scope",
         "--api", "diagnostic-target", "--attackers", "replay",
         "--judges", "rules,llm",
         "--judge-model", "mock",

@@ -5,7 +5,7 @@ validity rules, then execute [RUN_AND_RETURN.md](RUN_AND_RETURN.md). A dry run,
 partial artifact family, source conversion, model-name assumption, native prompt
 export, or synthetic figure is not a measured thesis result.
 
-The maintained execution contract is Runner `ura-runner/2.6` with unified
+The maintained execution contract is Runner `ura-runner/2.7` with unified
 schema `1.4`; older artifacts are not mixed into the thesis run.
 
 ## Experimental shape
@@ -68,8 +68,14 @@ Generic hosted candidates are bound by `--api-config`; local candidates by
 component, declared modality, credential presence and conservative call bounds.
 It cannot prove account access, endpoint visibility, routing, quota, or media
 transport. Therefore every exact model/modality route also needs a tiny bounded
-real attestation whose output is diagnostic transport evidence, not a thesis
-measurement.
+non-dry `run_matrix --attestation-probe`, followed by
+`experiments.live_attestation`. The latter performs no call; it converts the
+strict completed probe into a content-addressed `ura-live-attestation/1`
+receipt. Every ordinary non-dry grid must bind that receipt's exact bytes,
+digest, operator-declared execution scope and maximum age before target calls.
+The receipt is diagnostic historical route/access/byte-backed transport
+evidence, not a thesis measurement or proof of account equivalence, safety,
+evaluator validity, human validity, or future availability.
 
 The planner admits the intersection of source-present and target-supported
 modality combinations. Post-run validation requires actual eligible
@@ -103,14 +109,16 @@ nonempty subset as complete.
 4. Run `python -m experiments.rig_check` for every intended lane under a
    separate preflight output tree and review its source-policy counts and call
    projections; measured `run_matrix` outputs belong in the runner tree.
-5. Run bounded live endpoint/modality attestations, then execute only the
-   attested eligible cells with finite target, judge, HTTP-attempt, and time
-   ceilings.
+5. Run bounded live endpoint/modality probes, derive and hash typed receipts,
+   then execute only the exactly attested eligible cells with the same non-secret
+   execution-scope ID, an explicit maximum receipt age, and finite target, judge,
+   HTTP-attempt, and time ceilings. `rig_check` and dry-run use no receipt.
 6. Run the nine upstream native campaigns and normalize their completed outputs
    with `python -m experiments.native_import`.
 7. Build `python -m experiments.level1_evidence` from every final plan in the
    selected measured runner cohort, including plan-only `N/A`/blocked requests
-   but excluding preflight and attestation trees; build the separate no-pooling
+   but excluding preflight and probe trees; pass the exact receipts and hashes
+   bound by those measured grids, then build the separate no-pooling
    `experiments.suite_summary`, run no-call diagnostics, and prepare the
    automated-label-blinded, model-visible multi-rater human audit.
 8. After ratings/adjudication, render qualified focal figures and return the
@@ -123,6 +131,7 @@ Core CLIs:
 python -m experiments.rig_check --help
 python -m experiments.source_conformance --help
 python experiments/run_matrix.py --help
+python -m experiments.live_attestation --help
 python -m experiments.level1_evidence --help
 python -m experiments.native_import --help
 python -m experiments.suite_summary --help
@@ -143,6 +152,12 @@ python -m experiments.figures --help
 - Missing media, unsupported modality, absent source evaluator, target/transport
   failure, judge abstention, incomplete artifact family, and undefined statistic
   stay distinct. None becomes zero.
+- A live receipt matches one exact requested/base-resolved route, secret-free
+  route configuration, execution scope, modality combination and observation
+  time. Text+image is not a substitute for text. Synthetic live text and
+  text+one-pixel-image probes need no source receipt or human rating, but make a
+  real target call and remain diagnostic; no synthetic audio/video fixture is
+  implemented.
 - Every paid grid has finite call/time ceilings and resumes from its durable
   budget, circuit, lock, checkpoint, completion, and error artifacts.
 - A model-backed defense has one shared explicit-device guard instance whose
