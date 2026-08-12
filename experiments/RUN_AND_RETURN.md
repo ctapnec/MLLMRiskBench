@@ -2078,3 +2078,22 @@ Do not return API keys, shell history, secret-manager exports, model caches, or
 restricted source releases unless the recipient is explicitly authorized. Mock,
 synthetic, partial, manually edited, failed, or diagnostic-only artifacts remain
 diagnostics and cannot be promoted to thesis evidence.
+
+## 18. Optional rig-local web console
+
+A single-operator localhost console can start, monitor, and stop the
+allowlisted experiment CLIs from typed forms, stream their logs, and browse
+retained artifacts with explicit diagnostic/measured, structural-`N/A`, and
+error badges:
+
+```bash
+python -m experiments.rig_web --results-root runs --state-dir runs/rig-web
+```
+
+The console binds only `127.0.0.1`, builds argument vectors exclusively from a
+typed allowlist (no shell), keeps per-job argv/stdout/stderr under the state
+directory, and needs no database. It is convenience tooling only: the CLI and
+the filesystem artifacts remain authoritative, the console never reinterprets
+experiment semantics, diagnostic evidence it displays never authorizes a
+campaign, and nothing it renders is itself thesis evidence. Job logs under the
+state directory are operational records, not return-package artifacts.
