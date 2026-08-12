@@ -2,7 +2,7 @@
 
 `ura.data_models` is the typed Pydantic v2 contract shared by converters,
 attackers, targets, judges, persistence, and analysis. `SCHEMA_VERSION = "1.4"`
-is stamped on datapoints, checkpoints, and manifests. Runner 2.8 rejects mixed
+is stamped on datapoints, checkpoints, and manifests. Runner 2.9 rejects mixed
 schema versions and duplicate datapoint IDs before a target call.
 
 ## Records
@@ -19,7 +19,7 @@ schema versions and duplicate datapoint IDs before a target call.
 | `Response` | attempt, target, output/tool turns, latency/tokens, raw provenance, run ID | one target outcome, including a typed provider refusal |
 | `Judgment` | attempt, judge, label, score, rationale, raw provenance, run ID | one automated/human verdict, or typed non-evaluable setup record |
 | `EvalResult` | metric, value/CI, support, grouping, provenance, run ID | one aggregate estimand |
-| `RunManifest` | run/code/config identity, seeds, components, data hashes, time and environment | re-derivation and audit record |
+| `RunManifest` | run/code/config identity including `config.run.project_revision`, seeds, components, data hashes, time and environment | re-derivation and audit record |
 
 Enumerations are defined in code. In particular, expected behavior separates
 harmful `refuse` probes from benign `safe_answer` and `comply_safely` probes;
@@ -78,7 +78,7 @@ their call totals match.
 
 `python -m experiments.live_attestation` strictly revalidates one completed,
 single-cell, non-dry `run_matrix --attestation-probe` root and emits a create-only
-`ura-live-attestation/1` JSON receipt. The top-level object is strict and
+`ura-live-attestation/2` JSON receipt. The top-level object is strict and
 content-addressed by `attestation_id`; every record is likewise content-addressed
 by `record_id`. A record binds:
 
@@ -89,6 +89,8 @@ by `record_id`. A record binds:
   `['text', 'image']`;
 - the probe Runner manifest's content-bound UTC `started_at` as a conservative
   lower bound on successful transport, plus normalized realized target identity;
+- the exact verified `ura-project-revision/1` binding shared by the probe grid,
+  manifest, harness digest, and experiment-driver digest;
 - SHA-256/byte descriptors for the probe grid and completion marker, plus the
   probe run, realized-identity, attempt-media-hash, harness-source, and
   experiment-driver-source digests.
@@ -114,6 +116,34 @@ display/wrapper target and provider-volatile fingerprint remain provenance but
 are not treated as stable equality fields. Exact combinations are not widened.
 `rig_check` and dry-run instead record `mode=not_required`, while a probe records
 `mode=probe`; neither is measured evidence.
+
+## URA project revision identity
+
+`python -m experiments.project_revision` creates a strict, content-addressed
+`ura-project-revision/1` receipt from one operator-selected full 40-hex commit.
+It records expected/observed commit equality, the HEAD tree, clean tracked state,
+the required common Git root for `experiments/run_matrix.py` and the imported
+`src/ura/runner.py`, and separate actual-byte identities for the experiment
+driver and complete `src/ura` Python tree. Its limitation flags deny remote
+repository authenticity, dependency/upstream binding, source-archive inclusion,
+and empirical evidence.
+
+Every non-dry request requires a receipt path and exact SHA-256, normally through
+`URA_PROJECT_REVISION_MANIFEST` and `URA_PROJECT_REVISION_SHA256`. The compact
+verified binding contains receipt ID/file/hash/bytes, expected and observed
+commit, HEAD tree, and both source digests. It enters the experiment condition,
+eligibility bindings, grid request, `RunManifest.config.run`, completion/recovery
+checks, live-attestation version 2, lane-canary validation, Level-1 and measured
+postprocessing. Checkout/source drift is rechecked before execution boundaries
+and final publication. A revision change therefore requires a new request/cohort
+rather than checkpoint or completion reuse.
+
+A fully synthetic dry-run may omit the receipt only by recording the strict
+`mode=not_required_diagnostic_dry_run`: all repository identity fields are null,
+while current driver/harness source digests remain bound. It is diagnostic-only
+and is rejected wherever a verified revision is required. `code_version` is a
+Runner protocol label, the two SHA-256 values identify executed source bytes,
+and the Git commit identifies repository history; none substitutes for another.
 
 ## Diagnostic lane-canary summary
 
@@ -273,6 +303,11 @@ official evaluator actually ran and its provenance says so.
 The matrix accepts reusable inventories without treating an inventory entry as
 an executed cell:
 
+- `--project-revision`/`--project-revision-sha256`, or their environment
+  equivalents, bind the prospective local URA revision before every non-dry
+  preflight, probe, canary, or measured request. They do not bind the independent
+  upstream source/native revisions.
+
 - `--source-config` maps a stable corpus-arm ID to a converter plus an
   environment-variable path locator and optional source label/split. The full
   file hash is provenance; the normalized selected subset digest enters
@@ -310,6 +345,9 @@ The manifest keeps requested and realized target identities distinct.
 
 ## Enforced invariants
 
+- every non-dry request has one digest-validated project-revision receipt whose
+  expected/observed commit, HEAD tree, source roots and current driver/harness
+  bytes remain unchanged through final grid publication;
 - modalities and required identifiers are non-empty and non-duplicated;
 - executable media uses full 64-character SHA-256 digests;
 - scores lie in `[0,1]`, aggregate values are finite, and intervals are coherent;
@@ -343,6 +381,10 @@ record counts to match; physical paths may relocate with the complete tree.
 `experiments.suite_summary` joins completion-validated runner cells and these
 revalidated native envelopes only at an evidence-inventory layer; it does not
 coerce native outcomes into schema-v1.4 common metrics.
+`NativeEngineRun` retains its own upstream repository/revision and does not have
+a Runner `RunManifest`; the return-package/importer context records which URA
+revision performed import without rewriting the upstream-native schema. The
+current native row in `suite_summary` does not itself carry that URA revision.
 
 Human-audit outputs are separately content-addressed after ratings are complete.
 The audit artifact records the labels CSV name, byte count, and SHA-256;
@@ -360,6 +402,7 @@ conversation-within-cluster and equal-cluster weighting. Pair records expose
 agreement and unique-cluster support. These are analysis artifacts rather than
 additions to schema v1.4's runtime record types.
 
-The exact target snapshot, requested and realized judge identities, source and
-policy digests, code/schema identity, and analysis inputs remain independently
-bound in runtime and postprocessing provenance.
+The exact URA project revision, source-byte identities, target snapshot,
+requested and realized judge identities, source and policy digests, code/schema
+identity, and analysis inputs remain independently bound in runtime and
+postprocessing provenance.

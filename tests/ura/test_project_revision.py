@@ -1,0 +1,340 @@
+from __future__ import annotations
+
+import hashlib
+import json
+import os
+from pathlib import Path
+import subprocess
+
+import pytest
+
+from experiments import project_revision as revision_cli
+from experiments import rig_check, run_matrix
+from ura.project_revision import (
+    create_project_revision,
+    current_project_revision,
+    diagnostic_project_revision_binding,
+    load_project_revision_file,
+    project_revision_binding,
+    project_revision_bytes,
+    recheck_project_revision,
+    validate_project_revision,
+    validate_project_revision_binding,
+    write_project_revision,
+)
+
+
+def _git(repo: Path, *args: str) -> str:
+    completed = subprocess.run(
+        ["git", "-C", str(repo), *args],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    return completed.stdout.strip()
+
+
+def _repo(tmp_path: Path) -> tuple[Path, Path, Path, str]:
+    root = tmp_path / "repo"
+    driver = root / "experiments" / "run_matrix.py"
+    harness = root / "src" / "ura" / "runner.py"
+    driver.parent.mkdir(parents=True)
+    harness.parent.mkdir(parents=True)
+    driver.write_text("DRIVER = 1\n", encoding="utf-8")
+    harness.write_text("HARNESS = 1\n", encoding="utf-8")
+    (harness.parent / "helper.py").write_text("HELPER = 1\n", encoding="utf-8")
+    (root / ".gitignore").write_text(
+        "/runs/\n/experiments/source-instances.json\n",
+        encoding="utf-8",
+    )
+    _git(root, "init", "-q")
+    _git(root, "config", "user.email", "test@example.invalid")
+    _git(root, "config", "user.name", "Test")
+    _git(root, "add", ".")
+    _git(root, "commit", "-qm", "fixture")
+    return root, driver, harness, _git(root, "rev-parse", "HEAD")
+
+
+def test_clean_exact_receipt_round_trip_and_cli_validation(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    root, driver, harness, revision = _repo(tmp_path)
+    # Ordinary operator-local JSON configuration is intentionally allowed.
+    (root / "experiments" / "source-instances.json").write_text("{}\n", encoding="utf-8")
+    (root / "runs" / "thesis").mkdir(parents=True)
+    (root / "runs" / "thesis" / "result.json").write_text("{}\n", encoding="utf-8")
+    receipt = create_project_revision(
+        revision, driver, harness_module_path=harness
+    )
+    path = write_project_revision(tmp_path / "receipts", receipt)
+    digest = hashlib.sha256(path.read_bytes()).hexdigest()
+    loaded, descriptor = load_project_revision_file(
+        path, digest, driver, harness_module_path=harness
+    )
+    binding = project_revision_binding(loaded, descriptor)
+    assert binding["expected_commit"] == revision
+    assert binding["observed_commit"] == revision
+    assert binding["mode"] == "verified"
+    assert validate_project_revision(receipt) == receipt
+
+    monkeypatch.setattr(revision_cli, "create_project_revision", lambda *_a, **_kw: receipt)
+    monkeypatch.setattr(
+        revision_cli, "load_project_revision_file",
+        lambda *_a, **_kw: (loaded, descriptor),
+    )
+    out = tmp_path / "cli"
+    assert revision_cli.main(["--expected-revision", revision, "--out", str(out)]) == 0
+    cli_path = next(out.glob("*.project-revision.json"))
+    assert revision_cli.main([
+        "--validate", str(cli_path), "--sha256",
+        hashlib.sha256(cli_path.read_bytes()).hexdigest(),
+    ]) == 0
+
+
+@pytest.mark.parametrize(
+    "mode", ["tracked", "staged", "untracked_python", "ignored_python"]
+)
+def test_project_revision_rejects_executable_or_tracked_dirt(
+    tmp_path: Path, mode: str,
+) -> None:
+    root, driver, harness, revision = _repo(tmp_path)
+    if mode == "tracked":
+        driver.write_text("DRIVER = 2\n", encoding="utf-8")
+    elif mode == "staged":
+        driver.write_text("DRIVER = 2\n", encoding="utf-8")
+        _git(root, "add", "experiments/run_matrix.py")
+    elif mode == "untracked_python":
+        (root / "experiments" / "shadow.py").write_text("BAD = 1\n", encoding="utf-8")
+    else:
+        with (root / ".gitignore").open("a", encoding="utf-8") as handle:
+            handle.write("/src/ura/shadow.py\n")
+        _git(root, "add", ".gitignore")
+        _git(root, "commit", "-qm", "ignore fixture")
+        revision = _git(root, "rev-parse", "HEAD")
+        (root / "src" / "ura" / "shadow.py").write_text("BAD = 1\n", encoding="utf-8")
+    with pytest.raises(ValueError):
+        current_project_revision(
+            driver, expected_revision=revision, harness_module_path=harness
+        )
+
+
+def test_project_revision_rejects_wrong_root_revision_and_tamper(tmp_path: Path) -> None:
+    root, driver, harness, revision = _repo(tmp_path)
+    other_root, _other_driver, other_harness, _ = _repo(tmp_path / "other")
+    assert other_root != root
+    with pytest.raises(ValueError, match="different Git roots"):
+        current_project_revision(
+            driver, expected_revision=revision, harness_module_path=other_harness
+        )
+    with pytest.raises(ValueError, match="revision mismatch"):
+        current_project_revision(
+            driver, expected_revision="0" * 40, harness_module_path=harness
+        )
+    with pytest.raises(ValueError, match="full 40-hex"):
+        current_project_revision(
+            driver, expected_revision=revision.upper(), harness_module_path=harness
+        )
+    with pytest.raises(ValueError, match="must not be padded"):
+        current_project_revision(
+            driver, expected_revision=f" {revision}", harness_module_path=harness
+        )
+    receipt = create_project_revision(revision, driver, harness_module_path=harness)
+    receipt["source"]["driver_source"]["sha256"] = "f" * 64
+    body = {key: item for key, item in receipt.items() if key != "revision_id"}
+    from ura.eligibility import canonical_json_sha256
+
+    receipt["revision_id"] = "project-revision-" + canonical_json_sha256(body)[:24]
+    with pytest.raises(ValueError, match="source bytes differ"):
+        recheck_project_revision(receipt, driver, harness_module_path=harness)
+
+
+def test_binding_is_strict_and_revision_changes_experiment_identity(
+    tmp_path: Path,
+) -> None:
+    diagnostic = diagnostic_project_revision_binding("a" * 64, "b" * 64)
+    assert validate_project_revision_binding(diagnostic) == diagnostic
+    with pytest.raises(ValueError):
+        validate_project_revision_binding({**diagnostic, "forged": True})
+    with pytest.raises(ValueError):
+        validate_project_revision_binding(diagnostic, allow_not_required=False)
+
+    out_a = tmp_path / "a"
+    out_b = tmp_path / "b"
+    assert run_matrix.main([
+        "--dry-run", "--attackers", "replay", "--judges", "rules",
+        "--corpora", "synth", "--limit", "1", "--out", str(out_a),
+    ]) == 0
+    original = run_matrix.diagnostic_project_revision_binding
+    run_matrix.diagnostic_project_revision_binding = lambda *_a: original(
+        "c" * 64, "d" * 64
+    )
+    try:
+        assert run_matrix.main([
+            "--dry-run", "--attackers", "replay", "--judges", "rules",
+            "--corpora", "synth", "--limit", "1", "--out", str(out_b),
+        ]) == 0
+    finally:
+        run_matrix.diagnostic_project_revision_binding = original
+    grid_a = json.loads(next(out_a.glob("*.grid.json")).read_text(encoding="utf-8"))
+    grid_b = json.loads(next(out_b.glob("*.grid.json")).read_text(encoding="utf-8"))
+    assert grid_a["grid_id"] != grid_b["grid_id"]
+    assert grid_a["request"]["project_revision"] != grid_b["request"]["project_revision"]
+
+
+def test_non_dry_gate_requires_receipt_before_target_construction(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    constructions = 0
+
+    def forbidden(*_args, **_kwargs):
+        nonlocal constructions
+        constructions += 1
+        raise AssertionError("target construction must not be reached")
+
+    monkeypatch.setattr(run_matrix, "build_target", forbidden)
+    with pytest.raises(SystemExit) as exc:
+        run_matrix.main([
+            "--preflight-only", "--api", "fixture-target", "--judges", "rules",
+            "--corpora", "synth", "--limit", "1", "--out", str(tmp_path / "out"),
+        ])
+    assert exc.value.code == 2
+    assert constructions == 0
+
+
+def test_receipt_loader_rejects_digest_mismatch_and_duplicate_keys(
+    tmp_path: Path,
+) -> None:
+    _root, driver, harness, revision = _repo(tmp_path)
+    receipt = create_project_revision(revision, driver, harness_module_path=harness)
+    path = write_project_revision(tmp_path / "receipts", receipt)
+    digest = hashlib.sha256(path.read_bytes()).hexdigest()
+
+    with pytest.raises(ValueError, match="sha256 mismatch"):
+        load_project_revision_file(
+            path, "0" * 64, driver,
+            recheck_checkout=False, harness_module_path=harness,
+        )
+    with pytest.raises(ValueError, match="exactly 64 lowercase"):
+        load_project_revision_file(
+            path, digest.upper(), driver,
+            recheck_checkout=False, harness_module_path=harness,
+        )
+
+    duplicate_payload = (
+        b'{"schema":"ura-project-revision/1",' + project_revision_bytes(receipt)[1:]
+    )
+    duplicate_path = tmp_path / "duplicate.project-revision.json"
+    duplicate_path.write_bytes(duplicate_payload)
+    with pytest.raises(ValueError, match="duplicate JSON key"):
+        load_project_revision_file(
+            duplicate_path,
+            hashlib.sha256(duplicate_payload).hexdigest(),
+            driver,
+            recheck_checkout=False,
+            harness_module_path=harness,
+        )
+
+
+def test_receipt_loader_rejects_symlink(
+    tmp_path: Path,
+) -> None:
+    _root, driver, harness, revision = _repo(tmp_path)
+    receipt = create_project_revision(revision, driver, harness_module_path=harness)
+    path = write_project_revision(tmp_path / "receipts", receipt)
+    link = tmp_path / "linked.project-revision.json"
+    try:
+        os.symlink(path, link)
+    except (NotImplementedError, OSError):
+        pytest.skip("symlink creation is unavailable for this test account")
+    with pytest.raises(ValueError, match="non-symlink"):
+        load_project_revision_file(
+            link,
+            hashlib.sha256(path.read_bytes()).hexdigest(),
+            driver,
+            recheck_checkout=False,
+            harness_module_path=harness,
+        )
+
+
+def test_publication_boundary_recheck_prevents_completion_and_final_grid(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    project_revision_args,
+) -> None:
+    from ura.targets.api import MockTarget
+
+    monkeypatch.setattr(run_matrix, "build_target", lambda *_a, **_kw: MockTarget())
+    checks = 0
+
+    def drift_after_cell_start(*_args, **_kwargs):
+        nonlocal checks
+        checks += 1
+        if checks >= 2:
+            raise ValueError("simulated checkout drift")
+        return _args[0]
+
+    monkeypatch.setattr(run_matrix, "recheck_project_revision", drift_after_cell_start)
+    target_spec = "openai:fixture-model"
+    api_config = tmp_path / "api-targets.json"
+    api_config.write_text(json.dumps({target_spec: {
+        "modalities": ["text"],
+        "max_tokens": 64,
+        "temperature": 0.0,
+    }}), encoding="utf-8")
+    out = tmp_path / "run"
+    result = run_matrix.main([
+        "--attestation-probe", "--execution-scope-id", "test-scope",
+        "--api", target_spec, "--api-config", str(api_config),
+        "--attackers", "replay", "--judges", "rules",
+        "--corpora", "synth", "--limit", "1",
+        "--max-queries", "1", "--max-turns", "1",
+        "--max-total-target-calls", "100",
+        "--max-total-judge-calls", "100",
+        "--max-total-http-attempts", "100",
+        "--deadline-seconds", "3600",
+        "--out", str(out), *project_revision_args,
+    ])
+
+    assert result == 1
+    assert checks >= 2
+    assert not list(out.glob("*.complete.json"))
+    grid = json.loads(next(out.glob("*.grid.json")).read_text(encoding="utf-8"))
+    assert grid["status"] == "running"
+
+
+def test_rig_check_dry_omits_and_non_dry_retains_revision(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    project_revision_args,
+) -> None:
+    from ura.targets.api import MockTarget
+
+    monkeypatch.setattr(run_matrix, "build_target", lambda *_a, **_kw: MockTarget())
+    dry_out = tmp_path / "dry"
+    assert rig_check.main([
+        "--dry-run", "--attackers", "replay", "--judges", "rules",
+        "--corpora", "synth", "--limit", "1", "--out", str(dry_out),
+    ]) == 0
+    assert not list(dry_out.glob("*.project-revision.json"))
+
+    target_spec = "openai:fixture-model"
+    api_config = tmp_path / "rig-api-targets.json"
+    api_config.write_text(json.dumps({target_spec: {
+        "modalities": ["text"],
+        "max_tokens": 64,
+        "temperature": 0.0,
+    }}), encoding="utf-8")
+    live_out = tmp_path / "live"
+    assert rig_check.main([
+        "--api", target_spec, "--api-config", str(api_config),
+        "--attackers", "replay", "--judges", "rules",
+        "--corpora", "synth", "--limit", "1",
+        "--max-total-target-calls", "100",
+        "--max-total-judge-calls", "100",
+        "--max-total-http-attempts", "100",
+        "--deadline-seconds", "3600",
+        "--out", str(live_out), *project_revision_args,
+    ]) == 0
+    retained = list(live_out.glob("*.project-revision.json"))
+    assert len(retained) == 1
+    assert retained[0].name == project_revision_args.binding["file"]

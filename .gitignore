@@ -200,3 +200,6 @@ cython_debug/
 
 # Operator-local experiment registry copied from the checked-in example.
 /experiments/source-instances.json
+
+# Generated experiment evidence is retained outside Git source identity.
+/runs/

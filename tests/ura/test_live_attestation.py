@@ -26,6 +26,23 @@ _SCOPE = "openai-account:test-project"
 _OBSERVED = "2026-08-12T10:00:00Z"
 
 
+def _project_revision(
+    *, harness_sha256: str = "f" * 64, driver_sha256: str = "1" * 64,
+) -> dict[str, object]:
+    return {
+        "mode": "verified",
+        "revision_id": "project-revision-" + "2" * 24,
+        "file": "project-revision-" + "2" * 24 + ".project-revision.json",
+        "sha256": "3" * 64,
+        "bytes": 100,
+        "expected_commit": "4" * 40,
+        "observed_commit": "4" * 40,
+        "head_tree": "5" * 40,
+        "harness_source_sha256": harness_sha256,
+        "driver_source_sha256": driver_sha256,
+    }
+
+
 def _record(
     *,
     modalities: list[str] | None = None,
@@ -66,6 +83,7 @@ def _record(
             "attempt_media_hashes_sha256": "e" * 64,
             "harness_source_sha256": "f" * 64,
             "driver_source_sha256": "1" * 64,
+            "project_revision": _project_revision(),
         },
     }
 
@@ -92,6 +110,7 @@ def _match(
         route_kind={_SPEC: "hosted_api"},
         current_harness_source_sha256="f" * 64,
         current_driver_source_sha256="1" * 64,
+        current_project_revision=_project_revision(),
         reference_time=reference_time
         or datetime(2026, 8, 12, 12, 0, tzinfo=timezone.utc),
         max_age_hours=max_age_hours,
@@ -190,11 +209,32 @@ def test_matcher_rejects_obsolete_probe_code_identity(
     record = dict(manifest["records"][0])
     probe = dict(record["probe"])
     probe[field] = "2" * 64
+    revision = dict(probe["project_revision"])
+    revision[field] = "2" * 64
+    probe["project_revision"] = revision
     record["probe"] = probe
     changed = build_live_attestation_manifest([
         {key: value for key, value in record.items() if key != "record_id"}
     ])
     with pytest.raises(ValueError, match=message):
+        _match(changed)
+
+
+def test_matcher_rejects_cross_revision_receipt() -> None:
+    manifest = _manifest()
+    record = dict(manifest["records"][0])
+    probe = dict(record["probe"])
+    revision = dict(probe["project_revision"])
+    revision["revision_id"] = "project-revision-" + "9" * 24
+    revision["file"] = revision["revision_id"] + ".project-revision.json"
+    revision["expected_commit"] = "8" * 40
+    revision["observed_commit"] = "8" * 40
+    probe["project_revision"] = revision
+    record["probe"] = probe
+    changed = build_live_attestation_manifest([
+        {key: value for key, value in record.items() if key != "record_id"}
+    ])
+    with pytest.raises(ValueError, match="project revision mismatch"):
         _match(changed)
 
 
@@ -242,7 +282,7 @@ def test_content_addressed_loader_rejects_digest_tamper_and_symlink(
     digest = hashlib.sha256(payload).hexdigest()
 
     loaded, descriptor = load_live_attestation_file(path, digest)
-    assert loaded["schema"] == "ura-live-attestation/1"
+    assert loaded["schema"] == "ura-live-attestation/2"
     assert descriptor == {
         "file": path.name,
         "sha256": digest,

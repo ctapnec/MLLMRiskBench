@@ -2,7 +2,7 @@
 
 This command performs no provider call.  It revalidates an already completed
 ``run_matrix --attestation-probe`` grid and emits one content-addressed
-``ura-live-attestation/1`` JSON receipt.  The receipt proves only the historical
+``ura-live-attestation/2`` JSON receipt.  The receipt proves only the historical
 route/identity/byte-backed transport prerequisite named by each record.
 """
 from __future__ import annotations
@@ -29,6 +29,7 @@ from ura.live_attestation import (  # noqa: E402
     route_config_sha256,
 )
 from ura.modality_coverage import canonical_modality_combination  # noqa: E402
+from ura.project_revision import validate_project_revision_binding  # noqa: E402
 
 
 def _sha256_file(path: Path) -> str:
@@ -193,10 +194,22 @@ def build_from_probe_root(
     )
     harness_source = validated["manifest"]["config"].get("harness_source")
     driver_source = validated["manifest"]["config"]["run"].get("driver_source")
+    project_revision = validate_project_revision_binding(
+        validated["manifest"]["config"]["run"].get("project_revision"),
+        allow_not_required=False,
+    )
     if not isinstance(harness_source, dict) or not isinstance(driver_source, dict):
         raise ValueError("probe lacks harness/experiment-driver source identity")
     harness_source_sha256 = harness_source.get("sha256")
     driver_source_sha256 = driver_source.get("sha256")
+    if project_revision != validate_project_revision_binding(
+        request.get("project_revision"), allow_not_required=False
+    ):
+        raise ValueError("probe grid/execution project-revision mismatch")
+    if project_revision["harness_source_sha256"] != harness_source_sha256:
+        raise ValueError("probe project-revision/harness-source mismatch")
+    if project_revision["driver_source_sha256"] != driver_source_sha256:
+        raise ValueError("probe project-revision/experiment-driver mismatch")
     records = []
     for combination in sorted(combinations):
         records.append({
@@ -225,6 +238,7 @@ def build_from_probe_root(
                 ),
                 "harness_source_sha256": harness_source_sha256,
                 "driver_source_sha256": driver_source_sha256,
+                "project_revision": project_revision,
             },
         })
     return build_live_attestation_manifest(records)

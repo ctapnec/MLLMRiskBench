@@ -98,6 +98,12 @@ from ura.modality_coverage import (                    # noqa: E402
     plan_modality_coverage,
     verify_executed_modality_coverage,
 )
+from ura.project_revision import (                     # noqa: E402
+    diagnostic_project_revision_binding,
+    load_project_revision_file,
+    project_revision_binding,
+    recheck_project_revision,
+)
 from ura.runner import (                              # noqa: E402
     BudgetExhausted,
     CODE_VERSION,
@@ -363,6 +369,7 @@ def _read_content_addressed_json(
 
 def _retain_content_addressed_input(
     out: Path, path_value: str, expected_sha256: str, *, stem: str,
+    filename: str | None = None,
 ) -> Path:
     """Copy an already approved input into the return tree without overwrite."""
 
@@ -374,7 +381,11 @@ def _retain_content_addressed_input(
     actual = hashlib.sha256(payload).hexdigest()
     if actual != expected_sha256.lower():
         raise ValueError(f"{stem} input changed after content validation")
-    destination = out / f"{stem}-{actual[:24]}.json"
+    if filename is not None and (
+        not filename or Path(filename).name != filename
+    ):
+        raise ValueError(f"content-addressed {stem} filename must be a safe basename")
+    destination = out / (filename or f"{stem}-{actual[:24]}.json")
     if destination.exists():
         if (
             not destination.is_file()
@@ -2086,7 +2097,7 @@ def main(argv=None) -> int:
         "--live-attestation",
         action="append",
         default=[],
-        help="repeatable content-addressed ura-live-attestation/1 receipt",
+        help="repeatable content-addressed ura-live-attestation/2 receipt",
     )
     ap.add_argument(
         "--live-attestation-sha256",
@@ -2099,6 +2110,19 @@ def main(argv=None) -> int:
         type=float,
         default=0.0,
         help="maximum receipt age at measured-grid admission (hosted/local policy)",
+    )
+    ap.add_argument(
+        "--project-revision",
+        default=os.environ.get("URA_PROJECT_REVISION_MANIFEST", ""),
+        help=(
+            "content-addressed ura-project-revision/1 receipt for the exact clean "
+            "checkout; required for every non-dry invocation"
+        ),
+    )
+    ap.add_argument(
+        "--project-revision-sha256",
+        default=os.environ.get("URA_PROJECT_REVISION_SHA256", ""),
+        help="exact byte digest paired with --project-revision",
     )
     ap.add_argument("--api", default="", help="comma list of API model ids")
     ap.add_argument(
@@ -2268,6 +2292,37 @@ def main(argv=None) -> int:
         else "measured_run"
     )
 
+    if bool(args.project_revision) != bool(args.project_revision_sha256):
+        ap.error(
+            "--project-revision and --project-revision-sha256 must be provided together"
+        )
+    if not args.dry_run and not args.project_revision:
+        ap.error(
+            "every non-dry invocation requires --project-revision and "
+            "--project-revision-sha256"
+        )
+    project_revision_receipt: dict[str, object] | None = None
+    project_revision_artifact: dict[str, object] | None = None
+    if args.project_revision:
+        try:
+            project_revision_receipt, project_revision_artifact = (
+                load_project_revision_file(
+                    Path(args.project_revision),
+                    args.project_revision_sha256,
+                    Path(__file__).resolve(),
+                )
+            )
+            project_revision_state = project_revision_binding(
+                project_revision_receipt, project_revision_artifact
+            )
+        except (OSError, TypeError, ValueError) as exc:
+            ap.error(str(exc))
+    else:
+        driver_sha256 = _sha256_file(Path(__file__).resolve())
+        project_revision_state = diagnostic_project_revision_binding(
+            str(_harness_source_identity()["sha256"]), driver_sha256
+        )
+
     if args.limit < 0:
         ap.error("--limit must be non-negative")
     if args.max_queries <= 0 or args.max_turns <= 0:
@@ -2327,8 +2382,34 @@ def main(argv=None) -> int:
         ap.error("--seeds must be unique")
     out = Path(args.out)
     out.mkdir(parents=True, exist_ok=True)
+    if project_revision_receipt is not None and project_revision_artifact is not None:
+        try:
+            retained_project_revision = _retain_content_addressed_input(
+                out,
+                args.project_revision,
+                args.project_revision_sha256,
+                stem="project-revision",
+                filename=(
+                    f"{project_revision_receipt['revision_id']}.project-revision.json"
+                ),
+            )
+        except (OSError, ValueError) as exc:
+            ap.error(str(exc))
+        project_revision_artifact = {
+            **project_revision_artifact,
+            "file": retained_project_revision.name,
+        }
+        project_revision_state = project_revision_binding(
+            project_revision_receipt, project_revision_artifact
+        )
 
-    # Wall-clock provenance for Runner 2.8 (run date). Recorded in the manifest but kept
+    def recheck_bound_project_revision() -> None:
+        if project_revision_receipt is not None:
+            recheck_project_revision(
+                project_revision_receipt, Path(__file__).resolve()
+            )
+
+    # Wall-clock provenance for Runner 2.9 (run date). Recorded in the manifest but kept
     # OUT of the run_id hash, so runs stay reproducible while the date is captured.
     run_started = datetime.now(timezone.utc).isoformat(timespec="seconds")
     run_env = _runtime_env()
@@ -2791,6 +2872,7 @@ def main(argv=None) -> int:
         }
         experiment_condition_values = {
             "execution_purpose": execution_purpose,
+            "project_revision": project_revision_state,
             "defense": args.defense,
             "defense_guard": args.defense_guard,
             "judges": judge_names,
@@ -2849,6 +2931,7 @@ def main(argv=None) -> int:
             whole_request_preflight_complete=whole_request_preflight_complete,
             bindings={
                 "driver_source": driver_source,
+                "project_revision": project_revision_state,
                 "source_instances_sha256": _sha256_json(source_instances),
                 "attacker_configs_sha256": _sha256_json(attacker_configs),
                 "api_configs_sha256": _sha256_json(api_configs),
@@ -3216,6 +3299,7 @@ def main(argv=None) -> int:
                 route_kind=route_kinds,
                 current_harness_source_sha256=str(harness_source["sha256"]),
                 current_driver_source_sha256=str(driver_source["sha256"]),
+                current_project_revision=project_revision_state,
                 reference_time=datetime.fromisoformat(run_started),
                 max_age_hours=args.live_attestation_max_age_hours,
             )
@@ -3291,6 +3375,7 @@ def main(argv=None) -> int:
 
     grid_request = {
         "execution_purpose": execution_purpose,
+        "project_revision": project_revision_state,
         "models": [persisted_model_specs[spec] for spec in model_specs],
         "corpora": corpora,
         "source_instances": source_instances,
@@ -3398,6 +3483,11 @@ def main(argv=None) -> int:
     circuits: dict[str, dict[str, object]] = {}
 
     if args.preflight_only:
+        try:
+            recheck_bound_project_revision()
+        except (OSError, TypeError, ValueError) as exc:
+            print(f"project revision changed during preflight: {exc}", file=sys.stderr)
+            return 1
         if hosted_runtime_checks:
             print(
                 "local hosted readiness passed (SDK import and credential "
@@ -3662,6 +3752,7 @@ def main(argv=None) -> int:
                     cell_config = {
                         "grid_id": grid_id,
                         "execution_purpose": execution_purpose,
+                        "project_revision": project_revision_state,
                         "corpus": corpus_name,
                         "limit": args.limit,
                         "sample_seed": args.sample_seed,
@@ -3777,6 +3868,7 @@ def main(argv=None) -> int:
                             "resume/completion artifacts exist but the durable "
                             "call-budget ledger is missing; manual audit required"
                         )
+                    recheck_bound_project_revision()
                     if paths["complete"].is_file():
                         _validate_completion_marker(paths, planned, required)
                         _record_executed_modality_evidence(
@@ -3883,6 +3975,7 @@ def main(argv=None) -> int:
                         _validate_completion_marker(
                             validation_paths, planned, required
                         )
+                        recheck_bound_project_revision()
                     except Exception:
                         pending_complete.unlink(missing_ok=True)
                         raise
@@ -4045,6 +4138,15 @@ def main(argv=None) -> int:
         "modality_coverage_result": modality_result_payload,
         "cells": cell_statuses,
     }
+    try:
+        recheck_bound_project_revision()
+    except (OSError, TypeError, ValueError) as exc:
+        _release_artifact_lock(grid_lock, grid_lock_token)
+        print(
+            f"project revision changed before final grid publication: {exc}",
+            file=sys.stderr,
+        )
+        return 1
     _write_json(grid_path, final_grid)
     _release_artifact_lock(grid_lock, grid_lock_token)
 

@@ -14,6 +14,7 @@ from experiments.level1_evidence import (
     _load_live_attestation_artifact,
     _load_results,
     _plan_artifact,
+    _validate_grid_plan_bindings,
     build_level1_evidence,
     main,
     write_csv,
@@ -33,6 +34,32 @@ class _Target:
         self.modality_support = modalities
 
 
+def _project_revision(*, dry_run: bool) -> dict[str, object]:
+    identity: dict[str, object] = {
+        "mode": "not_required_diagnostic_dry_run" if dry_run else "verified",
+        "revision_id": None,
+        "file": None,
+        "sha256": None,
+        "bytes": None,
+        "expected_commit": None,
+        "observed_commit": None,
+        "head_tree": None,
+        "harness_source_sha256": "1" * 64,
+        "driver_source_sha256": "2" * 64,
+    }
+    if not dry_run:
+        identity.update({
+            "revision_id": "project-revision-" + "a" * 24,
+            "file": "project-revision-" + "a" * 24 + ".project-revision.json",
+            "sha256": "b" * 64,
+            "bytes": 100,
+            "expected_commit": "c" * 40,
+            "observed_commit": "c" * 40,
+            "head_tree": "d" * 40,
+        })
+    return identity
+
+
 def _conditions(
     *,
     defense: str = "none",
@@ -48,6 +75,7 @@ def _conditions(
     }
     values = {
         "execution_purpose": "diagnostic_dry_run" if dry_run else "measured_run",
+        "project_revision": _project_revision(dry_run=dry_run),
         "defense": defense,
         "defense_guard": "rules",
         "judges": ["rules"],
@@ -95,7 +123,8 @@ def _conditions(
         "values": values,
     }
     bindings = {
-        "driver_source": {"module": "run_matrix.py", "sha256": "0" * 64},
+        "driver_source": {"module": "run_matrix.py", "sha256": "2" * 64},
+        "project_revision": _project_revision(dry_run=dry_run),
         "source_instances_sha256": "1" * 64,
         "attacker_configs_sha256": "2" * 64,
         "api_configs_sha256": "3" * 64,
@@ -181,6 +210,7 @@ def _write_live_attestation(
             "attempt_media_hashes_sha256": "e" * 64,
             "harness_source_sha256": "1" * 64,
             "driver_source_sha256": "2" * 64,
+            "project_revision": _project_revision(dry_run=False),
         },
     }])
     payload = (json.dumps(manifest, sort_keys=True) + "\n").encode("utf-8")
@@ -238,6 +268,34 @@ def test_condition_projection_rejects_malformed_types() -> None:
 
     with pytest.raises(ValueError, match="judges"):
         _condition_from_plan(plan)
+
+
+def test_condition_projection_rejects_project_revision_drift() -> None:
+    _condition, bindings = _conditions()
+    plan = build_eligibility_plan(
+        requested_targets=["text-target"],
+        targets={"text-target": _Target("resolved-text", ("text",))},
+        corpora={"synth-arm": synth_corpus(1)},
+        attackers=["replay"],
+        bindings=bindings,
+        dry_run=True,
+    )
+    plan["bindings"]["project_revision"] = {
+        **plan["bindings"]["project_revision"],
+        "driver_source_sha256": "9" * 64,
+    }
+    with pytest.raises(ValueError, match="project-revision condition mismatch"):
+        _condition_from_plan(plan)
+
+    request = {
+        "driver_source": bindings["driver_source"],
+        "project_revision": {
+            **bindings["project_revision"],
+            "driver_source_sha256": "8" * 64,
+        },
+    }
+    with pytest.raises(ValueError, match="project-revision binding mismatch"):
+        _validate_grid_plan_bindings(request, {"bindings": bindings})
 
 
 def test_planning_only_retains_unresolved_target_setup_as_blocked(
@@ -302,6 +360,7 @@ def test_measured_level1_binds_exact_typed_attestation_at_grid_start(
             "live_attestation": projection,
             "harness_source": {"sha256": "1" * 64},
             "driver_source": {"sha256": "2" * 64},
+            "project_revision": _project_revision(dry_run=False),
         },
         "cells": {},
         "n_errors": 0,
@@ -365,6 +424,7 @@ def test_level1_attestation_rejects_stale_or_descriptor_substitution(
                 "live_attestation": bound,
                 "harness_source": {"sha256": "1" * 64},
                 "driver_source": {"sha256": "2" * 64},
+                "project_revision": _project_revision(dry_run=False),
             },
             "cells": {},
             "n_errors": 0,
@@ -411,6 +471,9 @@ def test_level1_attestation_rejects_route_kind_or_mode_flag_substitution(
             "dry_run": False,
             "attestation_probe": False,
             "live_attestation": projection,
+            "harness_source": {"sha256": "1" * 64},
+            "driver_source": {"sha256": "2" * 64},
+            "project_revision": _project_revision(dry_run=False),
         },
         "cells": {},
         "n_errors": 0,

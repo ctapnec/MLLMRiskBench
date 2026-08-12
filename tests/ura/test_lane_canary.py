@@ -135,6 +135,12 @@ def test_lane_canary_validator_rejects_nested_semantic_mutations(
             lambda item: item["condition"]["source_identity"].update(forged=True),
         ),
         (
+            "project revision source drift",
+            lambda item: item["condition"]["source_identity"][
+                "project_revision"
+            ].update(driver_source_sha256="9" * 64),
+        ),
+        (
             "extra latency field",
             lambda item: item["latency_observations"]["target"]["observations"][0].update(
                 forged=True

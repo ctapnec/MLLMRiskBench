@@ -41,12 +41,15 @@ Python 3.12 is the supported baseline.
 ```bash
 python -m pip install -e ".[dev,analysis]"
 python -m pytest
-python experiments/run_matrix.py --dry-run --attackers replay --judges rules,llm --corpora synth --limit 12 --out runs/dry
+env -u URA_PROJECT_REVISION_MANIFEST -u URA_PROJECT_REVISION_SHA256 \
+  python experiments/run_matrix.py --dry-run --attackers replay --judges rules,llm --corpora synth --limit 12 --out runs/dry
 python -m experiments.figures --synth --out runs/_figcheck
 ```
 
 Dry-run and synthetic output are plumbing evidence only and cannot enter the
-thesis results.
+thesis results. This explicit offline form records
+`project_revision.mode=not_required_diagnostic_dry_run`; every non-dry Runner
+invocation instead requires the exact project-revision receipt described below.
 
 ## Planned experimental programme
 
@@ -69,9 +72,9 @@ transport attestation before entering a measured cell. An inaccessible,
 silently aliased or stale route is blocked with a reason; structural capability
 incompatibility remains `N/A` rather than being counted as a failed experiment.
 
-Runner 2.8 makes that prerequisite machine-checked. A bounded non-dry
+Runner 2.9 makes that prerequisite machine-checked. A bounded non-dry
 `--attestation-probe` grid is converted by `experiments.live_attestation` into a
-content-addressed `ura-live-attestation/1` receipt. An ordinary measured grid
+content-addressed `ura-live-attestation/2` receipt. An ordinary measured grid
 must supply the exact receipt bytes and digest, the same operator-declared
 execution scope, and a maximum permitted age. Requested/base-resolved target,
 secret-free route configuration, exact delivered modality combination,
@@ -153,7 +156,10 @@ mixing dry-run and measured requests fails closed. It always records
 
 The runbook is the canonical from-zero procedure:
 
-1. download the project and create its Python environment;
+1. select a prospectively reviewed full 40-hex project commit, check it out
+   detached, create and validate one content-addressed
+   `ura-project-revision/1` receipt from that clean checkout, export its path and
+   SHA-256, and create the Python environment;
 2. download the selected releases from the 19-converter inventory, copy the
    checked-in source-instance example to the ignored operator-local registry,
    configure its independently labelled instances, bind ordered media roots,
@@ -175,11 +181,22 @@ The runbook is the canonical from-zero procedure:
    multi-rater human audit across the achieved common-eligible arms; the declared
    focal conditions follow the same achieved-sample rule, not a reserved quota;
   and
-8. retain the complete artifact tree, command line, commit identifier,
-   environment inventory, and run note for post-experiment analysis.
+8. revalidate the same local checkout and retain the complete artifact tree,
+   project-revision receipt and digest, separately self-recorded checkout status,
+   command line, upstream commits, environment inventory, and run note for
+   post-experiment analysis.
 
 ## Real-run gates
 
+- `URA_PROJECT_REVISION_MANIFEST` and `URA_PROJECT_REVISION_SHA256` bind one
+  digest-approved `ura-project-revision/1` receipt. Every non-dry `rig_check`,
+  target probe, diagnostic canary, and measured Runner request requires it.
+  Expected and observed full commits, HEAD tree, common driver/harness Git root,
+  clean tracked state, and actual driver/harness source digests are checked and
+  carried through eligibility, grid, manifest, completion, and postprocessing
+  identities. A revision change starts a prospectively recorded new cohort; it
+  cannot resume or pool under an old identity. This is local source provenance,
+  not remote authenticity, dependency/upstream identity, or empirical evidence.
 - Real corpora resolve through `URA_<CORPUS>_PATH`. Local media also needs an
   approved, ordered `URA_MEDIA_ROOTS` list. Persisted media paths are portable
   `@media-root/<index>/<relative-path>` aliases; resume must rebind the same
@@ -283,8 +300,12 @@ establish population latency, throughput, cost, expected storage, safety, or
 human validity. Diagnostic canaries are rejected from Level-1, suite summary,
 paired/transfer analysis, human-audit preparation, and measured figures. Native
 framework canaries remain external to the Runner and outside native imports.
+Canonical native envelopes retain their upstream project revision and have no
+Runner `RunManifest`; the URA revision that performed their import is retained
+in the return-package/importer context rather than relabelled as an upstream
+native field.
 
-Runner `ura-runner/2.8` writes unified schema `1.4`. Immutable planning/source
+Runner `ura-runner/2.9` writes unified schema `1.4`. Immutable planning/source
 stratum identity is stored separately from adaptive per-turn evaluation
 identity. Thus a Crescendo setup turn remains joined to its original planning
 stratum while receiving a typed `not_applicable` judgment and no judge call or

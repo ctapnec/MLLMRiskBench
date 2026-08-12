@@ -94,9 +94,18 @@ def _live_attestation_args(
     route_digest: str | None = None,
     harness_source_sha256: str | None = None,
     driver_source_sha256: str | None = None,
+    project_revision: dict[str, object] | None = None,
     max_age_hours: float = 24,
 ) -> list[str]:
     """Write one compact schema-valid receipt for fake measured-run tests."""
+
+    if project_revision is None:
+        raise ValueError("test live attestation requires explicit project revision")
+    receipt_project_revision = dict(project_revision)
+    if harness_source_sha256 is not None:
+        receipt_project_revision["harness_source_sha256"] = harness_source_sha256
+    if driver_source_sha256 is not None:
+        receipt_project_revision["driver_source_sha256"] = driver_source_sha256
 
     execution_scope = "test-scope"
     effective_config = route_config or {
@@ -148,6 +157,7 @@ def _live_attestation_args(
                     Path(run_matrix.__file__).resolve()
                 )[0]
             ),
+            "project_revision": receipt_project_revision,
         },
     }
     manifest = build_live_attestation_manifest([record])
@@ -330,7 +340,7 @@ def test_cluster_limits_are_nested_prefixes_for_one_sample_seed(
 
 
 def test_real_corpus_runs_directly_and_records_source_identity(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, project_revision_args,
 ) -> None:
     records = [
         _datapoint("a").model_copy(update={"meta": {"source_cluster_id": "a"}}),
@@ -374,7 +384,7 @@ def test_real_corpus_runs_directly_and_records_source_identity(
         "--judges", "rules", "--corpora", "fixture", "--limit", "2",
         "--max-queries", "1", "--max-turns", "1", "--out", str(out),
         "--attestation-probe", "--execution-scope-id", "test-scope",
-        *_finite_budget_args(),
+        *_finite_budget_args(), *project_revision_args,
     ]) == 0
     manifest = json.loads(next(out.glob("*.manifest.json")).read_text(
         encoding="utf-8"
@@ -677,6 +687,7 @@ def test_preflight_only_checks_hosted_sdks_and_keys_without_provider_calls(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture,
+    project_revision_args,
 ) -> None:
     imported: list[str] = []
 
@@ -697,6 +708,7 @@ def test_preflight_only_checks_hosted_sdks_and_keys_without_provider_calls(
         "--limit", "1", "--max-queries", "1", "--max-turns", "1",
         "--out", str(tmp_path / "run"),
         *_finite_budget_args(),
+        *project_revision_args,
     ]
 
     assert run_matrix.main(args) == 0
@@ -708,7 +720,7 @@ def test_preflight_only_checks_hosted_sdks_and_keys_without_provider_calls(
 
 
 def test_measured_run_without_attestation_persists_pre_call_gate(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, project_revision_args,
 ) -> None:
     constructions = 0
     generations = 0
@@ -737,7 +749,7 @@ def test_measured_run_without_attestation_persists_pre_call_gate(
         "--live-attestation-max-age-hours", "24",
         "--attackers", "replay", "--judges", "rules",
         "--corpora", "synth", "--limit", "1",
-        "--out", str(out), *_finite_budget_args(),
+        "--out", str(out), *_finite_budget_args(), *project_revision_args,
     ]) == 1
     assert constructions == 1
     assert generations == 0
@@ -768,6 +780,7 @@ def test_stale_or_route_mismatched_attestation_fails_before_generation(
     monkeypatch: pytest.MonkeyPatch,
     receipt_kwargs: dict[str, object],
     message: str,
+    project_revision_args,
 ) -> None:
     class NeverCalledTarget(BaseTarget):
         name = "attestation-gated-target"
@@ -788,6 +801,7 @@ def test_stale_or_route_mismatched_attestation_fails_before_generation(
         tmp_path,
         target_spec=target_spec,
         resolved_target=target.name,
+        project_revision=project_revision_args.binding,
         **receipt_kwargs,
     )
 
@@ -798,6 +812,7 @@ def test_stale_or_route_mismatched_attestation_fails_before_generation(
         "--corpora", "synth", "--limit", "1",
         "--max-queries", "1", "--max-turns", "1",
         "--out", str(tmp_path / "measured"), *_finite_budget_args(),
+        *project_revision_args,
     ]) == 1
     assert target.calls == 0
     error = json.loads(
@@ -817,6 +832,7 @@ def test_stale_or_route_mismatched_attestation_fails_before_generation(
 def test_probe_producer_and_measured_run_bind_one_fake_live_route(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
+    project_revision_args,
 ) -> None:
     class StableLiveTarget(BaseTarget):
         name = "stable-live-target"
@@ -849,6 +865,7 @@ def test_probe_producer_and_measured_run_bind_one_fake_live_route(
         "--attackers", "replay", "--judges", "rules",
         "--corpora", "synth", "--limit", "1",
         "--max-queries", "1", "--max-turns", "1", *_finite_budget_args(),
+        *project_revision_args,
     ]
 
     assert run_matrix.main([
@@ -957,6 +974,7 @@ def test_fully_synthetic_diagnostic_canary_completes_and_is_excluded(
 def test_diagnostic_canary_is_typed_and_excluded_from_measured_consumers(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
+    project_revision_args,
 ) -> None:
     class StableCanaryTarget(BaseTarget):
         name = "stable-canary-target"
@@ -990,6 +1008,7 @@ def test_diagnostic_canary_is_typed_and_excluded_from_measured_consumers(
             tmp_path,
             target_spec=target_spec,
             resolved_target=target.name,
+            project_revision=project_revision_args.binding,
             realized_identity={
                 "target": target.name,
                 "provider": "fixture-provider",
@@ -999,7 +1018,7 @@ def test_diagnostic_canary_is_typed_and_excluded_from_measured_consumers(
         "--attackers", "replay", "--judges", "rules",
         "--corpora", "synth", "--limit", "1", "--seeds", "7",
         "--max-queries", "3", "--max-turns", "2",
-        *_finite_budget_args(), "--out", str(out),
+        *_finite_budget_args(), *project_revision_args, "--out", str(out),
     ])
 
     assert result == 0
@@ -1038,6 +1057,7 @@ def test_provider_backed_request_requires_caps_for_full_projected_work(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     diagnostic_canary: bool,
+    project_revision_args,
 ) -> None:
     class NeverCalledTarget(BaseTarget):
         name = "canary-cap-target"
@@ -1063,6 +1083,7 @@ def test_provider_backed_request_requires_caps_for_full_projected_work(
             tmp_path,
             target_spec=target_spec,
             resolved_target=target.name,
+            project_revision=project_revision_args.binding,
         ),
         "--attackers", "crescendo", "--judges", "rules",
         "--corpora", "synth", "--limit", "1", "--seeds", "0",
@@ -1071,6 +1092,7 @@ def test_provider_backed_request_requires_caps_for_full_projected_work(
         "--max-total-judge-calls", "1",
         "--max-total-http-attempts", "1",
         "--deadline-seconds", "3600", "--out", str(out),
+        *project_revision_args,
     ])
 
     assert result == 1
@@ -1082,6 +1104,7 @@ def test_provider_backed_request_requires_caps_for_full_projected_work(
 def test_local_probe_receipt_admits_measured_run_and_level1(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
+    project_revision_args,
 ) -> None:
     """Local grid configs are keyed by resolved base identity, not request spec."""
 
@@ -1130,6 +1153,7 @@ def test_local_probe_receipt_admits_measured_run_and_level1(
         "--corpora", "synth", "--limit", "1",
         "--max-queries", "1", "--max-turns", "1",
         *_finite_budget_args(),
+        *project_revision_args,
     ]
     probe_root = tmp_path / "local-probe"
     assert run_matrix.main([
@@ -1204,6 +1228,7 @@ def test_real_grid_requires_finite_limits_before_generation(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture,
+    project_revision_args,
 ) -> None:
     class _NeverCalledTarget(BaseTarget):
         name = "finite-limit-target"
@@ -1229,6 +1254,7 @@ def test_real_grid_requires_finite_limits_before_generation(
         "--max-total-target-calls", "0",
         "--max-total-http-attempts", "0",
         "--deadline-seconds", "0",
+        *project_revision_args,
     ]
     assert run_matrix.main(args) == 1
     assert "planned call limits" in capsys.readouterr().err
@@ -1365,7 +1391,9 @@ def test_model_defense_requires_separate_guard_identity_and_device(
         ])
 
 
-def test_matrix_rejects_a_target_that_is_also_the_llm_judge(tmp_path: Path) -> None:
+def test_matrix_rejects_a_target_that_is_also_the_llm_judge(
+    tmp_path: Path, project_revision_args,
+) -> None:
     spec = "anthropic:claude-haiku-4-5-20251001"
     judge_spec = "claude:claude-haiku-4-5-20251001"
     config = tmp_path / "api.json"
@@ -1390,11 +1418,14 @@ def test_matrix_rejects_a_target_that_is_also_the_llm_judge(tmp_path: Path) -> N
         "--max-queries", "1", "--max-turns", "1",
         "--out", str(tmp_path / "self-judged"),
         *_finite_budget_args(),
+        *project_revision_args,
     ])
 
     assert result == 1
 
-def test_target_construction_failure_writes_error_artifact(tmp_path: Path) -> None:
+def test_target_construction_failure_writes_error_artifact(
+    tmp_path: Path, project_revision_args,
+) -> None:
     result = run_matrix.main([
         "--preflight-only",
         "--api", "unregistered-target",
@@ -1403,6 +1434,7 @@ def test_target_construction_failure_writes_error_artifact(tmp_path: Path) -> No
         "--limit", "1",
         "--out", str(tmp_path),
         *_finite_budget_args(),
+        *project_revision_args,
     ])
     errors = list(tmp_path.glob("*.error.json"))
     assert result == 1
@@ -1472,6 +1504,7 @@ def test_failed_call_errors_and_circuits_are_budget_recovery_evidence(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture,
+    project_revision_args,
 ) -> None:
     class ProviderError(RuntimeError):
         call_audit = {
@@ -1504,6 +1537,7 @@ def test_failed_call_errors_and_circuits_are_budget_recovery_evidence(
         "--judges", "rules", "--corpora", "synth", "--limit", "1",
         "--max-queries", "1", "--max-turns", "1", "--out", str(tmp_path),
         *_finite_budget_args(),
+        *project_revision_args,
     ]
     assert run_matrix.main(args) == 1
     assert target.calls == 1
@@ -1804,7 +1838,7 @@ def test_existing_artifact_locks_fail_closed_until_manually_removed(
 
 
 def test_systemic_target_failure_opens_circuit_before_next_cell(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, project_revision_args,
 ) -> None:
     class ProviderError(RuntimeError):
         call_audit = {
@@ -1836,6 +1870,7 @@ def test_systemic_target_failure_opens_circuit_before_next_cell(
         tmp_path,
         target_spec=target_spec,
         resolved_target=target.name,
+        project_revision=project_revision_args.binding,
     )
     result = run_matrix.main([
         "--api", target_spec, *api_config, *attestation,
@@ -1843,6 +1878,7 @@ def test_systemic_target_failure_opens_circuit_before_next_cell(
         "--judges", "rules", "--corpora", "synth", "--limit", "1",
         "--max-queries", "2", "--max-turns", "2", "--out", str(tmp_path),
         *_finite_budget_args(),
+        *project_revision_args,
     ])
 
     assert result == 1
@@ -2533,7 +2569,7 @@ def test_runner_rejects_mid_cell_resolved_target_identity_drift() -> None:
 
 
 def test_first_response_attestation_drift_opens_circuit_before_second_cell(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, project_revision_args,
 ) -> None:
     target = _ResolvedIdentityTarget(["unexpected-resolved-v2"])
     monkeypatch.setattr(run_matrix, "build_target", lambda *_a, **_kw: target)
@@ -2542,6 +2578,7 @@ def test_first_response_attestation_drift_opens_circuit_before_second_cell(
         tmp_path,
         target_spec=target_spec,
         resolved_target=target.name,
+        project_revision=project_revision_args.binding,
         realized_identity={
             "target": target.name,
             "provider": "fixture-provider",
@@ -2556,6 +2593,7 @@ def test_first_response_attestation_drift_opens_circuit_before_second_cell(
         "--corpora", "synth", "--limit", "1",
         "--max-queries", "2", "--max-turns", "2",
         "--out", str(tmp_path / "drift"), *_finite_budget_args(),
+        *project_revision_args,
     ]) == 1
     assert len(target._dialogs) == 1
     circuit = json.loads(next((tmp_path / "drift").glob("*.circuits.json")).read_text(

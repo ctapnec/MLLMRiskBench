@@ -144,6 +144,7 @@ def summarize_canary(
     request = grid["request"]
     exact_run_fields = {
         "execution_purpose": request.get("execution_purpose"),
+        "project_revision": request.get("project_revision"),
         "limit": request.get("limit"),
         "sample_seed": request.get("sample_seed"),
         "attacker": request.get("attackers", [None])[0],

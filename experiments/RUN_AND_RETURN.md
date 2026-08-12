@@ -7,7 +7,7 @@ source-native evaluators. Experiments and the human audit are still pending.
 Preflight, dry-run, diagnostic-canary, and bounded transport-probe artifacts are
 diagnostics, not thesis results.
 
-The maintained artifact contract is Runner `ura-runner/2.8` with unified schema
+The maintained artifact contract is Runner `ura-runner/2.9` with unified schema
 `1.4`. Do not combine older-runner artifacts with this program.
 
 The program is deliberately lane-based. A model is tested on every physical
@@ -111,7 +111,7 @@ cd MLLMRiskBench
 # Use the full thesis-reviewed harness commit. Change it only through a recorded
 # protocol amendment made before inspecting outcomes.
 export REF_URA='<full-40-hex-reviewed-post-fix-project-commit>'
-test "${#REF_URA}" -eq 40
+[[ "$REF_URA" =~ ^[0-9a-f]{40}$ ]]
 git checkout --detach "$REF_URA"
 test "$(git rev-parse HEAD)" = "$REF_URA"
 python3.12 -m venv .venv
@@ -124,7 +124,45 @@ python -m pip install "huggingface_hub[cli]"
 # operator has verified against this machine's CUDA, PyTorch, and driver stack.
 export VLLM_VERSION='<operator-reviewed-compatible-version>'
 python -m pip install "vllm==$VLLM_VERSION"
+
+# Create the one prospective local-checkout receipt before source acquisition.
+# Generated evidence lives under the ignored runs/ tree; untracked or ignored
+# executable source under src/ura or experiments still fails the receipt check.
+mkdir -p runs/thesis/project-revision
+python -m experiments.project_revision \
+  --expected-revision "$REF_URA" \
+  --out runs/thesis/project-revision
+mapfile -t URA_PROJECT_REVISION_FILES < <(find runs/thesis/project-revision \
+  -maxdepth 1 -type f -name 'project-revision-*.project-revision.json' -print)
+test "${#URA_PROJECT_REVISION_FILES[@]}" -eq 1
+export URA_PROJECT_REVISION_MANIFEST="${URA_PROJECT_REVISION_FILES[0]}"
+export URA_PROJECT_REVISION_SHA256="$(sha256sum \
+  "$URA_PROJECT_REVISION_MANIFEST" | awk '{print $1}')"
+python -m experiments.project_revision \
+  --validate "$URA_PROJECT_REVISION_MANIFEST" \
+  --sha256 "$URA_PROJECT_REVISION_SHA256"
+
+test -e runs/thesis/RUNNOTE.md || printf '# URA thesis run note\n' > runs/thesis/RUNNOTE.md
 ```
+
+`URA_PROJECT_REVISION_MANIFEST` and `URA_PROJECT_REVISION_SHA256` are consumed
+automatically by `run_matrix` and by `rig_check`'s forwarded non-dry request.
+Every non-dry preflight, transport probe, diagnostic canary, and measured Runner
+invocation requires this exact digest-approved `ura-project-revision/1` receipt.
+The driver retains it in each output and binds its compact identity into the
+eligibility condition, grid request, `RunManifest.config.run`, completion checks,
+live-attestation version 2, and postprocessing. It rechecks the local checkout
+before execution boundaries and final grid publication. A revision change is a
+prospective protocol amendment and a new cohort; do not resume or pool it under
+an existing grid/run identity.
+
+The receipt establishes only that the local expected and observed commits match,
+the tracked checkout is clean, the driver and imported harness share one Git
+root, and their current source bytes have the recorded digests. It does not
+authenticate the remote repository, bind dependencies or upstream revisions, or
+establish empirical validity. The operator-recorded commit/status files returned
+in section 17 are supplemental self-recorded provenance, not a substitute for
+the runtime binding.
 
 Use access-controlled storage. Review every upstream license, model access term,
 data-use restriction, provider retention policy, and institutional approval before
@@ -140,11 +178,6 @@ record the decision in the compact source receipt described in section 4.1;
 location before acquisition. A moving branch name is not a research identity.
 If a later snapshot is deliberately substituted, replace the corresponding full
 `REF_*` value and record why before running that lane.
-
-```bash
-mkdir -p runs/thesis
-test -e runs/thesis/RUNNOTE.md || printf '# URA thesis run note\n' > runs/thesis/RUNNOTE.md
-```
 
 ### 3.1 Git-hosted releases
 
@@ -414,7 +447,8 @@ template and then change the local registry.
 For each selected real arm, use a fresh one-arm observation directory. This
 bounded diagnostic selects one unique source cluster (retaining all sibling rows
 in that cluster), uses `MockTarget` and the offline mock-LLM fallback, and makes
-no provider call. It intentionally runs before a receipt exists:
+no provider call. It intentionally runs before a source-conformance receipt
+exists, while retaining the already established project-revision binding:
 
 ```bash
 export REVIEW_ARM='strongreject_official'  # repeat for each selected real arm
@@ -690,6 +724,7 @@ Run the full offline regression first:
 python -m pytest -p no:cacheprovider
 python -m ruff check --no-cache .
 python -m compileall src experiments
+env -u URA_PROJECT_REVISION_MANIFEST -u URA_PROJECT_REVISION_SHA256 \
 python -m experiments.run_matrix --dry-run \
   --attackers replay,crescendo --judges rules,llm \
   --corpora synth --limit 12 --seeds 0,1 \
@@ -703,7 +738,9 @@ Synthetic paths are available without a human audit, but none produces a
 benchmark result or human-validity claim.
 
 **A. Fully synthetic/offline.** The `--dry-run --corpora synth` command above
-uses `MockTarget` plus automated rule and mock-LLM fixture paths. It makes no
+uses `MockTarget` plus automated rule and mock-LLM fixture paths. The explicit
+environment removal records
+`project_revision.mode=not_required_diagnostic_dry_run`; it makes no
 provider call and requires no source acquisition, source receipt, or human
 rating. Its artifacts demonstrate only schema, orchestration, persistence,
 budget, and automated-fixture behavior.
@@ -716,6 +753,7 @@ never configure a mock judge in a non-dry or measured command.
 ```bash
 export SYNTH_CANARY_ROOT='runs/thesis/diagnostics/canary-synthetic-offline'
 
+env -u URA_PROJECT_REVISION_MANIFEST -u URA_PROJECT_REVISION_SHA256 \
 python -m experiments.run_matrix \
   --diagnostic-canary --dry-run \
   --attackers replay --judges rules,llm --judge-model mock \
@@ -738,7 +776,9 @@ acquisition, source receipt, or human work. Before any mock target execution it
 persists the exact content-addressed `ura-lane-projection/1`; the second command
 makes no call and writes a content-addressed `ura-lane-canary/1`. Inspect its
 `evidence_class=synthetic_offline`, `campaign_authorized=false`, and
-`empirical_benchmark_evidence=false`. The mock full-shadow decision path proves
+`empirical_benchmark_evidence=false`, together with
+`project_revision.mode=not_required_diagnostic_dry_run`. The mock full-shadow
+decision path proves
 only fixture and pipeline behavior. This typed canary is intentionally rejected
 by Level-1, figures, suite summary, paired/transfer analysis, and human-audit
 preparation; use the broader diagnostic dry-run below only for the separate
@@ -834,7 +874,7 @@ test "${#IMAGE_RECEIPT_SHA256}" -eq 64
 ```
 
 The producer performs no provider call. It strictly revalidates the completed
-single-cell probe and emits create-only `ura-live-attestation/1` JSON. Its UTC
+single-cell probe and emits create-only `ura-live-attestation/2` JSON. Its UTC
 observation is the probe Runner manifest's content-bound `started_at`, a
 conservative lower bound on the successful transport event; mutable outer-grid
 `finished_at` metadata is not trusted as receipt time. Inspect the receipt and
@@ -919,6 +959,10 @@ admission and before its first generation call. These artifacts are planning
 evidence only and are not live attestations.
 `rig_check` and `run_matrix --dry-run` neither require nor accept
 `--execution-scope-id` or live-attestation arguments.
+The preflight is nevertheless non-dry internally and therefore requires the
+environment-bound project-revision receipt from section 2; `rig_check` verifies
+that the forwarded request retained it. Every non-dry probe, canary, and measured
+command below inherits the same two environment variables.
 
 Keep every no-call `rig_check` output under `runs/thesis/preflight/<lane>` and
 every measured `run_matrix` output under `runs/thesis/runner/<lane>`. Whenever a
@@ -1901,7 +1945,9 @@ correcting and documenting the provider or judge failure that opened the circuit
 Complete the already-created `runs/thesis/RUNNOTE.md` and record:
 
 - UTC start/end, host, OS, Python, CUDA, driver, and both GPU identities;
-- `git rev-parse HEAD` and `git status --short` for URA and every upstream checkout;
+- the prospective URA project-revision receipt ID/file/SHA-256, expected and
+  observed commit, HEAD tree, and final validation result; separately record
+  `git rev-parse HEAD` and `git status --short` for URA and every upstream checkout;
 - source/model revisions, source file hashes, exact commands, lane ceilings, and
   non-secret endpoint routes;
 - the validated compact source-receipt file/SHA-256,
@@ -1926,8 +1972,15 @@ Capture the URA environment and harness identity:
 
 ```bash
 python -m pip list --format=json > runs/thesis/environment-packages.json
-git rev-parse HEAD > runs/thesis/harness-commit.txt
+test "$(git rev-parse HEAD)" = "$REF_URA"
+python -m experiments.project_revision \
+  --validate "$URA_PROJECT_REVISION_MANIFEST" \
+  --sha256 "$URA_PROJECT_REVISION_SHA256"
+printf '%s\n' "$REF_URA" > runs/thesis/harness-expected-commit.txt
+git rev-parse HEAD > runs/thesis/harness-observed-commit.txt
 git status --short > runs/thesis/harness-status.txt
+printf '%s  %s\n' "$URA_PROJECT_REVISION_SHA256" \
+  "$URA_PROJECT_REVISION_MANIFEST" > runs/thesis/project-revision.sha256
 test "$(sha256sum "$URA_SOURCE_CONFORMANCE_MANIFEST" | awk '{print $1}')" = \
   "$URA_SOURCE_CONFORMANCE_SHA256"
 ```
@@ -1941,8 +1994,14 @@ shadow trails, checkpoints, completion/error records, aggregates, modality
 coverage, call ledgers, native raw artifacts and canonical envelopes, human-audit
 files, every retained `ura-lane-projection/1`, diagnostic
 `ura-lane-canary/1`, the Level-1 JSON/CSV, analyses, figures, the exact retained
-`source-conformance-*.json`, every exact `ura-live-attestation/1` receipt and
-approved digest record, and the run note. The source releases themselves
+`source-conformance-*.json`, every exact `ura-live-attestation/2` receipt and
+approved digest record, the prospective `ura-project-revision/1` receipt and
+digest record, expected/observed commit and checkout-status records, and the run
+note. Runner outputs retain their own receipt copies and compact bindings.
+Canonical native envelopes retain their distinct upstream project revisions but
+do not acquire a Runner `RunManifest`; their URA implementation revision is
+therefore established in the return-package/importer context, not falsely
+presented as an upstream-native field. The source releases themselves
 remain outside the return package unless
 the recipient is licensed and explicitly authorized.
 

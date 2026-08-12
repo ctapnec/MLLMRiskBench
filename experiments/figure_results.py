@@ -48,6 +48,7 @@ from ura.data_models import (
     Response,
     RunManifest,
 )
+from ura.project_revision import validate_project_revision_binding
 from ura.runner import CODE_VERSION, realized_identity_summary
 
 _MAX_JSON_BYTES = 4 * 1024 * 1024
@@ -64,8 +65,6 @@ _FIGURE_NAMES = (
     "fig-v-policy-proxies.png",
     "fig-v-adaptivity.png",
 )
-
-
 def _valid_sha256(value: Any) -> bool:
     return (
         isinstance(value, str)
@@ -212,7 +211,9 @@ def _inside(root: Path, path: Path) -> Path:
     return resolved
 
 
-def _validate_source_identity(manifest: RunManifest, path: Path) -> None:
+def _validate_source_identity(
+    manifest: RunManifest, path: Path,
+) -> dict[str, Any]:
     harness = manifest.config.get("harness_source")
     if (
         not isinstance(harness, dict)
@@ -235,6 +236,14 @@ def _validate_source_identity(manifest: RunManifest, path: Path) -> None:
         or driver.get("file_count") != 1
     ):
         raise ValueError(f"manifest lacks a valid experiment-driver source identity: {path}")
+    project_revision = validate_project_revision_binding(
+        run.get("project_revision"), allow_not_required=run.get("dry_run") is True
+    )
+    if project_revision["harness_source_sha256"] != harness["sha256"]:
+        raise ValueError(f"manifest project/harness source mismatch: {path}")
+    if project_revision["driver_source_sha256"] != driver["sha256"]:
+        raise ValueError(f"manifest project/experiment-driver source mismatch: {path}")
+    return project_revision
 
 
 def _grid_allowlist(
@@ -552,10 +561,19 @@ def _validate_cell(
         )
     if len(manifest.models) != 1:
         raise ValueError(f"figure cell must have exactly one resolved target: {marker_path}")
-    _validate_source_identity(manifest, resolved["manifest"])
+    project_revision = _validate_source_identity(manifest, resolved["manifest"])
     run = manifest.config.get("run")
     if not isinstance(run, dict):
         raise ValueError(f"manifest lacks config.run: {resolved['manifest']}")
+    for ref in refs:
+        request_revision = validate_project_revision_binding(
+            ref.request.get("project_revision"),
+            allow_not_required=ref.request.get("dry_run") is True,
+        )
+        if request_revision != project_revision:
+            raise ValueError(
+                f"grid/completed-artifact project-revision mismatch: {marker_path}"
+            )
     for field in ("corpus", "attacker", "model_spec", "defense"):
         _nonblank(run.get(field), f"manifest run.{field} in {resolved['manifest']}")
     if run.get("dry_run") is not False and not allow_diagnostic_dry_run:

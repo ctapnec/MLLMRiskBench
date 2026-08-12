@@ -5,7 +5,7 @@ validity rules, then execute [RUN_AND_RETURN.md](RUN_AND_RETURN.md). A dry run,
 partial artifact family, source conversion, model-name assumption, native prompt
 export, or synthetic figure is not a measured thesis result.
 
-The maintained execution contract is Runner `ura-runner/2.8` with unified
+The maintained execution contract is Runner `ura-runner/2.9` with unified
 schema `1.4`; older artifacts are not mixed into the thesis run.
 
 ## Experimental shape
@@ -76,12 +76,22 @@ It cannot prove account access, endpoint visibility, routing, quota, or media
 transport. Therefore every exact model/modality route also needs a tiny bounded
 non-dry `run_matrix --attestation-probe`, followed by
 `experiments.live_attestation`. The latter performs no call; it converts the
-strict completed probe into a content-addressed `ura-live-attestation/1`
+strict completed probe into a content-addressed `ura-live-attestation/2`
 receipt. Every ordinary non-dry grid must bind that receipt's exact bytes,
 digest, operator-declared execution scope and maximum age before target calls.
 The receipt is diagnostic historical route/access/byte-backed transport
 evidence, not a thesis measurement or proof of account equivalence, safety,
 evaluator validity, human validity, or future availability.
+
+The earlier admission boundary is the exact URA implementation itself.
+`URA_PROJECT_REVISION_MANIFEST` and `URA_PROJECT_REVISION_SHA256` name one
+content-addressed clean-local-checkout receipt. Its compact expected/observed
+commit, HEAD-tree, driver/harness-root and source-digest binding enters every
+non-dry eligibility condition, grid, Runner manifest, completion, attestation,
+and measured consumer. This establishes local source provenance only—not remote
+authenticity, dependency/upstream identity, or empirical validity. A fully
+synthetic dry-run may omit it only through the explicit
+`not_required_diagnostic_dry_run` mode, which remains non-empirical.
 
 `run_matrix --diagnostic-canary` is a different execution purpose: exactly one
 target, logical source arm, attacker, seed, and whole cluster. The no-call
@@ -117,7 +127,12 @@ nonempty subset as complete.
 
 ## Direct lifecycle
 
-1. Install the project and offline dependencies; run the complete offline suite.
+1. Select a prospectively reviewed full 40-hex project commit, check it out
+   detached, create/digest/validate one `ura-project-revision/1` receipt from
+   the clean checkout, export its path/SHA-256, install dependencies, and run
+   the complete offline suite. Every non-dry preflight, probe, canary, or
+   measured Runner request binds this receipt; a revision change starts a new
+   recorded cohort.
 2. Acquire every selected release and upstream project at the recorded revision;
    copy and configure the operator-local `--source-config`, bind
    `URA_MEDIA_ROOTS`, then complete and validate the compact content-addressed
@@ -143,12 +158,14 @@ nonempty subset as complete.
    `experiments.suite_summary`, run no-call diagnostics, and prepare the
    automated-label-blinded, model-visible multi-rater human audit.
 8. After ratings/adjudication, render qualified focal figures and return the
-   complete artifact tree, commands, commits, environments, licenses/terms note,
-   and `N/A` ledger.
+   complete artifact tree, exact URA project-revision receipt/digest and
+   separately recorded checkout status, commands, upstream commits,
+   environments, licenses/terms note, and `N/A` ledger.
 
 Core CLIs:
 
 ```bash
+python -m experiments.project_revision --help
 python -m experiments.rig_check --help
 python -m experiments.source_conformance --help
 python experiments/run_matrix.py --help
@@ -218,6 +235,9 @@ composition-dependent diagnostics.
 Return attempts, responses, complete shadow trails, judgments, manifests,
 checkpoints, completion/error/budget/circuit artifacts, source/native artifacts
 and hashes, modality plans/results, diagnostics, human-audit files, suite
-inventory, figures/provenance, logs, environment inventory, exact commit IDs,
-operator notes, and the explicit eligibility/`N/A` ledger. Do not return only
-aggregates.
+inventory, figures/provenance, logs, environment inventory, the exact
+`ura-project-revision/1` receipt and SHA-256, separately self-recorded checkout
+status, upstream commit IDs, operator notes, and the explicit eligibility/`N/A`
+ledger. `NativeEngineRun` retains its upstream revision but has no Runner
+manifest; retain the URA import revision in the return-package/importer context.
+Do not return only aggregates.

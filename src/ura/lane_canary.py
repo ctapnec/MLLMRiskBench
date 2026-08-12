@@ -17,6 +17,7 @@ import re
 from typing import Any, Mapping
 
 from .eligibility import canonical_json_sha256
+from .project_revision import validate_project_revision_binding
 
 
 LANE_CANARY_SCHEMA = "ura-lane-canary/1"
@@ -95,7 +96,7 @@ _ROLE_FIELDS = frozenset({
 })
 _SOURCE_IDENTITY_FIELDS = frozenset({
     "dataset_hashes", "harness_source", "driver_source",
-    "source_conformance_artifact",
+    "source_conformance_artifact", "project_revision",
 })
 _ATTACKER_ROLE_FIELDS = frozenset({"identity", "status", "observed_records"})
 _TARGET_ROLE_FIELDS = frozenset({
@@ -535,7 +536,25 @@ def build_lane_canary_summary(
         "harness_source": (manifest.get("config") or {}).get("harness_source"),
         "driver_source": run.get("driver_source"),
         "source_conformance_artifact": run.get("source_conformance_artifact"),
+        "project_revision": run.get("project_revision"),
     }
+    project_revision = validate_project_revision_binding(
+        source_identity["project_revision"], allow_not_required=dry_run
+    )
+    eligibility_project_revision = validate_project_revision_binding(
+        eligibility_plan.get("bindings", {}).get("project_revision"),
+        allow_not_required=dry_run,
+    )
+    if project_revision != eligibility_project_revision:
+        raise ValueError("canary execution/eligibility project-revision mismatch")
+    if project_revision["harness_source_sha256"] != (
+        source_identity["harness_source"] or {}
+    ).get("sha256"):
+        raise ValueError("canary project-revision/harness-source mismatch")
+    if project_revision["driver_source_sha256"] != (
+        source_identity["driver_source"] or {}
+    ).get("sha256"):
+        raise ValueError("canary project-revision/driver-source mismatch")
     body: dict[str, Any] = {
         "schema": LANE_CANARY_SCHEMA,
         "status": "complete",
@@ -704,10 +723,28 @@ def validate_lane_canary_summary(value: object) -> dict[str, Any]:
         raise ValueError("lane canary condition seeds must be unique integers")
     if not isinstance(condition.get("realized_identities"), dict):
         raise ValueError("lane canary condition realized identities must be an object")
-    _strict_object(
+    source_identity = _strict_object(
         condition.get("source_identity"), _SOURCE_IDENTITY_FIELDS,
         "lane canary condition source identity",
     )
+    project_revision = validate_project_revision_binding(
+        source_identity.get("project_revision"),
+        allow_not_required=condition["dry_run"],
+    )
+    harness_source = source_identity.get("harness_source")
+    driver_source = source_identity.get("driver_source")
+    if (
+        not isinstance(harness_source, dict)
+        or project_revision["harness_source_sha256"]
+        != harness_source.get("sha256")
+    ):
+        raise ValueError("lane canary project-revision/harness-source mismatch")
+    if (
+        not isinstance(driver_source, dict)
+        or project_revision["driver_source_sha256"]
+        != driver_source.get("sha256")
+    ):
+        raise ValueError("lane canary project-revision/driver-source mismatch")
 
     workload = _strict_object(
         artifact.get("workload"), _WORKLOAD_FIELDS, "lane canary workload"

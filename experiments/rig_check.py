@@ -9,6 +9,7 @@ from tempfile import TemporaryDirectory
 
 from experiments import run_matrix
 from ura.lane_projection import load_lane_projection_file
+from ura.project_revision import load_project_revision_file
 
 
 def _requested_output(arguments: list[str]) -> Path:
@@ -32,6 +33,7 @@ def _persist_eligibility_artifacts(scratch: Path, destination: Path) -> list[Pat
     sources = sorted({
         *scratch.glob("eligibility-*.eligibility.json"),
         *scratch.glob("lane-projection-*.lane-projection.json"),
+        *scratch.glob("project-revision-*.project-revision.json"),
         *scratch.glob("source-conformance-*.json"),
     })
     if not sources:
@@ -45,6 +47,12 @@ def _persist_eligibility_artifacts(scratch: Path, destination: Path) -> list[Pat
         if source.name.endswith(".lane-projection.json"):
             load_lane_projection_file(
                 source, hashlib.sha256(payload).hexdigest()
+            )
+        if source.name.endswith(".project-revision.json"):
+            load_project_revision_file(
+                source,
+                hashlib.sha256(payload).hexdigest(),
+                Path(run_matrix.__file__).resolve(),
             )
         target = destination / source.name
         if target.exists():
@@ -93,6 +101,11 @@ def main(argv: list[str] | None = None) -> int:
             if path.name.startswith("lane-projection-")
             and path.name.endswith(".lane-projection.json")
         ]
+        project_revisions = [
+            path for path in copied
+            if path.name.startswith("project-revision-")
+            and path.name.endswith(".project-revision.json")
+        ]
         if result == 0 and not eligibility:
             print(
                 "rig-check passed without emitting the required eligibility artifact",
@@ -102,6 +115,13 @@ def main(argv: list[str] | None = None) -> int:
         if result == 0 and not projections:
             print(
                 "rig-check passed without emitting the required lane-projection "
+                "artifact",
+                file=sys.stderr,
+            )
+            return 1
+        if result == 0 and "--dry-run" not in forwarded and not project_revisions:
+            print(
+                "rig-check passed without retaining the required project-revision "
                 "artifact",
                 file=sys.stderr,
             )

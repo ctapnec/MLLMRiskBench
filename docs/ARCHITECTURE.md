@@ -28,14 +28,16 @@ not model performance or judge validity.
 | Attacks | `src/ura/adapters/` | replay, transforms, response-conditioned escalation, native-result bridges |
 | Targets | `src/ura/targets/` | exact hosted/local invocation and provider continuation state |
 | Judgment | `src/ura/judges/`, `src/ura/source_metrics.py` | ordered full-shadow cascade for common responses; source evaluator and unqueried placeholders for classification |
-| Runtime | `src/ura/runner.py`, `src/ura/live_attestation.py`, `src/ura/lane_projection.py`, `src/ura/lane_canary.py`, `experiments/run_matrix.py`, `experiments/live_attestation.py`, `experiments/lane_canary.py` | preflight, no-call projection, typed route/transport receipt production and admission, diagnostic canary summary, execution, budgets, checkpoints, recovery and manifests |
+| Runtime | `src/ura/runner.py`, `src/ura/project_revision.py`, `src/ura/live_attestation.py`, `src/ura/lane_projection.py`, `src/ura/lane_canary.py`, `experiments/run_matrix.py`, `experiments/project_revision.py`, `experiments/live_attestation.py`, `experiments/lane_canary.py` | immutable local-project admission, preflight, no-call projection, typed route/transport receipt production and admission, diagnostic canary summary, execution, budgets, checkpoints, recovery and manifests |
 | Analysis | `experiments/` | paired effects, transfer, judge sensitivity, human audit and figures |
 
 ## Direct operator flow
 
 The complete run is intentionally linear:
 
-1. clone and install the project;
+1. select and detach at one prospectively reviewed full project commit, create
+   and digest a `ura-project-revision/1` receipt from the clean checkout, export
+   its path/hash, install the project, and retain that identity for the cohort;
 2. acquire the selected converter-backed releases and upstream native projects,
    then bind labelled source instances and local media roots;
 3. set hosted credentials and review provider/data terms;
@@ -52,6 +54,17 @@ The complete run is intentionally linear:
 8. preserve all artifacts and ordinary provenance; and
 9. perform diagnostics, the automated-label-blinded/model-visible human audit,
    post-experiment analysis, and measured rendering.
+
+Every non-dry preflight, transport probe, diagnostic canary, and measured Runner
+request consumes that same digest-approved receipt. It verifies local expected
+and observed commit equality, HEAD tree, common driver/imported-harness Git root,
+clean tracked state, and current driver/harness source digests. Its compact
+binding travels through eligibility, grid, `RunManifest.config.run`, completion,
+live-attestation, and postprocessing identities. A revision change is a
+prospective protocol amendment and new cohort, not a resumable old run. A fully
+synthetic dry-run is the sole explicit exemption and records
+`mode=not_required_diagnostic_dry_run` together with actual source digests.
+Neither mode authenticates a remote repository or proves empirical validity.
 
 ## Schema and source boundaries
 
@@ -111,7 +124,7 @@ configuration failure before corpus materialization remains a separate preflight
 error because no exact source stratum can yet be derived.
 
 After the whole request passes admission and before the first generation call,
-Runner 2.8 writes a content-addressed `ura-lane-projection/1`. The artifact
+Runner 2.9 writes a content-addressed `ura-lane-projection/1`. The artifact
 binds the exact experiment condition and eligibility descriptor, selected
 record/cluster/source-policy counts, deterministic sampling identities,
 selected physical input-media bytes, and the conservative complete-grid target,
@@ -135,7 +148,7 @@ evidence remains bound through locator/SHA-256/byte descriptors; a mismatched
 embedded plan or artifact descriptor fails closed. The cohort's
 `evidence_kind` is either `diagnostic_dry_run` or `measured_run`, and those modes
 cannot be mixed in one artifact. For measured grids, the current boundary also
-consumes each grid-bound `ura-live-attestation/1` artifact by exact byte digest,
+consumes each grid-bound `ura-live-attestation/2` artifact by exact byte digest,
 reconstructs its route/config/scope/age and exact-modality prerequisite, checks
 the completed cell's stable realized identity, and reports matched record-level
 attestation support. Probe grids are diagnostic and cannot enter a measured
@@ -167,7 +180,7 @@ resume.
 Generic account-visible routes are described by `--api-config`; fixed
 provider-specific routes retain their dedicated adapters. Exact identifiers and
 capabilities are provisional until a bounded non-dry probe yields a strict
-`ura-live-attestation/1` receipt. The receipt binds its producer grid/completion
+`ura-live-attestation/2` receipt. The receipt binds its producer grid/completion
 digests, operator-declared non-secret execution scope, requested and base-resolved
 target, hosted/local route kind, secret-free route-config digest, exact delivered
 combination, UTC observation, harness/driver source digests, and realized
@@ -275,7 +288,11 @@ separate explicitly matched design supports comparison.
 `ura-native-import-envelope/2` with a relative, hashed import-config locator. On
 validation it re-runs the importer over the authoritative returned files and
 requires all substantive cases, scores, aggregates, hashes, and joins to match;
-it never executes the upstream project. The combined
+it never executes the upstream project. A `NativeEngineRun` retains the native
+repository/revision and has no Runner `RunManifest`. Consequently the URA
+revision used for import is retained in the enclosing return-package/importer
+context, not inserted as though it were an upstream-native field.
+The combined
 `experiments.suite_summary` accepts completion-validated common-run roots and
 canonical native envelopes. Its output is an evidence inventory, not a
 leaderboard: only coverage/conformance counts may be totaled globally, while

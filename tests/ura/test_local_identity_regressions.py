@@ -93,7 +93,9 @@ def test_run_matrix_rejects_multiple_local_models_per_process(tmp_path):
         ])
 
 
-def test_local_target_setup_error_does_not_persist_checkpoint_path(tmp_path):
+def test_local_target_setup_error_does_not_persist_checkpoint_path(
+    tmp_path, project_revision_args,
+):
     missing = (tmp_path / "private-workstation" / "missing-ckpt").resolve()
     spec = f"vllm:{missing}"
     digest = "0" * 64
@@ -105,6 +107,7 @@ def test_local_target_setup_error_does_not_persist_checkpoint_path(tmp_path):
 
     result = run_matrix.main([
         "--preflight-only",
+        *project_revision_args,
         "--local", spec,
         "--local-config", str(config),
         "--attackers", "replay",

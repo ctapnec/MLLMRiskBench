@@ -46,6 +46,7 @@ from ura.live_attestation import (  # noqa: E402
     stable_realized_target_identity,
     validate_required_live_attestations,
 )
+from ura.project_revision import validate_project_revision_binding  # noqa: E402
 
 
 LEVEL1_SCHEMA = "ura-level1-evidence/1"
@@ -63,6 +64,7 @@ _STRUCTURAL_NA = frozenset({
 _MAX_ERROR_BYTES = 8 * 1024 * 1024
 _CONDITION_FIELDS = frozenset({
     "execution_purpose",
+    "project_revision",
     "defense",
     "defense_guard",
     "judges",
@@ -315,6 +317,9 @@ def _condition_values(value: object) -> dict[str, Any]:
         raise ValueError("experiment condition selected-config identities are incomplete")
     for field in sorted(expected_selected):
         _selected_identity(selected[field], label=f"selected {field}")
+    validate_project_revision_binding(
+        value["project_revision"], allow_not_required=value["dry_run"]
+    )
     _live_attestation_projection(value["live_attestation"])
     return value
 
@@ -336,6 +341,11 @@ def _condition_from_plan(plan: dict[str, Any]) -> dict[str, Any]:
         raise ValueError("eligibility experiment condition ID/content mismatch")
     if values["dry_run"] is not plan["request"]["dry_run"]:
         raise ValueError("eligibility request/condition dry-run mismatch")
+    project_revision = validate_project_revision_binding(
+        bindings.get("project_revision")
+    )
+    if project_revision != values["project_revision"]:
+        raise ValueError("eligibility project-revision condition mismatch")
     selected = bindings.get("selected_config_identities")
     if not isinstance(selected, dict) or selected != values[
         "selected_config_identities"
@@ -379,6 +389,9 @@ def _grid_condition(request: Mapping[str, Any]) -> dict[str, Any]:
     }
     values = {
         "execution_purpose": request.get("execution_purpose"),
+        "project_revision": validate_project_revision_binding(
+            request.get("project_revision")
+        ),
         "defense": request.get("defense"),
         "defense_guard": request.get("defense_guard"),
         "judges": judges,
@@ -423,6 +436,27 @@ def _validate_grid_plan_bindings(
     bindings = plan["bindings"]
     if request.get("driver_source") != bindings.get("driver_source"):
         raise ValueError("grid/eligibility driver-source binding mismatch")
+    project_revision = validate_project_revision_binding(
+        request.get("project_revision")
+    )
+    if project_revision != validate_project_revision_binding(
+        bindings.get("project_revision")
+    ):
+        raise ValueError("grid/eligibility project-revision binding mismatch")
+    harness_source = request.get("harness_source")
+    driver_source = request.get("driver_source")
+    if (
+        not isinstance(harness_source, dict)
+        or project_revision["harness_source_sha256"]
+        != harness_source.get("sha256")
+    ):
+        raise ValueError("grid/project-revision harness-source mismatch")
+    if (
+        not isinstance(driver_source, dict)
+        or project_revision["driver_source_sha256"]
+        != driver_source.get("sha256")
+    ):
+        raise ValueError("grid/project-revision driver-source mismatch")
     for request_field, binding_field in (
         ("source_instances", "source_instances_sha256"),
         ("attacker_configs", "attacker_configs_sha256"),
@@ -650,6 +684,9 @@ def _bind_live_attestations(
                 if isinstance(request.get("driver_source"), dict)
                 else None,
                 "measured grid experiment driver source sha256",
+            ),
+            current_project_revision=validate_project_revision_binding(
+                request.get("project_revision"), allow_not_required=False
             ),
             reference_time=_utc_timestamp(
                 grid.get("started_at"), label="measured grid started_at"
@@ -1874,7 +1911,7 @@ def main(argv: list[str] | None = None) -> int:
         action="append",
         default=[],
         help=(
-            "typed ura-live-attestation/1 JSON; repeat and pair positionally "
+            "typed ura-live-attestation/2 JSON; repeat and pair positionally "
             "with --live-attestation-sha256"
         ),
     )

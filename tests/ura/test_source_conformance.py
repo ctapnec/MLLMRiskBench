@@ -516,6 +516,7 @@ def test_synthetic_offline_path_ignores_real_source_receipt_environment(
 
 def test_synthetic_transport_diagnostic_allows_offline_mock_judge(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    project_revision_args,
 ) -> None:
     """An all-synthetic target diagnostic may use mock labels without a receipt."""
 
@@ -534,6 +535,7 @@ def test_synthetic_transport_diagnostic_allows_offline_mock_judge(
 
     assert run_matrix.main([
         "--attestation-probe", "--execution-scope-id", "test-scope",
+        *project_revision_args,
         "--api", "diagnostic-target", "--attackers", "replay",
         "--judges", "rules,llm",
         "--judge-model", "mock",

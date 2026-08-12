@@ -14,6 +14,21 @@ _HASH_A = "a" * 64
 _HASH_B = "b" * 64
 
 
+def _project_revision() -> dict[str, object]:
+    return {
+        "mode": "verified",
+        "revision_id": "project-revision-" + "c" * 24,
+        "file": "project-revision-" + "c" * 24 + ".project-revision.json",
+        "sha256": "d" * 64,
+        "bytes": 100,
+        "expected_commit": "e" * 40,
+        "observed_commit": "e" * 40,
+        "head_tree": "f" * 40,
+        "harness_source_sha256": _HASH_B,
+        "driver_source_sha256": _HASH_A,
+    }
+
+
 def test_figure_point_and_bootstrap_equal_weight_prompt_clusters() -> None:
     paired = {}
     for index, (datapoint, left_value) in enumerate([
@@ -339,6 +354,7 @@ def _cell(
                 "quantization": "none",
                 "dtype": "auto",
                 "dry_run": False,
+                "project_revision": _project_revision(),
                 "driver_source": {
                     "module": "run_matrix.py",
                     "sha256": _HASH_A,
@@ -426,6 +442,7 @@ def _grid(root: Path, *, name: str, cells: list[dict[str, Any]]) -> Path:
             "attackers": attackers,
             "defense": next(iter(defenses)),
             "dry_run": False,
+            "project_revision": _project_revision(),
             "attestation_probe": False,
             "live_attestation": {
                 "mode": "measured",
@@ -999,6 +1016,32 @@ def test_loader_rejects_completion_from_a_different_grid_condition(
     _refresh_marker(cell)
 
     with pytest.raises(ValueError, match="grid/completed-artifact condition mismatch"):
+        figure_results.load_model_results(
+            tmp_path,
+            left_model="left",
+            right_model="right",
+            corpora=["alpha"],
+            policy_label="policy",
+            multiplicity_family="family",
+            minimum_cell_n=1,
+        )
+
+
+def test_loader_rejects_completion_from_a_different_project_revision(
+    tmp_path: Path,
+) -> None:
+    cells = _paired_model_grid(tmp_path)
+    cell = cells[0]
+    manifest = json.loads(cell["paths"]["manifest"].read_text(encoding="utf-8"))
+    revision = manifest["config"]["run"]["project_revision"]
+    revision["revision_id"] = "project-revision-" + "9" * 24
+    revision["file"] = revision["revision_id"] + ".project-revision.json"
+    revision["expected_commit"] = "8" * 40
+    revision["observed_commit"] = "8" * 40
+    cell["paths"]["manifest"].write_text(json.dumps(manifest), encoding="utf-8")
+    _refresh_marker(cell)
+
+    with pytest.raises(ValueError, match="project-revision mismatch"):
         figure_results.load_model_results(
             tmp_path,
             left_model="left",

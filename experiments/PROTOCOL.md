@@ -37,9 +37,9 @@ not replaced with a nearby model. A failed/stale live attestation or silent
 identity drift is a missing/failed prerequisite, not a safe zero and not
 silently rewritten as structural incompatibility.
 
-Runner 2.8 operationalizes this distinction. One completed, bounded, non-dry
+Runner 2.9 operationalizes this distinction. One completed, bounded, non-dry
 `--attestation-probe` is converted without another provider call into a strict
-`ura-live-attestation/1` receipt. Each ordinary measured grid must supply the
+`ura-live-attestation/2` receipt. Each ordinary measured grid must supply the
 receipt's exact byte digest, the same operator-declared non-secret
 `execution_scope_id`, and an explicit maximum age. Admission matches requested
 and base-resolved identity, secret-free route configuration, hosted/local route
@@ -205,38 +205,58 @@ are never pooled into one rate or ranking.
 
 ## Direct execution
 
-1. Acquire/install the project, all selected releases, and isolated pinned
-   native projects; record licenses and content digests.
-2. Create source, hosted API, local target, attacker, and separate scoring versus
+1. Before source acquisition, select one prospectively reviewed full 40-hex URA
+   project commit, check it out detached, and create/digest/validate one
+   `ura-project-revision/1` receipt from the clean local checkout. Export its
+   path and SHA-256 for every non-dry Runner request, then install dependencies.
+   A revision change requires a recorded protocol amendment and new cohort.
+2. Acquire all selected releases and isolated pinned native projects; record
+   licenses and content digests.
+3. Create source, hosted API, local target, attacker, and separate scoring versus
    defense-guard configurations without embedding credentials or machine paths.
-3. Run `experiments.rig_check` for each planned lane. Review source-policy counts
+4. Run `experiments.rig_check` for each planned lane. Review source-policy counts
    and the content-addressed conservative target/judge/guard/HTTP call
    projection. Retain these
    diagnostic plans under a separate preflight tree; do not mix them with the
    measured runner cohort. Record operator approval and a provider-side project
    quota for complete-projection caps before any campaign.
-4. Perform tiny bounded real endpoint/modality probes; derive and hash their
+5. Perform tiny bounded real endpoint/modality probes; derive and hash their
    typed receipts. Synthetic live text/text+one-pixel-image probes require no
    source receipt or human rating, while audio/video require prepared real media.
    All probes diagnose target access and transport only and are excluded from
    results.
-5. Where required, execute one separately typed whole-cluster diagnostic canary
+6. Where required, execute one separately typed whole-cluster diagnostic canary
    and build its offline summary; then execute eligible static, adaptive,
    multimodal, source-specific, and local
    defense lanes with finite budgets; retain every `N/A` reason.
-6. Execute the nine upstream native campaigns and import their complete outputs.
-7. Build Level-1 evidence from every final plan and every exact grid-bound live
+7. Execute the nine upstream native campaigns and import their complete outputs.
+   Their canonical `NativeEngineRun` records retain upstream revisions and have
+   no Runner manifest; retain the URA import revision in the enclosing return-
+   package/importer context rather than rewriting an upstream-native field.
+8. Build Level-1 evidence from every final plan and every exact grid-bound live
    receipt in the selected measured runner cohort, including plan-only
    `N/A`/blocked requests and excluding preflight and probe trees. Then build the
    no-pooling suite inventory; run paired
    effects, transfer, judge sensitivity, and the independently labelled human
    audit.
-8. Render measured focal figures only from completion-validated runs bound to
+9. Render measured focal figures only from completion-validated runs bound to
    the final human-audit artifact.
 
-The operator records exact commands, project/upstream commits, environments,
-source/config digests, run dates, provider terms reviewed, and manual
-interventions.
+The runtime binds the prospective URA receipt into every non-dry eligibility
+condition, grid, Runner manifest and completion identity, and rechecks the local
+checkout/source bytes before execution boundaries and final publication. The
+operator separately records exact commands, expected/observed URA commit and
+checkout status, upstream commits, environments, source/config digests, run
+dates, provider terms reviewed, and manual interventions. Those operator notes
+are self-recorded provenance, not a substitute for the runtime binding.
+
+The receipt proves only local expected/observed commit equality, HEAD tree,
+clean tracked state, common driver/imported-harness Git root, and current source
+digests. It does not authenticate the remote, bind dependencies or upstream
+native/source revisions, or establish empirical validity. Fully synthetic
+dry-runs may omit it only under
+`project_revision.mode=not_required_diagnostic_dry_run`; all non-dry preflights,
+transport probes, diagnostic canaries, and measured grids require it.
 
 ## Paid-call containment, guards, and recovery
 
@@ -256,7 +276,9 @@ price/cost, runtime/throughput, and expected output storage are
 `CANNOT-VERIFY`. The provider-side quota and operator approval are separate from
 the Runner ledger.
 
-`rig_check` and dry-run neither consume nor produce live receipts. A probe is a
+`rig_check` and dry-run neither consume nor produce live-attestation receipts.
+The non-dry preflight and probe do consume the separate URA project-revision
+receipt. A probe is a
 separate real, single-target/single-source/replay/single-seed/no-defense command
 with one query and turn and `--limit 1` or `2`; it consumes no earlier receipt.
 Every other non-dry grid requires at least one exact paired

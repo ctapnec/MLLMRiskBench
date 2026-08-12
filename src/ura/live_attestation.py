@@ -18,9 +18,10 @@ from pathlib import Path
 from typing import Any, Iterable, Mapping, Sequence
 
 from .modality_coverage import canonical_modality_combination
+from .project_revision import validate_project_revision_binding
 
 
-LIVE_ATTESTATION_SCHEMA = "ura-live-attestation/1"
+LIVE_ATTESTATION_SCHEMA = "ura-live-attestation/2"
 _HEX64 = re.compile(r"[0-9a-f]{64}")
 _ID = re.compile(r"live-attestation-[0-9a-f]{24}")
 _SCOPE = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}")
@@ -54,6 +55,7 @@ _PROBE_FIELDS = frozenset({
     "attempt_media_hashes_sha256",
     "harness_source_sha256",
     "driver_source_sha256",
+    "project_revision",
 })
 _DESCRIPTOR_FIELDS = frozenset({"file", "sha256", "bytes"})
 _REALIZED_FIELDS = frozenset({
@@ -336,6 +338,19 @@ def validate_live_attestation_manifest(value: object) -> dict[str, Any]:
             probe.get("driver_source_sha256"),
             f"{label}.probe.driver_source_sha256",
         )
+        project_revision = validate_project_revision_binding(
+            probe.get("project_revision"), allow_not_required=False
+        )
+        if (
+            project_revision["harness_source_sha256"]
+            != probe["harness_source_sha256"]
+        ):
+            raise ValueError(f"{label}.probe project/harness source mismatch")
+        if (
+            project_revision["driver_source_sha256"]
+            != probe["driver_source_sha256"]
+        ):
+            raise ValueError(f"{label}.probe project/driver source mismatch")
         expected_record_id = _record_id(raw)
         if raw.get("record_id") != expected_record_id:
             raise ValueError(f"{label} record_id/content mismatch")
@@ -468,6 +483,7 @@ def validate_required_live_attestations(
     route_kind: Mapping[str, str],
     current_harness_source_sha256: str,
     current_driver_source_sha256: str,
+    current_project_revision: Mapping[str, Any],
     reference_time: datetime,
     max_age_hours: float,
 ) -> dict[tuple[str, str, tuple[str, ...]], dict[str, Any]]:
@@ -483,6 +499,13 @@ def validate_required_live_attestations(
         current_driver_source_sha256,
         "current experiment driver source sha256",
     )
+    project_revision = validate_project_revision_binding(
+        current_project_revision, allow_not_required=False
+    )
+    if project_revision["harness_source_sha256"] != harness_digest:
+        raise ValueError("current project revision/harness source mismatch")
+    if project_revision["driver_source_sha256"] != driver_digest:
+        raise ValueError("current project revision/experiment driver mismatch")
     if not isinstance(max_age_hours, (int, float)) or isinstance(max_age_hours, bool):
         raise ValueError("live-attestation max age must be numeric")
     if not 0 < float(max_age_hours) <= 24 * 365:
@@ -514,6 +537,10 @@ def validate_required_live_attestations(
             if record["probe"]["driver_source_sha256"] != driver_digest:
                 raise ValueError(
                     f"live attestation experiment driver mismatch for {requested}"
+                )
+            if record["probe"]["project_revision"] != project_revision:
+                raise ValueError(
+                    f"live attestation project revision mismatch for {requested}"
                 )
             observed = _timestamp(record["observed_at_utc"], "observed_at_utc")
             age_hours = (reference_time.astimezone(timezone.utc) - observed).total_seconds() / 3600
