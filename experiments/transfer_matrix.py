@@ -391,6 +391,13 @@ def _completed_cell(path: Path) -> dict[str, Any]:
             f"{manifest.get('schema_version')!r}; expected {SCHEMA_VERSION!r}"
         )
     _validate_source_identity(manifest, path=manifest_path)
+    run_config = (manifest.get("config") or {}).get("run")
+    if not isinstance(run_config, dict):
+        raise ValueError(f"completed cell manifest lacks config.run: {manifest_path}")
+    if run_config.get("execution_purpose") == "diagnostic_canary":
+        raise ValueError(
+            f"diagnostic canary is not measured postprocessing evidence: {manifest_path}"
+        )
     resolved = {
         role: _artifact_path(path.parent, artifacts[role], marker=complete_path, role=role)
         for role in sorted(required)
@@ -631,6 +638,8 @@ def _validate_grid_scope(
         ):
             raise ValueError(f"incomplete grid accounting in {path}")
         request = grid["request"]
+        if request.get("execution_purpose") == "diagnostic_canary":
+            raise ValueError(f"diagnostic canary is not measured evidence: {path}")
         models = request.get("models")
         corpora = request.get("corpora")
         attackers = request.get("attackers")

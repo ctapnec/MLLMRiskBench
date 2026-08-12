@@ -15,7 +15,10 @@ import ura.cli as cli_module
 import ura.runner as runner_module
 import ura.targets.api as target_api_module
 from experiments import live_attestation as live_attestation_cli
+from experiments.figure_results import _load_cells
+from experiments.human_audit import _validated_artifacts
 from experiments.level1_evidence import main as level1_evidence_main
+from experiments.suite_summary import main as suite_summary_main
 from experiments.run_matrix import _safe_component
 from ura.adapters.base import AttackBudget, BaseAttacker
 from ura.adapters.crescendo import CrescendoAttacker
@@ -287,6 +290,43 @@ def test_limit_selects_exact_whole_clusters_and_audits_cluster_inventory(
     }
     assert set(audit["selected_cluster_ids"]) == selected_ids
     assert audit["limit_unit"] == "source_prompt_or_intent_clusters"
+    assert audit["selection_method"] == "seeded_nested_source_cluster_prefix_v1"
+
+
+def test_cluster_limits_are_nested_prefixes_for_one_sample_seed(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+) -> None:
+    records = [
+        _datapoint(f"{cluster}-{row}").model_copy(update={
+            "meta": {"source_cluster_id": cluster}
+        })
+        for cluster in ("intent-a", "intent-b", "intent-c", "intent-d")
+        for row in range(2)
+    ]
+
+    class _Converter:
+        @staticmethod
+        def parse(_path: Path) -> list[DataPoint]:
+            return records
+
+    source = tmp_path / "source.jsonl"
+    source.write_text("fixture\n", encoding="utf-8")
+    monkeypatch.setattr(run_matrix, "get_converter", lambda _name: _Converter())
+    monkeypatch.setattr(run_matrix, "_corpus_path", lambda _name: source)
+
+    one, audit_one = run_matrix.load_corpus_with_audit(
+        "clustered", 1, sample_seed=19
+    )
+    three, audit_three = run_matrix.load_corpus_with_audit(
+        "clustered", 3, sample_seed=19
+    )
+
+    one_clusters = {row.meta["source_cluster_id"] for row in one}
+    three_clusters = {row.meta["source_cluster_id"] for row in three}
+    assert one_clusters < three_clusters
+    assert set(audit_one["selected_cluster_ids"]) < set(
+        audit_three["selected_cluster_ids"]
+    )
 
 
 def test_real_corpus_runs_directly_and_records_source_identity(
@@ -858,6 +898,185 @@ def test_probe_producer_and_measured_run_bind_one_fake_live_route(
         "target": target.name,
     }
     assert len(list(measured.glob("live-attestation-*.json"))) == 1
+
+
+@pytest.mark.parametrize("incompatible", ["--preflight-only", "--attestation-probe"])
+def test_diagnostic_canary_rejects_other_execution_purposes(
+    tmp_path: Path, incompatible: str,
+) -> None:
+    with pytest.raises(SystemExit, match="2"):
+        run_matrix.main([
+            "--diagnostic-canary", incompatible,
+            "--corpora", "synth", "--limit", "1",
+            "--out", str(tmp_path / incompatible.removeprefix("--")),
+        ])
+
+
+def test_fully_synthetic_diagnostic_canary_completes_and_is_excluded(
+    tmp_path: Path,
+) -> None:
+    out = tmp_path / "synthetic-canary"
+    assert run_matrix.main([
+        "--diagnostic-canary", "--dry-run",
+        "--attackers", "replay", "--judges", "rules",
+        "--corpora", "synth", "--limit", "1", "--seeds", "9",
+        "--max-queries", "3", "--max-turns", "2", "--out", str(out),
+    ]) == 0
+
+    grid = json.loads(next(out.glob("*.grid.json")).read_text(encoding="utf-8"))
+    assert grid["request"]["execution_purpose"] == "diagnostic_canary"
+    assert grid["request"]["dry_run"] is True
+    assert grid["request"]["live_attestation"] == {
+        "mode": "not_required",
+        "execution_scope_id": None,
+        "max_age_hours": None,
+        "artifacts": [],
+    }
+    plan = json.loads(next(out.glob("*.eligibility.json")).read_text(encoding="utf-8"))
+    assert plan["bindings"]["experiment_conditions"]["values"][
+        "execution_purpose"
+    ] == "diagnostic_canary"
+    manifest = json.loads(next(out.glob("*.manifest.json")).read_text(encoding="utf-8"))
+    assert manifest["config"]["run"]["execution_purpose"] == "diagnostic_canary"
+    with pytest.raises(ValueError, match="diagnostic canary"):
+        _load_cells(out)
+    assert len(_load_cells(out, _allow_diagnostic_canary=True)) == 1
+    with pytest.raises(ValueError, match="diagnostic canary"):
+        _validated_artifacts(out)
+    assert suite_summary_main([
+        "--results", str(out), "--out", str(tmp_path / "suite.json")
+    ]) == 1
+    assert level1_evidence_main([
+        "--eligibility", str(next(out.glob("*.eligibility.json"))),
+        "--results", str(out),
+        "--out-json", str(tmp_path / "synthetic-level1.json"),
+        "--out-csv", str(tmp_path / "synthetic-level1.csv"),
+    ]) == 1
+
+
+def test_diagnostic_canary_is_typed_and_excluded_from_measured_consumers(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class StableCanaryTarget(BaseTarget):
+        name = "stable-canary-target"
+        modality_support = ("text",)
+        max_transport_attempts_per_call = 1
+
+        def __init__(self) -> None:
+            self.calls = 0
+
+        def generate(self, dialog, *, seed=None):
+            self.calls += 1
+            return Response(
+                attempt_id="target-placeholder",
+                target=self.name,
+                output_turns=[DialogTurn(role="assistant", content="I cannot help.")],
+                raw={
+                    "sampling_control": "seeded",
+                    "provider": "fixture-provider",
+                    "resolved_model": "fixture-resolved-v1",
+                },
+            )
+
+    target = StableCanaryTarget()
+    monkeypatch.setattr(run_matrix, "build_target", lambda *_a, **_kw: target)
+    target_spec = "openai:fixture-canary"
+    out = tmp_path / "canary"
+    result = run_matrix.main([
+        "--diagnostic-canary",
+        "--api", target_spec, *_api_config_args(tmp_path, target_spec),
+        *_live_attestation_args(
+            tmp_path,
+            target_spec=target_spec,
+            resolved_target=target.name,
+            realized_identity={
+                "target": target.name,
+                "provider": "fixture-provider",
+                "resolved_model": "fixture-resolved-v1",
+            },
+        ),
+        "--attackers", "replay", "--judges", "rules",
+        "--corpora", "synth", "--limit", "1", "--seeds", "7",
+        "--max-queries", "3", "--max-turns", "2",
+        *_finite_budget_args(), "--out", str(out),
+    ])
+
+    assert result == 0
+    assert target.calls > 0
+    grid = json.loads(next(out.glob("*.grid.json")).read_text(encoding="utf-8"))
+    assert grid["request"]["execution_purpose"] == "diagnostic_canary"
+    assert grid["request"]["max_queries"] == 3
+    assert grid["request"]["max_turns"] == 2
+    assert grid["request"]["judges"] == ["rules"]
+    plan_path = next(out.glob("*.eligibility.json"))
+    plan = json.loads(plan_path.read_text(encoding="utf-8"))
+    conditions = plan["bindings"]["experiment_conditions"]
+    assert conditions["values"]["execution_purpose"] == "diagnostic_canary"
+    manifest = json.loads(next(out.glob("*.manifest.json")).read_text(encoding="utf-8"))
+    assert manifest["config"]["run"]["execution_purpose"] == "diagnostic_canary"
+    assert manifest["config"]["run"]["sampling_audit"]["selected_clusters"] == 1
+
+    with pytest.raises(ValueError, match="diagnostic canary"):
+        _load_cells(out)
+    assert len(_load_cells(out, _allow_diagnostic_canary=True)) == 1
+    with pytest.raises(ValueError, match="diagnostic canary"):
+        _validated_artifacts(out)
+    assert suite_summary_main([
+        "--results", str(out), "--out", str(tmp_path / "real-suite.json")
+    ]) == 1
+    assert level1_evidence_main([
+        "--eligibility", str(plan_path), "--results", str(out),
+        "--out-json", str(tmp_path / "level1.json"),
+        "--out-csv", str(tmp_path / "level1.csv"),
+    ]) == 1
+    assert not (tmp_path / "level1.json").exists()
+
+
+@pytest.mark.parametrize("diagnostic_canary", [False, True])
+def test_provider_backed_request_requires_caps_for_full_projected_work(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    diagnostic_canary: bool,
+) -> None:
+    class NeverCalledTarget(BaseTarget):
+        name = "canary-cap-target"
+        modality_support = ("text",)
+        max_transport_attempts_per_call = 1
+
+        def __init__(self) -> None:
+            self.calls = 0
+
+        def generate(self, dialog, *, seed=None):  # pragma: no cover - admission blocks
+            self.calls += 1
+            raise AssertionError("call budget admission should fail before generation")
+
+    target = NeverCalledTarget()
+    monkeypatch.setattr(run_matrix, "build_target", lambda *_a, **_kw: target)
+    target_spec = "openai:fixture-canary-cap"
+    out = tmp_path / ("canary-cap" if diagnostic_canary else "measured-cap")
+    purpose_args = ["--diagnostic-canary"] if diagnostic_canary else []
+    result = run_matrix.main([
+        *purpose_args,
+        "--api", target_spec, *_api_config_args(tmp_path, target_spec),
+        *_live_attestation_args(
+            tmp_path,
+            target_spec=target_spec,
+            resolved_target=target.name,
+        ),
+        "--attackers", "crescendo", "--judges", "rules",
+        "--corpora", "synth", "--limit", "1", "--seeds", "0",
+        "--max-queries", "4", "--max-turns", "4",
+        "--max-total-target-calls", "1",
+        "--max-total-judge-calls", "1",
+        "--max-total-http-attempts", "1",
+        "--deadline-seconds", "3600", "--out", str(out),
+    ])
+
+    assert result == 1
+    assert target.calls == 0
+    error = json.loads((out / "grid-planning.error.json").read_text(encoding="utf-8"))
+    assert "for the complete planned grid" in error["message"]
 
 
 def test_local_probe_receipt_admits_measured_run_and_level1(
@@ -2399,6 +2618,32 @@ def test_input_defense_block_does_not_claim_attested_identity_drift() -> None:
     assert base.calls == 0
     assert runner.responses[0].raw["defense"] == "blocked"
     assert runner.responses[0].raw["stage"] == "input"
+
+
+def test_guarded_target_records_successfully_evaluated_defense_stages() -> None:
+    class SafeGuard:
+        name = "safe-guard"
+
+        @staticmethod
+        def judge_input(_dialog):
+            return Judgment(
+                attempt_id="guard", judge="safe-guard", label="safe",
+                score=0.0, confidence=1.0,
+            )
+
+        @staticmethod
+        def judge(_datapoint, _response):
+            return Judgment(
+                attempt_id="guard", judge="safe-guard", label="safe",
+                score=0.0, confidence=1.0,
+            )
+
+    guarded = GuardedTarget(MockTarget(), SafeGuard(), mode="both")
+    response = guarded.generate([DialogTurn(role="user", content="Hello")], seed=3)
+
+    assert response.raw["defense"] == "passed"
+    assert response.raw["defense_stages_evaluated"] == ["input", "output"]
+    assert response.raw["base_target_queried"] is True
 
 
 def test_runner_rejects_mid_cell_judge_system_fingerprint_drift() -> None:

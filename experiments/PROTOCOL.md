@@ -37,7 +37,7 @@ not replaced with a nearby model. A failed/stale live attestation or silent
 identity drift is a missing/failed prerequisite, not a safe zero and not
 silently rewritten as structural incompatibility.
 
-Runner 2.7 operationalizes this distinction. One completed, bounded, non-dry
+Runner 2.8 operationalizes this distinction. One completed, bounded, non-dry
 `--attestation-probe` is converted without another provider call into a strict
 `ura-live-attestation/1` receipt. Each ordinary measured grid must supply the
 receipt's exact byte digest, the same operator-declared non-secret
@@ -99,6 +99,12 @@ cluster-rule/assignment, policy, metric and media evidence derived by the normal
 receipt validates recorded acquisition/conversion conditions; it does not establish
 upstream authenticity. The operator review is not a legal determination, and
 the semantic spot-check is not scientific or evaluator validation.
+
+For one unchanged real converted-corpus digest and `sample_seed`, bounded
+cluster selection is a deterministic nested prefix. Thus the cluster selected
+by `--limit 1` remains in a later `--limit N` cohort, and every sibling row in a
+selected cluster is retained. This supports operational canary continuity; it
+does not make the canary statistically representative.
 
 Conversion is necessary but insufficient for scored admission. A common harmful
 or benign endpoint requires compatible expected behavior and implemented judge
@@ -204,15 +210,19 @@ are never pooled into one rate or ranking.
 2. Create source, hosted API, local target, attacker, and separate scoring versus
    defense-guard configurations without embedding credentials or machine paths.
 3. Run `experiments.rig_check` for each planned lane. Review source-policy counts
-   and conservative target/judge/guard/HTTP call projections. Retain these
+   and the content-addressed conservative target/judge/guard/HTTP call
+   projection. Retain these
    diagnostic plans under a separate preflight tree; do not mix them with the
-   measured runner cohort.
+   measured runner cohort. Record operator approval and a provider-side project
+   quota for complete-projection caps before any campaign.
 4. Perform tiny bounded real endpoint/modality probes; derive and hash their
    typed receipts. Synthetic live text/text+one-pixel-image probes require no
    source receipt or human rating, while audio/video require prepared real media.
    All probes diagnose target access and transport only and are excluded from
    results.
-5. Execute eligible static, adaptive, multimodal, source-specific, and local
+5. Where required, execute one separately typed whole-cluster diagnostic canary
+   and build its offline summary; then execute eligible static, adaptive,
+   multimodal, source-specific, and local
    defense lanes with finite budgets; retain every `N/A` reason.
 6. Execute the nine upstream native campaigns and import their complete outputs.
 7. Build Level-1 evidence from every final plan and every exact grid-bound live
@@ -235,6 +245,17 @@ ceilings. `rig_check` is no-call: it can load a selected local guard and check
 credential presence, but cannot prove key validity, entitlement, quota,
 reachability, routing, model visibility, or physical-media transport.
 
+After successful whole-request admission and before generation,
+`run_matrix` persists `ura-lane-projection/1`. It binds the exact eligibility
+condition, selected row/cluster/source-policy counts, selected input-media bytes,
+and `conservative_complete_grid_upper_bound_v1`. `rig_check` retains the same
+artifact class; the exact measured grid also binds its own projection. Every
+non-dry provider-backed logical-call and declared HTTP-attempt ceiling must cover
+the complete projection or admission fails before a provider call. Token use,
+price/cost, runtime/throughput, and expected output storage are
+`CANNOT-VERIFY`. The provider-side quota and operator approval are separate from
+the Runner ledger.
+
 `rig_check` and dry-run neither consume nor produce live receipts. A probe is a
 separate real, single-target/single-source/replay/single-seed/no-defense command
 with one query and turn and `--limit 1` or `2`; it consumes no earlier receipt.
@@ -249,6 +270,18 @@ Harness or experiment-driver source drift requires a new probe rather than
 silently reusing transport evidence produced by different serialization code.
 This is a small admission control, not a workflow engine or cryptographic trust
 service.
+
+`--diagnostic-canary` admits exactly one target, source arm, attacker, seed, and
+whole cluster. `experiments.lane_canary` makes no provider call and emits a
+strict content-addressed `ura-lane-canary/1`: `synthetic_offline` for
+`--dry-run --corpora synth`, or `live_diagnostic` for a live-attested route. The
+summary separates reserved logical calls/HTTP exposure from client-reported
+observed attempts and records only observed artifact bytes, timing records,
+decision support, and role reachability. No single-cluster cost, throughput,
+storage, safety, validity, or campaign extrapolation is permitted. Level-1,
+figures, suite summary, paired/transfer analysis, and human-audit preparation
+reject canary grids. Source-native one-case canaries remain in their independent
+upstream runtimes and outside measured native imports.
 
 A model-backed defense uses one shared defense-guard instance on an explicit
 device. Its model identity differs from the scoring guard so the tested guard
@@ -309,8 +342,8 @@ undefined.
   judge abstention, incomplete artifact, and undefined statistic.
 - Treat cross-provider comparisons as associations and same-base defense pairs
   as the only planned defense-effect design.
-- Never promote synthetic, dry-run, transport-attestation probe, incomplete, or mock
-  artifacts to empirical evidence.
+- Never promote synthetic, dry-run, diagnostic-canary, transport-attestation
+  probe, incomplete, or mock artifacts to empirical evidence.
 
 The complete setup and return checklist is in
 [RUN_AND_RETURN.md](RUN_AND_RETURN.md).

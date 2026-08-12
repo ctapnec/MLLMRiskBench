@@ -1,12 +1,14 @@
 """Run every whole-cell no-call plan and retain its preflight evidence."""
 from __future__ import annotations
 
+import hashlib
 import json
 from pathlib import Path
 import sys
 from tempfile import TemporaryDirectory
 
 from experiments import run_matrix
+from ura.lane_projection import load_lane_projection_file
 
 
 def _requested_output(arguments: list[str]) -> Path:
@@ -29,6 +31,7 @@ def _persist_eligibility_artifacts(scratch: Path, destination: Path) -> list[Pat
 
     sources = sorted({
         *scratch.glob("eligibility-*.eligibility.json"),
+        *scratch.glob("lane-projection-*.lane-projection.json"),
         *scratch.glob("source-conformance-*.json"),
     })
     if not sources:
@@ -39,6 +42,10 @@ def _persist_eligibility_artifacts(scratch: Path, destination: Path) -> list[Pat
     copied: list[Path] = []
     for source in sources:
         payload = source.read_bytes()
+        if source.name.endswith(".lane-projection.json"):
+            load_lane_projection_file(
+                source, hashlib.sha256(payload).hexdigest()
+            )
         target = destination / source.name
         if target.exists():
             if not target.is_file() or target.is_symlink():
@@ -81,9 +88,21 @@ def main(argv: list[str] | None = None) -> int:
             if path.name.startswith("eligibility-")
             and path.name.endswith(".eligibility.json")
         ]
+        projections = [
+            path for path in copied
+            if path.name.startswith("lane-projection-")
+            and path.name.endswith(".lane-projection.json")
+        ]
         if result == 0 and not eligibility:
             print(
                 "rig-check passed without emitting the required eligibility artifact",
+                file=sys.stderr,
+            )
+            return 1
+        if result == 0 and not projections:
+            print(
+                "rig-check passed without emitting the required lane-projection "
+                "artifact",
                 file=sys.stderr,
             )
             return 1

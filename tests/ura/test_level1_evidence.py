@@ -47,6 +47,7 @@ def _conditions(
         "local_config": None,
     }
     values = {
+        "execution_purpose": "diagnostic_dry_run" if dry_run else "measured_run",
         "defense": defense,
         "defense_guard": "rules",
         "judges": ["rules"],

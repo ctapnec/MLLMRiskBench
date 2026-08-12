@@ -4,10 +4,10 @@ This is the operator path from a clean Linux GPU machine to the evidence bundle
 for the thesis. It covers the broad hosted and local model roster, all nineteen
 source converters, the runner-safe external attack bridges, and nine complete
 source-native evaluators. Experiments and the human audit are still pending.
-Preflight, dry-run, and one-record transport probes are diagnostics, not thesis
-results.
+Preflight, dry-run, diagnostic-canary, and bounded transport-probe artifacts are
+diagnostics, not thesis results.
 
-The maintained artifact contract is Runner `ura-runner/2.7` with unified schema
+The maintained artifact contract is Runner `ura-runner/2.8` with unified schema
 `1.4`. Do not combine older-runner artifacts with this program.
 
 The program is deliberately lane-based. A model is tested on every physical
@@ -699,7 +699,7 @@ python -m experiments.figures --synth --out runs/thesis/diagnostics/figure-check
 
 ### 8.1 Explicit zero-human synthetic paths
 
-Two synthetic paths are available without a human audit, but neither produces a
+Synthetic paths are available without a human audit, but none produces a
 benchmark result or human-validity claim.
 
 **A. Fully synthetic/offline.** The `--dry-run --corpora synth` command above
@@ -707,6 +707,42 @@ uses `MockTarget` plus automated rule and mock-LLM fixture paths. It makes no
 provider call and requires no source acquisition, source receipt, or human
 rating. Its artifacts demonstrate only schema, orchestration, persistence,
 budget, and automated-fixture behavior.
+
+For the smallest fully synthetic, explicitly typed one-cluster canary, run the
+following exact command. `mock` is allowed here only because
+`--diagnostic-canary --dry-run --corpora synth` fixes the evidence as diagnostic;
+never configure a mock judge in a non-dry or measured command.
+
+```bash
+export SYNTH_CANARY_ROOT='runs/thesis/diagnostics/canary-synthetic-offline'
+
+python -m experiments.run_matrix \
+  --diagnostic-canary --dry-run \
+  --attackers replay --judges rules,llm --judge-model mock \
+  --corpora synth --limit 1 --sample-seed 0 --seeds 0 \
+  --max-queries 1 --max-turns 1 \
+  --out "$SYNTH_CANARY_ROOT"
+
+SYNTH_CANARY_ELIGIBILITY="$(find "$SYNTH_CANARY_ROOT" -maxdepth 1 -type f \
+  -name 'eligibility-*.eligibility.json' -print -quit)"
+test -n "$SYNTH_CANARY_ELIGIBILITY"
+
+python -m experiments.lane_canary \
+  --results "$SYNTH_CANARY_ROOT" \
+  --eligibility "$SYNTH_CANARY_ELIGIBILITY" \
+  --out-dir "$SYNTH_CANARY_ROOT"
+```
+
+The first command makes no provider call and needs no credentials, source
+acquisition, source receipt, or human work. Before any mock target execution it
+persists the exact content-addressed `ura-lane-projection/1`; the second command
+makes no call and writes a content-addressed `ura-lane-canary/1`. Inspect its
+`evidence_class=synthetic_offline`, `campaign_authorized=false`, and
+`empirical_benchmark_evidence=false`. The mock full-shadow decision path proves
+only fixture and pipeline behavior. This typed canary is intentionally rejected
+by Level-1, figures, suite summary, paired/transfer analysis, and human-audit
+preparation; use the broader diagnostic dry-run below only for the separate
+Level-1 lifecycle check.
 
 If the real-source receipt environment variables from section 4.1 remain
 exported, a synthetic-only invocation ignores them with an explicit warning; it
@@ -875,9 +911,12 @@ local target is selected, checks model/source modality compatibility, and prints
 policy-stratum counts plus projected target, guard, LLM-judge, and HTTP-attempt
 totals without a hosted generation call. Only the planning ceilings differ from
 the later measured command. `rig_check` executes the no-call plan in temporary
-scratch storage but copies its content-addressed eligibility/`N/A` ledger into
-the requested `--out` directory, including when a later compatibility gate
-fails. That ledger is planning evidence only and is not a live attestation.
+scratch storage but validates and copies both its content-addressed
+eligibility/`N/A` ledger and `ura-lane-projection/1` into the requested `--out`
+directory, including when a later compatibility gate fails. A successful exact
+measured invocation creates and binds its own projection after whole-request
+admission and before its first generation call. These artifacts are planning
+evidence only and are not live attestations.
 `rig_check` and `run_matrix --dry-run` neither require nor accept
 `--execution-scope-id` or live-attestation arguments.
 
@@ -930,15 +969,110 @@ CANNOT-VERIFY. The receipt establishes target-route/access/byte-backed transport
 only, not judge execution, judge validity, safety, benchmark validity, human
 validity, or future availability.
 
+### 9.1 One-cluster live diagnostic canary
+
+Run a live canary only after a canary-specific
+`CANARY_LIVE_ATTESTATION_ARGS` array, constructed by the receipt loop above,
+covers the exact target route and delivered input combination without unrelated
+or overlapping receipt records. Target-transport receipts do not attest the
+hosted judge. The canary must therefore actually reach every intended hosted
+judge route, or report it as `not_exercised`. Use the intended lane's complete
+target, source, attacker/config, defense, judge/guard, grouping, and query/turn
+configuration; reduce only the target inventory to one exact target, the seed
+inventory to one seed, and the deterministic cluster limit to one. The static
+full-cascade pattern is:
+
+```bash
+export CANARY_TARGET='<one-exact-target-from-the-lane>'
+export CANARY_ARM='<one-exact-logical-source-arm-from-the-lane>'
+export CANARY_ROOT="runs/thesis/diagnostics/canary-live/$CANARY_ARM"
+export CANARY_PREFLIGHT_ROOT="runs/thesis/preflight/canary-live/$CANARY_ARM"
+
+# No-call rehearsal. Use provisional operator ceilings large enough to admit
+# the complete one-cluster projection, then inspect the retained projection.
+python -m experiments.rig_check \
+  --api "$CANARY_TARGET" --api-config experiments/api-targets.json \
+  --attackers replay --judges rules,guardrail,llm --judge-model "$JUDGE" \
+  --guardrail-model "$SCORE_GUARD" --guardrail-revision "$SCORE_GUARD_REV" \
+  --guardrail-device "$SCORE_GUARD_DEVICE" \
+  --corpora "$CANARY_ARM" --source-config experiments/source-instances.json \
+  --limit 1 --sample-seed 0 --seeds 0 --max-queries 1 --max-turns 1 \
+  --group model,risk,effective_modality,source_policy_id,source_policy_version \
+  --max-total-target-calls '<operator-planning-ceiling>' \
+  --max-total-judge-calls '<operator-planning-ceiling>' \
+  --max-total-http-attempts '<operator-planning-ceiling>' \
+  --deadline-seconds 3600 --out "$CANARY_PREFLIGHT_ROOT"
+
+# Set these from the retained one-cluster conservative projection. Each value
+# must cover its complete projected total; record operator approval first.
+export CANARY_TARGET_CAP='<complete-canary-projected-target-total>'
+export CANARY_JUDGE_CAP='<complete-canary-projected-judge-total>'
+export CANARY_HTTP_CAP='<complete-canary-projected-http-total>'
+
+python -m experiments.run_matrix \
+  --diagnostic-canary "${CANARY_LIVE_ATTESTATION_ARGS[@]}" \
+  --api "$CANARY_TARGET" --api-config experiments/api-targets.json \
+  --attackers replay --judges rules,guardrail,llm --judge-model "$JUDGE" \
+  --guardrail-model "$SCORE_GUARD" --guardrail-revision "$SCORE_GUARD_REV" \
+  --guardrail-device "$SCORE_GUARD_DEVICE" \
+  --corpora "$CANARY_ARM" --source-config experiments/source-instances.json \
+  --limit 1 --sample-seed 0 --seeds 0 --max-queries 1 --max-turns 1 \
+  --group model,risk,effective_modality,source_policy_id,source_policy_version \
+  --max-total-target-calls "$CANARY_TARGET_CAP" \
+  --max-total-judge-calls "$CANARY_JUDGE_CAP" \
+  --max-total-http-attempts "$CANARY_HTTP_CAP" \
+  --deadline-seconds 3600 --out "$CANARY_ROOT"
+
+CANARY_ELIGIBILITY="$(find "$CANARY_ROOT" -maxdepth 1 -type f \
+  -name 'eligibility-*.eligibility.json' -print -quit)"
+test -n "$CANARY_ELIGIBILITY"
+python -m experiments.lane_canary \
+  --results "$CANARY_ROOT" --eligibility "$CANARY_ELIGIBILITY" \
+  --out-dir "$CANARY_ROOT"
+```
+
+The real-source receipt variables from section 4.1 are mandatory. For an
+adaptive, guarded, classification, or multimodal lane, replace the static
+arguments above with that lane's exact substantive configuration; do not make a
+cheaper canary a claim that an unexercised attacker, defense, evaluator, judge,
+or modality is reachable. Inspect the summary for
+`evidence_class=live_diagnostic`, exercised/not-exercised roles, observed
+artifact bytes and canary-local latency records, local
+decided/abstained/non-evaluable
+support, and client-reported target/judge transport attempts. Its reserved
+logical calls and HTTP-attempt exposure are separate conservative quantities.
+Missing client reporting is `CANNOT-VERIFY`.
+
+The summary is not campaign approval. Do not proceed until the operator has
+reviewed the exact projection and canary, recorded approved call/deadline/storage
+limits, and configured provider-side quota. Do not infer price, cost, throughput,
+expected full-lane storage, safety, or population validity from one cluster.
+Keep the entire canary tree under `diagnostics/`: Level-1, figures, suite summary,
+paired/transfer analysis, and human-audit preparation reject it.
+
 On Windows, the durable call-budget ledger retries the same fsynced atomic
 replacement for at most 100 ms when a scanner or filesystem filter briefly
 holds the prior ledger. Persistent denial still stops the grid before another
 external call; never delete or hand-edit the ledger to bypass that stop.
 
-For planning, use finite values larger than the projection. Copy the printed
-projection into the measured command's lane-specific ceilings; add capacity only
-when explicitly justified in the run note. Do not reuse one lane's ledger or
-ceilings for another lane.
+For planning, use finite positive values that cover the complete conservative
+projection. Copy at least the printed projection into the measured command's
+lane-specific ceilings; add capacity only when explicitly justified in the run
+note. Every non-dry provider-backed command fails before a provider call if any
+logical target/model-judge/declared HTTP-attempt cap is below its complete
+projection. Do not use an undersized cap to create a paid partial grid. Do not
+reuse one lane's ledger or ceilings for another lane. Before a campaign, record
+operator approval and configure an isolated provider project/account hard quota
+no greater than the approved exposure; the Runner ledger cannot prove or impose
+that provider-side quota.
+
+The projection's call and HTTP values are conservative reserved exposure, not
+observed provider traffic. It inventories selected physical input-media bytes
+when available. Token usage, monetary price/cost, runtime/throughput, and
+expected output storage remain `CANNOT-VERIFY`; do not extrapolate them from the
+projection. A canary summary may report actual retained artifact bytes and
+client-reported transport attempts for that canary only, but still cannot
+estimate full-lane cost, throughput, or storage.
 
 Common arguments for the full cascade are shown here for reference:
 
@@ -953,6 +1087,10 @@ Common arguments for the full cascade are shown here for reference:
 
 Use whole source-cluster sampling. `--limit 0` means the complete selected
 release; `--limit N` retains every row in each of at most N selected clusters.
+For the same real converted-corpus digest and `--sample-seed`, limits are nested
+prefixes of one deterministic cluster ordering: the `--limit 1` canary cluster
+is contained in a later `--limit N` selection. This continuity is operational,
+not evidence that one cluster represents the population.
 
 ## 10. Tier 1: broad static replay
 
@@ -1374,6 +1512,10 @@ verify the exact model routes and complete native artifact shape, then start the
 full campaign. The one-case canary is diagnostic and stays out of the measured
 native import. If a tool cannot expose or externally cap its calls, keep that
 campaign `N/A` rather than relying on a post-hoc cost check.
+Do not route these source-native canaries through
+`run_matrix --diagnostic-canary` or `experiments.lane_canary`: their target, attacker,
+runtime, and evaluator contract remains upstream-native. Retain their separate
+operator note and artifacts outside the canonical measured import input.
 
 ```bash
 # FuzzyAI: retains a complete timestamped result directory with raw.jsonl and report.json.
@@ -1623,8 +1765,9 @@ directory rather than mixing conditions. Within a `run_matrix` invocation the
 driver replaces its preliminary plan with the final plan. The Level-1 validator
 rejects duplicate request identities, and every supplied grid must still bind
 the exact plan descriptor and experiment condition.
-Do not supply `runs/thesis/preflight` or `runs/thesis/attestation`: those trees
-contain diagnostics, not the selected measured cohort.
+Do not supply `runs/thesis/preflight`, `runs/thesis/attestation`, or
+`runs/thesis/diagnostics`: those trees contain projections, probes, or canaries,
+not the selected measured cohort.
 One Level-1 artifact cannot mix dry-run and measured requests; this command's
 output must declare `evidence_kind=measured_run`. Supply the union of exact
 receipt bytes bound by those grids, not merely the most recently constructed
@@ -1724,8 +1867,9 @@ leaderboard score.
 
 The maintained measured-figure command still renders the declared paired core
 figures, not the whole broad roster. Invoke it only after the matching core grids
-and human audit exist. The loader requires `attestation_probe=false` plus a
-measured typed-receipt projection and rejects probe grids even when complete.
+and human audit exist. The loader requires `attestation_probe=false` plus
+`execution_purpose=measured_run` and a measured typed-receipt projection; it
+rejects probe and diagnostic-canary grids even when complete.
 The explicit corpus aliases reuse those broad-root cells;
 they do not trigger or require duplicate focal model calls:
 
@@ -1769,8 +1913,10 @@ Complete the already-created `runs/thesis/RUNNOTE.md` and record:
   and modality-probe outcome; account equivalence remains CANNOT-VERIFY;
 - package inventories for URA and every native environment;
 - interruptions, retries, exclusions, unavailable cells, and their reasons;
-- projected and realized provider calls for every runner and native lane,
-  provider-side native hard quotas, and provider usage/cost reconciliation;
+- projected conservative logical calls/HTTP-attempt exposure and separately
+  observed client-reported transport attempts for every runner canary/lane;
+  provider-side hard quotas and provider usage/cost reconciliation remain
+  separate evidence and unavailable values remain `CANNOT-VERIFY`;
 - human-audit status and achieved per-stratum counts; and
 - Level-1 `evidence_id`, planning-stratum/execution-unit/judgment-record counts,
   request-level errors, validated typed-attestation artifact/record support, and
@@ -1793,7 +1939,8 @@ the tree retains the separate `preflight/`, `attestation/`, and measured
 `runner/` directories, plus grid descriptors, manifests, attempts, responses, judgments,
 shadow trails, checkpoints, completion/error records, aggregates, modality
 coverage, call ledgers, native raw artifacts and canonical envelopes, human-audit
-files, the Level-1 JSON/CSV, analyses, figures, the exact retained
+files, every retained `ura-lane-projection/1`, diagnostic
+`ura-lane-canary/1`, the Level-1 JSON/CSV, analyses, figures, the exact retained
 `source-conformance-*.json`, every exact `ura-live-attestation/1` receipt and
 approved digest record, and the run note. The source releases themselves
 remain outside the return package unless

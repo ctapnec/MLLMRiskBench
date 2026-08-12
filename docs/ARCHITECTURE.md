@@ -5,7 +5,8 @@ flowchart LR
     S[Verified source instances<br/>19 converter families] --> C[Converters]
     C --> U[Unified schema]
     U --> P[Release, policy, metric and modality preflight]
-    P --> L[Typed live route/transport receipt gate]
+    P --> Q[Content-addressed no-call lane projection]
+    Q --> L[Typed live route/transport receipt gate]
     L --> A[Replay or response-conditioned attacker]
     A --> T[Hosted, local or guarded target]
     T --> J[Rule, guardrail and LLM judge cascade]
@@ -27,7 +28,7 @@ not model performance or judge validity.
 | Attacks | `src/ura/adapters/` | replay, transforms, response-conditioned escalation, native-result bridges |
 | Targets | `src/ura/targets/` | exact hosted/local invocation and provider continuation state |
 | Judgment | `src/ura/judges/`, `src/ura/source_metrics.py` | ordered full-shadow cascade for common responses; source evaluator and unqueried placeholders for classification |
-| Runtime | `src/ura/runner.py`, `src/ura/live_attestation.py`, `experiments/run_matrix.py`, `experiments/live_attestation.py` | preflight, typed route/transport receipt production and admission, execution, budgets, checkpoints, recovery and manifests |
+| Runtime | `src/ura/runner.py`, `src/ura/live_attestation.py`, `src/ura/lane_projection.py`, `src/ura/lane_canary.py`, `experiments/run_matrix.py`, `experiments/live_attestation.py`, `experiments/lane_canary.py` | preflight, no-call projection, typed route/transport receipt production and admission, diagnostic canary summary, execution, budgets, checkpoints, recovery and manifests |
 | Analysis | `experiments/` | paired effects, transfer, judge sensitivity, human audit and figures |
 
 ## Direct operator flow
@@ -38,10 +39,13 @@ The complete run is intentionally linear:
 2. acquire the selected converter-backed releases and upstream native projects,
    then bind labelled source instances and local media roots;
 3. set hosted credentials and review provider/data terms;
-4. execute the intended arguments with `experiments.rig_check`;
+4. execute the intended arguments with `experiments.rig_check`, retain the
+   prospective lane projection, and obtain operator approval for complete-grid
+   caps and provider-side quota;
 5. run bounded live target/modality probes, derive and hash their typed receipts,
    and bind the same operator-declared execution scope to each measured grid;
-6. execute the eligibility-scoped common-run lanes and source-native
+6. execute a separately typed one-cluster diagnostic canary where required,
+   then execute the eligibility-scoped common-run lanes and source-native
    campaigns with finite target, judge, transport-attempt, and time ceilings;
 7. import complete native artifacts and build the no-pooling suite evidence
    inventory;
@@ -64,6 +68,10 @@ before target calls. `--source-config` maps a stable corpus-arm identifier to a
 converter, an environment-variable path locator, and optional split/source
 label. This supports multiple instances of one converter without persisting a
 machine path. Real corpora resolve through environment paths.
+For one unchanged converted-corpus digest and `sample_seed`, bounded real-source
+cluster selection uses a deterministic shuffled ordering and nested prefixes;
+`--limit 1` is therefore contained in a later `--limit N` selection. Every row
+belonging to a selected cluster is retained.
 Local media is digest-checked beneath ordered approved roots and persisted as
 `@media-root/<index>/<relative-path>` so artifacts do not retain an author's
 absolute path.
@@ -101,6 +109,19 @@ This is planning evidence only: it is not a live
 attestation, attempted/completed-cell record, or scientific result. A source or
 configuration failure before corpus materialization remains a separate preflight
 error because no exact source stratum can yet be derived.
+
+After the whole request passes admission and before the first generation call,
+Runner 2.8 writes a content-addressed `ura-lane-projection/1`. The artifact
+binds the exact experiment condition and eligibility descriptor, selected
+record/cluster/source-policy counts, deterministic sampling identities,
+selected physical input-media bytes, and the conservative complete-grid target,
+model-judge, local-guardrail, and declared HTTP-attempt exposure. A measured
+grid binds its exact projection descriptor; `rig_check` validates and copies the
+same artifact class into the separate preflight tree. Input bytes are observed
+from selected local media, not an expected-output estimate. Token use,
+price/cost, runtime/throughput, and expected output storage remain
+`CANNOT-VERIFY` until independently observed and are never extrapolated by the
+projection.
 
 The read-only `experiments.level1_evidence` boundary then validates and joins
 every final plan in one selected measured `run_matrix` cohort, including
@@ -191,6 +212,27 @@ checkpoints, completed-attempt checkpoints, circuits, errors, and completion
 markers are durable. Before another external call, recovery validates the
 same-grid budget high-water mark and exact run/component lineage. Malformed,
 oversized, symlinked, partial, or mismatched recovery artifacts fail closed.
+
+Every non-dry provider-backed invocation requires all logical-call and declared
+HTTP-attempt ceilings to cover its complete conservative projection. This is a
+fixed-universe admission rule: a smaller cap is rejected before provider calls,
+not used to manufacture a paid partial result. The durable ledger records
+conservative logical reservations and HTTP-attempt exposure; those values are
+not realized network attempts. Provider-side project quota and an operator's
+recorded cap approval remain external admission controls.
+
+A `--diagnostic-canary` is a distinct execution purpose restricted to one
+target, source arm, attacker, seed, and whole source cluster. The offline
+`experiments.lane_canary` reader strictly validates the completed grid and emits
+`ura-lane-canary/1`, labelled `synthetic_offline` for the mock synthetic path or
+`live_diagnostic` for a live-attested path. It reports observed artifact bytes,
+persisted timing observations, decision support, client-reported transport
+attempts, and exercised/not-exercised roles separately from reserved exposure.
+It permits no throughput, cost, storage, population, safety, or campaign
+extrapolation. Default analysis admission rejects canaries from Level-1,
+figures, suite summary, paired and transfer analyses, and human-audit
+preparation. Native-project canaries execute under each upstream runtime and do
+not enter this Runner summary.
 
 Grid and cell locks are created exclusively and are never reclaimed
 automatically. A human may remove only an exact abandoned lock after verifying

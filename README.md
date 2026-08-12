@@ -69,7 +69,7 @@ transport attestation before entering a measured cell. An inaccessible,
 silently aliased or stale route is blocked with a reason; structural capability
 incompatibility remains `N/A` rather than being counted as a failed experiment.
 
-Runner 2.7 makes that prerequisite machine-checked. A bounded non-dry
+Runner 2.8 makes that prerequisite machine-checked. A bounded non-dry
 `--attestation-probe` grid is converted by `experiments.live_attestation` into a
 content-addressed `ura-live-attestation/1` receipt. An ordinary measured grid
 must supply the exact receipt bytes and digest, the same operator-declared
@@ -161,7 +161,9 @@ The runbook is the canonical from-zero procedure:
    receipt;
 3. set the target and judge credentials and review provider retention and
    corpus-license constraints;
-4. run `python -m experiments.rig_check` with the intended matrix arguments;
+4. run `python -m experiments.rig_check` with the intended matrix arguments,
+   retain its content-addressed lane projection, and approve complete-grid
+   provider and operator caps;
 5. run bounded exact target/modality probes, derive and hash their typed
    receipts, then pass the receipts and the same non-secret execution-scope ID
    to every measured `run_matrix` lane;
@@ -204,7 +206,11 @@ The runbook is the canonical from-zero procedure:
   budget checks without constructing a hosted client or making a generation
   call. A selected local guardrail is loaded at its exact revision and device
   before any paid call. The check prints selected source-policy counts and
-  conservative target, local-guardrail, judge, and HTTP-attempt upper bounds. It cannot prove account access,
+  conservative target, local-guardrail, judge, and HTTP-attempt upper bounds. It
+  retains the exact `ura-lane-projection/1` artifact alongside the eligibility
+  plan. The projection records selected input-media bytes when physical media
+  are present, while token use, price/cost, runtime/throughput, and expected
+  output storage remain `CANNOT-VERIFY`. It cannot prove account access,
   entitlement, quota, reachability, or model visibility.
 - `rig_check` and `--dry-run` neither require nor accept live-attestation
   arguments. A probe requires one real target, one source arm, replay, one seed,
@@ -223,7 +229,11 @@ The runbook is the canonical from-zero procedure:
   operator assertion, not a credential or independently verified proof that two
   accounts/environments are equivalent.
 - Every live grid sets finite matrix-wide target-call, judge-call, HTTP-attempt,
-  and wall-clock ceilings. Resume validates the durable ledger, checkpoints,
+  and wall-clock ceilings. Every non-dry provider-backed ceiling must cover the
+  complete conservative projection; a deliberately undersized cap is rejected
+  before a provider call rather than producing a paid partial grid. The exact
+  measured grid binds its own projection artifact. Provider-side project quota
+  and explicit operator approval remain separate prerequisites. Resume validates the durable ledger, checkpoints,
   completion records, errors, and circuit state before another external call.
   Durable ledger replacement retries only a few bounded times for transient
   Windows sharing violations, then still fails closed.
@@ -246,7 +256,10 @@ The runbook is the canonical from-zero procedure:
   distinct. None is rewritten as zero.
 
 `--limit N` means at most N unique source prompt/intent clusters while retaining
-all rows in each selected cluster. The complete thesis run uses `--limit 0`.
+all rows in each selected cluster. For the same converted-corpus digest and
+sample seed, real-source limits are deterministic nested prefixes, so the
+one-cluster canary is contained in a later `N`-cluster sample. The complete
+thesis run uses `--limit 0`.
 
 ## Artifacts and recovery
 
@@ -259,7 +272,19 @@ completed attempts and provider continuation state without querying them again.
 Partial artifact families, unresolved locks, exhausted ceilings, or provenance
 drift fail explicitly.
 
-Runner `ura-runner/2.7` writes unified schema `1.4`. Immutable planning/source
+A separately typed `--diagnostic-canary` executes exactly one target, logical
+source arm, attacker, seed, and whole source cluster. Its strict offline
+`ura-lane-canary/1` summary is labelled `synthetic_offline` for
+`--dry-run --corpora synth` or `live_diagnostic` for a live-attested route. It
+separates conservatively reserved logical calls/HTTP-attempt exposure from
+client-reported observed transport attempts and records which target, defense,
+source evaluator, and judge stages were actually exercised. One cluster cannot
+establish population latency, throughput, cost, expected storage, safety, or
+human validity. Diagnostic canaries are rejected from Level-1, suite summary,
+paired/transfer analysis, human-audit preparation, and measured figures. Native
+framework canaries remain external to the Runner and outside native imports.
+
+Runner `ura-runner/2.8` writes unified schema `1.4`. Immutable planning/source
 stratum identity is stored separately from adaptive per-turn evaluation
 identity. Thus a Crescendo setup turn remains joined to its original planning
 stratum while receiving a typed `not_applicable` judgment and no judge call or

@@ -81,6 +81,10 @@ from ura.eligibility import build_eligibility_plan    # noqa: E402
 from ura.judges.base import JudgeCascade              # noqa: E402
 from ura.judges.llm import LLMJudge                   # noqa: E402
 from ura.judges.rules import RuleJudge                # noqa: E402
+from ura.lane_projection import (                     # noqa: E402
+    build_lane_projection,
+    write_lane_projection,
+)
 from ura.live_attestation import (                    # noqa: E402
     load_live_attestation_file,
     required_attestation_keys,
@@ -1781,7 +1785,7 @@ def _validate_planned_call_budget(
     projection: dict[str, object], *, target: int, judge: int, http: int,
     deadline_seconds: int, dry_run: bool, require_complete: bool,
 ) -> None:
-    """Require finite real-run limits; rig-check also requires full coverage."""
+    """Require every provider-backed request ceiling to cover its full projection."""
     if dry_run:
         return
     requirements = {
@@ -1826,11 +1830,17 @@ def _select_corpus(
     keys = list(clusters)
     if not limit or limit >= len(keys):
         return dps, list(range(len(dps))), keys, keys
-    seed_material = f"ura-corpus-cluster-sample-v3\0{name}\0{sample_seed}".encode(
+    seed_material = f"ura-corpus-cluster-order-v1\0{name}\0{sample_seed}".encode(
         "utf-8"
     )
     scoped_seed = int.from_bytes(hashlib.sha256(seed_material).digest()[:8], "big")
-    positions = set(random.Random(scoped_seed).sample(range(len(keys)), k=limit))
+    # One deterministic permutation supplies every bounded sample for this
+    # source/seed. Taking prefixes makes a one-cluster diagnostic canary a true
+    # subset of a later N-cluster campaign instead of drawing an unrelated
+    # ``random.sample(..., k=N)`` population for every value of N.
+    ordered_positions = list(range(len(keys)))
+    random.Random(scoped_seed).shuffle(ordered_positions)
+    positions = set(ordered_positions[:limit])
     selected_cluster_ids = [key for index, key in enumerate(keys) if index in positions]
     indices = sorted(
         index for key in selected_cluster_ids for index in clusters[key]
@@ -2036,7 +2046,7 @@ def load_corpus_with_audit(
         "selected_cluster_ids": selected_clusters,
         "sample_seed": sample_seed,
         "limit": limit,
-        "selection_method": "seeded_source_cluster_sample",
+        "selection_method": "seeded_nested_source_cluster_prefix_v1",
     }
 
 
@@ -2053,6 +2063,15 @@ def main(argv=None) -> int:
         help=(
             "mark one bounded non-dry target/corpus/attacker grid as live "
             "route/transport prerequisite evidence, never measured evidence"
+        ),
+    )
+    ap.add_argument(
+        "--diagnostic-canary",
+        action="store_true",
+        help=(
+            "execute exactly one target/source/attacker/seed and one whole source "
+            "cluster as diagnostic evidence, never measured evidence; combine with "
+            "--dry-run --corpora synth for a fully offline/no-human canary"
         ),
     )
     ap.add_argument(
@@ -2232,6 +2251,23 @@ def main(argv=None) -> int:
     ap.add_argument("--out", default="runs/exp")
     args = ap.parse_args(argv)
 
+    if args.diagnostic_canary and (args.preflight_only or args.attestation_probe):
+        ap.error(
+            "--diagnostic-canary cannot be combined with --preflight-only "
+            "or --attestation-probe"
+        )
+    execution_purpose = (
+        "diagnostic_canary"
+        if args.diagnostic_canary
+        else "diagnostic_dry_run"
+        if args.dry_run
+        else "preflight_only"
+        if args.preflight_only
+        else "attestation_probe"
+        if args.attestation_probe
+        else "measured_run"
+    )
+
     if args.limit < 0:
         ap.error("--limit must be non-negative")
     if args.max_queries <= 0 or args.max_turns <= 0:
@@ -2292,7 +2328,7 @@ def main(argv=None) -> int:
     out = Path(args.out)
     out.mkdir(parents=True, exist_ok=True)
 
-    # Wall-clock provenance for Runner 2.7 (run date). Recorded in the manifest but kept
+    # Wall-clock provenance for Runner 2.8 (run date). Recorded in the manifest but kept
     # OUT of the run_id hash, so runs stay reproducible while the date is captured.
     run_started = datetime.now(timezone.utc).isoformat(timespec="seconds")
     run_env = _runtime_env()
@@ -2342,6 +2378,22 @@ def main(argv=None) -> int:
         ap.error(
             "--attestation-probe requires one target/corpus/replay attacker/seed, "
             "--defense none, --limit 1 or 2, and one query/turn"
+        )
+    if args.diagnostic_canary and (
+        len(model_specs) != 1
+        or len(corpora) != 1
+        or len(attacker_names) != 1
+        or len(seeds) != 1
+        or args.limit != 1
+    ):
+        ap.error(
+            "--diagnostic-canary requires exactly one target, corpus, attacker, "
+            "seed, and --limit 1 (all rows in that source cluster are retained)"
+        )
+    if args.diagnostic_canary and args.dry_run and corpora != ["synth"]:
+        ap.error(
+            "a dry-run --diagnostic-canary must use exactly --corpora synth; "
+            "real source canaries require a live-attested route"
         )
     source_conformance_manifest: dict[str, object] | None = None
     source_conformance_artifact: dict[str, object] | None = None
@@ -2600,6 +2652,27 @@ def main(argv=None) -> int:
             missing_ok=True
         )
 
+    if args.diagnostic_canary:
+        selected_clusters = sampling_audits[corpora[0]].get("selected_clusters")
+        if selected_clusters != 1:
+            _write_json(out / "diagnostic-canary.error.json", {
+                "status": "error",
+                "phase": "diagnostic_canary_cluster_admission",
+                "corpus": corpora[0],
+                "selected_clusters": selected_clusters,
+                "message": (
+                    "diagnostic canary requires exactly one selected whole "
+                    "source cluster"
+                ),
+            })
+            print(
+                "diagnostic canary admission failed: expected exactly one "
+                "selected whole source cluster",
+                file=sys.stderr,
+            )
+            return 1
+        (out / "diagnostic-canary.error.json").unlink(missing_ok=True)
+
     source_conformance_binding: dict[str, object] | None = None
     if source_conformance_manifest is not None:
         try:
@@ -2717,6 +2790,7 @@ def main(argv=None) -> int:
             ),
         }
         experiment_condition_values = {
+            "execution_purpose": execution_purpose,
             "defense": args.defense,
             "defense_guard": args.defense_guard,
             "judges": judge_names,
@@ -3047,6 +3121,7 @@ def main(argv=None) -> int:
                             env=run_env,
                             run_config={
                                 "preflight_admission": True,
+                                "execution_purpose": execution_purpose,
                                 "model_spec": persisted_model_specs[spec],
                                 "corpus": corpus_name,
                                 "attacker": attacker_name,
@@ -3079,6 +3154,13 @@ def main(argv=None) -> int:
             name: _source_policy_cluster_counts(rows)
             for name, rows in loaded_corpora.items()
         }
+        # The selected rows have already passed Runner's byte-level corpus
+        # admission above. Reuse the compact conformance projection to retain
+        # selected media-byte pressure without inventing expected output size.
+        selected_media_inventories = {
+            name: observed_arm_conformance(rows)["media"]
+            for name, rows in loaded_corpora.items()
+        }
         call_projection = _project_grid_call_upper_bounds(
             targets=prebuilt_targets,
             corpora=loaded_corpora,
@@ -3095,7 +3177,13 @@ def main(argv=None) -> int:
             http=args.max_total_http_attempts,
             deadline_seconds=args.deadline_seconds,
             dry_run=bool(args.dry_run),
-            require_complete=bool(args.preflight_only),
+            # Every provider-backed invocation is admitted only when its hard
+            # ceilings cover the complete conservative projection.  A smaller
+            # value is not a harmless safety cap: it would deliberately create
+            # a partial grid after paid calls and weaken the fixed-universe
+            # accounting contract.  Use a separately typed diagnostic canary
+            # with a prospectively smaller selected cluster universe instead.
+            require_complete=not bool(args.dry_run),
         )
     except Exception as exc:  # noqa: BLE001 - fail closed at the pre-call boundary
         eligibility_plan, eligibility_path = persist_eligibility_plan(
@@ -3162,8 +3250,28 @@ def main(argv=None) -> int:
     eligibility_plan, eligibility_path = persist_eligibility_plan(
         whole_request_preflight_complete=True
     )
+    try:
+        lane_projection = build_lane_projection(
+            eligibility_plan=eligibility_plan,
+            eligibility_artifact=_artifact_descriptor(eligibility_path),
+            sampling_audits=sampling_audits,
+            source_policy_cluster_counts=policy_strata,
+            selected_media_inventories=selected_media_inventories,
+            call_projection=call_projection,
+        )
+        lane_projection_path = write_lane_projection(out, lane_projection)
+    except (OSError, TypeError, ValueError) as exc:
+        _write_json(out / "lane-projection.error.json", {
+            "status": "error",
+            "phase": "lane_projection_persistence",
+            "exception_type": type(exc).__name__,
+            "message": str(exc)[:2000],
+        })
+        print(f"lane projection persistence failed: {exc}", file=sys.stderr)
+        return 1
     (out / "live-attestation.error.json").unlink(missing_ok=True)
     (out / "grid-planning.error.json").unlink(missing_ok=True)
+    (out / "lane-projection.error.json").unlink(missing_ok=True)
     for corpus_name, counts in policy_strata.items():
         print(
             f"plan '{corpus_name}' source-policy clusters: "
@@ -3173,8 +3281,16 @@ def main(argv=None) -> int:
         "planned complete-grid call upper bounds: "
         + json.dumps(call_projection, sort_keys=True, separators=(",", ":"))
     )
+    print(
+        "prospective no-call lane projection written: "
+        + json.dumps({
+            "artifact": lane_projection_path.name,
+            "projection_id": lane_projection["projection_id"],
+        }, sort_keys=True, separators=(",", ":"))
+    )
 
     grid_request = {
+        "execution_purpose": execution_purpose,
         "models": [persisted_model_specs[spec] for spec in model_specs],
         "corpora": corpora,
         "source_instances": source_instances,
@@ -3240,6 +3356,10 @@ def main(argv=None) -> int:
             "plan_id": eligibility_plan["plan_id"],
             **_artifact_descriptor(eligibility_path),
             "counts": eligibility_plan["counts"],
+        },
+        "lane_projection": {
+            "projection_id": lane_projection["projection_id"],
+            **_artifact_descriptor(lane_projection_path),
         },
         "modality_coverage_plan": modality_plan_payload,
         "source_policy_cluster_counts": policy_strata,
@@ -3541,6 +3661,7 @@ def main(argv=None) -> int:
                     )
                     cell_config = {
                         "grid_id": grid_id,
+                        "execution_purpose": execution_purpose,
                         "corpus": corpus_name,
                         "limit": args.limit,
                         "sample_seed": args.sample_seed,

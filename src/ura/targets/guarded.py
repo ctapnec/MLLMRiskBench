@@ -83,7 +83,9 @@ class GuardedTarget(BaseTarget):
             raw={
                 "defense": "blocked",
                 "stage": stage,
+                "defense_stages_evaluated": [stage],
                 "base_target": target,
+                "base_target_queried": stage != "input",
                 "requested_seed": seed,
                 "target_sampling_control": "not_queried",
             },
@@ -106,6 +108,7 @@ class GuardedTarget(BaseTarget):
     def generate(
         self, dialog: list[DialogTurn], *, seed: int | None = None
     ) -> Response:
+        evaluated_stages: list[str] = []
         # Llama Guard 3 is a text classifier. A hash sentinel is useful when it
         # participates as a non-multimodal judge, but it cannot defend a request
         # whose safety semantics are carried by physical media. Reject the cell
@@ -140,6 +143,7 @@ class GuardedTarget(BaseTarget):
             self._require_valid_guard_verdict(verdict)
             if verdict.label == "violation":
                 return self._blocked(self.base.name, "input", seed=seed)
+            evaluated_stages.append("input")
 
         # 2) query the wrapped target; attribute the result to the guarded config
         response = self.base.generate(dialog, seed=seed).model_copy(
@@ -163,6 +167,7 @@ class GuardedTarget(BaseTarget):
                     "raw": {
                         **response.raw,
                         **blocked.raw,
+                        "defense_stages_evaluated": [*evaluated_stages, "output"],
                         "target_sampling_control": response.raw.get(
                             "target_sampling_control",
                             response.raw.get("sampling_control"),
@@ -171,6 +176,16 @@ class GuardedTarget(BaseTarget):
                         "suppressed_output": True,
                     },
                 })
+            evaluated_stages.append("output")
+        if evaluated_stages:
+            response = response.model_copy(update={
+                "raw": {
+                    **response.raw,
+                    "defense": "passed",
+                    "defense_stages_evaluated": evaluated_stages,
+                    "base_target_queried": True,
+                }
+            })
         return response
 
 

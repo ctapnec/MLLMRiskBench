@@ -229,6 +229,32 @@ count is null, and error dispositions explicitly say that stratum attempt is
 unknown. Missing is reserved for an execution-eligible unit/stratum with no
 supplied grid; blocked and error states do not inflate it.
 
+## Projection and canary accounting are not outcome metrics
+
+`ura-lane-projection/1` is prospective exposure evidence for one exact admitted
+condition. Its target/model-judge logical calls and declared HTTP attempts are
+conservative complete-grid upper bounds, not observed usage. Selected physical
+input-media bytes are content observations; token use, monetary price/cost,
+runtime/throughput, and expected output storage are `CANNOT-VERIFY`. No estimate
+from this artifact belongs in an ASR, refusal, utility, or model-ranking
+denominator.
+
+`ura-lane-canary/1` summarizes one typed whole-cluster diagnostic. Its
+`synthetic_offline` and `live_diagnostic` evidence classes remain operational:
+observed artifact bytes, canary-local latency records, decision support, and
+client-reported transport attempts describe only the completed canary. Reserved
+logical calls/HTTP exposure remain a separate ledger quantity. Missing client
+transport reporting stays `CANNOT-VERIFY`; neither reserved nor observed values
+authorize price, throughput, storage, or full-campaign extrapolation. A single
+cluster supplies no population inference, benchmark validity, human validity,
+or campaign authorization.
+
+Diagnostic canaries are ineligible for Level-1 lifecycle evidence, suite-wide
+inventory, paired/transfer estimates, human-audit preparation, and measured
+figures. The synthetic path may exercise a mock full-shadow cascade without a
+human, but its decisions validate fixtures only. Source-native canaries stay in
+their upstream runtimes and out of canonical measured imports.
+
 ## Broad-suite inventory and focal figures
 
 `experiments.suite_summary` accepts completion-validated runner cells,
@@ -253,8 +279,9 @@ does not claim that the complete model-by-source eligibility matrix was run.
 
 Measured figures are generated only after the real grid and human audit are
 complete and only from completion-validated cohorts whose request declares
-`attestation_probe=false` and a measured typed-receipt projection. Probe grids
-fail figure admission even if their one-cell artifacts are complete. Until then, the tracked
+`attestation_probe=false`, `execution_purpose=measured_run`, and a measured
+typed-receipt projection. Probe and diagnostic-canary grids fail figure
+admission even if their one-cell artifacts are complete. Until then, the tracked
 images are synthetic, visibly watermarked layout previews with neutral condition
 labels. The existing `ura-chapter-v-figures/1.3` renderer is a focal paired
 analysis surface, not a whole-suite summary. A measured chart states the metric,

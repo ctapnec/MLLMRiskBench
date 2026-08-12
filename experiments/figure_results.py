@@ -237,7 +237,9 @@ def _validate_source_identity(manifest: RunManifest, path: Path) -> None:
         raise ValueError(f"manifest lacks a valid experiment-driver source identity: {path}")
 
 
-def _grid_allowlist(root: Path) -> dict[Path, list[_GridReference]]:
+def _grid_allowlist(
+    root: Path, *, allow_diagnostic_canary: bool = False,
+) -> dict[Path, list[_GridReference]]:
     if not root.is_dir():
         raise ValueError(f"results path is not a directory: {root}")
     locks = sorted([*root.rglob("*.grid.lock"), *root.rglob("*.cell.lock")])
@@ -265,19 +267,32 @@ def _grid_allowlist(root: Path) -> dict[Path, list[_GridReference]]:
             request.get("attackers"), f"request.attackers in {grid_path}"
         )
         _nonblank(request.get("defense"), f"request.defense in {grid_path}")
-        if request.get("dry_run") is not False:
+        is_canary = request.get("execution_purpose") == "diagnostic_canary"
+        if is_canary and not allow_diagnostic_canary:
+            raise ValueError(f"diagnostic canary is not measured evidence: {grid_path}")
+        if allow_diagnostic_canary and not is_canary:
+            raise ValueError(
+                f"diagnostic-canary loader received non-canary evidence: {grid_path}"
+            )
+        if not allow_diagnostic_canary and request.get("dry_run") is not False:
             raise ValueError(f"measured grid must explicitly declare dry_run=false: {grid_path}")
         if request.get("attestation_probe") is not False:
             raise ValueError(
                 f"live-attestation probe is not measured evidence: {grid_path}"
             )
         live_attestation = request.get("live_attestation")
+        required_attestation_mode = (
+            "not_required"
+            if allow_diagnostic_canary and request.get("dry_run") is True
+            else "measured"
+        )
         if (
             not isinstance(live_attestation, dict)
-            or live_attestation.get("mode") != "measured"
+            or live_attestation.get("mode") != required_attestation_mode
         ):
             raise ValueError(
-                f"measured grid lacks typed live-attestation admission: {grid_path}"
+                f"grid lacks execution-purpose-compatible live-attestation admission: "
+                f"{grid_path}"
             )
         requested = len(models) * len(corpora) * len(attackers)
         if grid.get("status") != "complete" or grid.get("n_errors") != 0:
@@ -503,6 +518,7 @@ def _validate_cell(
     refs: list[_GridReference],
     *,
     allow_diagnostic_dry_run: bool = False,
+    allow_diagnostic_canary: bool = False,
 ) -> dict[str, Any]:
     marker = _read_object(marker_path)
     if marker.get("status") != "complete" or marker.get("format_version") != 2:
@@ -544,6 +560,13 @@ def _validate_cell(
         _nonblank(run.get(field), f"manifest run.{field} in {resolved['manifest']}")
     if run.get("dry_run") is not False and not allow_diagnostic_dry_run:
         raise ValueError(f"dry-run cell is not measured evidence: {marker_path}")
+    is_canary = run.get("execution_purpose") == "diagnostic_canary"
+    if is_canary and not allow_diagnostic_canary:
+        raise ValueError(f"diagnostic canary is not measured evidence: {marker_path}")
+    if allow_diagnostic_canary and not is_canary:
+        raise ValueError(
+            f"diagnostic-canary loader received non-canary cell: {marker_path}"
+        )
     if not isinstance(run.get("sampling_audit"), dict):
         raise ValueError(f"manifest lacks corpus-specific sampling audit: {marker_path}")
     if run["attacker"] not in manifest.adapters:
@@ -700,9 +723,21 @@ def _validate_cell(
     }
 
 
-def _load_cells(root: Path) -> list[dict[str, Any]]:
-    allowlist = _grid_allowlist(root)
-    return [_validate_cell(marker, allowlist[marker]) for marker in sorted(allowlist)]
+def _load_cells(
+    root: Path, *, _allow_diagnostic_canary: bool = False,
+) -> list[dict[str, Any]]:
+    allowlist = _grid_allowlist(
+        root, allow_diagnostic_canary=_allow_diagnostic_canary
+    )
+    return [
+        _validate_cell(
+            marker,
+            allowlist[marker],
+            allow_diagnostic_dry_run=_allow_diagnostic_canary,
+            allow_diagnostic_canary=_allow_diagnostic_canary,
+        )
+        for marker in sorted(allowlist)
+    ]
 
 
 def _run_config(cell: dict[str, Any]) -> dict[str, Any]:

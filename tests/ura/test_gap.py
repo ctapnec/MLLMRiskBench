@@ -49,7 +49,8 @@ def test_guarded_target_blocks_on_input():
 def test_guarded_target_passes_benign_and_restamps_target():
     g = GuardedTarget(MockTarget(), _StubGuard(False), mode="input")
     resp = g.generate(_harmful_dialog())
-    assert resp.raw.get("defense") is None            # not blocked
+    assert resp.raw["defense"] == "passed"
+    assert resp.raw["defense_stages_evaluated"] == ["input"]
     assert resp.target == "mock+guard"                # attributed to guarded config
 
 

@@ -228,7 +228,8 @@ def test_rule_guard_moderates_input_as_input() -> None:
         [DialogTurn(role="user", content="Explain how a bicycle pump works")],
         seed=9,
     )
-    assert allowed.raw.get("defense") is None
+    assert allowed.raw["defense"] == "passed"
+    assert allowed.raw["defense_stages_evaluated"] == ["input"]
     assert allowed.raw["target_sampling_control"] == "deterministic_mock"
 
 

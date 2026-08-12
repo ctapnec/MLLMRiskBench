@@ -62,6 +62,7 @@ _STRUCTURAL_NA = frozenset({
 })
 _MAX_ERROR_BYTES = 8 * 1024 * 1024
 _CONDITION_FIELDS = frozenset({
+    "execution_purpose",
     "defense",
     "defense_guard",
     "judges",
@@ -242,6 +243,14 @@ def _condition_values(value: object) -> dict[str, Any]:
 
     if not isinstance(value, dict) or set(value) != _CONDITION_FIELDS:
         raise ValueError("eligibility experiment-condition fields are incomplete")
+    if value["execution_purpose"] not in {
+        "diagnostic_dry_run",
+        "preflight_only",
+        "attestation_probe",
+        "diagnostic_canary",
+        "measured_run",
+    }:
+        raise ValueError("experiment condition execution_purpose is invalid")
     for field in ("defense", "defense_guard", "dtype"):
         if not isinstance(value[field], str) or not value[field].strip():
             raise ValueError(f"experiment condition {field} must be nonblank")
@@ -288,6 +297,12 @@ def _condition_values(value: object) -> dict[str, Any]:
             raise ValueError(f"experiment condition call cap {field} is invalid")
     if not isinstance(value["dry_run"], bool):
         raise ValueError("experiment condition dry_run must be boolean")
+    if value["dry_run"] and value["execution_purpose"] not in {
+        "diagnostic_dry_run", "diagnostic_canary"
+    }:
+        raise ValueError("experiment condition execution purpose/dry-run mismatch")
+    if not value["dry_run"] and value["execution_purpose"] == "diagnostic_dry_run":
+        raise ValueError("experiment condition execution purpose/dry-run mismatch")
     selected = value["selected_config_identities"]
     expected_selected = {
         "source_config",
@@ -363,6 +378,7 @@ def _grid_condition(request: Mapping[str, Any]) -> dict[str, Any]:
         ),
     }
     values = {
+        "execution_purpose": request.get("execution_purpose"),
         "defense": request.get("defense"),
         "defense_guard": request.get("defense_guard"),
         "judges": judges,
@@ -851,6 +867,10 @@ def _load_results(
             request = grid.get("request")
             if not isinstance(request, dict):
                 raise ValueError(f"grid lacks request: {grid_path}")
+            if request.get("execution_purpose") == "diagnostic_canary":
+                raise ValueError(
+                    f"diagnostic canary is not Level-1 measured evidence: {grid_path}"
+                )
             if grid_id != _grid_id(grid) or grid_path.name != f"{grid_id}.grid.json":
                 raise ValueError(f"grid ID/content/filename mismatch: {grid_path}")
             if grid_id in seen_grid_ids:

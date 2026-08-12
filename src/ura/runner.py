@@ -56,7 +56,7 @@ from .targets.base import BaseTarget
 from .targets.api import _logical_media_root_alias, _resolve_local_media_path
 
 #: Bumped when the orchestration semantics change (recorded in every manifest).
-CODE_VERSION = "ura-runner/2.7"
+CODE_VERSION = "ura-runner/2.8"
 _MAX_SCORED_MEDIA_BYTES = 25 * 1024 * 1024
 _MAX_FULL_CHECKPOINT_BYTES = 512 * 1024 * 1024
 _MAX_RESPONSE_CHECKPOINT_BYTES = 512 * 1024 * 1024

@@ -2,7 +2,7 @@
 
 `ura.data_models` is the typed Pydantic v2 contract shared by converters,
 attackers, targets, judges, persistence, and analysis. `SCHEMA_VERSION = "1.4"`
-is stamped on datapoints, checkpoints, and manifests. Runner 2.7 rejects mixed
+is stamped on datapoints, checkpoints, and manifests. Runner 2.8 rejects mixed
 schema versions and duplicate datapoint IDs before a target call.
 
 ## Records
@@ -42,6 +42,37 @@ corpus can materialize remain separate preflight error artifacts because their
 exact modality/source strata are not yet knowable. The Level-1 lifecycle
 artifact below joins only the evidence presently available rather than
 reinterpreting this plan as realized coverage.
+
+## Prospective lane projection
+
+After successful whole-request admission and before the first generation call,
+`run_matrix` emits strict `ura-lane-projection/1` as
+`lane-projection-<content-id>.lane-projection.json`. `projection_id` is derived
+from the canonical artifact body. The projection binds the exact eligibility
+plan/request/condition and artifact descriptor, then records per logical source
+arm:
+
+- converter and selected-corpus/datapoint/cluster digests;
+- pre-limit and selected row/cluster counts, sample seed, limit, and exact
+  source-policy cluster counts;
+- verified selected physical input-media references and unique bytes by
+  modality, or an explicit no-physical-media state; and
+- reconciled selected-arm totals.
+
+Its `call_projection` uses
+`conservative_complete_grid_upper_bound_v1` for trajectory, target-call,
+model-judge-call, local-guardrail-evaluation, and declared HTTP-attempt exposure,
+including per-attacker subtotals. `unavailable_estimates` fixes token use,
+monetary price/cost, runtime/throughput, and expected output storage to
+`status=CANNOT-VERIFY` and `value=null`; consumers may not fill those fields by
+extrapolation. Selected input-media bytes are observed content bytes, not
+expected output storage.
+
+The exact measured grid request contains the projection ID and its file/SHA-256/
+byte/record descriptor. `rig_check` validates and retains the projection next to
+the eligibility plan in the separate preflight tree. These two instances may
+bind different execution purposes and must not be substituted merely because
+their call totals match.
 
 ## Live route and transport attestation
 
@@ -83,6 +114,39 @@ display/wrapper target and provider-volatile fingerprint remain provenance but
 are not treated as stable equality fields. Exact combinations are not widened.
 `rig_check` and dry-run instead record `mode=not_required`, while a probe records
 `mode=probe`; neither is measured evidence.
+
+## Diagnostic lane-canary summary
+
+`run_matrix --diagnostic-canary` fixes `execution_purpose=diagnostic_canary` and
+admits exactly one target, logical source arm, attacker, seed, and whole source
+cluster. For an unchanged real converted-corpus digest and sample seed,
+selection is `seeded_nested_source_cluster_prefix_v1`: a `--limit 1` cluster is
+contained in a later `--limit N` sample, with all sibling rows retained. The
+fully offline form additionally requires `--dry-run --corpora synth`.
+
+`python -m experiments.lane_canary` makes no external call. It accepts exactly
+one strictly completion-validated canary cell plus its eligibility plan and
+bound lane projection, and writes create-only content-addressed
+`ura-lane-canary/1`. `evidence_class` is `synthetic_offline` for mock dry-run or
+`live_diagnostic` for a live-attested canary. Bindings retain grid, run,
+completion, eligibility, condition, and projection identities/descriptors. The
+artifact also records the exact selected cluster/rows, core and supporting
+artifact bytes, a byte-bound but driver-self-reported wall-clock window
+(including preflight and finalization), available target/model-judge latency
+observations, local decision support, and actual role/stage reachability. The
+wall-clock field is not a monotonic runtime measurement and cannot establish
+throughput.
+
+`call_accounting.reserved` contains durable logical target/model-judge calls and
+declared HTTP-attempt exposure. It is not observed traffic.
+`observed_transport_attempts` separately sums client-reported target/judge
+transport attempts and exposes incomplete reporting; any unavailable difference
+stays `CANNOT-VERIFY`. Network payload bytes and end-to-end throughput are also
+`CANNOT-VERIFY`. Fixed limitation fields forbid campaign authorization,
+empirical benchmark evidence, human-validity, model-ranking, throughput, and
+storage extrapolation. Default Level-1, figures, suite, paired, transfer, and
+human-audit loaders reject this execution purpose. Upstream-native canaries do
+not use this schema.
 
 ## Level-1 lifecycle evidence
 

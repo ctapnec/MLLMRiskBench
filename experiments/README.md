@@ -5,7 +5,7 @@ validity rules, then execute [RUN_AND_RETURN.md](RUN_AND_RETURN.md). A dry run,
 partial artifact family, source conversion, model-name assumption, native prompt
 export, or synthetic figure is not a measured thesis result.
 
-The maintained execution contract is Runner `ura-runner/2.7` with unified
+The maintained execution contract is Runner `ura-runner/2.8` with unified
 schema `1.4`; older artifacts are not mixed into the thesis run.
 
 ## Experimental shape
@@ -66,6 +66,12 @@ openai-responses:gpt-5.6-sol;reasoning_mode=pro;reasoning_effort=medium;reasonin
 Generic hosted candidates are bound by `--api-config`; local candidates by
 `--local-config`. A no-call `rig_check` verifies configuration, corpus, policy,
 component, declared modality, credential presence and conservative call bounds.
+After whole-request admission it retains a content-addressed
+`ura-lane-projection/1` with the exact condition, selected cluster/policy/input-
+media byte inventory, and conservative complete-grid logical-call/HTTP exposure.
+The measured grid binds its own exact projection before its first call. Tokens,
+price/cost, runtime/throughput, and expected output storage remain
+`CANNOT-VERIFY`.
 It cannot prove account access, endpoint visibility, routing, quota, or media
 transport. Therefore every exact model/modality route also needs a tiny bounded
 non-dry `run_matrix --attestation-probe`, followed by
@@ -76,6 +82,17 @@ digest, operator-declared execution scope and maximum age before target calls.
 The receipt is diagnostic historical route/access/byte-backed transport
 evidence, not a thesis measurement or proof of account equivalence, safety,
 evaluator validity, human validity, or future availability.
+
+`run_matrix --diagnostic-canary` is a different execution purpose: exactly one
+target, logical source arm, attacker, seed, and whole cluster. The no-call
+`experiments.lane_canary` summarizer emits `ura-lane-canary/1` as
+`synthetic_offline` for `--dry-run --corpora synth` or `live_diagnostic` for a
+live-attested route. It keeps reserved calls/HTTP exposure separate from
+client-reported observed attempts and records observed artifact bytes, timings,
+decision support, and exercised roles. It cannot justify cost, throughput,
+expected storage, population validity, or campaign authorization. Canary grids
+are rejected by Level-1, suite/figure, paired/transfer, and human-audit admission.
+Native-framework canaries remain external and are not canonical native imports.
 
 The planner admits the intersection of source-present and target-supported
 modality combinations. Post-run validation requires actual eligible
@@ -108,9 +125,13 @@ nonempty subset as complete.
 3. Configure exact hosted/local targets and separate scoring/defense guards.
 4. Run `python -m experiments.rig_check` for every intended lane under a
    separate preflight output tree and review its source-policy counts and call
-   projections; measured `run_matrix` outputs belong in the runner tree.
+   projection artifact; obtain explicit operator approval and provider-side
+   project quota for caps covering the complete projection. Measured
+   `run_matrix` outputs belong in the runner tree.
 5. Run bounded live endpoint/modality probes, derive and hash typed receipts,
-   then execute only the exactly attested eligible cells with the same non-secret
+   then, where needed, run one separately typed whole-cluster diagnostic canary
+   and summarize it offline with `experiments.lane_canary`. Only after review,
+   execute the exactly attested eligible cells with the same non-secret
    execution-scope ID, an explicit maximum receipt age, and finite target, judge,
    HTTP-attempt, and time ceilings. `rig_check` and dry-run use no receipt.
 6. Run the nine upstream native campaigns and normalize their completed outputs
@@ -132,6 +153,7 @@ python -m experiments.rig_check --help
 python -m experiments.source_conformance --help
 python experiments/run_matrix.py --help
 python -m experiments.live_attestation --help
+python -m experiments.lane_canary --help
 python -m experiments.level1_evidence --help
 python -m experiments.native_import --help
 python -m experiments.suite_summary --help
@@ -146,7 +168,10 @@ python -m experiments.figures --help
 ## Real-run invariants
 
 - `--limit N` counts source prompt/intent clusters and retains every selected
-  cluster row; complete planned lanes use `--limit 0` after bounded diagnostics.
+  cluster row. For an unchanged real converted-corpus digest and sample seed,
+  limits are deterministic nested prefixes: the one-cluster canary remains in a
+  later `N`-cluster selection. Complete planned lanes use `--limit 0` after
+  bounded diagnostics.
 - Persisted local media use `@media-root/<index>/<relative-path>` and rebind to
   the same ordered roots and relative layout on resume.
 - Missing media, unsupported modality, absent source evaluator, target/transport
@@ -158,8 +183,11 @@ python -m experiments.figures --help
   text+one-pixel-image probes need no source receipt or human rating, but make a
   real target call and remain diagnostic; no synthetic audio/video fixture is
   implemented.
-- Every paid grid has finite call/time ceilings and resumes from its durable
-  budget, circuit, lock, checkpoint, completion, and error artifacts.
+- Every non-dry provider-backed grid has finite call/time ceilings that cover
+  the complete conservative projection and resumes from its durable budget,
+  circuit, lock, checkpoint, completion, and error artifacts. Reserved logical
+  calls/HTTP exposure are not observed transport attempts. A provider-side quota
+  and recorded operator approval are required before campaign execution.
 - A model-backed defense has one shared explicit-device guard instance whose
   identity differs from the scoring guard. The implemented model defense is
   text-only; it cannot support a multimodal defense claim.
