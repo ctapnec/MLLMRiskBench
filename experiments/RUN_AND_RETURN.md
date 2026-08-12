@@ -7,7 +7,7 @@ source-native evaluators. Experiments and the human audit are still pending.
 Preflight, dry-run, diagnostic-canary, and bounded transport-probe artifacts are
 diagnostics, not thesis results.
 
-The maintained artifact contract is Runner `ura-runner/2.9` with unified schema
+The maintained artifact contract is Runner `ura-runner/2.10` with unified schema
 `1.4`. Do not combine older-runner artifacts with this program.
 
 The program is deliberately lane-based. A model is tested on every physical
@@ -1809,6 +1809,10 @@ directory rather than mixing conditions. Within a `run_matrix` invocation the
 driver replaces its preliminary plan with the final plan. The Level-1 validator
 rejects duplicate request identities, and every supplied grid must still bind
 the exact plan descriptor and experiment condition.
+`run_matrix` already wrote each `ura-request-envelope/1` before config/source
+materialization. Level-1 discovers those files and any bound
+`ura-request-error/1` automatically from the measured result tree and plan
+siblings; there is no extra request-manifest setup or CLI argument.
 Do not supply `runs/thesis/preflight`, `runs/thesis/attestation`, or
 `runs/thesis/diagnostics`: those trees contain projections, probes, or canaries,
 not the selected measured cohort.
@@ -1850,8 +1854,9 @@ python -m experiments.level1_evidence \
 ```
 
 The command is create-only; use new output names when rebuilding. Its
-`ura-level1-evidence/1` JSON distinguishes materialized planning strata,
-whole-arm execution units, and judgment-record support. It validates exact
+`ura-level1-evidence/2` JSON distinguishes prospective whole-arm request units,
+materialized planning strata, whole-arm execution units, and judgment-record
+support. It validates exact
 plan/grid conditions and descriptors, content descriptors for grid and
 completion/error evidence, exact selected-datapoint count and identity-digest
 coverage, and decided/abstained/non-evaluable reconciliation.
@@ -1859,7 +1864,8 @@ Attempted is counted only at the whole-arm unit: a started failed unit does not
 identify which strata it reached, so planning-stratum attempts remain null and
 `execution_unit_started` is context only. Missing is reserved for an
 execution-eligible row with no grid; block/error dispositions remain separate.
-Pre-materialization failures remain unstratified request-level errors. For the
+Pre-materialization failures remain bound to prospective request units and do
+not create planning strata or calls. For the
 measured cohort, the command revalidates each grid-bound typed receipt, matches
 its exact route/config/scope/age/modality prerequisite and completed-cell stable
 target identity, and reports record-qualified attestation support. This is

@@ -104,6 +104,14 @@ from ura.project_revision import (                     # noqa: E402
     project_revision_binding,
     recheck_project_revision,
 )
+from ura.request_envelope import (                     # noqa: E402
+    build_request_envelope,
+    build_request_error,
+    load_request_error_file,
+    request_envelope_descriptor,
+    write_request_envelope,
+    write_request_error,
+)
 from ura.runner import (                              # noqa: E402
     BudgetExhausted,
     CODE_VERSION,
@@ -1558,6 +1566,28 @@ def _persisted_model_spec(
     return f"vllm:local-checkpoint@sha256:{digest.lower()}"
 
 
+def _prematerialization_target_key(spec: str) -> str:
+    """Return a request key without persisting an explicit local path.
+
+    Immutable local checkpoint identity is available only after local-config
+    loading.  The request envelope necessarily precedes that step, so an
+    explicit vLLM path receives an opaque, collision-resistant request key.
+    Repository IDs and hosted target specifications are already path-free.
+    """
+
+    if ":" not in spec:
+        return spec
+    backend, model = spec.split(":", 1)
+    if backend.lower() != "vllm":
+        return spec
+    from ura.targets.local import _is_explicit_local_path
+
+    if not _is_explicit_local_path(model):
+        return spec
+    digest = hashlib.sha256(spec.encode("utf-8")).hexdigest()
+    return f"vllm:local-path-request@sha256:{digest}"
+
+
 def _artifact_safe_model_error(
     exc: Exception, spec: str, persisted_spec: str,
 ) -> str:
@@ -2409,7 +2439,7 @@ def main(argv=None) -> int:
                 project_revision_receipt, Path(__file__).resolve()
             )
 
-    # Wall-clock provenance for Runner 2.9 (run date). Recorded in the manifest but kept
+    # Wall-clock provenance for Runner 2.10 (run date). Recorded in the manifest but kept
     # OUT of the run_id hash, so runs stay reproducible while the date is captured.
     run_started = datetime.now(timezone.utc).isoformat(timespec="seconds")
     run_env = _runtime_env()
@@ -2476,6 +2506,147 @@ def main(argv=None) -> int:
             "a dry-run --diagnostic-canary must use exactly --corpora synth; "
             "real source canaries require a live-attested route"
         )
+    group_keys = [k.strip() for k in args.group.split(",") if k.strip()]
+    if not group_keys:
+        ap.error("--group must contain at least one grouping key")
+    duplicate_group_keys = sorted(
+        key for key, count in Counter(group_keys).items() if count > 1
+    )
+    if duplicate_group_keys:
+        ap.error(
+            "--group keys must be unique; duplicates: "
+            + ", ".join(duplicate_group_keys)
+        )
+    unknown_group_keys = sorted(set(group_keys) - _ALLOWED_GROUP_KEYS)
+    if unknown_group_keys:
+        ap.error(
+            "--group contains unsupported keys: " + ", ".join(unknown_group_keys)
+        )
+
+    # Freeze the selected whole-arm universe before config loading or corpus
+    # conversion.  The driver/source digests are distinct from the Git commit
+    # receipt and make this early identity agree with all later Runner evidence.
+    driver_digest, driver_file_count = _source_tree_digest(Path(__file__).resolve())
+    driver_source = {
+        "module": Path(__file__).name,
+        "sha256": driver_digest,
+        "file_count": driver_file_count,
+    }
+    harness_source = _harness_source_identity()
+    request_target_keys = [
+        _prematerialization_target_key(spec) for spec in model_specs
+    ]
+    if len(set(request_target_keys)) != len(request_target_keys):
+        ap.error("target specs collapse to duplicate pre-materialization request keys")
+    request_envelope = build_request_envelope(
+        request={
+            "execution_purpose": execution_purpose,
+            "requested_target_keys": request_target_keys,
+            "logical_source_arms": corpora,
+            "selected_attackers": attacker_names,
+            "judges": judge_names,
+            "judge_model": args.judge_model if "llm" in judge_names else None,
+            "seeds": seeds,
+            "sample_seed": args.sample_seed,
+            "limit": args.limit,
+            "max_queries": args.max_queries,
+            "max_turns": args.max_turns,
+            "defense": args.defense,
+            "defense_guard": args.defense_guard,
+            "group_keys": group_keys,
+            "quantization": args.quantization,
+            "dtype": args.dtype,
+            "dry_run": bool(args.dry_run),
+            "call_caps": {
+                "target": args.max_total_target_calls or None,
+                "judge": args.max_total_judge_calls or None,
+                "http_attempts": args.max_total_http_attempts or None,
+                "deadline_seconds": args.deadline_seconds or None,
+            },
+        },
+        project_revision=project_revision_state,
+        harness_source=harness_source,
+        driver_source=driver_source,
+    )
+    request_envelope_path = write_request_envelope(out, request_envelope)
+    request_envelope_artifact = request_envelope_descriptor(
+        request_envelope_path, request_envelope
+    )
+    request_key_by_model_spec = dict(zip(model_specs, request_target_keys))
+    source_instances: dict[str, dict[str, object]] = {}
+
+    def safe_request_error_message(exc: Exception) -> str:
+        """Remove operator-local input paths from retained early failures."""
+
+        message = str(exc)
+        configured_paths = [
+            args.attacker_config,
+            args.api_config,
+            args.local_config,
+            args.source_config,
+            args.source_conformance,
+            *args.live_attestation,
+        ]
+        configured_paths.extend(
+            os.environ.get(str(instance.get("path_env")), "")
+            for instance in source_instances.values()
+            if instance.get("path_env")
+        )
+        media_roots = os.environ.get("URA_MEDIA_ROOTS", "")
+        if media_roots:
+            configured_paths.extend(media_roots.split(os.pathsep))
+        for configured in configured_paths:
+            if not configured:
+                continue
+            replacement = f"<operator-input:{Path(configured).name or 'path'}>"
+            variants = {str(configured)}
+            try:
+                variants.add(str(Path(configured).expanduser().resolve(strict=False)))
+            except (OSError, RuntimeError):
+                pass
+            for variant in sorted(variants, key=len, reverse=True):
+                if variant:
+                    message = message.replace(variant, replacement)
+        return message
+
+    def persist_request_error(
+        *,
+        phase: str,
+        category: str,
+        exc: Exception,
+        requested_target_key: str | None = None,
+        logical_source_arm: str | None = None,
+        attacker: str | None = None,
+    ) -> Path:
+        # A rerun may pass an earlier gate and fail at a later one. Retain only
+        # the current terminal pre-materialization outcome for this envelope.
+        clear_resolved_request_errors()
+        error = build_request_error(
+            envelope=request_envelope,
+            envelope_descriptor=request_envelope_artifact,
+            phase=phase,
+            category=category,
+            exception_type=type(exc).__name__,
+            message=safe_request_error_message(exc),
+            requested_target_key=requested_target_key,
+            logical_source_arm=logical_source_arm,
+            attacker=attacker,
+        )
+        return write_request_error(out, error)
+
+    def clear_resolved_request_errors() -> None:
+        """Remove only validated stale early errors for this exact envelope."""
+
+        for candidate in sorted(out.glob("request-error-*.request.error.json")):
+            try:
+                error = load_request_error_file(
+                    candidate, envelope=request_envelope
+                )
+            except (OSError, TypeError, ValueError):
+                continue
+            if error["request_envelope"] == request_envelope_artifact:
+                candidate.unlink()
+
     source_conformance_manifest: dict[str, object] | None = None
     source_conformance_artifact: dict[str, object] | None = None
     live_attestation_manifests: list[dict[str, object]] = []
@@ -2575,7 +2746,13 @@ def main(argv=None) -> int:
         }) != len(live_attestation_artifacts):
             raise ValueError("duplicate --live-attestation receipt input")
     except (OSError, KeyError, ValueError) as exc:
-        ap.error(str(exc))
+        persist_request_error(
+            phase="configuration_preflight",
+            category="configuration_invalid",
+            exc=exc,
+        )
+        print(f"configuration preflight failed: {exc}", file=sys.stderr)
+        return 1
     persisted_model_specs = {
         spec: _persisted_model_spec(spec, local_configs.get(spec))
         for spec in model_specs
@@ -2583,7 +2760,7 @@ def main(argv=None) -> int:
     # Preserve the sanitized request independently of the resolved target name.
     # Some target constructors replace the display identity below, while the
     # eligibility ledger must retain both sides of that mapping.
-    requested_model_specs = dict(persisted_model_specs)
+    requested_model_specs = dict(request_key_by_model_spec)
     if args.dry_run or args.preflight_only:
         live_attestation_projection: dict[str, object] = {
             "mode": "not_required",
@@ -2611,74 +2788,93 @@ def main(argv=None) -> int:
         and "llm" in judge_names
         and args.judge_model == "mock"
     ):
-        ap.error(
+        exc = ValueError(
             "a run containing real source arms requires an explicit non-mock "
             "--judge-model for the llm judge"
         )
+        persist_request_error(
+            phase="configuration_preflight",
+            category="configuration_invalid",
+            exc=exc,
+        )
+        print(f"configuration preflight failed: {exc}", file=sys.stderr)
+        return 1
     scoring_guardrail_selected = "guardrail" in judge_names
     defense_guardrail_selected = (
         args.defense != "none" and args.defense_guard == "guardrail"
     )
     if scoring_guardrail_selected:
         if not args.guardrail_model.strip():
-            ap.error("scoring guardrail cells require a non-blank --guardrail-model")
+            exc = ValueError(
+                "scoring guardrail cells require a non-blank --guardrail-model"
+            )
+            persist_request_error(
+                phase="configuration_preflight",
+                category="configuration_invalid",
+                exc=exc,
+            )
+            ap.error(str(exc))
         if re.fullmatch(r"[0-9a-fA-F]{40,64}", args.guardrail_revision) is None:
-            ap.error(
+            exc = ValueError(
                 "scoring guardrail cells require --guardrail-revision as an immutable "
                 "40-64 hex Hugging Face commit"
             )
+            persist_request_error(
+                phase="configuration_preflight",
+                category="configuration_invalid",
+                exc=exc,
+            )
+            ap.error(str(exc))
     if defense_guardrail_selected:
         if not args.defense_guardrail_model.strip():
-            ap.error("model-backed defense cells require --defense-guardrail-model")
+            exc = ValueError(
+                "model-backed defense cells require --defense-guardrail-model"
+            )
+            persist_request_error(
+                phase="configuration_preflight",
+                category="configuration_invalid",
+                exc=exc,
+            )
+            ap.error(str(exc))
         if re.fullmatch(
             r"[0-9a-fA-F]{40,64}", args.defense_guardrail_revision
         ) is None:
-            ap.error(
+            exc = ValueError(
                 "model-backed defense cells require --defense-guardrail-revision "
                 "as an immutable 40-64 hex Hugging Face commit"
             )
+            persist_request_error(
+                phase="configuration_preflight",
+                category="configuration_invalid",
+                exc=exc,
+            )
+            ap.error(str(exc))
         if not args.defense_guardrail_device.strip():
-            ap.error(
+            exc = ValueError(
                 "model-backed defense cells require an explicit "
                 "--defense-guardrail-device"
             )
+            persist_request_error(
+                phase="configuration_preflight",
+                category="configuration_invalid",
+                exc=exc,
+            )
+            ap.error(str(exc))
         if (
             scoring_guardrail_selected
             and args.defense_guardrail_model.strip() == args.guardrail_model.strip()
         ):
-            ap.error(
+            exc = ValueError(
                 "the defense guard and scoring guard must be different models; "
                 "a guard must not grade its own defense decisions"
             )
+            persist_request_error(
+                phase="configuration_preflight",
+                category="configuration_invalid",
+                exc=exc,
+            )
+            ap.error(str(exc))
 
-    group_keys = [k.strip() for k in args.group.split(",") if k.strip()]
-    if not group_keys:
-        ap.error("--group must contain at least one grouping key")
-    duplicate_group_keys = sorted(
-        key for key, count in Counter(group_keys).items() if count > 1
-    )
-    if duplicate_group_keys:
-        ap.error(
-            "--group keys must be unique; duplicates: "
-            + ", ".join(duplicate_group_keys)
-        )
-    unknown_group_keys = sorted(set(group_keys) - _ALLOWED_GROUP_KEYS)
-    if unknown_group_keys:
-        ap.error(
-            "--group contains unsupported keys: " + ", ".join(unknown_group_keys)
-        )
-
-    # The experiment driver controls sampling, grid accounting, and completion
-    # semantics that the runner's src/ura source hash does not cover. Content-
-    # address it so a changed driver yields a different grid_id and cannot reuse
-    # stale completion evidence, and record it in per-cell provenance.
-    driver_digest, driver_file_count = _source_tree_digest(Path(__file__).resolve())
-    driver_source = {
-        "module": Path(__file__).name,
-        "sha256": driver_digest,
-        "file_count": driver_file_count,
-    }
-    harness_source = _harness_source_identity()
     # Rehash declared acquisition inputs before conversion. Selected conformance
     # is checked again afterward, so a file changed during conversion fails
     # closed before any target/judge construction.
@@ -2688,14 +2884,11 @@ def main(argv=None) -> int:
                 source_conformance_manifest, selected_arms=real_source_arms
             )
         except (OSError, ValueError) as exc:
-            _write_json(out / "source-conformance.error.json", {
-                "status": "error",
-                "phase": "source_conformance_input_preflight",
-                "selected_real_arms": real_source_arms,
-                "exception_type": type(exc).__name__,
-                "message": str(exc)[:2000],
-                "source_conformance_artifact": source_conformance_artifact,
-            })
+            persist_request_error(
+                phase="source_conformance_input_preflight",
+                category="source_integrity_failed",
+                exc=exc,
+            )
             print(f"source receipt input preflight failed: {exc}", file=sys.stderr)
             return 1
 
@@ -2715,13 +2908,16 @@ def main(argv=None) -> int:
             if not corpus:
                 raise ValueError("requested corpus converted to zero datapoints")
         except Exception as exc:  # noqa: BLE001 - fail pre-call preflight
-            _write_json(out / f"{_safe_component(corpus_name)}.corpus.error.json", {
-                "status": "error",
-                "phase": "corpus_preflight",
-                "corpus": corpus_name,
-                "exception_type": type(exc).__name__,
-                "message": str(exc),
-            })
+            persist_request_error(
+                phase="corpus_preflight",
+                category=(
+                    "empty_converted_corpus"
+                    if str(exc) == "requested corpus converted to zero datapoints"
+                    else "conversion_failed"
+                ),
+                exc=exc,
+                logical_source_arm=corpus_name,
+            )
             print(
                 f"corpus '{corpus_name}' preflight failed: "
                 f"{type(exc).__name__}: {exc}", file=sys.stderr,
@@ -2729,30 +2925,25 @@ def main(argv=None) -> int:
             return 1
         loaded_corpora[corpus_name] = corpus
         sampling_audits[corpus_name] = sampling_audit
-        (out / f"{_safe_component(corpus_name)}.corpus.error.json").unlink(
-            missing_ok=True
-        )
 
     if args.diagnostic_canary:
         selected_clusters = sampling_audits[corpora[0]].get("selected_clusters")
         if selected_clusters != 1:
-            _write_json(out / "diagnostic-canary.error.json", {
-                "status": "error",
-                "phase": "diagnostic_canary_cluster_admission",
-                "corpus": corpora[0],
-                "selected_clusters": selected_clusters,
-                "message": (
-                    "diagnostic canary requires exactly one selected whole "
-                    "source cluster"
-                ),
-            })
+            admission_error = ValueError(
+                "diagnostic canary requires exactly one selected whole source cluster"
+            )
+            persist_request_error(
+                phase="diagnostic_canary_cluster_admission",
+                category="diagnostic_admission_failed",
+                exc=admission_error,
+                logical_source_arm=corpora[0],
+            )
             print(
                 "diagnostic canary admission failed: expected exactly one "
                 "selected whole source cluster",
                 file=sys.stderr,
             )
             return 1
-        (out / "diagnostic-canary.error.json").unlink(missing_ok=True)
 
     source_conformance_binding: dict[str, object] | None = None
     if source_conformance_manifest is not None:
@@ -2783,17 +2974,13 @@ def main(argv=None) -> int:
             )
             source_conformance_artifact.update(source_conformance_binding)
         except (OSError, ValueError) as exc:
-            _write_json(out / "source-conformance.error.json", {
-                "status": "error",
-                "phase": "source_conformance_preflight",
-                "selected_real_arms": real_source_arms,
-                "exception_type": type(exc).__name__,
-                "message": str(exc)[:2000],
-                "source_conformance_artifact": source_conformance_artifact,
-            })
+            persist_request_error(
+                phase="source_conformance_preflight",
+                category="source_integrity_failed",
+                exc=exc,
+            )
             print(f"source conformance preflight failed: {exc}", file=sys.stderr)
             return 1
-        (out / "source-conformance.error.json").unlink(missing_ok=True)
 
     # One defense model is shared by every target in this process. Constructing
     # a model-backed guard inside the target loop would retain one multi-GB copy
@@ -2828,6 +3015,8 @@ def main(argv=None) -> int:
         """Write the selected-cell admission/N/A ledger before any model call."""
 
         nonlocal current_eligibility_path
+
+        clear_resolved_request_errors()
 
         compact_corpus_bindings = {
             arm: {
@@ -2932,6 +3121,7 @@ def main(argv=None) -> int:
             bindings={
                 "driver_source": driver_source,
                 "project_revision": project_revision_state,
+                "request_envelope": request_envelope_artifact,
                 "source_instances_sha256": _sha256_json(source_instances),
                 "attacker_configs_sha256": _sha256_json(attacker_configs),
                 "api_configs_sha256": _sha256_json(api_configs),
@@ -3376,6 +3566,7 @@ def main(argv=None) -> int:
     grid_request = {
         "execution_purpose": execution_purpose,
         "project_revision": project_revision_state,
+        "request_envelope": request_envelope_artifact,
         "models": [persisted_model_specs[spec] for spec in model_specs],
         "corpora": corpora,
         "source_instances": source_instances,
@@ -3753,6 +3944,7 @@ def main(argv=None) -> int:
                         "grid_id": grid_id,
                         "execution_purpose": execution_purpose,
                         "project_revision": project_revision_state,
+                        "request_envelope": request_envelope_artifact,
                         "corpus": corpus_name,
                         "limit": args.limit,
                         "sample_seed": args.sample_seed,

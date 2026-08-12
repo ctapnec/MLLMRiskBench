@@ -37,7 +37,7 @@ not replaced with a nearby model. A failed/stale live attestation or silent
 identity drift is a missing/failed prerequisite, not a safe zero and not
 silently rewritten as structural incompatibility.
 
-Runner 2.9 operationalizes this distinction. One completed, bounded, non-dry
+Runner 2.10 operationalizes this distinction. One completed, bounded, non-dry
 `--attestation-probe` is converted without another provider call into a strict
 `ura-live-attestation/2` receipt. Each ordinary measured grid must supply the
 receipt's exact byte digest, the same operator-declared non-secret
@@ -168,17 +168,20 @@ is not a universal empirical safety score, and weights are never renormalized
 over each model's observed survivors.
 
 Level 1 is materialized by `experiments.level1_evidence` as
-`ura-level1-evidence/1` JSON and a deterministic planning-stratum CSV. Its fixed
-universe begins after selected corpora materialize: planning strata and
-whole-arm execution units remain separate, while completed/evaluable/decided/
-abstained/non-evaluable support is counted in judgment records. Earlier failures
-remain unstratified request-level errors. For measured cohorts, the current
+`ura-level1-evidence/2` JSON and a deterministic planning-stratum CSV.
+`run_matrix` automatically writes the prospective whole-arm request universe
+before config/source materialization, and Level 1 discovers that evidence from
+the selected result roots and plan siblings. Typed early failures stay in that
+request unit; they never fabricate planning strata or calls. Materialized
+planning strata and whole-arm execution units remain separate, while completed/
+evaluable/decided/abstained/non-evaluable support is counted in judgment
+records. For measured cohorts, the current
 artifact consumes the exact typed live-attestation files and approved SHA-256
 values bound into the grids, revalidates their route/config/scope/age/modality
 and completed-cell identity joins, and reports record-qualified attestation
 support. Probe grids cannot enter the measured cohort. Downstream
-analysis-selection evidence remains unimplemented, so included counts remain
-null with status `not_supplied`; they are not zero.
+analysis-inclusion evidence remains unavailable, so included counts remain null
+with status `not_supplied`; they are not zero.
 It binds grid and execution/error evidence with content descriptors, declares
 the homogeneous cohort as `evidence_kind=diagnostic_dry_run` or `measured_run`,
 rejects a mixed cohort, and states that empirical validity is not established.

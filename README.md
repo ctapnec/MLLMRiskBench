@@ -9,6 +9,12 @@ lineage for later analysis.
 Experiments are pending. The repository establishes no model ranking, defense
 effect, compliance finding, or other empirical result yet.
 
+The development tree implements the RUN-001 prospective-request and MET-001
+exact-selection interfaces described below, with offline contract tests. Their
+project commit is `PROJECT_COMMIT_PENDING` and the integrated final verification
+record is `FINAL_VERIFY_PENDING`. No acquired-source, provider, human, or other
+real-input MET-001 artifact has been produced.
+
 ## What is measured
 
 - Harmful ASR/refusal and benign false-refusal rate use disjoint denominators.
@@ -72,7 +78,7 @@ transport attestation before entering a measured cell. An inaccessible,
 silently aliased or stale route is blocked with a reason; structural capability
 incompatibility remains `N/A` rather than being counted as a failed experiment.
 
-Runner 2.9 makes that prerequisite machine-checked. A bounded non-dry
+Runner 2.10 makes that prerequisite machine-checked. A bounded non-dry
 `--attestation-probe` grid is converted by `experiments.live_attestation` into a
 content-addressed `ura-live-attestation/2` receipt. An ordinary measured grid
 must supply the exact receipt bytes and digest, the same operator-declared
@@ -116,6 +122,15 @@ Their complete outputs are normalized by `experiments.native_import`; they are
 not reduced to generated prompts and replayed as if that reproduced the native
 experiment.
 
+Before configuration loading or corpus conversion, `run_matrix` writes a strict,
+content-addressed `ura-request-envelope/1`. It fixes the operator-selected
+requested-target x logical-source-arm x attacker universe as prospective
+whole-arm request units; it does not invent source-policy or modality strata.
+Pre-materialization failures after that boundary use bound
+`ura-request-error/1` artifacts that explicitly deny execution and provider
+calls. Basic CLI/argument-shape failures rejected before the envelope boundary
+remain outside this accounting surface.
+
 For each source instance and model, the planner admits only the exact
 source-present modality combination declared by the target. Before calls,
 the content-addressed `ura-eligibility-plan/1` ledger retains each requested
@@ -130,27 +145,21 @@ audio, video, and agent/tool lanes remain pending until their byte-level source,
 transport, target capability, runtime, and evaluator gates pass. Media is never
 silently removed, caption-substituted, or counted merely from a tag.
 
-`python -m experiments.level1_evidence` performs the bounded realized-coverage
-join. For one measured cohort it validates every final `run_matrix` eligibility
-plan, including plan-only structural-`N/A` or blocked requests, plus final
-complete or partial grid artifacts. It excludes the separately retained
-`rig_check` preflight and live-attestation trees, binds exact experiment
-conditions, verifies the grid's exact plan descriptor and the content
-descriptors for grid/completion/error evidence, and writes
-`ura-level1-evidence/1` JSON plus a deterministic planning-stratum CSV. The
-report keeps materialized planning strata, whole-arm execution units, and
-judgment records as different units. Repeatable typed live-attestation inputs
-are validated against every measured grid's content-bound receipt projection;
-matching planning strata receive record-qualified attestation references and
-counts. Probe grids remain diagnostic and are rejected as measured Level-1
-input. Downstream analysis inclusion is not yet an input: its status is
-`not_supplied` and its counts are null, never zero or inferred from a directory
-name. Failures before corpus
-materialization remain separately identified request-level errors because their
-exact source/modality strata cannot be reconstructed. The scope reports whether
-the homogeneous cohort is `evidence_kind=diagnostic_dry_run` or `measured_run`;
-mixing dry-run and measured requests fails closed. It always records
-`empirical_validity_established=false`.
+`python -m experiments.level1_evidence` performs the bounded lifecycle join.
+The operator supplies the existing eligibility files and result roots; the
+command automatically discovers their request envelopes and bound early
+errors. It writes `ura-level1-evidence/2` JSON plus the existing deterministic
+materialized-planning-stratum CSV. Prospective whole-arm request units remain a
+separate, unit-labelled JSON collection rather than being mixed into that CSV.
+Bound early errors can mark applicable prospective units blocked, but never
+fabricate strata, attempts, or provider calls.
+
+Repeatable typed live-attestation inputs are validated against every measured
+grid's content-bound receipt projection. Analysis inclusion is deliberately
+left `status=not_supplied` with null counts; it is never guessed from directory
+placement. Probe, preflight, and diagnostic-canary artifacts are rejected from
+Level-1, and dry-run and measured requests cannot be mixed. Every Level-1
+artifact records `empirical_validity_established=false`.
 
 ## Direct real-run lifecycle
 
@@ -175,8 +184,8 @@ The runbook is the canonical from-zero procedure:
    to every measured `run_matrix` lane;
 6. run the eligibility-scoped static, adaptive, multimodal, local-defense,
    source-specific, and native-engine lanes with finite call/time ceilings;
-7. import native outputs, build the unit-qualified Level-1 lifecycle artifact
-   and the separate no-pooling suite evidence inventory, run diagnostics, and
+7. import native outputs, build the unit-qualified Level-1 lifecycle artifact and separate
+   no-pooling suite evidence inventory, run diagnostics, and
    perform the automated-label-blinded, model-visible
    multi-rater human audit across the achieved common-eligible arms; the declared
    focal conditions follow the same achieved-sample rule, not a reserved quota;
@@ -305,7 +314,7 @@ Runner `RunManifest`; the URA revision that performed their import is retained
 in the return-package/importer context rather than relabelled as an upstream
 native field.
 
-Runner `ura-runner/2.9` writes unified schema `1.4`. Immutable planning/source
+Runner `ura-runner/2.10` writes unified schema `1.4`. Immutable planning/source
 stratum identity is stored separately from adaptive per-turn evaluation
 identity. Thus a Crescendo setup turn remains joined to its original planning
 stratum while receiving a typed `not_applicable` judgment and no judge call or

@@ -5,7 +5,7 @@ validity rules, then execute [RUN_AND_RETURN.md](RUN_AND_RETURN.md). A dry run,
 partial artifact family, source conversion, model-name assumption, native prompt
 export, or synthetic figure is not a measured thesis result.
 
-The maintained execution contract is Runner `ura-runner/2.9` with unified
+The maintained execution contract is Runner `ura-runner/2.10` with unified
 schema `1.4`; older artifacts are not mixed into the thesis run.
 
 ## Experimental shape

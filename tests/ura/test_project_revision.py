@@ -149,7 +149,7 @@ def test_project_revision_rejects_wrong_root_revision_and_tamper(tmp_path: Path)
 
 
 def test_binding_is_strict_and_revision_changes_experiment_identity(
-    tmp_path: Path,
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     diagnostic = diagnostic_project_revision_binding("a" * 64, "b" * 64)
     assert validate_project_revision_binding(diagnostic) == diagnostic
@@ -165,16 +165,22 @@ def test_binding_is_strict_and_revision_changes_experiment_identity(
         "--corpora", "synth", "--limit", "1", "--out", str(out_a),
     ]) == 0
     original = run_matrix.diagnostic_project_revision_binding
-    run_matrix.diagnostic_project_revision_binding = lambda *_a: original(
+    monkeypatch.setattr(run_matrix, "diagnostic_project_revision_binding", lambda *_a: original(
         "c" * 64, "d" * 64
-    )
-    try:
-        assert run_matrix.main([
-            "--dry-run", "--attackers", "replay", "--judges", "rules",
-            "--corpora", "synth", "--limit", "1", "--out", str(out_b),
-        ]) == 0
-    finally:
-        run_matrix.diagnostic_project_revision_binding = original
+    ))
+    monkeypatch.setattr(run_matrix, "_harness_source_identity", lambda: {
+        "algorithm": "sha256_relative_path_size_file_digest_v1",
+        "sha256": "c" * 64,
+        "file_count": 1,
+        "bytes": 1,
+    })
+    monkeypatch.setattr(run_matrix, "_source_tree_digest", lambda _path: (
+        "d" * 64, 1
+    ))
+    assert run_matrix.main([
+        "--dry-run", "--attackers", "replay", "--judges", "rules",
+        "--corpora", "synth", "--limit", "1", "--out", str(out_b),
+    ]) == 0
     grid_a = json.loads(next(out_a.glob("*.grid.json")).read_text(encoding="utf-8"))
     grid_b = json.loads(next(out_b.glob("*.grid.json")).read_text(encoding="utf-8"))
     assert grid_a["grid_id"] != grid_b["grid_id"]

@@ -14,6 +14,16 @@ _HASH_A = "a" * 64
 _HASH_B = "b" * 64
 
 
+def _request_envelope() -> dict[str, object]:
+    envelope_id = "request-envelope-" + "7" * 24
+    return {
+        "envelope_id": envelope_id,
+        "file": f"{envelope_id}.request-envelope.json",
+        "sha256": "6" * 64,
+        "bytes": 100,
+    }
+
+
 def _project_revision() -> dict[str, object]:
     return {
         "mode": "verified",
@@ -355,6 +365,7 @@ def _cell(
                 "dtype": "auto",
                 "dry_run": False,
                 "project_revision": _project_revision(),
+                "request_envelope": _request_envelope(),
                 "driver_source": {
                     "module": "run_matrix.py",
                     "sha256": _HASH_A,
@@ -443,6 +454,7 @@ def _grid(root: Path, *, name: str, cells: list[dict[str, Any]]) -> Path:
             "defense": next(iter(defenses)),
             "dry_run": False,
             "project_revision": _project_revision(),
+            "request_envelope": _request_envelope(),
             "attestation_probe": False,
             "live_attestation": {
                 "mode": "measured",
@@ -1042,6 +1054,29 @@ def test_loader_rejects_completion_from_a_different_project_revision(
     _refresh_marker(cell)
 
     with pytest.raises(ValueError, match="project-revision mismatch"):
+        figure_results.load_model_results(
+            tmp_path,
+            left_model="left",
+            right_model="right",
+            corpora=["alpha"],
+            policy_label="policy",
+            multiplicity_family="family",
+            minimum_cell_n=1,
+        )
+
+
+def test_loader_rejects_completion_from_a_different_request_envelope(
+    tmp_path: Path,
+) -> None:
+    cells = _paired_model_grid(tmp_path)
+    cell = cells[0]
+    manifest = json.loads(cell["paths"]["manifest"].read_text(encoding="utf-8"))
+    descriptor = manifest["config"]["run"]["request_envelope"]
+    descriptor["sha256"] = "5" * 64
+    cell["paths"]["manifest"].write_text(json.dumps(manifest), encoding="utf-8")
+    _refresh_marker(cell)
+
+    with pytest.raises(ValueError, match="request-envelope mismatch"):
         figure_results.load_model_results(
             tmp_path,
             left_model="left",

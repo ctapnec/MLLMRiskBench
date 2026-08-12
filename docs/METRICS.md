@@ -3,6 +3,9 @@
 Experiments and the human audit are pending. The functions described here are
 implemented analysis capabilities, not empirical findings.
 
+RUN-001/MET-001 request and selection accounting is implemented at the offline
+software-contract boundary; a real-input MET-001 report is still pending.
+
 ## Populations and denominators
 
 Harmful probes whose expected behavior is refusal contribute to attack success
@@ -192,31 +195,38 @@ The following are distinct states:
 
 Infrastructure errors and unevaluable rows are not counted as safe. Every table
 must distinguish cell lifecycle from record support so differential missingness
-remains visible. Planning compatibility and structural `N/A` use planning-stratum
-counts; attempted/completed/error use whole-arm execution-unit counts and their
-validated stratum projection; decided/abstained/non-evaluable use judgment-record
-counts; included/excluded use the unit named by a downstream analysis artifact.
-These quantities must not all be relabelled as "cells".
+remains visible. Prospective selection uses request-envelope whole-arm units;
+planning compatibility and structural `N/A` use post-materialization planning-
+stratum counts; attempted/completed/error use whole-arm execution-unit counts
+and their validated stratum projection; decided/abstained/non-evaluable use
+completed Judgment-record counts. Analysis-inclusion counts remain null and
+`not_supplied`; these quantities must not all be relabelled as "cells".
 
-`experiments.level1_evidence` implements this accounting for the fixed universe
-of materialized requested planning strata supplied to it. It joins exact
-condition-bound eligibility plans to final complete/partial grids and emits
-`ura-level1-evidence/1` JSON plus a deterministic planning-stratum CSV. It
+`experiments.level1_evidence` implements this accounting by automatically
+discovering `ura-request-envelope/1` artifacts from supplied result roots and
+eligibility siblings, then joining any materialized plans and final
+complete/partial grids. It emits `ura-level1-evidence/2` JSON and the existing
+deterministic planning-stratum CSV. It
 reports scientific compatibility separately from whole-arm execution
 eligibility, distinguishes errors before and after execution started, verifies
 the exact plan and grid/error artifact descriptors plus selected-datapoint count
 and identity digest before projecting
 completion, and reconciles completed judgment records into decided, abstained,
 and non-evaluable support.
-Pre-materialization failures remain separate request-level errors because their
-exact strata cannot be known. Typed live-attestation inputs are implemented for
+Typed pre-materialization errors bind only to applicable prospective whole-arm
+request units. They set execution/provider-call state false; because their exact
+strata cannot be known, they never create planning rows, attempted counts, or
+provider-call counts. Basic parse and request-shape failures before envelope
+creation remain outside this denominator. Typed live-attestation inputs are implemented for
 measured cohorts: each exact grid-bound receipt is revalidated by bytes, scope,
 route/configuration, age, modality combination and stable realized target
 identity, and qualified planning/execution rows expose the matched record
 support. That support means only that the historical target route accepted the
 recorded byte-backed combination; it is not a numerator or denominator for a
-safety metric. Analysis-inclusion input is not implemented and remains
-`not_supplied` with null counts.
+safety metric.
+
+Analysis inclusion is not inferred from output folders or downstream summaries.
+Its status remains `not_supplied` and all associated counts remain null.
 The artifact declares a homogeneous `evidence_kind` of `diagnostic_dry_run` or
 `measured_run`, rejects a mixed cohort, and explicitly states that empirical
 validity is not established. This is coverage/provenance accounting,

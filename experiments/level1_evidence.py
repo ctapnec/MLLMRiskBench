@@ -1,9 +1,9 @@
 """Join planning, execution, and decision evidence without pooling their units.
 
-The Level-1 artifact is an accounting surface, not a safety score.  Its fixed
-planning-stratum universe begins only after selected corpora have materialized
-and ``ura-eligibility-plan/1`` can name their exact strata.  Earlier acquisition
-or conversion failures are retained separately as request-level errors because
+The Level-1 artifact is an accounting surface, not a safety score.  A prospective
+``ura-request-envelope/1`` fixes whole-arm request units before source loading;
+after selected corpora materialize, ``ura-eligibility-plan/1`` names their exact
+planning strata.  Bound early failures remain request-unit evidence only because
 their modality/source strata cannot be reconstructed honestly.
 """
 from __future__ import annotations
@@ -47,9 +47,16 @@ from ura.live_attestation import (  # noqa: E402
     validate_required_live_attestations,
 )
 from ura.project_revision import validate_project_revision_binding  # noqa: E402
+from ura.request_envelope import (  # noqa: E402
+    load_request_envelope_file,
+    load_request_error_file,
+    validate_request_envelope,
+    validate_request_envelope_descriptor,
+    validate_request_error,
+)
 
 
-LEVEL1_SCHEMA = "ura-level1-evidence/1"
+LEVEL1_SCHEMA = "ura-level1-evidence/2"
 _HEX64 = re.compile(r"[0-9a-f]{64}")
 _CONDITION_ID = re.compile(r"condition-[0-9a-f]{24}")
 _LIVE_ATTESTATION_ID = re.compile(r"live-attestation-[0-9a-f]{24}")
@@ -342,7 +349,8 @@ def _condition_from_plan(plan: dict[str, Any]) -> dict[str, Any]:
     if values["dry_run"] is not plan["request"]["dry_run"]:
         raise ValueError("eligibility request/condition dry-run mismatch")
     project_revision = validate_project_revision_binding(
-        bindings.get("project_revision")
+        bindings.get("project_revision"),
+        allow_not_required=values["dry_run"] is True,
     )
     if project_revision != values["project_revision"]:
         raise ValueError("eligibility project-revision condition mismatch")
@@ -351,6 +359,7 @@ def _condition_from_plan(plan: dict[str, Any]) -> dict[str, Any]:
         "selected_config_identities"
     ]:
         raise ValueError("eligibility selected-config condition mismatch")
+    validate_request_envelope_descriptor(bindings.get("request_envelope"))
     for field in (
         "source_instances_sha256",
         "attacker_configs_sha256",
@@ -434,6 +443,10 @@ def _validate_grid_plan_bindings(
     request: Mapping[str, Any], plan: Mapping[str, Any]
 ) -> None:
     bindings = plan["bindings"]
+    if validate_request_envelope_descriptor(
+        request.get("request_envelope")
+    ) != validate_request_envelope_descriptor(bindings.get("request_envelope")):
+        raise ValueError("grid/eligibility request-envelope binding mismatch")
     if request.get("driver_source") != bindings.get("driver_source"):
         raise ValueError("grid/eligibility driver-source binding mismatch")
     project_revision = validate_project_revision_binding(
@@ -485,6 +498,11 @@ def _plan_artifact(path: Path) -> tuple[dict[str, Any], str, str, int, int]:
     condition = _condition_from_plan(plan)
     del condition
     return plan, digest, locator, path.stat().st_size, _pretty_json_records(path)
+
+
+def _request_envelope_artifact(path: Path) -> dict[str, Any]:
+    envelope, descriptor = load_request_envelope_file(path)
+    return {"envelope": envelope, "descriptor": descriptor}
 
 
 def _load_live_attestation_artifact(
@@ -865,6 +883,16 @@ def _error_record(path: Path, *, root: Path) -> dict[str, Any]:
     value = _read_object(path)
     if value.get("status") != "error":
         raise ValueError(f"error artifact does not declare status=error: {path}")
+    if value.get("schema") == "ura-request-error/1":
+        error = load_request_error_file(path)
+        return {
+            "locator": str(path.relative_to(root)),
+            "sha256": _sha256_file(path),
+            "bytes": path.stat().st_size,
+            "phase": error["failure"]["phase"],
+            "scope": "bound_pre_materialization_request_error",
+            "request_error": error,
+        }
     phase = _nonblank(value.get("phase"), f"error phase in {path}")
     return {
         "locator": str(path.relative_to(root)),
@@ -1279,25 +1307,273 @@ def _item_support(
     return support
 
 
+def _validate_envelope_plan_binding(
+    envelope: Mapping[str, Any], descriptor: Mapping[str, Any], plan: Mapping[str, Any]
+) -> None:
+    if plan["bindings"].get("request_envelope") != dict(descriptor):
+        raise ValueError("eligibility plan/request-envelope descriptor mismatch")
+    request = envelope["request"]
+    planned = plan["request"]
+    if request["requested_target_keys"] != planned["requested_target_specs"]:
+        raise ValueError("eligibility plan/request-envelope target inventory mismatch")
+    if sorted(request["logical_source_arms"]) != planned["logical_source_arms"]:
+        raise ValueError("eligibility plan/request-envelope source-arm inventory mismatch")
+    if request["selected_attackers"] != planned["selected_attackers"]:
+        raise ValueError("eligibility plan/request-envelope attacker inventory mismatch")
+    if request["dry_run"] is not planned["dry_run"]:
+        raise ValueError("eligibility plan/request-envelope dry-run mismatch")
+    bindings = envelope["bindings"]
+    if bindings["project_revision"] != plan["bindings"].get("project_revision"):
+        raise ValueError("eligibility plan/request-envelope project revision mismatch")
+    if bindings["driver_source"] != plan["bindings"].get("driver_source"):
+        raise ValueError("eligibility plan/request-envelope driver source mismatch")
+    condition = _condition_from_plan(dict(plan))["values"]
+    projected = {
+        field: request[field]
+        for field in (
+            "execution_purpose", "judges", "judge_model", "seeds", "sample_seed",
+            "limit", "max_queries", "max_turns", "defense", "defense_guard",
+            "group_keys", "quantization", "dtype", "dry_run", "call_caps",
+        )
+    }
+    if any(condition[field] != value for field, value in projected.items()):
+        raise ValueError("eligibility condition/request-envelope scalar mismatch")
+
+
+def _request_error_applies(error: Mapping[str, Any], unit: Mapping[str, Any]) -> bool:
+    scope = error["scope"]
+    level = scope["level"]
+    if level == "whole_request":
+        return True
+    if level == "requested_target":
+        return scope["requested_target_key"] == unit["requested_target_key"]
+    if level == "logical_source_arm":
+        return scope["logical_source_arm"] == unit["logical_source_arm"]
+    return all(
+        scope[field] == unit[field]
+        for field in ("requested_target_key", "logical_source_arm", "attacker")
+    )
+
+
+def _bind_request_lifecycle(
+    request_envelopes: list[dict[str, Any]] | None,
+    plans: Mapping[str, tuple[dict[str, Any], str, str, int, int]],
+    request_level_errors: list[dict[str, Any]],
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]], dict[str, Any]]:
+    if request_envelopes is None:
+        return [], [], {
+            "status": "not_supplied",
+            "counts": None,
+            "reason": "no ura-request-envelope/1 artifacts were supplied",
+        }
+    envelopes: dict[str, dict[str, Any]] = {}
+    descriptors: dict[str, dict[str, Any]] = {}
+    for artifact in request_envelopes:
+        envelope = artifact.get("envelope")
+        descriptor = artifact.get("descriptor")
+        if not isinstance(envelope, dict) or not isinstance(descriptor, dict):
+            raise ValueError("invalid request-envelope input artifact")
+        envelope = validate_request_envelope(envelope)
+        descriptor = validate_request_envelope_descriptor(descriptor)
+        envelope_id = envelope.get("envelope_id")
+        if envelope_id != descriptor["envelope_id"] or envelope_id in envelopes:
+            raise ValueError("duplicate or mismatched request-envelope input")
+        envelopes[envelope_id] = envelope
+        descriptors[envelope_id] = descriptor
+
+    plan_by_envelope: dict[str, dict[str, Any]] = {}
+    for plan, _digest, _locator, _bytes, _records in plans.values():
+        descriptor = validate_request_envelope_descriptor(
+            plan["bindings"].get("request_envelope")
+        )
+        envelope_id = descriptor["envelope_id"]
+        envelope = envelopes.get(envelope_id)
+        if envelope is None or descriptor != descriptors[envelope_id]:
+            raise ValueError("eligibility plan references an unsupplied request envelope")
+        if envelope_id in plan_by_envelope:
+            raise ValueError("one request envelope is bound to multiple eligibility plans")
+        _validate_envelope_plan_binding(envelope, descriptor, plan)
+        plan_by_envelope[envelope_id] = plan
+
+    errors_by_envelope: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    for record in request_level_errors:
+        error = record.get("request_error")
+        if error is None:
+            continue
+        descriptor = error["request_envelope"]
+        envelope_id = descriptor["envelope_id"]
+        envelope = envelopes.get(envelope_id)
+        if envelope is None or descriptor != descriptors[envelope_id]:
+            raise ValueError("request error references an unsupplied request envelope")
+        # Revalidate membership against the supplied prospective universe.
+        validate_request_error(dict(error), envelope=envelope)
+        errors_by_envelope[envelope_id].append(record)
+    for envelope_id, errors in errors_by_envelope.items():
+        if len(errors) != 1:
+            raise ValueError("one request envelope has multiple early-failure artifacts")
+        if envelope_id in plan_by_envelope:
+            raise ValueError("request envelope has both materialized plan and early error")
+
+    envelope_rows: list[dict[str, Any]] = []
+    unit_rows: list[dict[str, Any]] = []
+    for envelope_id in sorted(envelopes):
+        envelope = envelopes[envelope_id]
+        plan = plan_by_envelope.get(envelope_id)
+        errors = errors_by_envelope.get(envelope_id, [])
+        error_record = errors[0] if errors else None
+        envelope_rows.append({
+            "envelope_id": envelope_id,
+            "artifact": descriptors[envelope_id],
+            "execution_purpose": envelope["request"]["execution_purpose"],
+            "dry_run": envelope["request"]["dry_run"],
+            "requested_execution_units": len(envelope["execution_units"]),
+            "plan_id": plan["plan_id"] if plan else None,
+            "request_id": plan["request_id"] if plan else None,
+            "early_error": (
+                {
+                    key: error_record[key]
+                    for key in ("locator", "sha256", "bytes", "phase")
+                }
+                if error_record
+                else None
+            ),
+            "materialization_status": (
+                "materialized_to_eligibility"
+                if plan
+                else "blocked_before_materialization"
+                if error_record
+                else "missing_after_request_envelope"
+            ),
+        })
+        plan_units = {
+            (
+                unit["requested_target_spec"], unit["logical_source_arm"],
+                unit["attacker"],
+            ): unit
+            for unit in (plan["execution"]["units"] if plan else [])
+        }
+        for unit in envelope["execution_units"]:
+            key = (
+                unit["requested_target_key"], unit["logical_source_arm"],
+                unit["attacker"],
+            )
+            planned_unit = plan_units.get(key)
+            applies = bool(
+                error_record
+                and _request_error_applies(error_record["request_error"], unit)
+            )
+            if plan is not None and planned_unit is None:
+                raise ValueError("eligibility plan omits a prospective execution unit")
+            unit_rows.append({
+                **unit,
+                "envelope_id": envelope_id,
+                "execution_purpose": envelope["request"]["execution_purpose"],
+                "dry_run": envelope["request"]["dry_run"],
+                "plan_id": plan["plan_id"] if plan else None,
+                "request_id": plan["request_id"] if plan else None,
+                "eligibility_execution_unit_id": (
+                    planned_unit["execution_unit_id"] if planned_unit else None
+                ),
+                "materialized": planned_unit is not None,
+                "bound_early_error": applies,
+                "attempted": False if applies else None,
+                "final_disposition": (
+                    "materialized_to_eligibility"
+                    if planned_unit
+                    else "blocked_before_materialization"
+                    if applies
+                    else "unmaterialized_missing_evidence"
+                ),
+            })
+    unit_rows.sort(key=lambda item: (item["envelope_id"], item["request_unit_id"]))
+    counts = {
+        "unit": "prospective_whole_arm_request_unit",
+        "requested": len(unit_rows),
+        "materialized": sum(row["materialized"] for row in unit_rows),
+        "blocked_before_materialization": sum(
+            row["bound_early_error"] for row in unit_rows
+        ),
+        "missing": sum(
+            row["final_disposition"] == "unmaterialized_missing_evidence"
+            for row in unit_rows
+        ),
+        "attempted": None,
+    }
+    if counts["requested"] != (
+        counts["materialized"] + counts["blocked_before_materialization"]
+        + counts["missing"]
+    ):
+        raise ValueError("prospective request-unit counts do not reconcile")
+    return envelope_rows, unit_rows, {
+        "status": "validated",
+        "counts": counts,
+        "limitations": {
+            "source_or_modality_strata_fabricated": False,
+            "execution_or_provider_call_inferred": False,
+            "empirical_validity_established": False,
+        },
+    }
+
+
 def build_level1_evidence(
     plan_artifacts: list[tuple[dict[str, Any], str, str, int, int]],
     grids_by_plan: Mapping[str, dict[str, Any]],
     request_level_errors: list[dict[str, Any]],
     live_attestation_availability: Mapping[str, Any] | None = None,
+    request_envelopes: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     """Build one deterministic, unit-qualified lifecycle inventory."""
 
-    if not plan_artifacts:
-        raise ValueError("Level-1 evidence requires at least one eligibility plan")
+    if not plan_artifacts and not request_envelopes:
+        raise ValueError(
+            "Level-1 evidence requires an eligibility plan or request envelope"
+        )
     dry_run_modes = {
         artifact[0]["request"]["dry_run"] for artifact in plan_artifacts
     }
+    if request_envelopes:
+        dry_run_modes.update(
+            artifact["envelope"]["request"]["dry_run"]
+            for artifact in request_envelopes
+        )
     if len(dry_run_modes) != 1:
         raise ValueError(
             "one Level-1 artifact must not mix diagnostic dry-run and measured requests"
         )
     diagnostic_dry_run = next(iter(dry_run_modes))
     evidence_kind = "diagnostic_dry_run" if diagnostic_dry_run else "measured_run"
+    expected_purpose = "diagnostic_dry_run" if diagnostic_dry_run else "measured_run"
+    observed_purposes = {
+        artifact[0]["bindings"]["experiment_conditions"]["values"][
+            "execution_purpose"
+        ]
+        for artifact in plan_artifacts
+    }
+    if request_envelopes:
+        observed_purposes.update(
+            artifact["envelope"]["request"]["execution_purpose"]
+            for artifact in request_envelopes
+        )
+    if observed_purposes != {expected_purpose}:
+        raise ValueError(
+            "Level-1 accepts only diagnostic_dry_run or measured_run request "
+            "cohorts; probes, preflights, and canaries are excluded"
+        )
+    revision_identities = {
+        canonical_json_sha256(
+            artifact[0]["bindings"]["project_revision"]
+        )
+        for artifact in plan_artifacts
+    }
+    if request_envelopes:
+        revision_identities.update(
+            canonical_json_sha256(
+                artifact["envelope"]["bindings"]["project_revision"]
+            )
+            for artifact in request_envelopes
+        )
+    if len(revision_identities) != 1:
+        raise ValueError("one Level-1 cohort must use one project revision binding")
     live_attestation_status = (
         live_attestation_availability.get("status")
         if live_attestation_availability is not None
@@ -1342,6 +1618,9 @@ def build_level1_evidence(
     orphan_grids = set(grids_by_plan) - set(plans)
     if orphan_grids:
         raise ValueError(f"grids reference unsupplied plans: {sorted(orphan_grids)!r}")
+    request_envelope_rows, prospective_unit_rows, request_availability = (
+        _bind_request_lifecycle(request_envelopes, plans, request_level_errors)
+    )
 
     rows: list[dict[str, Any]] = []
     unit_rows: list[dict[str, Any]] = []
@@ -1753,12 +2032,13 @@ def build_level1_evidence(
         "status": "validated_unit_qualified_lifecycle_inventory",
         "scope": {
             "fixed_universe": (
-                "materialized requested planning strata from supplied "
-                "ura-eligibility-plan/1 artifacts"
+                "prospective whole-arm request units from supplied "
+                "ura-request-envelope/1 artifacts, plus exact materialized planning "
+                "strata from supplied ura-eligibility-plan/1 artifacts"
             ),
             "pre_materialization_failures": (
-                "retained as request-level errors; exact source/modality strata "
-                "are CANNOT-VERIFY and are not fabricated"
+                "bound to prospective request units only; exact source/modality "
+                "strata are CANNOT-VERIFY and are not fabricated"
             ),
             "universal_safety_score_defined": False,
             "evidence_kind": evidence_kind,
@@ -1766,6 +2046,7 @@ def build_level1_evidence(
             "empirical_validity_established": False,
         },
         "availability": {
+            "prospective_request": request_availability,
             "live_attestation": {
                 **(
                     {
@@ -1820,9 +2101,7 @@ def build_level1_evidence(
             "analysis_inclusion": {
                 "status": "not_supplied",
                 "counts": None,
-                "reason": (
-                    "no explicit downstream analysis-selection artifact was supplied"
-                ),
+                "reason": "no analysis-inclusion evidence is defined in this wave",
             },
             "planning_stratum_attempts": {
                 "status": "not_derivable_from_error_units",
@@ -1834,15 +2113,27 @@ def build_level1_evidence(
             },
         },
         "counts": {
+            "prospective_request_units": request_availability.get("counts"),
             "planning_strata": planning_counts,
             "execution_units": execution_counts,
             "judgment_records": judgment_counts,
             "request_level_errors": {
-                "unit": "unstratified_request_error_artifact",
+                "unit": "request_error_artifact",
                 "observed": len(request_level_errors),
+                "bound_pre_materialization": sum(
+                    record.get("scope") == "bound_pre_materialization_request_error"
+                    for record in request_level_errors
+                ),
+                "unstratified": sum(
+                    record.get("scope")
+                    != "bound_pre_materialization_request_error"
+                    for record in request_level_errors
+                ),
             },
         },
         "requests": request_rows,
+        "request_envelopes": request_envelope_rows,
+        "prospective_request_units": prospective_unit_rows,
         "planning_strata": rows,
         "execution_units": unit_rows,
         "request_level_errors": request_level_errors,
@@ -1863,25 +2154,69 @@ def _csv_value(value: object) -> object:
 
 def write_csv(path: Path, rows: list[dict[str, Any]]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    with path.open("x", encoding="utf-8", newline="") as handle:
-        writer = csv.DictWriter(handle, fieldnames=_CSV_FIELDS, extrasaction="ignore")
-        writer.writeheader()
-        for row in rows:
-            writer.writerow({field: _csv_value(row.get(field)) for field in _CSV_FIELDS})
+    created = False
+    try:
+        handle = path.open("x", encoding="utf-8", newline="")
+        created = True
+        with handle:
+            writer = csv.DictWriter(
+                handle, fieldnames=_CSV_FIELDS, extrasaction="ignore"
+            )
+            writer.writeheader()
+            for row in rows:
+                writer.writerow({
+                    field: _csv_value(row.get(field)) for field in _CSV_FIELDS
+                })
+    except Exception:
+        if created:
+            path.unlink(missing_ok=True)
+        raise
+
+
+def _discover_request_envelopes(
+    plan_paths: list[Path],
+    plan_artifacts: list[tuple[dict[str, Any], str, str, int, int]],
+    result_roots: list[Path],
+) -> list[dict[str, Any]]:
+    """Find auto-generated envelopes beside supplied plans/results."""
+
+    candidates: set[Path] = set()
+    for plan_path, artifact in zip(plan_paths, plan_artifacts):
+        descriptor = validate_request_envelope_descriptor(
+            artifact[0]["bindings"].get("request_envelope")
+        )
+        candidates.add(plan_path.resolve(strict=True).parent / descriptor["file"])
+    for root in result_roots:
+        resolved = root.resolve(strict=True)
+        candidates.update(resolved.rglob("request-envelope-*.request-envelope.json"))
+    artifacts = [_request_envelope_artifact(path) for path in sorted(candidates)]
+    if len({item["descriptor"]["envelope_id"] for item in artifacts}) != len(
+        artifacts
+    ):
+        raise ValueError("duplicate request-envelope identity in Level-1 inputs")
+    return artifacts
 
 
 def _write_json_new(path: Path, value: dict[str, Any]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    with path.open("x", encoding="utf-8", newline="\n") as handle:
-        json.dump(
-            value,
-            handle,
-            ensure_ascii=False,
-            sort_keys=True,
-            indent=2,
-            allow_nan=False,
-        )
-        handle.write("\n")
+    created = False
+    try:
+        handle = path.open("x", encoding="utf-8", newline="\n")
+        created = True
+        with handle:
+            json.dump(
+                value,
+                handle,
+                ensure_ascii=False,
+                sort_keys=True,
+                indent=2,
+                allow_nan=False,
+            )
+            handle.write("\n")
+    except Exception:
+        if created:
+            path.unlink(missing_ok=True)
+        raise
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -1895,7 +2230,7 @@ def main(argv: list[str] | None = None) -> int:
         "--eligibility",
         type=Path,
         action="append",
-        required=True,
+        default=[],
         help="validated ura-eligibility-plan/1 JSON; repeat per request condition",
     )
     parser.add_argument(
@@ -1925,13 +2260,18 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--out-csv", type=Path, required=True)
     args = parser.parse_args(argv)
     if args.out_json.resolve() == args.out_csv.resolve():
-        parser.error("--out-json and --out-csv must be different paths")
+        parser.error("Level-1 JSON and CSV outputs must be different paths")
+    if args.out_json.exists() or args.out_csv.exists():
+        parser.error("Level-1 outputs are create-only and must not already exist")
     if len(args.live_attestation) != len(args.live_attestation_sha256):
         parser.error(
             "--live-attestation and --live-attestation-sha256 must be paired"
         )
     try:
         artifacts = [_plan_artifact(path) for path in args.eligibility]
+        envelope_artifacts = _discover_request_envelopes(
+            args.eligibility, artifacts, args.results
+        )
         plan_index = {artifact[0]["plan_id"]: artifact for artifact in artifacts}
         if len(plan_index) != len(artifacts):
             raise ValueError("duplicate eligibility plan input")
@@ -1950,12 +2290,17 @@ def main(argv: list[str] | None = None) -> int:
             grids,
             request_errors,
             live_availability,
+            envelope_artifacts,
         )
-        _write_json_new(args.out_json, report)
+        created_outputs: list[Path] = []
         try:
+            _write_json_new(args.out_json, report)
+            created_outputs.append(args.out_json)
             write_csv(args.out_csv, report["planning_strata"])
+            created_outputs.append(args.out_csv)
         except Exception:
-            args.out_json.unlink(missing_ok=True)
+            for path in created_outputs:
+                path.unlink(missing_ok=True)
             raise
     except (KeyError, OSError, TypeError, ValueError) as exc:
         print(f"Level-1 evidence failed: {exc}", file=sys.stderr)
@@ -1965,10 +2310,15 @@ def main(argv: list[str] | None = None) -> int:
         "evidence_id": report["evidence_id"],
         "json": str(args.out_json.resolve()),
         "csv": str(args.out_csv.resolve()),
+        "prospective_request_units": report["counts"][
+            "prospective_request_units"
+        ]["requested"],
         "planning_strata": report["counts"]["planning_strata"]["requested"],
         "execution_units": report["counts"]["execution_units"]["requested"],
         "attestation_status": report["availability"]["live_attestation"]["status"],
-        "analysis_inclusion_status": "not_supplied",
+        "analysis_inclusion_status": report["availability"]["analysis_inclusion"][
+            "status"
+        ],
     }, sort_keys=True))
     return 0
 

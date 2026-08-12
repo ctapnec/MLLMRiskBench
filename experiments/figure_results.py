@@ -49,6 +49,7 @@ from ura.data_models import (
     RunManifest,
 )
 from ura.project_revision import validate_project_revision_binding
+from ura.request_envelope import validate_request_envelope_descriptor
 from ura.runner import CODE_VERSION, realized_identity_summary
 
 _MAX_JSON_BYTES = 4 * 1024 * 1024
@@ -565,6 +566,9 @@ def _validate_cell(
     run = manifest.config.get("run")
     if not isinstance(run, dict):
         raise ValueError(f"manifest lacks config.run: {resolved['manifest']}")
+    completed_request_envelope = validate_request_envelope_descriptor(
+        run.get("request_envelope")
+    )
     for ref in refs:
         request_revision = validate_project_revision_binding(
             ref.request.get("project_revision"),
@@ -573,6 +577,13 @@ def _validate_cell(
         if request_revision != project_revision:
             raise ValueError(
                 f"grid/completed-artifact project-revision mismatch: {marker_path}"
+            )
+        grid_request_envelope = validate_request_envelope_descriptor(
+            ref.request.get("request_envelope")
+        )
+        if grid_request_envelope != completed_request_envelope:
+            raise ValueError(
+                f"grid/completed-artifact request-envelope mismatch: {marker_path}"
             )
     for field in ("corpus", "attacker", "model_spec", "defense"):
         _nonblank(run.get(field), f"manifest run.{field} in {resolved['manifest']}")

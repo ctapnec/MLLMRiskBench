@@ -2,7 +2,9 @@
 
 ```mermaid
 flowchart LR
-    S[Verified source instances<br/>19 converter families] --> C[Converters]
+    O[Operator-selected targets,<br/>logical arms and attackers] --> E[Content-addressed<br/>request envelope]
+    E --> S[Verified source instances<br/>19 converter families]
+    S --> C[Converters]
     C --> U[Unified schema]
     U --> P[Release, policy, metric and modality preflight]
     P --> Q[Content-addressed no-call lane projection]
@@ -12,7 +14,7 @@ flowchart LR
     T --> J[Rule, guardrail and LLM judge cascade]
     J --> R[Artifacts, checkpoints, budgets and completion]
     N[Upstream native evaluators] --> I[Content-addressed native import]
-    R --> D[Diagnostics and automated-label-blinded,<br/>model-visible human audit]
+    R --> D[Diagnostics, exact analysis selection and<br/>automated-label-blinded human audit]
     I --> X
     D --> X[Post-experiment analysis and figures]
 ```
@@ -28,8 +30,8 @@ not model performance or judge validity.
 | Attacks | `src/ura/adapters/` | replay, transforms, response-conditioned escalation, native-result bridges |
 | Targets | `src/ura/targets/` | exact hosted/local invocation and provider continuation state |
 | Judgment | `src/ura/judges/`, `src/ura/source_metrics.py` | ordered full-shadow cascade for common responses; source evaluator and unqueried placeholders for classification |
-| Runtime | `src/ura/runner.py`, `src/ura/project_revision.py`, `src/ura/live_attestation.py`, `src/ura/lane_projection.py`, `src/ura/lane_canary.py`, `experiments/run_matrix.py`, `experiments/project_revision.py`, `experiments/live_attestation.py`, `experiments/lane_canary.py` | immutable local-project admission, preflight, no-call projection, typed route/transport receipt production and admission, diagnostic canary summary, execution, budgets, checkpoints, recovery and manifests |
-| Analysis | `experiments/` | paired effects, transfer, judge sensitivity, human audit and figures |
+| Runtime | `src/ura/runner.py`, `src/ura/request_envelope.py`, `src/ura/project_revision.py`, `src/ura/live_attestation.py`, `src/ura/lane_projection.py`, `src/ura/lane_canary.py`, `experiments/run_matrix.py`, `experiments/project_revision.py`, `experiments/live_attestation.py`, `experiments/lane_canary.py` | prospective whole-arm request identity, bound early failures, immutable local-project admission, preflight, no-call projection, typed route/transport receipt production and admission, diagnostic canary summary, execution, budgets, checkpoints, recovery and manifests |
+| Analysis | `experiments/level1_evidence.py`, other `experiments/` modules | unit-qualified lifecycle accounting, paired effects, transfer, judge sensitivity, human audit and figures |
 
 ## Direct operator flow
 
@@ -119,12 +121,22 @@ After the selected corpora materialize, `run_matrix` writes a content-addressed
 requested planning stratum as `compatible_if_isolated` or `N/A`, with its failed
 gates, whole-arm execution-unit status, and bound configuration/corpus digests.
 This is planning evidence only: it is not a live
-attestation, attempted/completed-cell record, or scientific result. A source or
-configuration failure before corpus materialization remains a separate preflight
-error because no exact source stratum can yet be derived.
+attestation, attempted/completed-cell record, or scientific result.
+
+At the earlier boundary, after basic argument/axis validation but before config
+or source materialization, `run_matrix` writes `ura-request-envelope/1`. Its
+units are exactly requested target x logical source arm x attacker. A bound
+`ura-request-error/1` may then record a configuration, source-integrity,
+conversion, empty-corpus, or diagnostic-admission failure at whole-request,
+target, arm, or exact-request-unit scope. Such an error states that execution and
+provider calls did not start. It never reconstructs source-policy/modality
+strata or claims attempted execution. Argument parsing and basic request-shape
+rejections before this boundary are not retroactively represented. The envelope
+is the operator-selection universe, not normalized config/receipt identity;
+config-only variants sharing it belong in separate Level-1 cohorts.
 
 After the whole request passes admission and before the first generation call,
-Runner 2.9 writes a content-addressed `ura-lane-projection/1`. The artifact
+Runner 2.10 writes a content-addressed `ura-lane-projection/1`. The artifact
 binds the exact experiment condition and eligibility descriptor, selected
 record/cluster/source-policy counts, deterministic sampling identities,
 selected physical input-media bytes, and the conservative complete-grid target,
@@ -136,12 +148,14 @@ price/cost, runtime/throughput, and expected output storage remain
 `CANNOT-VERIFY` until independently observed and are never extrapolated by the
 projection.
 
-The read-only `experiments.level1_evidence` boundary then validates and joins
-every final plan in one selected measured `run_matrix` cohort, including
-plan-only structural-`N/A` or blocked requests, to complete/partial grids under the same
-content-derived request condition. Its `ura-level1-evidence/1` output retains
-three non-interchangeable units: materialized planning strata, whole-arm
-execution units, and judgment records. Whole-arm execution is projected onto a
+The read-only `experiments.level1_evidence` boundary automatically discovers
+request envelopes from supplied result roots and eligibility siblings, then
+joins any final plan in one selected `run_matrix` cohort, including plan-only
+structural-`N/A` or blocked requests, to complete or partial grids under the
+same content-derived condition. Its `ura-level1-evidence/2` output retains four non-interchangeable units:
+prospective whole-arm request units, materialized planning strata, whole-arm
+execution units, and completed Judgment records. Prospective units stay in the
+JSON and are not planning rows. Whole-arm execution is projected onto a
 planning stratum only after the completed artifacts cover that stratum's exact
 selected-datapoint count and identity digest. Grid, completion, and error
 evidence remains bound through locator/SHA-256/byte descriptors; a mismatched
@@ -152,9 +166,10 @@ consumes each grid-bound `ura-live-attestation/2` artifact by exact byte digest,
 reconstructs its route/config/scope/age and exact-modality prerequisite, checks
 the completed cell's stable realized identity, and reports matched record-level
 attestation support. Probe grids are diagnostic and cannot enter a measured
-Level-1 cohort. Analysis-selection evidence is still `not_supplied` with null
-counts. Pre-materialization failures remain unstratified request-level errors;
-the join never fabricates source/modality rows for them. It identifies
+Level-1 cohort. Analysis inclusion remains `not_supplied` with null counts; the
+system does not infer it from a folder or post-hoc output. Pre-materialization failures are
+bound to prospective request units only; the join never fabricates
+source/modality rows or calls for them. It identifies
 diagnostic dry-run input but explicitly sets empirical validity to false.
 No-call `rig_check` plans and live transport-probe artifacts remain in separate
 preflight/attestation trees and are not supplied as measured Level-1 requests.
@@ -253,6 +268,14 @@ that no owner is active and recording the intervention. Infrastructure errors
 remain errors and never become safe responses.
 
 ## Artifact boundary
+
+The earliest durable success artifact is
+`<envelope_id>.request-envelope.json`. A pre-materialization terminal failure is
+`<error_id>.request.error.json` and is descriptor-bound to that envelope. A
+later failure for the same envelope supersedes an earlier one; successful
+eligibility removes the same-envelope stale error. Envelope descriptors are
+bound under the exact key `request_envelope` in eligibility, grid, cell run, and
+completion-validated manifest lineage.
 
 An admitted cell persists attempts, responses, authoritative judgments,
 full-shadow common trails or explicit source-metric-only placeholders, aggregate results, manifest, checkpoint, and completion

@@ -10,6 +10,10 @@ from tempfile import TemporaryDirectory
 from experiments import run_matrix
 from ura.lane_projection import load_lane_projection_file
 from ura.project_revision import load_project_revision_file
+from ura.request_envelope import (
+    load_request_envelope_file,
+    load_request_error_file,
+)
 
 
 def _requested_output(arguments: list[str]) -> Path:
@@ -34,6 +38,8 @@ def _persist_eligibility_artifacts(scratch: Path, destination: Path) -> list[Pat
         *scratch.glob("eligibility-*.eligibility.json"),
         *scratch.glob("lane-projection-*.lane-projection.json"),
         *scratch.glob("project-revision-*.project-revision.json"),
+        *scratch.glob("request-envelope-*.request-envelope.json"),
+        *scratch.glob("request-error-*.request.error.json"),
         *scratch.glob("source-conformance-*.json"),
     })
     if not sources:
@@ -54,6 +60,10 @@ def _persist_eligibility_artifacts(scratch: Path, destination: Path) -> list[Pat
                 hashlib.sha256(payload).hexdigest(),
                 Path(run_matrix.__file__).resolve(),
             )
+        if source.name.endswith(".request-envelope.json"):
+            load_request_envelope_file(source)
+        if source.name.endswith(".request.error.json"):
+            load_request_error_file(source)
         target = destination / source.name
         if target.exists():
             if not target.is_file() or target.is_symlink():
@@ -106,6 +116,11 @@ def main(argv: list[str] | None = None) -> int:
             if path.name.startswith("project-revision-")
             and path.name.endswith(".project-revision.json")
         ]
+        request_envelopes = [
+            path for path in copied
+            if path.name.startswith("request-envelope-")
+            and path.name.endswith(".request-envelope.json")
+        ]
         if result == 0 and not eligibility:
             print(
                 "rig-check passed without emitting the required eligibility artifact",
@@ -115,6 +130,13 @@ def main(argv: list[str] | None = None) -> int:
         if result == 0 and not projections:
             print(
                 "rig-check passed without emitting the required lane-projection "
+                "artifact",
+                file=sys.stderr,
+            )
+            return 1
+        if result == 0 and not request_envelopes:
+            print(
+                "rig-check passed without emitting the required request-envelope "
                 "artifact",
                 file=sys.stderr,
             )

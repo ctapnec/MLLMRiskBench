@@ -25,6 +25,11 @@ from ura.live_attestation import (
     build_live_attestation_manifest,
     route_config_sha256,
 )
+from ura.request_envelope import (
+    build_request_envelope,
+    request_envelope_descriptor,
+    write_request_envelope,
+)
 from ura.targets.api import MockTarget
 
 
@@ -123,7 +128,9 @@ def _conditions(
         "values": values,
     }
     bindings = {
-        "driver_source": {"module": "run_matrix.py", "sha256": "2" * 64},
+        "driver_source": {
+            "module": "run_matrix.py", "sha256": "2" * 64, "file_count": 1,
+        },
         "project_revision": _project_revision(dry_run=dry_run),
         "source_instances_sha256": "1" * 64,
         "attacker_configs_sha256": "2" * 64,
@@ -132,6 +139,12 @@ def _conditions(
         "selected_config_identities": selected,
         "experiment_conditions": condition,
         "selected_corpora": {},
+        "request_envelope": {
+            "envelope_id": "request-envelope-" + "e" * 24,
+            "file": "request-envelope-" + "e" * 24 + ".request-envelope.json",
+            "sha256": "f" * 64,
+            "bytes": 100,
+        },
     }
     return condition, bindings
 
@@ -150,6 +163,43 @@ def _write_plan(
         defense=defense,
         dry_run=dry_run,
         live_attestation=live_attestation,
+    )
+    envelope = build_request_envelope(
+        request={
+            "execution_purpose": (
+                "diagnostic_dry_run" if dry_run else "measured_run"
+            ),
+            "requested_target_keys": ["text-target"],
+            "logical_source_arms": ["synth-arm"],
+            "selected_attackers": ["replay"],
+            "judges": ["rules"],
+            "judge_model": None,
+            "seeds": [0],
+            "sample_seed": 0,
+            "limit": 2,
+            "max_queries": 1,
+            "max_turns": 1,
+            "defense": defense,
+            "defense_guard": "rules",
+            "group_keys": bindings["experiment_conditions"]["values"]["group_keys"],
+            "quantization": "",
+            "dtype": "auto",
+            "dry_run": dry_run,
+            "call_caps": {
+                "target": None, "judge": None, "http_attempts": None,
+                "deadline_seconds": None,
+            },
+        },
+        project_revision=bindings["project_revision"],
+        harness_source={
+            "algorithm": "fixture", "sha256": "1" * 64,
+            "file_count": 1, "bytes": 1,
+        },
+        driver_source=bindings["driver_source"],
+    )
+    envelope_path = write_request_envelope(path.parent, envelope)
+    bindings["request_envelope"] = request_envelope_descriptor(
+        envelope_path, envelope
     )
     plan = build_eligibility_plan(
         requested_targets=["text-target"],
@@ -233,7 +283,7 @@ def test_planning_only_keeps_structural_na_separate_from_missing(tmp_path: Path)
 
     report = build_level1_evidence([artifact], {}, [])
 
-    assert report["schema_version"] == "ura-level1-evidence/1"
+    assert report["schema_version"] == "ura-level1-evidence/2"
     counts = report["counts"]["planning_strata"]
     assert counts["requested"] == 2
     assert counts["scientifically_compatible"] == 1
@@ -289,6 +339,7 @@ def test_condition_projection_rejects_project_revision_drift() -> None:
 
     request = {
         "driver_source": bindings["driver_source"],
+        "request_envelope": bindings["request_envelope"],
         "project_revision": {
             **bindings["project_revision"],
             "driver_source_sha256": "8" * 64,
@@ -790,6 +841,54 @@ def test_cli_writes_zero_human_synthetic_json_and_csv(tmp_path: Path) -> None:
     assert out_csv.read_text(encoding="utf-8").splitlines()[0].startswith(
         "lifecycle_stratum_id,"
     )
+
+
+def test_cli_accounts_for_bound_failure_before_materialization_without_strata(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "early-failure"
+    missing_config = tmp_path / "operator-private" / "missing.json"
+    assert run_matrix.main([
+        "--dry-run", "--corpora", "synth", "--limit", "1",
+        "--seeds", "0", "--attackers", "replay", "--judges", "rules",
+        "--attacker-config", str(missing_config),
+        "--max-queries", "1", "--max-turns", "1", "--out", str(root),
+    ]) == 1
+    assert len(list(root.glob("*.request-envelope.json"))) == 1
+    assert not list(root.glob("*.eligibility.json"))
+    assert len(list(root.glob("*.request.error.json"))) == 1
+
+    out_json = tmp_path / "early-level1.json"
+    planning_csv = tmp_path / "early-planning.csv"
+    assert main([
+        "--results", str(root),
+        "--out-json", str(out_json),
+        "--out-csv", str(planning_csv),
+    ]) == 0
+
+    report = json.loads(out_json.read_text(encoding="utf-8"))
+    prospective = report["counts"]["prospective_request_units"]
+    assert prospective == {
+        "unit": "prospective_whole_arm_request_unit",
+        "requested": 1,
+        "materialized": 0,
+        "blocked_before_materialization": 1,
+        "missing": 0,
+        "attempted": None,
+    }
+    assert report["counts"]["planning_strata"]["requested"] == 0
+    assert report["counts"]["execution_units"]["requested"] == 0
+    assert report["counts"]["judgment_records"]["completed"] == 0
+    assert report["counts"]["request_level_errors"] == {
+        "unit": "request_error_artifact",
+        "observed": 1,
+        "bound_pre_materialization": 1,
+        "unstratified": 0,
+    }
+    unit = report["prospective_request_units"][0]
+    assert unit["final_disposition"] == "blocked_before_materialization"
+    assert unit["attempted"] is False
+    assert planning_csv.read_text(encoding="utf-8").count("\n") == 1
 
 
 def test_decision_state_keeps_common_source_metric_and_setup_units_distinct() -> None:

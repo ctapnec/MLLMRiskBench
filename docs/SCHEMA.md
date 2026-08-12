@@ -2,7 +2,7 @@
 
 `ura.data_models` is the typed Pydantic v2 contract shared by converters,
 attackers, targets, judges, persistence, and analysis. `SCHEMA_VERSION = "1.4"`
-is stamped on datapoints, checkpoints, and manifests. Runner 2.9 rejects mixed
+is stamped on datapoints, checkpoints, and manifests. Runner 2.10 rejects mixed
 schema versions and duplicate datapoint IDs before a target call.
 
 ## Records
@@ -25,6 +25,55 @@ Enumerations are defined in code. In particular, expected behavior separates
 harmful `refuse` probes from benign `safe_answer` and `comply_safely` probes;
 that split controls ASR and FRR denominators.
 
+## Prospective request envelope and early failures
+
+Before planning exists, `run_matrix` emits strict
+`ura-request-envelope/1` as
+`<envelope_id>.request-envelope.json`. Its exact top-level
+fields are `schema`, `status`, `envelope_id`, `request`, `bindings`,
+`execution_units`, and `limitations`. `request` fixes execution purpose,
+requested target keys, logical source arms, attackers, judges, seeds, sampling
+and call/turn limits, defense, grouping, runtime controls, dry-run state, and
+call caps. `bindings` fixes project-revision, harness-source, and driver-source
+identity. Every execution unit has exactly `request_unit_id`,
+`requested_target_key`, `logical_source_arm`, and `attacker`; the list is the
+complete exact cross-product of those three selected axes.
+
+The envelope is created after basic CLI/axis validation but before selected
+config loading, source-conformance input loading, or conversion. It is a
+prospective whole-arm request universe, not evidence that source-policy or
+modality strata exist, a config was valid, execution started, a provider was
+called, or a result was observed. Its exact descriptor is
+`{envelope_id,file,sha256,bytes}` and is retained under `request_envelope` in
+the later eligibility binding, grid request, cell run config, and completion-
+validated manifest lineage. Local target paths are represented by sanitized
+pre-materialization request keys. Selected configuration and receipt identities
+are bound later by the existing eligibility and grid artifacts; the early
+envelope does not duplicate them.
+
+A terminal failure after that boundary but before planning uses strict
+`ura-request-error/1` as
+`<error_id>.request.error.json`. Its exact top-level fields are
+`schema`, `status`, `error_id`, `request_envelope`, `scope`, `failure`,
+`execution`, and `limitations`. Scope is one of `whole_request`,
+`requested_target`, `logical_source_arm`, or a complete `execution_unit` tuple;
+unsupported partial scopes are rejected. Typed phases are
+`configuration_preflight`, `source_conformance_input_preflight`,
+`corpus_preflight`, `diagnostic_canary_cluster_admission`, and
+`source_conformance_preflight`. Categories are `configuration_invalid`,
+`source_input_unavailable`, `source_integrity_failed`, `conversion_failed`,
+`empty_converted_corpus`, and `diagnostic_admission_failed`. `execution_started` and
+`provider_calls_started` are both false. The error cannot attribute planning
+strata, infer a failed execution unit beyond its declared scope, or establish
+empirical evidence. A newer validated same-envelope early error supersedes an
+older one, and successful eligibility removes a stale same-envelope error.
+
+Both artifact loaders require bounded, canonical UTF-8 JSON in a non-symlink
+regular file, reject duplicate keys and non-finite values, and match filename,
+content ID, digest, and bytes. Argument parsing, malformed selected-axis, and
+other basic request-shape failures rejected before envelope creation are outside
+this boundary rather than being reconstructed afterward.
+
 ## Planning eligibility artifact
 
 `run_matrix` and `rig_check` emit `ura-eligibility-plan/1` as
@@ -37,11 +86,11 @@ failed gates. The artifact self-validates its content-derived `plan_id`.
 Its stratum statuses are only `compatible_if_isolated` and structural `N/A`;
 separate execution-unit accounting says whether the whole logical arm can pass
 the actual Runner boundary. Neither status means attested, attempted, completed,
-decided, or empirically valid. Failures before a
-corpus can materialize remain separate preflight error artifacts because their
-exact modality/source strata are not yet knowable. The Level-1 lifecycle
-artifact below joins only the evidence presently available rather than
-reinterpreting this plan as realized coverage.
+decided, or empirically valid. Failures before a corpus can materialize bind to
+the earlier prospective request envelope/error pair because their exact
+modality/source strata are not yet knowable. The Level-1 lifecycle artifact
+below joins only the evidence presently available rather than reinterpreting
+either the request or the plan as realized coverage.
 
 ## Prospective lane projection
 
@@ -180,27 +229,28 @@ not use this schema.
 
 ## Level-1 lifecycle evidence
 
-`python -m experiments.level1_evidence` emits `ura-level1-evidence/1` JSON and a
-deterministic CSV view of its planning-stratum rows. Each supplied eligibility
-plan is content-checked, including its exact defense, judge, seed, budget,
-runtime, dry-run, and selected-config condition. Each supplied final grid must
-bind that exact plan and condition; complete cells pass the existing semantic
-completion validator, partial grids retain their explicit errors, duplicate or
-orphan artifacts fail closed, and the output receives a content-derived
-`evidence_id`. The grid's embedded plan descriptor is matched exactly. Retained
-`grid_artifact` and execution-evidence descriptors contain locator, SHA-256 and
-byte count; cell-error descriptors additionally validate file, SHA-256, bytes
-and record count before the error is accepted. Unstratified request errors carry
-their locator, SHA-256, bytes, phase and explicit request-level scope.
+`python -m experiments.level1_evidence` emits `ura-level1-evidence/2` JSON and
+the existing deterministic CSV view of materialized planning strata. The
+operator supplies eligibility files and result roots; request envelopes and
+bound early errors are discovered automatically from those locations. A result
+root containing only an envelope and error can therefore account for a request
+that never produced a plan. Each plan, grid, completion, manifest, and error is
+content-checked. In particular, the plan, grid, cell run config, and
+completion-validated `RunManifest` must carry the exact same request-envelope
+descriptor. Partial grids retain their explicit errors, duplicate/orphan or
+success-plus-early-error evidence fails closed, and the output receives a
+content-derived `evidence_id`. Both outputs are create-only and partial files
+opened by the command are removed on failure.
 
 The schema deliberately does not total unlike units:
 
 | Collection/count block | Unit | Meaning |
 |---|---|---|
+| `prospective_request_units` / `counts.prospective_request_units` | pre-materialization requested target key x logical source arm x attacker | exact operator-selected whole-arm universe and whether each unit materialized, was bound to an early error, or lacks evidence; no stratum/call inference |
 | `planning_strata` / `counts.planning_strata` | requested target x materialized selected-source stratum x exact modality x attacker under one request condition | planning compatibility, whole-arm-derived execution eligibility, structural `N/A`, completed evidence, and unit-qualified judgment support; attempted is null because a failed unit does not reveal which strata it reached |
 | `execution_units` / `counts.execution_units` | requested target x complete logical source arm x attacker | whether the indivisible Runner cell was eligible, started, failed, or completed |
-| `counts.judgment_records` | completed judgment record | completed, evaluable, decided, abstained, and non-evaluable support; these are record counts, not cell dispositions |
-| `request_level_errors` | unstratified pre-materialization error artifact | acquisition/configuration/conversion failures whose exact source/modality strata are `CANNOT-VERIFY` and are not invented |
+| `counts.judgment_records` | completed `Judgment` record | completed, evaluable, decided, abstained, and non-evaluable support; analysis inclusion remains unavailable; these are record counts, not cell dispositions |
+| `request_level_errors` | error artifact | a typed pre-materialization error is bound only to applicable prospective units; legacy/untyped errors remain unstratified; neither form invents source/modality strata or calls |
 
 A lifecycle stratum is keyed by its `request_id` and planning `cell_id`; the
 request identity binds run-wide conditions that the bare cell identity does not.
@@ -228,13 +278,13 @@ execution units. Its availability status is `validated` only for this exact
 supplied cohort; it is `not_supplied` for a diagnostic dry-run and may be
 `not_evaluated_no_realized_measured_grid` for a supplied plan-only cohort.
 Probe grids are rejected as measured Level-1 input, and a supplied receipt not
-used by the selected measured grid cohort is rejected. The schema still does
-not consume an explicit downstream analysis-selection artifact, so
-`availability.analysis_inclusion` and stratum `included_records` remain
-`not_supplied`/null. No consumer may convert unavailable values to zero or infer
-them from folder placement. `scope.evidence_kind` is exactly `diagnostic_dry_run` or
+used by the selected measured grid cohort is rejected.
+
+`availability.analysis_inclusion.status` is `not_supplied`, and its counts are
+null rather than zero. No consumer may infer inclusion from folder placement.
+`scope.evidence_kind` is exactly `diagnostic_dry_run` or
 `measured_run`, is repeated on request/execution-unit/planning-stratum records
-and in the CSV, and a mixed dry-run/measured cohort is rejected.
+and CSV rows, and a mixed dry-run/measured cohort is rejected.
 `scope.contains_diagnostic_dry_run` is its boolean diagnostic projection and
 `scope.empirical_validity_established` is always false. The artifact is
 lifecycle accounting, not a safety score or evidence of source fidelity,

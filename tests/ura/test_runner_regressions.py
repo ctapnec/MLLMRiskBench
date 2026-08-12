@@ -49,6 +49,7 @@ from ura.runner import (
     Runner,
     _harness_source_identity,
 )
+from ura.request_envelope import load_request_error_file
 from ura.source_conformance import (
     observed_arm_conformance,
 )
@@ -1045,7 +1046,8 @@ def test_diagnostic_canary_is_typed_and_excluded_from_measured_consumers(
         "--results", str(out), "--out", str(tmp_path / "real-suite.json")
     ]) == 1
     assert level1_evidence_main([
-        "--eligibility", str(plan_path), "--results", str(out),
+        "--eligibility", str(plan_path),
+        "--results", str(out),
         "--out-json", str(tmp_path / "level1.json"),
         "--out-csv", str(tmp_path / "level1.csv"),
     ]) == 1
@@ -1957,7 +1959,15 @@ def test_matrix_counts_an_empty_requested_corpus_as_failure(
         "--corpora", "empty", "--limit", "1", "--out", str(tmp_path),
     ])
     assert result == 1
-    assert list(tmp_path.glob("*.corpus.error.json"))
+    error = load_request_error_file(next(tmp_path.glob("*.request.error.json")))
+    assert error["failure"] == {
+        "phase": "corpus_preflight",
+        "category": "empty_converted_corpus",
+        "exception_type": "ValueError",
+        "message": "requested corpus converted to zero datapoints",
+    }
+    assert error["scope"]["logical_source_arm"] == "empty"
+    assert error["execution"]["provider_calls_started"] is False
 
 
 def test_convenience_cli_is_explicitly_offline_smoke_only(tmp_path: Path) -> None:
