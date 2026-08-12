@@ -56,7 +56,7 @@ from .targets.base import BaseTarget
 from .targets.api import _logical_media_root_alias, _resolve_local_media_path
 
 #: Bumped when the orchestration semantics change (recorded in every manifest).
-CODE_VERSION = "ura-runner/2.5"
+CODE_VERSION = "ura-runner/2.6"
 _MAX_SCORED_MEDIA_BYTES = 25 * 1024 * 1024
 _MAX_FULL_CHECKPOINT_BYTES = 512 * 1024 * 1024
 _MAX_RESPONSE_CHECKPOINT_BYTES = 512 * 1024 * 1024
@@ -1083,6 +1083,25 @@ class Runner:
                 dp.source_policy.model_dump(mode="json", exclude_none=True)
                 if dp.source_policy is not None else None
             ),
+            # Immutable planning identity stays separate from the per-turn
+            # evaluation identity.  Adaptive setup turns intentionally become
+            # comply_safely/non-evaluable, but still belong to the source
+            # stratum that produced the conversation.
+            "planning_source": dp.source,
+            "planning_exact_modality_combination": [
+                modality
+                for modality in ("text", "image", "audio", "video")
+                if modality in dp.modalities
+            ],
+            "planning_expected_behavior": dp.expected_behavior,
+            "planning_common_metrics_eligible": dp.meta.get(
+                "common_metrics_eligible", True
+            ),
+            "planning_required_metric": dp.meta.get("required_metric"),
+            "planning_source_policy": (
+                dp.source_policy.model_dump(mode="json", exclude_none=True)
+                if dp.source_policy is not None else None
+            ),
         }
         source_physical = set(dp.modalities) & {"image", "audio", "video"}
         delivered_physical = {
@@ -1261,6 +1280,20 @@ class Runner:
             "required_metric": datapoint.meta.get("required_metric"),
             "source_construct": datapoint.meta.get("source_construct"),
             "source_evaluation": source_evaluation,
+            "planning_source": attempt.params["planning_source"],
+            "planning_exact_modality_combination": attempt.params[
+                "planning_exact_modality_combination"
+            ],
+            "planning_expected_behavior": attempt.params[
+                "planning_expected_behavior"
+            ],
+            "planning_common_metrics_eligible": attempt.params[
+                "planning_common_metrics_eligible"
+            ],
+            "planning_required_metric": attempt.params[
+                "planning_required_metric"
+            ],
+            "planning_source_policy": attempt.params["planning_source_policy"],
             "attack_family": datapoint.attack_family,
             "attacker": attempt.attacker,
             "strategy": attempt.strategy,

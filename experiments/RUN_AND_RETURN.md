@@ -7,7 +7,7 @@ source-native evaluators. Experiments and the human audit are still pending.
 Preflight, dry-run, and one-record transport probes are diagnostics, not thesis
 results.
 
-The maintained artifact contract is Runner `ura-runner/2.5` with unified schema
+The maintained artifact contract is Runner `ura-runner/2.6` with unified schema
 `1.4`. Do not combine older-runner artifacts with this program.
 
 The program is deliberately lane-based. A model is tested on every physical
@@ -712,6 +712,31 @@ If the real-source receipt environment variables from section 4.1 remain
 exported, a synthetic-only invocation ignores them with an explicit warning; it
 does not validate or import real-source evidence.
 
+The same zero-human artifacts can exercise the Level-1 join. Run this once after
+the fully offline `run_matrix` command above, using its one emitted eligibility
+plan:
+
+```bash
+DRY_ELIGIBILITY="$(find runs/thesis/diagnostics/dry -maxdepth 1 -type f \
+  -name 'eligibility-*.eligibility.json' -print -quit)"
+test -n "$DRY_ELIGIBILITY"
+
+python -m experiments.level1_evidence \
+  --eligibility "$DRY_ELIGIBILITY" \
+  --results runs/thesis/diagnostics/dry \
+  --out-json runs/thesis/diagnostics/level1-offline.json \
+  --out-csv runs/thesis/diagnostics/level1-offline.csv
+```
+
+Outputs are create-only; delete neither measured nor retained evidence to reuse
+a name, but choose a new diagnostic name when repeating this check. The JSON
+must report `evidence_kind=diagnostic_dry_run`,
+`contains_diagnostic_dry_run=true`, and
+`empirical_validity_established=false`. It validates only the planning/grid/
+judgment lifecycle and deterministic export. It supplies no attestation,
+analysis-inclusion, source-release, provider, human-validity, or benchmark
+evidence.
+
 **B. Optional synthetic/live transport.** This path sends synthetic fixtures to
 one already selected real target and uses the rule stage plus the offline mock
 LLM fallback so a rule abstention cannot make the diagnostic unreachable. It
@@ -777,7 +802,7 @@ python -m experiments.rig_check \
   --limit 1 --sample-seed 0 --seeds 0 --max-queries 1 --max-turns 1 \
   --max-total-target-calls 16 --max-total-judge-calls 1 \
   --max-total-http-attempts 64 --deadline-seconds 3600 \
-  --out "runs/thesis/attestation/$TARGET_LABEL/$PROBE_MODALITY"
+  --out "runs/thesis/preflight/attestation/$TARGET_LABEL/$PROBE_MODALITY"
 
 python -m experiments.run_matrix \
   --api "$TARGET" --api-config experiments/api-targets.json \
@@ -818,6 +843,13 @@ the later measured command. `rig_check` executes the no-call plan in temporary
 scratch storage but copies its content-addressed eligibility/`N/A` ledger into
 the requested `--out` directory, including when a later compatibility gate
 fails. That ledger is planning evidence only and is not a live attestation.
+
+Keep every no-call `rig_check` output under `runs/thesis/preflight/<lane>` and
+every measured `run_matrix` output under `runs/thesis/runner/<lane>`. Whenever a
+lane below says to repeat a check with `run_matrix`, change both the module name
+and that output prefix. Never give the Level-1 join a preflight-only plan: its
+selected cohort is the measured `runner/` tree. The separate live transport
+probes remain under `attestation/` and are also excluded from that join.
 
 For planning, use finite values larger than the projection. Copy the printed
 projection into the measured command's lane-specific ceilings; add capacity only
@@ -860,7 +892,7 @@ python -m experiments.rig_check \
   --group model,risk,effective_modality,source_policy_id,source_policy_version \
   --max-total-target-calls '<planning-ceiling>' --max-total-judge-calls '<planning-ceiling>' \
   --max-total-http-attempts '<planning-ceiling>' --deadline-seconds 7776000 \
-  --out runs/thesis/runner/static-text
+  --out runs/thesis/preflight/static-text
 
 python -m experiments.run_matrix \
   --api "$TEXT_TARGETS" --api-config experiments/api-targets.json \
@@ -896,12 +928,13 @@ python -m experiments.rig_check \
   --group model,risk,effective_modality,source_policy_id,source_policy_version \
   --max-total-target-calls '<planning-ceiling>' --max-total-judge-calls '<planning-ceiling>' \
   --max-total-http-attempts '<planning-ceiling>' --deadline-seconds 7776000 \
-  --out runs/thesis/runner/static-image
+  --out runs/thesis/preflight/static-image
 ```
 
 After the check succeeds, replace `experiments.rig_check` with
 `experiments.run_matrix` and replace all three planning ceilings with the printed
-totals. Automated stages do not inspect image pixels: for released image sources
+totals; write the measured grid to `runs/thesis/runner/static-image`. Automated
+stages do not inspect image pixels: for released image sources
 they grade the target output with the source-provided safety reason/reference,
 and record that proxy explicitly. Media-aware human review remains the validity
 check; rows without a defensible source reference are not admitted to common
@@ -925,7 +958,7 @@ python -m experiments.rig_check \
   --group model,risk,effective_modality,source_policy_id,source_policy_version \
   --max-total-target-calls '<planning-ceiling>' --max-total-judge-calls '<planning-ceiling>' \
   --max-total-http-attempts '<planning-ceiling>' --deadline-seconds 7776000 \
-  --out runs/thesis/runner/static-audio
+  --out runs/thesis/preflight/static-audio
 
 # Video: the benign-query and harmful-query releases are both harmful joint-input probes.
 python -m experiments.rig_check \
@@ -938,11 +971,13 @@ python -m experiments.rig_check \
   --group model,risk,effective_modality,source_policy_id,source_policy_version \
   --max-total-target-calls '<planning-ceiling>' --max-total-judge-calls '<planning-ceiling>' \
   --max-total-http-attempts '<planning-ceiling>' --deadline-seconds 7776000 \
-  --out runs/thesis/runner/static-video
+  --out runs/thesis/preflight/static-video
 ```
 
-For each, repeat with `experiments.run_matrix` and the exact successful
-projection. Do not send transcripts, captions, or extracted frames to a target
+For each, repeat with `experiments.run_matrix`, the exact successful projection,
+and measured outputs `runs/thesis/runner/static-audio` and
+`runs/thesis/runner/static-video`, respectively. Do not send transcripts,
+captions, or extracted frames to a target
 and label that as audio/video execution. The maintained automated judges never
 receive image, audio, or video bytes: they grade a declared source-text reference
 plus the target output. Such evidence is a text-reference proxy, not a
@@ -979,7 +1014,7 @@ python -m experiments.rig_check \
   --limit 0 --sample-seed 0 --seeds 0,1 --max-queries 1 --max-turns 1 \
   --group model,risk,effective_modality --max-total-target-calls '<planning-ceiling>' \
   --max-total-http-attempts '<planning-ceiling>' \
-  --deadline-seconds 7776000 --out runs/thesis/runner/rjudge
+  --deadline-seconds 7776000 --out runs/thesis/preflight/rjudge
 
 # GPTGeoChat: image-capable roster, five moderation thresholds per conversation.
 python -m experiments.rig_check \
@@ -989,14 +1024,16 @@ python -m experiments.rig_check \
   --limit 0 --sample-seed 0 --seeds 0,1 --max-queries 1 --max-turns 1 \
   --group model,risk,effective_modality --max-total-target-calls '<planning-ceiling>' \
   --max-total-http-attempts '<planning-ceiling>' \
-  --deadline-seconds 7776000 --out runs/thesis/runner/gptgeochat
+  --deadline-seconds 7776000 --out runs/thesis/preflight/gptgeochat
 ```
 
 The no-call projection must report zero model-judge calls and zero local
 guardrail evaluations. A non-zero value means this source-only lane is
 misconfigured and must not proceed. Repeat each successful check with
-`experiments.run_matrix` and the exact printed target-call and HTTP-attempt
-ceilings; omission of `--max-total-judge-calls` is intentional because no
+`experiments.run_matrix`, the exact printed target-call and HTTP-attempt
+ceilings, and the corresponding measured output under
+`runs/thesis/runner/rjudge` or `runs/thesis/runner/gptgeochat`; omission of
+`--max-total-judge-calls` is intentional because no
 model-backed judge is configured or called. R-Judge reports source-label
 classification statistics against its reference labels, not independently
 established validity; the risk-explanation effectiveness stage is not
@@ -1025,11 +1062,12 @@ python -m experiments.rig_check \
   --group model,risk,effective_modality,source_policy_id,source_policy_version \
   --max-total-target-calls '<planning-ceiling>' --max-total-judge-calls '<planning-ceiling>' \
   --max-total-http-attempts '<planning-ceiling>' --deadline-seconds 7776000 \
-  --out runs/thesis/runner/crescendo-text
+  --out runs/thesis/preflight/crescendo-text
 ```
 
-Repeat with `experiments.run_matrix` and the printed totals. This lane reports
-conversation endpoints; it does not enter static ASR.
+Repeat with `experiments.run_matrix`, the printed totals, and
+`--out runs/thesis/runner/crescendo-text`. This lane reports conversation
+endpoints; it does not enter static ASR.
 
 ### 12.2 Runner-safe external attack bridges
 
@@ -1072,7 +1110,7 @@ python -m experiments.rig_check \
   --limit 0 --sample-seed 0 --seeds 0,1 --max-queries 1 --max-turns 1 \
   --group model,risk,effective_modality --max-total-target-calls '<planning-ceiling>' \
   --max-total-judge-calls '<planning-ceiling>' --max-total-http-attempts '<planning-ceiling>' \
-  --deadline-seconds 7776000 --out "runs/thesis/runner/transfer-$ATTACKER"
+  --deadline-seconds 7776000 --out "runs/thesis/preflight/transfer-$ATTACKER"
 ```
 
 Run h4rm3l and Spikee in separate invocations with
@@ -1082,8 +1120,8 @@ configured maximum, establish the realized variant count.
 
 Because `attacker-config.json` must contain only selected attacker keys, create a
 one-attacker copy for each invocation or remove the unselected rows before the
-check. Repeat the successful check with `experiments.run_matrix` and its exact
-totals.
+check. Repeat the successful check with `experiments.run_matrix`, its exact
+totals, and `--out "runs/thesis/runner/transfer-$ATTACKER"`.
 
 The remaining runner bridges are specialized:
 
@@ -1129,11 +1167,12 @@ CUDA_VISIBLE_DEVICES=0,1 python -m experiments.rig_check \
   --limit 0 --sample-seed 0 --seeds 0,1 --max-queries 1 --max-turns 1 \
   --group model,risk,effective_modality --max-total-target-calls '<planning-ceiling>' \
   --max-total-judge-calls '<planning-ceiling>' --max-total-http-attempts '<planning-ceiling>' \
-  --deadline-seconds 7776000 --out runs/thesis/runner/local-qwen3-vl-text
+  --deadline-seconds 7776000 --out runs/thesis/preflight/local-qwen3-vl-text
 ```
 
-Repeat with `run_matrix` and exact totals, allow the process to exit, then run the
-image lane. Repeat both for the LLaVA base and GraySwan RR checkpoint using their
+Repeat with `run_matrix`, exact totals, and
+`--out runs/thesis/runner/local-qwen3-vl-text`; allow the process to exit, then
+run the image lane. Repeat both for the LLaVA base and GraySwan RR checkpoint using their
 own exact local configs. Their paired comparison is meaningful only on identical
 source clusters, input bytes, inference settings, and judge condition.
 
@@ -1156,11 +1195,13 @@ python -m experiments.rig_check \
   --limit 0 --sample-seed 0 --seeds 0,1 --max-queries 1 --max-turns 1 \
   --group model,risk,effective_modality --max-total-target-calls '<planning-ceiling>' \
   --max-total-judge-calls '<planning-ceiling>' --max-total-http-attempts '<planning-ceiling>' \
-  --deadline-seconds 7776000 --out runs/thesis/runner/defense-text
+  --deadline-seconds 7776000 --out runs/thesis/preflight/defense-text
 ```
 
-Run matching no-defense cells for the same focal targets and clusters. Added
-value is measured as the harmful/benign tradeoff; lower harmful ASR without the
+Repeat the successful defense check with `run_matrix`, exact totals, and
+`--out runs/thesis/runner/defense-text`. Run matching no-defense cells for the
+same focal targets and clusters in their own checked/measured lane directories.
+Added value is measured as the harmful/benign tradeoff; lower harmful ASR without the
 benign refusal cost is an incomplete defense analysis.
 
 ## 14. Tier 5: nine source-native evaluators
@@ -1485,6 +1526,51 @@ python -m experiments.paired_compare --results runs/thesis/runner \
   --output runs/thesis/analysis/llava-base-v-rr-mmsafety.json
 ```
 
+Build the mandatory Level-1 lifecycle inventory from one explicitly selected
+runner cohort. Supply every final eligibility plan in that scope, including
+plan-only structural-`N/A` or preflight-blocked requests that have no grid. Use
+one output directory per exact request condition; if arguments change, use a new
+directory rather than mixing conditions. Within a `run_matrix` invocation the
+driver replaces its preliminary plan with the final plan. The Level-1 validator
+rejects duplicate request identities, and every supplied grid must still bind
+the exact plan descriptor and experiment condition.
+Do not supply `runs/thesis/preflight` or `runs/thesis/attestation`: those trees
+contain diagnostics, not the selected measured cohort.
+One Level-1 artifact cannot mix dry-run and measured requests; this command's
+output must declare `evidence_kind=measured_run`.
+
+```bash
+LEVEL1_ELIGIBILITY_ARGS=()
+while IFS= read -r -d '' plan; do
+  LEVEL1_ELIGIBILITY_ARGS+=(--eligibility "$plan")
+done < <(find runs/thesis/runner -type f \
+  -name 'eligibility-*.eligibility.json' -print0)
+
+python -m experiments.level1_evidence \
+  --results runs/thesis/runner \
+  "${LEVEL1_ELIGIBILITY_ARGS[@]}" \
+  --out-json runs/thesis/analysis/level1-evidence.json \
+  --out-csv runs/thesis/analysis/level1-evidence.csv
+```
+
+The command is create-only; use new output names when rebuilding. Its
+`ura-level1-evidence/1` JSON distinguishes materialized planning strata,
+whole-arm execution units, and judgment-record support. It validates exact
+plan/grid conditions and descriptors, content descriptors for grid and
+completion/error evidence, exact selected-datapoint count and identity-digest
+coverage, and decided/abstained/non-evaluable reconciliation.
+Attempted is counted only at the whole-arm unit: a started failed unit does not
+identify which strata it reached, so planning-stratum attempts remain null and
+`execution_unit_started` is context only. Missing is reserved for an
+execution-eligible row with no grid; block/error dispositions remain separate.
+Pre-materialization failures remain unstratified request-level errors. The
+current artifact has no typed
+live-attestation or analysis-selection input, so both availability statuses are
+`not_supplied`, their counts (including included records) are null rather than
+zero, and `empirical_validity_established` is false. `evidence_kind` distinguishes
+`diagnostic_dry_run` from `measured_run`; neither the measured label nor completed
+cells prove empirical validity.
+
 Build one evidence inventory across every runner grid and every canonical native
 run:
 
@@ -1569,8 +1655,11 @@ Complete the already-created `runs/thesis/RUNNOTE.md` and record:
 - package inventories for URA and every native environment;
 - interruptions, retries, exclusions, unavailable cells, and their reasons;
 - projected and realized provider calls for every runner and native lane,
-  provider-side native hard quotas, and provider usage/cost reconciliation; and
-- human-audit status and achieved per-stratum counts.
+  provider-side native hard quotas, and provider usage/cost reconciliation;
+- human-audit status and achieved per-stratum counts; and
+- Level-1 `evidence_id`, planning-stratum/execution-unit/judgment-record counts,
+  request-level errors, and the explicit `not_supplied` attestation/inclusion
+  fields.
 
 Capture the URA environment and harness identity:
 
@@ -1585,11 +1674,13 @@ test "$(sha256sum "$URA_SOURCE_CONFORMANCE_MANIFEST" | awk '{print $1}')" = \
 Before return, re-run every canonical native validation from the complete
 config/raw/envelope tree and rebuild the suite
 summary into a new output name if the existing file already exists. Verify that
-the tree contains grid descriptors, manifests, attempts, responses, judgments,
+the tree retains the separate `preflight/`, `attestation/`, and measured
+`runner/` directories, plus grid descriptors, manifests, attempts, responses, judgments,
 shadow trails, checkpoints, completion/error records, aggregates, modality
 coverage, call ledgers, native raw artifacts and canonical envelopes, human-audit
-files, analyses, figures, the exact retained `source-conformance-*.json`, and the
-run note. The source releases themselves remain outside the return package unless
+files, the Level-1 JSON/CSV, analyses, figures, the exact retained
+`source-conformance-*.json`, and the run note. The source releases themselves
+remain outside the return package unless
 the recipient is licensed and explicitly authorized.
 
 ```bash

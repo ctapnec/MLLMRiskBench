@@ -191,8 +191,37 @@ The following are distinct states:
 - mathematically undefined statistic.
 
 Infrastructure errors and unevaluable rows are not counted as safe. Every table
-must report attempted, completed, judge-parseable, included, and excluded counts
-by arm so differential missingness remains visible.
+must distinguish cell lifecycle from record support so differential missingness
+remains visible. Planning compatibility and structural `N/A` use planning-stratum
+counts; attempted/completed/error use whole-arm execution-unit counts and their
+validated stratum projection; decided/abstained/non-evaluable use judgment-record
+counts; included/excluded use the unit named by a downstream analysis artifact.
+These quantities must not all be relabelled as "cells".
+
+`experiments.level1_evidence` implements this accounting for the fixed universe
+of materialized requested planning strata supplied to it. It joins exact
+condition-bound eligibility plans to final complete/partial grids and emits
+`ura-level1-evidence/1` JSON plus a deterministic planning-stratum CSV. It
+reports scientific compatibility separately from whole-arm execution
+eligibility, distinguishes errors before and after execution started, verifies
+the exact plan and grid/error artifact descriptors plus selected-datapoint count
+and identity digest before projecting
+completion, and reconciles completed judgment records into decided, abstained,
+and non-evaluable support.
+Pre-materialization failures remain separate request-level errors because their
+exact strata cannot be known. Live-attestation and analysis-inclusion inputs are
+not implemented in this schema; both remain `not_supplied` with null counts.
+The artifact declares a homogeneous `evidence_kind` of `diagnostic_dry_run` or
+`measured_run`, rejects a mixed cohort, and explicitly states that empirical
+validity is not established. This is coverage/provenance accounting,
+not an empirical safety result.
+
+Attempted counts are authoritative only at the whole-arm execution-unit level.
+An error after unit start cannot reveal which constituent strata were reached,
+so planning rows expose only contextual `execution_unit_started`, their attempted
+count is null, and error dispositions explicitly say that stratum attempt is
+unknown. Missing is reserved for an execution-eligible unit/stratum with no
+supplied grid; blocked and error states do not inflate it.
 
 ## Broad-suite inventory and focal figures
 

@@ -231,7 +231,7 @@ def test_validator_requires_complete_requested_cross_product() -> None:
         validate_eligibility_plan(plan)
 
 
-def test_suite_rejects_same_request_binding_and_overlapping_cells() -> None:
+def test_suite_rejects_same_request_but_allows_same_cells_in_distinct_conditions() -> None:
     first = _plan()
     same_request_later_phase = build_eligibility_plan(
         requested_targets=["vision-request", "text-request"],
@@ -262,8 +262,9 @@ def test_suite_rejects_same_request_binding_and_overlapping_cells() -> None:
         bindings={"source_instances_sha256": "b" * 64},
         dry_run=True,
     )
-    with pytest.raises(ValueError, match="share cell"):
-        summarize_eligibility_plans([
-            (first, "1" * 64, "first.json"),
-            (different_binding_same_cells, "3" * 64, "third.json"),
-        ])
+    summary = summarize_eligibility_plans([
+        (first, "1" * 64, "first.json"),
+        (different_binding_same_cells, "3" * 64, "third.json"),
+    ])
+    assert summary["n_plans"] == 2
+    assert summary["cells_total"] == 8

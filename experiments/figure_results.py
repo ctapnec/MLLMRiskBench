@@ -486,7 +486,12 @@ def _validate_realized_identity_inventory(
     return summary
 
 
-def _validate_cell(marker_path: Path, refs: list[_GridReference]) -> dict[str, Any]:
+def _validate_cell(
+    marker_path: Path,
+    refs: list[_GridReference],
+    *,
+    allow_diagnostic_dry_run: bool = False,
+) -> dict[str, Any]:
     marker = _read_object(marker_path)
     if marker.get("status") != "complete" or marker.get("format_version") != 2:
         raise ValueError(f"invalid v2 completion marker: {marker_path}")
@@ -525,7 +530,7 @@ def _validate_cell(marker_path: Path, refs: list[_GridReference]) -> dict[str, A
         raise ValueError(f"manifest lacks config.run: {resolved['manifest']}")
     for field in ("corpus", "attacker", "model_spec", "defense"):
         _nonblank(run.get(field), f"manifest run.{field} in {resolved['manifest']}")
-    if run.get("dry_run") is not False:
+    if run.get("dry_run") is not False and not allow_diagnostic_dry_run:
         raise ValueError(f"dry-run cell is not measured evidence: {marker_path}")
     if not isinstance(run.get("sampling_audit"), dict):
         raise ValueError(f"manifest lacks corpus-specific sampling audit: {marker_path}")
@@ -648,6 +653,12 @@ def _validate_cell(marker_path: Path, refs: list[_GridReference]) -> dict[str, A
         raise ValueError(
             f"grid status/completed-cell identity mismatch for {marker_path}: "
             f"grid={sorted(ref_identities)!r}, artifact={actual_identity!r}"
+        )
+    grid_ids = {ref.grid_id for ref in refs}
+    if grid_ids != {run.get("grid_id")}:
+        raise ValueError(
+            f"grid/completed-artifact condition mismatch for {marker_path}: "
+            f"grid={sorted(grid_ids)!r}, artifact={run.get('grid_id')!r}"
         )
 
     manifest_dict = manifest.model_dump(mode="json")

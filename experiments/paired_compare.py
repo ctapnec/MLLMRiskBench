@@ -270,16 +270,22 @@ def _comparison_payload(
     # The enclosing grid ceiling is handled with the other suite-level fields
     # below for an attacker contrast; both remain visible in each arm summary.
     config.pop("call_budget_snapshot", None)
+    # The completion loader already binds each arm to its own exact grid.
+    # grid_id is request-instance lineage, not a scientific cohort field, and
+    # legitimately differs when a defense or attacker contrast is run in
+    # separate grids.
+    run = config.get("run")
+    if not isinstance(run, dict):
+        raise ValueError("comparison manifest lacks run configuration")
+    run.pop("grid_id", None)
     if defense_is_contrast:
-        run = config.get("run")
-        if not isinstance(run, dict) or "defense" not in run:
+        if "defense" not in run:
             raise ValueError("comparison manifest lacks defense configuration")
         run.pop("defense")
     if attacker_is_contrast:
-        run = config.get("run")
         components = config.get("components")
         budget = config.get("budget")
-        if not isinstance(run, dict) or "attacker" not in run:
+        if "attacker" not in run:
             raise ValueError("adaptivity comparison manifest lacks run.attacker")
         run.pop("attacker")
         # Replay and adaptive arms may be executed as separate grids so the
@@ -289,7 +295,6 @@ def _comparison_payload(
         # summary.
         for field in (
             "attacker_config",
-            "grid_id",
             "global_call_budget",
             "modality_coverage_plan",
         ):

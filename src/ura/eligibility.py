@@ -110,6 +110,23 @@ def _cell_id(value: Mapping[str, Any]) -> str:
     return f"eligibility-cell-{canonical_json_sha256(identity)[:24]}"
 
 
+def lifecycle_stratum_id(request_id: str, cell_id: str) -> str:
+    """Identity for one planning stratum under one exact request condition.
+
+    A bare ``cell_id`` deliberately excludes run-wide conditions.  The Level-1
+    inventory therefore uses this composite identity so the same source
+    stratum can legitimately appear under two defenses or judge/runtime
+    configurations without being pooled.
+    """
+
+    if re.fullmatch(r"eligibility-request-[0-9a-f]{24}", request_id) is None:
+        raise ValueError("invalid eligibility request_id")
+    if re.fullmatch(r"eligibility-cell-[0-9a-f]{24}", cell_id) is None:
+        raise ValueError("invalid eligibility cell_id")
+    identity = {"request_id": request_id, "cell_id": cell_id}
+    return f"lifecycle-stratum-{canonical_json_sha256(identity)[:24]}"
+
+
 def _stratum_token(value: Mapping[str, Any]) -> str:
     return canonical_json_sha256(_project_identity(value, _STRATUM_IDENTITY_FIELDS))
 
@@ -933,7 +950,7 @@ def summarize_eligibility_plans(
 
     seen: set[str] = set()
     seen_requests: dict[str, str] = {}
-    seen_cells: dict[str, str] = {}
+    seen_lifecycle_strata: dict[str, str] = {}
     records: list[dict[str, Any]] = []
     totals: Counter[str] = Counter()
     dispositions: Counter[str] = Counter()
@@ -952,12 +969,14 @@ def summarize_eligibility_plans(
         seen_requests[request_id] = locator
         for item in plan["items"]:
             cell_id = str(item["cell_id"])
-            if cell_id in seen_cells:
+            lifecycle_id = lifecycle_stratum_id(request_id, cell_id)
+            if lifecycle_id in seen_lifecycle_strata:
                 raise ValueError(
-                    "overlapping eligibility plans share cell "
-                    f"{cell_id}: {seen_cells[cell_id]!r}, {locator!r}"
+                    "overlapping eligibility plans share lifecycle stratum "
+                    f"{lifecycle_id}: "
+                    f"{seen_lifecycle_strata[lifecycle_id]!r}, {locator!r}"
                 )
-            seen_cells[cell_id] = locator
+            seen_lifecycle_strata[lifecycle_id] = locator
         counts = plan["counts"]
         totals["cells_total"] += counts["cells_total"]
         totals["compatible_if_isolated"] += counts["compatible_if_isolated"]
@@ -993,6 +1012,7 @@ __all__ = [
     "build_eligibility_plan",
     "canonical_json_sha256",
     "eligibility_plan_id",
+    "lifecycle_stratum_id",
     "summarize_eligibility_plans",
     "validate_eligibility_plan",
 ]

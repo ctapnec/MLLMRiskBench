@@ -5,7 +5,7 @@ validity rules, then execute [RUN_AND_RETURN.md](RUN_AND_RETURN.md). A dry run,
 partial artifact family, source conversion, model-name assumption, native prompt
 export, or synthetic figure is not a measured thesis result.
 
-The maintained execution contract is Runner `ura-runner/2.5` with unified
+The maintained execution contract is Runner `ura-runner/2.6` with unified
 schema `1.4`; older artifacts are not mixed into the thesis run.
 
 ## Experimental shape
@@ -100,15 +100,19 @@ nonempty subset as complete.
    `URA_MEDIA_ROOTS`, then complete and validate the compact content-addressed
    `ura-source-conformance/1` receipt and configure isolated native environments.
 3. Configure exact hosted/local targets and separate scoring/defense guards.
-4. Run `python -m experiments.rig_check` for every intended lane and review its
-   source-policy counts and call projections.
+4. Run `python -m experiments.rig_check` for every intended lane under a
+   separate preflight output tree and review its source-policy counts and call
+   projections; measured `run_matrix` outputs belong in the runner tree.
 5. Run bounded live endpoint/modality attestations, then execute only the
    attested eligible cells with finite target, judge, HTTP-attempt, and time
    ceilings.
 6. Run the nine upstream native campaigns and normalize their completed outputs
    with `python -m experiments.native_import`.
-7. Build `python -m experiments.suite_summary`, run no-call diagnostics, and
-   prepare the automated-label-blinded, model-visible multi-rater human audit.
+7. Build `python -m experiments.level1_evidence` from every final plan in the
+   selected measured runner cohort, including plan-only `N/A`/blocked requests
+   but excluding preflight and attestation trees; build the separate no-pooling
+   `experiments.suite_summary`, run no-call diagnostics, and prepare the
+   automated-label-blinded, model-visible multi-rater human audit.
 8. After ratings/adjudication, render qualified focal figures and return the
    complete artifact tree, commands, commits, environments, licenses/terms note,
    and `N/A` ledger.
@@ -119,6 +123,7 @@ Core CLIs:
 python -m experiments.rig_check --help
 python -m experiments.source_conformance --help
 python experiments/run_matrix.py --help
+python -m experiments.level1_evidence --help
 python -m experiments.native_import --help
 python -m experiments.suite_summary --help
 python -m experiments.paired_compare --help

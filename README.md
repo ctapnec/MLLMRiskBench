@@ -110,6 +110,24 @@ audio, video, and agent/tool lanes remain pending until their byte-level source,
 transport, target capability, runtime, and evaluator gates pass. Media is never
 silently removed, caption-substituted, or counted merely from a tag.
 
+`python -m experiments.level1_evidence` performs the bounded realized-coverage
+join. For one measured cohort it validates every final `run_matrix` eligibility
+plan, including plan-only structural-`N/A` or blocked requests, plus final
+complete or partial grid artifacts. It excludes the separately retained
+`rig_check` preflight and live-attestation trees, binds exact experiment
+conditions, verifies the grid's exact plan descriptor and the content
+descriptors for grid/completion/error evidence, and writes
+`ura-level1-evidence/1` JSON plus a deterministic planning-stratum CSV. The
+report keeps materialized planning strata, whole-arm execution units, and
+judgment records as different units. Live attestation and downstream analysis
+inclusion are not yet inputs: their status is `not_supplied` and their counts are
+null, never zero or inferred from a directory name. Failures before corpus
+materialization remain separately identified request-level errors because their
+exact source/modality strata cannot be reconstructed. The scope reports whether
+the homogeneous cohort is `evidence_kind=diagnostic_dry_run` or `measured_run`;
+mixing dry-run and measured requests fails closed. It always records
+`empirical_validity_established=false`.
+
 ## Direct real-run lifecycle
 
 The runbook is the canonical from-zero procedure:
@@ -125,10 +143,11 @@ The runbook is the canonical from-zero procedure:
 4. run `python -m experiments.rig_check` with the intended matrix arguments;
 5. run the eligibility-scoped static, adaptive, multimodal, local-defense,
    source-specific, and native-engine lanes with finite call/time ceilings;
-6. import native outputs, build a no-pooling suite evidence inventory, run
-   diagnostics, and perform the automated-label-blinded, model-visible
-  multi-rater human audit across the achieved common-eligible arms; the declared
-  focal conditions follow the same achieved-sample rule, not a reserved quota;
+6. import native outputs, build the unit-qualified Level-1 lifecycle artifact
+   and the separate no-pooling suite evidence inventory, run diagnostics, and
+   perform the automated-label-blinded, model-visible
+   multi-rater human audit across the achieved common-eligible arms; the declared
+   focal conditions follow the same achieved-sample rule, not a reserved quota;
   and
 7. retain the complete artifact tree, command line, commit identifier,
    environment inventory, and run note for post-experiment analysis.
@@ -198,8 +217,10 @@ completed attempts and provider continuation state without querying them again.
 Partial artifact families, unresolved locks, exhausted ceilings, or provenance
 drift fail explicitly.
 
-Runner `ura-runner/2.5` writes unified schema `1.4`. In a Crescendo trajectory,
-benign setup turns receive typed `not_applicable` judgments and no judge call or
+Runner `ura-runner/2.6` writes unified schema `1.4`. Immutable planning/source
+stratum identity is stored separately from adaptive per-turn evaluation
+identity. Thus a Crescendo setup turn remains joined to its original planning
+stratum while receiving a typed `not_applicable` judgment and no judge call or
 metric contribution. Policy challenges are numbered contiguously from zero,
 share one declared challenge horizon, and a harmful authoritative violation is
 terminal.

@@ -402,6 +402,18 @@ def _grid(root: Path, *, name: str, cells: list[dict[str, Any]]) -> Path:
     expected = len(models) * len(corpora) * len(attackers)
     assert len(cells) == expected
     grid_id = f"grid-{name}"
+    # The real driver binds every completed cell back to the exact grid
+    # condition in manifest.config.run. Keep the synthetic fixture faithful,
+    # then refresh the completion marker's manifest descriptor.
+    for cell in cells:
+        manifest_path = cell["paths"]["manifest"]
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        manifest["config"]["run"]["grid_id"] = grid_id
+        manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+        marker_path = cell["marker"]
+        marker = json.loads(marker_path.read_text(encoding="utf-8"))
+        marker["artifacts"]["manifest"] = _descriptor(manifest_path)
+        marker_path.write_text(json.dumps(marker), encoding="utf-8")
     path = root / f"{grid_id}.grid.json"
     path.write_text(json.dumps({
         "status": "complete",
@@ -962,6 +974,28 @@ def _direct_facet(
         "metrics": {"ASR": harmful, "over_refusal_rate": benign},
         "policy_metrics": policy_metrics,
     }
+
+
+def test_loader_rejects_completion_from_a_different_grid_condition(
+    tmp_path: Path,
+) -> None:
+    cells = _paired_model_grid(tmp_path)
+    cell = cells[0]
+    manifest = json.loads(cell["paths"]["manifest"].read_text(encoding="utf-8"))
+    manifest["config"]["run"]["grid_id"] = "grid-other-condition"
+    cell["paths"]["manifest"].write_text(json.dumps(manifest), encoding="utf-8")
+    _refresh_marker(cell)
+
+    with pytest.raises(ValueError, match="grid/completed-artifact condition mismatch"):
+        figure_results.load_model_results(
+            tmp_path,
+            left_model="left",
+            right_model="right",
+            corpora=["alpha"],
+            policy_label="policy",
+            multiplicity_family="family",
+            minimum_cell_n=1,
+        )
 
 
 def _write_direct_human_audit(

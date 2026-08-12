@@ -2,7 +2,7 @@
 
 `ura.data_models` is the typed Pydantic v2 contract shared by converters,
 attackers, targets, judges, persistence, and analysis. `SCHEMA_VERSION = "1.4"`
-is stamped on datapoints, checkpoints, and manifests. Runner 2.5 rejects mixed
+is stamped on datapoints, checkpoints, and manifests. Runner 2.6 rejects mixed
 schema versions and duplicate datapoint IDs before a target call.
 
 ## Records
@@ -15,7 +15,7 @@ schema versions and duplicate datapoint IDs before a target call.
 | `SourceEvaluationPolicy` | policy ID, version, SHA-256, source URI, intended metric | immutable source-benchmark evaluation-policy identity |
 | `DialogTurn` | role, content, media, tool fields, provider thinking/state | one conversation or represented agent-trace turn |
 | `DataPoint` | source, modalities, history/payload/media, risk, expected behavior, source policy, taxonomy and attack metadata | atomic converted corpus item |
-| `Attempt` | datapoint, attacker, target, turn, exact rendered input, seed, params, run ID | one submitted input |
+| `Attempt` | datapoint, attacker, target, turn, exact rendered input, seed, immutable planning/source-stratum identity, per-turn evaluation identity, params, run ID | one submitted input |
 | `Response` | attempt, target, output/tool turns, latency/tokens, raw provenance, run ID | one target outcome, including a typed provider refusal |
 | `Judgment` | attempt, judge, label, score, rationale, raw provenance, run ID | one automated/human verdict, or typed non-evaluable setup record |
 | `EvalResult` | metric, value/CI, support, grouping, provenance, run ID | one aggregate estimand |
@@ -39,9 +39,63 @@ separate execution-unit accounting says whether the whole logical arm can pass
 the actual Runner boundary. Neither status means attested, attempted, completed,
 decided, or empirically valid. Failures before a
 corpus can materialize remain separate preflight error artifacts because their
-exact modality/source strata are not yet knowable. A later Level-1 execution
-account must join planning eligibility to live attestations and completed/error
-artifacts rather than reinterpret this plan as realized coverage.
+exact modality/source strata are not yet knowable. The Level-1 lifecycle
+artifact below joins only the evidence presently available rather than
+reinterpreting this plan as realized coverage.
+
+## Level-1 lifecycle evidence
+
+`python -m experiments.level1_evidence` emits `ura-level1-evidence/1` JSON and a
+deterministic CSV view of its planning-stratum rows. Each supplied eligibility
+plan is content-checked, including its exact defense, judge, seed, budget,
+runtime, dry-run, and selected-config condition. Each supplied final grid must
+bind that exact plan and condition; complete cells pass the existing semantic
+completion validator, partial grids retain their explicit errors, duplicate or
+orphan artifacts fail closed, and the output receives a content-derived
+`evidence_id`. The grid's embedded plan descriptor is matched exactly. Retained
+`grid_artifact` and execution-evidence descriptors contain locator, SHA-256 and
+byte count; cell-error descriptors additionally validate file, SHA-256, bytes
+and record count before the error is accepted. Unstratified request errors carry
+their locator, SHA-256, bytes, phase and explicit request-level scope.
+
+The schema deliberately does not total unlike units:
+
+| Collection/count block | Unit | Meaning |
+|---|---|---|
+| `planning_strata` / `counts.planning_strata` | requested target x materialized selected-source stratum x exact modality x attacker under one request condition | planning compatibility, whole-arm-derived execution eligibility, structural `N/A`, completed evidence, and unit-qualified judgment support; attempted is null because a failed unit does not reveal which strata it reached |
+| `execution_units` / `counts.execution_units` | requested target x complete logical source arm x attacker | whether the indivisible Runner cell was eligible, started, failed, or completed |
+| `counts.judgment_records` | completed judgment record | completed, evaluable, decided, abstained, and non-evaluable support; these are record counts, not cell dispositions |
+| `request_level_errors` | unstratified pre-materialization error artifact | acquisition/configuration/conversion failures whose exact source/modality strata are `CANNOT-VERIFY` and are not invented |
+
+A lifecycle stratum is keyed by its `request_id` and planning `cell_id`; the
+request identity binds run-wide conditions that the bare cell identity does not.
+`execution_unit_started` on a planning row is contextual whole-arm state, not a
+claim that the stratum was attempted. Exact attempted counts exist only for
+whole-arm execution units; `availability.planning_stratum_attempts` and the
+planning-stratum attempted count are null because an error unit need not have
+reached every stratum. `completed` requires a completion-validated cell plus the
+exact selected-datapoint count and identity digest for that stratum. `missing`
+means an execution-eligible stratum or unit has no supplied grid; blocked and
+error dispositions are reported separately. Structural `N/A` remains distinct.
+Decision support reconciles as completed = decided + abstained + non-evaluable.
+Conditioning/setup judgments whose turn is not policy-evaluable are
+non-evaluable, not abstentions; unqueried source-metric-only trail placeholders
+do not enter these authoritative-judgment counts. Adaptive setup and challenge
+turns retain the same immutable planning/source-stratum identity even when their
+per-turn expected behavior and policy-evaluation status differ.
+
+The current schema does not consume a typed live-attestation artifact or an
+explicit downstream analysis-selection artifact. Accordingly,
+`availability.live_attestation` and `availability.analysis_inclusion` are
+`not_supplied`, their counts are null, and stratum `included_records` is null.
+No consumer may convert these unavailable values to zero or infer them from
+folder placement. `scope.evidence_kind` is exactly `diagnostic_dry_run` or
+`measured_run`, is repeated on request/execution-unit/planning-stratum records
+and in the CSV, and a mixed dry-run/measured cohort is rejected.
+`scope.contains_diagnostic_dry_run` is its boolean diagnostic projection and
+`scope.empirical_validity_established` is always false. The artifact is
+lifecycle accounting, not a safety score or evidence of source fidelity,
+endpoint access, human validity, or empirical performance.
 
 ## Lineage and continuation state
 

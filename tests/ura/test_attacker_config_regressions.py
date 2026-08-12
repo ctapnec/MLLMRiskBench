@@ -68,7 +68,9 @@ def test_run_matrix_applies_and_persists_attacker_config(tmp_path: Path) -> None
     grid = json.loads(next(out.glob("*.grid.json")).read_text(encoding="utf-8"))
     assert grid["request"]["attacker_configs"] == config_value
     config_artifact = grid["request"]["attacker_config_artifact"]
-    assert set(config_artifact) == {"file", "sha256", "bytes"}
+    assert set(config_artifact) == {
+        "file", "sha256", "bytes", "normalized_selected_sha256",
+    }
     assert config_artifact["file"] == config.name
     assert len(config_artifact["sha256"]) == 64
     assert str(config.resolve()) not in json.dumps(grid)
@@ -76,6 +78,34 @@ def test_run_matrix_applies_and_persists_attacker_config(tmp_path: Path) -> None
         next(out.glob("*.manifest.json")).read_text(encoding="utf-8")
     )
     assert manifest["config"]["run"]["attacker_config"] == config_value["nanogcg"]
+
+
+def test_attacker_config_formatting_does_not_change_selected_grid_identity(
+    tmp_path: Path,
+) -> None:
+    value = {"nanogcg": {
+        "suffix": " suffix",
+        "suffix_source": "fixture",
+        "model_revision": "0123456789abcdef",
+    }}
+    identities: list[tuple[str, str]] = []
+    for index, indent in enumerate((None, 4)):
+        config = tmp_path / f"attackers-{index}.json"
+        config.write_text(json.dumps(value, indent=indent), encoding="utf-8")
+        out = tmp_path / f"run-{index}"
+        assert run_matrix.main([
+            "--dry-run", "--attackers", "nanogcg",
+            "--attacker-config", str(config), "--judges", "rules",
+            "--corpora", "synth", "--limit", "1", "--max-queries", "1",
+            "--max-turns", "1", "--out", str(out),
+        ]) == 0
+        grid = json.loads(next(out.glob("*.grid.json")).read_text(encoding="utf-8"))
+        plan = json.loads(next(out.glob("*.eligibility.json")).read_text(
+            encoding="utf-8"
+        ))
+        identities.append((grid["grid_id"], plan["plan_id"]))
+
+    assert identities[0] == identities[1]
 
 
 def test_matrix_rejects_native_importer_as_runner_replay(tmp_path: Path) -> None:

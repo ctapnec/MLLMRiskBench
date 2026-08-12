@@ -73,7 +73,9 @@ def test_local_config_artifact_uses_a_logical_filename(tmp_path):
     assert loaded[spec]["digest"] == digest
     assert loaded[spec]["tensor_parallel_size"] == 1
     assert artifact is not None
-    assert set(artifact) == {"file", "sha256", "bytes"}
+    assert set(artifact) == {
+        "file", "sha256", "bytes", "normalized_selected_sha256",
+    }
     assert artifact["file"] == config.name
     assert str(config.resolve()) not in json.dumps(artifact)
     target = run_matrix.build_target(spec, local_identity=loaded[spec])

@@ -447,6 +447,7 @@ def _load_attacker_config(
         "file": path.name,
         "sha256": _sha256_file(path),
         "bytes": path.stat().st_size,
+        "normalized_selected_sha256": _sha256_json(normalized),
     }
 
 
@@ -793,6 +794,7 @@ def _load_local_config(
         "file": path.name,
         "sha256": _sha256_file(path),
         "bytes": path.stat().st_size,
+        "normalized_selected_sha256": _sha256_json(normalized),
     }
 
 
@@ -1970,6 +1972,9 @@ def load_corpus_with_audit(
                 name, "generated_fixture", instance
             ),
             "full_converted_corpus_sha256": full_digest,
+            "selected_converted_corpus_sha256": (
+                canonical_converted_corpus_sha256(selected)
+            ),
             "total_records": len(selected),
             "selected_records": len(selected),
             "selected_indices": list(range(len(selected))),
@@ -2007,6 +2012,9 @@ def load_corpus_with_audit(
             name, "directory" if resolved.is_dir() else "file", instance
         ),
         "full_converted_corpus_sha256": full_digest,
+        "selected_converted_corpus_sha256": (
+            canonical_converted_corpus_sha256(selected)
+        ),
         "full_source_conformance_observation": full_observation,
         "total_records": len(full),
         "selected_records": len(selected),
@@ -2538,6 +2546,68 @@ def main(argv=None) -> int:
             requested_model_specs[spec]: failure
             for spec, failure in (target_failures or {}).items()
         }
+        selected_artifact_identities = {
+            "source_config": _selected_config_artifact_identity(
+                source_config_artifact
+            ),
+            "source_conformance": _selected_config_artifact_identity(
+                source_conformance_artifact
+            ),
+            "attacker_config": _selected_config_artifact_identity(
+                attacker_config_artifact
+            ),
+            "api_config": _selected_config_artifact_identity(api_config_artifact),
+            "local_config": _selected_config_artifact_identity(
+                local_config_artifact
+            ),
+        }
+        experiment_condition_values = {
+            "defense": args.defense,
+            "defense_guard": args.defense_guard,
+            "judges": judge_names,
+            "judge_model": args.judge_model if "llm" in judge_names else None,
+            "guardrail_model": (
+                args.guardrail_model if scoring_guardrail_selected else None
+            ),
+            "guardrail_revision": (
+                args.guardrail_revision.lower() if scoring_guardrail_selected else None
+            ),
+            "guardrail_device": (
+                (args.guardrail_device or None) if scoring_guardrail_selected else None
+            ),
+            "defense_guardrail_model": (
+                args.defense_guardrail_model if defense_guardrail_selected else None
+            ),
+            "defense_guardrail_revision": (
+                args.defense_guardrail_revision.lower()
+                if defense_guardrail_selected else None
+            ),
+            "defense_guardrail_device": (
+                args.defense_guardrail_device if defense_guardrail_selected else None
+            ),
+            "seeds": seeds,
+            "sample_seed": args.sample_seed,
+            "limit": args.limit,
+            "max_queries": args.max_queries,
+            "max_turns": args.max_turns,
+            "call_caps": {
+                "target": args.max_total_target_calls or None,
+                "judge": args.max_total_judge_calls or None,
+                "http_attempts": args.max_total_http_attempts or None,
+                "deadline_seconds": args.deadline_seconds or None,
+            },
+            "group_keys": group_keys,
+            "quantization": args.quantization,
+            "dtype": args.dtype,
+            "dry_run": bool(args.dry_run),
+            "selected_config_identities": selected_artifact_identities,
+        }
+        experiment_conditions = {
+            "condition_id": (
+                "condition-" + _sha256_json(experiment_condition_values)[:24]
+            ),
+            "values": experiment_condition_values,
+        }
         plan = build_eligibility_plan(
             requested_targets=[requested_model_specs[spec] for spec in model_specs],
             targets=targets_by_request,
@@ -2552,19 +2622,18 @@ def main(argv=None) -> int:
                 "source_instances_sha256": _sha256_json(source_instances),
                 "attacker_configs_sha256": _sha256_json(attacker_configs),
                 "api_configs_sha256": _sha256_json(api_configs),
-                "local_configs_sha256": _sha256_json(local_configs),
-                "source_config_artifact": source_config_artifact,
-                "source_conformance_artifact": _selected_config_artifact_identity(
-                    source_conformance_artifact
-                ),
-                "attacker_config_artifact": attacker_config_artifact,
-                "api_config_artifact": api_config_artifact,
-                "local_config_artifact": local_config_artifact,
+                "local_configs_sha256": _sha256_json({
+                    persisted_model_specs[spec]: config
+                    for spec, config in local_configs.items()
+                }),
+                "selected_config_identities": selected_artifact_identities,
+                "experiment_conditions": experiment_conditions,
                 "selected_corpora": compact_corpus_bindings,
             },
         )
         path = out / f"{plan['plan_id']}.eligibility.json"
         _write_json(path, plan)
+        (out / "eligibility-plan.error.json").unlink(missing_ok=True)
         if current_eligibility_path is not None and current_eligibility_path != path:
             current_eligibility_path.unlink(missing_ok=True)
         current_eligibility_path = path
@@ -2604,6 +2673,17 @@ def main(argv=None) -> int:
                 target = GuardedTarget(target, shared_defense_guard, mode=args.defense)
             prebuilt_targets[spec] = target
             persisted_model_specs[spec] = str(getattr(target, "name"))
+            for corpus_name in corpora:
+                for stale_spec in {
+                    requested_model_specs[spec], persisted_model_specs[spec]
+                }:
+                    (out / (
+                        "__".join((
+                            _safe_component(corpus_name),
+                            _safe_component(stale_spec),
+                            "target-setup",
+                        )) + ".error.json"
+                    )).unlink(missing_ok=True)
         except Exception as exc:  # noqa: BLE001 - fail pre-call preflight
             for corpus_name in corpora:
                 setup_error = out / (
@@ -2702,6 +2782,7 @@ def main(argv=None) -> int:
                 "reason": str(exc)[:2000],
             }])
             return 1
+    (out / "judge-hosted-runtime-preflight.error.json").unlink(missing_ok=True)
     eligibility_plan, eligibility_path = persist_eligibility_plan()
     try:
         modality_plan = plan_modality_coverage(
@@ -2860,6 +2941,7 @@ def main(argv=None) -> int:
     eligibility_plan, eligibility_path = persist_eligibility_plan(
         whole_request_preflight_complete=True
     )
+    (out / "grid-planning.error.json").unlink(missing_ok=True)
     for corpus_name, counts in policy_strata.items():
         print(
             f"plan '{corpus_name}' source-policy clusters: "
@@ -2950,8 +3032,14 @@ def main(argv=None) -> int:
         "source_conformance_artifact": _selected_config_artifact_identity(
             source_conformance_artifact
         ),
+        "attacker_config_artifact": _selected_config_artifact_identity(
+            attacker_config_artifact
+        ),
         "api_config_artifact": _selected_config_artifact_identity(
             api_config_artifact
+        ),
+        "local_config_artifact": _selected_config_artifact_identity(
+            local_config_artifact
         ),
     }
     grid_material = json.dumps(
@@ -3105,31 +3193,38 @@ def main(argv=None) -> int:
             if blocked is not None:
                 circuit_key, circuit = blocked
                 n_errors += len(attacker_names)
-                circuit_error = out / (
-                    "__".join((
-                        _safe_component(corpus_name),
-                        _safe_component(persisted_model_specs[spec]),
-                        "circuit-open",
-                    ))
-                    + ".error.json"
-                )
-                _write_json(circuit_error, {
-                    "status": "error",
-                    "phase": "circuit_open",
-                    "corpus": corpus_name,
-                    "model_spec": persisted_model_specs[spec],
-                    "circuit_key": circuit_key,
-                    "circuit": circuit,
-                    "call_budget_snapshot": call_budget.snapshot(),
-                })
                 for attacker_name in attacker_names:
+                    circuit_error = out / (
+                        "__".join((
+                            _safe_component(corpus_name),
+                            _safe_component(persisted_model_specs[spec]),
+                            _safe_component(attacker_name),
+                            "circuit-open",
+                        ))
+                        + ".error.json"
+                    )
+                    _write_json(circuit_error, {
+                        "status": "error",
+                        "grid_id": grid_id,
+                        "run_id": None,
+                        "phase": "circuit_open",
+                        "corpus": corpus_name,
+                        "model_spec": persisted_model_specs[spec],
+                        "attacker": attacker_name,
+                        "circuit_key": circuit_key,
+                        "circuit": circuit,
+                        "call_budget_snapshot": call_budget.snapshot(),
+                        "execution_started": False,
+                    })
                     cell_statuses.append({
                         "corpus": corpus_name,
                         "model_spec": persisted_model_specs[spec],
                         "attacker": attacker_name,
+                        "run_id": None,
                         "status": "error",
                         "phase": "circuit_open",
-                        "error_artifact": circuit_error.name,
+                        "execution_started": False,
+                        "error_artifact": _artifact_descriptor(circuit_error),
                     })
                 continue
             target = prebuilt_targets[spec]
@@ -3172,6 +3267,8 @@ def main(argv=None) -> int:
                     n_errors += 1
                     _write_json(fallback_error, {
                         "status": "error",
+                        "grid_id": grid_id,
+                        "run_id": None,
                         "phase": "circuit_open",
                         "corpus": corpus_name,
                         "model_spec": persisted_model_specs[spec],
@@ -3179,14 +3276,17 @@ def main(argv=None) -> int:
                         "circuit_key": circuit_key,
                         "circuit": circuit,
                         "call_budget_snapshot": call_budget.snapshot(),
+                        "execution_started": False,
                     })
                     cell_statuses.append({
                         "corpus": corpus_name,
                         "model_spec": persisted_model_specs[spec],
                         "attacker": attacker_name,
+                        "run_id": None,
                         "status": "error",
                         "phase": "circuit_open",
-                        "error_artifact": fallback_error.name,
+                        "execution_started": False,
+                        "error_artifact": _artifact_descriptor(fallback_error),
                     })
                     continue
                 try:
@@ -3498,7 +3598,9 @@ def main(argv=None) -> int:
                     )
                     _write_json(error_path, {
                             "status": "error",
+                            "grid_id": grid_id,
                             "run_id": run_id,
+                            "phase": "cell_execution_or_validation",
                             "corpus": corpus_name,
                             "model_spec": persisted_model_specs[spec],
                             "target": getattr(
@@ -3512,6 +3614,7 @@ def main(argv=None) -> int:
                             "completed_attempts": len(runner.attempts) if runner else 0,
                             "call_budget_snapshot": call_budget.snapshot(),
                             "call_audit": _safe_external_audit(exc),
+                            "execution_started": execution_started,
                         })
                     cell_statuses.append({
                         "corpus": corpus_name,
@@ -3523,7 +3626,8 @@ def main(argv=None) -> int:
                         "run_id": run_id,
                         "status": "error",
                         "phase": "cell_execution_or_validation",
-                        "error_artifact": error_path.name,
+                        "execution_started": execution_started,
+                        "error_artifact": _artifact_descriptor(error_path),
                     })
                     print(
                         f"  ! cell failed [{stem or f'{corpus_name}/{spec}/{attacker_name}'}]: "

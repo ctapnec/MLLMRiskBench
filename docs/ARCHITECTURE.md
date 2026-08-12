@@ -99,6 +99,25 @@ attestation, attempted/completed-cell record, or scientific result. A source or
 configuration failure before corpus materialization remains a separate preflight
 error because no exact source stratum can yet be derived.
 
+The read-only `experiments.level1_evidence` boundary then validates and joins
+every final plan in one selected measured `run_matrix` cohort, including
+plan-only structural-`N/A` or blocked requests, to complete/partial grids under the same
+content-derived request condition. Its `ura-level1-evidence/1` output retains
+three non-interchangeable units: materialized planning strata, whole-arm
+execution units, and judgment records. Whole-arm execution is projected onto a
+planning stratum only after the completed artifacts cover that stratum's exact
+selected-datapoint count and identity digest. Grid, completion, and error
+evidence remains bound through locator/SHA-256/byte descriptors; a mismatched
+embedded plan or artifact descriptor fails closed. The cohort's
+`evidence_kind` is either `diagnostic_dry_run` or `measured_run`, and those modes
+cannot be mixed in one artifact. The current boundary has no typed live-attestation or
+analysis-selection input, so both are recorded as `not_supplied` with null
+counts. Pre-materialization failures remain unstratified request-level errors;
+the join never fabricates source/modality rows for them. It identifies
+diagnostic dry-run input but explicitly sets empirical validity to false.
+No-call `rig_check` plans and live transport-probe artifacts remain in separate
+preflight/attestation trees and are not supplied as measured Level-1 requests.
+
 Physical media reaches the target as verified bytes. The maintained automated
 judges are not pixel/audio/video evaluators: where a release provides a safety
 reason, transcript, or harmful-intention reference, they grade target output

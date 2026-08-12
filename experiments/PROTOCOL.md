@@ -32,8 +32,10 @@ Broader hosted rows are descriptive. Candidate families include account-visible
 Claude/OpenAI, Gemini, DeepSeek, Kimi, Qwen, and GLM routes. Any identifier in a
 configuration example is provisional until the authorized account returns the
 requested model and bounded live calls prove every claimed physical modality.
-An unavailable, aliased, or capability-mismatched route is `N/A`, not replaced
-with a nearby model.
+A declared unavailable or capability-incompatible route is structural `N/A`,
+not replaced with a nearby model. A failed/stale live attestation or silent
+identity drift is a missing/failed prerequisite, not a safe zero and not
+silently rewritten as structural incompatibility.
 
 Local rows use exact immutable vLLM/Ollama artifacts. Only one local target is
 started per runner process. On the two RTX 4090 rig, a model fitting one card
@@ -135,7 +137,8 @@ counts may be totaled only within one fixed requested universe and one stated
 unit.
 
 Synthesis has three levels: (1) mandatory fixed-universe eligibility,
-provenance, completion, decision and `N/A` accounting; (2) family estimates only
+provenance, completion, decision and `N/A` accounting with every count's unit
+named; (2) family estimates only
 inside an exact construct/population/policy/status/unit/denominator/polarity/
 modality/attacker/defense/judge/served-model/run/budget/horizon compatibility
 key, with source-cluster weighting and matched effects where possible; and (3)
@@ -143,6 +146,25 @@ an optional explicitly normative portfolio only with fixed published weights,
 uncertainty, missingness bounds and weight/leave-one-family sensitivity. Level 3
 is not a universal empirical safety score, and weights are never renormalized
 over each model's observed survivors.
+
+Level 1 is materialized by `experiments.level1_evidence` as
+`ura-level1-evidence/1` JSON and a deterministic planning-stratum CSV. Its fixed
+universe begins after selected corpora materialize: planning strata and
+whole-arm execution units remain separate, while completed/evaluable/decided/
+abstained/non-evaluable support is counted in judgment records. Earlier failures
+remain unstratified request-level errors. The current artifact does not consume
+typed live-attestation or downstream analysis-selection evidence, so attested
+and included counts remain null with status `not_supplied`; they are not zero.
+It binds grid and execution/error evidence with content descriptors, declares
+the homogeneous cohort as `evidence_kind=diagnostic_dry_run` or `measured_run`,
+rejects a mixed cohort, and states that empirical validity is not established.
+
+Attempted is counted only for whole-arm execution units. A unit may fail after
+starting without revealing which constituent strata it reached, so the
+planning-stratum attempted count remains null; `execution_unit_started` is
+context only. A completed stratum requires exact selected-datapoint count and
+identity-digest coverage. Missing means an execution-eligible row has no grid,
+not that it was blocked or failed.
 
 Static harmful common rows emit ASR/refusal endpoints; static benign rows emit
 over-refusal. Response-conditioned rows emit conversation endpoints under one
@@ -164,14 +186,19 @@ are never pooled into one rate or ranking.
 2. Create source, hosted API, local target, attacker, and separate scoring versus
    defense-guard configurations without embedding credentials or machine paths.
 3. Run `experiments.rig_check` for each planned lane. Review source-policy counts
-   and conservative target/judge/guard/HTTP call projections.
+   and conservative target/judge/guard/HTTP call projections. Retain these
+   diagnostic plans under a separate preflight tree; do not mix them with the
+   measured runner cohort.
 4. Perform tiny bounded real endpoint/modality attestations. These diagnose
    access and transport only and are excluded from results.
 5. Execute eligible static, adaptive, multimodal, source-specific, and local
    defense lanes with finite budgets; retain every `N/A` reason.
 6. Execute the nine upstream native campaigns and import their complete outputs.
-7. Build the no-pooling suite evidence inventory; run paired effects, transfer,
-   judge sensitivity, and the independently labelled human audit.
+7. Build Level-1 evidence from every final plan in the selected measured runner
+   cohort, including plan-only `N/A`/blocked requests and excluding preflight and
+   attestation trees. Then build the no-pooling suite inventory; run paired
+   effects, transfer, judge sensitivity, and the independently labelled human
+   audit.
 8. Render measured focal figures only from completion-validated runs bound to
    the final human-audit artifact.
 
