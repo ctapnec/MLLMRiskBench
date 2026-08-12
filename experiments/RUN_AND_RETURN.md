@@ -1915,6 +1915,31 @@ Distinct run IDs, cross-cell rates, and native scales are never pooled. Use this
 as the Experimental section's inventory and table source, not as a model
 leaderboard score.
 
+The deterministic Level-2 broad-table exporter turns the same
+completion-validated measured artifacts into thesis-ready JSON, CSV, and
+Markdown tables. It admits cells only through the measured-figure grid
+validator, so diagnostic dry runs, diagnostic canaries, and attestation probes
+are rejected; every estimate row carries its complete compatibility key
+(run, served target, source, policy identity/digest, modality, population,
+attacker, defense, ordered judge identity, sampling/budget condition), plus
+official/proxy status, declared polarity, cluster support, intervals, and
+judgment-record decision coverage. Rows with distinct keys are never merged,
+and supplied canonical native envelopes are listed in a separate table on
+their original scales:
+
+```bash
+python -m experiments.level2_report \
+  --results runs/thesis/runner \
+  "${NATIVE_ARGS[@]}" \
+  --out-json runs/thesis/level2-report.json \
+  --out-csv runs/thesis/level2-report.csv \
+  --out-md runs/thesis/level2-report.md
+```
+
+Outputs are create-only and deterministic for identical inputs. The export is
+descriptive: it defines no universal safety score, implies no ranking, and
+does not by itself establish empirical validity.
+
 The maintained measured-figure command still renders the declared paired core
 figures, not the whole broad roster. Invoke it only after the matching core grids
 and human audit exist. The loader requires `attestation_probe=false` plus

@@ -155,8 +155,9 @@ nonempty subset as complete.
    selected measured runner cohort, including plan-only `N/A`/blocked requests
    but excluding preflight and probe trees; pass the exact receipts and hashes
    bound by those measured grids, then build the separate no-pooling
-   `experiments.suite_summary`, run no-call diagnostics, and prepare the
-   automated-label-blinded, model-visible multi-rater human audit.
+   `experiments.suite_summary` and the deterministic
+   `experiments.level2_report` broad tables, run no-call diagnostics, and
+   prepare the automated-label-blinded, model-visible multi-rater human audit.
 8. After ratings/adjudication, render qualified focal figures and return the
    complete artifact tree, exact URA project-revision receipt/digest and
    separately recorded checkout status, commands, upstream commits,
@@ -174,6 +175,7 @@ python -m experiments.lane_canary --help
 python -m experiments.level1_evidence --help
 python -m experiments.native_import --help
 python -m experiments.suite_summary --help
+python -m experiments.level2_report --help
 python -m experiments.paired_compare --help
 python -m experiments.judge_sensitivity --help
 python -m experiments.kappa --help

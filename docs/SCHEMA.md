@@ -297,6 +297,26 @@ and CSV rows, and a mixed dry-run/measured cohort is rejected.
 lifecycle accounting, not a safety score or evidence of source fidelity,
 endpoint access, human validity, or empirical performance.
 
+## Level-2 compatible-family export
+
+`python -m experiments.level2_report` emits `ura-level2-report/1` JSON plus
+deterministic CSV and Markdown broad tables from completion-validated measured
+cells (admitted through the measured-figure grid validator, so dry runs,
+diagnostic canaries, and attestation probes are rejected) and optional
+canonical native envelopes. Each `common.estimates` row is one exact
+compatibility stratum and metric: run, served target, source arm,
+source-policy identity and digest, risk category, effective modality,
+expected-behavior population, attacker, defense and guard revision, ordered
+judge identity, seeds/sampling/limit condition, semantic family,
+official/proxy endpoint status, declared polarity, value with cluster-aware
+interval and support, and completed/evaluable/decided/abstained/non-evaluable
+judgment-record decision coverage for the exact bucket. Rows with distinct
+keys are never merged; duplicate run IDs and non-default aggregation groupings
+fail closed; native runs stay in the separate `native` section on their
+original scales. Outputs are create-only, contain a content-derived
+`report_id`, and declare `empirical_validity_established=false`: the export is
+descriptive and is never a ranking or a universal score.
+
 ## Lineage and continuation state
 
 Each cell persists attempts, responses, authoritative judgments, full-shadow
