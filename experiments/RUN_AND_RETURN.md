@@ -1776,6 +1776,39 @@ benign over-refusal are different adverse endpoints. Bootstrap intervals state
 requested and defined replicate counts and are conditional on defined
 replicates.
 
+### 15.1 Source-task classification audit (separate frame)
+
+The classification lanes from section 11 use a separate, never-mixed audit
+frame that verifies source-defined task semantics and parser fidelity instead
+of refusal/harmfulness. Preparation exports only typed source-metric-only rows
+(R-Judge/GPTGeoChat), blinds the automated parser prediction, its validity
+flag, and the source reference, and includes whole clusters:
+
+```bash
+python -m experiments.human_audit \
+  --results runs/thesis/runner --prepare-source-task 50 \
+  --acknowledge-sensitive-content \
+  --output runs/thesis/source-task-audit-sample.csv
+```
+
+At least two qualified raters label each row independently with the exact
+`task_label_vocabulary` and a parse-status judgment, then adjudicate. Analysis
+re-joins every labelled row to the exact exported prompt/response content and
+writes `source_task_audit.json` with inter-rater agreement, adjudicated-human
+versus source-reference accuracy (cluster-bootstrap interval), adjudicated
+versus parser agreement/confusion, and the parser-valid fraction:
+
+```bash
+python -m experiments.human_audit \
+  --results runs/thesis/runner \
+  --source-task-labels runs/thesis/source-task-audit-labelled.csv
+```
+
+These results are source-task classification evidence on the source's own
+scale. They are never common ASR/refusal evidence, never enter the common
+human frame or its judge-validity calibration, and never rename classification
+accuracy as safety.
+
 ## 16. Read-only analysis and suite summary
 
 Run the implemented diagnostics only on completed, content-validated artifacts:
