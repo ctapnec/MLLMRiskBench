@@ -501,7 +501,19 @@ def _build_units(
                 raise ValueError(f"judgment lacks {field} in {cell['stem']}")
         label = row.get("label")
         if evaluable:
-            if label not in _LABELS:
+            common_eligible = raw.get("common_metrics_eligible")
+            if common_eligible is False:
+                if (
+                    label != "not_applicable"
+                    or raw.get("stage_queried") is not False
+                    or raw.get("policy_evaluation_status") != "source_metric_only"
+                    or not isinstance(raw.get("required_metric"), str)
+                    or not raw["required_metric"].strip()
+                ):
+                    raise ValueError(
+                        f"invalid source-metric-only authority in {cell['stem']}"
+                    )
+            elif label not in _LABELS:
                 raise ValueError(f"invalid authoritative label in {cell['stem']}")
         elif label != "not_applicable":
             raise ValueError(

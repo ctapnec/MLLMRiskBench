@@ -33,6 +33,17 @@ _IMPLEMENTED_SOURCE_EVALUATORS = frozenset({
 })
 
 
+def source_evaluator_implemented(source: str, required_metric: str) -> bool:
+    """Whether an exact source/metric pair has a scored Runner evaluator.
+
+    This intentionally exposes only the admission decision, not the private
+    dispatch registry.  Planning and execution can therefore report the same
+    source-metric gate without treating conversion support as scoring support.
+    """
+
+    return (source, required_metric) in _IMPLEMENTED_SOURCE_EVALUATORS
+
+
 @dataclass(frozen=True)
 class SourceMetricSummary:
     metric: str
@@ -444,6 +455,7 @@ def aggregate_source_metrics(
 
 __all__ = [
     "SourceMetricSummary",
+    "source_evaluator_implemented",
     "evaluate_source_response",
     "aggregate_source_metrics",
     "validate_scored_source_metrics",

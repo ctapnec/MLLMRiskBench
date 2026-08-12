@@ -126,6 +126,8 @@ class JudgeCascade:
             trail.append(judgment.model_copy(update={
                 "raw": {
                     **judgment.raw,
+                    "stage_queried": True,
+                    "policy_evaluation_status": "evaluated",
                     "cascade_stage": index,
                     "cascade_confident": confidence[index],
                     "cascade_role": role,

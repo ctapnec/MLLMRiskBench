@@ -541,6 +541,12 @@ class Runner:
                 final, raw_trail = self._non_evaluable_setup_outcome(
                     response
                 )
+            elif evaluation_datapoint.meta.get(
+                "common_metrics_eligible", True
+            ) is False:
+                final, raw_trail = self._source_metric_only_outcome(
+                    evaluation_datapoint, response
+                )
             else:
                 judge_calls, judge_http_exposure = _model_judge_exposure(
                     self.judge_cascade, response
@@ -651,6 +657,45 @@ class Runner:
                 rationale=(
                     "conversation setup turn retained for conditioning; "
                     "policy judge not queried"
+                ),
+                raw=raw,
+            ))
+        return trail[0], trail
+
+    def _source_metric_only_outcome(
+        self, datapoint: DataPoint, response: Response
+    ) -> tuple[Judgment, list[Judgment]]:
+        """Retain stage-shaped lineage without applying an unrelated safety judge.
+
+        Exact source-specific classification pairs are evaluated by
+        ``source_metrics`` from the target response. Running refusal/harmfulness
+        judges over the classifier's label string would change the construct and
+        can make an otherwise valid source result depend on an irrelevant paid
+        judge. The unqueried rows keep checkpoint/identity shape explicit while
+        remaining ineligible for common metrics and the common human audit.
+        """
+        required_metric = datapoint.meta.get("required_metric")
+        trail: list[Judgment] = []
+        for index, stage in enumerate(self.judge_cascade.stages):
+            raw: dict[str, Any] = {
+                "confidence": 1.0,
+                "parsed": None,
+                "stage_queried": False,
+                "policy_evaluation_status": "source_metric_only",
+                "required_metric": required_metric,
+                "cascade_stage": index,
+                "cascade_confident": True,
+                "cascade_role": "authoritative" if index == 0 else "shadow",
+                "cascade_policy": "first_confident_with_full_shadow_trail",
+            }
+            trail.append(Judgment(
+                attempt_id=response.attempt_id,
+                judge=stage.name,
+                label="not_applicable",
+                score=0.0,
+                rationale=(
+                    "common safety judge not applicable; target output is "
+                    f"evaluated by source metric {required_metric!r}"
                 ),
                 raw=raw,
             ))
@@ -1452,6 +1497,10 @@ class Runner:
 
         authorities: list[Judgment] = []
         policy_evaluable = expected.params["policy_evaluable_turn"]
+        source_metric_only = (
+            policy_evaluable
+            and datapoint.meta.get("common_metrics_eligible", True) is False
+        )
         for index, (item, stage_name) in enumerate(zip(trail, expected_stage_names)):
             if item.judge != stage_name:
                 raise ValueError(
@@ -1484,7 +1533,19 @@ class Runner:
                         f"{expected.id!r}"
                     )
                 authorities.append(item)
-            if policy_evaluable:
+            if source_metric_only:
+                if (
+                    item.label != "not_applicable"
+                    or raw.get("stage_queried") is not False
+                    or raw.get("policy_evaluation_status") != "source_metric_only"
+                    or raw.get("required_metric")
+                    != datapoint.meta.get("required_metric")
+                ):
+                    raise ValueError(
+                        "checkpoint source-metric-only turn contains a common "
+                        f"judge verdict for {expected.id!r}"
+                    )
+            elif policy_evaluable:
                 if (
                     item.label == "not_applicable"
                     or raw.get("stage_queried") is False
@@ -1780,6 +1841,33 @@ class Runner:
         prepared: list[DataPoint] = []
         for dp in corpus:
             _validate_declared_media_modalities(dp)
+            eligibility = dp.meta.get("common_metrics_eligible", True)
+            physical_modalities = {
+                str(modality)
+                for modality in dp.modalities
+                if modality in {"image", "audio", "video"}
+            }
+            if eligibility is True and physical_modalities:
+                endpoint_scope = dp.meta.get(
+                    "automated_metric_scope", "media_conditioned"
+                )
+                if endpoint_scope not in {"media_conditioned", "response_only"}:
+                    raise ValueError(
+                        "DataPoint.meta.automated_metric_scope must be "
+                        "'media_conditioned' or 'response_only': "
+                        f"{dp.id}"
+                    )
+                reference = dp.meta.get("judge_reference_text")
+                has_reference = isinstance(reference, str) and bool(reference.strip())
+                if endpoint_scope == "media_conditioned" and not has_reference:
+                    rendered_modalities = ",".join(sorted(physical_modalities))
+                    raise ValueError(
+                        "physical-media common metric requires a non-blank "
+                        "DataPoint.meta.judge_reference_text before target calls "
+                        f"(id={dp.id!r}, modalities={rendered_modalities}); "
+                        "use automated_metric_scope='response_only' only for an "
+                        "explicitly response-only construct"
+                    )
             direct = [
                 _prepare_media_ref(
                     ref,
@@ -1890,6 +1978,21 @@ class Runner:
         for bucket_label in sorted(buckets):
             bucket = buckets[bucket_label]
             group_by = _decode_group(bucket_label, keys)
+            # These dimensions define distinct execution/evidence populations.
+            # A caller may request coarser labels, but it may not silently pool
+            # physically different delivery, source definitions, targets, or
+            # attack runtimes inside one metric bucket.
+            for dimension in ("effective_modality", "source", "target", "attacker"):
+                observed = {
+                    str(j.raw[dimension])
+                    for j in bucket
+                    if j.raw.get(dimension) is not None
+                }
+                if len(observed) > 1:
+                    raise ValueError(
+                        f"multiple {dimension} values would be pooled in "
+                        f"aggregate bucket {bucket_label!r}; group by {dimension}"
+                    )
             bucket_policies = {
                 (
                     str(j.raw.get("source_policy_id", "unversioned")),
@@ -2418,6 +2521,11 @@ class Runner:
                         "cascade_confident": cascade_confident,
                         "cascade_role": cascade_role,
                         "cascade_policy": j.raw.get("cascade_policy"),
+                        "stage_queried": j.raw.get("stage_queried", True),
+                        "policy_evaluation_status": j.raw.get(
+                            "policy_evaluation_status", "evaluated"
+                        ),
+                        "required_metric": j.raw.get("required_metric"),
                         "risk_category": meta.get("risk_category", "unknown"),
                         "modality": meta.get("modality", "unknown"),
                         "source_modality": meta.get("source_modality", "unknown"),

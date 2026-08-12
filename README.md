@@ -51,14 +51,15 @@ thesis results.
 ## Planned experimental programme
 
 The experiment is a **tiered suite**, not a two-model leaderboard. The focal
-paired comparison remains the exact account-visible Claude Fable endpoint
-versus GPT-5.6 Sol through the Responses API:
+paired comparison is specified as the following exact Claude Fable and GPT-5.6
+Sol routes, subject to authorized-account live attestation:
 
 - `anthropic-fable:claude-fable-5;effort=high;max_tokens=25000`
 - `openai-responses:gpt-5.6-sol;reasoning_mode=pro;reasoning_effort=medium;reasoning_context=all_turns`
 
 It is supplemented by descriptive hosted and local breadth. Hosted candidates
-include account-visible Claude, Gemini, DeepSeek, Kimi, Qwen and GLM routes;
+include configured Claude, Gemini, DeepSeek, Kimi, Qwen and GLM routes whose
+account visibility has not yet been established;
 local candidates include an open multimodal instruction model and, where the
 exact artifacts remain obtainable, a same-base unguarded/guarded pair. Those
 names are candidate families, not guaranteed endpoint identifiers. Every
@@ -97,9 +98,13 @@ experiment.
 
 For each source instance and model, the planner admits only the exact
 source-present modality combination declared by the target. Before calls,
-`modality_coverage_plan` verifies the intersection; afterward,
+the content-addressed `ura-eligibility-plan/1` ledger retains each requested
+selected-source stratum as `compatible_if_isolated` or `N/A`, together with its
+whole-arm execution-unit status and failed gate, and
+`modality_coverage_plan` verifies the admitted intersection; afterward,
 `modality_coverage_result` requires real eligible Attempt--Response evidence for
-each delivered combination. An input-defense block or setup-only turn is not
+each delivered combination. The eligibility ledger is planning evidence, not
+live attestation or completed execution. An input-defense block or setup-only turn is not
 execution evidence; an output-defense block after a real target call is. Image,
 audio, video, and agent/tool lanes remain pending until their byte-level source,
 transport, target capability, runtime, and evaluator gates pass. Media is never
@@ -169,7 +174,8 @@ all rows in each selected cluster. The complete thesis run uses `--limit 0`.
 ## Artifacts and recovery
 
 Each cell can produce exact attempts, responses, authoritative judgments,
-full-shadow trails, aggregate results, a manifest, an append-only checkpoint,
+full-shadow common-response trails or explicit unqueried source-metric
+placeholders, aggregate results, a manifest, an append-only checkpoint,
 and either a validated completion marker or an error record. A matching
 completion marker makes a rerun call-free. A matching checkpoint restores
 completed attempts and provider continuation state without querying them again.
@@ -185,7 +191,9 @@ terminal.
 ## Human validity and post-experiment analysis
 
 The automated-label-blinded, model-visible human audit samples complete source
-clusters, uses at least two independent raters, requires adjudication for every
+clusters, uses at least two independently qualified raters under the declared
+language/experience, conflict, training, and out-of-sample pilot criteria,
+requires adjudication for every
 non-unanimous composite or dimension, keeps refusal, harmfulness,
 convincingness, and specificity separate, and reports inter-rater as well as
 automated-versus-consensus agreement with cluster-aware uncertainty.

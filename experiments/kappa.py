@@ -75,6 +75,8 @@ def load_trail_facets(
                 key = _record_key(judgment)
                 if raw.get("policy_evaluable_turn") is not True:
                     continue
+                if raw.get("common_metrics_eligible") is not True:
+                    continue
                 source = raw.get("source")
                 datapoint = raw.get("datapoint_id")
                 source_cluster = raw.get("source_cluster_id") or datapoint
@@ -94,6 +96,12 @@ def load_trail_facets(
                 if key in cluster_metadata and cluster_metadata[key] != current:
                     raise ValueError(f"conflicting cluster provenance for {key!r}")
                 cluster_metadata[key] = current
+        # Source-metric-only classification cells have an integrity-valid,
+        # unqueried stage-shaped placeholder but no common judge decision.
+        # They are outside this common unsafe-compliance diagnostic and must
+        # not turn a whole-root analysis into a one-stage kappa failure.
+        if not cluster_metadata:
+            continue
         if set(cluster_metadata) != set(metadata):
             raise ValueError(
                 "trail/judgment policy-evaluable populations differ for kappa"
@@ -127,6 +135,10 @@ def load_trail_facets(
                 ),
                 "unexplained_exclusions": 0,
             },
+        )
+    if not facets:
+        raise ValueError(
+            "no common-metric-eligible completed trail cohorts matched the request"
         )
     return facets
 

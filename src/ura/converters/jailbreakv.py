@@ -45,7 +45,25 @@ class JailBreakVConverter(BaseConverter):
                 media=media,
                 risk_subtype=row.get("policy"),
                 attack_family=row.get("format"),
-                meta={"from": row.get("from"), "transfer_from_llm": row.get("transfer_from_llm")},
+                meta={
+                    "from": row.get("from"),
+                    "transfer_from_llm": row.get("transfer_from_llm"),
+                    # The released red-team query is grading-only context.  It
+                    # is not sent through the target text channel; the carrier
+                    # remains the source jailbreak query plus physical image.
+                    "judge_reference_text": (
+                        row.get("redteam_query").strip()
+                        if isinstance(row.get("redteam_query"), str)
+                        and row.get("redteam_query").strip()
+                        else None
+                    ),
+                    "judge_reference_kind": (
+                        "source_redteam_query_not_sent_to_target"
+                        if isinstance(row.get("redteam_query"), str)
+                        and row.get("redteam_query").strip()
+                        else None
+                    ),
+                },
             ))
         if not out:
             raise CorpusFormatError(f"JailBreakV conversion produced no rows from {path}")

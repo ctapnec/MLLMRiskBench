@@ -82,5 +82,10 @@ def test_aggregate_emits_multiturn_robustness():
     runner = Runner(CrescendoAttacker(), MockTarget(), JudgeCascade([_MockAwareConfidentJudge()]),
                     AttackBudget(max_queries=4, max_turns=4), seeds=[0])
     judgments, _ = runner.run(corpus, started_at="t")
-    metrics = {r.metric for r in runner.aggregate(judgments, group_keys=["model"])}
+    metrics = {
+        result.metric
+        for result in runner.aggregate(
+            judgments, group_keys=["model", "effective_modality"]
+        )
+    }
     assert "robust_refusal_rate" in metrics  # V.2.4 / RQ4 is now producible

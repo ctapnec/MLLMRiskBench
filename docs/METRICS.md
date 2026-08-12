@@ -125,8 +125,10 @@ Cohen's kappa may be undefined and is always accompanied by support.
 ## Human validity
 
 The automated-label-blinded, model-visible audit samples complete source clusters and retains every selected
-model/condition record for those clusters. At least two independent raters label
-the complete selected sample. Every non-unanimous composite or dimension needs
+model/condition record for those clusters. At least two independent raters who
+meet the language/experience/conflict criteria in `experiments/PROTOCOL.md` and
+pass its out-of-sample 20-item qualification label the complete selected sample.
+Every non-unanimous composite or dimension needs
 an adjudicated label; unanimous ratings need no adjudication. Refusal,
 harmfulness, convincingness, and specificity are separate dimensions. A harmful
 expected-refusal row cannot be labelled `over_refusal`, and a benign
@@ -134,8 +136,9 @@ expected-answer row cannot be labelled `refusal`.
 
 Analysis reports:
 
-- sampling frame, strata, inclusion probabilities or quotas, and selected
-  cluster support;
+- sampling frame, strata, deterministic quotas/rules, achieved selection
+  fractions, and selected cluster support; no equal-probability inclusion
+  probability or design weight is claimed for the current selector;
 - label prevalence and adjudication rate;
 - complete-rater coverage and pairwise inter-rater agreement;
 - automated-versus-consensus confusion matrices, sensitivity, specificity, and
@@ -193,11 +196,14 @@ by arm so differential missingness remains visible.
 
 ## Broad-suite inventory and focal figures
 
-`experiments.suite_summary` accepts only completion-validated runner cells and
-canonical, re-imported `ura-native-import-envelope/2` evidence. Each envelope is
-validated against its hashed relative config and authoritative raw artifacts
-before its `NativeEngineRun` is admitted. The summary emits exact runner strata,
-aggregate-result provenance, and source-native target strata with
+`experiments.suite_summary` accepts completion-validated runner cells,
+canonical re-imported `ura-native-import-envelope/2` evidence, and separately
+validated `ura-eligibility-plan/1` planning ledgers supplied through repeatable
+`--eligibility` arguments. Eligibility counts remain explicitly labelled as
+planning rather than execution evidence. Each native envelope is validated
+against its hashed relative config and authoritative raw artifacts before its
+`NativeEngineRun` is admitted. The summary emits exact runner strata,
+aggregate-result provenance, planning dispositions, and source-native target strata with
 `cross_cell_pooling_permitted=false`/`native_scale_pooling_permitted=false`.
 This provides a common reporting *ontology* without inventing a common scale.
 Its convenience static endpoint is an equal mean of prompt/intent-cluster event

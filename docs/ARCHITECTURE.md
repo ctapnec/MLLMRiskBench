@@ -25,7 +25,7 @@ not model performance or judge validity.
 | Data | `src/ura/data_models.py`, `src/ura/converters/` | typed records, source identity, media and policy provenance |
 | Attacks | `src/ura/adapters/` | replay, transforms, response-conditioned escalation, native-result bridges |
 | Targets | `src/ura/targets/` | exact hosted/local invocation and provider continuation state |
-| Judgment | `src/ura/judges/` | ordered cascade, authoritative decision and full shadow trail |
+| Judgment | `src/ura/judges/`, `src/ura/source_metrics.py` | ordered full-shadow cascade for common responses; source evaluator and unqueried placeholders for classification |
 | Runtime | `src/ura/runner.py`, `experiments/run_matrix.py` | preflight, execution, budgets, checkpoints, recovery and manifests |
 | Analysis | `experiments/` | paired effects, transfer, judge sensitivity, human audit and figures |
 
@@ -74,20 +74,26 @@ requires real eligible Attempt--Response evidence for each delivered
 combination. Tags without byte-backed delivery, setup-only turns, and input-side
 defense blocks do not count.
 
-Eligibility is represented as a model x source-instance x modality relation,
-not a complete Cartesian product. Text, image, audio, video, and represented
-agent/tool lanes are admitted only when the source bytes/trace, target
-transport, target declaration, runtime semantics, and evaluator all agree.
-Every omitted cell is retained as `N/A` with the failed gate; a caption or text
-fallback is not a substitute for physical-media delivery.
+Eligibility is represented as a requested-target x selected-source-stratum x
+exact-modality x attacker relation, not an invented complete Cartesian product.
+After the selected corpora materialize, `run_matrix` writes a content-addressed
+`ura-eligibility-plan/1` artifact before any model call. It retains every
+requested planning stratum as `compatible_if_isolated` or `N/A`, with its failed
+gates, whole-arm execution-unit status, and bound configuration/corpus digests.
+This is planning evidence only: it is not a live
+attestation, attempted/completed-cell record, or scientific result. A source or
+configuration failure before corpus materialization remains a separate preflight
+error because no exact source stratum can yet be derived.
 
 Physical media reaches the target as verified bytes. The maintained automated
 judges are not pixel/audio/video evaluators: where a release provides a safety
 reason, transcript, or harmful-intention reference, they grade target output
-against that source text and record the proxy mode; without such a defensible
-reference the row is `N/A` for common automated metrics. Media-aware human review
-is the validity path. Target modality coverage is never renamed as direct
-multimodal judging.
+against that source text and record the proxy mode. Without such a defensible
+reference, a media-conditioned row is `N/A` for common automated metrics. A
+separately typed `response_only` endpoint may grade literal response behavior
+without a reference, but cannot support a claim about media understanding.
+Media-aware human review is the validity path. Target modality coverage is never
+renamed as direct multimodal judging.
 
 ## Target and judge identity
 
@@ -131,7 +137,7 @@ remain errors and never become safe responses.
 ## Artifact boundary
 
 An admitted cell persists attempts, responses, authoritative judgments,
-full-shadow trails, aggregate results, manifest, checkpoint, and completion
+full-shadow common trails or explicit source-metric-only placeholders, aggregate results, manifest, checkpoint, and completion
 marker. A failed cell persists a typed error artifact. A complete matching
 marker makes rerun call-free; a matching checkpoint resumes without repeating
 completed attempts.

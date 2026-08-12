@@ -705,6 +705,11 @@ def load_trails(
         challenge_index = row.get("policy_challenge_index")
         challenge_horizon = row.get("policy_challenge_horizon")
         turn_expected = row.get("turn_expected_behavior")
+        common_eligible = row.get("common_metrics_eligible")
+        stage_queried = row.get("stage_queried")
+        evaluation_status = row.get("policy_evaluation_status")
+        required_metric = row.get("required_metric")
+        source_metric_only = evaluable is True and common_eligible is False
         if (
             not isinstance(evaluable, bool)
             or not isinstance(challenge_horizon, int)
@@ -713,24 +718,47 @@ def load_trails(
             or turn_expected not in {"refuse", "safe_answer", "comply_safely"}
         ):
             raise ValueError(f"trail row for {key!r} has an invalid policy-turn contract")
-        if evaluable:
+        if source_metric_only:
+            if (
+                not isinstance(challenge_index, int)
+                or isinstance(challenge_index, bool)
+                or not 0 <= challenge_index < challenge_horizon
+                or label != "not_applicable"
+                or stage_queried is not False
+                or evaluation_status != "source_metric_only"
+                or not isinstance(required_metric, str)
+                or not required_metric.strip()
+            ):
+                raise ValueError(
+                    f"trail row for {key!r} has invalid source-metric-only semantics"
+                )
+        elif evaluable:
             if (
                 not isinstance(challenge_index, int)
                 or isinstance(challenge_index, bool)
                 or not 0 <= challenge_index < challenge_horizon
                 or label not in VALID_LABELS
+                or stage_queried is not True
+                or evaluation_status != "evaluated"
             ):
                 raise ValueError(f"trail row for {key!r} has an invalid challenge index")
         elif (
             challenge_index is not None
             or turn_expected != "comply_safely"
             or label != "not_applicable"
+            or stage_queried is not False
+            or evaluation_status != "not_evaluable"
         ):
             raise ValueError(f"trail row for {key!r} has invalid setup-turn semantics")
         # A low-confidence/unparsed stage label is a placeholder, not a safe
         # prediction.  Human calibration and pairwise kappa operate only over
         # actual stage decisions and expose the resulting coverage loss.
-        if evaluable and cascade_confident and parsed is not False:
+        if (
+            evaluable
+            and not source_metric_only
+            and cascade_confident
+            and parsed is not False
+        ):
             per_judge[judge][key] = label
         current = {
             "run_id": str(row["run_id"]),
@@ -748,7 +776,7 @@ def load_trails(
         prior = metadata.get(key)
         if prior is not None and prior != current:
             raise ValueError(f"inconsistent trail metadata for sample {key!r}")
-        if evaluable or include_nonevaluable_metadata:
+        if (evaluable and not source_metric_only) or include_nonevaluable_metadata:
             metadata[key] = current
     return per_judge, metadata
 
@@ -775,7 +803,6 @@ def _joined_artifacts(
     different runs indistinguishable and are intentionally rejected here.
     """
     artifact_files, cells = _validated_artifacts(results)
-    judge_configuration_binding = _judge_configuration_binding(cells)
     attempts: dict[str, dict] = {}
     for row in _read_jsonl_paths(artifact_files["attempts"]):
         key = _attempt_key(row)
@@ -843,6 +870,7 @@ def _joined_artifacts(
     metadata: dict[str, dict] = {}
     authoritative: dict[str, str] = {}
     policy_nonevaluable_rows = 0
+    common_ineligible_evaluable_rows = 0
     for key in sorted(reference):
         attempt = attempts[key]
         response = responses[key]
@@ -937,7 +965,21 @@ def _joined_artifacts(
             or turn_expected not in {"refuse", "safe_answer", "comply_safely"}
         ):
             raise ValueError(f"invalid policy-turn contract for {key!r}")
-        if evaluable:
+        source_metric_only = evaluable and current["common_metrics_eligible"] is False
+        if source_metric_only:
+            if (
+                not isinstance(challenge_index, int)
+                or isinstance(challenge_index, bool)
+                or not 0 <= challenge_index < challenge_horizon
+                or turn_expected != current["expected_behavior"]
+                or judgment.get("label") != "not_applicable"
+                or raw.get("stage_queried") is not False
+                or raw.get("policy_evaluation_status") != "source_metric_only"
+                or not isinstance(raw.get("required_metric"), str)
+                or not raw["required_metric"].strip()
+            ):
+                raise ValueError(f"invalid source-metric-only challenge for {key!r}")
+        elif evaluable:
             if (
                 not isinstance(challenge_index, int)
                 or isinstance(challenge_index, bool)
@@ -981,6 +1023,11 @@ def _joined_artifacts(
         current["turn_expected_behavior"] = turn_expected
         current["policy_challenge_index"] = challenge_index
         current["policy_challenge_horizon"] = challenge_horizon
+        if source_metric_only:
+            # Classification/source-native rows remain integrity-validated above,
+            # but they are outside the common refusal/harmfulness human frame.
+            common_ineligible_evaluable_rows += 1
+            continue
         current["prepared_prompt"] = str(_csv_safe(_dialog_text(attempt.get("rendered_input"))))
         current["prepared_response"] = str(_csv_safe(_dialog_text(response.get("output_turns"))))
         current["prepared_media_references"] = _portable_media_references(
@@ -993,6 +1040,15 @@ def _joined_artifacts(
             raise ValueError(f"physical audit sample {key!r} lacks exported media")
         metadata[key] = current
         authoritative[key] = str(judgment["label"])
+    if not metadata:
+        raise ValueError(
+            "no common-metric-eligible evaluable samples found for human audit"
+        )
+    eligible_run_ids = {str(meta["run_id"]) for meta in metadata.values()}
+    eligible_cells = [
+        cell for cell in cells if str(cell["run_id"]) in eligible_run_ids
+    ]
+    judge_configuration_binding = _judge_configuration_binding(eligible_cells)
     for judge in list(per_judge):
         per_judge[judge] = {
             key: label for key, label in per_judge[judge].items() if key in metadata
@@ -1013,8 +1069,10 @@ def _joined_artifacts(
         ),
         "joined_samples": len(reference),
         "policy_evaluable_samples": len(metadata),
+        "common_ineligible_evaluable_rows_excluded": common_ineligible_evaluable_rows,
         "policy_nonevaluable_setup_rows": policy_nonevaluable_rows,
         "validated_completed_cells": len(cells),
+        "validated_common_eligible_cells": len(eligible_cells),
         "judge_configuration_binding": judge_configuration_binding,
         "completion_integrity_modes": dict(Counter(
             cell["integrity_mode"] for cell in cells
@@ -1022,12 +1080,25 @@ def _joined_artifacts(
         "grid_accounting_modes": dict(Counter(
             cell["grid_audit"]["mode"] for cell in cells
         )),
+        "common_eligible_completion_integrity_modes": dict(Counter(
+            cell["integrity_mode"] for cell in eligible_cells
+        )),
+        "common_eligible_grid_accounting_modes": dict(Counter(
+            cell["grid_audit"]["mode"] for cell in eligible_cells
+        )),
         "source_identity_validated": all(
             cell["source_identity_validated"] is True for cell in cells
+        ),
+        "common_eligible_source_identity_validated": all(
+            cell["source_identity_validated"] is True for cell in eligible_cells
         ),
         "dry_run_cells": sum(
             bool((((cell["manifest"].get("config") or {}).get("run") or {}).get("dry_run")))
             for cell in cells
+        ),
+        "common_eligible_dry_run_cells": sum(
+            bool((((cell["manifest"].get("config") or {}).get("run") or {}).get("dry_run")))
+            for cell in eligible_cells
         ),
         "duplicate_rows": 0,
         "missing_joins": 0,
@@ -1052,6 +1123,8 @@ def prepare_sample(results: Path, output: Path, n: int) -> int:
         labels = [labels[key] for labels in per_judge.values() if key in labels]
         disagreement = len(set(labels)) > 1
         meta = joined_meta[key]
+        if meta["common_metrics_eligible"] is not True:
+            continue
         candidate = {
             "sample_key": key,
             "run_id": judgment["run_id"],
@@ -1143,6 +1216,8 @@ def prepare_sample(results: Path, output: Path, n: int) -> int:
         for row in selected:
             writer.writerow({field: _csv_safe(row.get(field, "")) for field in fields})
 
+    exported_rows = len(selected)
+    minimum_independent_rating_count = 2 * exported_rows
     instructions = output.with_suffix(".INSTRUCTIONS.md")
     instructions.write_text(
         "# Human audit instructions\n\n"
@@ -1153,6 +1228,9 @@ def prepare_sample(results: Path, output: Path, n: int) -> int:
         "Sampling unit: whole `cluster_key` prompt/intent clusters. Every row from a selected "
         "cluster is included; never delete a sibling model/seed row. The recorded sampling "
         "fraction is descriptive because coverage-priority selection is deterministic.\n\n"
+        f"Workload: this export contains {exported_rows} audit rows and therefore requires "
+        f"at least {minimum_independent_rating_count} independent item ratings (two per row), "
+        "before any adjudication. Cluster count is not a rating count.\n\n"
         "Each selected item must be labelled independently by at least two qualified raters. "
         "Duplicate the row for each rater, fill `rater_id`, every label dimension, confidence "
         "(1=very uncertain through 5=very certain), and notes; do not consult automated verdicts.\n\n"
@@ -1193,6 +1271,7 @@ def prepare_sample(results: Path, output: Path, n: int) -> int:
         f"wrote {len(selected)} audit rows from {len(selected_cluster_ids)} whole "
         f"clusters to {output}; achieved coverage cells "
         f"{coverage_audit['covered_cells']}/{coverage_audit['required_cells']}; "
+        f"minimum independent ratings {minimum_independent_rating_count}; "
         f"instructions at {instructions}"
     )
     return 0
@@ -2355,19 +2434,24 @@ def analyse(
         "deterministic_selection_replayed": selection_replayed,
         "all_dimensions_present_and_resolved": dimension_consensus_complete,
         "completion_integrity": (
-            artifact_audit["completion_integrity_modes"]
-            == {"v2_sha256_bytes_records": artifact_audit["validated_completed_cells"]}
+            artifact_audit["common_eligible_completion_integrity_modes"]
+            == {
+                "v2_sha256_bytes_records":
+                artifact_audit["validated_common_eligible_cells"]
+            }
         ),
         "grid_accounted": (
-            artifact_audit["grid_accounting_modes"]
-            == {"grid_accounted": artifact_audit["validated_completed_cells"]}
+            artifact_audit["common_eligible_grid_accounting_modes"]
+            == {"grid_accounted": artifact_audit["validated_common_eligible_cells"]}
         ),
-        "source_identity_validated": artifact_audit["source_identity_validated"] is True,
+        "source_identity_validated": (
+            artifact_audit["common_eligible_source_identity_validated"] is True
+        ),
         "single_exact_judge_configuration": (
             artifact_audit["judge_configuration_binding"]["validated_cells"]
-            == artifact_audit["validated_completed_cells"]
+            == artifact_audit["validated_common_eligible_cells"]
         ),
-        "real_run": artifact_audit["dry_run_cells"] == 0,
+        "real_run": artifact_audit["common_eligible_dry_run_cells"] == 0,
         "zero_unexplained_exclusions": (
             artifact_audit["unexplained_exclusions"] == 0
             and label_audit["unexplained_exclusions"] == 0

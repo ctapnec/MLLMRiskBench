@@ -265,6 +265,11 @@ class MOSSBenchConverter(BaseConverter):
                         "secondary cross-benchmark over-refusal proxy; not the "
                         "official image-conditioned GPT-4 refusal evaluator"
                     ),
+                    # This endpoint asks only whether the resulting answer is a
+                    # refusal on an independently verified benign population.
+                    # It does not claim that the automated judge interprets the
+                    # image or reproduces the official image-conditioned judge.
+                    "automated_metric_scope": "response_only",
                     "release_revision": self.release_spec.upstream_revision,
                     "release_manifest_sha256": (
                         MOSSBENCH_INFORMATION_CSV_SHA256

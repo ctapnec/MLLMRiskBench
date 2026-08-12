@@ -77,6 +77,7 @@ from ura.data_models import (                         # noqa: E402
     Response,
     RunManifest,
 )
+from ura.eligibility import build_eligibility_plan    # noqa: E402
 from ura.judges.base import JudgeCascade              # noqa: E402
 from ura.judges.llm import LLMJudge                   # noqa: E402
 from ura.judges.rules import RuleJudge                # noqa: E402
@@ -95,7 +96,6 @@ from ura.runner import (                              # noqa: E402
     _portable_attempt_dump,
     realized_identity_summary,
 )
-from ura import source_metrics                        # noqa: E402
 from ura.targets.api import (                              # noqa: E402
     api_target_requires_config,
     build_api_target,
@@ -1674,8 +1674,17 @@ def _project_grid_call_upper_bounds(
         attacker_local_guardrail = 0
         for target in targets.values():
             trajectories = sum(len(rows) for rows in corpora.values()) * len(seeds)
+            common_trajectories = sum(
+                sum(
+                    int(row.meta.get("common_metrics_eligible", True) is True)
+                    for row in rows
+                )
+                for rows in corpora.values()
+            ) * len(seeds)
             target_calls = trajectories * target_turns
-            judge_calls = trajectories * evaluable_turns * judge_calls_per_evaluable
+            judge_calls = (
+                common_trajectories * evaluable_turns * judge_calls_per_evaluable
+            )
             defense_guard = getattr(target, "guard", None)
             defense_mode = getattr(target, "mode", None)
             defense_guardrails_per_target_turn = (
@@ -1685,12 +1694,14 @@ def _project_grid_call_upper_bounds(
                 else 0
             )
             local_guardrail_evaluations = (
-                trajectories * evaluable_turns * local_guardrails_per_evaluable
+                common_trajectories
+                * evaluable_turns
+                * local_guardrails_per_evaluable
                 + trajectories * target_turns * defense_guardrails_per_target_turn
             )
             http_attempts = (
                 target_calls * _declared_transport_attempts(target)
-                + trajectories * evaluable_turns * judge_http_per_evaluable
+                + common_trajectories * evaluable_turns * judge_http_per_evaluable
             )
             attacker_trajectories += trajectories
             attacker_target += target_calls
@@ -2070,8 +2081,17 @@ def main(argv=None) -> int:
                     help="maximum target calls per datapoint and seed")
     ap.add_argument("--max-turns", type=int, default=4,
                     help="maximum dialog turns per datapoint and seed")
-    ap.add_argument("--group", default="model,risk",
-                    help="aggregation group keys, e.g. model,risk,modality (E5 m-ASR)")
+    ap.add_argument(
+        "--group",
+        default=(
+            "model,source,risk,effective_modality,expected_behavior,attacker,"
+            "source_policy_id,source_policy_version"
+        ),
+        help=(
+            "aggregation group keys; the default preserves source, effective "
+            "modality, population, attacker, and source-policy identity"
+        ),
+    )
     ap.add_argument("--defense", default="none",
                     choices=["none", "input", "output", "both"],
                     help="wrap targets in a GuardedTarget pre/post-filter (E4 ablation)")
@@ -2188,6 +2208,10 @@ def main(argv=None) -> int:
         spec: _persisted_model_spec(spec, local_configs.get(spec))
         for spec in model_specs
     }
+    # Preserve the sanitized request independently of the resolved target name.
+    # Some target constructors replace the display identity below, while the
+    # eligibility ledger must retain both sides of that mapping.
+    requested_model_specs = dict(persisted_model_specs)
     if not args.dry_run and "llm" in judge_names and args.judge_model == "mock":
         ap.error("a real run with the llm judge requires an explicit non-mock --judge-model")
     scoring_guardrail_selected = "guardrail" in judge_names
@@ -2306,6 +2330,81 @@ def main(argv=None) -> int:
     prebuilt_targets: dict[str, object] = {}
     base_target_identities: list[tuple[str, str]] = []
     hosted_runtime_checks: list[dict[str, str]] = []
+    current_eligibility_path: Path | None = None
+
+    def persist_eligibility_plan(
+        target_failures: dict[str, dict[str, str]] | None = None,
+        global_failures: list[dict[str, str]] | None = None,
+        *,
+        whole_request_preflight_complete: bool = False,
+    ) -> tuple[dict[str, object], Path]:
+        """Write the selected-cell admission/N/A ledger before any model call."""
+
+        nonlocal current_eligibility_path
+
+        compact_corpus_bindings = {
+            arm: {
+                "converter": source_instances[arm]["converter"],
+                "full_converted_corpus_sha256": sampling_audits[arm][
+                    "full_converted_corpus_sha256"
+                ],
+                "selected_converted_corpus_sha256": (
+                    canonical_converted_corpus_sha256(loaded_corpora[arm])
+                ),
+                "selected_datapoint_ids_sha256": _sha256_json(sorted(
+                    datapoint.id for datapoint in loaded_corpora[arm]
+                )),
+                "selected_records": len(loaded_corpora[arm]),
+                "sample_seed": args.sample_seed,
+                "limit": args.limit,
+            }
+            for arm in sorted(loaded_corpora)
+        }
+        targets_by_request = {
+            requested_model_specs[spec]: target
+            for spec, target in prebuilt_targets.items()
+        }
+        failures_by_request = {
+            requested_model_specs[spec]: failure
+            for spec, failure in (target_failures or {}).items()
+        }
+        plan = build_eligibility_plan(
+            requested_targets=[requested_model_specs[spec] for spec in model_specs],
+            targets=targets_by_request,
+            corpora=loaded_corpora,
+            attackers=attacker_names,
+            target_failures=failures_by_request,
+            global_failures=global_failures or (),
+            dry_run=bool(args.dry_run),
+            whole_request_preflight_complete=whole_request_preflight_complete,
+            bindings={
+                "driver_source": driver_source,
+                "source_instances_sha256": _sha256_json(source_instances),
+                "attacker_configs_sha256": _sha256_json(attacker_configs),
+                "api_configs_sha256": _sha256_json(api_configs),
+                "local_configs_sha256": _sha256_json(local_configs),
+                "source_config_artifact": source_config_artifact,
+                "attacker_config_artifact": attacker_config_artifact,
+                "api_config_artifact": api_config_artifact,
+                "local_config_artifact": local_config_artifact,
+                "selected_corpora": compact_corpus_bindings,
+            },
+        )
+        path = out / f"{plan['plan_id']}.eligibility.json"
+        _write_json(path, plan)
+        if current_eligibility_path is not None and current_eligibility_path != path:
+            current_eligibility_path.unlink(missing_ok=True)
+        current_eligibility_path = path
+        print(
+            "eligibility/N/A plan written: "
+            + json.dumps({
+                "artifact": path.name,
+                "plan_id": plan["plan_id"],
+                "counts": plan["counts"],
+            }, sort_keys=True, separators=(",", ":"))
+        )
+        return plan, path
+
     for spec in model_specs:
         setup_phase = "target_construction"
         try:
@@ -2356,9 +2455,38 @@ def main(argv=None) -> int:
                 f"target '{spec}' preflight failed: {type(exc).__name__}: {exc}",
                 file=sys.stderr,
             )
+            failure_map: dict[str, dict[str, str]] = {}
+            for requested_spec in model_specs:
+                if requested_spec in prebuilt_targets:
+                    continue
+                if requested_spec == spec:
+                    failure_map[requested_spec] = {
+                        "gate": setup_phase,
+                        "reason": _artifact_safe_model_error(
+                            exc, spec, requested_model_specs[spec]
+                        ),
+                    }
+                else:
+                    failure_map[requested_spec] = {
+                        "gate": "target_setup_not_attempted",
+                        "reason": (
+                            "target setup was not attempted after an earlier "
+                            "requested target failed preflight"
+                        ),
+                    }
+            try:
+                persist_eligibility_plan(failure_map)
+            except Exception as eligibility_exc:  # noqa: BLE001 - diagnostic only
+                _write_json(out / "eligibility-plan.error.json", {
+                    "status": "error",
+                    "phase": "eligibility_plan",
+                    "exception_type": type(eligibility_exc).__name__,
+                    "message": str(eligibility_exc)[:2000],
+                })
             return 1
     target_names = [str(getattr(target, "name", "")) for target in prebuilt_targets.values()]
     if len(set(target_names)) != len(target_names):
+        persist_eligibility_plan()
         ap.error("target specs resolve to duplicate runtime target identities")
     if "llm" in judge_names:
         try:
@@ -2396,13 +2524,24 @@ def main(argv=None) -> int:
                 f"{type(exc).__name__}: {exc}",
                 file=sys.stderr,
             )
+            persist_eligibility_plan(global_failures=[{
+                "gate": "judge_hosted_runtime_preflight",
+                "reason": str(exc)[:2000],
+            }])
             return 1
+    eligibility_plan, eligibility_path = persist_eligibility_plan()
     try:
         modality_plan = plan_modality_coverage(
             list(prebuilt_targets.values()), loaded_corpora,
             enforce_available=not args.dry_run,
         )
     except (OSError, ValueError, ModalityCoverageError) as exc:
+        eligibility_plan, eligibility_path = persist_eligibility_plan(
+            global_failures=[{
+                "gate": "modality_coverage_preflight",
+                "reason": str(exc)[:2000],
+            }]
+        )
         _write_json(out / "modality-coverage.error.json", {
             "status": "error",
             "phase": "modality_coverage_preflight",
@@ -2415,8 +2554,6 @@ def main(argv=None) -> int:
     (out / "modality-coverage.error.json").unlink(missing_ok=True)
 
     try:
-        for rows in loaded_corpora.values():
-            source_metrics.validate_scored_source_metrics(rows)
         for target in prebuilt_targets.values():
             validator = getattr(target, "validate_research_identity", None)
             if callable(validator):
@@ -2461,6 +2598,55 @@ def main(argv=None) -> int:
             if callable(preflight):
                 preflight()
         _component_config(planned_cascade)
+        admission_failures: list[dict[str, str]] = []
+        for spec, target in prebuilt_targets.items():
+            for corpus_name, corpus in loaded_corpora.items():
+                for attacker_name, attacker in planned_attackers.items():
+                    try:
+                        Runner(
+                            attacker,
+                            target,
+                            planned_cascade,
+                            AttackBudget(
+                                max_queries=args.max_queries,
+                                max_turns=args.max_turns,
+                                seed=seeds[0],
+                            ),
+                            seeds,
+                        ).plan_manifest(
+                            corpus,
+                            started_at=run_started,
+                            env=run_env,
+                            run_config={
+                                "preflight_admission": True,
+                                "model_spec": persisted_model_specs[spec],
+                                "corpus": corpus_name,
+                                "attacker": attacker_name,
+                            },
+                        )
+                    except Exception as exc:  # noqa: BLE001 - audit all cells
+                        admission_failures.append({
+                            "model_spec": persisted_model_specs[spec],
+                            "corpus": corpus_name,
+                            "attacker": attacker_name,
+                            "exception_type": type(exc).__name__,
+                            "message": str(exc)[:1000],
+                        })
+        if admission_failures:
+            rendered = json.dumps(
+                admission_failures[:8],
+                sort_keys=True,
+                separators=(",", ":"),
+            )
+            suffix = (
+                f"; and {len(admission_failures) - 8} more"
+                if len(admission_failures) > 8
+                else ""
+            )
+            raise ValueError(
+                "whole-execution Runner.plan_manifest admission rejected "
+                f"{len(admission_failures)} requested cell(s): {rendered}{suffix}"
+            )
         policy_strata = {
             name: _source_policy_cluster_counts(rows)
             for name, rows in loaded_corpora.items()
@@ -2484,6 +2670,12 @@ def main(argv=None) -> int:
             require_complete=bool(args.preflight_only),
         )
     except Exception as exc:  # noqa: BLE001 - fail closed at the pre-call boundary
+        eligibility_plan, eligibility_path = persist_eligibility_plan(
+            global_failures=[{
+                "gate": "grid_planning_preflight",
+                "reason": str(exc)[:2000],
+            }]
+        )
         _write_json(out / "grid-planning.error.json", {
             "status": "error",
             "phase": "grid_planning_preflight",
@@ -2492,6 +2684,9 @@ def main(argv=None) -> int:
         })
         print(f"grid planning preflight failed: {exc}", file=sys.stderr)
         return 1
+    eligibility_plan, eligibility_path = persist_eligibility_plan(
+        whole_request_preflight_complete=True
+    )
     for corpus_name, counts in policy_strata.items():
         print(
             f"plan '{corpus_name}' source-policy clusters: "
@@ -2560,6 +2755,11 @@ def main(argv=None) -> int:
         "dtype": args.dtype,
         "dry_run": bool(args.dry_run),
         "driver_source": driver_source,
+        "eligibility_plan": {
+            "plan_id": eligibility_plan["plan_id"],
+            **_artifact_descriptor(eligibility_path),
+            "counts": eligibility_plan["counts"],
+        },
         "modality_coverage_plan": modality_plan_payload,
         "source_policy_cluster_counts": policy_strata,
         "call_projection": call_projection,

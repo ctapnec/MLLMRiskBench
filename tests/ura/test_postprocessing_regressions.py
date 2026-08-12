@@ -349,6 +349,13 @@ def _write_completed_cell(
     source_policy_version: str = "unversioned",
 ) -> None:
     model_spec = model if model_spec is None else model_spec
+    if not eligible and label == "violation":
+        # Match Runner's source-metric-only persistence shape. The common
+        # cascade is not queried and its authoritative-shaped placeholder is N/A.
+        label = "not_applicable"
+    stage_queried = eligible
+    evaluation_status = "evaluated" if eligible else "source_metric_only"
+    required_metric = None if eligible else "rjudge_safety_judgment"
     path = root / f"{stem}.jsonl"
     payload = {
         "attempt_id": "a",
@@ -395,6 +402,9 @@ def _write_completed_cell(
             "cascade_confident": True,
             "cascade_role": "authoritative",
             "cascade_policy": "first_confident_with_full_shadow_trail",
+            "stage_queried": stage_queried,
+            "policy_evaluation_status": evaluation_status,
+            "required_metric": required_metric,
         },
     }
     path.write_text(json.dumps(payload) + "\n", encoding="utf-8")
@@ -452,6 +462,9 @@ def _write_completed_cell(
         "cascade_confident": True,
         "cascade_role": "authoritative",
         "cascade_policy": "first_confident_with_full_shadow_trail",
+        "stage_queried": stage_queried,
+        "policy_evaluation_status": evaluation_status,
+        "required_metric": required_metric,
         "risk_category": "cybersec",
         "modality": "text",
         "model": model,
@@ -889,6 +902,10 @@ def _make_setup_then_physical_challenge(root: Path, stem: str, *, label: str) ->
             "policy_challenge_index": None if index == 0 else 0,
             "policy_challenge_horizon": 1,
             "turn_expected_behavior": "comply_safely" if index == 0 else "refuse",
+            "stage_queried": index == 1,
+            "policy_evaluation_status": (
+                "evaluated" if index == 1 else "not_evaluable"
+            ),
         })
     judgments_path.write_text(
         "".join(json.dumps(row) + "\n" for row in judgments), encoding="utf-8"
@@ -909,6 +926,10 @@ def _make_setup_then_physical_challenge(root: Path, stem: str, *, label: str) ->
             "policy_challenge_index": None if index == 0 else 0,
             "policy_challenge_horizon": 1,
             "turn_expected_behavior": "comply_safely" if index == 0 else "refuse",
+            "stage_queried": index == 1,
+            "policy_evaluation_status": (
+                "evaluated" if index == 1 else "not_evaluable"
+            ),
         })
     trails_path.write_text(
         "".join(json.dumps(row) + "\n" for row in trails), encoding="utf-8"
@@ -1567,6 +1588,30 @@ def test_kappa_cohort_identity_ignores_adaptive_realized_turn_counts(
     assert audit["unexplained_exclusions"] == 0
 
 
+def test_kappa_skips_source_metric_only_classification_facets(
+    tmp_path: Path,
+) -> None:
+    common = tmp_path / "common"
+    classification = tmp_path / "classification"
+    common.mkdir()
+    classification.mkdir()
+    _write_completed_cell(
+        common, "common", model="A", run_id="r-common", key="common",
+        corpus="fixture", eligible=True,
+    )
+    _configure_two_stage_sensitivity_fixture(common, "common")
+    _write_completed_cell(
+        classification, "classification", model="B", run_id="r-classification",
+        key="classification", corpus="rjudge_release", eligible=False,
+    )
+
+    facets = load_trail_facets(tmp_path)
+
+    assert set(facets) == {"fixture"}
+    with pytest.raises(ValueError, match="no common-metric-eligible"):
+        load_trail_facets(tmp_path, corpus="rjudge_release")
+
+
 def test_paired_compare_rejects_requested_seed_lineage_mismatch(
     tmp_path: Path,
 ) -> None:
@@ -1829,6 +1874,9 @@ def _write_human_artifacts(root: Path, *, descriptor_marker: bool = True) -> str
         "confidence": 0.9,
         "parsed": None,
         "cascade_confident": True,
+        "stage_queried": True,
+        "policy_evaluation_status": "evaluated",
+        "required_metric": None,
         "risk_category": "cybersec",
         "modality": "text",
         "model": model,
@@ -1846,6 +1894,9 @@ def _write_human_artifacts(root: Path, *, descriptor_marker: bool = True) -> str
         "confidence": 0.85,
         "parsed": True,
         "cascade_confident": True,
+        "stage_queried": True,
+        "policy_evaluation_status": "evaluated",
+        "required_metric": None,
         "risk_category": "cybersec",
         "modality": "text",
         "model": model,
@@ -2207,7 +2258,7 @@ def test_human_audit_includes_authoritative_cascade_and_reports_join_audit(
     assert adjudication["resolved_by_adjudication"] == 0
 
 
-def test_human_judge_validity_separates_common_eligibility_strata(
+def test_human_audit_excludes_ineligible_rows_and_their_judge_fingerprint(
     tmp_path: Path,
 ) -> None:
     eligible_root = tmp_path / "eligible"
@@ -2222,28 +2273,27 @@ def test_human_judge_validity_separates_common_eligibility_strata(
         ineligible_root, "classification", model="B", run_id="run-classification",
         key="classification", eligible=False, datapoint="classification-dp",
     )
+    manifest_path = ineligible_root / "classification.manifest.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    manifest["config"]["components"]["judge_cascade"]["native_classification"] = True
+    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+    _refresh_descriptors(ineligible_root, "classification")
+
+    per_judge, metadata, judgments, audit = _joined_artifacts(tmp_path)
+    assert set(metadata) == set(judgments) == set(per_judge["cascade_authoritative"])
+    assert {row["run_id"] for row in metadata.values()} == {"run-eligible"}
+    assert audit["common_ineligible_evaluable_rows_excluded"] == 1
+    assert audit["validated_completed_cells"] == 2
+    assert audit["validated_common_eligible_cells"] == 1
+    assert audit["judge_configuration_binding"]["validated_cells"] == 1
+
     sample = tmp_path / "validity-strata.csv"
-    assert prepare_sample(tmp_path, sample, 2) == 0
+    assert prepare_sample(tmp_path, sample, 1) == 0
     with sample.open(newline="", encoding="utf-8-sig") as handle:
         rows = list(csv.DictReader(handle))
-    rated = _rate_human_sample(rows)
-    with sample.open("w", newline="", encoding="utf-8-sig") as handle:
-        writer = csv.DictWriter(handle, fieldnames=list(rated[0]))
-        writer.writeheader()
-        writer.writerows(rated)
-
-    assert analyse(
-        tmp_path, sample, allow_single_rater=False, n_resamples=20,
-    ) == 0
-    report = json.loads((tmp_path / "human_audit.json").read_text(encoding="utf-8"))
-    validity = report["automated_vs_consensus"]["cascade_authoritative"]
-    strata = validity[
-        "by_exact_run_arm_corpus_source_policy_modality_population_and_common_eligibility"
-    ].values()
-    assert {stratum["common_metrics_eligible"] for stratum in strata} == {False, True}
-    assert "composition-dependent pooled diagnostic" in validity[
-        "pooled_unweighted"
-    ]["interpretation"]
+    assert len(rows) == 1
+    assert rows[0]["run_id"] == "run-eligible"
+    assert rows[0]["common_metrics_eligible"] == "True"
 
 
 def test_human_judge_validity_separates_response_producing_arms(
@@ -2966,6 +3016,9 @@ def test_human_audit_samples_whole_clusters_and_rates_all_dimensions(
         rows = list(csv.DictReader(handle))
     assert len(rows) == 2  # both model rows in the selected prompt/intent cluster
     assert len({row["cluster_key"] for row in rows}) == 1
+    instructions = sample.with_suffix(".INSTRUCTIONS.md").read_text(encoding="utf-8")
+    assert "this export contains 2 audit rows" in instructions
+    assert "at least 4 independent item ratings" in instructions
     rated: list[dict[str, str]] = []
     for row in rows:
         for rater in ("r1", "r2"):

@@ -5,6 +5,9 @@ validator used by measured figures.  Source-native evaluator envelopes are
 admitted through :mod:`experiments.native_import`.  The output keeps every
 rate in its exact benchmark/policy/modality/model condition and retains native
 aggregates on their original, per-run scales.
+Optional eligibility inputs are integrity-checked planning inventories. Their
+``compatible_if_isolated`` strata are not renamed as runnable execution cells,
+and overlapping request/cell identities are rejected rather than double-counted.
 """
 
 from __future__ import annotations
@@ -22,10 +25,15 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 from experiments.figure_results import _load_cells  # noqa: E402
 from experiments.native_import import load_native_run  # noqa: E402
 from ura.adapters._native_artifacts import NativeEngineRun  # noqa: E402
+from ura.eligibility import (  # noqa: E402
+    summarize_eligibility_plans,
+    validate_eligibility_plan,
+)
 
 
 SUITE_SCHEMA = "ura-suite-evidence/1"
 _MAX_SOURCE_CONFIG_BYTES = 1024 * 1024
+_MAX_ELIGIBILITY_BYTES = 16 * 1024 * 1024
 _EXPECTED_NATIVE_PROJECTS = frozenset({
     "agentdojo",
     "asb",
@@ -351,13 +359,18 @@ def build_suite_summary(
     cells: list[dict[str, Any]],
     native_runs: list[tuple[NativeEngineRun, str, str]],
     *,
+    eligibility_plans: list[tuple[dict[str, Any], str, str]] | None = None,
     expected_source_arms: dict[str, str] | None = None,
     source_inventory_artifact: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    if not cells and not native_runs:
-        raise ValueError("suite summary requires runner cells and/or native runs")
+    eligibility_inputs = eligibility_plans or []
+    if not cells and not native_runs and not eligibility_inputs:
+        raise ValueError(
+            "suite summary requires runner cells, native runs, and/or eligibility plans"
+        )
     runner = summarize_runner_cells(cells)
     native = summarize_native_runs(native_runs)
+    eligibility = summarize_eligibility_plans(eligibility_inputs)
     observed_source_arms = {
         str(cell["manifest"]["config"]["run"]["corpus"])
         for cell in cells
@@ -420,6 +433,7 @@ def build_suite_summary(
         },
         "runner": runner,
         "native": native,
+        "eligibility": eligibility,
     }
 
 
@@ -471,6 +485,49 @@ def _load_source_inventory(path_value: Path) -> tuple[dict[str, str], dict[str, 
     }
 
 
+def _load_eligibility_plan(
+    path_value: Path,
+) -> tuple[dict[str, Any], str, str]:
+    """Load one bounded, non-symlink, content-self-verifying plan artifact."""
+
+    if path_value.is_symlink():
+        raise ValueError("--eligibility must not be a symlink")
+    path = path_value.resolve(strict=True)
+    stat = path.stat()
+    if (
+        not path.is_file()
+        or path.is_symlink()
+        or stat.st_size <= 0
+        or stat.st_size > _MAX_ELIGIBILITY_BYTES
+    ):
+        raise ValueError("--eligibility must be a regular non-empty <=16 MiB JSON file")
+    data = path.read_bytes()
+    if len(data) != stat.st_size:
+        raise ValueError("--eligibility changed while being read")
+
+    def reject_duplicate_keys(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+        result: dict[str, Any] = {}
+        for key, item in pairs:
+            if key in result:
+                raise ValueError(f"duplicate JSON key in --eligibility: {key!r}")
+            result[key] = item
+        return result
+
+    def reject_constant(item: str) -> None:
+        raise ValueError(f"non-finite JSON number in --eligibility: {item!r}")
+
+    try:
+        value = json.loads(
+            data.decode("utf-8"),
+            object_pairs_hook=reject_duplicate_keys,
+            parse_constant=reject_constant,
+        )
+    except (UnicodeError, json.JSONDecodeError, ValueError) as exc:
+        raise ValueError(f"invalid --eligibility JSON: {exc}") from exc
+    plan = validate_eligibility_plan(value)
+    return plan, hashlib.sha256(data).hexdigest(), path.name
+
+
 def _write_new(path: Path, value: dict[str, Any]) -> None:
     payload = (
         json.dumps(
@@ -500,6 +557,13 @@ def main(argv: list[str] | None = None) -> int:
         help="canonical NativeEngineRun JSON; repeat for native runs",
     )
     parser.add_argument(
+        "--eligibility", type=Path, action="append", default=[],
+        help=(
+            "validated run_matrix/rig_check eligibility JSON; repeat for "
+            "independent requested grids"
+        ),
+    )
+    parser.add_argument(
         "--source-config",
         type=Path,
         help=(
@@ -509,8 +573,8 @@ def main(argv: list[str] | None = None) -> int:
     )
     parser.add_argument("--out", type=Path, required=True)
     args = parser.parse_args(argv)
-    if not args.results and not args.native:
-        parser.error("provide at least one --results or --native input")
+    if not args.results and not args.native and not args.eligibility:
+        parser.error("provide at least one --results, --native, or --eligibility input")
 
     try:
         cells: list[dict[str, Any]] = []
@@ -521,6 +585,9 @@ def main(argv: list[str] | None = None) -> int:
         for path in args.native:
             run, digest = load_native_run(path)
             native_runs.append((run, digest, path.name))
+        eligibility_plans = [
+            _load_eligibility_plan(path) for path in args.eligibility
+        ]
         source_inventory = None
         source_inventory_artifact = None
         if args.source_config is not None:
@@ -530,6 +597,7 @@ def main(argv: list[str] | None = None) -> int:
         summary = build_suite_summary(
             cells,
             native_runs,
+            eligibility_plans=eligibility_plans,
             expected_source_arms=source_inventory,
             source_inventory_artifact=source_inventory_artifact,
         )
@@ -542,6 +610,8 @@ def main(argv: list[str] | None = None) -> int:
         "output": str(args.out.resolve()),
         "n_completed_cells": summary["runner"]["n_completed_cells"],
         "n_native_runs": summary["native"]["n_native_runs"],
+        "n_eligibility_plans": summary["eligibility"]["n_plans"],
+        "n_not_applicable_cells": summary["eligibility"]["not_applicable"],
         "source_native_presence_complete": summary["source_native_presence"][
             "all_expected_entries_observed"
         ],

@@ -117,6 +117,12 @@ class MLLMGuardConverter(BaseConverter):
                 "category_2": cat2,
                 "dimension": dim or None,
                 "source_cluster_id": f"mllmguard:{dim or 'x'}:{rid}",
+                # For non-hallucination rows the released prompt is the
+                # substantive grading reference as well as target-visible text.
+                # Declaring it explicitly prevents physical-media admission
+                # from silently degrading to output-only proxy scoring.
+                "judge_reference_text": text.strip(),
+                "judge_reference_kind": "source_prompt_sent_with_image",
             }
             if dim == "hallucination" or split == "hallucination":
                 # Hallucination is a truthfulness construct, not a benign-utility

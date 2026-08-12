@@ -26,6 +26,7 @@ models); ``BaseConverter`` is the framework's converter ABC.
 """
 from __future__ import annotations
 
+import hashlib
 import re
 from pathlib import Path
 from typing import Optional
@@ -69,6 +70,7 @@ KEYWORD_OVERRIDES = (
 
 _BENIGN = "benign"
 _HARMFUL = "harmful"
+_VIDEO_ID_FIELDS = ("source_video_id", "video_id", "clip_id")
 
 
 def _norm(s: Optional[str]) -> str:
@@ -118,6 +120,25 @@ def _video(video_path: Optional[str], root: Path) -> list[MediaRef]:
     return [local_media(raw, root, modality="video")]
 
 
+def _source_cluster(rec: dict, media: MediaRef) -> tuple[str, str]:
+    """Bind benign/harmful query variants to their shared source video.
+
+    Prefer a dedicated release video identifier.  The documented release layout
+    does not require one, so verified content identity is the fail-closed fallback
+    and joins variants only when their admitted video bytes are identical.
+    """
+    for field in _VIDEO_ID_FIELDS:
+        value = rec.get(field)
+        if isinstance(value, (str, int)) and not isinstance(value, bool):
+            normalized = str(value).strip()
+            if normalized:
+                digest = hashlib.sha256(normalized.encode("utf-8")).hexdigest()
+                return f"videosafetybench:official-video-id:{digest}", field
+    if not media.sha256 or len(media.sha256) != 64:
+        raise CorpusFormatError("Video-SafetyBench video lacks verified content identity")
+    return f"videosafetybench:video-sha256:{media.sha256}", "verified_video_sha256"
+
+
 class VideoSafetyBenchConverter(BaseConverter):
     name = "videosafetybench"
 
@@ -160,6 +181,7 @@ class VideoSafetyBenchConverter(BaseConverter):
                     f"Video-SafetyBench row {i} in {path} has no non-empty question"
                 )
             media = _video(rec.get("video_path") or rec.get("video"), root)
+            source_cluster_id, source_cluster_basis = _source_cluster(rec, media[0])
 
             qtype = _query_type(rec, path)
             if qtype is None:
@@ -211,6 +233,8 @@ class VideoSafetyBenchConverter(BaseConverter):
                     ),
                     "query_type": qtype,
                     "emergent_unsafe": emergent,
+                    "source_cluster_id": source_cluster_id,
+                    "source_cluster_basis": source_cluster_basis,
                     "video_path": rec.get("video_path") or rec.get("video"),
                 },
             ))

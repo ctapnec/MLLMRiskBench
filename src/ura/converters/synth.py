@@ -74,6 +74,11 @@ def synth_corpus(n: int = 12) -> list[DataPoint]:
             ),
             meta={
                 "fixture": True,
+                # Synthetic multimodal rows exercise transport and response
+                # behavior only; the one-pixel fixture has no semantic content.
+                "automated_metric_scope": (
+                    "response_only" if media else "media_conditioned"
+                ),
                 "execution_mode": (
                     "recorded_tool_construct" if agentic else "direct_prompt"
                 ),

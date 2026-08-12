@@ -298,18 +298,41 @@ def _analyse_cell(cell: dict[str, Any]) -> dict[str, Any]:
         turn_expected = row.get("turn_expected_behavior")
         if challenge_horizon < 1 or turn_expected not in _EXPECTED:
             raise ValueError(f"invalid policy-turn contract at {where}")
-        if evaluable:
+        judgment_preview = judgment_by_id[attempt_id]
+        preview_raw = judgment_preview.get("raw")
+        if not isinstance(preview_raw, dict):
+            raise ValueError(f"invalid final Judgment provenance at {where}")
+        source_metric_only = (
+            evaluable and preview_raw.get("common_metrics_eligible") is False
+        )
+        if source_metric_only:
+            if (
+                not isinstance(challenge_index, int)
+                or isinstance(challenge_index, bool)
+                or not 0 <= challenge_index < challenge_horizon
+                or row["label"] != "not_applicable"
+                or row.get("stage_queried") is not False
+                or row.get("policy_evaluation_status") != "source_metric_only"
+                or not isinstance(row.get("required_metric"), str)
+                or not row["required_metric"].strip()
+            ):
+                raise ValueError(f"invalid source-metric-only row at {where}")
+        elif evaluable:
             if (
                 not isinstance(challenge_index, int)
                 or isinstance(challenge_index, bool)
                 or not 0 <= challenge_index < challenge_horizon
                 or row["label"] not in _EVENT_LABELS
+                or row.get("stage_queried") is not True
+                or row.get("policy_evaluation_status") != "evaluated"
             ):
                 raise ValueError(f"invalid policy challenge at {where}")
         elif (
             challenge_index is not None
             or turn_expected != "comply_safely"
             or row["label"] != "not_applicable"
+            or row.get("stage_queried") is not False
+            or row.get("policy_evaluation_status") != "not_evaluable"
         ):
             raise ValueError(f"invalid non-evaluable setup row at {where}")
         for field in ("score", "confidence"):

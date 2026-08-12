@@ -66,7 +66,18 @@ class HarmBenchConverter(BaseConverter):
                 media=media,
                 risk_subtype=sem,
                 attack_family=row.get("FunctionalCategory"),
-                meta={"tags": row.get("Tags")},
+                meta={
+                    "tags": row.get("Tags"),
+                    **({
+                        # HarmBench's released behavior (and optional context)
+                        # is the semantic request presented alongside the image.
+                        # The automated judges still do not inspect pixels, so
+                        # retain this as proxy-grading context rather than
+                        # treating transport as media-aware validity.
+                        "judge_reference_text": content,
+                        "judge_reference_kind": "source_behavior_sent_with_image",
+                    } if media else {}),
+                },
             ))
         if not out:
             raise CorpusFormatError(f"HarmBench conversion produced no rows from {path}")

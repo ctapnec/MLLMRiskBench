@@ -25,10 +25,29 @@ Enumerations are defined in code. In particular, expected behavior separates
 harmful `refuse` probes from benign `safe_answer` and `comply_safely` probes;
 that split controls ASR and FRR denominators.
 
+## Planning eligibility artifact
+
+`run_matrix` and `rig_check` emit `ura-eligibility-plan/1` as
+`eligibility-<content-id>.eligibility.json` after corpus conversion and before
+model calls. Each item binds the requested and resolved target identities,
+logical source arm, selected source stratum and item digest, exact modality,
+attacker, execution/metric mode, evaluator/reference mode, disposition, and
+failed gates. The artifact self-validates its content-derived `plan_id`.
+
+Its stratum statuses are only `compatible_if_isolated` and structural `N/A`;
+separate execution-unit accounting says whether the whole logical arm can pass
+the actual Runner boundary. Neither status means attested, attempted, completed,
+decided, or empirically valid. Failures before a
+corpus can materialize remain separate preflight error artifacts because their
+exact modality/source strata are not yet knowable. A later Level-1 execution
+account must join planning eligibility to live attestations and completed/error
+artifacts rather than reinterpret this plan as realized coverage.
+
 ## Lineage and continuation state
 
-Each cell persists attempts, responses, authoritative judgments, full shadow
-judge trails, aggregate results, a manifest, an append-only checkpoint, and
+Each cell persists attempts, responses, authoritative judgments, full-shadow
+judge trails for common responses (or typed unqueried placeholders for
+source-metric-only classification), aggregate results, a manifest, an append-only checkpoint, and
 only after validation a completion marker. Records join on `(run_id,
 model/target, attempt_id)`; an attempt ID alone is not globally unique.
 Every completed-attempt checkpoint row includes `budget_after_attempt` when a

@@ -24,6 +24,7 @@ offline PyArrow bridge from the official Parquet release to this file layout.
 """
 from __future__ import annotations
 
+import hashlib
 from pathlib import Path
 
 from ..adapters.base import BaseConverter
@@ -67,6 +68,13 @@ AUDIO_EXTS = (".wav", ".mp3", ".flac", ".ogg", ".m4a", ".aac", ".opus")
 _TEXT_FIELDS = ("text", "transcript", "prompt", "query", "instruction", "original_text")
 # Candidate fields naming the audio asset.
 _AUDIO_FIELDS = ("audio_path", "audio_file", "audio_filename", "audio", "wav", "file", "path")
+# Dedicated source-prompt identifiers take precedence over text-derived identity.
+# The release's generic ``id`` can name an audio asset, so it is deliberately not
+# treated as an underlying-prompt identifier.
+_PROMPT_ID_FIELDS = (
+    "source_prompt_id", "original_prompt_id", "prompt_id", "query_id",
+    "behavior_id", "source_id", "original_id",
+)
 
 
 def _first(rec: dict, fields: tuple[str, ...]) -> object:
@@ -84,6 +92,43 @@ def _audio_ref(name: str, root: Path) -> MediaRef:
         sib = root / "audio" / name
         p = Path("audio") / name if sib.is_file() else p
     return local_media(p, root, modality="audio")
+
+
+def _source_cluster(rec: dict, reference_transcript: str) -> tuple[str, str]:
+    """Return an opaque, stable identity for the underlying source prompt.
+
+    A dedicated prompt identifier from the official row is strongest.  The
+    released ``original_text`` is the next-best cross-attack identity.  Rows
+    without either use an exact-transcript hash as a conservative fallback; it
+    groups only byte-identical normalized transcripts and therefore does not
+    claim semantic equivalence across transformed variants.  Text is hashed into
+    metadata identity only and is never added to the target-visible dialog.
+    """
+    origin = str(rec.get("source") or "unknown").strip()
+    for field in _PROMPT_ID_FIELDS:
+        value = rec.get(field)
+        if isinstance(value, (str, int)) and not isinstance(value, bool):
+            normalized = str(value).strip()
+            if normalized:
+                digest = hashlib.sha256(
+                    f"{origin}\x1f{normalized}".encode("utf-8")
+                ).hexdigest()
+                return f"jalmbench:official-prompt-id:{digest}", field
+
+    original = rec.get("original_text")
+    if isinstance(original, str) and original.strip():
+        digest = hashlib.sha256(
+            f"{origin}\x1f{original.strip()}".encode("utf-8")
+        ).hexdigest()
+        return f"jalmbench:original-text-sha256:{digest}", "original_text_sha256"
+
+    digest = hashlib.sha256(
+        f"{origin}\x1f{reference_transcript}".encode("utf-8")
+    ).hexdigest()
+    return (
+        f"jalmbench:exact-transcript-sha256:{digest}",
+        "exact_reference_transcript_sha256_fallback",
+    )
 
 
 class JALMBenchConverter(BaseConverter):
@@ -121,6 +166,9 @@ class JALMBenchConverter(BaseConverter):
                     "required for source-conditioned automated grading"
                 )
             reference_transcript = text.strip()
+            source_cluster_id, source_cluster_basis = _source_cluster(
+                rec, reference_transcript
+            )
 
             # Locate the audio asset. Explicit audio field wins; otherwise the
             # folder-based manifest uses ``id`` as the audio filename (e.g. 1.mp3).
@@ -159,6 +207,9 @@ class JALMBenchConverter(BaseConverter):
                     "judge_reference_text": reference_transcript,
                     "judge_reference_kind": "audio_transcript_not_sent_to_target",
                     "transcript_sent_to_target": False,
+                    "source_cluster_id": source_cluster_id,
+                    "source_cluster_basis": source_cluster_basis,
+                    "source_cluster_text_exposed_to_target": False,
                     "audio_condition": "audio_only_harmful_intent",
                     "attack_method": str(method) if method else None,
                     "language": rec.get("language"),

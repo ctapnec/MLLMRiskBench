@@ -30,9 +30,11 @@ Keep these rules beside the terminal throughout the run:
   GraySwan RR pair is the only planned same-base defense contrast, and even that
   must be described using its exact checkpoint identities.
 - The judge cascade runs rules, the scoring guard, and the LLM judge on every
-  policy-evaluable response. The first confidence-clearing result is
-  authoritative; the complete trail is evidence. There is no cost-saving early
-  exit in this architecture.
+  common-metric-eligible policy-evaluable response. Source-specific
+  classification rows use their registered source evaluator and retain an
+  explicit unqueried structural placeholder. For common responses, the first
+  confidence-clearing result is authoritative; the complete trail is evidence.
+  There is no cost-saving early exit in this architecture.
 - The scoring guard and a model-backed defense guard must be different model
   identities. The model under test must not grade or certify itself.
 - A model-backed defense in this repository is text-only. Do not claim image,
@@ -48,6 +50,18 @@ Keep these rules beside the terminal throughout the run:
 - Provider refusal is a measured response state. Transport failure, missing media,
   parsing failure, budget exhaustion, and unsupported modality are not safe
   outcomes.
+
+The operator routes the authoritative Chapter V questions as follows. RQ4 has
+two declared subparts; RQ5 is judge validity, not the adaptive lane:
+
+| Question | Execution/analysis route | Required evidence |
+| --- | --- | --- |
+| RQ1 execution conformance | §§7--14 | requested-cell eligibility/`N/A`, modality plan/result, complete content-bound cells |
+| RQ2 matched served-model conditions | focal grids and §16 paired/figure commands | matched cluster support/effects plus exact realized identities |
+| RQ3 portfolio breadth/heterogeneity | 39 converter arms, nine native projects, §16 suite summary | disposition-complete family inventory without false pooling |
+| RQ4a defense | §13 guarded/unguarded same-base design | separate harmful and benign paired effects |
+| RQ4b adaptivity/native execution | §12 Crescendo/transfer and §14 native runtimes | fixed-horizon conversation, exact-transfer, or source task/oracle evidence |
+| RQ5 judge validity | §§15--16 | eligible common-response human labels, adjudication, decision coverage and cluster-aware agreement/calibration |
 
 The cross-framework program ontology is below. `suite_summary` emits the families
 that currently have implemented crosswalks; a named but unimplemented family is
@@ -65,6 +79,7 @@ an explicit gap, not permission to improvise a pooled score.
 | `graded_risk` | StrongREJECT-style score, Petri dimensions, AutoDAN danger score | never normalize into one score |
 | `detector_findings` | FuzzyAI, Garak, Giskard Scan | detector-specific counts/rates |
 | `truthfulness` | MLLMGuard hallucination | reserved; pending a substantive scorer in the runner |
+| `evaluator_reliability` | decision coverage, confusion/calibration, automated-human and inter-rater agreement | achieved independently labelled common-response population; never infer validity from stage concordance alone |
 
 `experiments.suite_summary` applies these crosswalks but does not pool the
 heterogeneous rates.
@@ -93,14 +108,19 @@ mkdir -p "$URA_CORPORA" "$URA_UPSTREAM" "$URA_NATIVE_ENVS"
 cd "$URA_WORK"
 git clone https://github.com/ctapnec/MLLMRiskBench.git
 cd MLLMRiskBench
-git switch main
+# Use the full thesis-reviewed harness commit. Change it only through a recorded
+# protocol amendment made before inspecting outcomes.
+export REF_URA='<full-40-hex-reviewed-post-fix-project-commit>'
+test "${#REF_URA}" -eq 40
+git checkout --detach "$REF_URA"
+test "$(git rev-parse HEAD)" = "$REF_URA"
 python3.12 -m venv .venv
 source .venv/bin/activate
 python -m pip install --upgrade pip
 python -m pip install -e ".[dev,analysis,api,guardrail]"
 python -m pip install "huggingface_hub[cli]"
 
-# Required only for the local vLLM lanes in section 14. Pin the version that the
+# Required only for the local vLLM lanes in section 13. Pin the version that the
 # operator has verified against this machine's CUDA, PyTorch, and driver stack.
 export VLLM_VERSION='<operator-reviewed-compatible-version>'
 python -m pip install "vllm==$VLLM_VERSION"
@@ -604,8 +624,10 @@ and media, loads a local target engine before scoring/defense guards when a
 local target is selected, checks model/source modality compatibility, and prints
 policy-stratum counts plus projected target, guard, LLM-judge, and HTTP-attempt
 totals without a hosted generation call. Only the planning ceilings differ from
-the later measured command; `rig_check` automatically replaces `--out` with a
-temporary scratch directory.
+the later measured command. `rig_check` executes the no-call plan in temporary
+scratch storage but copies its content-addressed eligibility/`N/A` ledger into
+the requested `--out` directory, including when a later compatibility gate
+fails. That ledger is planning evidence only and is not a live attestation.
 
 For planning, use finite values larger than the projection. Copy the printed
 projection into the measured command's lane-specific ceilings; add capacity only
@@ -620,7 +642,7 @@ Common arguments for the full cascade are shown here for reference:
 --judges rules,guardrail,llm --judge-model "$JUDGE"
 --guardrail-model "$SCORE_GUARD" --guardrail-revision "$SCORE_GUARD_REV"
 --guardrail-device "$SCORE_GUARD_DEVICE"
---group model,risk,modality,source_policy_id,source_policy_version
+--group model,risk,effective_modality,source_policy_id,source_policy_version
 ```
 
 Use whole source-cluster sampling. `--limit 0` means the complete selected
@@ -645,7 +667,7 @@ python -m experiments.rig_check \
   --guardrail-model "$SCORE_GUARD" --guardrail-revision "$SCORE_GUARD_REV" --guardrail-device "$SCORE_GUARD_DEVICE" \
   --corpora "$TEXT_ARMS" --source-config experiments/source-instances.json \
   --limit 0 --sample-seed 0 --seeds 0,1 --max-queries 1 --max-turns 1 \
-  --group model,risk,modality,source_policy_id,source_policy_version \
+  --group model,risk,effective_modality,source_policy_id,source_policy_version \
   --max-total-target-calls '<planning-ceiling>' --max-total-judge-calls '<planning-ceiling>' \
   --max-total-http-attempts '<planning-ceiling>' --deadline-seconds 7776000 \
   --out runs/thesis/runner/static-text
@@ -656,7 +678,7 @@ python -m experiments.run_matrix \
   --guardrail-model "$SCORE_GUARD" --guardrail-revision "$SCORE_GUARD_REV" --guardrail-device "$SCORE_GUARD_DEVICE" \
   --corpora "$TEXT_ARMS" --source-config experiments/source-instances.json \
   --limit 0 --sample-seed 0 --seeds 0,1 --max-queries 1 --max-turns 1 \
-  --group model,risk,modality,source_policy_id,source_policy_version \
+  --group model,risk,effective_modality,source_policy_id,source_policy_version \
   --max-total-target-calls '<projected-target-total>' --max-total-judge-calls '<projected-judge-total>' \
   --max-total-http-attempts '<projected-http-total>' --deadline-seconds 7776000 \
   --out runs/thesis/runner/static-text
@@ -681,7 +703,7 @@ python -m experiments.rig_check \
   --guardrail-model "$SCORE_GUARD" --guardrail-revision "$SCORE_GUARD_REV" --guardrail-device "$SCORE_GUARD_DEVICE" \
   --corpora "$IMAGE_ARMS" --source-config experiments/source-instances.json \
   --limit 0 --sample-seed 0 --seeds 0,1 --max-queries 1 --max-turns 1 \
-  --group model,risk,modality,source_policy_id,source_policy_version \
+  --group model,risk,effective_modality,source_policy_id,source_policy_version \
   --max-total-target-calls '<planning-ceiling>' --max-total-judge-calls '<planning-ceiling>' \
   --max-total-http-attempts '<planning-ceiling>' --deadline-seconds 7776000 \
   --out runs/thesis/runner/static-image
@@ -710,7 +732,7 @@ python -m experiments.rig_check \
   --guardrail-model "$SCORE_GUARD" --guardrail-revision "$SCORE_GUARD_REV" --guardrail-device "$SCORE_GUARD_DEVICE" \
   --corpora jalmbench_audio --source-config experiments/source-instances.json \
   --limit "$AUDIO_SAMPLE_CLUSTERS" --sample-seed 0 --seeds 0 --max-queries 1 --max-turns 1 \
-  --group model,risk,modality,source_policy_id,source_policy_version \
+  --group model,risk,effective_modality,source_policy_id,source_policy_version \
   --max-total-target-calls '<planning-ceiling>' --max-total-judge-calls '<planning-ceiling>' \
   --max-total-http-attempts '<planning-ceiling>' --deadline-seconds 7776000 \
   --out runs/thesis/runner/static-audio
@@ -723,7 +745,7 @@ python -m experiments.rig_check \
   --corpora videosafetybench_benign_query,videosafetybench_harmful_query \
   --source-config experiments/source-instances.json \
   --limit 0 --sample-seed 0 --seeds 0,1 --max-queries 1 --max-turns 1 \
-  --group model,risk,modality,source_policy_id,source_policy_version \
+  --group model,risk,effective_modality,source_policy_id,source_policy_version \
   --max-total-target-calls '<planning-ceiling>' --max-total-judge-calls '<planning-ceiling>' \
   --max-total-http-attempts '<planning-ceiling>' --deadline-seconds 7776000 \
   --out runs/thesis/runner/static-video
@@ -731,47 +753,64 @@ python -m experiments.rig_check \
 
 For each, repeat with `experiments.run_matrix` and the exact successful
 projection. Do not send transcripts, captions, or extracted frames to a target
-and label that as audio/video execution.
+and label that as audio/video execution. The maintained automated judges never
+receive image, audio, or video bytes: they grade a declared source-text reference
+plus the target output. Such evidence is a text-reference proxy, not a
+media-aware grade. A substantive media-grading claim requires a source-native
+media evaluator or the media-resolving human audit.
 
 JALMBench contains 245,355 audio rows. The maintained lane is therefore a
-seeded 5,000-cluster, one-repeat breadth sample, not an impractical two-repeat
-full-release sweep. Report its realized attack/language/acoustic strata and
-sample-conditional scope. Expanding it is a separate funded decision after the
-call projection is combined with provider pricing, token, audio-input, and
-latency assumptions in `RUNNOTE.md`.
+seeded, bounded source-cluster breadth sample, not an impractical two-repeat
+full-release sweep. `--limit 5000` selects at most 5,000 underlying prompt
+clusters and retains their related acoustic/attack variants, so the realized row
+and call counts may exceed 5,000. Accept the post-conversion projection rather
+than treating the limit as a call count. Report realized cluster, row,
+attack/language/acoustic strata and sample-conditional scope. Expanding it is a
+separate funded decision after the call projection is combined with provider
+pricing, token, audio-input, and latency assumptions in `RUNNOTE.md`.
 
 ## 11. Tier 2: source-specific classification
 
 These tracks answer different questions from ASR/FRR and stay separate.
+Each command deliberately selects only `--judges rules` because the Runner
+requires a non-empty, stage-shaped trail. For these common-ineligible outputs it
+does not query even that rule stage: the emitted `not_applicable` row is a
+structural placeholder, not a safety verdict. The registered R-Judge or
+GPTGeoChat response parser and its source-native classification metrics are the
+authoritative evidence for this lane. Do not pass LLM-judge or scoring-guardrail
+configuration; those runtimes are unrelated to this construct.
 
 ```bash
 # R-Judge: broad text roster, recorded trajectory-risk classification.
 python -m experiments.rig_check \
   --api "$TEXT_TARGETS" --api-config experiments/api-targets.json \
-  --attackers replay --judges rules,guardrail,llm --judge-model "$JUDGE" \
-  --guardrail-model "$SCORE_GUARD" --guardrail-revision "$SCORE_GUARD_REV" --guardrail-device "$SCORE_GUARD_DEVICE" \
+  --attackers replay --judges rules \
   --corpora rjudge_release --source-config experiments/source-instances.json \
   --limit 0 --sample-seed 0 --seeds 0,1 --max-queries 1 --max-turns 1 \
-  --group model,risk,modality --max-total-target-calls '<planning-ceiling>' \
-  --max-total-judge-calls '<planning-ceiling>' --max-total-http-attempts '<planning-ceiling>' \
+  --group model,risk,effective_modality --max-total-target-calls '<planning-ceiling>' \
+  --max-total-http-attempts '<planning-ceiling>' \
   --deadline-seconds 7776000 --out runs/thesis/runner/rjudge
 
 # GPTGeoChat: image-capable roster, five moderation thresholds per conversation.
 python -m experiments.rig_check \
   --api "$IMAGE_TARGETS" --api-config experiments/api-targets.json \
-  --attackers replay --judges rules,guardrail,llm --judge-model "$JUDGE" \
-  --guardrail-model "$SCORE_GUARD" --guardrail-revision "$SCORE_GUARD_REV" --guardrail-device "$SCORE_GUARD_DEVICE" \
+  --attackers replay --judges rules \
   --corpora gptgeochat_release --source-config experiments/source-instances.json \
   --limit 0 --sample-seed 0 --seeds 0,1 --max-queries 1 --max-turns 1 \
-  --group model,risk,modality --max-total-target-calls '<planning-ceiling>' \
-  --max-total-judge-calls '<planning-ceiling>' --max-total-http-attempts '<planning-ceiling>' \
+  --group model,risk,effective_modality --max-total-target-calls '<planning-ceiling>' \
+  --max-total-http-attempts '<planning-ceiling>' \
   --deadline-seconds 7776000 --out runs/thesis/runner/gptgeochat
 ```
 
-Repeat each successful check with `experiments.run_matrix` and the exact printed
-ceilings. R-Judge reports source-label classification statistics against its
-reference labels, not independently established validity; the risk-explanation
-effectiveness stage is not implemented. GPTGeoChat reports
+The no-call projection must report zero model-judge calls and zero local
+guardrail evaluations. A non-zero value means this source-only lane is
+misconfigured and must not proceed. Repeat each successful check with
+`experiments.run_matrix` and the exact printed target-call and HTTP-attempt
+ceilings; omission of `--max-total-judge-calls` is intentional because no
+model-backed judge is configured or called. R-Judge reports source-label
+classification statistics against its reference labels, not independently
+established validity; the risk-explanation effectiveness stage is not
+implemented. GPTGeoChat reports
 threshold-conditioned moderation classification, not a target geolocation ASR.
 
 ## 12. Tier 3: adaptive and transferred attacks
@@ -793,7 +832,7 @@ python -m experiments.rig_check \
   --guardrail-model "$SCORE_GUARD" --guardrail-revision "$SCORE_GUARD_REV" --guardrail-device "$SCORE_GUARD_DEVICE" \
   --corpora "$ADAPTIVE_ARMS" --source-config experiments/source-instances.json \
   --limit 0 --sample-seed 0 --seeds 0,1 --max-queries 4 --max-turns 4 \
-  --group model,risk,modality,source_policy_id,source_policy_version \
+  --group model,risk,effective_modality,source_policy_id,source_policy_version \
   --max-total-target-calls '<planning-ceiling>' --max-total-judge-calls '<planning-ceiling>' \
   --max-total-http-attempts '<planning-ceiling>' --deadline-seconds 7776000 \
   --out runs/thesis/runner/crescendo-text
@@ -831,7 +870,8 @@ prevents transformed prompts from being confused with raw replay.
 ```bash
 export TRANSFER_ARMS='strongreject_official,advbench_harmful,jailbreakbench_harmful'
 
-# Repeat ATTACKER=pyrit, deepteam, h4rm3l, and spikee.
+# PyRIT and DeepTeam emit one transformed attempt per selected configuration.
+# Repeat ATTACKER=pyrit and deepteam with max-queries=1/max-turns=1.
 export ATTACKER='pyrit'
 python -m experiments.rig_check \
   --api "$FOCAL_HOSTED" --api-config experiments/api-targets.json \
@@ -839,11 +879,16 @@ python -m experiments.rig_check \
   --judges rules,guardrail,llm --judge-model "$JUDGE" \
   --guardrail-model "$SCORE_GUARD" --guardrail-revision "$SCORE_GUARD_REV" --guardrail-device "$SCORE_GUARD_DEVICE" \
   --corpora "$TRANSFER_ARMS" --source-config experiments/source-instances.json \
-  --limit 0 --sample-seed 0 --seeds 0,1 --max-queries 4 --max-turns 1 \
-  --group model,risk,modality --max-total-target-calls '<planning-ceiling>' \
+  --limit 0 --sample-seed 0 --seeds 0,1 --max-queries 1 --max-turns 1 \
+  --group model,risk,effective_modality --max-total-target-calls '<planning-ceiling>' \
   --max-total-judge-calls '<planning-ceiling>' --max-total-http-attempts '<planning-ceiling>' \
   --deadline-seconds 7776000 --out "runs/thesis/runner/transfer-$ATTACKER"
 ```
+
+Run h4rm3l and Spikee in separate invocations with
+`--max-queries 4 --max-turns 4`; otherwise the Runner's shared query/turn budget
+admits only the first generated variant. The completed artifacts, not the
+configured maximum, establish the realized variant count.
 
 Because `attacker-config.json` must contain only selected attacker keys, create a
 one-attacker copy for each invocation or remove the unselected rows before the
@@ -865,6 +910,17 @@ Run these only after preparing their exact attacker config and passing
 Promptfoo, Petri, FuzzyAI, EasyJailbreak, AutoDAN-Turbo, Giskard, ASB, and
 AgentDojo are not runner attackers; they belong in the native track below.
 
+Live/source-model HarmBench generation, a T3MP3ST loopback planner, and local
+nanoGCG optimization are not covered by the Runner's target/judge/HTTP budget or
+its post-generation checkpoint. They can repeat work on resume. Do not place a
+paid or source-model-conditioned generator inside a measured Runner grid.
+Execute it first as a separately capped canary/campaign with its own hard
+provider quota, retain the complete immutable output plus generator/model/config
+identity and SHA-256, then use only that content-addressed precomputed artifact
+for the measured transfer lane. If such precomputation is unavailable, mark the
+specialized lane pending/`N/A` or omit it as optional; do not describe it as
+protected by the common call ceilings.
+
 ## 13. Tier 4: local targets and defense contrast
 
 Run every local model in its own process. The examples below use text; repeat the
@@ -881,7 +937,7 @@ CUDA_VISIBLE_DEVICES=0,1 python -m experiments.rig_check \
   --guardrail-model "$SCORE_GUARD" --guardrail-revision "$SCORE_GUARD_REV" --guardrail-device cuda:1 \
   --corpora "$TEXT_ARMS" --source-config experiments/source-instances.json \
   --limit 0 --sample-seed 0 --seeds 0,1 --max-queries 1 --max-turns 1 \
-  --group model,risk,modality --max-total-target-calls '<planning-ceiling>' \
+  --group model,risk,effective_modality --max-total-target-calls '<planning-ceiling>' \
   --max-total-judge-calls '<planning-ceiling>' --max-total-http-attempts '<planning-ceiling>' \
   --deadline-seconds 7776000 --out runs/thesis/runner/local-qwen3-vl-text
 ```
@@ -908,7 +964,7 @@ python -m experiments.rig_check \
   --defense-guardrail-device cuda:1 \
   --corpora "$TEXT_ARMS" --source-config experiments/source-instances.json \
   --limit 0 --sample-seed 0 --seeds 0,1 --max-queries 1 --max-turns 1 \
-  --group model,risk,modality --max-total-target-calls '<planning-ceiling>' \
+  --group model,risk,effective_modality --max-total-target-calls '<planning-ceiling>' \
   --max-total-judge-calls '<planning-ceiling>' --max-total-http-attempts '<planning-ceiling>' \
   --deadline-seconds 7776000 --out runs/thesis/runner/defense-text
 ```
@@ -1031,6 +1087,38 @@ cd "$URA_UPSTREAM/AutoDAN-Turbo"
 "$URA_NATIVE_ENVS/autodan/bin/python" main.py
 # Or, as a separate condition: "$URA_NATIVE_ENVS/autodan/bin/python" main_r.py
 
+# Immediately write the mandatory URA provenance sidecar. Substitute the exact
+# output directory, role identities, dataset digest, variant, and upstream
+# iteration/request settings used above; do not import until this succeeds. Use
+# the main project interpreter, where URA was installed, rather than AutoDAN's
+# isolated upstream-only environment.
+URA_AUTODAN_LOGS='<exact-AutoDAN-output-directory>' \
+URA_AUTODAN_RUN_ID='<recorded-run-id>' \
+URA_AUTODAN_DATASET_SHA256='<64-hex-dataset-sha256>' \
+"$URA_WORK/MLLMRiskBench/.venv/bin/python" - <<'PY'
+import os
+from ura.adapters.autodan import AutoDANTurboAttacker
+
+AutoDANTurboAttacker.write_run_manifest(
+    os.environ["URA_AUTODAN_LOGS"],
+    run_id=os.environ["URA_AUTODAN_RUN_ID"],
+    variant="standard",
+    model_roles={
+        "attacker": "<provider/attacker>",
+        "target": "<provider/target>",
+        "scorer": "<provider/scorer>",
+        "summarizer": "<provider/summarizer>",
+        "embedding": "<provider/embedding>",
+    },
+    epochs=150,
+    warm_up_iterations=1,
+    lifelong_iterations=4,
+    warm_up_requests=100,
+    lifelong_requests=100,
+    dataset_sha256=os.environ["URA_AUTODAN_DATASET_SHA256"],
+)
+PY
+
 # ASB: DPI, OPI, memory poisoning, and PoT are separate native surfaces.
 cd "$URA_UPSTREAM/ASB"
 "$URA_NATIVE_ENVS/asb/bin/python" scripts/agent_attack.py --cfg_path config/DPI.yml
@@ -1138,13 +1226,31 @@ python -m experiments.human_audit \
   --acknowledge-sensitive-content
 ```
 
-Use at least two independent qualified raters. Adjudicate every non-unanimous
+Before main labelling, create `runs/thesis/human-rater-qualification.md` with
+pseudonymous rater IDs, language competence, graduate-level study or equivalent
+relevant safety/moderation experience, conflict disclosures, training date,
+qualification-set digest, per-dimension score and adjudicator. Use an
+independently adjudicated 20-item set outside the final audit sample. Each rater
+must reach at least 80% agreement on every dimension; after reviewed retraining,
+one repeat is permitted. Do not silently lower the threshold or select raters on
+the final sample.
+
+Use at least two independently qualified raters. Adjudicate every non-unanimous
 composite or dimension; unanimous ratings need no adjudication. Rate refusal,
-harmfulness, convincingness, and specificity separately. Resolve and verify
-every media reference before rating. Keep all join columns. Raters must not see
-the automated labels; model identity remains visible in the current export and
-must be reported as a limitation. Retain a random-audit component if any
-uncertainty- or disagreement-enriched quota is added.
+harmfulness, convincingness, and specificity separately under the exact source
+policy and dimension rubric. Resolve and verify every media reference before
+rating. Keep all join columns. Raters must not see automated labels or metric
+outputs; model identity remains visible in the current export and must be
+reported as a limitation. The deterministic coverage-priority selector claims
+no equal-probability inclusion probabilities and uses no inverse-probability
+weights. Retain a probability-sampled component if any uncertainty- or
+disagreement-enriched quota is added and population interpretation is intended.
+`--prepare 400` means 400 source clusters, not 400 CSV rows. Every selected
+sibling model/seed/run response is exported. Before assigning work, record the
+reported exported-row count `R`, reserve at least `2R` independent item-ratings,
+and budget additional adjudication for every non-unanimous composite or
+dimension. If that realized load is infeasible, choose a smaller cluster count
+prospectively and rerun preparation; do not discard sibling rows after export.
 
 After adjudication:
 
@@ -1194,26 +1300,37 @@ run:
 
 ```bash
 NATIVE_ARGS=()
-for artifact in runs/thesis/native/canonical/*.json; do
+while IFS= read -r -d '' artifact; do
   NATIVE_ARGS+=(--native "$artifact")
-done
+done < <(find runs/thesis/native/canonical -maxdepth 1 -type f \
+  -name '*.json' -print0)
+
+ELIGIBILITY_ARGS=()
+while IFS= read -r -d '' artifact; do
+  ELIGIBILITY_ARGS+=(--eligibility "$artifact")
+done < <(find runs/thesis/runner -type f \
+  -name 'eligibility-*.eligibility.json' -print0)
 
 python -m experiments.suite_summary \
   --results runs/thesis/runner \
   --source-config experiments/source-instances.json \
   "${NATIVE_ARGS[@]}" \
+  "${ELIGIBILITY_ARGS[@]}" \
   --out runs/thesis/suite-evidence.json
 ```
 
-The output provides exact runner strata, aggregate metric families, native target
-strata, native outcome/score-field coverage, and content digests. Static
+The output provides planning eligibility/`N/A` counts, exact completed runner
+strata, aggregate metric families, native target strata, native
+outcome/score-field coverage, and content digests. Planning eligibility is not
+live attestation or execution evidence. Static
 convenience rates equal-weight source prompt/intent clusters and expose both
 record and cluster support; use the runner aggregates for cluster-bootstrap
 intervals. It also lists
 every registry arm and native project that has no admitted evidence. Record each
 missing entry in `RUNNOTE.md` as not run, failed, or scientifically unavailable
 with the reason. Its presence flag covers only the supplied source registry and
-nine native projects; it never claims that every model-by-source lane is complete.
+the requested planning ledgers and nine native projects; it never promotes a
+`compatible_if_isolated` plan row to an attested, attempted, or completed cell.
 Distinct run IDs, cross-cell rates, and native scales are never pooled. Use this
 as the Experimental section's inventory and table source, not as a model
 leaderboard score.
