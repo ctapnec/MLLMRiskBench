@@ -51,12 +51,13 @@ from .data_models import (
     RunManifest,
     SCHEMA_VERSION,
 )
+from .eligibility import datapoint_planning_stratum, planning_stratum_sha256
 from .judges.base import JudgeCascade
 from .targets.base import BaseTarget
 from .targets.api import _logical_media_root_alias, _resolve_local_media_path
 
 #: Bumped when the orchestration semantics change (recorded in every manifest).
-CODE_VERSION = "ura-runner/2.10"
+CODE_VERSION = "ura-runner/2.11"
 _MAX_SCORED_MEDIA_BYTES = 25 * 1024 * 1024
 _MAX_FULL_CHECKPOINT_BYTES = 512 * 1024 * 1024
 _MAX_RESPONSE_CHECKPOINT_BYTES = 512 * 1024 * 1024
@@ -1122,6 +1123,15 @@ class Runner:
                 dp.source_policy.model_dump(mode="json", exclude_none=True)
                 if dp.source_policy is not None else None
             ),
+            # Exact content identity of the datapoint's planning stratum.  The
+            # legacy fields above are coarser than the planner's grouping key
+            # (they omit declared modalities and execution mode, among others),
+            # so Level-1 attribution requires this token to stay unambiguous.
+            # Media bytes were admitted before delivery aliasing; the stamp
+            # must not re-resolve original corpus paths here.
+            "planning_stratum_sha256": planning_stratum_sha256(
+                datapoint_planning_stratum(dp, validate_media_bytes=False)
+            ),
         }
         source_physical = set(dp.modalities) & {"image", "audio", "video"}
         delivered_physical = {
@@ -1314,6 +1324,7 @@ class Runner:
                 "planning_required_metric"
             ],
             "planning_source_policy": attempt.params["planning_source_policy"],
+            "planning_stratum_sha256": attempt.params["planning_stratum_sha256"],
             "attack_family": datapoint.attack_family,
             "attacker": attempt.attacker,
             "strategy": attempt.strategy,

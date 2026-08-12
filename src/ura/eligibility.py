@@ -244,25 +244,80 @@ def _metric_descriptor(datapoint: DataPoint) -> dict[str, Any]:
     }
 
 
+#: Datapoint-level fields that define one planning stratum.  The planner groups
+#: selected rows by exactly this projection (plus the arm label), so the Runner
+#: stamp and Level-1 attribution must use the same field set: any coarser key
+#: can match two strata that differ only in, e.g., declared modalities or
+#: execution mode.
+PLANNING_STRATUM_FIELDS = (
+    "source",
+    "declared_modalities",
+    "exact_modality_combination",
+    "exact_modality",
+    "execution_mode",
+    "expected_behavior",
+    "source_policy",
+    "common_metrics_eligible",
+    "metric_mode",
+    "semantic_family",
+    "required_metric",
+    "source_metric_runtime",
+    "source_evaluator_implemented",
+    "source_metric_attackers",
+    "automated_grading_mode",
+    "automated_metric_scope",
+    "source_reference_available",
+)
+
+
+def datapoint_planning_stratum(
+    datapoint: DataPoint, *, validate_media_bytes: bool = True
+) -> dict[str, Any]:
+    """Datapoint-level planning-stratum descriptor shared with the Runner.
+
+    The planner keeps ``validate_media_bytes`` on so byte-backed media
+    admission stays a planning gate.  The Runner stamps the same descriptor
+    onto attempts after media were already admitted and aliased for delivery,
+    where the original corpus paths need not resolve; both paths produce the
+    identical declared combination value.
+    """
+
+    if validate_media_bytes:
+        exact = datapoint_modality_combination(datapoint)
+    else:
+        exact = canonical_modality_combination(
+            item
+            for item in datapoint.modalities
+            if item in _MODALITY_ORDER and item != "tool"
+        )
+    return {
+        "source": datapoint.source,
+        "declared_modalities": list(_declared_modalities(datapoint)),
+        "exact_modality_combination": list(exact),
+        "exact_modality": _richest_modality(exact),
+        "execution_mode": _normalized_optional_text(
+            datapoint.meta.get("execution_mode")
+        ) or "harness_response_evaluation",
+        "expected_behavior": datapoint.expected_behavior,
+        "source_policy": _source_policy_identity(datapoint),
+        **_metric_descriptor(datapoint),
+    }
+
+
+def planning_stratum_sha256(value: Mapping[str, Any]) -> str:
+    """Content identity of a planning stratum's datapoint-level descriptor."""
+
+    return canonical_json_sha256(_project_identity(value, PLANNING_STRATUM_FIELDS))
+
+
 def _source_strata(
     logical_source_arm: str, rows: Sequence[DataPoint]
 ) -> list[tuple[dict[str, Any], list[DataPoint]]]:
     grouped: dict[str, tuple[dict[str, Any], list[DataPoint]]] = {}
     for datapoint in rows:
-        exact = datapoint_modality_combination(datapoint)
-        metric = _metric_descriptor(datapoint)
         descriptor: dict[str, Any] = {
             "logical_source_arm": logical_source_arm,
-            "source": datapoint.source,
-            "declared_modalities": list(_declared_modalities(datapoint)),
-            "exact_modality_combination": list(exact),
-            "exact_modality": _richest_modality(exact),
-            "execution_mode": _normalized_optional_text(
-                datapoint.meta.get("execution_mode")
-            ) or "harness_response_evaluation",
-            "expected_behavior": datapoint.expected_behavior,
-            "source_policy": _source_policy_identity(datapoint),
-            **metric,
+            **datapoint_planning_stratum(datapoint),
         }
         key = json.dumps(descriptor, sort_keys=True, separators=(",", ":"))
         grouped.setdefault(key, (descriptor, []))[1].append(datapoint)

@@ -7,7 +7,7 @@ source-native evaluators. Experiments and the human audit are still pending.
 Preflight, dry-run, diagnostic-canary, and bounded transport-probe artifacts are
 diagnostics, not thesis results.
 
-The maintained artifact contract is Runner `ura-runner/2.10` with unified schema
+The maintained artifact contract is Runner `ura-runner/2.11` with unified schema
 `1.4`. Do not combine older-runner artifacts with this program.
 
 The program is deliberately lane-based. A model is tested on every physical

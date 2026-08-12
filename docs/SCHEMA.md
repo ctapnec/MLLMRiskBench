@@ -2,7 +2,7 @@
 
 `ura.data_models` is the typed Pydantic v2 contract shared by converters,
 attackers, targets, judges, persistence, and analysis. `SCHEMA_VERSION = "1.4"`
-is stamped on datapoints, checkpoints, and manifests. Runner 2.10 rejects mixed
+is stamped on datapoints, checkpoints, and manifests. Runner 2.11 rejects mixed
 schema versions and duplicate datapoint IDs before a target call.
 
 ## Records
@@ -254,6 +254,13 @@ The schema deliberately does not total unlike units:
 
 A lifecycle stratum is keyed by its `request_id` and planning `cell_id`; the
 request identity binds run-wide conditions that the bare cell identity does not.
+Judgment-to-stratum attribution uses `planning_stratum_sha256`, the canonical
+content hash of the datapoint-level planning-stratum descriptor that Runner
+2.11 stamps into every `Attempt` and mirrors into each `Judgment`'s raw
+provenance. The planner groups selected rows by exactly that descriptor, so
+attribution is unique by construction; the coarser human-readable planning
+fields cross-check the matched stratum but never select it, and artifacts
+without the token are rejected rather than guessed.
 `execution_unit_started` on a planning row is contextual whole-arm state, not a
 claim that the stratum was attempted. Exact attempted counts exist only for
 whole-arm execution units; `availability.planning_stratum_attempts` and the

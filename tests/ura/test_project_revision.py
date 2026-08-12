@@ -5,6 +5,7 @@ import json
 import os
 from pathlib import Path
 import subprocess
+import sys
 
 import pytest
 
@@ -344,3 +345,25 @@ def test_rig_check_dry_omits_and_non_dry_retains_revision(
     retained = list(live_out.glob("*.project-revision.json"))
     assert len(retained) == 1
     assert retained[0].name == project_revision_args.binding["file"]
+
+
+def test_cli_modules_reach_help_without_pythonpath() -> None:
+    # Regression: `python -m experiments.<cli>` must place src/ on sys.path
+    # itself.  Three documented runbook commands imported ura before any
+    # bootstrap ran and failed from a clean shell.
+    repo_root = Path(__file__).resolve().parents[2]
+    env = {key: value for key, value in os.environ.items() if key != "PYTHONPATH"}
+    for module in (
+        "experiments.project_revision",
+        "experiments.export_jalmbench",
+        "experiments.export_vlsbench",
+    ):
+        completed = subprocess.run(
+            [sys.executable, "-m", module, "--help"],
+            cwd=repo_root,
+            env=env,
+            capture_output=True,
+            text=True,
+            timeout=120,
+        )
+        assert completed.returncode == 0, f"{module}: {completed.stderr}"

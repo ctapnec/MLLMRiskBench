@@ -913,3 +913,77 @@ def test_decision_state_keeps_common_source_metric_and_setup_units_distinct() ->
         "label": "not_applicable",
         "raw": {"policy_evaluable_turn": False},
     }) == "non_evaluable"
+
+
+def test_mixed_execution_mode_strata_attribute_uniquely(tmp_path: Path) -> None:
+    # Runbook section 8.1 diagnostic: the full synth corpus contains planning
+    # strata that share source, exact modality, behavior, metric, and policy
+    # identity and differ only in declared modalities and execution mode
+    # (direct prompt versus recorded tool construct).  Attribution must use the
+    # exact planning-stratum token; the coarser legacy fields matched two
+    # strata and failed the documented Level-1 join before Runner 2.11.
+    root = tmp_path / "run"
+    assert run_matrix.main([
+        "--dry-run", "--corpora", "synth", "--limit", "12",
+        "--seeds", "0", "--attackers", "replay,crescendo",
+        "--judges", "rules,llm", "--judge-model", "mock",
+        "--max-queries", "2", "--max-turns", "2", "--out", str(root),
+    ]) == 0
+    artifact = _plan_artifact(next(root.glob("eligibility-*.eligibility.json")))
+    grids, errors = _load_results([root], {artifact[0]["plan_id"]: artifact})
+
+    report = build_level1_evidence([artifact], grids, errors)
+
+    strata = report["planning_strata"]
+    assert report["counts"]["planning_strata"]["completed"] == len(strata) == 12
+    replay_text_refuse = [
+        row for row in strata
+        if row["attacker"] == "replay"
+        and row["expected_behavior"] == "refuse"
+        and row["exact_modality_combination"] == ["text"]
+    ]
+    assert sorted(
+        (row["execution_mode"], row["selected_datapoint_count"])
+        for row in replay_text_refuse
+    ) == [("direct_prompt", 4), ("recorded_tool_construct", 1)]
+
+
+def test_planning_stratum_token_is_required_and_tamper_evident(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "token-lineage"
+    assert run_matrix.main([
+        "--dry-run", "--corpora", "synth", "--limit", "1",
+        "--seeds", "0", "--attackers", "replay", "--judges", "rules",
+        "--max-queries", "1", "--max-turns", "1", "--out", str(root),
+    ]) == 0
+    artifact = _plan_artifact(next(root.glob("eligibility-*.eligibility.json")))
+
+    def load_cell() -> tuple[dict, dict, dict, dict]:
+        grids, errors = _load_results([root], {artifact[0]["plan_id"]: artifact})
+        cell = next(iter(grids[artifact[0]["plan_id"]]["cells"].values()))
+        judgment = cell["validated_cell"]["judgments"][0]
+        attempt = cell["validated_cell"]["attempts"][judgment["attempt_id"]]
+        return grids, errors, judgment, attempt
+
+    # A judgment token that disagrees with its Attempt fails the lineage check.
+    grids, errors, judgment, attempt = load_cell()
+    judgment["raw"]["planning_stratum_sha256"] = "0" * 64
+    with pytest.raises(
+        ValueError, match="Attempt/Judgment planning identity mismatch"
+    ):
+        build_level1_evidence([artifact], grids, errors)
+
+    # A consistently substituted token matches no planning stratum.
+    grids, errors, judgment, attempt = load_cell()
+    judgment["raw"]["planning_stratum_sha256"] = "0" * 64
+    attempt["params"]["planning_stratum_sha256"] = "0" * 64
+    with pytest.raises(ValueError, match="cannot be attributed"):
+        build_level1_evidence([artifact], grids, errors)
+
+    # Pre-2.11 artifacts without the token are rejected, never guessed.
+    grids, errors, judgment, attempt = load_cell()
+    del judgment["raw"]["planning_stratum_sha256"]
+    del attempt["params"]["planning_stratum_sha256"]
+    with pytest.raises(ValueError, match="planning-stratum identity"):
+        build_level1_evidence([artifact], grids, errors)

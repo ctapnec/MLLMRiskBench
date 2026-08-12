@@ -15,7 +15,9 @@ import sys
 from pathlib import Path
 from typing import Any, Iterable
 
-from ura.converters._common import media_signature_matches
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
+
+from ura.converters._common import media_signature_matches  # noqa: E402
 
 
 SCHEMA_VERSION = "ura-vlsbench-parquet-export/1"

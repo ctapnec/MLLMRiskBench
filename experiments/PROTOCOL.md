@@ -134,7 +134,11 @@ text evaluators. A physical common-metric row therefore also needs a
 source-provided safety reason, transcript, or harmful-intention reference; the
 judge artifact records that source-text-plus-output proxy and never claims to
 inspect the media. Rows without defensible reference context are `N/A` for the
-automated common metric and remain eligible for media-aware human review.
+automated common metric and remain eligible for media-aware human review. The
+Runner enforces this before any target call by rejecting the affected cell
+unless the arm explicitly declares a response-only automated scope; realizing
+the `N/A`-plus-human-review path therefore requires that declaration or
+excluding the row, never a silently graded media-blind cell.
 
 Local media is digest-checked under ordered approved roots and persists as
 `@media-root/<index>/<relative-path>`. Provider-fetched remote media is not

@@ -35,6 +35,7 @@ from ura.data_models import Attempt  # noqa: E402
 from ura.eligibility import (  # noqa: E402
     canonical_json_sha256,
     lifecycle_stratum_id,
+    planning_stratum_sha256,
     validate_eligibility_plan,
 )
 from ura.live_attestation import (  # noqa: E402
@@ -1179,6 +1180,7 @@ def _match_item(
         "planning_common_metrics_eligible",
         "planning_required_metric",
         "planning_source_policy",
+        "planning_stratum_sha256",
     )
     for field in planning_fields:
         if raw.get(field) != attempt.params.get(field):
@@ -1192,26 +1194,42 @@ def _match_item(
         or any(not isinstance(value, str) for value in exact)
     ):
         raise ValueError("completed judgment lacks planning modality identity")
+    token = attempt.params.get("planning_stratum_sha256")
+    if not isinstance(token, str) or _HEX64.fullmatch(token) is None:
+        raise ValueError(
+            "completed Attempt lacks its exact planning-stratum identity "
+            "(planning_stratum_sha256); regenerate the cell with the current "
+            "Runner instead of loading pre-2.11 artifacts"
+        )
+    # The legacy fields below are coarser than the planner's grouping key, so
+    # they cross-check the matched stratum but never select it: two strata may
+    # differ only in declared modalities or execution mode.
     candidates = [
-        item
-        for item in items
-        if item["source"] == attempt.params.get("planning_source")
-        and item["exact_modality_combination"] == exact
-        and item["expected_behavior"]
-        == attempt.params.get("planning_expected_behavior")
-        and item["common_metrics_eligible"]
-        is attempt.params.get("planning_common_metrics_eligible")
-        and item["required_metric"]
-        == attempt.params.get("planning_required_metric")
-        and item["source_policy"]
-        == _policy_identity(attempt.params.get("planning_source_policy"))
+        item for item in items if planning_stratum_sha256(item) == token
     ]
     if len(candidates) != 1:
         raise ValueError(
             "completed judgment cannot be attributed to exactly one planning "
             f"stratum; attempt={judgment.get('attempt_id')!r}, matches={len(candidates)}"
         )
-    return candidates[0]
+    item = candidates[0]
+    if (
+        item["source"] != attempt.params.get("planning_source")
+        or item["exact_modality_combination"] != exact
+        or item["expected_behavior"]
+        != attempt.params.get("planning_expected_behavior")
+        or item["common_metrics_eligible"]
+        is not attempt.params.get("planning_common_metrics_eligible")
+        or item["required_metric"]
+        != attempt.params.get("planning_required_metric")
+        or item["source_policy"]
+        != _policy_identity(attempt.params.get("planning_source_policy"))
+    ):
+        raise ValueError(
+            "planning-stratum token matched an item whose visible planning "
+            f"identity contradicts the Attempt; attempt={judgment.get('attempt_id')!r}"
+        )
+    return item
 
 
 def _decision_state(judgment: dict[str, Any]) -> str:
