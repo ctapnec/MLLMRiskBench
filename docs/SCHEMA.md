@@ -110,6 +110,22 @@ an executed cell:
   environment-variable path locator and optional source label/split. The full
   file hash is provenance; the normalized selected subset digest enters
   execution identity. The environment's resolved absolute path is not retained.
+- `ura-source-conformance/1` is a separate, compact content-addressed source
+  receipt. For each admitted real arm it records operator-observed upstream
+  revision, declared source-file hashes, license/access decision, split,
+  reconciled raw counts, and a reviewer-attributed bounded
+  semantic spot-check listing unique reviewed cluster IDs and the full converted
+  corpus digest reviewed. `run_matrix` rehashes the declared files, validates
+  those review bindings, computes the normalized selected source-config digest,
+  and reuses its runtime converted-corpus, cluster-rule/assignment, policy, metric, and media
+  evidence; the operator does not duplicate those inventories in the receipt.
+  Blocked, mismatched, stale, or tampered selected evidence is rejected before
+  target construction. The full receipt digest is package provenance; only its
+  selected-arm identity enters execution identity. See
+  `docs/SOURCE_CONFORMANCE.md`.
+  Measured non-synthetic runs and no-call `rig_check` preflights require this
+  receipt. A real-source `run_matrix --dry-run` without one is a conversion
+  diagnostic only, not admitted experiment or preflight evidence.
 - `--api-config` maps an exact generic hosted model specification to declared
   modalities and request controls, with a compatibility base URL only where
   required. The full file byte count/SHA-256 and normalized selected-subset

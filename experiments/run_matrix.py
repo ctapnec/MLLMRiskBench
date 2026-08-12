@@ -96,6 +96,12 @@ from ura.runner import (                              # noqa: E402
     _portable_attempt_dump,
     realized_identity_summary,
 )
+from ura.source_conformance import (                  # noqa: E402
+    observed_arm_conformance,
+    validate_selected_source_conformance,
+    validate_source_conformance_manifest,
+    verify_manifest_components,
+)
 from ura.targets.api import (                              # noqa: E402
     api_target_requires_config,
     build_api_target,
@@ -340,6 +346,35 @@ def _read_content_addressed_json(
         "sha256": actual_sha256,
         "bytes": size,
     }
+
+
+def _retain_content_addressed_input(
+    out: Path, path_value: str, expected_sha256: str, *, stem: str,
+) -> Path:
+    """Copy an already approved input into the return tree without overwrite."""
+
+    source = Path(path_value)
+    if source.is_symlink():
+        raise ValueError(f"{stem} input must not be a symlink")
+    source = source.resolve(strict=True)
+    payload = source.read_bytes()
+    actual = hashlib.sha256(payload).hexdigest()
+    if actual != expected_sha256.lower():
+        raise ValueError(f"{stem} input changed after content validation")
+    destination = out / f"{stem}-{actual[:24]}.json"
+    if destination.exists():
+        if (
+            not destination.is_file()
+            or destination.is_symlink()
+            or destination.read_bytes() != payload
+        ):
+            raise ValueError(
+                f"content-addressed {stem} artifact collision: {destination}"
+            )
+    else:
+        with destination.open("xb") as handle:
+            handle.write(payload)
+    return destination
 
 
 _SECRET_CONFIG_KEY = re.compile(
@@ -1961,6 +1996,9 @@ def load_corpus_with_audit(
     )
     resolved = path.expanduser().resolve(strict=True)
     full_digest = canonical_converted_corpus_sha256(full)
+    full_observation = observed_arm_conformance(full)
+    if full_observation["converted_corpus_sha256"] != full_digest:
+        raise ValueError("full source observation/corpus digest mismatch")
     return selected, {
         "corpus": name,
         "converter": converter,
@@ -1969,6 +2007,7 @@ def load_corpus_with_audit(
             name, "directory" if resolved.is_dir() else "file", instance
         ),
         "full_converted_corpus_sha256": full_digest,
+        "full_source_conformance_observation": full_observation,
         "total_records": len(full),
         "selected_records": len(selected),
         "selected_indices": indices,
@@ -2063,6 +2102,22 @@ def main(argv=None) -> int:
             "optional JSON mapping corpus arm ids to {converter,path_env} or "
             "{converter:'synth',synth:true}, plus optional source_label/split; "
             "path values stay in environment variables"
+        ),
+    )
+    ap.add_argument(
+        "--source-conformance",
+        default=os.environ.get("URA_SOURCE_CONFORMANCE_MANIFEST", ""),
+        help=(
+            "content-addressed ura-source-conformance/1 manifest; defaults to "
+            "URA_SOURCE_CONFORMANCE_MANIFEST"
+        ),
+    )
+    ap.add_argument(
+        "--source-conformance-sha256",
+        default=os.environ.get("URA_SOURCE_CONFORMANCE_SHA256", ""),
+        help=(
+            "exact manifest byte digest; defaults to "
+            "URA_SOURCE_CONFORMANCE_SHA256"
         ),
     )
     ap.add_argument(
@@ -2182,6 +2237,8 @@ def main(argv=None) -> int:
     ):
         if len(set(_values)) != len(_values):
             ap.error(f"{_label} entries must be unique")
+    source_conformance_manifest: dict[str, object] | None = None
+    source_conformance_artifact: dict[str, object] | None = None
     try:
         attacker_configs, attacker_config_artifact = _load_attacker_config(
             args.attacker_config, attacker_names
@@ -2202,6 +2259,50 @@ def main(argv=None) -> int:
         source_instances, source_config_artifact = _load_source_config(
             args.source_config, corpora
         )
+        real_source_arms = [
+            arm for arm in corpora if source_instances[arm].get("synth") is not True
+        ]
+        if real_source_arms:
+            if bool(args.source_conformance) != bool(args.source_conformance_sha256):
+                raise ValueError(
+                    "--source-conformance and --source-conformance-sha256 must be "
+                    "provided together"
+                )
+            if not args.dry_run and not args.source_conformance:
+                raise ValueError(
+                    "real-source execution requires a content-addressed "
+                    "--source-conformance manifest"
+                )
+        elif args.source_conformance or args.source_conformance_sha256:
+            print(
+                "synthetic-only run: ignoring real-source conformance environment",
+                file=sys.stderr,
+            )
+            args.source_conformance = ""
+            args.source_conformance_sha256 = ""
+        if args.source_conformance:
+            if source_config_artifact is None:
+                raise ValueError(
+                    "source conformance requires an explicit --source-config file"
+                )
+            raw_conformance, source_conformance_artifact = (
+                _read_content_addressed_json(
+                    args.source_conformance,
+                    args.source_conformance_sha256,
+                    flag_name="--source-conformance",
+                    max_bytes=4 * 1024 * 1024,
+                )
+            )
+            source_conformance_manifest = validate_source_conformance_manifest(
+                raw_conformance
+            )
+            retained = _retain_content_addressed_input(
+                out,
+                args.source_conformance,
+                args.source_conformance_sha256,
+                stem="source-conformance",
+            )
+            source_conformance_artifact["file"] = retained.name
     except (OSError, KeyError, ValueError) as exc:
         ap.error(str(exc))
     persisted_model_specs = {
@@ -2212,8 +2313,16 @@ def main(argv=None) -> int:
     # Some target constructors replace the display identity below, while the
     # eligibility ledger must retain both sides of that mapping.
     requested_model_specs = dict(persisted_model_specs)
-    if not args.dry_run and "llm" in judge_names and args.judge_model == "mock":
-        ap.error("a real run with the llm judge requires an explicit non-mock --judge-model")
+    if (
+        not args.dry_run
+        and real_source_arms
+        and "llm" in judge_names
+        and args.judge_model == "mock"
+    ):
+        ap.error(
+            "a run containing real source arms requires an explicit non-mock "
+            "--judge-model for the llm judge"
+        )
     scoring_guardrail_selected = "guardrail" in judge_names
     defense_guardrail_selected = (
         args.defense != "none" and args.defense_guard == "guardrail"
@@ -2277,6 +2386,26 @@ def main(argv=None) -> int:
         "sha256": driver_digest,
         "file_count": driver_file_count,
     }
+    # Rehash declared acquisition inputs before conversion. Selected conformance
+    # is checked again afterward, so a file changed during conversion fails
+    # closed before any target/judge construction.
+    if source_conformance_manifest is not None:
+        try:
+            verify_manifest_components(
+                source_conformance_manifest, selected_arms=real_source_arms
+            )
+        except (OSError, ValueError) as exc:
+            _write_json(out / "source-conformance.error.json", {
+                "status": "error",
+                "phase": "source_conformance_input_preflight",
+                "selected_real_arms": real_source_arms,
+                "exception_type": type(exc).__name__,
+                "message": str(exc)[:2000],
+                "source_conformance_artifact": source_conformance_artifact,
+            })
+            print(f"source receipt input preflight failed: {exc}", file=sys.stderr)
+            return 1
+
     # Preload the complete selected corpus set and construct lazy target objects
     # before any target/judge call. Modality coverage is a grid-wide property:
     # planning it one corpus at a time can silently omit an available image arm.
@@ -2310,6 +2439,47 @@ def main(argv=None) -> int:
         (out / f"{_safe_component(corpus_name)}.corpus.error.json").unlink(
             missing_ok=True
         )
+
+    source_conformance_binding: dict[str, object] | None = None
+    if source_conformance_manifest is not None:
+        try:
+            if not real_source_arms:
+                raise ValueError(
+                    "source conformance was supplied but no real source arm was selected"
+                )
+            if source_config_artifact is None:  # pragma: no cover - earlier gate
+                raise ValueError("source conformance lacks source-config provenance")
+            source_conformance_binding = validate_selected_source_conformance(
+                source_conformance_manifest,
+                selected_source_instances={
+                    arm: source_instances[arm] for arm in real_source_arms
+                },
+                full_observations={
+                    arm: sampling_audits[arm][
+                        "full_source_conformance_observation"
+                    ]
+                    for arm in real_source_arms
+                },
+                sampling_audits={
+                    arm: sampling_audits[arm] for arm in real_source_arms
+                },
+                source_config_selected_sha256=str(
+                    source_config_artifact["normalized_selected_sha256"]
+                ),
+            )
+            source_conformance_artifact.update(source_conformance_binding)
+        except (OSError, ValueError) as exc:
+            _write_json(out / "source-conformance.error.json", {
+                "status": "error",
+                "phase": "source_conformance_preflight",
+                "selected_real_arms": real_source_arms,
+                "exception_type": type(exc).__name__,
+                "message": str(exc)[:2000],
+                "source_conformance_artifact": source_conformance_artifact,
+            })
+            print(f"source conformance preflight failed: {exc}", file=sys.stderr)
+            return 1
+        (out / "source-conformance.error.json").unlink(missing_ok=True)
 
     # One defense model is shared by every target in this process. Constructing
     # a model-backed guard inside the target loop would retain one multi-GB copy
@@ -2384,6 +2554,9 @@ def main(argv=None) -> int:
                 "api_configs_sha256": _sha256_json(api_configs),
                 "local_configs_sha256": _sha256_json(local_configs),
                 "source_config_artifact": source_config_artifact,
+                "source_conformance_artifact": _selected_config_artifact_identity(
+                    source_conformance_artifact
+                ),
                 "attacker_config_artifact": attacker_config_artifact,
                 "api_config_artifact": api_config_artifact,
                 "local_config_artifact": local_config_artifact,
@@ -2702,6 +2875,7 @@ def main(argv=None) -> int:
         "corpora": corpora,
         "source_instances": source_instances,
         "source_config_artifact": source_config_artifact,
+        "source_conformance_artifact": source_conformance_artifact,
         "attackers": attacker_names,
         "attacker_configs": attacker_configs,
         "attacker_config_artifact": attacker_config_artifact,
@@ -2772,6 +2946,9 @@ def main(argv=None) -> int:
         **grid_request,
         "source_config_artifact": _selected_config_artifact_identity(
             source_config_artifact
+        ),
+        "source_conformance_artifact": _selected_config_artifact_identity(
+            source_conformance_artifact
         ),
         "api_config_artifact": _selected_config_artifact_identity(
             api_config_artifact
@@ -3040,6 +3217,11 @@ def main(argv=None) -> int:
                         "limit": args.limit,
                         "sample_seed": args.sample_seed,
                         "sampling_audit": sampling_audit,
+                        "source_conformance_artifact": (
+                            _selected_config_artifact_identity(
+                                source_conformance_artifact
+                            )
+                        ),
                         "model_spec": persisted_model_specs[spec],
                         "api_config": api_configs.get(spec),
                         "api_config_artifact": _selected_config_artifact_identity(

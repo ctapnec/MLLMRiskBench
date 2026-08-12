@@ -36,6 +36,9 @@ from ura.runner import (
     GlobalCallBudget,
     Runner,
 )
+from ura.source_conformance import (
+    observed_arm_conformance,
+)
 from ura.targets.api import MockTarget
 from ura.targets.base import BaseTarget
 from ura.targets.guarded import GuardedTarget
@@ -64,6 +67,80 @@ def _api_config_args(tmp_path: Path, *specs: str) -> list[str]:
         "temperature": 0.0,
     } for spec in specs}), encoding="utf-8")
     return ["--api-config", str(path)]
+
+
+def _source_conformance_args(
+    tmp_path: Path, source: Path, records: list[DataPoint],
+) -> list[str]:
+    source_config = tmp_path / "source-instances.json"
+    source_config.write_text(json.dumps({
+        "fixture": {
+            "converter": "fixture",
+            "path_env": "URA_TEST_FIXTURE_SOURCE",
+            "split": "test",
+        }
+    }), encoding="utf-8")
+    observed = observed_arm_conformance(records)
+    manifest = {
+        "schema": "ura-source-conformance/1",
+        "claim_scope": "acquisition_and_conversion_traceability_only",
+        "arms": [{
+            "arm_id": "fixture",
+            "converter": "fixture",
+            "path_env": "URA_TEST_FIXTURE_SOURCE",
+            "source_label": None,
+            "split": "test",
+            "disposition": "admitted",
+            "reason": "fixture conformance",
+            "upstream_uri": "https://example.invalid/fixture",
+            "requested_revision": "b" * 40,
+            "observed_revision": "b" * 40,
+            "consumed_input": {
+                "kind": "file",
+                "sha256": hashlib.sha256(source.read_bytes()).hexdigest(),
+                "bytes": source.stat().st_size,
+            },
+            "components": [],
+            "operator_decision": {
+                "decision": "approved",
+                "access_status": "not_required",
+                "license_identifier_or_notice": "test fixture notice",
+                "reviewer": "test reviewer",
+                "reviewed_at": "2026-08-12T12:00:00+03:00",
+                "evidence_sha256": "c" * 64,
+                "notes": "Fixture license and access decision.",
+            },
+            "raw_records": {
+                "discovered": len(records),
+                "accepted": len(records),
+                "excluded_by_design": 0,
+                "rejected_invalid": 0,
+                "reasons": {},
+            },
+            "semantic_review": {
+                "status": "passed",
+                "reviewer": "test reviewer",
+                "reviewed_at": "2026-08-12T12:00:00+03:00",
+                "selection_rule": "all test records",
+                "reviewed_cluster_ids": sorted({
+                    str(row.meta.get("source_cluster_id") or row.id)
+                    for row in records
+                }),
+                "reviewed_converted_corpus_sha256": observed[
+                    "converted_corpus_sha256"
+                ],
+                "notes": "Fixture mapping check only.",
+            },
+        }],
+    }
+    conformance = tmp_path / "source-conformance.json"
+    conformance.write_text(json.dumps(manifest, sort_keys=True), encoding="utf-8")
+    return [
+        "--source-config", str(source_config),
+        "--source-conformance", str(conformance),
+        "--source-conformance-sha256",
+        hashlib.sha256(conformance.read_bytes()).hexdigest(),
+    ]
 
 
 def test_real_corpus_limit_is_seeded_not_first_n(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -136,6 +213,7 @@ def test_real_corpus_runs_directly_and_records_source_identity(
 
     source = tmp_path / "fixture.jsonl"
     source.write_text("fixture\n", encoding="utf-8")
+    monkeypatch.setenv("URA_TEST_FIXTURE_SOURCE", str(source))
     monkeypatch.setattr(run_matrix, "get_converter", lambda _name: _Converter())
     monkeypatch.setattr(run_matrix, "_corpus_path", lambda _name: source)
     class _RefusingTarget(BaseTarget):
@@ -160,6 +238,7 @@ def test_real_corpus_runs_directly_and_records_source_identity(
     target_spec = "openai:fixture-model"
     assert run_matrix.main([
         "--api", target_spec, *_api_config_args(tmp_path, target_spec),
+        *_source_conformance_args(tmp_path, source, records),
         "--attackers", "replay",
         "--judges", "rules", "--corpora", "fixture", "--limit", "0",
         "--max-queries", "1", "--max-turns", "1", "--out", str(out),
@@ -294,6 +373,26 @@ def test_rig_check_runs_preflights_and_projects_calls_without_generation(
         ("rig-check-target", "replay", 2),
     ]
     assert target.calls == 0
+
+
+def test_rig_check_retains_source_receipt_with_eligibility_evidence(
+    tmp_path: Path,
+) -> None:
+    from experiments import rig_check
+
+    scratch = tmp_path / "scratch"
+    destination = tmp_path / "returned"
+    scratch.mkdir()
+    eligibility = scratch / "eligibility-a.eligibility.json"
+    receipt = scratch / "source-conformance-b.json"
+    eligibility.write_text('{"schema":"ura-eligibility-plan/1"}\n', encoding="utf-8")
+    receipt.write_text('{"schema":"ura-source-conformance/1"}\n', encoding="utf-8")
+
+    retained = rig_check._persist_eligibility_artifacts(scratch, destination)
+
+    assert [path.name for path in retained] == [eligibility.name, receipt.name]
+    assert (destination / eligibility.name).read_bytes() == eligibility.read_bytes()
+    assert (destination / receipt.name).read_bytes() == receipt.read_bytes()
 
 
 def test_rig_check_exercises_runner_manifest_admission_for_every_whole_cell(

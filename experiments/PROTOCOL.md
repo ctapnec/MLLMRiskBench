@@ -58,9 +58,31 @@ StrongREJECT, Video-SafetyBench, and VLSBench.
 `--source-config` maps a stable corpus-arm ID to one converter plus an
 environment-indirected path and optional source label/split. The selected
 configuration and digest enter provenance without the resolved absolute path.
-Every real source records exact revision/release, split, license/access status,
-items discovered/accepted/rejected, cluster construction, media conformance,
-and semantic spot-checks.
+Every selected real source records operator-observed revision/release, split,
+license/access status, items discovered/accepted/rejected, and a
+reviewer-attributed semantic spot-check in one compact
+`ura-source-conformance/1` receipt. After acquisition, copy the maintained
+source-instance example to the ignored operator-local registry, configure its
+paths/media roots, write only observed/reviewed facts into the receipt, and run
+`python -m experiments.source_conformance` with its exact byte SHA-256 and the
+exact operator-local source registry. The review lists unique reviewed cluster
+IDs and the complete converted-corpus digest inspected; the matrix rejects a
+missing cluster or stale digest and computes the selected registry digest itself.
+Before authoring those review fields, the operator runs the bounded one-arm,
+no-provider real-source dry-run in the runbook. Its manifest exposes the full
+pre-limit converted-corpus digest and complete cluster inventory; the reviewer
+compares the emitted selected cluster rows with the raw source. One receipt may
+cover the union of later arms, or both receipt environment variables are switched
+together per lane.
+Every non-synthetic measured `run_matrix` and no-call `rig_check` receives that
+same manifest and digest through the documented environment variables or CLI
+flags. A real-source `run_matrix --dry-run` may omit it only as a conversion
+diagnostic and is not admitted preflight or experiment evidence. Before target
+construction the driver rehashes declared source files and reuses the converted,
+cluster-rule/assignment, policy, metric and media evidence derived by the normal runtime. The
+receipt validates recorded acquisition/conversion conditions; it does not establish
+upstream authenticity. The operator review is not a legal determination, and
+the semantic spot-check is not scientific or evaluator validation.
 
 Conversion is necessary but insufficient for scored admission. A common harmful
 or benign endpoint requires compatible expected behavior and implemented judge

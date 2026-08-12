@@ -115,8 +115,11 @@ silently removed, caption-substituted, or counted merely from a tag.
 The runbook is the canonical from-zero procedure:
 
 1. download the project and create its Python environment;
-2. download the selected releases from the 19-converter inventory, configure
-   their independently labelled instances, and bind ordered media roots;
+2. download the selected releases from the 19-converter inventory, copy the
+   checked-in source-instance example to the ignored operator-local registry,
+   configure its independently labelled instances, bind ordered media roots,
+   and validate one compact content-addressed `ura-source-conformance/1`
+   receipt;
 3. set the target and judge credentials and review provider retention and
    corpus-license constraints;
 4. run `python -m experiments.rig_check` with the intended matrix arguments;
@@ -136,6 +139,17 @@ The runbook is the canonical from-zero procedure:
   approved, ordered `URA_MEDIA_ROOTS` list. Persisted media paths are portable
   `@media-root/<index>/<relative-path>` aliases; resume must rebind the same
   ordered roots and relative layouts.
+- Every non-synthetic measured run and every no-call `rig_check` preflight
+  requires the exact compact
+  `URA_SOURCE_CONFORMANCE_MANIFEST` and
+  `URA_SOURCE_CONFORMANCE_SHA256`. The selected arms must be admitted, their
+  operator reviews complete, and their declared source files unchanged. The
+  driver separately reuses its runtime converter, cluster, policy, metric, and
+  media evidence rather than asking the operator to duplicate those inventories
+  by hand. See
+  [`docs/SOURCE_CONFORMANCE.md`](docs/SOURCE_CONFORMANCE.md).
+  A real-source `run_matrix --dry-run` may omit the receipt only as a conversion
+  diagnostic; it is not admitted experiment or preflight evidence.
 - Release-pinned converters enforce their implemented official contracts. The
   StrongREJECT gate, for example, is the official CSV at commit
   `f7cad6c17e624e21d8df2278e918ae1dddb4cb56`, normalized SHA-256
@@ -157,10 +171,12 @@ The runbook is the canonical from-zero procedure:
   identified guard and explicit device; it must not certify its own output via
   the same guard instance used as the scoring judge.
 - Generic hosted targets are selected through `--api-config`; corpus-arm
-  instances are selected through `--source-config`. Full reusable-file hashes
-  are retained as acquisition provenance, while only the normalized selected
-  subset enters grid/run identity; editing an unused roster entry cannot repeat
-  paid cells. Secrets and literal local paths are excluded.
+  instances are selected through `--source-config`. Those reusable-file hashes
+  are **configuration-registry** provenance, not acquisition evidence. The
+  separate compact source-conformance receipt records operator-observed
+  release/file/review evidence;
+  only its normalized selected subset enters grid/run identity. Secrets and
+  literal local paths are excluded.
 - Optional local targets use `--local-config` keyed by the exact local spec,
   with exactly one immutable `revision` or `digest` and an explicit
   `modalities` list.

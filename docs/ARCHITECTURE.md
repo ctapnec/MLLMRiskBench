@@ -65,6 +65,20 @@ Local media is digest-checked beneath ordered approved roots and persisted as
 `@media-root/<index>/<relative-path>` so artifacts do not retain an author's
 absolute path.
 
+The registry is configuration provenance, not acquisition evidence. Every
+selected non-synthetic measured run and every no-call `rig_check` preflight also
+consumes one exact, compact
+`ura-source-conformance/1` receipt. Before target construction the driver
+rehashes its declared source files and derives the converted-corpus, cluster,
+policy, metric-mode, and media evidence already needed by the runtime. A
+selected arm that is not operator-admitted with an observed revision,
+approved access/license review, reconciled source counts, and a passed bounded
+semantic mapping check fails closed. These checks validate the supplied receipt
+and current conversion only; they do not establish upstream authenticity, automate
+a legal determination, or establish benchmark/evaluator validity.
+A real-source `run_matrix --dry-run` can inspect conversion without a receipt,
+but that diagnostic is not admitted preflight or experiment evidence.
+
 ## Multimodal admission
 
 For each grid, the planner intersects that grid's selected-corpus modality

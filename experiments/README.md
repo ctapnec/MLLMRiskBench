@@ -96,8 +96,9 @@ nonempty subset as complete.
 
 1. Install the project and offline dependencies; run the complete offline suite.
 2. Acquire every selected release and upstream project at the recorded revision;
-   configure `--source-config`, `URA_MEDIA_ROOTS`, and isolated native
-   environments.
+   copy and configure the operator-local `--source-config`, bind
+   `URA_MEDIA_ROOTS`, then complete and validate the compact content-addressed
+   `ura-source-conformance/1` receipt and configure isolated native environments.
 3. Configure exact hosted/local targets and separate scoring/defense guards.
 4. Run `python -m experiments.rig_check` for every intended lane and review its
    source-policy counts and call projections.
@@ -116,6 +117,7 @@ Core CLIs:
 
 ```bash
 python -m experiments.rig_check --help
+python -m experiments.source_conformance --help
 python experiments/run_matrix.py --help
 python -m experiments.native_import --help
 python -m experiments.suite_summary --help

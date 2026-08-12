@@ -98,6 +98,17 @@ The value is resolved only at runtime and is not copied into result artifacts.
 rewrite, or validate a mixed physical file. Point every environment variable at
 the matching official file/directory.
 
+The registry hash identifies only which logical mapping was requested. It is not a
+release-acquisition attestation. After copying this example to the ignored
+`experiments/source-instances.json` and configuring all selected paths, complete
+and validate the separate compact `ura-source-conformance/1` receipt described in
+[`docs/SOURCE_CONFORMANCE.md`](../../docs/SOURCE_CONFORMANCE.md), then expose its
+exact path and byte digest as `URA_SOURCE_CONFORMANCE_MANIFEST` and
+`URA_SOURCE_CONFORMANCE_SHA256`. Any selected real arm that remains pending,
+blocked, file-mismatched, or without a passed reviewer-attributed mapping check
+is rejected before a target is constructed. The receipt is evidence supplied by
+the operator; it does not establish upstream authenticity or a legal determination.
+
 The registry covers all 19 converters and keeps physically or semantically
 distinct source instances separate:
 

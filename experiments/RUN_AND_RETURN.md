@@ -56,12 +56,12 @@ two declared subparts; RQ5 is judge validity, not the adaptive lane:
 
 | Question | Execution/analysis route | Required evidence |
 | --- | --- | --- |
-| RQ1 execution conformance | §§7--14 | requested-cell eligibility/`N/A`, modality plan/result, complete content-bound cells |
-| RQ2 matched served-model conditions | focal grids and §16 paired/figure commands | matched cluster support/effects plus exact realized identities |
-| RQ3 portfolio breadth/heterogeneity | 39 converter arms, nine native projects, §16 suite summary | disposition-complete family inventory without false pooling |
-| RQ4a defense | §13 guarded/unguarded same-base design | separate harmful and benign paired effects |
-| RQ4b adaptivity/native execution | §12 Crescendo/transfer and §14 native runtimes | fixed-horizon conversation, exact-transfer, or source task/oracle evidence |
-| RQ5 judge validity | §§15--16 | eligible common-response human labels, adjudication, decision coverage and cluster-aware agreement/calibration |
+| RQ1 execution conformance | sections 7-14 | requested-cell eligibility/`N/A`, modality plan/result, complete content-bound cells |
+| RQ2 matched served-model conditions | focal grids and section 16 paired/figure commands | matched cluster support/effects plus exact realized identities |
+| RQ3 portfolio breadth/heterogeneity | 39 converter arms, nine native projects, section 16 suite summary | disposition-complete family inventory without false pooling |
+| RQ4a defense | section 13 guarded/unguarded same-base design | separate harmful and benign paired effects |
+| RQ4b adaptivity/native execution | section 12 Crescendo/transfer and section 14 native runtimes | fixed-horizon conversation, exact-transfer, or source task/oracle evidence |
+| RQ5 judge validity | sections 15-16 | eligible common-response human labels, adjudication, decision coverage and cluster-aware agreement/calibration |
 
 The cross-framework program ontology is below. `suite_summary` emits the families
 that currently have implemented crosswalks; a named but unimplemented family is
@@ -135,9 +135,16 @@ in Git.
 
 The commands below use exact maintained snapshots verified on 12 August 2026.
 The operator must still review each repository, access condition, and license and
-record the accepted commits in `runs/thesis/RUNNOTE.md`. A moving branch name is
-not a research identity. If a later snapshot is deliberately substituted, replace
-the corresponding full `REF_*` value and record why before running that lane.
+record the decision in the compact source receipt described in section 4.1;
+`runs/thesis/RUNNOTE.md` retains supplemental context. Create the evidence
+location before acquisition. A moving branch name is not a research identity.
+If a later snapshot is deliberately substituted, replace the corresponding full
+`REF_*` value and record why before running that lane.
+
+```bash
+mkdir -p runs/thesis
+test -e runs/thesis/RUNNOTE.md || printf '# URA thesis run note\n' > runs/thesis/RUNNOTE.md
+```
 
 ### 3.1 Git-hosted releases
 
@@ -210,7 +217,9 @@ checkout. GPTGeoChat's Git repository contains evaluation code but not the 1.43
 GB human dataset; download `human.zip` from the official
 [`GPTGeoChat` README](https://github.com/ethanm88/GPTGeoChat#main-datasets-)
 and extract it so each selected split contains sibling `annotations/` and
-`images/` directories.
+`images/` directories. Retain each downloaded archive until its exact bytes and
+SHA-256 have been entered in the source receipt; the code checkout revision
+alone does not identify these separately distributed bytes.
 
 ### 3.2 Hugging Face releases and large media
 
@@ -252,6 +261,10 @@ mkdir -p "$URA_CORPORA/Video-SafetyBench/videos"
 tar -xzf "$URA_CORPORA/Video-SafetyBench/video.tar.gz" \
   -C "$URA_CORPORA/Video-SafetyBench/videos"
 ```
+
+Retain `video.tar.gz` as declared file evidence in the source receipt. The
+converted media inventory separately binds every selected extracted video; an
+archive name or extraction command alone is not content identity.
 
 The URA JALMBench converter consumes an audio-file manifest, not embedded Parquet
 bytes. Export the official Parquet release once; the destination must not exist:
@@ -387,6 +400,122 @@ order unchanged when resuming or relocating a run.
 ```bash
 export URA_MEDIA_ROOTS="$URA_CORPORA/MM-SafetyBench/data/imgs:$URA_CORPORA/MOSSBench:$URA_CORPORA/JailBreakV-28K:$URA_CORPORA/GPTGeoChat:$URA_CORPORA/HarmBench:$URA_CORPORA/VLSBench-export:$URA_CORPORA/SIUO/data:$URA_CORPORA/FigStep/data:$URA_CORPORA/MLLMGuard:$URA_CORPORA/JALMBench-export:$URA_CORPORA/Video-SafetyBench"
 ```
+
+### 4.1 Validate the compact source receipt
+
+Only now, after acquisition and after the exact operator-local registry and path
+bindings exist, derive the converter-owned review bindings and then write the
+source receipt. The checked-in
+`experiments/rig/source-instances.example.json` is a template; the exact file
+used by the commands below is the ignored local copy
+`experiments/source-instances.json`. Do not calculate a receipt against the
+template and then change the local registry.
+
+For each selected real arm, use a fresh one-arm observation directory. This
+bounded diagnostic selects one unique source cluster (retaining all sibling rows
+in that cluster), uses `MockTarget` and the offline mock-LLM fallback, and makes
+no provider call. It intentionally runs before a receipt exists:
+
+```bash
+export REVIEW_ARM='strongreject_official'  # repeat for each selected real arm
+export REVIEW_OUT="runs/thesis/source-review-observation/$REVIEW_ARM"
+test ! -e "$REVIEW_OUT"
+
+python -m experiments.run_matrix --dry-run \
+  --corpora "$REVIEW_ARM" \
+  --source-config experiments/source-instances.json \
+  --attackers replay --judges rules,llm --judge-model mock \
+  --limit 1 --sample-seed 0 --seeds 0 \
+  --max-queries 1 --max-turns 1 \
+  --out "$REVIEW_OUT"
+
+mapfile -t REVIEW_MANIFESTS < <(
+  find "$REVIEW_OUT" -maxdepth 1 -type f -name '*.manifest.json' -print
+)
+test "${#REVIEW_MANIFESTS[@]}" -eq 1
+export REVIEW_MANIFEST="${REVIEW_MANIFESTS[0]}"
+python - "$REVIEW_MANIFEST" <<'PY'
+import json
+import sys
+
+with open(sys.argv[1], encoding="utf-8") as stream:
+    audit = json.load(stream)["config"]["run"]["sampling_audit"]
+fields = (
+    "full_converted_corpus_sha256",
+    "total_cluster_ids",
+    "selected_cluster_ids",
+)
+print(json.dumps({field: audit[field] for field in fields}, indent=2))
+PY
+```
+
+The exact emitted observation files are
+`<arm>__mock__replay__<run_id>.manifest.json` and the corresponding
+`<arm>__mock__replay__<run_id>.attempts.jsonl` under `REVIEW_OUT`. In the
+manifest, `config.run.sampling_audit.full_converted_corpus_sha256` is the complete
+pre-limit converted-corpus digest and `total_cluster_ids` is its complete unique
+cluster inventory; `selected_cluster_ids` identifies the bounded cluster emitted
+for review. Compare every emitted sibling row in the attempts file--including
+`params.source_cluster_id`, rendered input, expected behavior, source policy, and
+media references--against the retained raw source record. Only after that manual
+mapping review may the operator copy the complete digest into
+`reviewed_converted_corpus_sha256` and the actually reviewed unique IDs into
+`reviewed_cluster_ids`. Increase `--limit` only under a documented review rule;
+the digest remains for the full converted corpus, not merely the sample.
+
+The receipt is a compact operator record, not a workflow database. It may be
+scoped to the real arms selected for this command, but every selected real arm
+must appear and be `admitted`. Optional entries may record `blocked` or
+`not_selected` operator decisions; the full 39-arm disposition table instead
+joins the maintained registry/requested universe with receipts, eligibility, and
+results. An admitted arm includes the observed upstream revision, split,
+declared source-file hashes, license/access decision, reconciled raw-source counts, and a
+reviewer-attributed bounded semantic mapping check. Unknown facts remain
+`blocked` or `CANNOT-VERIFY`; they are never guessed. The normal matrix
+preflight already derives converted-corpus, cluster-rule/assignment, policy, metric-mode, and
+media evidence, so those runtime inventories are not copied into the receipt.
+The semantic review lists the unique `reviewed_cluster_ids` selected under its
+documented rule and records `reviewed_converted_corpus_sha256` for the complete
+converted corpus inspected by the reviewer. Matrix admission rejects a missing
+cluster or a stale review when that digest differs from the re-derived complete
+corpus.
+
+The exact compact JSON shape, including an explicitly non-empirical admitted-arm
+example and the optional blocked/not-selected rule, is maintained in
+[`docs/SOURCE_CONFORMANCE.md`](../docs/SOURCE_CONFORMANCE.md). Do not copy its
+placeholder values. The receipt omits a source-config digest; the CLI and matrix
+compute and retain the normalized digest of the selected registry entries.
+
+One receipt may cover the union of real arms selected by all later lanes; each
+matrix validates only its selected subset. Alternatively, retain one receipt per
+lane and switch both `URA_SOURCE_CONFORMANCE_MANIFEST` and
+`URA_SOURCE_CONFORMANCE_SHA256` to that lane's exact validated bytes before its
+`rig_check` and measured `run_matrix`. Never point the two variables at different
+receipts or reuse a digest after editing a receipt.
+
+Validate the exact bytes and every declared source file, then expose that same
+receipt to all later `rig_check` and `run_matrix` commands:
+
+```bash
+export SOURCE_CONFORMANCE='runs/thesis/source-conformance.json'
+export SOURCE_CONFORMANCE_SHA256="$(sha256sum "$SOURCE_CONFORMANCE" | awk '{print $1}')"
+python -m experiments.source_conformance \
+  --manifest "$SOURCE_CONFORMANCE" \
+  --sha256 "$SOURCE_CONFORMANCE_SHA256" \
+  --source-config experiments/source-instances.json
+
+export URA_SOURCE_CONFORMANCE_MANIFEST="$SOURCE_CONFORMANCE"
+export URA_SOURCE_CONFORMANCE_SHA256="$SOURCE_CONFORMANCE_SHA256"
+```
+
+All later non-synthetic commands consume the two environment variables
+automatically. The driver rejects a missing, blocked, registry-mismatched, or
+file-mismatched selected arm before constructing a target and retains the exact
+receipt in the return tree. This establishes only that the supplied operator
+record and current local bytes passed the implemented checks. It does not
+establish upstream authenticity, legal acceptability, benchmark validity,
+evaluator validity, or model performance. See
+[`docs/SOURCE_CONFORMANCE.md`](../docs/SOURCE_CONFORMANCE.md).
 
 ## 5. Configure the broad model roster
 
@@ -567,6 +696,67 @@ python -m experiments.run_matrix --dry-run \
   --max-queries 4 --max-turns 4 --out runs/thesis/diagnostics/dry
 python -m experiments.figures --synth --out runs/thesis/diagnostics/figure-check
 ```
+
+### 8.1 Explicit zero-human synthetic paths
+
+Two synthetic paths are available without a human audit, but neither produces a
+benchmark result or human-validity claim.
+
+**A. Fully synthetic/offline.** The `--dry-run --corpora synth` command above
+uses `MockTarget` plus automated rule and mock-LLM fixture paths. It makes no
+provider call and requires no source acquisition, source receipt, or human
+rating. Its artifacts demonstrate only schema, orchestration, persistence,
+budget, and automated-fixture behavior.
+
+If the real-source receipt environment variables from section 4.1 remain
+exported, a synthetic-only invocation ignores them with an explicit warning; it
+does not validate or import real-source evidence.
+
+**B. Optional synthetic/live transport.** This path sends synthetic fixtures to
+one already selected real target and uses the rule stage plus the offline mock
+LLM fallback so a rule abstention cannot make the diagnostic unreachable. It
+requires target-provider credentials and makes target-provider calls, but it
+requires no source receipt or human audit because no released source is used.
+The mock judge is admitted only when the selected corpus set is entirely
+synthetic; a real or mixed corpus still rejects `--judge-model mock`. Its mock
+labels are scientifically meaningless. For a bounded text-only diagnostic:
+
+```bash
+export TARGET='<one-exact-live-target-spec>'
+export TARGET_LABEL='<short-logical-label>'
+
+python -m experiments.run_matrix \
+  --api "$TARGET" --api-config experiments/api-targets.json \
+  --attackers replay --judges rules,llm --judge-model mock \
+  --corpora synth --limit 1 --sample-seed 0 --seeds 0 \
+  --max-queries 1 --max-turns 1 \
+  --max-total-target-calls 1 --max-total-judge-calls 1 \
+  --max-total-http-attempts 4 --deadline-seconds 900 \
+  --out "runs/thesis/diagnostics/synth-live/$TARGET_LABEL/text"
+```
+
+For a target already declared and live-attested for text+image, `--limit 2`
+adds the first image-bearing fixture while retaining a two-call ceiling:
+
+```bash
+python -m experiments.run_matrix \
+  --api "$TARGET" --api-config experiments/api-targets.json \
+  --attackers replay --judges rules,llm --judge-model mock \
+  --corpora synth --limit 2 --sample-seed 0 --seeds 0 \
+  --max-queries 1 --max-turns 1 \
+  --max-total-target-calls 2 --max-total-judge-calls 2 \
+  --max-total-http-attempts 8 --deadline-seconds 900 \
+  --out "runs/thesis/diagnostics/synth-live/$TARGET_LABEL/text-image"
+```
+
+The synthetic image is a verified one-pixel, response-only transport fixture;
+it has no image-safety semantics. Synthetic tool calls are inert recorded
+constructs and are never executed. There is no synthetic audio or video
+fixture. Report this path only as a live-transport/automation diagnostic and
+exclude it from benchmark estimates, model comparisons, human-validity claims,
+and thesis results. Any later real-source run still requires the compact receipt
+and its human operator license/access and semantic review described in
+[section 4.1](#41-validate-the-compact-source-receipt).
 
 Then run one real bounded transport check per claimed physical modality for each
 exact hosted model. This is the only way to catch account visibility and request
@@ -1365,12 +1555,15 @@ realized, and the durable ledgers reconcile with provider usage. Resume a stoppe
 lane by rerunning its identical command. Use `--reset-open-circuits` only after
 correcting and documenting the provider or judge failure that opened the circuit.
 
-Create `runs/thesis/RUNNOTE.md` and record:
+Complete the already-created `runs/thesis/RUNNOTE.md` and record:
 
 - UTC start/end, host, OS, Python, CUDA, driver, and both GPU identities;
 - `git rev-parse HEAD` and `git status --short` for URA and every upstream checkout;
 - source/model revisions, source file hashes, exact commands, lane ceilings, and
   non-secret endpoint routes;
+- the validated compact source-receipt file/SHA-256,
+  admitted/blocked/not-selected arm counts, declared-file rehash result, and any
+  unresolved operator-review caveat;
 - exact requested and resolved model IDs, account region/tier, and modality probe
   outcomes;
 - package inventories for URA and every native environment;
@@ -1385,6 +1578,8 @@ Capture the URA environment and harness identity:
 python -m pip list --format=json > runs/thesis/environment-packages.json
 git rev-parse HEAD > runs/thesis/harness-commit.txt
 git status --short > runs/thesis/harness-status.txt
+test "$(sha256sum "$URA_SOURCE_CONFORMANCE_MANIFEST" | awk '{print $1}')" = \
+  "$URA_SOURCE_CONFORMANCE_SHA256"
 ```
 
 Before return, re-run every canonical native validation from the complete
@@ -1393,7 +1588,9 @@ summary into a new output name if the existing file already exists. Verify that
 the tree contains grid descriptors, manifests, attempts, responses, judgments,
 shadow trails, checkpoints, completion/error records, aggregates, modality
 coverage, call ledgers, native raw artifacts and canonical envelopes, human-audit
-files, analyses, figures, and the run note.
+files, analyses, figures, the exact retained `source-conformance-*.json`, and the
+run note. The source releases themselves remain outside the return package unless
+the recipient is licensed and explicitly authorized.
 
 ```bash
 tar -czf ura-thesis-return.tgz runs/thesis

@@ -1,4 +1,4 @@
-"""Run every whole execution cell's no-call plan and retain its eligibility ledger."""
+"""Run every whole-cell no-call plan and retain its preflight evidence."""
 from __future__ import annotations
 
 import json
@@ -25,9 +25,12 @@ def _requested_output(arguments: list[str]) -> Path:
 
 
 def _persist_eligibility_artifacts(scratch: Path, destination: Path) -> list[Path]:
-    """Copy only content-addressed planning ledgers out of temporary preflight."""
+    """Retain content-addressed planning and source-conformance evidence."""
 
-    sources = sorted(scratch.glob("eligibility-*.eligibility.json"))
+    sources = sorted({
+        *scratch.glob("eligibility-*.eligibility.json"),
+        *scratch.glob("source-conformance-*.json"),
+    })
     if not sources:
         return []
     if destination.is_symlink():
@@ -39,10 +42,12 @@ def _persist_eligibility_artifacts(scratch: Path, destination: Path) -> list[Pat
         target = destination / source.name
         if target.exists():
             if not target.is_file() or target.is_symlink():
-                raise ValueError(f"eligibility destination is not a regular file: {target}")
+                raise ValueError(
+                    f"preflight-evidence destination is not a regular file: {target}"
+                )
             if target.read_bytes() != payload:
                 raise ValueError(
-                    f"content-addressed eligibility artifact collision: {target}"
+                    f"content-addressed preflight-evidence collision: {target}"
                 )
         else:
             with target.open("xb") as handle:
@@ -71,7 +76,12 @@ def main(argv: list[str] | None = None) -> int:
         except (OSError, ValueError) as exc:
             print(f"rig-check eligibility persistence failed: {exc}", file=sys.stderr)
             return 1
-        if result == 0 and not copied:
+        eligibility = [
+            path for path in copied
+            if path.name.startswith("eligibility-")
+            and path.name.endswith(".eligibility.json")
+        ]
+        if result == 0 and not eligibility:
             print(
                 "rig-check passed without emitting the required eligibility artifact",
                 file=sys.stderr,
