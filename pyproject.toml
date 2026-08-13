@@ -39,6 +39,10 @@ guardrail = [
   "transformers>=4.44,<6",
   "accelerate>=0.34,<2",
 ]
+synthetic = [
+  "numpy>=1.26,<3",
+  "scikit-learn>=1.4,<2",
+]
 giskard-v2 = ["giskard[llm]==2.19.2"]
 
 [project.scripts]

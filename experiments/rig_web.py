@@ -293,6 +293,20 @@ def _commands() -> dict[str, Command]:
             ),
         ),
         Command(
+            "syn_compat", "experiments.syn_compat",
+            "Synthetic compatibility corpus: generate/check/evaluate (rule-fidelity only)",
+            (
+                CommandParam("--generate", "flag"),
+                CommandParam("--check", "flag"),
+                CommandParam("--evaluate", "flag"),
+                CommandParam("--cases", "path"),
+                CommandParam("--metadata", "path"),
+                CommandParam("--out", "path"),
+                CommandParam("--seed", "int"),
+                CommandParam("--perturbations-per-template", "int"),
+            ),
+        ),
+        Command(
             "webui_selftest", "experiments.rig_web",
             "UI diagnostic only: sleep briefly and exit",
             (

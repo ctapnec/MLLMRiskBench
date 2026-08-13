@@ -177,6 +177,7 @@ python -m experiments.native_import --help
 python -m experiments.suite_summary --help
 python -m experiments.level2_report --help
 python -m experiments.rig_web --help
+python -m experiments.syn_compat --help
 python -m experiments.paired_compare --help
 python -m experiments.judge_sensitivity --help
 python -m experiments.kappa --help
