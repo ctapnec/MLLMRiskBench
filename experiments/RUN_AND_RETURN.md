@@ -276,6 +276,14 @@ Set every `REF_HF_*` variable to the full dataset repository commit shown by the
 operator's reviewed release. Gated sources require `HF_TOKEN` from a secret
 manager. The commands below use only official repositories.
 
+`Carol0110/MLLMGuard` is token-gated and `BAAI/Video-SafetyBench` is
+approval-gated: its download fails with an access-denied error until the
+operator's Hugging Face account has requested and been granted access on the
+dataset page. Holding and accepting such access terms is an operator
+decision; record it in the source receipt. [Access to
+`BAAI/Video-SafetyBench` was requested and granted for this campaign's
+account on 13 August 2026; recorded in ledger Section 11.27.]
+
 ```bash
 export REF_HF_AGENTHARM=e23b3fe60a0da9037314b88e5ee3a0c054970dad
 export REF_HF_JBB=886acc352a31533ffbcf4ef22c744658688086fc
@@ -702,6 +710,40 @@ confirmed.
 
 Every funded row remains subject to the section 8 gates: a lane that fails
 its attestation probe or canary is removed, never substituted.
+
+### 5.2 Budget-bounded lane sampling (operator decision, 13 August 2026)
+
+Frontier hosted conditions (the Fable and Sol focal pair above all) would
+consume the prepaid budgets far too quickly at full corpus size, so the
+campaign runs two pre-registered population tiers:
+
+- Local lanes run the full converted corpora: target calls cost only local
+  GPU time.
+- Hosted API lanes run a bounded cluster subsample of each corpus, fixed
+  prospectively by `--limit` and a recorded `--sample-seed` before any
+  outcome is inspected. The sampling audit in every manifest retains the
+  full-corpus digest, the complete cluster inventory, and the exact
+  selected clusters, so the subsample is reproducible and reviewable.
+- Comparability: with identical corpus, `--limit`, and `--sample-seed`,
+  every hosted condition receives the identical cluster subset. A
+  local-versus-hosted comparison restricts to the intersection of their
+  cluster sets, which is exactly that pre-registered subset. Pooled rates
+  across the two population tiers remain forbidden - different
+  denominators; the compatibility rules already refuse them. The
+  full-corpus local lanes double as an internal check of the design: on a
+  local model, the subset estimate can be compared with the full-corpus
+  estimate to quantify the subsampling error empirically.
+- Judge budget: the hosted Haiku judge is metered on every judged response
+  regardless of whether the target is local, so full-corpus local lanes
+  cannot default to hosted LLM judging. Full local corpora score through
+  the deterministic rules stage; the hosted LLM-judge stage runs on the
+  pre-registered common subset (identical to the hosted lanes) unless
+  post-canary projections show budget for more. Rules-only and cascade
+  evaluator modes are distinct compatibility keys and are never pooled.
+- Exact per-lane limits are operator decisions taken after the section 9.1
+  diagnostic canaries from their cost projections and recorded with the
+  approved caps; audio and video remain hosted-only and already bounded
+  (section 10.3).
 
 ## 6. Configure scoring and optional defense guards
 
