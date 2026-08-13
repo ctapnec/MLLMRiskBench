@@ -75,6 +75,8 @@ _MATRIX_PARAMS = (
     CommandParam("--defense-guardrail-revision", "str"),
     CommandParam("--defense-guardrail-device", "str"),
     CommandParam("--group", "str"),
+    CommandParam("--attacker-config", "path"),
+    CommandParam("--reset-open-circuits", "flag"),
     CommandParam("--source-config", "path"),
     CommandParam("--api-config", "path"),
     CommandParam("--local-config", "path"),
@@ -206,6 +208,8 @@ def _commands() -> dict[str, Command]:
             (
                 CommandParam("--synth", "flag"),
                 CommandParam("--results", "path"),
+                CommandParam("--left-model", "str"),
+                CommandParam("--right-model", "str"),
                 CommandParam("--human-audit", "path"),
                 CommandParam("--human-audit-sha256", "str"),
                 CommandParam("--strongreject-corpus", "str"),
@@ -289,6 +293,7 @@ def _commands() -> dict[str, Command]:
             "Validate and canonicalize a native artifact family",
             (
                 CommandParam("--config", "path"),
+                CommandParam("--validate", "path"),
                 *common_out,
             ),
         ),
@@ -310,7 +315,7 @@ def _commands() -> dict[str, Command]:
             "webui_selftest", "experiments.rig_web",
             "UI diagnostic only: sleep briefly and exit",
             (
-                CommandParam("--selftest-sleep", "float"),
+                CommandParam("--selftest-sleep", "float", required=True),
             ),
         ),
     ]

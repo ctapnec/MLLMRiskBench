@@ -1078,6 +1078,9 @@ class Runner:
             policy_challenge_index = 0
             policy_challenge_horizon = 1
             turn_expected_behavior = dp.expected_behavior
+        planning_stratum_descriptor = datapoint_planning_stratum(
+            dp, validate_media_bytes=False
+        )
         params = {
             **attempt.params,
             "response_conditioned": response_conditioned,
@@ -1130,8 +1133,13 @@ class Runner:
             # Media bytes were admitted before delivery aliasing; the stamp
             # must not re-resolve original corpus paths here.
             "planning_stratum_sha256": planning_stratum_sha256(
-                datapoint_planning_stratum(dp, validate_media_bytes=False)
+                planning_stratum_descriptor
             ),
+            # Human-readable projection of the same descriptor so downstream
+            # tables can disclose execution-mode composition without guessing.
+            "planning_execution_mode": planning_stratum_descriptor[
+                "execution_mode"
+            ],
         }
         source_physical = set(dp.modalities) & {"image", "audio", "video"}
         delivered_physical = {
@@ -1325,6 +1333,7 @@ class Runner:
             ],
             "planning_source_policy": attempt.params["planning_source_policy"],
             "planning_stratum_sha256": attempt.params["planning_stratum_sha256"],
+            "planning_execution_mode": attempt.params["planning_execution_mode"],
             "attack_family": datapoint.attack_family,
             "attacker": attempt.attacker,
             "strategy": attempt.strategy,

@@ -53,6 +53,10 @@ def test_command_construction_is_typed_and_allowlisted() -> None:
         build_argv("run_matrix", {"--dry-run": "--models evil"})
     # An empty form for a command still produces only the module invocation.
     assert build_argv("figures", {}) == [sys.executable, "-m", "experiments.figures"]
+    # The UI selftest can never construct a bare rig_web invocation (which
+    # would start a nested console server): its sleep value is required.
+    with pytest.raises(ValueError, match="requires --selftest-sleep"):
+        build_argv("webui_selftest", {})
     # The operator start sequence is reachable from the console: the receipt
     # scaffold/validation command is allowlisted.
     argv = build_argv("source_conformance", {

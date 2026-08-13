@@ -20,7 +20,11 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
-from ura.compat_bundles import evaluate_comparison, validate_case  # noqa: E402
+from ura.compat_bundles import (  # noqa: E402
+    CLAIM_SCOPE,
+    evaluate_comparison,
+    validate_case,
+)
 from ura.compat_linear import evaluate_linear_baselines  # noqa: E402
 from ura.compat_synth import (  # noqa: E402
     coverage_report,
@@ -87,6 +91,7 @@ def main(argv: list[str] | None = None) -> int:
                 for case in cases
             ))
             _write_new(args.metadata, json.dumps({
+                "claim_scope": CLAIM_SCOPE,
                 "seed": args.seed,
                 "perturbations_per_template": args.perturbations_per_template,
                 "n_templates": len(templates()),
@@ -98,6 +103,7 @@ def main(argv: list[str] | None = None) -> int:
             }, indent=2, sort_keys=True) + "\n")
             print(json.dumps({
                 "status": "generated",
+                "claim_scope": CLAIM_SCOPE,
                 "n_templates": len(templates()),
                 "n_cases": len(cases),
                 "cases": str(args.cases.resolve()),
@@ -110,10 +116,7 @@ def main(argv: list[str] | None = None) -> int:
             cases = _load_corpus(args.cases)
             report = coverage_report(cases)
             report["schema_version"] = "ura-syn-compat-coverage/1"
-            report["claim_scope"] = (
-                "rule coverage over a synthetic corpus only; not campaign "
-                "or empirical evidence"
-            )
+            report["claim_scope"] = CLAIM_SCOPE
             adversarial = hand_authored_adversarial()
             caught = sum(
                 evaluate_comparison(case)["label"] == intended

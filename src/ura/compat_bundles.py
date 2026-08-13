@@ -26,6 +26,14 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 COMPAT_BUNDLE_SCHEMA = "ura-compat-bundle/1"
 COMPAT_CASE_SCHEMA = "ura-compat-case/1"
 
+#: The one canonical claim boundary every output of this chain must carry
+#: (recorded operator decision, ledger Section 11.20).
+CLAIM_SCOPE = (
+    "rule fidelity on synthetic distributions only; no real-world validity, "
+    "benchmark generalization, model ranking or safety claim (SYN-003 "
+    "withdrawn; ledger Section 11.20)"
+)
+
 #: The critical incompatibility reason codes (ledger Section 8.1).
 REASON_POLICY = "policy_mismatch"
 REASON_POPULATION = "harmful_benign_population_mismatch"
@@ -203,13 +211,17 @@ def evaluate_comparison(case: ComparisonCase) -> dict[str, Any]:
             reasons.add(REASON_UNIT)
         if left.unit != right.unit:
             reasons.add(REASON_UNIT)
-        if (
-            left.execution_type == "live_conversation"
-            and right.execution_type == "live_conversation"
-        ):
-            if left.budget_horizon_turns is None or right.budget_horizon_turns is None:
+        if left.execution_type == right.execution_type:
+            if left.execution_type == "live_conversation" and (
+                left.budget_horizon_turns is None
+                or right.budget_horizon_turns is None
+            ):
+                # A conversation endpoint without a declared horizon cannot be
+                # admitted to a fixed-horizon comparison.
                 reasons.add(REASON_PROVENANCE)
             elif left.budget_horizon_turns != right.budget_horizon_turns:
+                # Any declared budget/horizon must match exactly, for every
+                # execution type (native campaigns included).
                 reasons.add(REASON_HORIZON)
         if left.endpoint_status != right.endpoint_status:
             reasons.add(REASON_NATIVE_PROXY)
@@ -231,7 +243,8 @@ def evaluate_comparison(case: ComparisonCase) -> dict[str, Any]:
         if left.judge_order != right.judge_order:
             reasons.add(REASON_JUDGE)
         if (
-            left.delivery_mode != right.delivery_mode
+            left.modality != right.modality
+            or left.delivery_mode != right.delivery_mode
             or left.evaluator_mode != right.evaluator_mode
         ):
             reasons.add(REASON_MEDIA_EVALUATOR)

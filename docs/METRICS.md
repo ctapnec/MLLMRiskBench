@@ -181,6 +181,9 @@ separately records every completed run and every run with a labelled row. All
 admitted cells must also share one exact ordered configured and realized judge
 identity; otherwise the validity analysis fails rather than pooling judges.
 
+The separate source-task classification audit frame covers R-Judge/GPTGeoChat rows: whole-cluster export with the parser prediction, its validity flag and the source reference blinded; at least two independent raters answer the source task from the response text alone, and the analysis reports inter-rater agreement, adjudicated-human versus source-reference accuracy with a cluster bootstrap, human versus parser agreement, and the parser-valid fraction in `source_task_audit.json`. These are source-defined classification results, never common refusal/harmfulness evidence, and never calibrate the common judge cascade.
+
+
 ## Failure and missingness semantics
 
 The following are distinct states:

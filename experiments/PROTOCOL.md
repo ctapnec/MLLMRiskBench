@@ -37,7 +37,7 @@ not replaced with a nearby model. A failed/stale live attestation or silent
 identity drift is a missing/failed prerequisite, not a safe zero and not
 silently rewritten as structural incompatibility.
 
-Runner 2.10 operationalizes this distinction. One completed, bounded, non-dry
+Runner 2.11 operationalizes this distinction. One completed, bounded, non-dry
 `--attestation-probe` is converted without another provider call into a strict
 `ura-live-attestation/2` receipt. Each ordinary measured grid must supply the
 receipt's exact byte digest, the same operator-declared non-secret
@@ -173,6 +173,9 @@ over each model's observed survivors.
 
 Level 1 is materialized by `experiments.level1_evidence` as
 `ura-level1-evidence/2` JSON and a deterministic planning-stratum CSV.
+Level 2 tabulation is materialized by `experiments.level2_report` as
+deterministic `ura-level2-report/1` JSON/CSV/Markdown over exact
+compatibility keys, with native evidence in a separate original-scale table.
 `run_matrix` automatically writes the prospective whole-arm request universe
 before config/source materialization, and Level 1 discovers that evidence from
 the selected result roots and plan siblings. Typed early failures stay in that
@@ -243,7 +246,8 @@ are never pooled into one rate or ranking.
 8. Build Level-1 evidence from every final plan and every exact grid-bound live
    receipt in the selected measured runner cohort, including plan-only
    `N/A`/blocked requests and excluding preflight and probe trees. Then build the
-   no-pooling suite inventory; run paired
+   no-pooling suite inventory and the deterministic Level-2 compatible-family
+   tables; run paired
    effects, transfer, judge sensitivity, and the independently labelled human
    audit.
 9. Render measured focal figures only from completion-validated runs bound to
@@ -339,8 +343,13 @@ population, exact-input coverage, unmatched rows and cluster interval are always
 reported.
 
 The automated-label-blinded, currently model-visible human audit samples
-complete source clusters from common-metric-eligible response rows only;
-source-classification and native outputs need their own task-validity protocols.
+complete source clusters from common-metric-eligible response rows only.
+Source-classification rows have their own implemented, never-mixed source-task
+audit frame (`--prepare-source-task`/`--source-task-labels`): the automated
+parser prediction, its validity flag and the source reference are blinded, and
+the resulting `source_task_audit.json` is source-task classification evidence
+on the source's own scale that never enters common judge-validity calibration.
+Native outputs still need their own task-validity protocols.
 Model visibility is recorded as a potential expectation-bias limitation unless
 it is removed before export. At least two raters fluent in the evaluated
 language and with graduate-level study or equivalent relevant safety/moderation

@@ -20,7 +20,7 @@ from __future__ import annotations
 import hashlib
 from typing import Any, Mapping, Sequence
 
-from .compat_bundles import ComparisonCase, evaluate_comparison
+from .compat_bundles import CLAIM_SCOPE, ComparisonCase, evaluate_comparison
 
 _CLASSES = ("abstain", "compatible", "incompatible")
 
@@ -148,19 +148,27 @@ def split_cases(
     """Simultaneous template/benchmark-family/model-family holdout.
 
     Whole templates are held out (never perturbation rows of a train
-    template), and the holdout is grown until it contains every case of at
-    least one benchmark family and one model family.  Rendering is not used
-    anywhere in this corpus, so the renderer axis is structurally
-    not applicable and recorded as such.
+    template).  One benchmark family and one model family are held out
+    completely: any template whose cases touch the held family on either
+    bundle side moves to the test split.  Rendering is not used anywhere in
+    this corpus, so the renderer axis is structurally not applicable and
+    recorded as such.
     """
 
     if not 0 < held_out_fraction < 1:
         raise ValueError("held_out_fraction must be in (0, 1)")
-    template_families: dict[str, tuple[str, str]] = {}
+    template_families: dict[str, tuple[tuple[str, ...], tuple[str, ...]]] = {}
     for case in cases:
         meta = metadata[case.case_id]
         name = str(meta["template"])
-        pair = (str(meta["benchmark_family"]), str(meta["model_family"]))
+        # Family exposure counts BOTH bundles: a held-out family must not
+        # appear on either side of any training case.
+        pair = (
+            tuple(sorted({case.left.source, case.right.source})),
+            tuple(sorted({
+                case.left.requested_model, case.right.requested_model,
+            })),
+        )
         if template_families.setdefault(name, pair) != pair:
             raise ValueError(f"template {name!r} carries mixed family tags")
     template_names = sorted(template_families)
@@ -168,14 +176,18 @@ def split_cases(
     def family_templates(kind_index: int, family: str) -> set[str]:
         return {
             name for name, pair in template_families.items()
-            if pair[kind_index] == family
+            if family in pair[kind_index]
         }
 
     # Hold out one complete benchmark family and one complete model family
     # (chosen deterministically from the seed), then top up with whole
     # templates to reach the requested fraction.
-    benchmark_families = sorted({pair[0] for pair in template_families.values()})
-    model_families = sorted({pair[1] for pair in template_families.values()})
+    benchmark_families = sorted({
+        family for pair in template_families.values() for family in pair[0]
+    })
+    model_families = sorted({
+        family for pair in template_families.values() for family in pair[1]
+    })
     held_benchmark = min(
         benchmark_families, key=lambda name: _template_order_token(name, seed)
     )
@@ -324,15 +336,11 @@ def evaluate_linear_baselines(
     report: dict[str, Any] = {
         "schema_version": "ura-syn-compat-report/1",
         "label_source": "deterministic_rules_authoritative",
-        "claim_scope": (
-            "fidelity to the compatibility rules on synthetic held-out "
-            "templates only; no real-world validity, benchmark "
-            "generalization, model ranking or safety claim (SYN-003 "
-            "withdrawn by operator decision)"
-        ),
+        "claim_scope": CLAIM_SCOPE,
         "split": {
             "n_train": len(train),
             "n_test": len(test),
+            "train_classes": sorted(set(gold_train)),
             "held_out_templates": split["held_out_templates"],
             "held_out_benchmark_family": split["held_out_benchmark_family"],
             "held_out_model_family": split["held_out_model_family"],
@@ -365,12 +373,21 @@ def evaluate_linear_baselines(
         if hasattr(model, "predict_proba"):
             probabilities = model.predict_proba(matrix_test)
             classes = list(model.classes_)
-            gold_index = [classes.index(label) for label in gold_test]
+
+            def probability_of(row_index: int, label: str) -> float:
+                # A class absent from training (possible under whole-family
+                # holdout) has zero predicted probability by definition.
+                if label not in classes:
+                    return 0.0
+                return float(probabilities[row_index][classes.index(label)])
+
             brier = float(numpy.mean([
                 sum(
-                    (probabilities[i][j] - (1.0 if j == gold_index[i] else 0.0))
-                    ** 2
-                    for j in range(len(classes))
+                    (
+                        probability_of(i, label)
+                        - (1.0 if label == gold_test[i] else 0.0)
+                    ) ** 2
+                    for label in _CLASSES
                 )
                 for i in range(len(gold_test))
             ]))

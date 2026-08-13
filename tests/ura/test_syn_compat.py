@@ -8,7 +8,7 @@ from pathlib import Path
 import pytest
 
 from experiments import syn_compat
-from ura.compat_bundles import ALL_REASONS, evaluate_comparison
+from ura.compat_bundles import CLAIM_SCOPE, ALL_REASONS, evaluate_comparison
 from ura.compat_linear import (
     assert_feature_hygiene,
     featurize,
@@ -80,11 +80,14 @@ def test_split_holds_out_whole_templates_and_whole_families() -> None:
     }
     assert train_templates and test_templates
     assert not train_templates & test_templates
+    # Family holdout counts BOTH bundle sides of every training case.
     train_benchmarks = {
-        metadata[case.case_id]["benchmark_family"] for case in split["train"]
+        family for case in split["train"]
+        for family in (case.left.source, case.right.source)
     }
     train_models = {
-        metadata[case.case_id]["model_family"] for case in split["train"]
+        family for case in split["train"]
+        for family in (case.left.requested_model, case.right.requested_model)
     }
     assert split["held_out_benchmark_family"] not in train_benchmarks
     assert split["held_out_model_family"] not in train_models
@@ -167,3 +170,71 @@ def test_template_inventory_is_in_the_specified_pilot_range() -> None:
     assert 20 <= len(inventory) <= 50
     names = [entry["template"] for entry in inventory]
     assert len(names) == len(set(names))
+
+
+
+def test_modality_and_native_horizon_gates_fire() -> None:
+    from ura.compat_synth import _static_pooled
+    import random
+
+    rng = random.Random(21)
+    raw = _static_pooled(rng)
+    for side, modality in (("left", "image"), ("right", "video")):
+        raw[side].update({
+            "modality": modality,
+            "delivery_mode": "physical_bytes",
+            "evaluator_mode": "text_judges_with_source_reference_proxy",
+        })
+    from ura.compat_bundles import COMPAT_CASE_SCHEMA, validate_case
+
+    case = validate_case({
+        "schema": COMPAT_CASE_SCHEMA, "case_id": "case-modality", **raw,
+    })
+    verdict = evaluate_comparison(case)
+    assert verdict["label"] == "incompatible"
+    assert "media_transport_evaluator_mismatch" in verdict["reasons"]
+
+    raw = _static_pooled(rng)
+    for side, horizon in (("left", 4), ("right", 8)):
+        raw[side].update({
+            "execution_type": "native_campaign",
+            "evaluator_mode": "source_native_evaluator",
+            "endpoint_status": "native",
+            "budget_horizon_turns": horizon,
+        })
+    raw["left"]["budget_horizon_turns"] = 4
+    raw["right"]["budget_horizon_turns"] = 8
+    case = validate_case({
+        "schema": COMPAT_CASE_SCHEMA, "case_id": "case-native-horizon", **raw,
+    })
+    verdict = evaluate_comparison(case)
+    assert verdict["label"] == "incompatible"
+    assert "horizon_or_budget_mismatch" in verdict["reasons"]
+
+
+def test_every_output_mode_embeds_the_canonical_claim_scope(
+    tmp_path: Path,
+) -> None:
+    pytest.importorskip("sklearn")
+    cases_path = tmp_path / "cases.jsonl"
+    metadata_path = tmp_path / "meta.json"
+    assert syn_compat.main([
+        "--generate", "--cases", str(cases_path),
+        "--metadata", str(metadata_path),
+        "--seed", "6", "--perturbations-per-template", "3",
+    ]) == 0
+    sidecar = json.loads(metadata_path.read_text(encoding="utf-8"))
+    assert sidecar["claim_scope"] == CLAIM_SCOPE
+    assert syn_compat.main([
+        "--check", "--cases", str(cases_path),
+        "--out", str(tmp_path / "coverage.json"),
+    ]) == 0
+    coverage = json.loads((tmp_path / "coverage.json").read_text(encoding="utf-8"))
+    assert coverage["claim_scope"] == CLAIM_SCOPE
+    assert syn_compat.main([
+        "--evaluate", "--cases", str(cases_path),
+        "--metadata", str(metadata_path),
+        "--seed", "6", "--out", str(tmp_path / "report.json"),
+    ]) == 0
+    report = json.loads((tmp_path / "report.json").read_text(encoding="utf-8"))
+    assert report["claim_scope"] == CLAIM_SCOPE

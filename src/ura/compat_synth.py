@@ -304,6 +304,16 @@ def _mutate_evaluator(case, rng):
     return [REASON_MEDIA_EVALUATOR]
 
 
+def _mutate_modality(case, rng):
+    for side, modality in (("left", "image"), ("right", "video")):
+        case[side].update({
+            "modality": modality,
+            "delivery_mode": "physical_bytes",
+            "evaluator_mode": "text_judges_with_source_reference_proxy",
+        })
+    return [REASON_MEDIA_EVALUATOR]
+
+
 def _mutate_hash_absent(case, rng):
     case["left"]["source_policy_sha256"] = None
     case["right"]["source_policy_sha256"] = None
@@ -325,6 +335,7 @@ _MUTATIONS: dict[str, tuple[Callable[..., list[str]], str]] = {
     "polarity": (_mutate_polarity, "incompatible"),
     "support": (_mutate_support, "incompatible"),
     "evaluator": (_mutate_evaluator, "incompatible"),
+    "modality": (_mutate_modality, "incompatible"),
     "hash_absent": (_mutate_hash_absent, "abstain"),
 }
 

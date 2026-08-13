@@ -78,7 +78,7 @@ transport attestation before entering a measured cell. An inaccessible,
 silently aliased or stale route is blocked with a reason; structural capability
 incompatibility remains `N/A` rather than being counted as a failed experiment.
 
-Runner 2.10 makes that prerequisite machine-checked. A bounded non-dry
+Runner 2.11 makes that prerequisite machine-checked. A bounded non-dry
 `--attestation-probe` grid is converted by `experiments.live_attestation` into a
 content-addressed `ura-live-attestation/2` receipt. An ordinary measured grid
 must supply the exact receipt bytes and digest, the same operator-declared
@@ -314,7 +314,7 @@ Runner `RunManifest`; the URA revision that performed their import is retained
 in the return-package/importer context rather than relabelled as an upstream
 native field.
 
-Runner `ura-runner/2.10` writes unified schema `1.4`. Immutable planning/source
+Runner `ura-runner/2.11` writes unified schema `1.4`. Immutable planning/source
 stratum identity is stored separately from adaptive per-turn evaluation
 identity. Thus a Crescendo setup turn remains joined to its original planning
 stratum while receiving a typed `not_applicable` judgment and no judge call or

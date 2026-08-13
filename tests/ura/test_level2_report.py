@@ -6,6 +6,8 @@ import hashlib
 import json
 from pathlib import Path
 
+import pytest
+
 import experiments.run_matrix as run_matrix
 from experiments import level2_report
 from experiments import live_attestation as live_attestation_cli
@@ -277,3 +279,79 @@ def test_outputs_are_create_only(tmp_path: Path) -> None:
     assert (out / "l2.csv").read_text(encoding="utf-8") == "occupied"
     assert not (out / "l2.json").exists()
     assert not (out / "l2.md").exists()
+
+
+def test_survival_and_refinement_rows_export_distinctly(
+    tmp_path: Path, monkeypatch, project_revision_args,
+) -> None:
+    # Live crescendo cells emit kaplan_meier_survival rows whose group_by
+    # carries a survival_turn refinement key; each refined row must export as
+    # its own line instead of failing the grouping check or merging.
+    root = _measured_cohort(
+        tmp_path, monkeypatch, project_revision_args, "measured-crescendo",
+        extra_args=["--attackers", "crescendo", "--max-turns", "2",
+                    "--max-queries", "2"],
+    )
+    out = tmp_path / "out-crescendo"
+    assert level2_report.main(["--results", str(root), *_out_args(out)]) == 0
+    report = json.loads((out / "l2.json").read_text(encoding="utf-8"))
+    rows = report["common"]["estimates"]
+    survival = [r for r in rows if r["metric"] == "kaplan_meier_survival"]
+    assert survival, [r["metric"] for r in rows]
+    refinements = {r["group_refinements"] for r in survival}
+    assert all(ref for ref in refinements)
+    assert len(refinements) == len(survival)
+    for row in survival:
+        assert "survival_turn" in row["group_refinements"]
+        assert row["execution_modes"] == ["direct_prompt"]
+
+
+def test_coarser_grouping_fails_closed() -> None:
+    from experiments.level2_report import _estimate_rows
+
+    cell = {
+        "run_id": "run-x",
+        "model": "model-A",
+        "manifest": {"config": {"run": {
+            "corpus": "synth", "model_spec": "model-A", "defense": "none",
+        }}, "judges": ["rules"], "seeds": [0]},
+        "judgments": [],
+        "aggregate_results": [{
+            "metric": "ASR", "value": 1.0, "n": 1,
+            "group_by": {"model": "model-A"},
+            "provenance": {},
+        }],
+    }
+    with pytest.raises(ValueError, match="safe default aggregation"):
+        _estimate_rows(cell)
+
+
+def test_markdown_cells_escape_pipes() -> None:
+    from experiments.level2_report import _md_cell
+
+    assert _md_cell("a|b") == r"a\|b"
+    assert _md_cell("a\nb") == "a b"
+    assert _md_cell("back\\slash|x") == r"back\\slash\|x"
+
+
+def test_attestation_probe_roots_are_rejected_everywhere(
+    tmp_path: Path, monkeypatch, project_revision_args,
+) -> None:
+    import experiments.suite_summary as suite_summary
+    from experiments.figure_results import _load_cells
+    from experiments.human_audit import _validated_artifacts
+
+    _measured_cohort(tmp_path, monkeypatch, project_revision_args, "measured-a")
+    probe_root = tmp_path / "probe"
+    assert probe_root.is_dir()
+
+    out = tmp_path / "probe-rejected"
+    assert level2_report.main(["--results", str(probe_root), *_out_args(out)]) == 1
+    assert not (out / "l2.json").exists()
+    assert suite_summary.main([
+        "--results", str(probe_root), "--out", str(tmp_path / "suite.json"),
+    ]) == 1
+    with pytest.raises(ValueError, match="probe is not measured"):
+        _load_cells(probe_root)
+    with pytest.raises(ValueError, match="probe is not measured"):
+        _validated_artifacts(probe_root)

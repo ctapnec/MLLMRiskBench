@@ -398,6 +398,14 @@ def _completed_cell(path: Path) -> dict[str, Any]:
         raise ValueError(
             f"diagnostic canary is not measured postprocessing evidence: {manifest_path}"
         )
+    if (
+        run_config.get("execution_purpose") == "attestation_probe"
+        or run_config.get("attestation_probe") is True
+    ):
+        raise ValueError(
+            f"live-attestation probe is not measured postprocessing evidence: "
+            f"{manifest_path}"
+        )
     resolved = {
         role: _artifact_path(path.parent, artifacts[role], marker=complete_path, role=role)
         for role in sorted(required)
@@ -640,6 +648,13 @@ def _validate_grid_scope(
         request = grid["request"]
         if request.get("execution_purpose") == "diagnostic_canary":
             raise ValueError(f"diagnostic canary is not measured evidence: {path}")
+        if (
+            request.get("execution_purpose") == "attestation_probe"
+            or request.get("attestation_probe") is True
+        ):
+            raise ValueError(
+                f"live-attestation probe is not measured evidence: {path}"
+            )
         models = request.get("models")
         corpora = request.get("corpora")
         attackers = request.get("attackers")

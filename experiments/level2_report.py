@@ -103,6 +103,7 @@ _CSV_FIELDS = (
     "cluster_unit",
     "population",
     "horizon_turns",
+    "group_refinements",
     "execution_modes",
     "judgments_completed",
     "judgments_evaluable",
@@ -162,9 +163,14 @@ def _coverage_by_bucket(cell: dict[str, Any]) -> dict[str, dict[str, Any]]:
         record[f"judgments_{state}"] += 1
         if state != "non_evaluable":
             record["judgments_evaluable"] += 1
-        record["execution_modes"].add(
-            str(raw.get("execution_mode") or "harness_response_evaluation")
-        )
+        planning_execution_mode = raw.get("planning_execution_mode")
+        if not isinstance(planning_execution_mode, str) or not planning_execution_mode:
+            raise ValueError(
+                "completed judgment lacks planning_execution_mode; regenerate "
+                "the cell with the current Runner instead of loading older "
+                "artifacts"
+            )
+        record["execution_modes"].add(planning_execution_mode)
         policy = raw.get("source_policy")
         if isinstance(policy, dict) and policy.get("sha256"):
             record["policy_sha256"].add(str(policy["sha256"]))
@@ -200,11 +206,15 @@ def _estimate_rows(cell: dict[str, Any]) -> list[dict[str, Any]]:
             raise ValueError(
                 f"aggregate result lacks its grouping identity: {cell['run_id']}"
             )
-        if set(group_by) != _REQUIRED_GROUP_KEYS:
+        if not _REQUIRED_GROUP_KEYS.issubset(group_by):
             raise ValueError(
                 "level-2 export requires the safe default aggregation "
                 f"grouping; got {sorted(group_by)} in {cell['run_id']}"
             )
+        refinements = {
+            key: group_by[key]
+            for key in sorted(set(group_by) - _REQUIRED_GROUP_KEYS)
+        }
         bucket = _bucket_key(group_by)
         bucket_coverage = coverage.get(bucket)
         if bucket_coverage is None:
@@ -259,6 +269,10 @@ def _estimate_rows(cell: dict[str, Any]) -> list[dict[str, Any]]:
             "cluster_unit": provenance.get("cluster_unit"),
             "population": provenance.get("population"),
             "horizon_turns": provenance.get("horizon_turns"),
+            "group_refinements": (
+                json.dumps(refinements, sort_keys=True, separators=(",", ":"))
+                if refinements else ""
+            ),
             "execution_modes": sorted(bucket_coverage["execution_modes"]),
             "judgments_completed": bucket_coverage["judgments_completed"],
             "judgments_evaluable": bucket_coverage["judgments_evaluable"],
@@ -309,6 +323,7 @@ def build_level2_report(
             )},
             sort_keys=True,
         ),
+        row["metric"], row["group_refinements"],
     ))
     cell_bindings.sort(key=lambda item: item["run_id"])
     body = {
@@ -364,6 +379,13 @@ def _csv_text(estimates: list[dict[str, Any]]) -> str:
     return buffer.getvalue()
 
 
+def _md_cell(value: Any) -> str:
+    """Escape a value for a GFM pipe-table cell."""
+
+    escaped = str(value).replace("\\", "\\\\").replace("|", "\\|")
+    return escaped.replace("\n", " ")
+
+
 def _markdown_text(report: dict[str, Any]) -> str:
     lines = [
         "# Level-2 compatible-family tables",
@@ -395,11 +417,15 @@ def _markdown_text(report: dict[str, Any]) -> str:
                 else "-"
             )
             lines.append(
-                f"| {row['source']} | {row['metric']} | "
-                f"{row['endpoint_status']} | {row['polarity']} | "
-                f"{row['model_spec']} | {row['attacker']} | {row['defense']} "
-                f"| {row['effective_modality']} | {row['population']} | "
-                f"{row['value']} | {interval} | {row['n_records']} | "
+                f"| {_md_cell(row['source'])} | {_md_cell(row['metric'])} | "
+                f"{_md_cell(row['endpoint_status'])} | "
+                f"{_md_cell(row['polarity'])} | "
+                f"{_md_cell(row['model_spec'])} | {_md_cell(row['attacker'])} "
+                f"| {_md_cell(row['defense'])} "
+                f"| {_md_cell(row['effective_modality'])} | "
+                f"{_md_cell(row['population'])} | "
+                f"{_md_cell(row['value'])} | {_md_cell(interval)} | "
+                f"{row['n_records']} | "
                 f"{row['n_clusters']} | "
                 f"{row['judgments_decided']}/{row['judgments_abstained']} |"
             )
@@ -420,9 +446,11 @@ def _markdown_text(report: dict[str, Any]) -> str:
                     stratum["native_outcome_counts"], sort_keys=True
                 )
                 lines.append(
-                    f"| {run['engine']} | {run['native_run_id']} | "
-                    f"{stratum['target_model']} | {stratum['n_cases']} | "
-                    f"`{outcomes}` |"
+                    f"| {_md_cell(run['engine'])} | "
+                    f"{_md_cell(run['native_run_id'])} | "
+                    f"{_md_cell(stratum['target_model'])} | "
+                    f"{stratum['n_cases']} | "
+                    f"`{_md_cell(outcomes)}` |"
                 )
     lines.append("")
     return "\n".join(lines)

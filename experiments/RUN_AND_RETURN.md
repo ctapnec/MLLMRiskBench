@@ -14,6 +14,9 @@ Every `python -m experiments.*` command below can equivalently be started
 from the optional rig console (section 18): the console builds the identical
 argument vector from a typed allowlist, so admission gates and artifacts do
 not differ between the two interfaces, and the CLI remains authoritative.
+One exception: invocations that repeat a flag (multiple `--live-attestation`
+receipts, multiple `--arm`/`--observation`, `--native`/`--eligibility` input
+loops) remain CLI-only; the console form passes each flag at most once.
 
 The program is deliberately lane-based. A model is tested on every physical
 modality that both its exact adapter condition and an acquired source support,
@@ -179,6 +182,10 @@ acquisition or calls. Do not put secrets, harmful artifacts, or restricted corpo
 in Git.
 
 ## 3. Acquire all nineteen converter sources
+
+*Console equivalent: the section 3.2 export commands are also launchable as
+the `export_jalmbench` and `export_vlsbench` form(s) in the rig console
+(section 18); identical argument vectors, gates and artifacts.*
 
 The commands below use exact maintained snapshots verified on 12 August 2026.
 The operator must still review each repository, access condition, and license and
@@ -364,7 +371,7 @@ reason to edit the data until it passes.
 
 ## 4. Configure source arms and media
 
-*Console equivalent: this section's commands are also launchable as the `source_conformance`, `export_jalmbench` and `export_vlsbench` form(s) in the rig console (section 18); identical argument vectors, gates and artifacts.*
+*Console equivalent: this section's commands are also launchable as the `source_conformance` and `run_matrix` (bounded one-arm observation dry run) form(s) in the rig console (section 18); identical argument vectors, gates and artifacts.*
 
 Use the checked-in registry so the runbook and converter inventory cannot drift.
 The copy is an operator-local input and may add a new reviewed release under a
@@ -757,7 +764,7 @@ remain separate commands so vLLM releases its target weights between processes.
 
 ## 8. Offline checks and bounded live modality attestations
 
-*Console equivalent: this section's commands are also launchable as the `run_matrix`, `rig_check`, `live_attestation` and `figures` form(s) in the rig console (section 18); identical argument vectors, gates and artifacts.*
+*Console equivalent: this section's commands are also launchable as the `run_matrix`, `rig_check`, `live_attestation`, `lane_canary`, `level1_evidence` and `figures` form(s) in the rig console (section 18); identical argument vectors, gates and artifacts.*
 
 Run the full offline regression first:
 
@@ -2174,11 +2181,11 @@ argument vectors; nothing below is console-only):
 |---|---|
 | `project_revision` | 2, 17 |
 | `source_conformance` (scaffold and validate) | 4/4.1, 17 |
-| `export_jalmbench` / `export_vlsbench` | 4 |
-| `rig_check` | 9-13 |
-| `run_matrix` (dry-run, probe, canary, measured) | 8/8.1, 9/9.1, 10-13 |
+| `export_jalmbench` / `export_vlsbench` | 3.2 |
+| `rig_check` | 8.1, 9-13 |
+| `run_matrix` (dry-run, probe, canary, measured) | 4.1, 8/8.1, 9/9.1, 10-13 |
 | `live_attestation` | 8.1, 9 |
-| `lane_canary` | 9.1 |
+| `lane_canary` | 8.1, 9.1 |
 | `native_import` | 14.3, 16 |
 | `human_audit` (common and source-task frames) | 15, 15.1 |
 | `judge_sensitivity`, `kappa`, `transfer_matrix`, `paired_compare` | 16 |
