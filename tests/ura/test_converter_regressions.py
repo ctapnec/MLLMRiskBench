@@ -63,12 +63,59 @@ def test_local_media_is_confined_content_addressed_and_typed(tmp_path: Path):
         local_media("images/missing.png", root, modality="image")
 
 
-def test_local_media_rejects_extension_spoofed_bytes(tmp_path: Path):
+def test_local_media_types_by_magic_bytes_not_extension(tmp_path: Path):
+    # The declared MIME is sniffed from the actual bytes, never the filename
+    # extension. Official releases mislabel (MLLMGuard ships WebP as .jpg,
+    # SIUO ships JPEG as .png), so a valid image with a wrong extension is
+    # admitted with its TRUE type - a strictly tighter binding than trusting
+    # the extension, since MediaRef.mime can no longer disagree with content.
     root = tmp_path / "corpus"
     root.mkdir()
-    (root / "fake.png").write_bytes(_JPEG)
-    with pytest.raises(MediaAssetError, match="do not match"):
-        local_media("fake.png", root, modality="image")
+    (root / "spoofed.png").write_bytes(_JPEG)
+    ref = local_media("spoofed.png", root, modality="image")
+    assert ref.mime == "image/jpeg"
+    assert ref.sha256 == hashlib.sha256(_JPEG).hexdigest()
+
+    # Cross-modality spoofing still fails closed: audio bytes handed to an
+    # image slot are rejected by the modality-prefix guard.
+    (root / "audio_as_image.png").write_bytes(_WAV)
+    with pytest.raises(MediaAssetError, match="incompatible with 'image'"):
+        local_media("audio_as_image.png", root, modality="image")
+
+    # Unrecognized magic bytes fail closed rather than being trusted.
+    (root / "garbage.png").write_bytes(b"not a real media file at all")
+    with pytest.raises(MediaAssetError, match="unrecognized media magic bytes"):
+        local_media("garbage.png", root, modality="image")
+
+
+def test_video_modality_admits_larger_bytes_than_image_audio(tmp_path: Path):
+    # Real video releases (Video-SafetyBench ~44 MiB MP4s) exceed the 25 MiB
+    # image/audio bound; the video-only ceiling admits them while every byte
+    # is still read, hashed and signature-checked. A minimal ISO ftyp box
+    # gives a valid video signature.
+    from ura.converters._common import (
+        DEFAULT_MAX_MEDIA_ASSET_BYTES,
+        DEFAULT_MAX_VIDEO_ASSET_BYTES,
+    )
+
+    root = tmp_path / "corpus"
+    root.mkdir()
+    mp4_header = b"\x00\x00\x00\x18ftypmp42"
+    # Between the image/audio cap and the video cap: rejected as image, ok as video.
+    size = DEFAULT_MAX_MEDIA_ASSET_BYTES + 1_000_000
+    payload = mp4_header + b"\x00" * (size - len(mp4_header))
+    (root / "clip.mp4").write_bytes(payload)
+
+    ref = local_media(
+        "clip.mp4", root, modality="video",
+        max_bytes=DEFAULT_MAX_VIDEO_ASSET_BYTES,
+    )
+    assert ref.mime == "video/mp4"
+    assert ref.sha256 == hashlib.sha256(payload).hexdigest()
+
+    # The same bytes still exceed the tighter default image/audio bound.
+    with pytest.raises(MediaAssetError):
+        local_media("clip.mp4", root, modality="video")
 
 
 def test_figstep_preserves_hidden_image_instruction_for_proxy_grading(

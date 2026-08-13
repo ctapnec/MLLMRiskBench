@@ -59,6 +59,13 @@ from .targets.api import _logical_media_root_alias, _resolve_local_media_path
 #: Bumped when the orchestration semantics change (recorded in every manifest).
 CODE_VERSION = "ura-runner/2.11"
 _MAX_SCORED_MEDIA_BYTES = 25 * 1024 * 1024
+#: Video releases legitimately exceed the image/audio bound (Video-SafetyBench
+#: ships ~44 MiB MP4s); mirrors DEFAULT_MAX_VIDEO_ASSET_BYTES converter-side.
+_MAX_SCORED_VIDEO_BYTES = 64 * 1024 * 1024
+
+
+def _scored_media_limit(modality: str) -> int:
+    return _MAX_SCORED_VIDEO_BYTES if modality == "video" else _MAX_SCORED_MEDIA_BYTES
 _MAX_FULL_CHECKPOINT_BYTES = 512 * 1024 * 1024
 _MAX_RESPONSE_CHECKPOINT_BYTES = 512 * 1024 * 1024
 _MAX_CHECKPOINT_RECORD_BYTES = 8 * 1024 * 1024
@@ -3525,9 +3532,10 @@ def _prepare_media_ref(
             raise FileNotFoundError(f"media path does not exist: {media.path}") from exc
         if not path.is_file():
             raise ValueError(f"media path is not a file: {media.path}")
-        if path.stat().st_size > _MAX_SCORED_MEDIA_BYTES:
+        size_limit = _scored_media_limit(media.modality)
+        if path.stat().st_size > size_limit:
             raise ValueError(
-                f"media exceeds {_MAX_SCORED_MEDIA_BYTES} byte scored-input limit: "
+                f"media exceeds {size_limit} byte scored-input limit: "
                 f"{path}"
             )
         digest = _sha256_file(path)
@@ -3553,16 +3561,17 @@ def _prepare_media_ref(
         if not separator:
             raise ValueError("malformed media data URI")
         is_base64 = ";base64" in header.lower()
+        size_limit = _scored_media_limit(media.modality)
         # Reject oversized encodings before allocating the decoded byte array.
         # Base64 expands by about 4/3; percent-encoding expands by at most 3x.
         encoded_limit = (
-            4 * ((_MAX_SCORED_MEDIA_BYTES + 2) // 3) + 4
+            4 * ((size_limit + 2) // 3) + 4
             if is_base64
-            else 3 * _MAX_SCORED_MEDIA_BYTES
+            else 3 * size_limit
         )
         if len(payload) > encoded_limit:
             raise ValueError(
-                f"inline media exceeds {_MAX_SCORED_MEDIA_BYTES} byte "
+                f"inline media exceeds {size_limit} byte "
                 "scored-input limit"
             )
         try:
@@ -3572,9 +3581,9 @@ def _prepare_media_ref(
                 raw = unquote_to_bytes(payload)
         except (binascii.Error, ValueError) as exc:
             raise ValueError("malformed media data URI payload") from exc
-        if len(raw) > _MAX_SCORED_MEDIA_BYTES:
+        if len(raw) > size_limit:
             raise ValueError(
-                f"inline media exceeds {_MAX_SCORED_MEDIA_BYTES} byte "
+                f"inline media exceeds {size_limit} byte "
                 "scored-input limit"
             )
         header_mime = header[5:].split(";", 1)[0]

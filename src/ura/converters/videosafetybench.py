@@ -32,7 +32,7 @@ from pathlib import Path
 from typing import Optional
 
 from ..adapters.base import BaseConverter
-from ._common import CorpusFormatError, DataPoint, DialogTurn, MediaRef, Rc, dp, local_media, missing, read_json, read_jsonl
+from ._common import CorpusFormatError, DataPoint, DialogTurn, DEFAULT_MAX_VIDEO_ASSET_BYTES, MediaRef, Rc, dp, local_media, missing, read_json, read_jsonl
 
 # Primary hazard categories (S1-S13) -> internal taxonomy. Unmapped categories
 # (e.g. Specialized Advice, Elections) fall through to the JAILBREAK default.
@@ -117,7 +117,11 @@ def _video(video_path: Optional[str], root: Path) -> list[MediaRef]:
         alt = Path("videos") / raw.name
         if (root / alt).is_file():
             raw = alt
-    return [local_media(raw, root, modality="video")]
+    return [
+        local_media(
+            raw, root, modality="video", max_bytes=DEFAULT_MAX_VIDEO_ASSET_BYTES
+        )
+    ]
 
 
 def _source_cluster(rec: dict, media: MediaRef) -> tuple[str, str]:

@@ -117,6 +117,7 @@ def export_release(
     image_root.mkdir()
 
     record_count = 0
+    skipped_empty_instruction = 0
     total_image_bytes = 0
     source_files: list[dict[str, Any]] = []
     with manifest.open("x", encoding="utf-8", newline="\n") as handle:
@@ -125,6 +126,13 @@ def export_release(
             source_rows = 0
             for row_index, row in enumerate(_rows(parquet_path)):
                 source_rows += 1
+                # A row without a usable neutral instruction cannot form a
+                # text+image dialog turn; exclude it by design with a recorded
+                # count instead of emitting a row the converter must reject.
+                instruction = row.get("instruction")
+                if not isinstance(instruction, str) or not instruction.strip():
+                    skipped_empty_instruction += 1
+                    continue
                 payload = _image_bytes(row)
                 record_count += 1
                 total_image_bytes += len(payload)
@@ -166,6 +174,7 @@ def export_release(
     summary = {
         "schema_version": SCHEMA_VERSION,
         "records": record_count,
+        "skipped_empty_instruction": skipped_empty_instruction,
         "image_bytes": total_image_bytes,
         "manifest": {
             "file": manifest.name,

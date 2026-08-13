@@ -11,7 +11,6 @@ import hashlib
 import io
 import json
 import math
-import mimetypes
 import os
 from pathlib import Path
 from typing import Any, Optional, Sequence
@@ -51,6 +50,11 @@ DEFAULT_MAX_CORPUS_JSON_NODES = 2_000_000
 DEFAULT_MAX_CORPUS_JSON_DEPTH = 64
 DEFAULT_MAX_CSV_FIELD_CHARS = 16 * 1024 * 1024
 DEFAULT_MAX_MEDIA_ASSET_BYTES = 25 * 1024 * 1024
+#: Video releases legitimately exceed the image/audio bound (Video-SafetyBench
+#: ships ~44 MiB MP4s); the video-only ceiling stays a bounded single-file
+#: allocation while every admitted byte is still fully read, hashed and
+#: signature-checked.
+DEFAULT_MAX_VIDEO_ASSET_BYTES = 64 * 1024 * 1024
 
 
 def _object_without_duplicates(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
@@ -333,10 +337,10 @@ def sha256_normalized_text_file(path: Path) -> str:
     return hashlib.sha256(normalized.encode("utf-8")).hexdigest()
 
 
-def media_signature_matches(payload: bytes, mime: str) -> bool:
-    """Check maintained media types by magic bytes; unknown types remain neutral."""
-
-    signatures = {
+#: Maintained magic-byte predicates. Signature families can be ambiguous
+#: across modalities (an ISO ``ftyp`` box opens both MP4 audio and video), so
+#: sniffing accepts a preferred modality prefix from the caller.
+_MEDIA_SIGNATURES: dict = {
         "image/jpeg": lambda value: value.startswith(b"\xff\xd8\xff"),
         "image/png": lambda value: value.startswith(b"\x89PNG\r\n\x1a\n"),
         "image/gif": lambda value: value.startswith((b"GIF87a", b"GIF89a")),
@@ -372,9 +376,36 @@ def media_signature_matches(payload: bytes, mime: str) -> bool:
         "video/mpeg": lambda value: value.startswith(
             (b"\x00\x00\x01\xba", b"\x00\x00\x01\xb3")
         ),
-    }
-    validator = signatures.get(mime)
+}
+
+
+def media_signature_matches(payload: bytes, mime: str) -> bool:
+    """Check maintained media types by magic bytes; unknown types remain neutral."""
+
+    validator = _MEDIA_SIGNATURES.get(mime)
     return validator(payload) if validator is not None else True
+
+
+def sniff_media_mime(payload: bytes, *, prefer_prefix: str | None = None) -> str | None:
+    """Return the maintained MIME whose magic bytes match the payload.
+
+    The declared type of an admitted asset comes from its actual bytes, never
+    from a filename extension (official releases mislabel: MLLMGuard ships
+    WebP as ``.jpg``, SIUO ships JPEG as ``.png``). When ``prefer_prefix`` is
+    given, a match under that modality prefix wins over an earlier ambiguous
+    match from another modality (the ISO ``ftyp`` box is shared by MP4 audio
+    and video). Returns ``None`` for unrecognized bytes - callers fail closed.
+    """
+
+    fallback: str | None = None
+    for candidate, validator in _MEDIA_SIGNATURES.items():
+        if not validator(payload):
+            continue
+        if prefer_prefix is not None and candidate.startswith(prefer_prefix):
+            return candidate
+        if fallback is None:
+            fallback = candidate
+    return fallback
 
 
 def local_media(
@@ -423,14 +454,17 @@ def local_media(
             f"cannot admit stable media bytes for {resolved}: {exc}"
         ) from exc
 
-    mime = mimetypes.guess_type(resolved.name)[0]
     expected_prefix = {
         "image": "image/",
         "audio": "audio/",
         "video": "video/",
     }.get(modality)
+    # The declared MIME is sniffed from the admitted bytes, not the filename
+    # extension; MediaRef.mime therefore can never disagree with the content
+    # it addresses, and unrecognized bytes fail closed.
+    mime = sniff_media_mime(payload, prefer_prefix=expected_prefix)
     if mime is None:
-        raise MediaAssetError(f"cannot determine MIME type for {resolved}")
+        raise MediaAssetError(f"unrecognized media magic bytes for {resolved}")
     if expected_prefix is not None and not mime.startswith(expected_prefix):
         raise MediaAssetError(
             f"{resolved} has MIME {mime!r}, incompatible with {modality!r}"
@@ -534,6 +568,8 @@ __all__ = [
     "DEFAULT_MAX_CORPUS_JSON_NODES",
     "DEFAULT_MAX_CORPUS_RECORDS",
     "DEFAULT_MAX_MEDIA_ASSET_BYTES",
+    "DEFAULT_MAX_VIDEO_ASSET_BYTES",
+    "sniff_media_mime",
     "DataPoint",
     "DialogTurn",
     "MediaRef",

@@ -79,14 +79,64 @@ def _rows(path: Path) -> Iterable[dict[str, Any]]:
             yield row
 
 
-def _audio_bytes(row: dict[str, Any]) -> tuple[bytes, str | None] | None:
+def _encode_pcm16_wav(samples: Any, sampling_rate: int) -> bytes:
+    """Deterministically encode a released decoded waveform as PCM16 WAV.
+
+    The pinned JALMBench release materializes the Hugging Face ``Audio``
+    feature in decoded form (``{array, sampling_rate, path}``) rather than as
+    encoded file bytes, so the export re-encodes the exact released samples.
+    Float samples are clamped to [-1, 1] and scaled to int16; the container is
+    a standard mono RIFF/WAVE whose signature the media validator recognizes.
+    """
+
+    import io
+    import wave
+
+    if sampling_rate <= 0:
+        raise ValueError("JALMBench audio sampling_rate must be positive")
+    try:
+        import numpy as np
+
+        array = np.asarray(samples, dtype=np.float64)
+        if array.ndim != 1:
+            array = array.reshape(-1)
+        frames = (
+            np.clip(array, -1.0, 1.0) * 32767.0
+        ).astype("<i2").tobytes()
+    except ImportError:  # pragma: no cover - numpy ships in the analysis extra
+        import struct
+
+        frames = b"".join(
+            struct.pack("<h", int(max(-1.0, min(1.0, float(s))) * 32767))
+            for s in samples
+        )
+    buffer = io.BytesIO()
+    with wave.open(buffer, "wb") as writer:
+        writer.setnchannels(1)
+        writer.setsampwidth(2)
+        writer.setframerate(int(sampling_rate))
+        writer.writeframes(frames)
+    return buffer.getvalue()
+
+
+def _audio_bytes(row: dict[str, Any]) -> tuple[bytes, str | None, str] | None:
     audio = row.get("audio")
     name: str | None = None
     payload: Any = audio
+    encoding = "released_bytes"
     if isinstance(audio, dict):
         payload = audio.get("bytes")
         source_name = audio.get("path")
         name = source_name if isinstance(source_name, str) else None
+        if payload is None:
+            array = audio.get("array")
+            rate = audio.get("sampling_rate")
+            if array is not None and isinstance(rate, (int, float)) and rate:
+                payload = _encode_pcm16_wav(array, int(rate))
+                # The encoded container is WAV regardless of the original
+                # release filename hint.
+                name = None
+                encoding = "pcm16_wav_from_released_array"
     if payload is None:
         return None
     if isinstance(payload, memoryview):
@@ -97,7 +147,7 @@ def _audio_bytes(row: dict[str, Any]) -> tuple[bytes, str | None] | None:
         raise ValueError("JALMBench audio field is neither bytes nor a supported struct")
     if len(payload) > _MAX_AUDIO_BYTES:
         raise ValueError("JALMBench audio sample exceeds the 25 MiB runtime bound")
-    return payload, name
+    return payload, name, encoding
 
 
 def _mime_and_suffix(payload: bytes, source_name: str | None) -> tuple[str, str]:
@@ -146,7 +196,7 @@ def export_release(
                 if extracted is None:
                     skipped_text_only += 1
                     continue
-                payload, source_name = extracted
+                payload, source_name, audio_encoding = extracted
                 record_count += 1
                 total_audio_bytes += len(payload)
                 if record_count > max_records or total_audio_bytes > max_total_bytes:
@@ -170,6 +220,7 @@ def export_release(
                     "audio_path": audio_path.relative_to(out).as_posix(),
                     "audio_mime": mime,
                     "audio_sha256": digest,
+                    "audio_encoding": audio_encoding,
                     "subset": subset,
                     "source_parquet": relative,
                     "source_row_index": row_index,

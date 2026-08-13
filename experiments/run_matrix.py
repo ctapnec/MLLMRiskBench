@@ -1369,24 +1369,34 @@ def _validate_completion_marker(
     source_metric_inventory = manifest.config.get("source_metric_inventory")
     if not isinstance(source_metric_inventory, list):
         raise ValueError("stored manifest lacks source-metric execution inventory")
-    realized_source_metrics: dict[tuple[str, str], int] = {}
+    # Mirror the writer's two-rule accounting (_realized_source_metric_inventory):
+    # n_source_evaluations counts EVERY source-evaluation observation, including
+    # diagnostic implemented:False ones for sources whose official evaluator is
+    # not executed (for example MM-SafetyBench), while emitted requires at least
+    # one implemented observation.
+    realized_source_metric_counts: dict[tuple[str, str], int] = {}
+    realized_source_metric_implemented: set[tuple[str, str]] = set()
     for judgment in judgments:
         observation = judgment.raw.get("source_evaluation")
-        if not isinstance(observation, dict) or observation.get("implemented") is not True:
+        if not isinstance(observation, dict):
             continue
         key = (
             str(judgment.raw.get("source", "")),
             str(observation.get("family", "")),
         )
-        realized_source_metrics[key] = realized_source_metrics.get(key, 0) + 1
+        realized_source_metric_counts[key] = (
+            realized_source_metric_counts.get(key, 0) + 1
+        )
+        if observation.get("implemented") is True:
+            realized_source_metric_implemented.add(key)
     for entry in source_metric_inventory:
         if not isinstance(entry, dict):
             raise ValueError("source-metric inventory entries must be objects")
         key = (str(entry.get("source")), str(entry.get("required_metric")))
-        emitted = key in realized_source_metrics
+        emitted = key in realized_source_metric_implemented
         if entry.get("source_metric_emitted") is not emitted:
             raise ValueError("stored source-metric emitted status mismatch")
-        if entry.get("n_source_evaluations") != realized_source_metrics.get(key, 0):
+        if entry.get("n_source_evaluations") != realized_source_metric_counts.get(key, 0):
             raise ValueError("stored source-metric evaluation count mismatch")
         if (
             key == ("mmsafety", "mmsafety_official_attack_rate")

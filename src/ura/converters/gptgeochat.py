@@ -141,9 +141,13 @@ class GPTGeoChatConverter(BaseConverter):
 
             source_image = rec.get("image_path")
             if source_image:
-                # Official annotations use ../images/{id}.jpg relative to the
-                # annotation directory; split_root is the declared containment root.
-                image_path = annotation_dir / str(source_image)
+                # The released archive flattens all images into the split's
+                # images/ directory, while each annotation's image_path keeps
+                # the upstream static/annotation_images/<person>/ prefix that
+                # is not materialized on disk. Resolve by basename under the
+                # flat images/ dir; using only the name also blocks traversal
+                # from a hostile embedded path.
+                image_path = split_root / "images" / Path(str(source_image)).name
             else:
                 image_path = split_root / "images" / f"{cid}.jpg"
             img = image(image_path, split_root)

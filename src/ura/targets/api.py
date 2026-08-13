@@ -431,6 +431,10 @@ def _require(module: str, feature: str):
 
 
 _MAX_MEDIA_BYTES = 25 * 1024 * 1024
+#: Video releases legitimately exceed the image/audio bound; mirrors the
+#: converter-side DEFAULT_MAX_VIDEO_ASSET_BYTES. Provider-side request limits
+#: still apply downstream and fail per item, visibly.
+_MAX_VIDEO_MEDIA_BYTES = 64 * 1024 * 1024
 _MEDIA_ROOT_ALIAS_PREFIX = "@media-root/"
 
 
@@ -536,7 +540,7 @@ def _encode_media(
     media: MediaRef,
     *,
     allowed_roots: Optional[Iterable[str | Path]] = None,
-    max_bytes: int = _MAX_MEDIA_BYTES,
+    max_bytes: Optional[int] = None,
 ) -> tuple[str, str, Optional[str]]:
     """Return ``(mime, base64_data_or_empty, url_or_none)`` for physical media.
 
@@ -546,6 +550,12 @@ def _encode_media(
     """
     if media.modality not in {"image", "audio", "video"}:
         raise ValueError(f"target cannot encode {media.modality!r} media")
+    if max_bytes is None:
+        max_bytes = (
+            _MAX_VIDEO_MEDIA_BYTES
+            if media.modality == "video"
+            else _MAX_MEDIA_BYTES
+        )
     mime_prefix = f"{media.modality}/"
     default_mime = {
         "image": "image/png",
