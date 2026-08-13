@@ -211,19 +211,32 @@ def test_command_groups_partition_the_allowlist_exactly() -> None:
 
 def test_dashboard_shows_presence_only_pipeline(tmp_path: Path) -> None:
     # The dashboard pipeline counts retained files by name only and says so;
-    # it must never label presence as validity or authorization.
+    # it must never label presence as validity or authorization.  Files under
+    # a superseded/ directory are tallied separately as archived history, and
+    # stage nodes link into the artifact browser.
     app = _app(tmp_path)
     receipts = app.results_root / "thesis" / "project-revision"
-    receipts.mkdir(parents=True)
+    (receipts / "superseded").mkdir(parents=True)
     (receipts / "project-revision-abc.project-revision.json").write_text(
         "{}", encoding="utf-8"
     )
+    (
+        receipts / "superseded" / "project-revision-old.project-revision.json"
+    ).write_text("{}", encoding="utf-8")
     status, _, body = app.handle("GET", "/")
     assert status == 200
     text = body.decode("utf-8")
     assert "Revision receipt" in text
     assert "1 file" in text
+    assert "+1 archived" in text
     assert "presence never asserts validity" in text
+    # The stage node links into the artifact browser; the stage file list
+    # names both the current and the archived receipt as links.
+    assert "/artifacts?path=thesis/project-revision" in text
+    assert "1 current, 1 archived" in text
+    # The suggested-next-step card is presence-derived and says so.
+    assert "Suggested next step" in text
+    assert "file presence only" in text
     # Grouped Run page renders every command exactly once as a form.
     status, _, run_body = app.handle("GET", "/commands")
     assert status == 200
@@ -234,6 +247,23 @@ def test_dashboard_shows_presence_only_pipeline(tmp_path: Path) -> None:
         assert run_text.count(
             f"<input type='hidden' name='command' value='{name}'>"
         ) == 1
+    # The client-side filter is present and cards carry filterable names.
+    assert "cmdfilter" in run_text
+    assert "data-name='run_matrix" in run_text
+
+
+def test_favicon_and_active_nav(tmp_path: Path) -> None:
+    app = _app(tmp_path)
+    status, content_type, body = app.handle("GET", "/static/favicon.svg")
+    assert status == 200 and content_type == "image/svg+xml"
+    assert body.startswith(b"<svg")
+    status, content_type, _ = app.handle("GET", "/favicon.ico")
+    assert status == 200 and content_type == "image/svg+xml"
+    status, _, page = app.handle("GET", "/jobs")
+    assert status == 200
+    text = page.decode("utf-8")
+    assert "class='active'" in text
+    assert "favicon.svg" in text
 
 
 def test_artifact_pages_render_breadcrumbs(tmp_path: Path) -> None:

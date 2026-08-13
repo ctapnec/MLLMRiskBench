@@ -545,6 +545,7 @@ nav a { display:flex; gap:.4rem; align-items:center; color:var(--muted);
   text-decoration:none; font-weight:600; font-size:.92rem;
   padding:.35rem .7rem; border-radius:8px; }
 nav a:hover { background:var(--soft); color:var(--ink); }
+nav a.active { background:var(--soft); color:var(--accent); }
 h1 { font-size:1.3rem; margin:.4rem 0 1rem; display:flex; gap:.55rem;
   align-items:center; }
 h1 .ic { color:var(--accent); }
@@ -634,7 +635,11 @@ footer.note { color:var(--muted); font-size:.8rem; margin-top:2rem;
   "Segoe UI", sans-serif; }
 .pipeline .node text.count { fill:var(--muted); font-weight:500;
   font-size:11.5px; }
+.pipeline .node text.count.sub { font-size:10px; opacity:.85; }
 .pipeline .node.present text.count { fill:var(--accent); font-weight:700; }
+.pipeline a { cursor:pointer; }
+.pipeline a:hover .node rect { stroke:var(--accent); stroke-width:2.4;
+  filter:brightness(1.04); }
 .pipeline .arrow { stroke:var(--muted); stroke-width:1.4; fill:none;
   marker-end:url(#arrowhead); }
 .pipeline #arrowhead path { fill:var(--muted); }
@@ -645,6 +650,17 @@ footer.note { color:var(--muted); font-size:.8rem; margin-top:2rem;
 .argv code { border:1px solid var(--line); padding:.12rem .45rem; }
 .filelist td .ic { color:var(--muted); vertical-align:-3px;
   margin-right:.45rem; }
+details.stagefiles { margin:.35rem 0; font-size:.86rem; }
+details.stagefiles > summary { cursor:pointer; color:var(--accent);
+  font-weight:600; }
+details.stagefiles ul { margin:.3rem 0 .5rem; padding-left:1.2rem; }
+details.stagefiles li { margin:.12rem 0; overflow-wrap:anywhere; }
+#cmdfilter { width:100%; max-width:420px; padding:.45rem .7rem;
+  border:1px solid var(--line); border-radius:9px; background:var(--card);
+  color:var(--ink); font-size:.9rem; }
+#cmdfilter:focus { outline:2px solid
+  color-mix(in srgb, var(--accent) 45%, transparent);
+  border-color:var(--accent); }
 """
 
 
@@ -655,16 +671,27 @@ _NAV_LINKS = (
     ("/artifacts", "folder", "Artifacts"),
 )
 
+_FAVICON_SVG = (
+    "<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'>"
+    "<path fill='#0a5fb4' d='M12 2l8 4v6c0 5-3.5 8.5-8 10-4.5-1.5-8-5-8-10V6z'/>"
+    "<path fill='none' stroke='#ffffff' stroke-width='2' "
+    "stroke-linecap='round' stroke-linejoin='round' "
+    "d='M8.5 12.5l2.5 2.5 4.5-5'/></svg>"
+).encode("utf-8")
 
-def _page(title: str, body: str) -> bytes:
+
+def _page(title: str, body: str, active: str = "") -> bytes:
     links = "".join(
-        f"<a href='{href}'>{_icon(icon, size=16)}{label}</a>"
+        f"<a href='{href}'"
+        + (" class='active'" if label == active else "")
+        + f">{_icon(icon, size=16)}{label}</a>"
         for href, icon, label in _NAV_LINKS
     )
     return (
         "<!doctype html><html><head><meta charset='utf-8'>"
         "<meta name='viewport' content='width=device-width, initial-scale=1'>"
         f"<title>{html.escape(title)}</title>"
+        "<link rel='icon' type='image/svg+xml' href='/static/favicon.svg'>"
         "<link rel='stylesheet' href='/static/style.css'></head><body>"
         f"<nav><span class='brand'>{_icon('logo', size=21)}URA rig console"
         f"</span>{links}</nav>"
@@ -724,19 +751,48 @@ _PIPELINE_STAGES: tuple[tuple[str, tuple[str, ...]], ...] = (
 _ANALYSIS_MARKERS = ("level1", "level2", "suite-evidence")
 
 
-def artifact_inventory(root: Path) -> tuple[dict[str, int], bool]:
+_STAGE_PATHS_SHOWN = 20
+
+
+@dataclass
+class StageInventory:
+    """Presence-only tally for one pipeline stage."""
+
+    count: int = 0
+    superseded: int = 0
+    paths: list[str] = field(default_factory=list)
+
+
+def artifact_inventory(root: Path) -> tuple[dict[str, StageInventory], bool]:
     """Count retained artifact files by kind under the results root.
 
     Bounded, presence-only walk: at most ``_INVENTORY_MAX_ENTRIES`` directory
     entries and ``_INVENTORY_MAX_DEPTH`` levels are visited, lazily, so one
-    pathological flat directory cannot stall the dashboard.  Returns the
-    counts plus a truncation flag (counts are a lower bound when True).
-    Counting a file says nothing about its validity.
+    pathological flat directory cannot stall the dashboard.  Files below a
+    ``superseded`` directory are tallied separately (archived, not current).
+    Returns the stages plus a truncation flag (counts are a lower bound when
+    True).  Counting a file says nothing about its validity.
     """
 
-    counts: dict[str, int] = {label: 0 for label, _ in _PIPELINE_STAGES}
+    stages: dict[str, StageInventory] = {
+        label: StageInventory() for label, _ in _PIPELINE_STAGES
+    }
     seen = 0
     root = root.resolve()
+
+    def record(label: str, entry: Path) -> None:
+        stage = stages[label]
+        try:
+            relative = entry.relative_to(root).as_posix()
+        except ValueError:
+            relative = entry.name
+        if "superseded" in relative.split("/"):
+            stage.superseded += 1
+        else:
+            stage.count += 1
+        if len(stage.paths) < _STAGE_PATHS_SHOWN:
+            stage.paths.append(relative)
+
     stack: list[tuple[Path, int]] = [(root, 0)]
     while stack:
         directory, depth = stack.pop()
@@ -744,7 +800,7 @@ def artifact_inventory(root: Path) -> tuple[dict[str, int], bool]:
             for entry in directory.iterdir():
                 seen += 1
                 if seen > _INVENTORY_MAX_ENTRIES:
-                    return counts, True
+                    return stages, True
                 if entry.is_dir():
                     if depth + 1 <= _INVENTORY_MAX_DEPTH:
                         stack.append((entry, depth + 1))
@@ -752,18 +808,18 @@ def artifact_inventory(root: Path) -> tuple[dict[str, int], bool]:
                 name = entry.name.lower()
                 for label, suffixes in _PIPELINE_STAGES:
                     if any(name.endswith(suffix) for suffix in suffixes):
-                        counts[label] += 1
+                        record(label, entry)
                 if name.endswith((".json", ".csv")) and any(
                     marker in name for marker in _ANALYSIS_MARKERS
                 ):
-                    counts["Level-1/2"] += 1
+                    record("Level-1/2", entry)
         except OSError:
             continue
-    return counts, False
+    return stages, False
 
 
-def _pipeline_svg(counts: Mapping[str, int]) -> str:
-    node_w, node_h, gap, top = 128, 52, 24, 12
+def _pipeline_svg(stages: Mapping[str, StageInventory]) -> str:
+    node_w, node_h, gap, top = 128, 58, 24, 12
     total_w = len(_PIPELINE_STAGES) * node_w + (len(_PIPELINE_STAGES) - 1) * gap
     parts = [
         f"<svg class='pipeline' viewBox='0 0 {total_w} {node_h + 2 * top}' "
@@ -774,19 +830,43 @@ def _pipeline_svg(counts: Mapping[str, int]) -> str:
     ]
     for index, (label, _suffixes) in enumerate(_PIPELINE_STAGES):
         x = index * (node_w + gap)
-        count = counts.get(label, 0)
-        cls = "node present" if count else "node"
-        count_text = f"{count} file{'s' if count != 1 else ''}" if count else "none yet"
-        parts.append(
+        stage = stages.get(label, StageInventory())
+        cls = "node present" if stage.count else "node"
+        if stage.count:
+            count_text = f"{stage.count} file{'s' if stage.count != 1 else ''}"
+        else:
+            count_text = "none yet"
+        extra = (
+            f"<text class='count sub' x='{x + node_w / 2}' y='{top + 51}' "
+            f"text-anchor='middle'>+{stage.superseded} archived</text>"
+            if stage.superseded else ""
+        )
+        node = (
             f"<g class='{cls}'>"
             f"<rect x='{x}' y='{top}' width='{node_w}' height='{node_h}' "
             "rx='10'/>"
-            f"<text x='{x + node_w / 2}' y='{top + 21}' "
+            f"<text x='{x + node_w / 2}' y='{top + 23}' "
             f"text-anchor='middle'>{html.escape(label)}</text>"
-            f"<text class='count' x='{x + node_w / 2}' y='{top + 38}' "
+            f"<text class='count' x='{x + node_w / 2}' y='{top + 40}' "
             f"text-anchor='middle'>{html.escape(count_text)}</text>"
-            "</g>"
+            + extra
+            + "</g>"
         )
+        # A stage node links to the directory holding its files, preferring a
+        # current (non-archived) path so the click lands on live artifacts;
+        # presence there never implies validity.
+        if stage.paths:
+            current = [
+                p for p in stage.paths if "superseded" not in p.split("/")
+            ]
+            first = (current or stage.paths)[0]
+            directory = first.rsplit("/", 1)[0] if "/" in first else ""
+            node = (
+                f"<a href='/artifacts?path={quote(directory)}' "
+                f"aria-label='browse {html.escape(label)} artifacts'>"
+                + node + "</a>"
+            )
+        parts.append(node)
         if index < len(_PIPELINE_STAGES) - 1:
             start = x + node_w
             parts.append(
@@ -918,6 +998,8 @@ class RigWebApp:
                 return 200, "text/html; charset=utf-8", self._overview()
             if method == "GET" and path == "/static/style.css":
                 return 200, "text/css; charset=utf-8", _STYLE.encode("utf-8")
+            if method == "GET" and path in {"/static/favicon.svg", "/favicon.ico"}:
+                return 200, "image/svg+xml", _FAVICON_SVG
             if method == "GET" and path == "/commands":
                 return 200, "text/html; charset=utf-8", self._commands_page()
             if method == "POST" and path == "/jobs":
@@ -992,6 +1074,44 @@ class RigWebApp:
             "and attestation validators are the only authority.</p>"
         )
 
+    @staticmethod
+    def _next_hint(stages: Mapping[str, StageInventory]) -> str:
+        order = (
+            ("Revision receipt", "project_revision",
+             "author the prospective revision receipt (runbook section 2)"),
+            ("Source receipts", "source_conformance",
+             "run the bounded one-arm observations and author the source "
+             "receipt (runbook section 4.1)"),
+            ("Attestations", "run_matrix",
+             "run the account attestation probes and derive transport "
+             "receipts (runbook section 8)"),
+            ("Canaries", "run_matrix",
+             "run the diagnostic lane canaries and record cost projections "
+             "(runbook section 9.1)"),
+            ("Grids", "run_matrix",
+             "start the measured lanes (runbook sections 10-13)"),
+        )
+        note = (
+            "<p class='note'>This suggestion reads file presence only; the "
+            "runbook and its fail-closed gates decide what is actually "
+            "admissible.</p>"
+        )
+        for label, form, description in order:
+            stage = stages.get(label)
+            if stage is None or stage.count == 0:
+                return (
+                    "<div class='card'><h2>" + _icon("play")
+                    + "Suggested next step</h2><p>Runbook order points to: "
+                    f"<strong>{html.escape(description)}</strong> - the "
+                    f"<code>{html.escape(form)}</code> form on the "
+                    "<a href='/commands'>Run</a> page.</p>" + note + "</div>"
+                )
+        return (
+            "<div class='card'><h2>" + _icon("play") + "Suggested next step"
+            "</h2><p>All pipeline stages have files; analysis and reporting "
+            "live in runbook section 16.</p>" + note + "</div>"
+        )
+
     def _overview(self) -> bytes:
         jobs = list(self.jobs.values())
         running = [job for job in jobs if job.state() == "running"]
@@ -1042,17 +1162,49 @@ class RigWebApp:
             "<th>Runtime</th></tr>" + running_rows + "</table></div></div>"
             if running_rows else ""
         )
+        stage_sections = []
+        for label, _suffixes in _PIPELINE_STAGES:
+            stage = counts.get(label)
+            if stage is None or not stage.paths:
+                continue
+            items = "".join(
+                f"<li><a href='/artifacts?path={quote(path)}'>"
+                f"{html.escape(path)}</a></li>"
+                for path in stage.paths
+            )
+            total = stage.count + stage.superseded
+            if total > len(stage.paths):
+                items += (
+                    f"<li class='note'>first {len(stage.paths)} of {total} "
+                    "shown</li>"
+                )
+            summary = f"{html.escape(label)}: {stage.count} current"
+            if stage.superseded:
+                summary += f", {stage.superseded} archived"
+            stage_sections.append(
+                f"<details class='stagefiles'><summary>{summary}</summary>"
+                f"<ul>{items}</ul></details>"
+            )
+        stage_files = "".join(stage_sections)
+        refresh = (
+            "<script>setTimeout(function(){location.reload();}, 10000);"
+            "</script>" if running else ""
+        )
         body = (
             "<h1>" + _icon("grid", size=22) + "Dashboard</h1>"
             + stats
             + "<div class='card'><h2>" + _icon("chart") + "Campaign pipeline"
             "</h2>" + _pipeline_svg(counts) +
-            "<p class='note'>Counts are retained-file presence under the "
-            "results root only; presence never asserts validity, "
-            "authorization, or measurement status."
+            "<p class='note'>Click a stage to browse its files. Counts are "
+            "retained-file presence under the results root only; presence "
+            "never asserts validity, authorization, or measurement status. "
+            "“archived” counts files under a "
+            "<code>superseded/</code> directory (kept as history, not "
+            "current - for example an earlier pin's revision receipt)."
             + (" Inventory scan truncated at its entry cap; counts are a "
                "lower bound." if truncated else "")
-            + "</p></div>"
+            + "</p>" + stage_files + "</div>"
+            + self._next_hint(counts)
             + running_html +
             "<div class='card'><h2>" + _icon("file") + "Campaign bindings"
             "</h2>" + self._campaign_context() + "</div>"
@@ -1061,8 +1213,9 @@ class RigWebApp:
             "Dry-run/canary/probe artifacts stay diagnostic; measured "
             "claims come only from validated artifacts and the maintained "
             "analysis CLIs.</p></div>"
+            + refresh
         )
-        return _page("URA rig console", body)
+        return _page("URA rig console", body, active="Dashboard")
 
     def _command_card(self, name: str) -> str:
         entry = self.commands[name]
@@ -1082,8 +1235,10 @@ class RigWebApp:
                 f"<span class='kind'>{html.escape(param.kind)}</span>"
                 "</label>" + input_html
             )
+        haystack = html.escape(f"{name} {entry.description}".lower())
         return (
-            "<details class='cmd'><summary>" + _icon("terminal")
+            f"<details class='cmd' data-name='{haystack}'><summary>"
+            + _icon("terminal")
             + f"<span class='name'>{html.escape(name)}</span>"
             f"<span class='desc'>{html.escape(entry.description)}</span>"
             "</summary><div class='inner'>"
@@ -1129,9 +1284,21 @@ class RigWebApp:
             "CLIs; the argument vector shown on each job page is exactly "
             "what runs. Fields map one-to-one to documented CLI flags; "
             "<span class='req'>*</span> marks a required field.</p>"
+            "<p><input id='cmdfilter' type='text' "
+            "placeholder='Type to filter commands...' "
+            "aria-label='filter commands'></p>"
             + "".join(sections)
+            + "<script>(function(){"
+            "var box=document.getElementById('cmdfilter');"
+            "if(!box){return;}"
+            "box.addEventListener('input',function(){"
+            "var q=this.value.toLowerCase();"
+            "document.querySelectorAll('details.cmd').forEach(function(d){"
+            "var hay=d.getAttribute('data-name')||'';"
+            "d.style.display=hay.indexOf(q)>=0?'':'none';});});"
+            "})();</script>"
         )
-        return _page("Run a command", body)
+        return _page("Run a command", body, active="Run")
 
     def _jobs_page(self) -> bytes:
         rows = []
@@ -1163,7 +1330,10 @@ class RigWebApp:
             "<div class='card'><p class='note'>No jobs this session. Start "
             "one from the <a href='/commands'>Run</a> page.</p></div>"
         )
-        return _page("Jobs", "<h1>" + _icon("pulse", size=22) + "Jobs</h1>" + table)
+        return _page(
+            "Jobs", "<h1>" + _icon("pulse", size=22) + "Jobs</h1>" + table,
+            active="Jobs",
+        )
 
     def _job_page(self, job: Job) -> bytes:
         state = job.state()
@@ -1225,7 +1395,7 @@ class RigWebApp:
             f"<pre>{html.escape(stderr_tail)}</pre></div>"
             + refresh
         )
-        return _page(f"Job {job.job_id}", body)
+        return _page(f"Job {job.job_id}", body, active="Jobs")
 
     # -- artifact browsing -------------------------------------------------
 
@@ -1265,7 +1435,7 @@ class RigWebApp:
             "<h1>" + _icon("folder", size=22) + "Artifacts</h1>"
             + _crumbs(relative) + listing
         )
-        return _page("Artifacts", body)
+        return _page("Artifacts", body, active="Artifacts")
 
     def _file_page(self, target: Path, relative: str) -> tuple[int, str, bytes]:
         suffix = target.suffix.lower()
@@ -1321,7 +1491,10 @@ class RigWebApp:
             + (f"<p>{badges_html}</p>" if badges_html else "")
             + rendered
         )
-        return 200, "text/html; charset=utf-8", _page(relative, body)
+        return (
+            200, "text/html; charset=utf-8",
+            _page(relative, body, active="Artifacts"),
+        )
 
 
 def _serve(app: RigWebApp, host: str, port: int) -> None:
