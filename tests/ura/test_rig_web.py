@@ -252,6 +252,45 @@ def test_dashboard_shows_presence_only_pipeline(tmp_path: Path) -> None:
     assert "data-name='run_matrix" in run_text
 
 
+def test_dashboard_notices_and_policy_card(tmp_path: Path) -> None:
+    # Operator notices from console-warnings.json render as banners with the
+    # annotate-never-authorize disclaimer; malformed files are ignored; and
+    # the recorded sampling policy is always visible.
+    app = _app(tmp_path)
+    status, _, body = app.handle("GET", "/")
+    text = body.decode("utf-8")
+    assert status == 200
+    assert "Notices" not in text  # no warnings file -> no banner card
+    assert "Campaign sampling policy" in text
+    assert "local lanes only" in text
+    assert "never be pooled" in text or "never pooled" in text
+
+    (app.results_root / "console-warnings.json").write_text(json.dumps({
+        "warnings": [
+            {"level": "warning",
+             "title": "BIPIA qa constructed from external NewsQA",
+             "detail": "MD5 not yet verified against the official md5.txt."},
+            {"level": "bogus-level", "title": "tolerated"},
+            "not-a-dict",
+        ],
+    }), encoding="utf-8")
+    status, _, body = app.handle("GET", "/")
+    text = body.decode("utf-8")
+    assert status == 200
+    assert "Notices" in text
+    assert "BIPIA qa constructed from external NewsQA" in text
+    assert "MD5 not yet verified" in text
+    assert "tolerated" in text
+    assert "never authorize" in text
+
+    # A corrupt warnings file must never break the dashboard.
+    (app.results_root / "console-warnings.json").write_text(
+        "{not json", encoding="utf-8"
+    )
+    status, _, _ = app.handle("GET", "/")
+    assert status == 200
+
+
 def test_favicon_and_active_nav(tmp_path: Path) -> None:
     app = _app(tmp_path)
     status, content_type, body = app.handle("GET", "/static/favicon.svg")

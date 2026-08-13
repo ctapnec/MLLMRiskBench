@@ -43,6 +43,29 @@ _LOG_TAIL_BYTES = 64 * 1024
 _CSV_PREVIEW_ROWS = 200
 _INVENTORY_MAX_ENTRIES = 8000
 _INVENTORY_MAX_DEPTH = 4
+_WARNINGS_FILE = "console-warnings.json"
+_WARNINGS_MAX = 40
+_WARNING_TONES = {"error": "red", "warning": "amber", "info": "blue"}
+
+#: Recorded campaign sampling policy (thesis ledger 11.22/11.27, runbook 5.2).
+#: Presentation of an operator-recorded decision; the actual enforcement is
+#: the recorded --limit/--sample-seed on each hosted run_matrix invocation.
+_CAMPAIGN_POLICY = (
+    ("Full converted corpora", "run on local lanes only - never a hosted "
+     "paid-API model"),
+    ("Paid-API lanes", "run a pre-registered cluster subsample (recorded "
+     "--limit and --sample-seed); the identical subset is used across every "
+     "hosted condition and comparisons restrict to that intersection"),
+    ("No cross-tier pooling", "local full-corpus and hosted-subsample rates "
+     "are distinct populations and are never pooled"),
+    ("Judge budget", "the hosted judge is metered on every judged response "
+     "regardless of target locality, so local full-corpus lanes score "
+     "rules-only with hosted LLM judging on the common subset only"),
+    ("Prepaid budgets", "Anthropic $100, OpenAI $50, Google $25, "
+     "Moonshot $15, DeepSeek $10; per-lane limits are derived from the "
+     "diagnostic-canary cost projections and recorded before any measured "
+     "lane"),
+)
 
 
 @dataclass(frozen=True)
@@ -650,6 +673,13 @@ footer.note { color:var(--muted); font-size:.8rem; margin-top:2rem;
 .argv code { border:1px solid var(--line); padding:.12rem .45rem; }
 .filelist td .ic { color:var(--muted); vertical-align:-3px;
   margin-right:.45rem; }
+.notice { border-left:4px solid var(--line); border-radius:8px;
+  background:var(--soft); padding:.6rem .8rem; margin:.45rem 0;
+  font-size:.9rem; }
+.notice.amber { border-left-color:#c9922a; }
+.notice.red { border-left-color:#c4515c; }
+.notice.blue { border-left-color:#3f8edb; }
+.notice p.note { margin:.25rem 0 0; }
 details.stagefiles { margin:.35rem 0; font-size:.86rem; }
 details.stagefiles > summary { cursor:pointer; color:var(--accent);
   font-weight:600; }
@@ -1042,6 +1072,79 @@ class RigWebApp:
 
     # -- pages -------------------------------------------------------------
 
+    def _load_warnings(self) -> list[dict[str, str]]:
+        """Operator-facing notices from ``console-warnings.json``.
+
+        The file is an operator/tooling-authored presentation input under the
+        results root: ``{"warnings": [{"level", "title", "detail"}, ...]}``.
+        It never changes experiment semantics; unknown levels render as
+        ``warning``.  Malformed content is ignored (the console must not 500
+        over a notice file).
+        """
+
+        path = self.results_root / _WARNINGS_FILE
+        try:
+            raw = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            return []
+        entries = raw.get("warnings") if isinstance(raw, dict) else None
+        if not isinstance(entries, list):
+            return []
+        out: list[dict[str, str]] = []
+        for entry in entries[:_WARNINGS_MAX]:
+            if not isinstance(entry, dict):
+                continue
+            title = str(entry.get("title", "")).strip()
+            if not title:
+                continue
+            out.append({
+                "level": str(entry.get("level", "warning")).lower(),
+                "title": title,
+                "detail": str(entry.get("detail", "")).strip(),
+            })
+        return out
+
+    def _warnings_html(self) -> str:
+        entries = self._load_warnings()
+        if not entries:
+            return ""
+        rows = []
+        for entry in entries:
+            tone = _WARNING_TONES.get(entry["level"], "amber")
+            detail = (
+                f"<p class='note'>{html.escape(entry['detail'])}</p>"
+                if entry["detail"] else ""
+            )
+            rows.append(
+                f"<div class='notice {tone}'>"
+                f"<span class='badge {tone}'>{html.escape(entry['level'])}"
+                f"</span> <strong>{html.escape(entry['title'])}</strong>"
+                + detail + "</div>"
+            )
+        return (
+            "<div class='card'><h2>" + _icon("pulse") + "Notices</h2>"
+            + "".join(rows) +
+            "<p class='note'>Operator-recorded notices from "
+            f"<code>{_WARNINGS_FILE}</code>; they annotate, and never "
+            "authorize or invalidate, the artifacts themselves.</p></div>"
+        )
+
+    @staticmethod
+    def _policy_card() -> str:
+        rows = "".join(
+            f"<tr><td>{html.escape(term)}</td><td>{html.escape(rule)}</td></tr>"
+            for term, rule in _CAMPAIGN_POLICY
+        )
+        return (
+            "<div class='card'><h2>" + _icon("receipt")
+            + "Campaign sampling policy</h2>"
+            "<div class='scroll'><table>" + rows + "</table></div>"
+            "<p class='note'>Operator-recorded policy (thesis ledger "
+            "Sections 11.22/11.27; runbook section 5.2). Enforcement lives "
+            "in each recorded run_matrix invocation, not in this card.</p>"
+            "</div>"
+        )
+
     def _campaign_context(self) -> str:
         """Non-secret campaign bindings from the environment, if present."""
 
@@ -1192,6 +1295,7 @@ class RigWebApp:
         )
         body = (
             "<h1>" + _icon("grid", size=22) + "Dashboard</h1>"
+            + self._warnings_html()
             + stats
             + "<div class='card'><h2>" + _icon("chart") + "Campaign pipeline"
             "</h2>" + _pipeline_svg(counts) +
@@ -1205,7 +1309,8 @@ class RigWebApp:
                "lower bound." if truncated else "")
             + "</p>" + stage_files + "</div>"
             + self._next_hint(counts)
-            + running_html +
+            + running_html
+            + self._policy_card() +
             "<div class='card'><h2>" + _icon("file") + "Campaign bindings"
             "</h2>" + self._campaign_context() + "</div>"
             "<div class='card'><h2>" + _icon("logo") + "Boundaries</h2>"
