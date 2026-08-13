@@ -415,6 +415,58 @@ _SECRET_CONFIG_KEY = re.compile(
 )
 
 
+_PATH_ROOT = re.compile(r"^(?:[/\\]+|[A-Za-z]:[/\\]*)$")
+_PATH_LAST_COMPONENT = re.compile(r"[/\\]+[^/\\]+[/\\]*$")
+
+
+def _scrub_operator_paths(
+    message: str, configured_paths: list[object],
+) -> str:
+    """Replace configured operator paths AND their ancestor directories.
+
+    An OS error may name a missing parent directory rather than the configured
+    file itself (the exact message shape is platform-dependent), so every
+    ancestor of every configured input is scrubbed too; otherwise a retained
+    early-failure artifact could leak a host-specific absolute path.  Ancestors
+    are derived textually so the original separator style is preserved and the
+    scrub behaves identically on every platform.
+    """
+
+    replacements: dict[str, str] = {}
+
+    def register(text_value: str, *, is_input: bool) -> None:
+        text_value = text_value.rstrip("/\\") or text_value
+        if not text_value or _PATH_ROOT.fullmatch(text_value):
+            return  # never scrub a filesystem root
+        label = re.split(r"[/\\]", text_value)[-1] or "path"
+        kind = "operator-input" if is_input else "operator-input-dir"
+        replacements.setdefault(text_value, f"<{kind}:{label}>")
+
+    def register_with_ancestors(text_value: str, *, is_input: bool) -> None:
+        register(text_value, is_input=is_input)
+        current = text_value
+        while True:
+            trimmed = _PATH_LAST_COMPONENT.sub("", current)
+            if not trimmed or trimmed == current or _PATH_ROOT.fullmatch(trimmed):
+                return
+            register(trimmed, is_input=False)
+            current = trimmed
+
+    for configured in configured_paths:
+        if not configured:
+            continue
+        register_with_ancestors(str(configured), is_input=True)
+        try:
+            resolved = str(Path(str(configured)).expanduser().resolve(strict=False))
+        except (OSError, RuntimeError):
+            resolved = ""
+        if resolved and resolved != str(configured):
+            register_with_ancestors(resolved, is_input=True)
+    for variant in sorted(replacements, key=len, reverse=True):
+        message = message.replace(variant, replacements[variant])
+    return message
+
+
 def _load_attacker_config(
     path_value: str, selected_attackers: list[str]
 ) -> tuple[dict[str, dict[str, object]], dict[str, object] | None]:
@@ -2578,7 +2630,6 @@ def main(argv=None) -> int:
     def safe_request_error_message(exc: Exception) -> str:
         """Remove operator-local input paths from retained early failures."""
 
-        message = str(exc)
         configured_paths = [
             args.attacker_config,
             args.api_config,
@@ -2595,19 +2646,7 @@ def main(argv=None) -> int:
         media_roots = os.environ.get("URA_MEDIA_ROOTS", "")
         if media_roots:
             configured_paths.extend(media_roots.split(os.pathsep))
-        for configured in configured_paths:
-            if not configured:
-                continue
-            replacement = f"<operator-input:{Path(configured).name or 'path'}>"
-            variants = {str(configured)}
-            try:
-                variants.add(str(Path(configured).expanduser().resolve(strict=False)))
-            except (OSError, RuntimeError):
-                pass
-            for variant in sorted(variants, key=len, reverse=True):
-                if variant:
-                    message = message.replace(variant, replacement)
-        return message
+        return _scrub_operator_paths(str(exc), configured_paths)
 
     def persist_request_error(
         *,

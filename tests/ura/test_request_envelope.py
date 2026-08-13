@@ -301,3 +301,31 @@ def test_run_matrix_new_error_supersedes_same_envelope_error(tmp_path: Path) -> 
     error = load_request_error_file(error_paths[0], envelope=envelope)
     assert "second-missing.json" in error["failure"]["message"]
     assert "first-missing.json" not in error["failure"]["message"]
+
+
+def test_scrubber_removes_ancestor_directories_of_configured_inputs() -> None:
+    # Platform-independent regression for the Linux-observed leak: the OS
+    # error may name a missing PARENT directory of the configured input, not
+    # the configured file itself; both must be scrubbed from retained errors.
+    from experiments.run_matrix import _scrub_operator_paths
+
+    configured = "/tmp/pytest-of-ura/pytest-0/case0/private-config/missing.json"
+    parent_message = (
+        "[Errno 2] No such file or directory: "
+        "'/tmp/pytest-of-ura/pytest-0/case0/private-config'"
+    )
+    scrubbed = _scrub_operator_paths(parent_message, [configured])
+    assert "/tmp/pytest-of-ura" not in scrubbed
+    assert "<operator-input-dir:private-config>" in scrubbed
+
+    exact_message = f"cannot read {configured}"
+    scrubbed = _scrub_operator_paths(exact_message, [configured])
+    assert configured not in scrubbed
+    assert "<operator-input:missing.json>" in scrubbed
+
+    # Windows-style separators scrub the same way.
+    win = r"C:\Users\op\data\registry.json"
+    scrubbed = _scrub_operator_paths(r"missing dir C:\Users\op\data", [win])
+    assert r"C:\Users\op\data" not in scrubbed
+    # A filesystem root is never scrubbed away.
+    assert _scrub_operator_paths("error at /", ["/x"]) == "error at /"
