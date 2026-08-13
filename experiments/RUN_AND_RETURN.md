@@ -109,7 +109,9 @@ cd "$URA_WORK"
 git clone https://github.com/ctapnec/MLLMRiskBench.git
 cd MLLMRiskBench
 # Use the full thesis-reviewed harness commit. Change it only through a recorded
-# protocol amendment made before inspecting outcomes.
+# protocol amendment made before inspecting outcomes. It must be commit
+# 6af9efaa5610d86d882211db24f4c679ff5700a0 or later: the section 4.1
+# source_conformance --scaffold command first exists at that revision.
 export REF_URA='<full-40-hex-reviewed-post-fix-project-commit>'
 [[ "$REF_URA" =~ ^[0-9a-f]{40}$ ]]
 git checkout --detach "$REF_URA"
@@ -518,8 +520,12 @@ receipt: validation rejects the scaffold schema name outright and also rejects
 a renamed receipt while any `OPERATOR_TODO` placeholder survives (the check is
 case-insensitive), so the license/access decision, raw-record reconciliation
 and attributed semantic review always remain actual operator judgments. Fill
-those fields, change `schema` to `ura-source-conformance/1`, and validate as
-below.
+those fields, change `schema` to `ura-source-conformance/1`, save the
+completed file as `runs/thesis/source-conformance.json` (the exact path the
+validation block below consumes), and validate as below. The
+`*.scaffold.json` file is a working draft, not evidence: delete it or move it
+outside the return tree once the validated receipt exists, so the packaged
+artifacts contain only the receipt that was actually admitted.
 
 The receipt is a compact operator record, not a workflow database. It may be
 scoped to the real arms selected for this command, but every selected real arm
@@ -1042,7 +1048,10 @@ validity, or future availability.
 Run a live canary only after a canary-specific
 `CANARY_LIVE_ATTESTATION_ARGS` array, constructed by the receipt loop above,
 covers the exact target route and delivered input combination without unrelated
-or overlapping receipt records. Target-transport receipts do not attest the
+or overlapping receipt records. To construct it, re-run the section 9 receipt
+loop with `LIVE_ATTESTATION_FILES`/`LIVE_ATTESTATION_SHA256` restricted to the
+canary target's exact receipt(s), then copy the result:
+`CANARY_LIVE_ATTESTATION_ARGS=("${LIVE_ATTESTATION_ARGS[@]}")`. Target-transport receipts do not attest the
 hosted judge. The canary must therefore actually reach every intended hosted
 judge route, or report it as `not_exercised`. Use the intended lane's complete
 target, source, attacker/config, defense, judge/guard, grouping, and query/turn
@@ -2051,10 +2060,12 @@ Complete the already-created `runs/thesis/RUNNOTE.md` and record:
   observed client-reported transport attempts for every runner canary/lane;
   provider-side hard quotas and provider usage/cost reconciliation remain
   separate evidence and unavailable values remain `CANNOT-VERIFY`;
-- human-audit status and achieved per-stratum counts; and
+- human-audit status and achieved per-stratum counts for the common frame,
+  and separately the source-task audit status and its per-family counts;
 - Level-1 `evidence_id`, planning-stratum/execution-unit/judgment-record counts,
   request-level errors, validated typed-attestation artifact/record support, and
-  the explicit `not_supplied` analysis-inclusion fields.
+  the explicit `not_supplied` analysis-inclusion fields; and
+- the Level-2 `report_id` with its estimate-row and native-run counts.
 
 Capture the URA environment and harness identity:
 
@@ -2079,13 +2090,18 @@ summary into a new output name if the existing file already exists. Verify that
 the tree retains the separate `preflight/`, `attestation/`, and measured
 `runner/` directories, plus grid descriptors, manifests, attempts, responses, judgments,
 shadow trails, checkpoints, completion/error records, aggregates, modality
-coverage, call ledgers, native raw artifacts and canonical envelopes, human-audit
-files, every retained `ura-lane-projection/1`, diagnostic
-`ura-lane-canary/1`, the Level-1 JSON/CSV, analyses, figures, the exact retained
-`source-conformance-*.json`, every exact `ura-live-attestation/2` receipt and
-approved digest record, the prospective `ura-project-revision/1` receipt and
-digest record, expected/observed commit and checkout-status records, and the run
-note. Runner outputs retain their own receipt copies and compact bindings.
+coverage, call ledgers, native raw artifacts and canonical envelopes, the
+common human-audit files and the separate source-task audit sample/labelled
+CSVs plus `source_task_audit.json`, every retained `ura-lane-projection/1`,
+diagnostic `ura-lane-canary/1`, the rebuilt `suite-evidence.json` broad-roster
+inventory, the Level-1 JSON/CSV, the deterministic
+`ura-level2-report/1` JSON/CSV/Markdown tables, the remaining analyses,
+figures, the exact retained `source-conformance-*.json` (with any
+`*.scaffold.json` working drafts removed), every exact `ura-live-attestation/2`
+receipt and approved digest record, the prospective `ura-project-revision/1`
+receipt and digest record, expected/observed commit and checkout-status
+records, and the run note. The rig console's job state directory
+(`runs/rig-web/` by default) is an operational record, not return evidence. Runner outputs retain their own receipt copies and compact bindings.
 Canonical native envelopes retain their distinct upstream project revisions but
 do not acquire a Runner `RunManifest`; their URA implementation revision is
 therefore established in the return-package/importer context, not falsely
