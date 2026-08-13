@@ -497,6 +497,30 @@ mapping review may the operator copy the complete digest into
 `reviewed_cluster_ids`. Increase `--limit` only under a documented review rule;
 the digest remains for the full converted corpus, not merely the sample.
 
+To avoid hand-typing the mechanical fields, scaffold the receipt first. The
+scaffold pre-fills only what a machine can know - the registry identity, the
+consumed-input digest from the exported environment path, and the semantic
+review's complete corpus digest plus selected cluster IDs from the bounded
+observation above - and writes every judgment field as an `OPERATOR_TODO`
+placeholder under the non-receipt schema
+`ura-source-conformance-scaffold/1`:
+
+```bash
+python -m experiments.source_conformance --scaffold \
+  --arm "$REVIEW_ARM" \
+  --observation "$REVIEW_ARM=$REVIEW_OUT" \
+  --source-config experiments/source-instances.json \
+  --out runs/thesis/source-conformance.scaffold.json
+```
+
+Repeat `--arm`/`--observation` for each selected arm. The scaffold is not a
+receipt: validation rejects the scaffold schema name outright and also rejects
+a renamed receipt while any `OPERATOR_TODO` placeholder survives (the check is
+case-insensitive), so the license/access decision, raw-record reconciliation
+and attributed semantic review always remain actual operator judgments. Fill
+those fields, change `schema` to `ura-source-conformance/1`, and validate as
+below.
+
 The receipt is a compact operator record, not a workflow database. It may be
 scoped to the real arms selected for this command, but every selected real arm
 must appear and be `admitted`. Optional entries may record `blocked` or

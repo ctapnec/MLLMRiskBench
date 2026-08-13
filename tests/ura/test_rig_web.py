@@ -53,6 +53,16 @@ def test_command_construction_is_typed_and_allowlisted() -> None:
         build_argv("run_matrix", {"--dry-run": "--models evil"})
     # An empty form for a command still produces only the module invocation.
     assert build_argv("figures", {}) == [sys.executable, "-m", "experiments.figures"]
+    # The operator start sequence is reachable from the console: the receipt
+    # scaffold/validation command is allowlisted.
+    argv = build_argv("source_conformance", {
+        "--scaffold": "on",
+        "--arm": "strongreject_official",
+        "--source-config": "experiments/source-instances.json",
+        "--out": "runs/thesis/receipt.scaffold.json",
+    })
+    assert argv[2] == "experiments.source_conformance"
+    assert "--scaffold" in argv and "--arm" in argv
 
 
 def test_artifact_paths_are_contained(tmp_path: Path) -> None:

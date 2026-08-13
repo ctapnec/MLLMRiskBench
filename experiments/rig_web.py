@@ -70,6 +70,19 @@ def _commands() -> dict[str, Command]:
             ),
         ),
         Command(
+            "source_conformance", "experiments.source_conformance",
+            "Scaffold or validate the compact source acquisition receipt",
+            (
+                CommandParam("--scaffold", "flag"),
+                CommandParam("--arm", "str"),
+                CommandParam("--observation", "str"),
+                CommandParam("--out", "path"),
+                CommandParam("--manifest", "path"),
+                CommandParam("--sha256", "str"),
+                CommandParam("--source-config", "path"),
+            ),
+        ),
+        Command(
             "rig_check", "experiments.rig_check",
             "No-call preflight for a planned grid",
             (

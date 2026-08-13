@@ -322,10 +322,25 @@ class SourceConformanceManifest(_StrictModel):
         return self
 
 
+#: Placeholder marker written by the receipt scaffold for every operator
+#: judgment field.  A receipt is rejected while any of them survives, so a
+#: scaffold can never be renamed into an admissible receipt without the
+#: operator actually supplying each judgment.
+SCAFFOLD_SENTINEL = "OPERATOR_TODO"
+
+
 def validate_source_conformance_manifest(value: object) -> dict[str, Any]:
-    return SourceConformanceManifest.model_validate(value).model_dump(
+    normalized = SourceConformanceManifest.model_validate(value).model_dump(
         mode="json", by_alias=True
     )
+    serialized = json.dumps(normalized, ensure_ascii=False).lower()
+    if SCAFFOLD_SENTINEL.lower() in serialized:
+        raise ValueError(
+            "source receipt retains scaffold placeholder text "
+            f"({SCAFFOLD_SENTINEL}); complete every operator judgment field "
+            "before validation"
+        )
+    return normalized
 
 
 def _sha256_file(path: Path) -> str:

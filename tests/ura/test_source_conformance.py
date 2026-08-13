@@ -548,3 +548,156 @@ def test_synthetic_transport_diagnostic_allows_offline_mock_judge(
     assert not list(
         (tmp_path / "synthetic-transport").glob("source-conformance-*.json")
     )
+
+
+def test_scaffold_prefills_mechanical_fields_and_is_not_admissible(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    source = tmp_path / "fixture.jsonl"
+    source.write_text('{"row": 1}' + "\n", encoding="utf-8")
+    monkeypatch.setenv("URA_FIXTURE_SOURCE", str(source))
+    registry = tmp_path / "source-instances.json"
+    registry.write_text(json.dumps({"fixture_arm": {
+        "converter": "advbench",
+        "path_env": "URA_FIXTURE_SOURCE",
+        "source_label": "Fixture source",
+        "split": "test",
+    }}), encoding="utf-8")
+    observation = tmp_path / "observation"
+    observation.mkdir()
+    (observation / "cell.manifest.json").write_text(json.dumps({
+        "config": {"run": {
+            "corpus": "fixture_arm",
+            "sampling_audit": {
+                "full_converted_corpus_sha256": "a" * 64,
+                "total_cluster_ids": ["c1", "c2"],
+                "selected_cluster_ids": ["c1"],
+            },
+        }},
+    }), encoding="utf-8")
+    out = tmp_path / "receipt.scaffold.json"
+
+    assert conformance_cli.main([
+        "--scaffold", "--arm", "fixture_arm",
+        "--observation", f"fixture_arm={observation}",
+        "--source-config", str(registry),
+        "--out", str(out),
+    ]) == 0
+
+    scaffold = json.loads(out.read_text(encoding="utf-8"))
+    assert scaffold["schema"] == "ura-source-conformance-scaffold/1"
+    arm = scaffold["arms"][0]
+    assert arm["consumed_input"] == {
+        "kind": "file",
+        "sha256": hashlib.sha256(source.read_bytes()).hexdigest(),
+        "bytes": source.stat().st_size,
+    }
+    review = arm["semantic_review"]
+    assert review["status"] == "pending"
+    assert review["reviewed_converted_corpus_sha256"] == "a" * 64
+    assert review["reviewed_cluster_ids"] == ["c1"]
+    assert arm["operator_decision"]["decision"] == "pending"
+    assert "OPERATOR_TODO" in arm["operator_decision"]["reviewer"]
+
+    # The scaffold is not admissible as a receipt: wrong schema name.
+    with pytest.raises(Exception):
+        validate_source_conformance_manifest(scaffold)
+
+    # Renaming the schema without completing the judgments still fails closed.
+    renamed = deepcopy(scaffold)
+    renamed["schema"] = "ura-source-conformance/1"
+    renamed.pop("instructions")
+    with pytest.raises(Exception):
+        validate_source_conformance_manifest(renamed)
+
+    # Create-only output.
+    assert conformance_cli.main([
+        "--scaffold", "--arm", "fixture_arm",
+        "--source-config", str(registry),
+        "--out", str(out),
+    ]) == 1
+
+
+def test_receipt_rejects_any_surviving_scaffold_placeholder(
+    tmp_path: Path,
+) -> None:
+    source = tmp_path / "fixture.jsonl"
+    source.write_text('{"row": 1}' + "\n", encoding="utf-8")
+    rows = [_point("dp-1")]
+    receipt = _receipt(rows, source)
+    receipt["arms"][0]["operator_decision"]["notes"] = (
+        "OPERATOR_TODO: still deciding"
+    )
+    with pytest.raises(ValueError, match="scaffold placeholder"):
+        validate_source_conformance_manifest(receipt)
+    # Case-insensitive: the lowercased revision fields cannot smuggle it.
+    receipt = _receipt(rows, source)
+    receipt["arms"][0]["requested_revision"] = "operator_todo0"
+    receipt["arms"][0]["observed_revision"] = "operator_todo0"
+    with pytest.raises(ValueError, match="scaffold placeholder"):
+        validate_source_conformance_manifest(receipt)
+
+
+def test_completed_scaffold_becomes_a_valid_receipt(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    source = tmp_path / "fixture.jsonl"
+    source.write_text('{"row": 1}' + "\n", encoding="utf-8")
+    monkeypatch.setenv("URA_FIXTURE_SOURCE", str(source))
+    registry = tmp_path / "source-instances.json"
+    registry.write_text(json.dumps({"fixture_arm": {
+        "converter": "advbench",
+        "path_env": "URA_FIXTURE_SOURCE",
+        "source_label": "Fixture source",
+        "split": "test",
+    }}), encoding="utf-8")
+    out = tmp_path / "receipt.scaffold.json"
+    assert conformance_cli.main([
+        "--scaffold", "--arm", "fixture_arm",
+        "--source-config", str(registry),
+        "--out", str(out),
+    ]) == 0
+
+    completed = json.loads(out.read_text(encoding="utf-8"))
+    completed["schema"] = "ura-source-conformance/1"
+    completed.pop("instructions")
+    arm = completed["arms"][0]
+    arm["reason"] = "selected for the fixture study"
+    arm["upstream_uri"] = "https://example.invalid/fixture"
+    arm["requested_revision"] = "a" * 40
+    arm["observed_revision"] = "a" * 40
+    arm["operator_decision"] = {
+        "decision": "approved",
+        "access_status": "not_required",
+        "license_identifier_or_notice": "fixture notice",
+        "reviewer": "test reviewer",
+        "reviewed_at": "2026-08-13T12:00:00+03:00",
+        "evidence_sha256": "e" * 64,
+        "notes": "License and access reviewed.",
+    }
+    arm["raw_records"] = {
+        "discovered": 1, "accepted": 1,
+        "excluded_by_design": 0, "rejected_invalid": 0, "reasons": {},
+    }
+    arm["semantic_review"] = {
+        "status": "passed",
+        "reviewer": "test reviewer",
+        "reviewed_at": "2026-08-13T12:00:00+03:00",
+        "selection_rule": "the one selected cluster",
+        "reviewed_cluster_ids": ["c1"],
+        "reviewed_converted_corpus_sha256": "a" * 64,
+        "notes": "Compared converted rows with the raw source.",
+    }
+
+    validated = validate_source_conformance_manifest(completed)
+    assert validated["arms"][0]["disposition"] == "admitted"
+    assert verify_manifest_components(validated) == ["fixture_arm"]
+
+    receipt_path = tmp_path / "receipt.json"
+    payload = json.dumps(validated, sort_keys=True).encode("utf-8")
+    receipt_path.write_bytes(payload)
+    assert conformance_cli.main([
+        "--manifest", str(receipt_path),
+        "--sha256", hashlib.sha256(payload).hexdigest(),
+        "--source-config", str(registry),
+    ]) == 0

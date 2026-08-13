@@ -73,6 +73,16 @@ Write one manually reviewed receipt for the exact
 `experiments/source-instances.json` used by the run. Do not insert guessed
 revisions, hashes, counts, licenses, or review outcomes.
 
+`python -m experiments.source_conformance --scaffold --arm <arm>
+--observation <arm>=<observation-dir> --source-config <registry> --out
+<file>` pre-fills the mechanical fields (registry identity, consumed-input
+digest from the exported environment path, semantic-review corpus digest and
+selected cluster IDs from the observation) and writes every judgment field as
+an `OPERATOR_TODO` placeholder under the non-receipt schema
+`ura-source-conformance-scaffold/1`. The scaffold is rejected by validation
+both by schema name and - after renaming - while any placeholder survives
+(case-insensitive), so the operator judgments below can never be defaulted.
+
 This non-empirical shape example uses syntactically valid sentinel digests and
 example.invalid identifiers, not observations. Replace every value with reviewed
 evidence and include every selected real arm. The schema also permits optional
