@@ -740,10 +740,14 @@ campaign runs two pre-registered population tiers:
   pre-registered common subset (identical to the hosted lanes) unless
   post-canary projections show budget for more. Rules-only and cascade
   evaluator modes are distinct compatibility keys and are never pooled.
-- Exact per-lane limits are operator decisions taken after the section 9.1
-  diagnostic canaries from their cost projections and recorded with the
-  approved caps; audio and video remain hosted-only and already bounded
-  (section 10.3).
+- Exact per-lane limits and call caps are fixed after the section 9.1
+  diagnostic canaries from their cost projections and recorded before any
+  measured lane starts. [13 August 2026: the operator delegated setting
+  these limits to the campaign agent, bounded by the operator-recorded
+  prepaid provider budgets (ledger Section 11.27); the limits remain
+  prospective and recorded, and the delegation does not extend to any
+  other operator-only judgment.] Audio and video remain hosted-only and
+  already bounded (section 10.3).
 
 ## 6. Configure scoring and optional defense guards
 
