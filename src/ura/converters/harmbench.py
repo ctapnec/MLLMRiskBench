@@ -22,6 +22,24 @@ SEMANTIC_MAP = {
     "harassment_bullying": Rc.TOXICITY,
 }
 
+# The official multimodal behaviors CSV lists some images with a .jpeg
+# extension while the released image folder ships the same stems as .png.
+# Resolve by the exact listed name first, then by stem across the maintained
+# image extensions; the byte-level type is still verified downstream.
+_IMAGE_EXTENSIONS = (".png", ".jpg", ".jpeg", ".webp", ".gif", ".bmp", ".tiff")
+
+
+def _resolve_image_name(name: str, imgroot: Path) -> str:
+    if (imgroot / name).is_file():
+        return name
+    stem = Path(name).stem
+    for extension in _IMAGE_EXTENSIONS:
+        if (imgroot / f"{stem}{extension}").is_file():
+            return f"{stem}{extension}"
+    # Fall through with the declared name so image() raises the canonical
+    # fail-closed "media asset does not exist" error.
+    return name
+
 
 class HarmBenchConverter(BaseConverter):
     name = "harmbench"
@@ -53,7 +71,7 @@ class HarmBenchConverter(BaseConverter):
             media = []
             modalities = ["text"]
             if row.get("ImageFileName"):
-                media = [image(row["ImageFileName"], imgroot)]
+                media = [image(_resolve_image_name(row["ImageFileName"], imgroot), imgroot)]
                 modalities = ["text", "image"]
             out.append(dp(
                 id=f"harmbench:{row.get('BehaviorID')}",

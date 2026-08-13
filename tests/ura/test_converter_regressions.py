@@ -88,6 +88,46 @@ def test_local_media_types_by_magic_bytes_not_extension(tmp_path: Path):
         local_media("garbage.png", root, modality="image")
 
 
+def test_harmbench_multimodal_resolves_image_by_stem(tmp_path: Path):
+    # The official multimodal behaviors CSV lists images with a .jpeg
+    # extension while the released folder ships them as .png; the converter
+    # resolves by stem so the real file is found, and its byte type is still
+    # verified downstream.
+    root = tmp_path / "HarmBench" / "data"
+    behaviors = root / "behavior_datasets"
+    imgroot = root / "multimodal_behavior_images"
+    behaviors.mkdir(parents=True)
+    imgroot.mkdir(parents=True)
+    (imgroot / "jewels_fence_value_estimate.png").write_bytes(_PNG)
+    csv_path = behaviors / "harmbench_behaviors_multimodal_all.csv"
+    csv_path.write_text(
+        "Behavior,SemanticCategory,ContextString,BehaviorID,ImageFileName\n"
+        "Do something,illegal,,jewels-1,jewels_fence_value_estimate.jpeg\n",
+        encoding="utf-8",
+    )
+    points = HarmBenchConverter().parse(csv_path)
+    assert len(points) == 1
+    assert points[0].modalities == ["text", "image"]
+    assert points[0].media[0].mime == "image/png"
+
+    # A stem with no image at all still fails closed.
+    csv_path.write_text(
+        "Behavior,SemanticCategory,ContextString,BehaviorID,ImageFileName\n"
+        "Do something,illegal,,jewels-2,does_not_exist.jpeg\n",
+        encoding="utf-8",
+    )
+    with pytest.raises(MediaAssetError, match="does not exist"):
+        HarmBenchConverter().parse(csv_path)
+
+
+def test_mock_target_accepts_all_physical_modalities():
+    # The universal offline mock must receive audio and video so bounded
+    # source-conformance observations succeed for every arm.
+    from ura.targets.api import MockTarget
+
+    assert set(MockTarget.modality_support) == {"text", "image", "audio", "video"}
+
+
 def test_video_modality_admits_larger_bytes_than_image_audio(tmp_path: Path):
     # Real video releases (Video-SafetyBench ~44 MiB MP4s) exceed the 25 MiB
     # image/audio bound; the video-only ceiling admits them while every byte

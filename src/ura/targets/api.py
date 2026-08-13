@@ -674,7 +674,10 @@ class MockTarget(BaseTarget):
     """
 
     name = "mock"
-    modality_support = ("text", "image")
+    # The offline mock is the universal stand-in for bounded dry-run and
+    # source-conformance observations, so it accepts every physical modality
+    # (it reads only the last user text and never processes the media bytes).
+    modality_support = ("text", "image", "audio", "video")
 
     def __init__(self, model: str = "mock") -> None:
         self.model = model
@@ -2694,7 +2697,9 @@ class GeminiTarget(BaseTarget):
 # Registry wiring
 # --------------------------------------------------------------------------- #
 
-REGISTRY.register("mock", MockTarget, provider="mock", modality="text+image")
+REGISTRY.register(
+    "mock", MockTarget, provider="mock", modality="text+image+audio+video"
+)
 
 # Provider-documented model IDs verified for the experiment protocol snapshot.
 # The list is deliberately conservative. Account-specific, preview, and newly
