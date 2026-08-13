@@ -619,8 +619,10 @@ is an operator-attested condition. Add its exact spec to the local JSON with
 explicit `modalities`, `max_tokens`, and `temperature` only after reviewing the
 account documentation, then retain it only if the bounded live checks below
 return the expected served identity for every claimed modality. Examples such
-as `openai:gpt-5.6-terra`, `openai:gpt-5.6-luna`, or `glm:glm-5.2` are not
-asserted available by this runbook. Do not silently substitute another model.
+as `openai:gpt-5.6-tera`, `openai:gpt-5.6-luna`, or `glm:glm-5.2` become usable
+rows through that path: operator attestation of account visibility plus a
+probe-confirmed served identity; the document itself cannot see any account.
+Do not silently substitute another model.
 
 Generic Claude Opus 5 and Sonnet 5 conditions require all three fields shown:
 `temperature: null`, `thinking: "adaptive"`, and an explicit effort. The Haiku
@@ -661,6 +663,45 @@ if [[ -n "$OPERATOR_IMAGE_TARGETS" ]]; then export IMAGE_TARGETS="$IMAGE_TARGETS
 
 Remove a target from a lane if its probe did not produce a complete, correctly
 resolved response. A local preflight cannot establish remote entitlement.
+
+### 5.1 Funded campaign roster (operator decision, 13 August 2026)
+
+The first campaign's roster is fixed by recorded operator decision (thesis
+ledger Section 11.22); this subsection mirrors it so the rig operator does
+not have to consult the thesis repository mid-campaign. It narrows the
+candidate lanes above; it never adds a route the section 8 gates have not
+confirmed.
+
+- Focal pair: the Fable and Sol conditions above; both are measured targets.
+- Hosted judge: `anthropic:claude-haiku-4-5-20251001`. The judge model is
+  excluded as a target (self-judgment bias); its registry row exists only as
+  the judge condition.
+- Anthropic breadth: `anthropic:claude-sonnet-5`; add `anthropic:claude-opus-5`
+  only if diagnostic canary cost projections leave budget for it.
+- OpenAI breadth: at most one additional row beyond Sol - a budget cap, not
+  an availability doubt. The operator attests GPT-5.6 Tera, GPT-5.6 Luna,
+  and GPT-5.5 are visible on the account; the section 8 probe records each
+  exact served route id before its config row is added, and the canary cost
+  projection picks which one the funding carries.
+- Google: `google:gemini-3.6-flash`, the only funded rich-media hosted row.
+- Moonshot: one to two Kimi snapshots (`kimi:kimi-k3` plus at most one
+  additional account-visible snapshot).
+- DeepSeek: `deepseek:deepseek-v4-pro`, text lane only.
+- Hosted GLM: structural `N/A` for this campaign - no payable API route
+  exists for this operator, nothing substitutes for it, and a
+  third-party-hosted deployment would measure a different serving condition.
+- Hosted Qwen (`qwen:qwen3.7-max-2026-06-08`): registry-documented but
+  unfunded; it stays out of the campaign lanes unless the operator records a
+  funding decision for it.
+- Local lane priority: Qwen3-VL first, then the LLaVA base/RR same-base
+  defense pair. A local GLM open-weight condition was considered and dropped:
+  flagship open checkpoints exceed the 2x24 GB rig even quantized.
+- Chat-product subscriptions and agent-product wrappers are never experiment
+  routes; all measured traffic uses direct API keys under the declared
+  request controls.
+
+Every funded row remains subject to the section 8 gates: a lane that fails
+its attestation probe or canary is removed, never substituted.
 
 ## 6. Configure scoring and optional defense guards
 
