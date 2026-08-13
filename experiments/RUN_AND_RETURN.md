@@ -10,6 +10,11 @@ diagnostics, not thesis results.
 The maintained artifact contract is Runner `ura-runner/2.11` with unified schema
 `1.4`. Do not combine older-runner artifacts with this program.
 
+Every `python -m experiments.*` command below can equivalently be started
+from the optional rig console (section 18): the console builds the identical
+argument vector from a typed allowlist, so admission gates and artifacts do
+not differ between the two interfaces, and the CLI remains authoritative.
+
 The program is deliberately lane-based. A model is tested on every physical
 modality that both its exact adapter condition and an acquired source support,
 but an unsupported cell is recorded as `not_applicable` with a reason. It is not
@@ -85,6 +90,8 @@ an explicit gap, not permission to improvise a pooled score.
 heterogeneous rates.
 
 ## 2. Machine and URA installation
+
+*Console equivalent: this section's commands are also launchable as the `project_revision` form(s) in the rig console (section 18); identical argument vectors, gates and artifacts.*
 
 The intended rig is Linux, Python 3.12, two RTX 4090 cards, recent NVIDIA drivers,
 Git LFS, Git, Node.js for Promptfoo, and enough controlled storage for large audio
@@ -356,6 +363,8 @@ missing or structurally different release is an explicit blocked source, not a
 reason to edit the data until it passes.
 
 ## 4. Configure source arms and media
+
+*Console equivalent: this section's commands are also launchable as the `source_conformance`, `export_jalmbench` and `export_vlsbench` form(s) in the rig console (section 18); identical argument vectors, gates and artifacts.*
 
 Use the checked-in registry so the runbook and converter inventory cannot drift.
 The copy is an operator-local input and may add a new reviewed release under a
@@ -748,6 +757,8 @@ remain separate commands so vLLM releases its target weights between processes.
 
 ## 8. Offline checks and bounded live modality attestations
 
+*Console equivalent: this section's commands are also launchable as the `run_matrix`, `rig_check`, `live_attestation` and `figures` form(s) in the rig console (section 18); identical argument vectors, gates and artifacts.*
+
 Run the full offline regression first:
 
 ```bash
@@ -974,6 +985,8 @@ run one process at a time. Local audio/video claims are unsupported.
 
 ## 9. Plan lanes with the no-call rig check
 
+*Console equivalent: this section's commands are also launchable as the `rig_check`, `run_matrix`, `live_attestation` and `lane_canary` form(s) in the rig console (section 18); identical argument vectors, gates and artifacts.*
+
 Every measured grid below must first be passed with the same grid-defining
 arguments to `python -m experiments.rig_check`. It loads and validates sources
 and media, loads a local target engine before scoring/defense guards when a
@@ -1171,6 +1184,8 @@ not evidence that one cluster represents the population.
 
 ## 10. Tier 1: broad static replay
 
+*Console equivalent: this section's commands are also launchable as the `rig_check` and `run_matrix` form(s) in the rig console (section 18); identical argument vectors, gates and artifacts.*
+
 Static replay is the coverage backbone. It is where the broad model roster is
 actually measured, rather than merely listed.
 
@@ -1298,6 +1313,8 @@ pricing, token, audio-input, and latency assumptions in `RUNNOTE.md`.
 
 ## 11. Tier 2: source-specific classification
 
+*Console equivalent: this section's commands are also launchable as the `rig_check` and `run_matrix` form(s) in the rig console (section 18); identical argument vectors, gates and artifacts.*
+
 These tracks answer different questions from ASR/FRR and stay separate.
 Each command deliberately selects only `--judges rules` because the Runner
 requires a non-empty, stage-shaped trail. For these common-ineligible outputs it
@@ -1343,6 +1360,8 @@ implemented. GPTGeoChat reports
 threshold-conditioned moderation classification, not a target geolocation ASR.
 
 ## 12. Tier 3: adaptive and transferred attacks
+
+*Console equivalent: this section's commands are also launchable as the `rig_check` and `run_matrix` form(s) in the rig console (section 18); identical argument vectors, gates and artifacts.*
 
 Depth is applied to a declared focal subset, not to the full static Cartesian
 product. At minimum use several provider families plus a local model.
@@ -1454,6 +1473,8 @@ protected by the common call ceilings.
 
 ## 13. Tier 4: local targets and defense contrast
 
+*Console equivalent: this section's commands are also launchable as the `rig_check` and `run_matrix` form(s) in the rig console (section 18); identical argument vectors, gates and artifacts.*
+
 Run every local model in its own process. The examples below use text; repeat the
 static image lane for image-capable local models.
 
@@ -1509,6 +1530,8 @@ Added value is measured as the harmful/benign tradeoff; lower harmful ASR withou
 benign refusal cost is an incomplete defense analysis.
 
 ## 14. Tier 5: nine source-native evaluators
+
+*Console equivalent: this section's commands are also launchable as the `native_import` form(s) in the rig console (section 18); identical argument vectors, gates and artifacts.*
 
 Each project gets an isolated environment and exact source revision. Do not
 install all of them into the URA environment.
@@ -1749,6 +1772,8 @@ returning the envelope alone is not.
 
 ## 15. Human audit
 
+*Console equivalent: this section's commands are also launchable as the `human_audit` form(s) in the rig console (section 18); identical argument vectors, gates and artifacts.*
+
 Prepare the blinded audit only after all intended runner grids are complete. Use
 the common `runs/thesis/runner` parent so the sample can include broad roster,
 source, policy, modality, and attack strata. Choose the sample size from feasible
@@ -1843,6 +1868,8 @@ human frame or its judge-validity calibration, and never rename classification
 accuracy as safety.
 
 ## 16. Read-only analysis and suite summary
+
+*Console equivalent: this section's commands are also launchable as the `judge_sensitivity`, `kappa`, `transfer_matrix`, `paired_compare`, `level1_evidence`, `native_import`, `suite_summary`, `level2_report` and `figures` form(s) in the rig console (section 18); identical argument vectors, gates and artifacts.*
 
 Run the implemented diagnostics only on completed, content-validated artifacts:
 
@@ -2033,6 +2060,8 @@ the paired core figure template.
 
 ## 17. Completion, recovery, and return
 
+*Console equivalent: this section's commands are also launchable as the `project_revision` and `source_conformance` validation forms form(s) in the rig console (section 18); identical argument vectors, gates and artifacts.*
+
 Each lane is complete only when its command exits zero, the grid reports zero
 failed cells, every requested cell has a completion marker, modality coverage is
 realized, and the durable ledgers reconcile with provider usage. Resume a stopped
@@ -2137,3 +2166,20 @@ the filesystem artifacts remain authoritative, the console never reinterprets
 experiment semantics, diagnostic evidence it displays never authorizes a
 campaign, and nothing it renders is itself thesis evidence. Job logs under the
 state directory are operational records, not return-package artifacts.
+
+Console-form to runbook-section mapping (the console builds the identical
+argument vectors; nothing below is console-only):
+
+| Console form | Runbook section(s) |
+|---|---|
+| `project_revision` | 2, 17 |
+| `source_conformance` (scaffold and validate) | 4/4.1, 17 |
+| `export_jalmbench` / `export_vlsbench` | 4 |
+| `rig_check` | 9-13 |
+| `run_matrix` (dry-run, probe, canary, measured) | 8/8.1, 9/9.1, 10-13 |
+| `live_attestation` | 8.1, 9 |
+| `lane_canary` | 9.1 |
+| `native_import` | 14.3, 16 |
+| `human_audit` (common and source-task frames) | 15, 15.1 |
+| `judge_sensitivity`, `kappa`, `transfer_matrix`, `paired_compare` | 16 |
+| `level1_evidence`, `suite_summary`, `level2_report`, `figures` | 8.1, 16 |

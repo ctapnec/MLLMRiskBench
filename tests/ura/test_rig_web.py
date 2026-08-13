@@ -171,3 +171,22 @@ def test_badges_distinguish_measured_and_canary() -> None:
     })
     assert ("synthetic offline", "amber") in badges
     assert ("campaign not authorized", "gray") in badges
+
+
+def test_console_covers_every_runbook_cli() -> None:
+    # The console and the CLI are two interfaces to the same operations: every
+    # experiments module the runbook invokes must be allowlisted (rig_web
+    # itself excepted - the console does not launch itself).
+    import re
+
+    from experiments.rig_web import COMMANDS
+
+    runbook = (
+        Path(__file__).resolve().parents[2]
+        / "experiments" / "RUN_AND_RETURN.md"
+    ).read_text(encoding="utf-8")
+    used = set(re.findall(r"python -m experiments\.([a-z0-9_]+)", runbook))
+    used.discard("rig_web")
+    allowlisted = {entry.module.split(".", 1)[1] for entry in COMMANDS.values()}
+    missing = sorted(used - allowlisted)
+    assert not missing, f"runbook CLIs missing from the console allowlist: {missing}"
