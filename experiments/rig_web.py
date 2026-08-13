@@ -1,9 +1,12 @@
 """Rig-local web interface over the maintained experiment CLIs.
 
-A thin, single-operator, localhost-only convenience surface (WEB-001): it
-starts allowlisted ``python -m experiments.*`` commands from typed forms,
-monitors and stops those jobs, streams their logs, and browses retained
-artifacts with explicit diagnostic/measured and pending/N/A/error badges.
+A thin, single-operator, localhost-only convenience surface (WEB-001, visual
+layer WEB-002): it starts allowlisted ``python -m experiments.*`` commands
+from typed forms, monitors and stops those jobs, streams their logs, and
+browses retained artifacts with explicit diagnostic/measured and
+pending/N/A/error badges.  The dashboard additionally shows a campaign
+pipeline and artifact inventory derived purely from file presence; presence
+of a file never asserts its validity.
 
 The CLI and the filesystem artifacts remain authoritative.  This module never
 reimplements experiment semantics, never executes arbitrary shell input
@@ -20,14 +23,16 @@ import csv
 import html
 import io
 import json
+import os
 import secrets
+import shutil
 import subprocess
 import sys
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable, Mapping
-from urllib.parse import parse_qs, urlparse
+from urllib.parse import parse_qs, quote, urlparse
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
@@ -36,6 +41,8 @@ _REPO_ROOT = Path(__file__).resolve().parents[1]
 _MAX_RENDER_BYTES = 4 * 1024 * 1024
 _LOG_TAIL_BYTES = 64 * 1024
 _CSV_PREVIEW_ROWS = 200
+_INVENTORY_MAX_ENTRIES = 8000
+_INVENTORY_MAX_DEPTH = 4
 
 
 @dataclass(frozen=True)
@@ -299,7 +306,8 @@ def _commands() -> dict[str, Command]:
         ),
         Command(
             "syn_compat", "experiments.syn_compat",
-            "Synthetic compatibility corpus: generate/check/evaluate (rule-fidelity only)",
+            "Synthetic compatibility corpus: generate/check/evaluate "
+            "(rule-fidelity only)",
             (
                 CommandParam("--generate", "flag"),
                 CommandParam("--check", "flag"),
@@ -323,6 +331,28 @@ def _commands() -> dict[str, Command]:
 
 
 COMMANDS = _commands()
+
+
+#: Presentation-only grouping of the allowlisted commands by runbook stage.
+#: Every command appears in exactly one group (asserted by tests); grouping
+#: never changes what a command does or which arguments it accepts.
+COMMAND_GROUPS: tuple[tuple[str, str, str, tuple[str, ...]], ...] = (
+    ("Receipts and conformance", "receipt", "runbook sections 2, 4.1, 17",
+     ("project_revision", "source_conformance")),
+    ("Acquisition exports", "box", "runbook section 3.2",
+     ("export_jalmbench", "export_vlsbench")),
+    ("Preflight, probes and lanes", "play", "runbook sections 8-13",
+     ("rig_check", "run_matrix", "live_attestation", "lane_canary")),
+    ("Native and synthetic", "flask", "runbook sections 14, 16",
+     ("native_import", "syn_compat")),
+    ("Analysis and reporting", "chart", "runbook section 16",
+     ("level1_evidence", "suite_summary", "level2_report", "figures",
+      "paired_compare", "judge_sensitivity", "kappa", "transfer_matrix")),
+    ("Human audit", "users", "runbook sections 15, 15.1",
+     ("human_audit",)),
+    ("Console diagnostics", "pulse", "runbook section 18",
+     ("webui_selftest",)),
+)
 
 
 def build_argv(
@@ -430,67 +460,219 @@ def evidence_badges(document: Any) -> list[tuple[str, str]]:
     return badges
 
 
+#: Inline stroke icons (24x24 viewBox); presentation only, no external assets.
+_ICONS: dict[str, str] = {
+    "logo": (
+        "<path d='M12 2l8 4v6c0 5-3.5 8.5-8 10-4.5-1.5-8-5-8-10V6z'/>"
+        "<path d='M8.5 12.5l2.5 2.5 4.5-5'/>"
+    ),
+    "grid": (
+        "<rect x='3' y='3' width='7' height='7' rx='1.5'/>"
+        "<rect x='14' y='3' width='7' height='7' rx='1.5'/>"
+        "<rect x='3' y='14' width='7' height='7' rx='1.5'/>"
+        "<rect x='14' y='14' width='7' height='7' rx='1.5'/>"
+    ),
+    "terminal": "<path d='M4 17l6-5-6-5'/><path d='M12 19h8'/>",
+    "pulse": "<path d='M22 12h-4l-3 9L9 3l-3 9H2'/>",
+    "folder": (
+        "<path d='M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 "
+        "3h9a2 2 0 0 1 2 2z'/>"
+    ),
+    "file": (
+        "<path d='M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 "
+        "2-2V8z'/><path d='M14 2v6h6'/>"
+    ),
+    "receipt": (
+        "<path d='M9 11l3 3L22 4'/>"
+        "<path d='M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 "
+        "2-2h11'/>"
+    ),
+    "box": (
+        "<path d='M21 8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 "
+        "8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z'/>"
+        "<path d='M3.3 7L12 12l8.7-5'/><path d='M12 22V12'/>"
+    ),
+    "play": "<path d='M6 3l14 9-14 9V3z'/>",
+    "flask": (
+        "<path d='M10 2v6.3L4.2 19a2 2 0 0 0 1.8 3h12a2 2 0 0 0 1.8-3L14 "
+        "8.3V2'/><path d='M8 2h8'/><path d='M7.5 14h9'/>"
+    ),
+    "chart": "<path d='M18 20V10'/><path d='M12 20V4'/><path d='M6 20v-6'/>",
+    "users": (
+        "<path d='M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2'/>"
+        "<circle cx='9' cy='7' r='4'/>"
+        "<path d='M23 21v-2a4 4 0 0 0-3-3.87'/>"
+        "<path d='M16 3.13a4 4 0 0 1 0 7.75'/>"
+    ),
+    "clock": "<circle cx='12' cy='12' r='9'/><path d='M12 7v5l3 2'/>",
+    "disk": (
+        "<circle cx='12' cy='12' r='9'/><circle cx='12' cy='12' r='2.5'/>"
+    ),
+}
+
+
+def _icon(name: str, *, size: int = 18) -> str:
+    body = _ICONS.get(name, _ICONS["file"])
+    return (
+        f"<svg class='ic' width='{size}' height='{size}' viewBox='0 0 24 24' "
+        "fill='none' stroke='currentColor' stroke-width='1.8' "
+        f"stroke-linecap='round' stroke-linejoin='round' "
+        f"aria-hidden='true'>{body}</svg>"
+    )
+
+
 _STYLE = """
-:root { color-scheme: light dark; --bg:#f5f6f8; --card:#ffffff; --ink:#1c2733;
-  --muted:#5c6b7a; --line:#dde3ea; --accent:#0b64c0; }
+:root { color-scheme: light dark;
+  --bg:#eef1f5; --card:#ffffff; --ink:#182430; --muted:#5b6b7c;
+  --line:#d9e0e8; --accent:#0a5fb4; --accent-ink:#ffffff;
+  --soft:#f4f7fa; --shadow:0 1px 2px rgba(16,24,32,.06),
+  0 4px 14px rgba(16,24,32,.05); }
 @media (prefers-color-scheme: dark) {
-  :root { --bg:#12181f; --card:#1a222c; --ink:#e8eef4; --muted:#93a4b5;
-    --line:#2a3542; --accent:#5aa2e8; } }
+  :root { --bg:#10161d; --card:#19212b; --ink:#e7edf3; --muted:#92a3b4;
+    --line:#28323e; --accent:#59a3ea; --accent-ink:#0d1621;
+    --soft:#141b23; --shadow:0 1px 2px rgba(0,0,0,.35); } }
 * { box-sizing: border-box; }
-body { margin:0; font:15px/1.5 system-ui, "Segoe UI", sans-serif;
+body { margin:0; font:15px/1.55 system-ui, "Segoe UI", sans-serif;
   background:var(--bg); color:var(--ink); }
-main { max-width:1100px; margin:0 auto; padding:1.2rem; }
-nav { background:var(--card); border-bottom:1px solid var(--line);
-  padding:.7rem 1.2rem; display:flex; gap:1.2rem; flex-wrap:wrap; }
-nav a { color:var(--accent); text-decoration:none; font-weight:600; }
-nav span.title { font-weight:700; }
-h1 { font-size:1.25rem; } h2 { font-size:1.05rem; margin-top:1.6rem; }
+main { max-width:1160px; margin:0 auto; padding:1.4rem 1.2rem 2rem; }
+nav { position:sticky; top:0; z-index:5; background:var(--card);
+  border-bottom:1px solid var(--line); padding:.6rem 1.2rem;
+  display:flex; gap:.4rem; align-items:center; flex-wrap:wrap; }
+nav .brand { display:flex; gap:.55rem; align-items:center; font-weight:700;
+  margin-right:1rem; letter-spacing:.01em; }
+nav .brand .ic { color:var(--accent); }
+nav a { display:flex; gap:.4rem; align-items:center; color:var(--muted);
+  text-decoration:none; font-weight:600; font-size:.92rem;
+  padding:.35rem .7rem; border-radius:8px; }
+nav a:hover { background:var(--soft); color:var(--ink); }
+h1 { font-size:1.3rem; margin:.4rem 0 1rem; display:flex; gap:.55rem;
+  align-items:center; }
+h1 .ic { color:var(--accent); }
+h2 { font-size:1rem; margin:0 0 .6rem; display:flex; gap:.45rem;
+  align-items:center; color:var(--ink); }
+h2 .ic { color:var(--muted); }
 .card { background:var(--card); border:1px solid var(--line);
-  border-radius:10px; padding:1rem 1.2rem; margin:.8rem 0; }
-table { border-collapse:collapse; width:100%; font-size:.86rem; }
-th, td { border:1px solid var(--line); padding:.3rem .55rem; text-align:left;
-  vertical-align:top; }
-th { background:color-mix(in srgb, var(--card) 70%, var(--bg)); }
+  border-radius:12px; padding:1rem 1.2rem; margin:.9rem 0;
+  box-shadow:var(--shadow); }
+.cols { display:grid; grid-template-columns:repeat(auto-fit,minmax(240px,1fr));
+  gap:.9rem; }
+.cols .card { margin:0; }
+.stat { display:flex; flex-direction:column; gap:.15rem; }
+.stat .value { font-size:1.35rem; font-weight:700; }
+.stat .label { color:var(--muted); font-size:.82rem; }
+table { border-collapse:collapse; width:100%; font-size:.87rem; }
+th, td { border-bottom:1px solid var(--line); padding:.42rem .6rem;
+  text-align:left; vertical-align:top; }
+th { color:var(--muted); font-weight:600; font-size:.78rem;
+  text-transform:uppercase; letter-spacing:.05em;
+  border-bottom:2px solid var(--line); }
+tr:hover td { background:var(--soft); }
 .scroll { overflow-x:auto; }
-pre { background:color-mix(in srgb, var(--card) 60%, var(--bg));
-  border:1px solid var(--line); border-radius:8px; padding:.8rem;
-  overflow-x:auto; font-size:.82rem; white-space:pre-wrap; }
-.badge { display:inline-block; border-radius:999px; padding:.05rem .6rem;
-  font-size:.75rem; font-weight:600; margin:0 .25rem .25rem 0;
-  border:1px solid transparent; }
+pre { background:var(--soft); border:1px solid var(--line);
+  border-radius:10px; padding:.8rem .95rem; overflow-x:auto;
+  font-size:.82rem; white-space:pre-wrap; word-break:break-word; }
+code { background:var(--soft); border-radius:5px; padding:.05rem .35rem;
+  font-size:.85em; }
+.badge { display:inline-flex; align-items:center; border-radius:999px;
+  padding:.08rem .62rem; font-size:.74rem; font-weight:600;
+  margin:0 .25rem .25rem 0; }
 .badge.amber { background:#7a5200; color:#ffe9c2; }
 .badge.blue { background:#0b4c8c; color:#dcecfd; }
 .badge.green { background:#1d6b35; color:#d9f4e1; }
 .badge.red { background:#8c1d24; color:#fde0e2; }
 .badge.gray { background:#4a5563; color:#e3e8ee; }
-form.cmd { display:grid; grid-template-columns:minmax(180px,240px) 1fr;
-  gap:.35rem .8rem; align-items:center; }
-form.cmd label { color:var(--muted); font-size:.85rem; }
-form.cmd input[type=text] { width:100%; padding:.3rem .5rem;
-  border:1px solid var(--line); border-radius:6px; background:var(--bg);
-  color:var(--ink); }
-button { background:var(--accent); border:0; color:#fff; font-weight:600;
-  border-radius:7px; padding:.42rem .9rem; cursor:pointer; }
-button.danger { background:#8c1d24; }
+.dot { display:inline-block; width:.55rem; height:.55rem;
+  border-radius:50%; margin-right:.4rem; vertical-align:baseline; }
+.dot.blue { background:#3f8edb; box-shadow:0 0 0 3px
+  color-mix(in srgb, #3f8edb 25%, transparent); }
+.dot.green { background:#2e9e57; }
+.dot.red { background:#d4525b; }
+.dot.gray { background:#8a97a5; }
+.crumbs { color:var(--muted); font-size:.86rem; margin:0 0 .8rem; }
+.crumbs a { color:var(--accent); text-decoration:none; }
+.crumbs span.sep { margin:0 .35rem; }
+details.cmd { background:var(--card); border:1px solid var(--line);
+  border-radius:12px; margin:.55rem 0; box-shadow:var(--shadow); }
+details.cmd > summary { list-style:none; cursor:pointer; display:flex;
+  gap:.6rem; align-items:baseline; padding:.75rem 1.1rem; }
+details.cmd > summary::-webkit-details-marker { display:none; }
+details.cmd > summary .ic { color:var(--accent); align-self:center; }
+details.cmd > summary .name { font-weight:700; }
+details.cmd > summary .desc { color:var(--muted); font-size:.86rem; }
+details.cmd[open] > summary { border-bottom:1px solid var(--line); }
+details.cmd .inner { padding:.9rem 1.1rem 1.1rem; }
+.group-head { display:flex; gap:.55rem; align-items:center;
+  margin:1.6rem 0 .4rem; }
+.group-head .ic { color:var(--accent); }
+.group-head h2 { margin:0; }
+.group-head .ref { color:var(--muted); font-size:.8rem; }
+form.cmd { display:grid; grid-template-columns:minmax(200px,260px) 1fr;
+  gap:.4rem .8rem; align-items:center; }
+form.cmd label { color:var(--muted); font-size:.84rem; }
+.req { color:#c0392b; font-weight:700; }
+form.cmd label .kind { color:var(--muted); opacity:.7; font-size:.75rem; }
+form.cmd input[type=text] { width:100%; padding:.38rem .55rem;
+  border:1px solid var(--line); border-radius:8px; background:var(--bg);
+  color:var(--ink); font-size:.86rem; }
+form.cmd input[type=text]:focus { outline:2px solid
+  color-mix(in srgb, var(--accent) 45%, transparent); border-color:var(--accent); }
+button { display:inline-flex; gap:.4rem; align-items:center;
+  background:var(--accent); border:0; color:var(--accent-ink);
+  font-weight:600; border-radius:9px; padding:.48rem 1rem; cursor:pointer;
+  font-size:.9rem; }
+button:hover { filter:brightness(1.08); }
+button.danger { background:#a4262f; color:#fff; }
 a { color:var(--accent); }
-p.note { color:var(--muted); font-size:.85rem; }
+p.note { color:var(--muted); font-size:.84rem; }
+footer.note { color:var(--muted); font-size:.8rem; margin-top:2rem;
+  border-top:1px solid var(--line); padding-top:.8rem; }
+.pipeline { width:100%; min-width:900px; }
+.pipeline .node rect { fill:var(--card); stroke:var(--line);
+  stroke-width:1.4; }
+.pipeline .node.present rect { stroke:var(--accent); stroke-width:2; }
+.pipeline .node text { fill:var(--ink); font:600 12.5px system-ui,
+  "Segoe UI", sans-serif; }
+.pipeline .node text.count { fill:var(--muted); font-weight:500;
+  font-size:11.5px; }
+.pipeline .node.present text.count { fill:var(--accent); font-weight:700; }
+.pipeline .arrow { stroke:var(--muted); stroke-width:1.4; fill:none;
+  marker-end:url(#arrowhead); }
+.pipeline #arrowhead path { fill:var(--muted); }
+.meter { height:.55rem; border-radius:999px; background:var(--soft);
+  border:1px solid var(--line); overflow:hidden; margin:.35rem 0 .15rem; }
+.meter > div { height:100%; background:var(--accent); }
+.argv { display:flex; flex-wrap:wrap; gap:.3rem; }
+.argv code { border:1px solid var(--line); padding:.12rem .45rem; }
+.filelist td .ic { color:var(--muted); vertical-align:-3px;
+  margin-right:.45rem; }
 """
 
 
+_NAV_LINKS = (
+    ("/", "grid", "Dashboard"),
+    ("/commands", "terminal", "Run"),
+    ("/jobs", "pulse", "Jobs"),
+    ("/artifacts", "folder", "Artifacts"),
+)
+
+
 def _page(title: str, body: str) -> bytes:
+    links = "".join(
+        f"<a href='{href}'>{_icon(icon, size=16)}{label}</a>"
+        for href, icon, label in _NAV_LINKS
+    )
     return (
         "<!doctype html><html><head><meta charset='utf-8'>"
         "<meta name='viewport' content='width=device-width, initial-scale=1'>"
         f"<title>{html.escape(title)}</title>"
         "<link rel='stylesheet' href='/static/style.css'></head><body>"
-        "<nav><span class='title'>URA rig console</span>"
-        "<a href='/'>Overview</a><a href='/commands'>Commands</a>"
-        "<a href='/jobs'>Jobs</a><a href='/artifacts'>Artifacts</a></nav>"
+        f"<nav><span class='brand'>{_icon('logo', size=21)}URA rig console"
+        f"</span>{links}</nav>"
         f"<main>{body}"
-        "<p class='note'>The CLI and filesystem artifacts remain "
+        "<footer class='note'>The CLI and filesystem artifacts remain "
         "authoritative. This console never reinterprets experiment "
-        "semantics; diagnostic evidence never authorizes a campaign.</p>"
-        "</main></body></html>"
+        "semantics; diagnostic evidence never authorizes a campaign."
+        "</footer></main></body></html>"
     ).encode("utf-8")
 
 
@@ -499,6 +681,120 @@ def _badges_html(badges: list[tuple[str, str]]) -> str:
         f"<span class='badge {html.escape(tone)}'>{html.escape(label)}</span>"
         for label, tone in badges
     )
+
+
+def _human_size(size: float) -> str:
+    for unit in ("B", "KB", "MB", "GB", "TB"):
+        if size < 1024 or unit == "TB":
+            return f"{size:,.0f} {unit}" if unit == "B" else f"{size:,.1f} {unit}"
+        size /= 1024
+    return f"{size:,.1f} TB"
+
+
+def _crumbs(relative: str) -> str:
+    parts = [part for part in relative.replace("\\", "/").split("/") if part]
+    links = ["<a href='/artifacts'>runs</a>"]
+    so_far: list[str] = []
+    for part in parts:
+        so_far.append(part)
+        target = quote("/".join(so_far))
+        links.append(
+            f"<a href='/artifacts?path={target}'>{html.escape(part)}</a>"
+        )
+    return (
+        "<p class='crumbs'>"
+        + "<span class='sep'>/</span>".join(links)
+        + "</p>"
+    )
+
+
+#: Campaign pipeline stages shown on the dashboard.  Each stage counts
+#: retained files whose names end with one of the listed suffixes; a count
+#: is pure file presence and never asserts validity, authorization, or
+#: measurement status.
+_PIPELINE_STAGES: tuple[tuple[str, tuple[str, ...]], ...] = (
+    ("Revision receipt", (".project-revision.json",)),
+    ("Source receipts", ("source-conformance.json",)),
+    ("Envelopes", (".request-envelope.json",)),
+    ("Attestations", (".live-attestation.json",)),
+    ("Canaries", (".lane-canary.json", ".canary.json")),
+    ("Grids", (".grid.json",)),
+    ("Level-1/2", ()),  # filled from level1/level2/suite counts below
+)
+_ANALYSIS_MARKERS = ("level1", "level2", "suite-evidence")
+
+
+def artifact_inventory(root: Path) -> tuple[dict[str, int], bool]:
+    """Count retained artifact files by kind under the results root.
+
+    Bounded, presence-only walk: at most ``_INVENTORY_MAX_ENTRIES`` directory
+    entries and ``_INVENTORY_MAX_DEPTH`` levels are visited, lazily, so one
+    pathological flat directory cannot stall the dashboard.  Returns the
+    counts plus a truncation flag (counts are a lower bound when True).
+    Counting a file says nothing about its validity.
+    """
+
+    counts: dict[str, int] = {label: 0 for label, _ in _PIPELINE_STAGES}
+    seen = 0
+    root = root.resolve()
+    stack: list[tuple[Path, int]] = [(root, 0)]
+    while stack:
+        directory, depth = stack.pop()
+        try:
+            for entry in directory.iterdir():
+                seen += 1
+                if seen > _INVENTORY_MAX_ENTRIES:
+                    return counts, True
+                if entry.is_dir():
+                    if depth + 1 <= _INVENTORY_MAX_DEPTH:
+                        stack.append((entry, depth + 1))
+                    continue
+                name = entry.name.lower()
+                for label, suffixes in _PIPELINE_STAGES:
+                    if any(name.endswith(suffix) for suffix in suffixes):
+                        counts[label] += 1
+                if name.endswith((".json", ".csv")) and any(
+                    marker in name for marker in _ANALYSIS_MARKERS
+                ):
+                    counts["Level-1/2"] += 1
+        except OSError:
+            continue
+    return counts, False
+
+
+def _pipeline_svg(counts: Mapping[str, int]) -> str:
+    node_w, node_h, gap, top = 128, 52, 24, 12
+    total_w = len(_PIPELINE_STAGES) * node_w + (len(_PIPELINE_STAGES) - 1) * gap
+    parts = [
+        f"<svg class='pipeline' viewBox='0 0 {total_w} {node_h + 2 * top}' "
+        "role='img' aria-label='campaign pipeline'>",
+        "<defs><marker id='arrowhead' markerWidth='7' markerHeight='7' "
+        "refX='6' refY='3.5' orient='auto'><path d='M0 0L7 3.5L0 7z'/>"
+        "</marker></defs>",
+    ]
+    for index, (label, _suffixes) in enumerate(_PIPELINE_STAGES):
+        x = index * (node_w + gap)
+        count = counts.get(label, 0)
+        cls = "node present" if count else "node"
+        count_text = f"{count} file{'s' if count != 1 else ''}" if count else "none yet"
+        parts.append(
+            f"<g class='{cls}'>"
+            f"<rect x='{x}' y='{top}' width='{node_w}' height='{node_h}' "
+            "rx='10'/>"
+            f"<text x='{x + node_w / 2}' y='{top + 21}' "
+            f"text-anchor='middle'>{html.escape(label)}</text>"
+            f"<text class='count' x='{x + node_w / 2}' y='{top + 38}' "
+            f"text-anchor='middle'>{html.escape(count_text)}</text>"
+            "</g>"
+        )
+        if index < len(_PIPELINE_STAGES) - 1:
+            start = x + node_w
+            parts.append(
+                f"<path class='arrow' d='M{start + 3} {top + node_h / 2} "
+                f"L{start + gap - 4} {top + node_h / 2}'/>"
+            )
+    parts.append("</svg>")
+    return "<div class='scroll'>" + "".join(parts) + "</div>"
 
 
 @dataclass
@@ -511,6 +807,7 @@ class Job:
     stdout_handle: Any = None
     stderr_handle: Any = None
     started_at: float = field(default_factory=time.time)
+    ended_at: float | None = None
 
     def state(self) -> str:
         if self.process is None:
@@ -518,10 +815,16 @@ class Job:
         code = self.process.poll()
         if code is None:
             return "running"
+        if self.ended_at is None:
+            self.ended_at = time.time()
         return "complete" if code == 0 else "failed"
 
     def exit_code(self) -> int | None:
         return None if self.process is None else self.process.poll()
+
+    def runtime_seconds(self) -> float:
+        end = self.ended_at if self.ended_at is not None else time.time()
+        return max(0.0, end - self.started_at)
 
 
 class RigWebApp:
@@ -657,48 +960,178 @@ class RigWebApp:
 
     # -- pages -------------------------------------------------------------
 
+    def _campaign_context(self) -> str:
+        """Non-secret campaign bindings from the environment, if present."""
+
+        rows = []
+        for label, name in (
+            ("Pinned revision", "REF_URA"),
+            ("Revision receipt", "URA_PROJECT_REVISION_MANIFEST"),
+            ("Receipt SHA-256", "URA_PROJECT_REVISION_SHA256"),
+            ("Corpora root", "URA_CORPORA"),
+        ):
+            value = os.environ.get(name, "")
+            if not value:
+                continue
+            shown = value if len(value) <= 64 else value[:30] + "..." + value[-22:]
+            rows.append(
+                f"<tr><td>{html.escape(label)}</td>"
+                f"<td><code>{html.escape(shown)}</code></td></tr>"
+            )
+        if not rows:
+            return (
+                "<p class='note'>No campaign bindings exported in this "
+                "console's environment.</p>"
+            )
+        return (
+            "<div class='scroll'><table>"
+            + "".join(rows)
+            + "</table></div>"
+            "<p class='note'>Values echoed from this console's environment "
+            "for orientation only; nothing here validates them. The receipt "
+            "and attestation validators are the only authority.</p>"
+        )
+
     def _overview(self) -> bytes:
-        running = [job for job in self.jobs.values() if job.state() == "running"]
-        body = (
-            "<h1>Rig overview</h1>"
-            "<div class='card'><h2>State</h2>"
-            f"<p>Results root: <code>{html.escape(str(self.results_root))}</code><br>"
-            f"Job state dir: <code>{html.escape(str(self.state_dir))}</code><br>"
-            f"Jobs this session: {len(self.jobs)} ({len(running)} running)</p>"
+        jobs = list(self.jobs.values())
+        running = [job for job in jobs if job.state() == "running"]
+        failed = [job for job in jobs if job.state() == "failed"]
+        counts, truncated = artifact_inventory(self.results_root)
+        disk_html = "<p class='note'>disk usage unavailable</p>"
+        try:
+            usage = shutil.disk_usage(self.results_root)
+        except OSError:
+            usage = None
+        if usage is not None and usage.total > 0:
+            used_pct = 100.0 * (usage.total - usage.free) / usage.total
+            disk_html = (
+                f"<div class='stat'><span class='value'>"
+                f"{_human_size(usage.free)}</span>"
+                "<span class='label'>free on results volume</span></div>"
+                f"<div class='meter'><div style='width:{used_pct:.1f}%'>"
+                "</div></div>"
+                f"<p class='note'>{used_pct:.0f}% used of "
+                f"{_human_size(usage.total)}</p>"
+            )
+        stats = (
+            "<div class='cols'>"
+            "<div class='card'><div class='stat'>"
+            f"<span class='value'>{len(jobs)}</span>"
+            "<span class='label'>jobs this session</span></div></div>"
+            "<div class='card'><div class='stat'>"
+            f"<span class='value'><span class='dot blue'></span>"
+            f"{len(running)}</span>"
+            "<span class='label'>running now</span></div></div>"
+            "<div class='card'><div class='stat'>"
+            f"<span class='value'><span class='dot red'></span>"
+            f"{len(failed)}</span>"
+            "<span class='label'>failed this session</span></div></div>"
+            f"<div class='card'>{disk_html}</div>"
             "</div>"
-            "<div class='card'><h2>Boundaries</h2><p>Allowlisted commands "
-            "only; no arbitrary shell. Dry-run/canary/probe artifacts stay "
-            "diagnostic; measured claims come only from validated artifacts "
-            "and the maintained analysis CLIs.</p></div>"
+        )
+        running_rows = "".join(
+            f"<tr><td><a href='/jobs/{html.escape(job.job_id)}'>"
+            f"{html.escape(job.job_id)}</a></td>"
+            f"<td>{html.escape(job.command)}</td>"
+            f"<td>{job.runtime_seconds():,.0f}s</td></tr>"
+            for job in sorted(running, key=lambda item: item.started_at)
+        )
+        running_html = (
+            "<div class='card'><h2>" + _icon("pulse") + "Running jobs</h2>"
+            "<div class='scroll'><table><tr><th>Job</th><th>Command</th>"
+            "<th>Runtime</th></tr>" + running_rows + "</table></div></div>"
+            if running_rows else ""
+        )
+        body = (
+            "<h1>" + _icon("grid", size=22) + "Dashboard</h1>"
+            + stats
+            + "<div class='card'><h2>" + _icon("chart") + "Campaign pipeline"
+            "</h2>" + _pipeline_svg(counts) +
+            "<p class='note'>Counts are retained-file presence under the "
+            "results root only; presence never asserts validity, "
+            "authorization, or measurement status."
+            + (" Inventory scan truncated at its entry cap; counts are a "
+               "lower bound." if truncated else "")
+            + "</p></div>"
+            + running_html +
+            "<div class='card'><h2>" + _icon("file") + "Campaign bindings"
+            "</h2>" + self._campaign_context() + "</div>"
+            "<div class='card'><h2>" + _icon("logo") + "Boundaries</h2>"
+            "<p class='note'>Allowlisted commands only; no arbitrary shell. "
+            "Dry-run/canary/probe artifacts stay diagnostic; measured "
+            "claims come only from validated artifacts and the maintained "
+            "analysis CLIs.</p></div>"
         )
         return _page("URA rig console", body)
 
-    def _commands_page(self) -> bytes:
-        sections = []
-        for name in sorted(self.commands):
-            entry = self.commands[name]
-            fields = []
-            for param in entry.params:
-                input_html = (
-                    f"<input type='checkbox' name='{html.escape(param.flag)}'>"
-                    if param.kind == "flag"
-                    else f"<input type='text' name='{html.escape(param.flag)}'>"
-                )
-                fields.append(
-                    f"<label>{html.escape(param.flag)}"
-                    f" ({html.escape(param.kind)})</label>{input_html}"
-                )
-            sections.append(
-                f"<div class='card'><h2>{html.escape(name)}</h2>"
-                f"<p class='note'>{html.escape(entry.description)} "
-                f"(<code>python -m {html.escape(entry.module)}</code>)</p>"
-                "<form class='cmd' method='post' action='/jobs'>"
-                f"<input type='hidden' name='command' value='{html.escape(name)}'>"
-                + "".join(fields)
-                + "<span></span><button type='submit'>Start job</button>"
-                "</form></div>"
+    def _command_card(self, name: str) -> str:
+        entry = self.commands[name]
+        fields = []
+        for param in entry.params:
+            required = (
+                "<span class='req' title='required'>*</span>"
+                if param.required else ""
             )
-        return _page("Commands", "<h1>Allowlisted commands</h1>" + "".join(sections))
+            input_html = (
+                f"<input type='checkbox' name='{html.escape(param.flag)}'>"
+                if param.kind == "flag"
+                else f"<input type='text' name='{html.escape(param.flag)}'>"
+            )
+            fields.append(
+                f"<label>{html.escape(param.flag)}{required} "
+                f"<span class='kind'>{html.escape(param.kind)}</span>"
+                "</label>" + input_html
+            )
+        return (
+            "<details class='cmd'><summary>" + _icon("terminal")
+            + f"<span class='name'>{html.escape(name)}</span>"
+            f"<span class='desc'>{html.escape(entry.description)}</span>"
+            "</summary><div class='inner'>"
+            f"<p class='note'><code>python -m {html.escape(entry.module)}"
+            "</code></p>"
+            "<form class='cmd' method='post' action='/jobs'>"
+            f"<input type='hidden' name='command' value='{html.escape(name)}'>"
+            + "".join(fields)
+            + "<span></span><button type='submit'>"
+            + _icon("play", size=15) + "Start job</button>"
+            "</form></div></details>"
+        )
+
+    def _commands_page(self) -> bytes:
+        grouped: set[str] = set()
+        sections = []
+        for title, icon, ref, names in COMMAND_GROUPS:
+            cards = "".join(
+                self._command_card(name)
+                for name in names if name in self.commands
+            )
+            if not cards:
+                continue
+            grouped.update(names)
+            sections.append(
+                f"<div class='group-head'>{_icon(icon, size=20)}"
+                f"<h2>{html.escape(title)}</h2>"
+                f"<span class='ref'>{html.escape(ref)}</span></div>"
+                + cards
+            )
+        leftovers = "".join(
+            self._command_card(name)
+            for name in sorted(set(self.commands) - grouped)
+        )
+        if leftovers:
+            sections.append(
+                f"<div class='group-head'>{_icon('file', size=20)}"
+                "<h2>Other</h2></div>" + leftovers
+            )
+        body = (
+            "<h1>" + _icon("terminal", size=22) + "Run a command</h1>"
+            "<p class='note'>Typed forms over the allowlisted experiment "
+            "CLIs; the argument vector shown on each job page is exactly "
+            "what runs. Fields map one-to-one to documented CLI flags; "
+            "<span class='req'>*</span> marks a required field.</p>"
+            + "".join(sections)
+        )
+        return _page("Run a command", body)
 
     def _jobs_page(self) -> bytes:
         rows = []
@@ -708,19 +1141,29 @@ class RigWebApp:
             tone = {"running": "blue", "complete": "green", "failed": "red"}.get(
                 state, "gray"
             )
+            started = time.strftime(
+                "%H:%M:%S", time.localtime(job.started_at)
+            )
             rows.append(
                 f"<tr><td><a href='/jobs/{html.escape(job_id)}'>"
                 f"{html.escape(job_id)}</a></td>"
                 f"<td>{html.escape(job.command)}</td>"
-                f"<td><span class='badge {tone}'>{html.escape(state)}</span></td>"
-                f"<td>{'' if job.exit_code() is None else job.exit_code()}</td></tr>"
+                f"<td><span class='dot {tone}'></span>"
+                f"<span class='badge {tone}'>{html.escape(state)}</span></td>"
+                f"<td>{started}</td>"
+                f"<td>{job.runtime_seconds():,.0f}s</td>"
+                f"<td>{'' if job.exit_code() is None else job.exit_code()}"
+                "</td></tr>"
             )
         table = (
             "<div class='card scroll'><table><tr><th>Job</th><th>Command</th>"
-            "<th>State</th><th>Exit</th></tr>" + "".join(rows) + "</table></div>"
-            if rows else "<div class='card'><p>No jobs this session.</p></div>"
+            "<th>State</th><th>Started</th><th>Runtime</th><th>Exit</th></tr>"
+            + "".join(rows) + "</table></div>"
+            if rows else
+            "<div class='card'><p class='note'>No jobs this session. Start "
+            "one from the <a href='/commands'>Run</a> page.</p></div>"
         )
-        return _page("Jobs", "<h1>Jobs</h1>" + table)
+        return _page("Jobs", "<h1>" + _icon("pulse", size=22) + "Jobs</h1>" + table)
 
     def _job_page(self, job: Job) -> bytes:
         state = job.state()
@@ -739,19 +1182,47 @@ class RigWebApp:
             if state == "running" else ""
         )
         failure = (
-            "<div class='card'><h2>Failure</h2><p>The command exited with "
+            "<div class='card'><h2>" + _icon("pulse") + "Failure</h2>"
+            "<p>The command exited with "
             f"code {job.exit_code()}. Standard error is shown below; the "
             "underlying CLI message is authoritative.</p></div>"
             if state == "failed" else ""
         )
+        argv_chips = "<div class='argv'>" + "".join(
+            f"<code>{html.escape(part)}</code>" for part in job.argv
+        ) + "</div>"
+        started = time.strftime(
+            "%Y-%m-%d %H:%M:%S", time.localtime(job.started_at)
+        )
+        exit_code = job.exit_code()
+        meta = (
+            "<div class='cols'>"
+            "<div class='card'><div class='stat'>"
+            f"<span class='value'><span class='dot {tone}'></span>"
+            f"{html.escape(state)}</span>"
+            "<span class='label'>state</span></div></div>"
+            "<div class='card'><div class='stat'>"
+            f"<span class='value'>{job.runtime_seconds():,.0f}s</span>"
+            "<span class='label'>runtime</span></div></div>"
+            "<div class='card'><div class='stat'>"
+            f"<span class='value'>{started}</span>"
+            "<span class='label'>started</span></div></div>"
+            "<div class='card'><div class='stat'>"
+            f"<span class='value'>{'-' if exit_code is None else exit_code}"
+            "</span><span class='label'>exit code</span></div></div>"
+            "</div>"
+        )
         body = (
-            f"<h1>Job {html.escape(job.job_id)}</h1>"
-            f"<p><span class='badge {tone}'>{html.escape(state)}</span></p>"
-            f"<div class='card'><h2>Command</h2><pre>{html.escape(' '.join(job.argv))}</pre>"
-            f"{stop_form}</div>"
+            f"<h1>{_icon('terminal', size=22)}Job {html.escape(job.job_id)}"
+            "</h1>"
+            + meta +
+            "<div class='card'><h2>" + _icon("file") + "Command</h2>"
+            + argv_chips + stop_form + "</div>"
             + failure +
-            f"<div class='card'><h2>stdout</h2><pre>{html.escape(stdout_tail)}</pre></div>"
-            f"<div class='card'><h2>stderr</h2><pre>{html.escape(stderr_tail)}</pre></div>"
+            "<div class='card'><h2>" + _icon("chart") + "stdout</h2>"
+            f"<pre>{html.escape(stdout_tail)}</pre></div>"
+            "<div class='card'><h2>" + _icon("pulse") + "stderr</h2>"
+            f"<pre>{html.escape(stderr_tail)}</pre></div>"
             + refresh
         )
         return _page(f"Job {job.job_id}", body)
@@ -773,24 +1244,26 @@ class RigWebApp:
             directory.iterdir(), key=lambda item: (item.is_file(), item.name)
         )
         rows = []
-        if relative:
-            parent = "/".join(relative.replace("\\", "/").split("/")[:-1])
-            rows.append(
-                f"<tr><td><a href='/artifacts?path={html.escape(parent)}'>..</a>"
-                "</td><td></td></tr>"
-            )
         for entry in entries:
             child = f"{relative}/{entry.name}".lstrip("/")
-            size = "" if entry.is_dir() else f"{entry.stat().st_size:,} B"
+            is_dir = entry.is_dir()
+            icon = _icon("folder", size=15) if is_dir else _icon("file", size=15)
+            size = "" if is_dir else _human_size(entry.stat().st_size)
             rows.append(
-                f"<tr><td><a href='/artifacts?path={html.escape(child)}'>"
-                f"{html.escape(entry.name)}{'/' if entry.is_dir() else ''}</a></td>"
+                f"<tr><td>{icon}<a href='/artifacts?path={quote(child)}'>"
+                f"{html.escape(entry.name)}{'/' if is_dir else ''}</a></td>"
                 f"<td>{size}</td></tr>"
             )
-        body = (
-            f"<h1>Artifacts: /{html.escape(relative)}</h1>"
-            "<div class='card scroll'><table><tr><th>Name</th><th>Size</th></tr>"
+        listing = (
+            "<div class='card scroll'><table class='filelist'>"
+            "<tr><th>Name</th><th>Size</th></tr>"
             + "".join(rows) + "</table></div>"
+            if rows else
+            "<div class='card'><p class='note'>Empty directory.</p></div>"
+        )
+        body = (
+            "<h1>" + _icon("folder", size=22) + "Artifacts</h1>"
+            + _crumbs(relative) + listing
         )
         return _page("Artifacts", body)
 
@@ -803,7 +1276,9 @@ class RigWebApp:
                 200, "text/html; charset=utf-8",
                 _page(
                     "Artifact",
-                    f"<h1>{html.escape(relative)}</h1><div class='card'><p>"
+                    "<h1>" + _icon("file", size=22)
+                    + f"{html.escape(relative)}</h1>" + _crumbs(relative)
+                    + "<div class='card'><p>"
                     "File exceeds the inline render limit; inspect it on "
                     "disk.</p></div>",
                 ),
@@ -840,7 +1315,9 @@ class RigWebApp:
         else:
             rendered = f"<pre>{html.escape(text)}</pre>"
         body = (
-            f"<h1>{html.escape(relative)}</h1>"
+            "<h1>" + _icon("file", size=22)
+            + f"{html.escape(target.name)}</h1>"
+            + _crumbs(relative)
             + (f"<p>{badges_html}</p>" if badges_html else "")
             + rendered
         )

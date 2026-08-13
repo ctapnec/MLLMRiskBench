@@ -194,3 +194,58 @@ def test_console_covers_every_runbook_cli() -> None:
     allowlisted = {entry.module.split(".", 1)[1] for entry in COMMANDS.values()}
     missing = sorted(used - allowlisted)
     assert not missing, f"runbook CLIs missing from the console allowlist: {missing}"
+
+
+def test_command_groups_partition_the_allowlist_exactly() -> None:
+    # WEB-002 grouping is presentation only: every allowlisted command sits in
+    # exactly one group, and no group names an unknown command.  A partition
+    # failure would silently hide a command from the Run page groups.
+    from experiments.rig_web import COMMAND_GROUPS, COMMANDS
+
+    named = [name for _, _, _, names in COMMAND_GROUPS for name in names]
+    assert len(named) == len(set(named)), "command grouped twice"
+    assert set(named) == set(COMMANDS), (
+        sorted(set(named) ^ set(COMMANDS))
+    )
+
+
+def test_dashboard_shows_presence_only_pipeline(tmp_path: Path) -> None:
+    # The dashboard pipeline counts retained files by name only and says so;
+    # it must never label presence as validity or authorization.
+    app = _app(tmp_path)
+    receipts = app.results_root / "thesis" / "project-revision"
+    receipts.mkdir(parents=True)
+    (receipts / "project-revision-abc.project-revision.json").write_text(
+        "{}", encoding="utf-8"
+    )
+    status, _, body = app.handle("GET", "/")
+    assert status == 200
+    text = body.decode("utf-8")
+    assert "Revision receipt" in text
+    assert "1 file" in text
+    assert "presence never asserts validity" in text
+    # Grouped Run page renders every command exactly once as a form.
+    status, _, run_body = app.handle("GET", "/commands")
+    assert status == 200
+    run_text = run_body.decode("utf-8")
+    from experiments.rig_web import COMMANDS
+
+    for name in COMMANDS:
+        assert run_text.count(
+            f"<input type='hidden' name='command' value='{name}'>"
+        ) == 1
+
+
+def test_artifact_pages_render_breadcrumbs(tmp_path: Path) -> None:
+    app = _app(tmp_path)
+    inner = app.results_root / "thesis" / "level1"
+    inner.mkdir(parents=True)
+    (inner / "evidence.json").write_text("{}", encoding="utf-8")
+    status, _, body = app.handle(
+        "GET", "/artifacts?path=thesis/level1/evidence.json"
+    )
+    assert status == 200
+    text = body.decode("utf-8")
+    assert "crumbs" in text
+    assert "/artifacts?path=thesis" in text
+    assert "/artifacts?path=thesis/level1" in text
