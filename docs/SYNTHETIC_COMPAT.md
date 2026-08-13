@@ -24,7 +24,7 @@ pooling and pairing are gated on the full compatibility key. Unconfirmable
 identity (equal policy ids without hashes) yields `abstain`, never a guess.
 The rules are authoritative and version-stamped (`compat-rules/1`).
 
-`--generate` writes a deterministic corpus from 32 scenario-times-mutation
+`--generate` writes a deterministic corpus from 34 scenario-times-mutation
 templates (12 perturbations each by default; template, family and seed live
 only in the sidecar split metadata and are excluded from model features).
 `--check` oracles a corpus and fails unless every critical reason is

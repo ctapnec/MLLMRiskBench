@@ -355,3 +355,70 @@ def test_attestation_probe_roots_are_rejected_everywhere(
         _load_cells(probe_root)
     with pytest.raises(ValueError, match="probe is not measured"):
         _validated_artifacts(probe_root)
+
+
+def _classification_cell(official: bool) -> dict:
+    raw = {
+        "source": "rjudge",
+        "risk_category": "agentic_misuse",
+        "effective_modality": "text",
+        "planning_expected_behavior": "comply_safely",
+        "attacker": "replay",
+        "source_policy_id": "unversioned",
+        "source_policy_version": "unversioned",
+        "planning_execution_mode": "harness_response_evaluation",
+        "policy_evaluable_turn": True,
+        "common_metrics_eligible": False,
+        "source_evaluation": {
+            "valid": True, "official_evaluator_executed": official,
+        },
+    }
+    return {
+        "run_id": "run-cls",
+        "model": "model-A",
+        "manifest": {
+            "config": {"run": {
+                "corpus": "rjudge_official", "model_spec": "model-A",
+                "defense": "none", "judge_model": None,
+                "sample_seed": 0, "limit": 1,
+            }},
+            "judges": ["rules"], "seeds": [0],
+        },
+        "judgments": [{"label": "not_applicable", "raw": dict(raw)}],
+        "aggregate_results": [{
+            "metric": "rjudge_accuracy", "value": 1.0, "n": 1,
+            "group_by": {
+                "model": "model-A", "source": "rjudge",
+                "risk": "agentic_misuse", "effective_modality": "text",
+                "expected_behavior": "comply_safely", "attacker": "replay",
+                "source_policy_id": "unversioned",
+                "source_policy_version": "unversioned",
+                "source_metric_family": "rjudge_safety_judgment",
+            },
+            "provenance": {"ci_method": None, "cluster_unit": None,
+                           "n_clusters": 1, "population": "source_items"},
+        }],
+    }
+
+
+def test_classification_rows_export_with_source_evaluator_status() -> None:
+    from experiments.level2_report import _estimate_rows
+
+    rows = _estimate_rows(_classification_cell(official=True))
+    assert len(rows) == 1
+    row = rows[0]
+    assert row["semantic_family"] == "classification_quality"
+    assert row["endpoint_status"] == "official_source_evaluator"
+    assert "source_metric_family" in row["group_refinements"]
+
+    rows = _estimate_rows(_classification_cell(official=False))
+    assert rows[0]["endpoint_status"] == "source_specific_evaluator"
+
+
+def test_phantom_aggregate_bucket_fails_closed() -> None:
+    from experiments.level2_report import _estimate_rows
+
+    cell = _classification_cell(official=True)
+    cell["aggregate_results"][0]["group_by"]["attacker"] = "crescendo"
+    with pytest.raises(ValueError, match="no completed judgment support"):
+        _estimate_rows(cell)
