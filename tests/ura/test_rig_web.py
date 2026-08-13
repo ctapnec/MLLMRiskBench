@@ -291,6 +291,69 @@ def test_dashboard_notices_and_policy_card(tmp_path: Path) -> None:
     assert status == 200
 
 
+def test_notices_are_dismissible_client_side(tmp_path: Path) -> None:
+    # Dismissal is client-side only: each notice carries a stable id and a
+    # close control, and localStorage-backed script hides dismissed ids. The
+    # warnings file (server truth) is never mutated by the console.
+    app = _app(tmp_path)
+    (app.results_root / "console-warnings.json").write_text(json.dumps({
+        "warnings": [{"level": "warning", "title": "constructed set"}],
+    }), encoding="utf-8")
+    before = (app.results_root / "console-warnings.json").read_bytes()
+    status, _, body = app.handle("GET", "/")
+    text = body.decode("utf-8")
+    assert status == 200
+    assert "notice-close" in text
+    assert "data-nid=" in text
+    assert "localStorage" in text
+    # GET must not have a side effect on the notices file.
+    assert (app.results_root / "console-warnings.json").read_bytes() == before
+
+
+def test_jobs_page_has_filter_chips_and_row_stop(tmp_path: Path) -> None:
+    app = _app(tmp_path)
+    job = app.start_job("webui_selftest", {"--selftest-sleep": "30"})
+    try:
+        status, _, body = app.handle("GET", "/jobs")
+        text = body.decode("utf-8")
+        assert status == 200
+        # State filter chips with counts.
+        assert "class='chip on'" in text
+        assert "data-state='running'" in text
+        assert "Running (1)" in text
+        # A running job exposes an inline Stop control on its row.
+        assert f"/jobs/{job.job_id}/stop" in text
+        assert "jobfilter" in text
+        # Human-readable durations, not raw seconds with a trailing 's' only.
+        assert "data-hay=" in text
+    finally:
+        app.stop_job(job.job_id)
+
+
+def test_run_forms_use_select_and_datalist_without_weakening_argv() -> None:
+    # UI affordances are presentation only: enumerated flags render as a
+    # <select> of the exact argparse choices, suggestion fields get a
+    # <datalist>, but build_argv still rejects anything off-contract.
+    from experiments.rig_web import RigWebApp
+
+    app = RigWebApp(results_root=Path("."), state_dir=Path("."))
+    page = app.handle("GET", "/commands")[2].decode("utf-8")
+    assert "<select name='--defense'>" in page
+    assert "<option value='none'>none</option>" in page
+    assert "<option value='both'>both</option>" in page
+    assert "list='dl-attackers'" in page
+    assert "<datalist id='dl-attackers'>" in page
+    assert "<option value='crescendo'></option>" in page
+    # A number field for integer flags.
+    assert "type='number'" in page
+    # The typed allowlist is unchanged: an off-contract choice still fails,
+    # and a valid enumerated choice still builds.
+    argv = build_argv("run_matrix", {"--defense": "both"})
+    assert argv[-2:] == ["--defense", "both"]
+    with pytest.raises(ValueError):
+        build_argv("run_matrix", {"--not-a-flag": "x"})
+
+
 def test_favicon_and_active_nav(tmp_path: Path) -> None:
     app = _app(tmp_path)
     status, content_type, body = app.handle("GET", "/static/favicon.svg")

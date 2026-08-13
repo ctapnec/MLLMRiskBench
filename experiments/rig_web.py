@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import argparse
 import csv
+import hashlib
 import html
 import io
 import json
@@ -74,6 +75,27 @@ class CommandParam:
     kind: str  # str | int | float | path | flag
     required: bool = False
     help: str = ""
+    #: Strict value enumeration mirroring the CLI's argparse choices; renders
+    #: as a select. Empty means free-form.
+    choices: tuple[str, ...] = ()
+    #: Name of a suggestion list (rendered as a datalist; free text stays
+    #: allowed). Presentation only - build_argv validation is unchanged.
+    suggest: str = ""
+
+
+#: Static suggestion lists. The attacker names mirror the harness registry in
+#: src/ura/adapters/engines.py (replay/crescendo plus the engine adapters).
+_SUGGEST_STATIC: dict[str, tuple[str, ...]] = {
+    "attackers": (
+        "replay", "crescendo", "replay,crescendo", "pyrit", "garak",
+        "deepteam", "promptfoo", "t3mp3st", "petri", "fuzzyai", "nanogcg",
+        "autodan", "agentdojo", "giskard", "easyjailbreak", "h4rm3l",
+        "spikee", "ideator", "purplellama", "asb", "harmbench",
+    ),
+    "judges": ("rules,llm", "rules", "llm"),
+    "group": ("model", "source", "model,source"),
+    "seeds": ("0", "0,1", "0,1,2"),
+}
 
 
 @dataclass(frozen=True)
@@ -89,22 +111,23 @@ _MATRIX_PARAMS = (
     CommandParam("--dry-run", "flag"),
     CommandParam("--diagnostic-canary", "flag"),
     CommandParam("--attestation-probe", "flag"),
-    CommandParam("--models", "str"),
-    CommandParam("--api", "str"),
+    CommandParam("--models", "str", suggest="api"),
+    CommandParam("--api", "str", suggest="api"),
     CommandParam("--local", "str"),
-    CommandParam("--corpora", "str"),
-    CommandParam("--attackers", "str"),
-    CommandParam("--judges", "str"),
-    CommandParam("--judge-model", "str"),
-    CommandParam("--defense", "str"),
-    CommandParam("--defense-guard", "str"),
+    CommandParam("--corpora", "str", suggest="arms"),
+    CommandParam("--attackers", "str", suggest="attackers"),
+    CommandParam("--judges", "str", suggest="judges"),
+    CommandParam("--judge-model", "str", suggest="api"),
+    CommandParam("--defense", "str",
+                 choices=("none", "input", "output", "both")),
+    CommandParam("--defense-guard", "str", choices=("rules", "guardrail")),
     CommandParam("--guardrail-model", "str"),
     CommandParam("--guardrail-revision", "str"),
     CommandParam("--guardrail-device", "str"),
     CommandParam("--defense-guardrail-model", "str"),
     CommandParam("--defense-guardrail-revision", "str"),
     CommandParam("--defense-guardrail-device", "str"),
-    CommandParam("--group", "str"),
+    CommandParam("--group", "str", suggest="group"),
     CommandParam("--attacker-config", "path"),
     CommandParam("--reset-open-circuits", "flag"),
     CommandParam("--source-config", "path"),
@@ -112,7 +135,7 @@ _MATRIX_PARAMS = (
     CommandParam("--local-config", "path"),
     CommandParam("--limit", "int"),
     CommandParam("--sample-seed", "int"),
-    CommandParam("--seeds", "str"),
+    CommandParam("--seeds", "str", suggest="seeds"),
     CommandParam("--max-queries", "int"),
     CommandParam("--max-turns", "int"),
     CommandParam("--max-total-target-calls", "int"),
@@ -635,10 +658,12 @@ form.cmd { display:grid; grid-template-columns:minmax(200px,260px) 1fr;
 form.cmd label { color:var(--muted); font-size:.84rem; }
 .req { color:#c0392b; font-weight:700; }
 form.cmd label .kind { color:var(--muted); opacity:.7; font-size:.75rem; }
-form.cmd input[type=text] { width:100%; padding:.38rem .55rem;
+form.cmd input[type=text], form.cmd input[type=number],
+form.cmd select { width:100%; padding:.38rem .55rem;
   border:1px solid var(--line); border-radius:8px; background:var(--bg);
   color:var(--ink); font-size:.86rem; }
-form.cmd input[type=text]:focus { outline:2px solid
+form.cmd select { cursor:pointer; }
+form.cmd input:focus, form.cmd select:focus { outline:2px solid
   color-mix(in srgb, var(--accent) 45%, transparent); border-color:var(--accent); }
 button { display:inline-flex; gap:.4rem; align-items:center;
   background:var(--accent); border:0; color:var(--accent-ink);
@@ -646,6 +671,25 @@ button { display:inline-flex; gap:.4rem; align-items:center;
   font-size:.9rem; }
 button:hover { filter:brightness(1.08); }
 button.danger { background:#a4262f; color:#fff; }
+button.small { padding:.28rem .6rem; font-size:.8rem; border-radius:7px; }
+form.inline { display:inline; margin:0; }
+.chips { display:flex; flex-wrap:wrap; gap:.4rem; margin:.2rem 0 .6rem; }
+.chip { background:var(--card); color:var(--muted); border:1px solid var(--line);
+  border-radius:999px; padding:.3rem .8rem; font-size:.82rem; font-weight:600;
+  cursor:pointer; }
+.chip:hover { color:var(--ink); }
+.chip.on { background:var(--accent); color:var(--accent-ink);
+  border-color:var(--accent); }
+.notice { position:relative; }
+.notice-close { position:absolute; top:.35rem; right:.45rem;
+  background:transparent; color:var(--muted); border:0; font-size:1.15rem;
+  line-height:1; padding:.1rem .35rem; cursor:pointer; border-radius:6px; }
+.notice-close:hover { background:var(--card); color:var(--ink); }
+#jobfilter { width:100%; max-width:420px; padding:.45rem .7rem;
+  border:1px solid var(--line); border-radius:9px; background:var(--card);
+  color:var(--ink); font-size:.9rem; }
+#jobfilter:focus { outline:2px solid
+  color-mix(in srgb, var(--accent) 45%, transparent); border-color:var(--accent); }
 a { color:var(--accent); }
 p.note { color:var(--muted); font-size:.84rem; }
 footer.note { color:var(--muted); font-size:.8rem; margin-top:2rem;
@@ -746,6 +790,15 @@ def _human_size(size: float) -> str:
             return f"{size:,.0f} {unit}" if unit == "B" else f"{size:,.1f} {unit}"
         size /= 1024
     return f"{size:,.1f} TB"
+
+
+def _human_duration(seconds: float) -> str:
+    seconds = max(0, int(seconds))
+    if seconds < 60:
+        return f"{seconds}s"
+    if seconds < 3600:
+        return f"{seconds // 60}m {seconds % 60:02d}s"
+    return f"{seconds // 3600}h {(seconds % 3600) // 60:02d}m"
 
 
 def _crumbs(relative: str) -> str:
@@ -1111,12 +1164,18 @@ class RigWebApp:
         rows = []
         for entry in entries:
             tone = _WARNING_TONES.get(entry["level"], "amber")
+            nid = hashlib.sha1(
+                f"{entry['level']}|{entry['title']}".encode("utf-8")
+            ).hexdigest()[:12]
             detail = (
                 f"<p class='note'>{html.escape(entry['detail'])}</p>"
                 if entry["detail"] else ""
             )
             rows.append(
-                f"<div class='notice {tone}'>"
+                f"<div class='notice {tone}' data-nid='{nid}'>"
+                "<button type='button' class='notice-close' "
+                "aria-label='dismiss notice' title='Dismiss (this browser "
+                "only)'>&times;</button>"
                 f"<span class='badge {tone}'>{html.escape(entry['level'])}"
                 f"</span> <strong>{html.escape(entry['title'])}</strong>"
                 + detail + "</div>"
@@ -1126,7 +1185,31 @@ class RigWebApp:
             + "".join(rows) +
             "<p class='note'>Operator-recorded notices from "
             f"<code>{_WARNINGS_FILE}</code>; they annotate, and never "
-            "authorize or invalidate, the artifacts themselves.</p></div>"
+            "authorize or invalidate, the artifacts themselves. Dismissing "
+            "a notice hides it in this browser only - the file is "
+            "unchanged. <a href='#' id='notice-restore' "
+            "style='display:none'></a></p></div>"
+            "<script>(function(){"
+            "var KEY='ura-dismissed-notices';"
+            "function load(){try{return JSON.parse("
+            "localStorage.getItem(KEY))||[]}catch(e){return[]}}"
+            "function save(v){localStorage.setItem(KEY,JSON.stringify(v));}"
+            "var restore=document.getElementById('notice-restore');"
+            "function apply(){var d=load();var hidden=0;"
+            "document.querySelectorAll('.notice').forEach(function(n){"
+            "var on=d.indexOf(n.getAttribute('data-nid'))>=0;"
+            "n.style.display=on?'none':'';if(on){hidden++;}});"
+            "if(restore){restore.style.display=hidden?'':'none';"
+            "restore.textContent='Show '+hidden+' dismissed notice'+"
+            "(hidden===1?'':'s');}}"
+            "document.querySelectorAll('.notice-close').forEach(function(b){"
+            "b.addEventListener('click',function(){"
+            "var id=this.parentElement.getAttribute('data-nid');"
+            "var d=load();if(d.indexOf(id)<0){d.push(id);save(d);}"
+            "apply();});});"
+            "if(restore){restore.addEventListener('click',function(e){"
+            "e.preventDefault();save([]);apply();});}"
+            "apply();})();</script>"
         )
 
     @staticmethod
@@ -1322,6 +1405,29 @@ class RigWebApp:
         )
         return _page("URA rig console", body, active="Dashboard")
 
+    def _param_input(self, param: CommandParam) -> str:
+        flag = html.escape(param.flag)
+        if param.kind == "flag":
+            return f"<input type='checkbox' name='{flag}'>"
+        if param.choices:
+            options = "".join(
+                f"<option value='{html.escape(choice)}'>"
+                f"{html.escape(choice)}</option>"
+                for choice in param.choices
+            )
+            return (
+                f"<select name='{flag}'>"
+                "<option value=''>(default)</option>" + options + "</select>"
+            )
+        if param.kind == "int":
+            return f"<input type='number' step='1' name='{flag}'>"
+        if param.kind == "float":
+            return f"<input type='number' step='any' name='{flag}'>"
+        listattr = (
+            f" list='dl-{html.escape(param.suggest)}'" if param.suggest else ""
+        )
+        return f"<input type='text' name='{flag}'{listattr}>"
+
     def _command_card(self, name: str) -> str:
         entry = self.commands[name]
         fields = []
@@ -1330,15 +1436,10 @@ class RigWebApp:
                 "<span class='req' title='required'>*</span>"
                 if param.required else ""
             )
-            input_html = (
-                f"<input type='checkbox' name='{html.escape(param.flag)}'>"
-                if param.kind == "flag"
-                else f"<input type='text' name='{html.escape(param.flag)}'>"
-            )
             fields.append(
                 f"<label>{html.escape(param.flag)}{required} "
                 f"<span class='kind'>{html.escape(param.kind)}</span>"
-                "</label>" + input_html
+                "</label>" + self._param_input(param)
             )
         haystack = html.escape(f"{name} {entry.description}".lower())
         return (
@@ -1355,6 +1456,46 @@ class RigWebApp:
             + "<span></span><button type='submit'>"
             + _icon("play", size=15) + "Start job</button>"
             "</form></div></details>"
+        )
+
+    def _registry_keys(self, name: str, example: str) -> list[str]:
+        """Keys of an operator-local registry, falling back to the example.
+
+        Presentation-only suggestions: the local file is authoritative for
+        runs; the checked-in example keeps the console useful before the
+        operator copies it. Malformed files yield no suggestions.
+        """
+
+        for candidate in (name, example):
+            path = self.repo_root / "experiments" / candidate
+            try:
+                data = json.loads(path.read_text(encoding="utf-8"))
+            except (OSError, ValueError):
+                continue
+            if isinstance(data, dict):
+                return sorted(data)
+        return []
+
+    def _datalists(self) -> str:
+        lists = dict(_SUGGEST_STATIC)
+        lists["arms"] = tuple(
+            ["synth"] + self._registry_keys(
+                "source-instances.json", "source-instances.example.json"
+            )
+        )
+        lists["api"] = tuple(
+            ["mock"] + self._registry_keys(
+                "api-targets.json", "api-targets.example.json"
+            )
+        )
+        return "".join(
+            f"<datalist id='dl-{html.escape(key)}'>"
+            + "".join(
+                f"<option value='{html.escape(value)}'></option>"
+                for value in values
+            )
+            + "</datalist>"
+            for key, values in lists.items()
         )
 
     def _commands_page(self) -> bytes:
@@ -1392,6 +1533,7 @@ class RigWebApp:
             "<p><input id='cmdfilter' type='text' "
             "placeholder='Type to filter commands...' "
             "aria-label='filter commands'></p>"
+            + self._datalists()
             + "".join(sections)
             + "<script>(function(){"
             "var box=document.getElementById('cmdfilter');"
@@ -1407,36 +1549,91 @@ class RigWebApp:
 
     def _jobs_page(self) -> bytes:
         rows = []
+        tallies = {"running": 0, "complete": 0, "failed": 0}
         for job_id in sorted(self.jobs, reverse=True):
             job = self.jobs[job_id]
             state = job.state()
+            if state in tallies:
+                tallies[state] += 1
             tone = {"running": "blue", "complete": "green", "failed": "red"}.get(
                 state, "gray"
             )
             started = time.strftime(
                 "%H:%M:%S", time.localtime(job.started_at)
             )
+            stop = (
+                "<form class='inline' method='post' "
+                f"action='/jobs/{html.escape(job_id)}/stop'>"
+                "<button class='danger small' type='submit'>Stop</button>"
+                "</form>" if state == "running" else ""
+            )
+            hay = html.escape(f"{job_id} {job.command}".lower())
             rows.append(
-                f"<tr><td><a href='/jobs/{html.escape(job_id)}'>"
+                f"<tr data-state='{html.escape(state)}' data-hay='{hay}'>"
+                f"<td><a href='/jobs/{html.escape(job_id)}'>"
                 f"{html.escape(job_id)}</a></td>"
                 f"<td>{html.escape(job.command)}</td>"
                 f"<td><span class='dot {tone}'></span>"
                 f"<span class='badge {tone}'>{html.escape(state)}</span></td>"
                 f"<td>{started}</td>"
-                f"<td>{job.runtime_seconds():,.0f}s</td>"
+                f"<td>{_human_duration(job.runtime_seconds())}</td>"
                 f"<td>{'' if job.exit_code() is None else job.exit_code()}"
-                "</td></tr>"
+                f"</td><td>{stop}</td></tr>"
             )
+        chips = (
+            "<div class='chips'>"
+            f"<button type='button' class='chip on' data-state=''>All "
+            f"({len(self.jobs)})</button>"
+            + "".join(
+                f"<button type='button' class='chip' data-state='{state}'>"
+                f"{state.capitalize()} ({count})</button>"
+                for state, count in tallies.items()
+            )
+            + "</div>"
+        )
+        controls = (
+            chips +
+            "<p><input id='jobfilter' type='text' "
+            "placeholder='Type to filter jobs...' "
+            "aria-label='filter jobs'></p>"
+        )
         table = (
-            "<div class='card scroll'><table><tr><th>Job</th><th>Command</th>"
-            "<th>State</th><th>Started</th><th>Runtime</th><th>Exit</th></tr>"
+            "<div class='card scroll'><table id='jobstable'>"
+            "<tr><th>Job</th><th>Command</th>"
+            "<th>State</th><th>Started</th><th>Runtime</th><th>Exit</th>"
+            "<th></th></tr>"
             + "".join(rows) + "</table></div>"
             if rows else
             "<div class='card'><p class='note'>No jobs this session. Start "
             "one from the <a href='/commands'>Run</a> page.</p></div>"
         )
+        script = (
+            "<script>(function(){"
+            "var state='';var box=document.getElementById('jobfilter');"
+            "function apply(){var q=box?box.value.toLowerCase():'';"
+            "document.querySelectorAll('#jobstable tr[data-state]')"
+            ".forEach(function(r){"
+            "var okState=!state||r.getAttribute('data-state')===state;"
+            "var okText=(r.getAttribute('data-hay')||'').indexOf(q)>=0;"
+            "r.style.display=okState&&okText?'':'none';});}"
+            "document.querySelectorAll('.chip').forEach(function(c){"
+            "c.addEventListener('click',function(){"
+            "state=this.getAttribute('data-state')||'';"
+            "document.querySelectorAll('.chip').forEach(function(o){"
+            "o.classList.remove('on');});this.classList.add('on');"
+            "apply();});});"
+            "if(box){box.addEventListener('input',apply);}"
+            "})();</script>"
+            if rows else ""
+        )
+        refresh = (
+            "<script>setTimeout(function(){location.reload();}, 5000);"
+            "</script>" if tallies["running"] else ""
+        )
         return _page(
-            "Jobs", "<h1>" + _icon("pulse", size=22) + "Jobs</h1>" + table,
+            "Jobs",
+            "<h1>" + _icon("pulse", size=22) + "Jobs</h1>"
+            + controls + table + script + refresh,
             active="Jobs",
         )
 

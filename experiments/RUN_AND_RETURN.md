@@ -443,6 +443,18 @@ their substantive task/truthfulness evaluators are not implemented. Run
 `rig_check` after filling locators; a placeholder or layout mismatch must stop
 the lane.
 
+[13 August 2026: BIPIA `qa` and `abstract` ship only an index plus the
+authors' `process.py`, which constructs the task files from external base
+datasets and asserts the result against the shipped `md5.txt`. By recorded
+operator decision (ledger Section 11.29) these constructions are executed
+rather than blocked, marked WARNING in the acquisition logs and the console
+notices. `abstract` was constructed from XSum and its `test.jsonl` MD5
+matches the shipped checksum (pinned-equivalent). `qa` stays blocked until
+the operator obtains the license-gated NewsQA CNN source (Microsoft
+Research signup plus the NYU CNN stories, built with the Maluuba scripts);
+a successful construction must likewise match `md5.txt` before the arm
+leaves its blocked disposition.]
+
 For clarity, the acquired but intentionally unscored arms are both AgentHarm
 behavior sets, all five BIPIA tasks, CyberSecEval prompt injection, all four
 InjecAgent sets, and MLLMGuard hallucination. Their records are useful for
