@@ -1,0 +1,27 @@
+{
+  "vllm_version": null,
+  "source_url": "curated default; run local_targets --refresh to sync to the rig's vLLM version",
+  "models": {
+    "vllm:meta-llama/Llama-3.1-8B-Instruct": {"revision": null, "modalities": ["text"], "tensor_parallel_size": 1, "gpu_memory_utilization": 0.85, "max_tokens": 4096},
+    "vllm:mistralai/Mistral-7B-Instruct-v0.3": {"revision": null, "modalities": ["text"], "tensor_parallel_size": 1, "gpu_memory_utilization": 0.85, "max_tokens": 4096},
+    "vllm:mistralai/Mixtral-8x7B-Instruct-v0.1": {"revision": null, "modalities": ["text"], "tensor_parallel_size": 2, "gpu_memory_utilization": 0.9, "max_tokens": 4096},
+    "vllm:Qwen/Qwen2.5-7B-Instruct": {"revision": null, "modalities": ["text"], "tensor_parallel_size": 1, "gpu_memory_utilization": 0.85, "max_tokens": 4096},
+    "vllm:Qwen/Qwen2.5-14B-Instruct": {"revision": null, "modalities": ["text"], "tensor_parallel_size": 1, "gpu_memory_utilization": 0.9, "max_tokens": 4096},
+    "vllm:google/gemma-2-9b-it": {"revision": null, "modalities": ["text"], "tensor_parallel_size": 1, "gpu_memory_utilization": 0.85, "max_tokens": 4096},
+    "vllm:microsoft/Phi-3.5-mini-instruct": {"revision": null, "modalities": ["text"], "tensor_parallel_size": 1, "gpu_memory_utilization": 0.85, "max_tokens": 4096},
+    "vllm:deepseek-ai/DeepSeek-V2-Lite-Chat": {"revision": null, "modalities": ["text"], "tensor_parallel_size": 1, "gpu_memory_utilization": 0.85, "max_tokens": 4096},
+    "vllm:01-ai/Yi-1.5-9B-Chat": {"revision": null, "modalities": ["text"], "tensor_parallel_size": 1, "gpu_memory_utilization": 0.85, "max_tokens": 4096},
+    "vllm:Qwen/Qwen3-VL-8B-Instruct": {"revision": "60595ebc30ec8e3b1d3b9e65d4943ca011c0006a", "modalities": ["text", "image"], "tensor_parallel_size": 1, "gpu_memory_utilization": 0.85, "max_tokens": 4096},
+    "vllm:Qwen/Qwen2.5-VL-7B-Instruct": {"revision": null, "modalities": ["text", "image"], "tensor_parallel_size": 1, "gpu_memory_utilization": 0.85, "max_tokens": 4096},
+    "vllm:llava-hf/llava-v1.6-mistral-7b-hf": {"revision": "2424fdd47412fccc66d91719126b420e9fbd7065", "modalities": ["text", "image"], "tensor_parallel_size": 1, "gpu_memory_utilization": 0.85, "max_tokens": 4096},
+    "vllm:llava-hf/llava-1.5-7b-hf": {"revision": null, "modalities": ["text", "image"], "tensor_parallel_size": 1, "gpu_memory_utilization": 0.85, "max_tokens": 4096},
+    "vllm:mistral-community/pixtral-12b": {"revision": null, "modalities": ["text", "image"], "tensor_parallel_size": 1, "gpu_memory_utilization": 0.9, "max_tokens": 4096},
+    "vllm:OpenGVLab/InternVL2-8B": {"revision": null, "modalities": ["text", "image"], "tensor_parallel_size": 1, "gpu_memory_utilization": 0.85, "max_tokens": 4096},
+    "vllm:microsoft/Phi-3.5-vision-instruct": {"revision": null, "modalities": ["text", "image"], "tensor_parallel_size": 1, "gpu_memory_utilization": 0.85, "max_tokens": 4096},
+    "vllm:google/paligemma-3b-mix-448": {"revision": null, "modalities": ["text", "image"], "tensor_parallel_size": 1, "gpu_memory_utilization": 0.85, "max_tokens": 4096},
+    "vllm:meta-llama/Llama-3.2-11B-Vision-Instruct": {"revision": null, "modalities": ["text", "image"], "tensor_parallel_size": 1, "gpu_memory_utilization": 0.9, "max_tokens": 4096},
+    "vllm:HuggingFaceM4/Idefics3-8B-Llama3": {"revision": null, "modalities": ["text", "image"], "tensor_parallel_size": 1, "gpu_memory_utilization": 0.85, "max_tokens": 4096},
+    "vllm:Qwen/Qwen2-Audio-7B-Instruct": {"revision": null, "modalities": ["text", "audio"], "tensor_parallel_size": 1, "gpu_memory_utilization": 0.85, "max_tokens": 4096},
+    "vllm:fixie-ai/ultravox-v0_4": {"revision": null, "modalities": ["text", "audio"], "tensor_parallel_size": 1, "gpu_memory_utilization": 0.85, "max_tokens": 4096}
+  }
+}

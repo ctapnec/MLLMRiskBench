@@ -1,0 +1,23 @@
+{
+  "vllm:Qwen/Qwen3-VL-8B-Instruct": {
+    "revision": "60595ebc30ec8e3b1d3b9e65d4943ca011c0006a",
+    "modalities": ["text", "image"],
+    "tensor_parallel_size": 1,
+    "gpu_memory_utilization": 0.85,
+    "max_tokens": 4096
+  },
+  "vllm:llava-hf/llava-v1.6-mistral-7b-hf": {
+    "revision": "2424fdd47412fccc66d91719126b420e9fbd7065",
+    "modalities": ["text", "image"],
+    "tensor_parallel_size": 1,
+    "gpu_memory_utilization": 0.85,
+    "max_tokens": 4096
+  },
+  "vllm:GraySwanAI/llava-v1.6-mistral-7b-hf-RR": {
+    "revision": "d11b3d7ae2fb21e984f197a83c15bbb0deb66b7e",
+    "modalities": ["text", "image"],
+    "tensor_parallel_size": 1,
+    "gpu_memory_utilization": 0.85,
+    "max_tokens": 4096
+  }
+}

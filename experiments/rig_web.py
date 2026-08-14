@@ -238,6 +238,21 @@ _EDITABLE_CONFIGS: dict[str, tuple[str, str, str]] = {
         "Add a reviewed release under a new arm id; never repoint an existing "
         "arm at different data.",
     ),
+    "local-targets": (
+        "experiments/local-targets.json",
+        "experiments/rig/local-targets.example.json",
+        "Local vLLM target registry: vllm:org/model -> pinned revision, "
+        "modalities, tensor-parallel size, GPU memory. Consumed via "
+        "--local / --local-config; runs on the rig's own GPUs (no API spend).",
+    ),
+    "budgets": (
+        "experiments/budgets.json",
+        "experiments/rig/budgets.example.json",
+        "Prepaid provider budgets shown on the dashboard and Stats: a "
+        "list of {name, prepaid, match, funds}. 'match' is a lowercase "
+        "prefix used to attribute observed usage to the provider. "
+        "Presentation only - the console spends nothing.",
+    ),
 }
 
 
@@ -524,6 +539,14 @@ def _commands() -> dict[str, Command]:
             ),
         ),
         Command(
+            "local_targets", "experiments.local_targets",
+            "List or refresh the vLLM local-target roster (version-matched)",
+            (
+                CommandParam("--refresh", "flag"),
+                CommandParam("--vllm-version", "str"),
+            ),
+        ),
+        Command(
             "webui_selftest", "experiments.rig_web",
             "UI diagnostic only: sleep briefly and exit",
             (
@@ -549,6 +572,8 @@ COMMAND_GROUPS: tuple[tuple[str, str, str, tuple[str, ...]], ...] = (
      ("rig_check", "run_matrix", "live_attestation", "lane_canary")),
     ("Native and synthetic", "flask", "runbook sections 14, 16",
      ("native_import", "syn_compat")),
+    ("Targets and rosters", "coins", "runbook sections 5, 13",
+     ("local_targets",)),
     ("Analysis and reporting", "chart", "runbook section 16",
      ("level1_evidence", "suite_summary", "level2_report", "figures",
       "paired_compare", "judge_sensitivity", "kappa", "transfer_matrix")),
@@ -944,8 +969,28 @@ button.ghost { background:transparent; color:var(--accent);
 .modgroup { margin:.6rem 0; }
 .modgroup h3 { font-size:.82rem; text-transform:uppercase;
   letter-spacing:.05em; color:var(--muted); margin:.5rem 0 .2rem; }
-.modchip.on { background:var(--accent); color:var(--accent-ink);
-  border-color:var(--accent); }
+.modscope { display:flex; flex-wrap:wrap; gap:.5rem; margin:.3rem 0 .2rem; }
+.modtoggle { display:inline-flex; align-items:center; gap:.45rem;
+  cursor:pointer; user-select:none; padding:.5rem .95rem; border-radius:10px;
+  border:1.5px solid var(--line); background:var(--card); font-weight:600;
+  font-size:.9rem; text-transform:capitalize; transition:all .12s ease; }
+.modtoggle input { position:absolute; opacity:0; width:0; height:0; }
+.modtoggle span::before { content:''; display:inline-block; width:.7rem;
+  height:.7rem; margin-right:.5rem; border-radius:4px; vertical-align:-1px;
+  border:1.5px solid var(--muted); background:transparent; }
+.modtoggle:has(input:checked) { background:color-mix(in srgb,
+  var(--accent) 14%, var(--card)); border-color:var(--accent);
+  color:var(--accent); }
+.modtoggle:has(input:checked) span::before { background:var(--accent);
+  border-color:var(--accent); box-shadow:inset 0 0 0 2px var(--card); }
+.modtoggle:hover { border-color:var(--accent); }
+.grouphead { display:flex; align-items:center; justify-content:space-between;
+  gap:.5rem; margin:.7rem 0 .1rem; }
+.grouphead h3 { margin:0; }
+.groupsel { display:flex; gap:.5rem; }
+.linkbtn { background:transparent; border:0; color:var(--accent);
+  font-size:.8rem; font-weight:600; cursor:pointer; padding:.1rem .3rem; }
+.linkbtn:hover { text-decoration:underline; }
 .modtag { display:inline-block; font-size:.66rem; font-weight:600;
   text-transform:uppercase; letter-spacing:.04em; color:var(--muted);
   background:var(--soft); border:1px solid var(--line); border-radius:5px;
@@ -974,10 +1019,10 @@ if(!form){return;}
 function checked(sel,attr){var out=[];
 form.querySelectorAll(sel).forEach(function(el){
 if(el.checked){out.push(el.getAttribute(attr));}});return out;}
-function selectedMods(){var s={};
-form.querySelectorAll('.armbox').forEach(function(el){
-if(el.checked){(el.getAttribute('data-mods')||'').split(',').forEach(
-function(m){if(m){s[m]=1;}});}});return Object.keys(s);}
+function checkedKind(kind,attr){var out=[];
+form.querySelectorAll('.modelbox').forEach(function(el){
+if(el.checked&&el.getAttribute('data-kind')===kind){
+out.push(el.getAttribute(attr));}});return out;}
 function scopeSet(){var s={};form.querySelectorAll('.modbox').forEach(
 function(m){if(m.checked){s[m.getAttribute('data-mod')]=1;}});return s;}
 function intersects(list,set){return list.some(function(x){return set[x];});}
@@ -1003,7 +1048,8 @@ var flagFor={dry_run:'--dry-run',attestation_probe:'--attestation-probe',
 diagnostic_canary:'--diagnostic-canary',measured:''};
 var parts=['run_matrix'];
 if(flagFor[mode]){parts.push(flagFor[mode]);}
-var api=checked('.modelbox','data-model');if(api.length){parts.push('--api '+api.join(','));}
+var api=checkedKind('api','data-model');if(api.length){parts.push('--api '+api.join(','));}
+var loc=checkedKind('local','data-model');if(loc.length){parts.push('--local '+loc.join(','));}
 var arms=checked('.armbox','data-arm');if(arms.length){parts.push('--corpora '+arms.join(','));}
 var fw=checked('.fwbox','data-fw');if(fw.length){parts.push('--attackers '+fw.join(','));}
 var jg=checked('.judgebox','data-judge');if(jg.length){parts.push('--judges '+jg.join(','));}
@@ -1013,17 +1059,18 @@ var prev=document.getElementById('buildpreview');
 if(prev){prev.textContent=parts.join(' ');}}
 form.addEventListener('change',refresh);
 form.addEventListener('input',refresh);
-form.querySelectorAll('.modchip').forEach(function(chip){
-chip.addEventListener('click',function(){
-var mod=this.getAttribute('data-mod');
-var boxes=Array.prototype.filter.call(form.querySelectorAll('.armbox'),
-function(b){return (b.getAttribute('data-mods')||'').split(',').indexOf(mod)>=0;});
-var anyOff=boxes.some(function(b){return !b.checked;});
-boxes.forEach(function(b){b.checked=anyOff;});
-this.classList.toggle('on',anyOff);refresh();});});
+// per-group All / None bulk selection over the group's visible arms
+form.querySelectorAll('.linkbtn').forEach(function(btn){
+btn.addEventListener('click',function(){
+var on=this.getAttribute('data-sel')==='all';
+var group=this.closest('.modgroup');
+group.querySelectorAll('.armbox').forEach(function(b){
+var lab=b.closest('.check');
+if(!lab||lab.style.display!=='none'){b.checked=on;}});refresh();});});
 form.addEventListener('submit',function(){
 form.querySelector("input[name=corpora]").value=checked('.armbox','data-arm').join(',');
-form.querySelector("input[name=api]").value=checked('.modelbox','data-model').join(',');
+form.querySelector("input[name=api]").value=checkedKind('api','data-model').join(',');
+form.querySelector("input[name=local]").value=checkedKind('local','data-model').join(',');
 form.querySelector("input[name=attackers]").value=checked('.fwbox','data-fw').join(',');
 form.querySelector("input[name=judges]").value=checked('.judgebox','data-judge').join(',');});
 refresh();
@@ -1731,10 +1778,10 @@ class RigWebApp:
     def _spend_card(self) -> str:
         usage = self._campaign_usage()
         rows = []
-        for name, amount, _role in _PROVIDER_BUDGETS:
-            key = name.split()[0].lower()
+        for name, amount, match, _role in self._budgets():
             observed = next(
-                (v for p, v in usage.items() if p.lower().startswith(key)), None
+                (v for p, v in usage.items() if p.lower().startswith(match)),
+                None,
             )
             calls = observed["calls"] if observed else 0
             toks = (observed["input_tokens"] + observed["output_tokens"]
@@ -1749,12 +1796,13 @@ class RigWebApp:
             "</h2><div class='scroll'><table><tr><th>Provider</th>"
             "<th>Prepaid</th><th>Calls</th><th>Tokens</th></tr>"
             + "".join(rows) + "</table></div>"
-            "<p class='note'>Prepaid budgets are the recorded ceilings (ledger "
-            "11.22). Calls and tokens are scanned from retained run artifacts "
-            "(attestation probes, canaries, measured lanes) and are observed "
-            "usage, not a cost of record. A dollar figure appears only once a "
-            "per-model price is recorded; the console never estimates spend it "
-            "cannot source.</p></div>"
+            "<p class='note'>Prepaid budgets come from the editable "
+            "<a href='/config?file=budgets'>budgets</a> config (defaults from "
+            "ledger 11.22). Calls and tokens are scanned from retained run "
+            "artifacts (attestation probes, canaries, measured lanes) and are "
+            "observed usage, not a cost of record. A dollar figure appears "
+            "only once a per-model price is recorded; the console never "
+            "estimates spend it cannot source.</p></div>"
         )
 
     def _stats_page(self) -> bytes:
@@ -1808,37 +1856,77 @@ class RigWebApp:
 
     # -- campaign builder --------------------------------------------------
 
-    def _model_options(self) -> list[tuple[str, str, tuple[str, ...]]]:
-        """Selectable targets as (spec, label, supported-modalities).
+    def _load_registry(self, name: str, example: str) -> dict[str, Any]:
+        """Parse an operator-local registry, falling back to its example."""
 
-        Modalities come from each roster entry's ``modalities`` field so the
-        builder can hide a target that cannot handle a selected modality (a
-        text-only model drops out once image/audio/video is in scope). The
-        focal Anthropic/OpenAI pair are text+image multimodal frontier models.
-        """
-
-        options: list[tuple[str, str, tuple[str, ...]]] = []
-        for env_name, label in (("FABLE", "Fable (focal)"), ("SOL", "Sol (focal)")):
-            spec = os.environ.get(env_name, "").strip()
-            if spec:
-                options.append((spec, label, ("text", "image")))
-        registry: dict[str, Any] = {}
-        for candidate in ("api-targets.json", "rig/api-targets.example.json"):
+        for candidate in (name, example):
             path = self.repo_root / "experiments" / candidate
             try:
                 data = json.loads(path.read_text(encoding="utf-8"))
             except (OSError, ValueError):
                 continue
             if isinstance(data, dict):
-                registry = data
-                break
-        for key, entry in registry.items():
-            mods = ("text",)
-            if isinstance(entry, dict) and isinstance(entry.get("modalities"), list):
-                mods = tuple(
-                    str(m) for m in entry["modalities"] if isinstance(m, str)
-                ) or ("text",)
-            options.append((key, key, mods))
+                return data
+        return {}
+
+    @staticmethod
+    def _entry_modalities(entry: Any) -> tuple[str, ...]:
+        if isinstance(entry, dict) and isinstance(entry.get("modalities"), list):
+            mods = tuple(
+                str(m) for m in entry["modalities"] if isinstance(m, str)
+            )
+            if mods:
+                return mods
+        return ("text",)
+
+    def _vllm_roster_version(self) -> str | None:
+        try:
+            from experiments.local_targets import roster_version  # noqa: PLC0415
+
+            return roster_version(self.repo_root)
+        except Exception:  # noqa: BLE001 - convenience metadata only
+            return None
+
+    def _model_options(self) -> list[tuple[str, str, tuple[str, ...], str]]:
+        """Selectable targets as (spec, label, modalities, kind).
+
+        ``kind`` is 'api' for hosted routes (composed into --api) or 'local'
+        for on-rig vLLM targets (composed into --local). Modalities come from
+        each roster entry so the builder can hide a target that cannot handle a
+        selected modality. Local targets are the hand-configured local-targets
+        registry plus the vLLM roster (the models the rig's vLLM can serve;
+        vLLM downloads a chosen one on first run). The focal Anthropic/OpenAI
+        pair are the inherent env adapters if exported.
+        """
+
+        from experiments.local_targets import roster_models  # noqa: PLC0415
+
+        options: list[tuple[str, str, tuple[str, ...], str]] = []
+        for env_name, label in (("FABLE", "Fable (focal)"), ("SOL", "Sol (focal)")):
+            spec = os.environ.get(env_name, "").strip()
+            if spec:
+                options.append((spec, label, ("text", "image"), "api"))
+        for key, entry in self._load_registry(
+            "api-targets.json", "rig/api-targets.example.json"
+        ).items():
+            options.append((key, key, self._entry_modalities(entry), "api"))
+        local_seen: set[str] = set()
+        for key, entry in self._load_registry(
+            "local-targets.json", "rig/local-targets.example.json"
+        ).items():
+            local_seen.add(key)
+            options.append((key, key, self._entry_modalities(entry), "local"))
+        try:
+            roster = roster_models(self.repo_root)
+        except Exception:  # noqa: BLE001 - roster is a convenience, never fatal
+            roster = []
+        for model in roster:
+            spec = str(model["spec"])
+            if spec in local_seen:
+                continue
+            local_seen.add(spec)
+            mods = tuple(str(m) for m in model.get("modalities", ["text"]))
+            options.append((spec, spec, mods or ("text",), "local"))
         return options
 
     def _compose_from_builder(
@@ -1873,14 +1961,18 @@ class RigWebApp:
         for token, mode_flag, _desc in _BUILD_MODES:
             if token == mode and mode_flag:
                 values[mode_flag] = "on"
-        # Bind the operator-local registries so a hosted lane resolves its
-        # roster and source receipt exactly as the runbook expects.
+        # Bind the operator-local registries so a lane resolves its roster,
+        # local target config, and source receipt as the runbook expects.
         for relative, flag in (
             ("experiments/api-targets.json", "--api-config"),
             ("experiments/source-instances.json", "--source-config"),
         ):
             if (self.repo_root / relative).is_file():
                 values[flag] = relative
+        if values.get("--local"):
+            local_cfg = "experiments/local-targets.json"
+            if (self.repo_root / local_cfg).is_file():
+                values["--local-config"] = local_cfg
         return "run_matrix", values
 
     def _build_page(self) -> bytes:
@@ -1898,11 +1990,6 @@ class RigWebApp:
         registry_arms = set(self._registry_keys(
             "source-instances.json", "rig/source-instances.example.json"
         ))
-        modality_chips = "".join(
-            f"<button type='button' class='chip modchip' data-mod='{mod}'>"
-            f"{html.escape(mod)}</button>"
-            for mod in _MODALITIES
-        )
 
         def _mod_tags(mods: tuple[str, ...]) -> str:
             return "".join(
@@ -1924,35 +2011,69 @@ class RigWebApp:
                 boxes.append(
                     "<label class='check'>"
                     f"<input type='checkbox' class='armbox' "
-                    f"data-mods='{','.join(mods)}' "
+                    f"data-mods='{html.escape(','.join(mods))}' "
                     f"data-arm='{html.escape(arm)}'>"
                     f"<span>{html.escape(arm)} {_mod_tags(mods)}{note}</span>"
                     "</label>"
                 )
             arm_groups.append(
-                f"<div class='modgroup'><h3>{html.escape(signature)}</h3>"
+                "<div class='modgroup'><div class='grouphead'>"
+                f"<h3>{html.escape(signature)}</h3>"
+                "<span class='groupsel'>"
+                "<button type='button' class='linkbtn' data-sel='all'>All"
+                "</button><button type='button' class='linkbtn' "
+                "data-sel='none'>None</button></span></div>"
                 "<div class='checkgrid'>" + "".join(boxes) + "</div></div>"
             )
-        # Target model checkboxes (carry supported modalities so a target that
-        # cannot handle a selected modality is hidden from scope).
-        model_boxes = "".join(
-            "<label class='check modelrow' "
-            f"data-mods='{','.join(mods)}'>"
-            f"<input type='checkbox' class='modelbox' "
-            f"data-model='{html.escape(value)}'>"
-            f"<span>{html.escape(label)} "
-            + "".join(f"<span class='modtag'>{html.escape(m)}</span>"
-                      for m in mods)
-            + "</span></label>"
-            for value, label, mods in self._model_options()
-        ) or "<p class='note'>No targets configured. Add them on the "\
-             "<a href='/config?file=api-targets'>Config</a> page.</p>"
-        # Local target field (free text: backend:model specs).
+        # Target checkboxes carry supported modalities (so an out-of-scope
+        # target is hidden) and a kind (hosted API vs on-rig local vLLM).
+        def _target_box(value: str, label: str, mods: tuple[str, ...], kind: str) -> str:
+            return (
+                "<label class='check modelrow' "
+                f"data-mods='{html.escape(','.join(mods))}' "
+                f"data-kind='{html.escape(kind)}'>"
+                f"<input type='checkbox' class='modelbox' "
+                f"data-kind='{html.escape(kind)}' "
+                f"data-model='{html.escape(value)}'>"
+                f"<span>{html.escape(label)} "
+                + "".join(f"<span class='modtag'>{html.escape(m)}</span>"
+                          for m in mods)
+                + "</span></label>"
+            )
+
+        options = self._model_options()
+        api_boxes = "".join(
+            _target_box(v, lbl, mods, kind)
+            for v, lbl, mods, kind in options if kind == "api"
+        )
+        local_boxes = "".join(
+            _target_box(v, lbl, mods, kind)
+            for v, lbl, mods, kind in options if kind == "local"
+        )
+        model_boxes = (
+            "<h3>Hosted API</h3><div class='checkgrid'>"
+            + (api_boxes or "<p class='note'>No hosted targets configured.</p>")
+            + "</div><h3>Local vLLM (on-rig GPUs)</h3><div class='checkgrid'>"
+            + (local_boxes or "<p class='note'>No local targets configured.</p>")
+            + "</div>"
+            + "<p class='note'>Hosted rosters are edited on the "
+            "<a href='/config?file=api-targets'>api-targets</a> and "
+            "<a href='/config?file=local-targets'>local-targets</a> Config "
+            "pages. Local vLLM targets also include the vLLM roster ("
+            + (f"synced to vLLM {html.escape(str(self._vllm_roster_version()))}"
+               if self._vllm_roster_version()
+               else "curated default - run <code>local_targets --refresh</code> "
+                    "to sync it to the rig's vLLM version")
+            + "); vLLM downloads a chosen model on first run. Hosted targets "
+            "spend API budget; local vLLM targets use the rig's GPUs "
+            "(no API spend).</p>"
+        )
+        # (local targets are selected as checkboxes above, not free text)
         # Framework checkboxes (carry supported modalities so the wizard can
         # flag ones that cannot drive a chosen modality).
         framework_boxes = "".join(
             "<label class='check fwrow' "
-            f"data-mods='{','.join(mods)}'>"
+            f"data-mods='{html.escape(','.join(mods))}'>"
             f"<input type='checkbox' class='fwbox' data-fw='{html.escape(fw)}'"
             + (" checked" if fw == "replay" else "") + ">"
             f"<span><strong>{html.escape(fw)}</strong> "
@@ -1985,31 +2106,26 @@ class RigWebApp:
             "<form method='post' action='/build' id='builder'>"
             # hidden composed fields
             "<input type='hidden' name='corpora'><input type='hidden' name='api'>"
+            "<input type='hidden' name='local'>"
             "<input type='hidden' name='attackers'>"
             "<input type='hidden' name='judges'>"
             "<div class='card'><h2>" + _icon("play") + "Mode</h2>"
             "<div class='radios'>" + mode_html + "</div></div>"
             "<div class='card'><h2>" + _icon("grid") + "Modality scope</h2>"
-            "<p class='note'>The campaign's modalities. All are enabled for a "
-            "fresh build; unchecking one hides the arms, target models, and "
-            "frameworks that need it. A multimodal arm needs every one of its "
-            "modalities in scope; a target model must support all of them.</p>"
-            "<div class='checkgrid'>" + "".join(
-                "<label class='check'><input type='checkbox' class='modbox' "
-                f"data-mod='{m}' checked><span><strong>{m}</strong></span>"
-                "</label>" for m in _MODALITIES
+            "<p class='note'>The campaign's modalities - all enabled for a "
+            "fresh build. Turn one off to hide the arms, target models, and "
+            "frameworks that need it.</p>"
+            "<div class='modscope'>" + "".join(
+                "<label class='modtoggle'><input type='checkbox' class='modbox' "
+                f"data-mod='{m}' checked><span>{html.escape(m)}</span></label>"
+                for m in _MODALITIES
             ) + "</div></div>"
             "<div class='card'><h2>" + _icon("box") + "Arms &amp; corpora</h2>"
-            "<p class='note'>Only arms whose modalities are all in scope appear "
-            "here; use a modality chip to bulk-select a group.</p>"
-            "<div class='chips'>" + modality_chips + "</div>"
+            "<p class='note'>Arms in the current modality scope. Each shows its "
+            "modality tags; use All / None per group for bulk selection.</p>"
             + "".join(arm_groups) + "</div>"
             "<div class='card'><h2>" + _icon("coins") + "Target models</h2>"
-            "<div class='checkgrid'>" + model_boxes + "</div>"
-            "<label class='fieldlabel'>Local targets (backend:model, comma "
-            "list)</label>"
-            "<input type='text' name='local' class='wide' "
-            "placeholder='e.g. vllm:Qwen/Qwen3-VL-...'></div>"
+            + model_boxes + "</div>"
             "<div class='card'><h2>" + _icon("pulse") + "Attack frameworks</h2>"
             "<div class='checkgrid'>" + framework_boxes + "</div></div>"
             "<div class='card'><h2>" + _icon("receipt") + "Judges &amp; defense"
@@ -2037,22 +2153,52 @@ class RigWebApp:
         )
         return _page("Campaign builder", body, active="Build")
 
-    @staticmethod
-    def _budget_card() -> str:
+    def _budgets(self) -> list[tuple[str, str, str, str]]:
+        """(name, prepaid, match-prefix, funds) rows from the editable
+        budgets config, falling back to the recorded ledger defaults."""
+
+        document = self._load_registry(
+            "budgets.json", "rig/budgets.example.json"
+        )
+        providers = document.get("providers")
+        rows: list[tuple[str, str, str, str]] = []
+        if isinstance(providers, list):
+            for entry in providers:
+                if not isinstance(entry, dict):
+                    continue
+                name = str(entry.get("name", "")).strip()
+                if not name:
+                    continue
+                rows.append((
+                    name,
+                    str(entry.get("prepaid", "")).strip() or "-",
+                    str(entry.get("match", name.split()[0].lower())).lower(),
+                    str(entry.get("funds", "")).strip(),
+                ))
+        if rows:
+            return rows
+        return [
+            (name, amount, name.split()[0].lower(), role)
+            for name, amount, role in _PROVIDER_BUDGETS
+        ]
+
+    def _budget_card(self) -> str:
         rows = "".join(
             f"<tr><td>{html.escape(name)}</td>"
             f"<td><strong>{html.escape(amount)}</strong></td>"
             f"<td>{html.escape(role)}</td></tr>"
-            for name, amount, role in _PROVIDER_BUDGETS
+            for name, amount, _match, role in self._budgets()
         )
         return (
             "<div class='card'><h2>" + _icon("coins") + "Provider budgets</h2>"
             "<div class='scroll'><table><tr><th>Provider</th><th>Prepaid</th>"
             "<th>Funds</th></tr>" + rows + "</table></div>"
-            "<p class='note'>Recorded prepaid budgets (ledger 11.22). The "
-            "Anthropic balance is the constraint because the Haiku judge is "
-            "metered on every judged response, local lanes included. Exact "
-            "per-lane <code>--limit</code> and call caps are set from the "
+            "<p class='note'>Prepaid budgets from the editable "
+            "<a href='/config?file=budgets'>budgets</a> config (defaults "
+            "recorded in ledger 11.22). The Anthropic balance is the "
+            "constraint because the Haiku judge is metered on every judged "
+            "response, local lanes included. Exact per-lane "
+            "<code>--limit</code> and call caps are set from the "
             "diagnostic-canary cost projections and posted here before any "
             "measured lane. This card spends nothing.</p></div>"
         )

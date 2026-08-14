@@ -272,7 +272,8 @@ def test_builder_composes_validated_run_matrix(tmp_path: Path) -> None:
     # Modality scope checkboxes are all pre-checked for a fresh build, and the
     # scope-filter script is present (arms/models/frameworks hide out of scope).
     assert text.count("class='modbox' data-mod") == 4
-    assert "checked><span><strong>text" in text
+    assert "data-mod='text' checked" in text  # pre-checked scope toggle
+    assert "modtoggle" in text  # styled scope pills, not bare checkboxes
     assert "applyScope" in text and "intersects" in text
     command, values = app._compose_from_builder({
         "mode": "diagnostic_canary",
@@ -292,6 +293,68 @@ def test_builder_composes_validated_run_matrix(tmp_path: Path) -> None:
     argv = build_argv(command, values)
     assert argv[1:3] == ["-m", "experiments.run_matrix"]
     assert "--diagnostic-canary" in argv and "--corpora" in argv
+
+
+def test_builder_targets_split_hosted_and_local_vllm_roster() -> None:
+    # Targets are hosted API (composed into --api) and local vLLM (--local),
+    # the latter drawn from the configured registry plus the vLLM roster; the
+    # focal env pair are hosted. Compose splits them correctly.
+    from experiments import local_targets
+    from experiments.rig_web import RigWebApp
+
+    app = RigWebApp(results_root=Path("."), state_dir=Path("."))
+    page = app.handle("GET", "/build")[2].decode("utf-8")
+    assert "Hosted API" in page and "Local vLLM" in page
+    assert "data-kind='api'" in page and "data-kind='local'" in page
+    # The curated vLLM roster is real and modality-tagged.
+    roster = local_targets.roster_models()
+    assert len(roster) > 10
+    assert any("Qwen3-VL" in m["spec"] for m in roster)
+    assert any("audio" in m["modalities"] for m in roster)
+    # A build with a local target composes --local and binds --local-config
+    # only when a local target is selected.
+    _cmd, values = app._compose_from_builder({
+        "mode": "measured", "corpora": "strongreject_official",
+        "local": "vllm:Qwen/Qwen3-VL-8B-Instruct", "attackers": "replay",
+        "judges": "rules", "out": "runs/x",
+    })
+    assert values["--local"] == "vllm:Qwen/Qwen3-VL-8B-Instruct"
+    assert "--api" not in values
+
+
+def test_builder_escapes_config_sourced_modalities(tmp_path: Path) -> None:
+    # A crafted modality value in an editable target registry must not break
+    # out of the data-mods attribute on the builder page (stored-XSS guard),
+    # and there is a single control named 'local' (no duplicate free-text box).
+    repo = tmp_path / "repo"
+    (repo / "experiments" / "rig").mkdir(parents=True)
+    (repo / "experiments" / "api-targets.json").write_text(json.dumps({
+        "evil:model": {"modalities": ["text' onmouseover='x"]},
+    }), encoding="utf-8")
+    (repo / "experiments" / "rig" / "api-targets.example.json").write_text(
+        "{}", encoding="utf-8")
+    (repo / "experiments" / "rig" / "vllm-roster.example.json").write_text(
+        json.dumps({"models": {}}), encoding="utf-8")
+    app = RigWebApp(
+        results_root=tmp_path / "r", state_dir=tmp_path / "s", repo_root=repo,
+    )
+    (tmp_path / "r").mkdir()
+    page = app.handle("GET", "/build")[2].decode("utf-8")
+    assert "onmouseover='x" not in page  # escaped, no attribute breakout
+    assert "onmouseover=&#x27;x" in page or "onmouseover=&#39;x" in page
+    assert page.count("name='local'") == 1  # single composed control
+
+
+def test_local_targets_roster_parse_and_modality_inference() -> None:
+    from experiments.local_targets import infer_modalities, parse_vllm_doc
+
+    assert infer_modalities("vllm:Qwen/Qwen3-VL-8B-Instruct") == ["text", "image"]
+    assert infer_modalities("vllm:Qwen/Qwen2-Audio-7B-Instruct") == ["text", "audio"]
+    assert infer_modalities("vllm:meta-llama/Llama-3.1-8B-Instruct") == ["text"]
+    doc = "See `Qwen/Qwen2.5-7B-Instruct` and `llava-hf/llava-1.5-7b-hf` here."
+    ids = parse_vllm_doc(doc)
+    assert "Qwen/Qwen2.5-7B-Instruct" in ids
+    assert "llava-hf/llava-1.5-7b-hf" in ids
 
 
 def test_stats_page_renders_budget_and_tolerates_missing_results(tmp_path: Path) -> None:
