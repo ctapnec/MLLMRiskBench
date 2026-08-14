@@ -196,6 +196,102 @@ def test_console_covers_every_runbook_cli() -> None:
     assert not missing, f"runbook CLIs missing from the console allowlist: {missing}"
 
 
+def test_config_editor_writes_only_allowlisted_json_with_backup(tmp_path: Path) -> None:
+    # The config editor is the console's only write surface: it accepts an
+    # allowlisted key, rejects non-JSON and non-object bodies, backs up the
+    # prior bytes, and normalizes on save. No path outside the allowlist is
+    # writable.
+    # Use an isolated repo root so the test never touches the real registry.
+    repo = tmp_path / "repo"
+    (repo / "experiments").mkdir(parents=True)
+    app = RigWebApp(
+        results_root=tmp_path / "runs2", state_dir=tmp_path / "state2",
+        repo_root=repo,
+    )
+    (tmp_path / "runs2").mkdir()
+    # A clean valid save.
+    target = app.save_config("api-targets", '{"z":1,"a":2}')
+    assert target.name == "api-targets.json"
+    written = json.loads(target.read_text(encoding="utf-8"))
+    assert written == {"z": 1, "a": 2}
+    assert list(target.read_text(encoding="utf-8").splitlines())[0] == "{"
+    # A second save backs up the prior bytes.
+    app.save_config("api-targets", '{"a":9}')
+    backups = list((app.state_dir / "config-backups").glob("api-targets.json.*.bak"))
+    assert len(backups) == 1
+    # Invalid JSON and non-object are rejected.
+    with pytest.raises(ValueError, match="not valid JSON"):
+        app.save_config("api-targets", "not json")
+    with pytest.raises(ValueError, match="JSON object"):
+        app.save_config("api-targets", "[1,2,3]")
+    # Unknown / path-escaping keys never resolve to a writable file.
+    for bad in ("../secrets", "/etc/passwd", "nonsense"):
+        with pytest.raises(ValueError, match="unknown config"):
+            app.save_config(bad, "{}")
+    # The editor page renders and a save POST round-trips.
+    status, _, body = app.handle("GET", "/config")
+    assert status == 200 and b"api-targets" in body
+    status, ctype, _ = app.handle(
+        "POST", "/config", {"file": "api-targets", "content": '{"ok":1}'}
+    )
+    assert status == 303 and ctype.startswith("/config")
+    # Secrets file names are not in the allowlist.
+    from experiments.rig_web import _EDITABLE_CONFIGS
+    assert all("env" not in key for key in _EDITABLE_CONFIGS)
+
+
+def test_builder_composes_validated_run_matrix(tmp_path: Path) -> None:
+    # The campaign builder is a guided surface over run_matrix: it composes
+    # the same typed values the Run page would, and everything flows through
+    # build_argv. Selecting the LLM judge auto-binds the Haiku judge model.
+    app = _app(tmp_path)
+    status, _, body = app.handle("GET", "/build")
+    text = body.decode("utf-8")
+    assert status == 200
+    # Modalities, frameworks, and their capability data are present.
+    for modality in ("text", "image", "audio", "video"):
+        assert f"data-mod='{modality}'" in text
+    assert "data-fw='crescendo'" in text
+    assert "data-mods=" in text  # framework capability for wizard filtering
+    command, values = app._compose_from_builder({
+        "mode": "diagnostic_canary",
+        "corpora": "strongreject_official",
+        "api": "anthropic:claude-opus-5",
+        "attackers": "replay,crescendo",
+        "judges": "rules,llm",
+        "limit": "8", "sample_seed": "0", "out": "runs/thesis/canary",
+        "defense": "none",
+    })
+    assert command == "run_matrix"
+    assert values["--diagnostic-canary"] == "on"
+    assert values["--judge-model"] == "anthropic:claude-haiku-4-5-20251001"
+    assert values["--limit"] == "8"
+    assert "--defense" not in values  # 'none' is omitted
+    # Composed values must build a valid argv (same typed allowlist).
+    argv = build_argv(command, values)
+    assert argv[1:3] == ["-m", "experiments.run_matrix"]
+    assert "--diagnostic-canary" in argv and "--corpora" in argv
+
+
+def test_stats_page_renders_budget_and_tolerates_missing_results(tmp_path: Path) -> None:
+    app = _app(tmp_path)
+    status, _, body = app.handle("GET", "/stats")
+    text = body.decode("utf-8")
+    assert status == 200
+    assert "Budgets" in text and "Anthropic" in text and "$100" in text
+    assert "No Level-1/Level-2 result" in text  # graceful empty state
+    # A level2 report with a recognizable table renders a diagram.
+    (app.results_root / "level2.json").write_text(json.dumps({
+        "rows": [
+            {"model": "fable", "asr": 0.12},
+            {"model": "sol", "attack_success_rate": 34.0},
+        ],
+    }), encoding="utf-8")
+    status, _, body = app.handle("GET", "/stats")
+    text = body.decode("utf-8")
+    assert "barchart" in text and "fable" in text
+
+
 def test_command_groups_partition_the_allowlist_exactly() -> None:
     # WEB-002 grouping is presentation only: every allowlisted command sits in
     # exactly one group, and no group names an unknown command.  A partition

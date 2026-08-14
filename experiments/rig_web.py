@@ -83,6 +83,150 @@ class CommandParam:
     suggest: str = ""
 
 
+#: Per-flag help text shown as field tooltips and inline hints on the Run
+#: page.  Presentation only; the CLI's own --help remains authoritative.
+_PARAM_HELP: dict[str, str] = {
+    "--dry-run": "Use MockTarget and the offline mock LLM only - no provider "
+                 "calls, no spend. Produces a diagnostic dry-run artifact.",
+    "--diagnostic-canary": "Run a small real slice under real attack and judge "
+                           "conditions to project per-cluster cost. Diagnostic "
+                           "only; never enters a measured tree.",
+    "--attestation-probe": "One bounded real call per model to confirm the "
+                           "served identity and read token usage. First paid "
+                           "step; the per-model cost anchor comes from here.",
+    "--api": "Comma list of hosted target ids from api-targets.json (e.g. the "
+             "Fable/Sol focal pair). Hosted lanes must carry --limit and "
+             "--sample-seed.",
+    "--local": "Comma list of backend:model specs for local GPU lanes. Local "
+               "lanes run the full corpus; only the judge is metered.",
+    "--corpora": "Comma list of source arm ids (from source-instances.json) or "
+                 "'synth'. Every selected real arm must be admitted in the "
+                 "source-conformance receipt.",
+    "--attackers": "Comma list of attack engines. 'replay' sends the corpus "
+                   "prompt as-is; 'crescendo' escalates over turns; the rest "
+                   "are external adapters.",
+    "--judges": "Judge stages: 'rules' is the deterministic rule scorer "
+                "(free), 'llm' adds the hosted judge (metered per response).",
+    "--judge-model": "Target id used by the LLM judge. The campaign judge is "
+                     "anthropic:claude-haiku-4-5-20251001; 'mock' for offline.",
+    "--limit": "Cluster subsample size. REQUIRED on every hosted paid lane - "
+               "it bounds spend. Omit only for local full-corpus lanes.",
+    "--sample-seed": "Deterministic seed for the cluster subsample. Fix it and "
+                     "record it so every hosted condition sees the identical "
+                     "subset (comparable, never pooled across tiers).",
+    "--seeds": "Comma list of trajectory seeds (attack stochasticity), distinct "
+               "from --sample-seed.",
+    "--max-queries": "Max target queries per trajectory (turn budget upper "
+                     "bound).",
+    "--max-turns": "Max conversation turns per trajectory.",
+    "--max-total-target-calls": "Hard circuit-breaker: abort the lane after "
+                                "this many target calls. A budget guard.",
+    "--max-total-judge-calls": "Hard circuit-breaker on hosted judge calls - "
+                               "the dominant Anthropic cost. A budget guard.",
+    "--max-total-http-attempts": "Hard cap on total HTTP attempts across the "
+                                 "lane (retries included).",
+    "--deadline-seconds": "Wall-clock deadline for the lane; a runaway guard.",
+    "--source-config": "Path to the source registry (experiments/"
+                       "source-instances.json). Bound automatically when the "
+                       "campaign env is exported.",
+    "--api-config": "Path to the hosted-target registry (experiments/"
+                    "api-targets.json).",
+    "--out": "Output directory under the rig results root for this run's "
+             "artifacts.",
+    "--expected-revision": "The exact 40-hex project commit this checkout must "
+                           "match for the revision receipt.",
+    "--validate": "Path to an existing artifact to re-validate (with --sha256) "
+                  "instead of creating a new one.",
+    "--scaffold": "Pre-fill the mechanical receipt fields from bounded "
+                  "observations, leaving operator judgments as OPERATOR_TODO "
+                  "placeholders.",
+    "--selftest-sleep": "UI diagnostic only: sleep this many seconds and exit.",
+}
+
+
+#: Prepaid provider budgets (thesis ledger Section 11.22).  Presentation of a
+#: recorded operator decision; the console never spends anything.
+_PROVIDER_BUDGETS: tuple[tuple[str, str, str], ...] = (
+    ("Anthropic", "$100", "focal Fable target + the Haiku judge (the volume "
+     "driver, metered on every judged response) + one breadth row"),
+    ("OpenAI", "$50", "focal GPT-5.6 Sol + at most one extra breadth row"),
+    ("Google AI", "$25", "Gemini Flash-class row"),
+    ("Moonshot", "$15", "one to two Kimi snapshots"),
+    ("DeepSeek", "$10", "one row"),
+)
+
+
+#: Scored campaign arms grouped by physical modality (thesis roster). The
+#: builder uses this to turn a modality choice into the matching arm set; the
+#: operator can still refine the individual arm checkboxes.
+_MODALITY_ARMS: tuple[tuple[str, tuple[str, ...]], ...] = (
+    ("text", (
+        "strongreject_official", "advbench_harmful", "jailbreakbench_harmful",
+        "jailbreakbench_benign", "harmbench_text", "cyberseceval_mitre",
+        "cyberseceval_interpreter", "cyberseceval_insecure_coding",
+        "rjudge_release",
+    )),
+    ("image", (
+        "mmsafety_official", "jailbreakv_full", "harmbench_multimodal",
+        "vlsbench_release", "mossbench_official", "siuo_release", "figstep_full",
+        "mllmguard_privacy", "mllmguard_bias", "mllmguard_toxicity",
+        "mllmguard_legality", "mllmguard_position_swapping",
+        "mllmguard_noise_injection", "gptgeochat_release",
+    )),
+    ("audio", ("jalmbench_audio",)),
+    ("video", (
+        "videosafetybench_benign_query", "videosafetybench_harmful_query",
+    )),
+)
+
+#: Attack frameworks (engines) offered in the builder, mirroring the harness
+#: registry in src/ura/adapters/engines.py, with the modalities each can drive.
+#: replay/crescendo are modality-agnostic (they carry whatever the corpus
+#: datapoint holds); the external text-jailbreak adapters are text-first.
+_ALL_MODALITIES = ("text", "image", "audio", "video")
+_FRAMEWORKS: tuple[tuple[str, str, tuple[str, ...]], ...] = (
+    ("replay", "send the corpus prompt as-is (single turn)", _ALL_MODALITIES),
+    ("crescendo", "escalate the request over multiple turns", _ALL_MODALITIES),
+    ("pyrit", "Microsoft PyRIT adapter", ("text",)),
+    ("garak", "NVIDIA garak probes", ("text",)),
+    ("deepteam", "DeepTeam red-team adapter", ("text",)),
+    ("promptfoo", "Promptfoo adapter", ("text",)),
+    ("petri", "Petri adapter", ("text",)),
+    ("fuzzyai", "FuzzyAI adapter", ("text",)),
+    ("autodan", "AutoDAN-Turbo adapter", ("text",)),
+    ("harmbench", "HarmBench attack adapter", ("text", "image")),
+)
+
+#: Builder execution modes -> the run_matrix flag they set (empty = measured).
+_BUILD_MODES: tuple[tuple[str, str, str], ...] = (
+    ("dry_run", "--dry-run", "Offline dry-run (MockTarget, no calls, no spend)"),
+    ("attestation_probe", "--attestation-probe",
+     "Attestation probe (one paid call per model; cost anchor)"),
+    ("diagnostic_canary", "--diagnostic-canary",
+     "Diagnostic canary (small paid slice; cost projection)"),
+    ("measured", "", "Measured lane (paid; produces campaign evidence)"),
+)
+
+
+#: Files the console may edit in place.  Strict allowlist keyed by a short
+#: token; each is an operator-local registry read fresh by run_matrix, so an
+#: edit here takes effect on the next job.  No path outside this map is ever
+#: writable, and only JSON content that parses is accepted.
+_EDITABLE_CONFIGS: dict[str, tuple[str, str]] = {
+    "api-targets": (
+        "experiments/api-targets.json",
+        "Hosted target roster: exact provider:model ids with modalities, "
+        "max_tokens, temperature. Read fresh by run_matrix each invocation.",
+    ),
+    "source-instances": (
+        "experiments/source-instances.json",
+        "Source arm registry: logical arm id -> converter, path_env, split. "
+        "Add a reviewed release under a new arm id; never repoint an existing "
+        "arm at different data.",
+    ),
+}
+
+
 #: Static suggestion lists. The attacker names mirror the harness registry in
 #: src/ura/adapters/engines.py (replay/crescendo plus the engine adapters).
 _SUGGEST_STATIC: dict[str, tuple[str, ...]] = {
@@ -554,6 +698,25 @@ _ICONS: dict[str, str] = {
     "disk": (
         "<circle cx='12' cy='12' r='9'/><circle cx='12' cy='12' r='2.5'/>"
     ),
+    "sliders": (
+        "<path d='M4 21v-7'/><path d='M4 10V3'/><path d='M12 21v-9'/>"
+        "<path d='M12 8V3'/><path d='M20 21v-5'/><path d='M20 12V3'/>"
+        "<path d='M1 14h6'/><path d='M9 8h6'/><path d='M17 16h6'/>"
+    ),
+    "coins": (
+        "<circle cx='8' cy='8' r='6'/>"
+        "<path d='M18.09 10.37A6 6 0 1 1 10.34 18'/>"
+        "<path d='M7 6h1v4'/><path d='M16.71 13.88l.7.71-2.82 2.82'/>"
+    ),
+    "save": (
+        "<path d='M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1"
+        "-2 2z'/><path d='M17 21v-8H7v8'/><path d='M7 3v5h8'/>"
+    ),
+    "book": (
+        "<path d='M4 19.5A2.5 2.5 0 0 1 6.5 17H20'/>"
+        "<path d='M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 "
+        "6.5 2z'/>"
+    ),
 }
 
 
@@ -735,13 +898,117 @@ details.stagefiles li { margin:.12rem 0; overflow-wrap:anywhere; }
 #cmdfilter:focus { outline:2px solid
   color-mix(in srgb, var(--accent) 45%, transparent);
   border-color:var(--accent); }
+.fieldwrap { display:flex; flex-direction:column; gap:.15rem; }
+.fieldhint { color:var(--muted); font-size:.76rem; line-height:1.35; }
+.fieldlabel { display:block; color:var(--muted); font-size:.82rem;
+  margin:.6rem 0 .25rem; }
+input.wide, textarea.editor, .buildbar select, form select { }
+textarea.editor { width:100%; min-height:60vh; font:.82rem/1.5
+  ui-monospace, "Cascadia Code", Menlo, monospace; padding:.8rem;
+  border:1px solid var(--line); border-radius:10px; background:var(--soft);
+  color:var(--ink); resize:vertical; }
+textarea.editor:focus { outline:2px solid
+  color-mix(in srgb, var(--accent) 45%, transparent); border-color:var(--accent); }
+.editor-actions { display:flex; gap:.6rem; margin:.7rem 0; }
+button.ghost { background:transparent; color:var(--accent);
+  border:1px solid var(--line); }
+.playbook { margin:.4rem 0 0; padding-left:0; list-style:none; }
+.playbook li { display:flex; gap:.5rem; align-items:baseline;
+  padding:.35rem 0; border-bottom:1px solid var(--line); flex-wrap:wrap; }
+.playbook li:last-child { border-bottom:0; }
+.step-n { display:inline-flex; width:1.4rem; height:1.4rem;
+  align-items:center; justify-content:center; border-radius:50%;
+  background:var(--accent); color:var(--accent-ink); font-size:.75rem;
+  font-weight:700; flex:none; }
+.radios { display:flex; flex-direction:column; gap:.5rem; }
+.radio { display:flex; gap:.5rem; align-items:flex-start; cursor:pointer; }
+.check { display:flex; gap:.45rem; align-items:flex-start; cursor:pointer;
+  padding:.25rem 0; }
+.check span { font-size:.88rem; }
+.checkgrid { display:grid; grid-template-columns:repeat(auto-fill,
+  minmax(240px,1fr)); gap:.15rem .8rem; }
+.modgroup { margin:.6rem 0; }
+.modgroup h3 { font-size:.82rem; text-transform:uppercase;
+  letter-spacing:.05em; color:var(--muted); margin:.5rem 0 .2rem; }
+.modchip.on { background:var(--accent); color:var(--accent-ink);
+  border-color:var(--accent); }
+.fwrow.incompatible { opacity:.55; }
+.fwrow.incompatible .fwflag { color:#c4515c; font-weight:600; }
+input.wide { width:100%; padding:.4rem .55rem; border:1px solid var(--line);
+  border-radius:8px; background:var(--bg); color:var(--ink); font-size:.86rem; }
+.buildbar { position:sticky; bottom:0; display:flex; gap:.8rem;
+  align-items:center; padding:.7rem 0; background:linear-gradient(
+  to top, var(--bg), transparent); flex-wrap:wrap; }
+#buildpreview { font:.78rem ui-monospace, Menlo, monospace;
+  overflow-wrap:anywhere; }
+.barchart { width:100%; min-width:640px; }
+.barchart .bl, .barchart .bn { fill:var(--ink); font:600 12px system-ui,
+  sans-serif; }
+.barchart .bn { font-weight:500; fill:var(--muted); }
+.barchart .bt { fill:var(--soft); stroke:var(--line); stroke-width:1; }
+.barchart .bv { fill:var(--accent); }
 """
+
+
+_BUILDER_SCRIPT = """<script>(function(){
+var form=document.getElementById('builder');
+if(!form){return;}
+function checked(sel,attr){var out=[];
+form.querySelectorAll(sel).forEach(function(el){
+if(el.checked){out.push(el.getAttribute(attr));}});return out;}
+function selectedMods(){var s={};
+form.querySelectorAll('.armbox').forEach(function(el){
+if(el.checked){s[el.getAttribute('data-mod')]=1;}});return Object.keys(s);}
+function refresh(){
+var mods=selectedMods();
+// flag frameworks that cannot drive any selected modality
+form.querySelectorAll('.fwrow').forEach(function(row){
+var sup=(row.getAttribute('data-mods')||'').split(',');
+var ok=mods.length===0||mods.some(function(m){return sup.indexOf(m)>=0;});
+var flag=row.querySelector('.fwflag');
+if(!ok){row.classList.add('incompatible');
+if(flag){flag.textContent=' - cannot drive '+mods.filter(function(m){
+return sup.indexOf(m)<0;}).join('/');}}
+else{row.classList.remove('incompatible');if(flag){flag.textContent='';}}});
+// live preview
+var mode=(form.querySelector('input[name=mode]:checked')||{}).value||'measured';
+var flagFor={dry_run:'--dry-run',attestation_probe:'--attestation-probe',
+diagnostic_canary:'--diagnostic-canary',measured:''};
+var parts=['run_matrix'];
+if(flagFor[mode]){parts.push(flagFor[mode]);}
+var api=checked('.modelbox','data-model');if(api.length){parts.push('--api '+api.join(','));}
+var arms=checked('.armbox','data-arm');if(arms.length){parts.push('--corpora '+arms.join(','));}
+var fw=checked('.fwbox','data-fw');if(fw.length){parts.push('--attackers '+fw.join(','));}
+var jg=checked('.judgebox','data-judge');if(jg.length){parts.push('--judges '+jg.join(','));}
+var lim=form.querySelector('input[name=limit]').value;
+if(lim){parts.push('--limit '+lim);}
+var prev=document.getElementById('buildpreview');
+if(prev){prev.textContent=parts.join(' ');}}
+form.addEventListener('change',refresh);
+form.addEventListener('input',refresh);
+form.querySelectorAll('.modchip').forEach(function(chip){
+chip.addEventListener('click',function(){
+var mod=this.getAttribute('data-mod');
+var boxes=form.querySelectorAll(".armbox[data-mod='"+mod+"']");
+var anyOff=Array.prototype.some.call(boxes,function(b){return !b.checked;});
+boxes.forEach(function(b){b.checked=anyOff;});
+this.classList.toggle('on',anyOff);refresh();});});
+form.addEventListener('submit',function(){
+form.querySelector("input[name=corpora]").value=checked('.armbox','data-arm').join(',');
+form.querySelector("input[name=api]").value=checked('.modelbox','data-model').join(',');
+form.querySelector("input[name=attackers]").value=checked('.fwbox','data-fw').join(',');
+form.querySelector("input[name=judges]").value=checked('.judgebox','data-judge').join(',');});
+refresh();
+})();</script>"""
 
 
 _NAV_LINKS = (
     ("/", "grid", "Dashboard"),
+    ("/build", "flask", "Build"),
     ("/commands", "terminal", "Run"),
     ("/jobs", "pulse", "Jobs"),
+    ("/stats", "chart", "Stats"),
+    ("/config", "sliders", "Config"),
     ("/artifacts", "folder", "Artifacts"),
 )
 
@@ -1112,6 +1379,29 @@ class RigWebApp:
                 job_id = path.split("/")[2]
                 self.stop_job(job_id)
                 return 303, f"/jobs/{job_id}", b""
+            if method == "GET" and path == "/stats":
+                return 200, "text/html; charset=utf-8", self._stats_page()
+            if method == "GET" and path == "/build":
+                return 200, "text/html; charset=utf-8", self._build_page()
+            if method == "POST" and path == "/build":
+                command, values = self._compose_from_builder(dict(form or {}))
+                job = self.start_job(command, values)
+                return 303, f"/jobs/{job.job_id}", b""
+            if method == "GET" and path == "/config":
+                return 200, "text/html; charset=utf-8", self._config_page(
+                    query.get("file", ""), query.get("saved", ""),
+                )
+            if method == "POST" and path == "/config":
+                data = dict(form or {})
+                key = data.get("file", "")
+                content = data.get("content", "")
+                try:
+                    self.save_config(key, content)
+                except ValueError as exc:
+                    return 200, "text/html; charset=utf-8", self._config_page(
+                        key, "", error=str(exc), draft=content,
+                    )
+                return 303, f"/config?file={quote(key)}&saved=1", b""
             if method == "GET" and path == "/artifacts":
                 return self._artifacts(query.get("path", ""))
             return 404, "text/plain; charset=utf-8", b"not found"
@@ -1298,6 +1588,558 @@ class RigWebApp:
             "live in runbook section 16.</p>" + note + "</div>"
         )
 
+    # -- stats -------------------------------------------------------------
+
+    @staticmethod
+    def _bar_chart(rows: list[tuple[str, float]], *, unit: str = "") -> str:
+        """A minimal horizontal bar chart (values in [0,1]); presentation only."""
+
+        if not rows:
+            return ""
+        bar_h, gap, pad_l, width = 22, 10, 220, 640
+        height = len(rows) * (bar_h + gap) + gap
+        parts = [
+            f"<svg class='barchart' viewBox='0 0 {width} {height}' "
+            "role='img' aria-label='result chart'>"
+        ]
+        for index, (label, value) in enumerate(rows):
+            value = 0.0 if value < 0 else (1.0 if value > 1 else value)
+            y = gap + index * (bar_h + gap)
+            bar_w = (width - pad_l - 60) * value
+            shown = f"{value * 100:.0f}%" if not unit else f"{value:g}{unit}"
+            parts.append(
+                f"<text class='bl' x='{pad_l - 8}' y='{y + bar_h - 6}' "
+                f"text-anchor='end'>{html.escape(label[:34])}</text>"
+                f"<rect class='bt' x='{pad_l}' y='{y}' "
+                f"width='{width - pad_l - 60}' height='{bar_h}' rx='4'/>"
+                f"<rect class='bv' x='{pad_l}' y='{y}' width='{bar_w:.1f}' "
+                f"height='{bar_h}' rx='4'/>"
+                f"<text class='bn' x='{pad_l + bar_w + 6}' y='{y + bar_h - 6}'>"
+                f"{html.escape(shown)}</text>"
+            )
+        parts.append("</svg>")
+        return "<div class='scroll'>" + "".join(parts) + "</div>"
+
+    @staticmethod
+    def _extract_rate_rows(document: Any) -> list[tuple[str, float]]:
+        """Best-effort (label, rate-in-[0,1]) rows from a Level-2 report body.
+
+        Defensive: unknown shapes yield no rows rather than an error, so the
+        page never crashes on an unfamiliar or partial artifact.
+        """
+
+        rows: list[tuple[str, float]] = []
+        table = None
+        if isinstance(document, dict):
+            for key in ("rows", "records", "cells", "table"):
+                if isinstance(document.get(key), list):
+                    table = document[key]
+                    break
+        if not isinstance(table, list):
+            return rows
+        for item in table[:40]:
+            if not isinstance(item, dict):
+                continue
+            label = None
+            for key in ("model", "target", "condition", "arm", "label", "name"):
+                if isinstance(item.get(key), str):
+                    label = item[key]
+                    break
+            rate = None
+            for key in ("rate", "asr", "attack_success_rate", "value",
+                        "refusal_rate", "estimate"):
+                candidate = item.get(key)
+                if isinstance(candidate, (int, float)):
+                    rate = float(candidate)
+                    break
+            if label is not None and rate is not None:
+                rows.append((label, rate if rate <= 1 else rate / 100.0))
+        return rows
+
+    def _campaign_usage(self) -> dict[str, dict[str, int]]:
+        """Best-effort provider call/token tallies scanned from run artifacts.
+
+        Presence and magnitude only; never a cost of record. Bounded scan.
+        """
+
+        totals: dict[str, dict[str, int]] = {}
+        seen = 0
+        root = self.results_root.resolve()
+        stack: list[tuple[Path, int]] = [(root, 0)]
+        while stack:
+            directory, depth = stack.pop()
+            try:
+                entries = list(directory.iterdir())
+            except OSError:
+                continue
+            for entry in entries:
+                seen += 1
+                if seen > _INVENTORY_MAX_ENTRIES:
+                    return totals
+                if entry.is_dir():
+                    if depth + 1 <= _INVENTORY_MAX_DEPTH:
+                        stack.append((entry, depth + 1))
+                    continue
+                if not entry.name.endswith((".grid.json", ".manifest.json",
+                                            ".live-attestation.json")):
+                    continue
+                try:
+                    doc = json.loads(entry.read_text(encoding="utf-8"))
+                except (OSError, ValueError):
+                    continue
+                usage = doc.get("usage") if isinstance(doc, dict) else None
+                if not isinstance(usage, dict):
+                    continue
+                provider = str(usage.get("provider", "unknown"))
+                bucket = totals.setdefault(
+                    provider, {"calls": 0, "input_tokens": 0, "output_tokens": 0}
+                )
+                for key in ("calls", "input_tokens", "output_tokens"):
+                    value = usage.get(key)
+                    if isinstance(value, int) and value >= 0:
+                        bucket[key] += value
+        return totals
+
+    def _spend_card(self) -> str:
+        usage = self._campaign_usage()
+        rows = []
+        for name, amount, _role in _PROVIDER_BUDGETS:
+            key = name.split()[0].lower()
+            observed = next(
+                (v for p, v in usage.items() if p.lower().startswith(key)), None
+            )
+            calls = observed["calls"] if observed else 0
+            toks = (observed["input_tokens"] + observed["output_tokens"]
+                    ) if observed else 0
+            rows.append(
+                f"<tr><td>{html.escape(name)}</td>"
+                f"<td><strong>{html.escape(amount)}</strong></td>"
+                f"<td>{calls:,}</td><td>{toks:,}</td></tr>"
+            )
+        return (
+            "<div class='card'><h2>" + _icon("coins") + "Budgets &amp; spend"
+            "</h2><div class='scroll'><table><tr><th>Provider</th>"
+            "<th>Prepaid</th><th>Calls</th><th>Tokens</th></tr>"
+            + "".join(rows) + "</table></div>"
+            "<p class='note'>Prepaid budgets are the recorded ceilings (ledger "
+            "11.22). Calls and tokens are scanned from retained run artifacts "
+            "(attestation probes, canaries, measured lanes) and are observed "
+            "usage, not a cost of record. A dollar figure appears only once a "
+            "per-model price is recorded; the console never estimates spend it "
+            "cannot source.</p></div>"
+        )
+
+    def _stats_page(self) -> bytes:
+        counts, _trunc = artifact_inventory(self.results_root)
+        analysis = counts.get("Level-1/2", StageInventory())
+        charts = []
+        for rel in analysis.paths:
+            if "level2" not in rel.lower() or not rel.lower().endswith(".json"):
+                continue
+            try:
+                doc = json.loads(
+                    (self.results_root / rel).read_text(encoding="utf-8")
+                )
+            except (OSError, ValueError):
+                continue
+            rate_rows = self._extract_rate_rows(doc)
+            if not rate_rows:
+                continue
+            charts.append(
+                "<div class='card'><h2>" + _icon("chart")
+                + f"{html.escape(rel)}</h2>"
+                + self._bar_chart(rate_rows)
+                + f"<p class='note'><a href='/artifacts?path={quote(rel)}'>"
+                "open the full validated table &rarr;</a> Diagram is a "
+                "presentation of the deterministic Level-2 report; the "
+                "artifact is authoritative.</p></div>"
+            )
+        if analysis.paths:
+            listed = "".join(
+                f"<li><a href='/artifacts?path={quote(rel)}'>"
+                f"{html.escape(rel)}</a></li>" for rel in analysis.paths
+            )
+            results = (
+                "<div class='card'><h2>" + _icon("file") + "Result tables</h2>"
+                f"<ul>{listed}</ul></div>"
+            )
+        else:
+            results = (
+                "<div class='card'><p class='note'>No Level-1/Level-2 result "
+                "tables retained yet. They appear here once measured lanes and "
+                "the analysis CLIs have run; diagrams render from the "
+                "deterministic Level-2 report.</p></div>"
+            )
+        body = (
+            "<h1>" + _icon("chart", size=22) + "Campaign stats</h1>"
+            + self._spend_card()
+            + "".join(charts)
+            + results
+        )
+        return _page("Campaign stats", body, active="Stats")
+
+    # -- campaign builder --------------------------------------------------
+
+    def _model_options(self) -> list[tuple[str, str]]:
+        """Selectable target specs: focal env specs plus the roster registry."""
+
+        options: list[tuple[str, str]] = []
+        for env_name, label in (("FABLE", "Fable (focal)"), ("SOL", "Sol (focal)")):
+            spec = os.environ.get(env_name, "").strip()
+            if spec:
+                options.append((spec, label))
+        for key in self._registry_keys(
+            "api-targets.json", "api-targets.example.json"
+        ):
+            options.append((key, key))
+        return options
+
+    def _compose_from_builder(
+        self, form: Mapping[str, str],
+    ) -> tuple[str, dict[str, str]]:
+        """Turn builder selections into a validated run_matrix value map.
+
+        The individual modality/model/framework checkboxes are collected
+        client-side into comma-joined hidden fields, so this only reads the
+        composed strings and hands them to the same typed build_argv path.
+        """
+
+        values: dict[str, str] = {}
+        for source, flag in (
+            ("corpora", "--corpora"), ("api", "--api"),
+            ("local", "--local"), ("attackers", "--attackers"),
+            ("judges", "--judges"), ("limit", "--limit"),
+            ("sample_seed", "--sample-seed"), ("out", "--out"),
+        ):
+            raw = str(form.get(source, "")).strip()
+            if raw:
+                values[flag] = raw
+        defense = str(form.get("defense", "")).strip()
+        if defense and defense != "none":
+            values["--defense"] = defense
+        judges = values.get("--judges", "")
+        if "llm" in judges.split(","):
+            values["--judge-model"] = str(
+                form.get("judge_model", "")
+            ).strip() or "anthropic:claude-haiku-4-5-20251001"
+        mode = str(form.get("mode", "measured"))
+        for token, mode_flag, _desc in _BUILD_MODES:
+            if token == mode and mode_flag:
+                values[mode_flag] = "on"
+        # Bind the operator-local registries so a hosted lane resolves its
+        # roster and source receipt exactly as the runbook expects.
+        for relative, flag in (
+            ("experiments/api-targets.json", "--api-config"),
+            ("experiments/source-instances.json", "--source-config"),
+        ):
+            if (self.repo_root / relative).is_file():
+                values[flag] = relative
+        return "run_matrix", values
+
+    def _build_page(self) -> bytes:
+        # Mode radios.
+        mode_html = "".join(
+            "<label class='radio'>"
+            f"<input type='radio' name='mode' value='{token}'"
+            + (" checked" if token == "dry_run" else "") + ">"
+            f"<span><strong>{html.escape(token.replace('_', ' '))}</strong> "
+            f"<span class='fieldhint'>{html.escape(desc)}</span></span></label>"
+            for token, _flag, desc in _BUILD_MODES
+        )
+        # Modality chips + arm checkboxes grouped by modality.
+        registry_arms = set(self._registry_keys(
+            "source-instances.json", "source-instances.example.json"
+        ))
+        modality_chips = "".join(
+            f"<button type='button' class='chip modchip' data-mod='{mod}'>"
+            f"{html.escape(mod)}</button>"
+            for mod, _arms in _MODALITY_ARMS
+        )
+        arm_groups = []
+        for mod, arms in _MODALITY_ARMS:
+            boxes = []
+            for arm in arms:
+                known = arm in registry_arms
+                note = "" if known else " <span class='fieldhint'>(not in registry yet)</span>"
+                boxes.append(
+                    "<label class='check'>"
+                    f"<input type='checkbox' class='armbox' data-mod='{mod}' "
+                    f"data-arm='{html.escape(arm)}'>"
+                    f"<span>{html.escape(arm)}{note}</span></label>"
+                )
+            arm_groups.append(
+                f"<div class='modgroup' data-mod='{mod}'>"
+                f"<h3>{html.escape(mod)}</h3>"
+                "<div class='checkgrid'>" + "".join(boxes) + "</div></div>"
+            )
+        # Target model checkboxes.
+        model_boxes = "".join(
+            "<label class='check'>"
+            f"<input type='checkbox' class='modelbox' "
+            f"data-model='{html.escape(value)}'>"
+            f"<span>{html.escape(label)}</span></label>"
+            for value, label in self._model_options()
+        ) or "<p class='note'>No targets configured. Add them on the "\
+             "<a href='/config?file=api-targets'>Config</a> page.</p>"
+        # Local target field (free text: backend:model specs).
+        # Framework checkboxes (carry supported modalities so the wizard can
+        # flag ones that cannot drive a chosen modality).
+        framework_boxes = "".join(
+            "<label class='check fwrow' "
+            f"data-mods='{','.join(mods)}'>"
+            f"<input type='checkbox' class='fwbox' data-fw='{html.escape(fw)}'"
+            + (" checked" if fw == "replay" else "") + ">"
+            f"<span><strong>{html.escape(fw)}</strong> "
+            f"<span class='fieldhint'>{html.escape(desc)}</span>"
+            "<span class='fwflag'></span></span></label>"
+            for fw, desc, mods in _FRAMEWORKS
+        )
+        # Judge checkboxes.
+        judge_boxes = (
+            "<label class='check'><input type='checkbox' class='judgebox' "
+            "data-judge='rules' checked><span><strong>rules</strong> "
+            "<span class='fieldhint'>deterministic rule scorer (free)</span>"
+            "</span></label>"
+            "<label class='check'><input type='checkbox' class='judgebox' "
+            "data-judge='llm'><span><strong>llm</strong> "
+            "<span class='fieldhint'>hosted Haiku judge (metered per response)"
+            "</span></span></label>"
+        )
+        defense_opts = "".join(
+            f"<option value='{d}'>{d}</option>"
+            for d in ("none", "input", "output", "both")
+        )
+        body = (
+            "<h1>" + _icon("flask", size=22) + "Campaign builder</h1>"
+            "<p class='note'>Compose a lane by choosing modalities, target "
+            "models, and attack frameworks. On build it opens as a "
+            "<code>run_matrix</code> job through the same typed, validated "
+            "path - nothing here bypasses the allowlist. Paid modes spend real "
+            "money; review the composed command on the job page.</p>"
+            "<form method='post' action='/build' id='builder'>"
+            # hidden composed fields
+            "<input type='hidden' name='corpora'><input type='hidden' name='api'>"
+            "<input type='hidden' name='attackers'>"
+            "<input type='hidden' name='judges'>"
+            "<div class='card'><h2>" + _icon("play") + "Mode</h2>"
+            "<div class='radios'>" + mode_html + "</div></div>"
+            "<div class='card'><h2>" + _icon("grid") + "Modalities &amp; arms"
+            "</h2><p class='note'>Toggle a modality to select its whole arm "
+            "group, or pick arms individually.</p>"
+            "<div class='chips'>" + modality_chips + "</div>"
+            + "".join(arm_groups) + "</div>"
+            "<div class='card'><h2>" + _icon("coins") + "Target models</h2>"
+            "<div class='checkgrid'>" + model_boxes + "</div>"
+            "<label class='fieldlabel'>Local targets (backend:model, comma "
+            "list)</label>"
+            "<input type='text' name='local' class='wide' "
+            "placeholder='e.g. vllm:Qwen/Qwen3-VL-...'></div>"
+            "<div class='card'><h2>" + _icon("pulse") + "Attack frameworks</h2>"
+            "<div class='checkgrid'>" + framework_boxes + "</div></div>"
+            "<div class='card'><h2>" + _icon("receipt") + "Judges &amp; defense"
+            "</h2><div class='checkgrid'>" + judge_boxes + "</div>"
+            "<label class='fieldlabel'>Defense</label>"
+            f"<select name='defense'>{defense_opts}</select></div>"
+            "<div class='card'><h2>" + _icon("coins") + "Sampling &amp; output"
+            "</h2><div class='cols'>"
+            "<div><label class='fieldlabel'>--limit "
+            "<span class='fieldhint'>cluster subsample; required on paid hosted "
+            "lanes</span></label>"
+            "<input type='number' name='limit' step='1'></div>"
+            "<div><label class='fieldlabel'>--sample-seed "
+            "<span class='fieldhint'>fix &amp; record for a reproducible subset"
+            "</span></label><input type='number' name='sample_seed' value='0'>"
+            "</div>"
+            "<div><label class='fieldlabel'>--out</label>"
+            "<input type='text' name='out' value='runs/thesis/lane'></div>"
+            "</div></div>"
+            "<div class='buildbar'><button type='submit'>" + _icon("play", size=15)
+            + "Build &amp; start job</button>"
+            "<span id='buildpreview' class='note'></span></div>"
+            "</form>"
+            + _BUILDER_SCRIPT
+        )
+        return _page("Campaign builder", body, active="Build")
+
+    @staticmethod
+    def _budget_card() -> str:
+        rows = "".join(
+            f"<tr><td>{html.escape(name)}</td>"
+            f"<td><strong>{html.escape(amount)}</strong></td>"
+            f"<td>{html.escape(role)}</td></tr>"
+            for name, amount, role in _PROVIDER_BUDGETS
+        )
+        return (
+            "<div class='card'><h2>" + _icon("coins") + "Provider budgets</h2>"
+            "<div class='scroll'><table><tr><th>Provider</th><th>Prepaid</th>"
+            "<th>Funds</th></tr>" + rows + "</table></div>"
+            "<p class='note'>Recorded prepaid budgets (ledger 11.22). The "
+            "Anthropic balance is the constraint because the Haiku judge is "
+            "metered on every judged response, local lanes included. Exact "
+            "per-lane <code>--limit</code> and call caps are set from the "
+            "diagnostic-canary cost projections and posted here before any "
+            "measured lane. This card spends nothing.</p></div>"
+        )
+
+    # -- config editor -----------------------------------------------------
+
+    def _config_target(self, key: str) -> tuple[Path, str]:
+        """Resolve an allowlisted config key to its file path and description.
+
+        Only keys in ``_EDITABLE_CONFIGS`` resolve; anything else is rejected,
+        so no path outside the allowlist is ever readable or writable here.
+        """
+
+        entry = _EDITABLE_CONFIGS.get(key)
+        if entry is None:
+            raise ValueError(f"unknown config {key!r}")
+        relative, description = entry
+        return (self.repo_root / relative), description
+
+    def save_config(self, key: str, content: str) -> Path:
+        """Validate JSON and write an allowlisted config, backing up first.
+
+        Fail-closed: rejects unknown keys and any content that is not a JSON
+        object, and preserves the prior bytes under the state dir before
+        overwriting so a bad edit is always recoverable.
+        """
+
+        path, _description = self._config_target(key)
+        try:
+            parsed = json.loads(content)
+        except ValueError as exc:
+            raise ValueError(f"content is not valid JSON: {exc}") from exc
+        if not isinstance(parsed, dict):
+            raise ValueError("config must be a JSON object")
+        normalized = json.dumps(parsed, ensure_ascii=False, indent=2, sort_keys=True) + "\n"
+        if path.exists():
+            if path.is_symlink() or not path.is_file():
+                raise ValueError("config target is not a regular file")
+            backups = self.state_dir / "config-backups"
+            backups.mkdir(parents=True, exist_ok=True)
+            stamp = time.strftime("%Y%m%d-%H%M%S")
+            (backups / f"{path.name}.{stamp}.bak").write_bytes(path.read_bytes())
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(normalized, encoding="utf-8")
+        return path
+
+    def _config_page(
+        self, key: str, saved: str, *, error: str = "", draft: str = "",
+    ) -> bytes:
+        # Index of editable files.
+        if key not in _EDITABLE_CONFIGS:
+            cards = []
+            for token, (relative, description) in _EDITABLE_CONFIGS.items():
+                path = self.repo_root / relative
+                state = "exists" if path.is_file() else "not created yet"
+                cards.append(
+                    "<div class='card'><h2>" + _icon("sliders")
+                    + f"{html.escape(token)}</h2>"
+                    f"<p class='note'><code>{html.escape(relative)}</code> - "
+                    f"{html.escape(state)}</p>"
+                    f"<p>{html.escape(description)}</p>"
+                    f"<p><a href='/config?file={quote(token)}'>"
+                    "<button type='button'>Open editor</button></a></p></div>"
+                )
+            body = (
+                "<h1>" + _icon("sliders", size=22) + "Configuration</h1>"
+                "<p class='note'>Edit the operator-local registries in place. "
+                "Saves are JSON-validated and the prior version is backed up "
+                "under the console state directory. These files are read fresh "
+                "by each run, so an edit takes effect on the next job. Secrets "
+                "live only in <code>~/.ura_env</code> and are never shown or "
+                "editable here.</p>" + "".join(cards)
+            )
+            return _page("Configuration", body, active="Config")
+        # Single-file editor.
+        path, description = self._config_target(key)
+        relative = _EDITABLE_CONFIGS[key][0]
+        if draft:
+            content = draft
+        else:
+            try:
+                content = path.read_text(encoding="utf-8")
+            except OSError:
+                # Seed a fresh editor from the checked-in example if the local
+                # copy does not exist yet.
+                seed = self.repo_root / "experiments" / (
+                    Path(relative).stem + ".example.json"
+                )
+                content = seed.read_text(encoding="utf-8") if seed.is_file() else ""
+        banner = ""
+        if saved:
+            banner = ("<div class='notice blue'><strong>Saved.</strong>"
+                      "<p class='note'>Prior version backed up under the "
+                      "console state directory.</p></div>")
+        if error:
+            banner = ("<div class='notice red'><strong>Not saved: "
+                      f"{html.escape(error)}</strong></div>")
+        body = (
+            "<h1>" + _icon("sliders", size=22)
+            + f"Edit {html.escape(key)}</h1>"
+            f"<p class='crumbs'><a href='/config'>Configuration</a>"
+            f"<span class='sep'>/</span>{html.escape(relative)}</p>"
+            + banner
+            + f"<p class='note'>{html.escape(description)}</p>"
+            "<form method='post' action='/config'>"
+            f"<input type='hidden' name='file' value='{html.escape(key)}'>"
+            f"<textarea class='editor' name='content' spellcheck='false'>"
+            f"{html.escape(content)}</textarea>"
+            "<div class='editor-actions'>"
+            "<button type='submit'>" + _icon("save", size=15)
+            + "Validate &amp; save</button>"
+            f"<a href='/config?file={quote(key)}'>"
+            "<button type='button' class='ghost'>Reload</button></a>"
+            "</div></form>"
+            "<p class='note'>Save is rejected unless the content parses as a "
+            "JSON object; on success it is normalized (sorted keys, 2-space "
+            "indent) and the prior bytes are backed up.</p>"
+        )
+        return _page(f"Edit {key}", body, active="Config")
+
+    @staticmethod
+    def _playbook_card() -> str:
+        steps = (
+            ("1", "Author revision receipt", "project_revision",
+             {"--expected-revision": "&lt;40-hex pin&gt;",
+              "--out": "runs/thesis/project-revision"}),
+            ("2", "Preflight (no calls)", "rig_check",
+             {"--dry-run": "on", "--api": "$FABLE", "--corpora": "synth"}),
+            ("3", "Attestation probe (paid)", "run_matrix",
+             {"--attestation-probe": "on", "--api": "$FABLE",
+              "--out": "runs/thesis/attest"}),
+            ("4", "Diagnostic canary (paid)", "run_matrix",
+             {"--diagnostic-canary": "on", "--api": "$FABLE",
+              "--corpora": "strongreject_official", "--limit": "8",
+              "--sample-seed": "0", "--out": "runs/thesis/canary"}),
+            ("5", "Measured lane (paid)", "run_matrix",
+             {"--api": "$FABLE,$SOL", "--corpora": "strongreject_official",
+              "--attackers": "replay,crescendo", "--judges": "rules,llm",
+              "--judge-model": "anthropic:claude-haiku-4-5-20251001",
+              "--limit": "&lt;set from canary&gt;", "--sample-seed": "0",
+              "--out": "runs/thesis/measured"}),
+        )
+        rows = []
+        for num, title, command, values in steps:
+            params = "&".join(
+                f"{quote(flag)}={quote(str(val).replace('&lt;', '<').replace('&gt;', '>'))}"
+                for flag, val in values.items()
+            )
+            rows.append(
+                "<li><span class='step-n'>" + num + "</span>"
+                f"<strong>{html.escape(title)}</strong> "
+                f"<code>{html.escape(command)}</code> "
+                f"<a href='/commands?cmd={quote(command)}&{params}'>"
+                "prefill &rarr;</a></li>"
+            )
+        return (
+            "<div class='card'><h2>" + _icon("book") + "Campaign playbook</h2>"
+            "<p class='note'>The runbook sequence in order. 'Prefill' opens the "
+            "Run page with that command's form filled - review every value "
+            "before starting. Steps 3+ spend real money.</p>"
+            "<ol class='playbook'>" + "".join(rows) + "</ol></div>"
+        )
+
     def _overview(self) -> bytes:
         jobs = list(self.jobs.values())
         running = [job for job in jobs if job.state() == "running"]
@@ -1392,7 +2234,9 @@ class RigWebApp:
                "lower bound." if truncated else "")
             + "</p>" + stage_files + "</div>"
             + self._next_hint(counts)
+            + self._playbook_card()
             + running_html
+            + self._budget_card()
             + self._policy_card() +
             "<div class='card'><h2>" + _icon("file") + "Campaign bindings"
             "</h2>" + self._campaign_context() + "</div>"
@@ -1436,10 +2280,17 @@ class RigWebApp:
                 "<span class='req' title='required'>*</span>"
                 if param.required else ""
             )
+            help_text = param.help or _PARAM_HELP.get(param.flag, "")
+            title = f" title='{html.escape(help_text)}'" if help_text else ""
+            hint = (
+                f"<span class='fieldhint'>{html.escape(help_text)}</span>"
+                if help_text else ""
+            )
             fields.append(
-                f"<label>{html.escape(param.flag)}{required} "
+                f"<label{title}>{html.escape(param.flag)}{required} "
                 f"<span class='kind'>{html.escape(param.kind)}</span>"
-                "</label>" + self._param_input(param)
+                "</label>"
+                f"<div class='fieldwrap'>{self._param_input(param)}{hint}</div>"
             )
         haystack = html.escape(f"{name} {entry.description}".lower())
         return (
@@ -1537,12 +2388,27 @@ class RigWebApp:
             + "".join(sections)
             + "<script>(function(){"
             "var box=document.getElementById('cmdfilter');"
-            "if(!box){return;}"
-            "box.addEventListener('input',function(){"
+            "if(box){box.addEventListener('input',function(){"
             "var q=this.value.toLowerCase();"
             "document.querySelectorAll('details.cmd').forEach(function(d){"
             "var hay=d.getAttribute('data-name')||'';"
-            "d.style.display=hay.indexOf(q)>=0?'':'none';});});"
+            "d.style.display=hay.indexOf(q)>=0?'':'none';});});}"
+            # Playbook prefill: ?cmd=<name>&--flag=value opens and fills the
+            # matching command form. Values still go through the typed form and
+            # build_argv validation on submit; nothing is auto-run.
+            "var params=new URLSearchParams(window.location.search);"
+            "var cmd=params.get('cmd');"
+            "if(cmd){var card=document.querySelector("
+            "\"details.cmd input[name=command][value='\"+cmd+\"']\");"
+            "if(card){var det=card.closest('details.cmd');det.open=true;"
+            "params.forEach(function(val,key){"
+            "if(key==='cmd'){return;}"
+            "var field=det.querySelector(\"[name='\"+key+\"']\");"
+            "if(!field){return;}"
+            "if(field.type==='checkbox'){field.checked="
+            "(val==='on'||val==='true'||val==='1'||val==='yes');}"
+            "else{field.value=val;}});"
+            "det.scrollIntoView({behavior:'smooth',block:'center'});}}"
             "})();</script>"
         )
         return _page("Run a command", body, active="Run")
