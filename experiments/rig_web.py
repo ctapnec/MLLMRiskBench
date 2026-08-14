@@ -156,27 +156,38 @@ _PROVIDER_BUDGETS: tuple[tuple[str, str, str], ...] = (
 )
 
 
-#: Scored campaign arms grouped by physical modality (thesis roster). The
-#: builder uses this to turn a modality choice into the matching arm set; the
-#: operator can still refine the individual arm checkboxes.
-_MODALITY_ARMS: tuple[tuple[str, tuple[str, ...]], ...] = (
-    ("text", (
-        "strongreject_official", "advbench_harmful", "jailbreakbench_harmful",
-        "jailbreakbench_benign", "harmbench_text", "cyberseceval_mitre",
-        "cyberseceval_interpreter", "cyberseceval_insecure_coding",
-        "rjudge_release",
-    )),
-    ("image", (
-        "mmsafety_official", "jailbreakv_full", "harmbench_multimodal",
-        "vlsbench_release", "mossbench_official", "siuo_release", "figstep_full",
-        "mllmguard_privacy", "mllmguard_bias", "mllmguard_toxicity",
-        "mllmguard_legality", "mllmguard_position_swapping",
-        "mllmguard_noise_injection", "gptgeochat_release",
-    )),
-    ("audio", ("jalmbench_audio",)),
-    ("video", (
-        "videosafetybench_benign_query", "videosafetybench_harmful_query",
-    )),
+#: The physical modalities a scored campaign arm carries. Multimodal arms
+#: pair a text channel with an image/audio/video channel, so they belong to
+#: BOTH modalities - a text+image arm is selected by the text chip and the
+#: image chip alike (no arm is forced into a single bucket).
+_MODALITIES = ("text", "image", "audio", "video")
+_ARM_MODALITIES: tuple[tuple[str, tuple[str, ...]], ...] = (
+    ("strongreject_official", ("text",)),
+    ("advbench_harmful", ("text",)),
+    ("jailbreakbench_harmful", ("text",)),
+    ("jailbreakbench_benign", ("text",)),
+    ("harmbench_text", ("text",)),
+    ("cyberseceval_mitre", ("text",)),
+    ("cyberseceval_interpreter", ("text",)),
+    ("cyberseceval_insecure_coding", ("text",)),
+    ("rjudge_release", ("text",)),
+    ("mmsafety_official", ("text", "image")),
+    ("jailbreakv_full", ("text", "image")),
+    ("harmbench_multimodal", ("text", "image")),
+    ("vlsbench_release", ("text", "image")),
+    ("mossbench_official", ("text", "image")),
+    ("siuo_release", ("text", "image")),
+    ("figstep_full", ("text", "image")),
+    ("mllmguard_privacy", ("text", "image")),
+    ("mllmguard_bias", ("text", "image")),
+    ("mllmguard_toxicity", ("text", "image")),
+    ("mllmguard_legality", ("text", "image")),
+    ("mllmguard_position_swapping", ("text", "image")),
+    ("mllmguard_noise_injection", ("text", "image")),
+    ("gptgeochat_release", ("text", "image")),
+    ("jalmbench_audio", ("text", "audio")),
+    ("videosafetybench_benign_query", ("text", "video")),
+    ("videosafetybench_harmful_query", ("text", "video")),
 )
 
 #: Attack frameworks (engines) offered in the builder, mirroring the harness
@@ -210,16 +221,19 @@ _BUILD_MODES: tuple[tuple[str, str, str], ...] = (
 
 #: Files the console may edit in place.  Strict allowlist keyed by a short
 #: token; each is an operator-local registry read fresh by run_matrix, so an
-#: edit here takes effect on the next job.  No path outside this map is ever
-#: writable, and only JSON content that parses is accepted.
-_EDITABLE_CONFIGS: dict[str, tuple[str, str]] = {
+#: edit here takes effect on the next job.  Value is
+#: (relative_target, relative_example, description).  No path outside this map
+#: is ever writable, and only JSON content that parses is accepted.
+_EDITABLE_CONFIGS: dict[str, tuple[str, str, str]] = {
     "api-targets": (
         "experiments/api-targets.json",
+        "experiments/rig/api-targets.example.json",
         "Hosted target roster: exact provider:model ids with modalities, "
         "max_tokens, temperature. Read fresh by run_matrix each invocation.",
     ),
     "source-instances": (
         "experiments/source-instances.json",
+        "experiments/rig/source-instances.example.json",
         "Source arm registry: logical arm id -> converter, path_env, split. "
         "Add a reviewed release under a new arm id; never repoint an existing "
         "arm at different data.",
@@ -932,6 +946,10 @@ button.ghost { background:transparent; color:var(--accent);
   letter-spacing:.05em; color:var(--muted); margin:.5rem 0 .2rem; }
 .modchip.on { background:var(--accent); color:var(--accent-ink);
   border-color:var(--accent); }
+.modtag { display:inline-block; font-size:.66rem; font-weight:600;
+  text-transform:uppercase; letter-spacing:.04em; color:var(--muted);
+  background:var(--soft); border:1px solid var(--line); border-radius:5px;
+  padding:0 .3rem; margin-left:.2rem; vertical-align:middle; }
 .fwrow.incompatible { opacity:.55; }
 .fwrow.incompatible .fwflag { color:#c4515c; font-weight:600; }
 input.wide { width:100%; padding:.4rem .55rem; border:1px solid var(--line);
@@ -958,18 +976,27 @@ form.querySelectorAll(sel).forEach(function(el){
 if(el.checked){out.push(el.getAttribute(attr));}});return out;}
 function selectedMods(){var s={};
 form.querySelectorAll('.armbox').forEach(function(el){
-if(el.checked){s[el.getAttribute('data-mod')]=1;}});return Object.keys(s);}
-function refresh(){
-var mods=selectedMods();
-// flag frameworks that cannot drive any selected modality
-form.querySelectorAll('.fwrow').forEach(function(row){
-var sup=(row.getAttribute('data-mods')||'').split(',');
-var ok=mods.length===0||mods.some(function(m){return sup.indexOf(m)>=0;});
-var flag=row.querySelector('.fwflag');
-if(!ok){row.classList.add('incompatible');
-if(flag){flag.textContent=' - cannot drive '+mods.filter(function(m){
-return sup.indexOf(m)<0;}).join('/');}}
-else{row.classList.remove('incompatible');if(flag){flag.textContent='';}}});
+if(el.checked){(el.getAttribute('data-mods')||'').split(',').forEach(
+function(m){if(m){s[m]=1;}});}});return Object.keys(s);}
+function scopeSet(){var s={};form.querySelectorAll('.modbox').forEach(
+function(m){if(m.checked){s[m.getAttribute('data-mod')]=1;}});return s;}
+function intersects(list,set){return list.some(function(x){return set[x];});}
+function applyScope(){var sc=scopeSet();
+// arms: keep an arm only if it shares a modality with the scope
+form.querySelectorAll('.armbox').forEach(function(b){
+var mods=(b.getAttribute('data-mods')||'').split(',').filter(Boolean);
+var ok=intersects(mods,sc);var lab=b.closest('.check');
+if(lab){lab.style.display=ok?'':'none';}if(!ok){b.checked=false;}});
+form.querySelectorAll('.modgroup').forEach(function(g){
+var any=Array.prototype.some.call(g.querySelectorAll('.check'),
+function(l){return l.style.display!=='none';});g.style.display=any?'':'none';});
+// target models and frameworks: hide any that cannot serve a scoped modality
+[['.modelrow','.modelbox'],['.fwrow','.fwbox']].forEach(function(pair){
+form.querySelectorAll(pair[0]).forEach(function(row){
+var mods=(row.getAttribute('data-mods')||'').split(',').filter(Boolean);
+var ok=intersects(mods,sc);row.style.display=ok?'':'none';
+if(!ok){var cb=row.querySelector(pair[1]);if(cb){cb.checked=false;}}});});}
+function refresh(){applyScope();
 // live preview
 var mode=(form.querySelector('input[name=mode]:checked')||{}).value||'measured';
 var flagFor={dry_run:'--dry-run',attestation_probe:'--attestation-probe',
@@ -989,8 +1016,9 @@ form.addEventListener('input',refresh);
 form.querySelectorAll('.modchip').forEach(function(chip){
 chip.addEventListener('click',function(){
 var mod=this.getAttribute('data-mod');
-var boxes=form.querySelectorAll(".armbox[data-mod='"+mod+"']");
-var anyOff=Array.prototype.some.call(boxes,function(b){return !b.checked;});
+var boxes=Array.prototype.filter.call(form.querySelectorAll('.armbox'),
+function(b){return (b.getAttribute('data-mods')||'').split(',').indexOf(mod)>=0;});
+var anyOff=boxes.some(function(b){return !b.checked;});
 boxes.forEach(function(b){b.checked=anyOff;});
 this.classList.toggle('on',anyOff);refresh();});});
 form.addEventListener('submit',function(){
@@ -1780,18 +1808,37 @@ class RigWebApp:
 
     # -- campaign builder --------------------------------------------------
 
-    def _model_options(self) -> list[tuple[str, str]]:
-        """Selectable target specs: focal env specs plus the roster registry."""
+    def _model_options(self) -> list[tuple[str, str, tuple[str, ...]]]:
+        """Selectable targets as (spec, label, supported-modalities).
 
-        options: list[tuple[str, str]] = []
+        Modalities come from each roster entry's ``modalities`` field so the
+        builder can hide a target that cannot handle a selected modality (a
+        text-only model drops out once image/audio/video is in scope). The
+        focal Anthropic/OpenAI pair are text+image multimodal frontier models.
+        """
+
+        options: list[tuple[str, str, tuple[str, ...]]] = []
         for env_name, label in (("FABLE", "Fable (focal)"), ("SOL", "Sol (focal)")):
             spec = os.environ.get(env_name, "").strip()
             if spec:
-                options.append((spec, label))
-        for key in self._registry_keys(
-            "api-targets.json", "api-targets.example.json"
-        ):
-            options.append((key, key))
+                options.append((spec, label, ("text", "image")))
+        registry: dict[str, Any] = {}
+        for candidate in ("api-targets.json", "rig/api-targets.example.json"):
+            path = self.repo_root / "experiments" / candidate
+            try:
+                data = json.loads(path.read_text(encoding="utf-8"))
+            except (OSError, ValueError):
+                continue
+            if isinstance(data, dict):
+                registry = data
+                break
+        for key, entry in registry.items():
+            mods = ("text",)
+            if isinstance(entry, dict) and isinstance(entry.get("modalities"), list):
+                mods = tuple(
+                    str(m) for m in entry["modalities"] if isinstance(m, str)
+                ) or ("text",)
+            options.append((key, key, mods))
         return options
 
     def _compose_from_builder(
@@ -1846,39 +1893,58 @@ class RigWebApp:
             f"<span class='fieldhint'>{html.escape(desc)}</span></span></label>"
             for token, _flag, desc in _BUILD_MODES
         )
-        # Modality chips + arm checkboxes grouped by modality.
+        # Modality chips select arms by membership: an arm belongs to every
+        # modality it carries, so a text+image arm answers to both chips.
         registry_arms = set(self._registry_keys(
-            "source-instances.json", "source-instances.example.json"
+            "source-instances.json", "rig/source-instances.example.json"
         ))
         modality_chips = "".join(
             f"<button type='button' class='chip modchip' data-mod='{mod}'>"
             f"{html.escape(mod)}</button>"
-            for mod, _arms in _MODALITY_ARMS
+            for mod in _MODALITIES
         )
+
+        def _mod_tags(mods: tuple[str, ...]) -> str:
+            return "".join(
+                f"<span class='modtag'>{html.escape(m)}</span>" for m in mods
+            )
+
+        # Group arms by their full modality signature for a readable layout,
+        # ordered text-only first then the multimodal signatures.
+        signatures: dict[str, list[tuple[str, tuple[str, ...]]]] = {}
+        for arm, mods in _ARM_MODALITIES:
+            signatures.setdefault(" + ".join(mods), []).append((arm, mods))
         arm_groups = []
-        for mod, arms in _MODALITY_ARMS:
+        for signature in sorted(signatures, key=lambda s: (len(s), s)):
             boxes = []
-            for arm in arms:
+            for arm, mods in signatures[signature]:
                 known = arm in registry_arms
-                note = "" if known else " <span class='fieldhint'>(not in registry yet)</span>"
+                note = ("" if known else
+                        " <span class='fieldhint'>(not in registry yet)</span>")
                 boxes.append(
                     "<label class='check'>"
-                    f"<input type='checkbox' class='armbox' data-mod='{mod}' "
+                    f"<input type='checkbox' class='armbox' "
+                    f"data-mods='{','.join(mods)}' "
                     f"data-arm='{html.escape(arm)}'>"
-                    f"<span>{html.escape(arm)}{note}</span></label>"
+                    f"<span>{html.escape(arm)} {_mod_tags(mods)}{note}</span>"
+                    "</label>"
                 )
             arm_groups.append(
-                f"<div class='modgroup' data-mod='{mod}'>"
-                f"<h3>{html.escape(mod)}</h3>"
+                f"<div class='modgroup'><h3>{html.escape(signature)}</h3>"
                 "<div class='checkgrid'>" + "".join(boxes) + "</div></div>"
             )
-        # Target model checkboxes.
+        # Target model checkboxes (carry supported modalities so a target that
+        # cannot handle a selected modality is hidden from scope).
         model_boxes = "".join(
-            "<label class='check'>"
+            "<label class='check modelrow' "
+            f"data-mods='{','.join(mods)}'>"
             f"<input type='checkbox' class='modelbox' "
             f"data-model='{html.escape(value)}'>"
-            f"<span>{html.escape(label)}</span></label>"
-            for value, label in self._model_options()
+            f"<span>{html.escape(label)} "
+            + "".join(f"<span class='modtag'>{html.escape(m)}</span>"
+                      for m in mods)
+            + "</span></label>"
+            for value, label, mods in self._model_options()
         ) or "<p class='note'>No targets configured. Add them on the "\
              "<a href='/config?file=api-targets'>Config</a> page.</p>"
         # Local target field (free text: backend:model specs).
@@ -1923,9 +1989,19 @@ class RigWebApp:
             "<input type='hidden' name='judges'>"
             "<div class='card'><h2>" + _icon("play") + "Mode</h2>"
             "<div class='radios'>" + mode_html + "</div></div>"
-            "<div class='card'><h2>" + _icon("grid") + "Modalities &amp; arms"
-            "</h2><p class='note'>Toggle a modality to select its whole arm "
-            "group, or pick arms individually.</p>"
+            "<div class='card'><h2>" + _icon("grid") + "Modality scope</h2>"
+            "<p class='note'>The campaign's modalities. All are enabled for a "
+            "fresh build; unchecking one hides the arms, target models, and "
+            "frameworks that need it. A multimodal arm needs every one of its "
+            "modalities in scope; a target model must support all of them.</p>"
+            "<div class='checkgrid'>" + "".join(
+                "<label class='check'><input type='checkbox' class='modbox' "
+                f"data-mod='{m}' checked><span><strong>{m}</strong></span>"
+                "</label>" for m in _MODALITIES
+            ) + "</div></div>"
+            "<div class='card'><h2>" + _icon("box") + "Arms &amp; corpora</h2>"
+            "<p class='note'>Only arms whose modalities are all in scope appear "
+            "here; use a modality chip to bulk-select a group.</p>"
             "<div class='chips'>" + modality_chips + "</div>"
             + "".join(arm_groups) + "</div>"
             "<div class='card'><h2>" + _icon("coins") + "Target models</h2>"
@@ -1993,8 +2069,20 @@ class RigWebApp:
         entry = _EDITABLE_CONFIGS.get(key)
         if entry is None:
             raise ValueError(f"unknown config {key!r}")
-        relative, description = entry
+        relative, _example, description = entry
         return (self.repo_root / relative), description
+
+    def _config_example_text(self, key: str) -> str:
+        """The checked-in example content for an allowlisted config, if any."""
+
+        entry = _EDITABLE_CONFIGS.get(key)
+        if entry is None:
+            return ""
+        example = self.repo_root / entry[1]
+        try:
+            return example.read_text(encoding="utf-8")
+        except OSError:
+            return ""
 
     def save_config(self, key: str, content: str) -> Path:
         """Validate JSON and write an allowlisted config, backing up first.
@@ -2029,7 +2117,7 @@ class RigWebApp:
         # Index of editable files.
         if key not in _EDITABLE_CONFIGS:
             cards = []
-            for token, (relative, description) in _EDITABLE_CONFIGS.items():
+            for token, (relative, _example, description) in _EDITABLE_CONFIGS.items():
                 path = self.repo_root / relative
                 state = "exists" if path.is_file() else "not created yet"
                 cards.append(
@@ -2054,19 +2142,25 @@ class RigWebApp:
         # Single-file editor.
         path, description = self._config_target(key)
         relative = _EDITABLE_CONFIGS[key][0]
+        example_text = self._config_example_text(key)
+        seeded = ""
         if draft:
             content = draft
         else:
             try:
                 content = path.read_text(encoding="utf-8")
+                if not content.strip():
+                    raise OSError  # treat an empty file as unseeded
             except OSError:
-                # Seed a fresh editor from the checked-in example if the local
-                # copy does not exist yet.
-                seed = self.repo_root / "experiments" / (
-                    Path(relative).stem + ".example.json"
-                )
-                content = seed.read_text(encoding="utf-8") if seed.is_file() else ""
-        banner = ""
+                # Seed a fresh editor from the checked-in example so the roster
+                # is never a blank page.
+                content = example_text
+                if example_text:
+                    seeded = ("<div class='notice blue'><strong>Prefilled from "
+                              "the checked-in example.</strong><p class='note'>"
+                              "Review and edit, then save to write the local "
+                              "registry.</p></div>")
+        banner = seeded
         if saved:
             banner = ("<div class='notice blue'><strong>Saved.</strong>"
                       "<p class='note'>Prior version backed up under the "
@@ -2083,17 +2177,36 @@ class RigWebApp:
             + f"<p class='note'>{html.escape(description)}</p>"
             "<form method='post' action='/config'>"
             f"<input type='hidden' name='file' value='{html.escape(key)}'>"
-            f"<textarea class='editor' name='content' spellcheck='false'>"
-            f"{html.escape(content)}</textarea>"
-            "<div class='editor-actions'>"
+            f"<textarea class='editor' id='cfg-editor' name='content' "
+            f"spellcheck='false'>{html.escape(content)}</textarea>"
+            + (
+                "<textarea id='cfg-example' style='display:none'>"
+                f"{html.escape(example_text)}</textarea>"
+                if example_text else ""
+            )
+            + "<div class='editor-actions'>"
             "<button type='submit'>" + _icon("save", size=15)
             + "Validate &amp; save</button>"
-            f"<a href='/config?file={quote(key)}'>"
+            + (
+                "<button type='button' class='ghost' id='cfg-prefill'>"
+                + _icon("box", size=15) + "Prefill from example</button>"
+                if example_text else ""
+            )
+            + f"<a href='/config?file={quote(key)}'>"
             "<button type='button' class='ghost'>Reload</button></a>"
             "</div></form>"
             "<p class='note'>Save is rejected unless the content parses as a "
             "JSON object; on success it is normalized (sorted keys, 2-space "
-            "indent) and the prior bytes are backed up.</p>"
+            "indent) and the prior bytes are backed up. 'Prefill from example' "
+            "loads the checked-in roster into the editor without saving.</p>"
+            "<script>(function(){"
+            "var btn=document.getElementById('cfg-prefill');"
+            "var ex=document.getElementById('cfg-example');"
+            "var ed=document.getElementById('cfg-editor');"
+            "if(btn&&ex&&ed){btn.addEventListener('click',function(){"
+            "if(!ed.value.trim()||confirm('Replace the editor contents with "
+            "the example roster?')){ed.value=ex.value;ed.focus();}});}"
+            "})();</script>"
         )
         return _page(f"Edit {key}", body, active="Config")
 
@@ -2331,12 +2444,12 @@ class RigWebApp:
         lists = dict(_SUGGEST_STATIC)
         lists["arms"] = tuple(
             ["synth"] + self._registry_keys(
-                "source-instances.json", "source-instances.example.json"
+                "source-instances.json", "rig/source-instances.example.json"
             )
         )
         lists["api"] = tuple(
             ["mock"] + self._registry_keys(
-                "api-targets.json", "api-targets.example.json"
+                "api-targets.json", "rig/api-targets.example.json"
             )
         )
         return "".join(

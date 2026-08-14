@@ -228,6 +228,19 @@ def test_config_editor_writes_only_allowlisted_json_with_backup(tmp_path: Path) 
     for bad in ("../secrets", "/etc/passwd", "nonsense"):
         with pytest.raises(ValueError, match="unknown config"):
             app.save_config(bad, "{}")
+    # The editor seeds a missing/empty file from the checked-in example under
+    # experiments/rig/, and offers a prefill button.
+    (repo / "experiments" / "rig").mkdir(parents=True, exist_ok=True)
+    (repo / "experiments" / "rig" / "api-targets.example.json").write_text(
+        '{"anthropic:claude-opus-5": {"modalities": ["text", "image"]}}',
+        encoding="utf-8",
+    )
+    (repo / "experiments" / "api-targets.json").unlink(missing_ok=True)
+    status, _, seeded = app.handle("GET", "/config?file=api-targets")
+    seeded_text = seeded.decode("utf-8")
+    assert status == 200
+    assert "anthropic:claude-opus-5" in seeded_text  # seeded from example
+    assert "cfg-prefill" in seeded_text and "Prefilled from" in seeded_text
     # The editor page renders and a save POST round-trips.
     status, _, body = app.handle("GET", "/config")
     assert status == 200 and b"api-targets" in body
@@ -248,11 +261,19 @@ def test_builder_composes_validated_run_matrix(tmp_path: Path) -> None:
     status, _, body = app.handle("GET", "/build")
     text = body.decode("utf-8")
     assert status == 200
-    # Modalities, frameworks, and their capability data are present.
+    # A modality chip exists for each modality.
     for modality in ("text", "image", "audio", "video"):
         assert f"data-mod='{modality}'" in text
+    # Multimodal arms carry their FULL modality set (text + image), so they
+    # answer to the text chip and the image chip alike - not bucketed to one.
+    assert "data-mods='text,image'" in text
+    assert "data-arm='mmsafety_official'" in text
     assert "data-fw='crescendo'" in text
-    assert "data-mods=" in text  # framework capability for wizard filtering
+    # Modality scope checkboxes are all pre-checked for a fresh build, and the
+    # scope-filter script is present (arms/models/frameworks hide out of scope).
+    assert text.count("class='modbox' data-mod") == 4
+    assert "checked><span><strong>text" in text
+    assert "applyScope" in text and "intersects" in text
     command, values = app._compose_from_builder({
         "mode": "diagnostic_canary",
         "corpora": "strongreject_official",
