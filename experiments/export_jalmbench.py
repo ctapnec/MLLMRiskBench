@@ -204,7 +204,11 @@ def export_release(
                 mime, suffix = _mime_and_suffix(payload, source_name)
                 digest = hashlib.sha256(payload).hexdigest()
                 source_id = row.get("id", row_index)
-                filename = f"{_safe_name(source_id)}-{digest[:16]}{suffix}"
+                # The global record_count guarantees a unique filename even when
+                # distinct rows share the same source id and identical audio
+                # bytes (JALMBench repeats an id across attempt rows, and some
+                # rows carry byte-identical audio, so id+digest alone collides).
+                filename = f"{_safe_name(source_id)}-{record_count:08d}-{digest[:16]}{suffix}"
                 subset_dir = audio_root / _safe_name(relative.rsplit("/", 1)[0] or subset)
                 subset_dir.mkdir(parents=True, exist_ok=True)
                 audio_path = subset_dir / filename
