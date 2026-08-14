@@ -534,6 +534,61 @@ def test_run_forms_use_select_and_datalist_without_weakening_argv() -> None:
         build_argv("run_matrix", {"--not-a-flag": "x"})
 
 
+def test_jobs_and_runs_persist_across_console_restart(tmp_path: Path) -> None:
+    # WEB-009: the console indexes jobs, campaign runs, and spend in a sqlite
+    # database under the state dir, so the Jobs and Stats pages survive a
+    # restart. The database is an operational index, not return evidence.
+    import time as _time
+
+    app = _app(tmp_path)
+    job = app.start_job("webui_selftest", {"--selftest-sleep": "0"})
+    deadline = _time.time() + 30
+    while job.state() == "running" and _time.time() < deadline:
+        _time.sleep(0.05)
+    app._reconcile()
+    assert (app.state_dir / "console.db").is_file()
+
+    # A fresh app over the same state dir = a console restart.
+    restarted = RigWebApp(
+        results_root=app.results_root, state_dir=app.state_dir,
+        job_id_factory=lambda: "job-new",
+    )
+    assert job.job_id in restarted.jobs
+    restored = restarted.jobs[job.job_id]
+    assert restored.process is None
+    assert restored.state() == "complete"  # last-known state, no live handle
+    status, _, body = restarted.handle("GET", "/jobs")
+    assert status == 200 and job.job_id.encode() in body
+    from experiments.rig_web import ConsoleDB, run_kind
+    assert run_kind("run_matrix", ["--attestation-probe"]) == "attestation_probe"
+    assert run_kind("run_matrix", ["--dry-run"]) == "dry_run"
+    assert run_kind("run_matrix", []) == "measured"
+    assert run_kind("rig_check", []) == "preflight"
+    assert run_kind("figures", []) is None
+    assert isinstance(restarted.db, ConsoleDB)
+
+
+def test_stats_runs_card_records_lane_jobs(tmp_path: Path) -> None:
+    import time as _time
+
+    app = _app(tmp_path)
+    # A rig_check-shaped job is registered as a campaign run on finish.
+    job = app.start_job("level1_evidence", {
+        "--eligibility": str(tmp_path / "missing.json"),
+        "--results": str(tmp_path / "missing"),
+        "--out-json": str(tmp_path / "o.json"),
+        "--out-csv": str(tmp_path / "o.csv"),
+    })
+    deadline = _time.time() + 60
+    while job.state() == "running" and _time.time() < deadline:
+        _time.sleep(0.1)
+    app._reconcile()
+    # level1_evidence is not a run kind, so no run row; the Stats page still
+    # renders the (empty) runs card without error.
+    status, _, body = app.handle("GET", "/stats")
+    assert status == 200 and b"Campaign runs" in body
+
+
 def test_favicon_and_active_nav(tmp_path: Path) -> None:
     app = _app(tmp_path)
     status, content_type, body = app.handle("GET", "/static/favicon.svg")

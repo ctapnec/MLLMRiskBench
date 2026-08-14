@@ -27,8 +27,10 @@ import json
 import os
 import secrets
 import shutil
+import sqlite3
 import subprocess
 import sys
+import threading
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -1313,10 +1315,16 @@ class Job:
     stderr_handle: Any = None
     started_at: float = field(default_factory=time.time)
     ended_at: float | None = None
+    #: Last-known state for a job restored from the database whose live
+    #: process handle is gone (a prior console session started it).
+    restored_state: str | None = None
+    restored_exit: int | None = None
+    #: Set once its terminal state has been persisted as a campaign run.
+    run_recorded: bool = False
 
     def state(self) -> str:
         if self.process is None:
-            return "unknown"
+            return self.restored_state or "unknown"
         code = self.process.poll()
         if code is None:
             return "running"
@@ -1325,11 +1333,151 @@ class Job:
         return "complete" if code == 0 else "failed"
 
     def exit_code(self) -> int | None:
-        return None if self.process is None else self.process.poll()
+        if self.process is None:
+            return self.restored_exit
+        return self.process.poll()
 
     def runtime_seconds(self) -> float:
         end = self.ended_at if self.ended_at is not None else time.time()
         return max(0.0, end - self.started_at)
+
+
+#: Map a job's command + argv to a campaign-run kind for the registry.
+def run_kind(command: str, argv: list[str]) -> str | None:
+    if command not in {"run_matrix", "rig_check"}:
+        return None
+    if command == "rig_check":
+        return "preflight"
+    if "--attestation-probe" in argv:
+        return "attestation_probe"
+    if "--diagnostic-canary" in argv:
+        return "diagnostic_canary"
+    if "--dry-run" in argv:
+        return "dry_run"
+    return "measured"
+
+
+def _argv_out_dir(argv: list[str]) -> str:
+    for flag in ("--out", "--output"):
+        if flag in argv:
+            index = argv.index(flag)
+            if index + 1 < len(argv):
+                return argv[index + 1]
+    return ""
+
+
+class ConsoleDB:
+    """Durable operational index for the console (jobs, runs, spend).
+
+    A stdlib-sqlite convenience layer under the state directory. It is an
+    operational record, never return evidence: the validated artifacts remain
+    authoritative, and this only indexes and points at them so the console
+    survives restarts and accumulates observed usage. All access is guarded by
+    a lock (the HTTP server is multi-threaded) and every method is best-effort
+    - a database error is swallowed so a bookkeeping fault never 500s a page.
+    """
+
+    def __init__(self, path: Path) -> None:
+        self.path = path
+        self._lock = threading.Lock()
+        path.parent.mkdir(parents=True, exist_ok=True)
+        self._conn = sqlite3.connect(str(path), check_same_thread=False)
+        self._conn.row_factory = sqlite3.Row
+        with self._lock:
+            self._conn.execute("PRAGMA journal_mode=WAL")
+            self._conn.executescript(
+                """
+                CREATE TABLE IF NOT EXISTS jobs (
+                    job_id TEXT PRIMARY KEY, command TEXT, argv TEXT,
+                    directory TEXT, state TEXT, exit_code INTEGER,
+                    started_at REAL, ended_at REAL, updated_at REAL
+                );
+                CREATE TABLE IF NOT EXISTS runs (
+                    run_id INTEGER PRIMARY KEY AUTOINCREMENT, job_id TEXT,
+                    kind TEXT, command TEXT, out_dir TEXT, pin TEXT,
+                    state TEXT, exit_code INTEGER, created_at REAL,
+                    UNIQUE(job_id)
+                );
+                CREATE TABLE IF NOT EXISTS spend (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT, job_id TEXT,
+                    provider TEXT, calls INTEGER, input_tokens INTEGER,
+                    output_tokens INTEGER, recorded_at REAL,
+                    UNIQUE(job_id, provider)
+                );
+                """
+            )
+            self._conn.commit()
+
+    def _exec(self, sql: str, params: tuple = ()) -> None:
+        try:
+            with self._lock:
+                self._conn.execute(sql, params)
+                self._conn.commit()
+        except sqlite3.Error:
+            pass
+
+    def _query(self, sql: str, params: tuple = ()) -> list[sqlite3.Row]:
+        try:
+            with self._lock:
+                return list(self._conn.execute(sql, params))
+        except sqlite3.Error:
+            return []
+
+    def upsert_job(self, job: "Job") -> None:
+        self._exec(
+            "INSERT INTO jobs(job_id,command,argv,directory,state,exit_code,"
+            "started_at,ended_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?) "
+            "ON CONFLICT(job_id) DO UPDATE SET state=excluded.state,"
+            "exit_code=excluded.exit_code,ended_at=excluded.ended_at,"
+            "updated_at=excluded.updated_at",
+            (job.job_id, job.command, json.dumps(job.argv),
+             str(job.directory), job.state(), job.exit_code(),
+             job.started_at, job.ended_at, time.time()),
+        )
+
+    def load_jobs(self) -> list[sqlite3.Row]:
+        return self._query(
+            "SELECT * FROM jobs ORDER BY started_at DESC LIMIT 500"
+        )
+
+    def record_run(self, job: "Job", pin: str) -> None:
+        kind = run_kind(job.command, job.argv)
+        if kind is None:
+            return
+        self._exec(
+            "INSERT OR IGNORE INTO runs(job_id,kind,command,out_dir,pin,state,"
+            "exit_code,created_at) VALUES(?,?,?,?,?,?,?,?)",
+            (job.job_id, kind, job.command, _argv_out_dir(job.argv), pin,
+             job.state(), job.exit_code(), time.time()),
+        )
+
+    def record_spend(self, job_id: str, usage: Mapping[str, Mapping[str, int]]) -> None:
+        for provider, tally in usage.items():
+            self._exec(
+                "INSERT OR IGNORE INTO spend(job_id,provider,calls,"
+                "input_tokens,output_tokens,recorded_at) VALUES(?,?,?,?,?,?)",
+                (job_id, provider, int(tally.get("calls", 0)),
+                 int(tally.get("input_tokens", 0)),
+                 int(tally.get("output_tokens", 0)), time.time()),
+            )
+
+    def list_runs(self) -> list[sqlite3.Row]:
+        return self._query(
+            "SELECT * FROM runs ORDER BY created_at DESC LIMIT 500"
+        )
+
+    def spend_totals(self) -> dict[str, dict[str, int]]:
+        totals: dict[str, dict[str, int]] = {}
+        for row in self._query(
+            "SELECT provider, SUM(calls) c, SUM(input_tokens) i, "
+            "SUM(output_tokens) o FROM spend GROUP BY provider"
+        ):
+            totals[str(row["provider"])] = {
+                "calls": int(row["c"] or 0),
+                "input_tokens": int(row["i"] or 0),
+                "output_tokens": int(row["o"] or 0),
+            }
+        return totals
 
 
 class RigWebApp:
@@ -1352,6 +1500,63 @@ class RigWebApp:
         self._job_id_factory = job_id_factory or (
             lambda: f"job-{secrets.token_hex(6)}"
         )
+        try:
+            self.db: ConsoleDB | None = ConsoleDB(state_dir / "console.db")
+        except sqlite3.Error:
+            self.db = None
+        self._restore_jobs()
+
+    def _restore_jobs(self) -> None:
+        """Repopulate the Jobs page from prior sessions (read-only handles).
+
+        A restored job's live process handle is gone, so it shows its stored
+        state; a job left 'running' when a prior console exited is surfaced as
+        'orphaned' (its detached process may still be alive, but this console
+        cannot poll or stop it).
+        """
+
+        if self.db is None:
+            return
+        for row in self.db.load_jobs():
+            job_id = str(row["job_id"])
+            if job_id in self.jobs:
+                continue
+            stored = str(row["state"] or "unknown")
+            restored = "orphaned" if stored == "running" else stored
+            try:
+                argv = json.loads(row["argv"]) if row["argv"] else []
+            except (ValueError, TypeError):
+                argv = []
+            self.jobs[job_id] = Job(
+                job_id=job_id, command=str(row["command"] or ""), argv=argv,
+                directory=Path(str(row["directory"] or self.state_dir / job_id)),
+                process=None, started_at=float(row["started_at"] or 0.0),
+                ended_at=(float(row["ended_at"]) if row["ended_at"] else None),
+                restored_state=restored,
+                restored_exit=(int(row["exit_code"]) if row["exit_code"]
+                               is not None else None),
+                run_recorded=True,
+            )
+
+    def _reconcile(self) -> None:
+        """Persist live job state changes; record runs and spend on finish."""
+
+        if self.db is None:
+            return
+        pin = os.environ.get("REF_URA", "")
+        for job in self.jobs.values():
+            if job.process is None:
+                continue
+            state = job.state()
+            self.db.upsert_job(job)
+            if state in {"complete", "failed"} and not job.run_recorded:
+                job.run_recorded = True
+                self.db.record_run(job, pin)
+                out_dir = _argv_out_dir(job.argv)
+                if out_dir:
+                    usage = self._usage_under(self.repo_root / out_dir)
+                    if usage:
+                        self.db.record_spend(job.job_id, usage)
 
     # -- job lifecycle -----------------------------------------------------
 
@@ -1384,6 +1589,8 @@ class RigWebApp:
             stderr_handle=stderr_handle,
         )
         self.jobs[job_id] = job
+        if self.db is not None:
+            self.db.upsert_job(job)
         return job
 
     def stop_job(self, job_id: str) -> Job:
@@ -1397,6 +1604,8 @@ class RigWebApp:
             except subprocess.TimeoutExpired:
                 job.process.kill()
                 job.process.wait(timeout=10)
+        if self.db is not None:
+            self.db.upsert_job(job)
         return job
 
     def _log_tail(self, job: Job, stream: str) -> str:
@@ -1731,15 +1940,16 @@ class RigWebApp:
                 rows.append((label, rate if rate <= 1 else rate / 100.0))
         return rows
 
-    def _campaign_usage(self) -> dict[str, dict[str, int]]:
-        """Best-effort provider call/token tallies scanned from run artifacts.
+    @staticmethod
+    def _usage_under(root: Path) -> dict[str, dict[str, int]]:
+        """Provider call/token tallies scanned from run artifacts under root.
 
         Presence and magnitude only; never a cost of record. Bounded scan.
         """
 
         totals: dict[str, dict[str, int]] = {}
         seen = 0
-        root = self.results_root.resolve()
+        root = root.resolve()
         stack: list[tuple[Path, int]] = [(root, 0)]
         while stack:
             directory, depth = stack.pop()
@@ -1775,6 +1985,16 @@ class RigWebApp:
                         bucket[key] += value
         return totals
 
+    def _campaign_usage(self) -> dict[str, dict[str, int]]:
+        """Durable per-provider usage: the accumulated database totals if any,
+        else a live scan of the results root."""
+
+        if self.db is not None:
+            totals = self.db.spend_totals()
+            if totals:
+                return totals
+        return self._usage_under(self.results_root)
+
     def _spend_card(self) -> str:
         usage = self._campaign_usage()
         rows = []
@@ -1805,7 +2025,50 @@ class RigWebApp:
             "estimates spend it cannot source.</p></div>"
         )
 
+    def _runs_card(self) -> str:
+        if self.db is None:
+            return ""
+        runs = self.db.list_runs()
+        if not runs:
+            return (
+                "<div class='card'><h2>" + _icon("book") + "Campaign runs</h2>"
+                "<p class='note'>No lanes recorded yet. Each rig_check and "
+                "run_matrix job is registered here (kind, output, pinned "
+                "revision) as it finishes - durable across console "
+                "restarts.</p></div>"
+            )
+        tone = {"complete": "green", "failed": "red", "running": "blue"}
+        rows = []
+        for row in runs:
+            state = str(row["state"] or "")
+            out = str(row["out_dir"] or "")
+            link = (f"<a href='/artifacts?path={quote(out)}'>{html.escape(out)}"
+                    "</a>" if out else "-")
+            when = time.strftime(
+                "%m-%d %H:%M", time.localtime(float(row["created_at"] or 0))
+            )
+            rows.append(
+                f"<tr><td>{when}</td>"
+                f"<td><span class='badge {tone.get(state, 'gray')}'>"
+                f"{html.escape(str(row['kind'] or ''))}</span></td>"
+                f"<td>{html.escape(str(row['command'] or ''))}</td>"
+                f"<td>{link}</td>"
+                f"<td><code>{html.escape(str(row['pin'] or '')[:10])}</code>"
+                "</td></tr>"
+            )
+        return (
+            "<div class='card'><h2>" + _icon("book") + "Campaign runs</h2>"
+            "<div class='scroll'><table><tr><th>When</th><th>Kind</th>"
+            "<th>Command</th><th>Output</th><th>Pin</th></tr>"
+            + "".join(rows) + "</table></div>"
+            "<p class='note'>Every rig_check/run_matrix lane, recorded as it "
+            "finishes and durable across restarts. This is an operational "
+            "index; the validated artifacts it links remain authoritative.</p>"
+            "</div>"
+        )
+
     def _stats_page(self) -> bytes:
+        self._reconcile()
         counts, _trunc = artifact_inventory(self.results_root)
         analysis = counts.get("Level-1/2", StageInventory())
         charts = []
@@ -1849,6 +2112,7 @@ class RigWebApp:
         body = (
             "<h1>" + _icon("chart", size=22) + "Campaign stats</h1>"
             + self._spend_card()
+            + self._runs_card()
             + "".join(charts)
             + results
         )
@@ -2400,6 +2664,7 @@ class RigWebApp:
         )
 
     def _overview(self) -> bytes:
+        self._reconcile()
         jobs = list(self.jobs.values())
         running = [job for job in jobs if job.state() == "running"]
         failed = [job for job in jobs if job.state() == "failed"]
@@ -2673,16 +2938,15 @@ class RigWebApp:
         return _page("Run a command", body, active="Run")
 
     def _jobs_page(self) -> bytes:
+        self._reconcile()
         rows = []
-        tallies = {"running": 0, "complete": 0, "failed": 0}
+        tallies: dict[str, int] = {"running": 0, "complete": 0, "failed": 0}
         for job_id in sorted(self.jobs, reverse=True):
             job = self.jobs[job_id]
             state = job.state()
-            if state in tallies:
-                tallies[state] += 1
-            tone = {"running": "blue", "complete": "green", "failed": "red"}.get(
-                state, "gray"
-            )
+            tallies[state] = tallies.get(state, 0) + 1
+            tone = {"running": "blue", "complete": "green", "failed": "red",
+                    "orphaned": "amber"}.get(state, "gray")
             started = time.strftime(
                 "%H:%M:%S", time.localtime(job.started_at)
             )
