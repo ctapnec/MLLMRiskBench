@@ -198,8 +198,15 @@ cython_debug/
 .cursorignore
 .cursorindexingignore
 
-# Operator-local experiment registry copied from the checked-in example.
+# Operator-local experiment registries copied/refreshed from the checked-in
+# examples under experiments/rig/.  They configure a specific rig and must
+# never dirty the pinned checkout the project-revision receipt validates.
 /experiments/source-instances.json
+/experiments/api-targets.json
+/experiments/local-targets.json
+/experiments/budgets.json
+/experiments/pricing.json
+/experiments/vllm-roster.json
 
 # Generated experiment evidence is retained outside Git source identity.
 /runs/

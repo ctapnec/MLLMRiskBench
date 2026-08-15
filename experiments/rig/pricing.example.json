@@ -1,0 +1,74 @@
+{
+  "schema": "ura-console-pricing/1",
+  "note": "Effective-dated per-model price table for the console's calculated-cost display. Every rate ships null on purpose: fill each category from the provider's current published price sheet before relying on a calculated figure - the console multiplies recorded tokens by these rates and never invents or estimates a price. Category semantics follow each provider's own recorded usage fields (input excludes provider-reported cache reads where the provider reports them separately); rates are per one million tokens in the stated currency. Add a new rates[] entry with a later effective_date on a price change; never edit history.",
+  "providers": {
+    "anthropic": {
+      "models": {
+        "claude-fable-5": {
+          "rates": [
+            {
+              "effective_date": "2026-08-15",
+              "currency": "USD",
+              "per_million_tokens": {
+                "input": null,
+                "output": null,
+                "cache_read": null,
+                "cache_write": null,
+                "reasoning": null,
+                "batch_input": null,
+                "batch_output": null
+              }
+            }
+          ]
+        },
+        "claude-haiku-4-5-20251001": {
+          "rates": [
+            {
+              "effective_date": "2026-08-15",
+              "currency": "USD",
+              "per_million_tokens": {
+                "input": null,
+                "output": null,
+                "cache_read": null,
+                "cache_write": null,
+                "reasoning": null,
+                "batch_input": null,
+                "batch_output": null
+              }
+            }
+          ]
+        }
+      }
+    },
+    "openai": {
+      "models": {
+        "gpt-5.6-sol": {
+          "rates": [
+            {
+              "effective_date": "2026-08-15",
+              "currency": "USD",
+              "per_million_tokens": {
+                "input": null,
+                "output": null,
+                "cache_read": null,
+                "cache_write": null,
+                "reasoning": null,
+                "batch_input": null,
+                "batch_output": null
+              }
+            }
+          ]
+        }
+      }
+    },
+    "google": {
+      "models": {}
+    },
+    "moonshot": {
+      "models": {}
+    },
+    "deepseek": {
+      "models": {}
+    }
+  }
+}

@@ -4,6 +4,8 @@ This command performs no provider call.  It revalidates an already completed
 ``run_matrix --attestation-probe`` grid and emits one content-addressed
 ``ura-live-attestation/2`` JSON receipt.  The receipt proves only the historical
 route/identity/byte-backed transport prerequisite named by each record.
+``--validate PATH --sha256 HEX`` instead revalidates an existing receipt
+through the same strict loader/validator the measured-grid admission uses.
 """
 from __future__ import annotations
 
@@ -25,6 +27,7 @@ from ura.data_models import Attempt  # noqa: E402
 from ura.live_attestation import (  # noqa: E402
     build_live_attestation_manifest,
     canonical_json_sha256,
+    load_live_attestation_file,
     route_config_from_grid_request,
     route_config_sha256,
 )
@@ -253,12 +256,56 @@ def _write_new(path: Path, value: dict[str, Any]) -> None:
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
-        description="Derive a typed live-transport receipt from one completed probe"
+        description=(
+            "Derive a typed live-transport receipt from one completed probe, "
+            "or revalidate an existing receipt against its exact byte digest"
+        )
     )
-    parser.add_argument("--probe-root", type=Path, required=True)
-    parser.add_argument("--execution-scope-id", required=True)
-    parser.add_argument("--out", type=Path, required=True)
+    parser.add_argument("--probe-root", type=Path, default=None)
+    parser.add_argument("--execution-scope-id", default="")
+    parser.add_argument("--out", type=Path, default=None)
+    parser.add_argument(
+        "--validate", type=Path, default=None,
+        help=(
+            "existing ura-live-attestation/2 receipt to revalidate (with "
+            "--sha256) through the strict loader instead of deriving one"
+        ),
+    )
+    parser.add_argument(
+        "--sha256", default="",
+        help="exact byte digest required alongside --validate",
+    )
     args = parser.parse_args(argv)
+    if args.validate is not None:
+        if args.probe_root or args.execution_scope_id or args.out:
+            parser.error(
+                "--validate requires --sha256 and cannot be combined with "
+                "--probe-root, --execution-scope-id, or --out"
+            )
+        if not args.sha256:
+            parser.error("--validate requires --sha256")
+        try:
+            manifest, artifact = load_live_attestation_file(
+                args.validate, args.sha256
+            )
+        except (KeyError, OSError, TypeError, ValueError) as exc:
+            print(f"live attestation validation failed: {exc}", file=sys.stderr)
+            return 1
+        print(json.dumps({
+            "status": "attestation_validated",
+            "attestation_id": manifest["attestation_id"],
+            "records": len(manifest["records"]),
+            "sha256": artifact["sha256"],
+            "bytes": artifact["bytes"],
+            "validity_claim": "target_route_and_byte_backed_transport_only",
+        }, sort_keys=True))
+        return 0
+    if args.sha256:
+        parser.error("--sha256 is valid only with --validate")
+    if args.probe_root is None or not args.execution_scope_id or args.out is None:
+        parser.error(
+            "derivation requires --probe-root, --execution-scope-id, and --out"
+        )
     try:
         receipt = build_from_probe_root(
             args.probe_root, execution_scope_id=args.execution_scope_id

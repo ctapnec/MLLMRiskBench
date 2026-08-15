@@ -1,19 +1,29 @@
-"""Rig-local web interface over the maintained experiment CLIs.
+"""Rig-local campaign builder and console over the maintained experiment CLIs.
 
-A thin, single-operator, localhost-only convenience surface (WEB-001, visual
-layer WEB-002): it starts allowlisted ``python -m experiments.*`` commands
-from typed forms, monitors and stops those jobs, streams their logs, and
-browses retained artifacts with explicit diagnostic/measured and
-pending/N/A/error badges.  The dashboard additionally shows a campaign
-pipeline and artifact inventory derived purely from file presence; presence
-of a file never asserts its validity.
+A single-operator, localhost-only application (WEB-001 basic console, promoted
+to the WEB-002 campaign builder): it starts allowlisted ``python -m
+experiments.*`` commands from typed forms, composes campaign lanes through a
+mode-aware builder (dry run, attestation probe, diagnostic canary, measured
+execution) with mode-specific validation and an exact-argv confirmation step,
+monitors and stops those jobs (whole process tree), streams their logs,
+edits the operator-local registries through an allowlisted JSON editor,
+renders retained Level-1/Level-2 artifacts with explicit diagnostic/measured
+and pending/N/A/error distinctions, and accounts observed token usage and
+its calculated monetary cost from recorded artifacts and an operator-edited
+effective-dated pricing table.
 
-The CLI and the filesystem artifacts remain authoritative.  This module never
-reimplements experiment semantics, never executes arbitrary shell input
-(argument vectors are built from a typed allowlist and run with
-``shell=False``), needs no database, and adds no new dependency.  Nothing
-rendered here is a measurement surface; measured evidence is only what the
-validated artifacts themselves establish.
+State is kept in a stdlib-sqlite database under the console state directory
+(jobs, campaign runs, recorded usage, calculated cost, artifact index).  The
+database is operational state only - the validated filesystem artifacts
+remain the scientific authority, and nothing rendered here is a measurement
+surface.  Every experiment the console launches runs the same maintained
+``experiments.*`` module the CLI runs, through an argument vector built from a
+typed allowlist (parity is tested against the real module parsers); the
+console's own bookkeeping - reindexing the usage/report indexes and printing
+the recorded-usage cost report - is additionally reachable headlessly via
+``rig_web --reindex`` / ``--usage-report``.  No arbitrary shell input is ever
+executed (``shell=False``), the server binds 127.0.0.1 only, POST bodies are
+size-capped, and no dependency outside the standard library is added.
 """
 
 from __future__ import annotations
@@ -25,6 +35,7 @@ import html
 import io
 import json
 import os
+import re
 import secrets
 import shutil
 import sqlite3
@@ -83,6 +94,10 @@ class CommandParam:
     #: Name of a suggestion list (rendered as a datalist; free text stays
     #: allowed). Presentation only - build_argv validation is unchanged.
     suggest: str = ""
+    #: Mirrors ``action="append"`` CLI flags: the form may send ``flag`` plus
+    #: ``flag#1``, ``flag#2``, ... rows, emitted as one repeated flag per
+    #: value, in index order.  Non-repeatable flags reject ``#`` suffixes.
+    repeat: bool = False
 
 
 #: Per-flag help text shown as field tooltips and inline hints on the Run
@@ -143,6 +158,48 @@ _PARAM_HELP: dict[str, str] = {
                   "observations, leaving operator judgments as OPERATOR_TODO "
                   "placeholders.",
     "--selftest-sleep": "UI diagnostic only: sleep this many seconds and exit.",
+    "--models": "Comma list of model names resolved through the hosted and "
+                "local target registries (api-targets.json / "
+                "local-targets.json). Mutually exclusive with explicit "
+                "--api/--local; unknown or ambiguous names are rejected.",
+    "--preflight-only": "Validate and project the complete grid without any "
+                        "model or judge call (what rig_check runs).",
+    "--project-revision": "Path to the validated ura-project-revision/1 "
+                          "receipt. Defaults from URA_PROJECT_REVISION_"
+                          "MANIFEST; required for every non-dry invocation.",
+    "--project-revision-sha256": "Exact byte SHA-256 paired with "
+                                 "--project-revision (defaults from the "
+                                 "campaign environment).",
+    "--source-conformance": "Path to the validated ura-source-conformance/1 "
+                            "receipt; required when any real source arm is "
+                            "selected. Defaults from URA_SOURCE_CONFORMANCE_"
+                            "MANIFEST.",
+    "--source-conformance-sha256": "Exact byte SHA-256 paired with "
+                                   "--source-conformance.",
+    "--quantization": "vLLM quantization for local models (awq, gptq, fp8); "
+                      "empty auto-detects from a pre-quantized checkpoint.",
+    "--dtype": "vLLM dtype for local models (auto, bfloat16, float16).",
+    "--lock-stale-seconds": "Diagnostic stale-age metadata for cell locks; "
+                            "locks are never removed automatically.",
+    "--live-attestation": "Repeatable: one content-addressed "
+                          "ura-live-attestation/2 receipt per row, paired "
+                          "positionally with a --live-attestation-sha256 row.",
+    "--live-attestation-sha256": "Repeatable: the exact byte digest for the "
+                                 "same-numbered --live-attestation row.",
+    "--live-attestation-max-age-hours": "Maximum receipt age at measured-grid "
+                                        "admission; must be in (0, 8760].",
+    "--right-attacker": "Enables the replay-vs-adaptive comparison: "
+                        "--attacker is the left arm, this is the right arm "
+                        "(same model and defense on both sides).",
+    "--minimum-unique-clusters": "Minimum source prompt/intent clusters per "
+                                 "estimable transfer cell (>= 2).",
+    "--bootstrap": "Cluster bootstrap resamples for the analysis CLIs.",
+    "--bootstrap-resamples": "Bootstrap resamples for the human-audit "
+                             "analysis (this CLI's spelling of --bootstrap).",
+    "--allow-single-rater": "Exploratory only: accept a labels file with one "
+                            "rater (agreement statistics need two or more).",
+    "--alpha": "Two-sided significance level in (0, 1).",
+    "--seed": "Deterministic analysis resampling seed.",
 }
 
 
@@ -255,6 +312,16 @@ _EDITABLE_CONFIGS: dict[str, tuple[str, str, str]] = {
         "prefix used to attribute observed usage to the provider. "
         "Presentation only - the console spends nothing.",
     ),
+    "pricing": (
+        "experiments/pricing.json",
+        "experiments/rig/pricing.example.json",
+        "Effective-dated per-model price table used to calculate monetary "
+        "cost from recorded token usage: providers -> models -> rates "
+        "[{effective_date, currency, per_million_tokens{input, output, "
+        "cache_read, cache_write, reasoning, batch_input, batch_output}}]. "
+        "Rates ship null - fill them from the provider's current price "
+        "sheet; the console never invents a price.",
+    ),
 }
 
 
@@ -282,8 +349,11 @@ class Command:
 
 
 #: Shared surface for the matrix driver and its argv-forwarding preflight.
+#: One entry per real ``run_matrix`` argparse option (asserted by the
+#: interface-parity tests against ``run_matrix.build_parser()``).
 _MATRIX_PARAMS = (
     CommandParam("--dry-run", "flag"),
+    CommandParam("--preflight-only", "flag"),
     CommandParam("--diagnostic-canary", "flag"),
     CommandParam("--attestation-probe", "flag"),
     CommandParam("--models", "str", suggest="api"),
@@ -308,6 +378,12 @@ _MATRIX_PARAMS = (
     CommandParam("--source-config", "path"),
     CommandParam("--api-config", "path"),
     CommandParam("--local-config", "path"),
+    CommandParam("--project-revision", "path"),
+    CommandParam("--project-revision-sha256", "str"),
+    CommandParam("--source-conformance", "path"),
+    CommandParam("--source-conformance-sha256", "str"),
+    CommandParam("--quantization", "str"),
+    CommandParam("--dtype", "str"),
     CommandParam("--limit", "int"),
     CommandParam("--sample-seed", "int"),
     CommandParam("--seeds", "str", suggest="seeds"),
@@ -317,10 +393,11 @@ _MATRIX_PARAMS = (
     CommandParam("--max-total-judge-calls", "int"),
     CommandParam("--max-total-http-attempts", "int"),
     CommandParam("--deadline-seconds", "int"),
+    CommandParam("--lock-stale-seconds", "int"),
     CommandParam("--execution-scope-id", "str"),
-    CommandParam("--live-attestation", "path"),
-    CommandParam("--live-attestation-sha256", "str"),
-    CommandParam("--live-attestation-max-age-hours", "int"),
+    CommandParam("--live-attestation", "path", repeat=True),
+    CommandParam("--live-attestation-sha256", "str", repeat=True),
+    CommandParam("--live-attestation-max-age-hours", "float"),
     CommandParam("--out", "path"),
 )
 
@@ -345,8 +422,8 @@ def _commands() -> dict[str, Command]:
             "Scaffold or validate the compact source acquisition receipt",
             (
                 CommandParam("--scaffold", "flag"),
-                CommandParam("--arm", "str"),
-                CommandParam("--observation", "str"),
+                CommandParam("--arm", "str", repeat=True),
+                CommandParam("--observation", "str", repeat=True),
                 CommandParam("--out", "path"),
                 CommandParam("--manifest", "path"),
                 CommandParam("--sha256", "str"),
@@ -387,10 +464,10 @@ def _commands() -> dict[str, Command]:
             "level1_evidence", "experiments.level1_evidence",
             "Build the Level-1 lifecycle JSON/CSV for one cohort",
             (
-                CommandParam("--eligibility", "path"),
-                CommandParam("--results", "path"),
-                CommandParam("--live-attestation", "path"),
-                CommandParam("--live-attestation-sha256", "str"),
+                CommandParam("--eligibility", "path", repeat=True),
+                CommandParam("--results", "path", repeat=True),
+                CommandParam("--live-attestation", "path", repeat=True),
+                CommandParam("--live-attestation-sha256", "str", repeat=True),
                 CommandParam("--out-json", "path"),
                 CommandParam("--out-csv", "path"),
             ),
@@ -399,9 +476,9 @@ def _commands() -> dict[str, Command]:
             "suite_summary", "experiments.suite_summary",
             "Build the no-pooling suite evidence inventory",
             (
-                CommandParam("--results", "path"),
-                CommandParam("--native", "path"),
-                CommandParam("--eligibility", "path"),
+                CommandParam("--results", "path", repeat=True),
+                CommandParam("--native", "path", repeat=True),
+                CommandParam("--eligibility", "path", repeat=True),
                 CommandParam("--source-config", "path"),
                 *common_out,
             ),
@@ -410,8 +487,8 @@ def _commands() -> dict[str, Command]:
             "level2_report", "experiments.level2_report",
             "Export deterministic Level-2 JSON/CSV/Markdown broad tables",
             (
-                CommandParam("--results", "path"),
-                CommandParam("--native", "path"),
+                CommandParam("--results", "path", repeat=True),
+                CommandParam("--native", "path", repeat=True),
                 CommandParam("--out-json", "path"),
                 CommandParam("--out-csv", "path"),
                 CommandParam("--out-md", "path"),
@@ -428,6 +505,10 @@ def _commands() -> dict[str, Command]:
                 CommandParam("--source-task-labels", "path"),
                 CommandParam("--output", "path"),
                 CommandParam("--acknowledge-sensitive-content", "flag"),
+                CommandParam("--allow-single-rater", "flag"),
+                CommandParam("--bootstrap-resamples", "int"),
+                CommandParam("--alpha", "float"),
+                CommandParam("--seed", "int"),
             ),
         ),
         Command(
@@ -443,6 +524,8 @@ def _commands() -> dict[str, Command]:
                 CommandParam("--strongreject-corpus", "str"),
                 CommandParam("--mmsafety-corpus", "str"),
                 CommandParam("--mossbench-corpus", "str"),
+                CommandParam("--bootstrap", "int"),
+                CommandParam("--seed", "int"),
                 *common_out,
             ),
         ),
@@ -456,8 +539,10 @@ def _commands() -> dict[str, Command]:
                 CommandParam("--left-defense", "str"),
                 CommandParam("--right-defense", "str"),
                 CommandParam("--attacker", "str"),
+                CommandParam("--right-attacker", "str"),
                 CommandParam("--corpus", "str"),
-                CommandParam("--mode", "str"),
+                CommandParam("--mode", "str",
+                             choices=("auto", "static", "live")),
                 CommandParam("--bootstrap", "int"),
                 CommandParam("--seed", "int"),
                 CommandParam("--permutations", "int"),
@@ -491,6 +576,8 @@ def _commands() -> dict[str, Command]:
             (
                 CommandParam("--results", "path"),
                 CommandParam("--attacker", "str"),
+                CommandParam("--corpus", "str"),
+                CommandParam("--minimum-unique-clusters", "int"),
                 CommandParam("--bootstrap", "int"),
                 CommandParam("--seed", "int"),
                 CommandParam("--alpha", "float"),
@@ -586,6 +673,37 @@ COMMAND_GROUPS: tuple[tuple[str, str, str, tuple[str, ...]], ...] = (
 )
 
 
+def _param_values(
+    param: CommandParam, values: Mapping[str, str],
+) -> list[str]:
+    """Collect one parameter's non-empty form values, repeat rows included.
+
+    A repeatable parameter accepts the bare ``flag`` field plus any number of
+    ``flag#N`` rows (N a positive integer), returned in index order with the
+    bare field first.  Non-repeatable parameters accept the bare field only;
+    their ``#`` variants stay unknown parameters.
+    """
+
+    collected: list[tuple[int, str]] = []
+    base = values.get(param.flag, "")
+    base = base.strip() if isinstance(base, str) else ""
+    if base:
+        collected.append((0, base))
+    if param.repeat:
+        prefix = param.flag + "#"
+        for key, raw in values.items():
+            if not key.startswith(prefix):
+                continue
+            suffix = key[len(prefix):]
+            if not suffix.isdigit() or int(suffix) <= 0:
+                raise ValueError(f"invalid repeat row {key!r}")
+            raw = raw.strip() if isinstance(raw, str) else ""
+            if raw:
+                collected.append((int(suffix), raw))
+    collected.sort(key=lambda item: item[0])
+    return [raw for _index, raw in collected]
+
+
 def build_argv(
     command: str, values: Mapping[str, str], *, commands: Mapping[str, Command] | None = None,
 ) -> list[str]:
@@ -596,30 +714,37 @@ def build_argv(
     if entry is None:
         raise ValueError(f"unknown command {command!r}")
     known = {param.flag: param for param in entry.params}
-    unknown = sorted(set(values) - set(known))
+    allowed = set(known)
+    for param in entry.params:
+        if param.repeat:
+            allowed.update(
+                key for key in values
+                if key.startswith(param.flag + "#")
+            )
+    unknown = sorted(set(values) - allowed)
     if unknown:
         raise ValueError(f"unknown parameter(s) for {command!r}: {unknown}")
     argv = [sys.executable, "-m", entry.module]
     for param in entry.params:
-        raw = values.get(param.flag, "")
-        raw = raw.strip() if isinstance(raw, str) else ""
-        if not raw:
+        raws = _param_values(param, values)
+        if not raws:
             if param.required:
                 raise ValueError(f"{command!r} requires {param.flag}")
             continue
         if param.kind == "flag":
-            if raw not in {"on", "true", "1", "yes"}:
+            if len(raws) != 1 or raws[0] not in {"on", "true", "1", "yes"}:
                 raise ValueError(f"{param.flag} is a checkbox flag")
             argv.append(param.flag)
             continue
-        if param.kind == "int":
-            int(raw)
-        elif param.kind == "float":
-            float(raw)
-        elif param.kind == "path":
-            if "\x00" in raw:
-                raise ValueError(f"invalid path for {param.flag}")
-        argv.extend([param.flag, raw])
+        for raw in raws:
+            if param.kind == "int":
+                int(raw)
+            elif param.kind == "float":
+                float(raw)
+            elif param.kind == "path":
+                if "\x00" in raw:
+                    raise ValueError(f"invalid path for {param.flag}")
+            argv.extend([param.flag, raw])
     return argv
 
 
@@ -999,6 +1124,13 @@ button.ghost { background:transparent; color:var(--accent);
   padding:0 .3rem; margin-left:.2rem; vertical-align:middle; }
 .fwrow.incompatible { opacity:.55; }
 .fwrow.incompatible .fwflag { color:#c4515c; font-weight:600; }
+.fielderr { display:block; color:#c4515c; font-size:.8rem; font-weight:600;
+  margin:.2rem 0 .1rem; }
+.attrow { display:grid; grid-template-columns:1fr 1fr; gap:.5rem;
+  margin:.35rem 0; }
+@media (max-width:640px) { .attrow { grid-template-columns:1fr; } }
+.notice ul { margin:.35rem 0 .1rem; padding-left:1.2rem; }
+.notice li { font-size:.86rem; margin:.15rem 0; }
 input.wide { width:100%; padding:.4rem .55rem; border:1px solid var(--line);
   border-radius:8px; background:var(--bg); color:var(--ink); font-size:.86rem; }
 .buildbar { position:sticky; bottom:0; display:flex; gap:.8rem;
@@ -1069,6 +1201,33 @@ var group=this.closest('.modgroup');
 group.querySelectorAll('.armbox').forEach(function(b){
 var lab=b.closest('.check');
 if(!lab||lab.style.display!=='none'){b.checked=on;}});refresh();});});
+// server-side re-render prefill: re-check the composed selections
+var preEl=document.getElementById('builder-prefill');
+if(preEl){try{var pre=JSON.parse(preEl.textContent);
+function apply(list,sel,attr){if(!list||!list.length){return;}
+form.querySelectorAll(sel).forEach(function(b){
+b.checked=list.indexOf(b.getAttribute(attr))>=0;});}
+apply(pre.corpora,'.armbox','data-arm');
+apply(pre.attackers,'.fwbox','data-fw');
+if((pre.api&&pre.api.length)||(pre.local&&pre.local.length)){
+form.querySelectorAll('.modelbox').forEach(function(b){
+var kind=b.getAttribute('data-kind');
+var list=kind==='api'?(pre.api||[]):(pre.local||[]);
+b.checked=list.indexOf(b.getAttribute('data-model'))>=0;});}
+}catch(e){}}
+// repeatable live-attestation receipt/digest rows (paired in order)
+var addBtn=document.getElementById('addatt');
+if(addBtn){addBtn.addEventListener('click',function(){
+var rows=document.getElementById('attrows');
+var n=rows.querySelectorAll('.attrow').length+1;
+if(n>12){return;}
+var div=document.createElement('div');div.className='attrow';
+div.setAttribute('data-row',n);
+div.innerHTML="<input class='wide' type='text' name='att_path"+n+
+"' placeholder='runs/thesis/attest/receipt.live-attestation.json'>"+
+"<input class='wide' type='text' name='att_sha"+n+
+"' placeholder='exact 64-hex sha256'>";
+rows.appendChild(div);});}
 form.addEventListener('submit',function(){
 form.querySelector("input[name=corpora]").value=checked('.armbox','data-arm').join(',');
 form.querySelector("input[name=api]").value=checkedKind('api','data-model').join(',');
@@ -1315,11 +1474,18 @@ class Job:
     stderr_handle: Any = None
     started_at: float = field(default_factory=time.time)
     ended_at: float | None = None
+    #: The raw builder/form parameters this job was composed from (persisted
+    #: so a restored job still shows how it was built).
+    builder_params: dict[str, str] | None = None
+    #: The pinned project revision exported when the job started.
+    pin: str = ""
+    #: Short failure context (stderr tail) persisted for a failed job.
+    failure: str | None = None
     #: Last-known state for a job restored from the database whose live
     #: process handle is gone (a prior console session started it).
     restored_state: str | None = None
     restored_exit: int | None = None
-    #: Set once its terminal state has been persisted as a campaign run.
+    #: Set only AFTER the terminal state committed to the database.
     run_recorded: bool = False
 
     def state(self) -> str:
@@ -1366,118 +1532,873 @@ def _argv_out_dir(argv: list[str]) -> str:
     return ""
 
 
-class ConsoleDB:
-    """Durable operational index for the console (jobs, runs, spend).
+# -- recorded token usage and calculated cost -------------------------------
+#
+# Never an estimate: every number below is read from retained run artifacts,
+# entered through their completion markers so checkpoints, superseded partial
+# snapshots, and orphaned cell files are never counted.  Monetary cost is
+# calculated only from an operator-edited effective-dated pricing table; a
+# missing token count or missing price renders as N/A, never as zero.
 
-    A stdlib-sqlite convenience layer under the state directory. It is an
-    operational record, never return evidence: the validated artifacts remain
-    authoritative, and this only indexes and points at them so the console
-    survives restarts and accumulates observed usage. All access is guarded by
-    a lock (the HTTP server is multi-threaded) and every method is best-effort
-    - a database error is swallowed so a bookkeeping fault never 500s a page.
+#: Billing categories recorded per (provider, model).  Semantics follow each
+#: provider's own usage fields verbatim (no overlap adjustment is invented):
+#: ``input``/``output`` are the provider-reported token counts
+#: (``raw.provider_usage`` detail preferred over the normalized ``tokens``
+#: map), ``cache_read``/``cache_write`` and ``reasoning`` appear only when the
+#: provider reported them.
+_TOKEN_CATEGORIES = ("input", "output", "cache_read", "cache_write", "reasoning")
+#: Categories that carry their own price.  ``reasoning`` is deliberately absent:
+#: providers bill thinking/reasoning tokens as part of ``output`` (the adapters
+#: enforce reasoning <= output), so charging it again would double-bill.  It is
+#: displayed for transparency but never priced.
+_BILLED_CATEGORIES = ("input", "output", "cache_read", "cache_write")
+_UNBILLED_PROVIDERS = {"vllm", "ollama", "mock", "local"}
+_MARKER_SUFFIX = ".complete.json"
+
+
+def _tokens_by_category(tokens: Any, provider_usage: Any) -> dict[str, int]:
+    """Normalize one call's recorded token counts into billing categories.
+
+    Categories are made non-overlapping so no token is billed twice:
+    ``input`` is the billable-at-input-rate count with any separately-billed
+    cache reads removed (Anthropic's ``input_tokens`` already excludes cache;
+    Fable exposes the net figure as ``uncached_input``; OpenAI's
+    ``input_tokens`` is cache-inclusive, so the reported cache read is
+    subtracted). ``cache_read``/``cache_write`` are the separately-priced
+    cache components. ``reasoning`` is recorded for transparency only - every
+    provider here bills thinking/reasoning tokens *as* output tokens (the
+    adapters enforce ``reasoning <= output``), so ``compute_costs`` treats it
+    as a subset of ``output`` and never charges it a second time.  Local
+    adapters record prompt/completion and are not billed at all.
     """
+
+    out: dict[str, int] = {}
+    tk = tokens if isinstance(tokens, Mapping) else {}
+    pu = provider_usage if isinstance(provider_usage, Mapping) else {}
+
+    def put(category: str, value: Any) -> None:
+        if isinstance(value, int) and value >= 0:
+            out[category] = value
+
+    put("output", pu.get("output_tokens"))
+    if "output" not in out:
+        put("output", tk.get("output", tk.get("completion")))
+    put("cache_read", pu.get("cache_read_input_tokens"))
+    put("cache_write", pu.get("cache_creation_input_tokens"))
+    details_in = pu.get("input_tokens_details")
+    if isinstance(details_in, Mapping):
+        put("cache_read", details_in.get("cached_tokens"))
+        put("cache_write", details_in.get("cache_write_tokens"))
+    if "cache_read" not in out:
+        put("cache_read", tk.get("cached_input"))
+    if "cache_write" not in out:
+        put("cache_write", tk.get("cache_write_input"))
+    details_out = pu.get("output_tokens_details")
+    if isinstance(details_out, Mapping):
+        put("reasoning", details_out.get(
+            "thinking_tokens", details_out.get("reasoning_tokens")
+        ))
+    if "reasoning" not in out:
+        put("reasoning", tk.get("reasoning"))
+    # Input last, so the cache reads it must exclude are already known. Prefer
+    # an explicitly net figure (Fable's uncached_input); otherwise a provider
+    # input_tokens is only ever written by the cache-inclusive OpenAI adapter
+    # here, so net out the reported cache read.
+    if isinstance(tk.get("uncached_input"), int):
+        put("input", tk["uncached_input"])
+    elif isinstance(pu.get("input_tokens"), int):
+        put("input", max(0, pu["input_tokens"] - out.get("cache_read", 0)))
+    else:
+        put("input", tk.get("input", tk.get("prompt")))
+    return out
+
+
+def _response_identity(record: Mapping[str, Any]) -> tuple[str, str]:
+    """(provider, model) for one responses.jsonl record."""
+
+    raw = record.get("raw")
+    raw = raw if isinstance(raw, Mapping) else {}
+    target = str(record.get("target", "") or "")
+    provider = raw.get("provider") or raw.get("provider_name")
+    if not isinstance(provider, str) or not provider:
+        provider = target.split(":", 1)[0] if ":" in target else (target or "unknown")
+    model = None
+    for key in ("resolved_model", "provider_resolved_model", "provider_model",
+                "model"):
+        candidate = raw.get(key)
+        if isinstance(candidate, str) and candidate:
+            model = candidate
+            break
+    return str(provider), str(model or target or "unknown")
+
+
+def _marker_artifact_path(
+    marker_path: Path, descriptor: Any, *, verify_sha: bool = False,
+) -> Path:
+    """Resolve and byte-check one completion-marker artifact descriptor."""
+
+    if not isinstance(descriptor, Mapping):
+        raise ValueError("completion marker artifact descriptor missing")
+    name = str(descriptor.get("file", ""))
+    if not name or "/" in name or "\\" in name:
+        raise ValueError(f"artifact descriptor names a non-bare file {name!r}")
+    path = marker_path.parent / name
+    if path.is_symlink() or not path.is_file():
+        raise ValueError(f"artifact {name!r} is missing or not a regular file")
+    size = path.stat().st_size
+    if size != descriptor.get("bytes"):
+        raise ValueError(f"artifact {name!r} byte size changed since completion")
+    if verify_sha:
+        digest = hashlib.sha256()
+        with path.open("rb") as handle:
+            for block in iter(lambda: handle.read(1024 * 1024), b""):
+                digest.update(block)
+        if digest.hexdigest() != descriptor.get("sha256"):
+            raise ValueError(f"artifact {name!r} digest changed since completion")
+    return path
+
+
+def iter_completed_markers(
+    root: Path, *, max_entries: int = _INVENTORY_MAX_ENTRIES,
+) -> tuple[list[tuple[Path, dict[str, Any]]], dict[str, int]]:
+    """Completion markers under root plus honest skip accounting.
+
+    Only ``*.complete.json`` markers with ``status: complete`` and
+    ``format_version: 2`` and no sibling ``<stem>.error.json`` are returned;
+    everything else (orphan cell files, checkpoints, errored cells) is
+    excluded and counted so truncation is never silent.
+    """
+
+    markers: list[tuple[Path, dict[str, Any]]] = []
+    stats = {"markers": 0, "skipped_error": 0, "skipped_invalid": 0,
+             "orphan_responses": 0, "truncated": 0}
+    seen = 0
+    completed_stems: set[str] = set()
+    response_files: list[tuple[Path, str]] = []
+    stack: list[Path] = [root]
+    while stack:
+        directory = stack.pop()
+        try:
+            entries = list(directory.iterdir())
+        except OSError:
+            continue
+        for entry in entries:
+            seen += 1
+            if seen > max_entries:
+                stats["truncated"] = 1
+                break
+            if entry.is_dir():
+                stack.append(entry)
+                continue
+            name = entry.name
+            if name.endswith(".responses.jsonl") and not name.endswith(
+                ".responses.checkpoint.jsonl"
+            ):
+                response_files.append(
+                    (entry, name[: -len(".responses.jsonl")])
+                )
+                continue
+            if not name.endswith(_MARKER_SUFFIX):
+                continue
+            stem = name[: -len(_MARKER_SUFFIX)]
+            if (directory / f"{stem}.error.json").exists():
+                stats["skipped_error"] += 1
+                continue
+            try:
+                doc = json.loads(entry.read_text(encoding="utf-8"))
+            except (OSError, ValueError):
+                stats["skipped_invalid"] += 1
+                continue
+            if (
+                not isinstance(doc, dict)
+                or doc.get("status") != "complete"
+                or doc.get("format_version") != 2
+                or not isinstance(doc.get("artifacts"), dict)
+            ):
+                stats["skipped_invalid"] += 1
+                continue
+            markers.append((entry, doc))
+            completed_stems.add(str(entry.parent / stem))
+        if seen > max_entries:
+            break
+    stats["markers"] = len(markers)
+    stats["orphan_responses"] = sum(
+        1 for path, stem in response_files
+        if str(path.parent / stem) not in completed_stems
+    )
+    return markers, stats
+
+
+def usage_rows_from_marker(
+    marker_path: Path, doc: Mapping[str, Any], *, verify_sha: bool = False,
+) -> list[dict[str, Any]]:
+    """Recorded per-(role, provider, model, category) usage for one cell.
+
+    Target usage comes from the completion-bound responses artifact
+    (``Response.tokens`` plus ``raw.provider_usage`` detail); judge usage from
+    the completion-bound trails artifact (``raw.judge_call.tokens``, every
+    cascade stage, provider-refusal rows excluded because no judge call was
+    made).  A record whose token block is absent is tallied under the
+    ``missing_tokens`` category so it renders as N/A, never as zero.
+    """
+
+    marker_sha = hashlib.sha256(marker_path.read_bytes()).hexdigest()
+    run_id = str(doc.get("run_id", ""))
+    out_dir = str(marker_path.parent)
+    artifacts = doc["artifacts"]
+    tallies: dict[tuple[str, str, str, str], int] = {}
+
+    def add(role: str, provider: str, model: str, category: str, amount: int) -> None:
+        key = (role, provider, model, category)
+        tallies[key] = tallies.get(key, 0) + amount
+
+    responses_path = _marker_artifact_path(
+        marker_path, artifacts.get("responses"), verify_sha=verify_sha
+    )
+    n_lines = 0
+    with responses_path.open(encoding="utf-8") as handle:
+        for line in handle:
+            if not line.strip():
+                continue
+            n_lines += 1
+            try:
+                record = json.loads(line)
+            except ValueError:
+                continue
+            if not isinstance(record, Mapping):
+                continue
+            provider, model = _response_identity(record)
+            raw = record.get("raw")
+            raw = raw if isinstance(raw, Mapping) else {}
+            categories = _tokens_by_category(
+                record.get("tokens"), raw.get("provider_usage")
+            )
+            add("target", provider, model, "calls", 1)
+            if not categories:
+                add("target", provider, model, "missing_tokens", 1)
+            for category, amount in categories.items():
+                add("target", provider, model, category, amount)
+    expected = artifacts["responses"].get("records")
+    if isinstance(expected, int) and expected != n_lines:
+        raise ValueError(
+            f"responses artifact record count changed since completion "
+            f"({n_lines} != {expected})"
+        )
+    trails_path = _marker_artifact_path(
+        marker_path, artifacts.get("trails"), verify_sha=verify_sha
+    )
+    with trails_path.open(encoding="utf-8") as handle:
+        for line in handle:
+            if not line.strip():
+                continue
+            try:
+                record = json.loads(line)
+            except ValueError:
+                continue
+            if not isinstance(record, Mapping):
+                continue
+            raw = record.get("raw")
+            raw = raw if isinstance(raw, Mapping) else {}
+            judge_call = raw.get("judge_call")
+            if not isinstance(judge_call, Mapping):
+                continue  # stage made no judge call
+            if judge_call.get("sampling_control") == "not_queried_provider_refusal":
+                continue  # provider refused; no call was made or billed
+            provider = str(judge_call.get("provider") or "unknown")
+            model = str(
+                judge_call.get("provider_resolved_model")
+                or raw.get("judge_model") or "unknown"
+            )
+            categories = _tokens_by_category(judge_call.get("tokens"), None)
+            add("judge", provider, model, "calls", 1)
+            if not categories:
+                add("judge", provider, model, "missing_tokens", 1)
+            for category, amount in categories.items():
+                add("judge", provider, model, category, amount)
+    now = time.time()
+    return [
+        {
+            "marker_sha": marker_sha, "role": role, "provider": provider,
+            "model": model, "category": category, "amount": amount,
+            "run_id": run_id, "out_dir": out_dir, "recorded_at": now,
+        }
+        for (role, provider, model, category), amount in sorted(tallies.items())
+    ]
+
+
+def collect_usage(
+    root: Path, *, verify_sha: bool = False,
+) -> tuple[list[dict[str, Any]], dict[str, int]]:
+    """All recorded usage rows under root, with honest skip accounting."""
+
+    markers, stats = iter_completed_markers(root)
+    rows: list[dict[str, Any]] = []
+    stats["unreadable_artifacts"] = 0
+    for marker_path, doc in markers:
+        try:
+            rows.extend(
+                usage_rows_from_marker(marker_path, doc, verify_sha=verify_sha)
+            )
+        except (OSError, ValueError):
+            stats["unreadable_artifacts"] += 1
+    return rows, stats
+
+
+#: Report artifact schemas indexed for the Stats page and dashboard.
+_REPORT_SCHEMAS = {
+    "ura-level1-evidence/2": "level1",
+    "ura-level2-report/1": "level2",
+    "ura-suite-evidence/1": "suite",
+    "ura-lane-canary/1": "canary",
+}
+
+
+def collect_reports(
+    root: Path, *, max_entries: int = _INVENTORY_MAX_ENTRIES,
+) -> list[dict[str, Any]]:
+    """Index retained report artifacts by their declared schema_version."""
+
+    rows: list[dict[str, Any]] = []
+    seen = 0
+    stack: list[Path] = [root]
+    while stack:
+        directory = stack.pop()
+        try:
+            entries = list(directory.iterdir())
+        except OSError:
+            continue
+        for entry in entries:
+            seen += 1
+            if seen > max_entries:
+                return rows
+            if entry.is_dir():
+                stack.append(entry)
+                continue
+            if not entry.name.endswith(".json"):
+                continue
+            try:
+                size = entry.stat().st_size
+                if size > _MAX_RENDER_BYTES:
+                    continue
+                doc = json.loads(entry.read_text(encoding="utf-8"))
+            except (OSError, ValueError):
+                continue
+            schema = doc.get("schema_version") if isinstance(doc, dict) else None
+            kind = _REPORT_SCHEMAS.get(schema or "")
+            if kind is None:
+                continue
+            try:
+                relative = entry.relative_to(root).as_posix()
+            except ValueError:
+                relative = entry.name
+            rows.append({
+                "path": relative, "schema": str(schema), "kind": kind,
+                "sha256": hashlib.sha256(entry.read_bytes()).hexdigest(),
+                "bytes": size, "mtime": entry.stat().st_mtime,
+                "recorded_at": time.time(),
+            })
+    return rows
+
+
+def load_pricing(repo_root: Path = _REPO_ROOT) -> dict[str, Any]:
+    """The operator-edited pricing table (local file, then the example)."""
+
+    for candidate in ("pricing.json", "rig/pricing.example.json"):
+        path = repo_root / "experiments" / candidate
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            continue
+        if isinstance(data, dict):
+            return data
+    return {}
+
+
+def rate_for(
+    pricing: Mapping[str, Any], provider: str, model: str,
+    *, on_date: str | None = None,
+) -> tuple[dict[str, Any] | None, str]:
+    """The effective-dated rate row for (provider, model), or (None, why).
+
+    Picks the newest rate whose effective_date is on or before ``on_date``
+    (default today).  Missing provider, model, or applicable rate returns the
+    exact missing field so the page can display N/A with its reason.
+    """
+
+    providers = pricing.get("providers")
+    if not isinstance(providers, Mapping):
+        return None, "pricing table has no providers section"
+    entry = None
+    for key, value in providers.items():
+        if str(key).lower() == provider.lower():
+            entry = value
+            break
+    if not isinstance(entry, Mapping):
+        return None, f"no pricing entry for provider {provider!r}"
+    models = entry.get("models")
+    if not isinstance(models, Mapping) or model not in models:
+        return None, f"no pricing entry for model {model!r}"
+    rates = models[model].get("rates") if isinstance(models[model], Mapping) else None
+    if not isinstance(rates, list) or not rates:
+        return None, f"no rates recorded for model {model!r}"
+    today = on_date or time.strftime("%Y-%m-%d")
+
+    def valid_date(value: Any) -> bool:
+        # Zero-padded ISO date only, so lexicographic ordering is date order.
+        return isinstance(value, str) and bool(
+            re.fullmatch(r"\d{4}-\d{2}-\d{2}", value)
+        )
+
+    if any(isinstance(r, Mapping) and not valid_date(r.get("effective_date"))
+           for r in rates):
+        return None, (
+            f"model {model!r} has a rate with a non ISO 8601 (YYYY-MM-DD) "
+            "effective_date"
+        )
+    applicable = [
+        rate for rate in rates
+        if isinstance(rate, Mapping) and rate["effective_date"] <= today
+    ]
+    if not applicable:
+        return None, f"no rate effective on or before {today} for {model!r}"
+    chosen = max(applicable, key=lambda rate: rate["effective_date"])
+    return dict(chosen), ""
+
+
+def compute_costs(
+    usage_totals: Mapping[tuple[str, str, str], Mapping[str, int]],
+    pricing: Mapping[str, Any],
+) -> list[dict[str, Any]]:
+    """Calculated monetary cost per (role, provider, model) from recorded use.
+
+    Cost is the sum over billing categories of recorded tokens times the
+    configured per-million rate.  If any category with recorded tokens has no
+    numeric rate, the whole row's cost is N/A and the missing fields are
+    named - a partial cost would understate real spend.  Local providers are
+    marked not billable rather than zero-cost-by-assumption.
+    """
+
+    rows: list[dict[str, Any]] = []
+    for (role, provider, model), categories in sorted(usage_totals.items()):
+        tokens = {
+            category: int(categories.get(category, 0))
+            for category in _TOKEN_CATEGORIES
+        }
+        row: dict[str, Any] = {
+            "role": role, "provider": provider, "model": model,
+            "calls": int(categories.get("calls", 0)),
+            "missing_tokens": int(categories.get("missing_tokens", 0)),
+            "tokens": tokens,
+            "rate": None, "effective_date": "", "currency": "",
+            "cost": None, "missing": [], "billable": True,
+        }
+        if provider.lower() in _UNBILLED_PROVIDERS:
+            row["billable"] = False
+            rows.append(row)
+            continue
+        rate, why = rate_for(pricing, provider, model)
+        if rate is None:
+            row["missing"].append(why)
+            rows.append(row)
+            continue
+        per_million = rate.get("per_million_tokens")
+        per_million = per_million if isinstance(per_million, Mapping) else {}
+        row["rate"] = {k: per_million.get(k) for k in _TOKEN_CATEGORIES}
+        row["effective_date"] = str(rate.get("effective_date", ""))
+        row["currency"] = str(rate.get("currency", ""))
+        total = 0.0
+        missing: list[str] = []
+        for category in _BILLED_CATEGORIES:
+            amount = tokens.get(category, 0)
+            if amount <= 0:
+                continue
+            unit = per_million.get(category)
+            if isinstance(unit, (int, float)):
+                total += amount / 1_000_000 * float(unit)
+            else:
+                missing.append(f"{provider}/{model}: no {category} rate")
+        if row["missing_tokens"]:
+            missing.append(
+                f"{provider}/{model}: {row['missing_tokens']} call(s) "
+                "recorded no token usage"
+            )
+        if missing:
+            row["missing"] = missing
+        else:
+            row["cost"] = total
+        rows.append(row)
+    return rows
+
+
+class ConsoleDB:
+    """Durable operational database for the console.
+
+    Stdlib sqlite under the state directory: jobs (with their exact argv and
+    builder parameters), the campaign-run registry, recorded per-artifact
+    token usage, and the report/artifact index.  Operational state only - the
+    validated filesystem artifacts remain the scientific authority.
+
+    Every access is serialized by one lock (the HTTP server is
+    multi-threaded).  Terminal job state, its run row, and its usage rows
+    commit in a single transaction; callers flip their ``run_recorded`` flag
+    only after that commit returns success.  A database fault never raises
+    into a page, but it is never silent either: ``last_error`` and
+    ``healthy`` feed a visible banner, and history readers return None (an
+    unknown, shown as such) rather than a fabricated empty history.
+    """
+
+    SCHEMA_VERSION = 2
 
     def __init__(self, path: Path) -> None:
         self.path = path
         self._lock = threading.Lock()
-        path.parent.mkdir(parents=True, exist_ok=True)
-        self._conn = sqlite3.connect(str(path), check_same_thread=False)
-        self._conn.row_factory = sqlite3.Row
-        with self._lock:
+        self.healthy = False
+        self.last_error = ""
+        self._conn: sqlite3.Connection | None = None
+        try:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            self._conn = sqlite3.connect(str(path), check_same_thread=False)
+            self._conn.row_factory = sqlite3.Row
             self._conn.execute("PRAGMA journal_mode=WAL")
-            self._conn.executescript(
-                """
-                CREATE TABLE IF NOT EXISTS jobs (
-                    job_id TEXT PRIMARY KEY, command TEXT, argv TEXT,
-                    directory TEXT, state TEXT, exit_code INTEGER,
-                    started_at REAL, ended_at REAL, updated_at REAL
-                );
-                CREATE TABLE IF NOT EXISTS runs (
-                    run_id INTEGER PRIMARY KEY AUTOINCREMENT, job_id TEXT,
-                    kind TEXT, command TEXT, out_dir TEXT, pin TEXT,
-                    state TEXT, exit_code INTEGER, created_at REAL,
-                    UNIQUE(job_id)
-                );
-                CREATE TABLE IF NOT EXISTS spend (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT, job_id TEXT,
-                    provider TEXT, calls INTEGER, input_tokens INTEGER,
-                    output_tokens INTEGER, recorded_at REAL,
-                    UNIQUE(job_id, provider)
-                );
-                """
-            )
-            self._conn.commit()
+            check = self._conn.execute("PRAGMA quick_check").fetchone()
+            if check is None or str(check[0]).lower() != "ok":
+                raise sqlite3.DatabaseError(
+                    f"integrity check failed: {check[0] if check else 'no result'}"
+                )
+            self._migrate()
+            self.healthy = True
+        except sqlite3.Error as exc:
+            self.last_error = f"database open failed: {exc}"
+            try:
+                if self._conn is not None:
+                    self._conn.close()
+            except sqlite3.Error:
+                pass
+            self._conn = None
 
-    def _exec(self, sql: str, params: tuple = ()) -> None:
-        try:
-            with self._lock:
-                self._conn.execute(sql, params)
-                self._conn.commit()
-        except sqlite3.Error:
-            pass
+    # -- schema ------------------------------------------------------------
 
-    def _query(self, sql: str, params: tuple = ()) -> list[sqlite3.Row]:
-        try:
-            with self._lock:
-                return list(self._conn.execute(sql, params))
-        except sqlite3.Error:
-            return []
-
-    def upsert_job(self, job: "Job") -> None:
-        self._exec(
-            "INSERT INTO jobs(job_id,command,argv,directory,state,exit_code,"
-            "started_at,ended_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?) "
-            "ON CONFLICT(job_id) DO UPDATE SET state=excluded.state,"
-            "exit_code=excluded.exit_code,ended_at=excluded.ended_at,"
-            "updated_at=excluded.updated_at",
-            (job.job_id, job.command, json.dumps(job.argv),
-             str(job.directory), job.state(), job.exit_code(),
-             job.started_at, job.ended_at, time.time()),
-        )
-
-    def load_jobs(self) -> list[sqlite3.Row]:
-        return self._query(
-            "SELECT * FROM jobs ORDER BY started_at DESC LIMIT 500"
-        )
-
-    def record_run(self, job: "Job", pin: str) -> None:
-        kind = run_kind(job.command, job.argv)
-        if kind is None:
-            return
-        self._exec(
-            "INSERT OR IGNORE INTO runs(job_id,kind,command,out_dir,pin,state,"
-            "exit_code,created_at) VALUES(?,?,?,?,?,?,?,?)",
-            (job.job_id, kind, job.command, _argv_out_dir(job.argv), pin,
-             job.state(), job.exit_code(), time.time()),
-        )
-
-    def record_spend(self, job_id: str, usage: Mapping[str, Mapping[str, int]]) -> None:
-        for provider, tally in usage.items():
-            self._exec(
-                "INSERT OR IGNORE INTO spend(job_id,provider,calls,"
-                "input_tokens,output_tokens,recorded_at) VALUES(?,?,?,?,?,?)",
-                (job_id, provider, int(tally.get("calls", 0)),
-                 int(tally.get("input_tokens", 0)),
-                 int(tally.get("output_tokens", 0)), time.time()),
-            )
-
-    def list_runs(self) -> list[sqlite3.Row]:
-        return self._query(
-            "SELECT * FROM runs ORDER BY created_at DESC LIMIT 500"
-        )
-
-    def spend_totals(self) -> dict[str, dict[str, int]]:
-        totals: dict[str, dict[str, int]] = {}
-        for row in self._query(
-            "SELECT provider, SUM(calls) c, SUM(input_tokens) i, "
-            "SUM(output_tokens) o FROM spend GROUP BY provider"
-        ):
-            totals[str(row["provider"])] = {
-                "calls": int(row["c"] or 0),
-                "input_tokens": int(row["i"] or 0),
-                "output_tokens": int(row["o"] or 0),
+    def _migrate(self) -> None:
+        assert self._conn is not None
+        # sqlite3's legacy isolation mode autocommits DDL, so a `with
+        # self._conn` block does not make CREATE/ALTER/DROP atomic with the
+        # DML.  Recover any table stranded by an interrupted prior migration
+        # first (idempotent), then apply the current schema.
+        self._recover_stranded_runs()
+        with self._conn:  # one transaction
+            tables = {
+                str(row[0]) for row in self._conn.execute(
+                    "SELECT name FROM sqlite_master WHERE type='table'"
+                )
             }
+            self._conn.execute(
+                "CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT)"
+            )
+            if "jobs" in tables:
+                existing = {
+                    str(row[1]) for row in self._conn.execute(
+                        "PRAGMA table_info(jobs)"
+                    )
+                }
+                for column, kind in (
+                    ("builder_params", "TEXT"), ("run_kind", "TEXT"),
+                    ("out_dir", "TEXT"), ("pin", "TEXT"), ("failure", "TEXT"),
+                ):
+                    if column not in existing:
+                        self._conn.execute(
+                            f"ALTER TABLE jobs ADD COLUMN {column} {kind}"
+                        )
+            else:
+                self._conn.execute(
+                    """
+                    CREATE TABLE jobs (
+                        job_id TEXT PRIMARY KEY, command TEXT, argv TEXT,
+                        directory TEXT, state TEXT, exit_code INTEGER,
+                        started_at REAL, ended_at REAL, updated_at REAL,
+                        builder_params TEXT, run_kind TEXT, out_dir TEXT,
+                        pin TEXT, failure TEXT
+                    )
+                    """
+                )
+            if "runs" in tables:
+                columns = [
+                    str(row[1]) for row in self._conn.execute(
+                        "PRAGMA table_info(runs)"
+                    )
+                ]
+                if "run_id" in columns:  # v1 shape with an autoincrement id
+                    self._conn.execute("ALTER TABLE runs RENAME TO runs_v1")
+                    self._create_runs()
+                    self._conn.execute(
+                        "INSERT OR IGNORE INTO runs(job_id,kind,command,"
+                        "out_dir,pin,state,exit_code,created_at) "
+                        "SELECT job_id,kind,command,out_dir,pin,state,"
+                        "exit_code,created_at FROM runs_v1"
+                    )
+                    self._conn.execute("DROP TABLE runs_v1")
+            else:
+                self._create_runs()
+            self._conn.execute("DROP TABLE IF EXISTS spend")  # v1, rebuilt as usage
+            self._conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS usage (
+                    marker_sha TEXT, role TEXT, provider TEXT, model TEXT,
+                    category TEXT, amount INTEGER, run_id TEXT, out_dir TEXT,
+                    recorded_at REAL,
+                    PRIMARY KEY (marker_sha, role, provider, model, category)
+                )
+                """
+            )
+            self._conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS reports (
+                    path TEXT PRIMARY KEY, schema TEXT, kind TEXT,
+                    sha256 TEXT, bytes INTEGER, mtime REAL, recorded_at REAL
+                )
+                """
+            )
+            self._conn.execute(
+                "INSERT INTO meta(key, value) VALUES('schema_version', ?) "
+                "ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+                (str(self.SCHEMA_VERSION),),
+            )
+
+    def _create_runs(self) -> None:
+        assert self._conn is not None
+        self._conn.execute(
+            """
+            CREATE TABLE runs (
+                job_id TEXT PRIMARY KEY, kind TEXT, command TEXT,
+                out_dir TEXT, pin TEXT, state TEXT, exit_code INTEGER,
+                created_at REAL
+            )
+            """
+        )
+
+    def _recover_stranded_runs(self) -> None:
+        """Complete a v1->v2 runs migration interrupted after the DDL committed.
+
+        Because DDL autocommits under sqlite3's legacy isolation, a crash or
+        error between ``ALTER TABLE runs RENAME TO runs_v1`` and the row copy
+        can leave a populated ``runs_v1`` beside an empty v2 ``runs``.  On the
+        next open the normal migration would see the new-shape ``runs`` and
+        never look at ``runs_v1``, silently losing the history.  This finishes
+        the copy idempotently before anything else runs.
+        """
+
+        assert self._conn is not None
+        tables = {
+            str(row[0]) for row in self._conn.execute(
+                "SELECT name FROM sqlite_master WHERE type='table'"
+            )
+        }
+        if "runs_v1" not in tables:
+            return
+        with self._conn:
+            if "runs" not in tables:
+                self._create_runs()
+            else:
+                columns = [
+                    str(row[1]) for row in self._conn.execute(
+                        "PRAGMA table_info(runs)"
+                    )
+                ]
+                if "run_id" in columns:  # v1-shaped; replace with the v2 shape
+                    self._conn.execute("DROP TABLE runs")
+                    self._create_runs()
+            self._conn.execute(
+                "INSERT OR IGNORE INTO runs(job_id,kind,command,out_dir,pin,"
+                "state,exit_code,created_at) SELECT job_id,kind,command,"
+                "out_dir,pin,state,exit_code,created_at FROM runs_v1"
+            )
+            self._conn.execute("DROP TABLE runs_v1")
+
+    # -- plumbing ----------------------------------------------------------
+
+    def _fail(self, exc: sqlite3.Error) -> None:
+        self.last_error = str(exc)
+        self.healthy = False
+
+    def _job_row(
+        self, job: "Job", state: str | None = None, exit_code: int | None = None,
+    ) -> tuple:
+        # A caller that already sampled the job's state passes it in, so the
+        # persisted row cannot disagree with the branch decision (avoids a
+        # terminal row being written by a "running" upsert if the process
+        # exits between two polls).
+        resolved_state = state if state is not None else job.state()
+        resolved_exit = exit_code if state is not None else job.exit_code()
+        return (
+            job.job_id, job.command, json.dumps(job.argv),
+            json.dumps(job.builder_params) if job.builder_params else None,
+            str(job.directory), resolved_state, resolved_exit,
+            job.started_at, job.ended_at, time.time(),
+            run_kind(job.command, job.argv), _argv_out_dir(job.argv),
+            job.pin, job.failure,
+        )
+
+    _JOB_UPSERT = (
+        "INSERT INTO jobs(job_id,command,argv,builder_params,directory,state,"
+        "exit_code,started_at,ended_at,updated_at,run_kind,out_dir,pin,failure)"
+        " VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?) "
+        "ON CONFLICT(job_id) DO UPDATE SET state=excluded.state,"
+        "exit_code=excluded.exit_code,ended_at=excluded.ended_at,"
+        "updated_at=excluded.updated_at,failure=excluded.failure"
+    )
+
+    def upsert_job(
+        self, job: "Job", *, state: str | None = None, exit_code: int | None = None,
+    ) -> bool:
+        with self._lock:
+            if self._conn is None:
+                return False
+            try:
+                with self._conn:
+                    self._conn.execute(
+                        self._JOB_UPSERT, self._job_row(job, state, exit_code)
+                    )
+                return True
+            except sqlite3.Error as exc:
+                self._fail(exc)
+                return False
+
+    def record_terminal(
+        self, job: "Job", pin: str, usage_rows: list[dict[str, Any]],
+        *, state: str | None = None, exit_code: int | None = None,
+    ) -> bool:
+        """Commit a job's terminal state, run row, and usage in ONE txn."""
+
+        kind = run_kind(job.command, job.argv)
+        resolved_state = state if state is not None else job.state()
+        resolved_exit = exit_code if state is not None else job.exit_code()
+        with self._lock:
+            if self._conn is None:
+                return False
+            try:
+                with self._conn:
+                    self._conn.execute(
+                        self._JOB_UPSERT, self._job_row(job, state, exit_code)
+                    )
+                    if kind is not None:
+                        self._conn.execute(
+                            "INSERT INTO runs(job_id,kind,command,out_dir,pin,"
+                            "state,exit_code,created_at) VALUES(?,?,?,?,?,?,?,?) "
+                            "ON CONFLICT(job_id) DO UPDATE SET "
+                            "state=excluded.state,exit_code=excluded.exit_code,"
+                            "out_dir=excluded.out_dir,pin=excluded.pin",
+                            (job.job_id, kind, job.command,
+                             _argv_out_dir(job.argv), pin, resolved_state,
+                             resolved_exit, time.time()),
+                        )
+                    self._insert_usage_rows(usage_rows)
+                return True
+            except sqlite3.Error as exc:
+                self._fail(exc)
+                return False
+
+    def _insert_usage_rows(self, usage_rows: list[dict[str, Any]]) -> None:
+        assert self._conn is not None
+        for row in usage_rows:
+            self._conn.execute(
+                "INSERT INTO usage(marker_sha,role,provider,model,category,"
+                "amount,run_id,out_dir,recorded_at) VALUES(?,?,?,?,?,?,?,?,?) "
+                "ON CONFLICT(marker_sha,role,provider,model,category) "
+                "DO UPDATE SET amount=excluded.amount,"
+                "recorded_at=excluded.recorded_at",
+                (row["marker_sha"], row["role"], row["provider"], row["model"],
+                 row["category"], row["amount"], row["run_id"], row["out_dir"],
+                 row["recorded_at"]),
+            )
+
+    def reindex(
+        self, usage_rows: list[dict[str, Any]], report_rows: list[dict[str, Any]],
+    ) -> bool:
+        """Rebuild the derived usage and report indexes in one transaction."""
+
+        with self._lock:
+            if self._conn is None:
+                return False
+            try:
+                with self._conn:
+                    self._conn.execute("DELETE FROM usage")
+                    self._conn.execute("DELETE FROM reports")
+                    self._insert_usage_rows(usage_rows)
+                    for row in report_rows:
+                        self._conn.execute(
+                            "INSERT INTO reports(path,schema,kind,sha256,bytes,"
+                            "mtime,recorded_at) VALUES(?,?,?,?,?,?,?) "
+                            "ON CONFLICT(path) DO UPDATE SET "
+                            "schema=excluded.schema,kind=excluded.kind,"
+                            "sha256=excluded.sha256,bytes=excluded.bytes,"
+                            "mtime=excluded.mtime,recorded_at=excluded.recorded_at",
+                            (row["path"], row["schema"], row["kind"],
+                             row["sha256"], row["bytes"], row["mtime"],
+                             row["recorded_at"]),
+                        )
+                return True
+            except sqlite3.Error as exc:
+                self._fail(exc)
+                return False
+
+    def _query(self, sql: str, params: tuple = ()) -> list[sqlite3.Row] | None:
+        """None on failure - an unknown history, never a fabricated empty one."""
+
+        with self._lock:
+            if self._conn is None:
+                return None
+            try:
+                return list(self._conn.execute(sql, params))
+            except sqlite3.Error as exc:
+                self._fail(exc)
+                return None
+
+    def load_jobs(self) -> list[sqlite3.Row] | None:
+        return self._query("SELECT * FROM jobs ORDER BY started_at DESC LIMIT 500")
+
+    def list_runs(self) -> list[sqlite3.Row] | None:
+        return self._query("SELECT * FROM runs ORDER BY created_at DESC LIMIT 500")
+
+    def list_reports(self) -> list[sqlite3.Row] | None:
+        return self._query("SELECT * FROM reports ORDER BY mtime DESC LIMIT 500")
+
+    def usage_totals(self) -> dict[tuple[str, str, str], dict[str, int]] | None:
+        rows = self._query(
+            "SELECT role, provider, model, category, SUM(amount) AS total "
+            "FROM usage GROUP BY role, provider, model, category"
+        )
+        if rows is None:
+            return None
+        totals: dict[tuple[str, str, str], dict[str, int]] = {}
+        for row in rows:
+            key = (str(row["role"]), str(row["provider"]), str(row["model"]))
+            totals.setdefault(key, {})[str(row["category"])] = int(row["total"] or 0)
         return totals
+
+    def health(self) -> dict[str, Any]:
+        counts: dict[str, Any] = {}
+        if self._conn is not None and self.healthy:
+            for table in ("jobs", "runs", "usage", "reports"):
+                rows = self._query(f"SELECT COUNT(*) AS n FROM {table}")  # noqa: S608 - fixed table names
+                counts[table] = int(rows[0]["n"]) if rows else None
+        return {
+            "healthy": self.healthy,
+            "schema_version": self.SCHEMA_VERSION,
+            "path": str(self.path),
+            "last_error": self.last_error,
+            "counts": counts,
+        }
+
+    def close(self) -> None:
+        # Detach the connection under the lock so no in-flight accessor (which
+        # checks self._conn inside the same lock) can operate on a closed
+        # handle, then close outside the lock.
+        with self._lock:
+            conn, self._conn = self._conn, None
+        if conn is not None:
+            try:
+                conn.close()
+            except sqlite3.Error as exc:
+                self._fail(exc)
 
 
 class RigWebApp:
@@ -1497,27 +2418,39 @@ class RigWebApp:
         self.repo_root = repo_root
         self.commands = dict(COMMANDS if commands is None else commands)
         self.jobs: dict[str, Job] = {}
+        #: The one application lock protecting shared job state (the HTTP
+        #: server is multi-threaded; every start/stop/reconcile holds it).
+        self._app_lock = threading.RLock()
         self._job_id_factory = job_id_factory or (
             lambda: f"job-{secrets.token_hex(6)}"
         )
-        try:
-            self.db: ConsoleDB | None = ConsoleDB(state_dir / "console.db")
-        except sqlite3.Error:
-            self.db = None
+        self.db = ConsoleDB(state_dir / "console.db")
         self._restore_jobs()
+        self._recover_unrecorded_runs()
+
+    def close(self) -> None:
+        """Release the database cleanly; running jobs stay detached."""
+
+        with self._app_lock:
+            self._reconcile_locked()
+            for job in self.jobs.values():
+                self._close_handles(job)
+            self.db.close()
 
     def _restore_jobs(self) -> None:
         """Repopulate the Jobs page from prior sessions (read-only handles).
 
         A restored job's live process handle is gone, so it shows its stored
-        state; a job left 'running' when a prior console exited is surfaced as
-        'orphaned' (its detached process may still be alive, but this console
-        cannot poll or stop it).
+        state; a job left 'running' when a prior console exited is surfaced
+        as 'orphaned' (its detached process may still be alive, but this
+        console cannot poll or stop it) and that orphaned state is persisted
+        so it survives further restarts.
         """
 
-        if self.db is None:
+        rows = self.db.load_jobs()
+        if rows is None:
             return
-        for row in self.db.load_jobs():
+        for row in rows:
             job_id = str(row["job_id"])
             if job_id in self.jobs:
                 continue
@@ -1527,86 +2460,311 @@ class RigWebApp:
                 argv = json.loads(row["argv"]) if row["argv"] else []
             except (ValueError, TypeError):
                 argv = []
-            self.jobs[job_id] = Job(
+            try:
+                params = (
+                    json.loads(row["builder_params"])
+                    if row["builder_params"] else None
+                )
+            except (ValueError, TypeError):
+                params = None
+            job = Job(
                 job_id=job_id, command=str(row["command"] or ""), argv=argv,
                 directory=Path(str(row["directory"] or self.state_dir / job_id)),
                 process=None, started_at=float(row["started_at"] or 0.0),
                 ended_at=(float(row["ended_at"]) if row["ended_at"] else None),
+                builder_params=params if isinstance(params, dict) else None,
+                pin=str(row["pin"] or ""),
+                failure=(str(row["failure"]) if row["failure"] else None),
                 restored_state=restored,
                 restored_exit=(int(row["exit_code"]) if row["exit_code"]
                                is not None else None),
                 run_recorded=True,
             )
+            self.jobs[job_id] = job
+            if restored == "orphaned" and stored != "orphaned":
+                self.db.upsert_job(job)  # persist orphaned across restarts
+
+    def _recover_unrecorded_runs(self) -> None:
+        """Record runs whose console died before their terminal commit.
+
+        A run-kind job started in a prior session that finished (or whose
+        record_terminal never committed) leaves no runs-registry row.  On the
+        next startup its detached process is gone, so ``_reconcile_locked``
+        (which skips process-less jobs) can never record it.  Here, for every
+        restored run-kind job with no runs row, if its output directory holds
+        completed markers or its stored state is terminal, record the run and
+        its recorded usage once - so an interrupted run is never permanently
+        lost from the registry.
+        """
+
+        runs = self.db.list_runs()
+        if runs is None:
+            return
+        recorded = {str(row["job_id"]) for row in runs}
+        pin = os.environ.get("REF_URA", "")
+        for job in self.jobs.values():
+            if job.process is not None:
+                continue
+            if job.job_id in recorded:
+                continue
+            if run_kind(job.command, job.argv) is None:
+                continue
+            out_dir = _argv_out_dir(job.argv)
+            usage_rows: list[dict[str, Any]] = []
+            markers = 0
+            if out_dir:
+                try:
+                    usage_rows, stats = collect_usage(self.repo_root / out_dir)
+                    markers = stats.get("markers", 0)
+                except OSError:
+                    usage_rows, markers = [], 0
+            terminal = (job.restored_state or "") in {"complete", "failed"}
+            if markers or terminal:
+                self.db.record_terminal(job, job.pin or pin, usage_rows)
+
+    @staticmethod
+    def _close_handles(job: Job) -> None:
+        for handle in (job.stdout_handle, job.stderr_handle):
+            if handle is not None and not getattr(handle, "closed", True):
+                try:
+                    handle.close()
+                except OSError:
+                    pass
 
     def _reconcile(self) -> None:
-        """Persist live job state changes; record runs and spend on finish."""
+        with self._app_lock:
+            self._reconcile_locked()
 
-        if self.db is None:
-            return
+    def _reconcile_locked(self) -> None:
+        """Persist live-job state; commit terminal state + usage in one txn.
+
+        ``run_recorded`` flips only after the database transaction commits,
+        so an interrupted write is retried on the next reconcile instead of
+        being lost.
+        """
+
         pin = os.environ.get("REF_URA", "")
         for job in self.jobs.values():
             if job.process is None:
                 continue
-            state = job.state()
-            self.db.upsert_job(job)
-            if state in {"complete", "failed"} and not job.run_recorded:
+            # Sample the terminal state once; pass it through so the upsert and
+            # the run/usage transaction cannot disagree if the process exits
+            # between polls.
+            code = job.process.poll()
+            if code is None:
+                self.db.upsert_job(job, state="running", exit_code=None)
+                continue
+            state = "complete" if code == 0 else "failed"
+            if job.ended_at is None:
+                job.ended_at = time.time()
+            if job.run_recorded:
+                continue
+            self._close_handles(job)
+            job.pin = job.pin or pin
+            if state == "failed" and job.failure is None:
+                tail = self._log_tail(job, "stderr").strip()
+                job.failure = tail[-500:] if tail else f"exit {code}"
+            usage_rows: list[dict[str, Any]] = []
+            out_dir = _argv_out_dir(job.argv)
+            if out_dir and run_kind(job.command, job.argv) is not None:
+                try:
+                    usage_rows, _stats = collect_usage(self.repo_root / out_dir)
+                except OSError:
+                    usage_rows = []
+            if self.db.record_terminal(
+                job, job.pin, usage_rows, state=state, exit_code=code
+            ):
                 job.run_recorded = True
-                self.db.record_run(job, pin)
-                out_dir = _argv_out_dir(job.argv)
-                if out_dir:
-                    usage = self._usage_under(self.repo_root / out_dir)
-                    if usage:
-                        self.db.record_spend(job.job_id, usage)
 
     # -- job lifecycle -----------------------------------------------------
 
-    def start_job(self, command: str, values: Mapping[str, str]) -> Job:
+    #: Receipt env vars a dry lane must not inherit, so an offline command is
+    #: genuinely offline and self-contained (its argv carries no receipts and
+    #: the environment cannot re-inject them).
+    _DRY_SCRUB_ENV = (
+        "URA_PROJECT_REVISION_MANIFEST", "URA_PROJECT_REVISION_SHA256",
+        "URA_SOURCE_CONFORMANCE_MANIFEST", "URA_SOURCE_CONFORMANCE_SHA256",
+    )
+
+    def start_job(
+        self,
+        command: str,
+        values: Mapping[str, str],
+        *,
+        builder_params: Mapping[str, str] | None = None,
+        scrub_receipt_env: bool = False,
+    ) -> Job:
         argv = build_argv(command, values, commands=self.commands)
-        job_id = self._job_id_factory()
-        directory = self.state_dir / job_id
-        directory.mkdir(parents=True, exist_ok=False)
-        (directory / "command.json").write_text(json.dumps({
-            "job_id": job_id,
-            "command": command,
-            "argv": argv,
-        }, indent=2, sort_keys=True), encoding="utf-8")
-        stdout_handle = (directory / "stdout.log").open("wb")
-        stderr_handle = (directory / "stderr.log").open("wb")
-        process = subprocess.Popen(  # noqa: S603 - allowlisted argv, shell=False
-            argv,
-            cwd=self.repo_root,
-            stdout=stdout_handle,
-            stderr=stderr_handle,
-            shell=False,
-        )
-        job = Job(
-            job_id=job_id,
-            command=command,
-            argv=argv,
-            directory=directory,
-            process=process,
-            stdout_handle=stdout_handle,
-            stderr_handle=stderr_handle,
-        )
-        self.jobs[job_id] = job
-        if self.db is not None:
+        with self._app_lock:
+            job_id = self._job_id_factory()
+            directory = self.state_dir / job_id
+            directory.mkdir(parents=True, exist_ok=False)
+            (directory / "command.json").write_text(json.dumps({
+                "job_id": job_id,
+                "command": command,
+                "argv": argv,
+            }, indent=2, sort_keys=True), encoding="utf-8")
+            stdout_handle = (directory / "stdout.log").open("wb")
+            stderr_handle = (directory / "stderr.log").open("wb")
+            # Each job gets its own process group/session so a stop can
+            # terminate the complete child tree, not just the Python driver.
+            popen_kwargs: dict[str, Any] = {}
+            if os.name == "nt":
+                popen_kwargs["creationflags"] = (
+                    subprocess.CREATE_NEW_PROCESS_GROUP
+                )
+            else:
+                popen_kwargs["start_new_session"] = True
+            if scrub_receipt_env:
+                child_env = dict(os.environ)
+                for name in self._DRY_SCRUB_ENV:
+                    child_env.pop(name, None)
+                popen_kwargs["env"] = child_env
+            try:
+                process = subprocess.Popen(  # noqa: S603 - allowlisted argv, shell=False
+                    argv,
+                    cwd=self.repo_root,
+                    stdin=subprocess.DEVNULL,
+                    stdout=stdout_handle,
+                    stderr=stderr_handle,
+                    shell=False,
+                    **popen_kwargs,
+                )
+            except OSError:
+                stdout_handle.close()
+                stderr_handle.close()
+                raise
+            job = Job(
+                job_id=job_id,
+                command=command,
+                argv=argv,
+                directory=directory,
+                process=process,
+                stdout_handle=stdout_handle,
+                stderr_handle=stderr_handle,
+                builder_params=dict(builder_params) if builder_params else None,
+                pin=os.environ.get("REF_URA", ""),
+            )
+            self.jobs[job_id] = job
             self.db.upsert_job(job)
-        return job
+            return job
+
+    def _terminate_tree(self, job: Job) -> None:
+        """Stop the job's complete child-process tree, then the driver.
+
+        Best-effort but never fatal: a failure to launch the killer, or a
+        child that ignores the first signal, must not take down the request
+        thread or leave the driver alive.  On POSIX the process group receives
+        SIGTERM then (on timeout) SIGKILL regardless of whether the driver
+        itself has exited, so a group member that ignores SIGTERM is still
+        reaped.  On Windows ``taskkill /T`` walks the live child tree; if it
+        cannot be launched, the driver is killed directly.
+        """
+
+        process = job.process
+        if process is None or process.poll() is not None:
+            return
+        if os.name == "nt":
+            try:
+                subprocess.run(  # noqa: S603 - fixed argv, shell=False
+                    ["taskkill", "/PID", str(process.pid), "/T", "/F"],
+                    capture_output=True, shell=False, check=False,
+                )
+            except OSError:
+                # taskkill.exe unavailable: fall back to the direct kill.
+                try:
+                    process.kill()
+                except OSError:
+                    pass
+        else:
+            import signal  # noqa: PLC0415 - POSIX-only path
+
+            self._signal_group(process, signal.SIGTERM)
+        try:
+            process.wait(timeout=10)
+        except subprocess.TimeoutExpired:
+            if os.name != "nt":
+                import signal  # noqa: PLC0415 - POSIX-only path
+
+                # Escalate to the whole group even if the driver is still up.
+                self._signal_group(process, signal.SIGKILL)
+            else:
+                try:
+                    process.kill()
+                except OSError:
+                    pass
+            try:
+                process.wait(timeout=10)
+            except subprocess.TimeoutExpired:
+                pass
+
+    @staticmethod
+    def _signal_group(process: subprocess.Popen, sig: int) -> None:
+        """Signal the job's process group, falling back to the driver."""
+
+        try:
+            os.killpg(os.getpgid(process.pid), sig)
+        except (OSError, ProcessLookupError):
+            try:
+                process.send_signal(sig)
+            except (OSError, ProcessLookupError, ValueError):
+                pass
 
     def stop_job(self, job_id: str) -> Job:
-        job = self.jobs.get(job_id)
-        if job is None:
-            raise KeyError(f"unknown job {job_id!r}")
-        if job.process is not None and job.process.poll() is None:
-            job.process.terminate()
-            try:
-                job.process.wait(timeout=10)
-            except subprocess.TimeoutExpired:
-                job.process.kill()
-                job.process.wait(timeout=10)
-        if self.db is not None:
-            self.db.upsert_job(job)
-        return job
+        with self._app_lock:
+            job = self.jobs.get(job_id)
+            if job is None:
+                raise KeyError(f"unknown job {job_id!r}")
+            self._terminate_tree(job)
+            # Reconcile the terminal state now: close the log handles and
+            # commit job + run + usage in one transaction.
+            self._reconcile_locked()
+            return job
+
+    def reindex_all(self) -> dict[str, Any]:
+        """Rebuild the derived usage and report indexes from retained artifacts.
+
+        Serialized with reconcile/start/stop under the application lock so it
+        cannot delete a usage row another thread is committing.  It scans the
+        results root AND every output directory recorded in the runs registry
+        (a lane's --out may legitimately point outside the results root), so a
+        rebuild never silently drops usage that reconcile recorded from such a
+        directory.
+        """
+
+        with self._app_lock:
+            roots: dict[str, Path] = {
+                str(self.results_root.resolve()): self.results_root
+            }
+            runs = self.db.list_runs() or []
+            for row in runs:
+                out = str(row["out_dir"] or "").strip()
+                if not out:
+                    continue
+                candidate = (self.repo_root / out)
+                roots.setdefault(str(candidate.resolve()), candidate)
+            usage_rows: list[dict[str, Any]] = []
+            merged = {"markers": 0, "skipped_error": 0, "skipped_invalid": 0,
+                      "orphan_responses": 0, "truncated": 0,
+                      "unreadable_artifacts": 0}
+            seen: set[tuple[str, str, str, str, str]] = set()
+            for root in roots.values():
+                if not root.exists():
+                    continue
+                rows, stats = collect_usage(root, verify_sha=True)
+                for key in merged:
+                    merged[key] += int(stats.get(key, 0))
+                for entry in rows:
+                    dedup = (entry["marker_sha"], entry["role"],
+                             entry["provider"], entry["model"], entry["category"])
+                    if dedup in seen:
+                        continue
+                    seen.add(dedup)
+                    usage_rows.append(entry)
+            report_rows = collect_reports(self.results_root)
+            ok = self.db.reindex(usage_rows, report_rows)
+            return {"ok": ok, "roots": len(roots), "usage_rows": len(usage_rows),
+                    "reports": len(report_rows), **merged}
 
     def _log_tail(self, job: Job, stream: str) -> str:
         path = job.directory / f"{stream}.log"
@@ -1629,7 +2787,9 @@ class RigWebApp:
         }
         try:
             if method == "GET" and path == "/":
-                return 200, "text/html; charset=utf-8", self._overview()
+                return 200, "text/html; charset=utf-8", self._overview(
+                    query.get("reindexed", ""),
+                )
             if method == "GET" and path == "/static/style.css":
                 return 200, "text/css; charset=utf-8", _STYLE.encode("utf-8")
             if method == "GET" and path in {"/static/favicon.svg", "/favicon.ico"}:
@@ -1668,9 +2828,34 @@ class RigWebApp:
             if method == "GET" and path == "/build":
                 return 200, "text/html; charset=utf-8", self._build_page()
             if method == "POST" and path == "/build":
-                command, values = self._compose_from_builder(dict(form or {}))
-                job = self.start_job(command, values)
+                data = dict(form or {})
+                confirmed = data.pop("confirm", "") == "yes"
+                command, values, params = self._compose_from_builder(data)
+                errors = self._validate_builder(params)
+                if errors:
+                    # Reject before any subprocess exists; re-render with
+                    # field-level errors and the operator's selections kept.
+                    return 200, "text/html; charset=utf-8", self._build_page(
+                        prefill=params, errors=errors,
+                    )
+                mode = params.get("mode", "measured")
+                spends_money = not (
+                    mode == "dry_run"
+                    or (mode == "diagnostic_canary"
+                        and params.get("canary_dry") == "on")
+                )
+                if spends_money and not confirmed:
+                    return 200, "text/html; charset=utf-8", self._preview_page(
+                        command, values, params,
+                    )
+                job = self.start_job(
+                    command, values, builder_params=params,
+                    scrub_receipt_env=("--dry-run" in values),
+                )
                 return 303, f"/jobs/{job.job_id}", b""
+            if method == "POST" and path == "/db/reindex":
+                summary = self.reindex_all()
+                return 303, f"/?reindexed={quote(json.dumps(summary, sort_keys=True))}", b""
             if method == "GET" and path == "/config":
                 return 200, "text/html; charset=utf-8", self._config_page(
                     query.get("file", ""), query.get("saved", ""),
@@ -1904,131 +3089,159 @@ class RigWebApp:
         parts.append("</svg>")
         return "<div class='scroll'>" + "".join(parts) + "</div>"
 
-    @staticmethod
-    def _extract_rate_rows(document: Any) -> list[tuple[str, float]]:
-        """Best-effort (label, rate-in-[0,1]) rows from a Level-2 report body.
+    def _health_banner(self) -> str:
+        """A visible banner when the database is unhealthy - never silent."""
 
-        Defensive: unknown shapes yield no rows rather than an error, so the
-        page never crashes on an unfamiliar or partial artifact.
-        """
-
-        rows: list[tuple[str, float]] = []
-        table = None
-        if isinstance(document, dict):
-            for key in ("rows", "records", "cells", "table"):
-                if isinstance(document.get(key), list):
-                    table = document[key]
-                    break
-        if not isinstance(table, list):
-            return rows
-        for item in table[:40]:
-            if not isinstance(item, dict):
-                continue
-            label = None
-            for key in ("model", "target", "condition", "arm", "label", "name"):
-                if isinstance(item.get(key), str):
-                    label = item[key]
-                    break
-            rate = None
-            for key in ("rate", "asr", "attack_success_rate", "value",
-                        "refusal_rate", "estimate"):
-                candidate = item.get(key)
-                if isinstance(candidate, (int, float)):
-                    rate = float(candidate)
-                    break
-            if label is not None and rate is not None:
-                rows.append((label, rate if rate <= 1 else rate / 100.0))
-        return rows
-
-    @staticmethod
-    def _usage_under(root: Path) -> dict[str, dict[str, int]]:
-        """Provider call/token tallies scanned from run artifacts under root.
-
-        Presence and magnitude only; never a cost of record. Bounded scan.
-        """
-
-        totals: dict[str, dict[str, int]] = {}
-        seen = 0
-        root = root.resolve()
-        stack: list[tuple[Path, int]] = [(root, 0)]
-        while stack:
-            directory, depth = stack.pop()
-            try:
-                entries = list(directory.iterdir())
-            except OSError:
-                continue
-            for entry in entries:
-                seen += 1
-                if seen > _INVENTORY_MAX_ENTRIES:
-                    return totals
-                if entry.is_dir():
-                    if depth + 1 <= _INVENTORY_MAX_DEPTH:
-                        stack.append((entry, depth + 1))
-                    continue
-                if not entry.name.endswith((".grid.json", ".manifest.json",
-                                            ".live-attestation.json")):
-                    continue
-                try:
-                    doc = json.loads(entry.read_text(encoding="utf-8"))
-                except (OSError, ValueError):
-                    continue
-                usage = doc.get("usage") if isinstance(doc, dict) else None
-                if not isinstance(usage, dict):
-                    continue
-                provider = str(usage.get("provider", "unknown"))
-                bucket = totals.setdefault(
-                    provider, {"calls": 0, "input_tokens": 0, "output_tokens": 0}
-                )
-                for key in ("calls", "input_tokens", "output_tokens"):
-                    value = usage.get(key)
-                    if isinstance(value, int) and value >= 0:
-                        bucket[key] += value
-        return totals
-
-    def _campaign_usage(self) -> dict[str, dict[str, int]]:
-        """Durable per-provider usage: the accumulated database totals if any,
-        else a live scan of the results root."""
-
-        if self.db is not None:
-            totals = self.db.spend_totals()
-            if totals:
-                return totals
-        return self._usage_under(self.results_root)
-
-    def _spend_card(self) -> str:
-        usage = self._campaign_usage()
-        rows = []
-        for name, amount, match, _role in self._budgets():
-            observed = next(
-                (v for p, v in usage.items() if p.lower().startswith(match)),
-                None,
-            )
-            calls = observed["calls"] if observed else 0
-            toks = (observed["input_tokens"] + observed["output_tokens"]
-                    ) if observed else 0
-            rows.append(
-                f"<tr><td>{html.escape(name)}</td>"
-                f"<td><strong>{html.escape(amount)}</strong></td>"
-                f"<td>{calls:,}</td><td>{toks:,}</td></tr>"
-            )
+        health = self.db.health()
+        if health["healthy"] and not health["last_error"]:
+            return ""
         return (
-            "<div class='card'><h2>" + _icon("coins") + "Budgets &amp; spend"
-            "</h2><div class='scroll'><table><tr><th>Provider</th>"
-            "<th>Prepaid</th><th>Calls</th><th>Tokens</th></tr>"
-            + "".join(rows) + "</table></div>"
-            "<p class='note'>Prepaid budgets come from the editable "
-            "<a href='/config?file=budgets'>budgets</a> config (defaults from "
-            "ledger 11.22). Calls and tokens are scanned from retained run "
-            "artifacts (attestation probes, canaries, measured lanes) and are "
-            "observed usage, not a cost of record. A dollar figure appears "
-            "only once a per-model price is recorded; the console never "
-            "estimates spend it cannot source.</p></div>"
+            "<div class='notice red'><span class='badge red'>database</span> "
+            "<strong>Console database "
+            + ("error" if health["healthy"] else "unavailable")
+            + f"</strong><p class='note'>{html.escape(health['last_error'])} "
+            "- job history, run registry, and recorded usage may be "
+            "incomplete or unavailable (shown as unknown, never as empty). "
+            "Jobs still run; validated artifacts are unaffected. Use "
+            "Reindex on the dashboard after repairing the file.</p></div>"
         )
 
+    def _usage_cost_rows(self) -> tuple[list[dict[str, Any]] | None, str]:
+        """Cost rows from recorded usage, or (None, why-unavailable)."""
+
+        totals = self.db.usage_totals()
+        if totals is None:
+            return None, "database unavailable - recorded usage unknown"
+        pricing = load_pricing(self.repo_root)
+        return compute_costs(totals, pricing), ""
+
+    @staticmethod
+    def _fmt_money(value: float | None, currency: str) -> str:
+        if value is None:
+            return "N/A"
+        unit = {"USD": "$"}.get(currency.upper(), currency + " ")
+        return f"{unit}{value:,.4f}"
+
+    def _spend_card(self) -> str:
+        cost_rows, unavailable = self._usage_cost_rows()
+        if cost_rows is None:
+            body = (
+                f"<p class='note'><strong>N/A</strong> - "
+                f"{html.escape(unavailable)}.</p>"
+            )
+            return (
+                "<div class='card'><h2>" + _icon("coins")
+                + "Budgets, usage &amp; calculated cost</h2>" + body + "</div>"
+            )
+        # Per-model usage/cost table (recorded tokens by category, the rate
+        # applied, and the calculated cost - or N/A naming what is missing).
+        detail = []
+        for row in cost_rows:
+            cats = row["tokens"]
+            token_cells = "".join(
+                f"<td>{cats[c]:,}</td>" if cats[c] else "<td>-</td>"
+                for c in _TOKEN_CATEGORIES
+            )
+            if not row["billable"]:
+                cost_cell = "<td>local (not billed)</td>"
+            elif row["cost"] is not None:
+                cost_cell = (
+                    f"<td><strong>{self._fmt_money(row['cost'], row['currency'])}"
+                    f"</strong><br><span class='fieldhint'>rate of "
+                    f"{html.escape(row['effective_date'])}</span></td>"
+                )
+            else:
+                why = "; ".join(row["missing"]) or "price not recorded"
+                cost_cell = (
+                    "<td>N/A <span class='fieldhint'>"
+                    + html.escape(why) + "</span></td>"
+                )
+            detail.append(
+                f"<tr><td>{html.escape(row['role'])}</td>"
+                f"<td>{html.escape(row['provider'])}<br><code>"
+                f"{html.escape(row['model'][:44])}</code></td>"
+                f"<td>{row['calls']:,}"
+                + (f"<br><span class='fieldhint'>{row['missing_tokens']} "
+                   "without token usage</span>" if row["missing_tokens"] else "")
+                + f"</td>{token_cells}{cost_cell}</tr>"
+            )
+        heads = "".join(
+            f"<th>{c.replace('_', ' ')}</th>" for c in _TOKEN_CATEGORIES
+        )
+        detail_table = (
+            "<div class='scroll'><table><tr><th>Role</th><th>Provider / model"
+            f"</th><th>Calls</th>{heads}<th>Calculated cost</th></tr>"
+            + "".join(detail) + "</table></div>"
+            if detail else
+            "<p class='note'>No recorded usage yet. Usage appears here once "
+            "a completed run's artifacts are recorded (reconcile on job "
+            "finish, or Reindex on the dashboard).</p>"
+        )
+        # Provider budget summary: prepaid minus calculated spend.
+        by_provider: dict[str, tuple[float, bool]] = {}
+        for row in cost_rows:
+            if not row["billable"]:
+                continue
+            spent, complete = by_provider.get(row["provider"].lower(), (0.0, True))
+            if row["cost"] is None:
+                by_provider[row["provider"].lower()] = (spent, False)
+            else:
+                by_provider[row["provider"].lower()] = (spent + row["cost"], complete)
+        budget_rows = []
+        for name, amount, match, _role in self._budgets():
+            spent, complete = next(
+                (v for p, v in by_provider.items() if p.startswith(match)),
+                (0.0, True),
+            )
+            prepaid = self._parse_money(amount)
+            spent_text = self._fmt_money(spent, "USD") if complete else (
+                "N/A <span class='fieldhint'>some models lack a recorded "
+                "price</span>"
+            )
+            if prepaid is None:
+                remaining = "N/A <span class='fieldhint'>prepaid not numeric</span>"
+            elif not complete:
+                remaining = "N/A <span class='fieldhint'>cost incomplete</span>"
+            else:
+                remaining = self._fmt_money(prepaid - spent, "USD")
+            budget_rows.append(
+                f"<tr><td>{html.escape(name)}</td>"
+                f"<td><strong>{html.escape(amount)}</strong></td>"
+                f"<td>{spent_text}</td><td>{remaining}</td></tr>"
+            )
+        return (
+            "<div class='card'><h2>" + _icon("coins")
+            + "Budgets, usage &amp; calculated cost</h2>"
+            "<div class='scroll'><table><tr><th>Provider</th><th>Prepaid</th>"
+            "<th>Calculated spend</th><th>Remaining</th></tr>"
+            + "".join(budget_rows) + "</table></div>"
+            + detail_table +
+            "<p class='note'>Tokens are the recorded usage read from "
+            "completion-bound run artifacts (Response tokens and provider "
+            "usage detail; judge-call tokens from completed trails) - never "
+            "an estimate. Cost multiplies those tokens by the operator-edited "
+            "<a href='/config?file=pricing'>pricing</a> table (effective-"
+            "dated); a missing token count or price renders as N/A, never as "
+            "zero. Prepaid budgets come from the editable "
+            "<a href='/config?file=budgets'>budgets</a> config. If a provider "
+            "ever reports an actually billed amount in an artifact, that "
+            "amount is authoritative over this calculation.</p></div>"
+        )
+
+    @staticmethod
+    def _parse_money(amount: str) -> float | None:
+        match = re.fullmatch(r"\$?\s*([0-9]+(?:\.[0-9]+)?)", amount.strip())
+        return float(match.group(1)) if match else None
+
     def _runs_card(self) -> str:
-        if self.db is None:
-            return ""
         runs = self.db.list_runs()
+        if runs is None:
+            return (
+                "<div class='card'><h2>" + _icon("book") + "Campaign runs</h2>"
+                "<p class='note'><strong>Unavailable</strong> - the console "
+                "database cannot be read, so the run registry is unknown "
+                "(not empty).</p></div>"
+            )
         if not runs:
             return (
                 "<div class='card'><h2>" + _icon("book") + "Campaign runs</h2>"
@@ -2067,13 +3280,187 @@ class RigWebApp:
             "</div>"
         )
 
+    def _report_index(self) -> list[dict[str, Any]]:
+        """Indexed report artifacts: the database index, else a live scan."""
+
+        rows = self.db.list_reports()
+        if rows:
+            return [dict(row) for row in rows]
+        return collect_reports(self.results_root)
+
+    def _render_level2(self, rel: str, doc: Mapping[str, Any]) -> str:
+        """Render one ura-level2-report/1: real estimate rows, one chart per
+        metric, never a cross-metric combination or a universal score."""
+
+        common = doc.get("common")
+        estimates = (
+            common.get("estimates") if isinstance(common, Mapping) else None
+        )
+        if not isinstance(estimates, list) or not estimates:
+            return (
+                "<div class='card'><h2>" + _icon("chart")
+                + f"{html.escape(rel)}</h2><p class='note'>Validated Level-2 "
+                "report with no common estimate rows (native-only or empty)."
+                "</p></div>"
+            )
+        by_metric: dict[str, list[Mapping[str, Any]]] = {}
+        for row in estimates:
+            if isinstance(row, Mapping):
+                by_metric.setdefault(str(row.get("metric", "?")), []).append(row)
+        sections = []
+        for metric in sorted(by_metric):
+            rows = by_metric[metric]
+            family = str(rows[0].get("semantic_family", ""))
+            polarity = str(rows[0].get("polarity", ""))
+            # A chart is drawn only when every value in this metric is a
+            # rate in [0, 1]; other scales stay table-only rather than being
+            # squeezed into a misleading axis.
+            values = [row.get("value") for row in rows]
+            chartable = all(
+                isinstance(v, (int, float)) and 0.0 <= float(v) <= 1.0
+                for v in values
+            )
+            chart = ""
+            if chartable:
+                chart_rows = [
+                    (
+                        f"{row.get('model_spec', '?')} · "
+                        f"{row.get('corpus_arm', '?')} · "
+                        f"{row.get('attacker', '?')}",
+                        float(row.get("value", 0.0)),
+                    )
+                    for row in rows[:24]
+                ]
+                chart = self._bar_chart(chart_rows)
+            else:
+                chart = (
+                    "<p class='note'>Not charted: values are not rates in "
+                    "[0, 1]; the table below is the presentation.</p>"
+                )
+            table_rows = []
+            for row in rows[:60]:
+                ci_low, ci_high = row.get("ci_low"), row.get("ci_high")
+                ci = (
+                    f"[{ci_low:.3f}, {ci_high:.3f}]"
+                    if isinstance(ci_low, (int, float))
+                    and isinstance(ci_high, (int, float))
+                    else "N/A (no CI recorded)"
+                )
+                completed = row.get("judgments_completed")
+                decided = row.get("judgments_decided")
+                coverage = (
+                    f"{decided}/{completed}"
+                    if isinstance(decided, int) and isinstance(completed, int)
+                    else "N/A"
+                )
+                n_clusters = row.get("n_clusters")
+                value = row.get("value")
+                value_text = (
+                    f"{float(value):.4f}"
+                    if isinstance(value, (int, float)) else "N/A"
+                )
+                table_rows.append(
+                    f"<tr><td><code>{html.escape(str(row.get('model_spec', '')))}"
+                    "</code></td>"
+                    f"<td>{html.escape(str(row.get('corpus_arm', '')))}</td>"
+                    f"<td>{html.escape(str(row.get('attacker', '')))}</td>"
+                    f"<td>{html.escape(str(row.get('defense', '')))}</td>"
+                    f"<td><strong>{value_text}</strong></td>"
+                    f"<td>{ci}</td>"
+                    f"<td>{html.escape(str(row.get('n_records', 'N/A')))}</td>"
+                    f"<td>{html.escape(str(n_clusters) if n_clusters is not None else 'N/A')}</td>"
+                    f"<td>{coverage}</td></tr>"
+                )
+            sections.append(
+                f"<h3>{html.escape(metric)} <span class='modtag'>"
+                f"{html.escape(family)}</span><span class='modtag'>"
+                f"{html.escape(polarity)}</span></h3>"
+                + chart +
+                "<div class='scroll'><table><tr><th>model_spec</th>"
+                "<th>corpus_arm</th><th>attacker</th><th>defense</th>"
+                "<th>value</th><th>ci_low, ci_high</th><th>n_records</th>"
+                "<th>n_clusters</th><th>decided/completed</th></tr>"
+                + "".join(table_rows) + "</table></div>"
+            )
+        return (
+            "<div class='card'><h2>" + _icon("chart")
+            + f"{html.escape(rel)} <span class='badge blue'>measured</span>"
+            "</h2>"
+            "<p class='note'>Deterministic Level-2 export "
+            "(<code>common.estimates</code>). One chart per metric; "
+            "unrelated metrics are never combined and no universal safety "
+            "score exists. Diagnostic evidence cannot reach this report by "
+            "construction.</p>"
+            + "".join(sections)
+            + f"<p class='note'><a href='/artifacts?path={quote(rel)}'>open "
+            "the full validated artifact &rarr;</a></p></div>"
+        )
+
+    def _render_level1(self, rel: str, doc: Mapping[str, Any]) -> str:
+        """Render one ura-level1-evidence/2: separate unit ledgers with the
+        real count fields, diagnostic/measured distinct."""
+
+        scope = doc.get("scope") if isinstance(doc.get("scope"), Mapping) else {}
+        counts = doc.get("counts") if isinstance(doc.get("counts"), Mapping) else {}
+        kind = str(scope.get("evidence_kind", "unknown"))
+        badge = (
+            "<span class='badge amber'>diagnostic dry-run</span>"
+            if kind == "diagnostic_dry_run"
+            else "<span class='badge blue'>measured</span>"
+        )
+        tables = []
+        for title, key in (
+            ("Prospective request units", "prospective_request_units"),
+            ("Planning strata", "planning_strata"),
+            ("Execution units", "execution_units"),
+            ("Judgment records", "judgment_records"),
+            ("Request-level errors", "request_level_errors"),
+        ):
+            block = counts.get(key)
+            if not isinstance(block, Mapping):
+                tables.append(
+                    f"<h3>{html.escape(title)}</h3><p class='note'>"
+                    "N/A - not supplied in this artifact.</p>"
+                )
+                continue
+            cells = "".join(
+                "<tr><td>" + html.escape(str(name).replace("_", " "))
+                + "</td><td>"
+                + ("null (by design)" if value is None else f"{value:,}")
+                + "</td></tr>"
+                for name, value in block.items()
+                if name != "unit"
+            )
+            tables.append(
+                f"<h3>{html.escape(title)} <span class='modtag'>"
+                f"{html.escape(str(block.get('unit', '')))}</span></h3>"
+                "<div class='scroll'><table>" + cells + "</table></div>"
+            )
+        return (
+            "<div class='card'><h2>" + _icon("file")
+            + f"{html.escape(rel)} {badge}</h2>"
+            "<p class='note'>Level-1 lifecycle inventory. Request units, "
+            "planning strata, execution units, and judgment records are "
+            "separate unit ledgers and are never summed into each other; "
+            "structural N/A, missing, and error are distinct states.</p>"
+            + "".join(tables)
+            + f"<p class='note'><a href='/artifacts?path={quote(rel)}'>open "
+            "the full validated artifact &rarr;</a></p></div>"
+        )
+
     def _stats_page(self) -> bytes:
         self._reconcile()
-        counts, _trunc = artifact_inventory(self.results_root)
-        analysis = counts.get("Level-1/2", StageInventory())
-        charts = []
-        for rel in analysis.paths:
-            if "level2" not in rel.lower() or not rel.lower().endswith(".json"):
+        reports = self._report_index()
+        cards = []
+        listed = []
+        for report in reports:
+            rel = str(report["path"])
+            listed.append(
+                f"<li><a href='/artifacts?path={quote(rel)}'>"
+                f"{html.escape(rel)}</a> <span class='modtag'>"
+                f"{html.escape(str(report['kind']))}</span></li>"
+            )
+            if report["kind"] not in {"level1", "level2"} or len(cards) >= 6:
                 continue
             try:
                 doc = json.loads(
@@ -2081,39 +3468,27 @@ class RigWebApp:
                 )
             except (OSError, ValueError):
                 continue
-            rate_rows = self._extract_rate_rows(doc)
-            if not rate_rows:
+            if not isinstance(doc, dict):
                 continue
-            charts.append(
-                "<div class='card'><h2>" + _icon("chart")
-                + f"{html.escape(rel)}</h2>"
-                + self._bar_chart(rate_rows)
-                + f"<p class='note'><a href='/artifacts?path={quote(rel)}'>"
-                "open the full validated table &rarr;</a> Diagram is a "
-                "presentation of the deterministic Level-2 report; the "
-                "artifact is authoritative.</p></div>"
-            )
-        if analysis.paths:
-            listed = "".join(
-                f"<li><a href='/artifacts?path={quote(rel)}'>"
-                f"{html.escape(rel)}</a></li>" for rel in analysis.paths
-            )
-            results = (
-                "<div class='card'><h2>" + _icon("file") + "Result tables</h2>"
-                f"<ul>{listed}</ul></div>"
-            )
-        else:
-            results = (
-                "<div class='card'><p class='note'>No Level-1/Level-2 result "
-                "tables retained yet. They appear here once measured lanes and "
-                "the analysis CLIs have run; diagrams render from the "
-                "deterministic Level-2 report.</p></div>"
-            )
+            if report["kind"] == "level2":
+                cards.append(self._render_level2(rel, doc))
+            else:
+                cards.append(self._render_level1(rel, doc))
+        results = (
+            "<div class='card'><h2>" + _icon("file") + "Report artifacts</h2>"
+            f"<ul>{''.join(listed)}</ul></div>"
+            if listed else
+            "<div class='card'><p class='note'>No Level-1/Level-2 report "
+            "artifacts retained yet. They appear here once lanes and the "
+            "analysis CLIs have run; diagrams render from the real "
+            "<code>ura-level2-report/1</code> estimate rows.</p></div>"
+        )
         body = (
             "<h1>" + _icon("chart", size=22) + "Campaign stats</h1>"
+            + self._health_banner()
             + self._spend_card()
             + self._runs_card()
-            + "".join(charts)
+            + "".join(cards)
             + results
         )
         return _page("Campaign stats", body, active="Stats")
@@ -2193,38 +3568,111 @@ class RigWebApp:
             options.append((spec, spec, mods or ("text",), "local"))
         return options
 
+    #: How many repeatable live-attestation rows the builder form accepts.
+    _MAX_ATT_ROWS = 12
+
     def _compose_from_builder(
         self, form: Mapping[str, str],
-    ) -> tuple[str, dict[str, str]]:
+    ) -> tuple[str, dict[str, str], dict[str, str]]:
         """Turn builder selections into a validated run_matrix value map.
 
         The individual modality/model/framework checkboxes are collected
         client-side into comma-joined hidden fields, so this only reads the
         composed strings and hands them to the same typed build_argv path.
+        Returns ``(command, values, params)`` where ``params`` is the raw
+        builder form (persisted with the job and replayed on re-render).
         """
 
+        params = {
+            key: str(value).strip() for key, value in form.items()
+            if str(value).strip()
+        }
+        mode = params.get("mode", "measured")
+        dry = mode == "dry_run" or (
+            mode == "diagnostic_canary" and params.get("canary_dry") == "on"
+        )
         values: dict[str, str] = {}
         for source, flag in (
             ("corpora", "--corpora"), ("api", "--api"),
             ("local", "--local"), ("attackers", "--attackers"),
             ("judges", "--judges"), ("limit", "--limit"),
-            ("sample_seed", "--sample-seed"), ("out", "--out"),
+            ("sample_seed", "--sample-seed"), ("seeds", "--seeds"),
+            ("max_queries", "--max-queries"), ("max_turns", "--max-turns"),
+            ("cap_target", "--max-total-target-calls"),
+            ("cap_judge", "--max-total-judge-calls"),
+            ("cap_http", "--max-total-http-attempts"),
+            ("deadline", "--deadline-seconds"),
+            ("scope", "--execution-scope-id"),
+            ("max_age", "--live-attestation-max-age-hours"),
+            ("project_revision", "--project-revision"),
+            ("project_revision_sha", "--project-revision-sha256"),
+            ("source_conformance", "--source-conformance"),
+            ("source_conformance_sha", "--source-conformance-sha256"),
+            ("dtype", "--dtype"), ("quantization", "--quantization"),
+            ("out", "--out"),
         ):
-            raw = str(form.get(source, "")).strip()
+            raw = params.get(source, "")
             if raw:
                 values[flag] = raw
-        defense = str(form.get("defense", "")).strip()
+        for index in range(1, self._MAX_ATT_ROWS + 1):
+            path = params.get(f"att_path{index}", "")
+            sha = params.get(f"att_sha{index}", "")
+            if path:
+                values[f"--live-attestation#{index}"] = path
+            if sha:
+                values[f"--live-attestation-sha256#{index}"] = sha
+        defense = params.get("defense", "")
         if defense and defense != "none":
             values["--defense"] = defense
+            guard = params.get("defense_guard", "")
+            if guard:
+                values["--defense-guard"] = guard
         judges = values.get("--judges", "")
         if "llm" in judges.split(","):
-            values["--judge-model"] = str(
-                form.get("judge_model", "")
-            ).strip() or "anthropic:claude-haiku-4-5-20251001"
-        mode = str(form.get("mode", "measured"))
+            # A dry lane must grade with the offline mock LLM - never a real,
+            # metered hosted judge - so a "no calls, no spend" mode cannot
+            # silently issue paid Haiku judge calls.
+            values["--judge-model"] = "mock" if dry else (
+                params.get("judge_model", "")
+                or "anthropic:claude-haiku-4-5-20251001"
+            )
         for token, mode_flag, _desc in _BUILD_MODES:
             if token == mode and mode_flag:
                 values[mode_flag] = "on"
+        if mode == "attestation_probe":
+            # A probe is one query and one turn by definition; fix them so the
+            # composed argv matches the probe shape run_matrix enforces
+            # instead of inheriting the driver's default of 4.
+            values["--max-queries"] = "1"
+            values["--max-turns"] = "1"
+        if mode == "diagnostic_canary" and params.get("canary_dry") == "on":
+            values["--dry-run"] = "on"
+            # The dry canary is offline-synthetic by definition; compose the
+            # synthetic corpus (the builder has no synth arm checkbox) and
+            # drop any real target selection.
+            values["--corpora"] = "synth"
+            values.pop("--api", None)
+            values.pop("--local", None)
+        if dry:
+            # A dry lane needs no admission receipts; the env-prefilled
+            # receipt fields must not leak into an offline command (the child
+            # is also launched with those env vars scrubbed).
+            for flag in ("--project-revision", "--project-revision-sha256",
+                         "--source-conformance", "--source-conformance-sha256"):
+                values.pop(flag, None)
+        else:
+            # A non-dry lane's argv must be self-contained: if a receipt field
+            # was left blank but the campaign environment binds it, fold the
+            # env value into the command so the retained "Exact command"
+            # reproduces the same admission in a clean shell.
+            for flag, env_name in (
+                ("--project-revision", "URA_PROJECT_REVISION_MANIFEST"),
+                ("--project-revision-sha256", "URA_PROJECT_REVISION_SHA256"),
+                ("--source-conformance", "URA_SOURCE_CONFORMANCE_MANIFEST"),
+                ("--source-conformance-sha256", "URA_SOURCE_CONFORMANCE_SHA256"),
+            ):
+                if not values.get(flag) and os.environ.get(env_name):
+                    values[flag] = os.environ[env_name]
         # Bind the operator-local registries so a lane resolves its roster,
         # local target config, and source receipt as the runbook expects.
         for relative, flag in (
@@ -2237,18 +3685,369 @@ class RigWebApp:
             local_cfg = "experiments/local-targets.json"
             if (self.repo_root / local_cfg).is_file():
                 values["--local-config"] = local_cfg
-        return "run_matrix", values
+        return "run_matrix", values, params
 
-    def _build_page(self) -> bytes:
+    @staticmethod
+    def _split_list(raw: str) -> list[str]:
+        return [item.strip() for item in raw.split(",") if item.strip()]
+
+    def _validate_builder(self, params: Mapping[str, str]) -> dict[str, str]:
+        """Mode-specific builder validation, keyed by form field.
+
+        Mirrors the run_matrix admission gates so an invalid lane is rejected
+        with a field-level explanation BEFORE any subprocess exists.  The CLI
+        gates remain authoritative; this never weakens them.
+        """
+
+        errors: dict[str, str] = {}
+        mode = params.get("mode", "measured")
+        canary_dry = mode == "diagnostic_canary" and params.get("canary_dry") == "on"
+        api = self._split_list(params.get("api", ""))
+        local = self._split_list(params.get("local", ""))
+        corpora = self._split_list(params.get("corpora", ""))
+        attackers = self._split_list(params.get("attackers", ""))
+        seeds = self._split_list(params.get("seeds", "") or "0")
+        targets = len(api) + len(local)
+        real_corpora = [arm for arm in corpora if arm != "synth"]
+        att_rows: list[tuple[str, str]] = []
+        for index in range(1, self._MAX_ATT_ROWS + 1):
+            path = params.get(f"att_path{index}", "")
+            sha = params.get(f"att_sha{index}", "")
+            if path or sha:
+                att_rows.append((path, sha))
+
+        def require_int(field: str, *, positive: bool = False) -> int | None:
+            raw = params.get(field, "")
+            if not raw:
+                return None
+            try:
+                value = int(raw)
+            except ValueError:
+                errors[field] = "must be an integer"
+                return None
+            if positive and value <= 0:
+                errors[field] = "must be a positive integer"
+                return None
+            return value
+
+        limit = require_int("limit")
+        if limit is not None and limit < 0:
+            errors["limit"] = "must be non-negative"
+        require_int("sample_seed")
+        require_int("max_queries", positive=True)
+        require_int("max_turns", positive=True)
+
+        raw_seeds = params.get("seeds", "")
+        if raw_seeds:
+            seed_parts = self._split_list(raw_seeds)
+            if not all(re.fullmatch(r"-?\d+", part) for part in seed_parts):
+                errors["seeds"] = "must be a comma list of integers"
+            elif len(set(seed_parts)) != len(seed_parts):
+                errors["seeds"] = "seeds must be unique"
+        scope_value = params.get("scope", "")
+        if scope_value and re.search(r"\s", scope_value):
+            errors["scope"] = "must not contain whitespace"
+
+        def require_hex(field: str) -> None:
+            raw = params.get(field, "")
+            if raw and not re.fullmatch(r"[0-9a-fA-F]{64}", raw):
+                errors[field] = "must be an exact 64-hex SHA-256"
+
+        require_hex("project_revision_sha")
+        require_hex("source_conformance_sha")
+
+        def env_or(field: str, env_name: str) -> bool:
+            return bool(params.get(field, "") or os.environ.get(env_name, ""))
+
+        has_project = (
+            env_or("project_revision", "URA_PROJECT_REVISION_MANIFEST")
+            and env_or("project_revision_sha", "URA_PROJECT_REVISION_SHA256")
+        )
+        has_source = (
+            env_or("source_conformance", "URA_SOURCE_CONFORMANCE_MANIFEST")
+            and env_or("source_conformance_sha", "URA_SOURCE_CONFORMANCE_SHA256")
+        )
+
+        def forbid_live_fields(reason: str) -> None:
+            if params.get("scope", ""):
+                errors["scope"] = reason
+            if params.get("max_age", ""):
+                errors["max_age"] = reason
+            if att_rows:
+                errors["att"] = reason
+
+        def require_caps_and_deadline() -> None:
+            for cap in ("cap_target", "cap_judge", "cap_http", "deadline"):
+                value = require_int(cap, positive=True)
+                if value is None and cap not in errors:
+                    errors[cap] = (
+                        "required: a finite positive ceiling before any "
+                        "non-dry run"
+                    )
+
+        def require_live_admission() -> None:
+            if not params.get("scope", ""):
+                errors["scope"] = "required for live execution"
+            age = params.get("max_age", "")
+            try:
+                age_value = float(age) if age else 0.0
+            except ValueError:
+                age_value = 0.0
+            if not 0 < age_value <= 8760:
+                errors["max_age"] = (
+                    "required: maximum attestation age in hours, in (0, 8760]"
+                )
+            if not att_rows:
+                errors["att"] = (
+                    "at least one live-attestation receipt/digest pair is "
+                    "required"
+                )
+            if not has_project:
+                errors["project_revision"] = (
+                    "required: validated project-revision receipt and digest "
+                    "(field or campaign environment)"
+                )
+            if real_corpora and not has_source:
+                errors["source_conformance"] = (
+                    "required: validated source-conformance receipt and "
+                    "digest for real source arms"
+                )
+            require_caps_and_deadline()
+
+        for path, sha in att_rows:
+            if not path or not sha:
+                errors["att"] = (
+                    "every receipt row needs both the receipt path and its "
+                    "exact 64-hex digest"
+                )
+            elif not re.fullmatch(r"[0-9a-fA-F]{64}", sha):
+                errors["att"] = "receipt digest must be an exact 64-hex SHA-256"
+
+        if not params.get("out", ""):
+            errors["out"] = "required: output directory for this run"
+        if not corpora and not canary_dry:
+            # A dry canary composes the synthetic corpus itself, so it needs
+            # no arm checkbox; every other lane must select at least one arm.
+            errors["corpora"] = "select at least one corpus arm"
+        if not attackers:
+            errors["attackers"] = "select at least one attack framework"
+        if len(local) > 1:
+            errors["models"] = (
+                "one local target per process (vLLM/Ollama engines must not "
+                "accumulate on the rig GPUs)"
+            )
+
+        if mode == "dry_run":
+            forbid_live_fields(
+                "a diagnostic dry run cannot consume or produce live "
+                "attestation"
+            )
+        elif mode == "attestation_probe":
+            if targets != 1:
+                errors["models"] = "an attestation probe takes exactly one target"
+            if len(corpora) != 1:
+                errors["corpora"] = "an attestation probe takes exactly one corpus"
+            if attackers != ["replay"]:
+                errors["attackers"] = (
+                    "an attestation probe uses exactly the replay attacker"
+                )
+            if len(seeds) != 1:
+                errors["seeds"] = "an attestation probe takes exactly one seed"
+            if params.get("defense", "none") != "none":
+                errors["defense"] = "an attestation probe requires defense none"
+            if limit not in {1, 2}:
+                errors["limit"] = "an attestation probe requires --limit 1 or 2"
+            if params.get("max_queries", "") not in {"", "1"}:
+                errors["max_queries"] = "an attestation probe uses one query"
+            if params.get("max_turns", "") not in {"", "1"}:
+                errors["max_turns"] = "an attestation probe uses one turn"
+            if not params.get("scope", ""):
+                errors["scope"] = "required: execution scope id"
+            if not has_project:
+                errors["project_revision"] = (
+                    "required: validated project-revision receipt and digest"
+                )
+            if real_corpora and not has_source:
+                errors["source_conformance"] = (
+                    "required for a real-source probe corpus"
+                )
+            if att_rows:
+                errors["att"] = (
+                    "an attestation probe cannot consume prior attestations"
+                )
+            if params.get("max_age", ""):
+                errors["max_age"] = (
+                    "an attestation probe cannot consume prior attestations"
+                )
+            require_caps_and_deadline()
+        elif mode == "diagnostic_canary":
+            if limit != 1:
+                errors["limit"] = (
+                    "a diagnostic canary requires exactly --limit 1 (all rows "
+                    "in that source cluster are retained)"
+                )
+            if len(attackers) != 1:
+                errors["attackers"] = (
+                    "a diagnostic canary takes exactly one attacker"
+                )
+            if len(seeds) != 1:
+                errors["seeds"] = "a diagnostic canary takes exactly one seed"
+            if canary_dry:
+                # The dry canary is composed as offline-synthetic (corpora
+                # synth, no targets, no receipts): the operator only picks the
+                # attacker/seed/limit, so no arm or target selection is
+                # required, and live-attestation fields are forbidden.
+                forbid_live_fields(
+                    "a dry canary cannot consume or produce live attestation"
+                )
+            else:
+                if len(corpora) != 1:
+                    errors["corpora"] = (
+                        "a live canary takes exactly one corpus"
+                    )
+                if targets != 1:
+                    errors["models"] = (
+                        "a live canary takes exactly one target model"
+                    )
+                require_live_admission()
+        else:  # measured execution
+            if targets < 1:
+                errors["models"] = "select at least one target model"
+            require_live_admission()
+            if api and (limit is None or (limit is not None and limit <= 0)):
+                errors["limit"] = (
+                    "hosted paid lanes must carry a positive pre-registered "
+                    "--limit that bounds spend (campaign sampling policy); "
+                    "--limit 0 would run the full corpus"
+                )
+            if api and not params.get("sample_seed", ""):
+                errors["sample_seed"] = (
+                    "hosted paid lanes must record --sample-seed (identical "
+                    "subset across conditions)"
+                )
+        return errors
+
+    def _ceilings_card(self, params: Mapping[str, str]) -> str:
+        """The call-ceiling summary shown before a non-dry job starts."""
+
+        api = self._split_list(params.get("api", ""))
+        local = self._split_list(params.get("local", ""))
+        corpora = self._split_list(params.get("corpora", ""))
+        attackers = self._split_list(params.get("attackers", ""))
+        seeds = self._split_list(params.get("seeds", "") or "0")
+        grid_cells = max(1, len(api) + len(local)) * max(1, len(corpora)) * \
+            max(1, len(attackers))
+        shape = (
+            f"{len(api) + len(local)} target(s) x {len(corpora)} corpus "
+            f"arm(s) x {len(attackers)} attacker(s) x {len(seeds)} seed(s) "
+            f"= {grid_cells * max(1, len(seeds))} planned cell-seed lanes"
+        )
+        rows = "".join(
+            f"<tr><td><code>{html.escape(flag)}</code></td>"
+            f"<td><strong>{html.escape(params.get(field, '') or '(unset)')}"
+            "</strong></td><td>" + html.escape(note) + "</td></tr>"
+            for field, flag, note in (
+                ("cap_target", "--max-total-target-calls",
+                 "hard circuit-breaker on model-under-test calls"),
+                ("cap_judge", "--max-total-judge-calls",
+                 "hard circuit-breaker on hosted judge calls"),
+                ("cap_http", "--max-total-http-attempts",
+                 "hard cap on transport attempts, retries included"),
+                ("deadline", "--deadline-seconds",
+                 "wall-clock admission deadline for the lane"),
+                ("limit", "--limit",
+                 "cluster subsample per corpus (cluster sibling rows are all "
+                 "retained, so row counts can exceed this)"),
+                ("max_queries", "--max-queries",
+                 "target calls per datapoint and seed"),
+                ("max_turns", "--max-turns", "conversation turns per "
+                 "datapoint and seed"),
+            )
+        )
+        return (
+            "<div class='card'><h2>" + _icon("coins") + "Calculated call "
+            "ceilings</h2>"
+            f"<p><strong>{html.escape(shape)}</strong></p>"
+            "<div class='scroll'><table><tr><th>Ceiling</th><th>Value</th>"
+            "<th>Meaning</th></tr>" + rows + "</table></div>"
+            "<p class='note'>The entered ceilings are the binding budget "
+            "guards; run_matrix rejects the lane if they cannot cover its "
+            "exact no-call projection. The projection itself is computed by "
+            "the CLI preflight from the real corpus, never estimated here."
+            "</p></div>"
+        )
+
+    def _preview_page(
+        self, command: str, values: Mapping[str, str],
+        params: Mapping[str, str],
+    ) -> bytes:
+        """Exact argv + ceilings confirmation before a non-dry job starts."""
+
+        argv = build_argv(command, values, commands=self.commands)
+        argv_chips = "<div class='argv'>" + "".join(
+            f"<code>{html.escape(part)}</code>" for part in argv
+        ) + "</div>"
+        hidden = "".join(
+            f"<input type='hidden' name='{html.escape(key)}' "
+            f"value='{html.escape(value)}'>"
+            for key, value in sorted(params.items())
+        )
+        mode = params.get("mode", "measured")
+        body = (
+            "<h1>" + _icon("play", size=22) + "Confirm paid execution</h1>"
+            "<div class='notice amber'><strong>This mode spends real "
+            "money.</strong><p class='note'>Mode: "
+            f"<code>{html.escape(mode)}</code>. Review the exact command and "
+            "ceilings below; nothing has started yet.</p></div>"
+            "<div class='card'><h2>" + _icon("terminal")
+            + "Exact command</h2>" + argv_chips + "</div>"
+            + self._ceilings_card(params) +
+            "<form method='post' action='/build'>"
+            + hidden +
+            "<input type='hidden' name='confirm' value='yes'>"
+            "<div class='buildbar'><button type='submit'>"
+            + _icon("play", size=15) + "Start this job</button>"
+            "<a href='/build'><button type='button' class='ghost'>Back to "
+            "builder</button></a></div></form>"
+        )
+        return _page("Confirm execution", body, active="Build")
+
+    def _build_page(
+        self,
+        prefill: Mapping[str, str] | None = None,
+        errors: Mapping[str, str] | None = None,
+    ) -> bytes:
+        prefill = dict(prefill or {})
+        errors = dict(errors or {})
+
+        def err(field: str) -> str:
+            message = errors.get(field, "")
+            return (
+                f"<span class='fielderr'>{html.escape(message)}</span>"
+                if message else ""
+            )
+
+        def val(field: str, default: str = "") -> str:
+            return html.escape(prefill.get(field, default))
+
+        selected_mode = prefill.get("mode", "dry_run")
         # Mode radios.
         mode_html = "".join(
             "<label class='radio'>"
             f"<input type='radio' name='mode' value='{token}'"
-            + (" checked" if token == "dry_run" else "") + ">"
+            + (" checked" if token == selected_mode else "") + ">"
             f"<span><strong>{html.escape(token.replace('_', ' '))}</strong> "
             f"<span class='fieldhint'>{html.escape(desc)}</span></span></label>"
             for token, _flag, desc in _BUILD_MODES
         )
+        mode_html += (
+            "<label class='check'><input type='checkbox' name='canary_dry'"
+            + (" checked" if prefill.get("canary_dry") == "on" else "") + ">"
+            "<span><strong>dry (synthetic) canary</strong> "
+            "<span class='fieldhint'>with diagnostic canary: run the typed "
+            "synthetic canary offline (MockTarget, --corpora synth, no "
+            "spend)</span></span></label>"
+        ) + err("mode")
         # Modality chips select arms by membership: an arm belongs to every
         # modality it carries, so a text+image arm answers to both chips.
         registry_arms = set(self._registry_keys(
@@ -2346,27 +4145,101 @@ class RigWebApp:
             for fw, desc, mods in _FRAMEWORKS
         )
         # Judge checkboxes.
+        judges_selected = set(self._split_list(prefill.get("judges", "rules")))
         judge_boxes = (
             "<label class='check'><input type='checkbox' class='judgebox' "
-            "data-judge='rules' checked><span><strong>rules</strong> "
+            "data-judge='rules'"
+            + (" checked" if "rules" in judges_selected else "")
+            + "><span><strong>rules</strong> "
             "<span class='fieldhint'>deterministic rule scorer (free)</span>"
             "</span></label>"
             "<label class='check'><input type='checkbox' class='judgebox' "
-            "data-judge='llm'><span><strong>llm</strong> "
+            "data-judge='llm'"
+            + (" checked" if "llm" in judges_selected else "")
+            + "><span><strong>llm</strong> "
             "<span class='fieldhint'>hosted Haiku judge (metered per response)"
             "</span></span></label>"
         )
+        defense_selected = prefill.get("defense", "none")
         defense_opts = "".join(
-            f"<option value='{d}'>{d}</option>"
+            f"<option value='{d}'"
+            + (" selected" if d == defense_selected else "")
+            + f">{d}</option>"
             for d in ("none", "input", "output", "both")
         )
+        guard_selected = prefill.get("defense_guard", "rules")
+        guard_opts = "".join(
+            f"<option value='{d}'"
+            + (" selected" if d == guard_selected else "")
+            + f">{d}</option>"
+            for d in ("rules", "guardrail")
+        )
+        dtype_selected = prefill.get("dtype", "")
+        dtype_opts = "".join(
+            f"<option value='{d}'"
+            + (" selected" if d == dtype_selected else "")
+            + f">{d or '(default: auto)'}</option>"
+            for d in ("", "auto", "bfloat16", "float16")
+        )
+
+        def text_field(
+            field: str, label: str, hint: str, *, default: str = "",
+            kind: str = "text", placeholder: str = "",
+        ) -> str:
+            current = prefill.get(field, default)
+            attrs = f" value='{html.escape(current)}'" if current else ""
+            ph = f" placeholder='{html.escape(placeholder)}'" if placeholder else ""
+            step = " step='any'" if kind == "number" else ""
+            return (
+                f"<div><label class='fieldlabel'>{html.escape(label)} "
+                f"<span class='fieldhint'>{html.escape(hint)}</span></label>"
+                f"<input class='wide' type='{kind}'{step} "
+                f"name='{html.escape(field)}'{attrs}{ph}>{err(field)}</div>"
+            )
+
+        # Repeatable live-attestation receipt/digest rows.
+        att_rows_html = []
+        prefilled_rows = [
+            index for index in range(1, self._MAX_ATT_ROWS + 1)
+            if prefill.get(f"att_path{index}") or prefill.get(f"att_sha{index}")
+        ]
+        visible_rows = max(prefilled_rows or [1])
+        for index in range(1, visible_rows + 1):
+            att_rows_html.append(
+                f"<div class='attrow' data-row='{index}'>"
+                f"<input class='wide' type='text' name='att_path{index}' "
+                f"placeholder='runs/thesis/attest/receipt.live-attestation.json'"
+                f" value='{val(f'att_path{index}')}'>"
+                f"<input class='wide' type='text' name='att_sha{index}' "
+                f"placeholder='exact 64-hex sha256'"
+                f" value='{val(f'att_sha{index}')}'></div>"
+            )
+        env_project = os.environ.get("URA_PROJECT_REVISION_MANIFEST", "")
+        env_project_sha = os.environ.get("URA_PROJECT_REVISION_SHA256", "")
+        env_source = os.environ.get("URA_SOURCE_CONFORMANCE_MANIFEST", "")
+        env_source_sha = os.environ.get("URA_SOURCE_CONFORMANCE_SHA256", "")
+        error_summary = ""
+        if errors:
+            items = "".join(
+                f"<li><strong>{html.escape(field)}</strong>: "
+                f"{html.escape(message)}</li>"
+                for field, message in sorted(errors.items())
+            )
+            error_summary = (
+                "<div class='notice red'><strong>The lane was not started."
+                f"</strong><ul>{items}</ul><p class='note'>Each problem is "
+                "also flagged next to its control below. Nothing was "
+                "composed or executed.</p></div>"
+            )
         body = (
             "<h1>" + _icon("flask", size=22) + "Campaign builder</h1>"
             "<p class='note'>Compose a lane by choosing modalities, target "
             "models, and attack frameworks. On build it opens as a "
             "<code>run_matrix</code> job through the same typed, validated "
-            "path - nothing here bypasses the allowlist. Paid modes spend real "
-            "money; review the composed command on the job page.</p>"
+            "path - nothing here bypasses the allowlist. Paid modes show the "
+            "exact command and its call ceilings for confirmation before "
+            "anything starts.</p>"
+            + error_summary +
             "<form method='post' action='/build' id='builder'>"
             # hidden composed fields
             "<input type='hidden' name='corpora'><input type='hidden' name='api'>"
@@ -2387,32 +4260,116 @@ class RigWebApp:
             "<div class='card'><h2>" + _icon("box") + "Arms &amp; corpora</h2>"
             "<p class='note'>Arms in the current modality scope. Each shows its "
             "modality tags; use All / None per group for bulk selection.</p>"
-            + "".join(arm_groups) + "</div>"
+            + err("corpora") + "".join(arm_groups) + "</div>"
             "<div class='card'><h2>" + _icon("coins") + "Target models</h2>"
-            + model_boxes + "</div>"
+            + err("models") + model_boxes + "</div>"
             "<div class='card'><h2>" + _icon("pulse") + "Attack frameworks</h2>"
+            + err("attackers") +
             "<div class='checkgrid'>" + framework_boxes + "</div></div>"
             "<div class='card'><h2>" + _icon("receipt") + "Judges &amp; defense"
-            "</h2><div class='checkgrid'>" + judge_boxes + "</div>"
-            "<label class='fieldlabel'>Defense</label>"
-            f"<select name='defense'>{defense_opts}</select></div>"
-            "<div class='card'><h2>" + _icon("coins") + "Sampling &amp; output"
-            "</h2><div class='cols'>"
-            "<div><label class='fieldlabel'>--limit "
-            "<span class='fieldhint'>cluster subsample; required on paid hosted "
-            "lanes</span></label>"
-            "<input type='number' name='limit' step='1'></div>"
-            "<div><label class='fieldlabel'>--sample-seed "
-            "<span class='fieldhint'>fix &amp; record for a reproducible subset"
-            "</span></label><input type='number' name='sample_seed' value='0'>"
+            "</h2>" + err("judges") + "<div class='checkgrid'>" + judge_boxes
+            + "</div><div class='cols'>"
+            + text_field("judge_model", "--judge-model",
+                         "target id for the LLM judge (default: the Haiku "
+                         "campaign judge)",
+                         placeholder="anthropic:claude-haiku-4-5-20251001")
+            + "<div><label class='fieldlabel'>--defense</label>"
+            f"<select name='defense'>{defense_opts}</select>{err('defense')}"
             "</div>"
-            "<div><label class='fieldlabel'>--out</label>"
-            "<input type='text' name='out' value='runs/thesis/lane'></div>"
+            "<div><label class='fieldlabel'>--defense-guard "
+            "<span class='fieldhint'>guard used when a defense is on</span>"
+            f"</label><select name='defense_guard'>{guard_opts}</select></div>"
             "</div></div>"
+            "<div class='card'><h2>" + _icon("receipt")
+            + "Receipts (fail-closed admission)</h2>"
+            "<p class='note'>Every non-dry run requires the validated "
+            "project-revision receipt; every real source arm requires the "
+            "validated source-conformance receipt. Prefilled from the "
+            "exported campaign environment when present.</p><div class='cols'>"
+            + text_field("project_revision", "--project-revision",
+                         "ura-project-revision/1 receipt path",
+                         default=env_project)
+            + text_field("project_revision_sha", "--project-revision-sha256",
+                         "exact byte digest", default=env_project_sha)
+            + text_field("source_conformance", "--source-conformance",
+                         "ura-source-conformance/1 receipt path",
+                         default=env_source)
+            + text_field("source_conformance_sha",
+                         "--source-conformance-sha256",
+                         "exact byte digest", default=env_source_sha)
+            + "</div></div>"
+            "<div class='card'><h2>" + _icon("logo")
+            + "Execution scope &amp; live attestation</h2>"
+            "<p class='note'>Probes create attestations; live canaries and "
+            "measured lanes consume them (repeatable receipt/digest rows, "
+            "paired in order).</p><div class='cols'>"
+            + text_field("scope", "--execution-scope-id",
+                         "non-secret account/runtime scope label")
+            + text_field("max_age", "--live-attestation-max-age-hours",
+                         "maximum receipt age in (0, 8760]", kind="number")
+            + "</div><label class='fieldlabel'>Live-attestation receipt / "
+            "digest pairs</label>" + err("att")
+            + "<div id='attrows'>" + "".join(att_rows_html) + "</div>"
+            "<button type='button' class='ghost' id='addatt'>"
+            "Add receipt row</button></div>"
+            "<div class='card'><h2>" + _icon("sliders")
+            + "Sampling &amp; turns</h2><div class='cols'>"
+            + text_field("limit", "--limit",
+                         "cluster subsample; required on paid hosted lanes; "
+                         "probes need 1-2, canaries exactly 1", kind="number")
+            + text_field("sample_seed", "--sample-seed",
+                         "fix and record for a reproducible subset",
+                         default="0", kind="number")
+            + text_field("seeds", "--seeds",
+                         "comma list of trajectory seeds", default="0")
+            + text_field("max_queries", "--max-queries",
+                         "max target calls per datapoint and seed",
+                         kind="number")
+            + text_field("max_turns", "--max-turns",
+                         "max conversation turns per datapoint and seed",
+                         kind="number")
+            + "</div></div>"
+            "<div class='card'><h2>" + _icon("coins")
+            + "Call ceilings &amp; deadline (budget guards)</h2>"
+            "<p class='note'>Required finite positive ceilings on every "
+            "non-dry run; run_matrix refuses a lane they cannot cover.</p>"
+            "<div class='cols'>"
+            + text_field("cap_target", "--max-total-target-calls",
+                         "hard cap on target calls", kind="number")
+            + text_field("cap_judge", "--max-total-judge-calls",
+                         "hard cap on hosted judge calls", kind="number")
+            + text_field("cap_http", "--max-total-http-attempts",
+                         "hard cap on transport attempts", kind="number")
+            + text_field("deadline", "--deadline-seconds",
+                         "wall-clock deadline for the lane", kind="number")
+            + "</div></div>"
+            "<div class='card'><h2>" + _icon("disk")
+            + "Local serving (vLLM)</h2><div class='cols'>"
+            "<div><label class='fieldlabel'>--dtype</label>"
+            f"<select name='dtype'>{dtype_opts}</select></div>"
+            + text_field("quantization", "--quantization",
+                         "awq, gptq, fp8; empty auto-detects",
+                         placeholder="(auto-detect)")
+            + "</div></div>"
+            "<div class='card'><h2>" + _icon("folder") + "Output</h2>"
+            "<div class='cols'>"
+            + text_field("out", "--out", "output directory under the rig "
+                         "results root", default="runs/thesis/lane")
+            + "</div></div>"
             "<div class='buildbar'><button type='submit'>" + _icon("play", size=15)
-            + "Build &amp; start job</button>"
+            + "Compose &amp; review</button>"
             "<span id='buildpreview' class='note'></span></div>"
             "</form>"
+            "<script type='application/json' id='builder-prefill'>"
+            + json.dumps({
+                "corpora": self._split_list(prefill.get("corpora", "")),
+                "api": self._split_list(prefill.get("api", "")),
+                "local": self._split_list(prefill.get("local", "")),
+                "attackers": self._split_list(
+                    prefill.get("attackers", "replay")
+                ),
+            }).replace("</", "<\\/")
+            + "</script>"
             + _BUILDER_SCRIPT
         )
         return _page("Campaign builder", body, active="Build")
@@ -2663,7 +4620,73 @@ class RigWebApp:
             "<ol class='playbook'>" + "".join(rows) + "</ol></div>"
         )
 
-    def _overview(self) -> bytes:
+    def _db_card(self, reindexed: str) -> str:
+        """Database health, schema version, and the one Reindex action."""
+
+        health = self.db.health()
+        tone = "green" if health["healthy"] else "red"
+        state = "healthy" if health["healthy"] else "UNAVAILABLE"
+        counts = health["counts"]
+        count_text = (
+            ", ".join(
+                f"{name}: {value if value is not None else 'unknown'}"
+                for name, value in counts.items()
+            ) if counts else "counts unknown"
+        )
+        note = ""
+        if reindexed:
+            try:
+                summary = json.loads(reindexed)
+            except ValueError:
+                summary = {}
+            if isinstance(summary, dict) and summary:
+                # Always show the load-bearing counts (even when zero) and
+                # escape every key/value - the query string is attacker
+                # controlled, so this must never be a raw HTML sink.
+                always = ("usage_rows", "markers", "reports", "roots")
+                stat_bits = [
+                    f"{html.escape(str(name))} "
+                    f"{html.escape(str(summary.get(name, 0)))}"
+                    for name in always
+                ]
+                stat_bits += [
+                    f"{html.escape(str(key))} {html.escape(str(value))}"
+                    for key, value in sorted(summary.items())
+                    if key not in {"ok", *always} and value
+                ]
+                note = (
+                    "<div class='notice "
+                    + ("blue" if summary.get("ok") else "red")
+                    + "'><strong>Reindex "
+                    + ("completed" if summary.get("ok") else "FAILED")
+                    + ".</strong><p class='note'>Derived usage, cost, and "
+                    "report indexes were rebuilt from retained artifacts "
+                    "with full digest verification ("
+                    + ", ".join(stat_bits)
+                    + "). Skip counts are reported, never silent.</p></div>"
+                )
+        error = (
+            f"<p class='note'>Last error: <code>"
+            f"{html.escape(health['last_error'])}</code></p>"
+            if health["last_error"] else ""
+        )
+        return (
+            "<div class='card'><h2>" + _icon("disk") + "Console database</h2>"
+            + note +
+            f"<p><span class='badge {tone}'>{state}</span> "
+            f"schema v{health['schema_version']} - {html.escape(count_text)}"
+            "</p>" + error +
+            "<form method='post' action='/db/reindex'>"
+            "<button type='submit' class='small'>Reindex from artifacts"
+            "</button></form>"
+            "<p class='note'>Operational state only (jobs, runs, recorded "
+            "usage, report index) under the console state directory; the "
+            "validated artifacts remain the scientific authority. Reindex "
+            "rebuilds every derived row from the retained artifacts.</p>"
+            "</div>"
+        )
+
+    def _overview(self, reindexed: str = "") -> bytes:
         self._reconcile()
         jobs = list(self.jobs.values())
         running = [job for job in jobs if job.state() == "running"]
@@ -2685,11 +4708,25 @@ class RigWebApp:
                 f"<p class='note'>{used_pct:.0f}% used of "
                 f"{_human_size(usage.total)}</p>"
             )
+        pin = os.environ.get("REF_URA", "")
+        cost_rows, _cost_unavailable = self._usage_cost_rows()
+        if cost_rows is None:
+            spend_value, spend_label = "unknown", "calculated spend (db unavailable)"
+        else:
+            billable = [r for r in cost_rows if r["billable"]]
+            if any(r["cost"] is None for r in billable):
+                spend_value = "N/A"
+                spend_label = "calculated spend (price/tokens missing)"
+            else:
+                spend_value = self._fmt_money(
+                    sum(r["cost"] for r in billable), "USD"
+                )
+                spend_label = "calculated spend (recorded usage x pricing)"
         stats = (
             "<div class='cols'>"
             "<div class='card'><div class='stat'>"
             f"<span class='value'>{len(jobs)}</span>"
-            "<span class='label'>jobs this session</span></div></div>"
+            "<span class='label'>jobs (persisted)</span></div></div>"
             "<div class='card'><div class='stat'>"
             f"<span class='value'><span class='dot blue'></span>"
             f"{len(running)}</span>"
@@ -2697,7 +4734,14 @@ class RigWebApp:
             "<div class='card'><div class='stat'>"
             f"<span class='value'><span class='dot red'></span>"
             f"{len(failed)}</span>"
-            "<span class='label'>failed this session</span></div></div>"
+            "<span class='label'>failed</span></div></div>"
+            "<div class='card'><div class='stat'>"
+            f"<span class='value'><code>{html.escape(pin[:10] or 'unpinned')}"
+            "</code></span>"
+            "<span class='label'>project revision (REF_URA)</span></div></div>"
+            "<div class='card'><div class='stat'>"
+            f"<span class='value'>{spend_value}</span>"
+            f"<span class='label'>{html.escape(spend_label)}</span></div></div>"
             f"<div class='card'>{disk_html}</div>"
             "</div>"
         )
@@ -2744,8 +4788,10 @@ class RigWebApp:
         )
         body = (
             "<h1>" + _icon("grid", size=22) + "Dashboard</h1>"
+            + self._health_banner()
             + self._warnings_html()
             + stats
+            + self._db_card(reindexed)
             + "<div class='card'><h2>" + _icon("chart") + "Campaign pipeline"
             "</h2>" + _pipeline_svg(counts) +
             "<p class='note'>Click a stage to browse its files. Counts are "
@@ -3022,6 +5068,7 @@ class RigWebApp:
         return _page(
             "Jobs",
             "<h1>" + _icon("pulse", size=22) + "Jobs</h1>"
+            + self._health_banner()
             + controls + table + script + refresh,
             active="Jobs",
         )
@@ -3046,9 +5093,25 @@ class RigWebApp:
             "<div class='card'><h2>" + _icon("pulse") + "Failure</h2>"
             "<p>The command exited with "
             f"code {job.exit_code()}. Standard error is shown below; the "
-            "underlying CLI message is authoritative.</p></div>"
+            "underlying CLI message is authoritative.</p>"
+            + (f"<pre>{html.escape(job.failure)}</pre>" if job.failure else "")
+            + "</div>"
             if state == "failed" else ""
         )
+        builder = ""
+        if job.builder_params:
+            rows = "".join(
+                f"<tr><td>{html.escape(key)}</td>"
+                f"<td><code>{html.escape(value)}</code></td></tr>"
+                for key, value in sorted(job.builder_params.items())
+            )
+            builder = (
+                "<div class='card'><h2>" + _icon("flask")
+                + "Builder parameters</h2><div class='scroll'><table>"
+                + rows + "</table></div><p class='note'>The raw campaign-"
+                "builder selections this job was composed from (persisted "
+                "with the job).</p></div>"
+            )
         argv_chips = "<div class='argv'>" + "".join(
             f"<code>{html.escape(part)}</code>" for part in job.argv
         ) + "</div>"
@@ -3079,6 +5142,7 @@ class RigWebApp:
             + meta +
             "<div class='card'><h2>" + _icon("file") + "Command</h2>"
             + argv_chips + stop_form + "</div>"
+            + builder
             + failure +
             "<div class='card'><h2>" + _icon("chart") + "stdout</h2>"
             f"<pre>{html.escape(stdout_tail)}</pre></div>"
@@ -3188,14 +5252,52 @@ class RigWebApp:
         )
 
 
-def _serve(app: RigWebApp, host: str, port: int) -> None:
+#: Largest accepted POST body.  The configuration editor is the biggest
+#: legitimate payload (a JSON registry); anything larger is rejected before
+#: parsing.
+_MAX_POST_BYTES = 2 * 1024 * 1024
+
+
+def _make_server(app: RigWebApp, host: str, port: int):
+    """Construct (without serving) the localhost HTTP server for ``app``."""
+
     from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
     class Handler(BaseHTTPRequestHandler):
         def _dispatch(self, method: str) -> None:
             form: dict[str, str] = {}
             if method == "POST":
-                length = int(self.headers.get("Content-Length") or 0)
+                raw_length = self.headers.get("Content-Length")
+                try:
+                    length = int(raw_length) if raw_length is not None else 0
+                except ValueError:
+                    length = -1
+                # A missing/malformed/negative length, or one over the cap, is
+                # rejected outright: never fall through to an unbounded
+                # rfile.read(-1).  For an over-cap body the client is still
+                # streaming, so drain a bounded amount first (so it can read
+                # the 413) then close; a negative/invalid length carries no
+                # trustworthy body, so reject immediately.
+                if length < 0 or length > _MAX_POST_BYTES:
+                    self.close_connection = True
+                    if length > _MAX_POST_BYTES:
+                        status_code = 413
+                        body = b"request body exceeds the console limit"
+                        remaining = min(length, 64 * 1024 * 1024)
+                        while remaining > 0:
+                            chunk = self.rfile.read(min(remaining, 65536))
+                            if not chunk:
+                                break
+                            remaining -= len(chunk)
+                    else:
+                        status_code = 400
+                        body = b"invalid Content-Length"
+                    self.send_response(status_code)
+                    self.send_header("Content-Type", "text/plain; charset=utf-8")
+                    self.send_header("Content-Length", str(len(body)))
+                    self.end_headers()
+                    self.wfile.write(body)
+                    return
                 payload = self.rfile.read(length).decode("utf-8")
                 form = {
                     key: values[0]
@@ -3223,10 +5325,14 @@ def _serve(app: RigWebApp, host: str, port: int) -> None:
         def log_message(self, format: str, *args: Any) -> None:  # noqa: A002
             sys.stderr.write("rig-web: " + format % args + "\n")
 
-    server = ThreadingHTTPServer((host, port), Handler)
+    return ThreadingHTTPServer((host, port), Handler)
+
+
+def _serve(app: RigWebApp, host: str, port: int) -> None:
+    server = _make_server(app, host, port)
     print(json.dumps({
         "status": "serving",
-        "url": f"http://{host}:{port}/",
+        "url": f"http://{host}:{server.server_address[1]}/",
         "results_root": str(app.results_root),
         "state_dir": str(app.state_dir),
     }, sort_keys=True))
@@ -3236,6 +5342,7 @@ def _serve(app: RigWebApp, host: str, port: int) -> None:
         pass
     finally:
         server.server_close()
+        app.close()  # reconcile terminal jobs and release the database
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -3250,6 +5357,17 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", type=int, default=8642)
     parser.add_argument(
+        "--reindex", action="store_true",
+        help="headless: rebuild the usage/report indexes from retained "
+             "artifacts, print the JSON summary, and exit (same operation as "
+             "the dashboard Reindex button)",
+    )
+    parser.add_argument(
+        "--usage-report", action="store_true",
+        help="headless: print the recorded token usage and calculated cost "
+             "(the Stats spend table) as JSON and exit",
+    )
+    parser.add_argument(
         "--selftest-sleep", type=float, default=None,
         help="UI diagnostic only: sleep this many seconds and exit",
     )
@@ -3257,6 +5375,30 @@ def main(argv: list[str] | None = None) -> int:
     if args.selftest_sleep is not None:
         time.sleep(args.selftest_sleep)
         print("rig-web selftest complete")
+        return 0
+    # Headless operations make the console's usage/cost/reindex functions
+    # available through the CLI too, without serving the interface.
+    if args.reindex or args.usage_report:
+        app = RigWebApp(
+            results_root=args.results_root.resolve(),
+            state_dir=args.state_dir.resolve(),
+        )
+        app.state_dir.mkdir(parents=True, exist_ok=True)
+        try:
+            if args.reindex:
+                print(json.dumps(app.reindex_all(), sort_keys=True))
+            if args.usage_report:
+                totals = app.db.usage_totals() or {}
+                pricing = load_pricing(app.repo_root)
+                rows = compute_costs(totals, pricing)
+                print(json.dumps({
+                    "schema": "ura-console-usage-report/1",
+                    "rows": [
+                        {**row, "tokens": dict(row["tokens"])} for row in rows
+                    ],
+                }, sort_keys=True))
+        finally:
+            app.close()
         return 0
     if args.host != "127.0.0.1":
         print(

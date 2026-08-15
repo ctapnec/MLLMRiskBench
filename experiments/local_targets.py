@@ -34,9 +34,9 @@ _VLLM_DOC_PATHS = (
 _IMAGE_HINTS = (
     "vl", "llava", "vision", "vlm", "internvl", "pixtral", "idefics",
     "paligemma", "-vl-", "qwen2-vl", "qwen2.5-vl", "qwen3-vl", "phi-3.5-vision",
-    "llama-3.2-11b-vision", "llama-3.2-90b-vision", "gemma-3",
+    "llama-3.2-11b-vision", "llama-3.2-90b-vision", "gemma-3", "omni", "ocr",
 )
-_AUDIO_HINTS = ("audio", "ultravox", "qwen2-audio")
+_AUDIO_HINTS = ("audio", "ultravox", "qwen2-audio", "omni", "asr", "speech")
 
 _ROSTER_LOCAL = "experiments/vllm-roster.json"
 _ROSTER_EXAMPLE = "experiments/rig/vllm-roster.example.json"

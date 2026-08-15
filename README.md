@@ -368,6 +368,25 @@ ASR/FRR. Other convertible agent/runtime sources may fail scored preflight until
 their substantive runtime or evaluator exists; conversion support is not
 scoring support. See the protocol for the current inventory.
 
+## Rig console and campaign builder
+
+`python -m experiments.rig_web` serves a single-operator, localhost-only
+campaign builder and console over the same maintained CLIs: mode-aware lane
+composition (dry run, attestation probe, diagnostic canary, measured
+execution) with fail-closed validation and an exact-argv confirmation before
+any paid mode, job monitoring with whole-process-tree stop, an allowlisted
+JSON editor for the operator-local registries, rendering of retained
+Level-1/Level-2 artifacts, and recorded-token usage with calculated cost from
+an operator-edited effective-dated pricing table. Its state (jobs, campaign
+runs, recorded usage, report index) lives in a stdlib-sqlite `console.db`
+under the console state directory - operational state only; the validated
+filesystem artifacts remain the scientific authority. Every experiment
+operation the console launches runs the same maintained `experiments.*`
+command available on the CLI (`--models` resolves names via the hosted/local
+target registries on `run_matrix`/`rig_check`; `live_attestation --validate`
+revalidates a receipt), and the console's own bookkeeping is reachable
+headlessly too (`rig_web --reindex`, `rig_web --usage-report`).
+
 ## Layout
 
 ```text

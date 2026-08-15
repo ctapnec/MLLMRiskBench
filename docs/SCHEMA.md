@@ -483,3 +483,35 @@ The exact URA project revision, source-byte identities, target snapshot,
 requested and realized judge identities, source and policy digests, code/schema
 identity, and analysis inputs remain independently bound in runtime and
 postprocessing provenance.
+
+## Console operational database and pricing registry (not evidence)
+
+The rig console persists its operational state in a stdlib-sqlite database
+(`console.db` under the console state directory, schema version 2): `jobs`
+(exact argv, builder parameters, state, exit code, failure context, pinned
+revision), `runs` (the campaign-run registry: kind, output directory, pin),
+`usage` (per-completion-marker recorded token amounts keyed by role,
+provider, model, and billing category - input, output, cache_read,
+cache_write, reasoning, plus `calls` and `missing_tokens` counters), and
+`reports` (an index of retained artifacts by their declared
+`schema_version`). Rows in `usage` are derived exclusively from artifacts
+reachable through a valid `*.complete.json` completion marker and can be
+rebuilt at any time from the retained artifacts (dashboard Reindex, with
+digest verification). None of these tables is an evidence schema: they index
+and mirror the validated artifacts, which remain authoritative.
+
+`experiments/pricing.json` (editable copy of
+`experiments/rig/pricing.example.json`, schema tag `ura-console-pricing/1`)
+is an operator-maintained registry, not an artifact:
+`providers -> models -> rates[]`, each rate carrying `effective_date` (a
+zero-padded ISO `YYYY-MM-DD`), `currency`, and `per_million_tokens` for the
+billing categories. The console selects the rate whose `effective_date` is the
+newest on or before today and multiplies recorded tokens by its per-category
+rates. Priced categories are `input`, `output`, `cache_read`, and
+`cache_write`; `reasoning` is displayed but not priced separately (providers
+bill it as output), and the input count has any reported cache reads netted
+out first so no token is billed twice. If the applicable rate leaves a
+category with recorded tokens unpriced, or a token count is missing, the whole
+row renders N/A naming the missing field - never a fabricated zero. The
+example ships every rate as `null`; fill them from the provider's price sheet
+before relying on a figure.

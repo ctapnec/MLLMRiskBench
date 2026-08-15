@@ -44,6 +44,7 @@ from __future__ import annotations
 
 import argparse
 import atexit
+import difflib
 import hashlib
 import json
 import os
@@ -2153,7 +2154,122 @@ def load_corpus_with_audit(
     }
 
 
-def main(argv=None) -> int:
+def _resolve_model_selection(
+    names: list[str], api_registry_path: Path, local_registry_path: Path,
+) -> tuple[list[str], list[str]]:
+    """Resolve ``--models`` names through the hosted and local registries.
+
+    A name that is a key of the hosted registry becomes an ``--api`` spec; a
+    key of the local registry becomes a ``--local`` spec.  Unknown and
+    ambiguous names are rejected with the registries that were consulted, so
+    the operator sees exactly why a selection failed and where to fix it.
+    """
+
+    def registry_object(path: Path) -> dict[str, object]:
+        if not path.is_file():
+            return {}
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError) as exc:
+            raise ValueError(
+                f"--models could not read the target registry {path}: {exc}"
+            ) from exc
+        if not isinstance(data, dict):
+            raise ValueError(
+                f"--models target registry {path} must be a JSON object "
+                "keyed by exact model spec"
+            )
+        return data
+
+    hosted = registry_object(api_registry_path)
+    local = registry_object(local_registry_path)
+    if not hosted and not local:
+        raise ValueError(
+            "--models requires at least one target registry; found neither "
+            f"{api_registry_path} nor {local_registry_path}"
+        )
+    api_specs: list[str] = []
+    local_specs: list[str] = []
+    for name in names:
+        in_hosted = name in hosted
+        in_local = name in local
+        if in_hosted and in_local:
+            raise ValueError(
+                f"ambiguous model {name!r}: present in both the hosted "
+                f"registry ({api_registry_path}) and the local registry "
+                f"({local_registry_path}); select it explicitly with "
+                "--api or --local"
+            )
+        if in_hosted:
+            api_specs.append(name)
+        elif in_local:
+            local_specs.append(name)
+        else:
+            candidates = difflib.get_close_matches(
+                name, [*hosted, *local], n=4, cutoff=0.5
+            )
+            hint = (
+                "; closest registry entries: " + ", ".join(candidates)
+                if candidates else ""
+            )
+            raise ValueError(
+                f"unknown model {name!r}: not present in the hosted registry "
+                f"({api_registry_path}) or the local registry "
+                f"({local_registry_path}){hint}"
+            )
+    return api_specs, local_specs
+
+
+def _apply_model_selection(
+    ap: argparse.ArgumentParser, args: argparse.Namespace,
+) -> None:
+    """Rewrite ``--models`` into the equivalent ``--api``/``--local`` split.
+
+    Runs immediately after parsing so every later gate (probe/canary shape,
+    per-spec config requirements, uniqueness) sees the same values an explicit
+    selection would have produced.  When the operator gave no registry paths,
+    the conventional operator-local registries are consulted and, when a side
+    resolves, bound as that side's config so a ``--models`` run is
+    self-contained.
+    """
+
+    names = [s.strip() for s in args.models.split(",") if s.strip()]
+    if not names:
+        return
+    if args.api or args.local:
+        ap.error("--models is mutually exclusive with explicit --api/--local")
+    if len(set(names)) != len(names):
+        ap.error("--models entries must be unique")
+    repo_root = Path(__file__).resolve().parents[1]
+    api_path = (
+        Path(args.api_config) if args.api_config
+        else repo_root / "experiments" / "api-targets.json"
+    )
+    local_path = (
+        Path(args.local_config) if args.local_config
+        else repo_root / "experiments" / "local-targets.json"
+    )
+    try:
+        api_specs, local_specs = _resolve_model_selection(
+            names, api_path, local_path
+        )
+    except ValueError as exc:
+        ap.error(str(exc))
+    args.api = ",".join(api_specs)
+    args.local = ",".join(local_specs)
+    if api_specs and not args.api_config and api_path.is_file():
+        args.api_config = str(api_path)
+    if local_specs and not args.local_config and local_path.is_file():
+        args.local_config = str(local_path)
+
+
+def build_parser() -> argparse.ArgumentParser:
+    """The complete run_matrix argument surface (also forwarded by rig_check).
+
+    Importable so interface-parity tests can validate a generated argument
+    vector against the real parser without executing a run.
+    """
+
     ap = argparse.ArgumentParser(description="URA-Bench experiment matrix.")
     ap.add_argument("--dry-run", action="store_true", help="use MockTarget only")
     ap.add_argument(
@@ -2215,6 +2331,16 @@ def main(argv=None) -> int:
         "--project-revision-sha256",
         default=os.environ.get("URA_PROJECT_REVISION_SHA256", ""),
         help="exact byte digest paired with --project-revision",
+    )
+    ap.add_argument(
+        "--models",
+        default="",
+        help=(
+            "comma list of model names resolved through the hosted "
+            "(--api-config, default experiments/api-targets.json) and local "
+            "(--local-config, default experiments/local-targets.json) target "
+            "registries; mutually exclusive with explicit --api/--local"
+        ),
     )
     ap.add_argument("--api", default="", help="comma list of API model ids")
     ap.add_argument(
@@ -2365,7 +2491,13 @@ def main(argv=None) -> int:
                     help="operator acknowledgement: clear the durable provider/"
                          "judge circuit after correcting its root cause")
     ap.add_argument("--out", default="runs/exp")
+    return ap
+
+
+def main(argv=None) -> int:
+    ap = build_parser()
     args = ap.parse_args(argv)
+    _apply_model_selection(ap, args)
 
     if args.diagnostic_canary and (args.preflight_only or args.attestation_probe):
         ap.error(

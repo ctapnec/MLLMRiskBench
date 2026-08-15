@@ -288,6 +288,34 @@ benchmark, source policy, modality, model, defense, attacker, judge, cluster,
 seed, turn, and code/schema identity. Partial or mixed artifact families are not
 silently aggregated.
 
+## Console and operational state
+
+The rig console (`experiments/rig_web.py`) is the approved campaign builder
+over the maintained CLIs: a localhost-only, single-operator HTTP application
+that launches every experiment as one allowlisted `python -m experiments.*`
+argument vector (`shell=False`, typed parameters, interface-parity-tested
+against the real module parsers). Its mode-aware builder enforces the
+probe/canary/measured admission shapes before any subprocess exists and shows
+the exact argument vector plus call ceilings for confirmation before a paid
+mode starts. Jobs run in their own process group so a stop terminates the
+complete child tree. The console's own operational actions (saving a
+registry, reindexing, stopping a job, computing the recorded-usage cost
+report) run in-process against the state database and retained artifacts
+rather than as `experiments.*` commands; the reindex and usage report are
+also exposed headlessly (`rig_web --reindex` / `--usage-report`).
+
+Console state persists in a stdlib-sqlite database (`console.db` under the
+state directory): jobs with their exact argv and builder parameters, the
+campaign-run registry, per-artifact recorded token usage, and a report
+index; it carries a schema version, a startup integrity check, transactional
+terminal-state commits, and a Reindex action that rebuilds every derived row
+from retained artifacts with digest verification. This database is
+operational state, never scientific evidence: usage rows are read only from
+completion-marker-bound artifacts, cost is calculated only from the
+operator-edited effective-dated pricing registry (missing data renders N/A,
+never zero), and the validated filesystem artifacts remain the sole
+measurement authority.
+
 ## Defense and judge separation
 
 A model-backed `GuardedTarget` intervention has one shared defense-guard

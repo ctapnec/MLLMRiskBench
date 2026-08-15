@@ -215,6 +215,19 @@ are never pooled into one rate or ranking.
 
 ## Direct execution
 
+The `experiments.*` steps below are equally launchable from the CLI or from
+the rig console (`experiments/rig_web.py`), which composes the identical
+allowlisted argument vectors so no gate or artifact differs by interface.
+Steps that are not `experiments.*` commands - selecting and checking out the
+revision, installing dependencies, acquiring releases and recording licenses,
+and running the upstream native projects - are operator actions outside the
+console allowlist. Within the console, the campaign builder is the
+mode-validated path that enforces the probe/canary/measured admission shapes
+before any subprocess and previews the exact command and call ceilings before
+a paid mode starts; the Run page instead launches an allowlisted command
+directly from a typed form. The console's sqlite state is operational only;
+the validated artifacts remain the protocol's sole evidence.
+
 1. Before source acquisition, select one prospectively reviewed full 40-hex URA
    project commit, check it out detached, and create/digest/validate one
    `ura-project-revision/1` receipt from the clean local checkout. Export its

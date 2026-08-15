@@ -11,12 +11,28 @@ The maintained artifact contract is Runner `ura-runner/2.11` with unified schema
 `1.4`. Do not combine older-runner artifacts with this program.
 
 Every `python -m experiments.*` command below can equivalently be started
-from the optional rig console (section 18): the console builds the identical
-argument vector from a typed allowlist, so admission gates and artifacts do
-not differ between the two interfaces, and the CLI remains authoritative.
-One exception: invocations that repeat a flag (multiple `--live-attestation`
-receipts, multiple `--arm`/`--observation`, `--native`/`--eligibility` input
-loops) remain CLI-only; the console form passes each flag at most once.
+from the rig console and campaign builder (section 18): the console builds
+the identical argument vector from a typed allowlist, so admission gates and
+artifacts do not differ between the two interfaces, and the CLI remains
+authoritative. Repeatable flags (multiple `--live-attestation` receipt/digest
+pairs, repeated `--eligibility`/`--results`/`--native` inputs, repeated
+`--arm`/`--observation` for a multi-arm source-conformance scaffold) are
+repeatable form rows in the console; the interface-parity tests validate every
+console form against the real module parsers.
+
+The Run page starts an allowlisted command from a typed form immediately; the
+campaign builder is the separate mode-validated path that previews the exact
+argument vector and call ceilings before any paid mode starts.
+
+Target selection shorthand: `--models name[,name...]` on `run_matrix` and
+`rig_check` resolves each name through the hosted registry (`--api-config`,
+default `experiments/api-targets.json`) and the local registry
+(`--local-config`, default `experiments/local-targets.json`) into the
+equivalent `--api`/`--local` split. It is mutually exclusive with an explicit
+`--api`/`--local`, and an unknown or ambiguous name is rejected naming the
+registries consulted. `live_attestation --validate PATH --sha256 HEX`
+revalidates an existing receipt through the same strict loader the
+measured-grid admission uses.
 
 The program is deliberately lane-based. A model is tested on every physical
 modality that both its exact adapter condition and an acquired source support,
@@ -2254,24 +2270,62 @@ restricted source releases unless the recipient is explicitly authorized. Mock,
 synthetic, partial, manually edited, failed, or diagnostic-only artifacts remain
 diagnostics and cannot be promoted to thesis evidence.
 
-## 18. Optional rig-local web console
+## 18. Rig-local console and campaign builder
 
-A single-operator localhost console can start, monitor, and stop the
-allowlisted experiment CLIs from typed forms, stream their logs, and browse
-retained artifacts with explicit diagnostic/measured, structural-`N/A`, and
-error badges:
+A single-operator localhost application starts, monitors, and stops the
+allowlisted experiment CLIs from typed forms, composes campaign lanes through
+a mode-aware builder (dry run, attestation probe, diagnostic canary, measured
+execution) with mode-specific validation and an exact-argv confirmation step
+before any paid mode starts, streams job logs, edits the operator-local
+registries (api-targets, local-targets, source-instances, budgets, pricing)
+through an allowlisted JSON editor, renders retained `ura-level1-evidence/2`
+and `ura-level2-report/1` artifacts with explicit diagnostic/measured,
+structural-`N/A`, and error distinctions, and accounts recorded token usage
+and its calculated monetary cost:
 
 ```bash
 python -m experiments.rig_web --results-root runs --state-dir runs/rig-web
 ```
 
 The console binds only `127.0.0.1`, builds argument vectors exclusively from a
-typed allowlist (no shell), keeps per-job argv/stdout/stderr under the state
-directory, and needs no database. It is convenience tooling only: the CLI and
-the filesystem artifacts remain authoritative, the console never reinterprets
-experiment semantics, diagnostic evidence it displays never authorizes a
-campaign, and nothing it renders is itself thesis evidence. Job logs under the
-state directory are operational records, not return-package artifacts.
+typed allowlist (no shell), caps POST bodies, runs each job in its own process
+group (a stop terminates the complete child tree), and keeps per-job
+argv/stdout/stderr under the state directory.
+
+Console state (jobs with their exact argv and builder parameters, the
+campaign-run registry, recorded per-artifact token usage, and the report
+index) persists in a stdlib-sqlite database `console.db` under the state
+directory, with a schema version, a startup integrity check, transactional
+terminal-state commits, and a dashboard Reindex action that rebuilds every
+derived row from the retained artifacts with full digest verification. The
+database is operational state only - the validated filesystem artifacts
+remain the scientific authority, a database fault is surfaced visibly (never
+as a silently empty history or zero spend), and neither the database nor the
+state directory is return-package evidence.
+
+Token usage is never estimated: target usage is read from completion-bound
+`*.responses.jsonl` records (`Response.tokens` plus the detailed
+`raw.provider_usage` fields), judge usage from completed trail records
+(`raw.judge_call.tokens`), and only artifacts reachable through a valid
+`*.complete.json` completion marker are counted, so checkpoints, superseded
+partial snapshots, and orphaned cell files are never double-counted.
+Monetary cost multiplies those recorded tokens by the operator-edited
+effective-dated `experiments/pricing.json` table (per-million rates by
+billing category: input, output, cache read, cache write; reasoning tokens
+are displayed but not priced separately because every provider here bills
+them as output tokens, so pricing output already covers them). Cross-category
+overlaps are removed before pricing - cache reads are netted out of the input
+count for providers that report input inclusive of cache - so no token is
+billed twice. A missing token count or missing price renders as N/A with the
+missing field named, never as a fabricated zero. The precedence rule is that a
+provider-reported billed amount, should one ever be recorded in an artifact,
+would be authoritative over this token-derived calculation; no in-tree
+provider adapter records such an amount today, so the calculation is currently
+the only figure shown. Usage and cost rows are rebuilt from the retained
+artifacts by the dashboard Reindex action or the headless
+`rig_web --reindex` / `--usage-report` CLI. The CLI and the filesystem
+artifacts remain authoritative, the console never reinterprets experiment
+semantics, and diagnostic evidence it displays never authorizes a campaign.
 
 Console-form to runbook-section mapping (the console builds the identical
 argument vectors; nothing below is console-only):

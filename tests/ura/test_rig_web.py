@@ -1,29 +1,70 @@
-"""WEB-001 rig console contracts: allowlist, containment, jobs, rendering."""
+"""WEB-002 campaign builder and console contracts.
+
+Allowlist and containment, CLI/UI interface parity against the real module
+parsers, mode-specific builder validation, sqlite reliability (restart,
+migration, corruption, reindex), process-tree lifecycle, real Level-1/Level-2
+rendering from producer-generated artifacts, and recorded-usage cost
+accounting.  Every app instance uses temporary state and results directories
+so the checkout is never dirtied.
+"""
 
 from __future__ import annotations
 
+import argparse
+import hashlib
+import http.client
 import json
+import sqlite3
 import sys
+import threading
 import time
 from pathlib import Path
 
 import pytest
 
+import experiments.run_matrix as run_matrix
+from experiments import level1_evidence as level1_cli
+from experiments import level2_report as level2_cli
+from experiments import live_attestation as live_attestation_cli
+from experiments import rig_check
 from experiments.rig_web import (
+    _MATRIX_PARAMS,
+    Command,
+    ConsoleDB,
     RigWebApp,
+    _tokens_by_category,
     build_argv,
+    collect_usage,
+    compute_costs,
     evidence_badges,
+    rate_for,
+    run_kind,
+    usage_rows_from_marker,
 )
+from ura.data_models import DialogTurn, Response
+from ura.targets.base import BaseTarget
 
 
 def _app(tmp_path: Path) -> RigWebApp:
     results = tmp_path / "runs"
-    results.mkdir()
+    results.mkdir(exist_ok=True)
     counter = iter(range(1, 1000))
     return RigWebApp(
         results_root=results,
         state_dir=tmp_path / "state",
         job_id_factory=lambda: f"job-{next(counter):04d}",
+    )
+
+
+def _isolated_app(tmp_path: Path) -> RigWebApp:
+    """An app whose repo root is ALSO isolated (registry/pricing reads)."""
+
+    repo = tmp_path / "repo"
+    (repo / "experiments" / "rig").mkdir(parents=True, exist_ok=True)
+    results = tmp_path / "runs"
+    results.mkdir(exist_ok=True)
+    return RigWebApp(
+        results_root=results, state_dir=tmp_path / "state", repo_root=repo,
     )
 
 
@@ -253,73 +294,205 @@ def test_config_editor_writes_only_allowlisted_json_with_backup(tmp_path: Path) 
     assert all("env" not in key for key in _EDITABLE_CONFIGS)
 
 
-def test_builder_composes_validated_run_matrix(tmp_path: Path) -> None:
-    # The campaign builder is a guided surface over run_matrix: it composes
-    # the same typed values the Run page would, and everything flows through
-    # build_argv. Selecting the LLM judge auto-binds the Haiku judge model.
+def test_builder_page_renders_full_surface(tmp_path: Path) -> None:
+    # The builder page carries the complete lane surface: modality wizard,
+    # receipts, scope + repeatable attestation rows, sampling, call ceilings,
+    # local serving, and output.
     app = _app(tmp_path)
     status, _, body = app.handle("GET", "/build")
     text = body.decode("utf-8")
     assert status == 200
-    # A modality chip exists for each modality.
     for modality in ("text", "image", "audio", "video"):
         assert f"data-mod='{modality}'" in text
-    # Multimodal arms carry their FULL modality set (text + image), so they
-    # answer to the text chip and the image chip alike - not bucketed to one.
     assert "data-mods='text,image'" in text
     assert "data-arm='mmsafety_official'" in text
     assert "data-fw='crescendo'" in text
-    # Modality scope checkboxes are all pre-checked for a fresh build, and the
-    # scope-filter script is present (arms/models/frameworks hide out of scope).
     assert text.count("class='modbox' data-mod") == 4
-    assert "data-mod='text' checked" in text  # pre-checked scope toggle
-    assert "modtoggle" in text  # styled scope pills, not bare checkboxes
+    assert "data-mod='text' checked" in text
+    assert "modtoggle" in text
     assert "applyScope" in text and "intersects" in text
-    command, values = app._compose_from_builder({
-        "mode": "diagnostic_canary",
-        "corpora": "strongreject_official",
-        "api": "anthropic:claude-opus-5",
-        "attackers": "replay,crescendo",
-        "judges": "rules,llm",
-        "limit": "8", "sample_seed": "0", "out": "runs/thesis/canary",
-        "defense": "none",
+    # Every material Runner control is present.
+    for field in (
+        "name='project_revision'", "name='project_revision_sha'",
+        "name='source_conformance'", "name='source_conformance_sha'",
+        "name='scope'", "name='max_age'", "name='att_path1'",
+        "name='att_sha1'", "name='seeds'", "name='max_queries'",
+        "name='max_turns'", "name='cap_target'", "name='cap_judge'",
+        "name='cap_http'", "name='deadline'", "name='dtype'",
+        "name='quantization'", "name='judge_model'", "name='defense_guard'",
+        "name='canary_dry'",
+    ):
+        assert field in text, field
+    assert "addatt" in text  # repeatable receipt rows
+
+
+def test_builder_mode_validation_rejects_before_subprocess(tmp_path: Path) -> None:
+    # Mode-specific validation runs BEFORE any subprocess exists.  The old
+    # console accepted a diagnostic canary with --limit 8; that is now a
+    # field-level rejection (a canary is exactly one whole source cluster).
+    app = _app(tmp_path)
+    started = len(app.jobs)
+    status, _, body = app.handle("POST", "/build", {
+        "mode": "diagnostic_canary", "corpora": "strongreject_official",
+        "api": "anthropic:claude-opus-5", "attackers": "replay",
+        "judges": "rules,llm", "limit": "8", "sample_seed": "0",
+        "out": "runs/thesis/canary", "seeds": "0",
+    })
+    text = body.decode("utf-8")
+    assert status == 200
+    assert "exactly --limit 1" in text
+    assert "fielderr" in text  # rendered next to the control
+    assert len(app.jobs) == started  # nothing composed or executed
+
+    # Attestation probe: shape constraints are all enforced.
+    status, _, body = app.handle("POST", "/build", {
+        "mode": "attestation_probe", "corpora": "a,b",
+        "api": "x,y", "attackers": "replay,crescendo", "judges": "rules",
+        "limit": "3", "out": "runs/p", "seeds": "0,1", "defense": "input",
+        "max_queries": "2", "max_turns": "2",
+    })
+    text = body.decode("utf-8")
+    assert status == 200 and len(app.jobs) == started
+    for message in (
+        "exactly one target", "exactly one corpus",
+        "exactly the replay attacker", "exactly one seed",
+        "defense none", "--limit 1 or 2",
+    ):
+        assert message in text, message
+
+    # A dry canary is composed as offline-synthetic (corpora synth, targets
+    # dropped) rather than rejected, so a submission with an arm/target still
+    # selected validates and starts a job.  A too-large limit is still caught.
+    status, _, body = app.handle("POST", "/build", {
+        "mode": "diagnostic_canary", "canary_dry": "on",
+        "corpora": "strongreject_official", "api": "anthropic:claude-opus-5",
+        "attackers": "replay", "judges": "rules", "limit": "8",
+        "out": "runs/c", "seeds": "0",
+    })
+    text = body.decode("utf-8")
+    assert status == 200 and len(app.jobs) == started
+    assert "exactly --limit 1" in text
+
+    # Measured execution requires receipts, scope, age, attestations, caps.
+    status, _, body = app.handle("POST", "/build", {
+        "mode": "measured", "corpora": "strongreject_official",
+        "api": "anthropic:claude-opus-5", "attackers": "replay",
+        "judges": "rules", "out": "runs/m", "seeds": "0",
+    })
+    text = body.decode("utf-8")
+    assert status == 200 and len(app.jobs) == started
+    for field in ("scope", "max_age", "att", "cap_target", "cap_judge",
+                  "cap_http", "deadline", "limit", "project_revision"):
+        assert f"<strong>{field}</strong>" in text, field
+
+
+def test_builder_dry_run_composes_and_starts(tmp_path: Path) -> None:
+    # The ordinary synthetic dry run and the typed synthetic diagnostic
+    # canary both compose a valid no-provider command and start directly.
+    app = _app(tmp_path)
+    command, values, params = app._compose_from_builder({
+        "mode": "dry_run", "corpora": "synth", "attackers": "replay",
+        "judges": "rules,llm", "judge_model": "mock", "out": "runs/dry",
+        "seeds": "0", "limit": "2",
     })
     assert command == "run_matrix"
-    assert values["--diagnostic-canary"] == "on"
-    assert values["--judge-model"] == "anthropic:claude-haiku-4-5-20251001"
-    assert values["--limit"] == "8"
-    assert "--defense" not in values  # 'none' is omitted
-    # Composed values must build a valid argv (same typed allowlist).
+    assert values["--dry-run"] == "on"
+    assert values["--judge-model"] == "mock"
+    assert params["mode"] == "dry_run"
     argv = build_argv(command, values)
     assert argv[1:3] == ["-m", "experiments.run_matrix"]
-    assert "--diagnostic-canary" in argv and "--corpora" in argv
+    # The composed argv parses with the REAL run_matrix parser.
+    parsed = run_matrix.build_parser().parse_args(argv[3:])
+    assert parsed.dry_run is True and parsed.corpora == "synth"
+
+    command, values, _params = app._compose_from_builder({
+        "mode": "diagnostic_canary", "canary_dry": "on", "corpora": "synth",
+        "attackers": "replay", "judges": "rules", "limit": "1",
+        "out": "runs/c", "seeds": "0",
+    })
+    assert values["--diagnostic-canary"] == "on"
+    assert values["--dry-run"] == "on"
+    parsed = run_matrix.build_parser().parse_args(
+        build_argv(command, values)[3:]
+    )
+    assert parsed.diagnostic_canary is True and parsed.dry_run is True
+    # Dry composition never leaks env receipts into the offline command.
+    assert "--project-revision" not in build_argv(command, values)
+
+    status, location, _ = app.handle("POST", "/build", {
+        "mode": "dry_run", "corpora": "synth", "attackers": "replay",
+        "judges": "rules", "out": "runs/dry", "seeds": "0",
+    })
+    assert status == 303 and location.startswith("/jobs/")
+    app.stop_job(location.rsplit("/", 1)[1])
+    app.close()
 
 
-def test_builder_targets_split_hosted_and_local_vllm_roster() -> None:
+def test_builder_paid_modes_preview_exact_argv_then_confirm(
+    tmp_path: Path, monkeypatch,
+) -> None:
+    # A non-dry lane never starts on first submit: the exact complete argv
+    # and the call ceilings are shown for confirmation first.
+    monkeypatch.setenv("URA_PROJECT_REVISION_MANIFEST", str(tmp_path / "r.json"))
+    monkeypatch.setenv("URA_PROJECT_REVISION_SHA256", "a" * 64)
+    monkeypatch.setenv("URA_SOURCE_CONFORMANCE_MANIFEST", str(tmp_path / "s.json"))
+    monkeypatch.setenv("URA_SOURCE_CONFORMANCE_SHA256", "b" * 64)
+    app = _app(tmp_path)
+    form = {
+        "mode": "attestation_probe", "corpora": "strongreject_official",
+        "api": "anthropic:claude-opus-5", "attackers": "replay",
+        "judges": "rules", "limit": "1", "seeds": "0", "sample_seed": "0",
+        "scope": "acct-scope-1", "max_queries": "1", "max_turns": "1",
+        "cap_target": "4", "cap_judge": "4", "cap_http": "12",
+        "deadline": "600", "out": "runs/probe",
+    }
+    started = len(app.jobs)
+    status, _, body = app.handle("POST", "/build", form)
+    text = body.decode("utf-8")
+    assert status == 200 and len(app.jobs) == started  # preview, no job
+    assert "Confirm paid execution" in text
+    assert "--attestation-probe" in text
+    assert "--max-total-target-calls" in text and ">4<" in text
+    assert "spends real money" in text
+    # The confirmation re-submits the identical parameters plus confirm=yes.
+    assert "name='confirm' value='yes'" in text
+    form["confirm"] = "yes"
+    status, location, _ = app.handle("POST", "/build", form)
+    assert status == 303 and len(app.jobs) == started + 1
+    job = app.jobs[location.rsplit("/", 1)[1]]
+    assert "--attestation-probe" in job.argv
+    assert job.builder_params and job.builder_params["mode"] == "attestation_probe"
+    # The probe argv parses with the real parser.
+    run_matrix.build_parser().parse_args(job.argv[3:])
+    app.stop_job(job.job_id)
+    app.close()
+
+
+def test_builder_targets_split_hosted_and_local_vllm_roster(tmp_path: Path) -> None:
     # Targets are hosted API (composed into --api) and local vLLM (--local),
     # the latter drawn from the configured registry plus the vLLM roster; the
-    # focal env pair are hosted. Compose splits them correctly.
+    # focal env pair are hosted. Compose splits them correctly.  The app runs
+    # over temporary state so the checkout is never touched.
     from experiments import local_targets
-    from experiments.rig_web import RigWebApp
 
-    app = RigWebApp(results_root=Path("."), state_dir=Path("."))
+    app = _app(tmp_path)
     page = app.handle("GET", "/build")[2].decode("utf-8")
     assert "Hosted API" in page and "Local vLLM" in page
     assert "data-kind='api'" in page and "data-kind='local'" in page
     # The curated vLLM roster is real and modality-tagged.
     roster = local_targets.roster_models()
     assert len(roster) > 10
-    assert any("Qwen3-VL" in m["spec"] for m in roster)
     assert any("audio" in m["modalities"] for m in roster)
     # A build with a local target composes --local and binds --local-config
     # only when a local target is selected.
-    _cmd, values = app._compose_from_builder({
+    _cmd, values, _params = app._compose_from_builder({
         "mode": "measured", "corpora": "strongreject_official",
         "local": "vllm:Qwen/Qwen3-VL-8B-Instruct", "attackers": "replay",
         "judges": "rules", "out": "runs/x",
     })
     assert values["--local"] == "vllm:Qwen/Qwen3-VL-8B-Instruct"
     assert "--api" not in values
+    app.close()
 
 
 def test_builder_escapes_config_sourced_modalities(tmp_path: Path) -> None:
@@ -358,22 +531,26 @@ def test_local_targets_roster_parse_and_modality_inference() -> None:
 
 
 def test_stats_page_renders_budget_and_tolerates_missing_results(tmp_path: Path) -> None:
+    # Budgets render from the editable config (ledger defaults as fallback)
+    # and an empty results root degrades gracefully.  Charts come ONLY from
+    # schema-valid producer artifacts (see the real Level-1/Level-2 tests);
+    # an unrecognized ad-hoc JSON shape renders nothing.
     app = _app(tmp_path)
     status, _, body = app.handle("GET", "/stats")
     text = body.decode("utf-8")
     assert status == 200
     assert "Budgets" in text and "Anthropic" in text and "$100" in text
-    assert "No Level-1/Level-2 result" in text  # graceful empty state
-    # A level2 report with a recognizable table renders a diagram.
+    assert "No Level-1/Level-2 report" in text  # graceful empty state
+    # A fake rows/asr table is NOT a Level-2 report and must not chart.
     (app.results_root / "level2.json").write_text(json.dumps({
-        "rows": [
-            {"model": "fable", "asr": 0.12},
-            {"model": "sol", "attack_success_rate": 34.0},
-        ],
+        "rows": [{"model": "fable", "asr": 0.12}],
     }), encoding="utf-8")
     status, _, body = app.handle("GET", "/stats")
     text = body.decode("utf-8")
-    assert "barchart" in text and "fable" in text
+    assert status == 200
+    assert "barchart" not in text
+    assert "No Level-1/Level-2 report" in text
+    app.close()
 
 
 def test_command_groups_partition_the_allowlist_exactly() -> None:
@@ -510,13 +687,13 @@ def test_jobs_page_has_filter_chips_and_row_stop(tmp_path: Path) -> None:
         app.stop_job(job.job_id)
 
 
-def test_run_forms_use_select_and_datalist_without_weakening_argv() -> None:
+def test_run_forms_use_select_and_datalist_without_weakening_argv(
+    tmp_path: Path,
+) -> None:
     # UI affordances are presentation only: enumerated flags render as a
     # <select> of the exact argparse choices, suggestion fields get a
     # <datalist>, but build_argv still rejects anything off-contract.
-    from experiments.rig_web import RigWebApp
-
-    app = RigWebApp(results_root=Path("."), state_dir=Path("."))
+    app = _app(tmp_path)
     page = app.handle("GET", "/commands")[2].decode("utf-8")
     assert "<select name='--defense'>" in page
     assert "<option value='none'>none</option>" in page
@@ -559,7 +736,7 @@ def test_jobs_and_runs_persist_across_console_restart(tmp_path: Path) -> None:
     assert restored.state() == "complete"  # last-known state, no live handle
     status, _, body = restarted.handle("GET", "/jobs")
     assert status == 200 and job.job_id.encode() in body
-    from experiments.rig_web import ConsoleDB, run_kind
+    from experiments.rig_web import ConsoleDB
     assert run_kind("run_matrix", ["--attestation-probe"]) == "attestation_probe"
     assert run_kind("run_matrix", ["--dry-run"]) == "dry_run"
     assert run_kind("run_matrix", []) == "measured"
@@ -616,3 +793,1276 @@ def test_artifact_pages_render_breadcrumbs(tmp_path: Path) -> None:
     assert "crumbs" in text
     assert "/artifacts?path=thesis" in text
     assert "/artifacts?path=thesis/level1" in text
+
+
+# -- CLI/UI interface parity against the REAL module parsers ----------------
+
+
+def _captured_parser(module, probe_argv: list[str]) -> argparse.ArgumentParser:
+    """The actual ArgumentParser a CLI's main() builds, without running it."""
+
+    holder: dict[str, argparse.ArgumentParser] = {}
+
+    class _Captured(Exception):
+        pass
+
+    original = argparse.ArgumentParser.parse_args
+
+    def capture(self, args=None, namespace=None):  # noqa: ANN001
+        holder["parser"] = self
+        raise _Captured
+
+    argparse.ArgumentParser.parse_args = capture
+    try:
+        try:
+            module.main(probe_argv)
+        except _Captured:
+            pass
+    finally:
+        argparse.ArgumentParser.parse_args = original
+    assert "parser" in holder, f"{module.__name__} built no parser"
+    return holder["parser"]
+
+
+def _parser_options(parser: argparse.ArgumentParser) -> set[str]:
+    return {
+        option
+        for action in parser._actions  # noqa: SLF001 - introspection in tests
+        for option in action.option_strings
+        if option.startswith("--")
+    }
+
+
+def test_matrix_params_match_real_run_matrix_parser_exactly() -> None:
+    # The console's run_matrix/rig_check surface is one-to-one with the real
+    # parser: no phantom UI flag (the old --models bug) and no missing CLI
+    # option.  --help is the only exclusion.
+    real = _parser_options(run_matrix.build_parser()) - {"--help"}
+    ui = {param.flag for param in _MATRIX_PARAMS}
+    assert ui - real == set(), f"UI flags absent from run_matrix: {ui - real}"
+    assert real - ui == set(), f"run_matrix flags absent from the UI: {real - ui}"
+
+
+def test_every_ui_command_parses_with_its_real_module_parser() -> None:
+    # For every allowlisted command, a fully-populated form must produce an
+    # argv the REAL module parser accepts.  Merely comparing option names
+    # would miss type and choice mismatches.
+    import importlib
+
+    from experiments.rig_web import COMMANDS
+
+    # Curated full forms; mutually-exclusive alternatives are exercised as
+    # separate variants.  Values satisfy argparse types/choices only (no
+    # module logic runs).
+    forms: dict[str, list[dict[str, str]]] = {
+        "project_revision": [
+            {"--expected-revision": "a" * 40, "--out": "runs/pr"},
+            {"--validate": "runs/pr/x.json", "--sha256": "b" * 64},
+        ],
+        "source_conformance": [{
+            "--scaffold": "on", "--arm": "strongreject_official",
+            "--observation": "strongreject_official=runs/obs",
+            "--out": "runs/sc.json", "--source-config": "experiments/s.json",
+        }],
+        "rig_check": [],  # forwards the run_matrix surface (asserted above)
+        "run_matrix": [{
+            "--dry-run": "on", "--corpora": "synth", "--attackers": "replay",
+            "--judges": "rules", "--judge-model": "mock", "--limit": "2",
+            "--sample-seed": "0", "--seeds": "0", "--max-queries": "1",
+            "--max-turns": "1", "--group": "model,source",
+            "--defense": "both", "--defense-guard": "guardrail",
+            "--guardrail-model": "m", "--guardrail-revision": "c" * 40,
+            "--guardrail-device": "cpu", "--defense-guardrail-model": "n",
+            "--defense-guardrail-revision": "d" * 40,
+            "--defense-guardrail-device": "cpu", "--quantization": "awq",
+            "--dtype": "bfloat16", "--max-total-target-calls": "10",
+            "--max-total-judge-calls": "10", "--max-total-http-attempts": "30",
+            "--deadline-seconds": "600", "--lock-stale-seconds": "60",
+            "--execution-scope-id": "scope-1",
+            "--live-attestation#1": "runs/a.json",
+            "--live-attestation-sha256#1": "e" * 64,
+            "--live-attestation#2": "runs/b.json",
+            "--live-attestation-sha256#2": "f" * 64,
+            "--live-attestation-max-age-hours": "24",
+            "--project-revision": "runs/pr.json",
+            "--project-revision-sha256": "a" * 64,
+            "--source-conformance": "runs/sc.json",
+            "--source-conformance-sha256": "b" * 64,
+            "--models": "claude", "--api-config": "experiments/a.json",
+            "--local-config": "experiments/l.json",
+            "--source-config": "experiments/s.json",
+            "--attacker-config": "experiments/atk.json",
+            "--reset-open-circuits": "on", "--preflight-only": "on",
+            "--out": "runs/exp",
+        }],
+        "live_attestation": [
+            {"--probe-root": "runs/probe", "--execution-scope-id": "s",
+             "--out": "runs/att.json"},
+            {"--validate": "runs/att.json", "--sha256": "a" * 64},
+        ],
+        "lane_canary": [{
+            "--results": "runs/c", "--eligibility": "runs/c/e.json",
+            "--out-dir": "runs/c/out",
+        }],
+        "level1_evidence": [{
+            "--eligibility": "runs/a/e.json", "--eligibility#1": "runs/b/e.json",
+            "--results": "runs/a", "--results#1": "runs/b",
+            "--live-attestation": "runs/att.json",
+            "--live-attestation-sha256": "a" * 64,
+            "--out-json": "runs/l1.json", "--out-csv": "runs/l1.csv",
+        }],
+        "suite_summary": [{
+            "--results": "runs/a", "--native": "runs/n.json",
+            "--eligibility": "runs/a/e.json",
+            "--source-config": "experiments/s.json", "--out": "runs/suite",
+        }],
+        "level2_report": [{
+            "--results": "runs/a", "--results#1": "runs/b",
+            "--native": "runs/n.json", "--out-json": "runs/l2.json",
+            "--out-csv": "runs/l2.csv", "--out-md": "runs/l2.md",
+        }],
+        "human_audit": [
+            {"--results": "runs/a", "--prepare": "40",
+             "--acknowledge-sensitive-content": "on",
+             "--output": "runs/a/audit.csv", "--seed": "1"},
+            {"--results": "runs/a", "--labels": "runs/a/labels.csv",
+             "--allow-single-rater": "on", "--bootstrap-resamples": "100",
+             "--alpha": "0.05", "--seed": "0"},
+            {"--results": "runs/a", "--prepare-source-task": "10",
+             "--acknowledge-sensitive-content": "on"},
+            {"--results": "runs/a", "--source-task-labels": "runs/a/s.csv"},
+        ],
+        "figures": [
+            {"--synth": "on", "--out": "runs/figs"},
+            {"--results": "runs/a", "--left-model": "l", "--right-model": "r",
+             "--human-audit": "runs/a/h.json", "--human-audit-sha256": "a" * 64,
+             "--strongreject-corpus": "strongreject_official",
+             "--mmsafety-corpus": "mmsafety_official",
+             "--mossbench-corpus": "mossbench_official",
+             "--bootstrap": "100", "--seed": "0", "--out": "runs/figs"},
+        ],
+        "paired_compare": [{
+            "--results": "runs/a", "--left-model": "l", "--right-model": "l",
+            "--left-defense": "none", "--right-defense": "none",
+            "--attacker": "replay", "--right-attacker": "crescendo",
+            "--corpus": "strongreject_official", "--mode": "auto",
+            "--bootstrap": "100", "--seed": "0", "--permutations": "100",
+            "--alpha": "0.05", "--assume-exchangeable": "on",
+            "--output": "runs/pc.json",
+        }],
+        "judge_sensitivity": [{
+            "--results": "runs/a", "--attacker": "replay",
+            "--corpus": "strongreject_official", "--output": "runs/js.json",
+        }],
+        "kappa": [{
+            "--results": "runs/a", "--attacker": "replay",
+            "--corpus": "strongreject_official",
+        }],
+        "transfer_matrix": [{
+            "--results": "runs/a", "--attacker": "replay",
+            "--corpus": "strongreject_official",
+            "--minimum-unique-clusters": "2", "--bootstrap": "100",
+            "--seed": "0", "--alpha": "0.05",
+        }],
+        "export_jalmbench": [{
+            "--source": "runs/src", "--max-records": "10",
+            "--max-total-bytes": "1000", "--out": "runs/out",
+        }],
+        "export_vlsbench": [{
+            "--source": "runs/src", "--max-records": "10",
+            "--max-total-bytes": "1000", "--out": "runs/out",
+        }],
+        "native_import": [
+            {"--config": "runs/cfg.json", "--out": "runs/out"},
+            {"--validate": "runs/native.json"},
+        ],
+        "syn_compat": [
+            {"--generate": "on", "--out": "runs/syn", "--seed": "0",
+             "--perturbations-per-template": "2"},
+            {"--check": "on", "--cases": "runs/syn/cases.jsonl",
+             "--metadata": "runs/syn/meta.json"},
+            {"--evaluate": "on", "--cases": "runs/syn/cases.jsonl",
+             "--metadata": "runs/syn/meta.json", "--out": "runs/syn/out"},
+        ],
+        "local_targets": [{"--refresh": "on", "--vllm-version": "0.27.1"}],
+        "webui_selftest": [{"--selftest-sleep": "0"}],
+    }
+    assert set(forms) == set(COMMANDS), (
+        sorted(set(forms) ^ set(COMMANDS))
+    )
+    for name, entry in COMMANDS.items():
+        if name == "rig_check":
+            continue  # pure argv forwarder to run_matrix (covered above)
+        module = importlib.import_module(entry.module)
+        if entry.module == "experiments.run_matrix":
+            parser = run_matrix.build_parser()
+        else:
+            parser = _captured_parser(module, ["--nonexistent-probe"])
+        real_options = _parser_options(parser)
+        for param in entry.params:
+            assert param.flag in real_options, (
+                f"{name}: UI offers {param.flag} but "
+                f"{entry.module} does not define it"
+            )
+        for form in forms[name]:
+            argv = build_argv(name, form)
+            assert argv[2] == entry.module
+            # The REAL parser must accept the generated vector.
+            parser.parse_args(argv[3:])
+
+
+def test_models_flag_resolves_registries_and_rejects_unknown(
+    tmp_path: Path,
+) -> None:
+    api_cfg = tmp_path / "api.json"
+    api_cfg.write_text(json.dumps({
+        "anthropic:claude-haiku-4-5-20251001": {"modalities": ["text"]},
+    }), encoding="utf-8")
+    local_cfg = tmp_path / "local.json"
+    local_cfg.write_text(json.dumps({
+        "vllm:org/model": {"revision": "a" * 40, "modalities": ["text"]},
+    }), encoding="utf-8")
+    api, local = run_matrix._resolve_model_selection(
+        ["anthropic:claude-haiku-4-5-20251001", "vllm:org/model"],
+        api_cfg, local_cfg,
+    )
+    assert api == ["anthropic:claude-haiku-4-5-20251001"]
+    assert local == ["vllm:org/model"]
+    with pytest.raises(ValueError, match="unknown model"):
+        run_matrix._resolve_model_selection(["nope"], api_cfg, local_cfg)
+    with pytest.raises(ValueError, match="closest registry entries"):
+        run_matrix._resolve_model_selection(
+            ["anthropic:claude-haiku"], api_cfg, local_cfg,
+        )
+    local_cfg.write_text(json.dumps({
+        "anthropic:claude-haiku-4-5-20251001": {},
+    }), encoding="utf-8")
+    with pytest.raises(ValueError, match="ambiguous model"):
+        run_matrix._resolve_model_selection(
+            ["anthropic:claude-haiku-4-5-20251001"], api_cfg, local_cfg,
+        )
+    # Mutual exclusion with explicit --api/--local is a parse-time error.
+    with pytest.raises(SystemExit):
+        run_matrix.main([
+            "--dry-run", "--models", "x", "--api", "y",
+            "--api-config", str(api_cfg), "--out", str(tmp_path / "o"),
+        ])
+    # An unknown name is rejected before anything runs.
+    with pytest.raises(SystemExit):
+        run_matrix.main([
+            "--dry-run", "--models", "nope", "--api-config", str(api_cfg),
+            "--out", str(tmp_path / "o"),
+        ])
+    # rig_check forwards the same surface, so --models works there too.
+    with pytest.raises(SystemExit):
+        rig_check.main([
+            "--dry-run", "--models", "nope", "--api-config", str(api_cfg),
+            "--out", str(tmp_path / "rc"),
+        ])
+
+
+def test_models_flag_runs_an_offline_dry_lane(tmp_path: Path) -> None:
+    # End to end: --models resolves through the hosted registry and the dry
+    # lane completes offline (dry-run swaps in MockTarget; resolution and
+    # every gate still ran).
+    api_cfg = tmp_path / "api.json"
+    api_cfg.write_text(json.dumps({
+        "anthropic:claude-haiku-4-5-20251001": {"modalities": ["text"]},
+    }), encoding="utf-8")
+    assert run_matrix.main([
+        "--dry-run", "--models", "anthropic:claude-haiku-4-5-20251001",
+        "--api-config", str(api_cfg), "--corpora", "synth", "--limit", "1",
+        "--seeds", "0", "--attackers", "replay", "--judges", "rules",
+        "--max-queries", "1", "--max-turns", "1",
+        "--out", str(tmp_path / "dry"),
+    ]) == 0
+
+
+def _probe_receipt(
+    tmp_path: Path, monkeypatch, project_revision_args,
+) -> tuple[Path, str]:
+    """A REAL ura-live-attestation/2 receipt from an offline probe run."""
+
+    local_revision = "a" * 40
+    spec = "vllm:fixture/local-model"
+
+    class _StableLocalTarget(BaseTarget):
+        name = f"{spec}@{local_revision}"
+        modality_support = ("text",)
+        max_transport_attempts_per_call = 0
+
+        def generate(self, dialog, *, seed=None):  # noqa: ANN001
+            return Response(
+                attempt_id="target-placeholder",
+                target=self.name,
+                output_turns=[
+                    DialogTurn(role="assistant", content="I cannot help."),
+                ],
+                raw={
+                    "sampling_control": "seeded",
+                    "resolved_model": "fixture/local-model",
+                    "model_revision": local_revision,
+                },
+            )
+
+    local_config = tmp_path / "local-targets.json"
+    local_config.write_text(json.dumps({spec: {
+        "revision": local_revision, "modalities": ["text"],
+        "tensor_parallel_size": 1, "gpu_memory_utilization": 0.5,
+        "max_tokens": 64,
+    }}), encoding="utf-8")
+    monkeypatch.setattr(
+        run_matrix, "build_target", lambda *_a, **_kw: _StableLocalTarget()
+    )
+    probe_root = tmp_path / "probe"
+    assert run_matrix.main([
+        "--local", spec, "--local-config", str(local_config),
+        "--attackers", "replay", "--judges", "rules", "--corpora", "synth",
+        "--limit", "1", "--max-queries", "1", "--max-turns", "1",
+        "--max-total-target-calls", "100000",
+        "--max-total-judge-calls", "100000",
+        "--max-total-http-attempts", "100000", "--deadline-seconds", "3600",
+        *project_revision_args,
+        "--attestation-probe", "--execution-scope-id", "webtest-scope",
+        "--out", str(probe_root),
+    ]) == 0
+    receipt = tmp_path / "receipt.live-attestation.json"
+    assert live_attestation_cli.main([
+        "--probe-root", str(probe_root),
+        "--execution-scope-id", "webtest-scope", "--out", str(receipt),
+    ]) == 0
+    return receipt, hashlib.sha256(receipt.read_bytes()).hexdigest()
+
+
+def test_live_attestation_validate_revalidates_and_fails_closed(
+    tmp_path: Path, monkeypatch, project_revision_args, capsys,
+) -> None:
+    receipt, sha = _probe_receipt(tmp_path, monkeypatch, project_revision_args)
+    assert live_attestation_cli.main([
+        "--validate", str(receipt), "--sha256", sha,
+    ]) == 0
+    out = json.loads(capsys.readouterr().out.strip().splitlines()[-1])
+    assert out["status"] == "attestation_validated"
+    assert out["records"] >= 1 and out["sha256"] == sha
+    # A wrong digest fails closed.
+    assert live_attestation_cli.main([
+        "--validate", str(receipt), "--sha256", "0" * 64,
+    ]) == 1
+    # Tampered bytes fail closed even with a recomputed digest (the strict
+    # loader revalidates the manifest content, not just the hash).
+    tampered = tmp_path / "tampered.json"
+    doc = json.loads(receipt.read_text(encoding="utf-8"))
+    doc["status"] = "definitely-not-complete"
+    tampered.write_text(json.dumps(doc), encoding="utf-8")
+    bad_sha = hashlib.sha256(tampered.read_bytes()).hexdigest()
+    assert live_attestation_cli.main([
+        "--validate", str(tampered), "--sha256", bad_sha,
+    ]) == 1
+    # Mode mixing is rejected.
+    with pytest.raises(SystemExit):
+        live_attestation_cli.main(["--validate", str(receipt)])
+    with pytest.raises(SystemExit):
+        live_attestation_cli.main([
+            "--validate", str(receipt), "--sha256", sha,
+            "--probe-root", str(tmp_path),
+        ])
+
+
+# -- recorded usage and calculated cost -------------------------------------
+
+
+def _artifact_descriptor(path: Path) -> dict[str, object]:
+    lines = [
+        line for line in path.read_text(encoding="utf-8").splitlines()
+        if line.strip()
+    ]
+    return {
+        "file": path.name,
+        "sha256": hashlib.sha256(path.read_bytes()).hexdigest(),
+        "bytes": path.stat().st_size,
+        "records": len(lines),
+    }
+
+
+def _write_marker_fixture(cell_dir: Path, stem: str = "cell-a") -> Path:
+    cell_dir.mkdir(parents=True, exist_ok=True)
+    responses = cell_dir / f"{stem}.responses.jsonl"
+    responses.write_text("\n".join([
+        json.dumps({
+            "target": "anthropic-fable:claude-fable-5",
+            "tokens": {"input": 1200, "output": 300, "total": 1500,
+                       "uncached_input": 1000, "cached_input": 150,
+                       "cache_write_input": 50},
+            "raw": {
+                "provider": "anthropic",
+                "resolved_model": "claude-fable-5",
+                "provider_usage": {
+                    "input_tokens": 1000, "output_tokens": 300,
+                    "cache_read_input_tokens": 150,
+                    "cache_creation_input_tokens": 50,
+                    "output_tokens_details": {"thinking_tokens": 120},
+                },
+            },
+        }),
+        # A local response with prompt/completion keys and no provider.
+        json.dumps({
+            "target": "vllm:org/model",
+            "tokens": {"prompt": 70, "completion": 30, "total": 100},
+            "raw": {},
+        }),
+        # A response that recorded no token usage at all -> missing, not 0.
+        json.dumps({"target": "anthropic-fable:claude-fable-5",
+                    "raw": {"provider": "anthropic",
+                            "resolved_model": "claude-fable-5"}}),
+    ]) + "\n", encoding="utf-8")
+    trails = cell_dir / f"{stem}.trails.jsonl"
+    trails.write_text("\n".join([
+        json.dumps({"raw": {
+            "judge_model": "anthropic:claude-haiku-4-5-20251001",
+            "judge_call": {
+                "provider": "anthropic",
+                "provider_resolved_model": "claude-haiku-4-5-20251001",
+                "tokens": {"input": 500, "output": 20, "total": 520},
+                "sampling_control": "seeded",
+            },
+        }}),
+        # Provider refusal: no call was made or billed -> excluded.
+        json.dumps({"raw": {"judge_call": {
+            "provider": "anthropic",
+            "tokens": {"input": None, "output": None},
+            "sampling_control": "not_queried_provider_refusal",
+        }}}),
+        # A rules-only stage with no judge call at all.
+        json.dumps({"raw": {}}),
+    ]) + "\n", encoding="utf-8")
+    marker = cell_dir / f"{stem}.complete.json"
+    marker.write_text(json.dumps({
+        "status": "complete", "format_version": 2, "run_id": f"run-{stem}",
+        "artifacts": {
+            "responses": _artifact_descriptor(responses),
+            "trails": _artifact_descriptor(trails),
+        },
+    }), encoding="utf-8")
+    return marker
+
+
+def test_usage_accounting_follows_completion_marker_lineage(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "results"
+    marker = _write_marker_fixture(root / "lane")
+    # An orphan responses file (no marker) is never counted.
+    (root / "orphan").mkdir(parents=True)
+    (root / "orphan" / "cell-x.responses.jsonl").write_text(
+        json.dumps({"target": "anthropic:m",
+                    "tokens": {"input": 999999, "output": 999999}}) + "\n",
+        encoding="utf-8",
+    )
+    # An errored cell is skipped even though its marker exists.
+    err_dir = root / "errored"
+    _write_marker_fixture(err_dir, stem="cell-e")
+    (err_dir / "cell-e.error.json").write_text("{}", encoding="utf-8")
+    # Checkpoints are transient and never counted.
+    (root / "lane" / "cell-a.responses.checkpoint.jsonl").write_text(
+        json.dumps({"tokens": {"input": 5}}) + "\n", encoding="utf-8",
+    )
+
+    rows, stats = collect_usage(root, verify_sha=True)
+    assert stats["markers"] == 1
+    assert stats["skipped_error"] == 1
+    # Two excluded response files are reported: the true orphan AND the
+    # errored cell's partial snapshot (its marker was skipped, so its
+    # responses are not completion-bound either).
+    assert stats["orphan_responses"] == 2
+    tally = {
+        (row["role"], row["provider"], row["model"], row["category"]):
+            row["amount"]
+        for row in rows
+    }
+    # Target usage: provider_usage detail wins (input excludes cache).
+    assert tally[("target", "anthropic", "claude-fable-5", "input")] == 1000
+    assert tally[("target", "anthropic", "claude-fable-5", "output")] == 300
+    assert tally[("target", "anthropic", "claude-fable-5", "cache_read")] == 150
+    assert tally[("target", "anthropic", "claude-fable-5", "cache_write")] == 50
+    assert tally[("target", "anthropic", "claude-fable-5", "reasoning")] == 120
+    assert tally[("target", "anthropic", "claude-fable-5", "calls")] == 2
+    assert tally[("target", "anthropic", "claude-fable-5", "missing_tokens")] == 1
+    # Local rows normalize prompt/completion and derive the vllm provider.
+    assert tally[("target", "vllm", "vllm:org/model", "input")] == 70
+    assert tally[("target", "vllm", "vllm:org/model", "output")] == 30
+    # Judge usage from trails; the provider-refusal row is excluded.
+    judge_key = ("judge", "anthropic", "claude-haiku-4-5-20251001", "calls")
+    assert tally[judge_key] == 1
+    assert tally[("judge", "anthropic", "claude-haiku-4-5-20251001",
+                  "input")] == 500
+    # Lineage is enforced: a size change after completion fails closed.
+    responses = marker.parent / "cell-a.responses.jsonl"
+    responses.write_text(
+        responses.read_text(encoding="utf-8") + "\n", encoding="utf-8"
+    )
+    doc = json.loads(marker.read_text(encoding="utf-8"))
+    with pytest.raises(ValueError, match="byte size changed"):
+        usage_rows_from_marker(marker, doc)
+
+
+def test_costs_from_pricing_are_exact_or_na_never_zero() -> None:
+    pricing = {"providers": {"anthropic": {"models": {
+        "claude-haiku-4-5-20251001": {"rates": [
+            {"effective_date": "2026-01-01", "currency": "USD",
+             "per_million_tokens": {"input": 1.0, "output": 5.0}},
+            {"effective_date": "2026-08-01", "currency": "USD",
+             "per_million_tokens": {"input": 2.0, "output": 10.0,
+                                    "cache_read": 0.2}},
+            {"effective_date": "2099-01-01", "currency": "USD",
+             "per_million_tokens": {"input": 99.0, "output": 99.0}},
+        ]},
+    }}}}
+    # The newest effective rate on-or-before today wins (never the future).
+    rate, _ = rate_for(pricing, "anthropic", "claude-haiku-4-5-20251001")
+    assert rate["effective_date"] == "2026-08-01"
+    rows = compute_costs({
+        ("judge", "anthropic", "claude-haiku-4-5-20251001"): {
+            "calls": 4, "input": 1_000_000, "output": 200_000,
+            "cache_read": 500_000,
+        },
+    }, pricing)
+    assert rows[0]["cost"] == pytest.approx(2.0 + 2.0 + 0.1)
+    assert rows[0]["effective_date"] == "2026-08-01"
+    # Reasoning tokens are a subset of output (billed as output by the
+    # provider): they never void a row that input+output fully price.
+    rows = compute_costs({
+        ("target", "anthropic", "claude-haiku-4-5-20251001"): {
+            "calls": 1, "input": 10, "output": 5, "reasoning": 7,
+        },
+    }, pricing)
+    assert rows[0]["cost"] == pytest.approx(10 / 1e6 * 2 + 5 / 1e6 * 10)
+    assert rows[0]["missing"] == []
+    # A PRICED category (cache_write) with tokens but no rate -> N/A, never 0.
+    rows = compute_costs({
+        ("target", "anthropic", "claude-haiku-4-5-20251001"): {
+            "calls": 1, "input": 10, "output": 5, "cache_write": 7,
+        },
+    }, pricing)
+    assert rows[0]["cost"] is None
+    assert any("cache_write" in item for item in rows[0]["missing"])
+    # Unpriced model -> N/A with the missing entry named.
+    rows = compute_costs(
+        {("target", "openai", "gpt-x"): {"calls": 1, "input": 10}}, pricing,
+    )
+    assert rows[0]["cost"] is None and rows[0]["missing"]
+    # Local serving is not billable (never a fabricated $0 API cost).
+    rows = compute_costs(
+        {("target", "vllm", "org/m"): {"calls": 2, "input": 100}}, pricing,
+    )
+    assert rows[0]["billable"] is False and rows[0]["cost"] is None
+    # Calls whose usage went unrecorded surface as missing, blocking a cost.
+    rows = compute_costs({
+        ("target", "anthropic", "claude-haiku-4-5-20251001"): {
+            "calls": 2, "input": 10, "output": 5, "missing_tokens": 1,
+        },
+    }, pricing)
+    assert rows[0]["cost"] is None
+    assert any("no token usage" in item for item in rows[0]["missing"])
+
+
+def test_reindex_rebuilds_usage_and_spend_card_renders(tmp_path: Path) -> None:
+    app = _isolated_app(tmp_path)
+    _write_marker_fixture(app.results_root / "lane")
+    (app.repo_root / "experiments" / "pricing.json").write_text(json.dumps({
+        "providers": {"anthropic": {"models": {
+            "claude-fable-5": {"rates": [{
+                "effective_date": "2026-01-01", "currency": "USD",
+                "per_million_tokens": {"input": 2.0, "output": 10.0,
+                                       "cache_read": 0.2, "cache_write": 2.5,
+                                       "reasoning": 10.0},
+            }]},
+            "claude-haiku-4-5-20251001": {"rates": [{
+                "effective_date": "2026-01-01", "currency": "USD",
+                "per_million_tokens": {"input": 1.0, "output": 5.0},
+            }]},
+        }}},
+    }), encoding="utf-8")
+    status, location, _ = app.handle("POST", "/db/reindex", {})
+    assert status == 303 and location.startswith("/?reindexed=")
+    totals = app.db.usage_totals()
+    assert totals is not None
+    assert totals[("target", "anthropic", "claude-fable-5")]["input"] == 1000
+    status, _, body = app.handle("GET", "/stats")
+    text = body.decode("utf-8")
+    assert status == 200
+    # The judge cost is computable; the Fable row is N/A because one call
+    # recorded no tokens (missing, never zero) - both render distinctly.
+    assert "claude-haiku-4-5-20251001" in text
+    assert "$0.0006" in text  # 500 in @ $1/M + 20 out @ $5/M
+    assert "N/A" in text and "no token usage" in text
+    assert "local (not billed)" in text
+    # The dashboard reports the reindex outcome and database health.
+    status, _, dash = app.handle("GET", f"/?reindexed={location.split('=', 1)[1]}")
+    dtext = dash.decode("utf-8")
+    assert "Reindex completed" in dtext
+    assert "Console database" in dtext and "healthy" in dtext
+    app.close()
+
+
+# -- sqlite reliability ------------------------------------------------------
+
+
+def test_terminal_state_commits_in_one_transaction(tmp_path: Path) -> None:
+    # run_recorded flips only after the transactional commit; a failing
+    # database leaves it False so the write retries on the next reconcile.
+    app = _app(tmp_path)
+    job = app.start_job("webui_selftest", {"--selftest-sleep": "0"})
+    deadline = time.time() + 30
+    while job.state() == "running" and time.time() < deadline:
+        time.sleep(0.05)
+    # Sabotage the database, reconcile: the flag must stay False.
+    real_record = app.db.record_terminal
+    app.db.record_terminal = lambda *_a, **_kw: False
+    app._reconcile()
+    assert job.run_recorded is False
+    app.db.record_terminal = real_record
+    app._reconcile()
+    assert job.run_recorded is True
+    # Log handles were closed at terminal reconcile.
+    assert job.stdout_handle.closed and job.stderr_handle.closed
+    app.close()
+
+
+def test_v1_database_migrates_preserving_history(tmp_path: Path) -> None:
+    state = tmp_path / "state"
+    state.mkdir()
+    conn = sqlite3.connect(state / "console.db")
+    conn.executescript(
+        """
+        CREATE TABLE jobs (job_id TEXT PRIMARY KEY, command TEXT, argv TEXT,
+            directory TEXT, state TEXT, exit_code INTEGER, started_at REAL,
+            ended_at REAL, updated_at REAL);
+        CREATE TABLE runs (run_id INTEGER PRIMARY KEY AUTOINCREMENT,
+            job_id TEXT, kind TEXT, command TEXT, out_dir TEXT, pin TEXT,
+            state TEXT, exit_code INTEGER, created_at REAL, UNIQUE(job_id));
+        CREATE TABLE spend (id INTEGER PRIMARY KEY AUTOINCREMENT,
+            job_id TEXT, provider TEXT, calls INTEGER, input_tokens INTEGER,
+            output_tokens INTEGER, recorded_at REAL, UNIQUE(job_id, provider));
+        INSERT INTO jobs VALUES ('job-v1', 'run_matrix', '["--dry-run"]',
+            'dir', 'running', NULL, 1.0, NULL, 1.0);
+        INSERT INTO runs (job_id, kind, command, out_dir, pin, state,
+            exit_code, created_at) VALUES ('job-v1', 'dry_run', 'run_matrix',
+            'runs/x', 'abc', 'complete', 0, 1.0);
+        """
+    )
+    conn.commit()
+    conn.close()
+    db = ConsoleDB(state / "console.db")
+    health = db.health()
+    assert health["healthy"] and health["schema_version"] == 2
+    runs = db.list_runs()
+    assert runs is not None and runs[0]["job_id"] == "job-v1"
+    db.close()
+    # The app restores the v1 job and persists its orphaned state.
+    results = tmp_path / "runs"
+    results.mkdir()
+    app = RigWebApp(results_root=results, state_dir=state)
+    assert app.jobs["job-v1"].state() == "orphaned"
+    rows = app.db.load_jobs()
+    assert rows is not None and str(rows[0]["state"]) == "orphaned"
+    app.close()
+
+
+def test_corrupt_database_is_visible_never_silent_empty(tmp_path: Path) -> None:
+    state = tmp_path / "state"
+    state.mkdir()
+    (state / "console.db").write_bytes(b"not a sqlite file at all")
+    results = tmp_path / "runs"
+    results.mkdir()
+    app = RigWebApp(results_root=results, state_dir=state)
+    health = app.db.health()
+    assert health["healthy"] is False and health["last_error"]
+    # History readers return None (unknown), never a fabricated empty list.
+    assert app.db.load_jobs() is None
+    assert app.db.usage_totals() is None
+    # Every page still renders, with the failure visible.
+    for path in ("/", "/jobs", "/stats"):
+        status, _, body = app.handle("GET", path)
+        text = body.decode("utf-8")
+        assert status == 200, path
+        assert "Console database" in text or "Unavailable" in text or \
+            "unavailable" in text, path
+    # Jobs still start and stop with a broken database.
+    job = app.start_job("webui_selftest", {"--selftest-sleep": "30"})
+    assert job.state() == "running"
+    app.stop_job(job.job_id)
+    app.close()
+
+
+# -- real Level-1 / Level-2 rendering ---------------------------------------
+
+
+def test_stats_renders_real_level1_evidence(tmp_path: Path) -> None:
+    # The Level-1 card renders the REAL producer's document: run the actual
+    # dry-run grid and the actual level1_evidence CLI, then render.
+    app = _app(tmp_path)
+    grid_root = tmp_path / "grid"
+    assert run_matrix.main([
+        "--dry-run", "--corpora", "synth", "--limit", "2", "--seeds", "0",
+        "--attackers", "replay", "--judges", "rules,llm",
+        "--judge-model", "mock", "--max-queries", "1", "--max-turns", "1",
+        "--out", str(grid_root),
+    ]) == 0
+    eligibility = next(grid_root.glob("eligibility-*.eligibility.json"))
+    level1_dir = app.results_root / "thesis" / "level1"
+    level1_dir.mkdir(parents=True)
+    assert level1_cli.main([
+        "--eligibility", str(eligibility), "--results", str(grid_root),
+        "--out-json", str(level1_dir / "level1.json"),
+        "--out-csv", str(level1_dir / "level1.csv"),
+    ]) == 0
+    status, _, body = app.handle("GET", "/stats")
+    text = body.decode("utf-8")
+    assert status == 200
+    assert "diagnostic dry-run" in text  # the distinct diagnostic state
+    assert "Planning strata" in text and "Judgment records" in text
+    assert "structural not applicable" in text
+    assert "null (by design)" in text  # attempted stays null, shown as such
+    app.close()
+
+
+def test_stats_renders_real_level2_report(
+    tmp_path: Path, monkeypatch, project_revision_args,
+) -> None:
+    # The Level-2 card renders the REAL producer's document from a measured
+    # cohort (offline stable local target + probe + receipt + measured grid).
+    receipt, sha = _probe_receipt(tmp_path, monkeypatch, project_revision_args)
+    root = tmp_path / "measured"
+    assert run_matrix.main([
+        "--local", "vllm:fixture/local-model",
+        "--local-config", str(tmp_path / "local-targets.json"),
+        "--attackers", "replay", "--judges", "rules", "--corpora", "synth",
+        "--limit", "1", "--max-queries", "1", "--max-turns", "1",
+        "--max-total-target-calls", "100000",
+        "--max-total-judge-calls", "100000",
+        "--max-total-http-attempts", "100000", "--deadline-seconds", "3600",
+        *project_revision_args,
+        "--execution-scope-id", "webtest-scope",
+        "--live-attestation", str(receipt),
+        "--live-attestation-sha256", sha,
+        "--live-attestation-max-age-hours", "1",
+        "--out", str(root),
+    ]) == 0
+    app = _app(tmp_path)
+    level2_dir = app.results_root / "thesis" / "level2"
+    level2_dir.mkdir(parents=True)
+    assert level2_cli.main([
+        "--results", str(root),
+        "--out-json", str(level2_dir / "level2.json"),
+        "--out-csv", str(level2_dir / "level2.csv"),
+        "--out-md", str(level2_dir / "level2.md"),
+    ]) == 0
+    report = json.loads(
+        (level2_dir / "level2.json").read_text(encoding="utf-8")
+    )
+    assert report["schema_version"] == "ura-level2-report/1"
+    metrics = {row["metric"] for row in report["common"]["estimates"]}
+    status, _, body = app.handle("GET", "/stats")
+    text = body.decode("utf-8")
+    assert status == 200
+    assert "measured" in text  # the distinct measured state
+    for metric in metrics:
+        assert f">{metric} <" in text or metric in text  # one section per metric
+    # Real fields, not invented ones.
+    assert "model_spec" in text and "corpus_arm" in text
+    assert "n_records" in text and "n_clusters" in text
+    assert "decided/completed" in text
+    assert "never combined" in text or "no universal safety score" in text
+    app.close()
+
+
+# -- process lifecycle -------------------------------------------------------
+
+
+def test_stop_kills_the_complete_child_process_tree(tmp_path: Path) -> None:
+    # A stopped job must take its grandchildren with it: the job module
+    # spawns a heartbeat-writing child; after stop, the heartbeat must go
+    # quiet and the log handles must be closed.
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    (repo / "spawner.py").write_text(
+        "import subprocess, sys\n"
+        "code = (\"import time, pathlib\\n\"\n"
+        "        \"p = pathlib.Path('heartbeat.txt')\\n\"\n"
+        "        \"while True:\\n\"\n"
+        "        \"    p.write_text(str(time.time()))\\n\"\n"
+        "        \"    time.sleep(0.2)\\n\")\n"
+        "child = subprocess.Popen([sys.executable, '-c', code])\n"
+        "child.wait()\n",
+        encoding="utf-8",
+    )
+    results = tmp_path / "runs"
+    results.mkdir()
+    commands = {"spawner": Command("spawner", "spawner", "tree test", ())}
+    app = RigWebApp(
+        results_root=results, state_dir=tmp_path / "state",
+        repo_root=repo, commands=commands,
+    )
+    job = app.start_job("spawner", {})
+    heartbeat = repo / "heartbeat.txt"
+    deadline = time.time() + 30
+    while not heartbeat.exists() and time.time() < deadline:
+        time.sleep(0.1)
+    assert heartbeat.exists(), "grandchild never started"
+    app.stop_job(job.job_id)
+    assert job.state() in {"failed", "complete"}
+    assert job.stdout_handle.closed and job.stderr_handle.closed
+    time.sleep(1.0)  # allow any survivor to write again
+    snapshot = heartbeat.read_text(encoding="utf-8")
+    time.sleep(1.2)
+    assert heartbeat.read_text(encoding="utf-8") == snapshot, (
+        "grandchild survived the stop - the process tree was not terminated"
+    )
+    app.close()
+
+
+def test_http_post_body_limit_enforced(tmp_path: Path) -> None:
+    from experiments.rig_web import _make_server
+
+    app = _app(tmp_path)
+    server = _make_server(app, "127.0.0.1", 0)
+    port = server.server_address[1]
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        connection = http.client.HTTPConnection("127.0.0.1", port, timeout=10)
+        oversized = "content=" + "x" * (3 * 1024 * 1024)
+        connection.request("POST", "/config", body=oversized, headers={
+            "Content-Type": "application/x-www-form-urlencoded",
+        })
+        assert connection.getresponse().status == 413
+        connection.close()
+        connection = http.client.HTTPConnection("127.0.0.1", port, timeout=10)
+        connection.request("GET", "/")
+        assert connection.getresponse().status == 200
+        connection.close()
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=10)
+        app.close()
+
+
+# -- regression tests for the WEB-002 adversarial-review findings -----------
+
+
+def test_dry_lane_never_composes_a_real_hosted_judge(tmp_path: Path) -> None:
+    # HIGH: a dry-run lane (and dry canary) with the LLM judge selected must
+    # grade with the offline mock LLM, never a real metered hosted judge - a
+    # "no calls, no spend" mode must not issue paid Haiku calls.
+    app = _app(tmp_path)
+    for mode, extra in (
+        ("dry_run", {"corpora": "synth"}),
+        ("diagnostic_canary", {"canary_dry": "on", "limit": "1"}),
+    ):
+        _cmd, values, _params = app._compose_from_builder({
+            "mode": mode, "attackers": "replay", "judges": "rules,llm",
+            "judge_model": "anthropic:claude-haiku-4-5-20251001",
+            "out": "runs/d", "seeds": "0", **extra,
+        })
+        assert values["--dry-run"] == "on"
+        assert values["--judge-model"] == "mock", (mode, values)
+    app.close()
+
+
+def test_dry_lane_child_env_scrubs_receipt_vars(tmp_path: Path, monkeypatch) -> None:
+    # MED: dry stripping is not argv-only - the child is launched with the
+    # campaign receipt env vars removed, so an offline lane cannot be failed
+    # (or admitted) by an inherited receipt and its argv is self-contained.
+    monkeypatch.setenv("URA_PROJECT_REVISION_MANIFEST", str(tmp_path / "r.json"))
+    monkeypatch.setenv("URA_PROJECT_REVISION_SHA256", "a" * 64)
+    app = _app(tmp_path)
+    captured: dict[str, object] = {}
+    import subprocess as _sp
+
+    real_popen = _sp.Popen
+
+    def spy(argv, **kwargs):  # noqa: ANN001
+        captured["env"] = kwargs.get("env")
+        return real_popen(argv, **kwargs)
+
+    monkeypatch.setattr(_sp, "Popen", spy)
+    job = app.start_job(
+        "webui_selftest", {"--selftest-sleep": "0"}, scrub_receipt_env=True,
+    )
+    env = captured["env"]
+    assert env is not None
+    assert "URA_PROJECT_REVISION_MANIFEST" not in env
+    assert "URA_PROJECT_REVISION_SHA256" not in env
+    deadline = time.time() + 20
+    while job.state() == "running" and time.time() < deadline:
+        time.sleep(0.05)
+    app.close()
+
+
+def test_openai_cached_input_not_double_billed() -> None:
+    # HIGH: OpenAI input_tokens is cache-inclusive; the reported cache read
+    # must be netted out of input so it is not charged at the input rate AND
+    # the cache rate.
+    cats = _tokens_by_category(
+        {"input": 100000, "output": 5000, "total": 105000},
+        {"input_tokens": 100000, "output_tokens": 5000,
+         "input_tokens_details": {"cached_tokens": 80000}},
+    )
+    assert cats["input"] == 20000 and cats["cache_read"] == 80000
+    pricing = {"providers": {"openai": {"models": {"gpt-x": {"rates": [{
+        "effective_date": "2026-01-01", "currency": "USD",
+        "per_million_tokens": {"input": 2.5, "output": 10.0, "cache_read": 1.25},
+    }]}}}}}
+    rows = compute_costs(
+        {("target", "openai", "gpt-x"): {"calls": 1, **cats}}, pricing,
+    )
+    # 20000*2.5/M + 5000*10/M + 80000*1.25/M, NOT 100000*2.5 + 80000*1.25.
+    assert rows[0]["cost"] == pytest.approx(0.05 + 0.05 + 0.1)
+    # Fable's uncached_input is already net and must not be re-subtracted.
+    fable = _tokens_by_category(
+        {"input": 1200, "output": 300, "uncached_input": 1000,
+         "cached_input": 150, "cache_write_input": 50},
+        {"input_tokens": 1000, "output_tokens": 300,
+         "cache_read_input_tokens": 150, "cache_creation_input_tokens": 50},
+    )
+    assert fable["input"] == 1000 and fable["cache_read"] == 150
+
+
+def test_reasoning_tokens_are_displayed_not_separately_billed() -> None:
+    # HIGH: thinking/reasoning tokens are a subset of output; they must not
+    # void the cost when unpriced, nor be billed a second time when priced.
+    cats = _tokens_by_category(
+        {"input": 1000, "output": 300},
+        {"input_tokens": 1000, "output_tokens": 300,
+         "output_tokens_details": {"thinking_tokens": 120}},
+    )
+    assert cats["reasoning"] == 120 and cats["output"] == 300
+    pricing = {"providers": {"anthropic": {"models": {"m": {"rates": [{
+        "effective_date": "2026-01-01", "currency": "USD",
+        "per_million_tokens": {"input": 2.0, "output": 10.0},
+    }]}}}}}
+    rows = compute_costs(
+        {("target", "anthropic", "m"): {"calls": 1, **cats}}, pricing,
+    )
+    # Fully computable from input+output even though no reasoning rate exists.
+    assert rows[0]["cost"] == pytest.approx(1000 / 1e6 * 2 + 300 / 1e6 * 10)
+    assert rows[0]["missing"] == []
+
+
+def test_rate_for_rejects_non_iso_effective_date() -> None:
+    bad = {"providers": {"anthropic": {"models": {"m": {"rates": [{
+        "effective_date": "2026-8-1", "currency": "USD",
+        "per_million_tokens": {"input": 1.0},
+    }]}}}}}
+    rate, why = rate_for(bad, "anthropic", "m")
+    assert rate is None and "ISO" in why
+
+
+def test_builder_probe_auto_fixes_one_query_one_turn(tmp_path: Path) -> None:
+    # MED parity: a probe is one query/one turn by definition; the builder
+    # composes them so the argv matches the shape run_matrix enforces (rather
+    # than inheriting the driver default of 4 and dying at the CLI).
+    app = _app(tmp_path)
+    _cmd, values, _params = app._compose_from_builder({
+        "mode": "attestation_probe", "corpora": "strongreject_official",
+        "api": "anthropic:claude-opus-5", "attackers": "replay",
+        "judges": "rules", "limit": "1", "seeds": "0", "scope": "s",
+        "out": "runs/p",
+    })
+    assert values["--max-queries"] == "1" and values["--max-turns"] == "1"
+    app.close()
+
+
+def test_builder_dry_canary_composes_synth_and_validates(tmp_path: Path) -> None:
+    # MED: the advertised dry synthetic canary must be composable from the
+    # real form (which has no synth arm checkbox): compose forces --corpora
+    # synth and drops targets, and validation requires no arm selection.
+    app = _app(tmp_path)
+    form = {
+        "mode": "diagnostic_canary", "canary_dry": "on", "attackers": "replay",
+        "judges": "rules", "limit": "1", "seeds": "0", "out": "runs/c",
+        "api": "anthropic:claude-opus-5",  # should be dropped for a dry canary
+    }
+    assert app._validate_builder(form) == {}
+    _cmd, values, _params = app._compose_from_builder(form)
+    assert values["--corpora"] == "synth"
+    assert "--api" not in values and values["--dry-run"] == "on"
+    run_matrix.build_parser().parse_args(build_argv(_cmd, values)[3:])
+    app.close()
+
+
+def test_builder_hosted_measured_rejects_limit_zero(tmp_path: Path, monkeypatch) -> None:
+    # MED: a hosted paid measured lane must carry a positive pre-registered
+    # --limit; 0 ("all clusters") defeats the sampling policy and is rejected.
+    monkeypatch.setenv("URA_PROJECT_REVISION_MANIFEST", str(tmp_path / "r"))
+    monkeypatch.setenv("URA_PROJECT_REVISION_SHA256", "a" * 64)
+    monkeypatch.setenv("URA_SOURCE_CONFORMANCE_MANIFEST", str(tmp_path / "s"))
+    monkeypatch.setenv("URA_SOURCE_CONFORMANCE_SHA256", "b" * 64)
+    app = _app(tmp_path)
+    base = {
+        "mode": "measured", "corpora": "strongreject_official",
+        "api": "anthropic:claude-opus-5", "attackers": "replay",
+        "judges": "rules", "out": "runs/m", "seeds": "0", "sample_seed": "0",
+        "scope": "sc", "max_age": "24", "att_path1": "a.json",
+        "att_sha1": "c" * 64, "cap_target": "4", "cap_judge": "4",
+        "cap_http": "12", "deadline": "600",
+    }
+    assert "limit" in app._validate_builder({**base, "limit": "0"})
+    assert "limit" in app._validate_builder({**base, "limit": "-1"})
+    assert "limit" not in app._validate_builder({**base, "limit": "5"})
+    app.close()
+
+
+def test_builder_measured_argv_is_self_contained_from_env(
+    tmp_path: Path, monkeypatch,
+) -> None:
+    # MED: a measured lane admitted via campaign-env receipts must compose
+    # those receipts into the argv, so the retained "Exact command" reproduces
+    # the same admission in a clean shell.
+    monkeypatch.setenv("URA_PROJECT_REVISION_MANIFEST", str(tmp_path / "r.json"))
+    monkeypatch.setenv("URA_PROJECT_REVISION_SHA256", "a" * 64)
+    monkeypatch.setenv("URA_SOURCE_CONFORMANCE_MANIFEST", str(tmp_path / "s.json"))
+    monkeypatch.setenv("URA_SOURCE_CONFORMANCE_SHA256", "b" * 64)
+    app = _app(tmp_path)
+    _cmd, values, _params = app._compose_from_builder({
+        "mode": "measured", "corpora": "strongreject_official",
+        "api": "anthropic:claude-opus-5", "attackers": "replay",
+        "judges": "rules", "out": "runs/m", "seeds": "0", "sample_seed": "0",
+        "scope": "sc", "max_age": "24", "att_path1": "a.json",
+        "att_sha1": "c" * 64, "cap_target": "4", "cap_judge": "4",
+        "cap_http": "12", "deadline": "600", "limit": "5",
+    })
+    assert values["--project-revision"] == str(tmp_path / "r.json")
+    assert values["--project-revision-sha256"] == "a" * 64
+    assert values["--source-conformance"] == str(tmp_path / "s.json")
+    app.close()
+
+
+def test_builder_rejects_bad_seeds_and_whitespace_scope(tmp_path: Path) -> None:
+    app = _app(tmp_path)
+    assert "seeds" in app._validate_builder({
+        "mode": "dry_run", "corpora": "synth", "attackers": "replay",
+        "out": "runs/d", "seeds": "0,0",
+    })
+    assert "seeds" in app._validate_builder({
+        "mode": "dry_run", "corpora": "synth", "attackers": "replay",
+        "out": "runs/d", "seeds": "abc",
+    })
+    assert "scope" in app._validate_builder({
+        "mode": "dry_run", "corpora": "synth", "attackers": "replay",
+        "out": "runs/d", "seeds": "0", "scope": "bad scope",
+    })
+    app.close()
+
+
+def test_reindexed_query_param_is_html_escaped(tmp_path: Path) -> None:
+    # HIGH XSS: the reindexed summary comes from the URL query string and must
+    # be html-escaped before entering the dashboard notice.
+    app = _app(tmp_path)
+    payload = json.dumps({
+        "ok": True, "usage_rows": 0, "markers": 0, "reports": 0, "roots": 1,
+        "x": "<img src=x onerror=alert(1)>",
+    })
+    from urllib.parse import quote as _q
+
+    status, _, body = app.handle("GET", f"/?reindexed={_q(payload)}")
+    text = body.decode("utf-8")
+    assert status == 200
+    assert "<img src=x onerror=alert(1)>" not in text
+    assert "&lt;img src=x onerror=alert(1)&gt;" in text
+    app.close()
+
+
+def test_level2_render_escapes_artifact_numeric_fields(tmp_path: Path) -> None:
+    # LOW XSS hardening: n_records/n_clusters from the artifact are escaped.
+    app = _app(tmp_path)
+    (app.results_root / "l2.json").write_text(json.dumps({
+        "schema_version": "ura-level2-report/1",
+        "common": {"n_estimate_rows": 1, "estimates": [{
+            "metric": "ASR", "model_spec": "m", "corpus_arm": "a",
+            "attacker": "replay", "defense": "none", "value": 0.5,
+            "n_records": "<b>10</b>", "n_clusters": "<i>3</i>",
+            "semantic_family": "unsafe_response_rate", "polarity": "higher_adverse",
+        }]},
+    }), encoding="utf-8")
+    status, _, body = app.handle("GET", "/stats")
+    text = body.decode("utf-8")
+    assert status == 200
+    assert "<b>10</b>" not in text and "&lt;b&gt;10&lt;/b&gt;" in text
+    app.close()
+
+
+def test_http_rejects_negative_and_nonnumeric_content_length(tmp_path: Path) -> None:
+    # MED: a spoofed negative or non-numeric Content-Length must be rejected,
+    # never fall through to an unbounded rfile.read(-1).
+    from experiments.rig_web import _make_server
+
+    app = _app(tmp_path)
+    server = _make_server(app, "127.0.0.1", 0)
+    port = server.server_address[1]
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        import socket
+
+        def raw_post(content_length: str) -> int:
+            conn = socket.create_connection(("127.0.0.1", port), timeout=10)
+            body = b"content=x"
+            conn.sendall(
+                b"POST /config HTTP/1.1\r\nHost: localhost\r\n"
+                + f"Content-Length: {content_length}\r\n".encode()
+                + b"Content-Type: application/x-www-form-urlencoded\r\n\r\n"
+                + body
+            )
+            data = conn.recv(4096)
+            conn.close()
+            return int(data.split()[1])
+
+        assert raw_post("-1") == 400
+        assert raw_post("not-a-number") == 400
+        conn = http.client.HTTPConnection("127.0.0.1", port, timeout=10)
+        conn.request("GET", "/")
+        assert conn.getresponse().status == 200
+        conn.close()
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=10)
+        app.close()
+
+
+def test_stranded_runs_v1_is_recovered_on_open(tmp_path: Path) -> None:
+    # HIGH: an interrupted v1->v2 migration can leave data in runs_v1 beside an
+    # empty v2 runs. The next open must recover it, not silently lose it.
+    state = tmp_path / "state"
+    state.mkdir()
+    conn = sqlite3.connect(state / "console.db")
+    conn.executescript(
+        """
+        CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT);
+        CREATE TABLE runs (job_id TEXT PRIMARY KEY, kind TEXT, command TEXT,
+            out_dir TEXT, pin TEXT, state TEXT, exit_code INTEGER,
+            created_at REAL);
+        CREATE TABLE runs_v1 (job_id TEXT, kind TEXT, command TEXT,
+            out_dir TEXT, pin TEXT, state TEXT, exit_code INTEGER,
+            created_at REAL);
+        INSERT INTO runs_v1 VALUES ('job-strand', 'measured', 'run_matrix',
+            'runs/x', 'pin', 'complete', 0, 1.0);
+        """
+    )
+    conn.commit()
+    conn.close()
+    db = ConsoleDB(state / "console.db")
+    assert db.health()["healthy"]
+    runs = db.list_runs()
+    assert runs is not None and runs[0]["job_id"] == "job-strand"
+    tables = {
+        str(row[0]) for row in (db._query(
+            "SELECT name FROM sqlite_master WHERE type='table'"
+        ) or [])
+    }
+    assert "runs_v1" not in tables
+    db.close()
+
+
+def test_consoledb_close_is_thread_safe(tmp_path: Path) -> None:
+    # MED: accessors check the connection inside the lock, and close() detaches
+    # it under the lock, so a concurrent close never raises into a caller.
+    app = _app(tmp_path)
+    errors: list[str] = []
+
+    def hammer() -> None:
+        for _ in range(1500):
+            try:
+                app.db.load_jobs()
+                app.db.usage_totals()
+                app.db.list_runs()
+            except Exception as exc:  # noqa: BLE001 - the whole point is none escape
+                errors.append(repr(exc))
+
+    threads = [threading.Thread(target=hammer) for _ in range(4)]
+    for thread in threads:
+        thread.start()
+    time.sleep(0.02)
+    app.db.close()
+    for thread in threads:
+        thread.join()
+    assert not errors, errors[:3]
+    # After close, history reads as unknown (None), never a fabricated empty.
+    assert app.db.load_jobs() is None
+
+
+def test_reindex_preserves_usage_from_out_of_root_dirs(tmp_path: Path) -> None:
+    # MED/HIGH: reindex scans the results root AND every recorded run out_dir,
+    # so usage a job recorded from an --out outside the results root is not
+    # silently deleted by a rebuild.
+    repo = tmp_path / "repo"
+    (repo / "experiments").mkdir(parents=True)
+    results = tmp_path / "results"
+    results.mkdir()
+    app = RigWebApp(results_root=results, state_dir=tmp_path / "state", repo_root=repo)
+    _write_marker_fixture(repo / "scratch-out", stem="cell-out")
+
+    class _Job:
+        job_id = "j-out"
+        command = "run_matrix"
+        argv = ["--out", "scratch-out"]
+        builder_params = None
+        directory = repo
+        pin = "p"
+        failure = None
+        started_at = 1.0
+        ended_at = 2.0
+
+        def state(self) -> str:
+            return "complete"
+
+        def exit_code(self) -> int:
+            return 0
+
+    assert app.db.record_terminal(_Job(), "p", [], state="complete", exit_code=0)
+    summary = app.reindex_all()
+    assert summary["roots"] >= 2
+    totals = app.db.usage_totals()
+    assert totals is not None
+    assert ("target", "anthropic", "claude-fable-5") in totals
+    app.close()
+
+
+def test_headless_reindex_and_usage_report_cli(tmp_path: Path, capsys) -> None:
+    # The console's bookkeeping is reachable through the CLI too.
+    from experiments import rig_web
+
+    results = tmp_path / "runs"
+    results.mkdir()
+    _write_marker_fixture(results / "lane")
+    state = tmp_path / "state"
+    assert rig_web.main([
+        "--results-root", str(results), "--state-dir", str(state), "--reindex",
+    ]) == 0
+    reindex_out = json.loads(capsys.readouterr().out.strip().splitlines()[-1])
+    assert reindex_out["ok"] and reindex_out["usage_rows"] >= 1
+    assert rig_web.main([
+        "--results-root", str(results), "--state-dir", str(state),
+        "--usage-report",
+    ]) == 0
+    report = json.loads(capsys.readouterr().out.strip().splitlines()[-1])
+    assert report["schema"] == "ura-console-usage-report/1"
+    assert any(row["provider"] == "anthropic" for row in report["rows"])
+
+
+def test_source_conformance_multi_arm_is_composable() -> None:
+    # MED parity: --arm/--observation are action=append on the CLI, so the
+    # console offers them as repeatable rows and can build a multi-arm scaffold.
+    argv = build_argv("source_conformance", {
+        "--scaffold": "on",
+        "--arm": "strongreject_official",
+        "--arm#1": "advbench_harmful",
+        "--observation": "strongreject_official=runs/o1",
+        "--observation#1": "advbench_harmful=runs/o2",
+        "--source-config": "experiments/source-instances.json",
+        "--out": "runs/sc.json",
+    })
+    assert argv.count("--arm") == 2 and argv.count("--observation") == 2
+    assert argv.index("strongreject_official") < argv.index("advbench_harmful")
