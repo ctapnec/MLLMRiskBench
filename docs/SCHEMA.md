@@ -524,12 +524,14 @@ read-only HTTPS GETs of each provider's published pricing page listed in
 `experiments/pricing-sources.json` (copy of
 `experiments/rig/pricing-sources.example.json`, schema tag
 `ura-console-pricing-sources/1`, a `providers -> {url}` map) and merges the
-per-model rates it can read. It never fabricates a price: a model or provider
-it cannot read with confidence is left untouched (Anthropic, OpenAI, DeepSeek
-and z.ai/GLM are machine-readable; Google Gemini, Moonshot/Kimi and
-Alibaba/Qwen render prices client-side and stay manual). Model ids are matched
-exactly, so a base id (`gpt-5`, `claude-opus-4`) never captures a differently
-priced longer sibling. Once the operator has priced a model by hand (a rate
+per-model rates it can read. Providers and model ids are keyed by the prefix
+used in `api-targets` (the prefix attributes recorded usage, e.g.
+`google:gemini-3.6-flash` -> provider `google`). It never fabricates a price: a
+model or provider it cannot read with confidence is left untouched (Anthropic,
+OpenAI, DeepSeek, z.ai/GLM and Google Gemini are machine-readable; Moonshot/Kimi
+and Alibaba/Qwen render prices client-side and stay manual). Model ids are
+matched exactly, so a base id (`gpt-5`, `claude-opus-4`) never captures a
+differently priced longer sibling. Once the operator has priced a model by hand (a rate
 without `auto_fetched` whose input or output is non-null) that figure is
 authoritative and is never superseded - not on the same date and not by a
 later-dated fetch - so a hand-entered correction is always the billed value

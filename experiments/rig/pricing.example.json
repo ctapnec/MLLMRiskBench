@@ -1,22 +1,21 @@
 {
-  "schema": "ura-console-pricing/1",
-  "note": "Effective-dated per-model price table for the console's calculated-cost display. Every rate ships null on purpose: fill each category from the provider's current published price sheet before relying on a calculated figure - the console multiplies recorded tokens by these rates and never invents or estimates a price. Category semantics follow each provider's own recorded usage fields (input excludes provider-reported cache reads where the provider reports them separately); rates are per one million tokens in the stated currency. Add a new rates[] entry with a later effective_date on a price change; never edit history.",
+  "note": "Effective-dated per-model price table for the console's calculated-cost display. Providers and model ids are keyed exactly as they appear in api-targets (the provider prefix is what attributes recorded usage, e.g. google:gemini-3.6-flash -> provider 'google', model 'gemini-3.6-flash'). Every rate ships null on purpose: fill each category from the provider's current published price sheet, or use the console's 'Fetch from provider pricing pages' button, before relying on a calculated figure - the console multiplies recorded tokens by these rates and never invents or estimates a price. Anthropic, OpenAI, DeepSeek, z.ai/GLM and Google Gemini are machine-readable by the fetcher; Moonshot/Kimi and Alibaba/Qwen render prices client-side and must be entered by hand. Category semantics follow each provider's own recorded usage fields (input excludes provider-reported cache reads where the provider reports them separately); rates are per one million tokens in the stated currency. Add a new rates[] entry with a later effective_date on a price change; never edit history.",
   "providers": {
     "anthropic": {
       "models": {
         "claude-fable-5": {
           "rates": [
             {
-              "effective_date": "2026-08-15",
               "currency": "USD",
+              "effective_date": "2026-08-15",
               "per_million_tokens": {
-                "input": null,
-                "output": null,
+                "batch_input": null,
+                "batch_output": null,
                 "cache_read": null,
                 "cache_write": null,
-                "reasoning": null,
-                "batch_input": null,
-                "batch_output": null
+                "input": null,
+                "output": null,
+                "reasoning": null
               }
             }
           ]
@@ -24,79 +23,67 @@
         "claude-haiku-4-5-20251001": {
           "rates": [
             {
-              "effective_date": "2026-08-15",
               "currency": "USD",
+              "effective_date": "2026-08-15",
               "per_million_tokens": {
-                "input": null,
-                "output": null,
+                "batch_input": null,
+                "batch_output": null,
                 "cache_read": null,
                 "cache_write": null,
-                "reasoning": null,
-                "batch_input": null,
-                "batch_output": null
+                "input": null,
+                "output": null,
+                "reasoning": null
               }
             }
           ]
-        }
-      }
-    },
-    "openai": {
-      "models": {
-        "gpt-5.6-sol": {
+        },
+        "claude-mythos-5": {
           "rates": [
             {
-              "effective_date": "2026-08-15",
               "currency": "USD",
+              "effective_date": "2026-08-15",
               "per_million_tokens": {
-                "input": null,
-                "output": null,
+                "batch_input": null,
+                "batch_output": null,
                 "cache_read": null,
                 "cache_write": null,
-                "reasoning": null,
-                "batch_input": null,
-                "batch_output": null
+                "input": null,
+                "output": null,
+                "reasoning": null
               }
             }
           ]
-        }
-      }
-    },
-    "google": {
-      "models": {
-        "gemini-3.6-flash": {
+        },
+        "claude-opus-5": {
           "rates": [
             {
-              "effective_date": "2026-08-15",
               "currency": "USD",
+              "effective_date": "2026-08-15",
               "per_million_tokens": {
-                "input": null,
-                "output": null,
+                "batch_input": null,
+                "batch_output": null,
                 "cache_read": null,
                 "cache_write": null,
-                "reasoning": null,
-                "batch_input": null,
-                "batch_output": null
+                "input": null,
+                "output": null,
+                "reasoning": null
               }
             }
           ]
-        }
-      }
-    },
-    "moonshot": {
-      "models": {
-        "kimi-k3": {
+        },
+        "claude-sonnet-5": {
           "rates": [
             {
-              "effective_date": "2026-08-15",
               "currency": "USD",
+              "effective_date": "2026-08-15",
               "per_million_tokens": {
-                "input": null,
-                "output": null,
+                "batch_input": null,
+                "batch_output": null,
                 "cache_read": null,
                 "cache_write": null,
-                "reasoning": null,
-                "batch_input": null,
-                "batch_output": null
+                "input": null,
+                "output": null,
+                "reasoning": null
               }
             }
           ]
@@ -108,16 +95,16 @@
         "deepseek-v4-pro": {
           "rates": [
             {
-              "effective_date": "2026-08-15",
               "currency": "USD",
+              "effective_date": "2026-08-15",
               "per_million_tokens": {
-                "input": null,
-                "output": null,
+                "batch_input": null,
+                "batch_output": null,
                 "cache_read": null,
                 "cache_write": null,
-                "reasoning": null,
-                "batch_input": null,
-                "batch_output": null
+                "input": null,
+                "output": null,
+                "reasoning": null
               }
             }
           ]
@@ -129,16 +116,249 @@
         "glm-5.2": {
           "rates": [
             {
-              "effective_date": "2026-08-15",
               "currency": "USD",
+              "effective_date": "2026-08-15",
               "per_million_tokens": {
-                "input": null,
-                "output": null,
+                "batch_input": null,
+                "batch_output": null,
                 "cache_read": null,
                 "cache_write": null,
-                "reasoning": null,
+                "input": null,
+                "output": null,
+                "reasoning": null
+              }
+            }
+          ]
+        }
+      }
+    },
+    "google": {
+      "models": {
+        "gemini-2.5-flash": {
+          "rates": [
+            {
+              "currency": "USD",
+              "effective_date": "2026-08-15",
+              "per_million_tokens": {
                 "batch_input": null,
-                "batch_output": null
+                "batch_output": null,
+                "cache_read": null,
+                "cache_write": null,
+                "input": null,
+                "output": null,
+                "reasoning": null
+              }
+            }
+          ]
+        },
+        "gemini-2.5-flash-lite": {
+          "rates": [
+            {
+              "currency": "USD",
+              "effective_date": "2026-08-15",
+              "per_million_tokens": {
+                "batch_input": null,
+                "batch_output": null,
+                "cache_read": null,
+                "cache_write": null,
+                "input": null,
+                "output": null,
+                "reasoning": null
+              }
+            }
+          ]
+        },
+        "gemini-2.5-pro": {
+          "rates": [
+            {
+              "currency": "USD",
+              "effective_date": "2026-08-15",
+              "per_million_tokens": {
+                "batch_input": null,
+                "batch_output": null,
+                "cache_read": null,
+                "cache_write": null,
+                "input": null,
+                "output": null,
+                "reasoning": null
+              }
+            }
+          ]
+        },
+        "gemini-3.6-flash": {
+          "rates": [
+            {
+              "currency": "USD",
+              "effective_date": "2026-08-15",
+              "per_million_tokens": {
+                "batch_input": null,
+                "batch_output": null,
+                "cache_read": null,
+                "cache_write": null,
+                "input": null,
+                "output": null,
+                "reasoning": null
+              }
+            }
+          ]
+        },
+        "gemini-3.6-flash-lite": {
+          "rates": [
+            {
+              "currency": "USD",
+              "effective_date": "2026-08-15",
+              "per_million_tokens": {
+                "batch_input": null,
+                "batch_output": null,
+                "cache_read": null,
+                "cache_write": null,
+                "input": null,
+                "output": null,
+                "reasoning": null
+              }
+            }
+          ]
+        },
+        "gemini-3.6-pro": {
+          "rates": [
+            {
+              "currency": "USD",
+              "effective_date": "2026-08-15",
+              "per_million_tokens": {
+                "batch_input": null,
+                "batch_output": null,
+                "cache_read": null,
+                "cache_write": null,
+                "input": null,
+                "output": null,
+                "reasoning": null
+              }
+            }
+          ]
+        }
+      }
+    },
+    "kimi": {
+      "models": {
+        "kimi-k2": {
+          "rates": [
+            {
+              "currency": "USD",
+              "effective_date": "2026-08-15",
+              "per_million_tokens": {
+                "batch_input": null,
+                "batch_output": null,
+                "cache_read": null,
+                "cache_write": null,
+                "input": null,
+                "output": null,
+                "reasoning": null
+              }
+            }
+          ]
+        },
+        "kimi-k3": {
+          "rates": [
+            {
+              "currency": "USD",
+              "effective_date": "2026-08-15",
+              "per_million_tokens": {
+                "batch_input": null,
+                "batch_output": null,
+                "cache_read": null,
+                "cache_write": null,
+                "input": null,
+                "output": null,
+                "reasoning": null
+              }
+            }
+          ]
+        }
+      }
+    },
+    "openai": {
+      "models": {
+        "gpt-5.5": {
+          "rates": [
+            {
+              "currency": "USD",
+              "effective_date": "2026-08-15",
+              "per_million_tokens": {
+                "batch_input": null,
+                "batch_output": null,
+                "cache_read": null,
+                "cache_write": null,
+                "input": null,
+                "output": null,
+                "reasoning": null
+              }
+            }
+          ]
+        },
+        "gpt-5.6-luna": {
+          "rates": [
+            {
+              "currency": "USD",
+              "effective_date": "2026-08-15",
+              "per_million_tokens": {
+                "batch_input": null,
+                "batch_output": null,
+                "cache_read": null,
+                "cache_write": null,
+                "input": null,
+                "output": null,
+                "reasoning": null
+              }
+            }
+          ]
+        },
+        "gpt-5.6-sol": {
+          "rates": [
+            {
+              "currency": "USD",
+              "effective_date": "2026-08-15",
+              "per_million_tokens": {
+                "batch_input": null,
+                "batch_output": null,
+                "cache_read": null,
+                "cache_write": null,
+                "input": null,
+                "output": null,
+                "reasoning": null
+              }
+            }
+          ]
+        },
+        "gpt-5.6-tera": {
+          "rates": [
+            {
+              "currency": "USD",
+              "effective_date": "2026-08-15",
+              "per_million_tokens": {
+                "batch_input": null,
+                "batch_output": null,
+                "cache_read": null,
+                "cache_write": null,
+                "input": null,
+                "output": null,
+                "reasoning": null
+              }
+            }
+          ]
+        },
+        "o3-mini": {
+          "rates": [
+            {
+              "currency": "USD",
+              "effective_date": "2026-08-15",
+              "per_million_tokens": {
+                "batch_input": null,
+                "batch_output": null,
+                "cache_read": null,
+                "cache_write": null,
+                "input": null,
+                "output": null,
+                "reasoning": null
               }
             }
           ]
@@ -150,21 +370,22 @@
         "qwen3.7-max-2026-06-08": {
           "rates": [
             {
-              "effective_date": "2026-08-15",
               "currency": "USD",
+              "effective_date": "2026-08-15",
               "per_million_tokens": {
-                "input": null,
-                "output": null,
+                "batch_input": null,
+                "batch_output": null,
                 "cache_read": null,
                 "cache_write": null,
-                "reasoning": null,
-                "batch_input": null,
-                "batch_output": null
+                "input": null,
+                "output": null,
+                "reasoning": null
               }
             }
           ]
         }
       }
     }
-  }
+  },
+  "schema": "ura-console-pricing/1"
 }

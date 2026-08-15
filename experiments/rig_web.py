@@ -1145,6 +1145,23 @@ input.wide { width:100%; padding:.4rem .55rem; border:1px solid var(--line);
 .barchart .bn { font-weight:500; fill:var(--muted); }
 .barchart .bt { fill:var(--soft); stroke:var(--line); stroke-width:1; }
 .barchart .bv { fill:var(--accent); }
+#busy-overlay { position:fixed; inset:0; z-index:1000; display:none;
+  align-items:center; justify-content:center;
+  background:color-mix(in srgb, var(--bg) 78%, transparent);
+  backdrop-filter:blur(2px); }
+#busy-overlay.on { display:flex; }
+#busy-overlay .box { background:var(--card); border:1px solid var(--line);
+  border-radius:14px; padding:26px 34px; box-shadow:0 12px 40px rgba(0,0,0,.18);
+  display:flex; flex-direction:column; align-items:center; gap:14px;
+  max-width:min(90vw,420px); text-align:center; }
+#busy-overlay .spin { width:38px; height:38px; border-radius:50%;
+  border:4px solid var(--line); border-top-color:var(--accent);
+  animation:busy-rot .8s linear infinite; }
+#busy-overlay .msg { font-weight:600; color:var(--ink); }
+#busy-overlay .sub { font-size:.82rem; color:var(--muted); }
+@keyframes busy-rot { to { transform:rotate(360deg); } }
+button.is-busy { opacity:.6; pointer-events:none; }
+@media (prefers-reduced-motion:reduce){ #busy-overlay .spin{ animation:none; } }
 """
 
 
@@ -1277,8 +1294,43 @@ def _page(title: str, body: str, active: str = "") -> bytes:
         "<footer class='note'>The CLI and filesystem artifacts remain "
         "authoritative. This console never reinterprets experiment "
         "semantics; diagnostic evidence never authorizes a campaign."
-        "</footer></main></body></html>"
+        "</footer></main>"
+        + _BUSY_OVERLAY
+        + "</body></html>"
     ).encode("utf-8")
+
+
+#: A modal busy overlay shown while a slow POST (a pricing fetch, a reindex) is
+#: in flight, so the operator sees progress and cannot double-submit.  A form
+#: opts in with ``data-busy="<message>"``; the overlay is dismissed if the page
+#: is restored from the back/forward cache.
+_BUSY_OVERLAY = (
+    "<div id='busy-overlay' role='alert' aria-live='assertive'>"
+    "<div class='box'><div class='spin'></div>"
+    "<div class='msg' id='busy-msg'>Working...</div>"
+    "<div class='sub'>This can take up to a minute. Keep this tab open.</div>"
+    "</div></div>"
+    "<script>(function(){"
+    "var ov=document.getElementById('busy-overlay');"
+    "var msg=document.getElementById('busy-msg');"
+    "document.addEventListener('submit',function(e){"
+    "var f=e.target;"
+    "if(!f||!f.hasAttribute('data-busy'))return;"
+    "if(f.dataset.busyGo){e.preventDefault();return;}"  # block double-submit
+    "f.dataset.busyGo='1';"
+    "msg.textContent=f.getAttribute('data-busy')||'Working...';"
+    "ov.classList.add('on');"
+    "var b=f.querySelector('button[type=submit],button:not([type])');"
+    "if(b)b.classList.add('is-busy');"
+    "},true);"
+    "window.addEventListener('pageshow',function(ev){"
+    "if(!ev.persisted)return;"
+    "ov.classList.remove('on');"
+    "document.querySelectorAll('form[data-busy]').forEach(function(f){"
+    "delete f.dataset.busyGo;"
+    "var b=f.querySelector('button');if(b)b.classList.remove('is-busy');});"
+    "});})();</script>"
+)
 
 
 def _badges_html(badges: list[tuple[str, str]]) -> str:
@@ -5011,7 +5063,8 @@ class RigWebApp:
         fetch_action = ""
         if key == "pricing":
             fetch_action = (
-                "<form class='inline' method='post' action='/pricing/fetch'>"
+                "<form class='inline' method='post' action='/pricing/fetch' "
+                "data-busy='Fetching provider pricing pages...'>"
                 "<button type='submit' class='ghost'>" + _icon("coins", size=15)
                 + "Fetch from provider pricing pages</button></form> "
             )
@@ -5157,7 +5210,8 @@ class RigWebApp:
             f"<p><span class='badge {tone}'>{state}</span> "
             f"schema v{health['schema_version']} - {html.escape(count_text)}"
             "</p>" + error +
-            "<form method='post' action='/db/reindex'>"
+            "<form method='post' action='/db/reindex' "
+            "data-busy='Rebuilding the index from retained artifacts...'>"
             "<button type='submit' class='small'>Reindex from artifacts"
             "</button></form>"
             "<p class='note'>Operational state only (jobs, runs, recorded "

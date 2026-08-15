@@ -19,10 +19,12 @@ updates a rate it set itself (appending a later-dated entry only when the
 price actually differs).
 
 Providers currently machine-readable: Anthropic (HTML pricing table), OpenAI
-(the pricing page's embedded JSON), DeepSeek (HTML table) and z.ai/GLM (HTML
-table).  Google Gemini, Moonshot/Kimi and Alibaba/Qwen render their prices
-client-side, so their pages are not machine-readable here and their rates stay
-manual (the fetcher records the attempt and leaves them untouched).
+(the pricing page's embedded JSON), DeepSeek (HTML table), z.ai/GLM (HTML
+table) and Google Gemini (per-model anchored sections; ``google`` is the
+provider prefix, e.g. ``google:gemini-3.6-flash``).  Moonshot/Kimi and
+Alibaba/Qwen render their prices client-side (no rates in the HTML), so they
+stay manual - deliberately absent from the extractor registry, so the fetcher
+records the attempt and leaves their rates untouched.
 
 No provider exposes per-token prices through its inference API, so this is a
 pricing-page reader, not an API-cost reader.  All requests are read-only
@@ -445,17 +447,74 @@ def extract_deepseek(page: str, models: list[str]) -> dict[str, dict[str, float]
     return {m: r for m, r in out.items() if "input" in r and "output" in r}
 
 
+def _first_price(cell: str) -> float | None:
+    """The first ``$N`` amount in a cell (the currently effective one).
+
+    Gemini lists a phased price ("$0.75 through December 31, 2026.$1.50
+    starting January 1, 2027."); the first amount is the rate in effect now.
+    """
+
+    match = re.search(r"\$\s?([0-9]+(?:\.[0-9]+)?)", cell)
+    return float(match.group(1)) if match else None
+
+
+def extract_gemini(page: str, models: list[str]) -> dict[str, dict[str, float]]:
+    """Google Gemini pricing page: one section per model, keyed by an anchor
+    ``id="gemini-..."``, each with 'Input price', 'Output price' and 'Context
+    caching price' rows.
+
+    The paid rate is the LAST cell of each row (a leading 'Free of charge' /
+    'Not available' free-tier cell is ignored), and its first ``$`` amount is
+    the rate in effect today (a phased price runs 'through <future date>').
+    A model whose anchor is absent (not on the page) stays unmatched.
+    """
+
+    out: dict[str, dict[str, float]] = {}
+    heads = [(m.start(), m.group(1).lower())
+             for m in re.finditer(r'id="(gemini[^"]+)"', page)]
+    if not heads:
+        return out
+    heads.append((len(page), ""))
+    wanted = {model.split(":", 1)[-1].lower(): model for model in models}
+    for index in range(len(heads) - 1):
+        start, anchor = heads[index]
+        model = wanted.get(anchor)
+        if model is None or model in out:
+            continue
+        section = page[start:heads[index + 1][0]]
+        rates: dict[str, float] = {}
+        for row in _iter_rows(section):
+            cells = _cells(row)
+            if not cells:
+                continue
+            label = cells[0].lower()
+            value = _first_price(cells[-1])  # paid column is the last cell
+            if value is None:
+                continue
+            if label.startswith("input price"):
+                rates.setdefault("input", value)
+            elif label.startswith("output price"):
+                rates.setdefault("output", value)
+            elif "caching price" in label:
+                rates.setdefault("cache_read", value)
+        if "input" in rates and "output" in rates:
+            out[model] = rates
+    return out
+
+
 #: Provider -> extractor.  Only providers whose published page is genuinely
-#: machine-readable appear here; Google Gemini, Moonshot/Kimi and Alibaba/Qwen
-#: render prices client-side, so they are deliberately absent and fetch_pricing
-#: reports them as "not machine-readable (enter rates manually)" - exactly the
-#: honest status their docs and source notes claim, rather than issuing a
-#: pointless fetch and burying the model under an ambiguous "unmatched".
+#: machine-readable appear here; Moonshot/Kimi and Alibaba/Qwen render prices
+#: client-side, so they are deliberately absent and fetch_pricing reports them
+#: as "not machine-readable (enter rates manually)" - exactly the honest status
+#: their source notes claim, rather than issuing a pointless fetch and burying
+#: the model under an ambiguous "unmatched".  ``google`` is Gemini; its provider
+#: prefix in model ids is ``google`` (e.g. ``google:gemini-3.6-flash``).
 _EXTRACTORS: dict[str, Callable[[str, list[str]], dict[str, dict[str, float]]]] = {
     "anthropic": extract_anthropic,
     "openai": extract_openai,
     "deepseek": extract_deepseek,
     "glm": extract_glm,
+    "google": extract_gemini,
 }
 
 

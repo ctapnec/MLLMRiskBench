@@ -2527,6 +2527,19 @@ def test_pricing_save_is_serialized_by_pricing_lock(tmp_path: Path) -> None:
     assert done == [True]  # proceeds once the lock is released
 
 
+def test_busy_overlay_present_and_fetch_opts_in(tmp_path: Path) -> None:
+    # Slow POSTs (the pricing fetch) show a modal spinner and cannot double
+    # submit: the shell carries the overlay and the fetch form opts in.
+    app = _isolated_app(tmp_path)
+    _status, _ctype, body = app.handle("GET", "/config?file=pricing")
+    page = body.decode("utf-8")
+    assert "id='busy-overlay'" in page
+    assert "data-busy='Fetching provider pricing pages" in page
+    # Every rendered page carries the overlay wiring (the shell).
+    _s, _c, home = app.handle("GET", "/")
+    assert "id='busy-overlay'" in home.decode("utf-8")
+
+
 def test_pricing_fetch_route_delegates_and_redirects(tmp_path: Path) -> None:
     # POST /pricing/fetch runs the fetcher over the isolated repo and redirects
     # to the config page with a summary; no network is touched because the

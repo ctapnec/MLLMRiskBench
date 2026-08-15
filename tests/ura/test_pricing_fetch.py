@@ -151,6 +151,29 @@ def test_extract_deepseek_reads_positional_block() -> None:
     }
 
 
+def test_extract_gemini_reads_anchored_sections() -> None:
+    found = pf.extract_gemini(
+        _fixture("gemini.html"),
+        ["google:gemini-2.5-flash", "google:gemini-2.5-pro",
+         "google:gemini-2.5-flash-lite"],
+    )
+    assert found["google:gemini-2.5-flash"] == {
+        "input": 0.3, "output": 2.5, "cache_read": 0.03,
+    }
+    assert found["google:gemini-2.5-pro"]["input"] == 1.25
+    assert found["google:gemini-2.5-pro"]["output"] == 10.0
+    assert found["google:gemini-2.5-flash-lite"]["input"] == 0.1
+
+
+def test_extract_gemini_absent_model_stays_absent() -> None:
+    # A roster model whose anchor is not on the page (e.g. a future/renamed id)
+    # is left unmatched, never guessed.
+    found = pf.extract_gemini(
+        _fixture("gemini.html"), ["google:gemini-9.9-imaginary"],
+    )
+    assert found == {}
+
+
 def test_extract_glm_reads_table_rows() -> None:
     found = pf.extract_glm(
         _fixture("glm.html"),
@@ -525,12 +548,50 @@ def test_fetch_pricing_records_parser_failure(
     assert "parse failed" in summary["providers"]["glm"]["note"]
 
 
-@pytest.mark.parametrize("provider", ["google", "moonshot", "qwen"])
+def test_full_roster_fetch_covers_every_machine_readable_provider(tmp_path: Path) -> None:
+    # The shipped example roster + sources must fetch rates for ALL machine-
+    # readable providers and every model on the page - not just two Anthropic
+    # models - with Kimi/Qwen honestly reported as manual.
+    import shutil
+
+    proj = Path(__file__).parents[2]
+    repo = tmp_path / "repo"
+    (repo / "experiments" / "rig").mkdir(parents=True)
+    shutil.copy(proj / "experiments/rig/pricing.example.json",
+                repo / "experiments/pricing.json")
+    shutil.copy(proj / "experiments/rig/pricing-sources.example.json",
+                repo / "experiments/pricing-sources.json")
+    urls = json.loads(
+        (repo / "experiments/pricing-sources.json").read_text("utf-8")
+    )["providers"]
+    mapping = {
+        urls["anthropic"]["url"]: _fixture("anthropic.html"),
+        urls["openai"]["url"]: _fixture("openai.html"),
+        urls["deepseek"]["url"]: _fixture("deepseek.html"),
+        urls["glm"]["url"]: _fixture("glm.html"),
+        urls["google"]["url"]: _fixture("gemini.html"),
+    }
+    summary = pf.fetch_pricing(repo, today="2026-08-15", fetcher=lambda u: mapping[u])
+
+    anthropic = set(summary["providers"]["anthropic"]["matched"])
+    assert anthropic == {
+        "claude-opus-5", "claude-sonnet-5", "claude-mythos-5",
+        "claude-fable-5", "claude-haiku-4-5-20251001",
+    }
+    assert summary["providers"]["google"]["matched"]  # Gemini extractor wired
+    assert summary["providers"]["deepseek"]["matched"] == ["deepseek-v4-pro"]
+    assert summary["providers"]["glm"]["matched"] == ["glm-5.2"]
+    assert "manual" in summary["providers"]["kimi"]["note"]
+    assert "manual" in summary["providers"]["qwen"]["note"]
+    assert summary["rates_written"] >= 12  # far more than the old 2
+
+
+@pytest.mark.parametrize("provider", ["kimi", "qwen"])
 def test_fetch_pricing_notes_unreadable_provider(tmp_path: Path, provider: str) -> None:
-    # A provider with a url but no extractor (Gemini/Moonshot/Qwen client-side)
-    # is reported as manual-entry, not fetched, not errored - and no HTTP GET is
-    # issued for it (the fetcher would KeyError if it tried, since the map is
-    # empty).
+    # A provider with a url but no extractor (Moonshot/Kimi and Alibaba/Qwen
+    # render client-side) is reported as manual-entry, not fetched, not errored -
+    # and no HTTP GET is issued for it (the fetcher would KeyError if it tried,
+    # since the map is empty).
     pricing = {
         "providers": {
             provider: {"models": {"some-model": {"rates": [_null_rate("2026-08-15")]}}},

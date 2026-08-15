@@ -2332,8 +2332,9 @@ published pricing page by the fetcher (`experiments/pricing_fetch`, also the
 Config section's "Fetch from provider pricing pages" action). The fetcher does
 read-only HTTPS GETs of the URLs in `experiments/pricing-sources.json`, matches
 model ids exactly, and merges the rates it can read with `auto_fetched` /
-`source_url` / `fetched_at` provenance; it never fabricates a price (Google
-Gemini, Moonshot/Kimi and Alibaba/Qwen render client-side and stay manual) and
+`source_url` / `fetched_at` provenance; it never fabricates a price (Anthropic,
+OpenAI, DeepSeek, z.ai/GLM and Google Gemini are machine-readable; Moonshot/Kimi
+and Alibaba/Qwen render client-side and stay manual) and
 never supersedes a model the operator has priced by hand - that figure is
 billed on any date until the operator edits it directly; the fetcher only fills
 unpriced models or updates rates it set itself. The merge is atomic with a
