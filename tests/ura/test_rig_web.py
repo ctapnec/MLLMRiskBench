@@ -33,6 +33,7 @@ from experiments.rig_web import (
     _MATRIX_PARAMS,
     Command,
     ConsoleDB,
+    Job,
     RigWebApp,
     _tokens_by_category,
     build_argv,
@@ -1249,6 +1250,66 @@ def _write_marker_fixture(cell_dir: Path, stem: str = "cell-a") -> Path:
     return marker
 
 
+def test_failed_cell_usage_accounted_operationally_not_scientifically(
+    tmp_path: Path,
+) -> None:
+    from experiments.rig_web import failed_cell_usage_rows
+
+    root = tmp_path / "results"
+    cell = root / "failed"
+    cell.mkdir(parents=True)
+    # Durable partial responses/trails a failed cell leaves behind.
+    (cell / "cell-f.responses.jsonl").write_text(
+        json.dumps({
+            "target": "anthropic:claude-opus-5",
+            "tokens": {"input": 1000, "output": 200},
+            "raw": {"provider": "anthropic", "resolved_model": "claude-opus-5"},
+        }) + "\n", encoding="utf-8",
+    )
+    (cell / "cell-f.trails.jsonl").write_text(
+        json.dumps({"raw": {"judge_call": {
+            "provider": "anthropic",
+            "provider_resolved_model": "claude-haiku-4-5-20251001",
+            "tokens": {"input": 300, "output": 10},
+            "sampling_control": "seeded",
+        }}}) + "\n", encoding="utf-8",
+    )
+    (cell / "cell-f.error.json").write_text(json.dumps({
+        "status": "error", "run_id": "run-f", "completed_attempts": 3,
+    }), encoding="utf-8")
+    # A second failed cell with attempts but NO token detail -> reserved N/A.
+    reserved = root / "reserved"
+    reserved.mkdir()
+    (reserved / "cell-r.error.json").write_text(json.dumps({
+        "status": "error", "run_id": "run-r", "completed_attempts": 5,
+    }), encoding="utf-8")
+
+    rows = failed_cell_usage_rows(root)
+    by_role_cat = {(r["role"], r["provider"], r["category"]): r["amount"] for r in rows}
+    # Observable paid work is accounted under the distinct *_failed roles.
+    assert by_role_cat[("target_failed", "anthropic", "input")] == 1000
+    assert by_role_cat[("judge_failed", "anthropic", "input")] == 300
+    # No completion-marker role appears (kept out of scientific results).
+    assert not any(r["role"] in {"target", "judge"} for r in rows)
+    # The token-less failed cell surfaces reserved-call exposure, never zero.
+    assert by_role_cat[("reserved", "unknown", "calls")] == 5
+    assert by_role_cat[("reserved", "unknown", "missing_tokens")] == 5
+
+
+def test_spend_card_fresh_index_shows_unknown_not_zero(tmp_path: Path) -> None:
+    # Retained artifacts under the results root + an empty index must render as
+    # UNKNOWN/not-indexed, never as a fabricated $0.0000 spend.
+    app = _app(tmp_path)
+    try:
+        _write_marker_fixture(app.results_root / "lane")
+        card = app._spend_card()
+        assert "not indexed" in card.lower()
+        assert "unknown, not zero" in card
+        assert "$0.0000" not in card  # no fabricated zero anywhere on the card
+    finally:
+        app.close()
+
+
 def test_usage_accounting_follows_completion_marker_lineage(
     tmp_path: Path,
 ) -> None:
@@ -1320,21 +1381,32 @@ def test_costs_from_pricing_are_exact_or_na_never_zero() -> None:
              "per_million_tokens": {"input": 99.0, "output": 99.0}},
         ]},
     }}}}
-    # The newest effective rate on-or-before today wins (never the future).
-    rate, _ = rate_for(pricing, "anthropic", "claude-haiku-4-5-20251001")
+    # The newest effective rate on-or-before the run date wins (never future).
+    rate, _ = rate_for(
+        pricing, "anthropic", "claude-haiku-4-5-20251001", on_date="2026-08-16",
+    )
     assert rate["effective_date"] == "2026-08-01"
     rows = compute_costs({
-        ("judge", "anthropic", "claude-haiku-4-5-20251001"): {
+        ("judge", "anthropic", "claude-haiku-4-5-20251001", "2026-08-16"): {
             "calls": 4, "input": 1_000_000, "output": 200_000,
             "cache_read": 500_000,
         },
     }, pricing)
     assert rows[0]["cost"] == pytest.approx(2.0 + 2.0 + 0.1)
     assert rows[0]["effective_date"] == "2026-08-01"
+    # HISTORICAL pricing: a run dated before the price change is priced at the
+    # rate effective THEN (2026-01-01: input 1.0), not today's 2026-08-01 rate.
+    rows = compute_costs({
+        ("target", "anthropic", "claude-haiku-4-5-20251001", "2026-05-01"): {
+            "calls": 1, "input": 1_000_000, "output": 1_000_000,
+        },
+    }, pricing)
+    assert rows[0]["cost"] == pytest.approx(1.0 + 5.0)
+    assert rows[0]["effective_date"] == "2026-01-01"
     # Reasoning tokens are a subset of output (billed as output by the
     # provider): they never void a row that input+output fully price.
     rows = compute_costs({
-        ("target", "anthropic", "claude-haiku-4-5-20251001"): {
+        ("target", "anthropic", "claude-haiku-4-5-20251001", "2026-08-16"): {
             "calls": 1, "input": 10, "output": 5, "reasoning": 7,
         },
     }, pricing)
@@ -1342,7 +1414,7 @@ def test_costs_from_pricing_are_exact_or_na_never_zero() -> None:
     assert rows[0]["missing"] == []
     # A PRICED category (cache_write) with tokens but no rate -> N/A, never 0.
     rows = compute_costs({
-        ("target", "anthropic", "claude-haiku-4-5-20251001"): {
+        ("target", "anthropic", "claude-haiku-4-5-20251001", "2026-08-16"): {
             "calls": 1, "input": 10, "output": 5, "cache_write": 7,
         },
     }, pricing)
@@ -1350,22 +1422,59 @@ def test_costs_from_pricing_are_exact_or_na_never_zero() -> None:
     assert any("cache_write" in item for item in rows[0]["missing"])
     # Unpriced model -> N/A with the missing entry named.
     rows = compute_costs(
-        {("target", "openai", "gpt-x"): {"calls": 1, "input": 10}}, pricing,
+        {("target", "openai", "gpt-x", "2026-08-16"): {"calls": 1, "input": 10}},
+        pricing,
     )
     assert rows[0]["cost"] is None and rows[0]["missing"]
     # Local serving is not billable (never a fabricated $0 API cost).
     rows = compute_costs(
-        {("target", "vllm", "org/m"): {"calls": 2, "input": 100}}, pricing,
+        {("target", "vllm", "org/m", "2026-08-16"): {"calls": 2, "input": 100}},
+        pricing,
     )
     assert rows[0]["billable"] is False and rows[0]["cost"] is None
     # Calls whose usage went unrecorded surface as missing, blocking a cost.
     rows = compute_costs({
-        ("target", "anthropic", "claude-haiku-4-5-20251001"): {
+        ("target", "anthropic", "claude-haiku-4-5-20251001", "2026-08-16"): {
             "calls": 2, "input": 10, "output": 5, "missing_tokens": 1,
         },
     }, pricing)
     assert rows[0]["cost"] is None
     assert any("no token usage" in item for item in rows[0]["missing"])
+
+
+def test_compute_costs_rejects_invalid_pricing_values() -> None:
+    # Booleans, NaN, infinity, and negatives are not valid prices -> N/A.
+    for bad in (True, float("nan"), float("inf"), -1.0):
+        pricing = {"providers": {"anthropic": {"models": {"m": {"rates": [
+            {"effective_date": "2026-01-01", "currency": "USD",
+             "per_million_tokens": {"input": bad, "output": 5.0}}]}}}}}
+        rows = compute_costs(
+            {("target", "anthropic", "m", "2026-08-16"): {"calls": 1, "input": 10,
+                                                          "output": 5}},
+            pricing,
+        )
+        assert rows[0]["cost"] is None, bad
+        assert rows[0]["missing"]
+
+
+def test_compute_costs_never_sums_mixed_currencies() -> None:
+    # Two runs of the same model priced in different currencies must NOT be
+    # summed into one USD figure: cost is N/A with per-currency subtotals.
+    pricing = {"providers": {"anthropic": {"models": {"m": {"rates": [
+        {"effective_date": "2026-01-01", "currency": "USD",
+         "per_million_tokens": {"input": 1.0, "output": 1.0}},
+        {"effective_date": "2026-06-01", "currency": "EUR",
+         "per_million_tokens": {"input": 2.0, "output": 2.0}},
+    ]}}}}}
+    rows = compute_costs({
+        ("target", "anthropic", "m", "2026-03-01"): {"calls": 1, "input": 1_000_000,
+                                                     "output": 0},
+        ("target", "anthropic", "m", "2026-07-01"): {"calls": 1, "input": 1_000_000,
+                                                     "output": 0},
+    }, pricing)
+    assert rows[0]["cost"] is None
+    assert rows[0]["currency"] == "mixed"
+    assert rows[0]["by_currency"] == {"EUR": 2.0, "USD": 1.0}
 
 
 def test_reindex_rebuilds_usage_and_spend_card_renders(tmp_path: Path) -> None:
@@ -1389,7 +1498,9 @@ def test_reindex_rebuilds_usage_and_spend_card_renders(tmp_path: Path) -> None:
     assert status == 303 and location.startswith("/?reindexed=")
     totals = app.db.usage_totals()
     assert totals is not None
-    assert totals[("target", "anthropic", "claude-fable-5")]["input"] == 1000
+    fable = next(k for k in totals
+                 if k[:3] == ("target", "anthropic", "claude-fable-5"))
+    assert totals[fable]["input"] == 1000
     status, _, body = app.handle("GET", "/stats")
     text = body.decode("utf-8")
     assert status == 200
@@ -1457,7 +1568,7 @@ def test_v1_database_migrates_preserving_history(tmp_path: Path) -> None:
     conn.close()
     db = ConsoleDB(state / "console.db")
     health = db.health()
-    assert health["healthy"] and health["schema_version"] == 2
+    assert health["healthy"] and health["schema_version"] == 3
     runs = db.list_runs()
     assert runs is not None and runs[0]["job_id"] == "job-v1"
     db.close()
@@ -1624,6 +1735,84 @@ def test_stop_kills_the_complete_child_process_tree(tmp_path: Path) -> None:
     app.close()
 
 
+def test_stop_tree_repeatable_no_survivors(tmp_path: Path) -> None:
+    # Repeated start/stop cycles must each fully terminate the tree, leaving no
+    # surviving heartbeat writer between iterations.
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    (repo / "spawner.py").write_text(
+        "import subprocess, sys\n"
+        "code = (\"import time, pathlib\\n\"\n"
+        "        \"p = pathlib.Path('heartbeat.txt')\\n\"\n"
+        "        \"while True:\\n\"\n"
+        "        \"    p.write_text(str(time.time()))\\n\"\n"
+        "        \"    time.sleep(0.2)\\n\")\n"
+        "child = subprocess.Popen([sys.executable, '-c', code])\n"
+        "child.wait()\n",
+        encoding="utf-8",
+    )
+    results = tmp_path / "runs"
+    results.mkdir()
+    commands = {"spawner": Command("spawner", "spawner", "tree test", ())}
+    app = RigWebApp(
+        results_root=results, state_dir=tmp_path / "state",
+        repo_root=repo, commands=commands,
+    )
+    heartbeat = repo / "heartbeat.txt"
+    try:
+        for _ in range(3):
+            if heartbeat.exists():
+                heartbeat.unlink()
+            job = app.start_job("spawner", {})
+            deadline = time.time() + 30
+            while not heartbeat.exists() and time.time() < deadline:
+                time.sleep(0.1)
+            assert heartbeat.exists(), "grandchild never started"
+            app.stop_job(job.job_id)
+            assert job.stop_error is None, job.stop_error
+            time.sleep(1.0)
+            snapshot = heartbeat.read_text(encoding="utf-8")
+            time.sleep(1.2)
+            assert heartbeat.read_text(encoding="utf-8") == snapshot, (
+                "grandchild survived a stop iteration"
+            )
+    finally:
+        app.close()
+
+
+def test_stop_error_surfaced_when_tree_cannot_be_confirmed(tmp_path: Path) -> None:
+    # A process that refuses to die must NOT report a successful stop: the job
+    # carries an explicit stop_error the UI renders.
+    app = _app(tmp_path)
+
+    class _Undying:
+        pid = 424242
+
+        def poll(self):
+            return None  # never terminates
+
+        def wait(self, timeout=None):
+            import subprocess as _sp
+            raise _sp.TimeoutExpired("cmd", timeout)
+
+        def kill(self):
+            pass
+
+        def send_signal(self, sig):
+            pass
+
+    job = Job(
+        job_id="stuck", command="spawner", argv=[], directory=tmp_path,
+        process=_Undying(),
+    )
+    app._terminate_tree(job)
+    assert job.stop_error is not None
+    assert "could not be confirmed" in job.stop_error
+    page = app._job_page(job).decode("utf-8")
+    assert "Stop could not be confirmed" in page
+    app.close()
+
+
 def test_http_post_body_limit_enforced(tmp_path: Path) -> None:
     from experiments.rig_web import _make_server
 
@@ -1718,7 +1907,8 @@ def test_openai_cached_input_not_double_billed() -> None:
         "per_million_tokens": {"input": 2.5, "output": 10.0, "cache_read": 1.25},
     }]}}}}}
     rows = compute_costs(
-        {("target", "openai", "gpt-x"): {"calls": 1, **cats}}, pricing,
+        {("target", "openai", "gpt-x", "2026-08-16"): {"calls": 1, **cats}},
+        pricing,
     )
     # 20000*2.5/M + 5000*10/M + 80000*1.25/M, NOT 100000*2.5 + 80000*1.25.
     assert rows[0]["cost"] == pytest.approx(0.05 + 0.05 + 0.1)
@@ -1730,6 +1920,15 @@ def test_openai_cached_input_not_double_billed() -> None:
          "cache_read_input_tokens": 150, "cache_creation_input_tokens": 50},
     )
     assert fable["input"] == 1000 and fable["cache_read"] == 150
+
+
+def test_judge_cached_input_not_double_billed() -> None:
+    # The judge trail's normalized tokens report input INCLUSIVE of cached_input.
+    # {input: 100000, cached_input: 80000} must be 20,000 ordinary input plus
+    # 80,000 cache-read, never 180,000 billed tokens.
+    cats = _tokens_by_category({"input": 100000, "cached_input": 80000}, None)
+    assert cats["input"] == 20000
+    assert cats["cache_read"] == 80000
 
 
 def test_reasoning_tokens_are_displayed_not_separately_billed() -> None:
@@ -1746,7 +1945,8 @@ def test_reasoning_tokens_are_displayed_not_separately_billed() -> None:
         "per_million_tokens": {"input": 2.0, "output": 10.0},
     }]}}}}}
     rows = compute_costs(
-        {("target", "anthropic", "m"): {"calls": 1, **cats}}, pricing,
+        {("target", "anthropic", "m", "2026-08-16"): {"calls": 1, **cats}},
+        pricing,
     )
     # Fully computable from input+output even though no reasoning rate exists.
     assert rows[0]["cost"] == pytest.approx(1000 / 1e6 * 2 + 300 / 1e6 * 10)
@@ -1896,6 +2096,70 @@ def test_level2_render_escapes_artifact_numeric_fields(tmp_path: Path) -> None:
     app.close()
 
 
+def test_level2_incompatible_populations_charted_separately(tmp_path: Path) -> None:
+    # The SAME metric in two incompatible populations must render as two
+    # separate stratum sections, never pooled or labelled by the first row.
+    app = _app(tmp_path)
+    try:
+        doc = {"schema_version": "ura-level2-report/1", "common": {"estimates": [
+            {"metric": "ASR", "model_spec": "m", "value": 0.5,
+             "semantic_family": "unsafe_response_rate",
+             "population": "single_turn", "source": "s1"},
+            {"metric": "ASR", "model_spec": "m", "value": 0.9,
+             "semantic_family": "unsafe_response_rate",
+             "population": "multi_turn", "source": "s1"},
+        ]}}
+        html_out = app._render_level2("l2.json", doc)
+        assert html_out.count("<h3>") == 2  # two separate stratum sections
+        assert "population=single_turn" in html_out
+        assert "population=multi_turn" in html_out
+    finally:
+        app.close()
+
+
+def test_level2_no_silent_truncation(tmp_path: Path) -> None:
+    # 50 rows in one stratum: the chart states "showing 40 of 50" and every
+    # one of the 50 rows appears in the table (nothing silently dropped).
+    app = _app(tmp_path)
+    try:
+        estimates = [
+            {"metric": "ASR", "model_spec": f"m{i:02d}", "value": 0.1,
+             "semantic_family": "unsafe_response_rate", "population": "p",
+             "source": "s", "n_records": i}
+            for i in range(50)
+        ]
+        doc = {"schema_version": "ura-level2-report/1",
+               "common": {"estimates": estimates}}
+        html_out = app._render_level2("l2.json", doc)
+        assert "40 of 50" in html_out  # explicit "showing X of N" for the chart
+        for i in range(50):
+            assert f"m{i:02d}" in html_out  # every row present in the table
+    finally:
+        app.close()
+
+
+def test_level1_unknown_scope_is_not_measured(tmp_path: Path) -> None:
+    app = _app(tmp_path)
+    try:
+        # Missing/unknown evidence kind -> unknown/invalid, never measured.
+        for scope in ({}, {"evidence_kind": "garbage"}):
+            out = app._render_level1("l1.json", {"scope": scope, "counts": {}})
+            assert "unknown/invalid evidence kind" in out
+            assert ">measured<" not in out
+        # The exact measured kind still maps to measured; diagnostic stays.
+        measured = app._render_level1(
+            "l1.json", {"scope": {"evidence_kind": "measured_run"}, "counts": {}},
+        )
+        assert "badge blue'>measured" in measured
+        diag = app._render_level1(
+            "l1.json",
+            {"scope": {"evidence_kind": "diagnostic_dry_run"}, "counts": {}},
+        )
+        assert "diagnostic dry-run" in diag
+    finally:
+        app.close()
+
+
 def test_http_rejects_negative_and_nonnumeric_content_length(tmp_path: Path) -> None:
     # MED: a spoofed negative or non-numeric Content-Length must be rejected,
     # never fall through to an unbounded rfile.read(-1).
@@ -2029,7 +2293,7 @@ def test_reindex_preserves_usage_from_out_of_root_dirs(tmp_path: Path) -> None:
     assert summary["roots"] >= 2
     totals = app.db.usage_totals()
     assert totals is not None
-    assert ("target", "anthropic", "claude-fable-5") in totals
+    assert any(k[:3] == ("target", "anthropic", "claude-fable-5") for k in totals)
     app.close()
 
 

@@ -4323,6 +4323,7 @@ def main(argv=None) -> int:
                     completion_payload = {
                         "status": "complete",
                         "format_version": 2,
+                        "completed_at": time.time(),
                         "run_id": manifest.run_id,
                         "code_version": manifest.code_version,
                         "schema_version": manifest.schema_version,

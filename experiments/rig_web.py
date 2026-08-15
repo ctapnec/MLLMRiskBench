@@ -35,6 +35,7 @@ import hashlib
 import html
 import io
 import json
+import math
 import os
 import re
 import secrets
@@ -1534,6 +1535,13 @@ class Job:
     pin: str = ""
     #: Short failure context (stderr tail) persisted for a failed job.
     failure: str | None = None
+    #: A Windows Job Object handle (KILL_ON_JOB_CLOSE) the process is assigned
+    #: to, used as the reliable whole-tree kill fallback.  None on POSIX / when
+    #: unavailable.
+    job_handle: Any = None
+    #: Set when a stop could NOT be confirmed to have terminated the tree, so
+    #: the UI surfaces an explicit stop failure rather than a false success.
+    stop_error: str | None = None
     #: Last-known state for a job restored from the database whose live
     #: process handle is gone (a prior console session started it).
     restored_state: str | None = None
@@ -1583,6 +1591,99 @@ def _argv_out_dir(argv: list[str]) -> str:
             if index + 1 < len(argv):
                 return argv[index + 1]
     return ""
+
+
+# -- Windows whole-tree kill via a Job Object -------------------------------
+#
+# Windows has no process groups that kill a tree; ``taskkill /T`` walks the
+# LIVE tree but can fail (access denied, a re-parented grandchild).  A Job
+# Object with KILL_ON_JOB_CLOSE is the reliable fallback: a process assigned to
+# it, and every child it spawns, are terminated by the OS the moment the last
+# job handle closes.  All ctypes use is guarded so any failure degrades to the
+# taskkill path rather than raising (this whole file also runs on the POSIX
+# rig, where none of this executes).
+
+
+def _win_kill_on_close_job() -> Any:
+    """Create a KILL_ON_JOB_CLOSE Windows Job Object handle, or None."""
+
+    if os.name != "nt":
+        return None
+    try:
+        import ctypes  # noqa: PLC0415 - Windows-only
+        from ctypes import wintypes  # noqa: PLC0415 - Windows-only
+
+        kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+        kernel32.CreateJobObjectW.restype = wintypes.HANDLE
+        handle = kernel32.CreateJobObjectW(None, None)
+        if not handle:
+            return None
+
+        class _Basic(ctypes.Structure):
+            _fields_ = [
+                ("PerProcessUserTimeLimit", ctypes.c_int64),
+                ("PerJobUserTimeLimit", ctypes.c_int64),
+                ("LimitFlags", wintypes.DWORD),
+                ("MinimumWorkingSetSize", ctypes.c_size_t),
+                ("MaximumWorkingSetSize", ctypes.c_size_t),
+                ("ActiveProcessLimit", wintypes.DWORD),
+                ("Affinity", ctypes.c_size_t),
+                ("PriorityClass", wintypes.DWORD),
+                ("SchedulingClass", wintypes.DWORD),
+            ]
+
+        class _IoCounters(ctypes.Structure):
+            _fields_ = [(name, ctypes.c_uint64) for name in (
+                "ReadOperationCount", "WriteOperationCount",
+                "OtherOperationCount", "ReadTransferCount",
+                "WriteTransferCount", "OtherTransferCount")]
+
+        class _Extended(ctypes.Structure):
+            _fields_ = [
+                ("BasicLimitInformation", _Basic),
+                ("IoInfo", _IoCounters),
+                ("ProcessMemoryLimit", ctypes.c_size_t),
+                ("JobMemoryLimit", ctypes.c_size_t),
+                ("PeakProcessMemoryUsed", ctypes.c_size_t),
+                ("PeakJobMemoryUsed", ctypes.c_size_t),
+            ]
+
+        info = _Extended()
+        info.BasicLimitInformation.LimitFlags = 0x2000  # KILL_ON_JOB_CLOSE
+        if not kernel32.SetInformationJobObject(
+            handle, 9,  # JobObjectExtendedLimitInformation
+            ctypes.byref(info), ctypes.sizeof(info),
+        ):
+            kernel32.CloseHandle(handle)
+            return None
+        return handle
+    except Exception:  # noqa: BLE001 - any ctypes fault -> no job object
+        return None
+
+
+def _win_assign_job(handle: Any, process: subprocess.Popen) -> bool:
+    """Assign a running process (and its future children) to the job."""
+
+    if handle is None or os.name != "nt" or process is None:
+        return False
+    try:
+        import ctypes  # noqa: PLC0415 - Windows-only
+
+        kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+        return bool(kernel32.AssignProcessToJobObject(handle, int(process._handle)))
+    except Exception:  # noqa: BLE001
+        return False
+
+
+def _win_close_handle(handle: Any) -> None:
+    if handle is None or os.name != "nt":
+        return
+    try:
+        import ctypes  # noqa: PLC0415 - Windows-only
+
+        ctypes.WinDLL("kernel32", use_last_error=True).CloseHandle(handle)
+    except Exception:  # noqa: BLE001
+        pass
 
 
 # -- recorded token usage and calculated cost -------------------------------
@@ -1656,13 +1757,21 @@ def _tokens_by_category(tokens: Any, provider_usage: Any) -> dict[str, int]:
     # Input last, so the cache reads it must exclude are already known. Prefer
     # an explicitly net figure (Fable's uncached_input); otherwise a provider
     # input_tokens is only ever written by the cache-inclusive OpenAI adapter
-    # here, so net out the reported cache read.
+    # here, so net out the reported cache read.  A normalized tokens map (the
+    # judge trail) reports ``input`` INCLUSIVE of its ``cached_input``, so net
+    # that out too - the judge example {input: 100000, cached_input: 80000}
+    # must be 20,000 ordinary input plus 80,000 cache-read, not 180,000 billed.
     if isinstance(tk.get("uncached_input"), int):
         put("input", tk["uncached_input"])
     elif isinstance(pu.get("input_tokens"), int):
         put("input", max(0, pu["input_tokens"] - out.get("cache_read", 0)))
+    elif isinstance(tk.get("input"), int):
+        cached = tk.get("cached_input")
+        gross = tk["input"]
+        net = gross - cached if isinstance(cached, int) and cached >= 0 else gross
+        put("input", max(0, net))
     else:
-        put("input", tk.get("input", tk.get("prompt")))
+        put("input", tk.get("prompt"))
     return out
 
 
@@ -1798,6 +1907,7 @@ def usage_rows_from_marker(
     marker_sha = hashlib.sha256(marker_path.read_bytes()).hexdigest()
     run_id = str(doc.get("run_id", ""))
     out_dir = str(marker_path.parent)
+    usage_date = _marker_usage_date(marker_path, doc)
     artifacts = doc["artifacts"]
     tallies: dict[tuple[str, str, str, str], int] = {}
 
@@ -1873,16 +1983,184 @@ def usage_rows_from_marker(
         {
             "marker_sha": marker_sha, "role": role, "provider": provider,
             "model": model, "category": category, "amount": amount,
-            "run_id": run_id, "out_dir": out_dir, "recorded_at": now,
+            "run_id": run_id, "out_dir": out_dir, "usage_date": usage_date,
+            "recorded_at": now,
         }
         for (role, provider, model, category), amount in sorted(tallies.items())
     ]
 
 
+def _marker_usage_date(marker_path: Path, doc: Mapping[str, Any]) -> str:
+    """The run's completion date (YYYY-MM-DD) from completion-bound evidence.
+
+    Prefers the marker's own ``completed_at`` timestamp; falls back to the
+    completion marker file's mtime (the marker is written at completion).  This
+    is provenance time, NOT scan time - reindexing an old run today reprices it
+    at its own date, never today's rate.
+    """
+
+    timestamp: float | None = None
+    stamp = doc.get("completed_at")
+    if isinstance(stamp, (int, float)) and not isinstance(stamp, bool) and math.isfinite(stamp):
+        timestamp = float(stamp)
+    if timestamp is None:
+        try:
+            timestamp = marker_path.stat().st_mtime
+        except OSError:
+            return ""
+    try:
+        return time.strftime("%Y-%m-%d", time.gmtime(timestamp))
+    except (OSError, ValueError, OverflowError):
+        return ""
+
+
+def _judge_row_usage(record: Mapping[str, Any]) -> tuple[str, str, dict[str, int]] | None:
+    """(provider, model, categories) for one trail record's judge call, or None
+    when the stage made no billable judge call."""
+
+    raw = record.get("raw")
+    raw = raw if isinstance(raw, Mapping) else {}
+    judge_call = raw.get("judge_call")
+    if not isinstance(judge_call, Mapping):
+        return None
+    if judge_call.get("sampling_control") == "not_queried_provider_refusal":
+        return None
+    provider = str(judge_call.get("provider") or "unknown")
+    model = str(
+        judge_call.get("provider_resolved_model")
+        or raw.get("judge_model") or "unknown"
+    )
+    return provider, model, _tokens_by_category(judge_call.get("tokens"), None)
+
+
+def failed_cell_usage_rows(
+    root: Path, *, max_entries: int = _INVENTORY_MAX_ENTRIES,
+) -> list[dict[str, Any]]:
+    """Observable paid target/judge work in FAILED cells (operational only).
+
+    A failed cell (a ``<stem>.error.json``) leaves durable partial
+    ``responses``/``trails`` for the calls that DID happen before the failure.
+    That work cost real money, so it is accounted for operational spend under
+    the distinct ``target_failed``/``judge_failed`` roles - kept out of every
+    scientific result (those read only completion markers) but never erased.
+    A failed cell that recorded attempts but no token detail is surfaced as
+    reserved-call exposure (N/A tokens), never a fabricated zero.
+    """
+
+    rows: list[dict[str, Any]] = []
+    seen = 0
+    stack: list[Path] = [root]
+    while stack:
+        directory = stack.pop()
+        try:
+            entries = list(directory.iterdir())
+        except OSError:
+            continue
+        for entry in entries:
+            seen += 1
+            if seen > max_entries:
+                return rows
+            if entry.is_dir():
+                stack.append(entry)
+                continue
+            if not entry.name.endswith(".error.json"):
+                continue
+            stem = entry.name[: -len(".error.json")]
+            try:
+                err = json.loads(entry.read_text(encoding="utf-8"))
+                err_sha = hashlib.sha256(entry.read_bytes()).hexdigest()
+            except (OSError, ValueError):
+                continue
+            if not isinstance(err, dict) or err.get("status") != "error":
+                continue
+            try:
+                usage_date = time.strftime(
+                    "%Y-%m-%d", time.gmtime(entry.stat().st_mtime)
+                )
+            except OSError:
+                usage_date = ""
+            tallies: dict[tuple[str, str, str, str], int] = {}
+
+            def add(role: str, provider: str, model: str, category: str,
+                    amount: int, *, _t: dict = tallies) -> None:
+                key = (role, provider, model, category)
+                _t[key] = _t.get(key, 0) + amount
+
+            responses = directory / f"{stem}.responses.jsonl"
+            if responses.is_file():
+                try:
+                    for line in responses.read_text(encoding="utf-8").splitlines():
+                        if not line.strip():
+                            continue
+                        try:
+                            record = json.loads(line)
+                        except ValueError:
+                            continue
+                        if not isinstance(record, Mapping):
+                            continue
+                        provider, model = _response_identity(record)
+                        raw = record.get("raw")
+                        raw = raw if isinstance(raw, Mapping) else {}
+                        cats = _tokens_by_category(
+                            record.get("tokens"), raw.get("provider_usage")
+                        )
+                        add("target_failed", provider, model, "calls", 1)
+                        if not cats:
+                            add("target_failed", provider, model, "missing_tokens", 1)
+                        for category, amount in cats.items():
+                            add("target_failed", provider, model, category, amount)
+                except OSError:
+                    pass
+            trails = directory / f"{stem}.trails.jsonl"
+            if trails.is_file():
+                try:
+                    for line in trails.read_text(encoding="utf-8").splitlines():
+                        if not line.strip():
+                            continue
+                        try:
+                            record = json.loads(line)
+                        except ValueError:
+                            continue
+                        if not isinstance(record, Mapping):
+                            continue
+                        judged = _judge_row_usage(record)
+                        if judged is None:
+                            continue
+                        provider, model, cats = judged
+                        add("judge_failed", provider, model, "calls", 1)
+                        if not cats:
+                            add("judge_failed", provider, model, "missing_tokens", 1)
+                        for category, amount in cats.items():
+                            add("judge_failed", provider, model, category, amount)
+                except OSError:
+                    pass
+            # Reserved-call exposure: attempts were made but no token detail is
+            # in the durable partials -> surface the count as N/A, never zero.
+            attempts = err.get("completed_attempts")
+            if not tallies and isinstance(attempts, int) and attempts > 0:
+                add("reserved", "unknown", "unknown", "calls", attempts)
+                add("reserved", "unknown", "unknown", "missing_tokens", attempts)
+            now = time.time()
+            rows.extend(
+                {
+                    "marker_sha": err_sha, "role": role, "provider": provider,
+                    "model": model, "category": category, "amount": amount,
+                    "run_id": str(err.get("run_id", "")), "out_dir": str(directory),
+                    "usage_date": usage_date, "recorded_at": now,
+                }
+                for (role, provider, model, category), amount in sorted(tallies.items())
+            )
+    return rows
+
+
 def collect_usage(
     root: Path, *, verify_sha: bool = False,
 ) -> tuple[list[dict[str, Any]], dict[str, int]]:
-    """All recorded usage rows under root, with honest skip accounting."""
+    """All recorded usage rows under root, with honest skip accounting.
+
+    Completion-marker-bound rows (scientific + operational) plus failed-cell
+    rows (operational spend only, distinct ``*_failed``/``reserved`` roles).
+    """
 
     markers, stats = iter_completed_markers(root)
     rows: list[dict[str, Any]] = []
@@ -1894,6 +2172,9 @@ def collect_usage(
             )
         except (OSError, ValueError):
             stats["unreadable_artifacts"] += 1
+    failed = failed_cell_usage_rows(root)
+    stats["failed_cells"] = len({row["marker_sha"] for row in failed})
+    rows.extend(failed)
     return rows, stats
 
 
@@ -2038,70 +2319,119 @@ def rate_for(
     return dict(chosen), ""
 
 
+def _finite_nonneg(value: Any) -> float | None:
+    """A price is valid only as a finite, nonnegative real number.
+
+    Rejects booleans (a bool is an int in Python), NaN, infinity, and negatives
+    so a malformed rate never silently produces a wrong or fabricated cost.
+    """
+
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, (int, float)) and math.isfinite(value) and value >= 0:
+        return float(value)
+    return None
+
+
 def compute_costs(
-    usage_totals: Mapping[tuple[str, str, str], Mapping[str, int]],
+    usage_totals: Mapping[tuple[str, str, str, str], Mapping[str, int]],
     pricing: Mapping[str, Any],
 ) -> list[dict[str, Any]]:
     """Calculated monetary cost per (role, provider, model) from recorded use.
 
-    Cost is the sum over billing categories of recorded tokens times the
-    configured per-million rate.  If any category with recorded tokens has no
-    numeric rate, the whole row's cost is N/A and the missing fields are
-    named - a partial cost would understate real spend.  Local providers are
-    marked not billable rather than zero-cost-by-assumption.
+    The usage key carries the run's completion date, so each date's tokens are
+    priced at the rate effective ON THAT DATE (reindexing today never reprices
+    an old run).  Cost is recorded tokens times the applicable per-million rate;
+    a rate value is honoured only when finite and nonnegative.  If any billed
+    category with recorded tokens lacks a valid rate, the whole row is N/A with
+    the missing fields named.  Different currencies are never summed as one:
+    a single currency yields a total, a mix yields per-currency subtotals and no
+    combined figure.  Local providers are not billable rather than zero.
     """
 
+    grouped: dict[tuple[str, str, str], dict[str, Mapping[str, int]]] = {}
+    for key, categories in usage_totals.items():
+        role, provider, model, usage_date = key
+        grouped.setdefault((role, provider, model), {})[usage_date] = categories
+
     rows: list[dict[str, Any]] = []
-    for (role, provider, model), categories in sorted(usage_totals.items()):
-        tokens = {
-            category: int(categories.get(category, 0))
-            for category in _TOKEN_CATEGORIES
-        }
+    for (role, provider, model), by_date in sorted(grouped.items()):
+        tokens = {category: 0 for category in _TOKEN_CATEGORIES}
+        calls = 0
+        missing_tokens = 0
+        for cats in by_date.values():
+            calls += int(cats.get("calls", 0))
+            missing_tokens += int(cats.get("missing_tokens", 0))
+            for category in _TOKEN_CATEGORIES:
+                tokens[category] += int(cats.get(category, 0))
         row: dict[str, Any] = {
             "role": role, "provider": provider, "model": model,
-            "calls": int(categories.get("calls", 0)),
-            "missing_tokens": int(categories.get("missing_tokens", 0)),
-            "tokens": tokens,
+            "calls": calls, "missing_tokens": missing_tokens, "tokens": tokens,
             "rate": None, "effective_date": "", "currency": "",
-            "cost": None, "missing": [], "billable": True,
+            "cost": None, "by_currency": {}, "missing": [], "billable": True,
             "auto_fetched": False, "source_url": "",
         }
         if provider.lower() in _UNBILLED_PROVIDERS:
             row["billable"] = False
             rows.append(row)
             continue
-        rate, why = rate_for(pricing, provider, model)
-        if rate is None:
-            row["missing"].append(why)
-            rows.append(row)
-            continue
-        per_million = rate.get("per_million_tokens")
-        per_million = per_million if isinstance(per_million, Mapping) else {}
-        row["rate"] = {k: per_million.get(k) for k in _TOKEN_CATEGORIES}
-        row["effective_date"] = str(rate.get("effective_date", ""))
-        row["currency"] = str(rate.get("currency", ""))
-        row["auto_fetched"] = bool(rate.get("auto_fetched"))
-        row["source_url"] = str(rate.get("source_url", ""))
-        total = 0.0
+
+        cost_by_currency: dict[str, float] = {}
         missing: list[str] = []
-        for category in _BILLED_CATEGORIES:
-            amount = tokens.get(category, 0)
-            if amount <= 0:
+        effective_dates: set[str] = set()
+        display_rate: Mapping[str, Any] | None = None
+        for usage_date, cats in sorted(by_date.items()):
+            rate, why = rate_for(
+                pricing, provider, model, on_date=usage_date or None
+            )
+            if rate is None:
+                missing.append(f"{why} (for {usage_date or 'today'})")
                 continue
-            unit = per_million.get(category)
-            if isinstance(unit, (int, float)):
-                total += amount / 1_000_000 * float(unit)
-            else:
-                missing.append(f"{provider}/{model}: no {category} rate")
-        if row["missing_tokens"]:
+            per_million = rate.get("per_million_tokens")
+            per_million = per_million if isinstance(per_million, Mapping) else {}
+            currency = str(rate.get("currency", "")) or "USD"
+            display_rate = rate
+            effective_dates.add(str(rate.get("effective_date", "")))
+            subtotal = 0.0
+            for category in _BILLED_CATEGORIES:
+                amount = int(cats.get(category, 0))
+                if amount <= 0:
+                    continue
+                unit = _finite_nonneg(per_million.get(category))
+                if unit is None:
+                    missing.append(
+                        f"{provider}/{model}: no valid {category} rate "
+                        f"on {usage_date or 'today'}"
+                    )
+                else:
+                    subtotal += amount / 1_000_000 * unit
+            cost_by_currency[currency] = cost_by_currency.get(currency, 0.0) + subtotal
+        if missing_tokens:
             missing.append(
-                f"{provider}/{model}: {row['missing_tokens']} call(s) "
+                f"{provider}/{model}: {missing_tokens} call(s) "
                 "recorded no token usage"
             )
+        if display_rate is not None:
+            per_million = display_rate.get("per_million_tokens")
+            per_million = per_million if isinstance(per_million, Mapping) else {}
+            row["rate"] = {k: per_million.get(k) for k in _TOKEN_CATEGORIES}
+            row["effective_date"] = ", ".join(sorted(d for d in effective_dates if d))
+            row["auto_fetched"] = bool(display_rate.get("auto_fetched"))
+            row["source_url"] = str(display_rate.get("source_url", ""))
+        row["by_currency"] = {c: round(v, 6) for c, v in sorted(cost_by_currency.items())}
         if missing:
-            row["missing"] = missing
-        else:
+            row["missing"] = missing  # any missing rate -> whole row N/A
+        elif len(cost_by_currency) == 1:
+            currency, total = next(iter(cost_by_currency.items()))
+            row["currency"] = currency
             row["cost"] = total
+        elif len(cost_by_currency) > 1:
+            # Never sum different currencies into one figure.
+            row["currency"] = "mixed"
+            row["missing"].append(
+                f"{provider}/{model}: mixed currencies "
+                f"{sorted(cost_by_currency)}; per-currency subtotals shown"
+            )
         rows.append(row)
     return rows
 
@@ -2187,7 +2517,7 @@ class ConsoleDB:
     unknown, shown as such) rather than a fabricated empty history.
     """
 
-    SCHEMA_VERSION = 2
+    SCHEMA_VERSION = 3
 
     def __init__(self, path: Path) -> None:
         self.path = path
@@ -2279,12 +2609,25 @@ class ConsoleDB:
             else:
                 self._create_runs()
             self._conn.execute("DROP TABLE IF EXISTS spend")  # v1, rebuilt as usage
+            # ``usage`` is derived state (reindex/reconcile rebuild it from the
+            # retained artifacts), so when the schema lacks the completion-date
+            # column we drop and recreate it rather than a data-preserving
+            # migration - the next reconcile/reindex repopulates usage_date from
+            # the markers, so an old run is repriced at its own date, not today.
+            if "usage" in tables:
+                usage_cols = {
+                    str(row[1]) for row in self._conn.execute(
+                        "PRAGMA table_info(usage)"
+                    )
+                }
+                if "usage_date" not in usage_cols:
+                    self._conn.execute("DROP TABLE usage")
             self._conn.execute(
                 """
                 CREATE TABLE IF NOT EXISTS usage (
                     marker_sha TEXT, role TEXT, provider TEXT, model TEXT,
                     category TEXT, amount INTEGER, run_id TEXT, out_dir TEXT,
-                    recorded_at REAL,
+                    usage_date TEXT, recorded_at REAL,
                     PRIMARY KEY (marker_sha, role, provider, model, category)
                 )
                 """
@@ -2441,13 +2784,15 @@ class ConsoleDB:
         for row in usage_rows:
             self._conn.execute(
                 "INSERT INTO usage(marker_sha,role,provider,model,category,"
-                "amount,run_id,out_dir,recorded_at) VALUES(?,?,?,?,?,?,?,?,?) "
+                "amount,run_id,out_dir,usage_date,recorded_at) "
+                "VALUES(?,?,?,?,?,?,?,?,?,?) "
                 "ON CONFLICT(marker_sha,role,provider,model,category) "
                 "DO UPDATE SET amount=excluded.amount,"
+                "usage_date=excluded.usage_date,"
                 "recorded_at=excluded.recorded_at",
                 (row["marker_sha"], row["role"], row["provider"], row["model"],
                  row["category"], row["amount"], row["run_id"], row["out_dir"],
-                 row["recorded_at"]),
+                 row.get("usage_date", ""), row["recorded_at"]),
             )
 
     def reindex(
@@ -2501,16 +2846,22 @@ class ConsoleDB:
     def list_reports(self) -> list[sqlite3.Row] | None:
         return self._query("SELECT * FROM reports ORDER BY mtime DESC LIMIT 500")
 
-    def usage_totals(self) -> dict[tuple[str, str, str], dict[str, int]] | None:
+    def usage_totals(
+        self,
+    ) -> dict[tuple[str, str, str, str], dict[str, int]] | None:
+        # Grouped by usage_date as well, so compute_costs can price each run at
+        # the rate effective on ITS completion date, not today's.
         rows = self._query(
-            "SELECT role, provider, model, category, SUM(amount) AS total "
-            "FROM usage GROUP BY role, provider, model, category"
+            "SELECT role, provider, model, category, "
+            "COALESCE(usage_date,'') AS usage_date, SUM(amount) AS total "
+            "FROM usage GROUP BY role, provider, model, usage_date, category"
         )
         if rows is None:
             return None
-        totals: dict[tuple[str, str, str], dict[str, int]] = {}
+        totals: dict[tuple[str, str, str, str], dict[str, int]] = {}
         for row in rows:
-            key = (str(row["role"]), str(row["provider"]), str(row["model"]))
+            key = (str(row["role"]), str(row["provider"]), str(row["model"]),
+                   str(row["usage_date"] or ""))
             totals.setdefault(key, {})[str(row["category"])] = int(row["total"] or 0)
         return totals
 
@@ -2669,7 +3020,12 @@ class RigWebApp:
             markers = 0
             if out_dir:
                 try:
-                    usage_rows, stats = collect_usage(self.repo_root / out_dir)
+                    # Startup recovery verifies artifact digests, exactly as
+                    # reindex does, so a tampered/changed artifact is not
+                    # silently counted.
+                    usage_rows, stats = collect_usage(
+                        self.repo_root / out_dir, verify_sha=True
+                    )
                     markers = stats.get("markers", 0)
                 except OSError:
                     usage_rows, markers = [], 0
@@ -2685,6 +3041,11 @@ class RigWebApp:
                     handle.close()
                 except OSError:
                     pass
+        # A job that reached terminal state on its own no longer needs its
+        # kill-on-close job handle; release it (a no-op kill on a dead process).
+        if job.job_handle is not None:
+            _win_close_handle(job.job_handle)
+            job.job_handle = None
 
     def _reconcile(self) -> None:
         with self._app_lock:
@@ -2723,7 +3084,10 @@ class RigWebApp:
             out_dir = _argv_out_dir(job.argv)
             if out_dir and run_kind(job.command, job.argv) is not None:
                 try:
-                    usage_rows, _stats = collect_usage(self.repo_root / out_dir)
+                    # Normal completion indexing verifies artifact digests too.
+                    usage_rows, _stats = collect_usage(
+                        self.repo_root / out_dir, verify_sha=True
+                    )
                 except OSError:
                     usage_rows = []
             if self.db.record_terminal(
@@ -2789,6 +3153,12 @@ class RigWebApp:
                 stdout_handle.close()
                 stderr_handle.close()
                 raise
+            # Windows: assign the driver to a kill-on-close job so a stop can
+            # reliably take the whole tree even if taskkill later fails.
+            job_handle = _win_kill_on_close_job()
+            if job_handle is not None and not _win_assign_job(job_handle, process):
+                _win_close_handle(job_handle)
+                job_handle = None
             job = Job(
                 job_id=job_id,
                 command=command,
@@ -2799,6 +3169,7 @@ class RigWebApp:
                 stderr_handle=stderr_handle,
                 builder_params=dict(builder_params) if builder_params else None,
                 pin=os.environ.get("REF_URA", ""),
+                job_handle=job_handle,
             )
             self.jobs[job_id] = job
             self.db.upsert_job(job)
@@ -2807,51 +3178,96 @@ class RigWebApp:
     def _terminate_tree(self, job: Job) -> None:
         """Stop the job's complete child-process tree, then the driver.
 
-        Best-effort but never fatal: a failure to launch the killer, or a
-        child that ignores the first signal, must not take down the request
-        thread or leave the driver alive.  On POSIX the process group receives
-        SIGTERM then (on timeout) SIGKILL regardless of whether the driver
-        itself has exited, so a group member that ignores SIGTERM is still
-        reaped.  On Windows ``taskkill /T`` walks the live child tree; if it
-        cannot be launched, the driver is killed directly.
+        Never fatal to the request thread, but never reports a false success:
+        if the tree cannot be confirmed stopped, ``job.stop_error`` is set so
+        the UI shows an explicit stop failure.  POSIX signals the process group
+        (SIGTERM then, on timeout, SIGKILL, regardless of whether the driver
+        exited).  Windows runs ``taskkill /T /F`` and CHECKS its return code;
+        if that does not confirm the tree is gone, it closes the job's
+        kill-on-close Job Object (a reliable whole-tree kill) rather than
+        killing only the direct parent.
         """
 
         process = job.process
         if process is None or process.poll() is not None:
+            self._release_job_handle(job)
             return
         if os.name == "nt":
-            try:
-                subprocess.run(  # noqa: S603 - fixed argv, shell=False
-                    ["taskkill", "/PID", str(process.pid), "/T", "/F"],
-                    capture_output=True, shell=False, check=False,
-                )
-            except OSError:
-                # taskkill.exe unavailable: fall back to the direct kill.
-                try:
-                    process.kill()
-                except OSError:
-                    pass
+            self._terminate_tree_windows(job, process)
         else:
-            import signal  # noqa: PLC0415 - POSIX-only path
+            self._terminate_tree_posix(job, process)
 
-            self._signal_group(process, signal.SIGTERM)
+    def _terminate_tree_posix(self, job: Job, process: subprocess.Popen) -> None:
+        import signal  # noqa: PLC0415 - POSIX-only path
+
+        self._signal_group(process, signal.SIGTERM)
         try:
             process.wait(timeout=10)
         except subprocess.TimeoutExpired:
-            if os.name != "nt":
-                import signal  # noqa: PLC0415 - POSIX-only path
-
-                # Escalate to the whole group even if the driver is still up.
-                self._signal_group(process, signal.SIGKILL)
-            else:
-                try:
-                    process.kill()
-                except OSError:
-                    pass
+            # Escalate to the whole group even if the driver is still up.
+            self._signal_group(process, signal.SIGKILL)
             try:
                 process.wait(timeout=10)
             except subprocess.TimeoutExpired:
                 pass
+        if process.poll() is None:
+            job.stop_error = (
+                "stop could not be confirmed: SIGTERM and SIGKILL to the "
+                f"process group did not terminate PID {process.pid}"
+            )
+        else:
+            self._release_job_handle(job)
+
+    def _terminate_tree_windows(self, job: Job, process: subprocess.Popen) -> None:
+        # 1. taskkill /T /F walks the live tree.  Return code 0 == killed,
+        #    128 == PID not found (already gone); anything else is a FAILURE
+        #    and must not be treated as success.
+        taskkill_ok = False
+        try:
+            result = subprocess.run(  # noqa: S603 - fixed argv, shell=False
+                ["taskkill", "/PID", str(process.pid), "/T", "/F"],
+                capture_output=True, shell=False, check=False,
+            )
+            taskkill_ok = result.returncode in (0, 128)
+        except OSError:
+            taskkill_ok = False  # taskkill.exe unavailable
+        try:
+            process.wait(timeout=10)
+        except subprocess.TimeoutExpired:
+            pass
+        # 2. If taskkill did not confirm, or the driver is still alive, fall
+        #    back to the kill-on-close Job Object (the whole tree, not just the
+        #    parent).  Closing its last handle terminates every job member.
+        if not taskkill_ok or process.poll() is None:
+            if job.job_handle is not None:
+                _win_close_handle(job.job_handle)
+                job.job_handle = None
+            try:
+                process.kill()
+            except OSError:
+                pass
+            try:
+                process.wait(timeout=10)
+            except subprocess.TimeoutExpired:
+                pass
+        # 3. Verify.  If the driver is still alive we could not confirm the
+        #    tree stopped - surface it, do not report a false success.
+        if process.poll() is None:
+            job.stop_error = (
+                "stop could not be confirmed: taskkill and the job-object "
+                f"fallback did not terminate PID {process.pid}; the process "
+                "tree may still be running"
+            )
+        else:
+            self._release_job_handle(job)
+
+    @staticmethod
+    def _release_job_handle(job: Job) -> None:
+        # Closing a kill-on-close job whose process has already exited is a
+        # harmless no-op that just frees the handle.
+        if job.job_handle is not None:
+            _win_close_handle(job.job_handle)
+            job.job_handle = None
 
     @staticmethod
     def _signal_group(process: subprocess.Popen, sig: int) -> None:
@@ -3295,6 +3711,19 @@ class RigWebApp:
         pricing = load_pricing(self.repo_root)
         return compute_costs(totals, pricing), ""
 
+    def _has_completion_markers(self) -> bool:
+        """True if any completed-run artifacts exist under the results root.
+
+        Used to distinguish a genuinely empty campaign (no spend) from a fresh
+        or stale index pointed at retained artifacts (spend UNKNOWN, not zero).
+        """
+
+        try:
+            _markers, stats = iter_completed_markers(self.results_root)
+        except OSError:
+            return False
+        return bool(stats.get("markers"))
+
     @staticmethod
     def _fmt_money(value: float | None, currency: str) -> str:
         if value is None:
@@ -3335,6 +3764,16 @@ class RigWebApp:
                     f"</strong><br><span class='fieldhint'>rate of "
                     f"{html.escape(row['effective_date'])}{source}</span></td>"
                 )
+            elif row.get("currency") == "mixed" and row.get("by_currency"):
+                parts = " + ".join(
+                    self._fmt_money(value, currency)
+                    for currency, value in row["by_currency"].items()
+                )
+                cost_cell = (
+                    f"<td><strong>{html.escape(parts)}</strong><br>"
+                    "<span class='fieldhint'>mixed currencies - shown per "
+                    "currency, never summed</span></td>"
+                )
             else:
                 why = "; ".join(row["missing"]) or "price not recorded"
                 cost_cell = (
@@ -3353,15 +3792,34 @@ class RigWebApp:
         heads = "".join(
             f"<th>{c.replace('_', ' ')}</th>" for c in _TOKEN_CATEGORIES
         )
-        detail_table = (
-            "<div class='scroll'><table><tr><th>Role</th><th>Provider / model"
-            f"</th><th>Calls</th>{heads}<th>Calculated cost</th></tr>"
-            + "".join(detail) + "</table></div>"
-            if detail else
-            "<p class='note'>No recorded usage yet. Usage appears here once "
-            "a completed run's artifacts are recorded (reconcile on job "
-            "finish, or Reindex on the dashboard).</p>"
-        )
+        unindexed = not detail and self._has_completion_markers()
+        if detail:
+            detail_table = (
+                "<div class='scroll'><table><tr><th>Role</th><th>Provider / "
+                f"model</th><th>Calls</th>{heads}<th>Calculated cost</th></tr>"
+                + "".join(detail) + "</table></div>"
+            )
+        elif unindexed:
+            # Retained artifacts exist but the derived index is empty (a fresh
+            # or stale SQLite file): the spend is UNKNOWN, not $0.  Never show a
+            # zero here; prompt a reindex from the artifacts.
+            detail_table = (
+                "<div class='notice amber'><strong>Recorded usage not indexed."
+                "</strong><p class='note'>Completed run artifacts exist under "
+                "the results root but this database has no usage rows yet "
+                "(a fresh or rebuilt index), so recorded spend is "
+                "<strong>unknown, not zero</strong>. "
+                "<form class='inline' method='post' action='/db/reindex' "
+                "data-busy='Rebuilding the index from retained artifacts...'>"
+                "<button type='submit' class='small'>Reindex from artifacts"
+                "</button></form></p></div>"
+            )
+        else:
+            detail_table = (
+                "<p class='note'>No recorded usage yet. Usage appears here once "
+                "a completed run's artifacts are recorded (reconcile on job "
+                "finish, or Reindex on the dashboard).</p>"
+            )
         # Provider budget summary: prepaid minus calculated spend.
         by_provider: dict[str, tuple[float, bool]] = {}
         for row in cost_rows:
@@ -3379,13 +3837,19 @@ class RigWebApp:
                 (0.0, True),
             )
             prepaid = self._parse_money(amount)
-            spent_text = self._fmt_money(spent, "USD") if complete else (
-                "N/A <span class='fieldhint'>some models lack a recorded "
-                "price</span>"
-            )
+            if unindexed:
+                # Retained artifacts exist but usage is not indexed: spend is
+                # unknown, never a fabricated $0.0000.
+                spent_text = ("unknown <span class='fieldhint'>not indexed - "
+                              "reindex from artifacts</span>")
+            elif complete:
+                spent_text = self._fmt_money(spent, "USD")
+            else:
+                spent_text = ("N/A <span class='fieldhint'>some models lack a "
+                              "recorded price</span>")
             if prepaid is None:
                 remaining = "N/A <span class='fieldhint'>prepaid not numeric</span>"
-            elif not complete:
+            elif unindexed or not complete:
                 remaining = "N/A <span class='fieldhint'>cost incomplete</span>"
             else:
                 remaining = self._fmt_money(prepaid - spent, "USD")
@@ -3407,10 +3871,15 @@ class RigWebApp:
             "an estimate. Cost multiplies those tokens by the operator-edited "
             "<a href='/config?file=pricing'>pricing</a> table (effective-"
             "dated); a missing token count or price renders as N/A, never as "
-            "zero. Prepaid budgets come from the editable "
-            "<a href='/config?file=budgets'>budgets</a> config. If a provider "
-            "ever reports an actually billed amount in an artifact, that "
-            "amount is authoritative over this calculation.</p></div>"
+            "zero. <code>target_failed</code>/<code>judge_failed</code> rows are "
+            "observable paid work from cells that later errored (operational "
+            "spend only, never part of any scientific result); "
+            "<code>reserved</code> rows are attempted calls with no recorded "
+            "token detail, shown as N/A exposure, never zero. Prepaid budgets "
+            "come from the editable <a href='/config?file=budgets'>budgets</a> "
+            "config. If a provider ever reports an actually billed amount in an "
+            "artifact, that amount is authoritative over this calculation."
+            "</p></div>"
         )
 
     @staticmethod
@@ -3473,9 +3942,24 @@ class RigWebApp:
             return [dict(row) for row in rows]
         return collect_reports(self.results_root)
 
+    #: The fields that define a compatible Level-2 metric stratum.  Two
+    #: estimates may share a chart/section ONLY when every one of these matches
+    #: - so the same metric in two different populations, sources, policies,
+    #: modalities, attackers, defenses or judges is charted separately, never
+    #: pooled or mislabelled by the first row's metadata.
+    _LEVEL2_COMPAT_FIELDS = (
+        "semantic_family", "metric", "source", "source_policy_id",
+        "source_policy_version", "risk_category", "effective_modality",
+        "expected_behavior", "population", "attacker", "defense", "judge_model",
+    )
+    #: Chart bars are capped for legibility; the table always shows every row,
+    #: so nothing is silently dropped.
+    _LEVEL2_CHART_CAP = 40
+
     def _render_level2(self, rel: str, doc: Mapping[str, Any]) -> str:
         """Render one ura-level2-report/1: real estimate rows, one chart per
-        metric, never a cross-metric combination or a universal score."""
+        COMPATIBLE metric stratum, never a cross-stratum combination or a
+        universal score."""
 
         common = doc.get("common")
         estimates = (
@@ -3488,42 +3972,49 @@ class RigWebApp:
                 "report with no common estimate rows (native-only or empty)."
                 "</p></div>"
             )
-        by_metric: dict[str, list[Mapping[str, Any]]] = {}
+        by_stratum: dict[tuple, list[Mapping[str, Any]]] = {}
         for row in estimates:
-            if isinstance(row, Mapping):
-                by_metric.setdefault(str(row.get("metric", "?")), []).append(row)
+            if not isinstance(row, Mapping):
+                continue
+            key = tuple(str(row.get(field, "")) for field in self._LEVEL2_COMPAT_FIELDS)
+            by_stratum.setdefault(key, []).append(row)
         sections = []
-        for metric in sorted(by_metric):
-            rows = by_metric[metric]
-            family = str(rows[0].get("semantic_family", ""))
-            polarity = str(rows[0].get("polarity", ""))
-            # A chart is drawn only when every value in this metric is a
-            # rate in [0, 1]; other scales stay table-only rather than being
-            # squeezed into a misleading axis.
+        for key in sorted(by_stratum):
+            rows = by_stratum[key]
+            fields = dict(zip(self._LEVEL2_COMPAT_FIELDS, key))
+            # The section label reflects THIS stratum's own compatibility
+            # fields (they are identical for every row in the group), never a
+            # single arbitrary row's metadata standing in for a mixed set.
+            label_bits = "".join(
+                f"<span class='modtag'>{html.escape(f'{name}={value}')}</span>"
+                for name, value in fields.items() if value
+            )
             values = [row.get("value") for row in rows]
             chartable = all(
-                isinstance(v, (int, float)) and 0.0 <= float(v) <= 1.0
+                isinstance(v, (int, float)) and not isinstance(v, bool)
+                and 0.0 <= float(v) <= 1.0
                 for v in values
             )
-            chart = ""
             if chartable:
-                chart_rows = [
-                    (
-                        f"{row.get('model_spec', '?')} · "
-                        f"{row.get('corpus_arm', '?')} · "
-                        f"{row.get('attacker', '?')}",
-                        float(row.get("value", 0.0)),
-                    )
-                    for row in rows[:24]
+                bars = [
+                    (f"{row.get('model_spec', '?')} · {row.get('resolved_model', '?')}",
+                     float(row.get("value", 0.0)))
+                    for row in rows[:self._LEVEL2_CHART_CAP]
                 ]
-                chart = self._bar_chart(chart_rows)
+                chart = self._bar_chart(bars)
+                if len(rows) > self._LEVEL2_CHART_CAP:
+                    chart += (
+                        f"<p class='note'>Chart shows {self._LEVEL2_CHART_CAP} "
+                        f"of {len(rows)} rows; all {len(rows)} are in the table "
+                        "below.</p>"
+                    )
             else:
                 chart = (
                     "<p class='note'>Not charted: values are not rates in "
                     "[0, 1]; the table below is the presentation.</p>"
                 )
             table_rows = []
-            for row in rows[:60]:
+            for row in rows:  # every bounded row, never truncated
                 ci_low, ci_high = row.get("ci_low"), row.get("ci_high")
                 ci = (
                     f"[{ci_low:.3f}, {ci_high:.3f}]"
@@ -3542,7 +4033,8 @@ class RigWebApp:
                 value = row.get("value")
                 value_text = (
                     f"{float(value):.4f}"
-                    if isinstance(value, (int, float)) else "N/A"
+                    if isinstance(value, (int, float)) and not isinstance(value, bool)
+                    else "N/A"
                 )
                 table_rows.append(
                     f"<tr><td><code>{html.escape(str(row.get('model_spec', '')))}"
@@ -3557,9 +4049,9 @@ class RigWebApp:
                     f"<td>{coverage}</td></tr>"
                 )
             sections.append(
-                f"<h3>{html.escape(metric)} <span class='modtag'>"
-                f"{html.escape(family)}</span><span class='modtag'>"
-                f"{html.escape(polarity)}</span></h3>"
+                f"<h3>{html.escape(fields['metric'])} "
+                f"<span class='fieldhint'>({len(rows)} row(s))</span><br>"
+                + label_bits + "</h3>"
                 + chart +
                 "<div class='scroll'><table><tr><th>model_spec</th>"
                 "<th>corpus_arm</th><th>attacker</th><th>defense</th>"
@@ -3572,9 +4064,11 @@ class RigWebApp:
             + f"{html.escape(rel)} <span class='badge blue'>measured</span>"
             "</h2>"
             "<p class='note'>Deterministic Level-2 export "
-            "(<code>common.estimates</code>). One chart per metric; "
-            "unrelated metrics are never combined and no universal safety "
-            "score exists. Diagnostic evidence cannot reach this report by "
+            "(<code>common.estimates</code>). One chart per COMPATIBLE metric "
+            "stratum (semantic family, source, policy, modality, population, "
+            "attacker, defense, judge); the same metric in incompatible "
+            "populations is charted separately and no universal safety score "
+            "exists. Diagnostic evidence cannot reach this report by "
             "construction.</p>"
             + "".join(sections)
             + f"<p class='note'><a href='/artifacts?path={quote(rel)}'>open "
@@ -3588,11 +4082,18 @@ class RigWebApp:
         scope = doc.get("scope") if isinstance(doc.get("scope"), Mapping) else {}
         counts = doc.get("counts") if isinstance(doc.get("counts"), Mapping) else {}
         kind = str(scope.get("evidence_kind", "unknown"))
-        badge = (
-            "<span class='badge amber'>diagnostic dry-run</span>"
-            if kind == "diagnostic_dry_run"
-            else "<span class='badge blue'>measured</span>"
-        )
+        # Map ONLY the exact measured evidence kind to the measured badge.
+        # Diagnostic stays diagnostic; a missing, malformed, or unknown kind is
+        # unknown/invalid - never silently promoted to measured.
+        if kind == "measured_run":
+            badge = "<span class='badge blue'>measured</span>"
+        elif kind == "diagnostic_dry_run":
+            badge = "<span class='badge amber'>diagnostic dry-run</span>"
+        else:
+            badge = (
+                "<span class='badge gray'>unknown/invalid evidence kind"
+                f" ({html.escape(kind)})</span>"
+            )
         tables = []
         for title, key in (
             ("Prospective request units", "prospective_request_units"),
@@ -3654,6 +4155,21 @@ class RigWebApp:
             except (OSError, ValueError):
                 continue
             if not isinstance(doc, dict):
+                continue
+            # Validate the declared schema before rendering, so a malformed or
+            # mislabelled artifact is shown as invalid rather than rendered (and
+            # possibly badged measured) from untrusted content.
+            expected = {"level1": "ura-level1-evidence/2",
+                        "level2": "ura-level2-report/1"}[report["kind"]]
+            if str(doc.get("schema_version")) != expected:
+                cards.append(
+                    "<div class='card'><h2>" + _icon("file")
+                    + f"{html.escape(rel)} <span class='badge red'>invalid"
+                    "</span></h2><p class='note'>Declared schema "
+                    f"<code>{html.escape(str(doc.get('schema_version')))}</code> "
+                    f"does not match the expected <code>{expected}</code>; not "
+                    "rendered.</p></div>"
+                )
                 continue
             if report["kind"] == "level2":
                 cards.append(self._render_level2(rel, doc))
@@ -5671,10 +6187,17 @@ class RigWebApp:
             "</span><span class='label'>exit code</span></div></div>"
             "</div>"
         )
+        stop_failure = (
+            "<div class='notice red'><strong>Stop could not be confirmed."
+            "</strong><p class='note'>" + html.escape(job.stop_error)
+            + " Check the rig for a surviving process and terminate it "
+            "manually; this run's usage/cost may be incomplete.</p></div>"
+            if job.stop_error else ""
+        )
         body = (
             f"<h1>{_icon('terminal', size=22)}Job {html.escape(job.job_id)}"
             "</h1>"
-            + meta +
+            + meta + stop_failure +
             "<div class='card'><h2>" + _icon("file") + "Command</h2>"
             + argv_chips + stop_form + "</div>"
             + builder
