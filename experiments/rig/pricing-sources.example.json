@@ -1,0 +1,30 @@
+{
+  "schema": "ura-console-pricing-sources/1",
+  "note": "Where the pricing fetcher (experiments/pricing_fetch.py) reads published per-model prices. Anthropic, OpenAI, DeepSeek and z.ai/GLM pages are machine-readable and their rates are extracted with source_url + fetch-date provenance; Google Gemini, Moonshot/Kimi and Alibaba/Qwen render prices client-side, so their rates must be entered by hand (the fetcher records the attempt and leaves them untouched). A fetched rate never overwrites an operator-entered one; verify any auto-fetched figure against the source before relying on the calculated cost. Update a URL here if a provider moves its pricing page.",
+  "providers": {
+    "anthropic": {
+      "url": "https://docs.claude.com/en/docs/about-claude/pricing"
+    },
+    "openai": {
+      "url": "https://platform.openai.com/docs/pricing"
+    },
+    "deepseek": {
+      "url": "https://api-docs.deepseek.com/quick_start/pricing"
+    },
+    "glm": {
+      "url": "https://docs.z.ai/guides/overview/pricing"
+    },
+    "google": {
+      "url": "https://ai.google.dev/gemini-api/docs/pricing",
+      "note": "client-side rendered; rates not machine-readable - enter manually"
+    },
+    "moonshot": {
+      "url": "https://platform.moonshot.ai/docs/pricing",
+      "note": "client-side rendered; rates not machine-readable - enter manually"
+    },
+    "qwen": {
+      "url": "https://www.alibabacloud.com/help/en/model-studio/models",
+      "note": "client-side rendered card layout; no rates in the HTML - enter manually"
+    }
+  }
+}

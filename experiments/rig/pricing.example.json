@@ -62,13 +62,109 @@
       }
     },
     "google": {
-      "models": {}
+      "models": {
+        "gemini-3.6-flash": {
+          "rates": [
+            {
+              "effective_date": "2026-08-15",
+              "currency": "USD",
+              "per_million_tokens": {
+                "input": null,
+                "output": null,
+                "cache_read": null,
+                "cache_write": null,
+                "reasoning": null,
+                "batch_input": null,
+                "batch_output": null
+              }
+            }
+          ]
+        }
+      }
     },
     "moonshot": {
-      "models": {}
+      "models": {
+        "kimi-k3": {
+          "rates": [
+            {
+              "effective_date": "2026-08-15",
+              "currency": "USD",
+              "per_million_tokens": {
+                "input": null,
+                "output": null,
+                "cache_read": null,
+                "cache_write": null,
+                "reasoning": null,
+                "batch_input": null,
+                "batch_output": null
+              }
+            }
+          ]
+        }
+      }
     },
     "deepseek": {
-      "models": {}
+      "models": {
+        "deepseek-v4-pro": {
+          "rates": [
+            {
+              "effective_date": "2026-08-15",
+              "currency": "USD",
+              "per_million_tokens": {
+                "input": null,
+                "output": null,
+                "cache_read": null,
+                "cache_write": null,
+                "reasoning": null,
+                "batch_input": null,
+                "batch_output": null
+              }
+            }
+          ]
+        }
+      }
+    },
+    "glm": {
+      "models": {
+        "glm-5.2": {
+          "rates": [
+            {
+              "effective_date": "2026-08-15",
+              "currency": "USD",
+              "per_million_tokens": {
+                "input": null,
+                "output": null,
+                "cache_read": null,
+                "cache_write": null,
+                "reasoning": null,
+                "batch_input": null,
+                "batch_output": null
+              }
+            }
+          ]
+        }
+      }
+    },
+    "qwen": {
+      "models": {
+        "qwen3.7-max-2026-06-08": {
+          "rates": [
+            {
+              "effective_date": "2026-08-15",
+              "currency": "USD",
+              "per_million_tokens": {
+                "input": null,
+                "output": null,
+                "cache_read": null,
+                "cache_write": null,
+                "reasoning": null,
+                "batch_input": null,
+                "batch_output": null
+              }
+            }
+          ]
+        }
+      }
     }
   }
 }

@@ -515,3 +515,35 @@ category with recorded tokens unpriced, or a token count is missing, the whole
 row renders N/A naming the missing field - never a fabricated zero. The
 example ships every rate as `null`; fill them from the provider's price sheet
 before relying on a figure.
+
+A rate may additionally carry provenance - `auto_fetched: true`, `source_url`,
+and `fetched_at` - when it was retrieved by the pricing fetcher
+(`experiments/pricing_fetch.py`, reachable from the console's Config section as
+"Fetch from provider pricing pages" or run as a module). The fetcher performs
+read-only HTTPS GETs of each provider's published pricing page listed in
+`experiments/pricing-sources.json` (copy of
+`experiments/rig/pricing-sources.example.json`, schema tag
+`ura-console-pricing-sources/1`, a `providers -> {url}` map) and merges the
+per-model rates it can read. It never fabricates a price: a model or provider
+it cannot read with confidence is left untouched (Anthropic, OpenAI, DeepSeek
+and z.ai/GLM are machine-readable; Google Gemini, Moonshot/Kimi and
+Alibaba/Qwen render prices client-side and stay manual). Model ids are matched
+exactly, so a base id (`gpt-5`, `claude-opus-4`) never captures a differently
+priced longer sibling. Once the operator has priced a model by hand (a rate
+without `auto_fetched` whose input or output is non-null) that figure is
+authoritative and is never superseded - not on the same date and not by a
+later-dated fetch - so a hand-entered correction is always the billed value
+until the operator edits it directly; the fetcher only fills a model the
+operator has not priced or updates a rate it set itself, appending a
+later-dated entry only when the price actually differs. The merge is written atomically
+(temp-file + rename) after backing up the prior file to `pricing.json.bak`, and
+an existing `pricing.json` that is unreadable or not a JSON object is refused
+rather than reset, so operator rates are never lost to a corrupt file.
+
+Provider API keys are managed from the same Config section
+(`/config/secrets`). The console records only presence and a last-four masked
+hint; it never displays, logs, or stores a key value, and writes keys only to
+the operator secrets file (mode 600, `~/.ura_env` by default) as
+`export NAME=...` lines - rejecting any value containing a single quote or
+control character so a stored key can never break or inject into that sourced
+file.

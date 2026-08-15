@@ -72,6 +72,20 @@ Credentials stay in provider environment variables, never in JSON:
 | DeepSeek | `DEEPSEEK_API_KEY` |
 | Kimi | `MOONSHOT_API_KEY` |
 | Qwen | `DASHSCOPE_API_KEY` |
+| GLM (z.ai) | `ZHIPU_API_KEY` |
+
+These keys can be set or rotated from the console's Config section
+(`/config/secrets`): the console records only whether a key is present plus a
+last-four masked hint, never the value, and writes it to the operator secrets
+file (mode 600, `~/.ura_env` by default) for jobs launched afterwards. Setting
+a key this way is equivalent to exporting the environment variable by hand.
+
+`experiments/rig/pricing.example.json` seeds the per-model cost table
+(`experiments/pricing.json`); rates can be typed by hand or pulled with the
+"Fetch from provider pricing pages" button (module `experiments/pricing_fetch`),
+which reads the published pages listed in `pricing-sources.example.json` and
+never overwrites a hand-entered rate. See `docs/SCHEMA.md` for the provenance
+and merge rules.
 
 For OpenAI-compatible providers, the adapter's credential-free default endpoint
 is used unless the operator supplies the exact account/region endpoint through

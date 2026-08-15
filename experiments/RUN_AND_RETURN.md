@@ -2327,6 +2327,23 @@ artifacts by the dashboard Reindex action or the headless
 artifacts remain authoritative, the console never reinterprets experiment
 semantics, and diagnostic evidence it displays never authorizes a campaign.
 
+The per-model rates can be filled by hand or pulled from each provider's
+published pricing page by the fetcher (`experiments/pricing_fetch`, also the
+Config section's "Fetch from provider pricing pages" action). The fetcher does
+read-only HTTPS GETs of the URLs in `experiments/pricing-sources.json`, matches
+model ids exactly, and merges the rates it can read with `auto_fetched` /
+`source_url` / `fetched_at` provenance; it never fabricates a price (Google
+Gemini, Moonshot/Kimi and Alibaba/Qwen render client-side and stay manual) and
+never supersedes a model the operator has priced by hand - that figure is
+billed on any date until the operator edits it directly; the fetcher only fills
+unpriced models or updates rates it set itself. The merge is atomic with a
+`.bak` of the prior file, and
+a corrupt or non-object `pricing.json` is refused rather than reset, so
+hand-entered rates are never lost. Provider API keys are set or rotated from
+the Config section (`/config/secrets`); the console records only presence and a
+last-four hint, never the value, and writes keys write-only to the operator
+secrets file (mode 600).
+
 Console-form to runbook-section mapping (the console builds the identical
 argument vectors; nothing below is console-only):
 

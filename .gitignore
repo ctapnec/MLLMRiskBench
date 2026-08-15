@@ -206,6 +206,9 @@ cython_debug/
 /experiments/local-targets.json
 /experiments/budgets.json
 /experiments/pricing.json
+/experiments/pricing.json.bak
+/experiments/pricing.json.tmp
+/experiments/pricing-sources.json
 /experiments/vllm-roster.json
 
 # Generated experiment evidence is retained outside Git source identity.

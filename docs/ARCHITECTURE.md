@@ -316,6 +316,18 @@ operator-edited effective-dated pricing registry (missing data renders N/A,
 never zero), and the validated filesystem artifacts remain the sole
 measurement authority.
 
+The pricing registry can be populated by hand or by the pricing fetcher
+(`experiments/pricing_fetch.py`), which does read-only HTTPS GETs of each
+provider's published pricing page (URLs in `experiments/pricing-sources.json`),
+matches model ids exactly, and merges the rates it can read with
+`auto_fetched`/`source_url`/`fetched_at` provenance. It never fabricates a
+price (client-side-rendered pages stay manual) and never overwrites an
+operator-entered rate; the merge is atomic with a prior-file backup and refuses
+a corrupt table rather than resetting it. Provider API keys are managed
+write-only from the console's Config section (`/config/secrets`): presence and
+a masked last-four hint only, written to the operator secrets file (mode 600),
+never displayed, logged, or stored in the database.
+
 ## Defense and judge separation
 
 A model-backed `GuardedTarget` intervention has one shared defense-guard

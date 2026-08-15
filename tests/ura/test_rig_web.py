@@ -14,7 +14,9 @@ import argparse
 import hashlib
 import http.client
 import json
+import os
 import sqlite3
+import stat
 import sys
 import threading
 import time
@@ -38,6 +40,7 @@ from experiments.rig_web import (
     compute_costs,
     evidence_badges,
     rate_for,
+    reconcile_pricing_ownership,
     run_kind,
     usage_rows_from_marker,
 )
@@ -2066,3 +2069,481 @@ def test_source_conformance_multi_arm_is_composable() -> None:
     })
     assert argv.count("--arm") == 2 and argv.count("--observation") == 2
     assert argv.index("strongreject_official") < argv.index("advbench_harmful")
+
+
+# -- provider secrets (presence + write-only; values never rendered) -------
+
+
+@pytest.fixture
+def clean_secret_env():
+    """Isolate the managed secret env vars: start empty, restore on teardown.
+
+    set_secret mutates os.environ directly (so newly launched jobs inherit the
+    key), which pytest's monkeypatch does not track, so we snapshot and restore
+    the exact vars ourselves to avoid leaking test keys into the session.
+    """
+
+    names = list(RigWebApp._SECRET_NAMES)
+    saved = {name: os.environ.get(name) for name in names}
+    for name in names:
+        os.environ.pop(name, None)
+    try:
+        yield
+    finally:
+        for name in names:
+            if saved[name] is None:
+                os.environ.pop(name, None)
+            else:
+                os.environ[name] = saved[name]
+
+
+def _secrets_app(tmp_path: Path) -> RigWebApp:
+    results = tmp_path / "runs"
+    results.mkdir(exist_ok=True)
+    return RigWebApp(
+        results_root=results,
+        state_dir=tmp_path / "state",
+        env_file=tmp_path / "secrets" / ".ura_env",
+    )
+
+
+def test_set_secret_writes_file_and_environ_never_returns_value(
+    tmp_path: Path, clean_secret_env,
+) -> None:
+    app = _secrets_app(tmp_path)
+    secret = "sk-ant-THISVALUE-abcd1234"
+    result = app.set_secret("ANTHROPIC_API_KEY", secret)
+    assert result is None  # write-only: the call never hands the value back
+
+    # Written to the env file as an export line, and the file is 0600.
+    text = app.env_file.read_text(encoding="utf-8")
+    assert f"export ANTHROPIC_API_KEY='{secret}'" in text
+    if os.name == "posix":
+        mode = stat.S_IMODE(app.env_file.stat().st_mode)
+        assert mode == 0o600
+    # Mirrored into the process so freshly launched jobs inherit it.
+    assert os.environ["ANTHROPIC_API_KEY"] == secret
+
+
+def test_secret_status_masks_value(tmp_path: Path, clean_secret_env) -> None:
+    app = _secrets_app(tmp_path)
+    app.set_secret("OPENAI_API_KEY", "sk-openai-SECRETVALUE-wxyz9876")
+    rows = {row["name"]: row for row in app.secret_status()}
+    openai = rows["OPENAI_API_KEY"]
+    assert openai["present"] is True
+    # Only a last-4 hint is exposed, never the value.
+    assert openai["hint"] == "set - ....9876"
+    assert "SECRETVALUE" not in json.dumps(rows)
+    # A key that was never set reports absent.
+    assert rows["DEEPSEEK_API_KEY"]["present"] is False
+    assert rows["DEEPSEEK_API_KEY"]["hint"] == "not set"
+
+
+def test_secrets_page_never_renders_the_value(
+    tmp_path: Path, clean_secret_env,
+) -> None:
+    app = _secrets_app(tmp_path)
+    app.set_secret("MOONSHOT_API_KEY", "sk-moon-RAWSECRET-lmno4321")
+    _status, _ctype, body = app.handle("GET", "/config/secrets")
+    page = body.decode("utf-8")
+    assert "RAWSECRET" not in page
+    assert "....4321" in page  # the masked hint is what shows
+    # The input is a password field with no prefilled value attribute.
+    assert "type='password'" in page
+
+
+def test_set_secret_rejects_bad_input(tmp_path: Path, clean_secret_env) -> None:
+    app = _secrets_app(tmp_path)
+    with pytest.raises(ValueError, match="unknown secret"):
+        app.set_secret("NOT_A_KEY", "x")
+    with pytest.raises(ValueError, match="must not be empty"):
+        app.set_secret("ANTHROPIC_API_KEY", "   ")
+    with pytest.raises(ValueError, match="single line"):
+        app.set_secret("ANTHROPIC_API_KEY", "line1\nline2")
+    with pytest.raises(ValueError, match="implausibly long"):
+        app.set_secret("ANTHROPIC_API_KEY", "x" * 5000)
+    # A single quote would break out of the 'export NAME=...' quoting when the
+    # env file is sourced (shell injection); reject it fail-closed.
+    with pytest.raises(ValueError, match="single quote"):
+        app.set_secret("ANTHROPIC_API_KEY", "abc'; echo pwned; x='def")
+    with pytest.raises(ValueError, match="control character"):
+        app.set_secret("ANTHROPIC_API_KEY", "abc\x00def")
+    # A Unicode line/paragraph separator (U+0085/U+2028/U+2029) passes an
+    # ord<0x20 control-char check but str.splitlines() splits on it, so a stored
+    # key would be torn apart on the next read-modify-write; reject it too.
+    for sep in ("\x85", "\u2028", "\u2029"):
+        with pytest.raises(ValueError, match="single line"):
+            app.set_secret("ANTHROPIC_API_KEY", f"abc{sep}def")
+
+
+def test_set_secret_written_line_is_shell_safe(
+    tmp_path: Path, clean_secret_env,
+) -> None:
+    # A stored key round-trips through the env file with exactly one token: the
+    # sourced line must define only NAME=<value>, never a second command.
+    import shlex
+
+    app = _secrets_app(tmp_path)
+    app.set_secret("ANTHROPIC_API_KEY", "sk-ant-Aa0_-.+/=~value")
+    tokens = shlex.split(app.env_file.read_text(encoding="utf-8"))
+    assert tokens == ["export", "ANTHROPIC_API_KEY=sk-ant-Aa0_-.+/=~value"]
+
+
+def test_set_secret_rotate_replaces_without_duplicate(
+    tmp_path: Path, clean_secret_env,
+) -> None:
+    app = _secrets_app(tmp_path)
+    app.set_secret("ANTHROPIC_API_KEY", "sk-ant-FIRST-0001")
+    app.set_secret("ANTHROPIC_API_KEY", "sk-ant-SECOND-0002")
+    text = app.env_file.read_text(encoding="utf-8")
+    assert text.count("export ANTHROPIC_API_KEY=") == 1
+    assert "SECOND" in text and "FIRST" not in text
+    assert os.environ["ANTHROPIC_API_KEY"] == "sk-ant-SECOND-0002"
+
+
+def test_clear_secret_removes_from_file_and_environ(
+    tmp_path: Path, clean_secret_env,
+) -> None:
+    app = _secrets_app(tmp_path)
+    app.set_secret("DEEPSEEK_API_KEY", "sk-deepseek-GONE-5555")
+    app.clear_secret("DEEPSEEK_API_KEY")
+    text = app.env_file.read_text(encoding="utf-8")
+    assert "DEEPSEEK_API_KEY" not in text
+    assert "DEEPSEEK_API_KEY" not in os.environ
+    with pytest.raises(ValueError, match="unknown secret"):
+        app.clear_secret("NOT_A_KEY")
+
+
+def test_post_secrets_set_redirects_without_leaking_value(
+    tmp_path: Path, clean_secret_env,
+) -> None:
+    app = _secrets_app(tmp_path)
+    secret = "sk-ant-POSTED-9999"
+    status, location, _ = app.handle("POST", "/config/secrets", {
+        "name": "ANTHROPIC_API_KEY", "action": "set", "value": secret,
+    })
+    assert status == 303
+    # The value must never appear in the redirect target.
+    assert secret not in location
+    assert "9999" not in location
+    assert location.startswith("/config/secrets?saved=ANTHROPIC_API_KEY")
+    assert os.environ["ANTHROPIC_API_KEY"] == secret
+
+
+def test_post_secrets_clear_removes_key(
+    tmp_path: Path, clean_secret_env,
+) -> None:
+    app = _secrets_app(tmp_path)
+    app.set_secret("OPENAI_API_KEY", "sk-openai-CLEARME-1111")
+    status, location, _ = app.handle("POST", "/config/secrets", {
+        "name": "OPENAI_API_KEY", "action": "clear",
+    })
+    assert status == 303
+    assert "OPENAI_API_KEY" not in os.environ
+
+
+def test_post_secrets_invalid_shows_error_not_500(
+    tmp_path: Path, clean_secret_env,
+) -> None:
+    app = _secrets_app(tmp_path)
+    status, ctype, body = app.handle("POST", "/config/secrets", {
+        "name": "ANTHROPIC_API_KEY", "action": "set", "value": "",
+    })
+    assert status == 200  # rendered form with an inline error, not a crash
+    assert "must not be empty" in body.decode("utf-8")
+
+
+def test_set_secret_write_fault_raises_valueerror(
+    tmp_path: Path, clean_secret_env, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    app = _secrets_app(tmp_path)
+
+    def failing_replace(src, dst, *args, **kwargs):
+        raise PermissionError("read-only secrets file")
+
+    monkeypatch.setattr(os, "replace", failing_replace)
+    with pytest.raises(ValueError, match="could not write the secrets file"):
+        app.set_secret("ANTHROPIC_API_KEY", "sk-ant-value")
+
+
+def test_post_secrets_write_fault_shows_error_not_500(
+    tmp_path: Path, clean_secret_env, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # A filesystem write fault must render the "Not saved" page, not 500.
+    app = _secrets_app(tmp_path)
+
+    def failing_replace(src, dst, *args, **kwargs):
+        raise OSError("disk full")
+
+    monkeypatch.setattr(os, "replace", failing_replace)
+    status, _ctype, body = app.handle("POST", "/config/secrets", {
+        "name": "ANTHROPIC_API_KEY", "action": "set", "value": "sk-ant-value",
+    })
+    assert status == 200
+    assert "could not write the secrets file" in body.decode("utf-8")
+
+
+def test_set_secret_writes_lf_line_endings(tmp_path: Path, clean_secret_env) -> None:
+    # The env file is sourced by a POSIX shell; a stray CR would ride into the
+    # key value and 401 every call.  It must be LF-only on any platform.
+    app = _secrets_app(tmp_path)
+    app.set_secret("ANTHROPIC_API_KEY", "sk-ant-lf")
+    raw = app.env_file.read_bytes()
+    assert b"\r" not in raw
+    assert raw.endswith(b"'\n")
+
+
+def test_clear_secret_unreadable_file_fails_closed(
+    tmp_path: Path, clean_secret_env, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # If the file is present but unreadable, Clear must NOT report success while
+    # the key survives on disk (it would resurrect on the next source).
+    app = _secrets_app(tmp_path)
+    app.set_secret("OPENAI_API_KEY", "sk-openai-keep")
+    original = Path.read_text
+
+    def failing(self, *args, **kwargs):
+        if self.name == ".ura_env":
+            raise PermissionError("share-locked")
+        return original(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "read_text", failing)
+    with pytest.raises(ValueError, match="could not read the secrets file"):
+        app.clear_secret("OPENAI_API_KEY")
+    monkeypatch.undo()
+    assert "OPENAI_API_KEY" in app.env_file.read_text(encoding="utf-8")  # still on disk
+    assert os.environ.get("OPENAI_API_KEY") == "sk-openai-keep"  # not falsely popped
+
+
+def test_set_secret_unreadable_file_does_not_clobber_other_keys(
+    tmp_path: Path, clean_secret_env, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    app = _secrets_app(tmp_path)
+    app.set_secret("GEMINI_API_KEY", "sk-gem-keep")
+    original = Path.read_text
+
+    def failing(self, *args, **kwargs):
+        if self.name == ".ura_env":
+            raise PermissionError("share-locked")
+        return original(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "read_text", failing)
+    with pytest.raises(ValueError, match="could not read the secrets file"):
+        app.set_secret("ANTHROPIC_API_KEY", "sk-ant-new")
+    monkeypatch.undo()
+    assert "GEMINI_API_KEY" in app.env_file.read_text(encoding="utf-8")
+
+
+def test_set_secret_is_serialized_by_secret_lock(
+    tmp_path: Path, clean_secret_env,
+) -> None:
+    app = _secrets_app(tmp_path)
+    done: list[bool] = []
+
+    def setter() -> None:
+        app.set_secret("ANTHROPIC_API_KEY", "sk-ant-x")
+        done.append(True)
+
+    with app._secret_lock:
+        worker = threading.Thread(target=setter)
+        worker.start()
+        worker.join(timeout=0.3)
+        assert not done  # blocked while the lock is held
+    worker.join(timeout=3)
+    assert done == [True]
+
+
+def test_pricing_fetch_banner_reports_zero_match_provider() -> None:
+    # A machine-readable provider that fetched but matched no models must still
+    # appear in the banner, not vanish silently.
+    summary = {
+        "rates_written": 0,
+        "providers": {
+            "anthropic": {
+                "url": "https://a", "matched": [], "unmatched": ["claude-x"],
+                "note": "",
+            },
+        },
+    }
+    banner = RigWebApp._pricing_fetch_banner(json.dumps(summary))
+    assert "anthropic" in banner
+    assert "matched 0 of 1 model" in banner
+
+
+def test_set_secret_atomic_write_preserves_prior_file_on_fault(
+    tmp_path: Path, clean_secret_env, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # A mid-write fault must leave the PRIOR secrets file intact (atomic), not
+    # an empty/truncated file, and no stray .tmp behind.
+    app = _secrets_app(tmp_path)
+    app.set_secret("ANTHROPIC_API_KEY", "sk-ant-FIRST")
+    before = app.env_file.read_text(encoding="utf-8")
+
+    def failing_replace(src, dst, *args, **kwargs):
+        raise OSError("disk full")
+
+    monkeypatch.setattr(os, "replace", failing_replace)
+    with pytest.raises(ValueError):
+        app.set_secret("OPENAI_API_KEY", "sk-openai-SECOND")
+    monkeypatch.undo()
+    assert app.env_file.read_text(encoding="utf-8") == before  # prior file intact
+    assert not app.env_file.with_name(app.env_file.name + ".tmp").exists()
+
+
+def test_rate_for_same_date_operator_beats_auto_any_order() -> None:
+    # The billing resolver must bill at the operator's same-date rate, never the
+    # auto-fetched one, regardless of which entry is first in the list.
+    auto = {
+        "effective_date": "2026-08-16", "currency": "USD",
+        "per_million_tokens": {"input": 1.4, "output": 4.4}, "auto_fetched": True,
+    }
+    operator = {
+        "effective_date": "2026-08-16", "currency": "USD",
+        "per_million_tokens": {"input": 9.99, "output": 9.99},
+    }
+    for order in ([auto, operator], [operator, auto]):
+        pricing = {"providers": {"glm": {"models": {"glm-5.2": {"rates": order}}}}}
+        rate, why = rate_for(pricing, "glm", "glm-5.2", on_date="2026-08-16")
+        assert why == ""
+        assert rate["per_million_tokens"]["input"] == 9.99
+
+
+def _auto_rate(inp: float, out: float, date: str = "2026-08-16") -> dict:
+    return {
+        "effective_date": date, "currency": "USD",
+        "per_million_tokens": {"input": inp, "output": out},
+        "auto_fetched": True, "source_url": "https://z/pricing", "fetched_at": date,
+    }
+
+
+def test_reconcile_pricing_ownership_deauthes_edited_rate() -> None:
+    current = {"providers": {"glm": {"models": {"glm-5.2": {
+        "rates": [_auto_rate(1.4, 4.4)]}}}}}
+    # Operator corrected input to 9.99 in place, keeping the auto flags.
+    edited = _auto_rate(1.4, 4.4)
+    edited["per_million_tokens"]["input"] = 9.99
+    submitted = {"providers": {"glm": {"models": {"glm-5.2": {
+        "rates": [edited]}}}}}
+    reconcile_pricing_ownership(submitted, current)
+    rate = submitted["providers"]["glm"]["models"]["glm-5.2"]["rates"][0]
+    assert "auto_fetched" not in rate
+    assert "source_url" not in rate and "fetched_at" not in rate
+    assert rate["per_million_tokens"]["input"] == 9.99
+
+
+def test_reconcile_pricing_ownership_keeps_untouched_rate() -> None:
+    current = {"providers": {"glm": {"models": {"glm-5.2": {
+        "rates": [_auto_rate(1.4, 4.4)]}}}}}
+    submitted = {"providers": {"glm": {"models": {"glm-5.2": {
+        "rates": [_auto_rate(1.4, 4.4)]}}}}}
+    reconcile_pricing_ownership(submitted, current)
+    rate = submitted["providers"]["glm"]["models"]["glm-5.2"]["rates"][0]
+    assert rate.get("auto_fetched") is True  # unchanged: provenance retained
+
+
+def test_edited_fetched_rate_survives_refetch(tmp_path: Path) -> None:
+    # End to end: an in-place correction of an auto rate (via the config editor)
+    # must not be reverted by the next fetch.
+    from experiments import pricing_fetch
+
+    repo = tmp_path / "repo"
+    (repo / "experiments" / "rig").mkdir(parents=True, exist_ok=True)
+    pricing_path = repo / "experiments" / "pricing.json"
+    pricing_path.write_text(
+        json.dumps({"providers": {"glm": {"models": {"glm-5.2": {
+            "rates": [_auto_rate(1.4, 4.4)]}}}}}),
+        encoding="utf-8",
+    )
+    (repo / "experiments" / "pricing-sources.json").write_text(
+        json.dumps({"providers": {"glm": {"url": "https://z/pricing"}}}),
+        encoding="utf-8",
+    )
+    results = tmp_path / "runs"
+    results.mkdir()
+    app = RigWebApp(
+        results_root=results, state_dir=tmp_path / "state", repo_root=repo,
+    )
+    # Operator edits the fetched rate's input to 9.99 in place and saves.
+    edited = _auto_rate(1.4, 4.4)
+    edited["per_million_tokens"]["input"] = 9.99
+    content = json.dumps({"providers": {"glm": {"models": {"glm-5.2": {
+        "rates": [edited]}}}}})
+    app.save_config("pricing", content)
+    saved = json.loads(pricing_path.read_text("utf-8"))
+    rate = saved["providers"]["glm"]["models"]["glm-5.2"]["rates"][0]
+    assert "auto_fetched" not in rate  # de-authed on save
+
+    # A re-fetch on the same date must not revert the correction.
+    glm_html = (Path(__file__).parent / "fixtures" / "pricing" / "glm.html").read_text(
+        "utf-8"
+    )
+    summary = pricing_fetch.fetch_pricing(
+        repo, today="2026-08-16", fetcher=lambda url: glm_html,
+    )
+    assert summary["rates_written"] == 0
+    final = json.loads(pricing_path.read_text("utf-8"))
+    effective = pricing_fetch._current_effective(
+        final["providers"]["glm"]["models"]["glm-5.2"], "2026-08-16",
+    )
+    assert effective["per_million_tokens"]["input"] == 9.99
+
+
+def test_rate_for_skips_null_placeholder_and_bills_earlier_operator_rate() -> None:
+    # A later-dated all-null placeholder must not shadow an operator's earlier
+    # real rate: the billed figure is the operator's, not N/A.
+    operator = {
+        "effective_date": "2026-08-10", "currency": "USD",
+        "per_million_tokens": {"input": 9.99, "output": 9.99},
+    }
+    placeholder = {
+        "effective_date": "2026-08-16", "currency": "USD",
+        "per_million_tokens": {"input": None, "output": None},
+    }
+    pricing = {"providers": {"glm": {"models": {"glm-5.2": {
+        "rates": [operator, placeholder]}}}}}
+    rate, why = rate_for(pricing, "glm", "glm-5.2", on_date="2026-08-16")
+    assert why == ""
+    assert rate["per_million_tokens"]["input"] == 9.99
+
+
+def test_pricing_save_is_serialized_by_pricing_lock(tmp_path: Path) -> None:
+    # The pricing config editor and the pricing fetcher both rewrite
+    # pricing.json; save_config("pricing") must take the shared pricing lock so
+    # a save cannot interleave with (and be lost by) a concurrent fetch.
+    app = _isolated_app(tmp_path)
+    content = json.dumps({"schema": "ura-console-pricing/1", "providers": {}})
+    done: list[bool] = []
+
+    def saver() -> None:
+        app.save_config("pricing", content)
+        done.append(True)
+
+    with app._pricing_lock:
+        worker = threading.Thread(target=saver)
+        worker.start()
+        worker.join(timeout=0.3)
+        assert not done  # blocked while the lock is held here
+    worker.join(timeout=3)
+    assert done == [True]  # proceeds once the lock is released
+
+
+def test_pricing_fetch_route_delegates_and_redirects(tmp_path: Path) -> None:
+    # POST /pricing/fetch runs the fetcher over the isolated repo and redirects
+    # to the config page with a summary; no network is touched because the
+    # isolated repo has no sources file (empty providers).
+    repo = tmp_path / "repo"
+    (repo / "experiments" / "rig").mkdir(parents=True, exist_ok=True)
+    (repo / "experiments" / "pricing.json").write_text(
+        json.dumps({"providers": {}}), encoding="utf-8",
+    )
+    (repo / "experiments" / "pricing-sources.json").write_text(
+        json.dumps({"providers": {}}), encoding="utf-8",
+    )
+    results = tmp_path / "runs"
+    results.mkdir()
+    app = RigWebApp(
+        results_root=results, state_dir=tmp_path / "state", repo_root=repo,
+    )
+    status, location, _ = app.handle("POST", "/pricing/fetch", {})
+    assert status == 303
+    assert location.startswith("/config?file=pricing&fetched=")
