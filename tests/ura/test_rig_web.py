@@ -485,6 +485,37 @@ def test_source_metric_arm_runnable_and_replay_guarded(tmp_path: Path) -> None:
         app.close()
 
 
+def test_lane_projection_reads_grand_totals_not_per_attacker(tmp_path: Path) -> None:
+    # The no-call preview must gate Start on the GRAND-TOTAL projected call
+    # bounds, never a single attacker's smaller per-attacker sub-totals (the
+    # projection nests both).  Reading the last per-attacker node would
+    # understate the ceiling and enable Start below the true bound.
+    app = _isolated_app(tmp_path)
+    proj_dir = app.repo_root / "runs" / "proj"
+    proj_dir.mkdir(parents=True)
+    (proj_dir / "grid.lane-projection.json").write_text(json.dumps({
+        "call_projection": {
+            "semantics": "conservative_complete_grid_upper_bound_v1",
+            "trajectories": 30, "target_calls": 300, "judge_calls": 300,
+            "local_guardrail_evaluations": 0, "http_attempts": 360,
+            "by_attacker": {
+                "replay": {"trajectories": 10, "target_calls": 100,
+                           "judge_calls": 100, "local_guardrail_evaluations": 0,
+                           "http_attempts": 120},
+                "crescendo": {"trajectories": 20, "target_calls": 200,
+                              "judge_calls": 200,
+                              "local_guardrail_evaluations": 0,
+                              "http_attempts": 240},
+            },
+        },
+    }), encoding="utf-8")
+    found, why = app._read_lane_projection("runs/proj")
+    assert why == ""
+    assert found == {"target_calls": 300, "judge_calls": 300,
+                     "http_attempts": 360}
+    app.close()
+
+
 def test_exact_modality_admission_before_popen(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -1811,6 +1842,65 @@ def test_reindex_rebuilds_usage_and_spend_card_renders(tmp_path: Path) -> None:
     app.close()
 
 
+def test_budget_never_sums_or_mislabels_mixed_currencies(tmp_path: Path) -> None:
+    # A provider priced in two currencies must NOT be summed into one figure or
+    # mislabelled USD in the budget rollup: it shows per-currency subtotals and
+    # a mixed-currency Remaining of N/A.  A budget whose provider has no
+    # recorded usage shows "no recorded usage", never a fabricated $0.
+    app = _isolated_app(tmp_path)
+    cell = app.results_root / "lane"
+    cell.mkdir(parents=True, exist_ok=True)
+    responses = cell / "cell.responses.jsonl"
+    responses.write_text(json.dumps({
+        "target": "anthropic-fable:claude-fable-5",
+        "tokens": {"input": 1000, "output": 300, "total": 1300,
+                   "uncached_input": 1000},
+        "raw": {"provider": "anthropic", "resolved_model": "claude-fable-5",
+                "provider_usage": {"input_tokens": 1000, "output_tokens": 300}},
+    }) + "\n", encoding="utf-8")
+    trails = cell / "cell.trails.jsonl"
+    trails.write_text(json.dumps({"raw": {
+        "judge_model": "anthropic:claude-haiku-4-5-20251001",
+        "judge_call": {"provider": "anthropic",
+                       "provider_resolved_model": "claude-haiku-4-5-20251001",
+                       "tokens": {"input": 500, "output": 20, "total": 520},
+                       "sampling_control": "seeded"}}}) + "\n", encoding="utf-8")
+    marker = cell / "cell.complete.json"
+    marker.write_text(json.dumps({
+        "status": "complete", "format_version": 2, "run_id": "run-cell",
+        "artifacts": {"responses": _artifact_descriptor(responses),
+                      "trails": _artifact_descriptor(trails)},
+    }), encoding="utf-8")
+    # fable priced in EUR, haiku in USD - the SAME provider, two currencies.
+    (app.repo_root / "experiments" / "pricing.json").write_text(json.dumps({
+        "providers": {"anthropic": {"models": {
+            "claude-fable-5": {"rates": [{
+                "effective_date": "2026-01-01", "currency": "EUR",
+                "per_million_tokens": {"input": 2.0, "output": 10.0}}]},
+            "claude-haiku-4-5-20251001": {"rates": [{
+                "effective_date": "2026-01-01", "currency": "USD",
+                "per_million_tokens": {"input": 1.0, "output": 5.0}}]},
+        }}}}), encoding="utf-8")
+    # Two budgets: Anthropic (has mixed-currency usage) and DeepSeek (none).
+    (app.repo_root / "experiments" / "budgets.json").write_text(json.dumps({
+        "providers": [
+            {"name": "Anthropic", "prepaid": "$100", "match": "anthropic",
+             "funds": "prepaid"},
+            {"name": "DeepSeek", "prepaid": "$50", "match": "deepseek",
+             "funds": "prepaid"},
+        ],
+    }), encoding="utf-8")
+    app.handle("POST", "/db/reindex", {})
+    _s, _c, body = app.handle("GET", "/stats")
+    text = body.decode("utf-8")
+    # Anthropic: per-currency subtotals, never one summed USD figure.
+    assert "mixed currencies (not summed)" in text
+    assert "mixed currencies - cannot net" in text  # Remaining N/A
+    # DeepSeek: real absence, not a fabricated $0.
+    assert "no recorded usage" in text
+    app.close()
+
+
 # -- sqlite reliability ------------------------------------------------------
 
 
@@ -1930,6 +2020,28 @@ def test_stats_renders_real_level1_evidence(tmp_path: Path) -> None:
     assert "Planning strata" in text and "Judgment records" in text
     assert "structural not applicable" in text
     assert "null (by design)" in text  # attempted stays null, shown as such
+    app.close()
+
+
+def test_stats_page_survives_malformed_level1_count(tmp_path: Path) -> None:
+    # A version-valid Level-1 artifact with a non-integer count value must not
+    # 500 the whole Stats page: the version guard does not type-check values,
+    # so the renderer shows the raw value rather than crashing on f"{v:,}".
+    app = _app(tmp_path)
+    bad = app.results_root / "thesis" / "level1"
+    bad.mkdir(parents=True)
+    (bad / "level1.json").write_text(json.dumps({
+        "schema_version": "ura-level1-evidence/2",
+        "scope": {"evidence_kind": "measured_run"},
+        "counts": {
+            "execution_units": {"unit": "cells",
+                                "attempted": {"weird": "nested-object"}},
+        },
+    }), encoding="utf-8")
+    status, _, body = app.handle("GET", "/stats")
+    assert status == 200  # the page did not crash
+    # The malformed value is rendered raw (escaped), never summed or crashed.
+    assert "nested-object" in body.decode("utf-8")
     app.close()
 
 
@@ -2071,6 +2183,47 @@ def test_stop_tree_repeatable_no_survivors(tmp_path: Path) -> None:
             )
     finally:
         app.close()
+
+
+def test_posix_stop_sigkills_group_even_if_driver_exits_gracefully(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # POSIX Stop must escalate SIGKILL to the whole process GROUP after the
+    # grace period even when the driver exited gracefully within it (a child
+    # that caught SIGTERM would otherwise keep spending).  The group id is
+    # captured while the driver is alive, so a reaped driver cannot orphan it.
+    import os as _os
+    import signal as _signal
+    monkeypatch.setattr(_signal, "SIGKILL", 9, raising=False)  # absent on Windows
+    app = _app(tmp_path)
+    signals: list[tuple[int, int]] = []
+    monkeypatch.setattr(_os, "getpgid", lambda pid: 4242, raising=False)
+    monkeypatch.setattr(
+        _os, "killpg", lambda pgid, sig: signals.append((pgid, sig)),
+        raising=False,
+    )
+
+    class _GracefulDriver:
+        pid = 5150
+
+        def poll(self):
+            return 0  # already exited (graceful) at verification time
+
+        def wait(self, timeout=None):
+            return 0  # exits within the SIGTERM grace: no TimeoutExpired
+
+        def send_signal(self, sig):
+            signals.append((-1, sig))  # driver-only fallback marker
+
+    job = Job(job_id="grace", command="x", argv=[], directory=tmp_path,
+              process=_GracefulDriver())
+    app._terminate_tree_posix(job, job.process)
+    # SIGKILL reached the captured GROUP id, not merely the exited driver.
+    assert (4242, _signal.SIGKILL) in signals
+    assert (4242, _signal.SIGTERM) in signals
+    assert not any(pg == -1 for pg, _s in signals)  # never the driver-only path
+    assert job.stop_error is None  # confirmed stopped
+    app.close()
 
 
 def test_stop_error_surfaced_when_tree_cannot_be_confirmed(tmp_path: Path) -> None:

@@ -3302,22 +3302,34 @@ class RigWebApp:
     def _terminate_tree_posix(self, job: Job, process: subprocess.Popen) -> None:
         import signal  # noqa: PLC0415 - POSIX-only path
 
-        self._signal_group(process, signal.SIGTERM)
+        # Capture the process-group id WHILE the driver is alive: once it exits
+        # and is reaped, os.getpgid(pid) raises ESRCH and any surviving group
+        # member could no longer be addressed.
+        try:
+            pgid: int | None = os.getpgid(process.pid)
+        except (OSError, ProcessLookupError):
+            pgid = None
+        self._signal_group(process, signal.SIGTERM, pgid)
         try:
             process.wait(timeout=10)
         except subprocess.TimeoutExpired:
-            # Escalate to the whole group even if the driver is still up.
-            self._signal_group(process, signal.SIGKILL)
-            try:
-                process.wait(timeout=10)
-            except subprocess.TimeoutExpired:
-                pass
+            pass
+        # Escalate to the whole group UNCONDITIONALLY after the grace period,
+        # using the captured pgid so a child that caught SIGTERM (to finish a
+        # paid call) or a driver that already exited is still force-killed, not
+        # left spending.  SIGKILL to an already-empty group is a harmless no-op.
+        self._signal_group(process, signal.SIGKILL, pgid)
+        try:
+            process.wait(timeout=10)
+        except subprocess.TimeoutExpired:
+            pass
         if process.poll() is None:
             job.stop_error = (
                 "stop could not be confirmed: SIGTERM and SIGKILL to the "
                 f"process group did not terminate PID {process.pid}"
             )
         else:
+            job.stop_error = None  # a prior unconfirmed stop is now resolved
             self._release_job_handle(job)
 
     def _terminate_tree_windows(self, job: Job, process: subprocess.Popen) -> None:
@@ -3361,6 +3373,7 @@ class RigWebApp:
                 "tree may still be running"
             )
         else:
+            job.stop_error = None  # a prior unconfirmed stop is now resolved
             self._release_job_handle(job)
 
     @staticmethod
@@ -3372,11 +3385,18 @@ class RigWebApp:
             job.job_handle = None
 
     @staticmethod
-    def _signal_group(process: subprocess.Popen, sig: int) -> None:
-        """Signal the job's process group, falling back to the driver."""
+    def _signal_group(
+        process: subprocess.Popen, sig: int, pgid: int | None = None,
+    ) -> None:
+        """Signal the job's process group, falling back to the driver.
+
+        ``pgid`` may be captured while the driver is still alive and passed in:
+        once the driver exits and is reaped, ``os.getpgid(pid)`` raises ESRCH
+        and a surviving group member could no longer be addressed.
+        """
 
         try:
-            os.killpg(os.getpgid(process.pid), sig)
+            os.killpg(pgid if pgid is not None else os.getpgid(process.pid), sig)
         except (OSError, ProcessLookupError):
             try:
                 process.send_signal(sig)
@@ -3937,39 +3957,65 @@ class RigWebApp:
                 "a completed run's artifacts are recorded (reconcile on job "
                 "finish, or Reindex on the dashboard).</p>"
             )
-        # Provider budget summary: prepaid minus calculated spend.
-        by_provider: dict[str, tuple[float, bool]] = {}
+        # Provider budget summary: prepaid minus calculated spend.  Spend is
+        # tracked PER CURRENCY and never summed across currencies; each provider
+        # carries a completeness flag (a None-cost row = a model lacks a price).
+        # A match prefix that hits no provider with recorded usage shows "no
+        # recorded usage", never a fabricated $0.0000.
+        by_provider: dict[str, dict] = {}
         for row in cost_rows:
             if not row["billable"]:
                 continue
-            spent, complete = by_provider.get(row["provider"].lower(), (0.0, True))
+            prov = row["provider"].lower()
+            entry = by_provider.setdefault(prov, {"by_ccy": {}, "complete": True})
             if row["cost"] is None:
-                by_provider[row["provider"].lower()] = (spent, False)
+                entry["complete"] = False
             else:
-                by_provider[row["provider"].lower()] = (spent + row["cost"], complete)
+                ccy = str(row.get("currency") or "USD")
+                entry["by_ccy"][ccy] = entry["by_ccy"].get(ccy, 0.0) + row["cost"]
         budget_rows = []
         for name, amount, match, _role in self._budgets():
-            spent, complete = next(
-                (v for p, v in by_provider.items() if p.startswith(match)),
-                (0.0, True),
-            )
+            matched = [v for p, v in by_provider.items() if p.startswith(match)]
             prepaid = self._parse_money(amount)
+            merged: dict[str, float] = {}
+            complete = True
+            for v in matched:
+                complete = complete and v["complete"]
+                for ccy, amt in v["by_ccy"].items():
+                    merged[ccy] = merged.get(ccy, 0.0) + amt
             if unindexed:
-                # Retained artifacts exist but usage is not indexed: spend is
-                # unknown, never a fabricated $0.0000.
                 spent_text = ("unknown <span class='fieldhint'>not indexed - "
                               "reindex from artifacts</span>")
-            elif complete:
-                spent_text = self._fmt_money(spent, "USD")
-            else:
+                remaining = "N/A <span class='fieldhint'>cost incomplete</span>"
+            elif not matched:
+                # No billable usage recorded under this budget's provider: the
+                # spend is genuinely absent, not zero, and there is nothing to
+                # net against prepaid.
+                spent_text = ("no recorded usage <span class='fieldhint'>no "
+                              "billable calls recorded for this provider</span>")
+                remaining = ("N/A <span class='fieldhint'>no recorded spend to "
+                             "subtract</span>")
+            elif not complete:
                 spent_text = ("N/A <span class='fieldhint'>some models lack a "
                               "recorded price</span>")
-            if prepaid is None:
-                remaining = "N/A <span class='fieldhint'>prepaid not numeric</span>"
-            elif unindexed or not complete:
                 remaining = "N/A <span class='fieldhint'>cost incomplete</span>"
+            elif len(merged) > 1:
+                # Different currencies are never summed into one spend nor
+                # subtracted from a single prepaid figure.
+                spent_text = (" + ".join(
+                    self._fmt_money(amt, ccy) for ccy, amt in sorted(merged.items())
+                ) + " <span class='fieldhint'>mixed currencies (not summed)"
+                    "</span>")
+                remaining = ("N/A <span class='fieldhint'>mixed currencies - "
+                             "cannot net one prepaid figure</span>")
             else:
-                remaining = self._fmt_money(prepaid - spent, "USD")
+                ccy, amt = next(iter(merged.items())) if merged else ("USD", 0.0)
+                spent_text = self._fmt_money(amt, ccy)
+                if prepaid is None:
+                    remaining = ("N/A <span class='fieldhint'>prepaid not "
+                                 "numeric</span>")
+                else:
+                    remaining = self._fmt_money(prepaid - amt, ccy)
             budget_rows.append(
                 f"<tr><td>{html.escape(name)}</td>"
                 f"<td><strong>{html.escape(amount)}</strong></td>"
@@ -4229,7 +4275,13 @@ class RigWebApp:
             cells = "".join(
                 "<tr><td>" + html.escape(str(name).replace("_", " "))
                 + "</td><td>"
-                + ("null (by design)" if value is None else f"{value:,}")
+                + (
+                    "null (by design)" if value is None
+                    else f"{value:,}"
+                    if isinstance(value, int) and not isinstance(value, bool)
+                    else html.escape(str(value))  # malformed count: show raw,
+                    #                                never crash the whole page
+                )
                 + "</td></tr>"
                 for name, value in block.items()
                 if name != "unit"
@@ -4288,10 +4340,22 @@ class RigWebApp:
                     "rendered.</p></div>"
                 )
                 continue
-            if report["kind"] == "level2":
-                cards.append(self._render_level2(rel, doc))
-            else:
-                cards.append(self._render_level1(rel, doc))
+            try:
+                if report["kind"] == "level2":
+                    cards.append(self._render_level2(rel, doc))
+                else:
+                    cards.append(self._render_level1(rel, doc))
+            except (KeyError, ValueError, TypeError):
+                # A version-valid but structurally malformed artifact must not
+                # 500 the whole Stats page; show it as unrenderable (fail
+                # closed) and keep every other card.
+                cards.append(
+                    "<div class='card'><h2>" + _icon("file")
+                    + f"{html.escape(rel)} <span class='badge red'>invalid"
+                    "</span></h2><p class='note'>The artifact declares the "
+                    "expected schema but could not be rendered (malformed "
+                    "structure); not shown.</p></div>"
+                )
         results = (
             "<div class='card'><h2>" + _icon("file") + "Report artifacts</h2>"
             f"<ul>{''.join(listed)}</ul></div>"
@@ -4881,20 +4945,30 @@ class RigWebApp:
             return None, "the lane-projection artifact could not be read"
 
         found: dict[str, int] = {}
+        keys = ("target_calls", "judge_calls", "http_attempts")
 
-        def walk(node: Any) -> None:
+        def walk(node: Any) -> bool:
+            # Capture the FIRST node carrying all three call-bound keys (the
+            # top-level call_projection grand totals, visited before its
+            # children) and STOP.  The projection also nests a by_attacker map
+            # whose entries repeat these keys as per-attacker sub-totals; a
+            # blind recursive overwrite would leave `found` holding the last
+            # attacker's smaller counts and understate the required ceiling.
             if isinstance(node, Mapping):
-                if all(k in node for k in ("target_calls", "judge_calls",
-                                           "http_attempts")):
-                    for key in ("target_calls", "judge_calls", "http_attempts"):
+                if all(k in node for k in keys):
+                    for key in keys:
                         value = node.get(key)
                         if isinstance(value, int) and not isinstance(value, bool):
                             found[key] = value
+                    return True  # grand-total node found; never descend into it
                 for value in node.values():
-                    walk(value)
+                    if walk(value):
+                        return True
             elif isinstance(node, list):
                 for value in node:
-                    walk(value)
+                    if walk(value):
+                        return True
+            return False
 
         walk(doc)
         if len(found) != 3:
