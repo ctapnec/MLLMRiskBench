@@ -230,6 +230,13 @@ python -m experiments.human_audit --help
 python -m experiments.figures --help
 ```
 
+The rig-console command remains `python -m experiments.rig_web` and its stable
+imports remain in `experiments/rig_web.py`. That file is a thin facade over the
+focused `experiments/rig_web_app/` modules for catalog/UI, artifacts/reports,
+sqlite state, job/request lifecycle, Build workflows, pages/settings, app
+composition, and the localhost server. The split changes no CLI, admission
+gate, database, or artifact contract.
+
 ## Real-run invariants
 
 - `--limit N` counts source prompt/intent clusters and retains every selected

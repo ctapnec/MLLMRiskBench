@@ -311,6 +311,25 @@ report) run in-process against the state database and retained artifacts
 rather than as `experiments.*` commands; the reindex and usage report are
 also exposed headlessly (`rig_web --reindex` / `--usage-report`).
 
+`experiments/rig_web.py` is intentionally only the stable CLI/import facade.
+The sibling `experiments/rig_web_app/` package keeps the implementation in
+small, acyclic responsibility modules:
+
+- `catalog.py` and `ui.py` hold the typed command/catalog surface and shared
+  presentation assets/helpers;
+- `artifacts.py`, `reports.py`, and `storage.py` handle retained-artifact usage,
+  validated reports/pricing, and sqlite operational state;
+- `lifecycle.py`, `dashboard.py`, `settings.py`, and `pages.py` handle jobs,
+  routing, dashboard/report views, configuration, and general pages;
+- `builder_models.py`, `builder_capture.py`, `builder_validation.py`, and
+  `builder_page.py` implement the Build workflow without changing its gates;
+- `app.py` composes those focused mixins and `server.py` provides the localhost
+  HTTP/headless adapter.
+
+The facade continues to expose the established imports and
+`python -m experiments.rig_web` entry point. This is an implementation boundary,
+not a second interface or evidence path.
+
 At process startup the console snapshots platform, CPU model, physical/logical
 cores and total RAM through `psutil`/platform fallbacks, and NVIDIA card/model,
 VRAM, PCI, compute capability and driver data through `nvidia-smi`. The

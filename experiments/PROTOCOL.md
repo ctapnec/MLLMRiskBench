@@ -254,6 +254,10 @@ are never pooled into one rate or ranking.
 The `experiments.*` steps below are equally launchable from the CLI or from
 the rig console (`experiments/rig_web.py`), which composes the identical
 allowlisted argument vectors so no gate or artifact differs by interface.
+That file is the stable thin facade; the responsibility modules under
+`experiments/rig_web_app/` implement the server, application composition,
+builder/pages, lifecycle, operational database, and artifact/report helpers.
+The module split creates no new protocol or evidence path.
 Steps that are not `experiments.*` commands - selecting and checking out the
 revision, installing dependencies, acquiring releases and recording licenses,
 and running the upstream native projects - are operator actions outside the

@@ -481,12 +481,21 @@ runs the same maintained `experiments.*` command available on the CLI
 and the console's own bookkeeping is reachable headlessly too (`rig_web
 --reindex`, `rig_web --usage-report`).
 
+`experiments/rig_web.py` is the stable, thin import and `python -m` facade.
+The implementation lives in `experiments/rig_web_app/`: command/catalog and
+shared UI helpers, artifact/report/database services, the job/request lifecycle,
+builder workflows, pages/settings, application composition, and the localhost
+HTTP adapter. This is an internal code split only; the CLI, imported facade
+symbols, admission behavior, database, and artifacts are unchanged.
+
 ## Layout
 
 ```text
 src/ura/       schema, converters, adapters, targets, judges, runtime
 tests/ura/     offline regression and integration tests
 experiments/   matrix execution, diagnostics, human audit, analysis, figures
+  rig_web.py   stable rig-console CLI/import facade
+  rig_web_app/ modular rig-console implementation
 docs/          architecture, schema, metrics, taxonomy and native imports
 datasets/      local dataset area; released corpora are not redistributed
 ```

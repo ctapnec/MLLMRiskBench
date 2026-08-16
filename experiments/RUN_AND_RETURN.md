@@ -20,6 +20,12 @@ pairs, repeated `--eligibility`/`--results`/`--native` inputs, repeated
 repeatable form rows in the console; the interface-parity tests validate every
 console form against the real module parsers.
 
+The stable entry point and import facade is `experiments/rig_web.py`; its
+implementation is separated under `experiments/rig_web_app/` by command/UI,
+artifact/report/database, lifecycle, builder/page, application, and localhost
+server responsibilities. This layout does not change any operator command or
+artifact contract.
+
 The Run page starts an allowlisted command from a typed form immediately; the
 campaign builder is the separate mode-validated path that previews the exact
 argument vector and call ceilings before any paid mode starts.
@@ -2510,6 +2516,18 @@ usage and its calculated monetary cost:
 ```bash
 python -m experiments.rig_web --results-root runs --state-dir runs/rig-web
 ```
+
+A future engineering-only local campaign may exercise one CLI or web action at
+a time for at most 24 hours, including local-model T3MP3ST capture/replay and
+HarmBench prepare/replay sessions. It must use no hosted target or judge and
+must keep a dedicated results/state root outside `runs/thesis`, retaining each
+session's exact task, argv, timestamps, model/precision/hardware identity,
+stdout/stderr, console job record, preparation artifacts, Runner outputs, and
+outcome. Retain impossible, implausible, rejected, failed, interrupted, and
+successful cases alike. This campaign has not run yet; its logs are engineering
+diagnostics for suite and runbook refinement, not thesis results unless an
+output later passes the normal measured-evidence contracts and eligibility
+rules.
 
 The dashboard and Build tab show the startup OS/CPU/core/RAM and complete NVIDIA
 GPU inventory. Build target filters are independent and combinative: hosted API
