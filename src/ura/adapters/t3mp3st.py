@@ -533,7 +533,6 @@ class T3MP3STAttacker(BaseAttacker):
             )
         artifact = {
             "mode": "precomputed_response",
-            "path": str(path),
             "sha256": hashlib.sha256(raw).hexdigest(),
             "bytes": len(raw),
             "format_version": _REPLAY_FORMAT,

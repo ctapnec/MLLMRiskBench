@@ -292,6 +292,7 @@ def test_t3mp3st_replay_artifact_is_pinned_and_request_bound(tmp_path: Path) -> 
     attempts = list(attacker.generate(_datapoint(), _budget()))
     source = attempts[0].params["response_source"]
     assert source["mode"] == "precomputed_response"
+    assert "path" not in source
     assert len(source["sha256"]) == 64 and source["bytes"] > 0
     manifest = _runner(attacker).plan_manifest([_datapoint()])
     attacker_config = manifest.config["components"]["attacker"]
@@ -311,6 +312,10 @@ def test_t3mp3st_replay_artifact_is_pinned_and_request_bound(tmp_path: Path) -> 
     )
     copied_manifest = _runner(copied_attacker).plan_manifest([_datapoint()])
     assert copied_manifest.config["components"]["attacker"] == attacker_config
+    copied_attempts = list(copied_attacker.generate(_datapoint(), _budget()))
+    assert [row.model_dump(mode="json") for row in copied_attempts] == [
+        row.model_dump(mode="json") for row in attempts
+    ]
 
     wrapper["request"]["objective"] = "different row"
     attacker.response_artifact.write_text(json.dumps(wrapper), encoding="utf-8")
