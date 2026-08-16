@@ -467,6 +467,67 @@ def _scrub_operator_paths(
     return message
 
 
+def _portable_attacker_configs(
+    configs: dict[str, dict[str, object]],
+) -> dict[str, dict[str, object]]:
+    """Remove host-only replay paths while retaining their exact byte identity."""
+
+    portable: dict[str, dict[str, object]] = {}
+    for name, config in configs.items():
+        item = dict(config)
+        artifact_spec = (
+            ("response_artifact", "response_artifact_sha256", 256 * 1024 * 1024)
+            if name == "t3mp3st"
+            else ("replay_artifact", "replay_artifact_sha256", 64 * 1024 * 1024)
+            if name == "harmbench"
+            else None
+        )
+        declared_path_fields = {
+            field for field in ("response_artifact", "replay_artifact") if field in item
+        }
+        supported_path_field = artifact_spec[0] if artifact_spec is not None else None
+        unsupported_path_fields = sorted(declared_path_fields - {supported_path_field})
+        if unsupported_path_fields:
+            raise ValueError(
+                f"attacker config {name!r} has unsupported replay path fields: "
+                + ", ".join(unsupported_path_fields)
+            )
+        if artifact_spec is not None and artifact_spec[0] in item:
+            path_field, digest_field, max_bytes = artifact_spec
+            path_value = item.pop(path_field)
+            label = f"{name} {path_field}"
+            if not isinstance(path_value, str) or not path_value:
+                raise ValueError(f"{label} must be a non-blank path")
+            unresolved = Path(path_value).expanduser()
+            if unresolved.is_symlink():
+                raise ValueError(f"{label} must not be a symlink")
+            path = unresolved.resolve(strict=True)
+            if (
+                not path.is_file()
+                or path.is_symlink()
+                or not 0 < path.stat().st_size <= max_bytes
+            ):
+                raise ValueError(
+                    f"{label} must be a regular file no larger than "
+                    f"{max_bytes // (1024 * 1024)} MiB"
+                )
+            identity = {
+                "sha256": _sha256_file(path),
+                "bytes": path.stat().st_size,
+            }
+            declared = item.get(digest_field)
+            if declared is not None and (
+                not isinstance(declared, str)
+                or declared.lower() != identity["sha256"]
+            ):
+                raise ValueError(
+                    f"{label} does not match {digest_field}"
+                )
+            item[f"{path_field}_identity"] = identity
+        portable[name] = item
+    return portable
+
+
 def _load_attacker_config(
     path_value: str, selected_attackers: list[str]
 ) -> tuple[dict[str, dict[str, object]], dict[str, object] | None]:
@@ -527,11 +588,12 @@ def _load_attacker_config(
         raise ValueError(
             "--attacker-config contains unselected attackers: " + ", ".join(unused)
         )
+    portable = _portable_attacker_configs(normalized)
     return normalized, {
         "file": path.name,
         "sha256": _sha256_file(path),
         "bytes": path.stat().st_size,
-        "normalized_selected_sha256": _sha256_json(normalized),
+        "normalized_selected_sha256": _sha256_json(portable),
     }
 
 
@@ -2946,6 +3008,7 @@ def main(argv=None) -> int:
         attacker_configs, attacker_config_artifact = _load_attacker_config(
             args.attacker_config, attacker_names
         )
+        portable_attacker_configs = _portable_attacker_configs(attacker_configs)
         configured_api_specs = list(api_specs)
         if (
             not args.dry_run
@@ -3422,7 +3485,7 @@ def main(argv=None) -> int:
                 "project_revision": project_revision_state,
                 "request_envelope": request_envelope_artifact,
                 "source_instances_sha256": _sha256_json(source_instances),
-                "attacker_configs_sha256": _sha256_json(attacker_configs),
+                "attacker_configs_sha256": _sha256_json(portable_attacker_configs),
                 "api_configs_sha256": _sha256_json(api_configs),
                 "local_configs_sha256": _sha256_json({
                     persisted_model_specs[spec]: config
@@ -3876,7 +3939,7 @@ def main(argv=None) -> int:
         "source_config_artifact": source_config_artifact,
         "source_conformance_artifact": source_conformance_artifact,
         "attackers": attacker_names,
-        "attacker_configs": attacker_configs,
+        "attacker_configs": portable_attacker_configs,
         "attacker_config_artifact": attacker_config_artifact,
         "api_configs": api_configs,
         "api_config_artifact": api_config_artifact,
@@ -4270,7 +4333,9 @@ def main(argv=None) -> int:
                         ),
                         "local_identity": local_configs.get(spec),
                         "attacker": attacker_name,
-                        "attacker_config": attacker_config,
+                        "attacker_config": portable_attacker_configs.get(
+                            attacker_name.lower(), {}
+                        ),
                         "judge_names": judge_names,
                         "judge_model": args.judge_model,
                         "judge_api_config": api_configs.get(args.judge_model),

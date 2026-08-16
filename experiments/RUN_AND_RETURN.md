@@ -7,7 +7,7 @@ source-native evaluators. Experiments and the human audit are still pending.
 Preflight, dry-run, diagnostic-canary, and bounded transport-probe artifacts are
 diagnostics, not thesis results.
 
-The maintained artifact contract is Runner `ura-runner/2.14` with unified schema
+The maintained artifact contract is Runner `ura-runner/2.15` with unified schema
 `1.4`. Do not combine older-runner artifacts with this program.
 
 Every `python -m experiments.*` command below can equivalently be started
@@ -1715,28 +1715,84 @@ The remaining runner bridges are specialized:
 | Bridge | Defensible use in this program |
 | --- | --- |
 | `nanogcg` | precomputed suffix with `suffix_source`, or live optimization on an immutable local surrogate; report as surrogate transfer |
-| `harmbench` attacker | measured Runner generation is rejected; pinned upstream test-case generation is an out-of-band capture only. The current tree does not claim an implemented HarmBench-artifact replay producer |
+| `harmbench` attacker | prepare text cases from a clean exact-revision checkout with `experiments.harmbench_capture`, then replay only its exact `ura-harmbench-transfer-replay/1` in the measured grid |
 | `purplellama` | only with `cyberseceval` rows; source-identity replay, not the native pipeline |
 | `ideator` | verified precomputed text-image `seed_pairs` only; live package path is disabled |
-| `t3mp3st` | measured grids require an exact request-bound `response_artifact`; direct/loopback planning is permitted only as out-of-band capture and is never an execute/tool route |
+| `t3mp3st` | prepare an exact `ura-t3mp3st-plan-bundle/1` through the literal-loopback Op-General planning route, then replay only that bundle in the measured grid; no mission or tool route is used |
 
 Run these only after preparing their exact attacker config and passing
 `rig_check`. Do not claim that a complete upstream evaluator ran. Garak,
 Promptfoo, Petri, FuzzyAI, EasyJailbreak, AutoDAN-Turbo, Giskard, ASB, and
 AgentDojo are not runner attackers; they belong in the native track below.
 
-Live/source-model HarmBench generation, T3MP3ST direct/loopback planning, and
-local nanoGCG optimization are out-of-band activities not covered by the
-Runner's target/judge/HTTP budget or post-generation checkpoint. They can repeat
-work on resume and are rejected inside a measured Runner grid. If authorized,
-execute capture separately under its own hard cap/quota and retain the complete
-immutable output plus generator/model/config identity and SHA-256. Measured
-T3MP3ST then consumes only its request-bound, content-addressed
-`response_artifact`. The present code does not turn a HarmBench generation
-artifact into a measured replay lane automatically; prepare and validate an
-explicit replay input through an implemented path or leave the specialized lane
-pending/`N/A`. Never describe out-of-band calls as protected by the common
-Runner ceilings.
+T3MP3ST planning, HarmBench generation, and local nanoGCG optimization are
+out-of-band activities not covered by the Runner's target/judge/HTTP budget or
+post-generation checkpoint. Run preparation once under its own authorized cap
+or quota, retain its exact output, then use only that output in the measured
+Runner. Never describe preparation calls as protected by the common Runner
+ceilings.
+
+#### T3MP3ST: capture, then replay
+
+Start the pinned T3MP3ST Op-General service on loopback. Capture the exact same
+arm, limit and sample seed that the measured run will use:
+
+```bash
+python -m experiments.capture_t3mp3st \
+  --corpus strongreject_official \
+  --source-config experiments/source-instances.json \
+  --limit 50 --sample-seed 0 \
+  --endpoint http://127.0.0.1:3333/api/general/plan \
+  --upstream-revision '<exact-40-hex-T3MP3ST-revision>' \
+  --source-provider '<source-provider>' \
+  --source-model '<source-model>' \
+  --out runs/thesis/prepared/t3mp3st
+```
+
+The command prints the content-addressed artifact path and SHA-256. Put those
+exact values into a one-attacker config:
+
+```json
+{
+  "t3mp3st": {
+    "upstream_revision": "<exact-40-hex-T3MP3ST-revision>",
+    "source_provider": "<source-provider>",
+    "source_model": "<source-model>",
+    "response_artifact": "<printed-artifact-path>",
+    "response_artifact_sha256": "<printed-sha256>"
+  }
+}
+```
+
+Use that file with `--attackers t3mp3st --attacker-config <file>` in both
+`rig_check` and `run_matrix`. The measured selection must match the captured
+arm, limit, sample seed and source bytes exactly.
+
+#### HarmBench: capture, then replay
+
+Generate text cases from the clean pinned HarmBench checkout. The preparation
+command writes both the replay artifact and the matching one-attacker config:
+
+```bash
+python -m experiments.harmbench_capture \
+  --repo "$URA_CORPORA/HarmBench" \
+  --revision "$REF_HARMBENCH" \
+  --source "$URA_HARMBENCH_TEXT_PATH" \
+  --corpus-name harmbench_text \
+  --method DirectRequest \
+  --experiment llama2_7b \
+  --limit 50 --sample-seed 0 --cases-per-method 1 \
+  --artifact-out runs/thesis/prepared/harmbench-direct.json \
+  --attacker-config-out runs/thesis/prepared/harmbench-direct-config.json
+```
+
+Use the generated config with `--attackers harmbench --attacker-config
+runs/thesis/prepared/harmbench-direct-config.json` in both `rig_check` and
+`run_matrix`. Keep the same `harmbench_text`, limit and sample seed. Set both
+`--max-queries` and `--max-turns` to at least `number of methods x
+cases-per-method`; otherwise admission fails rather than dropping captured
+cases. This bridge is text-only and does not claim that the native HarmBench
+classifier ran.
 
 ## 13. Tier 4: local targets and defense contrast
 

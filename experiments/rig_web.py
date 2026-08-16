@@ -343,28 +343,13 @@ _NATIVE_ONLY_ATTACKERS: frozenset[str] = frozenset({
     "garak", "promptfoo", "petri", "fuzzyai", "autodan", "agentdojo",
     "giskard", "easyjailbreak", "asb",
 })
-_BUILDER_UNAVAILABLE_ATTACKERS: dict[str, str] = {
-    "harmbench": (
-        "HarmBench generation is not a campaign lane; select a HarmBench "
-        "corpus arm and use the replay attacker"
-    ),
-    "t3mp3st": (
-        "the current adapter replays one request-bound response artifact and "
-        "is not a campaign workflow; use the CLI only for an exact "
-        "single-request replay"
-    ),
-}
-#: Registered CLI adapters that cannot form a normal campaign lane.  Keep them
-#: in the harness registry and reject forged builder POSTs, but do not advertise
-#: dead choices in either builder UI.
-_BUILDER_OMITTED_ATTACKERS: frozenset[str] = frozenset(
-    _BUILDER_UNAVAILABLE_ATTACKERS
-)
+#: Every registered adapter is visible in Build. T3MP3ST and HarmBench use the
+#: explicit prepare/capture controls rendered beside the normal lane builder.
+_BUILDER_OMITTED_ATTACKERS: frozenset[str] = frozenset()
 #: Every registered attacker (mirrors ura.adapters.engines.ATTACKER_NAMES, the
-#: shared registry - a parity test asserts the two match). The Build page omits
-#: only the explicit non-campaign adapters above. replay/crescendo are
+#: shared registry - a parity test asserts the two match). replay/crescendo are
 #: modality-agnostic (they carry whatever the corpus datapoint holds); the
-#: external adapters are text-first except harmbench (text+image).
+#: prepared external adapters below are text-first.
 _FRAMEWORK_DESCRIPTIONS: dict[str, tuple[str, tuple[str, ...]]] = {
     "replay": ("send the corpus prompt as-is (single turn)", _ALL_MODALITIES),
     "crescendo": ("escalate the request over multiple turns", _ALL_MODALITIES),
@@ -372,7 +357,7 @@ _FRAMEWORK_DESCRIPTIONS: dict[str, tuple[str, tuple[str, ...]]] = {
     "garak": ("NVIDIA garak probes", ("text",)),
     "deepteam": ("DeepTeam red-team adapter", ("text",)),
     "promptfoo": ("Promptfoo adapter", ("text",)),
-    "t3mp3st": ("Tempest multi-turn adapter", ("text",)),
+    "t3mp3st": ("prepared T3MP3ST safe-probe replay", ("text",)),
     "petri": ("Petri adapter", ("text",)),
     "fuzzyai": ("FuzzyAI adapter", ("text",)),
     "nanogcg": ("nanoGCG gradient adapter", ("text",)),
@@ -385,7 +370,7 @@ _FRAMEWORK_DESCRIPTIONS: dict[str, tuple[str, tuple[str, ...]]] = {
     "ideator": ("IDEATOR adapter", ("text",)),
     "purplellama": ("PurpleLlama adapter", ("text",)),
     "asb": ("Agent Security Bench adapter", ("text",)),
-    "harmbench": ("HarmBench attack adapter", ("text", "image")),
+    "harmbench": ("prepared HarmBench case-transfer replay", ("text",)),
 }
 _FRAMEWORKS: tuple[tuple[str, str, tuple[str, ...]], ...] = tuple(
     (name, _FRAMEWORK_DESCRIPTIONS.get(name, ("adapter", ("text",)))[0],
@@ -559,6 +544,43 @@ def _commands() -> dict[str, Command]:
                 CommandParam("--manifest", "path"),
                 CommandParam("--sha256", "str"),
                 CommandParam("--source-config", "path"),
+            ),
+        ),
+        Command(
+            "capture_t3mp3st", "experiments.capture_t3mp3st",
+            "Capture a validated T3MP3ST planning bundle for measured replay",
+            (
+                CommandParam("--corpus", "str"),
+                CommandParam("--input", "path"),
+                CommandParam("--source-config", "path"),
+                CommandParam("--limit", "int"),
+                CommandParam("--sample-seed", "int"),
+                CommandParam("--endpoint", "str"),
+                CommandParam("--upstream-revision", "str"),
+                CommandParam("--source-provider", "str"),
+                CommandParam("--source-model", "str"),
+                CommandParam("--timeout-seconds", "float"),
+                CommandParam("--out", "path"),
+            ),
+        ),
+        Command(
+            "harmbench_capture", "experiments.harmbench_capture",
+            "Prepare a content-addressed HarmBench case bundle for measured replay",
+            (
+                CommandParam("--repo", "path"),
+                CommandParam("--revision", "str"),
+                CommandParam("--source", "path"),
+                CommandParam("--corpus-name", "str"),
+                CommandParam("--method", "str", repeat=True),
+                CommandParam("--experiment", "str"),
+                CommandParam("--limit", "int"),
+                CommandParam("--sample-seed", "int"),
+                CommandParam("--cases-per-method", "int"),
+                CommandParam("--artifact-out", "path"),
+                CommandParam("--attacker-config-out", "path"),
+                CommandParam("--python", "path"),
+                CommandParam("--credential-env", "str", repeat=True),
+                CommandParam("--timeout-seconds", "float"),
             ),
         ),
         Command(
@@ -787,6 +809,8 @@ COMMANDS = _commands()
 COMMAND_GROUPS: tuple[tuple[str, str, str, tuple[str, ...]], ...] = (
     ("Receipts and conformance", "receipt", "runbook sections 2, 4.1, 17",
      ("project_revision", "source_conformance")),
+    ("Prepared attack capture", "flask", "capture first, replay in Build",
+     ("capture_t3mp3st", "harmbench_capture")),
     ("Acquisition exports", "box", "runbook section 3.2",
      ("export_jalmbench", "export_vlsbench")),
     ("Preflight, probes and lanes", "play", "runbook sections 8-13",
@@ -1418,6 +1442,14 @@ button.ghost { background:transparent; color:var(--accent);
   display:block; }
 .fwrow.incompatible { opacity:.55; }
 .fwrow.incompatible .fwflag { color:#c4515c; font-weight:600; }
+.workflow-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(280px,1fr));
+  gap:.8rem; margin-top:.7rem; }
+.workflow-panel { border:1px solid var(--line); border-radius:10px;
+  padding:.75rem; background:var(--soft); min-width:0; }
+.workflow-panel h3 { margin:.05rem 0 .55rem; }
+.workflow-panel .cols { grid-template-columns:repeat(auto-fit,minmax(190px,1fr)); }
+.prepared-replay { margin-top:.9rem; }
+.prepared-fields { display:none; }
 .fielderr { display:block; color:#c4515c; font-size:.8rem; font-weight:600;
   margin:.2rem 0 .1rem; }
 .attrow { display:grid; grid-template-columns:1fr 1fr; gap:.5rem;
@@ -1537,7 +1569,12 @@ label.textContent=value==='auto'?'fit unknown':
 if(tip){tip.textContent=value==='auto'?
 'The operator must choose a per-model precision before a live run.':
 'Operator-selected precision; hardware fit remains unknown.';}});}
-function refresh(){updateUnknownPrecisionBadges();applyScope();
+function applyPreparedFields(){
+form.querySelectorAll('.prepared-fields').forEach(function(panel){
+var name=panel.getAttribute('data-prepared');
+var box=form.querySelector(".fwbox[data-fw='"+name+"']");
+panel.style.display=box&&box.checked?'block':'none';});}
+function refresh(){updateUnknownPrecisionBadges();applyScope();applyPreparedFields();
 // live preview
 var mode=(form.querySelector('input[name=mode]:checked')||{}).value||'measured';
 var flagFor={dry_run:'--dry-run',attestation_probe:'--attestation-probe',
@@ -4022,6 +4059,11 @@ class RigWebApp:
             if method == "POST" and path == "/jobs":
                 data = dict(form or {})
                 command = data.pop("command", "")
+                if command in {"capture_t3mp3st", "harmbench_capture"}:
+                    return (
+                        400, "text/plain; charset=utf-8",
+                        b"use the validated Capture/Prepare forms on /build",
+                    )
                 job = self.start_job(command, data)
                 return 303, f"/jobs/{job.job_id}", b""
             if method == "GET" and path == "/jobs":
@@ -4050,6 +4092,10 @@ class RigWebApp:
                 return 200, "text/html; charset=utf-8", self._stats_page()
             if method == "GET" and path == "/build":
                 return 200, "text/html; charset=utf-8", self._build_page()
+            if method == "POST" and path == "/build/t3mp3st/capture":
+                return self._handle_capture("t3mp3st", dict(form or {}))
+            if method == "POST" and path == "/build/harmbench/prepare":
+                return self._handle_capture("harmbench", dict(form or {}))
             if method == "POST" and path == "/build":
                 data = dict(form or {})
                 confirmed = data.pop("confirm", "") == "yes"
@@ -4062,6 +4108,16 @@ class RigWebApp:
                     return 200, "text/html; charset=utf-8", self._build_page(
                         prefill=params, errors=errors,
                     )
+                try:
+                    attacker_config = self._materialize_prepared_attacker_config(
+                        params,
+                    )
+                except ValueError as exc:
+                    return 200, "text/html; charset=utf-8", self._build_page(
+                        prefill=params, errors={"attackers": str(exc)},
+                    )
+                if attacker_config is not None:
+                    values["--attacker-config"] = str(attacker_config)
                 if preflight_only:
                     # No-call projection: run the SAME grid with
                     # --preflight-only (the CLI makes NO generation calls); it
@@ -5256,6 +5312,237 @@ class RigWebApp:
             os.replace(tmp, path)
         return path
 
+    def _prepared_file(self, raw: str, *, label: str) -> Path:
+        """Resolve one builder-produced artifact inside the results tree."""
+
+        if not raw:
+            raise ValueError(f"{label} path is required")
+        candidate = Path(raw).expanduser()
+        if not candidate.is_absolute():
+            candidate = self.repo_root / candidate
+        if candidate.is_symlink():
+            raise ValueError(f"{label} must be a regular non-symlink file")
+        try:
+            path = candidate.resolve(strict=True)
+            path.relative_to(self.results_root.resolve())
+        except (OSError, ValueError) as exc:
+            raise ValueError(
+                f"{label} must be an existing file under the results root"
+            ) from exc
+        if not path.is_file():
+            raise ValueError(f"{label} must be a regular non-symlink file")
+        return path
+
+    @staticmethod
+    def _file_sha256(path: Path) -> str:
+        digest = hashlib.sha256()
+        with path.open("rb") as handle:
+            for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+                digest.update(chunk)
+        return digest.hexdigest()
+
+    @staticmethod
+    def _strict_json_object(path: Path, *, max_bytes: int) -> dict[str, Any]:
+        if path.stat().st_size > max_bytes:
+            raise ValueError(f"{path.name} exceeds the accepted size limit")
+
+        def unique_object(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+            value: dict[str, Any] = {}
+            for key, child in pairs:
+                if key in value:
+                    raise ValueError(f"duplicate JSON key {key!r}")
+                value[key] = child
+            return value
+
+        try:
+            value = json.loads(
+                path.read_text(encoding="utf-8"),
+                object_pairs_hook=unique_object,
+                parse_constant=lambda constant: (_ for _ in ()).throw(
+                    ValueError(f"invalid JSON constant {constant}")
+                ),
+            )
+        except (OSError, UnicodeError, json.JSONDecodeError, ValueError) as exc:
+            raise ValueError(f"{path.name} is not strict UTF-8 JSON") from exc
+        if not isinstance(value, dict):
+            raise ValueError(f"{path.name} must contain a JSON object")
+        return value
+
+    def _portable_repo_path(self, path: Path, *, label: str) -> str:
+        try:
+            return path.resolve().relative_to(self.repo_root.resolve()).as_posix()
+        except ValueError as exc:
+            raise ValueError(
+                f"{label} must be under the repository for portable provenance"
+            ) from exc
+
+    def _prepared_attacker_entries(
+        self, params: Mapping[str, str], *, verify_digest: bool = True,
+    ) -> dict[str, dict[str, object]]:
+        """Load and normalize the two capture-first attacker configurations."""
+
+        selected = set(self._split_list(params.get("attackers", "")))
+        entries: dict[str, dict[str, object]] = {}
+        if "t3mp3st" in selected:
+            artifact = self._prepared_file(
+                params.get("t3_artifact", ""), label="T3MP3ST plan bundle",
+            )
+            expected = params.get("t3_artifact_sha", "").strip().lower()
+            if re.fullmatch(r"[0-9a-f]{64}", expected) is None:
+                raise ValueError("T3MP3ST bundle SHA-256 must be exact 64-hex")
+            if verify_digest and self._file_sha256(artifact) != expected:
+                raise ValueError("T3MP3ST bundle SHA-256 does not match the file")
+            bundle = self._strict_json_object(
+                artifact, max_bytes=256 * 1024 * 1024,
+            )
+            if bundle.get("format_version") != "ura-t3mp3st-plan-bundle/1":
+                raise ValueError(
+                    "T3MP3ST artifact is not a ura-t3mp3st-plan-bundle/1 bundle"
+                )
+            revision = bundle.get("upstream_revision")
+            provider = bundle.get("source_provider")
+            model = bundle.get("source_model")
+            if not isinstance(revision, str) or re.fullmatch(
+                r"[0-9a-fA-F]{40}", revision,
+            ) is None:
+                raise ValueError("T3MP3ST bundle has no exact upstream revision")
+            if not isinstance(provider, str) or not provider.strip():
+                raise ValueError("T3MP3ST bundle has no source provider")
+            if not isinstance(model, str) or not model.strip():
+                raise ValueError("T3MP3ST bundle has no source model")
+            entries["t3mp3st"] = {
+                "upstream_revision": revision.lower(),
+                "source_provider": provider.strip(),
+                "source_model": model.strip(),
+                "response_artifact": self._portable_repo_path(
+                    artifact, label="T3MP3ST plan bundle",
+                ),
+                "response_artifact_sha256": expected,
+            }
+        if "harmbench" in selected:
+            config_path = self._prepared_file(
+                params.get("harm_config", ""), label="HarmBench capture config",
+            )
+            document = self._strict_json_object(
+                config_path, max_bytes=1024 * 1024,
+            )
+            config = document.get("harmbench")
+            if set(document) != {"harmbench"} or not isinstance(config, dict):
+                raise ValueError(
+                    "HarmBench capture config must contain only a harmbench object"
+                )
+            expected_keys = {
+                "methods", "experiment", "upstream_revision",
+                "replay_artifact", "replay_artifact_sha256",
+            }
+            if set(config) != expected_keys:
+                raise ValueError("HarmBench capture config fields are incomplete")
+            methods = config.get("methods")
+            if not isinstance(methods, list) or not methods or any(
+                not isinstance(method, str) or not method.strip()
+                for method in methods
+            ):
+                raise ValueError("HarmBench capture config methods are invalid")
+            revision = config.get("upstream_revision")
+            if not isinstance(revision, str) or re.fullmatch(
+                r"[0-9a-fA-F]{40}", revision,
+            ) is None:
+                raise ValueError("HarmBench capture config revision is invalid")
+            artifact_sha = config.get("replay_artifact_sha256")
+            if not isinstance(artifact_sha, str) or re.fullmatch(
+                r"[0-9a-fA-F]{64}", artifact_sha,
+            ) is None:
+                raise ValueError("HarmBench replay artifact SHA-256 is invalid")
+            replay_artifact = self._prepared_file(
+                str(config.get("replay_artifact", "")),
+                label="HarmBench replay artifact",
+            )
+            artifact_sha = artifact_sha.lower()
+            if verify_digest and self._file_sha256(replay_artifact) != artifact_sha:
+                raise ValueError(
+                    "HarmBench replay artifact SHA-256 does not match the file"
+                )
+            bundle = self._strict_json_object(
+                replay_artifact, max_bytes=64 * 1024 * 1024,
+            )
+            if bundle.get("format_version") != "ura-harmbench-transfer-replay/1":
+                raise ValueError(
+                    "HarmBench artifact is not a ura-harmbench-transfer-replay/1 bundle"
+                )
+            if (
+                bundle.get("methods") != methods
+                or bundle.get("experiment") != config.get("experiment")
+                or str(bundle.get("upstream_revision", "")).lower()
+                != revision.lower()
+            ):
+                raise ValueError(
+                    "HarmBench capture config does not match its replay bundle"
+                )
+            entries["harmbench"] = {
+                **config,
+                "upstream_revision": revision.lower(),
+                "replay_artifact": self._portable_repo_path(
+                    replay_artifact, label="HarmBench replay artifact",
+                ),
+                "replay_artifact_sha256": artifact_sha,
+            }
+        return entries
+
+    def _harmbench_replay_requirements(
+        self, params: Mapping[str, str],
+    ) -> tuple[str, int, int, int]:
+        """Return corpus, limit, seed, and minimum queries/turns from capture."""
+
+        config_path = self._prepared_file(
+            params.get("harm_config", ""), label="HarmBench capture config",
+        )
+        document = self._strict_json_object(config_path, max_bytes=1024 * 1024)
+        config = document.get("harmbench")
+        if not isinstance(config, dict):
+            raise ValueError("HarmBench capture config has no harmbench object")
+        replay = self._prepared_file(
+            str(config.get("replay_artifact", "")), label="HarmBench replay artifact",
+        )
+        bundle = self._strict_json_object(replay, max_bytes=64 * 1024 * 1024)
+        selection = bundle.get("selection")
+        methods = bundle.get("methods")
+        cases = bundle.get("cases_per_method")
+        if (
+            not isinstance(selection, dict) or not isinstance(methods, list)
+            or not methods or isinstance(cases, bool) or not isinstance(cases, int)
+            or cases <= 0
+        ):
+            raise ValueError("HarmBench replay bundle has invalid capture metadata")
+        corpus = selection.get("corpus_name")
+        limit = selection.get("limit")
+        seed = selection.get("sample_seed")
+        if (
+            not isinstance(corpus, str) or not corpus
+            or isinstance(limit, bool) or not isinstance(limit, int) or limit < 0
+            or isinstance(seed, bool) or not isinstance(seed, int)
+        ):
+            raise ValueError("HarmBench replay bundle has invalid selection metadata")
+        return corpus, limit, seed, len(methods) * cases
+
+    def _materialize_prepared_attacker_config(
+        self, params: Mapping[str, str],
+    ) -> Path | None:
+        entries = self._prepared_attacker_entries(params)
+        if not entries:
+            return None
+        payload = json.dumps(
+            entries, ensure_ascii=False, sort_keys=True, separators=(",", ":"),
+        ) + "\n"
+        digest = hashlib.sha256(payload.encode("utf-8")).hexdigest()
+        directory = self.state_dir / "generated-attacker-configs"
+        directory.mkdir(parents=True, exist_ok=True)
+        path = directory / f"prepared-{digest[:24]}.json"
+        if not path.is_file():
+            tmp = path.with_suffix(".tmp")
+            tmp.write_text(payload, encoding="utf-8")
+            os.replace(tmp, path)
+        return path
+
     #: How many repeatable live-attestation rows the builder form accepts.
     _MAX_ATT_ROWS = 12
     #: A no-call projection is independent of the operator's provisional call
@@ -5272,6 +5559,285 @@ class RigWebApp:
             for key, value in params.items()
             if key not in cls._PROJECTION_CAP_FIELDS and str(value).strip()
         }
+
+    def _capture_output(self, raw: str, *, label: str) -> Path:
+        if not raw:
+            raise ValueError(f"{label} is required")
+        candidate = Path(raw).expanduser()
+        if not candidate.is_absolute():
+            candidate = self.repo_root / candidate
+        if candidate.is_symlink():
+            raise ValueError(f"{label} cannot be a symlink")
+        try:
+            resolved = candidate.resolve(strict=False)
+            resolved.relative_to(self.results_root.resolve())
+            resolved.relative_to(self.repo_root.resolve())
+        except (OSError, ValueError) as exc:
+            raise ValueError(
+                f"{label} must be under the repository results root"
+            ) from exc
+        return resolved
+
+    def _capture_values(
+        self, kind: str, params: Mapping[str, str],
+    ) -> tuple[str, dict[str, str], dict[str, str]]:
+        """Validate and compose one capture-first workflow before a job exists."""
+
+        errors: dict[str, str] = {}
+
+        def required(field_name: str, label: str) -> str:
+            value = params.get(field_name, "").strip()
+            if not value:
+                errors[field_name] = f"{label} is required"
+            return value
+
+        def integer(
+            field_name: str, *, positive: bool = False, nonnegative: bool = False,
+        ) -> str:
+            raw = required(field_name, field_name.replace("_", " "))
+            if not raw:
+                return raw
+            try:
+                value = int(raw)
+            except ValueError:
+                errors[field_name] = "must be an integer"
+            else:
+                if positive and value <= 0:
+                    errors[field_name] = "must be a positive integer"
+                elif nonnegative and value < 0:
+                    errors[field_name] = "must be a non-negative integer"
+            return raw
+
+        if kind == "t3mp3st":
+            corpus = required("t3cap_corpus", "corpus arm")
+            limit = integer("t3cap_limit", nonnegative=True)
+            seed = integer("t3cap_sample_seed")
+            endpoint = required("t3cap_endpoint", "loopback planning endpoint")
+            revision = required("t3cap_revision", "upstream revision")
+            provider = required("t3cap_provider", "source provider")
+            model = required("t3cap_model", "source model")
+            out = required("t3cap_out", "capture output directory")
+            timeout = params.get("t3cap_timeout", "").strip()
+            if corpus and corpus not in {
+                arm for arm, mods, reason in _ARM_CATALOG
+                if mods == ("text",) and not reason
+            }:
+                errors["t3cap_corpus"] = "select a runnable text corpus arm"
+            if revision and re.fullmatch(r"[0-9a-fA-F]{40}", revision) is None:
+                errors["t3cap_revision"] = "must be an exact 40-hex commit"
+            if endpoint:
+                try:
+                    parsed = urlparse(endpoint)
+                    port = parsed.port
+                except ValueError:
+                    parsed, port = None, None
+                if (
+                    parsed is None or parsed.scheme != "http"
+                    or parsed.hostname not in {"127.0.0.1", "::1"}
+                    or port is None or parsed.path != "/api/general/plan"
+                    or parsed.username or parsed.password
+                    or parsed.query or parsed.fragment
+                ):
+                    errors["t3cap_endpoint"] = (
+                        "must be the exact HTTP planning route on a literal "
+                        "loopback address with an explicit port"
+                    )
+            if out:
+                try:
+                    out_path = self._capture_output(
+                        out, label="capture output directory",
+                    )
+                    if out_path.exists() and not out_path.is_dir():
+                        raise ValueError("capture output must be a directory")
+                    out = str(out_path)
+                except ValueError as exc:
+                    errors["t3cap_out"] = str(exc)
+            if timeout:
+                try:
+                    timeout_value = float(timeout)
+                except ValueError:
+                    timeout_value = 0
+                if not math.isfinite(timeout_value) or not 0 < timeout_value <= 3600:
+                    errors["t3cap_timeout"] = "must be in (0, 3600]"
+            values = {
+                "--corpus": corpus,
+                "--limit": limit,
+                "--sample-seed": seed,
+                "--endpoint": endpoint,
+                "--upstream-revision": revision,
+                "--source-provider": provider,
+                "--source-model": model,
+                "--out": out,
+            }
+            if timeout:
+                values["--timeout-seconds"] = timeout
+            source_config = self.repo_root / "experiments" / "source-instances.json"
+            if source_config.is_file():
+                values["--source-config"] = str(source_config)
+            return "capture_t3mp3st", {
+                flag: value for flag, value in values.items() if value
+            }, errors
+
+        if kind != "harmbench":
+            raise ValueError(f"unknown prepared workflow {kind!r}")
+        repo_raw = required("hcap_repo", "HarmBench checkout")
+        revision = required("hcap_revision", "upstream revision")
+        source_raw = required("hcap_source", "official behavior CSV")
+        corpus = required("hcap_corpus", "logical corpus arm")
+        methods_raw = required("hcap_methods", "at least one method")
+        experiment = required("hcap_experiment", "experiment")
+        limit = integer("hcap_limit", nonnegative=True)
+        seed = integer("hcap_sample_seed")
+        cases = integer("hcap_cases", positive=True)
+        artifact_raw = required("hcap_artifact_out", "capture artifact output")
+        config_raw = required("hcap_config_out", "attacker config output")
+        if revision and re.fullmatch(r"[0-9a-fA-F]{40}", revision) is None:
+            errors["hcap_revision"] = "must be an exact 40-hex commit"
+        if cases:
+            try:
+                if int(cases) > 1000:
+                    errors["hcap_cases"] = "must be in [1, 1000]"
+            except ValueError:
+                pass
+        if corpus and corpus not in {
+            arm for arm, mods, reason in _ARM_CATALOG
+            if mods == ("text",) and not reason
+        }:
+            errors["hcap_corpus"] = "select a runnable text corpus arm"
+        methods = self._split_list(methods_raw)
+        supported_methods = {
+            "PEZ", "GBDA", "UAT", "AutoPrompt", "PAP-top5", "GCG",
+            "GCG-Multi", "GCG-Transfer", "AutoDAN", "PAIR", "TAP",
+            "DirectRequest", "HumanJailbreaks", "ZeroShot",
+        }
+        if (
+            not methods or len(methods) != len(set(methods))
+            or any(method not in supported_methods for method in methods)
+        ):
+            errors["hcap_methods"] = (
+                "use unique supported text methods separated by commas"
+            )
+        repo = Path(repo_raw).expanduser() if repo_raw else Path()
+        source = Path(source_raw).expanduser() if source_raw else Path()
+        if repo_raw and (not repo.is_absolute() or not repo.is_dir() or repo.is_symlink()):
+            errors["hcap_repo"] = "must be an existing absolute non-symlink directory"
+        if source_raw and (
+            not source.is_absolute() or not source.is_file() or source.is_symlink()
+        ):
+            errors["hcap_source"] = "must be an existing absolute non-symlink file"
+        artifact_out, config_out = artifact_raw, config_raw
+        for field_name, raw, label in (
+            ("hcap_artifact_out", artifact_raw, "capture artifact output"),
+            ("hcap_config_out", config_raw, "attacker config output"),
+        ):
+            if not raw:
+                continue
+            try:
+                resolved = self._capture_output(raw, label=label)
+            except ValueError as exc:
+                errors[field_name] = str(exc)
+                continue
+            if resolved.suffix.lower() != ".json":
+                errors[field_name] = f"{label} must end in .json"
+            elif resolved.exists():
+                errors[field_name] = f"{label} already exists; choose a new path"
+            if field_name == "hcap_artifact_out":
+                artifact_out = str(resolved)
+            else:
+                config_out = str(resolved)
+        if artifact_out and config_out and artifact_out == config_out:
+            errors["hcap_config_out"] = "artifact and config outputs must differ"
+        python = params.get("hcap_python", "").strip()
+        timeout = params.get("hcap_timeout", "").strip()
+        if python and (not Path(python).is_absolute() or not Path(python).is_file()):
+            errors["hcap_python"] = "must be an existing absolute executable path"
+        if timeout:
+            try:
+                timeout_value = float(timeout)
+            except ValueError:
+                timeout_value = 0
+            if not math.isfinite(timeout_value) or timeout_value <= 0:
+                errors["hcap_timeout"] = "must be a positive finite number"
+        credentials = self._split_list(params.get("hcap_credentials", ""))
+        if (
+            len(credentials) != len(set(credentials))
+            or any(re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", name) is None
+                   for name in credentials)
+        ):
+            errors["hcap_credentials"] = "use unique environment variable names"
+        values = {
+            "--repo": str(repo), "--revision": revision,
+            "--source": str(source), "--corpus-name": corpus,
+            "--experiment": experiment, "--limit": limit,
+            "--sample-seed": seed, "--cases-per-method": cases,
+            "--artifact-out": artifact_out,
+            "--attacker-config-out": config_out,
+        }
+        for index, method in enumerate(methods):
+            values["--method" if index == 0 else f"--method#{index}"] = method
+        if python:
+            values["--python"] = python
+        if timeout:
+            values["--timeout-seconds"] = timeout
+        for index, name in enumerate(credentials):
+            values[
+                "--credential-env" if index == 0 else f"--credential-env#{index}"
+            ] = name
+        return "harmbench_capture", values, errors
+
+    def _capture_preview_page(
+        self, kind: str, command: str, values: Mapping[str, str],
+        params: Mapping[str, str],
+    ) -> bytes:
+        label = "T3MP3ST capture" if kind == "t3mp3st" else "HarmBench prepare"
+        argv = build_argv(command, values, commands=self.commands)
+        chips = "<div class='argv'>" + "".join(
+            f"<code>{html.escape(part)}</code>" for part in argv
+        ) + "</div>"
+        hidden = "".join(
+            f"<input type='hidden' name='{html.escape(key)}' "
+            f"value='{html.escape(value)}'>"
+            for key, value in sorted(params.items())
+        )
+        action = (
+            "/build/t3mp3st/capture" if kind == "t3mp3st"
+            else "/build/harmbench/prepare"
+        )
+        body = (
+            f"<h1>{_icon('flask', size=22)}Review {label}</h1>"
+            "<div class='notice amber'><strong>Out-of-band paid/compute step."
+            "</strong><p class='note'>Capture may invoke the configured source "
+            "model or generation scripts. It does not call the measured target "
+            "or judges. Review the exact command before starting.</p></div>"
+            "<div class='card'><h2>Exact command</h2>" + chips + "</div>"
+            f"<form method='post' action='{action}'>" + hidden
+            + "<input type='hidden' name='confirm' value='yes'>"
+            "<div class='buildbar'><button type='submit'>"
+            + _icon("play", size=15) + f"Start {label}</button>"
+            "<a href='/build'><button type='button' class='ghost'>Back to "
+            "builder</button></a></div></form>"
+        )
+        return _page(f"Review {label}", body, active="Build")
+
+    def _handle_capture(
+        self, kind: str, form: Mapping[str, str],
+    ) -> tuple[int, str, bytes]:
+        params = {
+            key: str(value).strip() for key, value in form.items()
+            if str(value).strip()
+        }
+        confirmed = params.pop("confirm", "") == "yes"
+        command, values, errors = self._capture_values(kind, params)
+        if errors:
+            return 200, "text/html; charset=utf-8", self._build_page(
+                prefill=params, errors=errors,
+            )
+        if not confirmed:
+            return 200, "text/html; charset=utf-8", self._capture_preview_page(
+                kind, command, values, params,
+            )
+        job = self.start_job(command, values)
+        return 303, f"/jobs/{job.job_id}", b""
 
     def _compose_from_builder(
         self, form: Mapping[str, str],
@@ -5482,6 +6048,7 @@ class RigWebApp:
         reject_duplicates("corpora", corpora)
         reject_duplicates("attackers", attackers)
         reject_duplicates("judges", judges_list)
+        harm_requirements: tuple[str, int, int, int] | None = None
 
         known_arms = {arm for arm, _mods, _reason in _ARM_CATALOG} | {"synth"}
         unknown_arms = sorted(set(corpora) - known_arms)
@@ -5492,6 +6059,17 @@ class RigWebApp:
             errors["attackers"] = (
                 "unknown attack framework(s): " + ", ".join(unknown_attackers)
             )
+        for attacker, error_field in (
+            ("t3mp3st", "t3_replay"), ("harmbench", "harm_replay"),
+        ):
+            if attacker not in attackers:
+                continue
+            try:
+                self._prepared_attacker_entries({**params, "attackers": attacker})
+                if attacker == "harmbench":
+                    harm_requirements = self._harmbench_replay_requirements(params)
+            except ValueError as exc:
+                errors[error_field] = str(exc)
         unknown_judges = sorted(set(judges_list) - {"rules", "llm", "guardrail"})
         if unknown_judges:
             errors["judges"] = "unknown judge(s): " + ", ".join(unknown_judges)
@@ -5600,9 +6178,35 @@ class RigWebApp:
         limit = require_int("limit")
         if limit is not None and limit < 0:
             errors["limit"] = "must be non-negative"
-        require_int("sample_seed")
-        require_int("max_queries", positive=True)
-        require_int("max_turns", positive=True)
+        sample_seed_value = require_int("sample_seed")
+        max_queries_value = require_int("max_queries", positive=True)
+        max_turns_value = require_int("max_turns", positive=True)
+        if harm_requirements is not None:
+            captured_corpus, captured_limit, captured_seed, minimum = harm_requirements
+            if corpora != [captured_corpus]:
+                errors["corpora"] = (
+                    "HarmBench replay requires exactly its captured corpus arm: "
+                    + captured_corpus
+                )
+            if limit != captured_limit:
+                errors["limit"] = (
+                    f"HarmBench replay requires its captured limit {captured_limit}"
+                )
+            effective_seed = 0 if sample_seed_value is None else sample_seed_value
+            if effective_seed != captured_seed:
+                errors["sample_seed"] = (
+                    f"HarmBench replay requires its captured sample seed {captured_seed}"
+                )
+            if max_queries_value is None or max_queries_value < minimum:
+                errors["max_queries"] = (
+                    f"HarmBench replay requires at least {minimum} queries "
+                    "(methods x cases per method)"
+                )
+            if max_turns_value is None or max_turns_value < minimum:
+                errors["max_turns"] = (
+                    f"HarmBench replay requires at least {minimum} turns "
+                    "(methods x cases per method)"
+                )
 
         raw_seeds = params.get("seeds", "")
         if raw_seeds:
@@ -5722,16 +6326,6 @@ class RigWebApp:
                 + " native-artifact integration(s); run_matrix cannot replay "
                 "them through the common Runner. Import their native traces "
                 "with the native_import command instead"
-            )
-        unavailable_selected = [
-            attacker for attacker in attackers
-            if attacker in _BUILDER_UNAVAILABLE_ATTACKERS
-        ]
-        if unavailable_selected:
-            attacker = unavailable_selected[0]
-            errors["attackers"] = (
-                f"{attacker} is unavailable here: "
-                f"{_BUILDER_UNAVAILABLE_ATTACKERS[attacker]}"
             )
         arm_mods = {arm: set(mods) for arm, mods, _r in _ARM_CATALOG}
         fw_mods = {fw: set(mods) for fw, _d, mods in _FRAMEWORKS}
@@ -6573,16 +7167,6 @@ class RigWebApp:
         # attacker (runner_replay_eligible False) is shown DISABLED with its
         # real action - the native-import path - never as a common-runner lane.
         def _framework_box(fw: str, desc: str, mods: tuple[str, ...]) -> str:
-            if fw in _BUILDER_UNAVAILABLE_ATTACKERS:
-                reason = _BUILDER_UNAVAILABLE_ATTACKERS[fw]
-                return (
-                    "<label class='check fwrow disabled' "
-                    f"data-mods='{html.escape(','.join(mods))}'>"
-                    f"<input type='checkbox' class='fwbox' disabled data-fw='{html.escape(fw)}'>"
-                    f"<span><strong>{html.escape(fw)}</strong> "
-                    "<span class='badge gray'>unavailable</span>"
-                    f"<span class='fieldhint'>{html.escape(reason)}</span></span></label>"
-                )
             if fw in _NATIVE_ONLY_ATTACKERS:
                 # The (identical) native-import explanation lives in a tooltip on
                 # the badge rather than repeated inline under every native-only
@@ -6602,6 +7186,19 @@ class RigWebApp:
                     "the <code>native_import</code> command.</span>"
                     "</span></span></label>"
                 )
+            prepared_badge = ""
+            if fw in {"t3mp3st", "harmbench"}:
+                detail = (
+                    "Capture a validated planning bundle first; measured replay "
+                    "checks the exact selected corpus and digest before calls."
+                    if fw == "t3mp3st" else
+                    "Prepare generated cases first; measured replay checks the "
+                    "capture config, corpus, and digest before calls."
+                )
+                prepared_badge = (
+                    "<span class='badge blue tip' tabindex='0'>prepare + replay"
+                    f"<span class='tiptext'>{html.escape(detail)}</span></span>"
+                )
             return (
                 "<label class='check fwrow' "
                 f"data-mods='{html.escape(','.join(mods))}'>"
@@ -6609,6 +7206,7 @@ class RigWebApp:
                 + (" checked" if fw == "replay" else "") + ">"
                 f"<span><strong>{html.escape(fw)}</strong> "
                 f"<span class='fieldhint'>{html.escape(desc)}</span>"
+                + prepared_badge +
                 "<span class='fwflag'></span></span></label>"
             )
 
@@ -6678,6 +7276,94 @@ class RigWebApp:
                 f"name='{html.escape(field)}'{attrs}{ph}>{err(field)}</div>"
             )
 
+        t3_capture_form = (
+            "<form method='post' action='/build/t3mp3st/capture'>"
+            "<div class='cols'>"
+            + text_field("t3cap_corpus", "Corpus arm", "exact text arm to capture",
+                         default="strongreject_official")
+            + text_field("t3cap_limit", "Limit", "selected source clusters",
+                         default="1", kind="number")
+            + text_field("t3cap_sample_seed", "Sample seed", "reproducible subset",
+                         default="0", kind="number")
+            + text_field(
+                "t3cap_endpoint", "Planning endpoint",
+                "prestarted literal-loopback /api/general/plan route",
+                default="http://127.0.0.1:3333/api/general/plan",
+            )
+            + text_field("t3cap_revision", "Upstream revision", "exact 40-hex commit")
+            + text_field("t3cap_provider", "Source provider", "Op General provider")
+            + text_field("t3cap_model", "Source model", "Op General model")
+            + text_field(
+                "t3cap_out", "Output directory", "retained under the results root",
+                default="runs/t3mp3st-captures",
+            )
+            + text_field("t3cap_timeout", "Timeout seconds", "per planning request",
+                         default="120", kind="number")
+            + "</div><button type='submit' class='ghost'>Review capture</button></form>"
+        )
+        harm_capture_form = (
+            "<form method='post' action='/build/harmbench/prepare'>"
+            "<div class='cols'>"
+            + text_field("hcap_repo", "HarmBench checkout", "clean pinned checkout",
+                         default="/data/HarmBench")
+            + text_field("hcap_revision", "Upstream revision", "exact 40-hex commit")
+            + text_field("hcap_source", "Behavior CSV", "official text behaviors")
+            + text_field("hcap_corpus", "Logical corpus arm", "bundle identity",
+                         default="harmbench_text")
+            + text_field("hcap_methods", "Methods", "comma-separated text methods",
+                         default="PEZ,PAP-top5")
+            + text_field("hcap_experiment", "Experiment", "HarmBench model setup",
+                         default="llama2_7b")
+            + text_field("hcap_limit", "Limit", "selected source clusters",
+                         default="1", kind="number")
+            + text_field("hcap_sample_seed", "Sample seed", "reproducible subset",
+                         default="0", kind="number")
+            + text_field("hcap_cases", "Cases per method", "bounded generated cases",
+                         default="1", kind="number")
+            + text_field(
+                "hcap_artifact_out", "Capture artifact", "retained JSON under results",
+                default="runs/harmbench-captures/capture.json",
+            )
+            + text_field(
+                "hcap_config_out", "Attacker config", "generated replay config JSON",
+                default="runs/harmbench-captures/attackers.json",
+            )
+            + "</div><details><summary>Optional runtime settings</summary>"
+            "<div class='cols'>"
+            + text_field("hcap_python", "Python executable", "blank uses this environment")
+            + text_field("hcap_credentials", "Credential env names", "comma-separated names")
+            + text_field("hcap_timeout", "Timeout seconds", "positive finite value",
+                         kind="number")
+            + "</div></details><button type='submit' class='ghost'>Review prepare"
+            "</button></form>"
+        )
+        prepared_workflows = (
+            "<div class='card' id='prepared-workflows'><h2>Prepared attack workflows</h2>"
+            "<p class='note'>Capture or prepare first, then paste the retained output "
+            "below and run the normal measured lane. These are out-of-band paid/compute "
+            "steps, not no-call preflights.</p><div class='workflow-grid'>"
+            "<section class='workflow-panel'><h3>T3MP3ST "
+            "<span class='badge blue'>Capture - Replay</span></h3>"
+            + t3_capture_form + "</section>"
+            "<section class='workflow-panel'><h3>HarmBench "
+            "<span class='badge blue'>Prepare - Replay</span></h3>"
+            + harm_capture_form + "</section></div></div>"
+        )
+        prepared_replay_fields = (
+            "<div class='workflow-grid prepared-replay'>"
+            "<section class='workflow-panel prepared-fields' data-prepared='t3mp3st'>"
+            "<h3>T3MP3ST replay</h3><p class='note'>Use the bundle path and SHA-256 "
+            "printed by the completed capture job.</p>" + err("t3_replay")
+            + text_field("t3_artifact", "Plan bundle", "ura-t3mp3st-plan-bundle/1 path")
+            + text_field("t3_artifact_sha", "Bundle SHA-256", "exact capture digest")
+            + "</section><section class='workflow-panel prepared-fields' "
+            "data-prepared='harmbench'><h3>HarmBench replay</h3>"
+            "<p class='note'>Use the attacker config path printed by the completed "
+            "prepare job.</p>" + err("harm_replay")
+            + text_field("harm_config", "Capture config", "generated attackers.json path")
+            + "</section></div>"
+        )
+
         # Repeatable live-attestation receipt/digest rows.
         att_rows_html = []
         prefilled_rows = [
@@ -6722,6 +7408,7 @@ class RigWebApp:
             "anything starts.</p>"
             + error_summary +
             hardware_card +
+            prepared_workflows +
             "<form method='post' action='/build' id='builder'>"
             # hidden composed fields
             "<input type='hidden' name='corpora'><input type='hidden' name='api'>"
@@ -6747,7 +7434,8 @@ class RigWebApp:
             + err("models") + model_boxes + "</div>"
             "<div class='card'><h2>" + _icon("pulse") + "Attack frameworks</h2>"
             + err("attackers") +
-            "<div class='checkgrid'>" + framework_boxes + "</div></div>"
+            "<div class='checkgrid'>" + framework_boxes + "</div>"
+            + prepared_replay_fields + "</div>"
             "<div class='card'><h2>" + _icon("receipt") + "Judges &amp; defense"
             "</h2>" + err("judges") + "<div class='checkgrid'>" + judge_boxes
             + "</div><div class='cols'>"
@@ -7780,9 +8468,23 @@ class RigWebApp:
     def _commands_page(self) -> bytes:
         grouped: set[str] = set()
         sections = []
+
+        def card(name: str) -> str:
+            if name not in {"capture_t3mp3st", "harmbench_capture"}:
+                return self._command_card(name)
+            label = "T3MP3ST Capture" if name == "capture_t3mp3st" else "HarmBench Prepare"
+            return (
+                f"<details class='cmd' data-name='{html.escape(name)}'><summary>"
+                f"{_icon('flask')}<strong>{html.escape(label)}</strong>"
+                "<span class='desc'>Validated capture-first workflow</span></summary>"
+                "<p class='note'>Open the Build workflow for field validation and "
+                "an exact-command review before any process starts.</p>"
+                "<p><a href='/build#prepared-workflows'>Open in Build</a></p></details>"
+            )
+
         for title, icon, ref, names in COMMAND_GROUPS:
             cards = "".join(
-                self._command_card(name)
+                card(name)
                 for name in names if name in self.commands
             )
             if not cards:
@@ -7795,7 +8497,7 @@ class RigWebApp:
                 + cards
             )
         leftovers = "".join(
-            self._command_card(name)
+            card(name)
             for name in sorted(set(self.commands) - grouped)
         )
         if leftovers:
@@ -7981,6 +8683,29 @@ class RigWebApp:
         argv_chips = "<div class='argv'>" + "".join(
             f"<code>{html.escape(part)}</code>" for part in job.argv
         ) + "</div>"
+        retained_links: list[str] = []
+        for flag in ("--out", "--output", "--artifact-out", "--attacker-config-out"):
+            if flag not in job.argv:
+                continue
+            index = job.argv.index(flag)
+            if index + 1 >= len(job.argv):
+                continue
+            candidate = Path(job.argv[index + 1]).expanduser()
+            if not candidate.is_absolute():
+                candidate = self.repo_root / candidate
+            try:
+                resolved = candidate.resolve(strict=True)
+                relative = resolved.relative_to(self.results_root.resolve()).as_posix()
+            except (OSError, ValueError):
+                continue
+            retained_links.append(
+                f"<a href='/artifacts?path={quote(relative)}'>"
+                f"{html.escape(flag)}: {html.escape(relative)}</a>"
+            )
+        retained = (
+            "<p class='note'>Retained output: " + " &middot; ".join(retained_links)
+            + "</p>" if retained_links else ""
+        )
         started = time.strftime(
             "%Y-%m-%d %H:%M:%S", time.localtime(job.started_at)
         )
@@ -8014,7 +8739,7 @@ class RigWebApp:
             "</h1>"
             + meta + stop_failure +
             "<div class='card'><h2>" + _icon("file") + "Command</h2>"
-            + argv_chips + stop_form + "</div>"
+            + argv_chips + retained + stop_form + "</div>"
             + builder
             + failure +
             "<div class='card'><h2>" + _icon("chart") + "stdout</h2>"

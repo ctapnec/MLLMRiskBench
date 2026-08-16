@@ -34,16 +34,38 @@ from ._native_artifacts import read_binary_artifact, read_utf8_artifact
 from .base import AttackBudget, BaseAttacker
 
 _COMMIT_RE = re.compile(r"^[0-9a-fA-F]{40}$")
-_SUPPORTED_METHODS = frozenset({
-    "PEZ", "GBDA", "UAT", "AutoPrompt", "PAP-top5", "GCG", "GCG-Multi",
-    "GCG-Transfer", "AutoDAN", "PAIR", "TAP", "DirectRequest",
-    "HumanJailbreaks", "ZeroShot",
-})
+_SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
+_REPLAY_FORMAT = "ura-harmbench-transfer-replay/1"
+_METHOD_SPECS: dict[str, tuple[str, str | None]] = {
+    # logical HarmBench paper/pipeline name: (upstream class, fixed experiment).
+    # A null experiment uses this adapter's configured target-model experiment.
+    "PEZ": ("PEZ", None),
+    "GBDA": ("GBDA", None),
+    "UAT": ("UAT", None),
+    "AutoPrompt": ("AutoPrompt", None),
+    "PAP-top5": ("PAP", "top_5"),
+    "GCG": ("GCG", None),
+    "GCG-Multi": ("EnsembleGCG", None),
+    "GCG-Transfer": (
+        "EnsembleGCG",
+        "llama2_7b_vicuna_7b_llama2_13b_vicuna_13b_multibehavior_1000steps",
+    ),
+    "AutoDAN": ("AutoDAN", None),
+    "PAIR": ("PAIR", None),
+    "TAP": ("TAP", None),
+    "DirectRequest": ("DirectRequest", "default"),
+    "HumanJailbreaks": ("HumanJailbreaks", "random_subset_5"),
+    "ZeroShot": ("ZeroShot", "mixtral_attacker_llm"),
+}
+_SUPPORTED_METHODS = frozenset(_METHOD_SPECS)
 _IDENTITY_METHODS = frozenset({"DirectRequest"})
 _MAX_FILE_BYTES = 128 * 1024 * 1024
 _MAX_BEHAVIOR_CSV_BYTES = 1024 * 1024
 _MAX_TREE_BYTES = 512 * 1024 * 1024
 _MAX_TREE_FILES = 10_000
+_MAX_REPLAY_BYTES = 64 * 1024 * 1024
+_MAX_REPLAY_CASES = 100_000
+_MAX_REPLAY_REQUESTS = 10_000
 
 
 def _canonical_sha256(value: Any) -> str:
@@ -55,6 +77,39 @@ def _canonical_sha256(value: Any) -> str:
         allow_nan=False,
     ).encode("utf-8")
     return hashlib.sha256(data).hexdigest()
+
+
+def _strict_object(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+    value: dict[str, Any] = {}
+    for key, item in pairs:
+        if key in value:
+            raise ValueError(f"duplicate JSON key {key!r}")
+        value[key] = item
+    return value
+
+
+def _behavior_text(datapoint: DataPoint) -> str:
+    value = datapoint.payload_text or datapoint.payload_code or ""
+    if not value.strip():
+        raise ExternalEngineOutputError("HarmBench received a blank behavior")
+    return value
+
+
+def _source_request(datapoint: DataPoint) -> dict[str, str]:
+    """Return the exact converted-request identity bound into a replay bundle."""
+
+    behavior = _behavior_text(datapoint)
+    return {
+        "datapoint_id": datapoint.id,
+        "source": datapoint.source,
+        "datapoint_sha256": _canonical_sha256(datapoint.model_dump(mode="json")),
+        "behavior_sha256": hashlib.sha256(behavior.encode("utf-8")).hexdigest(),
+    }
+
+
+def _upstream_execution(method: str, experiment: str) -> tuple[str, str]:
+    upstream_method, fixed_experiment = _METHOD_SPECS[method]
+    return upstream_method, fixed_experiment or experiment
 
 
 class HarmBenchAttacker(BaseAttacker):
@@ -80,6 +135,8 @@ class HarmBenchAttacker(BaseAttacker):
         python: str | None = None,
         credential_env: list[str] | tuple[str, ...] | None = None,
         timeout_seconds: float | None = None,
+        replay_artifact: str | Path | None = None,
+        replay_artifact_sha256: str | None = None,
     ) -> None:
         selected = ["PEZ", "PAP-top5"] if methods is None else list(methods)
         if not selected or any(not isinstance(method, str) for method in selected):
@@ -106,6 +163,22 @@ class HarmBenchAttacker(BaseAttacker):
                 raise ValueError(f"HarmBench {label} must be a safe repo-relative path")
         if upstream_revision is not None and not _COMMIT_RE.fullmatch(upstream_revision):
             raise ValueError("HarmBench upstream_revision must be a full 40-hex commit")
+        if replay_artifact is None and replay_artifact_sha256 is not None:
+            raise ValueError(
+                "HarmBench replay_artifact_sha256 requires replay_artifact"
+            )
+        if replay_artifact is not None:
+            if upstream_revision is None:
+                raise ValueError(
+                    "HarmBench replay requires an explicit upstream_revision"
+                )
+            if (
+                not isinstance(replay_artifact_sha256, str)
+                or not _SHA256_RE.fullmatch(replay_artifact_sha256.lower())
+            ):
+                raise ValueError(
+                    "HarmBench replay_artifact_sha256 must be a full SHA-256"
+                )
 
         self.methods = selected
         self.experiment = experiment.strip()
@@ -118,31 +191,122 @@ class HarmBenchAttacker(BaseAttacker):
         self.python = python
         self.credential_env = tuple(credential_env or ())
         self.timeout_seconds = timeout_seconds
+        # The operator-local path is deliberately private so Runner manifests
+        # retain only the validated, portable content identity below.
+        self._replay_artifact = (
+            Path(replay_artifact) if replay_artifact is not None else None
+        )
+        self.replay_artifact_sha256 = (
+            replay_artifact_sha256.lower()
+            if replay_artifact_sha256 is not None
+            else None
+        )
+        self.replay_artifact_identity: dict[str, object] | None = None
+        self._replay_cases: dict[str, list[dict[str, Any]]] | None = None
+        self._replay_cases_per_method: int | None = None
 
     def validate_measured_run(self, corpus: Iterable[DataPoint] = ()) -> None:
-        """Keep source-conditioned generation outside the measured grid."""
-        raise ExternalEngineConformanceError(
-            "measured HarmBench runs cannot execute test-case generation inside "
-            "Runner; generate it out of band, then run the content-addressed "
-            "converted/replay artifacts"
-        )
+        """Admit only a complete capture matching the exact measured corpus."""
+
+        if self._replay_artifact is None:
+            raise ExternalEngineConformanceError(
+                "measured HarmBench runs require replay_artifact: run "
+                "experiments.harmbench_capture before the measured grid"
+            )
+        prepared = list(corpus)
+        if any(
+            datapoint.media
+            or any(turn.media for turn in datapoint.dialog_history)
+            for datapoint in prepared
+        ):
+            raise ExternalEngineConformanceError(
+                "the text-only HarmBench replay cannot admit DataPoint media"
+            )
+        bundle, identity = self._read_replay_artifact(prepared)
+        cases: dict[str, list[dict[str, Any]]] = {}
+        for case in bundle["cases"]:
+            cases.setdefault(case["datapoint_id"], []).append(case)
+        self._replay_cases = cases
+        self._replay_cases_per_method = bundle["cases_per_method"]
+        self.replay_artifact_identity = identity
 
     def generate(self, datapoint: DataPoint, budget: AttackBudget) -> Iterable[Attempt]:
-        if budget.max_queries < len(self.methods):
+        required_queries = len(self.methods)
+        if self._replay_artifact is not None and self._replay_cases_per_method is not None:
+            required_queries *= self._replay_cases_per_method
+        if min(budget.max_queries, budget.max_turns) < required_queries:
             raise ExternalEngineConformanceError(
-                "HarmBench max_queries must allow at least one case per configured method"
+                "HarmBench max_queries and max_turns must cover every captured "
+                "case and method"
+                if self._replay_artifact is not None
+                else "HarmBench max_queries and max_turns must allow at least "
+                "one case per configured method"
             )
         if datapoint.media or any(turn.media for turn in datapoint.dialog_history):
             raise ExternalEngineConformanceError(
                 "the text-only HarmBench bridge cannot drop DataPoint media"
             )
-        seed = datapoint.payload_text or datapoint.payload_code or ""
-        if not seed.strip():
-            raise ExternalEngineOutputError("HarmBench received a blank behavior")
+        seed = _behavior_text(datapoint)
+
+        if self._replay_artifact is not None:
+            if self._replay_cases is None or self.replay_artifact_identity is None:
+                raise ExternalEngineConformanceError(
+                    "HarmBench replay must be validated against the complete corpus "
+                    "before generation"
+                )
+            generated = self._replay_cases.get(datapoint.id)
+            if generated is None:
+                raise ExternalEngineConformanceError(
+                    f"HarmBench replay has no captured cases for {datapoint.id!r}"
+                )
+            yield from self._attempts(
+                datapoint,
+                generated[: budget.max_queries],
+                budget,
+                replay_identity=self.replay_artifact_identity,
+            )
+            return
 
         generated = self._generate_test_cases(datapoint, seed, budget.max_queries)
+        yield from self._attempts(datapoint, generated, budget)
+
+    def _attempts(
+        self,
+        datapoint: DataPoint,
+        generated: list[dict[str, Any]],
+        budget: AttackBudget,
+        *,
+        replay_identity: dict[str, object] | None = None,
+    ) -> Iterable[Attempt]:
         for index, item in enumerate(generated):
             method = item["method"]
+            params = {
+                "method": method,
+                "upstream_method": item.get(
+                    "upstream_method", _upstream_execution(method, self.experiment)[0]
+                ),
+                "upstream_experiment": item.get(
+                    "upstream_experiment", _upstream_execution(method, self.experiment)[1]
+                ),
+                "experiment": self.experiment,
+                "upstream_revision": self.upstream_revision,
+                "attack_semantics": "harmbench_generated_case_transfer",
+                "source_experiment_conditioned": True,
+                "native_completions_executed": False,
+                "native_harmbench_classifier_executed": False,
+                "common_judge_is_not_native_harmbench_classifier": True,
+                "behavior_csv_sha256": item["behavior_csv_sha256"],
+                "generated_case_index": item["case_index"],
+                "generated_case_sha256": item.get(
+                    "prompt_sha256",
+                    hashlib.sha256(item["prompt"].encode("utf-8")).hexdigest(),
+                ),
+                "source_request_sha256": item.get("datapoint_sha256"),
+                "method_output_artifacts": item["artifacts"],
+                "method_output_manifest_sha256": item["artifact_manifest_sha256"],
+            }
+            if replay_identity is not None:
+                params["replay_artifact_identity"] = replay_identity
             yield _attempt(
                 datapoint,
                 self.name,
@@ -150,20 +314,308 @@ class HarmBenchAttacker(BaseAttacker):
                 turn_index=index,
                 prompt=item["prompt"],
                 seed=budget.seed,
-                params={
-                    "method": method,
-                    "experiment": self.experiment,
-                    "upstream_revision": self.upstream_revision,
-                    "attack_semantics": "harmbench_generated_case_transfer",
-                    "source_experiment_conditioned": True,
-                    "native_completions_executed": False,
-                    "native_harmbench_classifier_executed": False,
-                    "common_judge_is_not_native_harmbench_classifier": True,
-                    "behavior_csv_sha256": item["behavior_csv_sha256"],
-                    "generated_case_index": item["case_index"],
-                    "method_output_artifacts": item["artifacts"],
-                    "method_output_manifest_sha256": item["artifact_manifest_sha256"],
-                },
+                params=params,
+            )
+
+    def _read_replay_artifact(
+        self, corpus: list[DataPoint]
+    ) -> tuple[dict[str, Any], dict[str, object]]:
+        assert self._replay_artifact is not None
+        assert self.replay_artifact_sha256 is not None
+        try:
+            path, raw = read_binary_artifact(
+                self._replay_artifact.expanduser(), max_bytes=_MAX_REPLAY_BYTES
+            )
+        except ExternalEngineOutputError as exc:
+            raise ExternalEngineConformanceError(
+                f"cannot read HarmBench replay artifact: {self._replay_artifact}"
+            ) from exc
+        file_sha256 = hashlib.sha256(raw).hexdigest()
+        if file_sha256 != self.replay_artifact_sha256:
+            raise ExternalEngineConformanceError(
+                "HarmBench replay artifact does not match replay_artifact_sha256"
+            )
+        try:
+            bundle = json.loads(
+                raw.decode("utf-8"),
+                object_pairs_hook=_strict_object,
+                parse_constant=lambda value: (_ for _ in ()).throw(
+                    ValueError(f"invalid JSON constant {value}")
+                ),
+            )
+        except (UnicodeDecodeError, json.JSONDecodeError, RecursionError, ValueError) as exc:
+            raise ExternalEngineOutputError(
+                "HarmBench replay artifact is not valid UTF-8 JSON"
+            ) from exc
+        if not isinstance(bundle, dict):
+            raise ExternalEngineOutputError("HarmBench replay artifact must be an object")
+        expected_top = {
+            "format_version",
+            "upstream_revision",
+            "experiment",
+            "methods",
+            "cases_per_method",
+            "selection",
+            "source_artifact",
+            "source_requests",
+            "cases",
+            "content_sha256",
+        }
+        if set(bundle) != expected_top:
+            raise ExternalEngineOutputError(
+                "HarmBench replay artifact is incomplete or has unknown fields"
+            )
+        if bundle["format_version"] != _REPLAY_FORMAT:
+            raise ExternalEngineOutputError(
+                f"HarmBench replay artifact must use {_REPLAY_FORMAT}"
+            )
+        content_sha256 = bundle["content_sha256"]
+        unsigned = {key: value for key, value in bundle.items() if key != "content_sha256"}
+        if (
+            not isinstance(content_sha256, str)
+            or not _SHA256_RE.fullmatch(content_sha256)
+            or _canonical_sha256(unsigned) != content_sha256
+        ):
+            raise ExternalEngineConformanceError(
+                "HarmBench replay artifact content digest is invalid"
+            )
+        if bundle["upstream_revision"] != self.upstream_revision:
+            raise ExternalEngineConformanceError(
+                "HarmBench replay upstream revision does not match configuration"
+            )
+        if bundle["experiment"] != self.experiment:
+            raise ExternalEngineConformanceError(
+                "HarmBench replay experiment does not match configuration"
+            )
+        if bundle["methods"] != self.methods:
+            raise ExternalEngineConformanceError(
+                "HarmBench replay methods do not match configuration"
+            )
+        cases_per_method = bundle["cases_per_method"]
+        if (
+            isinstance(cases_per_method, bool)
+            or not isinstance(cases_per_method, int)
+            or not 1 <= cases_per_method <= 1000
+        ):
+            raise ExternalEngineOutputError(
+                "HarmBench replay cases_per_method must be in [1, 1000]"
+            )
+        self._validate_capture_metadata(bundle["selection"], bundle["source_artifact"])
+
+        requests = bundle["source_requests"]
+        if (
+            not isinstance(requests, list)
+            or not requests
+            or len(requests) > _MAX_REPLAY_REQUESTS
+        ):
+            raise ExternalEngineOutputError(
+                "HarmBench replay must contain a bounded non-empty source request list"
+            )
+        expected_requests = [_source_request(datapoint) for datapoint in corpus]
+        if requests != expected_requests:
+            raise ExternalEngineConformanceError(
+                "HarmBench replay source requests do not exactly match the measured corpus"
+            )
+        request_by_id: dict[str, dict[str, str]] = {}
+        for request in requests:
+            if not isinstance(request, dict) or set(request) != {
+                "datapoint_id", "source", "datapoint_sha256", "behavior_sha256"
+            }:
+                raise ExternalEngineOutputError(
+                    "HarmBench replay contains an invalid source request identity"
+                )
+            datapoint_id = request.get("datapoint_id")
+            source = request.get("source")
+            if (
+                not isinstance(datapoint_id, str)
+                or not datapoint_id.strip()
+                or not isinstance(source, str)
+                or not source.strip()
+                or not isinstance(request.get("datapoint_sha256"), str)
+                or not _SHA256_RE.fullmatch(request["datapoint_sha256"])
+                or not isinstance(request.get("behavior_sha256"), str)
+                or not _SHA256_RE.fullmatch(request["behavior_sha256"])
+                or datapoint_id in request_by_id
+            ):
+                raise ExternalEngineOutputError(
+                    "HarmBench replay source request identities are invalid or duplicated"
+                )
+            request_by_id[datapoint_id] = request
+
+        cases = bundle["cases"]
+        expected_case_count = len(requests) * len(self.methods) * cases_per_method
+        if (
+            not isinstance(cases, list)
+            or len(cases) != expected_case_count
+            or len(cases) > _MAX_REPLAY_CASES
+        ):
+            raise ExternalEngineOutputError(
+                "HarmBench replay is partial or exceeds the case-count limit"
+            )
+        observed: dict[tuple[str, str], set[int]] = {}
+        for case in cases:
+            self._validate_replay_case(case, request_by_id)
+            key = (case["datapoint_id"], case["method"])
+            indexes = observed.setdefault(key, set())
+            if case["case_index"] in indexes:
+                raise ExternalEngineOutputError(
+                    "HarmBench replay contains duplicate generated case indexes"
+                )
+            indexes.add(case["case_index"])
+        required_indexes = set(range(cases_per_method))
+        required_groups = {
+            (request["datapoint_id"], method)
+            for request in requests
+            for method in self.methods
+        }
+        if set(observed) != required_groups or any(
+            indexes != required_indexes for indexes in observed.values()
+        ):
+            raise ExternalEngineOutputError(
+                "HarmBench replay does not contain every requested method/case"
+            )
+        return bundle, {
+            "format_version": _REPLAY_FORMAT,
+            "sha256": file_sha256,
+            "bytes": len(raw),
+            "content_sha256": content_sha256,
+            "source_requests": len(requests),
+            "generated_cases": len(cases),
+        }
+
+    @staticmethod
+    def _validate_capture_metadata(selection: object, source_artifact: object) -> None:
+        if not isinstance(selection, dict) or set(selection) != {
+            "corpus_name", "limit", "sample_seed"
+        }:
+            raise ExternalEngineOutputError("HarmBench replay selection is invalid")
+        if (
+            not isinstance(selection.get("corpus_name"), str)
+            or not selection["corpus_name"].strip()
+            or isinstance(selection.get("limit"), bool)
+            or not isinstance(selection.get("limit"), int)
+            or selection["limit"] < 0
+            or isinstance(selection.get("sample_seed"), bool)
+            or not isinstance(selection.get("sample_seed"), int)
+        ):
+            raise ExternalEngineOutputError("HarmBench replay selection is invalid")
+        if not isinstance(source_artifact, dict) or set(source_artifact) != {
+            "file", "sha256", "bytes"
+        }:
+            raise ExternalEngineOutputError(
+                "HarmBench replay source artifact identity is invalid"
+            )
+        filename = source_artifact.get("file")
+        size = source_artifact.get("bytes")
+        if (
+            not isinstance(filename, str)
+            or not filename
+            or Path(filename).name != filename
+            or not isinstance(source_artifact.get("sha256"), str)
+            or not _SHA256_RE.fullmatch(source_artifact["sha256"])
+            or isinstance(size, bool)
+            or not isinstance(size, int)
+            or size <= 0
+        ):
+            raise ExternalEngineOutputError(
+                "HarmBench replay source artifact identity is invalid"
+            )
+
+    def _validate_replay_case(
+        self,
+        case: object,
+        request_by_id: dict[str, dict[str, str]],
+    ) -> None:
+        expected = {
+            "datapoint_id",
+            "datapoint_sha256",
+            "method",
+            "upstream_method",
+            "upstream_experiment",
+            "case_index",
+            "prompt",
+            "prompt_sha256",
+            "behavior_csv_sha256",
+            "artifacts",
+            "artifact_manifest_sha256",
+        }
+        if not isinstance(case, dict) or set(case) != expected:
+            raise ExternalEngineOutputError(
+                "HarmBench replay contains an invalid generated case"
+            )
+        request = request_by_id.get(case.get("datapoint_id"))
+        method = case.get("method")
+        expected_execution = (
+            _upstream_execution(method, self.experiment)
+            if method in self.methods
+            else None
+        )
+        index = case.get("case_index")
+        prompt = case.get("prompt")
+        if (
+            request is None
+            or case.get("datapoint_sha256") != request["datapoint_sha256"]
+            or method not in self.methods
+            or expected_execution is None
+            or (case.get("upstream_method"), case.get("upstream_experiment"))
+            != expected_execution
+            or isinstance(index, bool)
+            or not isinstance(index, int)
+            or index < 0
+            or not isinstance(prompt, str)
+            or not prompt.strip()
+            or not isinstance(case.get("prompt_sha256"), str)
+            or hashlib.sha256(prompt.encode("utf-8")).hexdigest()
+            != case["prompt_sha256"]
+            or not isinstance(case.get("behavior_csv_sha256"), str)
+            or not _SHA256_RE.fullmatch(case["behavior_csv_sha256"])
+        ):
+            raise ExternalEngineOutputError(
+                "HarmBench replay generated case identity is invalid"
+            )
+        if method not in _IDENTITY_METHODS and (
+            case["prompt_sha256"] == request["behavior_sha256"]
+        ):
+            raise ExternalEngineOutputError(
+                f"HarmBench {method} replay contains the unchanged behavior"
+            )
+        artifacts = case.get("artifacts")
+        if not isinstance(artifacts, list) or not artifacts:
+            raise ExternalEngineOutputError(
+                "HarmBench replay generated case lacks output artifacts"
+            )
+        files: set[str] = set()
+        for artifact in artifacts:
+            if not isinstance(artifact, dict) or set(artifact) != {
+                "file", "sha256", "bytes"
+            }:
+                raise ExternalEngineOutputError(
+                    "HarmBench replay has an invalid output artifact descriptor"
+                )
+            filename = artifact.get("file")
+            size = artifact.get("bytes")
+            if (
+                not isinstance(filename, str)
+                or not filename
+                or Path(filename).is_absolute()
+                or ".." in Path(filename).parts
+                or filename in files
+                or not isinstance(artifact.get("sha256"), str)
+                or not _SHA256_RE.fullmatch(artifact["sha256"])
+                or isinstance(size, bool)
+                or not isinstance(size, int)
+                or size <= 0
+            ):
+                raise ExternalEngineOutputError(
+                    "HarmBench replay has an invalid output artifact descriptor"
+                )
+            files.add(filename)
+        if (
+            not isinstance(case.get("artifact_manifest_sha256"), str)
+            or _canonical_sha256(artifacts) != case["artifact_manifest_sha256"]
+        ):
+            raise ExternalEngineOutputError(
+                "HarmBench replay output artifact manifest digest is invalid"
             )
 
     def _checkout(self) -> tuple[Path, Path, Path]:
@@ -235,6 +687,7 @@ class HarmBenchAttacker(BaseAttacker):
     ) -> list[dict[str, Any]]:
         root, entry, merge = self._checkout()
         self._verify_checkout(root)
+        datapoint_sha256 = _source_request(datapoint)["datapoint_sha256"]
         python = self.python or sys.executable
 
         by_method: dict[str, list[dict[str, Any]]] = {}
@@ -250,15 +703,18 @@ class HarmBenchAttacker(BaseAttacker):
             ).hexdigest()
 
             for method in self.methods:
+                upstream_method, upstream_experiment = _upstream_execution(
+                    method, self.experiment
+                )
                 save_dir = tmp_root / method
                 run_engine_command(
                     [
                         python,
                         str(entry),
                         "--method_name",
-                        method,
+                        upstream_method,
                         "--experiment_name",
-                        self.experiment,
+                        upstream_experiment,
                         "--behaviors_path",
                         str(behaviors_csv),
                         "--save_dir",
@@ -272,6 +728,7 @@ class HarmBenchAttacker(BaseAttacker):
                     feature=f"HarmBench {method} generation",
                     cwd=root,
                     allow_credentials=self.credential_env,
+                    env_overrides={"PYTHONDONTWRITEBYTECODE": "1"},
                     timeout_seconds=self.timeout_seconds,
                 )
                 run_engine_command(
@@ -279,13 +736,14 @@ class HarmBenchAttacker(BaseAttacker):
                         python,
                         str(merge),
                         "--method_name",
-                        method,
+                        upstream_method,
                         "--save_dir",
                         str(save_dir),
                     ],
                     feature=f"HarmBench {method} merge",
                     cwd=root,
                     allow_credentials=self.credential_env,
+                    env_overrides={"PYTHONDONTWRITEBYTECODE": "1"},
                     timeout_seconds=self.timeout_seconds,
                 )
                 prompts = self._read_test_cases(
@@ -300,7 +758,13 @@ class HarmBenchAttacker(BaseAttacker):
                 by_method[method] = [
                     {
                         "method": method,
+                        "upstream_method": upstream_method,
+                        "upstream_experiment": upstream_experiment,
                         "prompt": prompt,
+                        "prompt_sha256": hashlib.sha256(
+                            prompt.encode("utf-8")
+                        ).hexdigest(),
+                        "datapoint_sha256": datapoint_sha256,
                         "case_index": case_index,
                         "behavior_csv_sha256": behavior_csv_sha256,
                         "artifacts": artifacts,

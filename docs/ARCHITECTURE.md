@@ -46,15 +46,18 @@ The complete run is intentionally linear:
 4. execute the intended arguments with `experiments.rig_check`, retain the
    prospective lane projection, and obtain operator approval for complete-grid
    caps and provider-side quota;
-5. run bounded live target/modality probes, derive and hash their typed receipts,
+5. prepare any selected T3MP3ST or HarmBench attacker artifact under its own
+   cap, outside the Runner, then bind the exact output hash to the measured
+   attacker config;
+6. run bounded live target/modality probes, derive and hash their typed receipts,
    and bind the same operator-declared execution scope to each measured grid;
-6. execute a separately typed one-cluster diagnostic canary where required,
+7. execute a separately typed one-cluster diagnostic canary where required,
    then execute the eligibility-scoped common-run lanes and source-native
    campaigns with finite target, judge, transport-attempt, and time ceilings;
-7. import complete native artifacts and build the no-pooling suite evidence
+8. import complete native artifacts and build the no-pooling suite evidence
    inventory;
-8. preserve all artifacts and ordinary provenance; and
-9. perform diagnostics, the automated-label-blinded/model-visible human audit,
+9. preserve all artifacts and ordinary provenance; and
+10. perform diagnostics, the automated-label-blinded/model-visible human audit,
    post-experiment analysis, and measured rendering.
 
 Every non-dry preflight, transport probe, diagnostic canary, and measured Runner
@@ -136,7 +139,7 @@ is the operator-selection universe, not normalized config/receipt identity;
 config-only variants sharing it belong in separate Level-1 cohorts.
 
 After the whole request passes admission and before the first generation call,
-Runner 2.14 writes a content-addressed `ura-lane-projection/1`. The artifact
+Runner 2.15 writes a content-addressed `ura-lane-projection/1`. The artifact
 binds the exact experiment condition and eligibility descriptor, selected
 record/cluster/source-policy counts, deterministic sampling identities,
 selected physical input-media bytes, and the conservative complete-grid target,

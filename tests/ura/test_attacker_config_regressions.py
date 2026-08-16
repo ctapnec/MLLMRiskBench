@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 from pathlib import Path
 
@@ -106,6 +107,81 @@ def test_attacker_config_formatting_does_not_change_selected_grid_identity(
         identities.append((grid["grid_id"], plan["plan_id"]))
 
     assert identities[0] == identities[1]
+
+
+def test_t3mp3st_bundle_path_is_operational_not_persisted_identity(
+    tmp_path: Path,
+) -> None:
+    bundle_bytes = b'{"format_version":"fixture"}\n'
+    digest = hashlib.sha256(bundle_bytes).hexdigest()
+    normalized_identities: list[str] = []
+    for index in range(2):
+        bundle = tmp_path / f"host-path-{index}" / "bundle.json"
+        bundle.parent.mkdir()
+        bundle.write_bytes(bundle_bytes)
+        config = tmp_path / f"t3-config-{index}.json"
+        config.write_text(json.dumps({
+            "t3mp3st": {
+                "upstream_revision": "a" * 40,
+                "source_provider": "local",
+                "source_model": "planner",
+                "response_artifact": str(bundle),
+                "response_artifact_sha256": digest,
+            }
+        }), encoding="utf-8")
+
+        operational, artifact = run_matrix._load_attacker_config(
+            str(config), ["t3mp3st"]
+        )
+        assert operational["t3mp3st"]["response_artifact"] == str(bundle)
+        portable = run_matrix._portable_attacker_configs(operational)
+        assert "response_artifact" not in portable["t3mp3st"]
+        assert portable["t3mp3st"]["response_artifact_identity"] == {
+            "sha256": digest,
+            "bytes": len(bundle_bytes),
+        }
+        assert str(bundle) not in json.dumps(portable)
+        assert artifact is not None
+        normalized_identities.append(str(artifact["normalized_selected_sha256"]))
+
+    assert normalized_identities[0] == normalized_identities[1]
+
+
+def test_harmbench_bundle_path_is_operational_not_persisted_identity(
+    tmp_path: Path,
+) -> None:
+    bundle_bytes = b'{"format_version":"fixture"}\n'
+    digest = hashlib.sha256(bundle_bytes).hexdigest()
+    normalized_identities: list[str] = []
+    for index in range(2):
+        bundle = tmp_path / f"harmbench-host-path-{index}" / "bundle.json"
+        bundle.parent.mkdir()
+        bundle.write_bytes(bundle_bytes)
+        config = tmp_path / f"harmbench-config-{index}.json"
+        config.write_text(json.dumps({
+            "harmbench": {
+                "methods": ["PEZ"],
+                "upstream_revision": "b" * 40,
+                "replay_artifact": str(bundle),
+                "replay_artifact_sha256": digest,
+            }
+        }), encoding="utf-8")
+
+        operational, artifact = run_matrix._load_attacker_config(
+            str(config), ["harmbench"]
+        )
+        assert operational["harmbench"]["replay_artifact"] == str(bundle)
+        portable = run_matrix._portable_attacker_configs(operational)
+        assert "replay_artifact" not in portable["harmbench"]
+        assert portable["harmbench"]["replay_artifact_identity"] == {
+            "sha256": digest,
+            "bytes": len(bundle_bytes),
+        }
+        assert str(bundle) not in json.dumps(portable)
+        assert artifact is not None
+        normalized_identities.append(str(artifact["normalized_selected_sha256"]))
+
+    assert normalized_identities[0] == normalized_identities[1]
 
 
 def test_matrix_rejects_native_importer_as_runner_replay(tmp_path: Path) -> None:

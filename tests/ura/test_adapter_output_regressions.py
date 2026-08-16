@@ -1,6 +1,7 @@
 """Fail-closed regressions for generated-attack outputs and Runner coverage."""
 from __future__ import annotations
 
+import hashlib
 import json
 import shutil
 import subprocess
@@ -16,6 +17,11 @@ import ura.adapters.h4rm3l as h4rm3l_module
 import ura.adapters.harmbench as harmbench_module
 import ura.adapters.spikee as spikee_module
 import ura.adapters.t3mp3st as t3mp3st_module
+import experiments.capture_t3mp3st as t3mp3st_capture_module
+from experiments.capture_t3mp3st import (
+    capture_bundle as capture_t3mp3st_bundle,
+    load_input_list as load_t3mp3st_input_list,
+)
 from ura.adapters._engine_common import (
     ExternalEngineConformanceError,
     ExternalEngineOutputError,
@@ -32,7 +38,7 @@ from ura.adapters.ideator import IDEATORAttacker
 from ura.adapters.petri import PetriAttacker
 from ura.adapters.purplellama import PurpleLlamaAttacker
 from ura.adapters.spikee import SpikeeAttacker
-from ura.adapters.t3mp3st import T3MP3STAttacker
+from ura.adapters.t3mp3st import T3MP3STAttacker, build_plan_bundle
 from ura.data_models import (
     Attempt,
     DataPoint,
@@ -127,6 +133,32 @@ def _t3_response(*, codename: str = "OPERATION LAB GLASS") -> dict:
         "recommendedNextActions": ["Replay the prompts against the model only."],
     }
     return {"success": True, "plan": plan, "review": review, "missionGate": gate}
+
+
+def _t3_points() -> list[DataPoint]:
+    return [
+        _datapoint().model_copy(
+            update={"id": "t3-row-1", "payload_text": "first harmful seed request"}
+        ),
+        _datapoint().model_copy(
+            update={"id": "t3-row-2", "payload_text": "second harmful seed request"}
+        ),
+    ]
+
+
+def _write_t3_json(path: Path, value: object) -> str:
+    raw = (
+        json.dumps(
+            value,
+            sort_keys=True,
+            ensure_ascii=False,
+            separators=(",", ":"),
+            allow_nan=False,
+        )
+        + "\n"
+    ).encode("utf-8")
+    path.write_bytes(raw)
+    return hashlib.sha256(raw).hexdigest()
 
 
 def _completed(command) -> subprocess.CompletedProcess[str]:
@@ -349,7 +381,7 @@ def test_measured_harmbench_generation_fails_during_manifest_admission() -> None
         upstream_revision="f" * 40,
     )
 
-    with pytest.raises(ExternalEngineConformanceError, match="out of band"):
+    with pytest.raises(ExternalEngineConformanceError, match="harmbench_capture"):
         _runner(attacker).plan_manifest([_datapoint()])
 
 
@@ -407,6 +439,264 @@ def test_t3mp3st_rejects_degraded_or_inconsistent_upstream_contract(
     )
     with pytest.raises(ExternalEngineOutputError):
         list(attacker.generate(_datapoint(), _budget()))
+
+
+def test_t3mp3st_capture_bundle_round_trips_exact_selection(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    points = _t3_points()
+    calls: list[tuple[str, dict[str, object], float]] = []
+
+    def fake_post(endpoint, body, *, timeout_seconds):
+        calls.append((endpoint, body, timeout_seconds))
+        return _t3_response()
+
+    monkeypatch.setattr(t3mp3st_module, "_post_plan", fake_post)
+    descriptor = capture_t3mp3st_bundle(
+        points,
+        endpoint="http://127.0.0.1:3333/api/general/plan",
+        upstream_revision="1" * 40,
+        source_provider="local",
+        source_model="frozen-planner",
+        output_directory=tmp_path / "nested" / "capture",
+        timeout_seconds=12,
+    )
+
+    artifact = Path(str(descriptor["artifact"]))
+    assert artifact.is_absolute()
+    assert artifact.name == f"t3mp3st-plan-bundle-{descriptor['sha256']}.json"
+    assert descriptor["records"] == 2
+    assert len(calls) == 2
+    assert all(call[0] == "http://127.0.0.1:3333/api/general/plan" for call in calls)
+    assert all(call[2] == 12 for call in calls)
+
+    attacker = T3MP3STAttacker(
+        upstream_revision="1" * 40,
+        source_provider="local",
+        source_model="frozen-planner",
+        response_artifact=artifact,
+        response_artifact_sha256=str(descriptor["sha256"]),
+    )
+    manifest = _runner(attacker).plan_manifest(points)
+    identity = manifest.config["components"]["attacker"]["response_artifact_identity"]
+    assert identity["sha256"] == descriptor["sha256"]
+    assert identity["records"] == 2
+    assert "response_artifact" not in manifest.config["components"]["attacker"]
+    assert str(tmp_path) not in json.dumps(
+        manifest.config["components"]["attacker"], sort_keys=True
+    )
+    for point in points:
+        attempts = list(attacker.generate(point, _budget()))
+        assert attempts[0].params["response_source"]["mode"] == "precomputed_bundle"
+
+
+@pytest.mark.parametrize(
+    ("mutation", "message"),
+    [
+        ("duplicate", "duplicate DataPoint id"),
+        ("orphan", "missing .*; orphan"),
+        ("request_mismatch", "request mismatch"),
+        ("response_tamper", "response hash mismatch"),
+        ("future", "future format"),
+    ],
+)
+def test_t3mp3st_bundle_fails_closed_on_invalid_complete_mapping(
+    tmp_path: Path, mutation: str, message: str
+) -> None:
+    points = _t3_points()
+    bundle = build_plan_bundle(
+        points,
+        [_t3_response(), _t3_response()],
+        upstream_revision="2" * 40,
+        source_provider="local",
+        source_model="planner",
+    )
+    entries = bundle["entries"]
+    assert isinstance(entries, list)
+    if mutation == "duplicate":
+        entries[1]["datapoint_id"] = entries[0]["datapoint_id"]
+    elif mutation == "orphan":
+        entries[1]["datapoint_id"] = "orphan-row"
+    elif mutation == "request_mismatch":
+        request = entries[1]["request"]
+        assert isinstance(request, dict)
+        request["objective"] = "different objective"
+        entries[1]["request_sha256"] = hashlib.sha256(
+            json.dumps(
+                request,
+                sort_keys=True,
+                ensure_ascii=False,
+                separators=(",", ":"),
+                allow_nan=False,
+            ).encode("utf-8")
+        ).hexdigest()
+    elif mutation == "response_tamper":
+        entries[1]["response"]["plan"]["workOrders"][0]["safeProbe"] = "tampered"
+    elif mutation == "future":
+        bundle["format_version"] = "ura-t3mp3st-plan-bundle/2"
+    path = tmp_path / f"{mutation}.json"
+    digest = _write_t3_json(path, bundle)
+    attacker = T3MP3STAttacker(
+        upstream_revision="2" * 40,
+        source_provider="local",
+        source_model="planner",
+        response_artifact=path,
+        response_artifact_sha256=digest,
+    )
+    with pytest.raises(ExternalEngineOutputError, match=message):
+        _runner(attacker).plan_manifest(points)
+
+
+def test_t3mp3st_bundle_requires_external_byte_identity_and_rejects_tamper(
+    tmp_path: Path,
+) -> None:
+    points = _t3_points()
+    bundle = build_plan_bundle(
+        points,
+        [_t3_response(), _t3_response()],
+        upstream_revision="3" * 40,
+        source_provider="local",
+        source_model="planner",
+    )
+    path = tmp_path / "bundle.json"
+    digest = _write_t3_json(path, bundle)
+    unpinned = T3MP3STAttacker(
+        upstream_revision="3" * 40,
+        source_provider="local",
+        source_model="planner",
+        response_artifact=path,
+    )
+    with pytest.raises(ExternalEngineConformanceError, match="artifact_sha256"):
+        _runner(unpinned).plan_manifest(points)
+
+    path.write_bytes(path.read_bytes() + b" ")
+    pinned = T3MP3STAttacker(
+        upstream_revision="3" * 40,
+        source_provider="local",
+        source_model="planner",
+        response_artifact=path,
+        response_artifact_sha256=digest,
+    )
+    with pytest.raises(ExternalEngineOutputError, match="bytes do not match"):
+        _runner(pinned).plan_manifest(points)
+
+
+def test_t3mp3st_replay_parser_rejects_duplicate_json_object_keys(
+    tmp_path: Path,
+) -> None:
+    attacker = T3MP3STAttacker(
+        upstream_revision="4" * 40,
+        source_provider="local",
+        source_model="planner",
+        response_artifact=tmp_path / "duplicate.json",
+    )
+    wrapper = {
+        "format_version": "ura-t3mp3st-plan-replay/1",
+        "upstream_revision": "4" * 40,
+        "request": attacker._request_body(_datapoint()),
+        "response": _t3_response(),
+    }
+    raw = json.dumps(wrapper, sort_keys=True, separators=(",", ":"))
+    raw = raw.replace(
+        '"format_version":"ura-t3mp3st-plan-replay/1"',
+        '"format_version":"ura-t3mp3st-plan-replay/1",'
+        '"format_version":"ura-t3mp3st-plan-replay/1"',
+        1,
+    )
+    assert attacker.response_artifact is not None
+    attacker.response_artifact.write_text(raw, encoding="utf-8")
+    with pytest.raises(ExternalEngineOutputError, match="valid UTF-8 JSON"):
+        _runner(attacker).plan_manifest([_datapoint()])
+
+    points = _t3_points()
+    bundle = build_plan_bundle(
+        points,
+        [_t3_response(), _t3_response()],
+        upstream_revision="4" * 40,
+        source_provider="local",
+        source_model="planner",
+    )
+    bundle_raw = json.dumps(bundle, sort_keys=True, separators=(",", ":"))
+    bundle_raw = bundle_raw.replace(
+        '"source_model":"planner"',
+        '"source_model":"planner","source_model":"planner"',
+        1,
+    )
+    bundle_path = tmp_path / "duplicate-bundle.json"
+    bundle_path.write_text(bundle_raw, encoding="utf-8")
+    bundle_attacker = T3MP3STAttacker(
+        upstream_revision="4" * 40,
+        source_provider="local",
+        source_model="planner",
+        response_artifact=bundle_path,
+        response_artifact_sha256=hashlib.sha256(bundle_raw.encode("utf-8")).hexdigest(),
+    )
+    with pytest.raises(ExternalEngineOutputError, match="valid UTF-8 JSON"):
+        _runner(bundle_attacker).plan_manifest(points)
+
+
+def test_t3mp3st_capture_rejects_duplicate_rows_before_http(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    points = _t3_points()
+    points[1] = points[1].model_copy(update={"id": points[0].id})
+    monkeypatch.setattr(
+        t3mp3st_module,
+        "_post_plan",
+        lambda *_args, **_kwargs: pytest.fail("duplicate selection reached HTTP"),
+    )
+    with pytest.raises(ExternalEngineConformanceError, match="duplicate DataPoint id"):
+        capture_t3mp3st_bundle(
+            points,
+            endpoint="http://127.0.0.1:3333/api/general/plan",
+            upstream_revision="5" * 40,
+            source_provider="local",
+            source_model="planner",
+            output_directory=tmp_path,
+        )
+
+
+def test_t3mp3st_strict_input_list_rejects_duplicate_keys(tmp_path: Path) -> None:
+    path = tmp_path / "rows.json"
+    row = _datapoint().model_dump_json()
+    path.write_text(f'[{row[:-1]},"id":"duplicate"}}]', encoding="utf-8")
+    with pytest.raises(ValueError, match="valid UTF-8 JSON"):
+        load_t3mp3st_input_list(path)
+
+
+def test_t3mp3st_capture_cli_writes_machine_readable_completion(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    input_path = tmp_path / "selection.json"
+    input_path.write_text(
+        json.dumps([point.model_dump(mode="json") for point in _t3_points()]),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(
+        t3mp3st_module,
+        "_post_plan",
+        lambda *_args, **_kwargs: _t3_response(),
+    )
+
+    assert t3mp3st_capture_module.main([
+        "--input", str(input_path),
+        "--endpoint", "http://127.0.0.1:3333/api/general/plan",
+        "--upstream-revision", "6" * 40,
+        "--source-provider", "local",
+        "--source-model", "planner",
+        "--timeout-seconds", "10",
+        "--out", str(tmp_path / "captures"),
+    ]) == 0
+
+    completion = json.loads(capsys.readouterr().out)
+    assert completion["format_version"] == "ura-t3mp3st-plan-bundle/1"
+    assert completion["records"] == 2
+    assert Path(completion["artifact"]).is_file()
+    assert Path(completion["artifact"]).name.endswith(
+        f"{completion['sha256']}.json"
+    )
 
 
 def test_purplellama_is_exact_cyberseceval_identity_replay() -> None:

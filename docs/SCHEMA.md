@@ -2,7 +2,7 @@
 
 `ura.data_models` is the typed Pydantic v2 contract shared by converters,
 attackers, targets, judges, persistence, and analysis. `SCHEMA_VERSION = "1.4"`
-is stamped on datapoints, checkpoints, and manifests. Runner 2.14 rejects mixed
+is stamped on datapoints, checkpoints, and manifests. Runner 2.15 rejects mixed
 schema versions and duplicate datapoint IDs before a target call.
 
 ## Records
@@ -24,6 +24,32 @@ schema versions and duplicate datapoint IDs before a target call.
 Enumerations are defined in code. In particular, expected behavior separates
 harmful `refuse` probes from benign `safe_answer` and `comply_safely` probes;
 that split controls ASR and FRR denominators.
+
+## Prepared attacker artifacts
+
+T3MP3ST and HarmBench keep source-model or optimizer work outside a measured
+Runner grid, then replay an exact prepared artifact.
+
+`ura-t3mp3st-plan-bundle/1` binds one deterministic converted-corpus selection
+to the exact T3MP3ST upstream revision, source provider/model, canonical request
+and validated planning response for every selected datapoint. Each entry carries
+datapoint, request and response hashes, and the bundle carries the converted
+corpus hash and record count. The measured attacker config supplies exactly
+`upstream_revision`, `source_provider`, `source_model`, `response_artifact` and
+`response_artifact_sha256`.
+
+`ura-harmbench-transfer-replay/1` is text-only. It binds the pinned HarmBench
+revision, experiment, ordered methods, cases per method, corpus name, limit,
+sample seed, exact converted source requests and every generated case. It also
+binds the source CSV and method-output artifact identities. The generated
+attacker config supplies exactly `methods`, `experiment`, `upstream_revision`,
+`replay_artifact` and `replay_artifact_sha256`.
+
+Both loaders reject missing, extra, duplicate, mismatched or tampered entries
+before any target call. Persisted run identity retains content hashes and sizes,
+not an operator-specific absolute artifact path. These formats prove prepared
+input integrity only; they do not prove upstream evaluator validity, target
+safety or an empirical thesis result.
 
 ## Prospective request envelope and early failures
 

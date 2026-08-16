@@ -455,17 +455,23 @@ def test_builder_lists_all_arms_and_only_campaign_attackers(tmp_path: Path) -> N
         app.close()
 
 
-def test_t3mp3st_is_not_advertised_and_forged_builder_post_is_rejected(
+def test_t3mp3st_is_selectable_and_requires_a_validated_capture_bundle(
     tmp_path: Path,
 ) -> None:
     from experiments.rig_web import _SUGGEST_STATIC
 
-    app = _app(tmp_path)
+    repo = tmp_path / "repo"
+    results = repo / "runs"
+    results.mkdir(parents=True)
+    app = RigWebApp(
+        results_root=results, state_dir=results / "state", repo_root=repo,
+    )
     started = len(app.jobs)
     try:
         page = app.handle("GET", "/build")[2].decode("utf-8")
-        assert "data-fw='t3mp3st'" not in page
-        assert all("t3mp3st" not in item for item in _SUGGEST_STATIC["attackers"])
+        assert "data-fw='t3mp3st'" in page
+        assert "prepare + replay" in page
+        assert "t3mp3st" in _SUGGEST_STATIC["attackers"]
 
         _status, _content_type, body = app.handle("POST", "/build", {
             "mode": "dry_run",
@@ -476,15 +482,13 @@ def test_t3mp3st_is_not_advertised_and_forged_builder_post_is_rejected(
             "seeds": "0",
         })
         text = body.decode("utf-8")
-        assert "one request-bound response artifact" in text
-        assert "not a campaign workflow" in text
-        assert "single-request replay" in text
+        assert "T3MP3ST plan bundle path is required" in text
         assert len(app.jobs) == started
     finally:
         app.close()
 
 
-def test_harmbench_attacker_is_omitted_but_its_corpus_arms_remain(
+def test_harmbench_is_selectable_and_requires_its_generated_capture_config(
     tmp_path: Path,
 ) -> None:
     from experiments.rig_web import _SUGGEST_STATIC
@@ -493,10 +497,10 @@ def test_harmbench_attacker_is_omitted_but_its_corpus_arms_remain(
     started = len(app.jobs)
     try:
         page = app.handle("GET", "/build")[2].decode("utf-8")
-        assert "data-fw='harmbench'" not in page
+        assert "data-fw='harmbench'" in page
         assert "data-arm='harmbench_text'" in page
         assert "data-arm='harmbench_multimodal'" in page
-        assert all("harmbench" not in item for item in _SUGGEST_STATIC["attackers"])
+        assert "harmbench" in _SUGGEST_STATIC["attackers"]
 
         _status, _content_type, body = app.handle("POST", "/build", {
             "mode": "dry_run",
@@ -507,10 +511,221 @@ def test_harmbench_attacker_is_omitted_but_its_corpus_arms_remain(
             "seeds": "0",
         })
         text = body.decode("utf-8")
-        assert "HarmBench generation is not a campaign lane" in text
-        assert "select a HarmBench corpus arm" in text
-        assert "use the replay attacker" in text
+        assert "HarmBench capture config path is required" in text
         assert len(app.jobs) == started
+    finally:
+        app.close()
+
+
+def test_prepared_attack_configs_are_verified_and_materialized_portably(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    repo = tmp_path / "repo"
+    (repo / "experiments").mkdir(parents=True)
+    (repo / "experiments" / "api-targets.json").write_text(json.dumps({
+        "openai:test-model": {"modalities": ["text"]},
+    }), encoding="utf-8")
+    results = repo / "runs"
+    results.mkdir()
+    app = RigWebApp(
+        results_root=results, state_dir=results / "state", repo_root=repo,
+    )
+    try:
+        t3_bundle = results / "t3-bundle.json"
+        t3_bundle.write_text(json.dumps({
+            "format_version": "ura-t3mp3st-plan-bundle/1",
+            "upstream_revision": "a" * 40,
+            "source_provider": "openai",
+            "source_model": "source-model",
+            "corpus": {"sha256": "b" * 64, "records": 1},
+            "entries": [],
+        }), encoding="utf-8")
+        t3_sha = hashlib.sha256(t3_bundle.read_bytes()).hexdigest()
+        t3_params = {
+            "mode": "dry_run", "corpora": "strongreject_official",
+            "attackers": "t3mp3st", "judges": "rules", "seeds": "0",
+            "out": "runs/t3", "t3_artifact": str(t3_bundle),
+            "t3_artifact_sha": t3_sha,
+        }
+        assert app._validate_builder(t3_params) == {}
+        generated = app._materialize_prepared_attacker_config(t3_params)
+        assert generated is not None
+        t3_config = json.loads(generated.read_text(encoding="utf-8"))["t3mp3st"]
+        assert t3_config == {
+            "upstream_revision": "a" * 40,
+            "source_provider": "openai",
+            "source_model": "source-model",
+            "response_artifact": "runs/t3-bundle.json",
+            "response_artifact_sha256": t3_sha,
+        }
+
+        harm_artifact = results / "harmbench-capture.json"
+        harm_artifact.write_text(json.dumps({
+            "format_version": "ura-harmbench-transfer-replay/1",
+            "upstream_revision": "c" * 40,
+            "experiment": "llama2_7b",
+            "methods": ["PEZ", "PAP-top5"],
+            "cases_per_method": 2,
+            "selection": {
+                "corpus_name": "harmbench_text", "limit": 1, "sample_seed": 7,
+            },
+            "source_artifact": {}, "source_requests": [], "cases": [],
+            "content_sha256": "d" * 64,
+        }), encoding="utf-8")
+        harm_sha = hashlib.sha256(harm_artifact.read_bytes()).hexdigest()
+        harm_config = results / "harmbench-attackers.json"
+        harm_config.write_text(json.dumps({"harmbench": {
+            "methods": ["PEZ", "PAP-top5"],
+            "experiment": "llama2_7b",
+            "upstream_revision": "c" * 40,
+            "replay_artifact": str(harm_artifact),
+            "replay_artifact_sha256": harm_sha,
+        }}), encoding="utf-8")
+        harm_params = {
+            "mode": "dry_run", "corpora": "harmbench_text",
+            "attackers": "harmbench", "judges": "rules", "seeds": "0",
+            "sample_seed": "7", "limit": "1", "max_queries": "4",
+            "max_turns": "4", "out": "runs/harm",
+            "harm_config": str(harm_config),
+        }
+        assert app._validate_builder(harm_params) == {}
+        generated = app._materialize_prepared_attacker_config(harm_params)
+        assert generated is not None
+        emitted = json.loads(generated.read_text(encoding="utf-8"))["harmbench"]
+        assert emitted["replay_artifact"] == "runs/harmbench-capture.json"
+        assert emitted["replay_artifact_sha256"] == harm_sha
+
+        inadequate = {**harm_params, "max_queries": "3", "max_turns": "2"}
+        errors = app._validate_builder(inadequate)
+        assert "at least 4 queries" in errors["max_queries"]
+        assert "at least 4 turns" in errors["max_turns"]
+
+        started: list[tuple[str, dict[str, str], dict[str, str]]] = []
+
+        def fake_start(command, values, *, builder_params=None, **_kwargs):
+            started.append((command, dict(values), dict(builder_params or {})))
+            return Job(
+                job_id=f"replay-{len(started)}", command=command,
+                argv=build_argv(command, values), directory=results / "state" / "fake",
+                process=None, restored_state="complete", restored_exit=0,
+            )
+
+        monkeypatch.setattr(app, "start_job", fake_start)
+        monkeypatch.setattr(
+            app, "_read_lane_projection",
+            lambda _params: ({"target_calls": 1, "judge_calls": 0,
+                              "http_attempts": 1}, ""),
+        )
+        common = {
+            "confirm": "yes", "mode": "measured", "api": "openai:test-model",
+            "judges": "rules", "seeds": "0", "limit": "1",
+            "cap_target": "10", "cap_judge": "10", "cap_http": "10",
+            "deadline": "600", "scope": "scope-1", "max_age": "24",
+            "att_path1": "runs/att.json", "att_sha1": "1" * 64,
+            "project_revision": "runs/project.json",
+            "project_revision_sha": "2" * 64,
+            "source_conformance": "runs/source.json",
+            "source_conformance_sha": "3" * 64,
+        }
+        status, location, _ = app.handle("POST", "/build", {
+            **common, "corpora": "strongreject_official",
+            "attackers": "t3mp3st", "sample_seed": "0",
+            "max_queries": "1", "max_turns": "1", "out": "runs/t3-measured",
+            "t3_artifact": str(t3_bundle), "t3_artifact_sha": t3_sha,
+        })
+        assert status == 303 and location == "/jobs/replay-1"
+        command, values, _params = started[-1]
+        assert command == "run_matrix" and values["--attackers"] == "t3mp3st"
+        generated_path = Path(values["--attacker-config"])
+        generated_doc = json.loads(generated_path.read_text(encoding="utf-8"))
+        assert generated_doc["t3mp3st"]["response_artifact"] == "runs/t3-bundle.json"
+        run_matrix.build_parser().parse_args(build_argv(command, values)[3:])
+
+        status, location, _ = app.handle("POST", "/build", {
+            **common, "corpora": "harmbench_text", "attackers": "harmbench",
+            "sample_seed": "7", "max_queries": "4", "max_turns": "4",
+            "out": "runs/harm-measured", "harm_config": str(harm_config),
+        })
+        assert status == 303 and location == "/jobs/replay-2"
+        command, values, _params = started[-1]
+        assert command == "run_matrix" and values["--attackers"] == "harmbench"
+        generated_path = Path(values["--attacker-config"])
+        generated_doc = json.loads(generated_path.read_text(encoding="utf-8"))
+        assert generated_doc["harmbench"]["replay_artifact"] == (
+            "runs/harmbench-capture.json"
+        )
+        run_matrix.build_parser().parse_args(build_argv(command, values)[3:])
+    finally:
+        app.close()
+
+
+def test_prepared_capture_forms_validate_preview_and_start_exact_commands(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    repo = tmp_path / "repo"
+    results = repo / "runs"
+    results.mkdir(parents=True)
+    checkout = tmp_path / "HarmBench"
+    checkout.mkdir()
+    source = tmp_path / "behaviors.csv"
+    source.write_text("BehaviorID,Behavior\n1,test\n", encoding="utf-8")
+    app = RigWebApp(
+        results_root=results, state_dir=results / "state", repo_root=repo,
+    )
+    captured: list[tuple[str, dict[str, str]]] = []
+
+    def fake_start(command, values, **_kwargs):
+        captured.append((command, dict(values)))
+        return Job(
+            job_id="capture-job", command=command,
+            argv=build_argv(command, values), directory=results / "state" / "fake",
+            process=None, restored_state="complete", restored_exit=0,
+        )
+
+    monkeypatch.setattr(app, "start_job", fake_start)
+    try:
+        t3_form = {
+            "t3cap_corpus": "strongreject_official", "t3cap_limit": "1",
+            "t3cap_sample_seed": "0",
+            "t3cap_endpoint": "http://127.0.0.1:3333/api/general/plan",
+            "t3cap_revision": "a" * 40, "t3cap_provider": "openai",
+            "t3cap_model": "source-model", "t3cap_timeout": "120",
+            "t3cap_out": str(results / "t3-captures"),
+        }
+        status, _, body = app.handle("POST", "/build/t3mp3st/capture", t3_form)
+        text = body.decode("utf-8")
+        assert status == 200 and not captured
+        assert "Out-of-band paid/compute step" in text
+        assert "experiments.capture_t3mp3st" in text
+        status, location, _ = app.handle(
+            "POST", "/build/t3mp3st/capture", {**t3_form, "confirm": "yes"},
+        )
+        assert status == 303 and location == "/jobs/capture-job"
+        assert captured[-1][0] == "capture_t3mp3st"
+        assert captured[-1][1]["--out"] == str(results / "t3-captures")
+
+        harm_form = {
+            "hcap_repo": str(checkout), "hcap_revision": "b" * 40,
+            "hcap_source": str(source), "hcap_corpus": "harmbench_text",
+            "hcap_methods": "PEZ,PAP-top5", "hcap_experiment": "llama2_7b",
+            "hcap_limit": "1", "hcap_sample_seed": "0", "hcap_cases": "1",
+            "hcap_artifact_out": str(results / "harm" / "capture.json"),
+            "hcap_config_out": str(results / "harm" / "attackers.json"),
+        }
+        status, _, body = app.handle("POST", "/build/harmbench/prepare", harm_form)
+        assert status == 200 and "experiments.harmbench_capture" in body.decode()
+        status, location, _ = app.handle(
+            "POST", "/build/harmbench/prepare", {**harm_form, "confirm": "yes"},
+        )
+        assert status == 303 and location == "/jobs/capture-job"
+        command, values = captured[-1]
+        assert command == "harmbench_capture"
+        assert [values["--method"], values["--method#1"]] == ["PEZ", "PAP-top5"]
+
+        status, _, _ = app.handle("POST", "/jobs", {
+            "command": "capture_t3mp3st", "--out": str(results / "forged"),
+        })
+        assert status == 400
     finally:
         app.close()
 
@@ -1603,9 +1818,16 @@ def test_dashboard_shows_presence_only_pipeline(tmp_path: Path) -> None:
     from experiments.rig_web import COMMANDS
 
     for name in COMMANDS:
-        assert run_text.count(
-            f"<input type='hidden' name='command' value='{name}'>"
-        ) == 1
+        if name in {"capture_t3mp3st", "harmbench_capture"}:
+            # These two commands link to the semantically validated Build
+            # workflows instead of exposing a generic form that could bypass
+            # their pre-subprocess checks.
+            assert run_text.count(f"data-name='{name}'") == 1
+            assert "/build#prepared-workflows" in run_text
+        else:
+            assert run_text.count(
+                f"<input type='hidden' name='command' value='{name}'>"
+            ) == 1
     # The client-side filter is present and cards carry filterable names.
     assert "cmdfilter" in run_text
     assert "data-name='run_matrix" in run_text
@@ -1865,6 +2087,26 @@ def test_every_ui_command_parses_with_its_real_module_parser() -> None:
             "--scaffold": "on", "--arm": "strongreject_official",
             "--observation": "strongreject_official=runs/obs",
             "--out": "runs/sc.json", "--source-config": "experiments/s.json",
+        }],
+        "capture_t3mp3st": [{
+            "--corpus": "strongreject_official",
+            "--source-config": "experiments/s.json", "--limit": "1",
+            "--sample-seed": "0",
+            "--endpoint": "http://127.0.0.1:3333/api/general/plan",
+            "--upstream-revision": "a" * 40, "--source-provider": "openai",
+            "--source-model": "source-model", "--timeout-seconds": "120",
+            "--out": "runs/t3",
+        }],
+        "harmbench_capture": [{
+            "--repo": "/data/HarmBench", "--revision": "a" * 40,
+            "--source": "/data/harmbench.csv", "--corpus-name": "harmbench_text",
+            "--method": "PEZ", "--method#1": "PAP-top5",
+            "--experiment": "llama2_7b", "--limit": "1",
+            "--sample-seed": "0", "--cases-per-method": "1",
+            "--artifact-out": "runs/harm/capture.json",
+            "--attacker-config-out": "runs/harm/attackers.json",
+            "--python": "/usr/bin/python", "--credential-env": "HF_TOKEN",
+            "--timeout-seconds": "600",
         }],
         "rig_check": [],  # forwards the run_matrix surface (asserted above)
         "run_matrix": [{

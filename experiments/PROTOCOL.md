@@ -49,7 +49,7 @@ not replaced with a nearby model. A failed/stale live attestation or silent
 identity drift is a missing/failed prerequisite, not a safe zero and not
 silently rewritten as structural incompatibility.
 
-Runner 2.14 operationalizes this distinction. One completed, bounded, non-dry
+Runner 2.15 operationalizes this distinction. One completed, bounded, non-dry
 `--attestation-probe` is converted without another provider call into a strict
 `ura-live-attestation/2` receipt. Each ordinary measured grid must supply the
 receipt's exact byte digest, the same operator-declared non-secret
@@ -381,12 +381,17 @@ exact lineage before another call. Locks are never reclaimed automatically.
 Infrastructure failure remains failure and never enters a safety denominator as
 zero.
 
-Measured Runner grids do not perform live HarmBench attacker generation or
-T3MP3ST direct/loopback planning. Those are optional out-of-band captures under
-their own caps. Measured T3MP3ST requires an exact request-bound,
-content-addressed `response_artifact`; no in-tree HarmBench generation-artifact
-replay producer is claimed. Without an explicitly prepared input through an
-implemented replay path, that HarmBench attacker lane remains pending/`N/A`.
+T3MP3ST and HarmBench use prepare then replay. Their preparation commands are
+outside the Runner because they may call a T3MP3ST source model or run
+HarmBench generation on a pinned checkout. They therefore require their own
+operator cap or quota and must not be described as covered by the Runner's
+target/judge/HTTP ceilings. T3MP3ST preparation writes a request-bound,
+content-addressed `ura-t3mp3st-plan-bundle/1`. HarmBench preparation writes a
+content-addressed, text-only `ura-harmbench-transfer-replay/1` and its matching
+attacker config. A measured grid accepts only those exact prepared bytes and
+validates their revision, source selection, methods/model identity, counts and
+hashes before any target call. It never regenerates either attack inside the
+measured grid.
 
 ## Analysis and human validity
 

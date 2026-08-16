@@ -5,9 +5,9 @@ validity rules, then execute [RUN_AND_RETURN.md](RUN_AND_RETURN.md). A dry run,
 partial artifact family, source conversion, model-name assumption, native prompt
 export, or synthetic figure is not a measured thesis result.
 
-The maintained execution contract is Runner `ura-runner/2.14` with unified
-schema `1.4`; older artifacts are not mixed into the thesis run. The current
-dashboard/filter/dependency snapshot's exact commit and verification results are
+The maintained execution contract is Runner `ura-runner/2.15` with unified
+schema `1.4`; older artifacts are not mixed into the thesis run. The latest
+completed dashboard/filter/dependency snapshot's exact commit and verification results are
 kept in the sibling Thesis record
 `../../../Thesis-EN/verification/2026-08-16-rig-dashboard-filters/`.
 
@@ -59,6 +59,16 @@ Visibility is not a runnable or empirical claim.
 Dry mode removes selected real API/local targets and configs because the runner
 uses `MockTarget`; local roster modalities are text/image only, so audio
 target/arm mismatches remain rejected in UI parity.
+
+T3MP3ST and HarmBench use one simple two-step path. First, run the prepared
+attack capture from the Build page or CLI. T3MP3ST writes an exact
+`ura-t3mp3st-plan-bundle/1`; HarmBench writes an exact
+`ura-harmbench-transfer-replay/1` plus its attacker config. Second, select the
+attacker in Build or pass that config to `run_matrix`. Preparation may use a
+source model or GPU and is outside the Runner's target/judge ceilings. The
+measured run makes no attacker-generation call: it verifies the artifact hash
+and exact converted selection before any target call, then replays the prepared
+attempts.
 
 ## Source inventory
 

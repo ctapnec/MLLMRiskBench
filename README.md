@@ -137,7 +137,7 @@ unused orphaned `datasets 2.14.7` installation. This verifies the environment
 and UI/admission prerequisites, not model inference; no provider/model call was
 made.
 
-Runner 2.14 makes that prerequisite machine-checked. A bounded non-dry
+Runner 2.15 makes that prerequisite machine-checked. A bounded non-dry
 `--attestation-probe` grid is converted by `experiments.live_attestation` into a
 content-addressed `ura-live-attestation/2` receipt. An ordinary measured grid
 must supply the exact receipt bytes and digest, the same operator-declared
@@ -380,7 +380,7 @@ Runner `RunManifest`; the URA revision that performed their import is retained
 in the return-package/importer context rather than relabelled as an upstream
 native field.
 
-Runner `ura-runner/2.14` writes unified schema `1.4`. Immutable planning/source
+Runner `ura-runner/2.15` writes unified schema `1.4`. Immutable planning/source
 stratum identity is stored separately from adaptive per-turn evaluation
 identity. Thus a Crescendo setup turn remains joined to its original planning
 stratum while receiving a typed `not_applicable` judgment and no judge call or
@@ -451,8 +451,13 @@ Dry-run composition drops selected
 real API/local targets and their configs because `run_matrix --dry-run` always
 uses `MockTarget`. Local roster modalities are limited to Runner-supported text
 and image, so an audio arm/target mismatch is rejected by UI parity. The
-builder covers all 39 maintained source arms. Its attacker selector omits
-HarmBench and T3MP3ST because neither adapter is a runnable campaign lane.
+builder covers all 39 maintained source arms. T3MP3ST and HarmBench are
+selectable attacker lanes after their prepared artifact is supplied. The same
+Build page exposes the separate preparation commands: T3MP3ST captures an exact
+planning bundle, while HarmBench captures generated text cases and writes the
+matching attacker config. These preparation jobs can use source-model or GPU
+compute; the measured Runner only validates and replays their content-addressed
+outputs.
 Before a paid mode, it shows the exact argv and offers a no-call preflight
 whose lane-projection gives the
 required target/judge/HTTP call upper bounds; Start is blocked until the entered
