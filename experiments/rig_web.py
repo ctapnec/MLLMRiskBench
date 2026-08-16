@@ -345,19 +345,26 @@ _NATIVE_ONLY_ATTACKERS: frozenset[str] = frozenset({
 })
 _BUILDER_UNAVAILABLE_ATTACKERS: dict[str, str] = {
     "harmbench": (
-        "measured generation is intentionally blocked; generate out of band "
-        "and use content-addressed converted/replay artifacts"
+        "HarmBench generation is not a campaign lane; select a HarmBench "
+        "corpus arm and use the replay attacker"
     ),
     "t3mp3st": (
-        "measured use requires a pinned precomputed response_artifact in "
-        "attacker config; this builder has no capture/config workflow"
+        "the current adapter replays one request-bound response artifact and "
+        "is not a campaign workflow; use the CLI only for an exact "
+        "single-request replay"
     ),
 }
+#: Registered CLI adapters that cannot form a normal campaign lane.  Keep them
+#: in the harness registry and reject forged builder POSTs, but do not advertise
+#: dead choices in either builder UI.
+_BUILDER_OMITTED_ATTACKERS: frozenset[str] = frozenset(
+    _BUILDER_UNAVAILABLE_ATTACKERS
+)
 #: Every registered attacker (mirrors ura.adapters.engines.ATTACKER_NAMES, the
-#: shared registry - a parity test asserts the two match, so the builder can
-#: never silently omit an engine).  replay/crescendo are modality-agnostic (they
-#: carry whatever the corpus datapoint holds); the external adapters are
-#: text-first except harmbench (text+image).
+#: shared registry - a parity test asserts the two match). The Build page omits
+#: only the explicit non-campaign adapters above. replay/crescendo are
+#: modality-agnostic (they carry whatever the corpus datapoint holds); the
+#: external adapters are text-first except harmbench (text+image).
 _FRAMEWORK_DESCRIPTIONS: dict[str, tuple[str, tuple[str, ...]]] = {
     "replay": ("send the corpus prompt as-is (single turn)", _ALL_MODALITIES),
     "crescendo": ("escalate the request over multiple turns", _ALL_MODALITIES),
@@ -448,10 +455,16 @@ _EDITABLE_CONFIGS: dict[str, tuple[str, str, str]] = {
 #: shared registry mirror ``_ATTACKER_NAMES`` (all 20), so a new engine appears
 #: automatically and none is silently omitted.
 _SUGGEST_STATIC: dict[str, tuple[str, ...]] = {
-    # Only common-runner-eligible attackers are suggested; native-only
-    # integrations are shown disabled in the builder and use native_import.
-    "attackers": ("replay,crescendo",
-                  *(a for a in _ATTACKER_NAMES if a not in _NATIVE_ONLY_ATTACKERS)),
+    # Only campaign-usable common-runner attackers are suggested. Native-only
+    # integrations use native_import; explicit non-campaign adapters stay CLI-only.
+    "attackers": (
+        "replay,crescendo",
+        *(
+            attacker for attacker in _ATTACKER_NAMES
+            if attacker not in _NATIVE_ONLY_ATTACKERS
+            and attacker not in _BUILDER_OMITTED_ATTACKERS
+        ),
+    ),
     "judges": ("rules,llm", "rules", "llm", "rules,guardrail", "guardrail"),
     "group": ("model", "source", "model,source"),
     "seeds": ("0", "0,1", "0,1,2"),
@@ -6600,7 +6613,9 @@ class RigWebApp:
             )
 
         framework_boxes = "".join(
-            _framework_box(fw, desc, mods) for fw, desc, mods in _FRAMEWORKS
+            _framework_box(fw, desc, mods)
+            for fw, desc, mods in _FRAMEWORKS
+            if fw not in _BUILDER_OMITTED_ATTACKERS
         )
         # Judge checkboxes.
         judges_selected = set(self._split_list(prefill.get("judges", "rules")))

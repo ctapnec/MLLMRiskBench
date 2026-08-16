@@ -451,9 +451,10 @@ Dry-run composition drops selected
 real API/local targets and their configs because `run_matrix --dry-run` always
 uses `MockTarget`. Local roster modalities are limited to Runner-supported text
 and image, so an audio arm/target mismatch is rejected by UI parity. The
-builder covers all 39 maintained source arms and all 20 registered attackers
-derived from the shared harness registries. Before a paid mode it shows the
-exact argv and offers a no-call preflight whose lane-projection gives the
+builder covers all 39 maintained source arms. Its attacker selector omits
+HarmBench and T3MP3ST because neither adapter is a runnable campaign lane.
+Before a paid mode, it shows the exact argv and offers a no-call preflight
+whose lane-projection gives the
 required target/judge/HTTP call upper bounds; Start is blocked until the entered
 ceilings cover that projection (a call bound, not a price estimate). It also
 offers job monitoring with a verified whole-process-tree stop (an unconfirmed

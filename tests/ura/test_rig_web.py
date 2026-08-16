@@ -414,16 +414,23 @@ def test_attacker_registry_parity_and_full_inventory() -> None:
     }
 
 
-def test_builder_lists_all_39_arms_and_20_attackers(tmp_path: Path) -> None:
-    from experiments.rig_web import _ARM_CATALOG, _ATTACKER_NAMES, _INELIGIBLE_ARMS
+def test_builder_lists_all_arms_and_only_campaign_attackers(tmp_path: Path) -> None:
+    from experiments.rig_web import (
+        _ARM_CATALOG,
+        _ATTACKER_NAMES,
+        _BUILDER_OMITTED_ATTACKERS,
+        _INELIGIBLE_ARMS,
+    )
     app = _app(tmp_path)
     try:
         _s, _c, body = app.handle("GET", "/build")
         text = body.decode("utf-8")
         for arm, _mods, _reason in _ARM_CATALOG:
             assert f"data-arm='{arm}'" in text, arm  # every arm visible
-        for attacker in _ATTACKER_NAMES:
-            assert f"data-fw='{attacker}'" in text, attacker  # every attacker
+        for attacker in set(_ATTACKER_NAMES) - _BUILDER_OMITTED_ATTACKERS:
+            assert f"data-fw='{attacker}'" in text, attacker
+        for attacker in _BUILDER_OMITTED_ATTACKERS:
+            assert f"data-fw='{attacker}'" not in text, attacker
         # Ineligible arms are selectable so the server can return their exact
         # fail-closed reason; the repeated reason is compacted into a tooltip.
         # The two source-metric arms are selectable because they do run.
@@ -444,6 +451,66 @@ def test_builder_lists_all_39_arms_and_20_attackers(tmp_path: Path) -> None:
         assert "native-only" in text  # native-artifact attackers badged
         for attacker in _NATIVE_ONLY_ATTACKERS:
             assert f"data-fw='{attacker}'" in text  # still visible, disabled
+    finally:
+        app.close()
+
+
+def test_t3mp3st_is_not_advertised_and_forged_builder_post_is_rejected(
+    tmp_path: Path,
+) -> None:
+    from experiments.rig_web import _SUGGEST_STATIC
+
+    app = _app(tmp_path)
+    started = len(app.jobs)
+    try:
+        page = app.handle("GET", "/build")[2].decode("utf-8")
+        assert "data-fw='t3mp3st'" not in page
+        assert all("t3mp3st" not in item for item in _SUGGEST_STATIC["attackers"])
+
+        _status, _content_type, body = app.handle("POST", "/build", {
+            "mode": "dry_run",
+            "corpora": "strongreject_official",
+            "attackers": "t3mp3st",
+            "judges": "rules",
+            "out": "runs/t3-forged",
+            "seeds": "0",
+        })
+        text = body.decode("utf-8")
+        assert "one request-bound response artifact" in text
+        assert "not a campaign workflow" in text
+        assert "single-request replay" in text
+        assert len(app.jobs) == started
+    finally:
+        app.close()
+
+
+def test_harmbench_attacker_is_omitted_but_its_corpus_arms_remain(
+    tmp_path: Path,
+) -> None:
+    from experiments.rig_web import _SUGGEST_STATIC
+
+    app = _app(tmp_path)
+    started = len(app.jobs)
+    try:
+        page = app.handle("GET", "/build")[2].decode("utf-8")
+        assert "data-fw='harmbench'" not in page
+        assert "data-arm='harmbench_text'" in page
+        assert "data-arm='harmbench_multimodal'" in page
+        assert all("harmbench" not in item for item in _SUGGEST_STATIC["attackers"])
+
+        _status, _content_type, body = app.handle("POST", "/build", {
+            "mode": "dry_run",
+            "corpora": "strongreject_official",
+            "attackers": "harmbench",
+            "judges": "rules",
+            "out": "runs/harmbench-forged",
+            "seeds": "0",
+        })
+        text = body.decode("utf-8")
+        assert "HarmBench generation is not a campaign lane" in text
+        assert "select a HarmBench corpus arm" in text
+        assert "use the replay attacker" in text
+        assert len(app.jobs) == started
     finally:
         app.close()
 
