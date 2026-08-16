@@ -3971,7 +3971,9 @@ class RigWebApp:
             if row["cost"] is None:
                 entry["complete"] = False
             else:
-                ccy = str(row.get("currency") or "USD")
+                # Normalise the currency key (as _fmt_money does) so an
+                # inconsistently-cased config never reads all-USD as "mixed".
+                ccy = str(row.get("currency") or "USD").upper()
                 entry["by_ccy"][ccy] = entry["by_ccy"].get(ccy, 0.0) + row["cost"]
         budget_rows = []
         for name, amount, match, _role in self._budgets():
