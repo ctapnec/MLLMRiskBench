@@ -864,6 +864,7 @@ def _load_local_config(
                 )
             from experiments.local_targets import (  # noqa: PLC0415
                 detect_gpu_hardware, model_hardware_profile,
+                tensor_parallel_capacity_gib,
             )
             selected_hardware = (
                 hardware if hardware is not None else detect_gpu_hardware()
@@ -901,15 +902,15 @@ def _load_local_config(
                     note = str(profile.get("compatibility_note") or "estimated VRAM exceeds available VRAM")
                     raise ValueError(f"vLLM config {spec!r} does not fit: {note}")
                 estimated = profile.get("estimated_vram_gib")
-                max_gpu = float(
-                    selected_hardware.get("max_gpu_vram_gib", 0.0) or 0.0
+                tp_capacity = tensor_parallel_capacity_gib(
+                    selected_hardware, float(utilization), resolved_tp
                 )
-                if isinstance(estimated, (int, float)) and float(estimated) > (
-                    max_gpu * float(utilization) * resolved_tp
+                if isinstance(estimated, (int, float)) and (
+                    tp_capacity is None or float(estimated) > tp_capacity
                 ):
                     raise ValueError(
                         f"vLLM config {spec!r} tensor_parallel_size {resolved_tp} "
-                        "cannot fit its estimated VRAM"
+                        "cannot fit its estimated VRAM across the detected cards"
                     )
             config["tensor_parallel_size"] = resolved_tp
         elif backend == "ollama":

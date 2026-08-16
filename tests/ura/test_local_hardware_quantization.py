@@ -19,8 +19,10 @@ def _rig_hardware(capability: str = "8.9") -> dict[str, object]:
         "aggregate_vram_gib": 49128 / 1024,
         "max_gpu_vram_gib": 24564 / 1024,
         "gpus": [
-            {"index": 0, "compute_capability": capability},
-            {"index": 1, "compute_capability": capability},
+            {"index": 0, "compute_capability": capability,
+             "memory_total_mib": 24564},
+            {"index": 1, "compute_capability": capability,
+             "memory_total_mib": 24564},
         ],
     }
 
@@ -55,6 +57,19 @@ def test_70b_auto_fit_resolves_bitsandbytes_and_tp2() -> None:
     assert profile["recommended_tensor_parallel_size"] == 2
     assert profile["fits"] is True
     assert profile["multi_gpu_support_basis"] == "assumed"
+
+
+def test_mixed_vram_does_not_overstate_equal_shard_capacity() -> None:
+    hardware = _rig_hardware()
+    hardware["aggregate_vram_gib"] = 32.0
+    hardware["gpus"][1]["memory_total_mib"] = 8192
+    profile = local_targets.model_hardware_profile(
+        "vllm:org/model-40B", {"gpu_memory_utilization": 0.85}, hardware
+    )
+    assert profile["recommended_quantization"] == "bitsandbytes"
+    assert profile["estimated_vram_gib"] == 22.8
+    assert profile["available_vram_gib"] == pytest.approx(20.39, abs=0.01)
+    assert profile["fits"] is False
 
 
 def test_override_wins_and_old_gpu_blocks_automatic_bitsandbytes() -> None:

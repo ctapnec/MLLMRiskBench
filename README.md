@@ -13,8 +13,8 @@ The development tree implements the RUN-001 prospective-request and MET-001
 exact-selection interfaces described below, with offline contract tests. The
 exact tested software revision and raw local/rig logs are recorded externally
 under `../../Thesis-EN/verification/2026-08-16-quantization-remediation/`; its
-record names the immutable Project commit. The suite passed 987 offline tests
-in both environments, with the three rig warnings retained explicitly. A retained
+record names the immutable Project commit and exact local/rig test results,
+including the retained rig warnings. A retained
 26-arm receipt is historical acquisition/conversion
 traceability, not current admission or a result: the current audit found no new
 issue in 19 entries; the SIUO, VLSBench, MLLMGuard position-swapping and

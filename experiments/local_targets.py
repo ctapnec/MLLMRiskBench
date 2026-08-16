@@ -149,6 +149,29 @@ def infer_parameter_count_b(spec: str) -> float | None:
     return max(values)
 
 
+def tensor_parallel_capacity_gib(
+    hardware: dict[str, object], utilization: float, tensor_parallel_size: int,
+) -> float | None:
+    """Usable equal-shard capacity for the strongest requested GPU subset."""
+
+    cards: list[float] = []
+    for gpu in hardware.get("gpus", []):
+        if not isinstance(gpu, dict):
+            continue
+        try:
+            memory_gib = float(gpu["memory_total_mib"]) / 1024
+        except (KeyError, TypeError, ValueError):
+            continue
+        if memory_gib > 0:
+            cards.append(memory_gib)
+    cards.sort(reverse=True)
+    if tensor_parallel_size < 1 or len(cards) < tensor_parallel_size:
+        return None
+    # Tensor-parallel weight shards are equal, so the smallest selected card
+    # limits every shard. Larger cards cannot donate their unused remainder.
+    return cards[tensor_parallel_size - 1] * tensor_parallel_size * utilization
+
+
 def model_hardware_profile(
     spec: str,
     entry: dict[str, object] | None,
@@ -177,19 +200,22 @@ def model_hardware_profile(
     # operator can set false for an architecture known not to support it.
     multi_gpu_compatible = multi_gpu if isinstance(multi_gpu, bool) else True
     multi_gpu_basis = "declared" if isinstance(multi_gpu, bool) else "assumed"
-    physical_available = float(
-        hardware.get(
-            "aggregate_vram_gib" if multi_gpu_compatible else "max_gpu_vram_gib",
-            0.0,
-        ) or 0.0
-    )
     utilization = config.get("gpu_memory_utilization", 0.90)
     utilization = (
         float(utilization)
         if isinstance(utilization, (int, float)) and not isinstance(utilization, bool)
         else 0.90
     )
-    available = physical_available * utilization
+    gpu_count = int(hardware.get("gpu_count", 0) or 0)
+    tp_limit = gpu_count if multi_gpu_compatible else min(gpu_count, 1)
+    capacities = {
+        tp: capacity
+        for tp in range(1, tp_limit + 1)
+        if (capacity := tensor_parallel_capacity_gib(
+            hardware, utilization, tp
+        )) is not None
+    }
+    available = max(capacities.values(), default=0.0)
     capabilities: list[float] = []
     capability_complete = True
     for gpu in hardware.get("gpus", []):
@@ -244,24 +270,12 @@ def model_hardware_profile(
         round(params * _VRAM_GIB_PER_BILLION[quantization], 2)
         if params is not None else None
     )
-    fits = (
-        estimated <= available
-        if estimated is not None and available > 0 else None
-    )
+    fitting_tp = [tp for tp, capacity in capacities.items()
+                  if estimated is not None and estimated <= capacity]
+    fits = bool(fitting_tp) if estimated is not None and capacities else None
     if quantization == "bitsandbytes" and bnb_supported is False:
         fits = False
-    gpu_count = int(hardware.get("gpu_count", 0) or 0)
-    max_gpu_vram = (
-        float(hardware.get("max_gpu_vram_gib", 0.0) or 0.0) * utilization
-    )
-    tensor_parallel_size = 1
-    if (
-        multi_gpu_compatible and gpu_count > 1 and estimated is not None
-        and max_gpu_vram > 0 and estimated > max_gpu_vram
-    ):
-        tensor_parallel_size = min(
-            gpu_count, max(2, int((estimated + max_gpu_vram - 0.01) // max_gpu_vram))
-        )
+    tensor_parallel_size = min(fitting_tp) if fitting_tp else 1
     return {
         "parameter_count_b": params,
         "parameter_count_basis": parameter_count_basis,
