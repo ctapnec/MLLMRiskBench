@@ -1334,7 +1334,7 @@ def _heatmap(
         for j, target in enumerate(models):
             cell = cells[source][target]
             value = cell["value"]
-            label = "--" if value is None else f"{value:.0%}\n(n={cell['matched']})"
+            label = "-" if value is None else f"{value:.0%}\n(n={cell['matched']})"
             ax.text(
                 j,
                 i,
@@ -1359,7 +1359,7 @@ def _print_matrix(result: dict[str, Any], *, corpus: str) -> None:
         for target in result["models"]:
             cell = result["cells"][source][target]
             rendered.append(
-                "      --  " if cell["value"] is None
+                "       -  " if cell["value"] is None
                 else f"{cell['value']:>8.0%}/{cell['matched']:<2}"
             )
         print(f"{source[:10]:>10}  " + "  ".join(rendered))

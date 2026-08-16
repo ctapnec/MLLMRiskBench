@@ -395,7 +395,7 @@ class LLMJudge(BaseJudge):
 
     @staticmethod
     def _extract_scale(text: str, keys: tuple[str, ...]) -> Optional[int]:
-        """Read one complete labelled 1--5 field, rejecting template echoes."""
+        """Read one complete labelled 1-5 field, rejecting template echoes."""
         values = LLMJudge._field_values(text, keys, r"[1-5]")
         return int(values[0]) if len(values) == 1 else None
 

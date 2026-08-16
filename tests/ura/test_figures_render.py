@@ -15,6 +15,7 @@ _PNG_MAGIC = b"\x89PNG\r\n\x1a\n"
 def test_synth_matrix_is_marked_illustrative():
     data = synth_matrix()
     assert data["illustrative"] is True
+    assert data["analysis"]["labels"] == "neutral Condition A-I labels"
     assert set(data["figures"]) == {
         "fig-v-asr-by-model.png",
         "fig-v-policy-proxies.png",

@@ -23,7 +23,7 @@ The current hypothesis is that, for prospectively selected compatible cells,
 the system preserves source, policy, modality, execution and judgment identity
 well enough to report complete execution or explicit `N/A`, estimate matched
 effects without incompatible pooling, and quantify judge agreement against an
-independent human audit. RQ1--RQ5 test this narrower claim. Exhaustiveness and
+independent human audit. RQ1-RQ5 test this narrower claim. Exhaustiveness and
 reduced complexity/cost are not tested without a separately declared baseline.
 
 For image, audio and video, successful byte transport establishes RQ1 execution
@@ -60,7 +60,7 @@ provider/runtime identity before target calls; each new or restored response is
 checked again. Exact combinations cannot substitute for one another. The scope
 label does not independently prove account/region/project equivalence
 (CANNOT-VERIFY), and the receipt proves only historical route/access and
-byte-backed transport—not safety, benchmark, evaluator, human validity, or
+byte-backed transport - not safety, benchmark, evaluator, human validity, or
 future availability.
 
 Local rows use exact immutable vLLM/Ollama artifacts. Only one local target is
@@ -154,7 +154,7 @@ cell and each excluded cell's reason before a full run.
 
 The planner intersects the source's byte-backed delivered combinations with the
 exact target's declared capabilities. The post-run result requires an actual
-eligible Attempt--Response join for every planned combination. An input-defense
+eligible Attempt-Response join for every planned combination. An input-defense
 block, setup-only turn, modality tag, caption, or dropped asset does not count as
 execution evidence.
 
@@ -347,7 +347,7 @@ Every other non-dry grid requires at least one exact paired
 greater than one year. Missing, stale, future-dated, ambiguous, mismatched, or
 obsolete harness/driver evidence fails closed before target calls. The observation timestamp is the
 probe Runner manifest's content-bound UTC `started_at`, a conservative lower
-bound on successful transport—not mutable grid-package `finished_at` metadata.
+bound on successful transport - not mutable grid-package `finished_at` metadata.
 Harness or experiment-driver source drift requires a new probe rather than
 silently reusing transport evidence produced by different serialization code.
 This is a small admission control, not a workflow engine or cryptographic trust

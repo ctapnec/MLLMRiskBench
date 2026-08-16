@@ -17,13 +17,13 @@ It compiles attack programs and applies them to the datapoint seed, materialisin
 the transformed prompts as Attempts for the harness to judge later; it never drives
 a live attacker-vs-target exploit loop against a deployed/third-party system. The
 programs are compiled with ``credentials=None``, which keeps h4rm3l fully OFFLINE:
-only pure string-transform primitives run, and the bandit few-shot synthesizer --
-which needs a live LLM and API keys to discover new programs -- is never invoked
+only pure string-transform primitives run, and the bandit few-shot synthesizer -
+which needs a live LLM and API keys to discover new programs - is never invoked
 (that online synthesis/scoring belongs to Chapter V, against real models with keys
 present). To replay the released 2656-attack corpus or synthesizer output, pass the
 program strings via ``programs=``. Authorized red-team use only.
 
-h4rm3l is MIT and pip-installable, so -- like :class:`PyRITAttacker` -- its
+h4rm3l is MIT and pip-installable, so - like :class:`PyRITAttacker` - its
 dependency is imported LAZILY in-process via :func:`_require` inside the call path.
 The module therefore imports with only stdlib + pydantic present and raises a clear
 RuntimeError when h4rm3l is missing (offline).
@@ -63,8 +63,8 @@ class H4rm3lAttacker(BaseAttacker):
     attacker-vs-target loop).
 
     ``programs`` are h4rm3l DSL program strings (default: a curated set of
-    offline-safe composable programs). Supply your own -- e.g. entries from the
-    released 2656-attack corpus or the program synthesizer's output -- to replay
+    offline-safe composable programs). Supply your own - e.g. entries from the
+    released 2656-attack corpus or the program synthesizer's output - to replay
     them. ``syntax_version`` selects the decorator syntax (h4rm3l ships v2).
     ``synthesis_model`` only labels the compilation namespace; because programs are
     compiled with ``credentials=None`` no model is ever contacted (harness safety

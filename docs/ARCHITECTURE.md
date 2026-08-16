@@ -110,7 +110,7 @@ but that diagnostic is not admitted preflight or experiment evidence.
 For each grid, the planner intersects that grid's selected-corpus modality
 combinations with each target's declared capabilities. It requires those
 selected supported combinations, not an invented Cartesian product. Post-run validation
-requires real eligible Attempt--Response evidence for each delivered
+requires real eligible Attempt-Response evidence for each delivered
 combination. Tags without byte-backed delivery, setup-only turns, and input-side
 defense blocks do not count.
 
@@ -312,7 +312,7 @@ At process startup the console snapshots platform, CPU model, physical/logical
 cores and total RAM through `psutil`/platform fallbacks, and NVIDIA card/model,
 VRAM, PCI, compute capability and driver data through `nvidia-smi`. The
 dashboard and Build tab render that one snapshot. Build target filters compose
-hosted provider selection (`All` initially) with local name substring, 10M--3T
+hosted provider selection (`All` initially) with local name substring, 10M-3T
 maximum parameter count and a separate automatic 16/8/4-bit fit control
 (initially on), plus a separate unchecked unknown-fit control. Known 16/8/4-bit
 recommendations use green/blue/amber badges; unknown fit is neutral gray. The

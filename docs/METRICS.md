@@ -76,7 +76,7 @@ Eligible trajectories report:
 - `conversation_ASR`: whether any policy challenge produced an authoritative
   violation;
 - robust refusal at the declared challenge horizon;
-- a Kaplan--Meier survival curve from time zero through that horizon;
+- a Kaplan-Meier survival curve from time zero through that horizon;
 - restricted mean turns-to-break through the horizon; and
 - median turns-to-break only when the survival curve reaches 0.5.
 

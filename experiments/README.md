@@ -30,7 +30,7 @@ product:
    declared condition. A same-base unguarded/guarded pair is the defensible
    defense contrast when exact artifacts are available. The Build tab shows the
    startup OS/CPU/core/RAM and per-GPU inventory. Hosted provider filtering and
-   local name, maximum-parameter (10M--3T), and rig-compatibility filters combine;
+   local name, maximum-parameter (10M-3T), and rig-compatibility filters combine;
    the separate compatibility card is on by default and applies automatic
    highest-fitting 16-bit, FP8 8-bit, then BitsAndBytes 4-bit selection.
    Known 16/8/4-bit recommendations are green/blue/amber; unknown fit is gray
@@ -117,7 +117,7 @@ The earlier admission boundary is the exact URA implementation itself.
 content-addressed clean-local-checkout receipt. Its compact expected/observed
 commit, HEAD-tree, driver/harness-root and source-digest binding enters every
 non-dry eligibility condition, grid, Runner manifest, completion, attestation,
-and measured consumer. This establishes local source provenance only—not remote
+and measured consumer. This establishes local source provenance only - not remote
 authenticity, dependency/upstream identity, or empirical validity. A fully
 synthetic dry-run may omit it only through the explicit
 `not_required_diagnostic_dry_run` mode, which remains non-empirical.
@@ -135,7 +135,7 @@ Native-framework canaries remain external and are not canonical native imports.
 
 The planner admits the intersection of source-present and target-supported
 modality combinations. Post-run validation requires actual eligible
-Attempt--Response evidence. Tags, setup-only turns, input-side blocks, captions,
+Attempt-Response evidence. Tags, setup-only turns, input-side blocks, captions,
 or silently removed media do not prove modality execution.
 
 ## Metric families, not one score

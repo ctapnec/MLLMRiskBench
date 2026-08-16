@@ -27,7 +27,7 @@ summaries. No provider, human-audit, or real-input MET-001 result exists.
 ## What is measured
 
 - Harmful ASR/refusal and benign false-refusal rate use disjoint denominators.
-- Live trajectories report conversation ASR, robust refusal, a Kaplan--Meier
+- Live trajectories report conversation ASR, robust refusal, a Kaplan-Meier
   curve, observed median turns-to-break when estimable, and challenge-horizon
   restricted mean turns-to-break. Setup turns remain provenance only.
 - Repeated seeds, turns, and source variants are clustered by their originating
@@ -103,7 +103,7 @@ Local startup uses `psutil`/platform probes for OS, CPU, physical/logical cores
 and RAM, and `nvidia-smi` for each GPU model, VRAM, PCI id, compute capability
 and driver. The dashboard and Build tab show this snapshot. Build filters hosted
 targets by provider (`All` by default). Local vLLM filters combine an immediate
-case-insensitive name substring, a synchronized 10M--3T maximum-parameter
+case-insensitive name substring, a synchronized 10M-3T maximum-parameter
 slider/numeric input, and a separate `Automatic 16/8/4-bit fit` card (on by
 default). A separate `Include unknown fit` checkbox is off by default. Hardware
 auto-selection chooses the highest precision that fits:
@@ -178,8 +178,8 @@ The current 39-arm disposition is 22 common-metric arms, two implemented
 source-classification arms, and 15 conversion-only arms pending their exact
 source scorer or runtime.
 
-Nine end-to-end projects--AgentDojo, ASB, AutoDAN-Turbo, EasyJailbreak, FuzzyAI,
-Garak, Giskard v2, Petri, and Promptfoo--run upstream under their own contracts.
+Nine end-to-end projects - AgentDojo, ASB, AutoDAN-Turbo, EasyJailbreak, FuzzyAI,
+Garak, Giskard v2, Petri, and Promptfoo - run upstream under their own contracts.
 Their complete outputs are normalized by `experiments.native_import`; they are
 not reduced to generated prompts and replayed as if that reproduced the native
 experiment.
@@ -199,7 +199,7 @@ the content-addressed `ura-eligibility-plan/1` ledger retains each requested
 selected-source stratum as `compatible_if_isolated` or `N/A`, together with its
 whole-arm execution-unit status and failed gate, and
 `modality_coverage_plan` verifies the admitted intersection; afterward,
-`modality_coverage_result` requires real eligible Attempt--Response evidence for
+`modality_coverage_result` requires real eligible Attempt-Response evidence for
 each delivered combination. The eligibility ledger is planning evidence, not
 live attestation or completed execution. An input-defense block or setup-only turn is not
 execution evidence; an output-defense block after a real target call is. Image,

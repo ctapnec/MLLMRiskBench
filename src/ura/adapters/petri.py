@@ -3,7 +3,7 @@
 Petri is an end-to-end alignment auditor, not an attacker-style seed generator.
 Its Inspect task binds distinct ``auditor``, ``target`` and ``judge`` model roles,
 constructs multi-turn scenarios, supports simulated tools and rollback branches,
-and scores the resulting target timeline on configurable 1--10 dimensions.  The
+and scores the resulting target timeline on configurable 1-10 dimensions.  The
 authoritative upstream contracts are:
 
 * https://github.com/meridianlabs-ai/inspect_petri

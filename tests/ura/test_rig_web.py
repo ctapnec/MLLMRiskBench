@@ -1105,6 +1105,7 @@ def test_dashboard_and_builder_show_startup_system_and_gpu_hardware(
     ):
         assert expected in dashboard
     assert "Local hardware" in builder
+    assert "GPU 0 - NVIDIA RTX 4090" in dashboard
     assert "AMD Ryzen Threadripper TEST" in builder
     assert "128.0 GiB RAM" in builder
     assert "NVIDIA RTX 4090" in builder
@@ -1227,7 +1228,7 @@ def test_builder_model_filters_and_quantization_warning_are_rendered(
     assert "includeUnknown" in page
     assert "fit==='true'||(fit==='false'&&!compatible)||" in page
     assert "(fit==='unknown'&&includeUnknown)" in page
-    assert "fit unknown — choose precision" in page
+    assert "fit unknown" in page
     assert "selected · fit unknown" in page  # live badge update for explicit choice
     assert "A presentation filter never changes a selected target" in page
     unknown = "vllm:org/Unknown"
@@ -1244,7 +1245,7 @@ def test_builder_model_filters_and_quantization_warning_are_rendered(
         page.find("</div>", unknown_at)
     ]
     assert "badge gray precision-badge precision-unknown" in unknown_row
-    assert "fit unknown — choose precision" in unknown_row
+    assert "fit unknown" in unknown_row
     assert "16-bit fit unknown" not in unknown_row
 
     # Rendering, validation, and generated execution config share one

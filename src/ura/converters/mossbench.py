@@ -2,7 +2,7 @@
 
 MOSSBench measures over-refusal, not generic toxicity.  The 300 released pairs
 are all cross-verified benign queries; every official dimension is retained
-without inventing meanings for the numeric ``harm`` codes 0--7.
+without inventing meanings for the numeric ``harm`` codes 0-7.
 """
 from __future__ import annotations
 

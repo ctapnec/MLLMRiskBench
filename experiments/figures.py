@@ -138,7 +138,7 @@ def synth_matrix() -> dict[str, Any]:
         "illustrative": True,
         "analysis": {
             "status": "illustrative_not_measured",
-            "labels": "neutral Condition A--I labels",
+            "labels": "neutral Condition A-I labels",
             "corpus_pooling": "not applicable",
         },
         "figures": figures,

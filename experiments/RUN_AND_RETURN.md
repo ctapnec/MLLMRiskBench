@@ -585,9 +585,9 @@ The exact emitted observation files are
 manifest, `config.run.sampling_audit.full_converted_corpus_sha256` is the complete
 pre-limit converted-corpus digest and `total_cluster_ids` is its complete unique
 cluster inventory; `selected_cluster_ids` identifies the bounded cluster emitted
-for review. Compare every emitted sibling row in the attempts file--including
+for review. Compare every emitted sibling row in the attempts file - including
 `params.source_cluster_id`, rendered input, expected behavior, source policy, and
-media references--against the retained raw source record. Only after that manual
+media references - against the retained raw source record. Only after that manual
 mapping review may the operator copy the complete digest into
 `reviewed_converted_corpus_sha256` and the actually reviewed unique IDs into
 `reviewed_cluster_ids`. Increase `--limit` only under a documented review rule;
@@ -2456,7 +2456,7 @@ python -m experiments.rig_web --results-root runs --state-dir runs/rig-web
 
 The dashboard and Build tab show the startup OS/CPU/core/RAM and complete NVIDIA
 GPU inventory. Build target filters are independent and combinative: hosted API
-provider (`All` by default), plus local vLLM name substring, 10M--3T maximum
+provider (`All` by default), plus local vLLM name substring, 10M-3T maximum
 parameter count, the separate automatic 16/8/4-bit fit card (on by default), and
 an unchecked `Include unknown fit` control. Known 16/8/4-bit recommendations use
 green/blue/amber badges; unknown fit is gray. Compatible local models are

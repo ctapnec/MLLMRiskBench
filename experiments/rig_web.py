@@ -1517,7 +1517,7 @@ awq:'4-bit AWQ',gptq:'4-bit GPTQ'};
 form.querySelectorAll(".modelrow[data-compatible='unknown']").forEach(function(row){
 var badge=row.querySelector('.precision-badge');var select=row.querySelector('.modelquant select');
 if(!badge||!select){return;}var value=select.value;
-badge.textContent=value==='auto'?'fit unknown — choose precision':
+badge.textContent=value==='auto'?'fit unknown':
 (labels[value]||value)+' selected · fit unknown';});}
 function refresh(){updateUnknownPrecisionBadges();applyScope();
 // live preview
@@ -4960,7 +4960,7 @@ class RigWebApp:
             summary = (
                 f"{self.gpu_hardware.get('gpu_count', len(gpus))} GPU(s), "
                 f"{self.gpu_hardware.get('aggregate_vram_gib', 0)} GiB aggregate VRAM"
-                + (f" — {names}" if names else "")
+                + (f" - {names}" if names else "")
             )
         system = self.system_hardware
 
@@ -4985,7 +4985,7 @@ class RigWebApp:
             if gpu.get("driver_version"):
                 details.append("driver " + shown(gpu["driver_version"]))
             gpu_rows.append(
-                "<li><strong>GPU " + shown(gpu.get("index", "?")) + " — "
+                "<li><strong>GPU " + shown(gpu.get("index", "?")) + " - "
                 + shown(gpu.get("name", "unknown")) + "</strong>"
                 "<span class='fieldhint'>" + " &middot; ".join(details)
                 + "</span></li>"
@@ -6341,7 +6341,7 @@ class RigWebApp:
                     precision_title = "Known incompatible with the detected hardware."
                 elif fit is None:
                     if configured_quant in {"", "auto"}:
-                        quant_label = "fit unknown — choose precision"
+                        quant_label = "fit unknown"
                         precision_title = (
                             "Fit cannot be estimated; choose a per-model precision "
                             "before a live run."
