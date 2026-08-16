@@ -12,9 +12,10 @@ effect, compliance finding, or other empirical result yet.
 The development tree implements the RUN-001 prospective-request and MET-001
 exact-selection interfaces described below, with offline contract tests. The
 exact tested software revision and raw local/rig logs are recorded externally
-under `../../Thesis-EN/verification/2026-08-16-convergence/`; the convergence
-suite passed 967 offline tests in both environments, with the three rig warnings
-retained explicitly. A retained 26-arm receipt is historical acquisition/conversion
+under `../../Thesis-EN/verification/2026-08-16-quantization-remediation/`; its
+record names the immutable Project commit. The suite passed 987 offline tests
+in both environments, with the three rig warnings retained explicitly. A retained
+26-arm receipt is historical acquisition/conversion
 traceability, not current admission or a result: the current audit found no new
 issue in 19 entries; the SIUO, VLSBench, MLLMGuard position-swapping and
 noise-injection, and both Video-SafetyBench mapping reviews are superseded; and
@@ -84,7 +85,19 @@ transport attestation before entering a measured cell. An inaccessible,
 silently aliased or stale route is blocked with a reason; structural capability
 incompatibility remains `N/A` rather than being counted as a failed experiment.
 
-Runner 2.11 makes that prerequisite machine-checked. A bounded non-dry
+Local startup uses `nvidia-smi` to inventory GPU models and VRAM for the CLI and
+dashboard. The roster applies conservative full/FP8/4-bit fit estimates, shows
+mandatory quantization and recommended tensor parallelism, assumes multi-GPU
+support only when the model entry does not declare otherwise, and exposes only
+proven-fit models. Per-model quantization overrides the command override, which
+overrides hardware auto-selection. Invalid/unknown/non-fit hardware/topology
+fails before engine construction; dependency/runtime allocation failures fail
+during local preflight before target/judge calls. On the actual two-24,564-MiB
+rig, a 70B model is therefore
+rostered only as an in-flight 4-bit BitsAndBytes, tensor-parallel-2 candidate,
+not as an unquantized model.
+
+Runner 2.12 makes that prerequisite machine-checked. A bounded non-dry
 `--attestation-probe` grid is converted by `experiments.live_attestation` into a
 content-addressed `ura-live-attestation/2` receipt. An ordinary measured grid
 must supply the exact receipt bytes and digest, the same operator-declared
@@ -327,7 +340,7 @@ Runner `RunManifest`; the URA revision that performed their import is retained
 in the return-package/importer context rather than relabelled as an upstream
 native field.
 
-Runner `ura-runner/2.11` writes unified schema `1.4`. Immutable planning/source
+Runner `ura-runner/2.12` writes unified schema `1.4`. Immutable planning/source
 stratum identity is stored separately from adaptive per-turn evaluation
 identity. Thus a Crescendo setup turn remains joined to its original planning
 stratum while receiving a typed `not_applicable` judgment and no judge call or

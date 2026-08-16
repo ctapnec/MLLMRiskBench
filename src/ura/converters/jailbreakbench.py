@@ -29,8 +29,7 @@ from ..adapters.base import BaseConverter
 from ..data_models import DataPoint, DialogTurn
 from ._common import CorpusFormatError, Rc, dp, missing, read_csv, read_json, read_jsonl
 
-# JBB categories (OpenAI usage policies) -> internal taxonomy. Default LEGALITY
-# when unmapped, matching the other harmful-behavior CSV converters.
+# Pinned JBB categories (OpenAI usage policies) -> internal taxonomy.
 CATEGORY_MAP = {
     "harassment/discrimination": Rc.TOXICITY,
     "malware/hacking": Rc.CYBERSEC,
@@ -89,11 +88,16 @@ class JailbreakBenchConverter(BaseConverter):
             target = rec.get("Target") or rec.get("target")
             behavior = rec.get("Behavior") or rec.get("behavior")
             cat = str(rec.get("Category") or rec.get("category") or "").strip()
+            if cat.lower() not in CATEGORY_MAP:
+                raise CorpusFormatError(
+                    f"JailbreakBench row {i} in {path} has unknown or blank "
+                    f"Category: {cat!r}"
+                )
             origin = rec.get("Source") or rec.get("source")
             # per-row override in case a combined export tags the subset
             row_kind = str(rec.get("type") or rec.get("behavior_type") or "").strip().lower()
             is_benign = benign or row_kind == "benign"
-            risk = CATEGORY_MAP.get(cat.lower(), Rc.LEGALITY)
+            risk = CATEGORY_MAP[cat.lower()]
             rid = rec.get("Index", rec.get("index", behavior if behavior else i))
             kind = "benign" if is_benign else "harmful"
             out.append(dp(

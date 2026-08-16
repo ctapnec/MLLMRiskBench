@@ -57,7 +57,7 @@ from .targets.base import BaseTarget
 from .targets.api import _logical_media_root_alias, _resolve_local_media_path
 
 #: Bumped when the orchestration semantics change (recorded in every manifest).
-CODE_VERSION = "ura-runner/2.11"
+CODE_VERSION = "ura-runner/2.12"
 _MAX_SCORED_MEDIA_BYTES = 25 * 1024 * 1024
 #: Video releases legitimately exceed the image/audio bound (Video-SafetyBench
 #: ships ~44 MiB MP4s); mirrors DEFAULT_MAX_VIDEO_ASSET_BYTES converter-side.
@@ -1759,6 +1759,7 @@ class Runner:
         run_config: Optional[dict[str, Any]],
         media_hashes: dict[str, str],
     ) -> RunManifest:
+        self.attacker.validate_measured_run(corpus)
         source_metrics.validate_scored_source_metrics(corpus)
         identity_validator = getattr(self.target, "validate_research_identity", None)
         if callable(identity_validator):
@@ -2480,7 +2481,10 @@ class Runner:
                     for conversation in benign_conversations.values()
                 ]
                 clusters = [
-                    str(observation.raw.get("datapoint_id", key))
+                    str(
+                        observation.raw.get("source_cluster_id")
+                        or observation.raw.get("datapoint_id", key)
+                    )
                     for key, observation in zip(
                         benign_conversations, observations
                     )
@@ -3727,7 +3731,15 @@ _CONFIG_CLASS_ATTRS = {
     "violation_threshold",
 }
 _RUNTIME_ATTRS = {
-    "client", "session", "pipeline", "tokenizer", "model_object", "media_roots"
+    "client",
+    "session",
+    "pipeline",
+    "tokenizer",
+    "model_object",
+    "media_roots",
+    # The validated content identity below is portable; the operator's host
+    # path is not and must never affect a run identity.
+    "response_artifact",
 }
 _SECRET_NAMES = {
     "api_key",

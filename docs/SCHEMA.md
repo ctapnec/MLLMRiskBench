@@ -2,7 +2,7 @@
 
 `ura.data_models` is the typed Pydantic v2 contract shared by converters,
 attackers, targets, judges, persistence, and analysis. `SCHEMA_VERSION = "1.4"`
-is stamped on datapoints, checkpoints, and manifests. Runner 2.11 rejects mixed
+is stamped on datapoints, checkpoints, and manifests. Runner 2.12 rejects mixed
 schema versions and duplicate datapoint IDs before a target call.
 
 ## Records

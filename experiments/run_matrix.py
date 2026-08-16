@@ -20,16 +20,15 @@ Examples
 # offline smoke of the whole matrix (no keys, no GPU):
 python experiments/run_matrix.py --dry-run --limit 12 --out runs/dry
 
-# cross-provider run: use explicit Fable and Responses conditions (Pro is a
-# mode, not a model slug):
-# POSIX shell environment syntax is shown here. In PowerShell use
-# ``$env:ANTHROPIC_API_KEY='...'`` and ``$env:OPENAI_API_KEY='...'``; see README.
-export ANTHROPIC_API_KEY=...  OPENAI_API_KEY=...  GOOGLE_API_KEY=...
+# one-local-target no-call preflight (replace receipt placeholders with the
+# content-addressed artifacts prepared by the runbook):
 python experiments/run_matrix.py \
-    --api "anthropic-fable:claude-fable-5;effort=high;max_tokens=25000,openai-responses:gpt-5.6-sol;reasoning_mode=pro;reasoning_effort=medium;reasoning_context=all_turns" \
-    --local vllm:Qwen/Qwen3-VL-8B-Instruct,vllm:google/gemma-3-27b-it,ollama:llama3.3:70b \
-    --attackers replay,crescendo --judges rules,llm --judge-model claude-haiku-4-5-20251001 \
-    --corpora synth --limit 200 --seeds 0,1 --out runs/full
+    --local vllm:Qwen/Qwen3-VL-8B-Instruct \
+    --local-config experiments/local-targets.json --preflight-only \
+    --project-revision runs/project-revision.json --project-revision-sha256 <64-hex> \
+    --attackers replay --judges rules --corpora synth --limit 12 \
+    --max-total-target-calls 12 --max-total-judge-calls 1 \
+    --max-total-http-attempts 1 --deadline-seconds 3600 --out runs/local-preflight
 
 Hosted comparison ids should be provider-qualified. The Fable case is the public
 ``claude-fable-5`` model with explicit high effort, adaptive thinking, a 25,000
@@ -783,7 +782,11 @@ def _record_executed_modality_evidence(
 
 
 def _load_local_config(
-    path_value: str, selected_specs: list[str]
+    path_value: str,
+    selected_specs: list[str],
+    *,
+    quantization: str = "",
+    hardware: dict[str, object] | None = None,
 ) -> tuple[dict[str, dict[str, object]], dict[str, object] | None]:
     """Load exact immutable identities and declared modalities for local targets."""
     if not selected_specs:
@@ -808,7 +811,8 @@ def _load_local_config(
         config = value[spec]
         if not isinstance(config, dict) or set(config) - {
             "revision", "digest", "modalities", "tensor_parallel_size",
-            "gpu_memory_utilization", "max_tokens",
+            "gpu_memory_utilization", "max_tokens", "parameter_count_b",
+            "multi_gpu_compatible", "quantization",
         }:
             raise ValueError(
                 f"local config {spec!r} contains unsupported execution fields"
@@ -835,10 +839,10 @@ def _load_local_config(
             tensor_parallel_size = config.get("tensor_parallel_size")
             if (
                 isinstance(tensor_parallel_size, bool)
-                or tensor_parallel_size not in {1, 2}
+                or tensor_parallel_size not in {None, "auto", 1, 2}
             ):
                 raise ValueError(
-                    f"vLLM config {spec!r} requires tensor_parallel_size 1 or 2"
+                    f"vLLM config {spec!r} requires tensor_parallel_size auto, 1, or 2"
                 )
             utilization = config.get("gpu_memory_utilization", 0.90)
             if (
@@ -858,6 +862,56 @@ def _load_local_config(
                 raise ValueError(
                     f"vLLM config {spec!r} max_tokens must be an integer in 1..25000"
                 )
+            from experiments.local_targets import (  # noqa: PLC0415
+                detect_gpu_hardware, model_hardware_profile,
+            )
+            selected_hardware = (
+                hardware if hardware is not None else detect_gpu_hardware()
+            )
+            profile = model_hardware_profile(
+                spec,
+                config,
+                selected_hardware,
+                default_quantization=quantization,
+            )
+            config = dict(config)
+            config["parameter_count_b"] = profile["parameter_count_b"]
+            config["multi_gpu_compatible"] = profile["multi_gpu_compatible"]
+            config["multi_gpu_support_basis"] = profile["multi_gpu_support_basis"]
+            # Exact resolved value for this selected model, never an "auto" token.
+            config["quantization"] = profile["recommended_quantization"]
+            resolved_tp = (
+                int(profile["recommended_tensor_parallel_size"])
+                if tensor_parallel_size in {None, "auto"}
+                else int(tensor_parallel_size)
+            )
+            if resolved_tp > 1 and profile["multi_gpu_compatible"] is False:
+                raise ValueError(
+                    f"vLLM config {spec!r} declares multi_gpu_compatible false "
+                    "but requests tensor_parallel_size > 1"
+                )
+            if selected_hardware.get("available"):
+                gpu_count = int(selected_hardware.get("gpu_count", 0) or 0)
+                if resolved_tp > gpu_count:
+                    raise ValueError(
+                        f"vLLM config {spec!r} requests tensor_parallel_size "
+                        f"{resolved_tp} but only {gpu_count} GPU(s) were detected"
+                    )
+                if profile["fits"] is False:
+                    note = str(profile.get("compatibility_note") or "estimated VRAM exceeds available VRAM")
+                    raise ValueError(f"vLLM config {spec!r} does not fit: {note}")
+                estimated = profile.get("estimated_vram_gib")
+                max_gpu = float(
+                    selected_hardware.get("max_gpu_vram_gib", 0.0) or 0.0
+                )
+                if isinstance(estimated, (int, float)) and float(estimated) > (
+                    max_gpu * float(utilization) * resolved_tp
+                ):
+                    raise ValueError(
+                        f"vLLM config {spec!r} tensor_parallel_size {resolved_tp} "
+                        "cannot fit its estimated VRAM"
+                    )
+            config["tensor_parallel_size"] = resolved_tp
         elif backend == "ollama":
             if (
                 revision is not None
@@ -865,7 +919,8 @@ def _load_local_config(
                 or any(
                     field in config
                     for field in (
-                        "tensor_parallel_size", "gpu_memory_utilization", "max_tokens"
+                        "tensor_parallel_size", "gpu_memory_utilization", "max_tokens",
+                        "parameter_count_b", "multi_gpu_compatible", "quantization",
                     )
                 )
             ):
@@ -1558,9 +1613,10 @@ def build_target(
       * a local "<backend>:<model>" - "vllm:Qwen/Qwen3-VL-8B-Instruct",
         "ollama:llama3.3:70b".
 
-    ``quantization``/``dtype`` are forwarded to the vLLM engine so a 27B-class
-    model fits the 2x RTX 4090 rig (e.g. ``--quantization awq``); a pre-quantized
-    (AWQ/GPTQ) checkpoint is auto-detected and needs no flag. Vision-language
+    The exact per-model ``quantization``/``dtype`` condition is forwarded to
+    vLLM. Empty quantization uses offline hardware-fit resolution and selects
+    in-flight ``bitsandbytes`` 4-bit when full precision does not fit; AWQ/GPTQ
+    remain explicit overrides for pinned pre-quantized checkpoints.
     Local capabilities and immutable identities come only from ``local_identity``;
     model-name substrings are never treated as capability evidence.
     """
@@ -1592,8 +1648,11 @@ def build_target(
                     ),
                     "max_tokens": local_identity.get("max_tokens", 512),
                 }
-                if quantization:
-                    kwargs["quantization"] = quantization
+                resolved_quantization = str(
+                    local_identity.get("quantization") or quantization
+                ).strip().lower()
+                if resolved_quantization and resolved_quantization != "none":
+                    kwargs["quantization"] = resolved_quantization
                 target = VLLMTarget(model=model, **kwargs)
                 target.validate_research_identity()
                 return target
@@ -1609,6 +1668,29 @@ def build_target(
         return build_api_target(spec, config=api_config)
     # bare id: resolve against the verified hosted/mock registry
     return build_api_target(spec, config=api_config)
+
+
+def _require_local_hardware_fit(
+    target: object,
+    spec: str,
+    config: dict[str, object],
+    hardware: dict[str, object],
+) -> None:
+    """Fail closed for a real vLLM target when startup fit is not proven."""
+
+    from ura.targets.local import VLLMTarget  # noqa: PLC0415
+    if not isinstance(target, VLLMTarget):
+        return
+    if not hardware.get("available"):
+        raise ValueError(f"local vLLM target {spec!r} requires a detected NVIDIA GPU")
+    from experiments.local_targets import model_hardware_profile  # noqa: PLC0415
+    profile = model_hardware_profile(spec, config, hardware)
+    if profile["fits"] is not True:
+        reason = str(
+            profile.get("compatibility_note")
+            or "parameter count/VRAM fit is unknown or insufficient"
+        )
+        raise ValueError(f"local vLLM target {spec!r} is not admitted: {reason}")
 
 
 def _persisted_model_spec(
@@ -2465,8 +2547,9 @@ def build_parser() -> argparse.ArgumentParser:
     ap.add_argument("--defense-guard", default="rules", choices=["rules", "guardrail"],
                     help="judge used as the defense guardrail when --defense is set")
     ap.add_argument("--quantization", default="",
-                    help="vLLM quantization for local models (e.g. awq, gptq, fp8); "
-                         "empty auto-detects from a pre-quantized checkpoint")
+                    help="default vLLM quantization override (bitsandbytes, awq, "
+                         "gptq, fp8, none); each model config wins; empty resolves "
+                         "from detected GPU VRAM and parameter count")
     ap.add_argument("--dtype", default="auto",
                     help="vLLM dtype for local models (auto, bfloat16, float16)")
     ap.add_argument("--max-total-target-calls", type=int, default=0,
@@ -2639,6 +2722,11 @@ def main(argv=None) -> int:
     run_env = _runtime_env()
     api_specs = [s.strip() for s in args.api.split(",") if s.strip()]
     local_specs = [s.strip() for s in args.local.split(",") if s.strip()]
+    from experiments.local_targets import detect_gpu_hardware  # noqa: PLC0415
+    gpu_hardware = detect_gpu_hardware() if local_specs else {
+        "available": False, "source": "not_requested", "gpu_count": 0,
+        "aggregate_vram_gib": 0.0, "max_gpu_vram_gib": 0.0, "gpus": [],
+    }
     if len(set(api_specs)) != len(api_specs):
         ap.error("--api specs must be unique")
     if len(set(local_specs)) != len(local_specs):
@@ -2847,8 +2935,16 @@ def main(argv=None) -> int:
             args.api_config, [] if args.dry_run else configured_api_specs
         )
         local_configs, local_config_artifact = _load_local_config(
-            args.local_config, [] if args.dry_run else local_specs
+            args.local_config,
+            [] if args.dry_run else local_specs,
+            quantization=args.quantization,
+            hardware=gpu_hardware,
         )
+        resolved_quantizations = {
+            spec: str(config["quantization"])
+            for spec, config in local_configs.items()
+            if spec.startswith("vllm:")
+        }
         source_instances, source_config_artifact = _load_source_config(
             args.source_config, corpora
         )
@@ -3341,6 +3437,10 @@ def main(argv=None) -> int:
                 local_identity=local_configs.get(spec),
                 api_config=api_configs.get(spec),
             )
+            if spec.startswith("vllm:"):
+                _require_local_hardware_fit(
+                    target, spec, local_configs[spec], gpu_hardware
+                )
             base_target_identities.append(_precall_model_identity(target))
             requested_spec = requested_model_specs[spec]
             base_resolved_targets[requested_spec] = str(getattr(target, "name"))
@@ -3803,6 +3903,12 @@ def main(argv=None) -> int:
         "defense": args.defense,
         "defense_guard": args.defense_guard,
         "quantization": args.quantization,
+        "resolved_quantizations": {
+            persisted_model_specs[spec]: resolved_quantizations[spec]
+            for spec in model_specs
+            if spec in resolved_quantizations
+        },
+        "gpu_hardware": gpu_hardware,
         "dtype": args.dtype,
         "dry_run": bool(args.dry_run),
         "attestation_probe": bool(args.attestation_probe),
@@ -4174,6 +4280,7 @@ def main(argv=None) -> int:
                         "defense": args.defense,
                         "defense_guard": args.defense_guard,
                         "quantization": args.quantization,
+                        "resolved_quantization": resolved_quantizations.get(spec),
                         "dtype": args.dtype,
                         "dry_run": bool(args.dry_run),
                         "attestation_probe": bool(args.attestation_probe),

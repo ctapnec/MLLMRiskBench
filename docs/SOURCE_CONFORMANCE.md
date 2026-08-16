@@ -55,7 +55,7 @@ JSONL line count must not be relabelled as upstream discovery.
 ## Historical receipt boundary
 
 The retained workspace receipt
-`Thesis-EN/verification/2026-08-15-web002-builder/source-conformance.json`
+[`source-conformance.json`](../../../Thesis-EN/verification/2026-08-15-web002-builder/source-conformance.json)
 (SHA-256
 `19a728d872d8fa94a28370fd10a6889c969d41b20943b2b8a37f3c07dd7cced1`) is
 immutable historical acquisition/conversion evidence, not current admission or
@@ -96,10 +96,12 @@ zero.
 Before authoring the receipt, run the bounded, no-provider, one-real-arm
 `run_matrix --dry-run` observation in
 [`RUN_AND_RETURN.md`, section 4.1](../experiments/RUN_AND_RETURN.md#41-validate-the-compact-source-receipt).
-Its exact `<arm>__mock__replay__<run_id>.manifest.json` exposes
+Exactly one `<arm>__mock__replay__*.manifest.json` must exist in the fresh
+one-arm observation directory. It exposes
 `config.run.sampling_audit.full_converted_corpus_sha256`, `total_cluster_ids`, and
-`selected_cluster_ids`; its sibling attempts JSONL exposes the converted rows
-selected for manual comparison with the raw source. Copy the full digest and
+`selected_cluster_ids`; replace its `.manifest.json` suffix with
+`.attempts.jsonl` to locate the sibling containing the converted rows selected
+for manual comparison with the raw source. Copy the full digest and
 only the unique cluster IDs actually reviewed into the semantic-review fields.
 This observation is conversion diagnostics, not admitted experiment evidence.
 

@@ -144,6 +144,18 @@ def test_harmbench_rejects_budget_that_silently_drops_a_method(tmp_path: Path) -
         )
 
 
+def test_measured_harmbench_generation_is_out_of_band(tmp_path: Path) -> None:
+    _checkout(tmp_path)
+    attacker = HarmBenchAttacker(
+        methods=["PEZ"],
+        repo=str(tmp_path),
+        upstream_revision=_REVISION,
+    )
+
+    with pytest.raises(ExternalEngineConformanceError, match="out of band"):
+        attacker.validate_measured_run()
+
+
 def test_harmbench_rejects_modified_pinned_checkout(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:

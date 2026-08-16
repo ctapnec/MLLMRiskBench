@@ -1166,8 +1166,18 @@ def test_local_probe_receipt_admits_measured_run_and_level1(
     probe_grid = json.loads(next(probe_root.glob("*.grid.json")).read_text(
         encoding="utf-8"
     ))
+    resolved_local_config = {
+        **local_config,
+        "parameter_count_b": None,
+        "multi_gpu_compatible": True,
+        "multi_gpu_support_basis": "assumed",
+        "quantization": "none",
+    }
     assert probe_grid["request"]["local_configs"] == {
-        resolved_target: local_config
+        resolved_target: resolved_local_config
+    }
+    assert probe_grid["request"]["resolved_quantizations"] == {
+        resolved_target: "none"
     }
 
     receipt_path = tmp_path / "local-live-attestation.json"
@@ -1183,7 +1193,7 @@ def test_local_probe_receipt_admits_measured_run_and_level1(
         route_kind="local_runtime",
         requested_target_spec=requested_spec,
         resolved_target=resolved_target,
-        route_config=local_config,
+        route_config=resolved_local_config,
     )
     receipt_sha256 = hashlib.sha256(receipt_path.read_bytes()).hexdigest()
 
@@ -2488,6 +2498,42 @@ def test_live_benign_violation_label_does_not_trigger_harmful_terminal_rule():
     judgments, _ = runner.run([benign])
 
     assert len(target._dialogs) == len(judgments) == 3
+
+
+def test_live_benign_conversation_ci_clusters_correlated_source_siblings():
+    runner = _runner(_FloodAttacker(), _RecordingTarget())
+    rows = [
+        Judgment(
+            attempt_id=f"benign-{index}",
+            judge="j",
+            label=label,
+            score=0.0,
+            raw={
+                "datapoint_id": f"benign-{index}",
+                "source_cluster_id": "shared-benign-source-intent",
+                "expected_behavior": "safe_answer",
+                "common_metrics_eligible": True,
+                "response_conditioned": True,
+                "replayed_transcript": False,
+                "seed": 0,
+                "turn_index": 0,
+            },
+        )
+        for index, label in enumerate(("safe", "over_refusal"))
+    ]
+
+    result = next(
+        row for row in runner.aggregate(rows, [])
+        if row.metric == "conversation_over_refusal_rate"
+    )
+
+    assert result.n == 2
+    assert result.value == pytest.approx(0.5)
+    assert result.ci_low == result.ci_high == pytest.approx(0.5)
+    assert result.provenance["n_clusters"] == 1
+    assert result.provenance["cluster_unit"] == (
+        "source_cluster_id_fallback_datapoint_id"
+    )
 
 
 def test_live_aggregation_persists_km_curve_and_cluster_ci_rmtb_above_one():

@@ -19,6 +19,7 @@ from ura.converters import (
     InjecAgentConverter,
     JALMBenchConverter,
     JailBreakVConverter,
+    JailbreakBenchConverter,
     MOSSBenchConverter,
     MediaAssetError,
     RJudgeConverter,
@@ -166,7 +167,12 @@ def test_figstep_preserves_hidden_image_instruction_for_proxy_grading(
     image_path.write_bytes(_PNG)
     source = tmp_path / "figstep.json"
     hidden = "HIDDEN HARMFUL FIGSTEP REQUEST"
-    _write_json(source, [{"id": "one", "instruction": hidden, "image": "probe.png"}])
+    _write_json(source, [{
+        "id": "one",
+        "category_name": "Illegal Activity",
+        "instruction": hidden,
+        "image": "probe.png",
+    }])
 
     point = FigStepConverter().parse(source)[0]
 
@@ -198,6 +204,49 @@ def test_harmbench_multimodal_retains_source_behavior_for_proxy_grading(
     assert point.meta["judge_reference_text"] == expected
     assert point.meta["judge_reference_kind"] == "source_behavior_sent_with_image"
     assert point.dialog_history[0].content == expected
+
+
+@pytest.mark.parametrize("category", ["", "new upstream category"])
+def test_jailbreakbench_unknown_or_blank_category_fails_closed(
+    tmp_path: Path, category: str,
+) -> None:
+    source = tmp_path / "harmful-behaviors.json"
+    _write_json(source, [{"Goal": "unsafe request", "Category": category}])
+
+    with pytest.raises(CorpusFormatError, match="unknown or blank Category"):
+        JailbreakBenchConverter().parse(source)
+
+
+@pytest.mark.parametrize("category", ["", "new_upstream_category"])
+def test_harmbench_unknown_or_blank_semantic_category_fails_closed(
+    tmp_path: Path, category: str,
+) -> None:
+    source = tmp_path / "harmbench.csv"
+    source.write_text(
+        "Behavior,FunctionalCategory,SemanticCategory,Tags,ContextString,BehaviorID\n"
+        f"unsafe request,standard,{category},,,\n",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(CorpusFormatError, match="unknown or blank SemanticCategory"):
+        HarmBenchConverter().parse(source)
+
+
+@pytest.mark.parametrize("category", ["", "new upstream category"])
+def test_figstep_unknown_or_blank_category_fails_closed(
+    tmp_path: Path, category: str,
+) -> None:
+    image_path = tmp_path / "probe.png"
+    image_path.write_bytes(_PNG)
+    source = tmp_path / "figstep.json"
+    _write_json(source, [{
+        "category_name": category,
+        "instruction": "unsafe request",
+        "image": "probe.png",
+    }])
+
+    with pytest.raises(CorpusFormatError, match="unknown or blank category"):
+        FigStepConverter().parse(source)
 
 
 def test_csv_rejects_fields_beyond_declared_header(tmp_path: Path):

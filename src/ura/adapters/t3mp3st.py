@@ -411,6 +411,7 @@ class T3MP3STAttacker(BaseAttacker):
         self.response_artifact = (
             Path(response_artifact) if response_artifact is not None else None
         )
+        self.response_artifact_identity: dict[str, object] | None = None
         if (
             isinstance(timeout_seconds, bool)
             or not isinstance(timeout_seconds, (int, float))
@@ -419,6 +420,25 @@ class T3MP3STAttacker(BaseAttacker):
         ):
             raise ValueError("T3MP3ST timeout_seconds must be in (0, 3600]")
         self.timeout_seconds = float(timeout_seconds)
+
+    def validate_measured_run(self, corpus: Iterable[DataPoint] = ()) -> None:
+        """Require and validate captured planning output before grid execution."""
+        if self.response_artifact is None:
+            raise ExternalEngineConformanceError(
+                "measured T3MP3ST runs require response_artifact: capture the "
+                "source-model-conditioned plan before the measured grid"
+            )
+        pin = self._pin()
+        for datapoint in corpus:
+            response, source = self._read_artifact(
+                self._request_body(datapoint), pin
+            )
+            _validate_official_response(response)
+            self.response_artifact_identity = {
+                "sha256": source["sha256"],
+                "bytes": source["bytes"],
+                "format_version": source["format_version"],
+            }
 
     @staticmethod
     def _objective(datapoint: DataPoint) -> str:
@@ -551,6 +571,9 @@ class T3MP3STAttacker(BaseAttacker):
                 "source_model_conditioned": True,
                 "source_provider": self.source_provider,
                 "source_model": self.source_model,
+                "source_generation_seed": None,
+                "source_generation_seed_control": "not_exposed_by_op_general_plan_api",
+                "runner_seed_role": "target_sampling_and_unit_identity_only",
                 "upstream_revision": pin,
                 "request_sha256": request_hash,
                 "response_sha256": response_hash,

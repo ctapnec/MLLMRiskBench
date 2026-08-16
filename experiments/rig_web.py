@@ -78,9 +78,8 @@ _CAMPAIGN_POLICY = (
      "regardless of target locality, so local full-corpus lanes score "
      "rules-only with hosted LLM judging on the common subset only"),
     ("Prepaid budgets", "Anthropic $100, OpenAI $50, Google $25, "
-     "Moonshot $15, DeepSeek $10; per-lane limits are derived from the "
-     "diagnostic-canary cost projections and recorded before any measured "
-     "lane"),
+     "Moonshot $15, DeepSeek $10; canaries record observed tokens/spend, "
+     "while per-lane caps use prepaid funds and prospective call upper bounds"),
 )
 
 
@@ -178,8 +177,8 @@ _PARAM_HELP: dict[str, str] = {
                             "MANIFEST.",
     "--source-conformance-sha256": "Exact byte SHA-256 paired with "
                                    "--source-conformance.",
-    "--quantization": "vLLM quantization for local models (awq, gptq, fp8); "
-                      "empty auto-detects from a pre-quantized checkpoint.",
+    "--quantization": "Default vLLM override (bitsandbytes, awq, gptq, fp8, "
+                      "none); per-model config wins; empty uses GPU-fit resolution.",
     "--dtype": "vLLM dtype for local models (auto, bfloat16, float16).",
     "--lock-stale-seconds": "Diagnostic stale-age metadata for cell locks; "
                             "locks are never removed automatically.",
@@ -343,6 +342,16 @@ _NATIVE_ONLY_ATTACKERS: frozenset[str] = frozenset({
     "garak", "promptfoo", "petri", "fuzzyai", "autodan", "agentdojo",
     "giskard", "easyjailbreak", "asb",
 })
+_BUILDER_UNAVAILABLE_ATTACKERS: dict[str, str] = {
+    "harmbench": (
+        "measured generation is intentionally blocked; generate out of band "
+        "and use content-addressed converted/replay artifacts"
+    ),
+    "t3mp3st": (
+        "measured use requires a pinned precomputed response_artifact in "
+        "attacker config; this builder has no capture/config workflow"
+    ),
+}
 #: Every registered attacker (mirrors ura.adapters.engines.ATTACKER_NAMES, the
 #: shared registry - a parity test asserts the two match, so the builder can
 #: never silently omit an engine).  replay/crescendo are modality-agnostic (they
@@ -382,7 +391,7 @@ _BUILD_MODES: tuple[tuple[str, str, str], ...] = (
     ("attestation_probe", "--attestation-probe",
      "Attestation probe (one paid call per model; cost anchor)"),
     ("diagnostic_canary", "--diagnostic-canary",
-     "Diagnostic canary (small paid slice; cost projection)"),
+     "Diagnostic canary (small paid slice; observed tokens/spend only)"),
     ("measured", "", "Measured lane (paid; produces campaign evidence)"),
 )
 
@@ -3389,10 +3398,15 @@ class RigWebApp:
         commands: Mapping[str, Command] | None = None,
         job_id_factory: Callable[[], str] | None = None,
         env_file: Path | None = None,
+        gpu_hardware: Mapping[str, Any] | None = None,
     ) -> None:
         self.results_root = results_root
         self.state_dir = state_dir
         self.repo_root = repo_root
+        from experiments.local_targets import startup_gpu_hardware  # noqa: PLC0415
+        self.gpu_hardware = json.loads(json.dumps(
+            gpu_hardware if gpu_hardware is not None else startup_gpu_hardware()
+        ))
         # A first launch commonly points at a results directory that has not
         # been populated yet.  Make that valid empty state concrete so the
         # artifact browser renders "Empty directory" instead of returning 404.
@@ -4170,7 +4184,7 @@ class RigWebApp:
              "run the account attestation probes and derive transport "
              "receipts (runbook section 8)"),
             ("Canaries", "run_matrix",
-             "run the diagnostic lane canaries and record cost projections "
+             "run diagnostic canaries and record exact observed tokens/spend "
              "(runbook section 9.1)"),
             ("Grids", "run_matrix",
              "start the measured lanes (runbook sections 10-13)"),
@@ -4821,6 +4835,29 @@ class RigWebApp:
 
     # -- campaign builder --------------------------------------------------
 
+    def _dashboard_hardware_card(self) -> str:
+        gpus = [gpu for gpu in self.gpu_hardware.get("gpus", [])
+                if isinstance(gpu, Mapping)]
+        if not self.gpu_hardware.get("available"):
+            summary = "No NVIDIA GPU detected; local model fit is unknown."
+        else:
+            names = ", ".join(
+                f"GPU {gpu.get('index', '?')}: {gpu.get('name', 'unknown')} "
+                f"({gpu.get('vram_gib', '?')} GiB, SM {gpu.get('compute_capability', '?')})"
+                for gpu in gpus
+            )
+            summary = (
+                f"{self.gpu_hardware.get('gpu_count', len(gpus))} GPU(s), "
+                f"{self.gpu_hardware.get('aggregate_vram_gib', 0)} GiB aggregate VRAM"
+                + (f" — {names}" if names else "")
+            )
+        return (
+            "<div class='card'><h2>Local GPU hardware</h2><p>"
+            + html.escape(summary)
+            + "</p><p class='note'>Detected once at console startup with "
+              "<code>nvidia-smi</code>; no model/provider call is made.</p></div>"
+        )
+
     def _load_registry(self, name: str, example: str) -> dict[str, Any]:
         """Parse an operator-local registry, falling back to its example."""
 
@@ -4893,10 +4930,13 @@ class RigWebApp:
         for key, entry in self._load_registry(
             "local-targets.json", "rig/local-targets.example.json"
         ).items():
+            from experiments.local_targets import model_hardware_profile  # noqa: PLC0415
+            if model_hardware_profile(key, entry, self.gpu_hardware)["fits"] is False:
+                continue
             local_seen.add(key)
             options.append((key, key, self._entry_modalities(entry), "local"))
         try:
-            roster = roster_models(self.repo_root)
+            roster = roster_models(self.repo_root, self.gpu_hardware)
         except Exception:  # noqa: BLE001 - roster is a convenience, never fatal
             roster = []
         for model in roster:
@@ -4907,6 +4947,91 @@ class RigWebApp:
             mods = tuple(str(m) for m in model.get("modalities", ["text"]))
             options.append((spec, spec, mods or ("text",), "local"))
         return options
+
+    def _local_entry_catalog(
+        self,
+    ) -> tuple[dict[str, dict[str, object]], set[str]]:
+        """Merged vLLM catalog and specs explicitly maintained by the operator."""
+
+        from experiments.local_targets import load_roster, _models_map  # noqa: PLC0415
+
+        roster = _models_map(load_roster(self.repo_root))
+        catalog = {
+            str(spec): dict(entry) for spec, entry in roster.items()
+            if isinstance(entry, dict)
+        }
+        configured = self._load_registry(
+            "local-targets.json", "rig/local-targets.example.json"
+        )
+        explicit = {str(spec) for spec, entry in configured.items()
+                    if isinstance(entry, dict)}
+        for spec, entry in configured.items():
+            if isinstance(entry, dict):
+                catalog[str(spec)] = dict(entry)
+        return catalog, explicit
+
+    def _materialize_selected_local_config(
+        self, specs: list[str], *, default_quantization: str = "",
+        quantization_overrides: Mapping[str, str] | None = None,
+    ) -> Path:
+        """Write the exact selected vLLM execution subset under console state."""
+
+        from experiments.local_targets import model_hardware_profile  # noqa: PLC0415
+
+        catalog, explicitly_configured = self._local_entry_catalog()
+        selected: dict[str, dict[str, object]] = {}
+        allowed = {
+            "revision", "digest", "modalities", "tensor_parallel_size",
+            "gpu_memory_utilization", "max_tokens", "parameter_count_b",
+            "multi_gpu_compatible", "quantization",
+        }
+        for spec in specs:
+            entry = catalog.get(spec)
+            if entry is None:
+                raise ValueError(f"local target {spec!r} is not in the vLLM roster")
+            if spec.startswith("ollama:"):
+                selected[spec] = {
+                    key: value for key, value in entry.items()
+                    if key in {"digest", "modalities"}
+                }
+                continue
+            profile_entry = dict(entry)
+            model_override = str(
+                (quantization_overrides or {}).get(spec, "")
+            ).strip().lower()
+            if model_override and model_override != "auto":
+                profile_entry["quantization"] = model_override
+            elif model_override == "auto":
+                profile_entry.pop("quantization", None)
+            profile = model_hardware_profile(
+                spec, profile_entry, self.gpu_hardware,
+                default_quantization=default_quantization,
+            )
+            resolved = {key: value for key, value in entry.items() if key in allowed}
+            resolved["parameter_count_b"] = profile["parameter_count_b"]
+            # Preserve the evidence boundary: an absent roster declaration stays
+            # absent here.  The shared CLI resolver will apply the requested
+            # default-true assumption and record its basis as ``assumed``.
+            if not isinstance(entry.get("multi_gpu_compatible"), bool):
+                resolved.pop("multi_gpu_compatible", None)
+            resolved["quantization"] = profile["recommended_quantization"]
+            # Hardware-auto TP: persist exactly what the model row displays.
+            resolved["tensor_parallel_size"] = profile[
+                "recommended_tensor_parallel_size"
+            ]
+            selected[spec] = resolved
+        payload = json.dumps(
+            selected, ensure_ascii=False, sort_keys=True, separators=(",", ":")
+        ) + "\n"
+        digest = hashlib.sha256(payload.encode("utf-8")).hexdigest()
+        directory = self.state_dir / "generated-local-configs"
+        directory.mkdir(parents=True, exist_ok=True)
+        path = directory / f"selected-{digest[:24]}.json"
+        if not path.is_file():
+            tmp = path.with_suffix(".tmp")
+            tmp.write_text(payload, encoding="utf-8")
+            os.replace(tmp, path)
+        return path
 
     #: How many repeatable live-attestation rows the builder form accepts.
     _MAX_ATT_ROWS = 12
@@ -5059,9 +5184,17 @@ class RigWebApp:
             if (self.repo_root / relative).is_file():
                 values[flag] = relative
         if values.get("--local"):
-            local_cfg = "experiments/local-targets.json"
-            if (self.repo_root / local_cfg).is_file():
-                values["--local-config"] = local_cfg
+            selected = self._split_list(values["--local"])
+            local_cfg = self._materialize_selected_local_config(
+                selected,
+                default_quantization=params.get("quantization", ""),
+                quantization_overrides={
+                    key.removeprefix("quantization::"): value
+                    for key, value in params.items()
+                    if key.startswith("quantization::")
+                },
+            )
+            values["--local-config"] = str(local_cfg)
         return "run_matrix", values, params
 
     @staticmethod
@@ -5298,6 +5431,16 @@ class RigWebApp:
                 + " native-artifact integration(s); run_matrix cannot replay "
                 "them through the common Runner. Import their native traces "
                 "with the native_import command instead"
+            )
+        unavailable_selected = [
+            attacker for attacker in attackers
+            if attacker in _BUILDER_UNAVAILABLE_ATTACKERS
+        ]
+        if unavailable_selected:
+            attacker = unavailable_selected[0]
+            errors["attackers"] = (
+                f"{attacker} is unavailable here: "
+                f"{_BUILDER_UNAVAILABLE_ATTACKERS[attacker]}"
             )
         arm_mods = {arm: set(mods) for arm, mods, _r in _ARM_CATALOG}
         fw_mods = {fw: set(mods) for fw, _d, mods in _FRAMEWORKS}
@@ -5848,15 +5991,77 @@ class RigWebApp:
         )
         # Target checkboxes carry supported modalities (so an out-of-scope
         # target is hidden) and a kind (hosted API vs on-rig local vLLM).
+        from experiments.local_targets import (  # noqa: PLC0415
+            installed_vllm_version, model_hardware_profile,
+        )
+        local_catalog, _explicit_local = self._local_entry_catalog()
+        local_profiles = {
+            spec: model_hardware_profile(spec, entry, self.gpu_hardware)
+            for spec, entry in local_catalog.items()
+        }
+
         def _target_box(value: str, label: str, mods: tuple[str, ...], kind: str) -> str:
+            detail = ""
+            disabled = ""
+            if kind == "local":
+                profile = local_profiles.get(value, {})
+                entry = local_catalog.get(value, {})
+                params = profile.get("parameter_count_b")
+                params_text = f"{float(params):g}B params" if params is not None else "params unknown"
+                fit = profile.get("fits")
+                fit_text = "fits" if fit is True else "does not fit" if fit is False else "fit unknown"
+                basis = profile.get("multi_gpu_support_basis", "assumed")
+                parameter_basis = profile.get("parameter_count_basis", "unknown")
+                revision = entry.get("revision")
+                digest = entry.get("digest")
+                pinned = (
+                    isinstance(revision, str) and re.fullmatch(r"[0-9a-fA-F]{40,64}", revision)
+                ) or (
+                    isinstance(digest, str) and re.fullmatch(r"[0-9a-fA-F]{64}", digest)
+                )
+                if fit is not True or not pinned:
+                    disabled = " disabled"
+                recommended = str(profile.get("recommended_quantization", "none"))
+                quant_label = (
+                    f"mandatory 4-bit {recommended}"
+                    if recommended == "bitsandbytes"
+                    and profile.get("quantization_source") == "hardware_auto"
+                    else f"quantization {recommended}"
+                )
+                detail = (
+                    "<span class='fieldhint'>" + html.escape(
+                        f"{params_text} ({parameter_basis}) · "
+                        f"{profile.get('estimated_vram_gib', '?')} GiB "
+                        f"estimated / {profile.get('available_vram_gib', 0)} GiB available "
+                        f"· {fit_text} · {quant_label} · TP"
+                        f"{profile.get('recommended_tensor_parallel_size', 1)} · "
+                        f"multi-GPU {basis} · {'pinned' if pinned else 'revision required'}"
+                        + (f" · {profile['compatibility_note']}"
+                           if profile.get("compatibility_note") else "")
+                    ) + "</span>"
+                )
+                choices = ("auto", "bitsandbytes", "none", "awq", "gptq", "fp8")
+                configured_quant = str(prefill.get(
+                    f"quantization::{value}", entry.get("quantization", "auto")
+                ))
+                detail += (
+                    "<span class='fieldhint'>Per-model quantization: "
+                    f"<select name='quantization::{html.escape(value)}'{disabled}>"
+                    + "".join(
+                        f"<option value='{choice}'"
+                        + (" selected" if choice == configured_quant else "")
+                        + f">{choice}</option>"
+                        for choice in choices
+                    ) + "</select></span>"
+                )
             return (
                 "<label class='check modelrow' "
                 f"data-mods='{html.escape(','.join(mods))}' "
                 f"data-kind='{html.escape(kind)}'>"
                 f"<input type='checkbox' class='modelbox' "
                 f"data-kind='{html.escape(kind)}' "
-                f"data-model='{html.escape(value)}'>"
-                f"<span>{_arm_head(html.escape(label), mods)}</span></label>"
+                f"data-model='{html.escape(value)}'{disabled}>"
+                f"<span>{_arm_head(html.escape(label), mods)}{detail}</span></label>"
             )
 
         options = self._model_options()
@@ -5886,12 +6091,52 @@ class RigWebApp:
             "spend API budget; local vLLM targets use the rig's GPUs "
             "(no API spend).</p>"
         )
+        gpu_rows = "".join(
+            "<li><code>GPU " + html.escape(str(gpu.get("index", "?"))) + "</code> "
+            + html.escape(str(gpu.get("name", "unknown")))
+            + " · " + html.escape(str(gpu.get("vram_gib", "?"))) + " GiB VRAM"
+            + (" · SM " + html.escape(str(gpu["compute_capability"]))
+               if gpu.get("compute_capability") else "")
+            + (" · PCI " + html.escape(str(gpu["pci_bus_id"]))
+               if gpu.get("pci_bus_id") else "")
+            + "</li>"
+            for gpu in self.gpu_hardware.get("gpus", [])
+            if isinstance(gpu, Mapping)
+        )
+        hardware_card = (
+            "<div class='card'><h2>Local hardware</h2>"
+            + (
+                "<p><strong>" + html.escape(str(self.gpu_hardware.get("gpu_count", 0)))
+                + " NVIDIA GPU(s), "
+                + html.escape(str(self.gpu_hardware.get("aggregate_vram_gib", 0)))
+                + " GiB aggregate VRAM</strong></p><ul>" + gpu_rows + "</ul>"
+                if self.gpu_hardware.get("available") else
+                "<div class='notice amber'>No NVIDIA GPU was detected; model fit is unknown.</div>"
+            )
+            + ("<p class='note'>vLLM " + html.escape(str(installed_vllm_version()))
+               + " is installed.</p>" if installed_vllm_version() else
+               "<p class='note'>vLLM is not installed in this console environment. "
+               "Planning remains available; execution will fail closed until installed.</p>")
+            + "<p class='note'>Automatic 4-bit serving uses "
+              "<code>bitsandbytes</code>, an optional runtime dependency. "
+              "Fit values are conservative estimates, not allocation guarantees.</p></div>"
+        )
         # (local targets are selected as checkboxes above, not free text)
         # Framework checkboxes (carry supported modalities so the wizard can
         # flag ones that cannot drive a chosen modality).  A native-artifact
         # attacker (runner_replay_eligible False) is shown DISABLED with its
         # real action - the native-import path - never as a common-runner lane.
         def _framework_box(fw: str, desc: str, mods: tuple[str, ...]) -> str:
+            if fw in _BUILDER_UNAVAILABLE_ATTACKERS:
+                reason = _BUILDER_UNAVAILABLE_ATTACKERS[fw]
+                return (
+                    "<label class='check fwrow disabled' "
+                    f"data-mods='{html.escape(','.join(mods))}'>"
+                    f"<input type='checkbox' class='fwbox' disabled data-fw='{html.escape(fw)}'>"
+                    f"<span><strong>{html.escape(fw)}</strong> "
+                    "<span class='badge gray'>unavailable</span>"
+                    f"<span class='fieldhint'>{html.escape(reason)}</span></span></label>"
+                )
             if fw in _NATIVE_ONLY_ATTACKERS:
                 # The (identical) native-import explanation lives in a tooltip on
                 # the badge rather than repeated inline under every native-only
@@ -6028,6 +6273,7 @@ class RigWebApp:
             "exact command and its call ceilings for confirmation before "
             "anything starts.</p>"
             + error_summary +
+            hardware_card +
             "<form method='post' action='/build' id='builder'>"
             # hidden composed fields
             "<input type='hidden' name='corpora'><input type='hidden' name='api'>"
@@ -6160,7 +6406,8 @@ class RigWebApp:
             "<div class='fieldcell'><label class='fieldlabel'>--dtype</label>"
             f"<select name='dtype'>{dtype_opts}</select>" + err("dtype") + "</div>"
             + text_field("quantization", "--quantization",
-                         "awq, gptq, fp8; empty auto-detects",
+                         "default override: bitsandbytes, awq, gptq, fp8; "
+                         "per-model config wins; empty uses hardware fit",
                          placeholder="(auto-detect)")
             + "</div></div>"
             "<div class='card'><h2>" + _icon("folder") + "Output</h2>"
@@ -6230,10 +6477,10 @@ class RigWebApp:
             "<a href='/config?file=budgets'>budgets</a> config (defaults "
             "recorded in ledger 11.22). The Anthropic balance is the "
             "constraint because the Haiku judge is metered on every judged "
-            "response, local lanes included. Exact per-lane "
-            "<code>--limit</code> and call caps are set from the "
-            "diagnostic-canary cost projections and posted here before any "
-            "measured lane. This card spends nothing.</p></div>"
+            "response, local lanes included. Canaries report only exact "
+            "observed tokens and spend; campaign <code>--limit</code> and call "
+            "caps come from prepaid funds plus the prospective call upper "
+            "bound. This card spends nothing.</p></div>"
         )
 
     @staticmethod
@@ -6953,6 +7200,7 @@ class RigWebApp:
             + self._health_banner()
             + self._warnings_html()
             + stats
+            + self._dashboard_hardware_card()
             + self._db_card(reindexed)
             + "<div class='card'><h2>" + _icon("chart") + "Campaign pipeline"
             "</h2>" + _pipeline_svg(counts) +

@@ -136,7 +136,7 @@ is the operator-selection universe, not normalized config/receipt identity;
 config-only variants sharing it belong in separate Level-1 cohorts.
 
 After the whole request passes admission and before the first generation call,
-Runner 2.11 writes a content-addressed `ura-lane-projection/1`. The artifact
+Runner 2.12 writes a content-addressed `ura-lane-projection/1`. The artifact
 binds the exact experiment condition and eligibility descriptor, selected
 record/cluster/source-policy counts, deterministic sampling identities,
 selected physical input-media bytes, and the conservative complete-grid target,

@@ -25,7 +25,7 @@ from ..adapters.base import BaseConverter
 from ..data_models import DataPoint, DialogTurn
 from ._common import CorpusFormatError, Rc, dp, image, missing, read_csv, read_json, read_jsonl
 
-# SafeBench's 10 forbidden topics -> internal taxonomy (default LEGALITY).
+# Pinned SafeBench forbidden topics -> internal taxonomy.
 CATEGORY_MAP = {
     "illegal activity": Rc.LEGALITY,
     "hate speech": Rc.TOXICITY,
@@ -83,7 +83,6 @@ class FigStepConverter(BaseConverter):
             if not isinstance(rec, dict):
                 raise CorpusFormatError(f"FigStep row {i} in {path} is not an object")
             cat = str(rec.get("category_name") or rec.get("category") or "").strip()
-            risk = CATEGORY_MAP.get(cat.lower(), Rc.LEGALITY)
             # 'instruction' is the imperative text typeset into the image; keep the
             # interrogative 'question' as a fallback / for meta.
             harmful = rec.get("instruction") or rec.get("question") or rec.get("prompt")
@@ -91,6 +90,11 @@ class FigStepConverter(BaseConverter):
                 raise CorpusFormatError(
                     f"FigStep row {i} in {path} lacks a non-empty harmful instruction"
                 )
+            if cat.lower() not in CATEGORY_MAP:
+                raise CorpusFormatError(
+                    f"FigStep row {i} in {path} has unknown or blank category: {cat!r}"
+                )
+            risk = CATEGORY_MAP[cat.lower()]
             question = rec.get("question")
             dataset = str(rec.get("dataset") or "ForbidQI").strip() or "ForbidQI"
             cat_id = rec.get("category_id")

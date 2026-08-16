@@ -7,7 +7,7 @@ source-native evaluators. Experiments and the human audit are still pending.
 Preflight, dry-run, diagnostic-canary, and bounded transport-probe artifacts are
 diagnostics, not thesis results.
 
-The maintained artifact contract is Runner `ura-runner/2.11` with unified schema
+The maintained artifact contract is Runner `ura-runner/2.12` with unified schema
 `1.4`. Do not combine older-runner artifacts with this program.
 
 Every `python -m experiments.*` command below can equivalently be started
@@ -153,6 +153,12 @@ python -m pip install "huggingface_hub[cli]"
 # operator has verified against this machine's CUDA, PyTorch, and driver stack.
 export VLLM_VERSION='<operator-reviewed-compatible-version>'
 python -m pip install "vllm==$VLLM_VERSION"
+
+# Required when automatic or explicit 4-bit BitsAndBytes serving is selected.
+# Use the version documented as compatible with the selected vLLM release.
+export BITSANDBYTES_VERSION='<operator-reviewed-vllm-compatible-version>'
+python -m pip install "bitsandbytes==$BITSANDBYTES_VERSION"
+python -c "import bitsandbytes, vllm; print(vllm.__version__, bitsandbytes.__version__)"
 
 # Create the one prospective local-checkout receipt before source acquisition.
 # Generated evidence lives under the ignored runs/ tree; untracked or ignored
@@ -374,6 +380,20 @@ JALMBench consumed manifest has 220,240 rows, but its upstream discovered and
 text-only-excluded counts remain `CANNOT-VERIFY` until a new exact exporter
 summary is retained; do not infer them from the prepared JSONL.
 
+Copy the exact summaries into the return tree immediately. The receipt must
+hash these copies, so the files it references cannot be omitted by the final
+`runs/thesis` archive:
+
+```bash
+mkdir -p runs/thesis/source-export-summaries
+cp "$URA_CORPORA/JALMBench-export/export-summary.json" \
+  runs/thesis/source-export-summaries/jalmbench-export-summary.json
+cp "$URA_CORPORA/VLSBench-export/export-summary.json" \
+  runs/thesis/source-export-summaries/vlsbench-export-summary.json
+sha256sum runs/thesis/source-export-summaries/*-export-summary.json \
+  > runs/thesis/source-export-summaries/SHA256SUMS
+```
+
 ### 3.3 Source inventory and exact input locators
 
 The nineteen converter names and the expected operator locators are:
@@ -447,7 +467,7 @@ export URA_JAILBREAKBENCH_HARMFUL_PATH="$URA_CORPORA/JBB-Behaviors/data/harmful-
 export URA_JAILBREAKBENCH_BENIGN_PATH="$URA_CORPORA/JBB-Behaviors/data/benign-behaviors.csv"
 export URA_JAILBREAKV_FULL_PATH='<official-JailBreakV_28K.csv-beside-images>'
 export URA_JALMBENCH_AUDIO_MANIFEST_PATH="$URA_CORPORA/JALMBench-export/jalmbench.jsonl"
-export URA_JALMBENCH_EXPORT_SUMMARY_PATH="$URA_CORPORA/JALMBench-export/export-summary.json"
+export URA_JALMBENCH_EXPORT_SUMMARY_PATH="runs/thesis/source-export-summaries/jalmbench-export-summary.json"
 export URA_MLLMGUARD_PRIVACY_PATH='<MLLMGuard-privacy-table-beside-imgs>'
 export URA_MLLMGUARD_BIAS_PATH='<MLLMGuard-bias-table-beside-imgs>'
 export URA_MLLMGUARD_TOXICITY_PATH='<MLLMGuard-toxicity-table-beside-imgs>'
@@ -463,7 +483,7 @@ export URA_STRONGREJECT_OFFICIAL_PATH="$URA_CORPORA/strongreject/strongreject_da
 export URA_VIDEOSAFETYBENCH_BENIGN_QUERY_PATH="$URA_CORPORA/Video-SafetyBench/benign_data.json"
 export URA_VIDEOSAFETYBENCH_HARMFUL_QUERY_PATH="$URA_CORPORA/Video-SafetyBench/harmful_data.json"
 export URA_VLSBENCH_RELEASE_PATH="$URA_CORPORA/VLSBench-export/vlsbench.jsonl"
-export URA_VLSBENCH_EXPORT_SUMMARY_PATH="$URA_CORPORA/VLSBench-export/export-summary.json"
+export URA_VLSBENCH_EXPORT_SUMMARY_PATH="runs/thesis/source-export-summaries/vlsbench-export-summary.json"
 ```
 
 The BIPIA task files require their official attack companion files in the
@@ -745,12 +765,14 @@ confirmed.
   excluded as a target (self-judgment bias); its registry row exists only as
   the judge condition.
 - Anthropic breadth: `anthropic:claude-sonnet-5`; add `anthropic:claude-opus-5`
-  only if diagnostic canary cost projections leave budget for it.
+  only if the prepaid budget, conservative call projection, and the canary's
+  exact observed token-derived spend support the operator decision.
 - OpenAI breadth: at most one additional row beyond Sol - a budget cap, not
   an availability doubt. The operator attests GPT-5.6 Tera, GPT-5.6 Luna,
   and GPT-5.5 are visible on the account; the section 8 probe records each
-  exact served route id before its config row is added, and the canary cost
-  projection picks which one the funding carries.
+  exact served route id before its config row is added. The prepaid budget,
+  conservative call projection, and exact observed canary spend determine the
+  operator's choice; one cluster is not multiplied into a campaign estimate.
 - Google: `google:gemini-3.6-flash`, the only funded rich-media hosted row.
 - Moonshot: one to two Kimi snapshots (`kimi:kimi-k3` plus at most one
   additional account-visible snapshot).
@@ -801,7 +823,8 @@ campaign runs two pre-registered population tiers:
   post-canary projections show budget for more. Rules-only and cascade
   evaluator modes are distinct compatibility keys and are never pooled.
 - Exact per-lane limits and call caps are fixed after the section 9.1
-  diagnostic canaries from their cost projections and recorded before any
+  diagnostic canaries from the prepaid budgets, conservative call projection,
+  and exact observed usage/spend, and are recorded before any
   measured lane starts. [13 August 2026: the operator delegated setting
   these limits to the campaign agent, bounded by the operator-recorded
   prepaid provider budgets (ledger Section 11.27); the limits remain
@@ -837,10 +860,47 @@ python -c "import os; from huggingface_hub import snapshot_download; snapshot_do
 ## 7. Configure local models: one model per process
 
 The current local vLLM and Ollama renderers support text and image, not audio or
-video. Use one local target per `run_matrix` process. With an 8B-class target,
-`tensor_parallel_size: 1` leaves the second GPU for the scoring guard. A two-GPU
-target leaves no GPU for that guard on this rig and is therefore a different,
-explicit execution condition.
+video. At CLI invocation, and once at rig-console startup, URA queries
+`nvidia-smi` for each NVIDIA card's index, model, total VRAM, PCI id, compute
+capability and driver, plus aggregate/max-card VRAM. The dashboard displays that
+inventory and the local model roster shows parameter count and basis, estimated
+versus usable VRAM, fit, resolved quantization, recommended tensor parallelism,
+and whether multi-GPU support was declared or assumed. No provider/model call is
+made by this inventory. `python -m experiments.local_targets` prints the same
+hardware/profile data for CLI inspection.
+
+Automatic fit is deliberately simple and conservative: after the configured
+`gpu_memory_utilization`, it budgets 2.2 GiB per billion parameters for
+unquantized weights/runtime headroom, 1.15 for FP8, and 0.57 for 4-bit
+BitsAndBytes/AWQ/GPTQ. Full precision is selected when it fits; otherwise
+hardware auto-selection uses 4-bit `bitsandbytes` only when every detected card
+has compute capability 7.0 or newer and the dependency above is installed.
+Models that need it are shown with a mandatory-quantization note; only
+proven-fit models are selectable. A real vLLM target with absent/unknown
+hardware, a known non-fit, or invalid tensor parallelism fails before engine
+construction. A missing/incompatible BitsAndBytes runtime fails during local
+preflight before target/judge calls; the setup import check above catches the
+ordinary missing dependency earlier. The estimate is not an allocation
+guarantee: the local preflight must still load the exact revision at the
+selected context and serving settings.
+
+Precedence is per-model `quantization` in `--local-config`, then the command's
+`--quantization` override, then hardware auto-selection. A missing
+`multi_gpu_compatible` field means supported by assumption and is labelled
+`assumed`; set it to `false` for a known single-GPU-only model. When a compatible
+model exceeds one usable card, automatic tensor parallelism uses the detected
+card count needed for the estimate. The resolved hardware, quantization and
+tensor-parallel configuration enter normal local-config, grid and run
+provenance.
+
+Concrete rig example: two RTX 4090 cards reported as 24,564 MiB each provide
+about 47.98 GiB physical and 40.78 GiB usable VRAM at utilization 0.85. A 70B
+model is estimated at 39.9 GiB with 4-bit BitsAndBytes, so the roster shows it
+only with mandatory in-flight 4-bit quantization and tensor parallelism 2.
+Declaring that model multi-GPU-incompatible makes it a non-fit instead. With an
+8B-class target, tensor parallelism 1 normally leaves the second GPU for the
+scoring guard; a two-GPU target leaves no GPU for that guard and is therefore a
+different execution condition.
 
 The local preflight loads the one target base engine before it constructs the
 scoring or defense guards. A successful preflight therefore tests the actual
@@ -1289,8 +1349,13 @@ Missing client reporting is `CANNOT-VERIFY`.
 
 The summary is not campaign approval. Do not proceed until the operator has
 reviewed the exact projection and canary, recorded approved call/deadline/storage
-limits, and configured provider-side quota. Do not infer price, cost, throughput,
-expected full-lane storage, safety, or population validity from one cluster.
+limits, and configured provider-side quota. The console automatically reports
+the canary's exact completion-bound token usage and, when all required
+effective-dated rates exist, its exact token-derived spend. That observed spend
+is not an estimate. Do not multiply one cluster into a campaign cost estimate.
+Choose caps from prepaid budgets, the conservative call projection, and an
+operator decision. Do not infer throughput, expected full-lane storage, safety,
+or population validity from one cluster.
 Keep the entire canary tree under `diagnostics/`: Level-1, figures, suite summary,
 paired/transfer analysis, and human-audit preparation reject it.
 
@@ -1315,8 +1380,13 @@ observed provider traffic. It inventories selected physical input-media bytes
 when available. Token usage, monetary price/cost, runtime/throughput, and
 expected output storage remain `CANNOT-VERIFY`; do not extrapolate them from the
 projection. A canary summary may report actual retained artifact bytes and
-client-reported transport attempts for that canary only, but still cannot
-estimate full-lane cost, throughput, or storage.
+client-reported transport attempts for that canary only. Completion-bound
+artifacts additionally provide exact observed token usage; the console may turn
+that usage into exact observed spend when the required effective-dated prices
+exist. Neither quantity is a measured full-lane total and neither is multiplied
+into a campaign estimate. Campaign limits come from prepaid budgets, the
+conservative call projection, and the operator decision; throughput and storage
+remain unknown until observed.
 
 Common arguments for the full cascade are shown here for reference:
 
@@ -1607,26 +1677,28 @@ The remaining runner bridges are specialized:
 | Bridge | Defensible use in this program |
 | --- | --- |
 | `nanogcg` | precomputed suffix with `suffix_source`, or live optimization on an immutable local surrogate; report as surrogate transfer |
-| `harmbench` attacker | run pinned upstream text test-case generation and replay the complete generated artifact family; not native HarmBench scoring |
+| `harmbench` attacker | measured Runner generation is rejected; pinned upstream test-case generation is an out-of-band capture only. The current tree does not claim an implemented HarmBench-artifact replay producer |
 | `purplellama` | only with `cyberseceval` rows; source-identity replay, not the native pipeline |
 | `ideator` | verified precomputed text-image `seed_pairs` only; live package path is disabled |
-| `t3mp3st` | request-bound planning response artifact or loopback planning endpoint only; never an execute/tool route |
+| `t3mp3st` | measured grids require an exact request-bound `response_artifact`; direct/loopback planning is permitted only as out-of-band capture and is never an execute/tool route |
 
 Run these only after preparing their exact attacker config and passing
 `rig_check`. Do not claim that a complete upstream evaluator ran. Garak,
 Promptfoo, Petri, FuzzyAI, EasyJailbreak, AutoDAN-Turbo, Giskard, ASB, and
 AgentDojo are not runner attackers; they belong in the native track below.
 
-Live/source-model HarmBench generation, a T3MP3ST loopback planner, and local
-nanoGCG optimization are not covered by the Runner's target/judge/HTTP budget or
-its post-generation checkpoint. They can repeat work on resume. Do not place a
-paid or source-model-conditioned generator inside a measured Runner grid.
-Execute it first as a separately capped canary/campaign with its own hard
-provider quota, retain the complete immutable output plus generator/model/config
-identity and SHA-256, then use only that content-addressed precomputed artifact
-for the measured transfer lane. If such precomputation is unavailable, mark the
-specialized lane pending/`N/A` or omit it as optional; do not describe it as
-protected by the common call ceilings.
+Live/source-model HarmBench generation, T3MP3ST direct/loopback planning, and
+local nanoGCG optimization are out-of-band activities not covered by the
+Runner's target/judge/HTTP budget or post-generation checkpoint. They can repeat
+work on resume and are rejected inside a measured Runner grid. If authorized,
+execute capture separately under its own hard cap/quota and retain the complete
+immutable output plus generator/model/config identity and SHA-256. Measured
+T3MP3ST then consumes only its request-bound, content-addressed
+`response_artifact`. The present code does not turn a HarmBench generation
+artifact into a measured replay lane automatically; prepare and validate an
+explicit replay input through an implemented path or leave the specialized lane
+pending/`N/A`. Never describe out-of-band calls as protected by the common
+Runner ceilings.
 
 ## 13. Tier 4: local targets and defense contrast
 
@@ -2247,16 +2319,25 @@ Complete the already-created `runs/thesis/RUNNOTE.md` and record:
   provider-side hard quotas and provider usage/cost reconciliation remain
   separate evidence and unavailable values remain `CANNOT-VERIFY`;
 - human-audit status and achieved per-stratum counts for the common frame,
-  and separately the source-task audit status and its per-family counts;
+  and separately the source-task audit status and its per-family counts; record
+  the applicable ethics determination identifier/date, consent version,
+  compensation basis, harmful-content welfare controls, withdrawals and adverse
+  events without unnecessary personal data;
 - Level-1 `evidence_id`, planning-stratum/execution-unit/judgment-record counts,
   request-level errors, validated typed-attestation artifact/record support, and
   the explicit `not_supplied` analysis-inclusion fields; and
 - the Level-2 `report_id` with its estimate-row and native-run counts.
 
-Capture the URA environment and harness identity:
+Capture the complete URA environment and harness identity. Repeat the Python
+version, `pip list`, and `pip freeze --all` commands after activating every
+source-native environment, using a distinct filename for each environment:
 
 ```bash
-python -m pip list --format=json > runs/thesis/environment-packages.json
+mkdir -p runs/thesis/environments
+python -VV > runs/thesis/environments/ura-python.txt 2>&1
+python -m pip list --format=json > runs/thesis/environments/ura-pip-list.json
+python -m pip freeze --all > runs/thesis/environments/ura-pip-freeze.txt
+nvidia-smi -q > runs/thesis/environments/nvidia-smi-q.txt
 test "$(git rev-parse HEAD)" = "$REF_URA"
 python -m experiments.project_revision \
   --validate "$URA_PROJECT_REVISION_MANIFEST" \
@@ -2268,7 +2349,15 @@ printf '%s  %s\n' "$URA_PROJECT_REVISION_SHA256" \
   "$URA_PROJECT_REVISION_MANIFEST" > runs/thesis/project-revision.sha256
 test "$(sha256sum "$URA_SOURCE_CONFORMANCE_MANIFEST" | awk '{print $1}')" = \
   "$URA_SOURCE_CONFORMANCE_SHA256"
+
+# Make the exact tested source recoverable even if this commit is not published.
+git bundle create runs/thesis/ura-project-source.bundle HEAD
+git bundle verify runs/thesis/ura-project-source.bundle
 ```
+
+If the exact tested commit is already available from a recorded remote ref, the
+verified bundle is still a compact self-contained fallback. A hash without a
+retrievable ref or source bundle is not a reproducible software release.
 
 Before return, re-run every canonical native validation from the complete
 config/raw/envelope tree and rebuild the suite
@@ -2282,9 +2371,11 @@ CSVs plus `source_task_audit.json`, every retained `ura-lane-projection/1`,
 diagnostic `ura-lane-canary/1`, the rebuilt `suite-evidence.json` broad-roster
 inventory, the Level-1 JSON/CSV, the deterministic
 `ura-level2-report/1` JSON/CSV/Markdown tables, the remaining analyses,
-figures, the exact retained `source-conformance-*.json` (with any
+figures, the exact retained `source-conformance.json` and any lane-specific
+`source-conformance-*.json` (with any
 `*.scaffold.json` working drafts removed), the exact VLSBench and JALMBench
-`export-summary.json` files referenced by prepared-input receipts, every exact
+`*-export-summary.json` files under `source-export-summaries/` referenced by
+prepared-input receipts, every exact
 `ura-live-attestation/2`
 receipt and approved digest record, the prospective `ura-project-revision/1`
 receipt and digest record, expected/observed commit and checkout-status

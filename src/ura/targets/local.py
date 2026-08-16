@@ -433,6 +433,7 @@ class VLLMTarget(BaseTarget):
                 "resolved_model": self.model,
                 "model_revision": self.revision,
                 "model_digest": self.model_digest,
+                "quantization": self.quantization or "none",
                 "finish_reason": finish_reason,
                 "stop_reason": stop_reason,
                 "requested_seed": seed,

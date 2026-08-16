@@ -119,6 +119,14 @@ class HarmBenchAttacker(BaseAttacker):
         self.credential_env = tuple(credential_env or ())
         self.timeout_seconds = timeout_seconds
 
+    def validate_measured_run(self, corpus: Iterable[DataPoint] = ()) -> None:
+        """Keep source-conditioned generation outside the measured grid."""
+        raise ExternalEngineConformanceError(
+            "measured HarmBench runs cannot execute test-case generation inside "
+            "Runner; generate it out of band, then run the content-addressed "
+            "converted/replay artifacts"
+        )
+
     def generate(self, datapoint: DataPoint, budget: AttackBudget) -> Iterable[Attempt]:
         if budget.max_queries < len(self.methods):
             raise ExternalEngineConformanceError(

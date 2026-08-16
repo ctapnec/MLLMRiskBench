@@ -1019,7 +1019,7 @@ def test_builder_targets_split_hosted_and_local_vllm_roster(tmp_path: Path) -> N
     assert "Hosted API" in page and "Local vLLM" in page
     assert "data-kind='api'" in page and "data-kind='local'" in page
     # The curated vLLM roster is real and modality-tagged.
-    roster = local_targets.roster_models()
+    roster = local_targets.roster_models(include_unfit=True)
     assert len(roster) > 10
     assert any("audio" in m["modalities"] for m in roster)
     # A build with a local target composes --local and binds --local-config

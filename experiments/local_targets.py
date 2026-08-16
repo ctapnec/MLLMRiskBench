@@ -18,8 +18,11 @@ import argparse
 import json
 import os
 import re
+import subprocess
 import sys
+from functools import lru_cache
 from pathlib import Path
+from typing import Callable
 
 _REPO_ROOT = Path(__file__).resolve().parents[1]
 
@@ -40,6 +43,239 @@ _AUDIO_HINTS = ("audio", "ultravox", "qwen2-audio", "omni", "asr", "speech")
 
 _ROSTER_LOCAL = "experiments/vllm-roster.json"
 _ROSTER_EXAMPLE = "experiments/rig/vllm-roster.example.json"
+
+# Conservative serving-only estimates. They deliberately include headroom for
+# the engine and KV cache instead of presenting weight bytes as a fit promise.
+_VRAM_GIB_PER_BILLION = {"none": 2.2, "bitsandbytes": 0.57,
+                         "awq": 0.57, "gptq": 0.57, "fp8": 1.15}
+_QUANTIZATIONS = frozenset(_VRAM_GIB_PER_BILLION)
+
+
+def detect_gpu_hardware(
+    runner: Callable[..., subprocess.CompletedProcess[str]] | None = None,
+) -> dict[str, object]:
+    """Best-effort, offline NVIDIA inventory with a harmless empty fallback."""
+
+    invoke = runner or subprocess.run
+    queries = (
+        ("index,name,pci.bus_id,memory.total,compute_cap,driver_version", True),
+        ("index,name,memory.total", False),
+    )
+    for query, extended in queries:
+        try:
+            result = invoke(
+                ["nvidia-smi", f"--query-gpu={query}",
+                 "--format=csv,noheader,nounits"],
+                capture_output=True, text=True, timeout=3, check=False,
+            )
+        except (OSError, subprocess.SubprocessError):
+            continue
+        if result.returncode != 0:
+            continue
+        gpus: list[dict[str, object]] = []
+        for raw in result.stdout.splitlines():
+            fields = [item.strip() for item in raw.split(",")]
+            expected = 6 if extended else 3
+            if len(fields) != expected:
+                continue
+            try:
+                gpu_index = int(fields[0])
+                memory_mib = int(fields[3] if extended else fields[2])
+            except ValueError:
+                continue
+            if not fields[1] or memory_mib <= 0:
+                continue
+            gpu: dict[str, object] = {
+                "index": gpu_index,
+                "name": fields[1],
+                "memory_total_mib": memory_mib,
+                "vram_gib": round(memory_mib / 1024, 2),
+            }
+            if extended:
+                gpu["pci_bus_id"] = fields[2]
+                gpu["compute_capability"] = fields[4]
+                gpu["driver_version"] = fields[5]
+            gpus.append(gpu)
+        if gpus:
+            total_mib = sum(int(gpu["memory_total_mib"]) for gpu in gpus)
+            return {
+                "available": True,
+                "source": "nvidia-smi",
+                "gpu_count": len(gpus),
+                "aggregate_vram_gib": round(total_mib / 1024, 2),
+                "max_gpu_vram_gib": round(
+                    max(int(gpu["memory_total_mib"]) for gpu in gpus) / 1024, 2
+                ),
+                "gpus": gpus,
+            }
+    return {
+        "available": False, "source": "none", "gpu_count": 0,
+        "aggregate_vram_gib": 0.0, "max_gpu_vram_gib": 0.0, "gpus": [],
+    }
+
+
+@lru_cache(maxsize=1)
+def _cached_startup_gpu_hardware() -> dict[str, object]:
+    return detect_gpu_hardware()
+
+
+def startup_gpu_hardware() -> dict[str, object]:
+    """One hardware probe per process, returned as an isolated copy."""
+
+    return json.loads(json.dumps(_cached_startup_gpu_hardware()))
+
+
+def infer_parameter_count_b(spec: str) -> float | None:
+    """Infer a basic parameter count from conventional ``7B``/``350M`` ids."""
+
+    matches = list(re.finditer(
+        r"(?<![\d.])(\d+(?:\.\d+)?)\s*([bm])(?=$|[-_./])",
+        spec, flags=re.IGNORECASE,
+    ))
+    if not matches:
+        return None
+    # A lone active-parameter marker (A13B) does not identify total loaded
+    # weights.  A total-plus-active id such as 30B-A3B remains inferable as 30B.
+    total_matches = [
+        match for match in matches
+        if match.start() == 0 or spec[match.start() - 1].lower() != "a"
+    ]
+    if not total_matches:
+        return None
+    values = [
+        float(match.group(1)) * (0.001 if match.group(2).lower() == "m" else 1.0)
+        for match in total_matches
+    ]
+    return max(values)
+
+
+def model_hardware_profile(
+    spec: str,
+    entry: dict[str, object] | None,
+    hardware: dict[str, object],
+    *,
+    default_quantization: str = "",
+) -> dict[str, object]:
+    """Resolve parameters, multi-GPU fit, and one exact quantization choice."""
+
+    config = entry or {}
+    raw_params = config.get("parameter_count_b")
+    params = (
+        float(raw_params)
+        if isinstance(raw_params, (int, float)) and not isinstance(raw_params, bool)
+        and float(raw_params) > 0
+        else infer_parameter_count_b(spec)
+    )
+    parameter_count_basis = (
+        "declared"
+        if isinstance(raw_params, (int, float)) and not isinstance(raw_params, bool)
+        and float(raw_params) > 0
+        else "name_inferred" if params is not None else "unknown"
+    )
+    multi_gpu = config.get("multi_gpu_compatible")
+    # Unknown vLLM roster entries are presumed tensor-parallel compatible. An
+    # operator can set false for an architecture known not to support it.
+    multi_gpu_compatible = multi_gpu if isinstance(multi_gpu, bool) else True
+    multi_gpu_basis = "declared" if isinstance(multi_gpu, bool) else "assumed"
+    physical_available = float(
+        hardware.get(
+            "aggregate_vram_gib" if multi_gpu_compatible else "max_gpu_vram_gib",
+            0.0,
+        ) or 0.0
+    )
+    utilization = config.get("gpu_memory_utilization", 0.90)
+    utilization = (
+        float(utilization)
+        if isinstance(utilization, (int, float)) and not isinstance(utilization, bool)
+        else 0.90
+    )
+    available = physical_available * utilization
+    capabilities: list[float] = []
+    capability_complete = True
+    for gpu in hardware.get("gpus", []):
+        if not isinstance(gpu, dict):
+            capability_complete = False
+            continue
+        try:
+            capabilities.append(float(str(gpu["compute_capability"])))
+        except (KeyError, TypeError, ValueError):
+            capability_complete = False
+    bnb_supported: bool | None = (
+        min(capabilities) >= 7.0
+        if capabilities and capability_complete else None
+    )
+    compatibility_note = ""
+    explicit = config.get("quantization")
+    if isinstance(explicit, str) and explicit.strip():
+        quantization = explicit.strip().lower()
+        source = "model_override"
+    elif default_quantization.strip():
+        quantization = default_quantization.strip().lower()
+        source = "command_override"
+    elif params is not None and available > 0:
+        full_precision = params * _VRAM_GIB_PER_BILLION["none"]
+        if full_precision <= available:
+            quantization = "none"
+            source = "hardware_auto"
+        elif bnb_supported is True:
+            quantization = "bitsandbytes"
+            source = "hardware_auto"
+        else:
+            quantization = "none"
+            source = "hardware_auto_unavailable"
+            compatibility_note = (
+                "automatic bitsandbytes requires NVIDIA compute capability 7.0+"
+                if bnb_supported is False else
+                "automatic bitsandbytes requires a known NVIDIA compute capability 7.0+"
+            )
+    else:
+        quantization = "none"
+        source = "safe_fallback"
+    if quantization not in _QUANTIZATIONS:
+        raise ValueError(f"unsupported quantization {quantization!r} for {spec!r}")
+    quantization_available: bool | None = None
+    if quantization == "bitsandbytes":
+        quantization_available = bnb_supported
+        if bnb_supported is False and not compatibility_note:
+            compatibility_note = (
+                "bitsandbytes is not supported below NVIDIA compute capability 7.0"
+            )
+    estimated = (
+        round(params * _VRAM_GIB_PER_BILLION[quantization], 2)
+        if params is not None else None
+    )
+    fits = (
+        estimated <= available
+        if estimated is not None and available > 0 else None
+    )
+    if quantization == "bitsandbytes" and bnb_supported is False:
+        fits = False
+    gpu_count = int(hardware.get("gpu_count", 0) or 0)
+    max_gpu_vram = (
+        float(hardware.get("max_gpu_vram_gib", 0.0) or 0.0) * utilization
+    )
+    tensor_parallel_size = 1
+    if (
+        multi_gpu_compatible and gpu_count > 1 and estimated is not None
+        and max_gpu_vram > 0 and estimated > max_gpu_vram
+    ):
+        tensor_parallel_size = min(
+            gpu_count, max(2, int((estimated + max_gpu_vram - 0.01) // max_gpu_vram))
+        )
+    return {
+        "parameter_count_b": params,
+        "parameter_count_basis": parameter_count_basis,
+        "multi_gpu_compatible": multi_gpu_compatible,
+        "multi_gpu_support_basis": multi_gpu_basis,
+        "recommended_tensor_parallel_size": tensor_parallel_size,
+        "available_vram_gib": round(available, 2),
+        "estimated_vram_gib": estimated,
+        "recommended_quantization": quantization,
+        "quantization_source": source,
+        "quantization_available": quantization_available,
+        "compatibility_note": compatibility_note,
+        "fits": fits,
+    }
 
 
 def infer_modalities(spec: str) -> list[str]:
@@ -96,15 +332,27 @@ def roster_version(repo_root: Path = _REPO_ROOT) -> str | None:
     return str(version) if isinstance(version, str) and version else None
 
 
-def roster_models(repo_root: Path = _REPO_ROOT) -> list[dict[str, object]]:
+def roster_models(
+    repo_root: Path = _REPO_ROOT,
+    hardware: dict[str, object] | None = None,
+    *,
+    include_unfit: bool = False,
+) -> list[dict[str, object]]:
     """``[{"spec", "modalities"}]`` for every vLLM roster entry."""
 
+    detected = hardware if hardware is not None else detect_gpu_hardware()
     out: list[dict[str, object]] = []
     for spec, entry in _models_map(load_roster(repo_root)).items():
         mods = ["text"]
         if isinstance(entry, dict) and isinstance(entry.get("modalities"), list):
             mods = [str(m) for m in entry["modalities"] if isinstance(m, str)] or ["text"]
-        out.append({"spec": str(spec), "modalities": mods})
+        config = entry if isinstance(entry, dict) else {}
+        model = {
+            "spec": str(spec), "modalities": mods,
+            **model_hardware_profile(str(spec), config, detected),
+        }
+        if include_unfit or model["fits"] is True:
+            out.append(model)
     return out
 
 
@@ -181,6 +429,7 @@ def refresh_roster(
         models[spec] = {
             "revision": "OPERATOR_TODO",
             "modalities": infer_modalities(spec),
+            "parameter_count_b": infer_parameter_count_b(spec),
             "tensor_parallel_size": 1,
             "gpu_memory_utilization": 0.85,
             "max_tokens": 4096,
@@ -229,9 +478,11 @@ def main(argv: list[str] | None = None) -> int:
             "source_url": document.get("source_url"),
         }))
         return 0
+    hardware = detect_gpu_hardware()
     print(json.dumps({
         "vllm_version": roster_version(repo_root),
-        "models": roster_models(repo_root),
+        "hardware": hardware,
+        "models": roster_models(repo_root, hardware),
     }, indent=2))
     return 0
 

@@ -64,6 +64,15 @@ class BaseAttacker(ABC):
     def generate(self, datapoint: DataPoint, budget: AttackBudget) -> Iterable[Attempt]:
         ...  # pragma: no cover - interface
 
+    def validate_measured_run(self, corpus: Iterable[DataPoint] = ()) -> None:
+        """Fail before a measured grid when generation has an unsafe side effect.
+
+        Ordinary attackers need no admission step.  Adapters whose prompt
+        generation can itself call an external/source model override this hook
+        and require an immutable precomputed artifact instead.
+        """
+        return None
+
     def start_session(
         self, datapoint: DataPoint, budget: AttackBudget
     ) -> AttackSession | None:

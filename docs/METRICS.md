@@ -103,6 +103,22 @@ adjustment performed afterward does not retroactively establish a prospective
 design. Sparse or unsupported effects are inconclusive or undefined, never
 filled with zero.
 
+For the thesis focal binary contrasts, the prospective interpretation rule is:
+two-sided 95% intervals from 2,000 seeded whole-cluster bootstrap resamples; an
+absolute risk difference of 0.10 as the minimum practically important effect;
+at least 100 matched independent clusters where the complete selected source
+contains them; and a target interval half-width no greater than 0.10. A smaller
+complete source remains reportable but precision-limited. Joint Holm control for
+all predeclared RQ2/RQ4a primary contrasts at alpha 0.05 is claimed only if the
+final analysis explicitly combines every primary p-value and retains the
+adjusted table. Otherwise each output reports its actual within-output Holm
+family and no cross-output control is claimed. Breadth and later contrasts are
+exploratory. The primary analysis uses complete pairs and also reports
+condition-specific missingness plus best/worst endpoint bounds. Missingness
+above 10% in either condition or an imbalance above five percentage points
+makes the conclusion sensitivity-limited. Not reaching the precision or
+minimum-effect threshold is not evidence of equivalence.
+
 ## Transfer
 
 For an ordered pair A to B, transfer is:
@@ -180,6 +196,14 @@ whole-cluster sample must cover all of them or preparation fails. The artifact
 separately records every completed run and every run with a labelled row. All
 admitted cells must also share one exact ordered configured and realized judge
 identity; otherwise the validity analysis fails rather than pooling judges.
+
+Human labelling begins only after the applicable supervisor/institutional ethics
+determination, informed-consent and compensation terms, and harmful-content
+welfare controls have been recorded. Raters receive content warnings, may opt
+out of categories without penalty, take scheduled breaks, and have a documented
+stop/escalation route. No minor is recruited; returned records use pseudonymous
+rater IDs and omit unnecessary personal data. Model visibility, when retained,
+is an explicit expectation-bias limitation.
 
 The separate source-task classification audit frame covers R-Judge/GPTGeoChat rows: whole-cluster export with the parser prediction, its validity flag and the source reference blinded; at least two independent raters answer the source task from the response text alone, and the analysis reports inter-rater agreement, adjudicated-human versus source-reference accuracy with a cluster bootstrap, human versus parser agreement, and the parser-valid fraction in `source_task_audit.json`. These are source-defined classification results, never common refusal/harmfulness evidence, and never calibrate the common judge cascade.
 

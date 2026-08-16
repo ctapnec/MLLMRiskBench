@@ -19,6 +19,18 @@ There is no universal safety score. Every result is benchmark-, source-policy-,
 modality-, attacker-, defense-, judge-, budget-, runtime-, and served-snapshot-
 conditioned. Cross-provider effects are associational.
 
+The current hypothesis is that, for prospectively selected compatible cells,
+the system preserves source, policy, modality, execution and judgment identity
+well enough to report complete execution or explicit `N/A`, estimate matched
+effects without incompatible pooling, and quantify judge agreement against an
+independent human audit. RQ1--RQ5 test this narrower claim. Exhaustiveness and
+reduced complexity/cost are not tested without a separately declared baseline.
+
+For image, audio and video, successful byte transport establishes RQ1 execution
+conformance only. Multimodal comprehension or safety needs a media-aware human
+label, validated media-aware judge, or source-native task/oracle; otherwise the
+safety outcome remains `N/A`.
+
 ## Tiered roster
 
 The focal paired conditions are configured candidate Fable and GPT-5.6 Sol
@@ -37,7 +49,7 @@ not replaced with a nearby model. A failed/stale live attestation or silent
 identity drift is a missing/failed prerequisite, not a safe zero and not
 silently rewritten as structural incompatibility.
 
-Runner 2.11 operationalizes this distinction. One completed, bounded, non-dry
+Runner 2.12 operationalizes this distinction. One completed, bounded, non-dry
 `--attestation-probe` is converted without another provider call into a strict
 `ura-live-attestation/2` receipt. Each ordinary measured grid must supply the
 receipt's exact byte digest, the same operator-declared non-secret
@@ -52,12 +64,21 @@ byte-backed transport—not safety, benchmark, evaluator, human validity, or
 future availability.
 
 Local rows use exact immutable vLLM/Ollama artifacts. Only one local target is
-started per runner process. On the two RTX 4090 rig, a model fitting one card
-normally uses tensor parallelism 1 and leaves the other card for an independent
-scoring guard or evaluation workload. Tensor parallelism 2 is an explicit
-separate condition for a model that needs it, not evidence that the two cards
-form one 48-GB NVLink pool. A verified same-base unguarded/guarded local pair is
-the preferred defense effect; unrelated models cannot identify that effect.
+started per runner process. The CLI probes NVIDIA hardware at invocation and the
+console caches the same `nvidia-smi` inventory at startup. Conservative fit
+profiles determine which roster models are selectable, their mandatory
+quantization note and recommended tensor parallelism. Per-model quantization
+overrides the command override, then hardware auto-selection applies. Missing
+multi-GPU metadata is labelled `assumed` and defaults true unless explicitly
+false. A real vLLM target with unknown hardware, a non-fit, or invalid topology
+fails before engine construction; a missing/incompatible quantizer runtime or
+allocation error fails during local preflight before target/judge calls. On two 24,564-MiB 4090s
+at utilization 0.85, a 70B model resolves to mandatory in-flight 4-bit
+BitsAndBytes, 39.9 GiB estimated use and tensor parallelism 2. The resolved
+configuration and hardware enter normal grid/run provenance. A model fitting
+one card normally leaves the other for an independent scoring guard. A verified
+same-base unguarded/guarded local pair is the preferred defense effect;
+unrelated models cannot identify that effect.
 
 `--api-config` and `--local-config` bind exact requested identities, controls,
 capabilities, and content provenance. Requested and provider-realized identities
@@ -338,8 +359,12 @@ strict content-addressed `ura-lane-canary/1`: `synthetic_offline` for
 `--dry-run --corpora synth`, or `live_diagnostic` for a live-attested route. The
 summary separates reserved logical calls/HTTP exposure from client-reported
 observed attempts and records only observed artifact bytes, timing records,
-decision support, and role reachability. No single-cluster cost, throughput,
-storage, safety, validity, or campaign extrapolation is permitted. Level-1,
+decision support, and role reachability. Completion artifacts also retain exact
+observed token usage, from which the console reports exact observed spend only
+when all required effective-dated prices exist. Neither is multiplied into a
+campaign estimate. Campaign caps use prepaid budgets, the conservative call
+projection, and an operator decision. No single-cluster throughput, storage,
+safety, validity, or measured campaign-total extrapolation is permitted. Level-1,
 figures, suite summary, paired/transfer analysis, and human-audit preparation
 reject canary grids. Source-native one-case canaries remain in their independent
 upstream runtimes and outside measured native imports.
@@ -356,6 +381,13 @@ exact lineage before another call. Locks are never reclaimed automatically.
 Infrastructure failure remains failure and never enters a safety denominator as
 zero.
 
+Measured Runner grids do not perform live HarmBench attacker generation or
+T3MP3ST direct/loopback planning. Those are optional out-of-band captures under
+their own caps. Measured T3MP3ST requires an exact request-bound,
+content-addressed `response_artifact`; no in-tree HarmBench generation-artifact
+replay producer is claimed. Without an explicitly prepared input through an
+implemented replay path, that HarmBench attacker lane remains pending/`N/A`.
+
 ## Analysis and human validity
 
 The independent unit is the source prompt/intent cluster. A paired binary effect
@@ -363,6 +395,21 @@ uses clusters observed under both exact conditions, gives each cluster equal
 weight, reports support/missingness, and uses a paired cluster-bootstrap
 interval. Repeated rows, turns, seeds and retries do not inflate independent
 sample size. Sparse estimates are inconclusive or undefined.
+
+Primary binary estimates use two-sided 95% intervals from 2,000 seeded
+whole-cluster bootstrap resamples. The focal minimum effect of practical
+interest is an absolute risk difference of 0.10; each focal estimand targets at
+least 100 matched clusters where the complete source contains them, and an
+interval half-width no greater than 0.10. Smaller complete sources are retained
+as precision-limited, and a wide or null-crossing interval is not equivalence.
+Joint Holm control for the predeclared RQ2/RQ4a primary contrasts at alpha 0.05
+is claimed only if the final analysis combines every primary p-value and retains
+that adjusted table. Otherwise each output reports only its actual within-output
+family and no cross-output control. Breadth and later contrasts are exploratory.
+Complete pairs are primary. Best/worst endpoint bounds accompany
+condition-specific missingness; over 10% missingness in either condition or
+over five percentage points of imbalance makes the conclusion
+sensitivity-limited.
 
 Transfer is conditional and descriptive:
 `P(B violates | A violated, harmful, transferable, identical rendered input)`.
@@ -395,6 +442,15 @@ rate are retained. A disagreement-enriched or small audit is limited-sample
 evidence; a genuinely probability-sampled component and declared design weights
 would be needed for population interpretation. Kappa is diagnostic and may be
 undefined.
+
+Before recruitment, record the applicable supervisor/institutional ethics
+determination (approval, exemption, or documented no-review-required decision),
+consent version, time/compensation terms and withdrawal process. No minor is
+recruited. Harmful-content controls include advance category warnings,
+category-level opt-out without penalty, limited continuous exposure, scheduled
+breaks and a stop/escalation contact. Returned artifacts use pseudonymous rater
+IDs, omit unnecessary personal data, and record achieved workload, withdrawals
+and adverse events. Compensation is not contingent on agreement.
 
 ## Reporting rules
 

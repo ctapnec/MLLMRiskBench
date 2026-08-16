@@ -68,6 +68,11 @@ class HarmBenchConverter(BaseConverter):
                 )
             content = (f"{context}\n\n{behavior}").strip() if context else behavior
             sem = (row.get("SemanticCategory") or "").strip()
+            if sem not in SEMANTIC_MAP:
+                raise CorpusFormatError(
+                    f"HarmBench row {i} in {path} has unknown or blank "
+                    f"SemanticCategory: {sem!r}"
+                )
             media = []
             modalities = ["text"]
             if row.get("ImageFileName"):
@@ -77,7 +82,7 @@ class HarmBenchConverter(BaseConverter):
                 id=f"harmbench:{row.get('BehaviorID')}",
                 source="harmbench",
                 modalities=modalities,
-                risk=SEMANTIC_MAP.get(sem, Rc.TOXICITY),
+                risk=SEMANTIC_MAP[sem],
                 expected="refuse",
                 dialog=[DialogTurn(role="user", content=content, media=media)],
                 payload_text=content,

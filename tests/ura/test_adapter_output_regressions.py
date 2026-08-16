@@ -293,11 +293,89 @@ def test_t3mp3st_replay_artifact_is_pinned_and_request_bound(tmp_path: Path) -> 
     source = attempts[0].params["response_source"]
     assert source["mode"] == "precomputed_response"
     assert len(source["sha256"]) == 64 and source["bytes"] > 0
+    manifest = _runner(attacker).plan_manifest([_datapoint()])
+    attacker_config = manifest.config["components"]["attacker"]
+    assert "response_artifact" not in attacker_config
+    assert attacker_config["response_artifact_identity"] == {
+        "sha256": source["sha256"],
+        "bytes": source["bytes"],
+        "format_version": "ura-t3mp3st-plan-replay/1",
+    }
+    copied_path = tmp_path / "same-plan-different-path.json"
+    copied_path.write_bytes(attacker.response_artifact.read_bytes())
+    copied_attacker = T3MP3STAttacker(
+        upstream_revision="b" * 40,
+        source_provider="local",
+        source_model="frozen-planner",
+        response_artifact=copied_path,
+    )
+    copied_manifest = _runner(copied_attacker).plan_manifest([_datapoint()])
+    assert copied_manifest.config["components"]["attacker"] == attacker_config
 
     wrapper["request"]["objective"] = "different row"
     attacker.response_artifact.write_text(json.dumps(wrapper), encoding="utf-8")
     with pytest.raises(ExternalEngineOutputError, match="does not match"):
         list(attacker.generate(_datapoint(), _budget()))
+    with pytest.raises(ExternalEngineOutputError, match="does not match"):
+        _runner(attacker).plan_manifest([_datapoint()])
+
+
+def test_measured_t3mp3st_requires_precomputed_response_before_network(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        t3mp3st_module,
+        "_post_plan",
+        lambda *_args, **_kwargs: pytest.fail("measured run reached live planning"),
+    )
+    attacker = T3MP3STAttacker(
+        upstream_revision="d" * 40,
+        source_provider="local",
+        source_model="planner",
+    )
+
+    with pytest.raises(ExternalEngineConformanceError, match="response_artifact"):
+        _runner(attacker).run([_datapoint()])
+
+
+def test_measured_harmbench_generation_fails_during_manifest_admission() -> None:
+    attacker = HarmBenchAttacker(
+        methods=["PEZ"],
+        upstream_revision="f" * 40,
+    )
+
+    with pytest.raises(ExternalEngineConformanceError, match="out of band"):
+        _runner(attacker).plan_manifest([_datapoint()])
+
+
+def test_t3mp3st_seed_provenance_does_not_claim_source_seed_control(
+    tmp_path: Path,
+) -> None:
+    attacker = T3MP3STAttacker(
+        upstream_revision="e" * 40,
+        source_provider="local",
+        source_model="planner",
+        response_artifact=tmp_path / "plan.json",
+    )
+    wrapper = {
+        "format_version": "ura-t3mp3st-plan-replay/1",
+        "upstream_revision": "e" * 40,
+        "request": attacker._request_body(_datapoint()),
+        "response": _t3_response(),
+    }
+    assert attacker.response_artifact is not None
+    attacker.response_artifact.write_text(json.dumps(wrapper), encoding="utf-8")
+
+    attempt = list(attacker.generate(_datapoint(), _budget(seed=37)))[0]
+
+    assert attempt.seed == 37
+    assert attempt.params["source_generation_seed"] is None
+    assert attempt.params["source_generation_seed_control"] == (
+        "not_exposed_by_op_general_plan_api"
+    )
+    assert attempt.params["runner_seed_role"] == (
+        "target_sampling_and_unit_identity_only"
+    )
 
 
 @pytest.mark.parametrize("mutation", ["fallback", "no_orders", "gate_mismatch"])
