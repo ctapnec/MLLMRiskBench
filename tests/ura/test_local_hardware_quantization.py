@@ -49,12 +49,57 @@ def test_nvidia_smi_inventory_and_no_gpu_fallback() -> None:
     assert local_targets.detect_gpu_hardware(missing)["available"] is False
 
 
+def test_system_hardware_inventory_is_simple_and_json_safe(monkeypatch) -> None:
+    monkeypatch.setattr(local_targets, "_cpu_model", lambda: "Example 32-Core CPU")
+    monkeypatch.setattr(local_targets, "_physical_cpu_count", lambda: 32)
+    monkeypatch.setattr(local_targets, "_total_ram_bytes", lambda: 128 * 1024 ** 3)
+    monkeypatch.setattr(local_targets.os, "cpu_count", lambda: 64)
+    monkeypatch.setattr(
+        local_targets.platform, "platform", lambda: "Linux-6.8.0-x86_64"
+    )
+
+    detected = local_targets.detect_system_hardware()
+
+    assert detected == {
+        "available": True,
+        "platform": "Linux-6.8.0-x86_64",
+        "cpu_model": "Example 32-Core CPU",
+        "logical_cpu_count": 64,
+        "physical_cpu_count": 32,
+        "total_ram_bytes": 128 * 1024 ** 3,
+        "total_ram_gib": 128.0,
+    }
+    assert json.loads(json.dumps(detected)) == detected
+
+
+def test_system_hardware_probe_fails_gracefully(monkeypatch) -> None:
+    def unavailable():
+        raise OSError("not available")
+
+    monkeypatch.setattr(local_targets, "_cpu_model", unavailable)
+    monkeypatch.setattr(local_targets, "_physical_cpu_count", unavailable)
+    monkeypatch.setattr(local_targets, "_total_ram_bytes", unavailable)
+    monkeypatch.setattr(local_targets.os, "cpu_count", unavailable)
+    monkeypatch.setattr(local_targets.platform, "platform", unavailable)
+
+    assert local_targets.detect_system_hardware() == {
+        "available": False,
+        "platform": "unknown",
+        "cpu_model": "unknown",
+        "logical_cpu_count": None,
+        "physical_cpu_count": None,
+        "total_ram_bytes": None,
+        "total_ram_gib": None,
+    }
+
+
 def test_70b_auto_fit_resolves_bitsandbytes_and_tp2() -> None:
     profile = local_targets.model_hardware_profile(
         "vllm:org/model-70B", {"gpu_memory_utilization": 0.85}, _rig_hardware()
     )
     assert profile["recommended_quantization"] == "bitsandbytes"
     assert profile["recommended_tensor_parallel_size"] == 2
+    assert profile["quantization_required_by_hardware"] is True
     assert profile["fits"] is True
     assert profile["multi_gpu_support_basis"] == "assumed"
 
@@ -78,6 +123,7 @@ def test_override_wins_and_old_gpu_blocks_automatic_bitsandbytes() -> None:
     )
     assert explicit["recommended_quantization"] == "awq"
     assert explicit["quantization_source"] == "model_override"
+    assert explicit["quantization_required_by_hardware"] is True
 
     old = local_targets.model_hardware_profile(
         "vllm:org/model-70B", {}, _rig_hardware("6.1")

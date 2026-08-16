@@ -1034,6 +1034,136 @@ def test_builder_targets_split_hosted_and_local_vllm_roster(tmp_path: Path) -> N
     app.close()
 
 
+def test_dashboard_and_builder_show_startup_system_and_gpu_hardware(
+    tmp_path: Path,
+) -> None:
+    gpu_hardware = {
+        "available": True,
+        "source": "nvidia-smi",
+        "gpu_count": 2,
+        "aggregate_vram_gib": 47.98,
+        "max_gpu_vram_gib": 23.99,
+        "gpus": [
+            {
+                "index": index,
+                "name": "NVIDIA RTX 4090",
+                "memory_total_mib": 24564,
+                "vram_gib": 23.99,
+                "compute_capability": "8.9",
+                "pci_bus_id": f"00000000:{index + 1:02X}:00.0",
+                "driver_version": "610.57.04",
+            }
+            for index in range(2)
+        ],
+    }
+    system_hardware = {
+        "available": True,
+        "platform": "Linux-6.8.0-x86_64",
+        "cpu_model": "AMD Ryzen Threadripper TEST",
+        "logical_cpu_count": 64,
+        "physical_cpu_count": 32,
+        "total_ram_bytes": 128 * 1024 ** 3,
+        "total_ram_gib": 128.0,
+    }
+    app = RigWebApp(
+        results_root=tmp_path / "runs", state_dir=tmp_path / "state",
+        gpu_hardware=gpu_hardware, system_hardware=system_hardware,
+    )
+    dashboard = app.handle("GET", "/")[2].decode("utf-8")
+    builder = app.handle("GET", "/build")[2].decode("utf-8")
+
+    assert "Rig hardware" in dashboard
+    for expected in (
+        "Linux-6.8.0-x86_64", "AMD Ryzen Threadripper TEST",
+        "32 physical / 64 logical", "128.0 GiB", "NVIDIA RTX 4090",
+        "23.99 GiB VRAM", "SM 8.9", "PCI 00000000:01:00.0",
+        "driver 610.57.04", "47.98 GiB",
+    ):
+        assert expected in dashboard
+    assert "Local hardware" in builder
+    assert "AMD Ryzen Threadripper TEST" in builder
+    assert "128.0 GiB RAM" in builder
+    assert "NVIDIA RTX 4090" in builder
+    app.close()
+
+
+def test_builder_model_filters_and_quantization_warning_are_rendered(
+    tmp_path: Path,
+) -> None:
+    repo = tmp_path / "repo"
+    rig = repo / "experiments" / "rig"
+    rig.mkdir(parents=True)
+    (rig / "api-targets.example.json").write_text(json.dumps({
+        "anthropic:claude-test": {"modalities": ["text"]},
+        "openai:gpt-test": {"modalities": ["text", "image"]},
+    }), encoding="utf-8")
+    (rig / "local-targets.example.json").write_text("{}", encoding="utf-8")
+    (rig / "vllm-roster.example.json").write_text(json.dumps({
+        "vllm_version": "0.test",
+        "models": {
+            "vllm:org/Tiny-10M": {
+                "revision": "1" * 40, "modalities": ["text"],
+                "parameter_count_b": 0.01,
+            },
+            "vllm:org/Model-70B": {
+                "revision": "2" * 40, "modalities": ["text"],
+                "parameter_count_b": 70,
+                "quantization": "bitsandbytes",
+            },
+            "vllm:org/Huge-4T": {
+                "revision": "3" * 40, "modalities": ["text"],
+                "parameter_count_b": 4000,
+            },
+            "vllm:org/Unknown": {
+                "revision": "4" * 40, "modalities": ["text"],
+            },
+        },
+    }), encoding="utf-8")
+    gpu_hardware = {
+        "available": True, "source": "nvidia-smi", "gpu_count": 2,
+        "aggregate_vram_gib": 47.98, "max_gpu_vram_gib": 23.99,
+        "gpus": [
+            {"index": index, "name": "RTX 4090", "vram_gib": 23.99,
+             "memory_total_mib": 24564, "compute_capability": "8.9"}
+            for index in range(2)
+        ],
+    }
+    app = RigWebApp(
+        results_root=tmp_path / "runs", state_dir=tmp_path / "state",
+        repo_root=repo, gpu_hardware=gpu_hardware,
+        system_hardware={"available": False, "platform": "test",
+                         "cpu_model": "test", "logical_cpu_count": None,
+                         "physical_cpu_count": None, "total_ram_bytes": None,
+                         "total_ram_gib": None},
+    )
+    page = app.handle("GET", "/build")[2].decode("utf-8")
+
+    assert "id='api-provider-filter'" in page
+    assert "<option value='all' selected>All</option>" in page
+    assert "data-provider='anthropic'" in page
+    assert "data-provider='openai'" in page
+    assert "id='local-name-filter'" in page
+    assert "id='local-param-range' type='range' min='0.01' max='3000'" in page
+    assert "id='local-param-number' type='number' min='0.01' max='3000'" in page
+    assert "id='local-compatible-filter' checked" in page
+    assert "data-name='vllm:org/Model-70B'" in page
+    assert "data-params-b='70'" in page
+    assert "data-compatible='true'" in page
+    assert "4-bit bitsandbytes required" in page
+    assert "name.indexOf(query)!==-1" in page  # literal substring, no fuzzy match
+    assert "params<=max" in page and "compatOk" in page  # combinative filters
+    assert "A presentation filter never changes a selected target" in page
+    # Filter controls have no server-side campaign fields. A submitted target
+    # remains authoritative and composes through the normal validated path.
+    assert "name='api-provider-filter'" not in page
+    _command, values, _params = app._compose_from_builder({
+        "mode": "dry_run", "corpora": "synth", "api": "openai:gpt-test",
+        "attackers": "replay", "judges": "rules", "out": "runs/filter-test",
+    })
+    assert values["--api"] == "openai:gpt-test"
+    app.close()
+
+
 def test_builder_escapes_config_sourced_modalities(tmp_path: Path) -> None:
     # A crafted modality value in an editable target registry must not break
     # out of the data-mods attribute on the builder page (stored-XSS guard),

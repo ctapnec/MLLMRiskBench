@@ -210,9 +210,10 @@ metadata.
 Local vLLM/Ollama entries are content-bound by
 `--local-config`. The two-4090 operating topology admits one local model server
 per process: a model that fits one card normally uses tensor parallelism 1, the
-other card can host the scoring guard or independent evaluation, and two-card
-tensor parallelism is a separate explicit condition rather than an automatic
-optimization.
+other card can host the scoring guard or independent evaluation, and a larger
+profile-fit model may resolve to two-card tensor parallelism with automatic
+4-bit quantization. The exact quantization and card count remain a recorded
+execution condition; the estimate never substitutes for local-engine preflight.
 
 This receipt is deliberately not a cryptographic identity or account credential.
 `execution_scope_id` is an operator assertion, so equivalence of accounts,
@@ -303,6 +304,16 @@ registry, reindexing, stopping a job, computing the recorded-usage cost
 report) run in-process against the state database and retained artifacts
 rather than as `experiments.*` commands; the reindex and usage report are
 also exposed headlessly (`rig_web --reindex` / `--usage-report`).
+
+At process startup the console snapshots platform, CPU model, physical/logical
+cores and total RAM through `psutil`/platform fallbacks, and NVIDIA card/model,
+VRAM, PCI, compute capability and driver data through `nvidia-smi`. The
+dashboard and Build tab render that one snapshot. Build target filters compose
+hosted provider selection (`All` initially) with local name substring, 10M--3T
+maximum parameter count and profile compatibility (initially on, including
+automatic 4-bit fits). Quantization-required local names are marked. These are
+client-side presentation filters only; server-side revision and hardware
+admission still controls execution.
 
 Console state persists in a stdlib-sqlite database (`console.db` under the
 state directory): jobs with their exact argv and builder parameters, the

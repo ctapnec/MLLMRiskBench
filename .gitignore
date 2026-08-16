@@ -213,3 +213,10 @@ cython_debug/
 
 # Generated experiment evidence is retained outside Git source identity.
 /runs/
+
+# Operational console state is never executable source. The maintained
+# runbook stores it under ignored runs/rig-web; keep a legacy root launch from
+# dirtying an otherwise pinned checkout as well.
+/console.db
+/console.db-shm
+/console.db-wal

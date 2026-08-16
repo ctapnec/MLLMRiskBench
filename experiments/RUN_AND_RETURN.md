@@ -146,19 +146,11 @@ test "$(git rev-parse HEAD)" = "$REF_URA"
 python3.12 -m venv .venv
 source .venv/bin/activate
 python -m pip install --upgrade pip
-python -m pip install -e ".[dev,analysis,api,guardrail]"
+python -m pip install -e ".[dev,analysis,api,guardrail,local-vllm]"
 python -m pip install "huggingface_hub[cli]"
-
-# Required only for the local vLLM lanes in section 13. Pin the version that the
-# operator has verified against this machine's CUDA, PyTorch, and driver stack.
-export VLLM_VERSION='<operator-reviewed-compatible-version>'
-python -m pip install "vllm==$VLLM_VERSION"
-
-# Required when automatic or explicit 4-bit BitsAndBytes serving is selected.
-# Use the version documented as compatible with the selected vLLM release.
-export BITSANDBYTES_VERSION='<operator-reviewed-vllm-compatible-version>'
-python -m pip install "bitsandbytes==$BITSANDBYTES_VERSION"
-python -c "import bitsandbytes, vllm; print(vllm.__version__, bitsandbytes.__version__)"
+python -c "import bitsandbytes, psutil, torch, vllm; print(vllm.__version__, bitsandbytes.__version__, psutil.__version__, torch.__version__, torch.version.cuda, torch.cuda.is_available(), torch.cuda.device_count())"
+python -m bitsandbytes
+python -m pip check
 
 # Create the one prospective local-checkout receipt before source acquisition.
 # Generated evidence lives under the ignored runs/ tree; untracked or ignored
@@ -179,6 +171,21 @@ python -m experiments.project_revision \
 
 test -e runs/thesis/RUNNOTE.md || printf '# URA thesis run note\n' > runs/thesis/RUNNOTE.md
 ```
+
+The checked-in `local-vllm` extra is the single version declaration for the
+tested local stack: `vllm==0.27.1` and `bitsandbytes==0.49.2`. The base project
+dependency declares `psutil>=7.2,<8` for the dashboard system snapshot. On the
+actual rig the checks above succeeded with Python 3.12.13, vLLM 0.27.1,
+BitsAndBytes 0.49.2, psutil 7.2.2, torch 2.13.0+cu130/CUDA 13.0, CUDA available
+with two GPUs and maximum compute capability 8.9, 24 logical CPUs, and
+134,974,398,464 bytes RAM. `pip check` was clean after the unused orphaned
+`datasets 2.14.7` package was removed. This is dependency/hardware evidence,
+not a model load or inference; no provider/model call was made. Repeat these
+checks in the final detached measured checkout and retain their output.
+The exact dashboard/filter/dependency snapshot and its local/rig results are
+retained in the sibling Thesis record
+`../../../Thesis-EN/verification/2026-08-16-rig-dashboard-filters/`; do not copy
+a mutable hash or test count into this runbook.
 
 `URA_PROJECT_REVISION_MANIFEST` and `URA_PROJECT_REVISION_SHA256` are consumed
 automatically by `run_matrix` and by `rig_check`'s forwarded non-dry request.
@@ -863,11 +870,23 @@ The current local vLLM and Ollama renderers support text and image, not audio or
 video. At CLI invocation, and once at rig-console startup, URA queries
 `nvidia-smi` for each NVIDIA card's index, model, total VRAM, PCI id, compute
 capability and driver, plus aggregate/max-card VRAM. The dashboard displays that
-inventory and the local model roster shows parameter count and basis, estimated
-versus usable VRAM, fit, resolved quantization, recommended tensor parallelism,
-and whether multi-GPU support was declared or assumed. No provider/model call is
-made by this inventory. `python -m experiments.local_targets` prints the same
-hardware/profile data for CLI inspection.
+inventory together with the platform, CPU model, physical/logical core counts
+and total RAM detected through `psutil` with harmless fallbacks. The local model
+roster shows parameter count and basis, estimated versus usable VRAM, fit,
+resolved quantization, recommended tensor parallelism, and whether multi-GPU
+support was declared or assumed. No provider/model call is made by this
+inventory. `python -m experiments.local_targets` prints the GPU/profile data for
+CLI inspection.
+
+In the Build tab, hosted targets have a provider selector whose default is
+`All`. Local vLLM targets have three combinative presentation filters: an
+immediate case-insensitive name substring, one synchronized slider/numeric
+maximum from 0.01B (10M) to 3000B (3T), and `Compatible with this rig`, selected
+by default. Compatibility includes models whose estimate fits only after
+automatic 4-bit quantization. Any model whose hardware fit requires
+quantization carries an amber warning, independent of override source. Filters
+do not select/deselect already chosen rows and do
+not replace server-side hardware/revision admission.
 
 Automatic fit is deliberately simple and conservative: after the configured
 `gpu_memory_utilization`, it budgets 2.2 GiB per billion parameters for
@@ -876,7 +895,7 @@ BitsAndBytes/AWQ/GPTQ. Full precision is selected when it fits; otherwise
 hardware auto-selection uses 4-bit `bitsandbytes` only when every detected card
 has compute capability 7.0 or newer and the dependency above is installed.
 Models that need it are shown with a mandatory-quantization note; only
-proven-fit models are selectable. A real vLLM target with absent/unknown
+profile-fit models are selectable. A real vLLM target with absent/unknown
 hardware, a known non-fit, or invalid tensor parallelism fails before engine
 construction. A missing/incompatible BitsAndBytes runtime fails during local
 preflight before target/judge calls; the setup import check above catches the
@@ -2415,6 +2434,13 @@ usage and its calculated monetary cost:
 ```bash
 python -m experiments.rig_web --results-root runs --state-dir runs/rig-web
 ```
+
+The dashboard and Build tab show the startup OS/CPU/core/RAM and complete NVIDIA
+GPU inventory. Build target filters are independent and combinative: hosted API
+provider (`All` by default), plus local vLLM name substring, 10M--3T maximum
+parameter count, and rig compatibility (on by default). Automatic quantization
+requirements are marked beside affected local model names. These filters are
+convenience only; the shared CLI/UI admission remains authoritative.
 
 The console binds only `127.0.0.1`, builds argument vectors exclusively from a
 typed allowlist (no shell), caps POST bodies, runs each job in its own process

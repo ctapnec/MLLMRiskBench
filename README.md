@@ -13,8 +13,10 @@ The development tree implements the RUN-001 prospective-request and MET-001
 exact-selection interfaces described below, with offline contract tests. The
 exact tested software revision and raw local/rig logs are recorded externally
 under `../../Thesis-EN/verification/2026-08-16-quantization-remediation/`; its
-record names the immutable Project commit and exact local/rig test results,
-including the retained rig warnings. A retained
+record names that immutable Project commit and exact local/rig results. The
+later dashboard/filter/dependency snapshot is recorded separately under
+`../../Thesis-EN/verification/2026-08-16-rig-dashboard-filters/`; that record is
+the authority for its exact commit and verification results. A retained
 26-arm receipt is historical acquisition/conversion
 traceability, not current admission or a result: the current audit found no new
 issue in 19 entries; the SIUO, VLSBench, MLLMGuard position-swapping and
@@ -59,6 +61,18 @@ env -u URA_PROJECT_REVISION_MANIFEST -u URA_PROJECT_REVISION_SHA256 \
 python -m experiments.figures --synth --out runs/_figcheck
 ```
 
+The rig's local-vLLM environment is installed from the checked-in extra rather
+than from separate version variables:
+
+```bash
+python -m pip install -e ".[dev,analysis,api,guardrail,local-vllm]"
+python -c "import bitsandbytes, psutil, torch, vllm; print(vllm.__version__, bitsandbytes.__version__, psutil.__version__, torch.__version__)"
+```
+
+`local-vllm` pins the tested `vllm==0.27.1` and `bitsandbytes==0.49.2` pair;
+`psutil>=7.2,<8` is a normal project dependency used for the startup CPU/core/RAM
+snapshot.
+
 Dry-run and synthetic output are plumbing evidence only and cannot enter the
 thesis results. This explicit offline form records
 `project_revision.mode=not_required_diagnostic_dry_run`; every non-dry Runner
@@ -85,17 +99,31 @@ transport attestation before entering a measured cell. An inaccessible,
 silently aliased or stale route is blocked with a reason; structural capability
 incompatibility remains `N/A` rather than being counted as a failed experiment.
 
-Local startup uses `nvidia-smi` to inventory GPU models and VRAM for the CLI and
-dashboard. The roster applies conservative full/FP8/4-bit fit estimates, shows
-mandatory quantization and recommended tensor parallelism, assumes multi-GPU
-support only when the model entry does not declare otherwise, and exposes only
-proven-fit models. Per-model quantization overrides the command override, which
-overrides hardware auto-selection. Invalid/unknown/non-fit hardware/topology
-fails before engine construction; dependency/runtime allocation failures fail
-during local preflight before target/judge calls. On the actual two-24,564-MiB
-rig, a 70B model is therefore
-rostered only as an in-flight 4-bit BitsAndBytes, tensor-parallel-2 candidate,
-not as an unquantized model.
+Local startup uses `psutil`/platform probes for OS, CPU, physical/logical cores
+and RAM, and `nvidia-smi` for each GPU model, VRAM, PCI id, compute capability
+and driver. The dashboard and Build tab show this snapshot. Build filters hosted
+targets by provider (`All` by default). Local vLLM filters combine an immediate
+case-insensitive name substring, a synchronized 10M--3T maximum-parameter
+slider/numeric input, and `Compatible with this rig` (on by default, including
+automatic 4-bit fits). Filtering is presentational and does not weaken runtime
+admission. Models whose hardware fit requires quantization carry an amber
+warning beside the name, regardless of the override source; per-model
+quantization overrides the command override,
+which overrides hardware auto-selection. Invalid/unknown/non-fit
+hardware/topology fails before engine construction, and dependency/runtime
+allocation failures fail during local preflight before target/judge calls. On
+the actual two-24,564-MiB rig, a 70B model is therefore rostered only as an
+in-flight 4-bit BitsAndBytes, tensor-parallel-2 candidate, not as an unquantized
+model.
+
+The dependency check on that rig used Python 3.12.13, vLLM 0.27.1,
+BitsAndBytes 0.49.2, psutil 7.2.2 and torch 2.13.0+cu130/CUDA 13.0. The
+BitsAndBytes import/self-diagnostic succeeded; CUDA exposed two GPUs with
+maximum compute capability 8.9; the system probe reported 24 logical CPUs and
+134,974,398,464 bytes of RAM; and `pip check` was clean after removing an
+unused orphaned `datasets 2.14.7` installation. This verifies the environment
+and UI/admission prerequisites, not model inference; no provider/model call was
+made.
 
 Runner 2.12 makes that prerequisite machine-checked. A bounded non-dry
 `--attestation-probe` grid is converted by `experiments.live_attestation` into a

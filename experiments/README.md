@@ -6,7 +6,10 @@ partial artifact family, source conversion, model-name assumption, native prompt
 export, or synthetic figure is not a measured thesis result.
 
 The maintained execution contract is Runner `ura-runner/2.12` with unified
-schema `1.4`; older artifacts are not mixed into the thesis run.
+schema `1.4`; older artifacts are not mixed into the thesis run. The current
+dashboard/filter/dependency snapshot's exact commit and verification results are
+kept in the sibling Thesis record
+`../../../Thesis-EN/verification/2026-08-16-rig-dashboard-filters/`.
 
 ## Experimental shape
 
@@ -25,7 +28,11 @@ product:
    A model fitting one RTX 4090 normally uses tensor parallelism 1; the second
    card may host the independent scoring guard. Two-card sharding is a separate
    declared condition. A same-base unguarded/guarded pair is the defensible
-   defense contrast when exact artifacts are available.
+   defense contrast when exact artifacts are available. The Build tab shows the
+   startup OS/CPU/core/RAM and per-GPU inventory. Hosted provider filtering and
+   local name, maximum-parameter (10M--3T), and rig-compatibility filters combine;
+   compatibility is on by default and includes estimated automatic 4-bit fits.
+   A model needing that fit is visibly marked beside its name.
 4. **Multimodal lanes.** Image, JALMBench audio, and Video-SafetyBench video are
    attempted only for exact target transports that pass bounded live
    attestation. Agent/tool sources additionally require their substantive
@@ -136,7 +143,11 @@ nonempty subset as complete.
    the clean checkout, export its path/SHA-256, install dependencies, and run
    the complete offline suite. Every non-dry preflight, probe, canary, or
    measured Runner request binds this receipt; a revision change starts a new
-   recorded cohort.
+   recorded cohort. On the local-vLLM rig, install
+   `.[dev,analysis,api,guardrail,local-vllm]`; the extra pins `vllm==0.27.1`
+   and `bitsandbytes==0.49.2`, while the base dependency supplies
+   `psutil>=7.2,<8`. Import those packages and run `pip check` before local
+   preflight.
 2. Acquire every selected release and upstream project at the recorded revision;
    copy and configure the operator-local `--source-config`, bind
    `URA_MEDIA_ROOTS`, then complete and validate the compact content-addressed

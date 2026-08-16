@@ -415,9 +415,12 @@ an executed cell:
   Capability declarations are planning inputs and require live attestation
   before measured use.
 - `--local-config` binds an exact local specification to one immutable model
-  revision or digest, declared modalities, tensor-parallel size, memory
-  utilization, and output bound. One local target is admitted per runner
-  process so server lifetime and GPU ownership stay explicit.
+  revision or digest, declared modalities, parameter count, multi-GPU support,
+  per-model quantization, tensor-parallel size, memory utilization, and output
+  bound. A per-model quantization overrides the command default, which overrides
+  hardware-auto selection. The resolved quantization, tensor-parallel size and
+  NVIDIA hardware profile enter run/grid provenance. One local target is
+  admitted per runner process so server lifetime and GPU ownership stay explicit.
 
 Unselected inventory entries are neither evidence nor requested cells. Secret
 values are environment-indirected and rejected from persisted configuration.
@@ -488,6 +491,12 @@ identity, and analysis inputs remain independently bound in runtime and
 postprocessing provenance.
 
 ## Console operational database and pricing registry (not evidence)
+
+The console's startup platform/CPU/core/RAM and NVIDIA inventory is an
+operator-visible runtime snapshot, not a scientific artifact schema. Likewise,
+the Build page's hosted-provider and local name/maximum-parameter/profile-fit
+controls only filter rendered choices; they do not change a selected target or
+replace the server-side local-config and hardware checks described above.
 
 The rig console persists its operational state in a stdlib-sqlite database
 (`console.db` under the console state directory, schema version 2): `jobs`

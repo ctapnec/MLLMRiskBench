@@ -17,6 +17,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import platform
 import re
 import subprocess
 import sys
@@ -123,6 +124,128 @@ def startup_gpu_hardware() -> dict[str, object]:
     """One hardware probe per process, returned as an isolated copy."""
 
     return json.loads(json.dumps(_cached_startup_gpu_hardware()))
+
+
+def _cpu_model() -> str | None:
+    """Best available human-readable CPU model without a network probe."""
+
+    if platform.system() == "Linux":
+        try:
+            cpuinfo = Path("/proc/cpuinfo").read_text(
+                encoding="utf-8", errors="replace"
+            )
+        except OSError:
+            cpuinfo = ""
+        for key in ("model name", "hardware", "processor"):
+            for line in cpuinfo.splitlines():
+                name, separator, value = line.partition(":")
+                if separator and name.strip().lower() == key and value.strip():
+                    return value.strip()
+    if platform.system() == "Darwin":
+        try:
+            result = subprocess.run(
+                ["sysctl", "-n", "machdep.cpu.brand_string"],
+                capture_output=True, text=True, timeout=3, check=False,
+            )
+            if result.returncode == 0 and result.stdout.strip():
+                return result.stdout.strip()
+        except (OSError, subprocess.SubprocessError):
+            pass
+    return (
+        platform.processor().strip()
+        or os.environ.get("PROCESSOR_IDENTIFIER", "").strip()
+        or platform.machine().strip()
+        or None
+    )
+
+
+def _physical_cpu_count() -> int | None:
+    """Physical cores when the cross-platform system probe is available."""
+
+    try:
+        import psutil  # noqa: PLC0415 - optional defensive fallback
+
+        count = psutil.cpu_count(logical=False)
+        if isinstance(count, int) and not isinstance(count, bool) and count > 0:
+            return count
+    except (ImportError, OSError, RuntimeError):
+        pass
+    return None
+
+
+def _total_ram_bytes() -> int | None:
+    """Installed system RAM from psutil, then the POSIX stdlib fallback."""
+
+    try:
+        import psutil  # noqa: PLC0415 - optional defensive fallback
+
+        total = psutil.virtual_memory().total
+        if isinstance(total, int) and not isinstance(total, bool) and total > 0:
+            return total
+    except (ImportError, OSError, RuntimeError):
+        pass
+    try:
+        page_size = int(os.sysconf("SC_PAGE_SIZE"))
+        page_count = int(os.sysconf("SC_PHYS_PAGES"))
+        total = page_size * page_count
+        if total > 0:
+            return total
+    except (AttributeError, OSError, TypeError, ValueError):
+        pass
+    return None
+
+
+def detect_system_hardware() -> dict[str, object]:
+    """Best-effort CPU/core/RAM inventory with JSON-safe null fallbacks."""
+
+    def safely(probe: Callable[[], object]) -> object | None:
+        try:
+            return probe()
+        except Exception:  # noqa: BLE001 - hardware discovery must not block startup
+            return None
+
+    cpu_model = safely(_cpu_model)
+    platform_name = safely(platform.platform)
+    logical_count = safely(os.cpu_count)
+    physical_count = safely(_physical_cpu_count)
+    total_bytes = safely(_total_ram_bytes)
+    logical_count = (
+        logical_count
+        if isinstance(logical_count, int) and not isinstance(logical_count, bool)
+        and logical_count > 0 else None
+    )
+    physical_count = (
+        physical_count
+        if isinstance(physical_count, int) and not isinstance(physical_count, bool)
+        and physical_count > 0 else None
+    )
+    total_bytes = (
+        total_bytes
+        if isinstance(total_bytes, int) and not isinstance(total_bytes, bool)
+        and total_bytes > 0 else None
+    )
+    model = cpu_model.strip() if isinstance(cpu_model, str) else ""
+    platform_text = platform_name.strip() if isinstance(platform_name, str) else ""
+    return {
+        "available": bool(model or logical_count or physical_count or total_bytes),
+        "platform": platform_text or "unknown",
+        "cpu_model": model or "unknown",
+        "logical_cpu_count": logical_count,
+        "physical_cpu_count": physical_count,
+        "total_ram_bytes": total_bytes,
+        "total_ram_gib": round(total_bytes / (1024 ** 3), 2) if total_bytes else None,
+    }
+
+
+@lru_cache(maxsize=1)
+def _cached_startup_system_hardware() -> dict[str, object]:
+    return detect_system_hardware()
+
+
+def startup_system_hardware() -> dict[str, object]:
+    """One system probe per process, returned as an isolated copy."""
+
+    return json.loads(json.dumps(_cached_startup_system_hardware()))
 
 
 def infer_parameter_count_b(spec: str) -> float | None:
@@ -276,6 +399,14 @@ def model_hardware_profile(
     if quantization == "bitsandbytes" and bnb_supported is False:
         fits = False
     tensor_parallel_size = min(fitting_tp) if fitting_tp else 1
+    full_precision_estimated = (
+        round(params * _VRAM_GIB_PER_BILLION["none"], 2)
+        if params is not None else None
+    )
+    full_precision_fits = (
+        any(full_precision_estimated <= capacity for capacity in capacities.values())
+        if full_precision_estimated is not None and capacities else None
+    )
     return {
         "parameter_count_b": params,
         "parameter_count_basis": parameter_count_basis,
@@ -287,6 +418,9 @@ def model_hardware_profile(
         "recommended_quantization": quantization,
         "quantization_source": source,
         "quantization_available": quantization_available,
+        "quantization_required_by_hardware": bool(
+            quantization != "none" and fits is True and full_precision_fits is False
+        ),
         "compatibility_note": compatibility_note,
         "fits": fits,
     }

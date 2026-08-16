@@ -1308,6 +1308,29 @@ button.ghost { background:transparent; color:var(--accent);
 .check > span { flex:1 1 auto; }
 .checkgrid { display:grid; grid-template-columns:repeat(auto-fill,
   minmax(240px,1fr)); gap:.15rem .8rem; align-items:start; }
+.targetfilters { display:grid; grid-template-columns:repeat(auto-fit,
+  minmax(210px,1fr)); gap:.65rem 1rem; align-items:end; margin:.55rem 0 .8rem;
+  padding:.65rem .75rem; background:var(--soft); border:1px solid var(--line);
+  border-radius:10px; }
+.targetfilters .fieldlabel { margin:0 0 .25rem; }
+.targetfilters input[type=range] { width:100%; accent-color:var(--accent); }
+.paramfilter { display:grid; grid-template-columns:minmax(120px,1fr) 8rem;
+  gap:.55rem; align-items:center; }
+.quant-warning { margin-left:.35rem; white-space:nowrap; vertical-align:middle; }
+.filter-empty { display:none; color:var(--muted); font-size:.84rem;
+  margin:.35rem 0; }
+.hardware-grid { display:grid; grid-template-columns:minmax(220px,.8fr) 2fr;
+  gap:1rem; align-items:start; }
+.hardware-grid h3 { margin:.15rem 0 .45rem; }
+.hardware-spec { display:grid; grid-template-columns:auto 1fr; gap:.25rem .65rem;
+  margin:0; font-size:.86rem; }
+.hardware-spec dt { color:var(--muted); }
+.hardware-spec dd { margin:0; font-weight:600; overflow-wrap:anywhere; }
+.hardware-list { list-style:none; margin:0; padding:0; display:grid; gap:.45rem; }
+.hardware-list li { padding:.5rem .6rem; background:var(--soft);
+  border:1px solid var(--line); border-radius:8px; }
+.hardware-list .fieldhint { display:block; margin-top:.12rem; }
+@media (max-width:760px) { .hardware-grid { grid-template-columns:1fr; } }
 .modgroup { margin:.6rem 0; }
 .modgroup h3 { font-size:.82rem; text-transform:uppercase;
   letter-spacing:.05em; color:var(--muted); margin:.5rem 0 .2rem; }
@@ -1415,6 +1438,38 @@ out.push(el.getAttribute(attr));}});return out;}
 function scopeSet(){var s={};form.querySelectorAll('.modbox').forEach(
 function(m){if(m.checked){s[m.getAttribute('data-mod')]=1;}});return s;}
 function intersects(list,set){return list.some(function(x){return set[x];});}
+function setFilterCount(kind,count){
+var out=document.getElementById(kind+'-filter-count');
+if(out){out.textContent=count+' shown';}
+var empty=document.getElementById(kind+'-filter-empty');
+if(empty){empty.style.display=count?'none':'block';}}
+function applyTargetFilters(sc){
+var provider=(document.getElementById('api-provider-filter')||{}).value||'all';
+var query=((document.getElementById('local-name-filter')||{}).value||'')
+.trim().toLowerCase();
+var max=parseFloat((document.getElementById('local-param-number')||{}).value);
+if(!Number.isFinite(max)){max=3000;}
+var compatible=(document.getElementById('local-compatible-filter')||{}).checked;
+var counts={api:0,local:0};
+form.querySelectorAll('.modelrow').forEach(function(row){
+var mods=(row.getAttribute('data-mods')||'').split(',').filter(Boolean);
+var scopeOk=intersects(mods,sc);var kind=row.getAttribute('data-kind')||'';
+var filterOk=true;
+if(kind==='api'){
+filterOk=provider==='all'||row.getAttribute('data-provider')===provider;
+}else if(kind==='local'){
+var name=(row.getAttribute('data-name')||'').toLowerCase();
+var raw=row.getAttribute('data-params-b')||'';var params=parseFloat(raw);
+var paramsOk=Number.isFinite(params)?params<=max:max>=3000;
+var compatOk=!compatible||row.getAttribute('data-compatible')==='true';
+filterOk=name.indexOf(query)!==-1&&paramsOk&&compatOk;}
+var visible=scopeOk&&filterOk;row.style.display=visible?'':'none';
+// A presentation filter never changes a selected target. Modality scope keeps
+// its established behavior because an out-of-scope target cannot serve a lane.
+if(!scopeOk){var cb=row.querySelector('.modelbox');if(cb){cb.checked=false;}}
+if(visible&&Object.prototype.hasOwnProperty.call(counts,kind)){counts[kind]++;}
+});
+setFilterCount('api',counts.api);setFilterCount('local',counts.local);}
 function applyScope(){var sc=scopeSet();
 // arms: keep an arm only if it shares a modality with the scope
 form.querySelectorAll('.armbox').forEach(function(b){
@@ -1424,12 +1479,13 @@ if(lab){lab.style.display=ok?'':'none';}if(!ok){b.checked=false;}});
 form.querySelectorAll('.modgroup').forEach(function(g){
 var any=Array.prototype.some.call(g.querySelectorAll('.check'),
 function(l){return l.style.display!=='none';});g.style.display=any?'':'none';});
-// target models and frameworks: hide any that cannot serve a scoped modality
-[['.modelrow','.modelbox'],['.fwrow','.fwbox']].forEach(function(pair){
-form.querySelectorAll(pair[0]).forEach(function(row){
+// Frameworks must share a selected modality. Target rows combine that scope
+// with their independent provider/name/size/compatibility presentation filters.
+form.querySelectorAll('.fwrow').forEach(function(row){
 var mods=(row.getAttribute('data-mods')||'').split(',').filter(Boolean);
 var ok=intersects(mods,sc);row.style.display=ok?'':'none';
-if(!ok){var cb=row.querySelector(pair[1]);if(cb){cb.checked=false;}}});});}
+if(!ok){var cb=row.querySelector('.fwbox');if(cb){cb.checked=false;}}});
+applyTargetFilters(sc);}
 function refresh(){applyScope();
 // live preview
 var mode=(form.querySelector('input[name=mode]:checked')||{}).value||'measured';
@@ -1448,6 +1504,21 @@ var prev=document.getElementById('buildpreview');
 if(prev){prev.textContent=parts.join(' ');}}
 form.addEventListener('change',refresh);
 form.addEventListener('input',refresh);
+// The two maximum-parameter controls are one filter, expressed in billions.
+var paramRange=document.getElementById('local-param-range');
+var paramNumber=document.getElementById('local-param-number');
+function boundedParam(value){var n=parseFloat(value);
+if(!Number.isFinite(n)){return 3000;}
+return Math.min(3000,Math.max(.01,Math.round(n*100)/100));}
+if(paramRange&&paramNumber){
+paramRange.addEventListener('input',function(){paramNumber.value=this.value;refresh();});
+paramNumber.addEventListener('input',function(){
+if(this.value===''){paramRange.value='3000';refresh();return;}
+var n=boundedParam(this.value);this.value=String(n);paramRange.value=String(n);
+refresh();});
+paramNumber.addEventListener('blur',function(){
+var n=boundedParam(this.value);this.value=String(n);paramRange.value=String(n);
+refresh();});}
 // per-group All / None bulk selection over the group's visible arms
 form.querySelectorAll('.linkbtn').forEach(function(btn){
 btn.addEventListener('click',function(){
@@ -3399,13 +3470,20 @@ class RigWebApp:
         job_id_factory: Callable[[], str] | None = None,
         env_file: Path | None = None,
         gpu_hardware: Mapping[str, Any] | None = None,
+        system_hardware: Mapping[str, Any] | None = None,
     ) -> None:
         self.results_root = results_root
         self.state_dir = state_dir
         self.repo_root = repo_root
-        from experiments.local_targets import startup_gpu_hardware  # noqa: PLC0415
+        from experiments.local_targets import (  # noqa: PLC0415
+            startup_gpu_hardware, startup_system_hardware,
+        )
         self.gpu_hardware = json.loads(json.dumps(
             gpu_hardware if gpu_hardware is not None else startup_gpu_hardware()
+        ))
+        self.system_hardware = json.loads(json.dumps(
+            system_hardware
+            if system_hardware is not None else startup_system_hardware()
         ))
         # A first launch commonly points at a results directory that has not
         # been populated yet.  Make that valid empty state concrete so the
@@ -4851,11 +4929,57 @@ class RigWebApp:
                 f"{self.gpu_hardware.get('aggregate_vram_gib', 0)} GiB aggregate VRAM"
                 + (f" — {names}" if names else "")
             )
+        system = self.system_hardware
+
+        def shown(value: object, suffix: str = "") -> str:
+            if value is None or value == "":
+                return "unknown"
+            return html.escape(str(value)) + suffix
+
+        physical = system.get("physical_cpu_count")
+        logical = system.get("logical_cpu_count")
+        cores = (
+            f"{physical if physical is not None else '?'} physical / "
+            f"{logical if logical is not None else '?'} logical"
+        )
+        gpu_rows = []
+        for gpu in gpus:
+            details = [f"{shown(gpu.get('vram_gib'))} GiB VRAM"]
+            if gpu.get("compute_capability"):
+                details.append("SM " + shown(gpu["compute_capability"]))
+            if gpu.get("pci_bus_id"):
+                details.append("PCI " + shown(gpu["pci_bus_id"]))
+            if gpu.get("driver_version"):
+                details.append("driver " + shown(gpu["driver_version"]))
+            gpu_rows.append(
+                "<li><strong>GPU " + shown(gpu.get("index", "?")) + " — "
+                + shown(gpu.get("name", "unknown")) + "</strong>"
+                "<span class='fieldhint'>" + " &middot; ".join(details)
+                + "</span></li>"
+            )
+        gpu_content = (
+            "<ul class='hardware-list'>" + "".join(gpu_rows) + "</ul>"
+            if self.gpu_hardware.get("available") and gpu_rows else
+            "<div class='notice amber'>No NVIDIA GPU detected; local model "
+            "fit is unknown.</div>"
+        )
         return (
-            "<div class='card'><h2>Local GPU hardware</h2><p>"
-            + html.escape(summary)
-            + "</p><p class='note'>Detected once at console startup with "
-              "<code>nvidia-smi</code>; no model/provider call is made.</p></div>"
+            "<div class='card' id='rig-hardware' aria-label='"
+            + html.escape(summary, quote=True) + "'><h2>Rig hardware</h2>"
+            "<div class='hardware-grid'><section><h3>System</h3>"
+            "<dl class='hardware-spec'><dt>OS</dt><dd>"
+            + shown(system.get("platform")) + "</dd><dt>CPU</dt><dd>"
+            + shown(system.get("cpu_model")) + "</dd><dt>Cores</dt><dd>"
+            + html.escape(cores) + "</dd><dt>RAM</dt><dd>"
+            + shown(system.get("total_ram_gib"), " GiB")
+            + "</dd></dl></section><section><h3>GPUs "
+            "<span class='badge blue'>" + shown(
+                self.gpu_hardware.get("gpu_count", len(gpus))
+            ) + "</span></h3>" + gpu_content + "</section></div>"
+            "<p class='note'>Detected once at console startup; no model or "
+            "provider call is made. Aggregate VRAM: <strong>"
+            + shown(self.gpu_hardware.get("aggregate_vram_gib"), " GiB")
+            + "</strong>.</p></div>"
         )
 
     def _load_registry(self, name: str, example: str) -> dict[str, Any]:
@@ -4930,13 +5054,15 @@ class RigWebApp:
         for key, entry in self._load_registry(
             "local-targets.json", "rig/local-targets.example.json"
         ).items():
-            from experiments.local_targets import model_hardware_profile  # noqa: PLC0415
-            if model_hardware_profile(key, entry, self.gpu_hardware)["fits"] is False:
-                continue
             local_seen.add(key)
             options.append((key, key, self._entry_modalities(entry), "local"))
         try:
-            roster = roster_models(self.repo_root, self.gpu_hardware)
+            # Keep the full roster in the document. The checked-by-default
+            # compatibility filter hides non-fitting rows, and disabling them
+            # keeps execution admission honest when the filter is opened.
+            roster = roster_models(
+                self.repo_root, self.gpu_hardware, include_unfit=True,
+            )
         except Exception:  # noqa: BLE001 - roster is a convenience, never fatal
             roster = []
         for model in roster:
@@ -6003,12 +6129,24 @@ class RigWebApp:
         def _target_box(value: str, label: str, mods: tuple[str, ...], kind: str) -> str:
             detail = ""
             disabled = ""
+            row_attrs = ""
+            name_html = html.escape(label)
+            if kind == "api":
+                provider = value.partition(":")[0].strip().lower() or "unknown"
+                row_attrs = f" data-provider='{html.escape(provider)}'"
             if kind == "local":
                 profile = local_profiles.get(value, {})
                 entry = local_catalog.get(value, {})
                 params = profile.get("parameter_count_b")
                 params_text = f"{float(params):g}B params" if params is not None else "params unknown"
                 fit = profile.get("fits")
+                fit_data = "true" if fit is True else "false" if fit is False else "unknown"
+                params_data = f"{float(params):g}" if params is not None else ""
+                row_attrs = (
+                    f" data-name='{html.escape(value)}'"
+                    f" data-params-b='{html.escape(params_data)}'"
+                    f" data-compatible='{fit_data}'"
+                )
                 fit_text = "fits" if fit is True else "does not fit" if fit is False else "fit unknown"
                 basis = profile.get("multi_gpu_support_basis", "assumed")
                 parameter_basis = profile.get("parameter_count_basis", "unknown")
@@ -6028,6 +6166,17 @@ class RigWebApp:
                     and profile.get("quantization_source") == "hardware_auto"
                     else f"quantization {recommended}"
                 )
+                if profile.get("quantization_required_by_hardware"):
+                    expected = (
+                        f"4-bit {recommended} required"
+                        if recommended in {"bitsandbytes", "awq", "gptq"}
+                        else f"{recommended} required"
+                    )
+                    name_html += (
+                        " <span class='badge amber quant-warning' "
+                        "title='Expected quantization required for this rig'>"
+                        + html.escape(expected) + "</span>"
+                    )
                 detail = (
                     "<span class='fieldhint'>" + html.escape(
                         f"{params_text} ({parameter_basis}) · "
@@ -6057,11 +6206,11 @@ class RigWebApp:
             return (
                 "<label class='check modelrow' "
                 f"data-mods='{html.escape(','.join(mods))}' "
-                f"data-kind='{html.escape(kind)}'>"
+                f"data-kind='{html.escape(kind)}'{row_attrs}>"
                 f"<input type='checkbox' class='modelbox' "
                 f"data-kind='{html.escape(kind)}' "
                 f"data-model='{html.escape(value)}'{disabled}>"
-                f"<span>{_arm_head(html.escape(label), mods)}{detail}</span></label>"
+                f"<span>{_arm_head(name_html, mods)}{detail}</span></label>"
             )
 
         options = self._model_options()
@@ -6073,12 +6222,48 @@ class RigWebApp:
             _target_box(v, lbl, mods, kind)
             for v, lbl, mods, kind in options if kind == "local"
         )
+        providers = sorted({
+            value.partition(":")[0].strip().lower() or "unknown"
+            for value, _label, _mods, kind in options if kind == "api"
+        })
+        provider_options = "<option value='all' selected>All</option>" + "".join(
+            f"<option value='{html.escape(provider)}'>"
+            f"{html.escape(provider)}</option>" for provider in providers
+        )
         model_boxes = (
-            "<h3>Hosted API</h3><div class='checkgrid'>"
+            "<div class='grouphead'><h3>Hosted API</h3>"
+            "<span class='fieldhint' id='api-filter-count'></span></div>"
+            "<div class='targetfilters'><div class='fieldcell'>"
+            "<label class='fieldlabel' for='api-provider-filter'>Provider</label>"
+            "<select id='api-provider-filter' aria-label='Hosted API provider'>"
+            + provider_options + "</select></div></div><div class='checkgrid' "
+            "id='api-target-list'>"
             + (api_boxes or "<p class='note'>No hosted targets configured.</p>")
-            + "</div><h3>Local vLLM (on-rig GPUs)</h3><div class='checkgrid'>"
+            + "</div><p class='filter-empty' id='api-filter-empty'>No hosted "
+            "models match the current provider and modality filters.</p>"
+            "<div class='grouphead'><h3>Local vLLM (on-rig GPUs)</h3>"
+            "<span class='fieldhint' id='local-filter-count'></span></div>"
+            "<div class='targetfilters'><div class='fieldcell'>"
+            "<label class='fieldlabel' for='local-name-filter'>Name contains</label>"
+            "<input class='wide' id='local-name-filter' type='search' "
+            "autocomplete='off' placeholder='Type to filter model names'>"
+            "</div><div class='fieldcell'><label class='fieldlabel' "
+            "for='local-param-range'>Maximum parameters "
+            "<span class='fieldhint'>(billions; 0.01B = 10M, 3000B = 3T)"
+            "</span></label><div class='paramfilter'>"
+            "<input id='local-param-range' type='range' min='0.01' max='3000' "
+            "step='0.01' value='3000' aria-label='Maximum parameters slider'>"
+            "<input class='wide' id='local-param-number' type='number' "
+            "min='0.01' max='3000' step='0.01' value='3000' "
+            "aria-label='Maximum parameters in billions'></div></div>"
+            "<label class='check'><input type='checkbox' "
+            "id='local-compatible-filter' checked><span><strong>Compatible "
+            "with this rig</strong><span class='fieldhint'>includes automatic "
+            "4-bit fit</span></span></label></div>"
+            "<div class='checkgrid' id='local-target-list'>"
             + (local_boxes or "<p class='note'>No local targets configured.</p>")
-            + "</div>"
+            + "</div><p class='filter-empty' id='local-filter-empty'>No local "
+            "models match all active filters.</p>"
             + "<p class='note'>Hosted rosters are edited on the "
             "<a href='/config?file=api-targets'>api-targets</a> and "
             "<a href='/config?file=local-targets'>local-targets</a> Config "
@@ -6103,8 +6288,18 @@ class RigWebApp:
             for gpu in self.gpu_hardware.get("gpus", [])
             if isinstance(gpu, Mapping)
         )
+        cpu_name = str(self.system_hardware.get("cpu_model") or "unknown")
+        ram_gib = self.system_hardware.get("total_ram_gib")
+        ram_text = f"{ram_gib} GiB RAM" if ram_gib is not None else "unknown RAM"
+        system_summary = (
+            "<p><strong>" + html.escape(cpu_name) + "</strong> &middot; "
+            + html.escape(ram_text) + " &middot; "
+            + html.escape(str(self.system_hardware.get("platform") or "unknown"))
+            + "</p>"
+        )
         hardware_card = (
             "<div class='card'><h2>Local hardware</h2>"
+            + system_summary
             + (
                 "<p><strong>" + html.escape(str(self.gpu_hardware.get("gpu_count", 0)))
                 + " NVIDIA GPU(s), "
