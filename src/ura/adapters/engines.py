@@ -31,6 +31,18 @@ from .spikee import SpikeeAttacker
 from .t3mp3st import T3MP3STAttacker
 
 
+#: The canonical, ordered list of every registered attacker name - the single
+#: source of truth ``get_attacker`` resolves against and the console builder
+#: derives its attacker inventory from (so the two never drift).  ``replay`` and
+#: ``crescendo`` are the pure-python adapters; the rest are external engines.
+ATTACKER_NAMES: tuple[str, ...] = (
+    "replay", "crescendo",
+    "pyrit", "garak", "deepteam", "promptfoo", "t3mp3st", "petri", "fuzzyai",
+    "nanogcg", "autodan", "agentdojo", "giskard", "easyjailbreak", "h4rm3l",
+    "spikee", "ideator", "purplellama", "asb", "harmbench",
+)
+
+
 def get_attacker(name: str, **config: object) -> BaseAttacker:
     """Resolve an attacker adapter by name.
 
@@ -75,6 +87,7 @@ def get_attacker(name: str, **config: object) -> BaseAttacker:
 
 
 __all__ = [
+    "ATTACKER_NAMES",
     "PyRITAttacker",
     "GarakAttacker",
     "DeepTeamAttacker",

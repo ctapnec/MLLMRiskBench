@@ -222,33 +222,64 @@ _PROVIDER_BUDGETS: tuple[tuple[str, str, str], ...] = (
 #: BOTH modalities - a text+image arm is selected by the text chip and the
 #: image chip alike (no arm is forced into a single bucket).
 _MODALITIES = ("text", "image", "audio", "video")
-_ARM_MODALITIES: tuple[tuple[str, tuple[str, ...]], ...] = (
-    ("strongreject_official", ("text",)),
-    ("advbench_harmful", ("text",)),
-    ("jailbreakbench_harmful", ("text",)),
-    ("jailbreakbench_benign", ("text",)),
-    ("harmbench_text", ("text",)),
-    ("cyberseceval_mitre", ("text",)),
-    ("cyberseceval_interpreter", ("text",)),
-    ("cyberseceval_insecure_coding", ("text",)),
-    ("rjudge_release", ("text",)),
-    ("mmsafety_official", ("text", "image")),
-    ("jailbreakv_full", ("text", "image")),
-    ("harmbench_multimodal", ("text", "image")),
-    ("vlsbench_release", ("text", "image")),
-    ("mossbench_official", ("text", "image")),
-    ("siuo_release", ("text", "image")),
-    ("figstep_full", ("text", "image")),
-    ("mllmguard_privacy", ("text", "image")),
-    ("mllmguard_bias", ("text", "image")),
-    ("mllmguard_toxicity", ("text", "image")),
-    ("mllmguard_legality", ("text", "image")),
-    ("mllmguard_position_swapping", ("text", "image")),
-    ("mllmguard_noise_injection", ("text", "image")),
-    ("gptgeochat_release", ("text", "image")),
-    ("jalmbench_audio", ("text", "audio")),
-    ("videosafetybench_benign_query", ("text", "video")),
-    ("videosafetybench_harmful_query", ("text", "video")),
+#: The complete maintained source-arm catalogue: (arm id, physical modalities,
+#: disabled reason).  All 39 registry arms are listed - an empty reason is a
+#: common-runner lane; a non-empty reason is an agentic / indirect-prompt-
+#: injection arm that runs on the native tool-use path, NOT the common runner,
+#: and is shown disabled with that reason rather than pretended to be a common
+#: lane.  ``_ARM_MODALITIES`` (common-runner arms only) is derived below for the
+#: modality-compatibility checks.
+_AGENTIC_REASON = (
+    "agentic / indirect prompt-injection arm - runs on the native tool-use "
+    "path, not the common runner; select it through its native converter/runner"
+)
+_ARM_CATALOG: tuple[tuple[str, tuple[str, ...], str], ...] = (
+    ("strongreject_official", ("text",), ""),
+    ("advbench_harmful", ("text",), ""),
+    ("jailbreakbench_harmful", ("text",), ""),
+    ("jailbreakbench_benign", ("text",), ""),
+    ("harmbench_text", ("text",), ""),
+    ("cyberseceval_mitre", ("text",), ""),
+    ("cyberseceval_interpreter", ("text",), ""),
+    ("cyberseceval_insecure_coding", ("text",), ""),
+    ("cyberseceval_prompt_injection", ("text",), ""),
+    ("mmsafety_official", ("text", "image"), ""),
+    ("jailbreakv_full", ("text", "image"), ""),
+    ("harmbench_multimodal", ("text", "image"), ""),
+    ("vlsbench_release", ("text", "image"), ""),
+    ("mossbench_official", ("text", "image"), ""),
+    ("siuo_release", ("text", "image"), ""),
+    ("figstep_full", ("text", "image"), ""),
+    ("mllmguard_privacy", ("text", "image"), ""),
+    ("mllmguard_bias", ("text", "image"), ""),
+    ("mllmguard_toxicity", ("text", "image"), ""),
+    ("mllmguard_legality", ("text", "image"), ""),
+    ("mllmguard_position_swapping", ("text", "image"), ""),
+    ("mllmguard_noise_injection", ("text", "image"), ""),
+    ("mllmguard_hallucination", ("text", "image"), ""),
+    ("gptgeochat_release", ("text", "image"), ""),
+    ("jalmbench_audio", ("text", "audio"), ""),
+    ("videosafetybench_benign_query", ("text", "video"), ""),
+    ("videosafetybench_harmful_query", ("text", "video"), ""),
+    ("agentharm_benign", ("text",), _AGENTIC_REASON),
+    ("agentharm_harmful", ("text",), _AGENTIC_REASON),
+    ("bipia_test_abstract", ("text",), _AGENTIC_REASON),
+    ("bipia_test_code", ("text",), _AGENTIC_REASON),
+    ("bipia_test_email", ("text",), _AGENTIC_REASON),
+    ("bipia_test_qa", ("text",), _AGENTIC_REASON),
+    ("bipia_test_table", ("text",), _AGENTIC_REASON),
+    ("injecagent_direct_harm_base", ("text",), _AGENTIC_REASON),
+    ("injecagent_direct_harm_enhanced", ("text",), _AGENTIC_REASON),
+    ("injecagent_data_stealing_base", ("text",), _AGENTIC_REASON),
+    ("injecagent_data_stealing_enhanced", ("text",), _AGENTIC_REASON),
+    ("rjudge_release", ("text",), _AGENTIC_REASON),
+)
+#: Common-runner arms only (agentic arms excluded), for modality checks.
+_ARM_MODALITIES: tuple[tuple[str, tuple[str, ...]], ...] = tuple(
+    (arm, mods) for arm, mods, reason in _ARM_CATALOG if not reason
+)
+_AGENTIC_ARMS: frozenset[str] = frozenset(
+    arm for arm, _mods, reason in _ARM_CATALOG if reason
 )
 
 #: Attack frameworks (engines) offered in the builder, mirroring the harness
@@ -256,17 +287,47 @@ _ARM_MODALITIES: tuple[tuple[str, tuple[str, ...]], ...] = (
 #: replay/crescendo are modality-agnostic (they carry whatever the corpus
 #: datapoint holds); the external text-jailbreak adapters are text-first.
 _ALL_MODALITIES = ("text", "image", "audio", "video")
-_FRAMEWORKS: tuple[tuple[str, str, tuple[str, ...]], ...] = (
-    ("replay", "send the corpus prompt as-is (single turn)", _ALL_MODALITIES),
-    ("crescendo", "escalate the request over multiple turns", _ALL_MODALITIES),
-    ("pyrit", "Microsoft PyRIT adapter", ("text",)),
-    ("garak", "NVIDIA garak probes", ("text",)),
-    ("deepteam", "DeepTeam red-team adapter", ("text",)),
-    ("promptfoo", "Promptfoo adapter", ("text",)),
-    ("petri", "Petri adapter", ("text",)),
-    ("fuzzyai", "FuzzyAI adapter", ("text",)),
-    ("autodan", "AutoDAN-Turbo adapter", ("text",)),
-    ("harmbench", "HarmBench attack adapter", ("text", "image")),
+#: The 20 registered attacker names.  This mirrors the single source of truth
+#: ``ura.adapters.engines.ATTACKER_NAMES``; importing that module eagerly would
+#: pull in every heavy engine dependency just to list names, so the console
+#: keeps a light mirror and a parity test asserts the two never drift.
+_ATTACKER_NAMES: tuple[str, ...] = (
+    "replay", "crescendo",
+    "pyrit", "garak", "deepteam", "promptfoo", "t3mp3st", "petri", "fuzzyai",
+    "nanogcg", "autodan", "agentdojo", "giskard", "easyjailbreak", "h4rm3l",
+    "spikee", "ideator", "purplellama", "asb", "harmbench",
+)
+#: Every registered attacker (mirrors ura.adapters.engines.ATTACKER_NAMES, the
+#: shared registry - a parity test asserts the two match, so the builder can
+#: never silently omit an engine).  replay/crescendo are modality-agnostic (they
+#: carry whatever the corpus datapoint holds); the external adapters are
+#: text-first except harmbench (text+image).
+_FRAMEWORK_DESCRIPTIONS: dict[str, tuple[str, tuple[str, ...]]] = {
+    "replay": ("send the corpus prompt as-is (single turn)", _ALL_MODALITIES),
+    "crescendo": ("escalate the request over multiple turns", _ALL_MODALITIES),
+    "pyrit": ("Microsoft PyRIT adapter", ("text",)),
+    "garak": ("NVIDIA garak probes", ("text",)),
+    "deepteam": ("DeepTeam red-team adapter", ("text",)),
+    "promptfoo": ("Promptfoo adapter", ("text",)),
+    "t3mp3st": ("Tempest multi-turn adapter", ("text",)),
+    "petri": ("Petri adapter", ("text",)),
+    "fuzzyai": ("FuzzyAI adapter", ("text",)),
+    "nanogcg": ("nanoGCG gradient adapter", ("text",)),
+    "autodan": ("AutoDAN-Turbo adapter", ("text",)),
+    "agentdojo": ("AgentDojo adapter", ("text",)),
+    "giskard": ("Giskard scan adapter", ("text",)),
+    "easyjailbreak": ("EasyJailbreak adapter", ("text",)),
+    "h4rm3l": ("h4rm3l program-synthesis adapter", ("text",)),
+    "spikee": ("Spikee adapter", ("text",)),
+    "ideator": ("IDEATOR adapter", ("text",)),
+    "purplellama": ("PurpleLlama adapter", ("text",)),
+    "asb": ("Agent Security Bench adapter", ("text",)),
+    "harmbench": ("HarmBench attack adapter", ("text", "image")),
+}
+_FRAMEWORKS: tuple[tuple[str, str, tuple[str, ...]], ...] = tuple(
+    (name, _FRAMEWORK_DESCRIPTIONS.get(name, ("adapter", ("text",)))[0],
+     _FRAMEWORK_DESCRIPTIONS.get(name, ("adapter", ("text",)))[1])
+    for name in _ATTACKER_NAMES
 )
 
 #: Builder execution modes -> the run_matrix flag they set (empty = measured).
@@ -327,16 +388,12 @@ _EDITABLE_CONFIGS: dict[str, tuple[str, str, str]] = {
 }
 
 
-#: Static suggestion lists. The attacker names mirror the harness registry in
-#: src/ura/adapters/engines.py (replay/crescendo plus the engine adapters).
+#: Static suggestion lists.  The attacker suggestions are derived from the
+#: shared registry mirror ``_ATTACKER_NAMES`` (all 20), so a new engine appears
+#: automatically and none is silently omitted.
 _SUGGEST_STATIC: dict[str, tuple[str, ...]] = {
-    "attackers": (
-        "replay", "crescendo", "replay,crescendo", "pyrit", "garak",
-        "deepteam", "promptfoo", "t3mp3st", "petri", "fuzzyai", "nanogcg",
-        "autodan", "agentdojo", "giskard", "easyjailbreak", "h4rm3l",
-        "spikee", "ideator", "purplellama", "asb", "harmbench",
-    ),
-    "judges": ("rules,llm", "rules", "llm"),
+    "attackers": ("replay,crescendo", *_ATTACKER_NAMES),
+    "judges": ("rules,llm", "rules", "llm", "rules,guardrail", "guardrail"),
     "group": ("model", "source", "model,source"),
     "seeds": ("0", "0,1", "0,1,2"),
 }
@@ -635,6 +692,7 @@ def _commands() -> dict[str, Command]:
             (
                 CommandParam("--refresh", "flag"),
                 CommandParam("--vllm-version", "str"),
+                CommandParam("--repo-root", "str"),
             ),
         ),
         Command(
@@ -3401,6 +3459,7 @@ class RigWebApp:
             if method == "POST" and path == "/build":
                 data = dict(form or {})
                 confirmed = data.pop("confirm", "") == "yes"
+                preflight_only = data.pop("preflight_only", "") == "yes"
                 command, values, params = self._compose_from_builder(data)
                 errors = self._validate_builder(params)
                 if errors:
@@ -3409,6 +3468,20 @@ class RigWebApp:
                     return 200, "text/html; charset=utf-8", self._build_page(
                         prefill=params, errors=errors,
                     )
+                if preflight_only:
+                    # No-call projection: run the SAME grid with
+                    # --preflight-only (the CLI makes NO generation calls); it
+                    # writes the lane-projection the preview then reads.
+                    proj_values = {
+                        flag: value for flag, value in values.items()
+                        if flag not in ("--dry-run", "--diagnostic-canary",
+                                        "--attestation-probe")
+                    }
+                    proj_values["--preflight-only"] = "on"
+                    job = self.start_job(
+                        command, proj_values, builder_params=params,
+                    )
+                    return 303, f"/jobs/{job.job_id}", b""
                 mode = params.get("mode", "measured")
                 spends_money = not (
                     mode == "dry_run"
@@ -4242,13 +4315,18 @@ class RigWebApp:
         from experiments.local_targets import roster_models  # noqa: PLC0415
 
         options: list[tuple[str, str, tuple[str, ...], str]] = []
+        api_seen: set[str] = set()
         for env_name, label in (("FABLE", "Fable (focal)"), ("SOL", "Sol (focal)")):
             spec = os.environ.get(env_name, "").strip()
-            if spec:
+            if spec and spec not in api_seen:
+                api_seen.add(spec)
                 options.append((spec, label, ("text", "image"), "api"))
         for key, entry in self._load_registry(
             "api-targets.json", "rig/api-targets.example.json"
         ).items():
+            if key in api_seen:  # a focal spec already listed: do not duplicate
+                continue
+            api_seen.add(key)
             options.append((key, key, self._entry_modalities(entry), "api"))
         local_seen: set[str] = set()
         for key, entry in self._load_registry(
@@ -4328,7 +4406,30 @@ class RigWebApp:
             guard = params.get("defense_guard", "")
             if guard:
                 values["--defense-guard"] = guard
+            # The DEFENSE guardrail is a distinct model/revision/device from the
+            # SCORING guardrail (below) by construction; wire its fields only
+            # when the defense guard is a model-backed guardrail.
+            if guard == "guardrail":
+                for src, flag in (
+                    ("defense_guardrail_model", "--defense-guardrail-model"),
+                    ("defense_guardrail_revision", "--defense-guardrail-revision"),
+                    ("defense_guardrail_device", "--defense-guardrail-device"),
+                ):
+                    if params.get(src):
+                        values[flag] = params[src]
         judges = values.get("--judges", "")
+        # The SCORING guardrail is the judge cascade's `guardrail` grader - a
+        # separate identity from the defense guard so a tested guard never grades
+        # its own output.  Wire its model/revision/device when it is in the
+        # cascade.
+        if "guardrail" in judges.split(","):
+            for src, flag in (
+                ("guardrail_model", "--guardrail-model"),
+                ("guardrail_revision", "--guardrail-revision"),
+                ("guardrail_device", "--guardrail-device"),
+            ):
+                if params.get(src):
+                    values[flag] = params[src]
         if "llm" in judges.split(","):
             # A dry lane must grade with the offline mock LLM - never a real,
             # metered hosted judge - so a "no calls, no spend" mode cannot
@@ -4538,6 +4639,58 @@ class RigWebApp:
                 "accumulate on the rig GPUs)"
             )
 
+        # -- exact modality + agentic + guardrail-separation admission --------
+        # Server-side and complete: a target/attacker must serve EVERY modality
+        # an arm carries (not merely share one), agentic arms are rejected, and
+        # the scoring and defense guardrails must be distinct identities.  This
+        # is the real gate; the client-side filter is only convenience.
+        arm_mods = {arm: set(mods) for arm, mods, _r in _ARM_CATALOG}
+        fw_mods = {fw: set(mods) for fw, _d, mods in _FRAMEWORKS}
+        target_mods = {value: set(mods) for value, _lbl, mods, _kind
+                       in self._model_options()}
+        for arm in real_corpora:
+            if arm in _AGENTIC_ARMS:
+                errors["corpora"] = (
+                    f"{arm} is an agentic / indirect-injection arm and cannot "
+                    "run as a common-runner lane; use its native runner"
+                )
+                continue
+            needed = arm_mods.get(arm)
+            if needed is None:
+                continue  # unknown arm id: left to the CLI's own registry check
+            for target in api + local:
+                have = target_mods.get(target)
+                if have is not None and not needed <= have:
+                    errors["models"] = (
+                        f"target {target} serves {sorted(have) or ['text']} but "
+                        f"arm {arm} requires all of {sorted(needed)}"
+                    )
+            for attacker in attackers:
+                can = fw_mods.get(attacker)
+                if can is not None and not needed <= can:
+                    errors["attackers"] = (
+                        f"attacker {attacker} drives {sorted(can)} but arm "
+                        f"{arm} requires all of {sorted(needed)}"
+                    )
+        judges_list = self._split_list(params.get("judges", ""))
+        if "guardrail" in judges_list and not params.get("guardrail_model", ""):
+            errors["guardrail_model"] = (
+                "the scoring guardrail judge requires a guardrail model"
+            )
+        if params.get("defense_guard", "") == "guardrail" and params.get(
+            "defense", "") not in ("", "none"
+        ) and not params.get("defense_guardrail_model", ""):
+            errors["defense_guardrail_model"] = (
+                "the defense guardrail requires a defense guardrail model"
+            )
+        scoring_g = params.get("guardrail_model", "")
+        defense_g = params.get("defense_guardrail_model", "")
+        if scoring_g and defense_g and scoring_g == defense_g:
+            errors["defense_guardrail_model"] = (
+                "the scoring guard and the defense guard must be distinct "
+                "models - a tested guard must never grade its own output"
+            )
+
         if mode == "dry_run":
             forbid_live_fields(
                 "a diagnostic dry run cannot consume or produce live "
@@ -4628,8 +4781,65 @@ class RigWebApp:
                 )
         return errors
 
-    def _ceilings_card(self, params: Mapping[str, str]) -> str:
-        """The call-ceiling summary shown before a non-dry job starts."""
+    def _read_lane_projection(
+        self, out_rel: str,
+    ) -> tuple[dict[str, int] | None, str]:
+        """The required target/judge/HTTP upper bounds from a no-call preflight.
+
+        Reads the ``*.lane-projection.json`` the CLI ``--preflight-only`` path
+        writes under the run's output directory (never estimated here) and
+        returns the projected upper-bound call counts, or (None, why) when no
+        projection has been produced for this grid yet.
+        """
+
+        if not out_rel:
+            return None, "select an output directory and run the preflight"
+        out_dir = (self.repo_root / out_rel)
+        try:
+            candidates = sorted(
+                out_dir.glob("**/*.lane-projection.json"),
+                key=lambda p: p.stat().st_mtime, reverse=True,
+            )
+        except OSError:
+            return None, "output directory is not readable"
+        if not candidates:
+            return None, (
+                "no no-call projection yet: run the preflight below to compute "
+                "the required ceilings from the real corpus"
+            )
+        try:
+            doc = json.loads(candidates[0].read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            return None, "the lane-projection artifact could not be read"
+
+        found: dict[str, int] = {}
+
+        def walk(node: Any) -> None:
+            if isinstance(node, Mapping):
+                if all(k in node for k in ("target_calls", "judge_calls",
+                                           "http_attempts")):
+                    for key in ("target_calls", "judge_calls", "http_attempts"):
+                        value = node.get(key)
+                        if isinstance(value, int) and not isinstance(value, bool):
+                            found[key] = value
+                for value in node.values():
+                    walk(value)
+            elif isinstance(node, list):
+                for value in node:
+                    walk(value)
+
+        walk(doc)
+        if len(found) != 3:
+            return None, "the projection did not record all three call bounds"
+        return found, ""
+
+    def _ceilings_card(self, params: Mapping[str, str]) -> tuple[str, bool]:
+        """The call-ceiling summary shown before a non-dry job starts.
+
+        Returns ``(html, caps_cover_projection)``: the boolean is False when a
+        no-call projection exists and an entered ceiling is below the projected
+        required upper bound (so the preview can refuse to enable Start).
+        """
 
         api = self._split_list(params.get("api", ""))
         local = self._split_list(params.get("local", ""))
@@ -4665,18 +4875,64 @@ class RigWebApp:
                  "datapoint and seed"),
             )
         )
+        # No-call projection: the required upper bounds from the CLI preflight
+        # (never estimated here).  Compare each entered ceiling against its
+        # projected requirement; a shortfall blocks Start.
+        projection, why = self._read_lane_projection(params.get("out", ""))
+        caps_ok = True
+        if projection is not None:
+            proj_rows = []
+            for label, cap_field, proj_key in (
+                ("target calls", "cap_target", "target_calls"),
+                ("judge calls", "cap_judge", "judge_calls"),
+                ("HTTP attempts", "cap_http", "http_attempts"),
+            ):
+                required = projection[proj_key]
+                entered_raw = params.get(cap_field, "")
+                try:
+                    entered = int(entered_raw) if entered_raw else None
+                except ValueError:
+                    entered = None
+                covers = entered is not None and entered >= required
+                if not covers:
+                    caps_ok = False
+                proj_rows.append(
+                    f"<tr><td>{label}</td><td><strong>{required:,}</strong></td>"
+                    f"<td>{html.escape(entered_raw) or '(unset)'}</td>"
+                    "<td>" + ("<span class='badge green'>covers</span>" if covers
+                              else "<span class='badge red'>below required</span>")
+                    + "</td></tr>"
+                )
+            projection_html = (
+                "<h3>No-call projection (from the CLI preflight)</h3>"
+                "<div class='scroll'><table><tr><th>Call kind</th>"
+                "<th>Projected required</th><th>Your ceiling</th><th></th></tr>"
+                + "".join(proj_rows) + "</table></div>"
+                + ("" if caps_ok else
+                   "<div class='notice red'><strong>A ceiling is below the "
+                   "projected requirement.</strong><p class='note'>Raise the "
+                   "flagged ceiling(s) to at least the projected upper bound "
+                   "before starting; run_matrix would reject the lane "
+                   "otherwise.</p></div>")
+            )
+        else:
+            projection_html = (
+                "<h3>No-call projection</h3><p class='note'>"
+                + html.escape(why) + ".</p>"
+            )
         return (
             "<div class='card'><h2>" + _icon("coins") + "Calculated call "
             "ceilings</h2>"
             f"<p><strong>{html.escape(shape)}</strong></p>"
             "<div class='scroll'><table><tr><th>Ceiling</th><th>Value</th>"
             "<th>Meaning</th></tr>" + rows + "</table></div>"
+            + projection_html +
             "<p class='note'>The entered ceilings are the binding budget "
             "guards; run_matrix rejects the lane if they cannot cover its "
-            "exact no-call projection. The projection itself is computed by "
-            "the CLI preflight from the real corpus, never estimated here."
-            "</p></div>"
-        )
+            "exact no-call projection. The projection above is computed by the "
+            "CLI preflight from the real corpus (a call bound, not a price "
+            "estimate), never estimated here.</p></div>"
+        ), caps_ok
 
     def _preview_page(
         self, command: str, values: Mapping[str, str],
@@ -4694,6 +4950,31 @@ class RigWebApp:
             for key, value in sorted(params.items())
         )
         mode = params.get("mode", "measured")
+        ceilings_html, caps_ok = self._ceilings_card(params)
+        # A "Run no-call preflight" action composes the SAME grid with
+        # --preflight-only (no calls) so the operator can produce the projection
+        # this page reads and compares against.
+        preflight_hidden = "".join(
+            f"<input type='hidden' name='{html.escape(key)}' "
+            f"value='{html.escape(value)}'>"
+            for key, value in sorted(params.items())
+        )
+        preflight_form = (
+            "<form method='post' action='/build'>" + preflight_hidden
+            + "<input type='hidden' name='confirm' value='yes'>"
+            "<input type='hidden' name='preflight_only' value='yes'>"
+            "<button type='submit' class='ghost' "
+            "data-busy='Running the no-call preflight projection...'>"
+            + _icon("pulse", size=15)
+            + "Run no-call preflight (projection, no calls)</button></form> "
+        )
+        start_button = (
+            "<button type='submit'>" + _icon("play", size=15)
+            + "Start this job</button>"
+            if caps_ok else
+            "<button type='submit' disabled>" + _icon("play", size=15)
+            + "Start blocked: raise ceilings to the projection</button>"
+        )
         body = (
             "<h1>" + _icon("play", size=22) + "Confirm paid execution</h1>"
             "<div class='notice amber'><strong>This mode spends real "
@@ -4701,13 +4982,12 @@ class RigWebApp:
             f"<code>{html.escape(mode)}</code>. Review the exact command and "
             "ceilings below; nothing has started yet.</p></div>"
             "<div class='card'><h2>" + _icon("terminal")
-            + "Exact command</h2>" + argv_chips + "</div>"
-            + self._ceilings_card(params) +
+            + "Exact command</h2>" + argv_chips + preflight_form + "</div>"
+            + ceilings_html +
             "<form method='post' action='/build'>"
             + hidden +
             "<input type='hidden' name='confirm' value='yes'>"
-            "<div class='buildbar'><button type='submit'>"
-            + _icon("play", size=15) + "Start this job</button>"
+            "<div class='buildbar'>" + start_button +
             "<a href='/build'><button type='button' class='ghost'>Back to "
             "builder</button></a></div></form>"
         )
@@ -4760,16 +5040,35 @@ class RigWebApp:
                 f"<span class='modtag'>{html.escape(m)}</span>" for m in mods
             )
 
-        # Group arms by their full modality signature for a readable layout,
-        # ordered text-only first then the multimodal signatures.
-        signatures: dict[str, list[tuple[str, tuple[str, ...]]]] = {}
-        for arm, mods in _ARM_MODALITIES:
-            signatures.setdefault(" + ".join(mods), []).append((arm, mods))
+        # Group ALL 39 catalogue arms by their full modality signature for a
+        # readable layout (text-only first, then multimodal, then the agentic
+        # arms).  An agentic arm is shown DISABLED with its precise reason - it
+        # is never presented as a selectable common-runner lane.
+        signatures: dict[str, list[tuple[str, tuple[str, ...], str]]] = {}
+        for arm, mods, reason in _ARM_CATALOG:
+            bucket = ("agentic (native tool-use only)" if reason
+                      else " + ".join(mods))
+            signatures.setdefault(bucket, []).append((arm, mods, reason))
         arm_groups = []
-        for signature in sorted(signatures, key=lambda s: (len(s), s)):
+        order = sorted(
+            signatures,
+            key=lambda s: (s.startswith("agentic"), len(s), s),
+        )
+        for signature in order:
             boxes = []
-            for arm, mods in signatures[signature]:
+            for arm, mods, reason in signatures[signature]:
                 known = arm in registry_arms
+                if reason:
+                    boxes.append(
+                        "<label class='check disabled'>"
+                        "<input type='checkbox' class='armbox' disabled "
+                        f"data-arm='{html.escape(arm)}'>"
+                        f"<span>{html.escape(arm)} {_mod_tags(mods)} "
+                        "<span class='badge gray'>agentic</span><br>"
+                        f"<span class='fieldhint'>{html.escape(reason)}</span>"
+                        "</span></label>"
+                    )
+                    continue
                 note = ("" if known else
                         " <span class='fieldhint'>(not in registry yet)</span>")
                 boxes.append(
@@ -4789,6 +5088,19 @@ class RigWebApp:
                 "data-sel='none'>None</button></span></div>"
                 "<div class='checkgrid'>" + "".join(boxes) + "</div></div>"
             )
+        # The offline synthetic corpus - an ORDINARY --dry-run --corpora synth
+        # lane (MockTarget, no source acquisition, no spend), not only the dry
+        # diagnostic canary.
+        arm_groups.insert(0,
+            "<div class='modgroup'><div class='grouphead'>"
+            "<h3>Synthetic (offline)</h3></div><div class='checkgrid'>"
+            "<label class='check'><input type='checkbox' class='armbox' "
+            "data-mods='text' data-arm='synth'>"
+            "<span>synth <span class='modtag'>text</span> "
+            "<span class='fieldhint'>offline synthetic corpus - no source "
+            "acquisition; use with the dry-run mode (no calls, no spend)</span>"
+            "</span></label></div></div>"
+        )
         # Target checkboxes carry supported modalities (so an out-of-scope
         # target is hidden) and a kind (hosted API vs on-rig local vLLM).
         def _target_box(value: str, label: str, mods: tuple[str, ...], kind: str) -> str:
@@ -5640,7 +5952,7 @@ class RigWebApp:
               "--out": "runs/thesis/attest"}),
             ("4", "Diagnostic canary (paid)", "run_matrix",
              {"--diagnostic-canary": "on", "--api": "$FABLE",
-              "--corpora": "strongreject_official", "--limit": "8",
+              "--corpora": "strongreject_official",
               "--sample-seed": "0", "--out": "runs/thesis/canary"}),
             ("5", "Measured lane (paid)", "run_matrix",
              {"--api": "$FABLE,$SOL", "--corpora": "strongreject_official",

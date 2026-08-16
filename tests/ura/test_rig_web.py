@@ -330,6 +330,192 @@ def test_builder_page_renders_full_surface(tmp_path: Path) -> None:
     assert "addatt" in text  # repeatable receipt rows
 
 
+def test_attacker_registry_parity_and_full_inventory() -> None:
+    # The console's attacker mirror must equal the maintained engines registry
+    # (all 20), so the builder can never silently omit an engine.
+    import sys
+    sys.path.insert(0, "src")
+    from ura.adapters.engines import ATTACKER_NAMES
+    from experiments.rig_web import _ATTACKER_NAMES, _ARM_CATALOG, _AGENTIC_ARMS, _FRAMEWORKS
+    assert _ATTACKER_NAMES == ATTACKER_NAMES
+    assert len(_FRAMEWORKS) == 20
+    assert len(_ARM_CATALOG) == 39  # all maintained source arms
+    assert len(_AGENTIC_ARMS) == 12  # agentic / indirect-injection arms
+
+
+def test_builder_lists_all_39_arms_and_20_attackers(tmp_path: Path) -> None:
+    from experiments.rig_web import _ARM_CATALOG, _ATTACKER_NAMES, _AGENTIC_ARMS
+    app = _app(tmp_path)
+    try:
+        _s, _c, body = app.handle("GET", "/build")
+        text = body.decode("utf-8")
+        for arm, _mods, _reason in _ARM_CATALOG:
+            assert f"data-arm='{arm}'" in text, arm  # every arm visible
+        for attacker in _ATTACKER_NAMES:
+            assert f"data-fw='{attacker}'" in text, attacker  # every attacker
+        # Agentic arms are shown DISABLED with a reason, not as common lanes.
+        for arm in _AGENTIC_ARMS:
+            assert arm in text
+        assert "agentic (native tool-use only)" in text
+        assert "runs on the native tool-use path" in text
+    finally:
+        app.close()
+
+
+def test_agentic_arm_rejected_server_side(tmp_path: Path) -> None:
+    app = _app(tmp_path)
+    started = len(app.jobs)
+    try:
+        _s, _c, body = app.handle("POST", "/build", {
+            "mode": "dry_run", "corpora": "agentharm_harmful",
+            "api": "anthropic:claude-opus-5", "attackers": "replay",
+            "judges": "rules", "out": "runs/a", "seeds": "0",
+        })
+        text = body.decode("utf-8")
+        assert "agentic" in text and "cannot run as a common-runner lane" in text
+        assert len(app.jobs) == started  # no Popen
+    finally:
+        app.close()
+
+
+def test_exact_modality_admission_before_popen(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # A target that serves only text cannot run a text+image arm - complete
+    # exact modality, not "shares any" - and it is rejected on the form.
+    app = _app(tmp_path)
+    started = len(app.jobs)
+    monkeypatch.setattr(
+        app, "_model_options",
+        lambda: [("prov:textonly", "textonly", ("text",), "api")],
+    )
+    try:
+        _s, _c, body = app.handle("POST", "/build", {
+            "mode": "dry_run", "corpora": "mmsafety_official",
+            "api": "prov:textonly", "attackers": "replay",
+            "judges": "rules", "out": "runs/m", "seeds": "0",
+        })
+        text = body.decode("utf-8")
+        assert "requires all of" in text and "mmsafety_official" in text
+        assert len(app.jobs) == started
+        # A compatible target (serves image) is admitted: no modality error.
+        errors = app._validate_builder({
+            "mode": "dry_run", "corpora": "strongreject_official",
+            "api": "prov:textonly", "attackers": "replay",
+            "judges": "rules", "out": "runs/m", "seeds": "0",
+        })
+        assert "models" not in errors  # text arm on a text target is fine
+    finally:
+        app.close()
+
+
+def test_guardrail_separation_and_wiring(tmp_path: Path) -> None:
+    app = _app(tmp_path)
+    try:
+        # Same model for scoring + defense guard is rejected (a guard must not
+        # grade its own output).
+        errors = app._validate_builder({
+            "mode": "dry_run", "corpora": "strongreject_official",
+            "api": "anthropic:claude-opus-5", "attackers": "replay",
+            "judges": "rules,guardrail", "defense": "output",
+            "defense_guard": "guardrail", "guardrail_model": "vllm:guard",
+            "defense_guardrail_model": "vllm:guard", "out": "runs/g", "seeds": "0",
+        })
+        assert "defense_guardrail_model" in errors
+        assert "distinct" in errors["defense_guardrail_model"]
+        # The guardrail judge requires a scoring guardrail model.
+        errors = app._validate_builder({
+            "mode": "dry_run", "corpora": "strongreject_official",
+            "api": "anthropic:claude-opus-5", "attackers": "replay",
+            "judges": "guardrail", "out": "runs/g", "seeds": "0",
+        })
+        assert "guardrail_model" in errors
+        # Distinct guards + models wire the separate flags.
+        _cmd, values, _p = app._compose_from_builder({
+            "mode": "dry_run", "corpora": "strongreject_official",
+            "api": "anthropic:claude-opus-5", "attackers": "replay",
+            "judges": "rules,guardrail", "defense": "output",
+            "defense_guard": "guardrail", "guardrail_model": "vllm:scorer",
+            "guardrail_device": "cuda:0", "defense_guardrail_model": "vllm:defender",
+            "out": "runs/g", "seeds": "0",
+        })
+        assert values["--guardrail-model"] == "vllm:scorer"
+        assert values["--guardrail-device"] == "cuda:0"
+        assert values["--defense-guardrail-model"] == "vllm:defender"
+    finally:
+        app.close()
+
+
+def test_builder_ordinary_dry_run_synth(tmp_path: Path) -> None:
+    # An ordinary --dry-run --corpora synth lane (not the diagnostic canary):
+    # the builder offers a synth corpus and composes an offline dry run.
+    app = _app(tmp_path)
+    try:
+        _s, _c, body = app.handle("GET", "/build")
+        assert "data-arm='synth'" in body.decode("utf-8")  # synth is selectable
+        _cmd, values, _p = app._compose_from_builder({
+            "mode": "dry_run", "corpora": "synth", "api": "anthropic:claude-opus-5",
+            "attackers": "replay", "judges": "rules", "out": "runs/s", "seeds": "0",
+        })
+        assert values["--dry-run"] == "on"
+        assert values["--corpora"] == "synth"
+        # No admission receipts leak into an offline lane.
+        assert "--source-conformance" not in values
+        errors = app._validate_builder({
+            "mode": "dry_run", "corpora": "synth", "api": "anthropic:claude-opus-5",
+            "attackers": "replay", "judges": "rules", "out": "runs/s", "seeds": "0",
+        })
+        assert errors == {}
+    finally:
+        app.close()
+
+
+def test_no_call_projection_gates_start(tmp_path: Path) -> None:
+    # The preview reads the no-call preflight's lane-projection and blocks Start
+    # when an entered ceiling is below the projected required upper bound.
+    repo = tmp_path / "repo"
+    (repo / "experiments" / "rig").mkdir(parents=True)
+    results = tmp_path / "runs"
+    results.mkdir()
+    app = RigWebApp(
+        results_root=results, state_dir=tmp_path / "state", repo_root=repo,
+    )
+    try:
+        out_rel = "runs/grid1"
+        out = repo / out_rel
+        out.mkdir(parents=True)
+        (out / "p1.lane-projection.json").write_text(json.dumps({
+            "call_projection": {"target_calls": 100, "judge_calls": 50,
+                                "http_attempts": 300},
+        }), encoding="utf-8")
+        proj, why = app._read_lane_projection(out_rel)
+        assert proj == {"target_calls": 100, "judge_calls": 50, "http_attempts": 300}
+        # Under-provisioned ceilings block Start.
+        html_out, ok = app._ceilings_card({
+            "out": out_rel, "cap_target": "50", "cap_judge": "50",
+            "cap_http": "300",
+        })
+        assert ok is False and "below required" in html_out
+        # Sufficient ceilings pass.
+        html_out, ok = app._ceilings_card({
+            "out": out_rel, "cap_target": "100", "cap_judge": "50",
+            "cap_http": "300",
+        })
+        assert ok is True and "covers" in html_out
+        # No projection yet -> caps_ok stays True (nothing to compare), and the
+        # card prompts to run the preflight.
+        _html, ok = app._ceilings_card({"out": "runs/empty"})
+        assert ok is True
+    finally:
+        app.close()
+
+
+def test_local_targets_repo_root_parity() -> None:
+    from experiments.rig_web import build_argv
+    argv = build_argv("local_targets", {"--repo-root": "/some/repo", "--refresh": "on"})
+    assert "--repo-root" in argv and "/some/repo" in argv
+
+
 def test_builder_mode_validation_rejects_before_subprocess(tmp_path: Path) -> None:
     # Mode-specific validation runs BEFORE any subprocess exists.  The old
     # console accepted a diagnostic canary with --limit 8; that is now a
