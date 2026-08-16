@@ -11,11 +11,11 @@ effect, compliance finding, or other empirical result yet.
 
 The development tree implements the RUN-001 prospective-request and MET-001
 exact-selection interfaces described below, with offline contract tests. Their
-project commit is `02e858b1864943806eaadb043cf8098c5eb5523e` and the integrated
+project commit is `04c2606dd64c0fae629b5aeeef0f5243edba613b` and the integrated
 final verification records are retained under
-`../Thesis-EN/verification/2026-08-16-reaudit-phase1/` and (this phase) the
-16 Aug re-audit close-out, with 894 offline tests passing. No acquired-source,
-provider, human, or other real-input MET-001 artifact has been produced.
+`../Thesis-EN/verification/2026-08-16-reaudit-closeout/`, with 903 offline tests
+passing. No acquired-source, provider, human, or other real-input MET-001
+artifact has been produced.
 
 ## What is measured
 
