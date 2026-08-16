@@ -1245,7 +1245,21 @@ def test_builder_model_filters_and_quantization_warning_are_rendered(
         page.find("</div>", unknown_at)
     ]
     assert "badge gray precision-badge precision-unknown" in unknown_row
-    assert "fit unknown" in unknown_row
+    assert "<span class='precision-label'>fit unknown</span>" in unknown_row
+    unknown_tooltip = (
+        "The operator must choose a per-model precision before a live run."
+    )
+    assert unknown_row.count(unknown_tooltip) == 1
+    unknown_badge_at = unknown_row.index(
+        "<span class='badge gray precision-badge precision-unknown tip'"
+    )
+    unknown_badge_tag = unknown_row[
+        unknown_badge_at:unknown_row.find(">", unknown_badge_at)
+    ]
+    assert "tabindex='0'" in unknown_badge_tag
+    assert "title=" not in unknown_badge_tag
+    assert "label.textContent=value==='auto'?'fit unknown'" in page
+    assert "badge.textContent" not in page
     assert "16-bit fit unknown" not in unknown_row
 
     # Rendering, validation, and generated execution config share one

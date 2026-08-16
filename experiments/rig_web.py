@@ -1516,9 +1516,14 @@ var labels={none:'16-bit',fp8:'8-bit FP8',bitsandbytes:'4-bit BitsAndBytes',
 awq:'4-bit AWQ',gptq:'4-bit GPTQ'};
 form.querySelectorAll(".modelrow[data-compatible='unknown']").forEach(function(row){
 var badge=row.querySelector('.precision-badge');var select=row.querySelector('.modelquant select');
-if(!badge||!select){return;}var value=select.value;
-badge.textContent=value==='auto'?'fit unknown':
-(labels[value]||value)+' selected · fit unknown';});}
+var label=badge&&badge.querySelector('.precision-label');
+var tip=badge&&badge.querySelector('.tiptext');
+if(!badge||!select||!label){return;}var value=select.value;
+label.textContent=value==='auto'?'fit unknown':
+(labels[value]||value)+' selected · fit unknown';
+if(tip){tip.textContent=value==='auto'?
+'The operator must choose a per-model precision before a live run.':
+'Operator-selected precision; hardware fit remains unknown.';}});}
 function refresh(){updateUnknownPrecisionBadges();applyScope();
 // live preview
 var mode=(form.querySelector('input[name=mode]:checked')||{}).value||'measured';
@@ -6343,8 +6348,8 @@ class RigWebApp:
                     if configured_quant in {"", "auto"}:
                         quant_label = "fit unknown"
                         precision_title = (
-                            "Fit cannot be estimated; choose a per-model precision "
-                            "before a live run."
+                            "The operator must choose a per-model precision before "
+                            "a live run."
                         )
                     else:
                         quant_label = f"{precision_label} selected · fit unknown"
@@ -6373,12 +6378,23 @@ class RigWebApp:
                 precision_class = (
                     "unknown" if fit is None else str(precision_bits)
                 )
-                name_html += (
-                    f" <span class='badge {precision_tone} precision-badge "
-                    f"precision-{precision_class}' "
-                    f"title='{html.escape(precision_title, quote=True)}'>"
-                    + html.escape(quant_label) + "</span>"
+                badge_class = (
+                    f"badge {precision_tone} precision-badge "
+                    f"precision-{precision_class}"
                 )
+                if fit is None:
+                    name_html += (
+                        f" <span class='{badge_class} tip' tabindex='0'>"
+                        f"<span class='precision-label'>{html.escape(quant_label)}</span>"
+                        f"<span class='tiptext'>{html.escape(precision_title)}</span>"
+                        "</span>"
+                    )
+                else:
+                    name_html += (
+                        f" <span class='{badge_class}' "
+                        f"title='{html.escape(precision_title, quote=True)}'>"
+                        + html.escape(quant_label) + "</span>"
+                    )
                 detail = (
                     "<span class='fieldhint'>" + html.escape(
                         f"{params_text} ({parameter_basis}) · "
