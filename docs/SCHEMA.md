@@ -321,7 +321,7 @@ descriptive and is never a ranking or a universal score.
 
 Each cell persists attempts, responses, authoritative judgments, full-shadow
 judge trails for common responses (or typed unqueried placeholders for
-source-metric-only classification), aggregate results, a manifest, an append-only checkpoint, and
+source-metric-only records), aggregate results, a manifest, an append-only checkpoint, and
 only after validation a completion marker. Records join on `(run_id,
 model/target, attempt_id)`; an attempt ID alone is not globally unique.
 Every completed-attempt checkpoint row includes `budget_after_attempt` when a
@@ -398,6 +398,9 @@ an executed cell:
   those review bindings, computes the normalized selected source-config digest,
   and reuses its runtime converted-corpus, cluster-rule/assignment, policy, metric, and media
   evidence; the operator does not duplicate those inventories in the receipt.
+  For an exporter-prepared JSONL, the consumed JSONL hash stays separate while
+  the exact exporter summary is a hashed component and supplies reconciled
+  upstream discovered/accepted/excluded counts.
   Blocked, mismatched, stale, or tampered selected evidence is rejected before
   target construction. The full receipt digest is package provenance; only its
   selected-arm identity enters execution identity. See

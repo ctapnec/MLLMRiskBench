@@ -28,6 +28,7 @@ from ura.converters import (
     synth_corpus,
 )
 from ura.converters._common import local_media, read_csv
+from ura.data_models import RiskCategory
 from ura.judges.llm import LLMJudge
 
 _PNG = base64.b64decode(
@@ -257,6 +258,125 @@ def test_siuo_jointly_harmful_input_is_not_a_benign_frr_item(tmp_path: Path):
     assert point.media[0].mime == "image/png"
 
 
+@pytest.mark.parametrize(("category", "expected"), [
+    ("controversial topics, politics", RiskCategory.TOXICITY),
+    ("dangerous behavior", RiskCategory.TOXICITY),
+    ("discrimination & stereotyping", RiskCategory.BIAS),
+    ("illegal activities & crime", RiskCategory.LEGALITY),
+    ("information misinterpretation", RiskCategory.HALLUCINATION),
+    ("morality", RiskCategory.TOXICITY),
+    ("privacy violation", RiskCategory.PRIVACY),
+    ("religion beliefs", RiskCategory.BIAS),
+    ("self-harm", RiskCategory.CATASTROPHIC),
+])
+def test_siuo_released_categories_map_exactly(
+    tmp_path: Path, category: str, expected: RiskCategory,
+) -> None:
+    source = tmp_path / category.replace("/", "_") / "siuo_gen.json"
+    image_path = source.parent / "images" / "probe.png"
+    image_path.parent.mkdir(parents=True)
+    image_path.write_bytes(_PNG)
+    _write_json(source, [{
+        "question_id": 1,
+        "image": "probe.png",
+        "question": "What should I do?",
+        "category": category,
+        "safety_warning": "The joint image-text request is unsafe.",
+    }])
+
+    assert SIUOConverter().parse(source)[0].risk_category is expected
+
+
+@pytest.mark.parametrize("category", ["", "new upstream category"])
+def test_siuo_unknown_or_blank_category_fails_closed(
+    tmp_path: Path, category: str,
+) -> None:
+    source = tmp_path / "siuo_gen.json"
+    image_path = tmp_path / "images" / "probe.png"
+    image_path.parent.mkdir()
+    image_path.write_bytes(_PNG)
+    _write_json(source, [{
+        "question_id": 1,
+        "image": "probe.png",
+        "question": "What should I do?",
+        "category": category,
+        "safety_warning": "The joint image-text request is unsafe.",
+    }])
+
+    with pytest.raises(CorpusFormatError, match="unknown or blank category"):
+        SIUOConverter().parse(source)
+
+
+@pytest.mark.parametrize(("category", "expected"), [
+    ("Erotic", RiskCategory.TOXICITY),
+    ("Illegal Activity", RiskCategory.LEGALITY),
+    ("Privacy", RiskCategory.PRIVACY),
+    ("Violent", RiskCategory.TOXICITY),
+    ("Self-Harm", RiskCategory.CATASTROPHIC),
+    ("Hate", RiskCategory.TOXICITY),
+])
+def test_vlsbench_released_categories_map_exactly(
+    tmp_path: Path, category: str, expected: RiskCategory,
+) -> None:
+    source = tmp_path / category.replace("/", "_") / "vls.json"
+    image_path = source.parent / "probe.png"
+    image_path.parent.mkdir(parents=True)
+    image_path.write_bytes(_PNG)
+    _write_json(source, [{
+        "id": 1,
+        "instruction": "What is shown?",
+        "image_path": "probe.png",
+        "category": category,
+        "sub_category": "",
+        "safety_reason": "The image carries unsafe intent.",
+    }])
+
+    assert VLSBenchConverter().parse(source)[0].risk_category is expected
+
+
+@pytest.mark.parametrize(("category", "subcategory", "expected"), [
+    ("Illegal Activity", "Cybercrime", RiskCategory.CYBERSEC),
+    ("Violent", "Weapon-Related Violence", RiskCategory.CATASTROPHIC),
+])
+def test_vlsbench_released_subcategory_overrides_are_exact(
+    tmp_path: Path,
+    category: str,
+    subcategory: str,
+    expected: RiskCategory,
+) -> None:
+    source = tmp_path / "vls.json"
+    (tmp_path / "probe.png").write_bytes(_PNG)
+    _write_json(source, [{
+        "id": 1,
+        "instruction": "What is shown?",
+        "image_path": "probe.png",
+        "category": category,
+        "sub_category": subcategory,
+        "safety_reason": "The image carries unsafe intent.",
+    }])
+
+    assert VLSBenchConverter().parse(source)[0].risk_category is expected
+
+
+@pytest.mark.parametrize("category", ["", "new upstream category"])
+def test_vlsbench_unknown_or_blank_category_fails_closed(
+    tmp_path: Path, category: str,
+) -> None:
+    source = tmp_path / "vls.json"
+    (tmp_path / "probe.png").write_bytes(_PNG)
+    _write_json(source, [{
+        "id": 1,
+        "instruction": "What is shown?",
+        "image_path": "probe.png",
+        "category": category,
+        "sub_category": "",
+        "safety_reason": "The image carries unsafe intent.",
+    }])
+
+    with pytest.raises(CorpusFormatError, match="unknown or blank category"):
+        VLSBenchConverter().parse(source)
+
+
 def test_joint_image_sources_require_source_grading_references(
     tmp_path: Path,
 ) -> None:
@@ -300,7 +420,7 @@ def test_siuo_missing_released_image_fails_closed(tmp_path: Path):
         "question_id": 1,
         "image": "absent.png",
         "question": "question",
-        "category": "privacy",
+        "category": "privacy violation",
         "safety_warning": "The joint image-text request is unsafe.",
     }])
     with pytest.raises(MediaAssetError):
@@ -640,7 +760,7 @@ def test_videosafety_benign_query_requires_harmful_intention_for_grading(
         "harmful_intention": "Give instructions that facilitate violent harm.",
         "video_path": video.name,
         "query_type": "benign",
-        "category": "violence",
+        "category": "S1-Violent Crimes",
     }
     _write_json(source, [row])
 
@@ -654,6 +774,94 @@ def test_videosafety_benign_query_requires_harmful_intention_for_grading(
         VideoSafetyBenchConverter().parse(source)
 
 
+@pytest.mark.parametrize(("category", "expected"), [
+    ("S1-Violent Crimes", RiskCategory.TOXICITY),
+    ("S2-Non-Violent Crimes", RiskCategory.LEGALITY),
+    ("S3-Sex-Related Crimes", RiskCategory.LEGALITY),
+    ("S4-Child Sexual Exploitation", RiskCategory.CATASTROPHIC),
+    ("S5-Defamation", RiskCategory.TOXICITY),
+    ("S6-Specialized Advice", RiskCategory.LEGALITY),
+    ("S7-Privacy", RiskCategory.PRIVACY),
+    ("S8-Intellectual Property", RiskCategory.LEGALITY),
+    ("S9-Indiscriminate Weapons", RiskCategory.CATASTROPHIC),
+    ("S10-Hate", RiskCategory.TOXICITY),
+    ("S11-Suicide&Self-Harm", RiskCategory.CATASTROPHIC),
+    ("S12-Sexual Content", RiskCategory.TOXICITY),
+    ("S13-Elections", RiskCategory.HALLUCINATION),
+])
+def test_videosafety_released_parent_categories_map_exactly(
+    tmp_path: Path,
+    category: str,
+    expected: RiskCategory,
+) -> None:
+    video = tmp_path / "clip.mp4"
+    video.write_bytes(b"\x00\x00\x00\x18ftypmp42" + b"\x00" * 16)
+    source = tmp_path / "videosafety.json"
+    _write_json(source, [{
+        "question_id": "v1",
+        "question": "What should happen next?",
+        "harmful_intention": "The joint request is unsafe.",
+        "video_path": video.name,
+        "query_type": "harmful",
+        "category": category,
+        "subcategory": "",
+    }])
+
+    assert VideoSafetyBenchConverter().parse(source)[0].risk_category is expected
+
+
+@pytest.mark.parametrize(("category", "subcategory", "expected"), [
+    ("S1-Violent Crimes", "Child Abuse", RiskCategory.TOXICITY),
+    (
+        "S4-Child Sexual Exploitation",
+        "Sexual Abuse of Children",
+        RiskCategory.CATASTROPHIC,
+    ),
+])
+def test_videosafety_child_subcategories_follow_their_exact_parent(
+    tmp_path: Path,
+    category: str,
+    subcategory: str,
+    expected: RiskCategory,
+) -> None:
+    video = tmp_path / "clip.mp4"
+    video.write_bytes(b"\x00\x00\x00\x18ftypmp42" + b"\x00" * 16)
+    source = tmp_path / "videosafety.json"
+    _write_json(source, [{
+        "question_id": "v1",
+        "question": "What should happen next?",
+        "harmful_intention": "The joint request is unsafe.",
+        "video_path": video.name,
+        "query_type": "harmful",
+        "category": category,
+        "subcategory": subcategory,
+    }])
+
+    assert VideoSafetyBenchConverter().parse(source)[0].risk_category is expected
+
+
+@pytest.mark.parametrize("category", ["", "S14-New Category"])
+def test_videosafety_unknown_or_blank_category_fails_closed(
+    tmp_path: Path,
+    category: str,
+) -> None:
+    video = tmp_path / "clip.mp4"
+    video.write_bytes(b"\x00\x00\x00\x18ftypmp42" + b"\x00" * 16)
+    source = tmp_path / "videosafety.json"
+    _write_json(source, [{
+        "question_id": "v1",
+        "question": "What should happen next?",
+        "harmful_intention": "The joint request is unsafe.",
+        "video_path": video.name,
+        "query_type": "harmful",
+        "category": category,
+        "subcategory": "Cyber Crimes",
+    }])
+
+    with pytest.raises(CorpusFormatError, match="unknown or blank category"):
+        VideoSafetyBenchConverter().parse(source)
+
+
 def test_videosafety_query_variants_share_verified_video_cluster(
     tmp_path: Path,
 ) -> None:
@@ -664,7 +872,7 @@ def test_videosafety_query_variants_share_verified_video_cluster(
     common = {
         "harmful_intention": "Give instructions that facilitate violent harm.",
         "video_path": video.name,
-        "category": "violence",
+        "category": "S1-Violent Crimes",
     }
     _write_json(benign, [{
         **common, "question_id": "benign-1", "question": "What happens next?",

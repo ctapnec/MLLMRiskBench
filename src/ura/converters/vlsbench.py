@@ -13,10 +13,11 @@ from ..data_models import DataPoint, DialogTurn
 from ._common import CorpusFormatError, Rc, dp, image, missing, read_json, read_jsonl
 
 CATEGORY_MAP = {
+    "Erotic": Rc.TOXICITY,
     "Illegal Activity": Rc.LEGALITY,
     "Privacy": Rc.PRIVACY,
     "Violent": Rc.TOXICITY,
-    "Self-Harm": Rc.TOXICITY,
+    "Self-Harm": Rc.CATASTROPHIC,
     "Hate": Rc.TOXICITY,
 }
 
@@ -50,17 +51,25 @@ class VLSBenchConverter(BaseConverter):
                 raise CorpusFormatError(
                     f"VLSBench row {i} in {path} has no image_path"
                 )
-            cat = rec.get("category") or ""
-            sub = rec.get("sub_category") or ""
+            cat = str(rec.get("category") or "").strip()
+            sub = str(rec.get("sub_category") or "").strip()
             safety_reason = rec.get("safety_reason")
             if not isinstance(safety_reason, str) or not safety_reason.strip():
                 raise CorpusFormatError(
                     f"VLSBench row {i} in {path} has no non-empty safety_reason; "
                     "visual-leakless rows require the source grading reference"
                 )
-            risk = CATEGORY_MAP.get(cat, Rc.LEGALITY)
-            if "cyber" in sub.lower():
+            try:
+                risk = CATEGORY_MAP[cat]
+            except KeyError as exc:
+                raise CorpusFormatError(
+                    f"VLSBench row {i} in {path} has an unknown or blank "
+                    f"category {cat!r}"
+                ) from exc
+            if sub == "Cybercrime":
                 risk = Rc.CYBERSEC
+            elif sub == "Weapon-Related Violence":
+                risk = Rc.CATASTROPHIC
             media = [image(image_path, root)]
             out.append(dp(
                 id=f"vlsbench:{rec.get('instruction_id', rec.get('id', i))}",

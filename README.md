@@ -10,12 +10,16 @@ Experiments are pending. The repository establishes no model ranking, defense
 effect, compliance finding, or other empirical result yet.
 
 The development tree implements the RUN-001 prospective-request and MET-001
-exact-selection interfaces described below, with offline contract tests. Their
-project commit is `04c2606dd64c0fae629b5aeeef0f5243edba613b` and the integrated
-final verification records are retained under
-`../Thesis-EN/verification/2026-08-16-reaudit-closeout/`, with 903 offline tests
-passing. No acquired-source, provider, human, or other real-input MET-001
-artifact has been produced.
+exact-selection interfaces described below, with offline contract tests. The
+exact tested software revision and raw local/rig logs are recorded externally
+under `../../Thesis-EN/verification/2026-08-16-convergence/`; the convergence
+suite passed 967 offline tests in both environments, with the three rig warnings
+retained explicitly. A retained 26-arm receipt is historical acquisition/conversion
+traceability, not current admission or a result: the current audit found no new
+issue in 19 entries; the SIUO, VLSBench, MLLMGuard position-swapping and
+noise-injection, and both Video-SafetyBench mapping reviews are superseded; and
+VLSBench/JALMBench upstream export accounting needs refreshed retained
+summaries. No provider, human-audit, or real-input MET-001 result exists.
 
 ## What is measured
 
@@ -117,6 +121,9 @@ bind multiple independently labelled source instances to those converters
 without persisting operator-specific absolute paths. Conversion is not an
 automatic claim of scored-run eligibility: a source-specific evaluator that is
 not implemented fails pre-call rather than being squeezed into common ASR.
+The current 39-arm disposition is 22 common-metric arms, two implemented
+source-classification arms, and 15 conversion-only arms pending their exact
+source scorer or runtime.
 
 Nine end-to-end projects--AgentDojo, ASB, AutoDAN-Turbo, EasyJailbreak, FuzzyAI,
 Garak, Giskard v2, Petri, and Promptfoo--run upstream under their own contracts.
@@ -175,7 +182,9 @@ The runbook is the canonical from-zero procedure:
    checked-in source-instance example to the ignored operator-local registry,
    configure its independently labelled instances, bind ordered media roots,
    and validate one compact content-addressed `ura-source-conformance/1`
-   receipt;
+   receipt; for VLSBench/JALMBench prepared manifests, retain each exporter
+   summary as a hashed receipt component and count the upstream exporter input,
+   not only JSONL lines;
 3. set the target and judge credentials and review provider retention and
    corpus-license constraints;
 4. run `python -m experiments.rig_check` with the intended matrix arguments,
@@ -193,6 +202,7 @@ The runbook is the canonical from-zero procedure:
    focal conditions follow the same achieved-sample rule, not a reserved quota;
   and
 8. revalidate the same local checkout and retain the complete artifact tree,
+   including the VLSBench/JALMBench exporter summaries when those arms are used,
    project-revision receipt and digest, separately self-recorded checkout status,
    command line, upstream commits, environment inventory, and run note for
    post-experiment analysis.
@@ -273,7 +283,8 @@ The runbook is the canonical from-zero procedure:
   instances are selected through `--source-config`. Those reusable-file hashes
   are **configuration-registry** provenance, not acquisition evidence. The
   separate compact source-conformance receipt records operator-observed
-  release/file/review evidence;
+  release/file/review evidence. For an exporter-prepared manifest it also binds
+  the export summary and reconciles upstream discovered/accepted/excluded counts;
   only its normalized selected subset enters grid/run identity. Secrets and
   literal local paths are excluded.
 - Optional local targets use `--local-config` keyed by the exact local spec,

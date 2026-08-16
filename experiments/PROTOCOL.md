@@ -100,6 +100,21 @@ receipt validates recorded acquisition/conversion conditions; it does not establ
 upstream authenticity. The operator review is not a legal determination, and
 the semantic spot-check is not scientific or evaluator validation.
 
+For a direct input, receipt raw counts describe that upstream file/directory.
+For VLSBench/JALMBench exporter-prepared JSONL, retain the exact exporter summary
+as a hashed receipt component: discovered is the sum of its source-file rows,
+accepted is `records`, and excluded-by-design is its named skip count. The JSONL
+remains the separately hashed consumed input. The exact commands and field names
+are in `docs/SOURCE_CONFORMANCE.md` and the runbook; absent summary values remain
+`CANNOT-VERIFY`, never inferred from the prepared manifest.
+
+The retained 26-entry receipt is historical, not current admission. Its exact
+19-with-no-new-issue / six-mapping-stale partition and the separate JALMBench
+upstream-accounting gap are maintained in
+[`docs/SOURCE_CONFORMANCE.md`](../docs/SOURCE_CONFORMANCE.md#historical-receipt-boundary).
+Current RUN-002 source acceptance remains in progress and must produce new
+receipt bytes rather than modify that historical record.
+
 For one unchanged real converted-corpus digest and `sample_seed`, bounded
 cluster selection is a deterministic nested prefix. Thus the cluster selected
 by `--limit 1` remains in a later `--limit N` cohort, and every sibling row in a

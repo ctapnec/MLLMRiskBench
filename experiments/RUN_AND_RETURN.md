@@ -65,9 +65,10 @@ Keep these rules beside the terminal throughout the run:
   audio, or video defense results from it.
 - A converter is not automatically a runnable evaluator. R-Judge and GPTGeoChat
   have implemented source-specific scorers. AgentHarm, BIPIA, InjecAgent,
-  CyberSecEval prompt injection, and MLLMGuard hallucination remain conversion
-  or upstream-native tracks until their exact source scorer/runtime is integrated.
-  Runner preflight rejects those records before a model call.
+  CyberSecEval prompt injection, and MLLMGuard hallucination, position-swapping,
+  and noise-injection remain conversion or upstream-native tracks until their
+  exact source scorer/runtime is integrated. Runner preflight rejects those
+  records before a model call.
 - Nine complete evaluators run in their own upstream environments. Their native
   result scales are imported and preserved; URA does not replay their prompts and
   pretend that the upstream framework ran.
@@ -102,7 +103,7 @@ an explicit gap, not permission to improvise a pooled score.
 | `task_utility` | AgentDojo/ASB utility, Giskard RAGET correctness | native task and scale |
 | `graded_risk` | StrongREJECT-style score, Petri dimensions, AutoDAN danger score | never normalize into one score |
 | `detector_findings` | FuzzyAI, Garak, Giskard Scan | detector-specific counts/rates |
-| `truthfulness` | MLLMGuard hallucination | reserved; pending a substantive scorer in the runner |
+| `truthfulness` | MLLMGuard hallucination, position-swapping, and noise-injection | reserved; pending a substantive scorer in the runner |
 | `evaluator_reliability` | decision coverage, confusion/calibration, automated-human and inter-rater agreement | achieved independently labelled common-response population; never infer validity from stage concordance alone |
 
 `experiments.suite_summary` applies these crosswalks but does not pool the
@@ -362,6 +363,17 @@ python -m experiments.export_vlsbench \
   --max-total-bytes 100000000000
 ```
 
+Both exporters write `export-summary.json` beside the prepared JSONL. Retain
+that exact file as a hashed source-receipt component: the JSONL remains the
+`consumed_input`, while upstream `discovered` is the sum of
+`source_files[].rows`, `accepted` is `records`, and `excluded_by_design` is the
+named skip count. The currently evidenced VLSBench refresh is 2,241 discovered,
+2,240 accepted, one empty-instruction exclusion, and zero rejected-invalid
+rows. Stop if a newly exported pinned release does not reconcile. The historical
+JALMBench consumed manifest has 220,240 rows, but its upstream discovered and
+text-only-excluded counts remain `CANNOT-VERIFY` until a new exact exporter
+summary is retained; do not infer them from the prepared JSONL.
+
 ### 3.3 Source inventory and exact input locators
 
 The nineteen converter names and the expected operator locators are:
@@ -384,7 +396,7 @@ The nineteen converter names and the expected operator locators are:
 | `figstep` | `CryptoAILab/FigStep` | `data/question/safebench.csv`; images in `data/images/SafeBench/` | common harmful image |
 | `cyberseceval` | `meta-llama/PurpleLlama` | one supported prompt-suite JSON/JSONL | MITRE/interpreter common; prompt injection pending scorer |
 | `injecagent` | `uiuc-kang-lab/InjecAgent` | one `data/test_cases_{dh,ds}_{base,enhanced}.json` | conversion only; tool-call scorer absent |
-| `mllmguard` | gated `Carol0110/MLLMGuard` | one per-dimension table beside `imgs/` | non-hallucination common; hallucination pending truthfulness scorer |
+| `mllmguard` | gated `Carol0110/MLLMGuard` | one per-dimension table beside `imgs/` | privacy/bias/toxicity/legality common; hallucination/position-swapping/noise-injection pending truthfulness scorers |
 | `jalmbench` | `AnonymousUser000/JALMBench` | exported `jalmbench.jsonl` | common harmful text+audio |
 | `videosafetybench` | `BAAI/Video-SafetyBench` | benign or harmful metadata JSON/JSONL beside videos | common harmful text+video |
 
@@ -435,6 +447,7 @@ export URA_JAILBREAKBENCH_HARMFUL_PATH="$URA_CORPORA/JBB-Behaviors/data/harmful-
 export URA_JAILBREAKBENCH_BENIGN_PATH="$URA_CORPORA/JBB-Behaviors/data/benign-behaviors.csv"
 export URA_JAILBREAKV_FULL_PATH='<official-JailBreakV_28K.csv-beside-images>'
 export URA_JALMBENCH_AUDIO_MANIFEST_PATH="$URA_CORPORA/JALMBench-export/jalmbench.jsonl"
+export URA_JALMBENCH_EXPORT_SUMMARY_PATH="$URA_CORPORA/JALMBench-export/export-summary.json"
 export URA_MLLMGUARD_PRIVACY_PATH='<MLLMGuard-privacy-table-beside-imgs>'
 export URA_MLLMGUARD_BIAS_PATH='<MLLMGuard-bias-table-beside-imgs>'
 export URA_MLLMGUARD_TOXICITY_PATH='<MLLMGuard-toxicity-table-beside-imgs>'
@@ -450,11 +463,13 @@ export URA_STRONGREJECT_OFFICIAL_PATH="$URA_CORPORA/strongreject/strongreject_da
 export URA_VIDEOSAFETYBENCH_BENIGN_QUERY_PATH="$URA_CORPORA/Video-SafetyBench/benign_data.json"
 export URA_VIDEOSAFETYBENCH_HARMFUL_QUERY_PATH="$URA_CORPORA/Video-SafetyBench/harmful_data.json"
 export URA_VLSBENCH_RELEASE_PATH="$URA_CORPORA/VLSBench-export/vlsbench.jsonl"
+export URA_VLSBENCH_EXPORT_SUMMARY_PATH="$URA_CORPORA/VLSBench-export/export-summary.json"
 ```
 
 The BIPIA task files require their official attack companion files in the
 release-relative positions expected by the converter. CyberSecEval prompt
-injection and MLLMGuard hallucination also stay outside ordinary scored lanes:
+injection and all three MLLMGuard truthfulness tasks (hallucination,
+position-swapping, and noise-injection) also stay outside ordinary scored lanes:
 their substantive task/truthfulness evaluators are not implemented. Run
 `rig_check` after filling locators; a placeholder or layout mismatch must stop
 the lane.
@@ -471,14 +486,14 @@ Research signup plus the NYU CNN stories, built with the Maluuba scripts);
 a successful construction must likewise match `md5.txt` before the arm
 leaves its blocked disposition.]
 
-For clarity, the acquired but intentionally unscored arms are both AgentHarm
-behavior sets, all five BIPIA tasks, CyberSecEval prompt injection, all four
-InjecAgent sets, and MLLMGuard hallucination. Their records are useful for
-provenance and later native-runtime integration, but a target response without
-the official tool/task/truthfulness evaluator is not a defensible result. Any
-separate upstream execution remains supplementary until a complete-artifact
-importer exists; do not inject it into `suite_summary` as if it were a runner
-cell.
+For clarity, the fifteen acquired but intentionally unscored arms are both
+AgentHarm behavior sets, all five BIPIA tasks, CyberSecEval prompt injection,
+all four InjecAgent sets, and all three MLLMGuard truthfulness tasks. Their
+records are useful for provenance and later native-runtime integration, but a
+target response without the official tool/task/truthfulness evaluator is not a
+defensible result. Any separate upstream execution remains supplementary until
+a complete-artifact importer exists; do not inject it into `suite_summary` as
+if it were a runner cell.
 
 Set one ordered media-root list containing every real media tree used by the
 selected arms. On POSIX the separator is `:`; on Windows it is `;`. Keep the
@@ -578,6 +593,23 @@ validation block below consumes), and validate as below. The
 `*.scaffold.json` file is a working draft, not evidence: delete it or move it
 outside the return tree once the validated receipt exists, so the packaged
 artifacts contain only the receipt that was actually admitted.
+
+The scaffold does not find or infer exporter summaries. For `vlsbench_release`
+and `jalmbench_audio`, add the exact retained `export-summary.json` to that
+arm's `components` with `role`, its summary-path environment variable, `sha256`,
+and `bytes`; keep the prepared JSONL separately bound as `consumed_input`.
+Copy raw counts only from that summary using the reconciliation rule in section
+3.2. Without a retained summary, upstream counts stay `CANNOT-VERIFY`.
+
+Do not reuse or edit the retained 26-entry historical receipt. Nineteen entries
+have no newly found issue; six mapping reviews must be replaced after a fresh
+observation (`siuo_release`, `vlsbench_release`, both retained MLLMGuard
+position/noise arms, and both Video-SafetyBench arms). JALMBench separately
+needs a new summary-backed upstream count; VLSBench overlaps both groups. The
+old source/input mapping remains historical traceability, but current RUN-002
+admission requires new receipt bytes. The exact evidence boundary and receipt
+digest are recorded in
+[`docs/SOURCE_CONFORMANCE.md`](../docs/SOURCE_CONFORMANCE.md#historical-receipt-boundary).
 
 The receipt is a compact operator record, not a workflow database. It may be
 scoped to the real arms selected for this command, but every selected real arm
@@ -1349,11 +1381,12 @@ command's values come from the successful no-call projection.
 
 ### 10.2 Image roster
 
-Add every acquired non-hallucination MLLMGuard dimension as its own arm. Keep
-MOSSBench's benign refusal endpoint separate from harmful image ASR.
+Add the four common-eligible MLLMGuard safety dimensions as separate arms. Keep
+MOSSBench's benign refusal endpoint separate from harmful image ASR. The three
+MLLMGuard truthfulness tasks stay in the conversion-only inventory.
 
 ```bash
-export IMAGE_ARMS='mmsafety_official,jailbreakv_full,harmbench_multimodal,vlsbench_release,mossbench_official,siuo_release,figstep_full,mllmguard_privacy,mllmguard_bias,mllmguard_toxicity,mllmguard_legality,mllmguard_position_swapping,mllmguard_noise_injection'
+export IMAGE_ARMS='mmsafety_official,jailbreakv_full,harmbench_multimodal,vlsbench_release,mossbench_official,siuo_release,figstep_full,mllmguard_privacy,mllmguard_bias,mllmguard_toxicity,mllmguard_legality'
 
 # Run rig_check first, then run_matrix with the same arguments and exact printed ceilings.
 python -m experiments.rig_check \
@@ -1423,9 +1456,11 @@ plus the target output. Such evidence is a text-reference proxy, not a
 media-aware grade. A substantive media-grading claim requires a source-native
 media evaluator or the media-resolving human audit.
 
-JALMBench contains 245,355 audio rows. The maintained lane is therefore a
+The historical prepared JALMBench manifest contains 220,240 audio-bearing rows.
+Its upstream discovered and text-only-excluded counts remain `CANNOT-VERIFY`
+until a fresh export summary is retained. The maintained lane is therefore a
 seeded, bounded source-cluster breadth sample, not an impractical two-repeat
-full-release sweep. `--limit 5000` selects at most 5,000 underlying prompt
+full-manifest sweep. `--limit 5000` selects at most 5,000 underlying prompt
 clusters and retains their related acoustic/attack variants, so the realized row
 and call counts may exceed 5,000. Accept the post-conversion projection rather
 than treating the limit as a call count. Report realized cluster, row,
@@ -2248,7 +2283,9 @@ diagnostic `ura-lane-canary/1`, the rebuilt `suite-evidence.json` broad-roster
 inventory, the Level-1 JSON/CSV, the deterministic
 `ura-level2-report/1` JSON/CSV/Markdown tables, the remaining analyses,
 figures, the exact retained `source-conformance-*.json` (with any
-`*.scaffold.json` working drafts removed), every exact `ura-live-attestation/2`
+`*.scaffold.json` working drafts removed), the exact VLSBench and JALMBench
+`export-summary.json` files referenced by prepared-input receipts, every exact
+`ura-live-attestation/2`
 receipt and approved digest record, the prospective `ura-project-revision/1`
 receipt and digest record, expected/observed commit and checkout-status
 records, and the run note. The rig console's job state directory
@@ -2280,8 +2317,9 @@ before any paid mode starts, streams job logs, edits the operator-local
 registries (api-targets, local-targets, source-instances, budgets, pricing)
 through an allowlisted JSON editor, renders retained `ura-level1-evidence/2`
 and `ura-level2-report/1` artifacts with explicit diagnostic/measured,
-structural-`N/A`, and error distinctions, and accounts recorded token usage
-and its calculated monetary cost:
+structural-`N/A`, and error distinctions after reconciling their reported
+counts, sample sizes, and confidence intervals, and accounts recorded token
+usage and its calculated monetary cost:
 
 ```bash
 python -m experiments.rig_web --results-root runs --state-dir runs/rig-web
@@ -2289,8 +2327,11 @@ python -m experiments.rig_web --results-root runs --state-dir runs/rig-web
 
 The console binds only `127.0.0.1`, builds argument vectors exclusively from a
 typed allowlist (no shell), caps POST bodies, runs each job in its own process
-group (a stop terminates the complete child tree), and keeps per-job
-argv/stdout/stderr under the state directory.
+group, and keeps per-job argv/stdout/stderr under the state directory. Closing
+the console leaves detached jobs running; the explicit Stop action terminates
+the complete child tree. Builder preflights are kept under
+`<results-root>/preflight`; changing only execution caps may reuse the same exact
+projection, while a semantic lane change requires a new preflight.
 
 Console state (jobs with their exact argv and builder parameters, the
 campaign-run registry, recorded per-artifact token usage, and the report
@@ -2316,8 +2357,9 @@ are displayed but not priced separately because every provider here bills
 them as output tokens, so pricing output already covers them). Cross-category
 overlaps are removed before pricing - cache reads are netted out of the input
 count for providers that report input inclusive of cache - so no token is
-billed twice. A missing token count or missing price renders as N/A with the
-missing field named, never as a fabricated zero. The precedence rule is that a
+billed twice. A missing mandatory input or output token direction, inconsistent
+token counts, or a missing price renders cost as N/A with the missing field
+named, never as a fabricated zero. The precedence rule is that a
 provider-reported billed amount, should one ever be recorded in an artifact,
 would be authoritative over this token-derived calculation; no in-tree
 provider adapter records such an amount today, so the calculation is currently

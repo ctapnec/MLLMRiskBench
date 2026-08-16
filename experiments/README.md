@@ -53,6 +53,10 @@ artifacts. Conversion support does not imply scored eligibility: currently
 implemented source-specific classification evaluators include R-Judge and
 GPTGeoChat; other source-specific requirements fail before a target call until
 their substantive evaluator exists.
+The 39 logical arms therefore comprise 22 common-metric arms, two implemented
+source-classification arms, and 15 conversion-only arms. MLLMGuard
+hallucination, position-swapping, and noise-injection are in the last group
+until their truthfulness scorers exist.
 
 ## Target configuration and admission
 

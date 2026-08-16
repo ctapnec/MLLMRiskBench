@@ -122,9 +122,16 @@ exact path and byte digest as `URA_SOURCE_CONFORMANCE_MANIFEST` and
 blocked, file-mismatched, or without a passed reviewer-attributed mapping check
 is rejected before a target is constructed. The receipt is evidence supplied by
 the operator; it does not establish upstream authenticity or a legal determination.
+The retained historical 26-entry receipt is not current admission: 19 entries
+have no newly found issue, six mapping reviews are superseded, and JALMBench has
+a separate upstream-accounting gap (VLSBench overlaps the mapping and accounting
+groups). Preserve it and follow the exact refresh list in
+[`docs/SOURCE_CONFORMANCE.md`](../../docs/SOURCE_CONFORMANCE.md#historical-receipt-boundary).
 
 The registry covers all 19 converters and keeps physically or semantically
-distinct source instances separate:
+distinct source instances separate. Its 39 logical arms comprise 22 common-
+metric arms, two implemented source-classification arms, and 15 conversion-only
+arms:
 
 | Converter | Logical arms | Physical input | Common-runner status |
 |---|---|---|---|
@@ -139,7 +146,7 @@ distinct source instances separate:
 | JailbreakBench | `jailbreakbench_harmful`, `jailbreakbench_benign` | text | harmful-response and benign-refusal strata remain separate |
 | JailBreakV-28K | `jailbreakv_full` | text + image | harmful common metrics; image assets are mandatory |
 | JALMBench | `jalmbench_audio` | text + audio | harmful common metrics over audio-bearing rows |
-| MLLMGuard | five safety dimensions plus position-swapping and noise-injection arms | text + image | common metrics except hallucination, whose truthfulness scorer is not implemented |
+| MLLMGuard | four harmful/refusal dimensions plus three truthfulness task arms | text + image | privacy/bias/toxicity/legality use common metrics; hallucination/position-swapping/noise-injection are conversion-only until their exact truthfulness scorers exist |
 | MM-SafetyBench | `mmsafety_official` | text + image | common proxy metrics; does not claim execution of the upstream evaluator |
 | MOSSBench | `mossbench_official` | text + image | benign-refusal common proxy; does not claim execution of the upstream image-conditioned evaluator |
 | R-Judge | `rjudge_release` | text trajectory evidence | implemented source-specific safety-classification metrics, not common ASR/FRR |
@@ -155,12 +162,14 @@ The converter contracts and accepted layouts are the executable authority in
 - BIPIA infers the task from the parent directory and test/train from the file
   stem, and its attack companion file must remain next to or above the context;
 - InjecAgent infers direct-harm/data-stealing and enhanced/base from the stem;
-- MLLMGuard reads the dimension from `Category I` or, if absent, the stem;
+- MLLMGuard requires one of the exact released `Category I` dimensions;
 - Video-SafetyBench requires benign/harmful identity in a row field or path;
 - HarmBench, FigStep, JailBreakV, MLLMGuard, MM-SafetyBench, MOSSBench, SIUO,
   VLSBench and GPTGeoChat require their referenced image files;
 - JALMBench expects the JSONL produced by `experiments.export_jalmbench` (or an
-  equivalent manifest whose rows reference real bounded audio files).
+  equivalent manifest whose rows reference real bounded audio files). JALMBench
+  and VLSBench also require their retained exporter summaries for receipt
+  upstream-count accounting.
 
 These filename rules are why the multi-instance arms are explicit. Relabeling a
 path in JSON cannot turn one source subset into another.
@@ -180,6 +189,9 @@ URA_JAILBREAKBENCH_HARMFUL_PATH=<data-root>/jbb/data/harmful-behaviors.csv
 URA_JAILBREAKBENCH_BENIGN_PATH=<data-root>/jbb/data/benign-behaviors.csv
 URA_MMSAFETY_OFFICIAL_PATH=<data-root>/MM-SafetyBench
 URA_JALMBENCH_AUDIO_MANIFEST_PATH=<data-root>/jalm-export/jalmbench.jsonl
+URA_JALMBENCH_EXPORT_SUMMARY_PATH=<data-root>/jalm-export/export-summary.json
+URA_VLSBENCH_RELEASE_PATH=<data-root>/vls-export/vlsbench.jsonl
+URA_VLSBENCH_EXPORT_SUMMARY_PATH=<data-root>/vls-export/export-summary.json
 ```
 
 The angle-bracket values above are notation, not literal paths. Bind the same

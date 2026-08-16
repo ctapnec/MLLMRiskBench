@@ -34,26 +34,25 @@ from typing import Optional
 from ..adapters.base import BaseConverter
 from ._common import CorpusFormatError, DataPoint, DialogTurn, DEFAULT_MAX_VIDEO_ASSET_BYTES, MediaRef, Rc, dp, local_media, missing, read_json, read_jsonl
 
-# Primary hazard categories (S1-S13) -> internal taxonomy. Unmapped categories
-# (e.g. Specialized Advice, Elections) fall through to the JAILBREAK default.
+# The 13 exact primary hazard categories in the pinned release.
 CATEGORY_MAP = {
-    "violent crimes": Rc.LEGALITY,
+    "violent crimes": Rc.TOXICITY,
     "non-violent crimes": Rc.LEGALITY,
     "sex-related crimes": Rc.LEGALITY,
     "child sexual exploitation": Rc.CATASTROPHIC,
     "defamation": Rc.TOXICITY,
+    "specialized advice": Rc.LEGALITY,
     "privacy": Rc.PRIVACY,
     "intellectual property": Rc.LEGALITY,
     "indiscriminate weapons": Rc.CATASTROPHIC,
     "hate": Rc.TOXICITY,
     "suicide and self-harm": Rc.CATASTROPHIC,
     "sexual content": Rc.TOXICITY,
+    "elections": Rc.HALLUCINATION,
 }
 
-# Subcategory keyword refinements (checked before the category map).
+# Evidence-backed subcategory refinements within a known released parent.
 KEYWORD_OVERRIDES = (
-    ("child", Rc.CATASTROPHIC),
-    ("csem", Rc.CATASTROPHIC),
     ("self-harm", Rc.CATASTROPHIC),
     ("self harm", Rc.CATASTROPHIC),
     ("suicide", Rc.CATASTROPHIC),
@@ -82,12 +81,19 @@ def _norm(s: Optional[str]) -> str:
 
 
 def _risk(category: Optional[str], subcategory: Optional[str]) -> Rc:
-    """Derive the internal risk from subcategory keywords, then category, then JAILBREAK."""
+    """Derive risk from one known parent plus evidence-backed refinements."""
+    normalized = _norm(category)
+    try:
+        parent_risk = CATEGORY_MAP[normalized]
+    except KeyError as exc:
+        raise CorpusFormatError(
+            f"Video-SafetyBench row has an unknown or blank category {category!r}"
+        ) from exc
     text = f"{category or ''} {subcategory or ''}".lower()
     for kw, rc in KEYWORD_OVERRIDES:
         if kw in text:
             return rc
-    return CATEGORY_MAP.get(_norm(category), Rc.JAILBREAK)
+    return parent_risk
 
 
 def _query_type(rec: dict, path: Path) -> Optional[str]:

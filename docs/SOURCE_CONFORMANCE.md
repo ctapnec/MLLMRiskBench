@@ -41,6 +41,40 @@ receipt; the operator does not duplicate them in the compact JSON. Raw-source
 counts remain separate from emitted `DataPoint` counts because a converter may
 expand one released item into several policy, threshold, or media variants.
 
+For a direct source file or directory, `raw_records` counts that upstream input.
+For an exporter-prepared JSONL manifest, the JSONL remains the separately hashed
+`consumed_input`, but `raw_records` counts the exporter's upstream input. Retain
+the exact `export-summary.json` as a hashed `components` file and copy its values
+without estimation: `discovered = sum(source_files[].rows)`, `accepted =
+records`, and `excluded_by_design` is the named exporter skip count
+(`skipped_empty_instruction` for VLSBench or `skipped_text_only_rows` for
+JALMBench). Record any rejected-invalid count separately and name every
+exclusion/rejection in `reasons`. The four values must reconcile; the prepared
+JSONL line count must not be relabelled as upstream discovery.
+
+## Historical receipt boundary
+
+The retained workspace receipt
+`Thesis-EN/verification/2026-08-15-web002-builder/source-conformance.json`
+(SHA-256
+`19a728d872d8fa94a28370fd10a6889c969d41b20943b2b8a37f3c07dd7cced1`) is
+immutable historical acquisition/conversion evidence, not current admission or
+a model result. All 26 entries remain historical. The current audit found no
+new issue in 19 entries. Six mapping reviews are superseded pending a fresh
+observation and review: `siuo_release`, `vlsbench_release`,
+`mllmguard_position_swapping`, `mllmguard_noise_injection`,
+`videosafetybench_benign_query`, and `videosafetybench_harmful_query`.
+
+JALMBench is a separate upstream-accounting gap: its historical consumed
+manifest has 220,240 rows, while upstream discovered and text-only-excluded
+counts remain `CANNOT-VERIFY` until a new exact exporter summary is retained.
+VLSBench overlaps both groups; its evidenced refresh is 2,241 discovered, 2,240
+accepted, one empty-instruction exclusion, and zero rejected-invalid rows, and
+still requires the exact retained summary. Thus seven unique historical entries
+need action. Their source-to-input and conversion mappings remain traceability;
+do not edit the old receipt. Produce new observations, reviews, summaries, and
+receipt bytes for current RUN-002 admission.
+
 ## Evidence boundary
 
 Machine validation can establish the receipt schema and byte digest, selected
@@ -82,6 +116,9 @@ an `OPERATOR_TODO` placeholder under the non-receipt schema
 `ura-source-conformance-scaffold/1`. The scaffold is rejected by validation
 both by schema name and - after renaming - while any placeholder survives
 (case-insensitive), so the operator judgments below can never be defaulted.
+The scaffold does not infer upstream exporter accounting or add exporter
+summaries to `components`; the operator must copy those exact retained facts
+from the successful export.
 
 This non-empirical shape example uses syntactically valid sentinel digests and
 example.invalid identifiers, not observations. Replace every value with reviewed
@@ -141,7 +178,9 @@ and reason; it does not require the receipt itself to enumerate all 39 arms.
 
 For a directory-backed `consumed_input`, use only `{"kind":"directory"}` and
 add at least one exact retained source/release file to `components`, each with
-`role`, `path_env`, `sha256`, and `bytes`. The receipt omits the selected source
+`role`, `path_env`, `sha256`, and `bytes`. A file-backed prepared manifest keeps
+its JSONL digest in `consumed_input` and adds its retained exporter summary to
+`components` with the same four fields. The receipt omits the selected source
 configuration digest: the validator and matrix compute and retain that digest
 from the exact selected registry entries.
 

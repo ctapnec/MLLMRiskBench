@@ -267,8 +267,10 @@ _ARM_CATALOG: tuple[tuple[str, tuple[str, ...], str], ...] = (
     ("mllmguard_bias", ("text", "image"), ""),
     ("mllmguard_toxicity", ("text", "image"), ""),
     ("mllmguard_legality", ("text", "image"), ""),
-    ("mllmguard_position_swapping", ("text", "image"), ""),
-    ("mllmguard_noise_injection", ("text", "image"), ""),
+    ("mllmguard_position_swapping", ("text", "image"),
+     _ineligible("mllmguard_position_swapping_truthfulness")),
+    ("mllmguard_noise_injection", ("text", "image"),
+     _ineligible("mllmguard_noise_injection_truthfulness")),
     ("mllmguard_hallucination", ("text", "image"),
      _ineligible("mllmguard_hallucination_truthfulness")),
     ("gptgeochat_release", ("text", "image"), ""),
@@ -312,6 +314,9 @@ _ARM_MODALITIES: tuple[tuple[str, tuple[str, ...]], ...] = tuple(
 _INELIGIBLE_ARMS: frozenset[str] = frozenset(
     arm for arm, _mods, reason in _ARM_CATALOG if reason
 )
+_INELIGIBLE_REASONS: dict[str, str] = {
+    arm: reason for arm, _mods, reason in _ARM_CATALOG if reason
+}
 
 #: Attack frameworks (engines) offered in the builder, mirroring the harness
 #: registry in src/ura/adapters/engines.py, with the modalities each can drive.
@@ -848,6 +853,10 @@ def build_argv(
             elif param.kind == "path":
                 if "\x00" in raw:
                     raise ValueError(f"invalid path for {param.flag}")
+            if param.choices and raw not in param.choices:
+                raise ValueError(
+                    f"{param.flag} must be one of {', '.join(param.choices)}"
+                )
             argv.extend([param.flag, raw])
     return argv
 
@@ -1753,9 +1762,9 @@ class Job:
     pin: str = ""
     #: Short failure context (stderr tail) persisted for a failed job.
     failure: str | None = None
-    #: A Windows Job Object handle (KILL_ON_JOB_CLOSE) the process is assigned
-    #: to, used as the reliable whole-tree kill fallback.  None on POSIX / when
-    #: unavailable.
+    #: A Windows Job Object handle the process is assigned to, used by explicit
+    #: Stop as the reliable whole-tree kill fallback. None on POSIX / when
+    #: unavailable; closing it alone never terminates a running experiment.
     job_handle: Any = None
     #: Set when a stop could NOT be confirmed to have terminated the tree, so
     #: the UI surfaces an explicit stop failure rather than a false success.
@@ -1814,16 +1823,15 @@ def _argv_out_dir(argv: list[str]) -> str:
 # -- Windows whole-tree kill via a Job Object -------------------------------
 #
 # Windows has no process groups that kill a tree; ``taskkill /T`` walks the
-# LIVE tree but can fail (access denied, a re-parented grandchild).  A Job
-# Object with KILL_ON_JOB_CLOSE is the reliable fallback: a process assigned to
-# it, and every child it spawns, are terminated by the OS the moment the last
-# job handle closes.  All ctypes use is guarded so any failure degrades to the
-# taskkill path rather than raising (this whole file also runs on the POSIX
-# rig, where none of this executes).
+# live tree but can fail.  A plain Job Object gives explicit Stop a reliable
+# ``TerminateJobObject`` fallback while still allowing a running experiment to
+# remain detached when the console closes.  KILL_ON_JOB_CLOSE is deliberately
+# not enabled: closing the console must not silently kill a paid run and leave
+# its database row falsely marked ``running``.
 
 
-def _win_kill_on_close_job() -> Any:
-    """Create a KILL_ON_JOB_CLOSE Windows Job Object handle, or None."""
+def _win_managed_job() -> Any:
+    """Create a Windows Job Object handle for explicit whole-tree stop."""
 
     if os.name != "nt":
         return None
@@ -1837,43 +1845,6 @@ def _win_kill_on_close_job() -> Any:
         if not handle:
             return None
 
-        class _Basic(ctypes.Structure):
-            _fields_ = [
-                ("PerProcessUserTimeLimit", ctypes.c_int64),
-                ("PerJobUserTimeLimit", ctypes.c_int64),
-                ("LimitFlags", wintypes.DWORD),
-                ("MinimumWorkingSetSize", ctypes.c_size_t),
-                ("MaximumWorkingSetSize", ctypes.c_size_t),
-                ("ActiveProcessLimit", wintypes.DWORD),
-                ("Affinity", ctypes.c_size_t),
-                ("PriorityClass", wintypes.DWORD),
-                ("SchedulingClass", wintypes.DWORD),
-            ]
-
-        class _IoCounters(ctypes.Structure):
-            _fields_ = [(name, ctypes.c_uint64) for name in (
-                "ReadOperationCount", "WriteOperationCount",
-                "OtherOperationCount", "ReadTransferCount",
-                "WriteTransferCount", "OtherTransferCount")]
-
-        class _Extended(ctypes.Structure):
-            _fields_ = [
-                ("BasicLimitInformation", _Basic),
-                ("IoInfo", _IoCounters),
-                ("ProcessMemoryLimit", ctypes.c_size_t),
-                ("JobMemoryLimit", ctypes.c_size_t),
-                ("PeakProcessMemoryUsed", ctypes.c_size_t),
-                ("PeakJobMemoryUsed", ctypes.c_size_t),
-            ]
-
-        info = _Extended()
-        info.BasicLimitInformation.LimitFlags = 0x2000  # KILL_ON_JOB_CLOSE
-        if not kernel32.SetInformationJobObject(
-            handle, 9,  # JobObjectExtendedLimitInformation
-            ctypes.byref(info), ctypes.sizeof(info),
-        ):
-            kernel32.CloseHandle(handle)
-            return None
         return handle
     except Exception:  # noqa: BLE001 - any ctypes fault -> no job object
         return None
@@ -1902,6 +1873,23 @@ def _win_close_handle(handle: Any) -> None:
         ctypes.WinDLL("kernel32", use_last_error=True).CloseHandle(handle)
     except Exception:  # noqa: BLE001
         pass
+
+
+def _win_terminate_job(handle: Any) -> bool:
+    """Terminate every process assigned to a Windows Job Object."""
+
+    if handle is None or os.name != "nt":
+        return False
+    try:
+        import ctypes  # noqa: PLC0415 - Windows-only
+
+        return bool(
+            ctypes.WinDLL("kernel32", use_last_error=True).TerminateJobObject(
+                handle, 1
+            )
+        )
+    except Exception:  # noqa: BLE001
+        return False
 
 
 # -- recorded token usage and calculated cost -------------------------------
@@ -1948,8 +1936,11 @@ def _tokens_by_category(tokens: Any, provider_usage: Any) -> dict[str, int]:
     tk = tokens if isinstance(tokens, Mapping) else {}
     pu = provider_usage if isinstance(provider_usage, Mapping) else {}
 
+    def valid_count(value: Any) -> bool:
+        return isinstance(value, int) and not isinstance(value, bool) and value >= 0
+
     def put(category: str, value: Any) -> None:
-        if isinstance(value, int) and value >= 0:
+        if valid_count(value):
             out[category] = value
 
     put("output", pu.get("output_tokens"))
@@ -1979,18 +1970,29 @@ def _tokens_by_category(tokens: Any, provider_usage: Any) -> dict[str, int]:
     # judge trail) reports ``input`` INCLUSIVE of its ``cached_input``, so net
     # that out too - the judge example {input: 100000, cached_input: 80000}
     # must be 20,000 ordinary input plus 80,000 cache-read, not 180,000 billed.
-    if isinstance(tk.get("uncached_input"), int):
+    if valid_count(tk.get("uncached_input")):
         put("input", tk["uncached_input"])
-    elif isinstance(pu.get("input_tokens"), int):
-        put("input", max(0, pu["input_tokens"] - out.get("cache_read", 0)))
-    elif isinstance(tk.get("input"), int):
+    elif valid_count(pu.get("input_tokens")):
+        cached = out.get("cache_read", 0)
+        if cached <= pu["input_tokens"]:
+            put("input", pu["input_tokens"] - cached)
+    elif valid_count(tk.get("input")):
         cached = tk.get("cached_input")
         gross = tk["input"]
-        net = gross - cached if isinstance(cached, int) and cached >= 0 else gross
-        put("input", max(0, net))
+        if valid_count(cached):
+            if cached <= gross:
+                put("input", gross - cached)
+        else:
+            put("input", gross)
     else:
         put("input", tk.get("prompt"))
     return out
+
+
+def _token_usage_complete(categories: Mapping[str, int]) -> bool:
+    """True only when a call records both mandatory billing directions."""
+
+    return "input" in categories and "output" in categories
 
 
 def _response_identity(record: Mapping[str, Any]) -> tuple[str, str]:
@@ -2155,7 +2157,7 @@ def usage_rows_from_marker(
                 record.get("tokens"), raw.get("provider_usage")
             )
             add("target", provider, model, "calls", 1)
-            if not categories:
+            if not _token_usage_complete(categories):
                 add("target", provider, model, "missing_tokens", 1)
             for category, amount in categories.items():
                 add("target", provider, model, category, amount)
@@ -2192,7 +2194,7 @@ def usage_rows_from_marker(
             )
             categories = _tokens_by_category(judge_call.get("tokens"), None)
             add("judge", provider, model, "calls", 1)
-            if not categories:
+            if not _token_usage_complete(categories):
                 add("judge", provider, model, "missing_tokens", 1)
             for category, amount in categories.items():
                 add("judge", provider, model, category, amount)
@@ -2219,7 +2221,11 @@ def _marker_usage_date(marker_path: Path, doc: Mapping[str, Any]) -> str:
 
     timestamp: float | None = None
     stamp = doc.get("completed_at")
-    if isinstance(stamp, (int, float)) and not isinstance(stamp, bool) and math.isfinite(stamp):
+    if (
+        isinstance(stamp, (int, float))
+        and not isinstance(stamp, bool)
+        and math.isfinite(stamp)
+    ):
         timestamp = float(stamp)
     if timestamp is None:
         try:
@@ -2261,8 +2267,9 @@ def failed_cell_usage_rows(
     That work cost real money, so it is accounted for operational spend under
     the distinct ``target_failed``/``judge_failed`` roles - kept out of every
     scientific result (those read only completion markers) but never erased.
-    A failed cell that recorded attempts but no token detail is surfaced as
-    reserved-call exposure (N/A tokens), never a fabricated zero.
+    A failed provider call's bounded ``call_audit.logical_call_count`` is
+    surfaced as reserved-call exposure (N/A tokens).  ``completed_attempts`` is
+    deliberately not used: an experiment attempt is not a provider-call count.
     """
 
     rows: list[dict[str, Any]] = []
@@ -2323,7 +2330,7 @@ def failed_cell_usage_rows(
                             record.get("tokens"), raw.get("provider_usage")
                         )
                         add("target_failed", provider, model, "calls", 1)
-                        if not cats:
+                        if not _token_usage_complete(cats):
                             add("target_failed", provider, model, "missing_tokens", 1)
                         for category, amount in cats.items():
                             add("target_failed", provider, model, category, amount)
@@ -2346,18 +2353,32 @@ def failed_cell_usage_rows(
                             continue
                         provider, model, cats = judged
                         add("judge_failed", provider, model, "calls", 1)
-                        if not cats:
+                        if not _token_usage_complete(cats):
                             add("judge_failed", provider, model, "missing_tokens", 1)
                         for category, amount in cats.items():
                             add("judge_failed", provider, model, category, amount)
                 except OSError:
                     pass
-            # Reserved-call exposure: attempts were made but no token detail is
-            # in the durable partials -> surface the count as N/A, never zero.
-            attempts = err.get("completed_attempts")
-            if not tallies and isinstance(attempts, int) and attempts > 0:
-                add("reserved", "unknown", "unknown", "calls", attempts)
-                add("reserved", "unknown", "unknown", "missing_tokens", attempts)
+            # The failed in-flight call has no Response/trail token block, but
+            # ExternalCallFailure retains a bounded per-call audit.  This is an
+            # exact call exposure, unlike completed_attempts (a different unit).
+            audit = err.get("call_audit")
+            audit = audit if isinstance(audit, Mapping) else {}
+            logical_calls = audit.get("logical_call_count")
+            if (
+                isinstance(logical_calls, int)
+                and not isinstance(logical_calls, bool)
+                and logical_calls > 0
+            ):
+                provider = str(audit.get("provider") or "unknown")
+                model = str(
+                    audit.get("resolved_model")
+                    or err.get("target")
+                    or err.get("model_spec")
+                    or "unknown"
+                )
+                add("reserved", provider, model, "calls", logical_calls)
+                add("reserved", provider, model, "missing_tokens", logical_calls)
             now = time.time()
             rows.extend(
                 {
@@ -2403,6 +2424,198 @@ _REPORT_SCHEMAS = {
     "ura-suite-evidence/1": "suite",
     "ura-lane-canary/1": "canary",
 }
+
+# Exact experiment/measurement conditions that keep Level-2 rows in one
+# presentation stratum.  Target and run identity are deliberately included:
+# the maintained Level-2 contract says rows from distinct strata are not
+# comparable, so the console must not imply a cross-target ranking by placing
+# them in one chart.
+_LEVEL2_STRATUM_FIELDS = (
+    "run_id", "corpus_arm", "model_spec", "resolved_model", "source",
+    "source_policy_id", "source_policy_version", "source_policy_sha256",
+    "risk_category", "effective_modality", "expected_behavior", "population",
+    "horizon_turns", "attacker", "defense", "defense_guardrail_revision",
+    "ordered_judges", "judge_model", "seeds", "sample_seed", "limit",
+    "semantic_family", "metric", "endpoint_status", "polarity",
+    "group_refinements", "execution_modes", "ci_method", "cluster_unit",
+)
+
+_LEVEL2_ROW_FIELDS = frozenset({
+    *_LEVEL2_STRATUM_FIELDS,
+    "value", "ci_low", "ci_high", "n_records", "n_clusters",
+    "judgments_completed", "judgments_evaluable", "judgments_decided",
+    "judgments_abstained", "judgments_non_evaluable",
+    "cross_stratum_pooling_permitted",
+})
+
+
+def _validate_content_id(
+    document: Mapping[str, Any], field: str, prefix: str,
+) -> None:
+    """Validate the producer's content-derived report/evidence identifier."""
+
+    claimed = document.get(field)
+    if not isinstance(claimed, str) or re.fullmatch(
+        re.escape(prefix) + r"[0-9a-f]{24}", claimed
+    ) is None:
+        raise ValueError(f"missing or malformed {field}")
+    body = dict(document)
+    del body[field]
+    try:
+        material = json.dumps(
+            body, ensure_ascii=False, sort_keys=True, separators=(",", ":"),
+            allow_nan=False,
+        ).encode("utf-8")
+    except (TypeError, ValueError) as exc:
+        raise ValueError("report is not strict canonical JSON") from exc
+    expected = prefix + hashlib.sha256(material).hexdigest()[:24]
+    if not secrets.compare_digest(claimed, expected):
+        raise ValueError(f"{field} does not match the report content")
+
+
+def _validate_report_document(kind: str, document: Mapping[str, Any]) -> None:
+    """Fail closed before a retained document receives a scientific badge."""
+
+    if kind == "level1":
+        if document.get("schema_version") != "ura-level1-evidence/2":
+            raise ValueError("wrong Level-1 schema")
+        if document.get("status") != "validated_unit_qualified_lifecycle_inventory":
+            raise ValueError("Level-1 status is not validated")
+        _validate_content_id(document, "evidence_id", "level1-")
+        scope = document.get("scope")
+        if not isinstance(scope, Mapping):
+            raise ValueError("Level-1 scope is missing")
+        evidence_kind = scope.get("evidence_kind")
+        if evidence_kind not in {"diagnostic_dry_run", "measured_run"}:
+            raise ValueError("Level-1 evidence_kind is invalid")
+        if scope.get("empirical_validity_established") is not False:
+            raise ValueError("Level-1 empirical-validity boundary is missing")
+        if scope.get("contains_diagnostic_dry_run") is not (
+            evidence_kind == "diagnostic_dry_run"
+        ):
+            raise ValueError("Level-1 diagnostic scope is inconsistent")
+        counts = document.get("counts")
+        if not isinstance(counts, Mapping):
+            raise ValueError("Level-1 counts are missing")
+        for name in (
+            "prospective_request_units", "planning_strata", "execution_units",
+            "judgment_records", "request_level_errors",
+        ):
+            block = counts.get(name)
+            if name == "prospective_request_units" and block is None:
+                continue
+            if not isinstance(block, Mapping) or not isinstance(
+                block.get("unit"), str
+            ) or not block.get("unit"):
+                raise ValueError(f"Level-1 {name} count block is malformed")
+            for key, value in block.items():
+                if key == "unit" or value is None:
+                    continue
+                if (
+                    not isinstance(value, int)
+                    or isinstance(value, bool)
+                    or value < 0
+                ):
+                    raise ValueError(
+                        f"Level-1 {name}.{key} is not a nonnegative count"
+                    )
+        judgment_counts = counts.get("judgment_records")
+        if isinstance(judgment_counts, Mapping):
+            completed = judgment_counts.get("completed")
+            evaluable = judgment_counts.get("evaluable")
+            decided = judgment_counts.get("decided")
+            abstained = judgment_counts.get("abstained")
+            non_evaluable = judgment_counts.get("non_evaluable")
+            if all(
+                isinstance(item, int) and not isinstance(item, bool)
+                for item in (completed, decided, abstained, non_evaluable)
+            ) and completed != decided + abstained + non_evaluable:
+                raise ValueError("Level-1 judgment decision counts do not reconcile")
+            if all(
+                isinstance(item, int) and not isinstance(item, bool)
+                for item in (evaluable, decided, abstained)
+            ) and evaluable != decided + abstained:
+                raise ValueError("Level-1 evaluable judgment counts do not reconcile")
+        return
+
+    if kind != "level2":
+        return
+    if document.get("schema_version") != "ura-level2-report/1":
+        raise ValueError("wrong Level-2 schema")
+    if document.get("status") != "deterministic_compatible_stratum_export":
+        raise ValueError("Level-2 status is not validated")
+    if document.get("empirical_validity_established") is not False:
+        raise ValueError("Level-2 empirical-validity boundary is missing")
+    pooling = document.get("pooling_policy")
+    if not isinstance(pooling, Mapping) or (
+        pooling.get("universal_safety_score_defined") is not False
+        or pooling.get("cross_stratum_pooling_permitted") is not False
+        or pooling.get("native_scale_pooling_permitted") is not False
+    ):
+        raise ValueError("Level-2 no-pooling policy is missing")
+    _validate_content_id(document, "report_id", "level2-")
+    common = document.get("common")
+    if not isinstance(common, Mapping) or not isinstance(
+        common.get("estimates"), list
+    ):
+        raise ValueError("Level-2 common estimates are missing")
+    estimates = common["estimates"]
+    count = common.get("n_estimate_rows")
+    if (
+        not isinstance(count, int)
+        or isinstance(count, bool)
+        or count != len(estimates)
+    ):
+        raise ValueError("Level-2 estimate count does not reconcile")
+    for row in estimates:
+        if not isinstance(row, Mapping) or not _LEVEL2_ROW_FIELDS.issubset(row):
+            raise ValueError("Level-2 estimate row is incomplete")
+        value = row.get("value")
+        if (
+            not isinstance(value, (int, float))
+            or isinstance(value, bool)
+            or not math.isfinite(value)
+        ):
+            raise ValueError("Level-2 estimate value is not finite")
+        ci_low, ci_high = row.get("ci_low"), row.get("ci_high")
+        if (ci_low is None) != (ci_high is None):
+            raise ValueError("Level-2 CI endpoints must be paired")
+        if ci_low is not None and ci_high is not None:
+            if any(
+                not isinstance(item, (int, float))
+                or isinstance(item, bool)
+                or not math.isfinite(item)
+                for item in (ci_low, ci_high)
+            ):
+                raise ValueError("Level-2 CI endpoints are not finite numbers")
+            if ci_low > ci_high:
+                raise ValueError("Level-2 CI endpoints are reversed")
+            tolerance = 1e-9
+            if not ci_low - tolerance <= value <= ci_high + tolerance:
+                raise ValueError("Level-2 estimate lies outside its CI")
+        for name in ("n_records", "n_clusters"):
+            item = row.get(name)
+            if not isinstance(item, int) or isinstance(item, bool) or item < 0:
+                raise ValueError(f"Level-2 {name} is not a nonnegative count")
+        if row.get("cross_stratum_pooling_permitted") is not False:
+            raise ValueError("Level-2 row permits cross-stratum pooling")
+        decisions: dict[str, int] = {}
+        for name in (
+            "judgments_completed", "judgments_evaluable", "judgments_decided",
+            "judgments_abstained", "judgments_non_evaluable",
+        ):
+            item = row.get(name)
+            if not isinstance(item, int) or isinstance(item, bool) or item < 0:
+                raise ValueError(f"Level-2 {name} is not a nonnegative count")
+            decisions[name] = item
+        if decisions["judgments_completed"] != (
+            decisions["judgments_decided"]
+            + decisions["judgments_abstained"]
+            + decisions["judgments_non_evaluable"]
+        ) or decisions["judgments_evaluable"] != (
+            decisions["judgments_decided"] + decisions["judgments_abstained"]
+        ):
+            raise ValueError("Level-2 judgment counts do not reconcile")
 
 
 def collect_reports(
@@ -2494,18 +2707,17 @@ def rate_for(
     if not isinstance(rates, list) or not rates:
         return None, f"no rates recorded for model {model!r}"
     today = on_date or time.strftime("%Y-%m-%d")
+    if not _valid_iso_date(today):
+        return None, f"invalid usage date {today!r}; expected YYYY-MM-DD"
 
-    def valid_date(value: Any) -> bool:
-        # Zero-padded ISO date only, so lexicographic ordering is date order.
-        return isinstance(value, str) and bool(
-            re.fullmatch(r"\d{4}-\d{2}-\d{2}", value)
-        )
-
-    if any(isinstance(r, Mapping) and not valid_date(r.get("effective_date"))
-           for r in rates):
+    if any(
+        not isinstance(rate, Mapping)
+        or not _valid_iso_date(rate.get("effective_date"))
+        for rate in rates
+    ):
         return None, (
-            f"model {model!r} has a rate with a non ISO 8601 (YYYY-MM-DD) "
-            "effective_date"
+            f"model {model!r} has a malformed rate or a non ISO 8601 "
+            "(YYYY-MM-DD) effective_date"
         )
     def _is_priced(rate: Mapping[str, Any]) -> bool:
         # An all-null row is a placeholder, not a real price: skip it so an
@@ -2537,6 +2749,20 @@ def rate_for(
     return dict(chosen), ""
 
 
+def _valid_iso_date(value: Any) -> bool:
+    """A real, zero-padded Gregorian calendar date."""
+
+    if not isinstance(value, str) or re.fullmatch(
+        r"\d{4}-\d{2}-\d{2}", value
+    ) is None:
+        return False
+    try:
+        time.strptime(value, "%Y-%m-%d")
+    except ValueError:
+        return False
+    return True
+
+
 def _finite_nonneg(value: Any) -> float | None:
     """A price is valid only as a finite, nonnegative real number.
 
@@ -2549,6 +2775,14 @@ def _finite_nonneg(value: Any) -> float | None:
     if isinstance(value, (int, float)) and math.isfinite(value) and value >= 0:
         return float(value)
     return None
+
+
+def _currency_code(value: Any) -> str | None:
+    """Normalized three-letter currency code, or None when not declared."""
+
+    if not isinstance(value, str) or re.fullmatch(r"[A-Za-z]{3}", value) is None:
+        return None
+    return value.upper()
 
 
 def compute_costs(
@@ -2577,11 +2811,32 @@ def compute_costs(
         tokens = {category: 0 for category in _TOKEN_CATEGORIES}
         calls = 0
         missing_tokens = 0
-        for cats in by_date.values():
-            calls += int(cats.get("calls", 0))
-            missing_tokens += int(cats.get("missing_tokens", 0))
+        malformed_usage: list[str] = []
+
+        def recorded_count(cats: Mapping[str, int], category: str) -> int:
+            value = cats.get(category, 0)
+            if (
+                not isinstance(value, int)
+                or isinstance(value, bool)
+                or value < 0
+            ):
+                malformed_usage.append(
+                    f"{provider}/{model}: invalid recorded {category} count"
+                )
+                return 0
+            return value
+
+        for usage_date, cats in by_date.items():
+            date_calls = recorded_count(cats, "calls")
+            calls += date_calls
+            missing_tokens += recorded_count(cats, "missing_tokens")
+            if date_calls and not {"input", "output"}.issubset(cats):
+                malformed_usage.append(
+                    f"{provider}/{model}: incomplete input/output token usage "
+                    f"on {usage_date or 'unknown date'}"
+                )
             for category in _TOKEN_CATEGORIES:
-                tokens[category] += int(cats.get(category, 0))
+                tokens[category] += recorded_count(cats, category)
         row: dict[str, Any] = {
             "role": role, "provider": provider, "model": model,
             "calls": calls, "missing_tokens": missing_tokens, "tokens": tokens,
@@ -2595,24 +2850,36 @@ def compute_costs(
             continue
 
         cost_by_currency: dict[str, float] = {}
-        missing: list[str] = []
+        missing: list[str] = list(dict.fromkeys(malformed_usage))
         effective_dates: set[str] = set()
         display_rate: Mapping[str, Any] | None = None
         for usage_date, cats in sorted(by_date.items()):
+            if not _valid_iso_date(usage_date):
+                missing.append(
+                    f"{provider}/{model}: missing or invalid completion date; "
+                    "historical usage cannot be priced at today's rate"
+                )
+                continue
             rate, why = rate_for(
-                pricing, provider, model, on_date=usage_date or None
+                pricing, provider, model, on_date=usage_date
             )
             if rate is None:
-                missing.append(f"{why} (for {usage_date or 'today'})")
+                missing.append(f"{why} (for {usage_date})")
                 continue
             per_million = rate.get("per_million_tokens")
             per_million = per_million if isinstance(per_million, Mapping) else {}
-            currency = str(rate.get("currency", "")) or "USD"
+            currency = _currency_code(rate.get("currency"))
+            if currency is None:
+                missing.append(
+                    f"{provider}/{model}: rate on {usage_date} has no valid "
+                    "three-letter currency"
+                )
+                continue
             display_rate = rate
             effective_dates.add(str(rate.get("effective_date", "")))
             subtotal = 0.0
             for category in _BILLED_CATEGORIES:
-                amount = int(cats.get(category, 0))
+                amount = recorded_count(cats, category)
                 if amount <= 0:
                     continue
                 unit = _finite_nonneg(per_million.get(category))
@@ -2627,7 +2894,7 @@ def compute_costs(
         if missing_tokens:
             missing.append(
                 f"{provider}/{model}: {missing_tokens} call(s) "
-                "recorded no token usage"
+                "have incomplete token usage"
             )
         if display_rate is not None:
             per_million = display_rate.get("per_million_tokens")
@@ -3126,6 +3393,10 @@ class RigWebApp:
         self.results_root = results_root
         self.state_dir = state_dir
         self.repo_root = repo_root
+        # A first launch commonly points at a results directory that has not
+        # been populated yet.  Make that valid empty state concrete so the
+        # artifact browser renders "Empty directory" instead of returning 404.
+        self.results_root.mkdir(parents=True, exist_ok=True)
         #: The 600-mode operator secrets file (rig ~/.ura_env). Keys are
         #: written here and mirrored into os.environ; their values are never
         #: read back into a page, logged, or stored in the database.
@@ -3259,8 +3530,8 @@ class RigWebApp:
                     handle.close()
                 except OSError:
                     pass
-        # A job that reached terminal state on its own no longer needs its
-        # kill-on-close job handle; release it (a no-op kill on a dead process).
+        # Releasing a plain Job Object handle never terminates a live process;
+        # this is what lets close() detach running jobs honestly.
         if job.job_handle is not None:
             _win_close_handle(job.job_handle)
             job.job_handle = None
@@ -3371,9 +3642,9 @@ class RigWebApp:
                 stdout_handle.close()
                 stderr_handle.close()
                 raise
-            # Windows: assign the driver to a kill-on-close job so a stop can
+            # Windows: assign the driver to a managed job so explicit Stop can
             # reliably take the whole tree even if taskkill later fails.
-            job_handle = _win_kill_on_close_job()
+            job_handle = _win_managed_job()
             if job_handle is not None and not _win_assign_job(job_handle, process):
                 _win_close_handle(job_handle)
                 job_handle = None
@@ -3401,9 +3672,9 @@ class RigWebApp:
         the UI shows an explicit stop failure.  POSIX signals the process group
         (SIGTERM then, on timeout, SIGKILL, regardless of whether the driver
         exited).  Windows runs ``taskkill /T /F`` and CHECKS its return code;
-        if that does not confirm the tree is gone, it closes the job's
-        kill-on-close Job Object (a reliable whole-tree kill) rather than
-        killing only the direct parent.
+        if that does not confirm the tree is gone, it terminates the job's
+        Job Object (a reliable whole-tree kill) rather than killing only the
+        direct parent.
         """
 
         process = job.process
@@ -3466,10 +3737,10 @@ class RigWebApp:
         except subprocess.TimeoutExpired:
             pass
         # 2. If taskkill did not confirm, or the driver is still alive, fall
-        #    back to the kill-on-close Job Object (the whole tree, not just the
-        #    parent).  Closing its last handle terminates every job member.
+        #    back to TerminateJobObject (the whole tree, not just the parent).
         if not taskkill_ok or process.poll() is None:
             if job.job_handle is not None:
+                _win_terminate_job(job.job_handle)
                 _win_close_handle(job.job_handle)
                 job.job_handle = None
             try:
@@ -3494,8 +3765,8 @@ class RigWebApp:
 
     @staticmethod
     def _release_job_handle(job: Job) -> None:
-        # Closing a kill-on-close job whose process has already exited is a
-        # harmless no-op that just frees the handle.
+        # Closing the plain managed-job handle just frees it; explicit Stop
+        # uses TerminateJobObject before reaching this release path.
         if job.job_handle is not None:
             _win_close_handle(job.job_handle)
             job.job_handle = None
@@ -3651,13 +3922,23 @@ class RigWebApp:
                 if preflight_only:
                     # No-call projection: run the SAME grid with
                     # --preflight-only (the CLI makes NO generation calls); it
-                    # writes the lane-projection the preview then reads.
+                    # writes the lane-projection the preview then reads.  Live
+                    # attestation is intentionally absent: run_matrix forbids
+                    # scope/attestation inputs in preflight-only mode.
                     proj_values = {
                         flag: value for flag, value in values.items()
                         if flag not in ("--dry-run", "--diagnostic-canary",
-                                        "--attestation-probe")
+                                        "--attestation-probe",
+                                        "--execution-scope-id",
+                                        "--live-attestation-max-age-hours")
+                        and not flag.startswith("--live-attestation#")
+                        and not flag.startswith("--live-attestation-sha256#")
                     }
                     proj_values["--preflight-only"] = "on"
+                    # Prospective eligibility/projection artifacts must not
+                    # share the measured lane's output tree: downstream
+                    # cohort scans treat that tree as measurement input.
+                    proj_values["--out"] = str(self._preflight_output_dir(params))
                     job = self.start_job(
                         command, proj_values, builder_params=params,
                     )
@@ -3672,6 +3953,15 @@ class RigWebApp:
                     return 200, "text/html; charset=utf-8", self._preview_page(
                         command, values, params,
                     )
+                if spends_money:
+                    _card, caps_ok = self._ceilings_card(params)
+                    if not caps_ok:
+                        # Confirmation is never trusted as a bypass: a stale
+                        # browser form or direct POST must still present an
+                        # exact valid preflight whose calculated bounds fit.
+                        return 200, "text/html; charset=utf-8", self._preview_page(
+                            command, values, params,
+                        )
                 job = self.start_job(
                     command, values, builder_params=params,
                     scrub_receipt_env=("--dry-run" in values),
@@ -4039,7 +4329,8 @@ class RigWebApp:
                 f"{html.escape(row['model'][:44])}</code></td>"
                 f"<td>{row['calls']:,}"
                 + (f"<br><span class='fieldhint'>{row['missing_tokens']} "
-                   "without token usage</span>" if row["missing_tokens"] else "")
+                   "with incomplete token usage</span>"
+                   if row["missing_tokens"] else "")
                 + f"</td>{token_cells}{cost_cell}</tr>"
             )
         heads = "".join(
@@ -4132,6 +4423,15 @@ class RigWebApp:
                 if prepaid is None:
                     remaining = ("N/A <span class='fieldhint'>prepaid not "
                                  "numeric</span>")
+                elif ccy != "USD":
+                    # The maintained budgets config records dollar-denominated
+                    # prepaid balances (for example "$100").  Never subtract
+                    # those dollars from a non-USD spend without an exchange
+                    # rate that the console deliberately does not invent.
+                    remaining = (
+                        "N/A <span class='fieldhint'>prepaid balance is USD; "
+                        "no currency conversion recorded</span>"
+                    )
                 else:
                     remaining = self._fmt_money(prepaid - amt, ccy)
             budget_rows.append(
@@ -4228,11 +4528,7 @@ class RigWebApp:
     #: - so the same metric in two different populations, sources, policies,
     #: modalities, attackers, defenses or judges is charted separately, never
     #: pooled or mislabelled by the first row's metadata.
-    _LEVEL2_COMPAT_FIELDS = (
-        "semantic_family", "metric", "source", "source_policy_id",
-        "source_policy_version", "risk_category", "effective_modality",
-        "expected_behavior", "population", "attacker", "defense", "judge_model",
-    )
+    _LEVEL2_COMPAT_FIELDS = _LEVEL2_STRATUM_FIELDS
     #: Chart bars are capped for legibility; the table always shows every row,
     #: so nothing is silently dropped.
     _LEVEL2_CHART_CAP = 40
@@ -4257,19 +4553,38 @@ class RigWebApp:
         for row in estimates:
             if not isinstance(row, Mapping):
                 continue
-            key = tuple(str(row.get(field, "")) for field in self._LEVEL2_COMPAT_FIELDS)
+            key = tuple(
+                json.dumps(
+                    row.get(field), ensure_ascii=False, sort_keys=True,
+                    separators=(",", ":"), allow_nan=False,
+                )
+                for field in self._LEVEL2_COMPAT_FIELDS
+            )
             by_stratum.setdefault(key, []).append(row)
         sections = []
         for key in sorted(by_stratum):
             rows = by_stratum[key]
-            fields = dict(zip(self._LEVEL2_COMPAT_FIELDS, key))
+            fields = {
+                name: json.loads(value)
+                for name, value in zip(self._LEVEL2_COMPAT_FIELDS, key)
+            }
             # The section label reflects THIS stratum's own compatibility
             # fields (they are identical for every row in the group), never a
             # single arbitrary row's metadata standing in for a mixed set.
-            label_bits = "".join(
-                f"<span class='modtag'>{html.escape(f'{name}={value}')}</span>"
-                for name, value in fields.items() if value
-            )
+            label_parts = []
+            for name, value in fields.items():
+                if value is None or value == "":
+                    continue
+                shown = (
+                    value if isinstance(value, str) else json.dumps(
+                        value, ensure_ascii=False, sort_keys=True,
+                        separators=(",", ":"),
+                    )
+                )
+                label_parts.append(
+                    f"<span class='modtag'>{html.escape(name + '=' + shown)}</span>"
+                )
+            label_bits = "".join(label_parts)
             values = [row.get("value") for row in rows]
             chartable = all(
                 isinstance(v, (int, float)) and not isinstance(v, bool)
@@ -4330,7 +4645,7 @@ class RigWebApp:
                     f"<td>{coverage}</td></tr>"
                 )
             sections.append(
-                f"<h3>{html.escape(fields['metric'])} "
+                f"<h3>{html.escape(str(fields['metric']))} "
                 f"<span class='fieldhint'>({len(rows)} row(s))</span><br>"
                 + label_bits + "</h3>"
                 + chart +
@@ -4346,10 +4661,10 @@ class RigWebApp:
             "</h2>"
             "<p class='note'>Deterministic Level-2 export "
             "(<code>common.estimates</code>). One chart per COMPATIBLE metric "
-            "stratum (semantic family, source, policy, modality, population, "
-            "attacker, defense, judge); the same metric in incompatible "
-            "populations is charted separately and no universal safety score "
-            "exists. Diagnostic evidence cannot reach this report by "
+            "stratum (exact run/served target/source/policy/modality/population/"
+            "attacker/defense/judge/sampling condition); distinct targets or "
+            "runs are not presented as a ranking, and no universal safety "
+            "score exists. Diagnostic evidence cannot reach this report by "
             "construction.</p>"
             + "".join(sections)
             + f"<p class='note'><a href='/artifacts?path={quote(rel)}'>open "
@@ -4459,6 +4774,17 @@ class RigWebApp:
                 )
                 continue
             try:
+                _validate_report_document(str(report["kind"]), doc)
+            except ValueError as exc:
+                cards.append(
+                    "<div class='card'><h2>" + _icon("file")
+                    + f"{html.escape(rel)} <span class='badge red'>invalid"
+                    "</span></h2><p class='note'>The declared schema matches, "
+                    "but the producer contract or content-derived identity "
+                    f"does not: {html.escape(str(exc))}. Not rendered.</p></div>"
+                )
+                continue
+            try:
                 if report["kind"] == "level2":
                     cards.append(self._render_level2(rel, doc))
                 else:
@@ -4541,15 +4867,24 @@ class RigWebApp:
         from experiments.local_targets import roster_models  # noqa: PLC0415
 
         options: list[tuple[str, str, tuple[str, ...], str]] = []
+        api_registry = self._load_registry(
+            "api-targets.json", "rig/api-targets.example.json"
+        )
         api_seen: set[str] = set()
         for env_name, label in (("FABLE", "Fable (focal)"), ("SOL", "Sol (focal)")):
             spec = os.environ.get(env_name, "").strip()
             if spec and spec not in api_seen:
                 api_seen.add(spec)
-                options.append((spec, label, ("text", "image"), "api"))
-        for key, entry in self._load_registry(
-            "api-targets.json", "rig/api-targets.example.json"
-        ).items():
+                # If the focal route is also in the maintained registry, its
+                # declared modalities are authoritative.  A blanket text+image
+                # assumption can otherwise admit an impossible paid lane.
+                entry = api_registry.get(spec)
+                modalities = (
+                    self._entry_modalities(entry)
+                    if isinstance(entry, Mapping) else ("text", "image")
+                )
+                options.append((spec, label, modalities, "api"))
+        for key, entry in api_registry.items():
             if key in api_seen:  # a focal spec already listed: do not duplicate
                 continue
             api_seen.add(key)
@@ -4575,6 +4910,20 @@ class RigWebApp:
 
     #: How many repeatable live-attestation rows the builder form accepts.
     _MAX_ATT_ROWS = 12
+    #: A no-call projection is independent of the operator's provisional call
+    #: ceilings. RUN_AND_RETURN explicitly permits replacing those three
+    #: planning values with the exact totals printed by the preflight.
+    _PROJECTION_CAP_FIELDS = frozenset({"cap_target", "cap_judge", "cap_http"})
+
+    @classmethod
+    def _projection_params(cls, params: Mapping[str, str]) -> dict[str, str]:
+        """Normalized grid identity for safe preflight reuse."""
+
+        return {
+            key: str(value).strip()
+            for key, value in params.items()
+            if key not in cls._PROJECTION_CAP_FIELDS and str(value).strip()
+        }
 
     def _compose_from_builder(
         self, form: Mapping[str, str],
@@ -4719,6 +5068,16 @@ class RigWebApp:
     def _split_list(raw: str) -> list[str]:
         return [item.strip() for item in raw.split(",") if item.strip()]
 
+    def _preflight_output_dir(self, params: Mapping[str, str]) -> Path:
+        """Dedicated no-call output, separate from the measured run tree."""
+
+        normalized = self._projection_params(params)
+        condition = hashlib.sha256(json.dumps(
+            normalized, ensure_ascii=False, sort_keys=True,
+            separators=(",", ":"), allow_nan=False,
+        ).encode("utf-8")).hexdigest()[:16]
+        return self.results_root / "preflight" / f"builder-{condition}"
+
     def _validate_builder(self, params: Mapping[str, str]) -> dict[str, str]:
         """Mode-specific builder validation, keyed by form field.
 
@@ -4734,6 +5093,7 @@ class RigWebApp:
         local = self._split_list(params.get("local", ""))
         corpora = self._split_list(params.get("corpora", ""))
         attackers = self._split_list(params.get("attackers", ""))
+        judges_list = self._split_list(params.get("judges", ""))
         seeds = self._split_list(params.get("seeds", "") or "0")
         targets = len(api) + len(local)
         real_corpora = [arm for arm in corpora if arm != "synth"]
@@ -4743,6 +5103,61 @@ class RigWebApp:
             sha = params.get(f"att_sha{index}", "")
             if path or sha:
                 att_rows.append((path, sha))
+
+        allowed_modes = {token for token, _flag, _desc in _BUILD_MODES}
+        if mode not in allowed_modes:
+            errors["mode"] = "select a supported execution mode"
+
+        def reject_duplicates(field: str, values: list[str]) -> None:
+            duplicates = sorted(
+                value for value in set(values) if values.count(value) > 1
+            )
+            if duplicates:
+                errors[field] = (
+                    "entries must be unique; duplicates: "
+                    + ", ".join(duplicates)
+                )
+
+        reject_duplicates("models", [*api, *local])
+        reject_duplicates("corpora", corpora)
+        reject_duplicates("attackers", attackers)
+        reject_duplicates("judges", judges_list)
+
+        known_arms = {arm for arm, _mods, _reason in _ARM_CATALOG} | {"synth"}
+        unknown_arms = sorted(set(corpora) - known_arms)
+        if unknown_arms:
+            errors["corpora"] = "unknown corpus arm(s): " + ", ".join(unknown_arms)
+        unknown_attackers = sorted(set(attackers) - set(_ATTACKER_NAMES))
+        if unknown_attackers:
+            errors["attackers"] = (
+                "unknown attack framework(s): " + ", ".join(unknown_attackers)
+            )
+        unknown_judges = sorted(set(judges_list) - {"rules", "llm", "guardrail"})
+        if unknown_judges:
+            errors["judges"] = "unknown judge(s): " + ", ".join(unknown_judges)
+        if params.get("defense", "none") not in {"none", "input", "output", "both"}:
+            errors["defense"] = "select none, input, output, or both"
+        if params.get("defense_guard", "rules") not in {"rules", "guardrail"}:
+            errors["defense_guard"] = "select rules or guardrail"
+        if params.get("dtype", "") not in {"", "auto", "bfloat16", "float16"}:
+            errors["dtype"] = "select auto, bfloat16, or float16"
+
+        model_options = self._model_options()
+        target_mods = {
+            (kind, value): set(mods)
+            for value, _label, mods, kind in model_options
+        }
+        unknown_api = sorted(value for value in api if ("api", value) not in target_mods)
+        unknown_local = sorted(
+            value for value in local if ("local", value) not in target_mods
+        )
+        if unknown_api or unknown_local:
+            details = []
+            if unknown_api:
+                details.append("hosted: " + ", ".join(unknown_api))
+            if unknown_local:
+                details.append("local: " + ", ".join(unknown_local))
+            errors["models"] = "unknown target selection(s): " + "; ".join(details)
 
         def require_int(field: str, *, positive: bool = False) -> int | None:
             raw = params.get(field, "")
@@ -4859,6 +5274,8 @@ class RigWebApp:
             errors["corpora"] = "select at least one corpus arm"
         if not attackers:
             errors["attackers"] = "select at least one attack framework"
+        if not judges_list:
+            errors["judges"] = "select at least one judge"
         if len(local) > 1:
             errors["models"] = (
                 "one local target per process (vLLM/Ollama engines must not "
@@ -4884,32 +5301,31 @@ class RigWebApp:
             )
         arm_mods = {arm: set(mods) for arm, mods, _r in _ARM_CATALOG}
         fw_mods = {fw: set(mods) for fw, _d, mods in _FRAMEWORKS}
-        target_mods = {value: set(mods) for value, _lbl, mods, _kind
-                       in self._model_options()}
         for arm in real_corpora:
             if arm in _INELIGIBLE_ARMS:
                 errors["corpora"] = (
-                    f"{arm} is common-metric-ineligible and its source-specific "
-                    "evaluator is not integrated, so run_matrix fails its scored "
-                    "preflight before any target call. Converted records remain "
-                    "available for offline analysis (not a native_import target - "
-                    "native_import canonicalises the upstream engines, not this arm)"
+                    f"{arm} is common-metric-ineligible: "
+                    f"{_INELIGIBLE_REASONS[arm]}"
                 )
                 continue
             if arm in _SOURCE_METRIC_ARMS:
                 metric, allowed = _SOURCE_METRIC_ARMS[arm]
-                if not any(a in allowed for a in attackers):
+                unsupported = [a for a in attackers if a not in allowed]
+                if unsupported:
                     errors["attackers"] = (
                         f"arm {arm} is scored only by the implemented "
                         f"'{metric}' source metric, which run_matrix admits "
-                        f"solely for the {'/'.join(allowed)} attacker; select "
-                        f"{'/'.join(allowed)} or the arm produces no scored cell"
+                        f"solely for the {'/'.join(allowed)} attacker; remove "
+                        f"{', '.join(unsupported)} or the grid contains "
+                        "unscored cells"
                     )
             needed = arm_mods.get(arm)
             if needed is None:
                 continue  # unknown arm id: left to the CLI's own registry check
-            for target in api + local:
-                have = target_mods.get(target)
+            for kind, target in [("api", value) for value in api] + [
+                ("local", value) for value in local
+            ]:
+                have = target_mods.get((kind, target))
                 if have is not None and not needed <= have:
                     errors["models"] = (
                         f"target {target} serves {sorted(have) or ['text']} but "
@@ -4922,23 +5338,54 @@ class RigWebApp:
                         f"attacker {attacker} drives {sorted(can)} but arm "
                         f"{arm} requires all of {sorted(needed)}"
                     )
-        judges_list = self._split_list(params.get("judges", ""))
         if "guardrail" in judges_list and not params.get("guardrail_model", ""):
             errors["guardrail_model"] = (
                 "the scoring guardrail judge requires a guardrail model"
             )
-        if params.get("defense_guard", "") == "guardrail" and params.get(
-            "defense", "") not in ("", "none"
-        ) and not params.get("defense_guardrail_model", ""):
-            errors["defense_guardrail_model"] = (
-                "the defense guardrail requires a defense guardrail model"
+        scoring_guardrail = "guardrail" in judges_list
+        defense_guardrail = (
+            params.get("defense_guard", "") == "guardrail"
+            and params.get("defense", "") not in ("", "none")
+        )
+        if scoring_guardrail and re.fullmatch(
+            r"[0-9a-fA-F]{40,64}", params.get("guardrail_revision", "")
+        ) is None:
+            errors["guardrail_revision"] = (
+                "the scoring guardrail requires an immutable 40-64 hex revision"
             )
+        if defense_guardrail:
+            if not params.get("defense_guardrail_model", ""):
+                errors["defense_guardrail_model"] = (
+                    "the defense guardrail requires a defense guardrail model"
+                )
+            if re.fullmatch(
+                r"[0-9a-fA-F]{40,64}",
+                params.get("defense_guardrail_revision", ""),
+            ) is None:
+                errors["defense_guardrail_revision"] = (
+                    "the defense guardrail requires an immutable 40-64 hex revision"
+                )
+            if not params.get("defense_guardrail_device", ""):
+                errors["defense_guardrail_device"] = (
+                    "the defense guardrail requires an explicit device"
+                )
         scoring_g = params.get("guardrail_model", "")
         defense_g = params.get("defense_guardrail_model", "")
-        if scoring_g and defense_g and scoring_g == defense_g:
+        if (
+            scoring_guardrail and defense_guardrail
+            and scoring_g and defense_g and scoring_g == defense_g
+        ):
             errors["defense_guardrail_model"] = (
                 "the scoring guard and the defense guard must be distinct "
                 "models - a tested guard must never grade its own output"
+            )
+        if (
+            mode != "dry_run" and not canary_dry and real_corpora
+            and "llm" in judges_list
+            and params.get("judge_model", "").strip().lower() == "mock"
+        ):
+            errors["judge_model"] = (
+                "a real-source live lane cannot use the mock LLM judge"
             )
 
         if mode == "dry_run":
@@ -5032,73 +5479,83 @@ class RigWebApp:
         return errors
 
     def _read_lane_projection(
-        self, out_rel: str,
+        self, params: Mapping[str, str],
     ) -> tuple[dict[str, int] | None, str]:
         """The required target/judge/HTTP upper bounds from a no-call preflight.
 
-        Reads the ``*.lane-projection.json`` the CLI ``--preflight-only`` path
-        writes under the run's output directory (never estimated here) and
-        returns the projected upper-bound call counts, or (None, why) when no
-        projection has been produced for this grid yet.
+        Only a successful console preflight carrying the same normalized grid
+        parameters can authorize the preview. The three provisional planning
+        caps may change to the preflight's printed totals; every other builder
+        field remains exact. Its stdout names the content-addressed projection,
+        which is validated before any bound is used.
         """
 
+        from ura.lane_projection import validate_lane_projection  # noqa: PLC0415
+
+        out_rel = params.get("out", "")
         if not out_rel:
             return None, "select an output directory and run the preflight"
-        out_dir = (self.repo_root / out_rel)
-        try:
-            candidates = sorted(
-                out_dir.glob("**/*.lane-projection.json"),
-                key=lambda p: p.stat().st_mtime, reverse=True,
-            )
-        except OSError:
-            return None, "output directory is not readable"
-        if not candidates:
+        normalized = self._projection_params(params)
+        preflights = sorted(
+            (
+                job for job in self.jobs.values()
+                if "--preflight-only" in job.argv
+                and self._projection_params(job.builder_params or {}) == normalized
+                and job.state() == "complete"
+            ),
+            key=lambda job: job.started_at,
+            reverse=True,
+        )
+        if not preflights:
             return None, (
-                "no no-call projection yet: run the preflight below to compute "
-                "the required ceilings from the real corpus"
+                "no successful no-call preflight for these exact selections: "
+                "run the preflight below"
             )
-        try:
-            doc = json.loads(candidates[0].read_text(encoding="utf-8"))
-        except (OSError, ValueError):
-            return None, "the lane-projection artifact could not be read"
-
-        found: dict[str, int] = {}
-        keys = ("target_calls", "judge_calls", "http_attempts")
-
-        def walk(node: Any) -> bool:
-            # Capture the FIRST node carrying all three call-bound keys (the
-            # top-level call_projection grand totals, visited before its
-            # children) and STOP.  The projection also nests a by_attacker map
-            # whose entries repeat these keys as per-attacker sub-totals; a
-            # blind recursive overwrite would leave `found` holding the last
-            # attacker's smaller counts and understate the required ceiling.
-            if isinstance(node, Mapping):
-                if all(k in node for k in keys):
-                    for key in keys:
-                        value = node.get(key)
-                        if isinstance(value, int) and not isinstance(value, bool):
-                            found[key] = value
-                    return True  # grand-total node found; never descend into it
-                for value in node.values():
-                    if walk(value):
-                        return True
-            elif isinstance(node, list):
-                for value in node:
-                    if walk(value):
-                        return True
-            return False
-
-        walk(doc)
-        if len(found) != 3:
-            return None, "the projection did not record all three call bounds"
-        return found, ""
+        prefix = "prospective no-call lane projection written: "
+        for job in preflights:
+            preflight_out = _argv_out_dir(job.argv)
+            if not preflight_out:
+                continue
+            unresolved_out = Path(preflight_out)
+            out_dir = (
+                unresolved_out if unresolved_out.is_absolute()
+                else self.repo_root / unresolved_out
+            ).resolve()
+            artifact = ""
+            for line in reversed(self._log_tail(job, "stdout").splitlines()):
+                if prefix not in line:
+                    continue
+                try:
+                    announcement = json.loads(line.split(prefix, 1)[1])
+                except (TypeError, ValueError):
+                    continue
+                if isinstance(announcement, Mapping):
+                    artifact = str(announcement.get("artifact", ""))
+                break
+            if not artifact or Path(artifact).name != artifact:
+                continue
+            candidate = (out_dir / artifact).resolve()
+            if candidate.parent != out_dir:
+                continue
+            try:
+                doc = validate_lane_projection(
+                    json.loads(candidate.read_text(encoding="utf-8"))
+                )
+            except (OSError, TypeError, ValueError):
+                continue
+            projection = doc["call_projection"]
+            return {
+                key: int(projection[key])
+                for key in ("target_calls", "judge_calls", "http_attempts")
+            }, ""
+        return None, "the matching preflight's lane projection is missing or invalid"
 
     def _ceilings_card(self, params: Mapping[str, str]) -> tuple[str, bool]:
         """The call-ceiling summary shown before a non-dry job starts.
 
-        Returns ``(html, caps_cover_projection)``: the boolean is False when a
-        no-call projection exists and an entered ceiling is below the projected
-        required upper bound (so the preview can refuse to enable Start).
+        Returns ``(html, caps_cover_projection)``: the boolean is true only
+        when an exact, valid no-call projection exists and every entered
+        ceiling covers it.
         """
 
         api = self._split_list(params.get("api", ""))
@@ -5138,8 +5595,8 @@ class RigWebApp:
         # No-call projection: the required upper bounds from the CLI preflight
         # (never estimated here).  Compare each entered ceiling against its
         # projected requirement; a shortfall blocks Start.
-        projection, why = self._read_lane_projection(params.get("out", ""))
-        caps_ok = True
+        projection, why = self._read_lane_projection(params)
+        caps_ok = projection is not None
         if projection is not None:
             proj_rows = []
             for label, cap_field, proj_key in (
@@ -5233,7 +5690,7 @@ class RigWebApp:
             + "Start this job</button>"
             if caps_ok else
             "<button type='submit' disabled>" + _icon("play", size=15)
-            + "Start blocked: raise ceilings to the projection</button>"
+            + "Start blocked: run preflight / cover its projection</button>"
         )
         body = (
             "<h1>" + _icon("play", size=22) + "Confirm paid execution</h1>"
@@ -5609,7 +6066,8 @@ class RigWebApp:
             "</div>"
             "<div class='fieldcell'><label class='fieldlabel'>--defense-guard "
             "<span class='fieldhint'>guard used when a defense is on</span>"
-            f"</label><select name='defense_guard'>{guard_opts}</select></div>"
+            f"</label><select name='defense_guard'>{guard_opts}</select>"
+            + err("defense_guard") + "</div>"
             "</div>"
             "<h3>Scoring guardrail <span class='fieldhint'>the judge cascade's "
             "<code>guardrail</code> grader; add <code>guardrail</code> to the "
@@ -5618,7 +6076,7 @@ class RigWebApp:
                          "scoring guardrail model id",
                          placeholder="meta-llama/Llama-Guard-3-8B")
             + text_field("guardrail_revision", "--guardrail-revision",
-                         "pinned revision (optional)")
+                         "required immutable 40-64 hex revision")
             + text_field("guardrail_device", "--guardrail-device",
                          "device, e.g. cuda:0 (optional)")
             + "</div>"
@@ -5630,9 +6088,9 @@ class RigWebApp:
                          "defense guardrail model id (distinct from scoring)")
             + text_field("defense_guardrail_revision",
                          "--defense-guardrail-revision",
-                         "pinned revision (optional)")
+                         "required immutable 40-64 hex revision")
             + text_field("defense_guardrail_device", "--defense-guardrail-device",
-                         "device (optional)")
+                         "required explicit device")
             + "</div></div>"
             "<div class='card'><h2>" + _icon("receipt")
             + "Receipts (fail-closed admission)</h2>"
@@ -5700,7 +6158,7 @@ class RigWebApp:
             "<div class='card'><h2>" + _icon("disk")
             + "Local serving (vLLM)</h2><div class='cols'>"
             "<div class='fieldcell'><label class='fieldlabel'>--dtype</label>"
-            f"<select name='dtype'>{dtype_opts}</select></div>"
+            f"<select name='dtype'>{dtype_opts}</select>" + err("dtype") + "</div>"
             + text_field("quantization", "--quantization",
                          "awq, gptq, fp8; empty auto-detects",
                          placeholder="(auto-detect)")
@@ -6809,12 +7267,20 @@ class RigWebApp:
                 f"<td><code>{html.escape(value)}</code></td></tr>"
                 for key, value in sorted(job.builder_params.items())
             )
+            reopen = "".join(
+                f"<input type='hidden' name='{html.escape(key)}' "
+                f"value='{html.escape(value)}'>"
+                for key, value in sorted(job.builder_params.items())
+            )
             builder = (
                 "<div class='card'><h2>" + _icon("flask")
                 + "Builder parameters</h2><div class='scroll'><table>"
                 + rows + "</table></div><p class='note'>The raw campaign-"
                 "builder selections this job was composed from (persisted "
-                "with the job).</p></div>"
+                "with the job).</p><form method='post' action='/build'>"
+                + reopen
+                + "<button type='submit' class='ghost'>Review this exact "
+                "lane in the builder</button></form></div>"
             )
         argv_chips = "<div class='argv'>" + "".join(
             f"<code>{html.escape(part)}</code>" for part in job.argv

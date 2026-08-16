@@ -13,6 +13,9 @@ split, and reviewer-attributed semantic spot-check. The runtime
 artifacts remain authoritative for emitted-row, policy, metric, and media
 inventories, including the converter-derived cluster rule; see
 [`docs/SOURCE_CONFORMANCE.md`](../docs/SOURCE_CONFORMANCE.md).
+For an exporter-prepared manifest, raw-source counts come from the retained
+export summary at the upstream-input boundary; the consumed JSONL and summary
+are hashed separately.
 
 The `synth` corpus is generated in code solely for offline smoke and regression
 tests. It is not a substitute for a released corpus and its outputs are never

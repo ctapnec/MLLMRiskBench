@@ -20,21 +20,19 @@ from ..adapters.base import BaseConverter
 from ..data_models import DataPoint, DialogTurn
 from ._common import CorpusFormatError, Rc, dp, image, missing, read_json, read_jsonl
 
-# SIUO safety categories -> internal taxonomy (default LEGALITY when unmapped).
+# The nine category strings in the pinned 167-row SIUO release.  Conversion is
+# fail-closed below: silently treating a new/misspelled category as LEGALITY
+# would corrupt the risk stratum while leaving the row apparently valid.
 CATEGORY_MAP = {
-    "self-harm": Rc.CATASTROPHIC,
-    "violence": Rc.CATASTROPHIC,
-    "hate": Rc.TOXICITY,
-    "hate speech": Rc.TOXICITY,
-    "illegal activity": Rc.LEGALITY,
-    "crime": Rc.LEGALITY,
-    "dangerous behavior": Rc.LEGALITY,
-    "privacy": Rc.PRIVACY,
-    "privacy violation": Rc.PRIVACY,
-    "cybersecurity": Rc.CYBERSEC,
-    "ethics": Rc.TOXICITY,
+    "controversial topics, politics": Rc.TOXICITY,
+    "dangerous behavior": Rc.TOXICITY,
+    "discrimination & stereotyping": Rc.BIAS,
+    "illegal activities & crime": Rc.LEGALITY,
+    "information misinterpretation": Rc.HALLUCINATION,
     "morality": Rc.TOXICITY,
-    "political": Rc.TOXICITY,
+    "privacy violation": Rc.PRIVACY,
+    "religion beliefs": Rc.BIAS,
+    "self-harm": Rc.CATASTROPHIC,
 }
 
 
@@ -55,14 +53,20 @@ class SIUOConverter(BaseConverter):
         for i, rec in enumerate(records):
             if not isinstance(rec, dict):
                 raise CorpusFormatError(f"SIUO row {i} in {path} is not an object")
-            cat = str(rec.get("category") or "").strip()
-            risk = CATEGORY_MAP.get(cat.lower(), Rc.LEGALITY)
             text = rec.get("question") or rec.get("instruction") or rec.get("prompt")
             img_name = rec.get("image") or rec.get("image_path") or rec.get("image_id")
             if not isinstance(text, str) or not text.strip() or not img_name:
                 raise CorpusFormatError(
                     f"SIUO row {i} in {path} lacks the required question or image"
                 )
+            cat = str(rec.get("category") or "").strip()
+            try:
+                risk = CATEGORY_MAP[cat.lower()]
+            except KeyError as exc:
+                raise CorpusFormatError(
+                    f"SIUO row {i} in {path} has an unknown or blank category "
+                    f"{cat!r}"
+                ) from exc
             safety_warning = rec.get("safety_warning")
             if not isinstance(safety_warning, str) or not safety_warning.strip():
                 raise CorpusFormatError(

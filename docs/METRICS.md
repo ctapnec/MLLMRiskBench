@@ -38,7 +38,7 @@ evidence inventory navigable:
 | `task_utility` | agent/application utility and RAG/application quality | source-native scale retained |
 | `graded_risk` | StrongREJECT-style severity, Petri/AutoDAN-native scores | rubric and scale retained |
 | `detector_findings` | Garak/FuzzyAI/Giskard scan findings | detector/test inventory retained |
-| `truthfulness` | MLLMGuard GuardRank hallucination/factuality | unavailable unless that substantive source scorer is implemented |
+| `truthfulness` | MLLMGuard hallucination, position-swapping consistency, and noise-injection accuracy | unavailable unless each substantive source scorer is implemented |
 
 Membership in one family does **not** make two values exchangeable. Only
 coverage/conformance counts have a meaningful suite-wide total. Common rates

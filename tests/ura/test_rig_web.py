@@ -30,12 +30,14 @@ from experiments import level2_report as level2_cli
 from experiments import live_attestation as live_attestation_cli
 from experiments import rig_check
 from experiments.rig_web import (
+    _LEVEL2_ROW_FIELDS,
     _MATRIX_PARAMS,
     Command,
     ConsoleDB,
     Job,
     RigWebApp,
     _tokens_by_category,
+    _validate_report_document,
     build_argv,
     collect_usage,
     compute_costs,
@@ -96,6 +98,8 @@ def test_command_construction_is_typed_and_allowlisted() -> None:
     # Flag parameters never smuggle values.
     with pytest.raises(ValueError, match="checkbox flag"):
         build_argv("run_matrix", {"--dry-run": "--models evil"})
+    with pytest.raises(ValueError, match="must be one of"):
+        build_argv("run_matrix", {"--defense": "invented"})
     # An empty form for a command still produces only the module invocation.
     assert build_argv("figures", {}) == [sys.executable, "-m", "experiments.figures"]
     # The UI selftest can never construct a bare rig_web invocation (which
@@ -134,6 +138,23 @@ def test_artifact_paths_are_contained(tmp_path: Path) -> None:
         assert b"secret" not in body
 
 
+def test_fresh_results_root_renders_empty_artifact_browser(tmp_path: Path) -> None:
+    results = tmp_path / "not-created-yet" / "results"
+    assert not results.exists()
+    app = RigWebApp(
+        results_root=results,
+        state_dir=tmp_path / "state",
+        repo_root=Path(__file__).resolve().parents[2],
+    )
+    try:
+        status, _, body = app.handle("GET", "/artifacts")
+        assert status == 200
+        assert results.is_dir()
+        assert "Empty directory." in body.decode("utf-8")
+    finally:
+        app.close()
+
+
 def test_job_lifecycle_start_monitor_stop(tmp_path: Path) -> None:
     app = _app(tmp_path)
     job = app.start_job("webui_selftest", {"--selftest-sleep": "30"})
@@ -158,6 +179,29 @@ def test_job_lifecycle_start_monitor_stop(tmp_path: Path) -> None:
     )
     assert log_status == 200
     assert b"selftest complete" in log_body
+
+
+def test_close_detaches_running_job_without_killing_it(tmp_path: Path) -> None:
+    app = _app(tmp_path)
+    job = app.start_job("webui_selftest", {"--selftest-sleep": "30"})
+    assert job.process is not None and job.process.poll() is None
+    db_path = app.db.path
+
+    app.close()
+    try:
+        # Console shutdown releases its handles but must not silently stop the
+        # experiment; a later console will honestly restore it as orphaned.
+        time.sleep(0.2)
+        assert job.process.poll() is None
+        with sqlite3.connect(db_path) as conn:
+            assert conn.execute(
+                "SELECT state, exit_code FROM jobs WHERE job_id = ?",
+                (job.job_id,),
+            ).fetchone() == ("running", None)
+    finally:
+        if job.process.poll() is None:
+            job.process.kill()
+        job.process.wait(timeout=10)
 
 
 def test_failed_job_displays_failure_and_stderr(tmp_path: Path) -> None:
@@ -253,7 +297,6 @@ def test_config_editor_writes_only_allowlisted_json_with_backup(tmp_path: Path) 
         results_root=tmp_path / "runs2", state_dir=tmp_path / "state2",
         repo_root=repo,
     )
-    (tmp_path / "runs2").mkdir()
     # A clean valid save.
     target = app.save_config("api-targets", '{"z":1,"a":2}')
     assert target.name == "api-targets.json"
@@ -347,13 +390,18 @@ def test_attacker_registry_parity_and_full_inventory() -> None:
     assert _ATTACKER_NAMES == ATTACKER_NAMES
     assert len(_FRAMEWORKS) == 20
     assert len(_ARM_CATALOG) == 39  # all maintained source arms
-    # 13 common-metric-ineligible arms with NO implemented source evaluator
+    # 15 common-metric-ineligible arms with NO implemented source evaluator
     # (shown disabled). rjudge/gptgeochat are NOT here: their exact source
     # evaluators ARE implemented, so run_matrix scores them as source-metric
     # lanes - they are runnable, not disabled.
-    assert len(_INELIGIBLE_ARMS) == 13
-    assert {"cyberseceval_prompt_injection", "mllmguard_hallucination",
-            "agentharm_harmful"} <= _INELIGIBLE_ARMS
+    assert len(_INELIGIBLE_ARMS) == 15
+    assert {
+        "cyberseceval_prompt_injection",
+        "mllmguard_hallucination",
+        "mllmguard_position_swapping",
+        "mllmguard_noise_injection",
+        "agentharm_harmful",
+    } <= _INELIGIBLE_ARMS
     assert "rjudge_release" not in _INELIGIBLE_ARMS
     assert "gptgeochat_release" not in _INELIGIBLE_ARMS
     # The source-metric arm set mirrors the implemented-evaluator registry
@@ -507,6 +555,16 @@ def test_agentic_arm_rejected_server_side(tmp_path: Path) -> None:
         })
         assert "common-metric-ineligible" in body2.decode("utf-8")
         assert len(app.jobs) == started
+        for arm in (
+            "mllmguard_position_swapping",
+            "mllmguard_noise_injection",
+        ):
+            errors = app._validate_builder({
+                "mode": "dry_run", "corpora": arm,
+                "api": "anthropic:claude-opus-5", "attackers": "replay",
+                "judges": "rules", "out": f"runs/{arm}", "seeds": "0",
+            })
+            assert "truthfulness" in errors.get("corpora", "")
     finally:
         app.close()
 
@@ -534,7 +592,7 @@ def test_source_metric_arm_runnable_and_replay_guarded(tmp_path: Path) -> None:
             "judges": "rules", "out": "runs/sm2", "seeds": "0",
         })
         assert "rjudge_safety_judgment" in errors2.get("attackers", "")
-        assert "produces no scored cell" in errors2["attackers"]
+        assert "unscored cells" in errors2["attackers"]
         # gptgeochat_release is likewise runnable (not ineligible).
         errors3 = app._validate_builder({
             "mode": "dry_run", "corpora": "gptgeochat_release",
@@ -542,6 +600,13 @@ def test_source_metric_arm_runnable_and_replay_guarded(tmp_path: Path) -> None:
             "judges": "rules", "out": "runs/sm3", "seeds": "0",
         })
         assert "corpora" not in errors3
+        mixed = app._validate_builder({
+            "mode": "dry_run", "corpora": "rjudge_release",
+            "api": "anthropic:claude-opus-5",
+            "attackers": "replay,crescendo", "judges": "rules",
+            "out": "runs/sm4", "seeds": "0",
+        })
+        assert "unscored cells" in mixed.get("attackers", "")
     finally:
         app.close()
 
@@ -552,28 +617,53 @@ def test_lane_projection_reads_grand_totals_not_per_attacker(tmp_path: Path) -> 
     # projection nests both).  Reading the last per-attacker node would
     # understate the ceiling and enable Start below the true bound.
     app = _isolated_app(tmp_path)
-    proj_dir = app.repo_root / "runs" / "proj"
-    proj_dir.mkdir(parents=True)
-    (proj_dir / "grid.lane-projection.json").write_text(json.dumps({
-        "call_projection": {
-            "semantics": "conservative_complete_grid_upper_bound_v1",
-            "trajectories": 30, "target_calls": 300, "judge_calls": 300,
-            "local_guardrail_evaluations": 0, "http_attempts": 360,
-            "by_attacker": {
-                "replay": {"trajectories": 10, "target_calls": 100,
-                           "judge_calls": 100, "local_guardrail_evaluations": 0,
-                           "http_attempts": 120},
-                "crescendo": {"trajectories": 20, "target_calls": 200,
-                              "judge_calls": 200,
-                              "local_guardrail_evaluations": 0,
-                              "http_attempts": 240},
-            },
-        },
-    }), encoding="utf-8")
-    found, why = app._read_lane_projection("runs/proj")
+    planning_params = {
+        "mode": "measured", "out": "runs/measured", "corpora": "synth",
+        "attackers": "replay,crescendo", "judges": "rules",
+        "cap_target": "9999", "cap_judge": "9999", "cap_http": "9999",
+    }
+    proj_dir = app._preflight_output_dir(planning_params)
+    assert rig_check.main([
+        "--dry-run", "--attackers", "replay,crescendo", "--judges", "rules",
+        "--corpora", "synth", "--limit", "2", "--seeds", "0",
+        "--max-queries", "4", "--max-turns", "4", "--out", str(proj_dir),
+    ]) == 0
+    projection_path = next(proj_dir.glob("*.lane-projection.json"))
+    projection = json.loads(projection_path.read_text(encoding="utf-8"))
+    job_dir = tmp_path / "preflight-job"
+    job_dir.mkdir()
+    (job_dir / "stdout.log").write_text(
+        "prospective no-call lane projection written: "
+        + json.dumps({"artifact": projection_path.name}) + "\n",
+        encoding="utf-8",
+    )
+    (job_dir / "stderr.log").write_text("", encoding="utf-8")
+    app.jobs["preflight"] = Job(
+        job_id="preflight", command="run_matrix",
+        argv=["python", "-m", "experiments.run_matrix", "--preflight-only",
+              "--out", str(proj_dir)],
+        directory=job_dir, process=None, builder_params=planning_params,
+        restored_state="complete", restored_exit=0,
+    )
+    # RUN_AND_RETURN permits replacing the provisional planning caps with the
+    # exact printed totals. That cap-only change must reuse this same validated
+    # projection instead of forcing a redundant second preflight.
+    exact_params = {
+        **planning_params,
+        "cap_target": str(projection["call_projection"]["target_calls"]),
+        "cap_judge": str(projection["call_projection"]["judge_calls"]),
+        "cap_http": str(projection["call_projection"]["http_attempts"]),
+    }
+    assert app._preflight_output_dir(exact_params) == proj_dir
+    found, why = app._read_lane_projection(exact_params)
     assert why == ""
-    assert found == {"target_calls": 300, "judge_calls": 300,
-                     "http_attempts": 360}
+    assert found == {
+        key: projection["call_projection"][key]
+        for key in ("target_calls", "judge_calls", "http_attempts")
+    }
+    # Every grid-defining field remains exact.
+    changed_grid = {**exact_params, "attackers": "replay"}
+    assert app._read_lane_projection(changed_grid)[0] is None
     app.close()
 
 
@@ -629,6 +719,17 @@ def test_guardrail_separation_and_wiring(tmp_path: Path) -> None:
             "judges": "guardrail", "out": "runs/g", "seeds": "0",
         })
         assert "guardrail_model" in errors
+        assert "guardrail_revision" in errors
+        defense_missing = app._validate_builder({
+            "mode": "dry_run", "corpora": "strongreject_official",
+            "api": "anthropic:claude-opus-5", "attackers": "replay",
+            "judges": "rules", "defense": "output",
+            "defense_guard": "guardrail",
+            "defense_guardrail_model": "vllm:defender",
+            "out": "runs/g", "seeds": "0",
+        })
+        assert "defense_guardrail_revision" in defense_missing
+        assert "defense_guardrail_device" in defense_missing
         # Distinct guards + models wire the separate flags.
         _cmd, values, _p = app._compose_from_builder({
             "mode": "dry_run", "corpora": "strongreject_official",
@@ -669,7 +770,9 @@ def test_builder_ordinary_dry_run_synth(tmp_path: Path) -> None:
         app.close()
 
 
-def test_no_call_projection_gates_start(tmp_path: Path) -> None:
+def test_no_call_projection_gates_start(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
     # The preview reads the no-call preflight's lane-projection and blocks Start
     # when an entered ceiling is below the projected required upper bound.
     repo = tmp_path / "repo"
@@ -681,14 +784,11 @@ def test_no_call_projection_gates_start(tmp_path: Path) -> None:
     )
     try:
         out_rel = "runs/grid1"
-        out = repo / out_rel
-        out.mkdir(parents=True)
-        (out / "p1.lane-projection.json").write_text(json.dumps({
-            "call_projection": {"target_calls": 100, "judge_calls": 50,
-                                "http_attempts": 300},
-        }), encoding="utf-8")
-        proj, why = app._read_lane_projection(out_rel)
-        assert proj == {"target_calls": 100, "judge_calls": 50, "http_attempts": 300}
+        monkeypatch.setattr(
+            app, "_read_lane_projection",
+            lambda _params: ({"target_calls": 100, "judge_calls": 50,
+                              "http_attempts": 300}, ""),
+        )
         # Under-provisioned ceilings block Start.
         html_out, ok = app._ceilings_card({
             "out": out_rel, "cap_target": "50", "cap_judge": "50",
@@ -701,12 +801,57 @@ def test_no_call_projection_gates_start(tmp_path: Path) -> None:
             "cap_http": "300",
         })
         assert ok is True and "covers" in html_out
-        # No projection yet -> caps_ok stays True (nothing to compare), and the
-        # card prompts to run the preflight.
+        # No exact projection yet -> Start remains blocked.
+        monkeypatch.setattr(
+            app, "_read_lane_projection", lambda _params: (None, "run preflight"),
+        )
         _html, ok = app._ceilings_card({"out": "runs/empty"})
-        assert ok is True
+        assert ok is False
     finally:
         app.close()
+
+
+def test_builder_preflight_strips_live_fields_and_uses_dedicated_output(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("URA_PROJECT_REVISION_MANIFEST", str(tmp_path / "p.json"))
+    monkeypatch.setenv("URA_PROJECT_REVISION_SHA256", "a" * 64)
+    monkeypatch.setenv("URA_SOURCE_CONFORMANCE_MANIFEST", str(tmp_path / "s.json"))
+    monkeypatch.setenv("URA_SOURCE_CONFORMANCE_SHA256", "b" * 64)
+    app = _app(tmp_path)
+    captured: dict[str, object] = {}
+
+    def fake_start(command, values, *, builder_params=None, **_kwargs):
+        captured.update(command=command, values=dict(values), params=builder_params)
+        return Job(
+            job_id="preflight", command=command, argv=build_argv(command, values),
+            directory=tmp_path / "fake-job", process=None,
+            builder_params=dict(builder_params or {}), restored_state="complete",
+            restored_exit=0,
+        )
+
+    monkeypatch.setattr(app, "start_job", fake_start)
+    measured_out = "runs/measured-lane"
+    status, location, _ = app.handle("POST", "/build", {
+        "preflight_only": "yes", "mode": "measured",
+        "corpora": "strongreject_official", "api": "anthropic:claude-opus-5",
+        "attackers": "replay", "judges": "rules", "limit": "1",
+        "sample_seed": "0", "seeds": "0", "scope": "scope-1",
+        "max_age": "24", "att_path1": "runs/att.json",
+        "att_sha1": "c" * 64, "cap_target": "10", "cap_judge": "10",
+        "cap_http": "30", "deadline": "600", "out": measured_out,
+    })
+    assert status == 303 and location == "/jobs/preflight"
+    values = captured["values"]
+    assert values["--preflight-only"] == "on"
+    assert "--execution-scope-id" not in values
+    assert "--live-attestation-max-age-hours" not in values
+    assert not any(key.startswith("--live-attestation") for key in values)
+    preflight_out = Path(values["--out"])
+    assert preflight_out != Path(measured_out)
+    assert preflight_out.is_relative_to(app.results_root / "preflight")
+    assert captured["params"]["out"] == measured_out
+    app.close()
 
 
 def test_local_targets_repo_root_parity() -> None:
@@ -827,6 +972,11 @@ def test_builder_paid_modes_preview_exact_argv_then_confirm(
     monkeypatch.setenv("URA_SOURCE_CONFORMANCE_MANIFEST", str(tmp_path / "s.json"))
     monkeypatch.setenv("URA_SOURCE_CONFORMANCE_SHA256", "b" * 64)
     app = _app(tmp_path)
+    monkeypatch.setattr(
+        app, "_read_lane_projection",
+        lambda _params: ({"target_calls": 4, "judge_calls": 4,
+                          "http_attempts": 12}, ""),
+    )
     form = {
         "mode": "attestation_probe", "corpora": "strongreject_official",
         "api": "anthropic:claude-opus-5", "attackers": "replay",
@@ -900,7 +1050,6 @@ def test_builder_escapes_config_sourced_modalities(tmp_path: Path) -> None:
     app = RigWebApp(
         results_root=tmp_path / "r", state_dir=tmp_path / "s", repo_root=repo,
     )
-    (tmp_path / "r").mkdir()
     page = app.handle("GET", "/build")[2].decode("utf-8")
     assert "onmouseover='x" not in page  # escaped, no attribute breakout
     assert "onmouseover=&#x27;x" in page or "onmouseover=&#39;x" in page
@@ -1662,11 +1811,23 @@ def test_failed_cell_usage_accounted_operationally_not_scientifically(
     (cell / "cell-f.error.json").write_text(json.dumps({
         "status": "error", "run_id": "run-f", "completed_attempts": 3,
     }), encoding="utf-8")
-    # A second failed cell with attempts but NO token detail -> reserved N/A.
+    # A second failed provider call with no token detail retains its exact,
+    # bounded logical-call audit.  completed_attempts is a different unit and
+    # must never be relabelled as a provider-call count.
     reserved = root / "reserved"
     reserved.mkdir()
     (reserved / "cell-r.error.json").write_text(json.dumps({
         "status": "error", "run_id": "run-r", "completed_attempts": 5,
+        "target": "anthropic:claude-opus-5",
+        "call_audit": {
+            "logical_call_count": 1, "transport_attempt_count": 1,
+            "provider": "anthropic", "operation": "generate",
+        },
+    }), encoding="utf-8")
+    unaudited = root / "unaudited"
+    unaudited.mkdir()
+    (unaudited / "cell-u.error.json").write_text(json.dumps({
+        "status": "error", "run_id": "run-u", "completed_attempts": 9,
     }), encoding="utf-8")
 
     rows = failed_cell_usage_rows(root)
@@ -1677,8 +1838,11 @@ def test_failed_cell_usage_accounted_operationally_not_scientifically(
     # No completion-marker role appears (kept out of scientific results).
     assert not any(r["role"] in {"target", "judge"} for r in rows)
     # The token-less failed cell surfaces reserved-call exposure, never zero.
-    assert by_role_cat[("reserved", "unknown", "calls")] == 5
-    assert by_role_cat[("reserved", "unknown", "missing_tokens")] == 5
+    assert by_role_cat[("reserved", "anthropic", "calls")] == 1
+    assert by_role_cat[("reserved", "anthropic", "missing_tokens")] == 1
+    assert not any(
+        row["role"] == "reserved" and row["amount"] == 9 for row in rows
+    )
 
 
 def test_spend_card_fresh_index_shows_unknown_not_zero(tmp_path: Path) -> None:
@@ -1824,7 +1988,7 @@ def test_costs_from_pricing_are_exact_or_na_never_zero() -> None:
         },
     }, pricing)
     assert rows[0]["cost"] is None
-    assert any("no token usage" in item for item in rows[0]["missing"])
+    assert any("incomplete token usage" in item for item in rows[0]["missing"])
 
 
 def test_compute_costs_rejects_invalid_pricing_values() -> None:
@@ -1840,6 +2004,54 @@ def test_compute_costs_rejects_invalid_pricing_values() -> None:
         )
         assert rows[0]["cost"] is None, bad
         assert rows[0]["missing"]
+
+
+def test_costs_fail_closed_on_partial_or_malformed_token_usage() -> None:
+    pricing = {"providers": {"anthropic": {"models": {"m": {"rates": [{
+        "effective_date": "2026-01-01", "currency": "USD",
+        "per_million_tokens": {"input": 1.0, "output": 2.0},
+    }]}}}}}
+    rows = compute_costs(
+        {("target", "anthropic", "m", "2026-08-16"): {
+            "calls": 1, "input": 10,
+        }},
+        pricing,
+    )
+    assert rows[0]["cost"] is None
+    assert any("incomplete input/output" in why for why in rows[0]["missing"])
+
+    # bool is not a token count, and an impossible cache > gross input must not
+    # be clamped into a plausible-looking zero-cost ordinary-input category.
+    assert "input" not in _tokens_by_category(
+        {"input": True, "output": 2}, None,
+    )
+    assert "input" not in _tokens_by_category(
+        {"input": 10, "output": 2, "cached_input": 11}, None,
+    )
+
+
+def test_costs_require_historical_date_and_valid_currency() -> None:
+    pricing = {"providers": {"anthropic": {"models": {"m": {"rates": [{
+        "effective_date": "2026-01-01", "currency": "usd",
+        "per_million_tokens": {"input": 1.0, "output": 2.0},
+    }]}}}}}
+    usage = {("target", "anthropic", "m", "2026-08-16"): {
+        "calls": 1, "input": 10, "output": 2,
+    }}
+    row = compute_costs(usage, pricing)[0]
+    assert row["currency"] == "USD" and row["cost"] is not None
+
+    unknown_date = {
+        ("target", "anthropic", "m", ""): {"calls": 1, "input": 10, "output": 2}
+    }
+    row = compute_costs(unknown_date, pricing)[0]
+    assert row["cost"] is None
+    assert any("historical usage" in why for why in row["missing"])
+
+    pricing["providers"]["anthropic"]["models"]["m"]["rates"][0]["currency"] = True
+    row = compute_costs(usage, pricing)[0]
+    assert row["cost"] is None
+    assert any("currency" in why for why in row["missing"])
 
 
 def test_compute_costs_never_sums_mixed_currencies() -> None:
@@ -1893,7 +2105,7 @@ def test_reindex_rebuilds_usage_and_spend_card_renders(tmp_path: Path) -> None:
     # recorded no tokens (missing, never zero) - both render distinctly.
     assert "claude-haiku-4-5-20251001" in text
     assert "$0.0006" in text  # 500 in @ $1/M + 20 out @ $5/M
-    assert "N/A" in text and "no token usage" in text
+    assert "N/A" in text and "incomplete token usage" in text
     assert "local (not billed)" in text
     # The dashboard reports the reindex outcome and database health.
     status, _, dash = app.handle("GET", f"/?reindexed={location.split('=', 1)[1]}")
@@ -1960,6 +2172,30 @@ def test_budget_never_sums_or_mislabels_mixed_currencies(tmp_path: Path) -> None
     # DeepSeek: real absence, not a fabricated $0.
     assert "no recorded usage" in text
     app.close()
+
+
+def test_usd_prepaid_balance_is_not_subtracted_from_non_usd_spend(
+    tmp_path: Path,
+) -> None:
+    app = _app(tmp_path)
+    app._usage_cost_rows = lambda: ([{
+        "role": "target", "provider": "anthropic", "model": "m",
+        "calls": 1, "missing_tokens": 0,
+        "tokens": {name: 0 for name in (
+            "input", "output", "cache_read", "cache_write", "reasoning",
+        )},
+        "billable": True, "cost": 10.0, "currency": "EUR",
+        "by_currency": {"EUR": 10.0}, "missing": [],
+        "effective_date": "2026-01-01", "auto_fetched": False,
+    }], "")
+    app._budgets = lambda: [("Anthropic", "$100", "anthropic", "test")]
+    try:
+        card = app._spend_card()
+        assert "prepaid balance is USD" in card
+        assert "no currency conversion recorded" in card
+        assert "EUR 90.0000" not in card
+    finally:
+        app.close()
 
 
 # -- sqlite reliability ------------------------------------------------------
@@ -2085,9 +2321,8 @@ def test_stats_renders_real_level1_evidence(tmp_path: Path) -> None:
 
 
 def test_stats_page_survives_malformed_level1_count(tmp_path: Path) -> None:
-    # A version-valid Level-1 artifact with a non-integer count value must not
-    # 500 the whole Stats page: the version guard does not type-check values,
-    # so the renderer shows the raw value rather than crashing on f"{v:,}".
+    # A schema-labelled artifact with a non-integer count must not receive a
+    # measured badge merely because its schema_version string looks right.
     app = _app(tmp_path)
     bad = app.results_root / "thesis" / "level1"
     bad.mkdir(parents=True)
@@ -2101,9 +2336,54 @@ def test_stats_page_survives_malformed_level1_count(tmp_path: Path) -> None:
     }), encoding="utf-8")
     status, _, body = app.handle("GET", "/stats")
     assert status == 200  # the page did not crash
-    # The malformed value is rendered raw (escaped), never summed or crashed.
-    assert "nested-object" in body.decode("utf-8")
+    text = body.decode("utf-8")
+    assert "badge red'>invalid" in text
+    assert "Not rendered" in text
+    assert "badge blue'>measured" not in text
     app.close()
+
+
+def test_level1_validation_rejects_inconsistent_judgment_counts() -> None:
+    base = {
+        "unit": "judgment_record", "completed": 2, "evaluable": 2,
+        "decided": 1, "abstained": 1, "non_evaluable": 0, "included": None,
+    }
+
+    def document(judgments: dict[str, object]) -> dict[str, object]:
+        result: dict[str, object] = {
+            "schema_version": "ura-level1-evidence/2",
+            "status": "validated_unit_qualified_lifecycle_inventory",
+            "scope": {
+                "evidence_kind": "measured_run",
+                "contains_diagnostic_dry_run": False,
+                "empirical_validity_established": False,
+            },
+            "counts": {
+                "prospective_request_units": None,
+                "planning_strata": {"unit": "planning_stratum", "observed": 1},
+                "execution_units": {"unit": "execution_unit", "completed": 1},
+                "judgment_records": judgments,
+                "request_level_errors": {
+                    "unit": "request_error_artifact", "observed": 0,
+                },
+            },
+        }
+        material = json.dumps(
+            result, ensure_ascii=False, sort_keys=True, separators=(",", ":"),
+            allow_nan=False,
+        ).encode("utf-8")
+        result["evidence_id"] = "level1-" + hashlib.sha256(material).hexdigest()[:24]
+        return result
+
+    _validate_report_document("level1", document(dict(base)))
+    with pytest.raises(ValueError, match="decision counts do not reconcile"):
+        _validate_report_document(
+            "level1", document({**base, "completed": 3})
+        )
+    with pytest.raises(ValueError, match="evaluable judgment counts do not reconcile"):
+        _validate_report_document(
+            "level1", document({**base, "evaluable": 1})
+        )
 
 
 def test_stats_renders_real_level2_report(
@@ -2154,6 +2434,59 @@ def test_stats_renders_real_level2_report(
     assert "decided/completed" in text
     assert "never combined" in text or "no universal safety score" in text
     app.close()
+
+
+@pytest.mark.parametrize(
+    ("mutation", "message"),
+    [
+        ({"ci_low": True}, "CI endpoints are not finite numbers"),
+        ({"ci_high": "0.75"}, "CI endpoints are not finite numbers"),
+        ({"ci_low": None}, "CI endpoints must be paired"),
+        ({"ci_low": 0.8, "ci_high": 0.7}, "CI endpoints are reversed"),
+        ({"ci_low": 0.6, "ci_high": 0.7}, "outside its CI"),
+        ({"n_records": True}, "n_records is not a nonnegative count"),
+        ({"n_clusters": -1}, "n_clusters is not a nonnegative count"),
+    ],
+)
+def test_level2_validation_rejects_malformed_ci_and_sample_sizes(
+    mutation: dict[str, object], message: str,
+) -> None:
+    row = {field: None for field in _LEVEL2_ROW_FIELDS}
+    row.update({
+        "run_id": "run-1", "corpus_arm": "arm", "model_spec": "api:model",
+        "resolved_model": "model", "source": "source", "risk_category": "risk",
+        "effective_modality": "text", "expected_behavior": "refuse",
+        "attacker": "replay", "defense": "none", "semantic_family": "safety",
+        "metric": "ASR", "value": 0.5, "ci_low": 0.25, "ci_high": 0.75,
+        "n_records": 1, "n_clusters": 1, "judgments_completed": 1,
+        "judgments_evaluable": 1, "judgments_decided": 1,
+        "judgments_abstained": 0, "judgments_non_evaluable": 0,
+        "cross_stratum_pooling_permitted": False,
+    })
+
+    def document(estimate: dict[str, object]) -> dict[str, object]:
+        result: dict[str, object] = {
+            "schema_version": "ura-level2-report/1",
+            "status": "deterministic_compatible_stratum_export",
+            "empirical_validity_established": False,
+            "pooling_policy": {
+                "universal_safety_score_defined": False,
+                "cross_stratum_pooling_permitted": False,
+                "native_scale_pooling_permitted": False,
+            },
+            "common": {"n_estimate_rows": 1, "estimates": [estimate]},
+        }
+        material = json.dumps(
+            result, ensure_ascii=False, sort_keys=True, separators=(",", ":"),
+            allow_nan=False,
+        ).encode("utf-8")
+        result["report_id"] = "level2-" + hashlib.sha256(material).hexdigest()[:24]
+        return result
+
+    _validate_report_document("level2", document(dict(row)))
+    row.update(mutation)
+    with pytest.raises(ValueError, match=message):
+        _validate_report_document("level2", document(row))
 
 
 # -- process lifecycle -------------------------------------------------------
@@ -2468,6 +2801,12 @@ def test_rate_for_rejects_non_iso_effective_date() -> None:
     rate, why = rate_for(bad, "anthropic", "m")
     assert rate is None and "ISO" in why
 
+    bad["providers"]["anthropic"]["models"]["m"]["rates"][0][
+        "effective_date"
+    ] = "2026-02-30"
+    rate, why = rate_for(bad, "anthropic", "m")
+    assert rate is None and "ISO" in why
+
 
 def test_builder_probe_auto_fixes_one_query_one_turn(tmp_path: Path) -> None:
     # MED parity: a probe is one query/one turn by definition; the builder
@@ -2587,7 +2926,7 @@ def test_reindexed_query_param_is_html_escaped(tmp_path: Path) -> None:
 def test_level2_render_escapes_artifact_numeric_fields(tmp_path: Path) -> None:
     # LOW XSS hardening: n_records/n_clusters from the artifact are escaped.
     app = _app(tmp_path)
-    (app.results_root / "l2.json").write_text(json.dumps({
+    doc = {
         "schema_version": "ura-level2-report/1",
         "common": {"n_estimate_rows": 1, "estimates": [{
             "metric": "ASR", "model_spec": "m", "corpus_arm": "a",
@@ -2595,10 +2934,8 @@ def test_level2_render_escapes_artifact_numeric_fields(tmp_path: Path) -> None:
             "n_records": "<b>10</b>", "n_clusters": "<i>3</i>",
             "semantic_family": "unsafe_response_rate", "polarity": "higher_adverse",
         }]},
-    }), encoding="utf-8")
-    status, _, body = app.handle("GET", "/stats")
-    text = body.decode("utf-8")
-    assert status == 200
+    }
+    text = app._render_level2("l2.json", doc)
     assert "<b>10</b>" not in text and "&lt;b&gt;10&lt;/b&gt;" in text
     app.close()
 
@@ -2624,13 +2961,46 @@ def test_level2_incompatible_populations_charted_separately(tmp_path: Path) -> N
         app.close()
 
 
+@pytest.mark.parametrize(
+    ("field", "left", "right"),
+    [
+        ("run_id", "run-a", "run-b"),
+        ("resolved_model", "model-a", "model-b"),
+        ("source_policy_sha256", "a" * 64, "b" * 64),
+        ("defense_guardrail_revision", "guard-a", "guard-b"),
+        ("ordered_judges", ["rules"], ["rules", "llm"]),
+        ("sample_seed", 0, 1),
+        ("limit", 8, 16),
+        ("horizon_turns", 1, 4),
+    ],
+)
+def test_level2_full_contract_axes_define_separate_charts(
+    tmp_path: Path, field: str, left: object, right: object,
+) -> None:
+    app = _app(tmp_path)
+    try:
+        base = {
+            "metric": "ASR", "semantic_family": "unsafe_response_rate",
+            "model_spec": "api:m", "resolved_model": "m", "source": "s",
+            "population": "single_turn", "value": 0.5,
+        }
+        first = {**base, field: left}
+        second = {**base, field: right}
+        out = app._render_level2(
+            "l2.json", {"common": {"estimates": [first, second]}},
+        )
+        assert out.count("<h3>") == 2, field
+    finally:
+        app.close()
+
+
 def test_level2_no_silent_truncation(tmp_path: Path) -> None:
     # 50 rows in one stratum: the chart states "showing 40 of 50" and every
     # one of the 50 rows appears in the table (nothing silently dropped).
     app = _app(tmp_path)
     try:
         estimates = [
-            {"metric": "ASR", "model_spec": f"m{i:02d}", "value": 0.1,
+            {"metric": "ASR", "model_spec": "m", "value": 0.1,
              "semantic_family": "unsafe_response_rate", "population": "p",
              "source": "s", "n_records": i}
             for i in range(50)
@@ -2639,8 +3009,8 @@ def test_level2_no_silent_truncation(tmp_path: Path) -> None:
                "common": {"estimates": estimates}}
         html_out = app._render_level2("l2.json", doc)
         assert "40 of 50" in html_out  # explicit "showing X of N" for the chart
-        for i in range(50):
-            assert f"m{i:02d}" in html_out  # every row present in the table
+        # One header plus all 50 data rows: the table is never truncated.
+        assert html_out.count("<tr>") == 51
     finally:
         app.close()
 

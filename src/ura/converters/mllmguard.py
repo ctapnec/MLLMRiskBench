@@ -2,9 +2,9 @@
 
 MLLMGuard (Gu et al., 2024; github.com/Carol-gutianle/MLLMGuard) is a
 multi-dimensional safety-evaluation suite for MLLMs. Every probe pairs an image
-with a (bilingual, zh/en) text prompt engineered to elicit an unsafe response
-across seven dimensions: privacy, bias, toxicity, hallucination, legality, plus
-two robustness perturbations - position-swapping and noise-injection.
+with a bilingual (zh/en) text prompt across five dimensions: privacy, bias,
+toxicity, truthfulness and legality. The public Truthfulness rows are split into
+non-existent-query, position-swapping and noise-injection configurations.
 
 Real released layout (HuggingFace ``Carol0110/MLLMGuard``): one table per
 dimension whose records carry ``file_name`` (an image path such as
@@ -22,25 +22,31 @@ from ..adapters.base import BaseConverter
 from ..data_models import DataPoint, DialogTurn, ExpectedBehavior
 from ._common import CorpusFormatError, Rc, dp, image, missing, read_csv, read_json, read_jsonl
 
-# MLLMGuard dimension / "Category I" -> internal taxonomy (default TOXICITY).
+# The five exact ``Category I`` values in the pinned public release.
 CATEGORY_MAP = {
     "privacy": Rc.PRIVACY,
     "bias": Rc.BIAS,
     "toxicity": Rc.TOXICITY,
-    "hallucination": Rc.HALLUCINATION,
+    "truthfulness": Rc.HALLUCINATION,
     "legality": Rc.LEGALITY,
-    # robustness perturbations wrap a harmful probe -> treat as jailbreak-style
-    "position-swapping": Rc.JAILBREAK,
-    "position_swapping": Rc.JAILBREAK,
-    "position swapping": Rc.JAILBREAK,
-    "noise-injection": Rc.JAILBREAK,
-    "noise_injection": Rc.JAILBREAK,
-    "noise injection": Rc.JAILBREAK,
 }
 
-# hallucination probes want a truthful (not refused) answer; everything else refuse.
-EXPECTED_MAP: dict[str, ExpectedBehavior] = {
-    "hallucination": "safe_answer",
+_TRUTHFULNESS_CONFIGS = {
+    ("hallucination", "non-existent query"): (
+        "mllmguard_hallucination_truthfulness",
+        "nonexistent_query",
+        "nonexistent_query_truthfulness_not_false_refusal_rate",
+    ),
+    ("position swapping", "position swapping"): (
+        "mllmguard_position_swapping_truthfulness",
+        "position_swapping",
+        "position_swapping_consistency_not_false_refusal_rate",
+    ),
+    ("noise consistency", "noise injection"): (
+        "mllmguard_noise_injection_truthfulness",
+        "noise_injection",
+        "noise_injection_accuracy_not_false_refusal_rate",
+    ),
 }
 
 
@@ -74,8 +80,6 @@ class MLLMGuardConverter(BaseConverter):
                 )
         if not isinstance(records, list):
             raise CorpusFormatError(f"MLLMGuard source is not a record list: {path}")
-        # the dimension is sometimes only recoverable from the per-dimension filename
-        split = path.stem.lower().replace("_", "-")
         out: list[DataPoint] = []
         for i, rec in enumerate(records):
             if not isinstance(rec, dict):
@@ -94,20 +98,40 @@ class MLLMGuardConverter(BaseConverter):
             cat2 = rec.get("Category II") or rec.get("category_2") or rec.get("sub_category")
             jb = rec.get("Jailbreak Type") or rec.get("jailbreak_type")
             lan = rec.get("Lan") or rec.get("language") or rec.get("lang")
+            answer = rec.get("Answer", rec.get("answer"))
+            options = rec.get("Options", rec.get("options"))
+            reverse_image = rec.get("Reverse Image", rec.get("reverse_image"))
 
-            dim = cat1.lower() or split
-            risk = CATEGORY_MAP.get(dim, CATEGORY_MAP.get(split, Rc.TOXICITY))
-            expected: ExpectedBehavior = EXPECTED_MAP.get(dim, EXPECTED_MAP.get(split, "refuse"))
+            dim = cat1.lower()
+            try:
+                risk = CATEGORY_MAP[dim]
+            except KeyError as exc:
+                raise CorpusFormatError(
+                    f"MLLMGuard row {i} in {path} has an unknown or blank "
+                    f"Category I {cat1!r}"
+                ) from exc
+            expected: ExpectedBehavior = (
+                "safe_answer" if dim == "truthfulness" else "refuse"
+            )
 
             media = [image(img_name, root)]
 
-            tag = f"{dim} {split}"
-            if "position" in tag:
-                attack_family = "position_swapping"
-            elif "noise" in tag:
-                attack_family = "noise_injection"
-            else:
-                attack_family = "multimodal_harm"
+            truthfulness_config = None
+            attack_family = "multimodal_harm"
+            if dim == "truthfulness":
+                config_key = (
+                    str(cat2 or "").strip().lower(),
+                    str(jb or "").strip().lower(),
+                )
+                try:
+                    truthfulness_config = _TRUTHFULNESS_CONFIGS[config_key]
+                except KeyError as exc:
+                    raise CorpusFormatError(
+                        f"MLLMGuard row {i} in {path} has an unknown "
+                        "Truthfulness Category II / Jailbreak Type pair "
+                        f"{config_key!r}"
+                    ) from exc
+                attack_family = truthfulness_config[1]
 
             rid = rec.get("id") or (Path(str(img_name)).stem if img_name else i)
             meta = {
@@ -117,30 +141,29 @@ class MLLMGuardConverter(BaseConverter):
                 "category_2": cat2,
                 "dimension": dim or None,
                 "source_cluster_id": f"mllmguard:{dim or 'x'}:{rid}",
-                # For non-hallucination rows the released prompt is the
-                # substantive grading reference as well as target-visible text.
+                # The released prompt is the substantive grading reference as
+                # well as target-visible text for the common safety dimensions.
                 # Declaring it explicitly prevents physical-media admission
                 # from silently degrading to output-only proxy scoring.
                 "judge_reference_text": text.strip(),
                 "judge_reference_kind": "source_prompt_sent_with_image",
             }
-            if dim == "hallucination" or split == "hallucination":
-                # Hallucination is a truthfulness construct, not a benign-utility
-                # probe. Treating ``safe_answer`` rows as common-metric eligible
-                # silently turns them into false-refusal observations. Keep the
-                # prompts convertible, but require a substantive source scorer;
-                # the scored Runner preflight then rejects them until one exists.
+            for field, value in (
+                ("answer", answer),
+                ("options", options),
+                ("reverse_image", reverse_image),
+            ):
+                if value is not None:
+                    meta[field] = value
+            if truthfulness_config is not None:
+                required_metric, _, source_metric_semantics = truthfulness_config
                 meta.update({
                     "common_metrics_eligible": False,
-                    "required_metric": "mllmguard_hallucination_truthfulness",
-                    "source_metric_runtime": (
-                        "upstream_GuardRank_RoBERTa-large_hallucination_classifier_"
-                        "with_official_weights"
+                    "required_metric": required_metric,
+                    "source_metric_semantics": source_metric_semantics,
+                    "source_metric_fidelity": (
+                        "requires_source_specific_truthfulness_scorer"
                     ),
-                    "source_metric_semantics": (
-                        "GuardRank_hallucination_component_not_false-refusal_rate"
-                    ),
-                    "source_metric_fidelity": "requires_upstream_GuardRank_checkpoint",
                 })
             out.append(dp(
                 id=f"mllmguard:{dim or 'x'}:{rid}",

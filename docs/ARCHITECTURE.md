@@ -29,7 +29,7 @@ not model performance or judge validity.
 | Data | `src/ura/data_models.py`, `src/ura/converters/` | typed records, source identity, media and policy provenance |
 | Attacks | `src/ura/adapters/` | replay, transforms, response-conditioned escalation, native-result bridges |
 | Targets | `src/ura/targets/` | exact hosted/local invocation and provider continuation state |
-| Judgment | `src/ura/judges/`, `src/ura/source_metrics.py` | ordered full-shadow cascade for common responses; source evaluator and unqueried placeholders for classification |
+| Judgment | `src/ura/judges/`, `src/ura/source_metrics.py` | ordered full-shadow cascade for common responses; source evaluator and unqueried placeholders for source-metric-only records |
 | Runtime | `src/ura/runner.py`, `src/ura/request_envelope.py`, `src/ura/project_revision.py`, `src/ura/live_attestation.py`, `src/ura/lane_projection.py`, `src/ura/lane_canary.py`, `experiments/run_matrix.py`, `experiments/project_revision.py`, `experiments/live_attestation.py`, `experiments/lane_canary.py` | prospective whole-arm request identity, bound early failures, immutable local-project admission, preflight, no-call projection, typed route/transport receipt production and admission, diagnostic canary summary, execution, budgets, checkpoints, recovery and manifests |
 | Analysis | `experiments/level1_evidence.py`, other `experiments/` modules | unit-qualified lifecycle accounting, paired effects, transfer, judge sensitivity, human audit and figures |
 
