@@ -1055,14 +1055,16 @@ _STYLE = """
   0 4px 14px rgba(16,24,32,.05);
   --m-text:#0a66c2; --m-text-bg:#e4eefb; --m-image:#1d7a43;
   --m-image-bg:#e1f2e8; --m-audio:#a86400; --m-audio-bg:#f7ecd9;
-  --m-video:#7a3fb8; --m-video-bg:#f0e7fa; }
+  --m-video:#7a3fb8; --m-video-bg:#f0e7fa;
+  --chevron:url("data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20viewBox='0%200%2024%2024'%20fill='none'%20stroke='%235b6b7c'%20stroke-width='2.2'%20stroke-linecap='round'%20stroke-linejoin='round'%3E%3Cpath%20d='M6%209l6%206%206-6'/%3E%3C/svg%3E"); }
 @media (prefers-color-scheme: dark) {
   :root { --bg:#10161d; --card:#19212b; --ink:#e7edf3; --muted:#92a3b4;
     --line:#28323e; --accent:#59a3ea; --accent-ink:#0d1621;
     --soft:#141b23; --shadow:0 1px 2px rgba(0,0,0,.35);
     --m-text:#79b7f7; --m-text-bg:#16304a; --m-image:#63cb90;
     --m-image-bg:#12301f; --m-audio:#f0b25e; --m-audio-bg:#3a2a10;
-    --m-video:#c89df3; --m-video-bg:#2d1b41; } }
+    --m-video:#c89df3; --m-video-bg:#2d1b41;
+    --chevron:url("data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20viewBox='0%200%2024%2024'%20fill='none'%20stroke='%2392a3b4'%20stroke-width='2.2'%20stroke-linecap='round'%20stroke-linejoin='round'%3E%3Cpath%20d='M6%209l6%206%206-6'/%3E%3C/svg%3E"); } }
 * { box-sizing: border-box; }
 body { margin:0; font:15px/1.55 system-ui, "Segoe UI", sans-serif;
   background:var(--bg); color:var(--ink); }
@@ -1144,11 +1146,11 @@ form.cmd { display:grid; grid-template-columns:minmax(200px,260px) 1fr;
 form.cmd label { color:var(--muted); font-size:.84rem; }
 .req { color:#c0392b; font-weight:700; }
 form.cmd label .kind { color:var(--muted); opacity:.7; font-size:.75rem; }
-form.cmd input[type=text], form.cmd input[type=number],
-form.cmd select { width:100%; padding:.38rem .55rem;
+form.cmd input[type=text], form.cmd input[type=number] {
+  width:100%; padding:.38rem .55rem;
   border:1px solid var(--line); border-radius:8px; background:var(--bg);
   color:var(--ink); font-size:.86rem; }
-form.cmd select { cursor:pointer; }
+form.cmd select { width:100%; }
 form.cmd input:focus, form.cmd select:focus { outline:2px solid
   color-mix(in srgb, var(--accent) 45%, transparent); border-color:var(--accent); }
 button { display:inline-flex; gap:.4rem; align-items:center;
@@ -1228,7 +1230,16 @@ details.stagefiles li { margin:.12rem 0; overflow-wrap:anywhere; }
 .fieldhint { color:var(--muted); font-size:.76rem; line-height:1.35; }
 .fieldlabel { display:block; color:var(--muted); font-size:.82rem;
   margin:.6rem 0 .25rem; }
-input.wide, textarea.editor, .buildbar select, form select { }
+select { appearance:none; -webkit-appearance:none; font:inherit;
+  font-size:.86rem; color:var(--ink); background-color:var(--bg);
+  border:1px solid var(--line); border-radius:8px; cursor:pointer;
+  padding:.4rem 2.1rem .4rem .6rem; min-width:8.5rem;
+  background-image:var(--chevron); background-repeat:no-repeat;
+  background-position:right .55rem center; background-size:15px; }
+select:hover { border-color:color-mix(in srgb, var(--accent) 55%, var(--line)); }
+select:focus { outline:2px solid
+  color-mix(in srgb, var(--accent) 45%, transparent);
+  border-color:var(--accent); }
 textarea.editor { width:100%; min-height:60vh; font:.82rem/1.5
   ui-monospace, "Cascadia Code", Menlo, monospace; padding:.8rem;
   border:1px solid var(--line); border-radius:10px; background:var(--soft);
@@ -1317,8 +1328,10 @@ button.ghost { background:transparent; color:var(--accent);
 input.wide { width:100%; padding:.4rem .55rem; border:1px solid var(--line);
   border-radius:8px; background:var(--bg); color:var(--ink); font-size:.86rem; }
 .buildbar { position:sticky; bottom:0; display:flex; gap:.8rem;
-  align-items:center; padding:.7rem 0; background:linear-gradient(
-  to top, var(--bg), transparent); flex-wrap:wrap; }
+  align-items:center; padding:.65rem .9rem; flex-wrap:wrap;
+  background:var(--card); border:1px solid var(--line);
+  border-radius:12px 12px 0 0; border-bottom:0;
+  box-shadow:0 -6px 18px -8px rgba(0,0,0,.28); }
 #buildpreview { font:.78rem ui-monospace, Menlo, monospace;
   overflow-wrap:anywhere; }
 .barchart { width:100%; min-width:640px; }

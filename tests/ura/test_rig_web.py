@@ -435,6 +435,16 @@ def test_modality_shown_as_icons_not_word_tags(tmp_path: Path) -> None:
         assert css.count("--m-text:") == 2 and ".modicon.m-video" in css
         # Field cells bottom-align their inputs across a row (labels grow).
         assert ".fieldcell .fieldlabel { flex:1 0 auto; }" in css
+        # Selects are custom-styled everywhere (no generic browser chrome):
+        # appearance reset + themed chevron (light and dark), hover and focus.
+        assert "select { appearance:none;" in css
+        assert css.count("--chevron:url(") == 2  # light + dark chevron
+        assert "background-image:var(--chevron)" in css
+        assert "select:hover" in css and "select:focus" in css
+        # The sticky Compose & review bar is a solid panel - content must not
+        # bleed through a fade-to-transparent gradient while scrolling.
+        assert "to top, var(--bg), transparent" not in css
+        assert ".buildbar { position:sticky" in css
     finally:
         app.close()
 
