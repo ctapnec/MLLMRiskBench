@@ -380,8 +380,8 @@ def test_builder_lists_all_39_arms_and_20_attackers(tmp_path: Path) -> None:
         # reason; the two source-metric arms are shown SELECTABLE (they run).
         for arm in _INELIGIBLE_ARMS:
             assert arm in text
-        assert "common-metric-ineligible (source evaluator not integrated)" in text
-        assert "source-metric scored (implemented; replay only)" in text
+        assert "source-specific metric - not yet runnable (evaluator not integrated)" in text
+        assert "source-specific metric - runnable (replay attacker only)" in text
         assert "badge amber'>source-metric" in text  # runnable source-metric arm
         assert "data-arm='rjudge_release'" in text
         assert "data-arm='gptgeochat_release'" in text
@@ -391,6 +391,39 @@ def test_builder_lists_all_39_arms_and_20_attackers(tmp_path: Path) -> None:
         assert "native-only" in text  # native-artifact attackers badged
         for attacker in _NATIVE_ONLY_ATTACKERS:
             assert f"data-fw='{attacker}'" in text  # still visible, disabled
+    finally:
+        app.close()
+
+
+def test_native_only_note_is_a_tooltip_not_repeated_inline(tmp_path: Path) -> None:
+    # The identical native_import explanation lives in ONE tooltip per
+    # native-only framework badge, not repeated inline under every one.
+    from experiments.rig_web import _NATIVE_ONLY_ATTACKERS
+    app = _app(tmp_path)
+    try:
+        _s, _c, body = app.handle("GET", "/build")
+        text = body.decode("utf-8")
+        assert "badge gray tip" in text          # focusable tooltip trigger
+        assert "class='tiptext'>" in text        # the note lives in a tooltip
+        assert "native_import" in text
+        # Exactly one tooltip per native-only framework (no inline repetition).
+        assert text.count("class='tiptext'>") == len(_NATIVE_ONLY_ATTACKERS)
+    finally:
+        app.close()
+
+
+def test_modality_shown_as_icons_not_word_tags(tmp_path: Path) -> None:
+    # Modalities render as compact accessible icons, not TEXT/IMAGE word tags.
+    from experiments.rig_web import _mod_icon
+    glyph = _mod_icon("text")
+    assert "class='modicon'" in glyph
+    assert "title='text'" in glyph and "aria-label='text'" in glyph
+    assert "<svg" in glyph  # an icon, not a word
+    app = _app(tmp_path)
+    try:
+        _s, _c, body = app.handle("GET", "/build")
+        text = body.decode("utf-8")
+        assert "class='modicon'" in text  # arm/target modalities use icons
     finally:
         app.close()
 

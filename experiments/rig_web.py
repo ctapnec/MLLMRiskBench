@@ -238,10 +238,10 @@ _MODALITIES = ("text", "image", "audio", "video")
 #:     end-to-end engines (the native-only attackers), not these dataset arms.
 def _ineligible(metric: str) -> str:
     return (
-        f"common-metric-ineligible: requires the source-specific metric "
-        f"'{metric}', whose evaluator/runtime is not integrated, so run_matrix "
-        "fails its scored preflight before any target call. Converted records "
-        "remain available for offline analysis (not a native_import target)"
+        f"scored by the source-specific '{metric}' metric (its ground truth is "
+        "not common harmful-ASR), but that evaluator is not yet integrated, so "
+        "run_matrix fails its scored preflight before any target call. Converted "
+        "records remain available for offline analysis (not a native_import target)"
     )
 
 
@@ -987,6 +987,20 @@ _ICONS: dict[str, str] = {
         "<path d='M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 "
         "6.5 2z'/>"
     ),
+    # Modality glyphs (shown instead of TEXT/IMAGE/AUDIO/VIDEO word tags).
+    "mod_text": "<path d='M5 7V4h14v3'/><path d='M12 4v16'/><path d='M9 20h6'/>",
+    "mod_image": (
+        "<rect x='3' y='3' width='18' height='18' rx='2'/>"
+        "<circle cx='8.5' cy='8.5' r='1.5'/><path d='M21 15l-5-5L5 21'/>"
+    ),
+    "mod_audio": (
+        "<path d='M4 9v6h4l5 4V5L8 9H4z'/>"
+        "<path d='M16 8.5a4 4 0 0 1 0 7'/>"
+    ),
+    "mod_video": (
+        "<rect x='2' y='6' width='13' height='12' rx='2'/>"
+        "<path d='M15 10l7-4v12l-7-4z'/>"
+    ),
 }
 
 
@@ -997,6 +1011,23 @@ def _icon(name: str, *, size: int = 18) -> str:
         "fill='none' stroke='currentColor' stroke-width='1.8' "
         f"stroke-linecap='round' stroke-linejoin='round' "
         f"aria-hidden='true'>{body}</svg>"
+    )
+
+
+_MOD_ICON_NAME = {
+    "text": "mod_text", "image": "mod_image",
+    "audio": "mod_audio", "video": "mod_video",
+}
+
+
+def _mod_icon(modality: str) -> str:
+    """A compact modality glyph with an accessible label, instead of a word tag
+    (keeps dense arm/target grids from being overwhelmed by TEXT/IMAGE/... text).
+    """
+    name = _MOD_ICON_NAME.get(modality, "file")
+    return (
+        f"<span class='modicon' title='{html.escape(modality)}' "
+        f"aria-label='{html.escape(modality)}'>{_icon(name, size=13)}</span>"
     )
 
 
@@ -1194,9 +1225,10 @@ button.ghost { background:transparent; color:var(--accent);
 .radio { display:flex; gap:.5rem; align-items:flex-start; cursor:pointer; }
 .check { display:flex; gap:.45rem; align-items:flex-start; cursor:pointer;
   padding:.25rem 0; }
-.check span { font-size:.88rem; }
+.check input { margin-top:.2rem; flex:0 0 auto; }
+.check span { font-size:.88rem; min-width:0; overflow-wrap:anywhere; }
 .checkgrid { display:grid; grid-template-columns:repeat(auto-fill,
-  minmax(240px,1fr)); gap:.15rem .8rem; }
+  minmax(240px,1fr)); gap:.15rem .8rem; align-items:start; }
 .modgroup { margin:.6rem 0; }
 .modgroup h3 { font-size:.82rem; text-transform:uppercase;
   letter-spacing:.05em; color:var(--muted); margin:.5rem 0 .2rem; }
@@ -1226,6 +1258,17 @@ button.ghost { background:transparent; color:var(--accent);
   text-transform:uppercase; letter-spacing:.04em; color:var(--muted);
   background:var(--soft); border:1px solid var(--line); border-radius:5px;
   padding:0 .3rem; margin-left:.2rem; vertical-align:middle; }
+.modicon { display:inline-flex; align-items:center; color:var(--muted);
+  vertical-align:middle; margin:0 .07rem; }
+.modicon .ic { width:13px; height:13px; }
+.tip { position:relative; cursor:help; outline:none; }
+.tip .tiptext { display:none; position:absolute; z-index:30; left:0; top:135%;
+  width:min(320px,72vw); background:var(--card); color:var(--ink);
+  border:1px solid var(--line); border-radius:7px; padding:.5rem .6rem;
+  font-size:.75rem; font-weight:400; text-transform:none; letter-spacing:0;
+  line-height:1.45; box-shadow:var(--shadow); white-space:normal; }
+.tip:hover .tiptext, .tip:focus .tiptext, .tip:focus-within .tiptext {
+  display:block; }
 .fwrow.incompatible { opacity:.55; }
 .fwrow.incompatible .fwflag { color:#c4515c; font-weight:600; }
 .fielderr { display:block; color:#c4515c; font-size:.8rem; font-weight:600;
@@ -5180,9 +5223,7 @@ class RigWebApp:
         ))
 
         def _mod_tags(mods: tuple[str, ...]) -> str:
-            return "".join(
-                f"<span class='modtag'>{html.escape(m)}</span>" for m in mods
-            )
+            return "".join(_mod_icon(m) for m in mods)
 
         # Group ALL 39 catalogue arms for a readable layout: common lanes first
         # (by modality signature), then the source-metric scored lanes, then the
@@ -5192,18 +5233,19 @@ class RigWebApp:
         signatures: dict[str, list[tuple[str, tuple[str, ...], str]]] = {}
         for arm, mods, reason in _ARM_CATALOG:
             if reason:
-                bucket = "common-metric-ineligible (source evaluator not integrated)"
+                bucket = ("source-specific metric - not yet runnable "
+                          "(evaluator not integrated)")
             elif arm in _SOURCE_METRIC_ARMS:
-                bucket = "source-metric scored (implemented; replay only)"
+                bucket = "source-specific metric - runnable (replay attacker only)"
             else:
                 bucket = " + ".join(mods)
             signatures.setdefault(bucket, []).append((arm, mods, reason))
         arm_groups = []
 
         def _bucket_rank(name: str) -> tuple[int, int, str]:
-            if name.startswith("common-metric-ineligible"):
+            if "not yet runnable" in name:
                 return (2, len(name), name)
-            if name.startswith("source-metric"):
+            if name.startswith("source-specific metric"):
                 return (1, len(name), name)
             return (0, len(name), name)
 
@@ -5222,7 +5264,7 @@ class RigWebApp:
                         f"data-mods='{html.escape(','.join(mods))}' "
                         f"data-arm='{html.escape(arm)}'>"
                         f"<span>{html.escape(arm)} {_mod_tags(mods)} "
-                        "<span class='badge gray'>metric-ineligible</span><br>"
+                        "<span class='badge gray'>no evaluator</span><br>"
                         f"<span class='fieldhint'>{html.escape(reason)}</span>"
                         "</span></label>"
                     )
@@ -5272,7 +5314,7 @@ class RigWebApp:
             "<h3>Synthetic (offline)</h3></div><div class='checkgrid'>"
             "<label class='check'><input type='checkbox' class='armbox' "
             "data-mods='text' data-arm='synth'>"
-            "<span>synth <span class='modtag'>text</span> "
+            "<span>synth " + _mod_icon("text") + " "
             "<span class='fieldhint'>offline synthetic corpus - no source "
             "acquisition; use with the dry-run mode (no calls, no spend)</span>"
             "</span></label></div></div>"
@@ -5288,8 +5330,7 @@ class RigWebApp:
                 f"data-kind='{html.escape(kind)}' "
                 f"data-model='{html.escape(value)}'>"
                 f"<span>{html.escape(label)} "
-                + "".join(f"<span class='modtag'>{html.escape(m)}</span>"
-                          for m in mods)
+                + "".join(_mod_icon(m) for m in mods)
                 + "</span></label>"
             )
 
@@ -5327,17 +5368,23 @@ class RigWebApp:
         # real action - the native-import path - never as a common-runner lane.
         def _framework_box(fw: str, desc: str, mods: tuple[str, ...]) -> str:
             if fw in _NATIVE_ONLY_ATTACKERS:
+                # The (identical) native-import explanation lives in a tooltip on
+                # the badge rather than repeated inline under every native-only
+                # framework, which cluttered the grid.
                 return (
                     "<label class='check fwrow disabled' "
                     f"data-mods='{html.escape(','.join(mods))}'>"
                     f"<input type='checkbox' class='fwbox' disabled "
                     f"data-fw='{html.escape(fw)}'>"
                     f"<span><strong>{html.escape(fw)}</strong> "
-                    "<span class='badge gray'>native-only</span> "
-                    f"<span class='fieldhint'>{html.escape(desc)} - a "
+                    "<span class='badge gray tip' tabindex='0' role='button' "
+                    "aria-label='native-only: why this framework is disabled'>"
+                    "native-only"
+                    f"<span class='tiptext'>{html.escape(desc)} - a "
                     "native-artifact integration; run_matrix cannot replay it "
                     "through the common Runner. Import its native traces with "
-                    "the <code>native_import</code> command.</span></span></label>"
+                    "the <code>native_import</code> command.</span>"
+                    "</span></span></label>"
                 )
             return (
                 "<label class='check fwrow' "
