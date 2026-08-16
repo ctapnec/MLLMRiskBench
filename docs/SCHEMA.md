@@ -2,7 +2,7 @@
 
 `ura.data_models` is the typed Pydantic v2 contract shared by converters,
 attackers, targets, judges, persistence, and analysis. `SCHEMA_VERSION = "1.4"`
-is stamped on datapoints, checkpoints, and manifests. Runner 2.12 rejects mixed
+is stamped on datapoints, checkpoints, and manifests. Runner 2.13 rejects mixed
 schema versions and duplicate datapoint IDs before a target call.
 
 ## Records
@@ -418,9 +418,13 @@ an executed cell:
   revision or digest, declared modalities, parameter count, multi-GPU support,
   per-model quantization, tensor-parallel size, memory utilization, and output
   bound. A per-model quantization overrides the command default, which overrides
-  hardware-auto selection. The resolved quantization, tensor-parallel size and
-  NVIDIA hardware profile enter run/grid provenance. One local target is
+  hardware-auto selection. Auto chooses the highest fitting supported precision:
+  unquantized 16-bit, FP8 8-bit (minimum SM 7.5), then BitsAndBytes 4-bit
+  (minimum SM 7.0). The resolved quantization, precision, tensor-parallel size
+  and NVIDIA hardware profile enter run/grid provenance. One local target is
   admitted per runner process so server lifetime and GPU ownership stay explicit.
+  Expert/MoE-ambiguous names do not supply an inferred `parameter_count_b`;
+  fit remains unknown until the operator declares the exact total.
 
 Unselected inventory entries are neither evidence nor requested cells. Secret
 values are environment-indirected and rejected from persisted configuration.
@@ -495,8 +499,16 @@ postprocessing provenance.
 The console's startup platform/CPU/core/RAM and NVIDIA inventory is an
 operator-visible runtime snapshot, not a scientific artifact schema. Likewise,
 the Build page's hosted-provider and local name/maximum-parameter/profile-fit
-controls only filter rendered choices; they do not change a selected target or
-replace the server-side local-config and hardware checks described above.
+controls only filter rendered choices. Compatible local rows are single-choice
+selectors even when the roster pin is unfinished, but non-dry submission still
+requires an exact revision/digest. Source-ineligible rows may also remain visible
+and selectable with tooltip limitations; server validation rejects them before
+a subprocess. Neither UI state replaces the local-config, source-evaluator, or
+hardware checks described above.
+Dry builder state carries no real API/local target/config into the command
+because dry execution uses `MockTarget`. Local roster modality metadata is
+restricted to the Runner's text/image vLLM path, keeping audio mismatch rejection
+consistent between UI and CLI.
 
 The rig console persists its operational state in a stdlib-sqlite database
 (`console.db` under the console state directory, schema version 2): `jobs`

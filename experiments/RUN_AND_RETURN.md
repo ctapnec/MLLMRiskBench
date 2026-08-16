@@ -7,7 +7,7 @@ source-native evaluators. Experiments and the human audit are still pending.
 Preflight, dry-run, diagnostic-canary, and bounded transport-probe artifacts are
 diagnostics, not thesis results.
 
-The maintained artifact contract is Runner `ura-runner/2.12` with unified schema
+The maintained artifact contract is Runner `ura-runner/2.13` with unified schema
 `1.4`. Do not combine older-runner artifacts with this program.
 
 Every `python -m experiments.*` command below can equivalently be started
@@ -881,25 +881,32 @@ CLI inspection.
 In the Build tab, hosted targets have a provider selector whose default is
 `All`. Local vLLM targets have three combinative presentation filters: an
 immediate case-insensitive name substring, one synchronized slider/numeric
-maximum from 0.01B (10M) to 3000B (3T), and `Compatible with this rig`, selected
-by default. Compatibility includes models whose estimate fits only after
-automatic 4-bit quantization. Any model whose hardware fit requires
-quantization carries an amber warning, independent of override source. Filters
-do not select/deselect already chosen rows and do
-not replace server-side hardware/revision admission.
+maximum from 0.01B (10M) to 3000B (3T), and a visually separate `Automatic
+16/8/4-bit fit` card selected by default. Any model whose hardware fit requires
+quantization carries an amber warning, independent of override source. The
+per-model selector labels 16-bit BF16/FP16, 8-bit FP8 and the 4-bit backends.
+Compatible rows are single-choice radios and remain selectable when their
+revision is `OPERATOR_TODO`; a non-dry submission still requires an exact
+revision/digest before starting a subprocess. Filters do not replace
+server-side hardware/revision admission.
+Expert/MoE-ambiguous identifiers (for example Mixtral expert counts,
+Llama-4 `E` counts, or `MoE`) do not produce a guessed dense parameter total.
+They stay fit-unknown and hidden by the default fit filter until the roster has
+an exact `parameter_count_b`; no download or fit is claimed from the name.
 
 Automatic fit is deliberately simple and conservative: after the configured
 `gpu_memory_utilization`, it budgets 2.2 GiB per billion parameters for
 unquantized weights/runtime headroom, 1.15 for FP8, and 0.57 for 4-bit
-BitsAndBytes/AWQ/GPTQ. Full precision is selected when it fits; otherwise
-hardware auto-selection uses 4-bit `bitsandbytes` only when every detected card
-has compute capability 7.0 or newer and the dependency above is installed.
-Models that need it are shown with a mandatory-quantization note; only
-profile-fit models are selectable. A real vLLM target with absent/unknown
+BitsAndBytes/AWQ/GPTQ. Hardware auto-selection uses the highest fitting
+precision: unquantized 16-bit BF16/FP16 first, FP8 8-bit next when every selected
+card has compute capability 7.5 or newer, then in-flight BitsAndBytes 4-bit when
+every selected card has compute capability 7.0 or newer. AWQ/GPTQ remain explicit
+choices for matching pre-quantized checkpoints. Models whose hardware fit needs
+quantization are shown with a warning. A real vLLM target with absent/unknown
 hardware, a known non-fit, or invalid tensor parallelism fails before engine
-construction. A missing/incompatible BitsAndBytes runtime fails during local
-preflight before target/judge calls; the setup import check above catches the
-ordinary missing dependency earlier. The estimate is not an allocation
+construction. Missing/incompatible FP8 or BitsAndBytes support fails during
+local preflight before target/judge calls; the setup import check above catches
+the ordinary missing dependency earlier. The estimate is not an allocation
 guarantee: the local preflight must still load the exact revision at the
 selected context and serving settings.
 
@@ -915,7 +922,8 @@ provenance.
 Concrete rig example: two RTX 4090 cards reported as 24,564 MiB each provide
 about 47.98 GiB physical and 40.78 GiB usable VRAM at utilization 0.85. A 70B
 model is estimated at 39.9 GiB with 4-bit BitsAndBytes, so the roster shows it
-only with mandatory in-flight 4-bit quantization and tensor parallelism 2.
+only with mandatory in-flight 4-bit quantization and tensor parallelism 2; its
+80.5-GiB FP8 estimate does not fit this rig.
 Declaring that model multi-GPU-incompatible makes it a non-fit instead. With an
 8B-class target, tensor parallelism 1 normally leaves the second GPU for the
 scoring guard; a two-GPU target leaves no GPU for that guard and is therefore a
@@ -2438,9 +2446,23 @@ python -m experiments.rig_web --results-root runs --state-dir runs/rig-web
 The dashboard and Build tab show the startup OS/CPU/core/RAM and complete NVIDIA
 GPU inventory. Build target filters are independent and combinative: hosted API
 provider (`All` by default), plus local vLLM name substring, 10M--3T maximum
-parameter count, and rig compatibility (on by default). Automatic quantization
-requirements are marked beside affected local model names. These filters are
-convenience only; the shared CLI/UI admission remains authoritative.
+parameter count, and the separate automatic 16/8/4-bit fit card (on by default).
+Hardware-required quantization is marked beside affected local model names
+regardless of override source. Compatible local models are single-choice radios;
+an unpinned roster row may be selected for planning, but non-dry submission
+rejects it before launch. These filters are convenience only; shared CLI/UI
+admission remains authoritative.
+
+Source arms without an integrated evaluator remain visible/selectable with a
+concise `no evaluator` badge and the exact limitation in a tooltip. The server
+rejects such a selection before a subprocess. This preserves the full research
+programme without falsely calling the lane runnable; implemented source-metric
+arms and common-metric arms retain their distinct admission paths.
+
+Dry mode removes any selected real API/local targets and target configs because
+`run_matrix --dry-run` always executes `MockTarget`. The local roster advertises
+only the text/image modalities supported by the Runner's vLLM path; audio
+target/arm combinations are rejected by the same UI/CLI parity checks.
 
 The console binds only `127.0.0.1`, builds argument vectors exclusively from a
 typed allowlist (no shell), caps POST bodies, runs each job in its own process

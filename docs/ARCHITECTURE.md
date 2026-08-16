@@ -136,7 +136,7 @@ is the operator-selection universe, not normalized config/receipt identity;
 config-only variants sharing it belong in separate Level-1 cohorts.
 
 After the whole request passes admission and before the first generation call,
-Runner 2.12 writes a content-addressed `ura-lane-projection/1`. The artifact
+Runner 2.13 writes a content-addressed `ura-lane-projection/1`. The artifact
 binds the exact experiment condition and eligibility descriptor, selected
 record/cluster/source-policy counts, deterministic sampling identities,
 selected physical input-media bytes, and the conservative complete-grid target,
@@ -211,9 +211,12 @@ Local vLLM/Ollama entries are content-bound by
 `--local-config`. The two-4090 operating topology admits one local model server
 per process: a model that fits one card normally uses tensor parallelism 1, the
 other card can host the scoring guard or independent evaluation, and a larger
-profile-fit model may resolve to two-card tensor parallelism with automatic
-4-bit quantization. The exact quantization and card count remain a recorded
-execution condition; the estimate never substitutes for local-engine preflight.
+profile-fit model may resolve to two-card tensor parallelism. Hardware auto
+chooses the highest fitting precision: unquantized 16-bit, FP8 8-bit on SM 7.5+,
+then BitsAndBytes 4-bit on SM 7.0+. The exact quantization and card count remain
+a recorded execution condition; the estimate never substitutes for local-engine
+preflight. Expert/MoE-ambiguous names stay parameter/fit-unknown until an exact
+`parameter_count_b` is declared; their names never authorize a download or fit.
 
 This receipt is deliberately not a cryptographic identity or account credential.
 `execution_scope_id` is an operator assertion, so equivalence of accounts,
@@ -310,10 +313,17 @@ cores and total RAM through `psutil`/platform fallbacks, and NVIDIA card/model,
 VRAM, PCI, compute capability and driver data through `nvidia-smi`. The
 dashboard and Build tab render that one snapshot. Build target filters compose
 hosted provider selection (`All` initially) with local name substring, 10M--3T
-maximum parameter count and profile compatibility (initially on, including
-automatic 4-bit fits). Quantization-required local names are marked. These are
-client-side presentation filters only; server-side revision and hardware
-admission still controls execution.
+maximum parameter count and a separate automatic 16/8/4-bit fit control
+(initially on). Hardware-required quantization is marked independently of
+override source, and the per-model control names its precision. Compatible local
+rows are selectable single-choice radios even when still unpinned; non-dry
+server admission requires the exact revision/digest before launch. These are
+presentation controls only. Source arms lacking an integrated evaluator also
+remain visible/selectable with concise badges and tooltip details, while the
+server rejects them before a subprocess; visibility never asserts runnability.
+Dry composition discards real API/local selections because the runner uses
+`MockTarget`, and local roster modality metadata is narrowed to its supported
+text/image path so audio mismatches fail UI/CLI parity.
 
 Console state persists in a stdlib-sqlite database (`console.db` under the
 state directory): jobs with their exact argv and builder parameters, the

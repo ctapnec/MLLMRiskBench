@@ -5,7 +5,7 @@ validity rules, then execute [RUN_AND_RETURN.md](RUN_AND_RETURN.md). A dry run,
 partial artifact family, source conversion, model-name assumption, native prompt
 export, or synthetic figure is not a measured thesis result.
 
-The maintained execution contract is Runner `ura-runner/2.12` with unified
+The maintained execution contract is Runner `ura-runner/2.13` with unified
 schema `1.4`; older artifacts are not mixed into the thesis run. The current
 dashboard/filter/dependency snapshot's exact commit and verification results are
 kept in the sibling Thesis record
@@ -31,8 +31,13 @@ product:
    defense contrast when exact artifacts are available. The Build tab shows the
    startup OS/CPU/core/RAM and per-GPU inventory. Hosted provider filtering and
    local name, maximum-parameter (10M--3T), and rig-compatibility filters combine;
-   compatibility is on by default and includes estimated automatic 4-bit fits.
-   A model needing that fit is visibly marked beside its name.
+   the separate compatibility card is on by default and applies automatic
+   highest-fitting 16-bit, FP8 8-bit, then BitsAndBytes 4-bit selection.
+   Hardware-required quantization is visibly marked beside the model. Compatible
+   local rows are single-choice radios even before their immutable revision is
+   filled, but non-dry submission still rejects `OPERATOR_TODO` before launch.
+   MoE/expert-ambiguous names remain unknown/hidden until exact
+   `parameter_count_b` is supplied; no fit or download is inferred.
 4. **Multimodal lanes.** Image, JALMBench audio, and Video-SafetyBench video are
    attempted only for exact target transports that pass bounded live
    attestation. Agent/tool sources additionally require their substantive
@@ -41,6 +46,14 @@ product:
    Garak, Giskard v2, Petri, and Promptfoo run upstream. URA imports their
    complete artifacts; it never claims that replaying a generated prompt
    reproduces the source experiment.
+
+The Build page keeps source arms with unavailable source-specific evaluators
+visible and selectable for planning, labelled `no evaluator`; the full reason is
+in a tooltip and server-side submission rejects the lane before a subprocess.
+Visibility is not a runnable or empirical claim.
+Dry mode removes selected real API/local targets and configs because the runner
+uses `MockTarget`; local roster modalities are text/image only, so audio
+target/arm mismatches remain rejected in UI parity.
 
 ## Source inventory
 

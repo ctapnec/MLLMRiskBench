@@ -50,6 +50,13 @@ _ROSTER_EXAMPLE = "experiments/rig/vllm-roster.example.json"
 _VRAM_GIB_PER_BILLION = {"none": 2.2, "bitsandbytes": 0.57,
                          "awq": 0.57, "gptq": 0.57, "fp8": 1.15}
 _QUANTIZATIONS = frozenset(_VRAM_GIB_PER_BILLION)
+_QUANTIZATION_BITS = {
+    "none": 16,
+    "fp8": 8,
+    "bitsandbytes": 4,
+    "awq": 4,
+    "gptq": 4,
+}
 
 
 def detect_gpu_hardware(
@@ -251,6 +258,28 @@ def startup_system_hardware() -> dict[str, object]:
 def infer_parameter_count_b(spec: str) -> float | None:
     """Infer a basic parameter count from conventional ``7B``/``350M`` ids."""
 
+    # A single expert/active size is not the total set of weights loaded by a
+    # mixture-of-experts checkpoint. Treat ambiguous names as unknown instead
+    # of turning Mixtral-8x7B into 7B or Llama-4-17B-128E into 17B. Operators
+    # can supply an exact total through ``parameter_count_b`` in the roster.
+    if (
+        re.search(
+            r"(?<![a-z0-9])\d+(?:\.\d+)?\s*x\s*\d+(?:\.\d+)?\s*[bm]"
+            r"(?=$|[-_./])",
+            spec,
+            flags=re.IGNORECASE,
+        )
+        or re.search(
+            r"(?<![a-z0-9])\d+\s*e(?=$|[-_./])",
+            spec,
+            flags=re.IGNORECASE,
+        )
+        or re.search(
+            r"(?<![a-z0-9])moe(?=$|[-_./])", spec, flags=re.IGNORECASE
+        )
+    ):
+        return None
+
     matches = list(re.finditer(
         r"(?<![\d.])(\d+(?:\.\d+)?)\s*([bm])(?=$|[-_./])",
         spec, flags=re.IGNORECASE,
@@ -349,9 +378,16 @@ def model_hardware_profile(
             capabilities.append(float(str(gpu["compute_capability"])))
         except (KeyError, TypeError, ValueError):
             capability_complete = False
+    minimum_capability = (
+        min(capabilities) if capabilities and capability_complete else None
+    )
+    # These thresholds are the quantizer gates in the pinned vLLM runtime:
+    # Fp8Config requires SM 7.5 and BitsAndBytesConfig requires SM 7.0.
+    fp8_supported: bool | None = (
+        minimum_capability >= 7.5 if minimum_capability is not None else None
+    )
     bnb_supported: bool | None = (
-        min(capabilities) >= 7.0
-        if capabilities and capability_complete else None
+        minimum_capability >= 7.0 if minimum_capability is not None else None
     )
     compatibility_note = ""
     explicit = config.get("quantization")
@@ -363,19 +399,32 @@ def model_hardware_profile(
         source = "command_override"
     elif params is not None and available > 0:
         full_precision = params * _VRAM_GIB_PER_BILLION["none"]
+        fp8_precision = params * _VRAM_GIB_PER_BILLION["fp8"]
         if full_precision <= available:
             quantization = "none"
             source = "hardware_auto"
+        elif fp8_supported is True and fp8_precision <= available:
+            # Prefer the highest precision that fits: 16-bit, then FP8,
+            # then in-flight BitsAndBytes 4-bit.
+            quantization = "fp8"
+            source = "hardware_auto"
         elif bnb_supported is True:
             quantization = "bitsandbytes"
+            source = "hardware_auto"
+        elif fp8_supported is True:
+            # The model remains visibly incompatible, but FP8 is the smallest
+            # supported automatic fallback available on this hardware.
+            quantization = "fp8"
             source = "hardware_auto"
         else:
             quantization = "none"
             source = "hardware_auto_unavailable"
             compatibility_note = (
-                "automatic bitsandbytes requires NVIDIA compute capability 7.0+"
+                "automatic FP8/4-bit fallback requires NVIDIA compute "
+                "capability 7.0+"
                 if bnb_supported is False else
-                "automatic bitsandbytes requires a known NVIDIA compute capability 7.0+"
+                "automatic FP8/4-bit fallback requires a known NVIDIA "
+                "compute capability 7.0+"
             )
     else:
         quantization = "none"
@@ -385,9 +434,15 @@ def model_hardware_profile(
     quantization_available: bool | None = None
     if quantization == "bitsandbytes":
         quantization_available = bnb_supported
-        if bnb_supported is False and not compatibility_note:
+        if bnb_supported is not True and not compatibility_note:
             compatibility_note = (
-                "bitsandbytes is not supported below NVIDIA compute capability 7.0"
+                "bitsandbytes requires a known NVIDIA compute capability 7.0+"
+            )
+    elif quantization == "fp8":
+        quantization_available = fp8_supported
+        if fp8_supported is not True and not compatibility_note:
+            compatibility_note = (
+                "FP8 requires a known NVIDIA compute capability 7.5+"
             )
     estimated = (
         round(params * _VRAM_GIB_PER_BILLION[quantization], 2)
@@ -396,7 +451,10 @@ def model_hardware_profile(
     fitting_tp = [tp for tp, capacity in capacities.items()
                   if estimated is not None and estimated <= capacity]
     fits = bool(fitting_tp) if estimated is not None and capacities else None
-    if quantization == "bitsandbytes" and bnb_supported is False:
+    if (
+        (quantization == "bitsandbytes" and bnb_supported is not True)
+        or (quantization == "fp8" and fp8_supported is not True)
+    ):
         fits = False
     tensor_parallel_size = min(fitting_tp) if fitting_tp else 1
     full_precision_estimated = (
@@ -416,6 +474,7 @@ def model_hardware_profile(
         "available_vram_gib": round(available, 2),
         "estimated_vram_gib": estimated,
         "recommended_quantization": quantization,
+        "recommended_precision_bits": _QUANTIZATION_BITS[quantization],
         "quantization_source": source,
         "quantization_available": quantization_available,
         "quantization_required_by_hardware": bool(

@@ -98,10 +98,34 @@ def test_70b_auto_fit_resolves_bitsandbytes_and_tp2() -> None:
         "vllm:org/model-70B", {"gpu_memory_utilization": 0.85}, _rig_hardware()
     )
     assert profile["recommended_quantization"] == "bitsandbytes"
+    assert profile["recommended_precision_bits"] == 4
     assert profile["recommended_tensor_parallel_size"] == 2
     assert profile["quantization_required_by_hardware"] is True
     assert profile["fits"] is True
     assert profile["multi_gpu_support_basis"] == "assumed"
+
+
+def test_auto_fit_prefers_16_then_8_then_4_bit_precision() -> None:
+    full_precision = local_targets.model_hardware_profile(
+        "vllm:org/model-13B", {"gpu_memory_utilization": 0.85}, _rig_hardware()
+    )
+    assert full_precision["recommended_quantization"] == "none"
+    assert full_precision["recommended_precision_bits"] == 16
+    assert full_precision["recommended_tensor_parallel_size"] == 2
+
+    fp8 = local_targets.model_hardware_profile(
+        "vllm:org/model-34B", {"gpu_memory_utilization": 0.85}, _rig_hardware()
+    )
+    assert fp8["recommended_quantization"] == "fp8"
+    assert fp8["recommended_precision_bits"] == 8
+    assert fp8["recommended_tensor_parallel_size"] == 2
+    assert fp8["quantization_required_by_hardware"] is True
+
+    four_bit = local_targets.model_hardware_profile(
+        "vllm:org/model-70B", {"gpu_memory_utilization": 0.85}, _rig_hardware()
+    )
+    assert four_bit["recommended_quantization"] == "bitsandbytes"
+    assert four_bit["recommended_precision_bits"] == 4
 
 
 def test_mixed_vram_does_not_overstate_equal_shard_capacity() -> None:
@@ -141,6 +165,25 @@ def test_parameter_count_basis_does_not_treat_active_count_as_total() -> None:
     )
     assert profile["parameter_count_basis"] == "unknown"
     assert profile["fits"] is None
+
+
+def test_moe_names_never_masquerade_as_dense_parameter_totals() -> None:
+    ambiguous = (
+        "vllm:mistralai/Mixtral-8x7B-Instruct-v0.1",
+        "vllm:meta-llama/Llama-4-Maverick-17B-128E-Instruct",
+        "vllm:org/Example-MoE-7B",
+    )
+    for spec in ambiguous:
+        assert local_targets.infer_parameter_count_b(spec) is None
+        profile = local_targets.model_hardware_profile(spec, {}, _rig_hardware())
+        assert profile["parameter_count_basis"] == "unknown"
+        assert profile["fits"] is None
+
+    declared = local_targets.model_hardware_profile(
+        ambiguous[0], {"parameter_count_b": 46.7}, _rig_hardware()
+    )
+    assert declared["parameter_count_basis"] == "declared"
+    assert declared["parameter_count_b"] == 46.7
 
 
 def test_cli_local_config_auto_records_exact_quantization_and_tp(tmp_path: Path) -> None:
@@ -249,6 +292,6 @@ def test_web_materializes_clean_roster_selection_with_exact_values(tmp_path: Pat
             prefill={"local": spec, f"quantization::{spec}": "awq"},
             errors={"limit": "test validation error"},
         ).decode("utf-8")
-        assert "<option value='awq' selected>awq</option>" in rerendered
+        assert "<option value='awq' selected>4-bit AWQ</option>" in rerendered
     finally:
         app.close()

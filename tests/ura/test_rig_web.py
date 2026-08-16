@@ -424,13 +424,18 @@ def test_builder_lists_all_39_arms_and_20_attackers(tmp_path: Path) -> None:
             assert f"data-arm='{arm}'" in text, arm  # every arm visible
         for attacker in _ATTACKER_NAMES:
             assert f"data-fw='{attacker}'" in text, attacker  # every attacker
-        # Ineligible arms are shown DISABLED with the honest source-evaluator
-        # reason; the two source-metric arms are shown SELECTABLE (they run).
+        # Ineligible arms are selectable so the server can return their exact
+        # fail-closed reason; the repeated reason is compacted into a tooltip.
+        # The two source-metric arms are selectable because they do run.
         for arm in _INELIGIBLE_ARMS:
-            assert arm in text
+            marker = f"data-arm='{arm}'"
+            at = text.index(marker)
+            input_tag = text[text.rfind("<input", 0, at):text.find(">", at)]
+            assert "disabled" not in input_tag
         assert "source-specific metric - not yet runnable (evaluator not integrated)" in text
         assert "source-specific metric - runnable (replay attacker only)" in text
-        assert "badge amber'>source-metric" in text  # runnable source-metric arm
+        assert "badge gray tip" in text and "no evaluator" in text
+        assert "badge amber tip" in text and "source-metric" in text
         assert "data-arm='rjudge_release'" in text
         assert "data-arm='gptgeochat_release'" in text
         # native_import remains the real action for the native-only ENGINES.
@@ -454,8 +459,11 @@ def test_native_only_note_is_a_tooltip_not_repeated_inline(tmp_path: Path) -> No
         assert "badge gray tip" in text          # focusable tooltip trigger
         assert "class='tiptext'>" in text        # the note lives in a tooltip
         assert "native_import" in text
-        # Exactly one tooltip per native-only framework (no inline repetition).
-        assert text.count("class='tiptext'>") == len(_NATIVE_ONLY_ATTACKERS)
+        # Exactly one native explanation per native-only framework. Other
+        # compact builder badges may independently use the same tooltip class.
+        assert text.count("native-artifact integration; run_matrix") == len(
+            _NATIVE_ONLY_ATTACKERS
+        )
     finally:
         app.close()
 
@@ -538,6 +546,12 @@ def test_agentic_arm_rejected_server_side(tmp_path: Path) -> None:
     app = _app(tmp_path)
     started = len(app.jobs)
     try:
+        page = app.handle("GET", "/build")[2].decode("utf-8")
+        marker = "data-arm='agentharm_harmful'"
+        at = page.index(marker)
+        input_tag = page[page.rfind("<input", 0, at):page.find(">", at)]
+        assert "disabled" not in input_tag  # operator can choose the row
+        assert "no evaluator" in page and "badge gray tip" in page
         _s, _c, body = app.handle("POST", "/build", {
             "mode": "dry_run", "corpora": "agentharm_harmful",
             "api": "anthropic:claude-opus-5", "attackers": "replay",
@@ -1097,7 +1111,13 @@ def test_builder_model_filters_and_quantization_warning_are_rendered(
         "anthropic:claude-test": {"modalities": ["text"]},
         "openai:gpt-test": {"modalities": ["text", "image"]},
     }), encoding="utf-8")
-    (rig / "local-targets.example.json").write_text("{}", encoding="utf-8")
+    local_checkpoint = f"vllm:{(tmp_path / 'checkpoint').resolve()}"
+    (rig / "local-targets.example.json").write_text(json.dumps({
+        local_checkpoint: {
+            "digest": "6" * 64, "modalities": ["text"],
+            "parameter_count_b": 7,
+        },
+    }), encoding="utf-8")
     (rig / "vllm-roster.example.json").write_text(json.dumps({
         "vllm_version": "0.test",
         "models": {
@@ -1109,6 +1129,18 @@ def test_builder_model_filters_and_quantization_warning_are_rendered(
                 "revision": "2" * 40, "modalities": ["text"],
                 "parameter_count_b": 70,
                 "quantization": "bitsandbytes",
+            },
+            "vllm:org/Lower-7B": {
+                "revision": "OPERATOR_TODO", "modalities": ["text"],
+                "parameter_count_b": 7,
+            },
+            "vllm:org/Audio-7B": {
+                "revision": "4" * 40, "modalities": ["text", "audio"],
+                "parameter_count_b": 7,
+            },
+            "vllm:org/DigestOnly-7B": {
+                "digest": "5" * 64, "modalities": ["text"],
+                "parameter_count_b": 7,
             },
             "vllm:org/Huge-4T": {
                 "revision": "3" * 40, "modalities": ["text"],
@@ -1146,21 +1178,82 @@ def test_builder_model_filters_and_quantization_warning_are_rendered(
     assert "id='local-param-range' type='range' min='0.01' max='3000'" in page
     assert "id='local-param-number' type='number' min='0.01' max='3000'" in page
     assert "id='local-compatible-filter' checked" in page
+    assert "Automatic 16/8/4-bit fit" in page
+    assert "automatically selected 16-, 8-, or 4-bit precision" in page
+    assert "<option value='none'>16-bit (BF16/FP16)</option>" in page
+    assert "<option value='fp8'>8-bit FP8</option>" in page
+    assert "Compatible with this rigincludes" not in page
     assert "data-name='vllm:org/Model-70B'" in page
     assert "data-params-b='70'" in page
     assert "data-compatible='true'" in page
-    assert "4-bit bitsandbytes required" in page
+    assert "4-bit BitsAndBytes required" in page
     assert "name.indexOf(query)!==-1" in page  # literal substring, no fuzzy match
     assert "params<=max" in page and "compatOk" in page  # combinative filters
     assert "A presentation filter never changes a selected target" in page
+    audio = "vllm:org/Audio-7B"
+    audio_at = page.index(f"data-name='{audio}'")
+    audio_row = page[page.rfind("<div class='modelrow'", 0, audio_at):
+                     page.find("</div>", audio_at)]
+    assert "data-mods='text'" in audio_row and "data-mods='text,audio'" not in audio_row
+    audio_config = json.loads(
+        app._materialize_selected_local_config([audio]).read_text(encoding="utf-8")
+    )
+    assert audio_config[audio]["modalities"] == ["text"]
+    audio_errors = app._validate_builder({
+        "mode": "dry_run", "corpora": "jalmbench_audio", "local": audio,
+        "attackers": "replay", "judges": "rules", "out": "runs/audio",
+    })
+    assert "serves ['text']" in audio_errors["models"]
+    assert "requires all of ['audio', 'text']" in audio_errors["models"]
+    # A lower, compatible roster row remains a standard labelled radio even
+    # before its live revision is pinned; its quantization control is separate
+    # from the checkbox label, so neither control captures the other's clicks.
+    lower = "vllm:org/Lower-7B"
+    marker = f"data-model='{lower}'"
+    at = page.index(marker)
+    input_tag = page[page.rfind("<input", 0, at):page.find(">", at)]
+    assert "type='radio'" in input_tag and "name='local_choice'" in input_tag
+    assert "disabled" not in input_tag
+    id_start = input_tag.index("id='") + len("id='")
+    control_id = input_tag[id_start:input_tag.index("'", id_start)]
+    row_start = page.rfind("<div class='modelrow'", 0, at)
+    quant_at = page.index(f"name='quantization::{lower}'", at)
+    assert f"for='{control_id}'" in page[row_start:at]
+    assert "</label><div class='modelquant'>" in page[at:quant_at]
+    quant_tag = page[page.rfind("<select", at, quant_at):page.find(">", quant_at)]
+    assert "disabled" not in quant_tag
     # Filter controls have no server-side campaign fields. A submitted target
     # remains authoritative and composes through the normal validated path.
     assert "name='api-provider-filter'" not in page
     _command, values, _params = app._compose_from_builder({
-        "mode": "dry_run", "corpora": "synth", "api": "openai:gpt-test",
+        "mode": "measured", "corpora": "synth", "api": "openai:gpt-test",
         "attackers": "replay", "judges": "rules", "out": "runs/filter-test",
     })
     assert values["--api"] == "openai:gpt-test"
+    _command, values, _params = app._compose_from_builder({
+        "mode": "dry_run", "corpora": "synth", "local": lower,
+        "attackers": "replay", "judges": "rules",
+        "limit": "1", "seeds": "0", "max_queries": "1", "max_turns": "1",
+        "out": str(tmp_path / "lower-row"),
+    })
+    assert "--local" not in values and "--local-config" not in values
+    dry_errors = app._validate_builder(_params)
+    assert "models" not in dry_errors
+    assert run_matrix.main(build_argv("run_matrix", values)[3:]) == 0
+    live_errors = app._validate_builder({
+        **_params, "mode": "measured",
+    })
+    assert "hub vLLM targets require a 40-64 hex revision" in live_errors["models"]
+    digest_only_errors = app._validate_builder({
+        **_params, "mode": "measured", "local": "vllm:org/DigestOnly-7B",
+    })
+    assert "hub vLLM targets require a 40-64 hex revision" in (
+        digest_only_errors["models"]
+    )
+    checkpoint_errors = app._validate_builder({
+        **_params, "mode": "measured", "local": local_checkpoint,
+    })
+    assert "models" not in checkpoint_errors
     app.close()
 
 

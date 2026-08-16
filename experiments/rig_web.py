@@ -178,7 +178,8 @@ _PARAM_HELP: dict[str, str] = {
     "--source-conformance-sha256": "Exact byte SHA-256 paired with "
                                    "--source-conformance.",
     "--quantization": "Default vLLM override (bitsandbytes, awq, gptq, fp8, "
-                      "none); per-model config wins; empty uses GPU-fit resolution.",
+                      "none); per-model config wins; empty chooses the highest "
+                      "fitting 16-, 8-, or 4-bit precision.",
     "--dtype": "vLLM dtype for local models (auto, bfloat16, float16).",
     "--lock-stale-seconds": "Diagnostic stale-age metadata for cell locks; "
                             "locks are never removed automatically.",
@@ -1309,13 +1310,30 @@ button.ghost { background:transparent; color:var(--accent);
 .checkgrid { display:grid; grid-template-columns:repeat(auto-fill,
   minmax(240px,1fr)); gap:.15rem .8rem; align-items:start; }
 .targetfilters { display:grid; grid-template-columns:repeat(auto-fit,
-  minmax(210px,1fr)); gap:.65rem 1rem; align-items:end; margin:.55rem 0 .8rem;
+  minmax(210px,1fr)); gap:.65rem 1rem; align-items:stretch; margin:.55rem 0 .8rem;
   padding:.65rem .75rem; background:var(--soft); border:1px solid var(--line);
   border-radius:10px; }
 .targetfilters .fieldlabel { margin:0 0 .25rem; }
 .targetfilters input[type=range] { width:100%; accent-color:var(--accent); }
 .paramfilter { display:grid; grid-template-columns:minmax(120px,1fr) 8rem;
   gap:.55rem; align-items:center; }
+.compatfilter { display:grid; grid-template-columns:17px minmax(0,1fr);
+  gap:.55rem; align-items:start; padding:.5rem .6rem; cursor:pointer;
+  background:var(--card); border:1px solid var(--line); border-radius:8px; }
+.compatfilter input { margin-top:.15rem; }
+.compatcopy { display:flex; flex-direction:column; gap:.12rem; line-height:1.3; }
+.compatcopy .fieldhint { display:block; }
+.modelrow { min-width:0; padding:.5rem .55rem; background:var(--card);
+  border:1px solid var(--line); border-radius:9px; }
+.modelrow:focus-within { border-color:var(--accent); }
+.modelrow:has(.modelbox:checked) { background:color-mix(in srgb,
+  var(--accent) 8%, var(--card)); border-color:var(--accent); }
+.modelchoice { width:100%; padding:0; }
+.modelrow .fieldhint { display:block; margin-top:.18rem; line-height:1.35; }
+.modelquant { display:flex; align-items:center; gap:.45rem; margin:.4rem 0 0 1.45rem;
+  flex-wrap:wrap; }
+.modelquant label { color:var(--muted); font-size:.76rem; }
+.modelquant select { min-width:8rem; }
 .quant-warning { margin-left:.35rem; white-space:nowrap; vertical-align:middle; }
 .filter-empty { display:none; color:var(--muted); font-size:.84rem;
   margin:.35rem 0; }
@@ -5055,7 +5073,15 @@ class RigWebApp:
             "local-targets.json", "rig/local-targets.example.json"
         ).items():
             local_seen.add(key)
-            options.append((key, key, self._entry_modalities(entry), "local"))
+            # The local harness currently renders text and image inputs. Keep
+            # richer roster metadata in its source file, but advertise only
+            # the physical modalities this target adapter can actually send.
+            supported = tuple(
+                modality for modality in self._entry_modalities(entry)
+                if modality in {"text", "image"}
+            )
+            if supported:
+                options.append((key, key, supported, "local"))
         try:
             # Keep the full roster in the document. The checked-by-default
             # compatibility filter hides non-fitting rows, and disabling them
@@ -5070,8 +5096,12 @@ class RigWebApp:
             if spec in local_seen:
                 continue
             local_seen.add(spec)
-            mods = tuple(str(m) for m in model.get("modalities", ["text"]))
-            options.append((spec, spec, mods or ("text",), "local"))
+            mods = tuple(
+                str(modality) for modality in model.get("modalities", ["text"])
+                if str(modality) in {"text", "image"}
+            )
+            if mods:
+                options.append((spec, spec, mods, "local"))
         return options
 
     def _local_entry_catalog(
@@ -5134,6 +5164,17 @@ class RigWebApp:
                 default_quantization=default_quantization,
             )
             resolved = {key: value for key, value in entry.items() if key in allowed}
+            raw_modalities = resolved.get("modalities")
+            if isinstance(raw_modalities, list):
+                resolved["modalities"] = [
+                    modality for modality in raw_modalities
+                    if modality in {"text", "image"}
+                ]
+            if "text" not in resolved.get("modalities", []):
+                raise ValueError(
+                    f"local target {spec!r} has no text/image modality supported "
+                    "by the local Runner adapter"
+                )
             resolved["parameter_count_b"] = profile["parameter_count_b"]
             # Preserve the evidence boundary: an absent roster declaration stays
             # absent here.  The shared CLI resolver will apply the requested
@@ -5284,10 +5325,14 @@ class RigWebApp:
         if dry:
             # A dry lane needs no admission receipts; the env-prefilled
             # receipt fields must not leak into an offline command (the child
-            # is also launched with those env vars scrubbed).
+            # is also launched with those env vars scrubbed). It always uses
+            # MockTarget, so do not attach a real target or generated local
+            # config that run_matrix correctly treats as unused input.
             for flag in ("--project-revision", "--project-revision-sha256",
                          "--source-conformance", "--source-conformance-sha256"):
                 values.pop(flag, None)
+            values.pop("--api", None)
+            values.pop("--local", None)
         else:
             # A non-dry lane's argv must be self-contained: if a receipt field
             # was left blank but the campaign environment binds it, fold the
@@ -5309,7 +5354,7 @@ class RigWebApp:
         ):
             if (self.repo_root / relative).is_file():
                 values[flag] = relative
-        if values.get("--local"):
+        if not dry and values.get("--local"):
             selected = self._split_list(values["--local"])
             local_cfg = self._materialize_selected_local_config(
                 selected,
@@ -5417,6 +5462,38 @@ class RigWebApp:
             if unknown_local:
                 details.append("local: " + ", ".join(unknown_local))
             errors["models"] = "unknown target selection(s): " + "; ".join(details)
+        if local and mode != "dry_run" and not canary_dry and not unknown_local:
+            from ura.targets.local import _is_explicit_local_path  # noqa: PLC0415
+
+            catalog, _configured = self._local_entry_catalog()
+            unpinned = []
+            for spec in local:
+                entry = catalog.get(spec, {})
+                revision = entry.get("revision")
+                digest = entry.get("digest")
+                revision_ok = isinstance(revision, str) and re.fullmatch(
+                    r"[0-9a-fA-F]{40,64}", revision,
+                ) is not None
+                digest_ok = isinstance(digest, str) and re.fullmatch(
+                    r"[0-9a-fA-F]{64}", digest,
+                ) is not None
+                backend, _separator, model = spec.partition(":")
+                digest_identity = backend.lower() == "ollama" or (
+                    backend.lower() == "vllm" and _is_explicit_local_path(model)
+                )
+                identity_ok = (
+                    digest_ok and not revision
+                    if digest_identity else revision_ok and not digest
+                )
+                if not identity_ok:
+                    unpinned.append(spec)
+            if unpinned:
+                errors.setdefault(
+                    "models",
+                    "live hub vLLM targets require a 40-64 hex revision; "
+                    "explicit local checkpoints and Ollama targets require a "
+                    "64-hex digest: " + ", ".join(unpinned),
+                )
 
         def require_int(field: str, *, positive: bool = False) -> int | None:
             raw = params.get(field, "")
@@ -6023,9 +6100,10 @@ class RigWebApp:
 
         # Group ALL 39 catalogue arms for a readable layout: common lanes first
         # (by modality signature), then the source-metric scored lanes, then the
-        # common-metric-ineligible arms.  A source-metric arm is SELECTABLE (it
-        # runs in run_matrix, replay only); an ineligible arm is shown DISABLED
-        # with its precise reason - never a selectable common scored lane.
+        # common-metric-ineligible arms. A source-metric arm runs in run_matrix
+        # with replay. An ineligible arm remains selectable so the server can
+        # return its exact fail-before-subprocess reason; it never becomes a
+        # scored lane merely because the builder exposes the choice.
         signatures: dict[str, list[tuple[str, tuple[str, ...], str]]] = {}
         for arm, mods, reason in _ARM_CATALOG:
             if reason:
@@ -6051,17 +6129,17 @@ class RigWebApp:
             for arm, mods, reason in signatures[signature]:
                 known = arm in registry_arms
                 if reason:
-                    # Disabled (never a common-runner lane) but carries its real
-                    # data-mods so the modality-scope filter keeps it VISIBLE
-                    # under its modality rather than hiding it on load.
+                    escaped_reason = html.escape(reason, quote=True)
                     boxes.append(
-                        "<label class='check disabled'>"
-                        "<input type='checkbox' class='armbox' disabled "
+                        "<label class='check'>"
+                        "<input type='checkbox' class='armbox' "
                         f"data-mods='{html.escape(','.join(mods))}' "
                         f"data-arm='{html.escape(arm)}'>"
                         f"<span>{_arm_head(html.escape(arm), mods)}"
-                        "<span class='badge gray'>no evaluator</span><br>"
-                        f"<span class='fieldhint'>{html.escape(reason)}</span>"
+                        "<span class='badge gray tip' tabindex='0' "
+                        f"title='{escaped_reason}'>no evaluator"
+                        f"<span class='tiptext'>{html.escape(reason)}</span>"
+                        "</span>"
                         "</span></label>"
                     )
                     continue
@@ -6069,18 +6147,22 @@ class RigWebApp:
                     # Selectable: a scored source-metric lane (implemented
                     # evaluator, replay only).  Carries its real data-mods.
                     metric, allowed = _SOURCE_METRIC_ARMS[arm]
+                    source_note = (
+                        f"Scored by the implemented {metric!r} evaluator, not "
+                        "common harmful-ASR; run_matrix admits only the "
+                        f"{'/'.join(allowed)} attacker for it."
+                    )
                     boxes.append(
                         "<label class='check'>"
                         "<input type='checkbox' class='armbox' "
                         f"data-mods='{html.escape(','.join(mods))}' "
                         f"data-arm='{html.escape(arm)}'>"
                         f"<span>{_arm_head(html.escape(arm), mods)}"
-                        "<span class='badge amber'>source-metric</span><br>"
-                        "<span class='fieldhint'>scored by the implemented "
-                        f"'{html.escape(metric)}' evaluator (not common "
-                        "harmful-ASR); run_matrix admits only the "
-                        f"{html.escape('/'.join(allowed))} attacker for it"
-                        "</span></span></label>"
+                        "<span class='badge amber tip' tabindex='0' "
+                        f"title='{html.escape(source_note, quote=True)}'>"
+                        "source-metric<span class='tiptext'>"
+                        f"{html.escape(source_note)}</span></span>"
+                        "</span></label>"
                     )
                     continue
                 note = ("" if known else
@@ -6128,9 +6210,13 @@ class RigWebApp:
 
         def _target_box(value: str, label: str, mods: tuple[str, ...], kind: str) -> str:
             detail = ""
+            quant_control = ""
             disabled = ""
             row_attrs = ""
             name_html = html.escape(label)
+            control_id = "target-" + hashlib.sha256(
+                f"{kind}:{value}".encode("utf-8")
+            ).hexdigest()[:16]
             if kind == "api":
                 provider = value.partition(":")[0].strip().lower() or "unknown"
                 row_attrs = f" data-provider='{html.escape(provider)}'"
@@ -6157,25 +6243,36 @@ class RigWebApp:
                 ) or (
                     isinstance(digest, str) and re.fullmatch(r"[0-9a-fA-F]{64}", digest)
                 )
-                if fit is not True or not pinned:
+                # Compatibility blocks execution. A missing immutable revision
+                # is instead validated on live submission, so every compatible
+                # roster row remains reachable and selectable in the builder.
+                if fit is not True:
                     disabled = " disabled"
                 recommended = str(profile.get("recommended_quantization", "none"))
-                quant_label = (
-                    f"mandatory 4-bit {recommended}"
-                    if recommended == "bitsandbytes"
-                    and profile.get("quantization_source") == "hardware_auto"
-                    else f"quantization {recommended}"
+                precision_bits = profile.get("recommended_precision_bits")
+                precision_bits = (
+                    int(precision_bits)
+                    if isinstance(precision_bits, (int, float))
+                    and not isinstance(precision_bits, bool) else 16
                 )
-                if profile.get("quantization_required_by_hardware"):
-                    expected = (
-                        f"4-bit {recommended} required"
-                        if recommended in {"bitsandbytes", "awq", "gptq"}
-                        else f"{recommended} required"
-                    )
+                precision_backend = {
+                    "none": "", "fp8": "FP8", "bitsandbytes": "BitsAndBytes",
+                    "awq": "AWQ", "gptq": "GPTQ",
+                }.get(recommended, recommended)
+                precision_label = f"{precision_bits}-bit" + (
+                    f" {precision_backend}" if precision_backend else ""
+                )
+                hardware_required = bool(
+                    profile.get("quantization_required_by_hardware")
+                )
+                quant_label = precision_label + (
+                    " required" if hardware_required else ""
+                )
+                if hardware_required:
                     name_html += (
                         " <span class='badge amber quant-warning' "
                         "title='Expected quantization required for this rig'>"
-                        + html.escape(expected) + "</span>"
+                        + html.escape(quant_label) + "</span>"
                     )
                 detail = (
                     "<span class='fieldhint'>" + html.escape(
@@ -6189,28 +6286,43 @@ class RigWebApp:
                            if profile.get("compatibility_note") else "")
                     ) + "</span>"
                 )
-                choices = ("auto", "bitsandbytes", "none", "awq", "gptq", "fp8")
+                choices = (
+                    ("auto", "auto (highest fitting 16/8/4-bit)"),
+                    ("none", "16-bit (BF16/FP16)"),
+                    ("fp8", "8-bit FP8"),
+                    ("bitsandbytes", "4-bit BitsAndBytes"),
+                    ("awq", "4-bit AWQ"),
+                    ("gptq", "4-bit GPTQ"),
+                )
                 configured_quant = str(prefill.get(
                     f"quantization::{value}", entry.get("quantization", "auto")
                 ))
-                detail += (
-                    "<span class='fieldhint'>Per-model quantization: "
-                    f"<select name='quantization::{html.escape(value)}'{disabled}>"
+                quant_id = control_id + "-quantization"
+                quant_control = (
+                    "<div class='modelquant'><label for='" + quant_id + "'>"
+                    "Per-model quantization</label>"
+                    f"<select id='{quant_id}' "
+                    f"name='quantization::{html.escape(value)}'{disabled}>"
                     + "".join(
                         f"<option value='{choice}'"
                         + (" selected" if choice == configured_quant else "")
-                        + f">{choice}</option>"
-                        for choice in choices
-                    ) + "</select></span>"
+                        + f">{label}</option>"
+                        for choice, label in choices
+                    ) + "</select></div>"
                 )
+            input_type = "radio" if kind == "local" else "checkbox"
+            input_name = " name='local_choice'" if kind == "local" else ""
             return (
-                "<label class='check modelrow' "
+                "<div class='modelrow' "
                 f"data-mods='{html.escape(','.join(mods))}' "
                 f"data-kind='{html.escape(kind)}'{row_attrs}>"
-                f"<input type='checkbox' class='modelbox' "
+                f"<label class='check modelchoice' for='{control_id}'>"
+                f"<input id='{control_id}' type='{input_type}' class='modelbox'"
+                f"{input_name} "
                 f"data-kind='{html.escape(kind)}' "
                 f"data-model='{html.escape(value)}'{disabled}>"
                 f"<span>{_arm_head(name_html, mods)}{detail}</span></label>"
+                f"{quant_control}</div>"
             )
 
         options = self._model_options()
@@ -6256,10 +6368,12 @@ class RigWebApp:
             "<input class='wide' id='local-param-number' type='number' "
             "min='0.01' max='3000' step='0.01' value='3000' "
             "aria-label='Maximum parameters in billions'></div></div>"
-            "<label class='check'><input type='checkbox' "
-            "id='local-compatible-filter' checked><span><strong>Compatible "
-            "with this rig</strong><span class='fieldhint'>includes automatic "
-            "4-bit fit</span></span></label></div>"
+            "<label class='compatfilter'><input type='checkbox' "
+            "id='local-compatible-filter' checked><span class='compatcopy'>"
+            "<strong>Automatic 16/8/4-bit fit</strong>"
+            "<span class='fieldhint'>Show only models estimated to fit this "
+            "hardware at automatically selected 16-, 8-, or 4-bit precision."
+            "</span></span></label></div>"
             "<div class='checkgrid' id='local-target-list'>"
             + (local_boxes or "<p class='note'>No local targets configured.</p>")
             + "</div><p class='filter-empty' id='local-filter-empty'>No local "

@@ -1616,8 +1616,9 @@ def build_target(
 
     The exact per-model ``quantization``/``dtype`` condition is forwarded to
     vLLM. Empty quantization uses offline hardware-fit resolution and selects
-    in-flight ``bitsandbytes`` 4-bit when full precision does not fit; AWQ/GPTQ
-    remain explicit overrides for pinned pre-quantized checkpoints.
+    the highest fitting precision in the order 16-bit, FP8 8-bit, then
+    in-flight ``bitsandbytes`` 4-bit; AWQ/GPTQ remain explicit overrides for
+    pinned pre-quantized checkpoints.
     Local capabilities and immutable identities come only from ``local_identity``;
     model-name substrings are never treated as capability evidence.
     """
@@ -2550,7 +2551,8 @@ def build_parser() -> argparse.ArgumentParser:
     ap.add_argument("--quantization", default="",
                     help="default vLLM quantization override (bitsandbytes, awq, "
                          "gptq, fp8, none); each model config wins; empty resolves "
-                         "from detected GPU VRAM and parameter count")
+                         "the highest fitting 16-, 8-, or 4-bit precision from "
+                         "detected GPU VRAM and parameter count")
     ap.add_argument("--dtype", default="auto",
                     help="vLLM dtype for local models (auto, bfloat16, float16)")
     ap.add_argument("--max-total-target-calls", type=int, default=0,

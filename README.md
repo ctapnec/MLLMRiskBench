@@ -104,17 +104,24 @@ and RAM, and `nvidia-smi` for each GPU model, VRAM, PCI id, compute capability
 and driver. The dashboard and Build tab show this snapshot. Build filters hosted
 targets by provider (`All` by default). Local vLLM filters combine an immediate
 case-insensitive name substring, a synchronized 10M--3T maximum-parameter
-slider/numeric input, and `Compatible with this rig` (on by default, including
-automatic 4-bit fits). Filtering is presentational and does not weaken runtime
-admission. Models whose hardware fit requires quantization carry an amber
-warning beside the name, regardless of the override source; per-model
-quantization overrides the command override,
-which overrides hardware auto-selection. Invalid/unknown/non-fit
-hardware/topology fails before engine construction, and dependency/runtime
+slider/numeric input, and a separate `Automatic 16/8/4-bit fit` card (on by
+default). Hardware auto-selection chooses the highest precision that fits:
+unquantized 16-bit BF16/FP16, then FP8 8-bit on SM 7.5+, then BitsAndBytes 4-bit
+on SM 7.0+. Models whose hardware fit requires quantization carry an amber
+warning beside the name regardless of override source. Per-model quantization
+overrides the command override, which overrides hardware auto-selection; the
+dropdown labels the 16-, 8-, and 4-bit choices explicitly. Compatible local rows
+use a single-choice radio and remain selectable when their roster revision is
+still `OPERATOR_TODO`, but every non-dry submission requires an exact immutable
+revision or digest before any subprocess starts. Expert/MoE-ambiguous names do
+not infer a dense total: fit stays unknown and hidden by the default fit filter
+until `parameter_count_b` is declared, so no download/fit is implied.
+Invalid/unknown/non-fit
+hardware/topology still fails before engine construction, and dependency/runtime
 allocation failures fail during local preflight before target/judge calls. On
-the actual two-24,564-MiB rig, a 70B model is therefore rostered only as an
-in-flight 4-bit BitsAndBytes, tensor-parallel-2 candidate, not as an unquantized
-model.
+the actual two-24,564-MiB rig, FP8 does not fit a 70B profile, so it is rostered
+only as an in-flight 4-bit BitsAndBytes, tensor-parallel-2 candidate rather than
+an unquantized model.
 
 The dependency check on that rig used Python 3.12.13, vLLM 0.27.1,
 BitsAndBytes 0.49.2, psutil 7.2.2 and torch 2.13.0+cu130/CUDA 13.0. The
@@ -125,7 +132,7 @@ unused orphaned `datasets 2.14.7` installation. This verifies the environment
 and UI/admission prerequisites, not model inference; no provider/model call was
 made.
 
-Runner 2.12 makes that prerequisite machine-checked. A bounded non-dry
+Runner 2.13 makes that prerequisite machine-checked. A bounded non-dry
 `--attestation-probe` grid is converted by `experiments.live_attestation` into a
 content-addressed `ura-live-attestation/2` receipt. An ordinary measured grid
 must supply the exact receipt bytes and digest, the same operator-declared
@@ -368,7 +375,7 @@ Runner `RunManifest`; the URA revision that performed their import is retained
 in the return-package/importer context rather than relabelled as an upstream
 native field.
 
-Runner `ura-runner/2.12` writes unified schema `1.4`. Immutable planning/source
+Runner `ura-runner/2.13` writes unified schema `1.4`. Immutable planning/source
 stratum identity is stored separately from adaptive per-turn evaluation
 identity. Thus a Crescendo setup turn remains joined to its original planning
 stratum while receiving a typed `not_applicable` judgment and no judge call or
@@ -429,8 +436,15 @@ campaign builder and console over the same maintained CLIs: mode-aware lane
 composition (an ordinary offline dry run over the synthetic corpus, attestation
 probe, diagnostic canary, measured execution) with complete server-side
 fail-closed admission - exact-modality compatibility of every target/attacker
-with each arm, agentic/native-only arms shown disabled rather than as common
-lanes, and scoring-vs-defense guardrail separation - before any subprocess. The
+with each arm, agentic/native-only attackers shown disabled rather than as
+common lanes, and scoring-vs-defense guardrail separation - before any
+subprocess. Source arms lacking an integrated evaluator remain selectable so the
+programme stays visible, but carry only a concise `no evaluator` badge with the
+exact reason in its tooltip; submitting one is rejected server-side before a
+subprocess and never presented as runnable. Dry-run composition drops selected
+real API/local targets and their configs because `run_matrix --dry-run` always
+uses `MockTarget`. Local roster modalities are limited to Runner-supported text
+and image, so an audio arm/target mismatch is rejected by UI parity. The
 builder covers all 39 maintained source arms and all 20 registered attackers
 derived from the shared harness registries. Before a paid mode it shows the
 exact argv and offers a no-call preflight whose lane-projection gives the
