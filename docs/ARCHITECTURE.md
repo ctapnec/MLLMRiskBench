@@ -136,7 +136,7 @@ is the operator-selection universe, not normalized config/receipt identity;
 config-only variants sharing it belong in separate Level-1 cohorts.
 
 After the whole request passes admission and before the first generation call,
-Runner 2.13 writes a content-addressed `ura-lane-projection/1`. The artifact
+Runner 2.14 writes a content-addressed `ura-lane-projection/1`. The artifact
 binds the exact experiment condition and eligibility descriptor, selected
 record/cluster/source-policy counts, deterministic sampling identities,
 selected physical input-media bytes, and the conservative complete-grid target,
@@ -314,12 +314,16 @@ VRAM, PCI, compute capability and driver data through `nvidia-smi`. The
 dashboard and Build tab render that one snapshot. Build target filters compose
 hosted provider selection (`All` initially) with local name substring, 10M--3T
 maximum parameter count and a separate automatic 16/8/4-bit fit control
-(initially on). Hardware-required quantization is marked independently of
-override source, and the per-model control names its precision. Compatible local
+(initially on), plus a separate unchecked unknown-fit control. Known 16/8/4-bit
+recommendations use green/blue/amber badges; unknown fit is neutral gray. The
+per-model control names its precision. Compatible local
 rows are selectable single-choice radios even when still unpinned; non-dry
-server admission requires the exact revision/digest before launch. These are
-presentation controls only. Source arms lacking an integrated evaluator also
-remain visible/selectable with concise badges and tooltip details, while the
+server admission requires the exact revision/digest before launch. Unknown fit
+is blocked under auto; an explicit per-model precision binds
+`allow_unknown_fit: true` and permits only that operator-owned load attempt.
+Known non-fit remains blocked. These are presentation controls only. Source arms
+lacking an integrated evaluator also remain visible/selectable with a concise
+badge and one custom hover/focus tooltip, while the
 server rejects them before a subprocess; visibility never asserts runnability.
 Dry composition discards real API/local selections because the runner uses
 `MockTarget`, and local roster modality metadata is narrowed to its supported

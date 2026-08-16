@@ -1334,7 +1334,11 @@ button.ghost { background:transparent; color:var(--accent);
   flex-wrap:wrap; }
 .modelquant label { color:var(--muted); font-size:.76rem; }
 .modelquant select { min-width:8rem; }
-.quant-warning { margin-left:.35rem; white-space:nowrap; vertical-align:middle; }
+.precision-badge { margin-left:.35rem; white-space:nowrap; vertical-align:middle; }
+.precision-badge.precision-16 { box-shadow:inset 0 0 0 1px #4fa66a; }
+.precision-badge.precision-8 { box-shadow:inset 0 0 0 1px #529ee8; }
+.precision-badge.precision-4 { box-shadow:inset 0 0 0 1px #d6a044; }
+.precision-badge.precision-unknown { box-shadow:inset 0 0 0 1px var(--line); }
 .filter-empty { display:none; color:var(--muted); font-size:.84rem;
   margin:.35rem 0; }
 .hardware-grid { display:grid; grid-template-columns:minmax(220px,.8fr) 2fr;
@@ -1468,6 +1472,7 @@ var query=((document.getElementById('local-name-filter')||{}).value||'')
 var max=parseFloat((document.getElementById('local-param-number')||{}).value);
 if(!Number.isFinite(max)){max=3000;}
 var compatible=(document.getElementById('local-compatible-filter')||{}).checked;
+var includeUnknown=(document.getElementById('local-unknown-filter')||{}).checked;
 var counts={api:0,local:0};
 form.querySelectorAll('.modelrow').forEach(function(row){
 var mods=(row.getAttribute('data-mods')||'').split(',').filter(Boolean);
@@ -1479,7 +1484,9 @@ filterOk=provider==='all'||row.getAttribute('data-provider')===provider;
 var name=(row.getAttribute('data-name')||'').toLowerCase();
 var raw=row.getAttribute('data-params-b')||'';var params=parseFloat(raw);
 var paramsOk=Number.isFinite(params)?params<=max:max>=3000;
-var compatOk=!compatible||row.getAttribute('data-compatible')==='true';
+var fit=row.getAttribute('data-compatible')||'unknown';
+var compatOk=fit==='true'||(fit==='false'&&!compatible)||
+(fit==='unknown'&&includeUnknown);
 filterOk=name.indexOf(query)!==-1&&paramsOk&&compatOk;}
 var visible=scopeOk&&filterOk;row.style.display=visible?'':'none';
 // A presentation filter never changes a selected target. Modality scope keeps
@@ -1504,7 +1511,15 @@ var mods=(row.getAttribute('data-mods')||'').split(',').filter(Boolean);
 var ok=intersects(mods,sc);row.style.display=ok?'':'none';
 if(!ok){var cb=row.querySelector('.fwbox');if(cb){cb.checked=false;}}});
 applyTargetFilters(sc);}
-function refresh(){applyScope();
+function updateUnknownPrecisionBadges(){
+var labels={none:'16-bit',fp8:'8-bit FP8',bitsandbytes:'4-bit BitsAndBytes',
+awq:'4-bit AWQ',gptq:'4-bit GPTQ'};
+form.querySelectorAll(".modelrow[data-compatible='unknown']").forEach(function(row){
+var badge=row.querySelector('.precision-badge');var select=row.querySelector('.modelquant select');
+if(!badge||!select){return;}var value=select.value;
+badge.textContent=value==='auto'?'fit unknown — choose precision':
+(labels[value]||value)+' selected · fit unknown';});}
+function refresh(){updateUnknownPrecisionBadges();applyScope();
 // live preview
 var mode=(form.querySelector('input[name=mode]:checked')||{}).value||'measured';
 var flagFor={dry_run:'--dry-run',attestation_probe:'--attestation-probe',
@@ -5126,13 +5141,36 @@ class RigWebApp:
                 catalog[str(spec)] = dict(entry)
         return catalog, explicit
 
+    def _effective_local_profile(
+        self,
+        spec: str,
+        entry: Mapping[str, object],
+        *,
+        default_quantization: str = "",
+        model_quantization: str = "",
+    ) -> dict[str, object]:
+        """Resolve one model exactly as the generated local config does."""
+
+        from experiments.local_targets import model_hardware_profile  # noqa: PLC0415
+
+        profile_entry = dict(entry)
+        model_override = str(model_quantization).strip().lower()
+        if model_override and model_override != "auto":
+            profile_entry["quantization"] = model_override
+        elif model_override == "auto":
+            profile_entry.pop("quantization", None)
+        return model_hardware_profile(
+            spec,
+            profile_entry,
+            self.gpu_hardware,
+            default_quantization=str(default_quantization).strip().lower(),
+        )
+
     def _materialize_selected_local_config(
         self, specs: list[str], *, default_quantization: str = "",
         quantization_overrides: Mapping[str, str] | None = None,
     ) -> Path:
         """Write the exact selected vLLM execution subset under console state."""
-
-        from experiments.local_targets import model_hardware_profile  # noqa: PLC0415
 
         catalog, explicitly_configured = self._local_entry_catalog()
         selected: dict[str, dict[str, object]] = {}
@@ -5151,17 +5189,13 @@ class RigWebApp:
                     if key in {"digest", "modalities"}
                 }
                 continue
-            profile_entry = dict(entry)
             model_override = str(
                 (quantization_overrides or {}).get(spec, "")
             ).strip().lower()
-            if model_override and model_override != "auto":
-                profile_entry["quantization"] = model_override
-            elif model_override == "auto":
-                profile_entry.pop("quantization", None)
-            profile = model_hardware_profile(
-                spec, profile_entry, self.gpu_hardware,
+            profile = self._effective_local_profile(
+                spec, entry,
                 default_quantization=default_quantization,
+                model_quantization=model_override,
             )
             resolved = {key: value for key, value in entry.items() if key in allowed}
             raw_modalities = resolved.get("modalities")
@@ -5182,6 +5216,10 @@ class RigWebApp:
             if not isinstance(entry.get("multi_gpu_compatible"), bool):
                 resolved.pop("multi_gpu_compatible", None)
             resolved["quantization"] = profile["recommended_quantization"]
+            if profile.get("fits") is None and model_override not in {"", "auto"}:
+                # The operator has explicitly chosen the precision for a model
+                # whose size is unknown. The CLI re-checks this opt-in before run.
+                resolved["allow_unknown_fit"] = True
             # Hardware-auto TP: persist exactly what the model row displays.
             resolved["tensor_parallel_size"] = profile[
                 "recommended_tensor_parallel_size"
@@ -5466,6 +5504,38 @@ class RigWebApp:
             from ura.targets.local import _is_explicit_local_path  # noqa: PLC0415
 
             catalog, _configured = self._local_entry_catalog()
+            unknown_fit_without_precision = []
+            incompatible = []
+            for spec in local:
+                if not spec.startswith("vllm:"):
+                    continue
+                model_quantization = str(
+                    params.get(f"quantization::{spec}", "")
+                ).strip().lower()
+                fit = self._effective_local_profile(
+                    spec,
+                    catalog.get(spec, {}),
+                    default_quantization=params.get("quantization", ""),
+                    model_quantization=model_quantization,
+                ).get("fits")
+                if fit is None:
+                    if model_quantization in {"", "auto"}:
+                        unknown_fit_without_precision.append(spec)
+                elif fit is False:
+                    incompatible.append(spec)
+            if incompatible:
+                errors.setdefault(
+                    "models",
+                    "live local target is known incompatible with this "
+                    "hardware: " + ", ".join(incompatible),
+                )
+            elif unknown_fit_without_precision:
+                errors.setdefault(
+                    "models",
+                    "live local target hardware fit is unknown; choose an "
+                    "explicit per-model precision before running: "
+                    + ", ".join(unknown_fit_without_precision),
+                )
             unpinned = []
             for spec in local:
                 entry = catalog.get(spec, {})
@@ -6129,15 +6199,13 @@ class RigWebApp:
             for arm, mods, reason in signatures[signature]:
                 known = arm in registry_arms
                 if reason:
-                    escaped_reason = html.escape(reason, quote=True)
                     boxes.append(
                         "<label class='check'>"
                         "<input type='checkbox' class='armbox' "
                         f"data-mods='{html.escape(','.join(mods))}' "
                         f"data-arm='{html.escape(arm)}'>"
                         f"<span>{_arm_head(html.escape(arm), mods)}"
-                        "<span class='badge gray tip' tabindex='0' "
-                        f"title='{escaped_reason}'>no evaluator"
+                        "<span class='badge gray tip' tabindex='0'>no evaluator"
                         f"<span class='tiptext'>{html.escape(reason)}</span>"
                         "</span>"
                         "</span></label>"
@@ -6158,8 +6226,7 @@ class RigWebApp:
                         f"data-mods='{html.escape(','.join(mods))}' "
                         f"data-arm='{html.escape(arm)}'>"
                         f"<span>{_arm_head(html.escape(arm), mods)}"
-                        "<span class='badge amber tip' tabindex='0' "
-                        f"title='{html.escape(source_note, quote=True)}'>"
+                        "<span class='badge amber tip' tabindex='0'>"
                         "source-metric<span class='tiptext'>"
                         f"{html.escape(source_note)}</span></span>"
                         "</span></label>"
@@ -6199,15 +6266,8 @@ class RigWebApp:
         )
         # Target checkboxes carry supported modalities (so an out-of-scope
         # target is hidden) and a kind (hosted API vs on-rig local vLLM).
-        from experiments.local_targets import (  # noqa: PLC0415
-            installed_vllm_version, model_hardware_profile,
-        )
+        from experiments.local_targets import installed_vllm_version  # noqa: PLC0415
         local_catalog, _explicit_local = self._local_entry_catalog()
-        local_profiles = {
-            spec: model_hardware_profile(spec, entry, self.gpu_hardware)
-            for spec, entry in local_catalog.items()
-        }
-
         def _target_box(value: str, label: str, mods: tuple[str, ...], kind: str) -> str:
             detail = ""
             quant_control = ""
@@ -6221,8 +6281,16 @@ class RigWebApp:
                 provider = value.partition(":")[0].strip().lower() or "unknown"
                 row_attrs = f" data-provider='{html.escape(provider)}'"
             if kind == "local":
-                profile = local_profiles.get(value, {})
                 entry = local_catalog.get(value, {})
+                configured_quant = str(prefill.get(
+                    f"quantization::{value}", entry.get("quantization", "auto")
+                )).strip().lower()
+                profile = self._effective_local_profile(
+                    value,
+                    entry,
+                    default_quantization=prefill.get("quantization", ""),
+                    model_quantization=configured_quant,
+                )
                 params = profile.get("parameter_count_b")
                 params_text = f"{float(params):g}B params" if params is not None else "params unknown"
                 fit = profile.get("fits")
@@ -6243,10 +6311,9 @@ class RigWebApp:
                 ) or (
                     isinstance(digest, str) and re.fullmatch(r"[0-9a-fA-F]{64}", digest)
                 )
-                # Compatibility blocks execution. A missing immutable revision
-                # is instead validated on live submission, so every compatible
-                # roster row remains reachable and selectable in the builder.
-                if fit is not True:
+                # A known non-fit stays disabled. Unknown fit is an explicit UI
+                # opt-in; a live run additionally requires a per-model precision.
+                if fit is False:
                     disabled = " disabled"
                 recommended = str(profile.get("recommended_quantization", "none"))
                 precision_bits = profile.get("recommended_precision_bits")
@@ -6265,15 +6332,53 @@ class RigWebApp:
                 hardware_required = bool(
                     profile.get("quantization_required_by_hardware")
                 )
-                quant_label = precision_label + (
-                    " required" if hardware_required else ""
-                )
-                if hardware_required:
-                    name_html += (
-                        " <span class='badge amber quant-warning' "
-                        "title='Expected quantization required for this rig'>"
-                        + html.escape(quant_label) + "</span>"
+                quantization_source = str(profile.get("quantization_source", ""))
+                is_override = quantization_source in {
+                    "model_override", "command_override",
+                }
+                if fit is False:
+                    precision_status = "does not fit"
+                    precision_title = "Known incompatible with the detected hardware."
+                elif fit is None:
+                    if configured_quant in {"", "auto"}:
+                        quant_label = "fit unknown — choose precision"
+                        precision_title = (
+                            "Fit cannot be estimated; choose a per-model precision "
+                            "before a live run."
+                        )
+                    else:
+                        quant_label = f"{precision_label} selected · fit unknown"
+                        precision_title = (
+                            "Operator-selected precision; hardware fit remains unknown."
+                        )
+                elif hardware_required:
+                    precision_status = "required"
+                    precision_title = "This precision is required to fit this hardware."
+                elif is_override:
+                    precision_status = "override"
+                    precision_title = "Configured precision override; not hardware-required."
+                else:
+                    precision_status = ""
+                    precision_title = "Highest automatically selected fitting precision."
+                if fit is not None:
+                    quant_label = precision_label + (
+                        f" {precision_status}" if precision_status else ""
                     )
+                precision_tone = (
+                    "gray" if fit is None
+                    else {16: "green", 8: "blue", 4: "amber"}.get(
+                        precision_bits, "gray"
+                    )
+                )
+                precision_class = (
+                    "unknown" if fit is None else str(precision_bits)
+                )
+                name_html += (
+                    f" <span class='badge {precision_tone} precision-badge "
+                    f"precision-{precision_class}' "
+                    f"title='{html.escape(precision_title, quote=True)}'>"
+                    + html.escape(quant_label) + "</span>"
+                )
                 detail = (
                     "<span class='fieldhint'>" + html.escape(
                         f"{params_text} ({parameter_basis}) · "
@@ -6294,9 +6399,6 @@ class RigWebApp:
                     ("awq", "4-bit AWQ"),
                     ("gptq", "4-bit GPTQ"),
                 )
-                configured_quant = str(prefill.get(
-                    f"quantization::{value}", entry.get("quantization", "auto")
-                ))
                 quant_id = control_id + "-quantization"
                 quant_control = (
                     "<div class='modelquant'><label for='" + quant_id + "'>"
@@ -6373,6 +6475,12 @@ class RigWebApp:
             "<strong>Automatic 16/8/4-bit fit</strong>"
             "<span class='fieldhint'>Show only models estimated to fit this "
             "hardware at automatically selected 16-, 8-, or 4-bit precision."
+            "</span></span></label>"
+            "<label class='compatfilter'><input type='checkbox' "
+            "id='local-unknown-filter'><span class='compatcopy'>"
+            "<strong>Include unknown fit</strong>"
+            "<span class='fieldhint'>Show models whose fit cannot be estimated. "
+            "Live runs require an explicit per-model precision."
             "</span></span></label></div>"
             "<div class='checkgrid' id='local-target-list'>"
             + (local_boxes or "<p class='note'>No local targets configured.</p>")

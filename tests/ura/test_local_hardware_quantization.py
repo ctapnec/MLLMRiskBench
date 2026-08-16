@@ -205,6 +205,50 @@ def test_cli_local_config_auto_records_exact_quantization_and_tp(tmp_path: Path)
     assert loaded[spec]["tensor_parallel_size"] == 2
 
 
+def test_cli_unknown_fit_requires_and_honors_explicit_operator_precision(
+    tmp_path: Path,
+) -> None:
+    spec = "vllm:org/custom-model"
+    path = tmp_path / "local.json"
+    base = {
+        "revision": "a" * 40,
+        "modalities": ["text"],
+        "allow_unknown_fit": True,
+    }
+
+    path.write_text(json.dumps({spec: base}), encoding="utf-8")
+    with pytest.raises(ValueError, match="explicit per-model quantization"):
+        run_matrix._load_local_config(str(path), [spec], hardware=_rig_hardware())
+
+    path.write_text(json.dumps({spec: {
+        **base, "quantization": "fp8",
+    }}), encoding="utf-8")
+    loaded, _artifact = run_matrix._load_local_config(
+        str(path), [spec], hardware=_rig_hardware()
+    )
+    assert loaded[spec]["parameter_count_b"] is None
+    assert loaded[spec]["quantization"] == "fp8"
+    assert loaded[spec]["allow_unknown_fit"] is True
+    target = run_matrix.build_target(spec, local_identity=loaded[spec])
+    run_matrix._require_local_hardware_fit(
+        target, spec, loaded[spec], _rig_hardware()
+    )
+
+    path.write_text(json.dumps({spec: {
+        "revision": "a" * 40,
+        "modalities": ["text"],
+        "quantization": "fp8",
+    }}), encoding="utf-8")
+    blocked, _artifact = run_matrix._load_local_config(
+        str(path), [spec], hardware=_rig_hardware()
+    )
+    blocked_target = run_matrix.build_target(spec, local_identity=blocked[spec])
+    with pytest.raises(ValueError, match="is not admitted"):
+        run_matrix._require_local_hardware_fit(
+            blocked_target, spec, blocked[spec], _rig_hardware()
+        )
+
+
 def test_cli_rejects_tp2_when_multi_gpu_is_declared_false(tmp_path: Path) -> None:
     spec = "vllm:org/model-7B"
     path = tmp_path / "local.json"

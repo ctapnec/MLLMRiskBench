@@ -812,7 +812,7 @@ def _load_local_config(
         if not isinstance(config, dict) or set(config) - {
             "revision", "digest", "modalities", "tensor_parallel_size",
             "gpu_memory_utilization", "max_tokens", "parameter_count_b",
-            "multi_gpu_compatible", "quantization",
+            "multi_gpu_compatible", "quantization", "allow_unknown_fit",
         }:
             raise ValueError(
                 f"local config {spec!r} contains unsupported execution fields"
@@ -861,6 +861,19 @@ def _load_local_config(
             ):
                 raise ValueError(
                     f"vLLM config {spec!r} max_tokens must be an integer in 1..25000"
+                )
+            allow_unknown_fit = config.get("allow_unknown_fit", False)
+            if not isinstance(allow_unknown_fit, bool):
+                raise ValueError(
+                    f"vLLM config {spec!r} allow_unknown_fit must be boolean"
+                )
+            explicit_quantization = config.get("quantization")
+            if allow_unknown_fit and explicit_quantization not in {
+                "none", "fp8", "bitsandbytes", "awq", "gptq",
+            }:
+                raise ValueError(
+                    f"vLLM config {spec!r} allow_unknown_fit requires an "
+                    "explicit per-model quantization"
                 )
             from experiments.local_targets import (  # noqa: PLC0415
                 detect_gpu_hardware, model_hardware_profile,
@@ -922,6 +935,7 @@ def _load_local_config(
                     for field in (
                         "tensor_parallel_size", "gpu_memory_utilization", "max_tokens",
                         "parameter_count_b", "multi_gpu_compatible", "quantization",
+                        "allow_unknown_fit",
                     )
                 )
             ):
@@ -1678,7 +1692,7 @@ def _require_local_hardware_fit(
     config: dict[str, object],
     hardware: dict[str, object],
 ) -> None:
-    """Fail closed for a real vLLM target when startup fit is not proven."""
+    """Require proven fit or an explicit operator-owned unknown-fit override."""
 
     from ura.targets.local import VLLMTarget  # noqa: PLC0415
     if not isinstance(target, VLLMTarget):
@@ -1687,6 +1701,11 @@ def _require_local_hardware_fit(
         raise ValueError(f"local vLLM target {spec!r} requires a detected NVIDIA GPU")
     from experiments.local_targets import model_hardware_profile  # noqa: PLC0415
     profile = model_hardware_profile(spec, config, hardware)
+    if profile["fits"] is None and config.get("allow_unknown_fit") is True:
+        if config.get("quantization") in {
+            "none", "fp8", "bitsandbytes", "awq", "gptq",
+        }:
+            return
     if profile["fits"] is not True:
         reason = str(
             profile.get("compatibility_note")

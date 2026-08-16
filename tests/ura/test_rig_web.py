@@ -543,6 +543,10 @@ def test_native_only_attacker_rejected_server_side(tmp_path: Path) -> None:
 
 
 def test_agentic_arm_rejected_server_side(tmp_path: Path) -> None:
+    import html as html_lib
+
+    from experiments.rig_web import _INELIGIBLE_REASONS
+
     app = _app(tmp_path)
     started = len(app.jobs)
     try:
@@ -552,6 +556,12 @@ def test_agentic_arm_rejected_server_side(tmp_path: Path) -> None:
         input_tag = page[page.rfind("<input", 0, at):page.find(">", at)]
         assert "disabled" not in input_tag  # operator can choose the row
         assert "no evaluator" in page and "badge gray tip" in page
+        reason = html_lib.escape(_INELIGIBLE_REASONS["agentharm_harmful"])
+        row = page[page.rfind("<label", 0, at):page.find("</label>", at)]
+        assert row.count(reason) == 1  # one custom tooltip, no title duplicate
+        badge_at = page.index("<span class='badge gray tip'", at)
+        badge_tag = page[badge_at:page.find(">", badge_at)]
+        assert "title=" not in badge_tag
         _s, _c, body = app.handle("POST", "/build", {
             "mode": "dry_run", "corpora": "agentharm_harmful",
             "api": "anthropic:claude-opus-5", "attackers": "replay",
@@ -1130,6 +1140,18 @@ def test_builder_model_filters_and_quantization_warning_are_rendered(
                 "parameter_count_b": 70,
                 "quantization": "bitsandbytes",
             },
+            "vllm:org/Model-30B": {
+                "revision": "7" * 40, "modalities": ["text"],
+                "parameter_count_b": 30,
+            },
+            "vllm:org/Model-34B": {
+                "revision": "9" * 40, "modalities": ["text"],
+                "parameter_count_b": 34,
+            },
+            "vllm:org/Override-7B": {
+                "revision": "8" * 40, "modalities": ["text"],
+                "parameter_count_b": 7, "quantization": "gptq",
+            },
             "vllm:org/Lower-7B": {
                 "revision": "OPERATOR_TODO", "modalities": ["text"],
                 "parameter_count_b": 7,
@@ -1178,6 +1200,14 @@ def test_builder_model_filters_and_quantization_warning_are_rendered(
     assert "id='local-param-range' type='range' min='0.01' max='3000'" in page
     assert "id='local-param-number' type='number' min='0.01' max='3000'" in page
     assert "id='local-compatible-filter' checked" in page
+    assert "id='local-unknown-filter'" in page
+    unknown_filter_at = page.index("id='local-unknown-filter'")
+    unknown_filter_tag = page[
+        page.rfind("<input", 0, unknown_filter_at):page.find(">", unknown_filter_at)
+    ]
+    assert "checked" not in unknown_filter_tag
+    assert "Include unknown fit" in page
+    assert "Live runs require an explicit per-model precision" in page
     assert "Automatic 16/8/4-bit fit" in page
     assert "automatically selected 16-, 8-, or 4-bit precision" in page
     assert "<option value='none'>16-bit (BF16/FP16)</option>" in page
@@ -1186,10 +1216,79 @@ def test_builder_model_filters_and_quantization_warning_are_rendered(
     assert "data-name='vllm:org/Model-70B'" in page
     assert "data-params-b='70'" in page
     assert "data-compatible='true'" in page
+    assert "badge green precision-badge precision-16" in page
+    assert "badge blue precision-badge precision-8" in page
+    assert "8-bit FP8 required" in page
+    assert "badge amber precision-badge precision-4" in page
     assert "4-bit BitsAndBytes required" in page
+    assert "4-bit GPTQ override" in page
     assert "name.indexOf(query)!==-1" in page  # literal substring, no fuzzy match
     assert "params<=max" in page and "compatOk" in page  # combinative filters
+    assert "includeUnknown" in page
+    assert "fit==='true'||(fit==='false'&&!compatible)||" in page
+    assert "(fit==='unknown'&&includeUnknown)" in page
+    assert "fit unknown — choose precision" in page
+    assert "selected · fit unknown" in page  # live badge update for explicit choice
     assert "A presentation filter never changes a selected target" in page
+    unknown = "vllm:org/Unknown"
+    unknown_at = page.index(f"data-model='{unknown}'")
+    unknown_input = page[
+        page.rfind("<input", 0, unknown_at):page.find(">", unknown_at)
+    ]
+    assert "disabled" not in unknown_input
+    assert "data-compatible='unknown'" in page[
+        page.rfind("<div class='modelrow'", 0, unknown_at):unknown_at
+    ]
+    unknown_row = page[
+        page.rfind("<div class='modelrow'", 0, unknown_at):
+        page.find("</div>", unknown_at)
+    ]
+    assert "badge gray precision-badge precision-unknown" in unknown_row
+    assert "fit unknown — choose precision" in unknown_row
+    assert "16-bit fit unknown" not in unknown_row
+
+    # Rendering, validation, and generated execution config share one
+    # precedence: per-model selection, then the submitted global default.
+    model_34b = "vllm:org/Model-34B"
+    global_none_page = app._build_page(prefill={
+        "quantization": "none", f"quantization::{model_34b}": "auto",
+    }).decode("utf-8")
+    model_34b_at = global_none_page.index(f"data-model='{model_34b}'")
+    model_34b_row = global_none_page[
+        global_none_page.rfind("<div class='modelrow'", 0, model_34b_at):
+        global_none_page.find("<div class='modelrow'", model_34b_at)
+    ]
+    assert "data-compatible='false'" in model_34b_row
+    assert "16-bit does not fit" in model_34b_row
+
+    tiny = "vllm:org/Tiny-10M"
+    global_bnb_page = app._build_page(prefill={
+        "quantization": "bitsandbytes", f"quantization::{tiny}": "auto",
+    }).decode("utf-8")
+    tiny_at = global_bnb_page.index(f"data-model='{tiny}'")
+    tiny_row = global_bnb_page[
+        global_bnb_page.rfind("<div class='modelrow'", 0, tiny_at):
+        global_bnb_page.find("<div class='modelrow'", tiny_at)
+    ]
+    assert "data-compatible='true'" in tiny_row
+    assert "4-bit BitsAndBytes override" in tiny_row
+
+    per_model_page = app._build_page(prefill={
+        "quantization": "bitsandbytes", f"quantization::{tiny}": "none",
+    }).decode("utf-8")
+    tiny_at = per_model_page.index(f"data-model='{tiny}'")
+    tiny_row = per_model_page[
+        per_model_page.rfind("<div class='modelrow'", 0, tiny_at):
+        per_model_page.find("<div class='modelrow'", tiny_at)
+    ]
+    assert "16-bit override" in tiny_row
+
+    incompatible = "vllm:org/Huge-4T"
+    incompatible_at = page.index(f"data-model='{incompatible}'")
+    incompatible_input = page[
+        page.rfind("<input", 0, incompatible_at):page.find(">", incompatible_at)
+    ]
+    assert "disabled" in incompatible_input
     audio = "vllm:org/Audio-7B"
     audio_at = page.index(f"data-name='{audio}'")
     audio_row = page[page.rfind("<div class='modelrow'", 0, audio_at):
@@ -1254,6 +1353,66 @@ def test_builder_model_filters_and_quantization_warning_are_rendered(
         **_params, "mode": "measured", "local": local_checkpoint,
     })
     assert "models" not in checkpoint_errors
+    unknown_errors = app._validate_builder({
+        **_params, "mode": "measured", "local": unknown,
+    })
+    assert "explicit per-model precision" in unknown_errors["models"]
+    explicit_unknown_params = {
+        **_params, "mode": "measured", "local": unknown,
+        f"quantization::{unknown}": "fp8",
+    }
+    explicit_unknown_errors = app._validate_builder(explicit_unknown_params)
+    assert "models" not in explicit_unknown_errors
+    explicit_unknown_config = json.loads(
+        app._materialize_selected_local_config(
+            [unknown], quantization_overrides={unknown: "fp8"},
+        ).read_text(encoding="utf-8")
+    )
+    assert explicit_unknown_config[unknown]["quantization"] == "fp8"
+    assert explicit_unknown_config[unknown]["allow_unknown_fit"] is True
+    auto_unknown_config = json.loads(
+        app._materialize_selected_local_config(
+            [unknown], quantization_overrides={unknown: "auto"},
+        ).read_text(encoding="utf-8")
+    )
+    assert "allow_unknown_fit" not in auto_unknown_config[unknown]
+
+    global_none_errors = app._validate_builder({
+        **_params, "mode": "measured", "local": model_34b,
+        "quantization": "none", f"quantization::{model_34b}": "auto",
+    })
+    assert "known incompatible" in global_none_errors["models"]
+    global_none_config = json.loads(
+        app._materialize_selected_local_config(
+            [model_34b], default_quantization="none",
+            quantization_overrides={model_34b: "auto"},
+        ).read_text(encoding="utf-8")
+    )
+    assert global_none_config[model_34b]["quantization"] == "none"
+
+    global_bnb_errors = app._validate_builder({
+        **_params, "mode": "measured", "local": tiny,
+        "quantization": "bitsandbytes", f"quantization::{tiny}": "auto",
+    })
+    assert "models" not in global_bnb_errors
+    global_bnb_config = json.loads(
+        app._materialize_selected_local_config(
+            [tiny], default_quantization="bitsandbytes",
+            quantization_overrides={tiny: "auto"},
+        ).read_text(encoding="utf-8")
+    )
+    assert global_bnb_config[tiny]["quantization"] == "bitsandbytes"
+    per_model_config = json.loads(
+        app._materialize_selected_local_config(
+            [tiny], default_quantization="bitsandbytes",
+            quantization_overrides={tiny: "none"},
+        ).read_text(encoding="utf-8")
+    )
+    assert per_model_config[tiny]["quantization"] == "none"
+    incompatible_errors = app._validate_builder({
+        **_params, "mode": "measured", "local": incompatible,
+    })
+    assert "known incompatible" in incompatible_errors["models"]
     app.close()
 
 

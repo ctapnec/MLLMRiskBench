@@ -5,7 +5,7 @@ validity rules, then execute [RUN_AND_RETURN.md](RUN_AND_RETURN.md). A dry run,
 partial artifact family, source conversion, model-name assumption, native prompt
 export, or synthetic figure is not a measured thesis result.
 
-The maintained execution contract is Runner `ura-runner/2.13` with unified
+The maintained execution contract is Runner `ura-runner/2.14` with unified
 schema `1.4`; older artifacts are not mixed into the thesis run. The current
 dashboard/filter/dependency snapshot's exact commit and verification results are
 kept in the sibling Thesis record
@@ -33,11 +33,15 @@ product:
    local name, maximum-parameter (10M--3T), and rig-compatibility filters combine;
    the separate compatibility card is on by default and applies automatic
    highest-fitting 16-bit, FP8 8-bit, then BitsAndBytes 4-bit selection.
-   Hardware-required quantization is visibly marked beside the model. Compatible
-   local rows are single-choice radios even before their immutable revision is
+   Known 16/8/4-bit recommendations are green/blue/amber; unknown fit is gray
+   and appears only when the separate unchecked `Include unknown fit` control is
+   selected. Compatible local rows are single-choice radios even before their immutable revision is
    filled, but non-dry submission still rejects `OPERATOR_TODO` before launch.
    MoE/expert-ambiguous names remain unknown/hidden until exact
-   `parameter_count_b` is supplied; no fit or download is inferred.
+   `parameter_count_b` is supplied; no fit or download is inferred. Auto
+   precision cannot launch an unknown-fit row. An explicit per-model precision
+   creates the bound `allow_unknown_fit: true` operator opt-in, while a known
+   incompatibility remains blocked.
 4. **Multimodal lanes.** Image, JALMBench audio, and Video-SafetyBench video are
    attempted only for exact target transports that pass bounded live
    attestation. Agent/tool sources additionally require their substantive
@@ -48,8 +52,9 @@ product:
    reproduces the source experiment.
 
 The Build page keeps source arms with unavailable source-specific evaluators
-visible and selectable for planning, labelled `no evaluator`; the full reason is
-in a tooltip and server-side submission rejects the lane before a subprocess.
+visible and selectable for planning, labelled `no evaluator`; one custom
+hover/focus tooltip carries the full reason and server-side submission rejects
+the lane before a subprocess.
 Visibility is not a runnable or empirical claim.
 Dry mode removes selected real API/local targets and configs because the runner
 uses `MockTarget`; local roster modalities are text/image only, so audio

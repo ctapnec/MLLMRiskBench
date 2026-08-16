@@ -2,7 +2,7 @@
 
 `ura.data_models` is the typed Pydantic v2 contract shared by converters,
 attackers, targets, judges, persistence, and analysis. `SCHEMA_VERSION = "1.4"`
-is stamped on datapoints, checkpoints, and manifests. Runner 2.13 rejects mixed
+is stamped on datapoints, checkpoints, and manifests. Runner 2.14 rejects mixed
 schema versions and duplicate datapoint IDs before a target call.
 
 ## Records
@@ -425,6 +425,12 @@ an executed cell:
   admitted per runner process so server lifetime and GPU ownership stay explicit.
   Expert/MoE-ambiguous names do not supply an inferred `parameter_count_b`;
   fit remains unknown until the operator declares the exact total.
+  `allow_unknown_fit` is an optional vLLM-only boolean (default `false`). It may
+  be `true` only with an explicit per-model `quantization` value of `none`,
+  `fp8`, `bitsandbytes`, `awq`, or `gptq`. It permits an operator-owned load
+  attempt only when estimated fit is unknown; hardware auto and known non-fit
+  remain blocked. The normalized selected config retains the resolved precision
+  and this opt-in.
 
 Unselected inventory entries are neither evidence nor requested cells. Secret
 values are environment-indirected and rejected from persisted configuration.
@@ -498,12 +504,16 @@ postprocessing provenance.
 
 The console's startup platform/CPU/core/RAM and NVIDIA inventory is an
 operator-visible runtime snapshot, not a scientific artifact schema. Likewise,
-the Build page's hosted-provider and local name/maximum-parameter/profile-fit
-controls only filter rendered choices. Compatible local rows are single-choice
+the Build page's hosted-provider, local name/maximum-parameter/profile-fit, and
+separate unchecked unknown-fit controls only filter rendered choices. Known
+16/8/4-bit recommendations use green/blue/amber; unknown fit is gray. Compatible
+local rows are single-choice
 selectors even when the roster pin is unfinished, but non-dry submission still
-requires an exact revision/digest. Source-ineligible rows may also remain visible
-and selectable with tooltip limitations; server validation rejects them before
-a subprocess. Neither UI state replaces the local-config, source-evaluator, or
+requires an exact revision/digest. An unknown-fit row remains blocked under auto;
+an explicit per-model precision binds `allow_unknown_fit: true`, while known
+non-fit remains blocked. Source-ineligible rows may also remain visible and
+selectable with one custom hover/focus tooltip; server validation rejects them
+before a subprocess. Neither UI state replaces the local-config, source-evaluator, or
 hardware checks described above.
 Dry builder state carries no real API/local target/config into the command
 because dry execution uses `MockTarget`. Local roster modality metadata is
@@ -511,7 +521,7 @@ restricted to the Runner's text/image vLLM path, keeping audio mismatch rejectio
 consistent between UI and CLI.
 
 The rig console persists its operational state in a stdlib-sqlite database
-(`console.db` under the console state directory, schema version 2): `jobs`
+(`console.db` under the console state directory, schema version 3): `jobs`
 (exact argv, builder parameters, state, exit code, failure context, pinned
 revision), `runs` (the campaign-run registry: kind, output directory, pin),
 `usage` (per-completion-marker recorded token amounts keyed by role,

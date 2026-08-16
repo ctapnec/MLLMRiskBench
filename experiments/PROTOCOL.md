@@ -49,7 +49,7 @@ not replaced with a nearby model. A failed/stale live attestation or silent
 identity drift is a missing/failed prerequisite, not a safe zero and not
 silently rewritten as structural incompatibility.
 
-Runner 2.13 operationalizes this distinction. One completed, bounded, non-dry
+Runner 2.14 operationalizes this distinction. One completed, bounded, non-dry
 `--attestation-probe` is converted without another provider call into a strict
 `ura-live-attestation/2` receipt. Each ordinary measured grid must supply the
 receipt's exact byte digest, the same operator-declared non-secret

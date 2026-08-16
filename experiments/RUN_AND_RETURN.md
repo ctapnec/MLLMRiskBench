@@ -7,7 +7,7 @@ source-native evaluators. Experiments and the human audit are still pending.
 Preflight, dry-run, diagnostic-canary, and bounded transport-probe artifacts are
 diagnostics, not thesis results.
 
-The maintained artifact contract is Runner `ura-runner/2.13` with unified schema
+The maintained artifact contract is Runner `ura-runner/2.14` with unified schema
 `1.4`. Do not combine older-runner artifacts with this program.
 
 Every `python -m experiments.*` command below can equivalently be started
@@ -879,11 +879,12 @@ inventory. `python -m experiments.local_targets` prints the GPU/profile data for
 CLI inspection.
 
 In the Build tab, hosted targets have a provider selector whose default is
-`All`. Local vLLM targets have three combinative presentation filters: an
+`All`. Local vLLM targets have four combinative presentation filters: an
 immediate case-insensitive name substring, one synchronized slider/numeric
 maximum from 0.01B (10M) to 3000B (3T), and a visually separate `Automatic
-16/8/4-bit fit` card selected by default. Any model whose hardware fit requires
-quantization carries an amber warning, independent of override source. The
+16/8/4-bit fit` card selected by default, plus an unchecked `Include unknown
+fit` control. Known recommendations use green for 16-bit, blue for 8-bit, and
+amber for 4-bit; unknown fit uses neutral gray. The
 per-model selector labels 16-bit BF16/FP16, 8-bit FP8 and the 4-bit backends.
 Compatible rows are single-choice radios and remain selectable when their
 revision is `OPERATOR_TODO`; a non-dry submission still requires an exact
@@ -891,8 +892,9 @@ revision/digest before starting a subprocess. Filters do not replace
 server-side hardware/revision admission.
 Expert/MoE-ambiguous identifiers (for example Mixtral expert counts,
 Llama-4 `E` counts, or `MoE`) do not produce a guessed dense parameter total.
-They stay fit-unknown and hidden by the default fit filter until the roster has
-an exact `parameter_count_b`; no download or fit is claimed from the name.
+They stay fit-unknown and hidden unless `Include unknown fit` is selected or the
+roster has an exact `parameter_count_b`; no download or fit is claimed from the
+name.
 
 Automatic fit is deliberately simple and conservative: after the configured
 `gpu_memory_utilization`, it budgets 2.2 GiB per billion parameters for
@@ -901,10 +903,13 @@ BitsAndBytes/AWQ/GPTQ. Hardware auto-selection uses the highest fitting
 precision: unquantized 16-bit BF16/FP16 first, FP8 8-bit next when every selected
 card has compute capability 7.5 or newer, then in-flight BitsAndBytes 4-bit when
 every selected card has compute capability 7.0 or newer. AWQ/GPTQ remain explicit
-choices for matching pre-quantized checkpoints. Models whose hardware fit needs
-quantization are shown with a warning. A real vLLM target with absent/unknown
-hardware, a known non-fit, or invalid tensor parallelism fails before engine
-construction. Missing/incompatible FP8 or BitsAndBytes support fails during
+choices for matching pre-quantized checkpoints. Hardware-auto does not admit an
+unknown-fit model. For that case only, choosing an explicit per-model value
+(`none`, `fp8`, `bitsandbytes`, `awq`, or `gptq`) binds
+`allow_unknown_fit: true` and permits an operator-owned live load attempt. It is
+not a fit claim or allocation guarantee. Missing hardware, a known non-fit, or
+invalid tensor parallelism still fails before engine construction.
+Missing/incompatible FP8 or BitsAndBytes support fails during
 local preflight before target/judge calls; the setup import check above catches
 the ordinary missing dependency earlier. The estimate is not an allocation
 guarantee: the local preflight must still load the exact revision at the
@@ -918,6 +923,12 @@ model exceeds one usable card, automatic tensor parallelism uses the detected
 card count needed for the estimate. The resolved hardware, quantization and
 tensor-parallel configuration enter normal local-config, grid and run
 provenance.
+
+The vLLM local-config field `allow_unknown_fit` is an optional boolean, default
+`false`. It is valid only with an explicit per-model `quantization` value from
+`none`, `fp8`, `bitsandbytes`, `awq`, or `gptq`; `auto` is rejected. The builder
+sets it only for an unknown-fit row with an explicit per-model choice. It never
+overrides `fits: false` or the immutable revision/digest requirement.
 
 Concrete rig example: two RTX 4090 cards reported as 24,564 MiB each provide
 about 47.98 GiB physical and 40.78 GiB usable VRAM at utilization 0.85. A 70B
@@ -2446,15 +2457,19 @@ python -m experiments.rig_web --results-root runs --state-dir runs/rig-web
 The dashboard and Build tab show the startup OS/CPU/core/RAM and complete NVIDIA
 GPU inventory. Build target filters are independent and combinative: hosted API
 provider (`All` by default), plus local vLLM name substring, 10M--3T maximum
-parameter count, and the separate automatic 16/8/4-bit fit card (on by default).
-Hardware-required quantization is marked beside affected local model names
-regardless of override source. Compatible local models are single-choice radios;
+parameter count, the separate automatic 16/8/4-bit fit card (on by default), and
+an unchecked `Include unknown fit` control. Known 16/8/4-bit recommendations use
+green/blue/amber badges; unknown fit is gray. Compatible local models are
+single-choice radios;
 an unpinned roster row may be selected for planning, but non-dry submission
-rejects it before launch. These filters are convenience only; shared CLI/UI
+rejects it before launch. An unknown-fit row also needs an explicit per-model
+precision, which binds `allow_unknown_fit: true`; auto remains blocked, as does
+every known incompatibility. These filters are convenience only; shared CLI/UI
 admission remains authoritative.
 
 Source arms without an integrated evaluator remain visible/selectable with a
-concise `no evaluator` badge and the exact limitation in a tooltip. The server
+concise `no evaluator` badge and one custom hover/focus tooltip containing the
+exact limitation. The server
 rejects such a selection before a subprocess. This preserves the full research
 programme without falsely calling the lane runnable; implemented source-metric
 arms and common-metric arms retain their distinct admission paths.
