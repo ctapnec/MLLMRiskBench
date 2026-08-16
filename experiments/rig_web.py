@@ -223,18 +223,25 @@ _PROVIDER_BUDGETS: tuple[tuple[str, str, str], ...] = (
 #: image chip alike (no arm is forced into a single bucket).
 _MODALITIES = ("text", "image", "audio", "video")
 #: The complete maintained source-arm catalogue: (arm id, physical modalities,
-#: disabled reason).  All 39 registry arms are listed - an empty reason is a
-#: common-runner SCORED lane; a non-empty reason is a common-metric-INELIGIBLE
-#: arm (``common_metrics_eligible: False`` in its converter: it requires a
-#: source-specific metric, not common harmful-ASR, so run_matrix fails its
-#: scored preflight before target execution).  Such an arm is shown disabled
-#: with its required metric rather than pretended to be a common scored lane; it
-#: is converted and evaluated on the native path (native_import).
+#: disabled reason).  All 39 registry arms are listed.  There are THREE kinds,
+#: mirroring ``ura.eligibility`` and ``ura.source_metrics`` exactly:
+#:   * empty reason, NOT in _SOURCE_METRIC_ARMS - a common-runner SCORED lane
+#:     (``common_metrics_eligible: True``), scored by common harmful-ASR/FRR.
+#:   * empty reason, IN _SOURCE_METRIC_ARMS - ``common_metrics_eligible: False``
+#:     but its exact (source, required_metric) evaluator IS implemented in
+#:     ``ura.source_metrics``, so run_matrix scores it as a source-metric lane
+#:     (restricted to the attacker(s) its converter declares).  RUNNABLE.
+#:   * non-empty reason - ``common_metrics_eligible: False`` and NO implemented
+#:     source evaluator, so run_matrix fails its scored preflight before any
+#:     target call.  Shown DISABLED with the honest reason.  This is NOT a
+#:     native_import target: native_import canonicalises the nine upstream
+#:     end-to-end engines (the native-only attackers), not these dataset arms.
 def _ineligible(metric: str) -> str:
     return (
         f"common-metric-ineligible: requires the source-specific metric "
-        f"'{metric}', not common harmful-ASR, so it fails the common Runner's "
-        "scored preflight. Convert and evaluate it via the native_import command"
+        f"'{metric}', whose evaluator/runtime is not integrated, so run_matrix "
+        "fails its scored preflight before any target call. Converted records "
+        "remain available for offline analysis (not a native_import target)"
     )
 
 
@@ -264,8 +271,7 @@ _ARM_CATALOG: tuple[tuple[str, tuple[str, ...], str], ...] = (
     ("mllmguard_noise_injection", ("text", "image"), ""),
     ("mllmguard_hallucination", ("text", "image"),
      _ineligible("mllmguard_hallucination_truthfulness")),
-    ("gptgeochat_release", ("text", "image"),
-     _ineligible("gptgeochat_binary_moderation")),
+    ("gptgeochat_release", ("text", "image"), ""),
     ("jalmbench_audio", ("text", "audio"), ""),
     ("videosafetybench_benign_query", ("text", "video"), ""),
     ("videosafetybench_harmful_query", ("text", "video"), ""),
@@ -284,13 +290,25 @@ _ARM_CATALOG: tuple[tuple[str, tuple[str, ...], str], ...] = (
      _ineligible("official_injecagent_tool_call_scoring")),
     ("injecagent_data_stealing_enhanced", ("text",),
      _ineligible("official_injecagent_tool_call_scoring")),
-    ("rjudge_release", ("text",), _ineligible("rjudge_safety_judgment")),
+    ("rjudge_release", ("text",), ""),
 )
-#: Common-runner (scored) arms only, for modality checks.
+#: Common-metric-ineligible arms whose exact (source, required_metric) evaluator
+#: IS implemented in ``ura.source_metrics._IMPLEMENTED_SOURCE_EVALUATORS``, so
+#: run_matrix scores them as source-metric lanes.  Each maps to (required_metric,
+#: allowed attackers), mirroring the converter's ``source_metric_attackers``.
+#: These are RUNNABLE, not disabled; a parity test asserts this set matches the
+#: implemented-evaluator registry so the console can never drift from execution.
+_SOURCE_METRIC_ARMS: dict[str, tuple[str, tuple[str, ...]]] = {
+    "rjudge_release": ("rjudge_safety_judgment", ("replay",)),
+    "gptgeochat_release": ("gptgeochat_binary_moderation", ("replay",)),
+}
+#: Scored arms for modality checks - common lanes AND source-metric lanes both
+#: run in run_matrix and carry real modality requirements (empty reason).
 _ARM_MODALITIES: tuple[tuple[str, tuple[str, ...]], ...] = tuple(
     (arm, mods) for arm, mods, reason in _ARM_CATALOG if not reason
 )
-#: Common-metric-ineligible arms (shown disabled; rejected in a scored lane).
+#: Common-metric-ineligible arms with NO implemented source evaluator: shown
+#: disabled and rejected before a scored lane.  Excludes the source-metric arms.
 _INELIGIBLE_ARMS: frozenset[str] = frozenset(
     arm for arm, _mods, reason in _ARM_CATALOG if reason
 )
@@ -4689,11 +4707,22 @@ class RigWebApp:
         for arm in real_corpora:
             if arm in _INELIGIBLE_ARMS:
                 errors["corpora"] = (
-                    f"{arm} is common-metric-ineligible (it requires a "
-                    "source-specific metric); it fails the common Runner's "
-                    "scored preflight. Convert and evaluate it via native_import"
+                    f"{arm} is common-metric-ineligible and its source-specific "
+                    "evaluator is not integrated, so run_matrix fails its scored "
+                    "preflight before any target call. Converted records remain "
+                    "available for offline analysis (not a native_import target - "
+                    "native_import canonicalises the upstream engines, not this arm)"
                 )
                 continue
+            if arm in _SOURCE_METRIC_ARMS:
+                metric, allowed = _SOURCE_METRIC_ARMS[arm]
+                if not any(a in allowed for a in attackers):
+                    errors["attackers"] = (
+                        f"arm {arm} is scored only by the implemented "
+                        f"'{metric}' source metric, which run_matrix admits "
+                        f"solely for the {'/'.join(allowed)} attacker; select "
+                        f"{'/'.join(allowed)} or the arm produces no scored cell"
+                    )
             needed = arm_mods.get(arm)
             if needed is None:
                 continue  # unknown arm id: left to the CLI's own registry check
@@ -5079,20 +5108,30 @@ class RigWebApp:
                 f"<span class='modtag'>{html.escape(m)}</span>" for m in mods
             )
 
-        # Group ALL 39 catalogue arms by their full modality signature for a
-        # readable layout (text-only first, then multimodal, then the
-        # common-metric-ineligible arms).  An ineligible arm is shown DISABLED
+        # Group ALL 39 catalogue arms for a readable layout: common lanes first
+        # (by modality signature), then the source-metric scored lanes, then the
+        # common-metric-ineligible arms.  A source-metric arm is SELECTABLE (it
+        # runs in run_matrix, replay only); an ineligible arm is shown DISABLED
         # with its precise reason - never a selectable common scored lane.
         signatures: dict[str, list[tuple[str, tuple[str, ...], str]]] = {}
         for arm, mods, reason in _ARM_CATALOG:
-            bucket = ("common-metric-ineligible (native_import only)" if reason
-                      else " + ".join(mods))
+            if reason:
+                bucket = "common-metric-ineligible (source evaluator not integrated)"
+            elif arm in _SOURCE_METRIC_ARMS:
+                bucket = "source-metric scored (implemented; replay only)"
+            else:
+                bucket = " + ".join(mods)
             signatures.setdefault(bucket, []).append((arm, mods, reason))
         arm_groups = []
-        order = sorted(
-            signatures,
-            key=lambda s: (s.startswith("common-metric"), len(s), s),
-        )
+
+        def _bucket_rank(name: str) -> tuple[int, int, str]:
+            if name.startswith("common-metric-ineligible"):
+                return (2, len(name), name)
+            if name.startswith("source-metric"):
+                return (1, len(name), name)
+            return (0, len(name), name)
+
+        order = sorted(signatures, key=_bucket_rank)
         for signature in order:
             boxes = []
             for arm, mods, reason in signatures[signature]:
@@ -5110,6 +5149,24 @@ class RigWebApp:
                         "<span class='badge gray'>metric-ineligible</span><br>"
                         f"<span class='fieldhint'>{html.escape(reason)}</span>"
                         "</span></label>"
+                    )
+                    continue
+                if arm in _SOURCE_METRIC_ARMS:
+                    # Selectable: a scored source-metric lane (implemented
+                    # evaluator, replay only).  Carries its real data-mods.
+                    metric, allowed = _SOURCE_METRIC_ARMS[arm]
+                    boxes.append(
+                        "<label class='check'>"
+                        "<input type='checkbox' class='armbox' "
+                        f"data-mods='{html.escape(','.join(mods))}' "
+                        f"data-arm='{html.escape(arm)}'>"
+                        f"<span>{html.escape(arm)} {_mod_tags(mods)} "
+                        "<span class='badge amber'>source-metric</span><br>"
+                        "<span class='fieldhint'>scored by the implemented "
+                        f"'{html.escape(metric)}' evaluator (not common "
+                        "harmful-ASR); run_matrix admits only the "
+                        f"{html.escape('/'.join(allowed))} attacker for it"
+                        "</span></span></label>"
                     )
                     continue
                 note = ("" if known else

@@ -347,11 +347,23 @@ def test_attacker_registry_parity_and_full_inventory() -> None:
     assert _ATTACKER_NAMES == ATTACKER_NAMES
     assert len(_FRAMEWORKS) == 20
     assert len(_ARM_CATALOG) == 39  # all maintained source arms
-    # 15 common-metric-ineligible arms (agentic + source-specific-metric).
-    assert len(_INELIGIBLE_ARMS) == 15
-    assert {"cyberseceval_prompt_injection", "gptgeochat_release",
-            "mllmguard_hallucination", "agentharm_harmful",
-            "rjudge_release"} <= _INELIGIBLE_ARMS
+    # 13 common-metric-ineligible arms with NO implemented source evaluator
+    # (shown disabled). rjudge/gptgeochat are NOT here: their exact source
+    # evaluators ARE implemented, so run_matrix scores them as source-metric
+    # lanes - they are runnable, not disabled.
+    assert len(_INELIGIBLE_ARMS) == 13
+    assert {"cyberseceval_prompt_injection", "mllmguard_hallucination",
+            "agentharm_harmful"} <= _INELIGIBLE_ARMS
+    assert "rjudge_release" not in _INELIGIBLE_ARMS
+    assert "gptgeochat_release" not in _INELIGIBLE_ARMS
+    # The source-metric arm set mirrors the implemented-evaluator registry
+    # exactly, so the console never claims a scored lane the runtime does not
+    # implement (nor disables one it does).
+    from experiments.rig_web import _SOURCE_METRIC_ARMS
+    from ura.source_metrics import _IMPLEMENTED_SOURCE_EVALUATORS
+    assert {metric for _a, (metric, _atk) in _SOURCE_METRIC_ARMS.items()} == {
+        metric for _src, metric in _IMPLEMENTED_SOURCE_EVALUATORS
+    }
 
 
 def test_builder_lists_all_39_arms_and_20_attackers(tmp_path: Path) -> None:
@@ -364,12 +376,17 @@ def test_builder_lists_all_39_arms_and_20_attackers(tmp_path: Path) -> None:
             assert f"data-arm='{arm}'" in text, arm  # every arm visible
         for attacker in _ATTACKER_NAMES:
             assert f"data-fw='{attacker}'" in text, attacker  # every attacker
-        # Ineligible arms are shown DISABLED with their real action, not as
-        # common lanes; native-only attackers likewise point to native_import.
+        # Ineligible arms are shown DISABLED with the honest source-evaluator
+        # reason; the two source-metric arms are shown SELECTABLE (they run).
         for arm in _INELIGIBLE_ARMS:
             assert arm in text
-        assert "common-metric-ineligible (native_import only)" in text
-        assert "native_import" in text  # the real supported action
+        assert "common-metric-ineligible (source evaluator not integrated)" in text
+        assert "source-metric scored (implemented; replay only)" in text
+        assert "badge amber'>source-metric" in text  # runnable source-metric arm
+        assert "data-arm='rjudge_release'" in text
+        assert "data-arm='gptgeochat_release'" in text
+        # native_import remains the real action for the native-only ENGINES.
+        assert "native_import" in text
         from experiments.rig_web import _NATIVE_ONLY_ATTACKERS
         assert "native-only" in text  # native-artifact attackers badged
         for attacker in _NATIVE_ONLY_ATTACKERS:
@@ -418,7 +435,8 @@ def test_agentic_arm_rejected_server_side(tmp_path: Path) -> None:
             "judges": "rules", "out": "runs/a", "seeds": "0",
         })
         text = body.decode("utf-8")
-        assert "common-metric-ineligible" in text and "native_import" in text
+        assert "common-metric-ineligible" in text
+        assert "not a native_import target" in text  # honest: NOT the fix path
         assert len(app.jobs) == started  # no Popen
         # A source-specific-metric arm (not agentic) is also rejected.
         _s2, _c2, body2 = app.handle("POST", "/build", {
@@ -428,6 +446,41 @@ def test_agentic_arm_rejected_server_side(tmp_path: Path) -> None:
         })
         assert "common-metric-ineligible" in body2.decode("utf-8")
         assert len(app.jobs) == started
+    finally:
+        app.close()
+
+
+def test_source_metric_arm_runnable_and_replay_guarded(tmp_path: Path) -> None:
+    # rjudge/gptgeochat have common_metrics_eligible=False but their exact
+    # source evaluators ARE implemented, so run_matrix scores them as
+    # source-metric lanes (replay only).  The builder must NOT reject them as
+    # ineligible, and must require the replay attacker their converter declares.
+    app = _app(tmp_path)
+    try:
+        # replay selected -> no ineligible error, no source-metric guard error.
+        errors = app._validate_builder({
+            "mode": "dry_run", "corpora": "rjudge_release",
+            "api": "anthropic:claude-opus-5", "attackers": "replay",
+            "judges": "rules", "out": "runs/sm", "seeds": "0",
+        })
+        assert "corpora" not in errors  # NOT rejected as ineligible
+        assert "attackers" not in errors  # replay satisfies the source metric
+        # A non-replay attacker alone -> the source-metric guard rejects it
+        # (the arm would produce no scored cell), naming the required metric.
+        errors2 = app._validate_builder({
+            "mode": "dry_run", "corpora": "rjudge_release",
+            "api": "anthropic:claude-opus-5", "attackers": "crescendo",
+            "judges": "rules", "out": "runs/sm2", "seeds": "0",
+        })
+        assert "rjudge_safety_judgment" in errors2.get("attackers", "")
+        assert "produces no scored cell" in errors2["attackers"]
+        # gptgeochat_release is likewise runnable (not ineligible).
+        errors3 = app._validate_builder({
+            "mode": "dry_run", "corpora": "gptgeochat_release",
+            "api": "anthropic:claude-opus-5", "attackers": "replay",
+            "judges": "rules", "out": "runs/sm3", "seeds": "0",
+        })
+        assert "corpora" not in errors3
     finally:
         app.close()
 
