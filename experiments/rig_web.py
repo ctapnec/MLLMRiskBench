@@ -988,7 +988,7 @@ _ICONS: dict[str, str] = {
         "6.5 2z'/>"
     ),
     # Modality glyphs (shown instead of TEXT/IMAGE/AUDIO/VIDEO word tags).
-    "mod_text": "<path d='M5 7V4h14v3'/><path d='M12 4v16'/><path d='M9 20h6'/>",
+    "mod_text": "<path d='M4 6h16'/><path d='M4 12h12'/><path d='M4 18h8'/>",
     "mod_image": (
         "<rect x='3' y='3' width='18' height='18' rx='2'/>"
         "<circle cx='8.5' cy='8.5' r='1.5'/><path d='M21 15l-5-5L5 21'/>"
@@ -1021,13 +1021,29 @@ _MOD_ICON_NAME = {
 
 
 def _mod_icon(modality: str) -> str:
-    """A compact modality glyph with an accessible label, instead of a word tag
+    """A colored modality chip with an accessible label, instead of a word tag
     (keeps dense arm/target grids from being overwhelmed by TEXT/IMAGE/... text).
     """
     name = _MOD_ICON_NAME.get(modality, "file")
     return (
-        f"<span class='modicon' title='{html.escape(modality)}' "
-        f"aria-label='{html.escape(modality)}'>{_icon(name, size=13)}</span>"
+        f"<span class='modicon m-{html.escape(modality)}' "
+        f"title='{html.escape(modality)}' "
+        f"aria-label='{html.escape(modality)}'>{_icon(name, size=12)}</span>"
+    )
+
+
+def _mod_set(mods: tuple[str, ...]) -> str:
+    """The right-aligned cluster of modality chips for a checkbox row header."""
+    return "<span class='modset'>" + "".join(_mod_icon(m) for m in mods) + "</span>"
+
+
+def _arm_head(name_html: str, mods: tuple[str, ...]) -> str:
+    """One checkbox-row header line: name on the left, modality chips on the
+    right - a consistent, uncluttered placement instead of icons trailing the
+    name."""
+    return (
+        f"<span class='armhead'><span class='armname'>{name_html}</span>"
+        f"{_mod_set(mods)}</span>"
     )
 
 
@@ -1036,11 +1052,17 @@ _STYLE = """
   --bg:#eef1f5; --card:#ffffff; --ink:#182430; --muted:#5b6b7c;
   --line:#d9e0e8; --accent:#0a5fb4; --accent-ink:#ffffff;
   --soft:#f4f7fa; --shadow:0 1px 2px rgba(16,24,32,.06),
-  0 4px 14px rgba(16,24,32,.05); }
+  0 4px 14px rgba(16,24,32,.05);
+  --m-text:#0a66c2; --m-text-bg:#e4eefb; --m-image:#1d7a43;
+  --m-image-bg:#e1f2e8; --m-audio:#a86400; --m-audio-bg:#f7ecd9;
+  --m-video:#7a3fb8; --m-video-bg:#f0e7fa; }
 @media (prefers-color-scheme: dark) {
   :root { --bg:#10161d; --card:#19212b; --ink:#e7edf3; --muted:#92a3b4;
     --line:#28323e; --accent:#59a3ea; --accent-ink:#0d1621;
-    --soft:#141b23; --shadow:0 1px 2px rgba(0,0,0,.35); } }
+    --soft:#141b23; --shadow:0 1px 2px rgba(0,0,0,.35);
+    --m-text:#79b7f7; --m-text-bg:#16304a; --m-image:#63cb90;
+    --m-image-bg:#12301f; --m-audio:#f0b25e; --m-audio-bg:#3a2a10;
+    --m-video:#c89df3; --m-video-bg:#2d1b41; } }
 * { box-sizing: border-box; }
 body { margin:0; font:15px/1.55 system-ui, "Segoe UI", sans-serif;
   background:var(--bg); color:var(--ink); }
@@ -1200,6 +1222,9 @@ details.stagefiles li { margin:.12rem 0; overflow-wrap:anywhere; }
   color-mix(in srgb, var(--accent) 45%, transparent);
   border-color:var(--accent); }
 .fieldwrap { display:flex; flex-direction:column; gap:.15rem; }
+.fieldcell { display:flex; flex-direction:column; }
+.fieldcell .fieldlabel { flex:1 0 auto; }
+.fieldcell select { align-self:flex-start; }
 .fieldhint { color:var(--muted); font-size:.76rem; line-height:1.35; }
 .fieldlabel { display:block; color:var(--muted); font-size:.82rem;
   margin:.6rem 0 .25rem; }
@@ -1227,6 +1252,7 @@ button.ghost { background:transparent; color:var(--accent);
   padding:.25rem 0; }
 .check input { margin-top:.2rem; flex:0 0 auto; }
 .check span { font-size:.88rem; min-width:0; overflow-wrap:anywhere; }
+.check > span { flex:1 1 auto; }
 .checkgrid { display:grid; grid-template-columns:repeat(auto-fill,
   minmax(240px,1fr)); gap:.15rem .8rem; align-items:start; }
 .modgroup { margin:.6rem 0; }
@@ -1258,9 +1284,19 @@ button.ghost { background:transparent; color:var(--accent);
   text-transform:uppercase; letter-spacing:.04em; color:var(--muted);
   background:var(--soft); border:1px solid var(--line); border-radius:5px;
   padding:0 .3rem; margin-left:.2rem; vertical-align:middle; }
-.modicon { display:inline-flex; align-items:center; color:var(--muted);
-  vertical-align:middle; margin:0 .07rem; }
-.modicon .ic { width:13px; height:13px; }
+.modicon { display:inline-flex; align-items:center; justify-content:center;
+  width:19px; height:19px; border-radius:6px; vertical-align:middle;
+  flex:0 0 auto; }
+.modicon .ic { width:12px; height:12px; }
+.modicon.m-text { color:var(--m-text); background:var(--m-text-bg); }
+.modicon.m-image { color:var(--m-image); background:var(--m-image-bg); }
+.modicon.m-audio { color:var(--m-audio); background:var(--m-audio-bg); }
+.modicon.m-video { color:var(--m-video); background:var(--m-video-bg); }
+.armhead { display:flex; align-items:center; justify-content:space-between;
+  gap:.45rem; }
+.armhead .armname { min-width:0; overflow-wrap:anywhere; }
+.modset { display:inline-flex; gap:.22rem; flex:0 0 auto; }
+.check .badge { margin:.18rem 0 .05rem; }
 .tip { position:relative; cursor:help; outline:none; }
 .tip .tiptext { display:none; position:absolute; z-index:30; left:0; top:135%;
   width:min(320px,72vw); background:var(--card); color:var(--ink);
@@ -5222,9 +5258,6 @@ class RigWebApp:
             "source-instances.json", "rig/source-instances.example.json"
         ))
 
-        def _mod_tags(mods: tuple[str, ...]) -> str:
-            return "".join(_mod_icon(m) for m in mods)
-
         # Group ALL 39 catalogue arms for a readable layout: common lanes first
         # (by modality signature), then the source-metric scored lanes, then the
         # common-metric-ineligible arms.  A source-metric arm is SELECTABLE (it
@@ -5263,7 +5296,7 @@ class RigWebApp:
                         "<input type='checkbox' class='armbox' disabled "
                         f"data-mods='{html.escape(','.join(mods))}' "
                         f"data-arm='{html.escape(arm)}'>"
-                        f"<span>{html.escape(arm)} {_mod_tags(mods)} "
+                        f"<span>{_arm_head(html.escape(arm), mods)}"
                         "<span class='badge gray'>no evaluator</span><br>"
                         f"<span class='fieldhint'>{html.escape(reason)}</span>"
                         "</span></label>"
@@ -5278,7 +5311,7 @@ class RigWebApp:
                         "<input type='checkbox' class='armbox' "
                         f"data-mods='{html.escape(','.join(mods))}' "
                         f"data-arm='{html.escape(arm)}'>"
-                        f"<span>{html.escape(arm)} {_mod_tags(mods)} "
+                        f"<span>{_arm_head(html.escape(arm), mods)}"
                         "<span class='badge amber'>source-metric</span><br>"
                         "<span class='fieldhint'>scored by the implemented "
                         f"'{html.escape(metric)}' evaluator (not common "
@@ -5294,7 +5327,7 @@ class RigWebApp:
                     f"<input type='checkbox' class='armbox' "
                     f"data-mods='{html.escape(','.join(mods))}' "
                     f"data-arm='{html.escape(arm)}'>"
-                    f"<span>{html.escape(arm)} {_mod_tags(mods)}{note}</span>"
+                    f"<span>{_arm_head(html.escape(arm) + note, mods)}</span>"
                     "</label>"
                 )
             arm_groups.append(
@@ -5314,7 +5347,7 @@ class RigWebApp:
             "<h3>Synthetic (offline)</h3></div><div class='checkgrid'>"
             "<label class='check'><input type='checkbox' class='armbox' "
             "data-mods='text' data-arm='synth'>"
-            "<span>synth " + _mod_icon("text") + " "
+            "<span>" + _arm_head("synth", ("text",)) +
             "<span class='fieldhint'>offline synthetic corpus - no source "
             "acquisition; use with the dry-run mode (no calls, no spend)</span>"
             "</span></label></div></div>"
@@ -5329,9 +5362,7 @@ class RigWebApp:
                 f"<input type='checkbox' class='modelbox' "
                 f"data-kind='{html.escape(kind)}' "
                 f"data-model='{html.escape(value)}'>"
-                f"<span>{html.escape(label)} "
-                + "".join(_mod_icon(m) for m in mods)
-                + "</span></label>"
+                f"<span>{_arm_head(html.escape(label), mods)}</span></label>"
             )
 
         options = self._model_options()
@@ -5453,7 +5484,8 @@ class RigWebApp:
             ph = f" placeholder='{html.escape(placeholder)}'" if placeholder else ""
             step = " step='any'" if kind == "number" else ""
             return (
-                f"<div><label class='fieldlabel'>{html.escape(label)} "
+                f"<div class='fieldcell'><label class='fieldlabel'>"
+                f"{html.escape(label)} "
                 f"<span class='fieldhint'>{html.escape(hint)}</span></label>"
                 f"<input class='wide' type='{kind}'{step} "
                 f"name='{html.escape(field)}'{attrs}{ph}>{err(field)}</div>"
@@ -5535,10 +5567,10 @@ class RigWebApp:
                          "target id for the LLM judge (default: the Haiku "
                          "campaign judge)",
                          placeholder="anthropic:claude-haiku-4-5-20251001")
-            + "<div><label class='fieldlabel'>--defense</label>"
+            + "<div class='fieldcell'><label class='fieldlabel'>--defense</label>"
             f"<select name='defense'>{defense_opts}</select>{err('defense')}"
             "</div>"
-            "<div><label class='fieldlabel'>--defense-guard "
+            "<div class='fieldcell'><label class='fieldlabel'>--defense-guard "
             "<span class='fieldhint'>guard used when a defense is on</span>"
             f"</label><select name='defense_guard'>{guard_opts}</select></div>"
             "</div>"
@@ -5630,7 +5662,7 @@ class RigWebApp:
             + "</div></div>"
             "<div class='card'><h2>" + _icon("disk")
             + "Local serving (vLLM)</h2><div class='cols'>"
-            "<div><label class='fieldlabel'>--dtype</label>"
+            "<div class='fieldcell'><label class='fieldlabel'>--dtype</label>"
             f"<select name='dtype'>{dtype_opts}</select></div>"
             + text_field("quantization", "--quantization",
                          "awq, gptq, fp8; empty auto-detects",

@@ -413,17 +413,28 @@ def test_native_only_note_is_a_tooltip_not_repeated_inline(tmp_path: Path) -> No
 
 
 def test_modality_shown_as_icons_not_word_tags(tmp_path: Path) -> None:
-    # Modalities render as compact accessible icons, not TEXT/IMAGE word tags.
+    # Modalities render as colored accessible icon chips, not TEXT/IMAGE word
+    # tags, clustered right of the name in a flex header (not trailing it).
     from experiments.rig_web import _mod_icon
     glyph = _mod_icon("text")
-    assert "class='modicon'" in glyph
+    assert "class='modicon m-text'" in glyph  # per-modality colored chip
     assert "title='text'" in glyph and "aria-label='text'" in glyph
     assert "<svg" in glyph  # an icon, not a word
+    assert "class='modicon m-video'" in _mod_icon("video")
     app = _app(tmp_path)
     try:
         _s, _c, body = app.handle("GET", "/build")
         text = body.decode("utf-8")
-        assert "class='modicon'" in text  # arm/target modalities use icons
+        assert "class='modicon m-" in text  # arm/target modalities use chips
+        assert "class='armhead'" in text  # name left, chip cluster right
+        assert "class='modset'" in text
+        assert "class='fieldcell'" in text  # bottom-aligned field cells
+        _s2, _c2, css_body = app.handle("GET", "/static/style.css")
+        css = css_body.decode("utf-8")
+        # The per-modality chip colors are themed (light + dark definitions).
+        assert css.count("--m-text:") == 2 and ".modicon.m-video" in css
+        # Field cells bottom-align their inputs across a row (labels grow).
+        assert ".fieldcell .fieldlabel { flex:1 0 auto; }" in css
     finally:
         app.close()
 
