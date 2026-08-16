@@ -230,8 +230,9 @@ _MODALITIES = ("text", "image", "audio", "video")
 #: lane.  ``_ARM_MODALITIES`` (common-runner arms only) is derived below for the
 #: modality-compatibility checks.
 _AGENTIC_REASON = (
-    "agentic / indirect prompt-injection arm - runs on the native tool-use "
-    "path, not the common runner; select it through its native converter/runner"
+    "agentic / indirect prompt-injection arm - common-metric-ineligible; it is "
+    "converted and evaluated on the native tool-use path, not the common "
+    "runner. Import its native traces with the native_import command"
 )
 _ARM_CATALOG: tuple[tuple[str, tuple[str, ...], str], ...] = (
     ("strongreject_official", ("text",), ""),
@@ -297,6 +298,16 @@ _ATTACKER_NAMES: tuple[str, ...] = (
     "nanogcg", "autodan", "agentdojo", "giskard", "easyjailbreak", "h4rm3l",
     "spikee", "ideator", "purplellama", "asb", "harmbench",
 )
+#: Attackers whose ``runner_replay_eligible`` is False - native-artifact
+#: integrations (own their target/trajectory or evaluator) that run_matrix
+#: REJECTS in the common runner ("cannot be replayed through Runner").  They are
+#: shown disabled with their real action (the native-import path), never as
+#: selectable common-runner frameworks.  A parity test asserts this matches the
+#: harness registry.
+_NATIVE_ONLY_ATTACKERS: frozenset[str] = frozenset({
+    "garak", "promptfoo", "petri", "fuzzyai", "autodan", "agentdojo",
+    "giskard", "easyjailbreak", "asb",
+})
 #: Every registered attacker (mirrors ura.adapters.engines.ATTACKER_NAMES, the
 #: shared registry - a parity test asserts the two match, so the builder can
 #: never silently omit an engine).  replay/crescendo are modality-agnostic (they
@@ -392,7 +403,10 @@ _EDITABLE_CONFIGS: dict[str, tuple[str, str, str]] = {
 #: shared registry mirror ``_ATTACKER_NAMES`` (all 20), so a new engine appears
 #: automatically and none is silently omitted.
 _SUGGEST_STATIC: dict[str, tuple[str, ...]] = {
-    "attackers": ("replay,crescendo", *_ATTACKER_NAMES),
+    # Only common-runner-eligible attackers are suggested; native-only
+    # integrations are shown disabled in the builder and use native_import.
+    "attackers": ("replay,crescendo",
+                  *(a for a in _ATTACKER_NAMES if a not in _NATIVE_ONLY_ATTACKERS)),
     "judges": ("rules,llm", "rules", "llm", "rules,guardrail", "guardrail"),
     "group": ("model", "source", "model,source"),
     "seeds": ("0", "0,1", "0,1,2"),
@@ -4644,6 +4658,18 @@ class RigWebApp:
         # an arm carries (not merely share one), agentic arms are rejected, and
         # the scoring and defense guardrails must be distinct identities.  This
         # is the real gate; the client-side filter is only convenience.
+        # Native-only attackers cannot be replayed through the common Runner
+        # (run_matrix rejects them); reject before any subprocess with the real
+        # action rather than letting the CLI fail after launch.
+        native_selected = [a for a in attackers if a in _NATIVE_ONLY_ATTACKERS]
+        if native_selected:
+            errors["attackers"] = (
+                f"{', '.join(native_selected)} "
+                + ("is a" if len(native_selected) == 1 else "are")
+                + " native-artifact integration(s); run_matrix cannot replay "
+                "them through the common Runner. Import their native traces "
+                "with the native_import command instead"
+            )
         arm_mods = {arm: set(mods) for arm, mods, _r in _ARM_CATALOG}
         fw_mods = {fw: set(mods) for fw, _d, mods in _FRAMEWORKS}
         target_mods = {value: set(mods) for value, _lbl, mods, _kind
@@ -5059,9 +5085,13 @@ class RigWebApp:
             for arm, mods, reason in signatures[signature]:
                 known = arm in registry_arms
                 if reason:
+                    # Disabled (never a common-runner lane) but carries its real
+                    # data-mods so the modality-scope filter keeps it VISIBLE
+                    # under its modality rather than hiding it on load.
                     boxes.append(
                         "<label class='check disabled'>"
                         "<input type='checkbox' class='armbox' disabled "
+                        f"data-mods='{html.escape(','.join(mods))}' "
                         f"data-arm='{html.escape(arm)}'>"
                         f"<span>{html.escape(arm)} {_mod_tags(mods)} "
                         "<span class='badge gray'>agentic</span><br>"
@@ -5146,16 +5176,35 @@ class RigWebApp:
         )
         # (local targets are selected as checkboxes above, not free text)
         # Framework checkboxes (carry supported modalities so the wizard can
-        # flag ones that cannot drive a chosen modality).
+        # flag ones that cannot drive a chosen modality).  A native-artifact
+        # attacker (runner_replay_eligible False) is shown DISABLED with its
+        # real action - the native-import path - never as a common-runner lane.
+        def _framework_box(fw: str, desc: str, mods: tuple[str, ...]) -> str:
+            if fw in _NATIVE_ONLY_ATTACKERS:
+                return (
+                    "<label class='check fwrow disabled' "
+                    f"data-mods='{html.escape(','.join(mods))}'>"
+                    f"<input type='checkbox' class='fwbox' disabled "
+                    f"data-fw='{html.escape(fw)}'>"
+                    f"<span><strong>{html.escape(fw)}</strong> "
+                    "<span class='badge gray'>native-only</span> "
+                    f"<span class='fieldhint'>{html.escape(desc)} - a "
+                    "native-artifact integration; run_matrix cannot replay it "
+                    "through the common Runner. Import its native traces with "
+                    "the <code>native_import</code> command.</span></span></label>"
+                )
+            return (
+                "<label class='check fwrow' "
+                f"data-mods='{html.escape(','.join(mods))}'>"
+                f"<input type='checkbox' class='fwbox' data-fw='{html.escape(fw)}'"
+                + (" checked" if fw == "replay" else "") + ">"
+                f"<span><strong>{html.escape(fw)}</strong> "
+                f"<span class='fieldhint'>{html.escape(desc)}</span>"
+                "<span class='fwflag'></span></span></label>"
+            )
+
         framework_boxes = "".join(
-            "<label class='check fwrow' "
-            f"data-mods='{html.escape(','.join(mods))}'>"
-            f"<input type='checkbox' class='fwbox' data-fw='{html.escape(fw)}'"
-            + (" checked" if fw == "replay" else "") + ">"
-            f"<span><strong>{html.escape(fw)}</strong> "
-            f"<span class='fieldhint'>{html.escape(desc)}</span>"
-            "<span class='fwflag'></span></span></label>"
-            for fw, desc, mods in _FRAMEWORKS
+            _framework_box(fw, desc, mods) for fw, desc, mods in _FRAMEWORKS
         )
         # Judge checkboxes.
         judges_selected = set(self._split_list(prefill.get("judges", "rules")))
@@ -5171,6 +5220,13 @@ class RigWebApp:
             + (" checked" if "llm" in judges_selected else "")
             + "><span><strong>llm</strong> "
             "<span class='fieldhint'>hosted Haiku judge (metered per response)"
+            "</span></span></label>"
+            "<label class='check'><input type='checkbox' class='judgebox' "
+            "data-judge='guardrail'"
+            + (" checked" if "guardrail" in judges_selected else "")
+            + "><span><strong>guardrail</strong> "
+            "<span class='fieldhint'>model-backed guardrail grader; set the "
+            "scoring guardrail model below (distinct from any defense guard)"
             "</span></span></label>"
         )
         defense_selected = prefill.get("defense", "none")
@@ -5292,7 +5348,30 @@ class RigWebApp:
             "<div><label class='fieldlabel'>--defense-guard "
             "<span class='fieldhint'>guard used when a defense is on</span>"
             f"</label><select name='defense_guard'>{guard_opts}</select></div>"
-            "</div></div>"
+            "</div>"
+            "<h3>Scoring guardrail <span class='fieldhint'>the judge cascade's "
+            "<code>guardrail</code> grader; add <code>guardrail</code> to the "
+            "judges above to use it</span></h3><div class='cols'>"
+            + text_field("guardrail_model", "--guardrail-model",
+                         "scoring guardrail model id",
+                         placeholder="meta-llama/Llama-Guard-3-8B")
+            + text_field("guardrail_revision", "--guardrail-revision",
+                         "pinned revision (optional)")
+            + text_field("guardrail_device", "--guardrail-device",
+                         "device, e.g. cuda:0 (optional)")
+            + "</div>"
+            "<h3>Defense guardrail <span class='fieldhint'>the model-backed "
+            "defense guard (defense-guard = guardrail); MUST be a different "
+            "model from the scoring guardrail - a guard never grades its own "
+            "output</span></h3><div class='cols'>"
+            + text_field("defense_guardrail_model", "--defense-guardrail-model",
+                         "defense guardrail model id (distinct from scoring)")
+            + text_field("defense_guardrail_revision",
+                         "--defense-guardrail-revision",
+                         "pinned revision (optional)")
+            + text_field("defense_guardrail_device", "--defense-guardrail-device",
+                         "device (optional)")
+            + "</div></div>"
             "<div class='card'><h2>" + _icon("receipt")
             + "Receipts (fail-closed admission)</h2>"
             "<p class='note'>Every non-dry run requires the validated "

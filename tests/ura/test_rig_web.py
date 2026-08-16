@@ -311,6 +311,7 @@ def test_builder_page_renders_full_surface(tmp_path: Path) -> None:
     assert "data-mods='text,image'" in text
     assert "data-arm='mmsafety_official'" in text
     assert "data-fw='crescendo'" in text
+    assert "data-judge='guardrail'" in text  # the guardrail judge option
     assert text.count("class='modbox' data-mod") == 4
     assert "data-mod='text' checked" in text
     assert "modtoggle" in text
@@ -325,6 +326,10 @@ def test_builder_page_renders_full_surface(tmp_path: Path) -> None:
         "name='cap_http'", "name='deadline'", "name='dtype'",
         "name='quantization'", "name='judge_model'", "name='defense_guard'",
         "name='canary_dry'",
+        # Scoring and defense guardrail inputs (model/revision/device each).
+        "name='guardrail_model'", "name='guardrail_revision'",
+        "name='guardrail_device'", "name='defense_guardrail_model'",
+        "name='defense_guardrail_revision'", "name='defense_guardrail_device'",
     ):
         assert field in text, field
     assert "addatt" in text  # repeatable receipt rows
@@ -353,11 +358,46 @@ def test_builder_lists_all_39_arms_and_20_attackers(tmp_path: Path) -> None:
             assert f"data-arm='{arm}'" in text, arm  # every arm visible
         for attacker in _ATTACKER_NAMES:
             assert f"data-fw='{attacker}'" in text, attacker  # every attacker
-        # Agentic arms are shown DISABLED with a reason, not as common lanes.
+        # Agentic arms are shown DISABLED with their real action, not as common
+        # lanes; native-only attackers likewise point to native_import.
         for arm in _AGENTIC_ARMS:
             assert arm in text
         assert "agentic (native tool-use only)" in text
-        assert "runs on the native tool-use path" in text
+        assert "native_import" in text  # the real supported action
+        from experiments.rig_web import _NATIVE_ONLY_ATTACKERS
+        assert "native-only" in text  # native-artifact attackers badged
+        for attacker in _NATIVE_ONLY_ATTACKERS:
+            assert f"data-fw='{attacker}'" in text  # still visible, disabled
+    finally:
+        app.close()
+
+
+def test_native_only_attacker_rejected_and_classified() -> None:
+    # The native-only classification must match the harness registry, and a
+    # native-only attacker in a common-runner lane is rejected before Popen.
+    import sys
+    sys.path.insert(0, "src")
+    from ura.adapters.engines import ATTACKER_NAMES, get_attacker
+    from experiments.rig_web import _NATIVE_ONLY_ATTACKERS
+    actual_native = {
+        name for name in ATTACKER_NAMES
+        if getattr(get_attacker(name), "runner_replay_eligible", True) is False
+    }
+    assert _NATIVE_ONLY_ATTACKERS == actual_native
+
+
+def test_native_only_attacker_rejected_server_side(tmp_path: Path) -> None:
+    app = _app(tmp_path)
+    started = len(app.jobs)
+    try:
+        _s, _c, body = app.handle("POST", "/build", {
+            "mode": "dry_run", "corpora": "strongreject_official",
+            "api": "anthropic:claude-opus-5", "attackers": "garak",
+            "judges": "rules", "out": "runs/n", "seeds": "0",
+        })
+        text = body.decode("utf-8")
+        assert "native-artifact" in text and "native_import" in text
+        assert len(app.jobs) == started  # no Popen
     finally:
         app.close()
 
