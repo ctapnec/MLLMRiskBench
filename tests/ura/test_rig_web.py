@@ -478,7 +478,11 @@ def test_t3mp3st_is_selectable_and_requires_a_validated_capture_bundle(
     try:
         page = app.handle("GET", "/build")[2].decode("utf-8")
         assert "data-fw='t3mp3st'" in page
-        assert "prepare + replay" in page
+        t3_row = page[page.index("data-fw='t3mp3st'"):]
+        t3_row = t3_row[:t3_row.index("</label>")]
+        assert "capture + replay" in t3_row
+        assert "prepare + replay" not in t3_row
+        assert "prepared-framework-badge" in t3_row
         assert "t3mp3st" in _SUGGEST_STATIC["attackers"]
         checkbox = _opening_tag(page, "data-fw='t3mp3st'")
         panel = _opening_tag(page, "id='prepared-t3mp3st'")
@@ -518,6 +522,11 @@ def test_harmbench_is_selectable_and_requires_its_generated_capture_config(
         assert "data-arm='harmbench_text'" in page
         assert "data-arm='harmbench_multimodal'" in page
         assert "harmbench" in _SUGGEST_STATIC["attackers"]
+        harm_row = page[page.index("data-fw='harmbench'"):]
+        harm_row = harm_row[:harm_row.index("</label>")]
+        assert "prepare + replay" in harm_row
+        assert "capture + replay" not in harm_row
+        assert "prepared-framework-badge" in harm_row
         checkbox = _opening_tag(page, "data-fw='harmbench'")
         panel = _opening_tag(page, "id='prepared-harmbench'")
         assert "aria-controls='prepared-harmbench'" in checkbox
@@ -574,6 +583,9 @@ def test_prepared_workflows_live_under_attack_frameworks_without_nested_forms(
         assert ".workflow-step { display:grid; gap:.7rem; padding:.8rem;" in css
         assert ".workflow-panel details {" in css and "padding:.65rem;" in css
         assert ".workflow-actions {" in css and "gap:.65rem;" in css
+        assert ".check .prepared-framework-badge {" in css
+        assert "margin:.18rem 0 .05rem .55rem;" in css
+        assert "padding:.12rem .65rem; gap:.3rem;" in css
         assert "@media (max-width:400px) {" in css
         assert (
             ".workflow-grid, .workflow-panel .cols { "

@@ -1432,6 +1432,8 @@ button.ghost { background:transparent; color:var(--accent);
 .armhead .armname { min-width:0; overflow-wrap:anywhere; }
 .modset { display:inline-flex; gap:.22rem; flex:0 0 auto; }
 .check .badge { margin:.18rem 0 .05rem; }
+.check .prepared-framework-badge { margin:.18rem 0 .05rem .55rem;
+  padding:.12rem .65rem; gap:.3rem; }
 .tip { position:relative; cursor:help; outline:none; }
 .tip .tiptext { display:none; position:absolute; z-index:30; left:0; top:135%;
   width:min(320px,72vw); background:var(--card); color:var(--ink);
@@ -7254,8 +7256,10 @@ class RigWebApp:
                     "capture config, corpus, and digest before calls."
                 )
                 prepared_badge = (
-                    "<span class='badge blue tip' tabindex='0'>prepare + replay"
-                    f"<span class='tiptext'>{html.escape(detail)}</span></span>"
+                    "<span class='badge blue tip prepared-framework-badge' "
+                    "tabindex='0'>"
+                    + ("capture + replay" if fw == "t3mp3st" else "prepare + replay")
+                    + f"<span class='tiptext'>{html.escape(detail)}</span></span>"
                 )
                 prepared_control = (
                     f" aria-controls='prepared-{html.escape(fw)}'"
