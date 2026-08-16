@@ -1240,6 +1240,29 @@ select:hover { border-color:color-mix(in srgb, var(--accent) 55%, var(--line)); 
 select:focus { outline:2px solid
   color-mix(in srgb, var(--accent) 45%, transparent);
   border-color:var(--accent); }
+input[type=checkbox], input[type=radio] { appearance:none;
+  -webkit-appearance:none; width:17px; height:17px; margin:0;
+  flex:0 0 auto; cursor:pointer; border:1.5px solid
+  color-mix(in srgb, var(--muted) 55%, var(--line));
+  border-radius:5px; background:var(--card); display:inline-grid;
+  place-content:center; vertical-align:middle;
+  transition:border-color .12s ease, background-color .12s ease; }
+input[type=radio] { border-radius:50%; }
+input[type=checkbox]:hover:not(:disabled),
+input[type=radio]:hover:not(:disabled) { border-color:var(--accent); }
+input[type=checkbox]:focus-visible, input[type=radio]:focus-visible {
+  outline:2px solid color-mix(in srgb, var(--accent) 45%, transparent);
+  outline-offset:1px; }
+input[type=checkbox]:checked { background:var(--accent);
+  border-color:var(--accent); }
+input[type=checkbox]:checked::before { content:''; width:9px; height:5px;
+  border:2px solid var(--accent-ink); border-top:0; border-right:0;
+  transform:rotate(-45deg) translateY(-1px); }
+input[type=radio]:checked { border-color:var(--accent); }
+input[type=radio]:checked::before { content:''; width:9px; height:9px;
+  border-radius:50%; background:var(--accent); }
+input[type=checkbox]:disabled, input[type=radio]:disabled {
+  cursor:not-allowed; background:var(--soft); opacity:.55; }
 textarea.editor { width:100%; min-height:60vh; font:.82rem/1.5
   ui-monospace, "Cascadia Code", Menlo, monospace; padding:.8rem;
   border:1px solid var(--line); border-radius:10px; background:var(--soft);
@@ -1259,6 +1282,7 @@ button.ghost { background:transparent; color:var(--accent);
   font-weight:700; flex:none; }
 .radios { display:flex; flex-direction:column; gap:.5rem; }
 .radio { display:flex; gap:.5rem; align-items:flex-start; cursor:pointer; }
+.radio input { margin-top:.15rem; }
 .check { display:flex; gap:.45rem; align-items:flex-start; cursor:pointer;
   padding:.25rem 0; }
 .check input { margin-top:.2rem; flex:0 0 auto; }

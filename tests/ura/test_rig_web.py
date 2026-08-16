@@ -445,6 +445,13 @@ def test_modality_shown_as_icons_not_word_tags(tmp_path: Path) -> None:
         # bleed through a fade-to-transparent gradient while scrolling.
         assert "to top, var(--bg), transparent" not in css
         assert ".buildbar { position:sticky" in css
+        # Checkboxes and radios are custom-styled console-wide (no generic
+        # browser chrome): appearance reset, checked/disabled/focus states.
+        assert "input[type=checkbox], input[type=radio] { appearance:none;" in css
+        assert "input[type=checkbox]:checked::before" in css  # drawn checkmark
+        assert "input[type=radio]:checked::before" in css  # drawn dot
+        assert "input[type=checkbox]:disabled" in css
+        assert "input[type=checkbox]:focus-visible" in css
     finally:
         app.close()
 
