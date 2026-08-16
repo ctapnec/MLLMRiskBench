@@ -224,16 +224,20 @@ _PROVIDER_BUDGETS: tuple[tuple[str, str, str], ...] = (
 _MODALITIES = ("text", "image", "audio", "video")
 #: The complete maintained source-arm catalogue: (arm id, physical modalities,
 #: disabled reason).  All 39 registry arms are listed - an empty reason is a
-#: common-runner lane; a non-empty reason is an agentic / indirect-prompt-
-#: injection arm that runs on the native tool-use path, NOT the common runner,
-#: and is shown disabled with that reason rather than pretended to be a common
-#: lane.  ``_ARM_MODALITIES`` (common-runner arms only) is derived below for the
-#: modality-compatibility checks.
-_AGENTIC_REASON = (
-    "agentic / indirect prompt-injection arm - common-metric-ineligible; it is "
-    "converted and evaluated on the native tool-use path, not the common "
-    "runner. Import its native traces with the native_import command"
-)
+#: common-runner SCORED lane; a non-empty reason is a common-metric-INELIGIBLE
+#: arm (``common_metrics_eligible: False`` in its converter: it requires a
+#: source-specific metric, not common harmful-ASR, so run_matrix fails its
+#: scored preflight before target execution).  Such an arm is shown disabled
+#: with its required metric rather than pretended to be a common scored lane; it
+#: is converted and evaluated on the native path (native_import).
+def _ineligible(metric: str) -> str:
+    return (
+        f"common-metric-ineligible: requires the source-specific metric "
+        f"'{metric}', not common harmful-ASR, so it fails the common Runner's "
+        "scored preflight. Convert and evaluate it via the native_import command"
+    )
+
+
 _ARM_CATALOG: tuple[tuple[str, tuple[str, ...], str], ...] = (
     ("strongreject_official", ("text",), ""),
     ("advbench_harmful", ("text",), ""),
@@ -243,7 +247,8 @@ _ARM_CATALOG: tuple[tuple[str, tuple[str, ...], str], ...] = (
     ("cyberseceval_mitre", ("text",), ""),
     ("cyberseceval_interpreter", ("text",), ""),
     ("cyberseceval_insecure_coding", ("text",), ""),
-    ("cyberseceval_prompt_injection", ("text",), ""),
+    ("cyberseceval_prompt_injection", ("text",),
+     _ineligible("cyberseceval_prompt_injection_judge_question")),
     ("mmsafety_official", ("text", "image"), ""),
     ("jailbreakv_full", ("text", "image"), ""),
     ("harmbench_multimodal", ("text", "image"), ""),
@@ -257,29 +262,36 @@ _ARM_CATALOG: tuple[tuple[str, tuple[str, ...], str], ...] = (
     ("mllmguard_legality", ("text", "image"), ""),
     ("mllmguard_position_swapping", ("text", "image"), ""),
     ("mllmguard_noise_injection", ("text", "image"), ""),
-    ("mllmguard_hallucination", ("text", "image"), ""),
-    ("gptgeochat_release", ("text", "image"), ""),
+    ("mllmguard_hallucination", ("text", "image"),
+     _ineligible("mllmguard_hallucination_truthfulness")),
+    ("gptgeochat_release", ("text", "image"),
+     _ineligible("gptgeochat_binary_moderation")),
     ("jalmbench_audio", ("text", "audio"), ""),
     ("videosafetybench_benign_query", ("text", "video"), ""),
     ("videosafetybench_harmful_query", ("text", "video"), ""),
-    ("agentharm_benign", ("text",), _AGENTIC_REASON),
-    ("agentharm_harmful", ("text",), _AGENTIC_REASON),
-    ("bipia_test_abstract", ("text",), _AGENTIC_REASON),
-    ("bipia_test_code", ("text",), _AGENTIC_REASON),
-    ("bipia_test_email", ("text",), _AGENTIC_REASON),
-    ("bipia_test_qa", ("text",), _AGENTIC_REASON),
-    ("bipia_test_table", ("text",), _AGENTIC_REASON),
-    ("injecagent_direct_harm_base", ("text",), _AGENTIC_REASON),
-    ("injecagent_direct_harm_enhanced", ("text",), _AGENTIC_REASON),
-    ("injecagent_data_stealing_base", ("text",), _AGENTIC_REASON),
-    ("injecagent_data_stealing_enhanced", ("text",), _AGENTIC_REASON),
-    ("rjudge_release", ("text",), _AGENTIC_REASON),
+    ("agentharm_benign", ("text",), _ineligible("official_agentharm_tool_grading")),
+    ("agentharm_harmful", ("text",), _ineligible("official_agentharm_tool_grading")),
+    ("bipia_test_abstract", ("text",), _ineligible("indirect_injection_task_success")),
+    ("bipia_test_code", ("text",), _ineligible("indirect_injection_task_success")),
+    ("bipia_test_email", ("text",), _ineligible("indirect_injection_task_success")),
+    ("bipia_test_qa", ("text",), _ineligible("indirect_injection_task_success")),
+    ("bipia_test_table", ("text",), _ineligible("indirect_injection_task_success")),
+    ("injecagent_direct_harm_base", ("text",),
+     _ineligible("official_injecagent_tool_call_scoring")),
+    ("injecagent_direct_harm_enhanced", ("text",),
+     _ineligible("official_injecagent_tool_call_scoring")),
+    ("injecagent_data_stealing_base", ("text",),
+     _ineligible("official_injecagent_tool_call_scoring")),
+    ("injecagent_data_stealing_enhanced", ("text",),
+     _ineligible("official_injecagent_tool_call_scoring")),
+    ("rjudge_release", ("text",), _ineligible("rjudge_safety_judgment")),
 )
-#: Common-runner arms only (agentic arms excluded), for modality checks.
+#: Common-runner (scored) arms only, for modality checks.
 _ARM_MODALITIES: tuple[tuple[str, tuple[str, ...]], ...] = tuple(
     (arm, mods) for arm, mods, reason in _ARM_CATALOG if not reason
 )
-_AGENTIC_ARMS: frozenset[str] = frozenset(
+#: Common-metric-ineligible arms (shown disabled; rejected in a scored lane).
+_INELIGIBLE_ARMS: frozenset[str] = frozenset(
     arm for arm, _mods, reason in _ARM_CATALOG if reason
 )
 
@@ -4675,10 +4687,11 @@ class RigWebApp:
         target_mods = {value: set(mods) for value, _lbl, mods, _kind
                        in self._model_options()}
         for arm in real_corpora:
-            if arm in _AGENTIC_ARMS:
+            if arm in _INELIGIBLE_ARMS:
                 errors["corpora"] = (
-                    f"{arm} is an agentic / indirect-injection arm and cannot "
-                    "run as a common-runner lane; use its native runner"
+                    f"{arm} is common-metric-ineligible (it requires a "
+                    "source-specific metric); it fails the common Runner's "
+                    "scored preflight. Convert and evaluate it via native_import"
                 )
                 continue
             needed = arm_mods.get(arm)
@@ -5067,18 +5080,18 @@ class RigWebApp:
             )
 
         # Group ALL 39 catalogue arms by their full modality signature for a
-        # readable layout (text-only first, then multimodal, then the agentic
-        # arms).  An agentic arm is shown DISABLED with its precise reason - it
-        # is never presented as a selectable common-runner lane.
+        # readable layout (text-only first, then multimodal, then the
+        # common-metric-ineligible arms).  An ineligible arm is shown DISABLED
+        # with its precise reason - never a selectable common scored lane.
         signatures: dict[str, list[tuple[str, tuple[str, ...], str]]] = {}
         for arm, mods, reason in _ARM_CATALOG:
-            bucket = ("agentic (native tool-use only)" if reason
+            bucket = ("common-metric-ineligible (native_import only)" if reason
                       else " + ".join(mods))
             signatures.setdefault(bucket, []).append((arm, mods, reason))
         arm_groups = []
         order = sorted(
             signatures,
-            key=lambda s: (s.startswith("agentic"), len(s), s),
+            key=lambda s: (s.startswith("common-metric"), len(s), s),
         )
         for signature in order:
             boxes = []
@@ -5094,7 +5107,7 @@ class RigWebApp:
                         f"data-mods='{html.escape(','.join(mods))}' "
                         f"data-arm='{html.escape(arm)}'>"
                         f"<span>{html.escape(arm)} {_mod_tags(mods)} "
-                        "<span class='badge gray'>agentic</span><br>"
+                        "<span class='badge gray'>metric-ineligible</span><br>"
                         f"<span class='fieldhint'>{html.escape(reason)}</span>"
                         "</span></label>"
                     )

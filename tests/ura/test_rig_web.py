@@ -341,15 +341,21 @@ def test_attacker_registry_parity_and_full_inventory() -> None:
     import sys
     sys.path.insert(0, "src")
     from ura.adapters.engines import ATTACKER_NAMES
-    from experiments.rig_web import _ATTACKER_NAMES, _ARM_CATALOG, _AGENTIC_ARMS, _FRAMEWORKS
+    from experiments.rig_web import (
+        _ATTACKER_NAMES, _ARM_CATALOG, _INELIGIBLE_ARMS, _FRAMEWORKS,
+    )
     assert _ATTACKER_NAMES == ATTACKER_NAMES
     assert len(_FRAMEWORKS) == 20
     assert len(_ARM_CATALOG) == 39  # all maintained source arms
-    assert len(_AGENTIC_ARMS) == 12  # agentic / indirect-injection arms
+    # 15 common-metric-ineligible arms (agentic + source-specific-metric).
+    assert len(_INELIGIBLE_ARMS) == 15
+    assert {"cyberseceval_prompt_injection", "gptgeochat_release",
+            "mllmguard_hallucination", "agentharm_harmful",
+            "rjudge_release"} <= _INELIGIBLE_ARMS
 
 
 def test_builder_lists_all_39_arms_and_20_attackers(tmp_path: Path) -> None:
-    from experiments.rig_web import _ARM_CATALOG, _ATTACKER_NAMES, _AGENTIC_ARMS
+    from experiments.rig_web import _ARM_CATALOG, _ATTACKER_NAMES, _INELIGIBLE_ARMS
     app = _app(tmp_path)
     try:
         _s, _c, body = app.handle("GET", "/build")
@@ -358,11 +364,11 @@ def test_builder_lists_all_39_arms_and_20_attackers(tmp_path: Path) -> None:
             assert f"data-arm='{arm}'" in text, arm  # every arm visible
         for attacker in _ATTACKER_NAMES:
             assert f"data-fw='{attacker}'" in text, attacker  # every attacker
-        # Agentic arms are shown DISABLED with their real action, not as common
-        # lanes; native-only attackers likewise point to native_import.
-        for arm in _AGENTIC_ARMS:
+        # Ineligible arms are shown DISABLED with their real action, not as
+        # common lanes; native-only attackers likewise point to native_import.
+        for arm in _INELIGIBLE_ARMS:
             assert arm in text
-        assert "agentic (native tool-use only)" in text
+        assert "common-metric-ineligible (native_import only)" in text
         assert "native_import" in text  # the real supported action
         from experiments.rig_web import _NATIVE_ONLY_ATTACKERS
         assert "native-only" in text  # native-artifact attackers badged
@@ -412,8 +418,16 @@ def test_agentic_arm_rejected_server_side(tmp_path: Path) -> None:
             "judges": "rules", "out": "runs/a", "seeds": "0",
         })
         text = body.decode("utf-8")
-        assert "agentic" in text and "cannot run as a common-runner lane" in text
+        assert "common-metric-ineligible" in text and "native_import" in text
         assert len(app.jobs) == started  # no Popen
+        # A source-specific-metric arm (not agentic) is also rejected.
+        _s2, _c2, body2 = app.handle("POST", "/build", {
+            "mode": "dry_run", "corpora": "cyberseceval_prompt_injection",
+            "api": "anthropic:claude-opus-5", "attackers": "replay",
+            "judges": "rules", "out": "runs/a2", "seeds": "0",
+        })
+        assert "common-metric-ineligible" in body2.decode("utf-8")
+        assert len(app.jobs) == started
     finally:
         app.close()
 
