@@ -11,9 +11,11 @@ effect, compliance finding, or other empirical result yet.
 
 The development tree implements the RUN-001 prospective-request and MET-001
 exact-selection interfaces described below, with offline contract tests. Their
-project commit is `PROJECT_COMMIT_PENDING` and the integrated final verification
-record is `FINAL_VERIFY_PENDING`. No acquired-source, provider, human, or other
-real-input MET-001 artifact has been produced.
+project commit is `02e858b1864943806eaadb043cf8098c5eb5523e` and the integrated
+final verification records are retained under
+`../Thesis-EN/verification/2026-08-16-reaudit-phase1/` and (this phase) the
+16 Aug re-audit close-out, with 894 offline tests passing. No acquired-source,
+provider, human, or other real-input MET-001 artifact has been produced.
 
 ## What is measured
 
@@ -372,20 +374,34 @@ scoring support. See the protocol for the current inventory.
 
 `python -m experiments.rig_web` serves a single-operator, localhost-only
 campaign builder and console over the same maintained CLIs: mode-aware lane
-composition (dry run, attestation probe, diagnostic canary, measured
-execution) with fail-closed validation and an exact-argv confirmation before
-any paid mode, job monitoring with whole-process-tree stop, an allowlisted
-JSON editor for the operator-local registries, rendering of retained
-Level-1/Level-2 artifacts, and recorded-token usage with calculated cost from
-an operator-edited effective-dated pricing table. Its state (jobs, campaign
-runs, recorded usage, report index) lives in a stdlib-sqlite `console.db`
-under the console state directory - operational state only; the validated
-filesystem artifacts remain the scientific authority. Every experiment
-operation the console launches runs the same maintained `experiments.*`
-command available on the CLI (`--models` resolves names via the hosted/local
-target registries on `run_matrix`/`rig_check`; `live_attestation --validate`
-revalidates a receipt), and the console's own bookkeeping is reachable
-headlessly too (`rig_web --reindex`, `rig_web --usage-report`).
+composition (an ordinary offline dry run over the synthetic corpus, attestation
+probe, diagnostic canary, measured execution) with complete server-side
+fail-closed admission - exact-modality compatibility of every target/attacker
+with each arm, agentic/native-only arms shown disabled rather than as common
+lanes, and scoring-vs-defense guardrail separation - before any subprocess. The
+builder covers all 39 maintained source arms and all 20 registered attackers
+derived from the shared harness registries. Before a paid mode it shows the
+exact argv and offers a no-call preflight whose lane-projection gives the
+required target/judge/HTTP call upper bounds; Start is blocked until the entered
+ceilings cover that projection (a call bound, not a price estimate). It also
+offers job monitoring with a verified whole-process-tree stop (an unconfirmed
+stop is surfaced, never reported as success), an allowlisted JSON editor for the
+operator-local registries, rendering of retained Level-1/Level-2 artifacts (one
+diagram per compatible metric stratum, measured badged only for the exact
+measured evidence kind), and recorded-token usage with calculated cost. Cost
+multiplies recorded tokens by the rate effective on each run's completion date
+(an old run is never repriced by a later reindex) from an operator-controlled
+pricing registry containing manual or provenance-labelled fetched rates; mixed
+currencies are never summed, a missing count or price renders N/A never zero,
+and local serving is not billable. Its state (jobs, campaign runs, recorded
+usage, report index) lives in a stdlib-sqlite `console.db` under the console
+state directory - operational state only; the validated filesystem artifacts
+remain the scientific authority. Every experiment operation the console launches
+runs the same maintained `experiments.*` command available on the CLI
+(`--models` resolves names via the hosted/local target registries on
+`run_matrix`/`rig_check`; `live_attestation --validate` revalidates a receipt),
+and the console's own bookkeeping is reachable headlessly too (`rig_web
+--reindex`, `rig_web --usage-report`).
 
 ## Layout
 
