@@ -11,12 +11,12 @@ effect, compliance finding, or other empirical result yet.
 
 The development tree implements the RUN-001 prospective-request and MET-001
 exact-selection interfaces described below, with offline contract tests. The
-exact tested software revision and raw local/rig logs are recorded externally
-under `../../Thesis-EN/verification/2026-08-16-quantization-remediation/`; its
-record names that immutable Project commit and exact local/rig results. The
-later dashboard/filter/dependency snapshot is recorded separately under
-`../../Thesis-EN/verification/2026-08-16-rig-dashboard-filters/`; that record is
-the authority for its exact commit and verification results. A retained
+latest exact tested software revision, raw local/rig logs, rendered dashboard
+and Build pages, project-revision receipt and source bundle are retained under
+`../../Thesis-EN/verification/2026-08-17-prepared-attack-workflows/`; that
+record is the authority for its exact commit and verification results. The
+earlier quantization and dashboard/filter records remain historical evidence
+for their own snapshots. A retained
 26-arm receipt is historical acquisition/conversion
 traceability, not current admission or a result: the current audit found no new
 issue in 19 entries; the SIUO, VLSBench, MLLMGuard position-swapping and

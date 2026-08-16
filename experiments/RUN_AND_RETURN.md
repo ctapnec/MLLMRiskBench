@@ -182,10 +182,11 @@ with two GPUs and maximum compute capability 8.9, 24 logical CPUs, and
 `datasets 2.14.7` package was removed. This is dependency/hardware evidence,
 not a model load or inference; no provider/model call was made. Repeat these
 checks in the final detached measured checkout and retain their output.
-The exact dashboard/filter/dependency snapshot and its local/rig results are
-retained in the sibling Thesis record
-`../../../Thesis-EN/verification/2026-08-16-rig-dashboard-filters/`; do not copy
-a mutable hash or test count into this runbook.
+The latest exact tested release, dashboard/Build captures and local/rig results
+are retained in the sibling Thesis record
+`../../../Thesis-EN/verification/2026-08-17-prepared-attack-workflows/`; do not
+copy a mutable hash or test count into this runbook. The earlier dashboard and
+quantization records remain historical evidence for their own snapshots.
 
 `URA_PROJECT_REVISION_MANIFEST` and `URA_PROJECT_REVISION_SHA256` are consumed
 automatically by `run_matrix` and by `rig_check`'s forwarded non-dry request.

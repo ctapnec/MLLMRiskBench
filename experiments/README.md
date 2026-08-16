@@ -7,9 +7,9 @@ export, or synthetic figure is not a measured thesis result.
 
 The maintained execution contract is Runner `ura-runner/2.15` with unified
 schema `1.4`; older artifacts are not mixed into the thesis run. The latest
-completed dashboard/filter/dependency snapshot's exact commit and verification results are
-kept in the sibling Thesis record
-`../../../Thesis-EN/verification/2026-08-16-rig-dashboard-filters/`.
+exact tested release and its local/rig evidence are retained in the sibling
+Thesis record
+`../../../Thesis-EN/verification/2026-08-17-prepared-attack-workflows/`.
 
 ## Experimental shape
 
