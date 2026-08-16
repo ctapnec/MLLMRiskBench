@@ -1442,14 +1442,35 @@ button.ghost { background:transparent; color:var(--accent);
   display:block; }
 .fwrow.incompatible { opacity:.55; }
 .fwrow.incompatible .fwflag { color:#c4515c; font-weight:600; }
-.workflow-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(280px,1fr));
-  gap:.8rem; margin-top:.7rem; }
+.prepared-workflows { border-top:1px solid var(--line); margin-top:1rem;
+  padding-top:1rem; }
+.prepared-workflows > .note { margin:0 0 .85rem; }
+.workflow-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(300px,1fr));
+  gap:1rem; margin:0; }
 .workflow-panel { border:1px solid var(--line); border-radius:10px;
-  padding:.75rem; background:var(--soft); min-width:0; }
-.workflow-panel h3 { margin:.05rem 0 .55rem; }
-.workflow-panel .cols { grid-template-columns:repeat(auto-fit,minmax(190px,1fr)); }
-.prepared-replay { margin-top:.9rem; }
-.prepared-fields { display:none; }
+  padding:1rem; background:var(--soft); min-width:0; display:grid;
+  align-content:start; gap:.9rem; }
+.workflow-panel[hidden] { display:none; }
+.workflow-panel h3, .workflow-panel h4, .workflow-panel p.note,
+.workflow-panel .cols, .workflow-panel details { margin:0; }
+.workflow-panel h3 { display:flex; align-items:center; flex-wrap:wrap; gap:.45rem; }
+.workflow-step { display:grid; gap:.7rem; padding:.8rem; background:var(--card);
+  border:1px solid var(--line); border-radius:9px; }
+.workflow-step h4 { font-size:.92rem; }
+.workflow-panel .cols { grid-template-columns:repeat(auto-fit,minmax(190px,1fr));
+  gap:.75rem; }
+.workflow-panel .fieldcell { margin:0; }
+.workflow-panel details { border:1px solid var(--line); border-radius:8px;
+  padding:.65rem; }
+.workflow-panel details summary { cursor:pointer; font-weight:600; }
+.workflow-panel details[open] summary { margin-bottom:.75rem; }
+.workflow-actions { display:flex; align-items:center; flex-wrap:wrap; gap:.65rem;
+  margin:0; }
+@media (max-width:400px) {
+  .workflow-grid, .workflow-panel .cols { grid-template-columns:minmax(0,1fr); }
+  .prepared-workflows, .workflow-panel, .workflow-step {
+    min-width:0; max-width:100%; }
+}
 .fielderr { display:block; color:#c4515c; font-size:.8rem; font-weight:600;
   margin:.2rem 0 .1rem; }
 .attrow { display:grid; grid-template-columns:1fr 1fr; gap:.5rem;
@@ -1570,10 +1591,16 @@ if(tip){tip.textContent=value==='auto'?
 'The operator must choose a per-model precision before a live run.':
 'Operator-selected precision; hardware fit remains unknown.';}});}
 function applyPreparedFields(){
+var any=false;
 form.querySelectorAll('.prepared-fields').forEach(function(panel){
 var name=panel.getAttribute('data-prepared');
 var box=form.querySelector(".fwbox[data-fw='"+name+"']");
-panel.style.display=box&&box.checked?'block':'none';});}
+var visible=!!(box&&box.checked);panel.hidden=!visible;
+panel.setAttribute('aria-hidden',visible?'false':'true');
+if(box){box.setAttribute('aria-expanded',visible?'true':'false');}
+if(visible){any=true;}});
+var group=document.getElementById('prepared-workflows');
+if(group){group.hidden=!any;group.setAttribute('aria-hidden',any?'false':'true');}}
 function refresh(){updateUnknownPrecisionBadges();applyScope();applyPreparedFields();
 // live preview
 var mode=(form.querySelector('input[name=mode]:checked')||{}).value||'measured';
@@ -5554,10 +5581,24 @@ class RigWebApp:
     def _projection_params(cls, params: Mapping[str, str]) -> dict[str, str]:
         """Normalized grid identity for safe preflight reuse."""
 
+        attackers = {
+            item.strip()
+            for item in str(params.get("attackers", "")).split(",")
+            if item.strip()
+        }
         return {
             key: str(value).strip()
             for key, value in params.items()
-            if key not in cls._PROJECTION_CAP_FIELDS and str(value).strip()
+            if (
+                key not in cls._PROJECTION_CAP_FIELDS
+                and not key.startswith(("t3cap_", "hcap_"))
+                and (
+                    key not in {"t3_artifact", "t3_artifact_sha"}
+                    or "t3mp3st" in attackers
+                )
+                and (key != "harm_config" or "harmbench" in attackers)
+                and str(value).strip()
+            )
         }
 
     def _capture_output(self, raw: str, *, label: str) -> Path:
@@ -5822,15 +5863,17 @@ class RigWebApp:
     def _handle_capture(
         self, kind: str, form: Mapping[str, str],
     ) -> tuple[int, str, bytes]:
+        confirmed = str(form.get("confirm", "")).strip() == "yes"
+        prefix = "t3cap_" if kind == "t3mp3st" else "hcap_"
         params = {
-            key: str(value).strip() for key, value in form.items()
-            if str(value).strip()
+            key: str(value).strip()
+            for key, value in form.items()
+            if key.startswith(prefix)
         }
-        confirmed = params.pop("confirm", "") == "yes"
         command, values, errors = self._capture_values(kind, params)
         if errors:
             return 200, "text/html; charset=utf-8", self._build_page(
-                prefill=params, errors=errors,
+                prefill={**params, "attackers": kind}, errors=errors,
             )
         if not confirmed:
             return 200, "text/html; charset=utf-8", self._capture_preview_page(
@@ -5853,8 +5896,17 @@ class RigWebApp:
 
         params = {
             key: str(value).strip() for key, value in form.items()
-            if str(value).strip()
+            if (
+                not key.startswith(("t3cap_", "hcap_"))
+                and str(value).strip()
+            )
         }
+        attackers = set(self._split_list(params.get("attackers", "")))
+        if "t3mp3st" not in attackers:
+            params.pop("t3_artifact", None)
+            params.pop("t3_artifact_sha", None)
+        if "harmbench" not in attackers:
+            params.pop("harm_config", None)
         mode = params.get("mode", "measured")
         dry = mode == "dry_run" or (
             mode == "diagnostic_canary" and params.get("canary_dry") == "on"
@@ -7166,6 +7218,11 @@ class RigWebApp:
         # flag ones that cannot drive a chosen modality).  A native-artifact
         # attacker (runner_replay_eligible False) is shown DISABLED with its
         # real action - the native-import path - never as a common-runner lane.
+        attackers_selected = (
+            set(self._split_list(prefill.get("attackers", "")))
+            if "attackers" in prefill else {"replay"}
+        )
+
         def _framework_box(fw: str, desc: str, mods: tuple[str, ...]) -> str:
             if fw in _NATIVE_ONLY_ATTACKERS:
                 # The (identical) native-import explanation lives in a tooltip on
@@ -7187,6 +7244,7 @@ class RigWebApp:
                     "</span></span></label>"
                 )
             prepared_badge = ""
+            prepared_control = ""
             if fw in {"t3mp3st", "harmbench"}:
                 detail = (
                     "Capture a validated planning bundle first; measured replay "
@@ -7199,11 +7257,16 @@ class RigWebApp:
                     "<span class='badge blue tip' tabindex='0'>prepare + replay"
                     f"<span class='tiptext'>{html.escape(detail)}</span></span>"
                 )
+                prepared_control = (
+                    f" aria-controls='prepared-{html.escape(fw)}'"
+                    f" aria-expanded='{'true' if fw in attackers_selected else 'false'}'"
+                )
             return (
                 "<label class='check fwrow' "
                 f"data-mods='{html.escape(','.join(mods))}'>"
                 f"<input type='checkbox' class='fwbox' data-fw='{html.escape(fw)}'"
-                + (" checked" if fw == "replay" else "") + ">"
+                + prepared_control
+                + (" checked" if fw in attackers_selected else "") + ">"
                 f"<span><strong>{html.escape(fw)}</strong> "
                 f"<span class='fieldhint'>{html.escape(desc)}</span>"
                 + prepared_badge +
@@ -7276,8 +7339,30 @@ class RigWebApp:
                 f"name='{html.escape(field)}'{attrs}{ph}>{err(field)}</div>"
             )
 
-        t3_capture_form = (
-            "<form method='post' action='/build/t3mp3st/capture'>"
+        selected_prepared = attackers_selected & {"t3mp3st", "harmbench"}
+
+        def visibility(name: str) -> str:
+            return (
+                " aria-hidden='false'" if name in selected_prepared
+                else " hidden aria-hidden='true'"
+            )
+
+        workflows_visibility = (
+            " aria-hidden='false'"
+            if selected_prepared & {"t3mp3st", "harmbench"}
+            else " hidden aria-hidden='true'"
+        )
+        prepared_workflow_fields = (
+            "<div class='prepared-workflows' id='prepared-workflows'"
+            + workflows_visibility + ">"
+            "<p class='note'>Capture or prepare is an out-of-band paid/compute "
+            "step. Measured replay still uses the normal admission and budget gates."
+            "</p><div class='workflow-grid'>"
+            "<section class='workflow-panel prepared-fields' id='prepared-t3mp3st' "
+            "data-prepared='t3mp3st'" + visibility("t3mp3st") + ">"
+            "<h3>T3MP3ST <span class='badge blue'>Capture - Replay</span></h3>"
+            "<div class='workflow-step'><h4>1. Capture plan bundle</h4>"
+            "<p class='note'>Calls only the pinned loopback planning service.</p>"
             "<div class='cols'>"
             + text_field("t3cap_corpus", "Corpus arm", "exact text arm to capture",
                          default="strongreject_official")
@@ -7287,22 +7372,33 @@ class RigWebApp:
                          default="0", kind="number")
             + text_field(
                 "t3cap_endpoint", "Planning endpoint",
-                "prestarted literal-loopback /api/general/plan route",
+                "literal-loopback /api/general/plan route",
                 default="http://127.0.0.1:3333/api/general/plan",
             )
             + text_field("t3cap_revision", "Upstream revision", "exact 40-hex commit")
             + text_field("t3cap_provider", "Source provider", "Op General provider")
             + text_field("t3cap_model", "Source model", "Op General model")
             + text_field(
-                "t3cap_out", "Output directory", "retained under the results root",
+                "t3cap_out", "Output directory", "retained under results",
                 default="runs/t3mp3st-captures",
             )
             + text_field("t3cap_timeout", "Timeout seconds", "per planning request",
                          default="120", kind="number")
-            + "</div><button type='submit' class='ghost'>Review capture</button></form>"
-        )
-        harm_capture_form = (
-            "<form method='post' action='/build/harmbench/prepare'>"
+            + "</div><div class='workflow-actions'><button type='submit' class='ghost' "
+            "formaction='/build/t3mp3st/capture' formmethod='post'>Review capture"
+            "</button></div></div>"
+            "<div class='workflow-step'><h4>2. Measured replay</h4>"
+            "<p class='note'>Use the bundle path and SHA-256 printed by capture.</p>"
+            + err("t3_replay") + "<div class='cols'>"
+            + text_field("t3_artifact", "Plan bundle",
+                         "ura-t3mp3st-plan-bundle/1 path")
+            + text_field("t3_artifact_sha", "Bundle SHA-256", "exact capture digest")
+            + "</div></div></section>"
+            "<section class='workflow-panel prepared-fields' id='prepared-harmbench' "
+            "data-prepared='harmbench'" + visibility("harmbench") + ">"
+            "<h3>HarmBench <span class='badge blue'>Prepare - Replay</span></h3>"
+            "<div class='workflow-step'><h4>1. Prepare generated cases</h4>"
+            "<p class='note'>Runs the pinned text-only HarmBench generation scripts.</p>"
             "<div class='cols'>"
             + text_field("hcap_repo", "HarmBench checkout", "clean pinned checkout",
                          default="/data/HarmBench")
@@ -7334,34 +7430,16 @@ class RigWebApp:
             + text_field("hcap_credentials", "Credential env names", "comma-separated names")
             + text_field("hcap_timeout", "Timeout seconds", "positive finite value",
                          kind="number")
-            + "</div></details><button type='submit' class='ghost'>Review prepare"
-            "</button></form>"
-        )
-        prepared_workflows = (
-            "<div class='card' id='prepared-workflows'><h2>Prepared attack workflows</h2>"
-            "<p class='note'>Capture or prepare first, then paste the retained output "
-            "below and run the normal measured lane. These are out-of-band paid/compute "
-            "steps, not no-call preflights.</p><div class='workflow-grid'>"
-            "<section class='workflow-panel'><h3>T3MP3ST "
-            "<span class='badge blue'>Capture - Replay</span></h3>"
-            + t3_capture_form + "</section>"
-            "<section class='workflow-panel'><h3>HarmBench "
-            "<span class='badge blue'>Prepare - Replay</span></h3>"
-            + harm_capture_form + "</section></div></div>"
-        )
-        prepared_replay_fields = (
-            "<div class='workflow-grid prepared-replay'>"
-            "<section class='workflow-panel prepared-fields' data-prepared='t3mp3st'>"
-            "<h3>T3MP3ST replay</h3><p class='note'>Use the bundle path and SHA-256 "
-            "printed by the completed capture job.</p>" + err("t3_replay")
-            + text_field("t3_artifact", "Plan bundle", "ura-t3mp3st-plan-bundle/1 path")
-            + text_field("t3_artifact_sha", "Bundle SHA-256", "exact capture digest")
-            + "</section><section class='workflow-panel prepared-fields' "
-            "data-prepared='harmbench'><h3>HarmBench replay</h3>"
-            "<p class='note'>Use the attacker config path printed by the completed "
-            "prepare job.</p>" + err("harm_replay")
-            + text_field("harm_config", "Capture config", "generated attackers.json path")
-            + "</section></div>"
+            + "</div></details><div class='workflow-actions'>"
+            "<button type='submit' class='ghost' "
+            "formaction='/build/harmbench/prepare' formmethod='post'>Review prepare"
+            "</button></div></div>"
+            "<div class='workflow-step'><h4>2. Measured replay</h4>"
+            "<p class='note'>Use the attacker config path printed by prepare.</p>"
+            + err("harm_replay") + "<div class='cols'>"
+            + text_field("harm_config", "Capture config",
+                         "generated attackers.json path")
+            + "</div></div></section></div></div>"
         )
 
         # Repeatable live-attestation receipt/digest rows.
@@ -7408,7 +7486,6 @@ class RigWebApp:
             "anything starts.</p>"
             + error_summary +
             hardware_card +
-            prepared_workflows +
             "<form method='post' action='/build' id='builder'>"
             # hidden composed fields
             "<input type='hidden' name='corpora'><input type='hidden' name='api'>"
@@ -7435,7 +7512,7 @@ class RigWebApp:
             "<div class='card'><h2>" + _icon("pulse") + "Attack frameworks</h2>"
             + err("attackers") +
             "<div class='checkgrid'>" + framework_boxes + "</div>"
-            + prepared_replay_fields + "</div>"
+            + prepared_workflow_fields + "</div>"
             "<div class='card'><h2>" + _icon("receipt") + "Judges &amp; defense"
             "</h2>" + err("judges") + "<div class='checkgrid'>" + judge_boxes
             + "</div><div class='cols'>"

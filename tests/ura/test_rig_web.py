@@ -74,6 +74,14 @@ def _isolated_app(tmp_path: Path) -> RigWebApp:
     )
 
 
+def _opening_tag(document: str, marker: str) -> str:
+    """Return the opening HTML tag containing *marker*."""
+
+    marker_at = document.index(marker)
+    start = document.rfind("<", 0, marker_at)
+    return document[start:document.index(">", marker_at) + 1]
+
+
 def test_command_construction_is_typed_and_allowlisted() -> None:
     argv = build_argv("level1_evidence", {
         "--eligibility": "runs/a/eligibility.json",
@@ -472,6 +480,11 @@ def test_t3mp3st_is_selectable_and_requires_a_validated_capture_bundle(
         assert "data-fw='t3mp3st'" in page
         assert "prepare + replay" in page
         assert "t3mp3st" in _SUGGEST_STATIC["attackers"]
+        checkbox = _opening_tag(page, "data-fw='t3mp3st'")
+        panel = _opening_tag(page, "id='prepared-t3mp3st'")
+        assert "aria-controls='prepared-t3mp3st'" in checkbox
+        assert "aria-expanded='false'" in checkbox and " checked" not in checkbox
+        assert " hidden" in panel and "aria-hidden='true'" in panel
 
         _status, _content_type, body = app.handle("POST", "/build", {
             "mode": "dry_run",
@@ -483,6 +496,10 @@ def test_t3mp3st_is_selectable_and_requires_a_validated_capture_bundle(
         })
         text = body.decode("utf-8")
         assert "T3MP3ST plan bundle path is required" in text
+        checkbox = _opening_tag(text, "data-fw='t3mp3st'")
+        panel = _opening_tag(text, "id='prepared-t3mp3st'")
+        assert " checked" in checkbox and "aria-expanded='true'" in checkbox
+        assert " hidden" not in panel and "aria-hidden='false'" in panel
         assert len(app.jobs) == started
     finally:
         app.close()
@@ -501,6 +518,11 @@ def test_harmbench_is_selectable_and_requires_its_generated_capture_config(
         assert "data-arm='harmbench_text'" in page
         assert "data-arm='harmbench_multimodal'" in page
         assert "harmbench" in _SUGGEST_STATIC["attackers"]
+        checkbox = _opening_tag(page, "data-fw='harmbench'")
+        panel = _opening_tag(page, "id='prepared-harmbench'")
+        assert "aria-controls='prepared-harmbench'" in checkbox
+        assert "aria-expanded='false'" in checkbox and " checked" not in checkbox
+        assert " hidden" in panel and "aria-hidden='true'" in panel
 
         _status, _content_type, body = app.handle("POST", "/build", {
             "mode": "dry_run",
@@ -512,7 +534,90 @@ def test_harmbench_is_selectable_and_requires_its_generated_capture_config(
         })
         text = body.decode("utf-8")
         assert "HarmBench capture config path is required" in text
+        checkbox = _opening_tag(text, "data-fw='harmbench'")
+        panel = _opening_tag(text, "id='prepared-harmbench'")
+        assert " checked" in checkbox and "aria-expanded='true'" in checkbox
+        assert " hidden" not in panel and "aria-hidden='false'" in panel
         assert len(app.jobs) == started
+    finally:
+        app.close()
+
+
+def test_prepared_workflows_live_under_attack_frameworks_without_nested_forms(
+    tmp_path: Path,
+) -> None:
+    app = _app(tmp_path)
+    try:
+        page = app.handle("GET", "/build")[2].decode("utf-8")
+        builder_at = page.index("<form method='post' action='/build' id='builder'>")
+        frameworks_at = page.index("Attack frameworks")
+        workflows_at = page.index("id='prepared-workflows'")
+        assert builder_at < frameworks_at < workflows_at
+        assert page.count("<form ") == 1
+        assert "Prepared attack workflows" not in page
+        assert (
+            "formaction='/build/t3mp3st/capture' formmethod='post'" in page
+        )
+        assert (
+            "formaction='/build/harmbench/prepare' formmethod='post'" in page
+        )
+        assert "panel.hidden=!visible" in page
+        assert "panel.setAttribute('aria-hidden'" in page
+        assert "box.setAttribute('aria-expanded'" in page
+
+        _status, _content_type, css_body = app.handle("GET", "/static/style.css")
+        css = css_body.decode("utf-8")
+        assert ".prepared-workflows { border-top:1px solid var(--line);" in css
+        assert "padding-top:1rem;" in css
+        assert ".workflow-panel { border:1px solid var(--line);" in css
+        assert "align-content:start; gap:.9rem;" in css
+        assert ".workflow-step { display:grid; gap:.7rem; padding:.8rem;" in css
+        assert ".workflow-panel details {" in css and "padding:.65rem;" in css
+        assert ".workflow-actions {" in css and "gap:.65rem;" in css
+        assert "@media (max-width:400px) {" in css
+        assert (
+            ".workflow-grid, .workflow-panel .cols { "
+            "grid-template-columns:minmax(0,1fr); }" in css
+        )
+        assert (
+            ".prepared-workflows, .workflow-panel, .workflow-step {" in css
+            and "min-width:0; max-width:100%;" in css
+        )
+
+        _command, _values, params = app._compose_from_builder({
+            "mode": "dry_run", "corpora": "synth", "attackers": "replay",
+            "judges": "rules", "out": "runs/dry", "seeds": "0",
+            "t3cap_model": "not-a-campaign-field",
+            "hcap_repo": "not-a-campaign-field",
+            "t3_artifact": "runs/stale-t3.json",
+            "t3_artifact_sha": "a" * 64,
+            "harm_config": "runs/stale-harm.json",
+        })
+        assert "t3cap_model" not in params and "hcap_repo" not in params
+        assert "t3_artifact" not in params and "t3_artifact_sha" not in params
+        assert "harm_config" not in params
+        projection = app._projection_params({
+            **params, "t3cap_model": "ignored", "hcap_repo": "ignored",
+            "t3_artifact": "runs/stale-t3.json",
+            "t3_artifact_sha": "a" * 64,
+            "harm_config": "runs/stale-harm.json",
+        })
+        assert "t3cap_model" not in projection and "hcap_repo" not in projection
+        assert "t3_artifact" not in projection and "harm_config" not in projection
+
+        _command, _values, selected = app._compose_from_builder({
+            "mode": "dry_run", "corpora": "synth",
+            "attackers": "t3mp3st,harmbench", "judges": "rules",
+            "out": "runs/dry", "seeds": "0",
+            "t3_artifact": "runs/selected-t3.json",
+            "t3_artifact_sha": "b" * 64,
+            "harm_config": "runs/selected-harm.json",
+        })
+        assert selected["t3_artifact"] == "runs/selected-t3.json"
+        assert selected["harm_config"] == "runs/selected-harm.json"
+        selected_projection = app._projection_params(selected)
+        assert selected_projection["t3_artifact"] == "runs/selected-t3.json"
+        assert selected_projection["harm_config"] == "runs/selected-harm.json"
     finally:
         app.close()
 
@@ -692,11 +797,28 @@ def test_prepared_capture_forms_validate_preview_and_start_exact_commands(
             "t3cap_model": "source-model", "t3cap_timeout": "120",
             "t3cap_out": str(results / "t3-captures"),
         }
-        status, _, body = app.handle("POST", "/build/t3mp3st/capture", t3_form)
+        status, _, body = app.handle("POST", "/build/t3mp3st/capture", {
+            **t3_form, "t3cap_revision": "not-a-commit",
+            "t3cap_limit": "",
+            "corpora": "unrelated-builder-value",
+        })
+        text = body.decode("utf-8")
+        checkbox = _opening_tag(text, "data-fw='t3mp3st'")
+        panel = _opening_tag(text, "id='prepared-t3mp3st'")
+        assert status == 200 and "must be an exact 40-hex commit" in text
+        assert " checked" in checkbox and "aria-expanded='true'" in checkbox
+        assert " hidden" not in panel and "aria-hidden='false'" in panel
+        assert "value='1'" not in _opening_tag(text, "name='t3cap_limit'")
+        assert "unrelated-builder-value" not in text
+
+        status, _, body = app.handle("POST", "/build/t3mp3st/capture", {
+            **t3_form, "corpora": "unrelated-builder-value",
+        })
         text = body.decode("utf-8")
         assert status == 200 and not captured
         assert "Out-of-band paid/compute step" in text
         assert "experiments.capture_t3mp3st" in text
+        assert "unrelated-builder-value" not in text
         status, location, _ = app.handle(
             "POST", "/build/t3mp3st/capture", {**t3_form, "confirm": "yes"},
         )
@@ -712,6 +834,22 @@ def test_prepared_capture_forms_validate_preview_and_start_exact_commands(
             "hcap_artifact_out": str(results / "harm" / "capture.json"),
             "hcap_config_out": str(results / "harm" / "attackers.json"),
         }
+        status, _, body = app.handle("POST", "/build/harmbench/prepare", {
+            **harm_form, "hcap_revision": "not-a-commit",
+            "hcap_experiment": "",
+            "judges": "unrelated-builder-value",
+        })
+        text = body.decode("utf-8")
+        checkbox = _opening_tag(text, "data-fw='harmbench'")
+        panel = _opening_tag(text, "id='prepared-harmbench'")
+        assert status == 200 and "must be an exact 40-hex commit" in text
+        assert " checked" in checkbox and "aria-expanded='true'" in checkbox
+        assert " hidden" not in panel and "aria-hidden='false'" in panel
+        assert "value='llama2_7b'" not in _opening_tag(
+            text, "name='hcap_experiment'",
+        )
+        assert "unrelated-builder-value" not in text
+
         status, _, body = app.handle("POST", "/build/harmbench/prepare", harm_form)
         assert status == 200 and "experiments.harmbench_capture" in body.decode()
         status, location, _ = app.handle(
