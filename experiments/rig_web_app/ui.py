@@ -449,13 +449,14 @@ var counts={api:0,local:0};
 form.querySelectorAll('.modelrow').forEach(function(row){
 var mods=(row.getAttribute('data-mods')||'').split(',').filter(Boolean);
 var scopeOk=intersects(mods,sc);var kind=row.getAttribute('data-kind')||'';
+var backend=row.getAttribute('data-backend')||'';
 var filterOk=true;
 if(kind==='api'){
 filterOk=provider==='all'||row.getAttribute('data-provider')===provider;
-}else if(kind==='local'){
+}else if(kind==='local'&&backend==='vllm'){
 var name=(row.getAttribute('data-name')||'').toLowerCase();
 var raw=row.getAttribute('data-params-b')||'';var params=parseFloat(raw);
-var paramsOk=Number.isFinite(params)?params<=max:max>=3000;
+var paramsOk=Number.isFinite(params)?params<=max:includeUnknown;
 var fit=row.getAttribute('data-compatible')||'unknown';
 var compatOk=fit==='true'||(fit==='false'&&!compatible)||
 (fit==='unknown'&&includeUnknown);
@@ -464,7 +465,8 @@ var visible=scopeOk&&filterOk;row.style.display=visible?'':'none';
 // A presentation filter never changes a selected target. Modality scope keeps
 // its established behavior because an out-of-scope target cannot serve a lane.
 if(!scopeOk){var cb=row.querySelector('.modelbox');if(cb){cb.checked=false;}}
-if(visible&&Object.prototype.hasOwnProperty.call(counts,kind)){counts[kind]++;}
+if(visible&&kind==='api'){counts.api++;}
+if(visible&&kind==='local'&&backend==='vllm'){counts.local++;}
 });
 setFilterCount('api',counts.api);setFilterCount('local',counts.local);}
 function applyScope(){var sc=scopeSet();
@@ -477,7 +479,8 @@ form.querySelectorAll('.modgroup').forEach(function(g){
 var any=Array.prototype.some.call(g.querySelectorAll('.check'),
 function(l){return l.style.display!=='none';});g.style.display=any?'':'none';});
 // Frameworks must share a selected modality. Target rows combine that scope
-// with their independent provider/name/size/compatibility presentation filters.
+// with their independent filters. vLLM uses name/size/fit filters; Ollama
+// rows represent already-pulled daemon artifacts and only follow modality.
 form.querySelectorAll('.fwrow').forEach(function(row){
 var mods=(row.getAttribute('data-mods')||'').split(',').filter(Boolean);
 var ok=intersects(mods,sc);row.style.display=ok?'':'none';

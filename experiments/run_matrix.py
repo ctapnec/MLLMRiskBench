@@ -884,7 +884,10 @@ def _load_local_config(
         if (
             not isinstance(modalities, list)
             or not modalities
-            or any(item not in {"text", "image"} for item in modalities)
+            or any(
+                not isinstance(item, str) or item not in {"text", "image"}
+                for item in modalities
+            )
             or "text" not in modalities
             or len(set(modalities)) != len(modalities)
         ):
@@ -892,8 +895,15 @@ def _load_local_config(
                 f"local config {spec!r} requires unique declared text[/image] modalities"
             )
         backend = spec.split(":", 1)[0].lower()
+        config = dict(config)
         revision = config.get("revision")
         digest = config.get("digest")
+        if isinstance(revision, str):
+            revision = revision.lower()
+            config["revision"] = revision
+        if isinstance(digest, str):
+            digest = digest.lower()
+            config["digest"] = digest
         if backend == "vllm":
             if bool(revision) == bool(digest):
                 raise ValueError(
@@ -965,7 +975,6 @@ def _load_local_config(
                 selected_hardware,
                 default_quantization=quantization,
             )
-            config = dict(config)
             config["parameter_count_b"] = profile["parameter_count_b"]
             config["multi_gpu_compatible"] = profile["multi_gpu_compatible"]
             config["multi_gpu_support_basis"] = profile["multi_gpu_support_basis"]
@@ -1011,6 +1020,7 @@ def _load_local_config(
             if (
                 set(config) & OLLAMA_FORBIDDEN_LOCAL_CONFIG_FIELDS
                 or not isinstance(digest, str)
+                or re.fullmatch(r"[0-9a-f]{64}", digest) is None
             ):
                 raise ValueError(
                     f"Ollama config {spec!r} requires digest and forbids vLLM fields"

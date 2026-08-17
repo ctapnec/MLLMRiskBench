@@ -148,6 +148,30 @@ def test_local_config_rejects_invalid_context_caps_before_target_construction(
         )
 
 
+def test_local_config_rejects_non_string_modalities_without_crashing(
+    tmp_path: Path,
+) -> None:
+    config = _config()
+    config["modalities"] = [{}]
+    path = _write_config(tmp_path, config)
+
+    with pytest.raises(ValueError, match="unique declared text"):
+        run_matrix._load_local_config(
+            str(path), [SPEC], hardware=_rig_hardware()
+        )
+
+
+def test_local_config_canonicalizes_uppercase_identity_hex(tmp_path: Path) -> None:
+    config = _config()
+    config["revision"] = "A" * 40
+    path = _write_config(tmp_path, config)
+
+    loaded, _artifact = run_matrix._load_local_config(
+        str(path), [SPEC], hardware=_rig_hardware()
+    )
+    assert loaded[SPEC]["revision"] == "a" * 40
+
+
 def test_context_cap_is_not_a_generation_limit_alias(tmp_path: Path) -> None:
     config = _config()
     config["max_tokens"] = 15361

@@ -44,7 +44,7 @@ class BuilderModelsMixin:
         """Selectable targets as (spec, label, modalities, kind).
 
         ``kind`` is 'api' for hosted routes (composed into --api) or 'local'
-        for on-rig vLLM targets (composed into --local). Modalities come from
+        for on-rig vLLM or Ollama targets (composed into --local). Modalities come from
         each roster entry so the builder can hide a target that cannot handle a
         selected modality. Local targets are the hand-configured local-targets
         registry plus the vLLM roster (the models the rig's vLLM can serve;
@@ -89,8 +89,10 @@ class BuilderModelsMixin:
                 for modality in self._entry_modalities(entry)
                 if modality in {"text", "image"}
             )
-            if supported:
-                options.append((key, key, supported, "local"))
+            # Keep an explicitly configured but invalid row visible so Build
+            # can disable it and explain the exact config error. Dropping it
+            # would falsely claim that no local target was configured.
+            options.append((key, key, supported or ("text",), "local"))
         try:
             # Keep the full roster in the document. The checked-by-default
             # compatibility filter hides non-fitting rows, and disabling them
@@ -147,7 +149,18 @@ class BuilderModelsMixin:
         from experiments.local_targets import model_hardware_profile  # noqa: PLC0415
 
         profile_entry = dict(entry)
-        model_override = str(model_quantization).strip().lower()
+        if "quantization" in profile_entry:
+            profile_entry["quantization"] = self._validated_local_quantization(
+                spec,
+                profile_entry["quantization"],
+                label="configured quantization",
+            )
+        model_override = self._validated_local_quantization(
+            spec, model_quantization, label="per-model quantization"
+        )
+        default_override = self._validated_local_quantization(
+            spec, default_quantization, label="default quantization"
+        )
         if model_override and model_override != "auto":
             profile_entry["quantization"] = model_override
         elif model_override == "auto":
@@ -156,8 +169,31 @@ class BuilderModelsMixin:
             spec,
             profile_entry,
             self.gpu_hardware,
-            default_quantization=str(default_quantization).strip().lower(),
+            default_quantization=default_override,
         )
+
+    @staticmethod
+    def _validated_local_quantization(
+        spec: str,
+        value: object,
+        *,
+        label: str,
+    ) -> str:
+        normalized = value.strip().lower() if isinstance(value, str) else ""
+        if not isinstance(value, str) or normalized not in {
+            "",
+            "auto",
+            "none",
+            "fp8",
+            "bitsandbytes",
+            "awq",
+            "gptq",
+        }:
+            raise ValueError(
+                f"local target {spec!r} {label} must be auto, none, fp8, "
+                "bitsandbytes, awq, or gptq"
+            )
+        return normalized
 
     @staticmethod
     def _local_max_model_len(
@@ -186,10 +222,63 @@ class BuilderModelsMixin:
             raise ValueError(f"local target {spec!r} {exc}") from exc
 
     @staticmethod
+    def _local_gpu_memory_utilization(
+        spec: str, entry: Mapping[str, object]
+    ) -> float:
+        """Validate the vLLM allocation fraction with the shared CLI bounds."""
+
+        value = entry.get("gpu_memory_utilization", 0.90)
+        if (
+            isinstance(value, bool)
+            or not isinstance(value, (int, float))
+            or not 0.1 <= float(value) <= 0.95
+        ):
+            raise ValueError(
+                f"local target {spec!r} gpu_memory_utilization must be in "
+                "[0.1, 0.95]"
+            )
+        return float(value)
+
+    @staticmethod
+    def _validated_local_modalities(
+        spec: str,
+        entry: Mapping[str, object],
+        *,
+        project_richer: bool = False,
+    ) -> list[str]:
+        """Return the strict text/image declaration consumed by the Runner.
+
+        The maintained vLLM roster may truthfully declare capabilities, such
+        as audio, that this harness cannot send. In that case ``project_richer``
+        keeps the source declaration valid but returns only the supported
+        text/image intersection. Ollama's operator config is already the exact
+        measured contract, so it may not contain unsupported modalities.
+        """
+
+        modalities = entry.get("modalities")
+        if (
+            not isinstance(modalities, list)
+            or not modalities
+            or any(not isinstance(item, str) for item in modalities)
+            or len(set(modalities)) != len(modalities)
+        ):
+            raise ValueError(
+                f"local target {spec!r} config requires unique declared "
+                "text[/image] modalities"
+            )
+        supported = [item for item in modalities if item in {"text", "image"}]
+        if "text" not in supported or (not project_richer and supported != modalities):
+            raise ValueError(
+                f"local target {spec!r} config requires unique declared "
+                "text[/image] modalities"
+            )
+        return supported
+
+    @staticmethod
     def _validate_ollama_local_entry(
         spec: str, entry: Mapping[str, object]
     ) -> None:
-        """Reject vLLM-only execution fields before Web can strip them."""
+        """Match the measured Ollama identity and modality CLI contract."""
 
         from ura.targets.local import (  # noqa: PLC0415
             OLLAMA_FORBIDDEN_LOCAL_CONFIG_FIELDS,
@@ -201,6 +290,12 @@ class BuilderModelsMixin:
                 f"local target {spec!r} Ollama config forbids vLLM fields: "
                 + ", ".join(forbidden)
             )
+        digest = entry.get("digest")
+        if not isinstance(digest, str) or re.fullmatch(r"[0-9a-fA-F]{64}", digest) is None:
+            raise ValueError(
+                f"local target {spec!r} Ollama config requires a 64-hex digest"
+            )
+        BuilderModelsMixin._validated_local_modalities(spec, entry)
 
     def _materialize_selected_local_config(
         self,
@@ -232,7 +327,8 @@ class BuilderModelsMixin:
             if spec.startswith("ollama:"):
                 self._validate_ollama_local_entry(spec, entry)
                 selected[spec] = {
-                    key: value for key, value in entry.items() if key in {"digest", "modalities"}
+                    "digest": str(entry["digest"]).lower(),
+                    "modalities": self._validated_local_modalities(spec, entry),
                 }
                 continue
             model_override = str((quantization_overrides or {}).get(spec, "")).strip().lower()
@@ -244,7 +340,16 @@ class BuilderModelsMixin:
             )
             max_model_len = self._local_max_model_len(spec, entry)
             max_tokens = self._local_max_tokens(spec, entry)
+            gpu_memory_utilization = self._local_gpu_memory_utilization(spec, entry)
             resolved = {key: value for key, value in entry.items() if key in allowed}
+            for identity_key in ("revision", "digest"):
+                identity_value = resolved.get(identity_key)
+                if isinstance(identity_value, str):
+                    resolved[identity_key] = identity_value.lower()
+            resolved["modalities"] = self._validated_local_modalities(
+                spec, entry, project_richer=True
+            )
+            resolved["gpu_memory_utilization"] = gpu_memory_utilization
             if max_model_len is not None:
                 resolved["max_model_len"] = max_model_len
                 if max_tokens > max_model_len:
@@ -252,16 +357,6 @@ class BuilderModelsMixin:
                         f"local target {spec!r} max_tokens must not exceed "
                         "max_model_len"
                     )
-            raw_modalities = resolved.get("modalities")
-            if isinstance(raw_modalities, list):
-                resolved["modalities"] = [
-                    modality for modality in raw_modalities if modality in {"text", "image"}
-                ]
-            if "text" not in resolved.get("modalities", []):
-                raise ValueError(
-                    f"local target {spec!r} has no text/image modality supported "
-                    "by the local Runner adapter"
-                )
             resolved["parameter_count_b"] = profile["parameter_count_b"]
             # Preserve the evidence boundary: an absent roster declaration stays
             # absent here.  The shared CLI resolver will apply the requested

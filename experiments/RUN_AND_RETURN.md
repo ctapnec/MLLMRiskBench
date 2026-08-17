@@ -885,8 +885,9 @@ support was declared or assumed. No provider/model call is made by this
 inventory. `python -m experiments.local_targets` prints the GPU/profile data for
 CLI inspection.
 
-In the Build tab, hosted targets have a provider selector whose default is
-`All`. Local vLLM targets have four combinative presentation filters: an
+In the Build tab, hosted, Local vLLM, and Local Ollama targets are separate
+groups. Hosted targets have a provider selector whose default is `All`. Local
+vLLM targets have four combinative presentation filters: an
 immediate case-insensitive name substring, one synchronized slider/numeric
 maximum from 0.01B (10M) to 3000B (3T), and a visually separate `Automatic
 16/8/4-bit fit` card selected by default, plus an unchecked `Include unknown
@@ -901,7 +902,22 @@ Expert/MoE-ambiguous identifiers (for example Mixtral expert counts,
 Llama-4 `E` counts, or `MoE`) do not produce a guessed dense parameter total.
 They stay fit-unknown and hidden unless `Include unknown fit` is selected or the
 roster has an exact `parameter_count_b`; no download or fit is claimed from the
-name.
+name. Once `Include unknown fit` is selected, an unknown-size row remains
+visible at every maximum-parameter setting. Known parameter counts always obey
+the selected maximum. The checkbox controls visibility only and does not make
+hardware-auto valid for an unknown fit.
+
+Local Ollama rows do not use those vLLM name, parameter, fit, or precision
+controls. They refer to model tags already pulled into a separately managed
+local Ollama daemon. Each `ollama:<model-tag>` entry in `local-targets` requires
+the exact 64-hex digest reported by `/api/tags` and a unique explicit modality
+list containing `text` and optionally `image`. vLLM-only revision,
+quantization, tensor parallelism, memory utilization, parameter count, output
+and context bounds, and unknown-fit fields are forbidden. The pulled artifact
+fixes precision. Runner
+uses the daemon HTTP API through the Python standard library, so no Ollama
+Python SDK is required; the daemon and matching pulled tag must exist before a
+live run.
 
 Automatic fit is deliberately simple and conservative: after the configured
 `gpu_memory_utilization`, it budgets 2.2 GiB per billion parameters for
@@ -2584,17 +2600,27 @@ output later passes the normal measured-evidence contracts and eligibility
 rules.
 
 The dashboard and Build tab show the startup OS/CPU/core/RAM and complete NVIDIA
-GPU inventory. Build target filters are independent and combinative: hosted API
-provider (`All` by default), plus local vLLM name substring, 10M-3T maximum
+GPU inventory. Build separates hosted API, Local vLLM, and Local Ollama groups.
+Target filters are independent and combinative: hosted API provider (`All` by
+default), plus Local vLLM name substring, 10M-3T maximum
 parameter count, the separate automatic 16/8/4-bit fit card (on by default), and
 an unchecked `Include unknown fit` control. Known 16/8/4-bit recommendations use
-green/blue/amber badges; unknown fit is gray. Compatible local models are
+green/blue/amber badges; unknown fit is gray. The unknown-fit checkbox exposes
+an unknown-size row regardless of the selected maximum, while known sizes still
+obey the cap. Compatible local vLLM models are
 single-choice radios;
 an unpinned roster row may be selected for planning, but non-dry submission
 rejects it before launch. An unknown-fit row also needs an explicit per-model
 precision, which binds `allow_unknown_fit: true`; auto remains blocked, as does
 every known incompatibility. These filters are convenience only; shared CLI/UI
 admission remains authoritative.
+
+Local Ollama rows follow only selected modality. Each row describes a model
+already pulled into an external local daemon and requires its exact 64-hex
+`/api/tags` digest plus a unique modality list containing `text` and optionally
+`image`. It rejects vLLM-only fit and quantization fields and exposes no fit or
+precision selector because precision belongs to the pulled artifact. Runner
+uses the daemon's HTTP API directly and needs no Ollama Python SDK.
 
 Source arms without an integrated evaluator remain visible/selectable with a
 concise `no evaluator` badge and one custom hover/focus tooltip containing the
@@ -2615,6 +2641,37 @@ the console leaves detached jobs running; the explicit Stop action terminates
 the complete child tree. Builder preflights are kept under
 `<results-root>/preflight`; changing only execution caps may reuse the same exact
 projection, while a semantic lane change requires a new preflight.
+
+The Jobs table renders each full start date and time in the browser's local time
+zone. State chips, free-text search, From, and To filters compose. Unless the
+URL supplies either bound, From defaults to exactly seven days before the
+current browser time and To defaults to that current time. Both bounds are
+inclusive at the precision selected by the datetime input. Compact tags avoid
+repeating terminal prose: console-owned jobs use `running`, `passed`, `failed`,
+or `orphaned`; external engineering campaigns can also use `reported running`,
+`partial`, `blocked`, `stopped`, or `unknown`. `Reported running` mirrors an
+external marker without asserting operating-system process liveness. A terminal
+campaign is `partial` when declared work is failed, skipped, pending, or when
+unplanned task events exist.
+
+An external campaign's `ENGINEERING_ONLY.json` marker may declare a strict,
+unique `planned_tasks` list and a strict, unique `model_tasks` subset. Each task
+name is a non-empty string of at most 256 characters; phase names `bootstrap`
+and `stage2` are not tasks. Event logs determine task-process counts for
+succeeded, failed, skipped, active, and pending work. A successful task process
+does not imply that it called a model, and a call reservation records capacity,
+not execution.
+
+The optional `model-execution.jsonl` is a bounded operational self-report. Each
+complete row has event `model_execution`, references one declared model task,
+and gives nonnegative integer `attempted_calls` and `successful_generations`,
+with successful generations no greater than attempts. Duplicate, undeclared,
+contradictory, oversized, or malformed rows invalidate the report. If the file
+is supplied for a terminal campaign, it must contain exactly one valid row for
+every declared model task, including a `0`/`0` row for a pending or skipped task.
+This report can distinguish a completed support stub from reported generation,
+but it is not confirmed execution or scientific evidence. Only validated,
+completion-bound response artifacts establish actual calls and results.
 
 Console state (jobs with their exact argv and builder parameters, the
 campaign-run registry, recorded per-artifact token usage, and the report

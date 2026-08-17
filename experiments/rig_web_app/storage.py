@@ -277,6 +277,7 @@ class ConsoleDB:
                             "INSERT INTO runs(job_id,kind,command,out_dir,pin,"
                             "state,exit_code,created_at) VALUES(?,?,?,?,?,?,?,?) "
                             "ON CONFLICT(job_id) DO UPDATE SET "
+                            "kind=excluded.kind,command=excluded.command,"
                             "state=excluded.state,exit_code=excluded.exit_code,"
                             "out_dir=excluded.out_dir,pin=excluded.pin",
                             (

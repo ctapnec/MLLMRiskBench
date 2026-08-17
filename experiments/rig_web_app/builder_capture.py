@@ -344,6 +344,22 @@ class BuilderCaptureMixin:
         job = self.start_job(command, values)
         return 303, f"/jobs/{job.job_id}", b""
 
+    def _builder_params(self, form: Mapping[str, str]) -> dict[str, str]:
+        """Normalize builder fields without materializing runtime config."""
+
+        params = {
+            key: str(value).strip()
+            for key, value in form.items()
+            if (not key.startswith(("t3cap_", "hcap_")) and str(value).strip())
+        }
+        attackers = set(self._split_list(params.get("attackers", "")))
+        if "t3mp3st" not in attackers:
+            params.pop("t3_artifact", None)
+            params.pop("t3_artifact_sha", None)
+        if "harmbench" not in attackers:
+            params.pop("harm_config", None)
+        return params
+
     def _compose_from_builder(
         self,
         form: Mapping[str, str],
@@ -357,17 +373,7 @@ class BuilderCaptureMixin:
         builder form (persisted with the job and replayed on re-render).
         """
 
-        params = {
-            key: str(value).strip()
-            for key, value in form.items()
-            if (not key.startswith(("t3cap_", "hcap_")) and str(value).strip())
-        }
-        attackers = set(self._split_list(params.get("attackers", "")))
-        if "t3mp3st" not in attackers:
-            params.pop("t3_artifact", None)
-            params.pop("t3_artifact_sha", None)
-        if "harmbench" not in attackers:
-            params.pop("harm_config", None)
+        params = self._builder_params(form)
         mode = params.get("mode", "measured")
         dry = mode == "dry_run" or (
             mode == "diagnostic_canary" and params.get("canary_dry") == "on"

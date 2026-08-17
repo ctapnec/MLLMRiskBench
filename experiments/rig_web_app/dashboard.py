@@ -15,7 +15,7 @@ from .catalog import _WARNINGS_FILE, _WARNINGS_MAX, _WARNING_TONES, _CAMPAIGN_PO
 
 from .ui import _page
 
-from .artifacts import StageInventory, _TOKEN_CATEGORIES, iter_completed_markers
+from .artifacts import StageInventory, _TOKEN_CATEGORIES, iter_completed_markers, run_kind
 
 from .reports import (
     _LEVEL2_STRATUM_FIELDS,
@@ -502,16 +502,33 @@ class DashboardMixin:
                 "restarts.</p></div>"
             )
         tone = {"complete": "green", "failed": "red", "running": "blue"}
+        work_labels = {
+            "preflight": "preflight - no model call",
+            "dry_run": "offline dry run - no model call",
+            "diagnostic_canary": "diagnostic model-capable run",
+            "attestation_probe": "model probe",
+            "measured": "model campaign",
+        }
         rows = []
         for row in runs:
             state = str(row["state"] or "")
+            state_tag = "passed" if state == "complete" else state
+            kind = str(row["kind"] or "")
+            restored_job = self.jobs.get(str(row["job_id"] or ""))
+            if restored_job is not None:
+                # Older rows may carry a pre-fix run-kind label. The exact
+                # persisted argv is authoritative for this operational view.
+                kind = run_kind(restored_job.command, restored_job.argv) or kind
             out = str(row["out_dir"] or "")
             link = f"<a href='/artifacts?path={quote(out)}'>{html.escape(out)}</a>" if out else "-"
-            when = time.strftime("%m-%d %H:%M", time.localtime(float(row["created_at"] or 0)))
+            when = time.strftime(
+                "%Y-%m-%d %H:%M:%S", time.localtime(float(row["created_at"] or 0))
+            )
             rows.append(
                 f"<tr><td>{when}</td>"
                 f"<td><span class='badge {tone.get(state, 'gray')}'>"
-                f"{html.escape(str(row['kind'] or ''))}</span></td>"
+                f"{html.escape(state_tag)}</span></td>"
+                f"<td>{html.escape(work_labels.get(kind, kind or 'unknown'))}</td>"
                 f"<td>{html.escape(str(row['command'] or ''))}</td>"
                 f"<td>{link}</td>"
                 f"<td><code>{html.escape(str(row['pin'] or '')[:10])}</code>"
@@ -519,11 +536,13 @@ class DashboardMixin:
             )
         return (
             "<div class='card'><h2>" + _icon("book") + "Campaign runs</h2>"
-            "<div class='scroll'><table><tr><th>When</th><th>Kind</th>"
+            "<div class='scroll'><table><tr><th>When</th><th>State</th><th>Work</th>"
             "<th>Command</th><th>Output</th><th>Pin</th></tr>" + "".join(rows) + "</table></div>"
-            "<p class='note'>Every rig_check/run_matrix lane, recorded as it "
-            "finishes and durable across restarts. This is an operational "
-            "index; the validated artifacts it links remain authoritative.</p>"
+            "<p class='note'>This is an operational process registry. Passed "
+            "means the CLI exited with status 0; it does not by itself prove "
+            "that a model generated a response. Preflight and offline dry-run "
+            "rows make no model calls. For model-capable rows, only the linked "
+            "validated artifacts and recorded usage establish execution.</p>"
             "</div>"
         )
 

@@ -26,14 +26,58 @@ from .catalog import (
 
 from .ui import _page, _badges_html, _human_size, _human_duration, _crumbs
 
-from .artifacts import _PIPELINE_STAGES, artifact_inventory, _pipeline_svg, Job
+from .artifacts import _PIPELINE_STAGES, artifact_inventory, _pipeline_svg, Job, run_kind
 from .campaigns import EngineeringCampaign
 
 
 _DASHBOARD_RECENT_FAILURE_LIMIT = 5
+_DASHBOARD_RECENT_PARTIAL_LIMIT = 5
 
 
 class PagesMixin:
+    @staticmethod
+    def _job_status_tag(state: str) -> str:
+        return "passed" if state == "complete" else state
+
+    @staticmethod
+    def _job_work_label(job: Job) -> str:
+        kind = run_kind(job.command, job.argv)
+        if kind == "preflight":
+            return "preflight"
+        if kind == "dry_run":
+            return "offline dry run"
+        if kind == "attestation_probe":
+            return "model probe"
+        if kind == "diagnostic_canary":
+            return "diagnostic model run"
+        if kind == "measured":
+            return "model campaign"
+        if job.command == "capture_t3mp3st":
+            return "model capture"
+        if job.command == "harmbench_capture":
+            return "preparation"
+        return "tool / validation"
+
+    @staticmethod
+    def _job_execution_label(job: Job) -> str:
+        kind = run_kind(job.command, job.argv)
+        if kind in {"preflight", "dry_run"}:
+            return "no model call"
+        if job.command == "harmbench_capture":
+            methods = [
+                job.argv[index + 1]
+                for index, value in enumerate(job.argv[:-1])
+                if value == "--method"
+            ]
+            if methods and all(method.casefold() == "directrequest" for method in methods):
+                return "no model call"
+            return "verify capture artifact"
+        if kind in {"attestation_probe", "diagnostic_canary", "measured"}:
+            return "verify artifacts"
+        if job.command == "capture_t3mp3st":
+            return "verify capture artifact"
+        return "not applicable"
+
     @staticmethod
     def _playbook_card() -> str:
         steps = (
@@ -183,8 +227,28 @@ class PagesMixin:
         job_states = [(job, job.state()) for job in jobs]
         running_jobs = [job for job, state in job_states if state == "running"]
         failed_jobs = [job for job, state in job_states if state == "failed"]
+        indeterminate_jobs = [
+            (job, state)
+            for job, state in job_states
+            if state in {"orphaned", "unknown"}
+        ]
         running_campaigns = [campaign for campaign in campaigns if campaign.state == "running"]
-        failed_campaigns = [campaign for campaign in campaigns if campaign.state == "failed"]
+        failed_campaigns = [
+            campaign for campaign in campaigns if campaign.status_tag == "failed"
+        ]
+        blocked_stopped_campaigns = [
+            campaign
+            for campaign in campaigns
+            if campaign.status_tag in {"blocked", "stopped"}
+        ]
+        indeterminate_campaigns = [
+            campaign
+            for campaign in campaigns
+            if campaign.status_tag in {"orphaned", "unknown"}
+        ]
+        partial_campaigns = [
+            campaign for campaign in campaigns if campaign.status_tag == "partial"
+        ]
         counts, truncated = artifact_inventory(self.results_root)
         disk_html = "<p class='note'>disk usage unavailable</p>"
         try:
@@ -221,12 +285,28 @@ class PagesMixin:
             "<span class='label'>jobs (console + external)</span></div></div>"
             "<div class='card'><div class='stat'>"
             f"<span class='value'><span class='dot blue'></span>"
-            f"{len(running_jobs) + len(running_campaigns)}</span>"
-            "<span class='label'>running / last recorded active</span></div></div>"
+            f"{len(running_jobs)}</span>"
+            "<span class='label'>running (console-owned)</span></div></div>"
+            "<div class='card'><div class='stat'>"
+            f"<span class='value'><span class='dot amber'></span>"
+            f"{len(running_campaigns)}</span>"
+            "<span class='label'>reported running (external)</span></div></div>"
             "<div class='card'><div class='stat'>"
             f"<span class='value'><span class='dot red'></span>"
             f"{len(failed_jobs) + len(failed_campaigns)}</span>"
             "<span class='label'>failed</span></div></div>"
+            "<div class='card'><div class='stat'>"
+            f"<span class='value'><span class='dot red'></span>"
+            f"{len(blocked_stopped_campaigns)}</span>"
+            "<span class='label'>blocked / stopped</span></div></div>"
+            "<div class='card'><div class='stat'>"
+            f"<span class='value'><span class='dot amber'></span>"
+            f"{len(indeterminate_jobs) + len(indeterminate_campaigns)}</span>"
+            "<span class='label'>orphaned / unknown</span></div></div>"
+            "<div class='card'><div class='stat'>"
+            f"<span class='value'><span class='dot amber'></span>"
+            f"{len(partial_campaigns)}</span>"
+            "<span class='label'>partial</span></div></div>"
             "<div class='card'><div class='stat'>"
             f"<span class='value'><code>{html.escape(pin[:10] or 'unpinned')}"
             "</code></span>"
@@ -257,61 +337,119 @@ class PagesMixin:
                     f"{html.escape(campaign.campaign_id)}</a></td>"
                     "<td>engineering campaign "
                     "<span class='badge gray'>external, "
-                    f"{html.escape(campaign.display_state)}</span></td>"
+                    f"{html.escape(campaign.status_tag)}</span></td>"
                     f"<td>{_human_duration(campaign.runtime_seconds())}</td></tr>",
                 )
             )
         running_rows_html = "".join(row for _started, row in sorted(running_rows))
         running_html = (
-            "<div class='card'><h2>" + _icon("pulse") + "Running jobs</h2>"
+            "<div class='card'><h2>" + _icon("pulse") + "Running / reported running</h2>"
             "<div class='scroll'><table><tr><th>Job</th><th>Command</th>"
             "<th>Runtime</th></tr>" + running_rows_html + "</table></div>"
-            "<p class='note'>External engineering campaign state is the last "
-            "status recorded in retained task logs; this console does not own "
+            "<p class='note'>External engineering campaign state is derived "
+            "from retained task logs; this console does not own "
             "or stop its process.</p></div>"
             if running_rows_html
             else ""
         )
-        failed_rows = []
+        attention_rows = []
         for job in failed_jobs:
-            failed_rows.append(
+            attention_rows.append(
                 (
                     job.started_at,
                     f"<tr><td><a href='/jobs/{html.escape(job.job_id)}'>"
                     f"{html.escape(job.job_id)}</a></td>"
-                    f"<td>{html.escape(job.command)}</td>"
+                    f"<td>{html.escape(job.command)} "
+                    "<span class='badge red'>failed</span></td>"
                     f"<td>{_human_duration(job.runtime_seconds())}</td></tr>",
                 )
             )
-        for campaign in failed_campaigns:
+        for job, state in indeterminate_jobs:
+            attention_rows.append(
+                (
+                    job.started_at,
+                    f"<tr><td><a href='/jobs/{html.escape(job.job_id)}'>"
+                    f"{html.escape(job.job_id)}</a></td>"
+                    f"<td>{html.escape(job.command)} "
+                    f"<span class='badge amber'>{html.escape(state)}</span></td>"
+                    f"<td>{_human_duration(job.runtime_seconds())}</td></tr>",
+                )
+            )
+        for campaign in [
+            *failed_campaigns,
+            *blocked_stopped_campaigns,
+            *indeterminate_campaigns,
+        ]:
             route_id = quote(campaign.route_id)
             detail = (
                 f" <span class='fieldhint'>{html.escape(campaign.state_detail)}</span>"
                 if campaign.state_detail
                 else ""
             )
-            failed_rows.append(
+            tag_tone = {
+                "failed": "red",
+                "blocked": "red",
+                "stopped": "red",
+                "orphaned": "amber",
+                "unknown": "amber",
+            }.get(campaign.status_tag, "gray")
+            attention_rows.append(
                 (
                     campaign.started_at,
                     f"<tr><td><a href='/jobs/campaign/{route_id}'>"
                     f"{html.escape(campaign.campaign_id)}</a></td>"
                     "<td>engineering campaign "
-                    "<span class='badge gray'>external, "
-                    f"{html.escape(campaign.display_state)}</span>{detail}</td>"
+                    f"<span class='badge {tag_tone}'>external, "
+                    f"{html.escape(campaign.status_tag)}</span>{detail}</td>"
                     f"<td>{_human_duration(campaign.runtime_seconds())}</td></tr>",
                 )
             )
-        recent_failed_rows = sorted(failed_rows, reverse=True)[:_DASHBOARD_RECENT_FAILURE_LIMIT]
-        failed_html = (
-            "<div class='card'><h2>" + _icon("pulse") + "Failed jobs</h2>"
+        recent_attention_rows = sorted(attention_rows, reverse=True)[
+            :_DASHBOARD_RECENT_FAILURE_LIMIT
+        ]
+        attention_html = (
+            "<div class='card'><h2>" + _icon("pulse") + "Needs attention</h2>"
             "<div class='scroll'><table><tr><th>Job</th><th>Command</th>"
             "<th>Runtime</th></tr>"
-            + "".join(row for _started, row in recent_failed_rows)
+            + "".join(row for _started, row in recent_attention_rows)
             + "</table></div><p class='note'>Showing up to "
-            f"{_DASHBOARD_RECENT_FAILURE_LIMIT} most recently started failures. "
+            f"{_DASHBOARD_RECENT_FAILURE_LIMIT} most recently started failed, "
+            "blocked, stopped, orphaned, or unknown jobs. "
             "External engineering campaign state is filesystem-backed and "
             "read-only; open the job for its retained logs.</p></div>"
-            if recent_failed_rows
+            if recent_attention_rows
+            else ""
+        )
+        partial_rows = []
+        for campaign in partial_campaigns:
+            route_id = quote(campaign.route_id)
+            pending = (
+                "unknown" if campaign.pending_tasks is None else str(campaign.pending_tasks)
+            )
+            partial_rows.append(
+                (
+                    campaign.started_at,
+                    f"<tr><td><a href='/jobs/campaign/{route_id}'>"
+                    f"{html.escape(campaign.campaign_id)}</a></td>"
+                    "<td><span class='badge amber'>partial</span> "
+                    f"{campaign.succeeded_tasks} succeeded; "
+                    f"{campaign.failed_tasks} failed; "
+                    f"{campaign.skipped_tasks} skipped; {pending} pending</td>"
+                    f"<td>{_human_duration(campaign.runtime_seconds())}</td></tr>",
+                )
+            )
+        recent_partial_rows = sorted(partial_rows, reverse=True)[
+            :_DASHBOARD_RECENT_PARTIAL_LIMIT
+        ]
+        partial_html = (
+            "<div class='card'><h2>" + _icon("pulse") + "Partial campaigns</h2>"
+            "<div class='scroll'><table><tr><th>Job</th><th>Task results</th>"
+            "<th>Runtime</th></tr>"
+            + "".join(row for _started, row in recent_partial_rows)
+            + "</table></div><p class='note'>A successful campaign terminal does "
+            "not hide failed, skipped, or pending tasks. Open the campaign for "
+            "its model-work declaration and execution report.</p></div>"
+            if recent_partial_rows
             else ""
         )
         stage_sections = []
@@ -375,7 +513,8 @@ class PagesMixin:
             + self._next_hint(counts)
             + self._playbook_card()
             + running_html
-            + failed_html
+            + partial_html
+            + attention_html
             + self._budget_card()
             + self._policy_card()
             + "<div class='card'><h2>"
@@ -549,18 +688,21 @@ class PagesMixin:
         self._reconcile()
         campaigns, campaign_scan_note = self._engineering_campaign_scan()
         rows = []
-        tallies: dict[str, int] = {"running": 0, "complete": 0, "failed": 0}
+        tallies: dict[str, int] = {}
         for job_id in sorted(self.jobs, reverse=True):
             job = self.jobs[job_id]
             state = job.state()
-            tallies[state] = tallies.get(state, 0) + 1
+            state_tag = self._job_status_tag(state)
+            tallies[state_tag] = tallies.get(state_tag, 0) + 1
             tone = {
                 "running": "blue",
-                "complete": "green",
+                "reported running": "amber",
+                "passed": "green",
                 "failed": "red",
                 "orphaned": "amber",
-            }.get(state, "gray")
-            started = time.strftime("%H:%M:%S", time.localtime(job.started_at))
+            }.get(state_tag, "gray")
+            started = time.strftime("%Y-%m-%d %H:%M:%S UTC", time.gmtime(job.started_at))
+            started_ms = int(job.started_at * 1000)
             stop = (
                 "<form class='inline' method='post' "
                 f"action='/jobs/{html.escape(job_id)}/stop'>"
@@ -571,13 +713,17 @@ class PagesMixin:
             )
             hay = html.escape(f"{job_id} {job.command}".lower())
             rows.append(
-                f"<tr data-state='{html.escape(state)}' data-hay='{hay}'>"
+                f"<tr data-state='{html.escape(state_tag)}' "
+                f"data-started='{started_ms}' data-hay='{hay}'>"
                 f"<td><a href='/jobs/{html.escape(job_id)}'>"
                 f"{html.escape(job_id)}</a></td>"
                 f"<td>{html.escape(job.command)}</td>"
+                f"<td>{html.escape(self._job_work_label(job))}</td>"
+                f"<td>{html.escape(self._job_execution_label(job))}</td>"
                 f"<td><span class='dot {tone}'></span>"
-                f"<span class='badge {tone}'>{html.escape(state)}</span></td>"
-                f"<td>{started}</td>"
+                f"<span class='badge {tone}'>{html.escape(state_tag)}</span></td>"
+                f"<td><time class='job-started' data-epoch-ms='{started_ms}'>"
+                f"{started}</time></td>"
                 f"<td>{_human_duration(job.runtime_seconds())}</td>"
                 "<td>-</td>"
                 f"<td>{'' if job.exit_code() is None else job.exit_code()}"
@@ -585,28 +731,57 @@ class PagesMixin:
             )
         for campaign in campaigns:
             state = campaign.state
-            tallies[state] = tallies.get(state, 0) + 1
+            state_tag = campaign.status_tag
+            tallies[state_tag] = tallies.get(state_tag, 0) + 1
             tone = {
                 "running": "blue",
-                "complete": "green",
+                "passed": "green",
+                "partial": "amber",
+                "blocked": "red",
                 "failed": "red",
                 "orphaned": "amber",
-            }.get(state, "gray")
-            state_label = f"{campaign.display_state} (last recorded)"
-            started = time.strftime("%H:%M:%S", time.localtime(campaign.started_at))
+            }.get(state_tag, "gray")
+            started = time.strftime(
+                "%Y-%m-%d %H:%M:%S UTC", time.gmtime(campaign.started_at)
+            )
+            started_ms = int(campaign.started_at * 1000)
             route_id = quote(campaign.route_id)
             hay = html.escape(
                 f"{campaign.campaign_id} engineering campaign external "
-                f"{campaign.display_state} {campaign.progress}".lower()
+                f"{campaign.status_tag} {campaign.progress}".lower()
             )
+            work = "model work undeclared"
+            if campaign.model_tasks is not None:
+                roles = {role for _task, _status, role in campaign.task_outcomes}
+                if campaign.model_tasks:
+                    work = "model + support" if "support" in roles else "model only"
+                else:
+                    work = "support only"
+                if "unplanned" in roles:
+                    work += " + unplanned"
+            if campaign.model_execution_error:
+                execution = "report invalid"
+            elif campaign.model_attempted_calls is None:
+                execution = "not reported"
+            else:
+                execution = (
+                    f"{campaign.model_successful_generations}/{campaign.model_attempted_calls} "
+                    "reported successful; "
+                    f"{campaign.model_execution_covered_tasks}/"
+                    f"{len(campaign.model_tasks or ())} model tasks"
+                )
             rows.append(
-                f"<tr data-state='{html.escape(state)}' data-hay='{hay}'>"
+                f"<tr data-state='{html.escape(state_tag)}' "
+                f"data-started='{started_ms}' data-hay='{hay}'>"
                 f"<td><a href='/jobs/campaign/{route_id}'>"
                 f"{html.escape(campaign.campaign_id)}</a></td>"
                 "<td>engineering campaign <span class='badge gray'>external</span></td>"
+                f"<td>{html.escape(work)}</td>"
+                f"<td>{html.escape(execution)}</td>"
                 f"<td><span class='dot {tone}'></span>"
-                f"<span class='badge {tone}'>{html.escape(state_label)}</span></td>"
-                f"<td>{started}</td>"
+                f"<span class='badge {tone}'>{html.escape(state_tag)}</span></td>"
+                f"<td><time class='job-started' data-epoch-ms='{started_ms}'>"
+                f"{started}</time></td>"
                 f"<td>{_human_duration(campaign.runtime_seconds())}</td>"
                 f"<td>{html.escape(campaign.progress)} "
                 f"<a href='/jobs/campaign/{route_id}'>logs</a></td>"
@@ -615,23 +790,31 @@ class PagesMixin:
         chips = (
             "<div class='chips'>"
             f"<button type='button' class='chip on' data-state=''>All "
-            f"({len(self.jobs) + len(campaigns)})</button>"
+            "(<span class='chip-count'>"
+            f"{len(self.jobs) + len(campaigns)}</span>)</button>"
             + "".join(
                 f"<button type='button' class='chip' data-state='{state}'>"
-                f"{state.capitalize()} ({count})</button>"
-                for state, count in tallies.items()
+                f"{state.capitalize()} (<span class='chip-count'>{count}</span>)</button>"
+                for state, count in sorted(tallies.items())
             )
             + "</div>"
         )
         controls = (
-            chips + "<p><input id='jobfilter' type='text' "
+            chips + "<div class='targetfilters'><div class='fieldcell'>"
+            "<label class='fieldlabel' for='job-from'>From</label>"
+            "<input id='job-from' type='datetime-local' step='1'>"
+            "</div><div class='fieldcell'>"
+            "<label class='fieldlabel' for='job-to'>To</label>"
+            "<input id='job-to' type='datetime-local' step='1'>"
+            "</div></div><p><input id='jobfilter' type='text' "
             "placeholder='Type to filter jobs...' "
             "aria-label='filter jobs'></p>"
         )
         table = (
             "<div class='card scroll'><table id='jobstable'>"
             "<tr><th>Job</th><th>Command</th>"
-            "<th>State</th><th>Started</th><th>Runtime</th><th>Progress</th><th>Exit</th>"
+            "<th>Work</th><th>Execution</th><th>State</th><th>Started</th><th>Runtime</th>"
+            "<th>Progress</th><th>Exit</th>"
             "<th></th></tr>" + "".join(rows) + "</table></div>"
             if rows
             else "<div class='card'><p class='note'>No jobs this session. Start "
@@ -640,26 +823,75 @@ class PagesMixin:
         script = (
             "<script>(function(){"
             "var state='';var box=document.getElementById('jobfilter');"
+            "var fromBox=document.getElementById('job-from');"
+            "var toBox=document.getElementById('job-to');"
+            "var params=new URLSearchParams(window.location.search);"
+            "if(box&&params.has('q')){box.value=params.get('q');}"
+            "state=params.get('state')||'';"
+            "function pad(value){return String(value).padStart(2,'0');}"
+            "function localValue(ms){var date=new Date(ms);return "
+            "date.getFullYear()+'-'+pad(date.getMonth()+1)+'-'+pad(date.getDate())+"
+            "'T'+pad(date.getHours())+':'+pad(date.getMinutes())+':' +"
+            "pad(date.getSeconds());}"
+            "function localStamp(ms){return localValue(ms).replace('T',' ');}"
+            "var now=Date.now();"
+            "fromBox.value=params.has('from')?params.get('from'):localValue(now-7*86400000);"
+            "toBox.value=params.has('to')?params.get('to'):localValue(now);"
+            "document.querySelectorAll('time.job-started[data-epoch-ms]').forEach("
+            "function(out){var ms=Number(out.getAttribute('data-epoch-ms'));"
+            "if(Number.isFinite(ms)){out.textContent=localStamp(ms);}});"
+            "function lowerBound(box,fallback){var value=Date.parse(box.value);"
+            "return Number.isFinite(value)?value:fallback;}"
+            "function upperBound(box,fallback){var value=Date.parse(box.value);"
+            "if(!Number.isFinite(value)){return fallback;}"
+            "if(!box.value.includes('.')){value+=box.value.length===16?59999:999;}"
+            "return value;}"
+            "function syncFilters(){var url=new URL(window.location.href);"
+            "url.searchParams.set('from',fromBox.value);"
+            "url.searchParams.set('to',toBox.value);"
+            "url.searchParams.set('state',state);"
+            "url.searchParams.set('q',box?box.value:'');"
+            "history.replaceState(null,'',url.pathname+url.search);}"
             "function apply(){var q=box?box.value.toLowerCase():'';"
+            "var from=lowerBound(fromBox,Number.NEGATIVE_INFINITY);"
+            "var to=upperBound(toBox,Number.POSITIVE_INFINITY);"
+            "var counts={all:0};var visible=0;"
             "document.querySelectorAll('#jobstable tr[data-state]')"
             ".forEach(function(r){"
             "var okState=!state||r.getAttribute('data-state')===state;"
             "var okText=(r.getAttribute('data-hay')||'').indexOf(q)>=0;"
-            "r.style.display=okState&&okText?'':'none';});}"
+            "var started=Number(r.getAttribute('data-started'));"
+            "var okDate=Number.isFinite(started)&&started>=from&&started<=to;"
+            "var base=okText&&okDate;if(base){counts.all++;var key="
+            "r.getAttribute('data-state')||'unknown';counts[key]=(counts[key]||0)+1;}"
+            "var show=okState&&base;if(show){visible++;}"
+            "r.style.display=show?'':'none';});"
+            "document.querySelectorAll('.chip').forEach(function(c){"
+            "var key=c.getAttribute('data-state')||'all';var count="
+            "c.querySelector('.chip-count');if(count){count.textContent=counts[key]||0;}});"
+            "var empty=document.getElementById('jobs-filter-empty');"
+            "var table=document.getElementById('jobstable');"
+            "if(empty){empty.hidden=!table||visible!==0;}}"
             "document.querySelectorAll('.chip').forEach(function(c){"
             "c.addEventListener('click',function(){"
             "state=this.getAttribute('data-state')||'';"
             "document.querySelectorAll('.chip').forEach(function(o){"
             "o.classList.remove('on');});this.classList.add('on');"
-            "apply();});});"
-            "if(box){box.addEventListener('input',apply);}"
+            "syncFilters();apply();});});"
+            "var matchedState=false;document.querySelectorAll('.chip').forEach("
+            "function(c){var selected=(c.getAttribute('data-state')||'')===state;"
+            "c.classList.toggle('on',selected);matchedState=matchedState||selected;});"
+            "if(!matchedState){state='';var all=document.querySelector("
+            "'.chip[data-state=\"\"]');if(all){all.classList.add('on');}}"
+            "if(box){box.addEventListener('input',function(){syncFilters();apply();});}"
+            "[fromBox,toBox].forEach(function(field){field.addEventListener('change',"
+            "function(){syncFilters();apply();});});"
+            "apply();"
             "})();</script>"
-            if rows
-            else ""
         )
         refresh = (
             "<script>setTimeout(function(){location.reload();}, 5000);</script>"
-            if tallies["running"]
+            if tallies.get("running", 0) or tallies.get("reported running", 0)
             else ""
         )
         return _page(
@@ -675,6 +907,8 @@ class PagesMixin:
             )
             + controls
             + table
+            + "<p id='jobs-filter-empty' class='notice amber' hidden>"
+            "No jobs match the selected dates, state, and text.</p>"
             + script
             + refresh,
             active="Jobs",
@@ -683,10 +917,13 @@ class PagesMixin:
     def _campaign_page(self, campaign: EngineeringCampaign) -> bytes:
         tone = {
             "running": "blue",
-            "complete": "green",
+            "reported running": "amber",
+            "passed": "green",
+            "partial": "amber",
+            "blocked": "red",
             "failed": "red",
             "orphaned": "amber",
-        }.get(campaign.state, "gray")
+        }.get(campaign.status_tag, "gray")
         route_id = quote(campaign.route_id)
         relative = f"engineering/{campaign.route_id}"
         started = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(campaign.started_at))
@@ -700,9 +937,54 @@ class PagesMixin:
             f"<tr><td>Evidence class</td><td>{html.escape(campaign.evidence_class)}</td></tr>"
             "<tr><td>Thesis empirical evidence</td><td>no</td></tr>"
             f"<tr><td>Hosted calls allowed</td><td>{'yes' if campaign.hosted_calls_allowed else 'no'}</td></tr>"
-            f"<tr><td>Local calls reserved</td><td>{campaign.reserved_calls}/{call_cap}</td></tr>"
+            f"<tr><td>Reserved call budget (not execution)</td>"
+            f"<td>{campaign.reserved_calls}/{call_cap}</td></tr>"
+            "<tr><td>Declared model tasks</td><td>"
+            + (
+                "invalid: " + html.escape(campaign.model_declaration_error)
+                if campaign.model_declaration_error
+                else "not declared"
+                if campaign.model_tasks is None
+                else str(len(campaign.model_tasks))
+            )
+            + "</td></tr>"
+            "<tr><td>Reported model execution</td><td>"
+            + (
+                "report invalid: " + html.escape(campaign.model_execution_error)
+                if campaign.model_execution_error
+                else "not reported"
+                if campaign.model_attempted_calls is None
+                else f"{campaign.model_successful_generations} successful generation(s) / "
+                f"{campaign.model_attempted_calls} attempt(s); "
+                f"{campaign.model_execution_covered_tasks}/"
+                f"{len(campaign.model_tasks or ())} model tasks reported"
+            )
+            + "</td></tr>"
             f"<tr><td>Hard stop</td><td>{hard_stop}</td></tr>"
             "</table></div>"
+        )
+        task_rows = "".join(
+            "<tr><td><code>"
+            + html.escape(task)
+            + "</code></td><td>"
+            + html.escape(role)
+            + "</td><td>"
+            + html.escape(status)
+            + "</td></tr>"
+            for task, status, role in campaign.task_outcomes
+        )
+        task_table = (
+            "<div class='card'><h2>Task outcomes</h2>"
+            "<p class='note'>A passed support task proves only that its command "
+            "exited successfully. It is not model-execution evidence. Reported "
+            "call counts remain operational self-reports; validated response "
+            "artifacts are authoritative.</p>"
+            "<div class='scroll'><table><tr><th>Task</th><th>Work</th>"
+            "<th>Result</th></tr>"
+            + task_rows
+            + "</table></div></div>"
+            if task_rows
+            else ""
         )
         log_links = "".join(
             "<li>"
@@ -734,13 +1016,13 @@ class PagesMixin:
             f"{html.escape(campaign.campaign_id)}</h1>"
             "<div class='notice amber'><strong>Externally managed engineering work.</strong> "
             "This console observes its retained files read-only; process ownership remains "
-            "with the campaign launcher. Status is the last state recorded in the task logs, "
-            "not an operating-system liveness check. It is not thesis empirical evidence.</div>"
+            "with the campaign launcher. Status comes from retained task logs, not an "
+            "operating-system liveness check. It is not thesis empirical evidence.</div>"
             "<div class='cols'>"
             "<div class='card'><div class='stat'>"
             f"<span class='value'><span class='dot {tone}'></span>"
-            f"{html.escape(campaign.display_state)}</span>"
-            "<span class='label'>last recorded campaign status</span>"
+            f"{html.escape(campaign.status_tag)}</span>"
+            "<span class='label'>campaign status</span>"
             "</div></div>"
             "<div class='card'><div class='stat'>"
             f"<span class='value'>{_human_duration(campaign.runtime_seconds())}</span>"
@@ -751,6 +1033,7 @@ class PagesMixin:
             "<div class='card'><h2>" + _icon("chart") + "Progress</h2>"
             f"<p>{html.escape(campaign.progress)}</p></div>"
             + details
+            + task_table
             + last_detail
             + logs
             + refresh
@@ -760,6 +1043,7 @@ class PagesMixin:
     def _job_page(self, job: Job) -> bytes:
         state = job.state()
         tone = {"running": "blue", "complete": "green", "failed": "red"}.get(state, "gray")
+        state_tag = self._job_status_tag(state)
         stdout_tail = self._log_tail(job, "stdout") or "(empty)"
         stderr_tail = self._log_tail(job, "stderr") or "(empty)"
         stop_form = (
@@ -840,7 +1124,7 @@ class PagesMixin:
             "<div class='cols'>"
             "<div class='card'><div class='stat'>"
             f"<span class='value'><span class='dot {tone}'></span>"
-            f"{html.escape(state)}</span>"
+            f"{html.escape(state_tag)}</span>"
             "<span class='label'>state</span></div></div>"
             "<div class='card'><div class='stat'>"
             f"<span class='value'>{job.runtime_seconds():,.0f}s</span>"

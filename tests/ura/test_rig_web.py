@@ -15,6 +15,7 @@ import hashlib
 import http.client
 import json
 import os
+import re
 import sqlite3
 import stat
 import sys
@@ -1617,6 +1618,9 @@ def test_builder_targets_split_hosted_and_local_vllm_roster(tmp_path: Path) -> N
     app = _app(tmp_path)
     page = app.handle("GET", "/build")[2].decode("utf-8")
     assert "Hosted API" in page and "Local vLLM" in page
+    assert "Local Ollama (local daemon)" in page
+    assert "No Ollama targets are configured" in page
+    assert "64-hex <code>/api/tags</code> digest" in page
     assert "data-kind='api'" in page and "data-kind='local'" in page
     # The curated vLLM roster is real and modality-tagged.
     roster = local_targets.roster_models(include_unfit=True)
@@ -1699,17 +1703,21 @@ def test_builder_model_filters_and_quantization_warning_are_rendered(
         "openai:gpt-test": {"modalities": ["text", "image"]},
     }), encoding="utf-8")
     local_checkpoint = f"vllm:{(tmp_path / 'checkpoint').resolve()}"
+    ollama_spec = "ollama:fixture:latest"
     (rig / "local-targets.example.json").write_text(json.dumps({
         local_checkpoint: {
             "digest": "6" * 64, "modalities": ["text"],
             "parameter_count_b": 7,
+        },
+        ollama_spec: {
+            "digest": "A" * 64, "modalities": ["text"],
         },
     }), encoding="utf-8")
     (rig / "vllm-roster.example.json").write_text(json.dumps({
         "vllm_version": "0.test",
         "models": {
             "vllm:org/Tiny-10M": {
-                "revision": "1" * 40, "modalities": ["text"],
+                "revision": "A" * 40, "modalities": ["text"],
                 "parameter_count_b": 0.01,
             },
             "vllm:org/Model-70B": {
@@ -1801,6 +1809,10 @@ def test_builder_model_filters_and_quantization_warning_are_rendered(
     assert "4-bit GPTQ override" in page
     assert "name.indexOf(query)!==-1" in page  # literal substring, no fuzzy match
     assert "params<=max" in page and "compatOk" in page  # combinative filters
+    assert "var paramsOk=Number.isFinite(params)?params<=max:includeUnknown;" in page
+    assert "max>=3000" not in page
+    assert "kind==='local'&&backend==='vllm'" in page
+    assert "data-backend='vllm'" in page
     assert "includeUnknown" in page
     assert "fit==='true'||(fit==='false'&&!compatible)||" in page
     assert "(fit==='unknown'&&includeUnknown)" in page
@@ -1837,6 +1849,33 @@ def test_builder_model_filters_and_quantization_warning_are_rendered(
     assert "label.textContent=value==='auto'?'fit unknown'" in page
     assert "badge.textContent" not in page
     assert "16-bit fit unknown" not in unknown_row
+
+    assert "Local Ollama (local daemon)" in page
+    ollama_at = page.index(f"data-model='{ollama_spec}'")
+    ollama_row = page[
+        page.rfind("<div class='modelrow'", 0, ollama_at):
+        page.find("</div>", ollama_at) + len("</div>")
+    ]
+    assert "data-backend='ollama'" in ollama_row
+    assert "digest pinned" in ollama_row
+    assert "precision is fixed by the pulled Ollama artifact" in ollama_row
+    assert "data-compatible" not in ollama_row
+    assert "data-params-b" not in ollama_row
+    assert "precision-badge" not in ollama_row
+    assert "modelquant" not in ollama_row
+    assert f"quantization::{ollama_spec}" not in page
+    ollama_config_path = app._materialize_selected_local_config([ollama_spec])
+    ollama_config = json.loads(ollama_config_path.read_text(encoding="utf-8"))
+    assert ollama_config == {
+        ollama_spec: {"digest": "a" * 64, "modalities": ["text"]}
+    }
+    loaded_ollama, _artifact = run_matrix._load_local_config(
+        str(ollama_config_path), [ollama_spec]
+    )
+    ollama_target = run_matrix.build_target(
+        ollama_spec, local_identity=loaded_ollama[ollama_spec]
+    )
+    assert ollama_target.__class__.__name__ == "OllamaTarget"
 
     # Rendering, validation, and generated execution config share one
     # precedence: per-model selection, then the submitted global default.
@@ -1968,6 +2007,24 @@ def test_builder_model_filters_and_quantization_warning_are_rendered(
     )
     assert "allow_unknown_fit" not in auto_unknown_config[unknown]
 
+    invalid_override = {
+        **_params,
+        "mode": "measured",
+        "local": tiny,
+        f"quantization::{tiny}": "bogus",
+    }
+    invalid_override_errors = app._validate_builder(invalid_override)
+    assert "per-model quantization must be auto, none, fp8" in (
+        invalid_override_errors["models"]
+    )
+    jobs_before = set(app.jobs)
+    invalid_status, _, invalid_body = app.handle("POST", "/build", invalid_override)
+    assert invalid_status == 200
+    assert "per-model quantization must be auto, none, fp8" in (
+        invalid_body.decode("utf-8")
+    )
+    assert set(app.jobs) == jobs_before
+
     global_none_errors = app._validate_builder({
         **_params, "mode": "measured", "local": model_34b,
         "quantization": "none", f"quantization::{model_34b}": "auto",
@@ -1993,6 +2050,7 @@ def test_builder_model_filters_and_quantization_warning_are_rendered(
         ).read_text(encoding="utf-8")
     )
     assert global_bnb_config[tiny]["quantization"] == "bitsandbytes"
+    assert global_bnb_config[tiny]["revision"] == "a" * 40
     per_model_config = json.loads(
         app._materialize_selected_local_config(
             [tiny], default_quantization="bitsandbytes",
@@ -2004,6 +2062,91 @@ def test_builder_model_filters_and_quantization_warning_are_rendered(
         **_params, "mode": "measured", "local": incompatible,
     })
     assert "known incompatible" in incompatible_errors["models"]
+    app.close()
+
+
+@pytest.mark.parametrize(
+    ("spec", "entry", "message"),
+    [
+        (
+            "ollama:broken:latest",
+            {"digest": "a" * 64, "modalities": [{}]},
+            "requires unique declared text[/image] modalities",
+        ),
+        (
+            "ollama:audio-only:latest",
+            {"digest": "a" * 64, "modalities": ["audio"]},
+            "requires unique declared text[/image] modalities",
+        ),
+        (
+            "vllm:org/Broken-Modalities",
+            {"revision": "b" * 40, "modalities": [{}], "parameter_count_b": 1},
+            "requires unique declared text[/image] modalities",
+        ),
+        (
+            "vllm:org/Audio-Only",
+            {"revision": "b" * 40, "modalities": ["audio"], "parameter_count_b": 1},
+            "requires unique declared text[/image] modalities",
+        ),
+        (
+            "vllm:org/Broken-Utilization",
+            {
+                "revision": "c" * 40,
+                "modalities": ["text"],
+                "parameter_count_b": 1,
+                "gpu_memory_utilization": 1.0,
+            },
+            "gpu_memory_utilization must be in [0.1, 0.95]",
+        ),
+        (
+            "vllm:org/Broken-Quantization",
+            {
+                "revision": "d" * 40,
+                "modalities": ["text"],
+                "parameter_count_b": 1,
+                "quantization": "bogus",
+            },
+            "configured quantization must be auto, none, fp8",
+        ),
+    ],
+)
+def test_builder_rejects_malformed_local_runtime_config_before_job(
+    tmp_path: Path,
+    spec: str,
+    entry: dict[str, object],
+    message: str,
+) -> None:
+    repo = tmp_path / "repo"
+    rig = repo / "experiments" / "rig"
+    rig.mkdir(parents=True)
+    (rig / "api-targets.example.json").write_text("{}", encoding="utf-8")
+    (rig / "local-targets.example.json").write_text(
+        json.dumps({spec: entry}), encoding="utf-8"
+    )
+    (rig / "vllm-roster.example.json").write_text(
+        json.dumps({"models": {}}), encoding="utf-8"
+    )
+    app = RigWebApp(
+        results_root=tmp_path / "runs",
+        state_dir=tmp_path / "state",
+        repo_root=repo,
+    )
+
+    status, _, body = app.handle("GET", "/build")
+    page = body.decode("utf-8")
+    assert status == 200 and spec in page
+    assert "invalid local config" in page
+    assert message in page
+
+    params = {"mode": "measured", "local": spec}
+    errors = app._validate_builder(params)
+    assert message in errors["models"]
+    jobs_before = set(app.jobs)
+    status, _, body = app.handle("POST", "/build", params)
+    assert status == 200 and message in body.decode("utf-8")
+    assert set(app.jobs) == jobs_before
+    with pytest.raises(ValueError, match=re.escape(message)):
+        app._materialize_selected_local_config([spec])
     app.close()
 
 
@@ -2195,7 +2338,26 @@ def test_jobs_page_has_filter_chips_and_row_stop(tmp_path: Path) -> None:
         # State filter chips with counts.
         assert "class='chip on'" in text
         assert "data-state='running'" in text
-        assert "Running (1)" in text
+        assert "Running (<span class='chip-count'>1</span>)" in text
+        assert "id='job-from' type='datetime-local'" in text
+        assert "id='job-to' type='datetime-local'" in text
+        assert "data-started='" in text
+        assert "<th>Work</th><th>Execution</th><th>State</th>" in text
+        assert "tool / validation" in text and "not applicable" in text
+        assert "class='job-started' data-epoch-ms='" in text
+        assert " UTC</time>" in text
+        assert "var now=Date.now()" in text
+        assert "localValue(now-7*86400000)" in text
+        assert "localValue(now)" in text
+        assert "out.textContent=localStamp(ms)" in text
+        assert "url.searchParams.set('from',fromBox.value)" in text
+        assert "url.searchParams.set('to',toBox.value)" in text
+        assert "state=params.get('state')||''" in text
+        assert "box.value=params.get('q')" in text
+        assert "url.searchParams.set('state',state)" in text
+        assert "url.searchParams.set('q',box?box.value:'')" in text
+        assert "function upperBound(box,fallback)" in text
+        assert "value+=box.value.length===16?59999:999" in text
         # A running job exposes an inline Stop control on its row.
         assert f"/jobs/{job.job_id}/stop" in text
         assert "jobfilter" in text
@@ -2203,6 +2365,73 @@ def test_jobs_page_has_filter_chips_and_row_stop(tmp_path: Path) -> None:
         assert "data-hay=" in text
     finally:
         app.stop_job(job.job_id)
+
+
+def test_jobs_truthfully_labels_no_call_and_preparation_modes(tmp_path: Path) -> None:
+    app = _app(tmp_path)
+    fixtures = {
+        "preflight-only": ["--preflight-only"],
+        "dry-canary": ["--diagnostic-canary", "--dry-run"],
+        "harm-direct": ["--method", "DirectRequest"],
+        "harm-optimizer": ["--method", "PEZ"],
+    }
+    for job_id, argv in fixtures.items():
+        command = "harmbench_capture" if job_id.startswith("harm-") else "run_matrix"
+        app.jobs[job_id] = Job(
+            job_id=job_id,
+            command=command,
+            argv=argv,
+            directory=tmp_path / job_id,
+            process=None,
+            restored_state="complete",
+            restored_exit=0,
+        )
+
+    text = app.handle("GET", "/jobs")[2].decode("utf-8")
+
+    def row(job_id: str) -> str:
+        start = text.index(f"/jobs/{job_id}")
+        return text[text.rfind("<tr", 0, start):text.find("</tr>", start)]
+
+    assert "preflight" in row("preflight-only")
+    assert "no model call" in row("preflight-only")
+    assert "offline dry run" in row("dry-canary")
+    assert "no model call" in row("dry-canary")
+    assert "preparation" in row("harm-direct")
+    assert "no model call" in row("harm-direct")
+    assert "preparation" in row("harm-optimizer")
+    assert "verify capture artifact" in row("harm-optimizer")
+    app.close()
+
+
+def test_jobs_date_filter_uses_browser_timezone_not_server_timezone(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from experiments.rig_web_app import pages as pages_module
+
+    app = _app(tmp_path)
+    app.jobs["dated-job"] = Job(
+        job_id="dated-job",
+        command="webui_selftest",
+        argv=[],
+        directory=tmp_path / "dated-job",
+        process=None,
+        started_at=1_700_000_000.0,
+        restored_state="complete",
+        restored_exit=0,
+    )
+
+    def reject_server_localtime(*_args: object) -> object:
+        raise AssertionError("Jobs must not format filter timestamps in server local time")
+
+    monkeypatch.setattr(pages_module.time, "localtime", reject_server_localtime)
+    text = app.handle("GET", "/jobs")[2].decode("utf-8")
+    assert "2023-11-14 22:13:20 UTC" in text
+    assert "new Date(ms)" in text
+    assert "date.getFullYear()" in text and "date.getHours()" in text
+    assert "params.has('from')" in text and "params.has('to')" in text
+    app.close()
 
 
 def _write_external_engineering_campaign(results: Path) -> Path:
@@ -2251,12 +2480,15 @@ def test_jobs_lists_external_engineering_campaign_read_only(tmp_path: Path) -> N
     status, _, body = app.handle("GET", "/jobs")
     text = body.decode("utf-8")
     assert status == 200
-    assert "All (1)" in text and "Running (1)" in text
+    assert "All (<span class='chip-count'>1</span>)" in text
+    assert "Reported running (<span class='chip-count'>1</span>)" in text
     assert "local-only-20260817T000000Z" in text
     assert "engineering campaign" in text and "external" in text
-    assert "tasks: 1 succeeded; 0 failed; 0 skipped; 0 active" in text
-    assert "tasks: 2 succeeded" not in text
+    assert "task processes: 1 succeeded; 0 failed; 0 skipped; 0 active" in text
+    assert "task processes: 2 succeeded" not in text
     assert "pending: not declared" in text
+    assert "model work undeclared" in text and "not reported" in text
+    assert "(last recorded)" not in text
     assert "/jobs/campaign/local-only-20260817T000000Z" in text
     assert "/jobs/campaign/local-only-20260817T000000Z/stop" not in text
 
@@ -2304,7 +2536,7 @@ def test_external_campaign_task_failures_do_not_override_passing_terminal(
     campaign = _write_external_engineering_campaign(app.results_root)
     marker_path = campaign / "ENGINEERING_ONLY.json"
     marker = json.loads(marker_path.read_text(encoding="utf-8"))
-    marker["planned_tasks"] = ["download-model", "download-model"]
+    marker["planned_tasks"] = ["download-model", "optional-probe"]
     marker_path.write_text(json.dumps(marker), encoding="utf-8")
     with (campaign / "stage2-task-log.jsonl").open("a", encoding="utf-8") as handle:
         for event in (
@@ -2333,20 +2565,24 @@ def test_external_campaign_task_failures_do_not_override_passing_terminal(
     assert observed.state == "complete" and observed.display_state == terminal_status
     assert observed.succeeded_tasks == 1 and observed.failed_tasks == 1
     assert observed.skipped_tasks == 0
-    assert observed.active_tasks == () and observed.pending_tasks is None
+    assert observed.active_tasks == () and observed.pending_tasks == 0
+    assert observed.status_tag == "partial"
 
     status, _, body = app.handle("GET", "/jobs")
     text = body.decode("utf-8")
     assert status == 200
-    assert "Complete (1)" in text and "Failed (0)" in text
-    assert f"{terminal_status} (last recorded)" in text
-    assert "tasks: 1 succeeded; 1 failed; 0 skipped; 0 active" in text
-    assert "pending: not declared" in text
-    assert f"campaign terminal: {terminal_status} (optional_probe_failed)" in text
+    assert "Partial (<span class='chip-count'>1</span>)" in text
+    assert "(last recorded)" not in text
+    assert "task processes: 1 succeeded; 1 failed; 0 skipped; 0 active" in text
+    assert "pending: 0" in text
+    assert f"campaign terminal: {terminal_status} - optional_probe_failed" in text
 
     dashboard = app.handle("GET", "/")[2].decode("utf-8")
     assert "<span class='value'><span class='dot red'></span>0</span>" in dashboard
     assert "Failed jobs" not in dashboard
+    assert "<span class='value'><span class='dot amber'></span>1</span>" in dashboard
+    assert "Partial campaigns" in dashboard
+    assert "1 succeeded; 1 failed; 0 skipped; 0 pending" in dashboard
     assert app.db.health()["counts"]["jobs"] == 0
     app.close()
 
@@ -2420,9 +2656,352 @@ def test_external_campaign_reports_skipped_tasks_separately(
     detail = app.handle(
         "GET", "/jobs/campaign/local-only-20260817T000000Z"
     )[2].decode("utf-8")
-    expected = "tasks: 1 succeeded; 1 failed; 1 skipped; 0 active; pending: 1"
+    expected = "task processes: 1 succeeded; 1 failed; 1 skipped; 0 active; pending: 1"
     assert expected in jobs
     assert expected in detail
+    app.close()
+
+
+def test_external_campaign_separates_process_results_from_model_execution(
+    tmp_path: Path,
+) -> None:
+    app = _app(tmp_path)
+    campaign = _write_external_engineering_campaign(app.results_root)
+    marker_path = campaign / "ENGINEERING_ONLY.json"
+    marker = json.loads(marker_path.read_text(encoding="utf-8"))
+    marker["planned_tasks"] = ["setup", "model-probe"]
+    marker["model_tasks"] = ["model-probe"]
+    marker_path.write_text(json.dumps(marker), encoding="utf-8")
+    (campaign / "task-log.jsonl").write_text(
+        json.dumps({
+            "at": "2026-08-17T00:00:00Z",
+            "event": "campaign_start",
+            "task": "bootstrap",
+            "status": "running",
+        }) + "\n",
+        encoding="utf-8",
+    )
+    (campaign / "stage2-task-log.jsonl").write_text(
+        "\n".join(json.dumps(event) for event in (
+            {
+                "at": "2026-08-17T00:00:01Z",
+                "event": "campaign_start",
+                "task": "stage2",
+                "status": "running",
+            },
+            {
+                "at": "2026-08-17T00:00:02Z",
+                "event": "task_end",
+                "task": "setup",
+                "status": "passed",
+            },
+            {
+                "at": "2026-08-17T00:00:03Z",
+                "event": "task_end",
+                "task": "model-probe",
+                "status": "passed",
+            },
+            {
+                "at": "2026-08-17T00:00:04Z",
+                "event": "campaign_end",
+                "task": "stage2",
+                "status": "passed",
+            },
+        )) + "\n",
+        encoding="utf-8",
+    )
+
+    observed = app._engineering_campaign("local-only-20260817T000000Z")
+    assert observed is not None
+    assert observed.status_tag == "passed"
+    assert observed.task_outcomes == (
+        ("setup", "passed", "support"),
+        ("model-probe", "passed", "model"),
+    )
+    assert observed.model_succeeded_tasks == 1
+    assert observed.model_attempted_calls is None
+    jobs = app.handle("GET", "/jobs")[2].decode("utf-8")
+    detail = app.handle(
+        "GET", "/jobs/campaign/local-only-20260817T000000Z"
+    )[2].decode("utf-8")
+    assert "model + support" in jobs and "not reported" in jobs
+    assert "model execution: not reported" in jobs
+    assert "A passed support task proves only that its command exited successfully" in detail
+    assert "<td>support</td><td>passed</td>" in detail
+    assert "<td>model</td><td>passed</td>" in detail
+
+    (campaign / "model-execution.jsonl").write_text(
+        json.dumps({
+            "event": "model_execution",
+            "task": "model-probe",
+            "attempted_calls": 1,
+            "successful_generations": 1,
+        }) + "\n",
+        encoding="utf-8",
+    )
+    confirmed = app._engineering_campaign("local-only-20260817T000000Z")
+    assert confirmed is not None
+    assert confirmed.model_attempted_calls == 1
+    assert confirmed.model_successful_generations == 1
+    jobs = app.handle("GET", "/jobs")[2].decode("utf-8")
+    assert "1/1 reported successful" in jobs
+    assert "model execution report: 1 successful generation(s) from 1 attempt(s)" in jobs
+    app.close()
+
+
+def test_external_campaign_rejects_invalid_model_execution_claims(
+    tmp_path: Path,
+) -> None:
+    app = _app(tmp_path)
+    campaign = _write_external_engineering_campaign(app.results_root)
+    marker_path = campaign / "ENGINEERING_ONLY.json"
+    marker = json.loads(marker_path.read_text(encoding="utf-8"))
+    marker["planned_tasks"] = ["setup"]
+    marker["model_tasks"] = ["undeclared-task"]
+    marker_path.write_text(json.dumps(marker), encoding="utf-8")
+    (campaign / "model-execution.jsonl").write_text(
+        json.dumps({
+            "event": "model_execution",
+            "task": "setup",
+            "attempted_calls": 1,
+            "successful_generations": 1,
+        }) + "\n",
+        encoding="utf-8",
+    )
+
+    observed = app._engineering_campaign("local-only-20260817T000000Z")
+    assert observed is not None
+    assert "not in planned_tasks" in observed.model_declaration_error
+    assert observed.model_attempted_calls is None
+    assert "requires a valid model_tasks declaration" in observed.model_execution_error
+    assert ("setup", "pending", "unclassified") in observed.task_outcomes
+    jobs = app.handle("GET", "/jobs")[2].decode("utf-8")
+    assert "model work undeclared" in jobs and "report invalid" in jobs
+    app.close()
+
+
+@pytest.mark.parametrize("task_status", ["skipped", None])
+def test_external_campaign_rejects_model_calls_for_unexecuted_tasks(
+    tmp_path: Path,
+    task_status: str | None,
+) -> None:
+    app = _app(tmp_path)
+    campaign = _write_external_engineering_campaign(app.results_root)
+    marker_path = campaign / "ENGINEERING_ONLY.json"
+    marker = json.loads(marker_path.read_text(encoding="utf-8"))
+    marker["planned_tasks"] = ["model-probe"]
+    marker["model_tasks"] = ["model-probe"]
+    marker_path.write_text(json.dumps(marker), encoding="utf-8")
+    (campaign / "task-log.jsonl").write_text(
+        json.dumps({
+            "at": "2026-08-17T00:00:00Z",
+            "event": "campaign_start",
+            "task": "bootstrap",
+            "status": "running",
+        }) + "\n",
+        encoding="utf-8",
+    )
+    events = [{
+        "at": "2026-08-17T00:00:03Z",
+        "event": "campaign_end",
+        "task": "stage2",
+        "status": "passed",
+    }]
+    if task_status is not None:
+        events.insert(0, {
+            "at": "2026-08-17T00:00:02Z",
+            "event": "task_skip",
+            "task": "model-probe",
+            "status": task_status,
+        })
+    with (campaign / "stage2-task-log.jsonl").open("a", encoding="utf-8") as handle:
+        for event in events:
+            handle.write(json.dumps(event) + "\n")
+    (campaign / "model-execution.jsonl").write_text(
+        json.dumps({
+            "event": "model_execution",
+            "task": "model-probe",
+            "attempted_calls": 1,
+            "successful_generations": 1,
+        }) + "\n",
+        encoding="utf-8",
+    )
+
+    observed = app._engineering_campaign("local-only-20260817T000000Z")
+    assert observed is not None
+    assert observed.status_tag == "partial"
+    assert observed.failed_tasks == 0
+    assert observed.pending_tasks == (1 if task_status is None else 0)
+    assert observed.model_attempted_calls is None
+    assert "contradicts a pending or skipped task" in observed.model_execution_error
+
+    (campaign / "model-execution.jsonl").write_text(
+        json.dumps({
+            "event": "model_execution",
+            "task": "model-probe",
+            "attempted_calls": 0,
+            "successful_generations": 0,
+        }) + "\n",
+        encoding="utf-8",
+    )
+    zero_report = app._engineering_campaign("local-only-20260817T000000Z")
+    assert zero_report is not None
+    assert zero_report.model_execution_error == ""
+    assert zero_report.model_attempted_calls == 0
+    assert zero_report.model_successful_generations == 0
+    app.close()
+
+
+def test_external_campaign_model_execution_report_requires_exact_task_coverage(
+    tmp_path: Path,
+) -> None:
+    app = _app(tmp_path)
+    campaign = _write_external_engineering_campaign(app.results_root)
+    marker_path = campaign / "ENGINEERING_ONLY.json"
+    marker = json.loads(marker_path.read_text(encoding="utf-8"))
+    marker["planned_tasks"] = ["model-a", "model-b"]
+    marker["model_tasks"] = ["model-a", "model-b"]
+    marker_path.write_text(json.dumps(marker), encoding="utf-8")
+    (campaign / "task-log.jsonl").write_text(
+        json.dumps({
+            "at": "2026-08-17T00:00:00Z",
+            "event": "campaign_start",
+            "task": "bootstrap",
+            "status": "running",
+        }) + "\n",
+        encoding="utf-8",
+    )
+    (campaign / "stage2-task-log.jsonl").write_text(
+        "\n".join(json.dumps(event) for event in (
+            {
+                "at": "2026-08-17T00:00:01Z",
+                "event": "campaign_start",
+                "task": "stage2",
+                "status": "running",
+            },
+            {
+                "at": "2026-08-17T00:00:02Z",
+                "event": "task_end",
+                "task": "model-a",
+                "status": "passed",
+            },
+            {
+                "at": "2026-08-17T00:00:03Z",
+                "event": "task_end",
+                "task": "model-b",
+                "status": "passed",
+            },
+            {
+                "at": "2026-08-17T00:00:04Z",
+                "event": "campaign_end",
+                "task": "stage2",
+                "status": "passed",
+            },
+        )) + "\n",
+        encoding="utf-8",
+    )
+    report = campaign / "model-execution.jsonl"
+    duplicate_rows = [
+        {
+            "event": "model_execution",
+            "task": task,
+            "attempted_calls": 1,
+            "successful_generations": 1,
+        }
+        for task in ("model-a", "model-a", "model-b")
+    ]
+    report.write_text(
+        "\n".join(json.dumps(row) for row in duplicate_rows) + "\n",
+        encoding="utf-8",
+    )
+    duplicate = app._engineering_campaign("local-only-20260817T000000Z")
+    assert duplicate is not None
+    assert duplicate.model_attempted_calls is None
+    assert "duplicates a task" in duplicate.model_execution_error
+
+    report.write_text(json.dumps(duplicate_rows[0]) + "\n", encoding="utf-8")
+    missing = app._engineering_campaign("local-only-20260817T000000Z")
+    assert missing is not None
+    assert missing.model_attempted_calls is None
+    assert "omits declared model task(s): model-b" in missing.model_execution_error
+    assert "model only" in app.handle("GET", "/jobs")[2].decode("utf-8")
+    detail = app.handle(
+        "GET", "/jobs/campaign/local-only-20260817T000000Z"
+    )[2].decode("utf-8")
+    assert "report invalid: terminal model execution report omits" in detail
+    app.close()
+
+
+def test_external_campaign_surfaces_unplanned_work_without_inventing_a_plan(
+    tmp_path: Path,
+) -> None:
+    app = _app(tmp_path)
+    campaign = _write_external_engineering_campaign(app.results_root)
+    marker_path = campaign / "ENGINEERING_ONLY.json"
+    marker = json.loads(marker_path.read_text(encoding="utf-8"))
+    marker["planned_tasks"] = ["setup"]
+    marker["model_tasks"] = []
+    marker_path.write_text(json.dumps(marker), encoding="utf-8")
+    (campaign / "task-log.jsonl").write_text(
+        json.dumps({
+            "at": "2026-08-17T00:00:00Z",
+            "event": "campaign_start",
+            "task": "bootstrap",
+            "status": "running",
+        }) + "\n",
+        encoding="utf-8",
+    )
+    (campaign / "stage2-task-log.jsonl").write_text(
+        "\n".join(json.dumps(event) for event in (
+            {
+                "at": "2026-08-17T00:00:01Z",
+                "event": "campaign_start",
+                "task": "stage2",
+                "status": "running",
+            },
+            {
+                "at": "2026-08-17T00:00:02Z",
+                "event": "task_end",
+                "task": "setup",
+                "status": "passed",
+            },
+            {
+                "at": "2026-08-17T00:00:03Z",
+                "event": "task_end",
+                "task": "model-call-extra",
+                "status": "passed",
+            },
+            {
+                "at": "2026-08-17T00:00:04Z",
+                "event": "campaign_end",
+                "task": "stage2",
+                "status": "passed",
+            },
+        )) + "\n",
+        encoding="utf-8",
+    )
+
+    planned = app._engineering_campaign("local-only-20260817T000000Z")
+    assert planned is not None
+    assert planned.status_tag == "partial"
+    assert planned.unplanned_tasks == ("model-call-extra",)
+    assert planned.task_outcomes == (
+        ("setup", "passed", "support"),
+        ("model-call-extra", "passed", "unplanned"),
+    )
+    assert "support only + unplanned" in app.handle("GET", "/jobs")[2].decode(
+        "utf-8"
+    )
+
+    marker.pop("planned_tasks")
+    marker.pop("model_tasks")
+    marker_path.write_text(json.dumps(marker), encoding="utf-8")
+    unknown_plan = app._engineering_campaign("local-only-20260817T000000Z")
+    assert unknown_plan is not None
+    assert unknown_plan.status_tag == "passed"
+    assert unknown_plan.pending_tasks is None
+    assert unknown_plan.unplanned_tasks == ()
+    assert all(role == "unclassified" for _task, _status, role in unknown_plan.task_outcomes)
     app.close()
 
 
@@ -2481,11 +3060,12 @@ def test_external_campaign_survives_restart_and_reads_terminal_log(tmp_path: Pat
     status, _, body = restarted.handle("GET", "/jobs")
     text = body.decode("utf-8")
     assert status == 200
-    assert "All (1)" in text and "Complete (1)" in text
+    assert "All (<span class='chip-count'>1</span>)" in text
+    assert "Partial (<span class='chip-count'>1</span>)" in text
     assert "local-only-20260817T000000Z" in text
     assert "last recorded active" not in text
     assert "0 active" in text
-    assert "0 succeeded; 1 failed; 0 skipped; 0 active" in text
+    assert "task processes: 0 succeeded; 1 failed; 0 skipped; 0 active" in text
     assert "pending: 1" in text
     assert "1 interrupted without a terminal task event" in text
     observed = restarted._engineering_campaign("local-only-20260817T000000Z")
@@ -2522,9 +3102,10 @@ def test_external_campaign_malformed_and_oversized_logs_do_not_break_jobs(
     status, _, body = app.handle("GET", "/jobs")
     text = body.decode("utf-8")
     assert status == 200
-    assert "All (1)" in text
+    assert "All (<span class='chip-count'>1</span>)" in text
     assert "local-only-20260817T000000Z" in text
-    assert "unknown (last recorded)" in text
+    assert "<span class='badge gray'>unknown</span>" in text
+    assert "(last recorded)" not in text
     assert "activity status unavailable" in text
     assert "0 tasks finished" not in text
     assert "malformed" not in text and "deep-json" not in text
@@ -2543,7 +3124,7 @@ def test_external_campaign_rejects_symlink_root(tmp_path: Path) -> None:
         app.close()
         pytest.skip("directory symlinks are not available")
     status, _, body = app.handle("GET", "/jobs")
-    assert status == 200 and b"All (0)" in body
+    assert status == 200 and b"All (<span class='chip-count'>0</span>)" in body
     app.close()
 
 
@@ -2583,7 +3164,7 @@ def test_external_campaign_directory_scan_cap_is_visible(
 
     status, _, body = app.handle("GET", "/jobs")
     text = body.decode("utf-8")
-    assert status == 200 and "All (0)" in text
+    assert status == 200 and "All (<span class='chip-count'>0</span>)" in text
     assert "scan stopped after 3 directory entries" in text
     assert "later entries were not inspected" in text
     app.close()
@@ -2606,9 +3187,10 @@ def test_dashboard_lists_external_running_and_failed_campaigns(
     running = body.decode("utf-8")
     assert status == 200
     assert "jobs (console + external)" in running
-    assert "<span class='value'><span class='dot blue'></span>1</span>" in running
+    assert "<span class='value'><span class='dot blue'></span>0</span>" in running
+    assert "<span class='value'><span class='dot amber'></span>1</span>" in running
     assert "<span class='value'><span class='dot red'></span>0</span>" in running
-    assert "Running jobs" in running
+    assert "Running / reported running" in running
     assert "/jobs/campaign/local-only-20260817T000000Z" in running
     assert "<img src=x onerror=alert(1)>" not in running
     assert "&lt;img src=x onerror=alert(1)&gt;" in running
@@ -2634,7 +3216,7 @@ def test_dashboard_lists_external_running_and_failed_campaigns(
     assert status == 200
     assert "<span class='value'><span class='dot blue'></span>0</span>" in failed
     assert "<span class='value'><span class='dot red'></span>1</span>" in failed
-    assert "Failed jobs" in failed and "external, blocked" in failed
+    assert "Needs attention" in failed and "external, blocked" in failed
     assert "wrong_release" in failed
     assert "/jobs/campaign/local-only-20260817T000000Z" in failed
     assert "/jobs/campaign/local-only-20260817T000000Z/stop" not in failed
@@ -2642,11 +3224,12 @@ def test_dashboard_lists_external_running_and_failed_campaigns(
 
     status, _, body = app.handle("GET", "/jobs")
     jobs = body.decode("utf-8")
-    assert status == 200 and "Failed (1)" in jobs
-    assert "blocked (last recorded)" in jobs
-    assert "tasks: 1 succeeded; 1 failed; 0 skipped; 0 active" in jobs
+    assert status == 200 and "Blocked (<span class='chip-count'>1</span>)" in jobs
+    assert "<span class='badge red'>blocked</span>" in jobs
+    assert "(last recorded)" not in jobs
+    assert "task processes: 1 succeeded; 1 failed; 0 skipped; 0 active" in jobs
     assert "pending: 1" in jobs
-    assert "campaign terminal: blocked (wrong_release)" in jobs
+    assert "campaign terminal: blocked - wrong_release" in jobs
 
     observed = app._engineering_campaign("local-only-20260817T000000Z")
     assert observed is not None
@@ -2682,8 +3265,43 @@ def test_dashboard_samples_each_console_job_state_once(
     status, _, body = app.handle("GET", "/")
     text = body.decode("utf-8")
     assert status == 200 and job.calls == 1
-    assert "Running jobs" in text and "flipping-job" in text
-    assert "Failed jobs" not in text
+    assert "Running / reported running" in text and "flipping-job" in text
+    assert "Needs attention" not in text
+    app.jobs.clear()
+    app.close()
+
+
+def test_dashboard_surfaces_indeterminate_console_jobs(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    app = _app(tmp_path)
+
+    class RestoredJob:
+        command = "run_matrix"
+        started_at = 1.0
+
+        def __init__(self, job_id: str, restored_state: str) -> None:
+            self.job_id = job_id
+            self.restored_state = restored_state
+
+        def state(self) -> str:
+            return self.restored_state
+
+        @staticmethod
+        def runtime_seconds() -> float:
+            return 1.0
+
+    for state in ("orphaned", "unknown"):
+        job = RestoredJob(f"console-{state}", state)
+        app.jobs[job.job_id] = job  # type: ignore[assignment]
+    monkeypatch.setattr(app, "_reconcile", lambda: None)
+    text = app.handle("GET", "/")[2].decode("utf-8")
+    assert "orphaned / unknown" in text
+    assert "Needs attention" in text
+    assert "console-orphaned" in text and "console-unknown" in text
+    assert "<span class='badge amber'>orphaned</span>" in text
+    assert "<span class='badge amber'>unknown</span>" in text
     app.jobs.clear()
     app.close()
 
@@ -2740,6 +3358,10 @@ def test_jobs_and_runs_persist_across_console_restart(tmp_path: Path) -> None:
     from experiments.rig_web import ConsoleDB
     assert run_kind("run_matrix", ["--attestation-probe"]) == "attestation_probe"
     assert run_kind("run_matrix", ["--dry-run"]) == "dry_run"
+    assert run_kind("run_matrix", ["--preflight-only"]) == "preflight"
+    assert run_kind(
+        "run_matrix", ["--diagnostic-canary", "--dry-run"]
+    ) == "dry_run"
     assert run_kind("run_matrix", []) == "measured"
     assert run_kind("rig_check", []) == "preflight"
     assert run_kind("figures", []) is None
@@ -2765,6 +3387,42 @@ def test_stats_runs_card_records_lane_jobs(tmp_path: Path) -> None:
     # renders the (empty) runs card without error.
     status, _, body = app.handle("GET", "/stats")
     assert status == 200 and b"Campaign runs" in body
+
+
+def test_stats_corrects_stale_no_call_run_kind_from_persisted_argv(
+    tmp_path: Path,
+) -> None:
+    app = _app(tmp_path)
+    job = Job(
+        job_id="dry-diagnostic",
+        command="run_matrix",
+        argv=["--diagnostic-canary", "--dry-run", "--out", "runs/dry"],
+        directory=tmp_path / "dry-diagnostic",
+        process=None,
+        restored_state="complete",
+        restored_exit=0,
+    )
+    app.jobs[job.job_id] = job
+    assert app.db.record_terminal(
+        job,
+        "a" * 40,
+        [],
+        state="complete",
+        exit_code=0,
+    )
+    # Simulate a row written before no-call precedence was corrected. The Jobs
+    # argv remains the authoritative operational classification source.
+    with sqlite3.connect(app.state_dir / "console.db") as conn:
+        conn.execute(
+            "UPDATE runs SET kind='diagnostic_canary' WHERE job_id=?",
+            (job.job_id,),
+        )
+
+    text = app.handle("GET", "/stats")[2].decode("utf-8")
+    assert "offline dry run - no model call" in text
+    assert "diagnostic model-capable run" not in text
+    assert "Passed means the CLI exited with status 0" in text
+    app.close()
 
 
 def test_favicon_and_active_nav(tmp_path: Path) -> None:
@@ -3742,6 +4400,9 @@ def test_v1_database_migrates_preserving_history(tmp_path: Path) -> None:
     assert app.jobs["job-v1"].state() == "orphaned"
     rows = app.db.load_jobs()
     assert rows is not None and str(rows[0]["state"]) == "orphaned"
+    dashboard = app.handle("GET", "/")[2].decode("utf-8")
+    assert "Needs attention" in dashboard and "job-v1" in dashboard
+    assert "<span class='badge amber'>orphaned</span>" in dashboard
     app.close()
 
 

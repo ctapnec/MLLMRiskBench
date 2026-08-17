@@ -142,8 +142,18 @@ class BuilderValidationMixin:
                 if not spec.startswith("vllm:"):
                     continue
                 try:
+                    self._validated_local_modalities(
+                        spec, entry, project_richer=True
+                    )
+                    self._local_gpu_memory_utilization(spec, entry)
                     max_model_len = self._local_max_model_len(spec, entry)
                     max_tokens = self._local_max_tokens(spec, entry)
+                    fit = self._effective_local_profile(
+                        spec,
+                        entry,
+                        default_quantization=params.get("quantization", ""),
+                        model_quantization=params.get(f"quantization::{spec}", ""),
+                    ).get("fits")
                 except ValueError as exc:
                     errors.setdefault("models", str(exc))
                     continue
@@ -155,12 +165,6 @@ class BuilderValidationMixin:
                     )
                     continue
                 model_quantization = str(params.get(f"quantization::{spec}", "")).strip().lower()
-                fit = self._effective_local_profile(
-                    spec,
-                    entry,
-                    default_quantization=params.get("quantization", ""),
-                    model_quantization=model_quantization,
-                ).get("fits")
                 if fit is None:
                     if model_quantization in {"", "auto"}:
                         unknown_fit_without_precision.append(spec)

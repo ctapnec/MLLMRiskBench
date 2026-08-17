@@ -207,12 +207,16 @@ def run_kind(command: str, argv: list[str]) -> str | None:
         return None
     if command == "rig_check":
         return "preflight"
+    # No-call modes take precedence over any lane-shape flag that may also be
+    # present in a composed or restored argv.
+    if "--preflight-only" in argv:
+        return "preflight"
+    if "--dry-run" in argv:
+        return "dry_run"
     if "--attestation-probe" in argv:
         return "attestation_probe"
     if "--diagnostic-canary" in argv:
         return "diagnostic_canary"
-    if "--dry-run" in argv:
-        return "dry_run"
     return "measured"
 
 

@@ -192,6 +192,10 @@ class BuilderPageMixin:
                         disabled = " disabled"
                 elif value.startswith("vllm:"):
                     try:
+                        self._validated_local_modalities(
+                            value, entry, project_richer=True
+                        )
+                        self._local_gpu_memory_utilization(value, entry)
                         context_limit = self._local_max_model_len(value, entry)
                         generation_limit = self._local_max_tokens(value, entry)
                         if (
@@ -210,12 +214,25 @@ class BuilderPageMixin:
                     .strip()
                     .lower()
                 )
-                profile = self._effective_local_profile(
-                    value,
-                    entry,
-                    default_quantization=prefill.get("quantization", ""),
-                    model_quantization=configured_quant,
-                )
+                try:
+                    if local_config_error:
+                        raise ValueError(local_config_error)
+                    profile = self._effective_local_profile(
+                        value,
+                        entry,
+                        default_quantization=prefill.get("quantization", ""),
+                        model_quantization=configured_quant,
+                    )
+                except ValueError as exc:
+                    local_config_error = str(exc)
+                    disabled = " disabled"
+                    configured_quant = "auto"
+                    profile = self._effective_local_profile(
+                        value,
+                        {},
+                        default_quantization="",
+                        model_quantization="auto",
+                    )
                 params = profile.get("parameter_count_b")
                 params_text = (
                     f"{float(params):g}B params" if params is not None else "params unknown"
@@ -366,6 +383,7 @@ class BuilderPageMixin:
                     )
                     + "</select></div>"
                 )
+                row_attrs += " data-backend='vllm'"
             input_type = "radio" if kind == "local" else "checkbox"
             input_name = " name='local_choice'" if kind == "local" else ""
             return (
@@ -381,12 +399,65 @@ class BuilderPageMixin:
                 f"{quant_control}</div>"
             )
 
+        def _ollama_target_box(value: str, label: str, mods: tuple[str, ...]) -> str:
+            entry = local_catalog.get(value, {})
+            disabled = ""
+            error = ""
+            try:
+                self._validate_ollama_local_entry(value, entry)
+            except ValueError as exc:
+                error = str(exc)
+                disabled = " disabled"
+            digest = entry.get("digest")
+            pinned = isinstance(digest, str) and re.fullmatch(
+                r"[0-9a-fA-F]{64}", digest
+            )
+            control_id = "target-" + hashlib.sha256(
+                f"ollama:{value}".encode("utf-8")
+            ).hexdigest()[:16]
+            name_html = (
+                html.escape(label)
+                + " <span class='badge gray'>Ollama</span>"
+                + (
+                    " <span class='badge red'>invalid local config</span>"
+                    if error
+                    else ""
+                )
+            )
+            pin_text = "digest pinned" if pinned else "64-hex digest required for live use"
+            detail = (
+                "<span class='fieldhint'>local Ollama daemon - "
+                + html.escape("/".join(mods))
+                + " - "
+                + pin_text
+                + "; precision is fixed by the pulled Ollama artifact"
+                + (" - " + html.escape(error) if error else "")
+                + "</span>"
+            )
+            return (
+                "<div class='modelrow' "
+                f"data-mods='{html.escape(','.join(mods))}' data-kind='local' "
+                f"data-backend='ollama' data-name='{html.escape(value)}'>"
+                f"<label class='check modelchoice' for='{control_id}'>"
+                f"<input id='{control_id}' type='radio' class='modelbox' "
+                "name='local_choice' data-kind='local' "
+                f"data-model='{html.escape(value)}'{disabled}>"
+                f"<span>{_arm_head(name_html, mods)}{detail}</span></label></div>"
+            )
+
         options = self._model_options()
         api_boxes = "".join(
             _target_box(v, lbl, mods, kind) for v, lbl, mods, kind in options if kind == "api"
         )
-        local_boxes = "".join(
-            _target_box(v, lbl, mods, kind) for v, lbl, mods, kind in options if kind == "local"
+        vllm_boxes = "".join(
+            _target_box(v, lbl, mods, kind)
+            for v, lbl, mods, kind in options
+            if kind == "local" and v.startswith("vllm:")
+        )
+        ollama_boxes = "".join(
+            _ollama_target_box(v, lbl, mods)
+            for v, lbl, mods, kind in options
+            if kind == "local" and v.startswith("ollama:")
         )
         providers = sorted(
             {
@@ -438,10 +509,22 @@ class BuilderPageMixin:
             "<span class='fieldhint'>Show models whose fit cannot be estimated. "
             "Live runs require an explicit per-model precision."
             "</span></span></label></div>"
-            "<div class='checkgrid' id='local-target-list'>"
-            + (local_boxes or "<p class='note'>No local targets configured.</p>")
+            "<div class='checkgrid' id='vllm-target-list'>"
+            + (vllm_boxes or "<p class='note'>No vLLM targets configured.</p>")
             + "</div><p class='filter-empty' id='local-filter-empty'>No local "
-            "models match all active filters.</p>"
+            "vLLM models match all active filters.</p>"
+            "<div class='grouphead'><h3>Local Ollama (local daemon)</h3>"
+            "</div><div class='checkgrid' id='ollama-target-list'>"
+            + (
+                ollama_boxes
+                or "<p class='note'>No Ollama targets are configured. Add an "
+                "<code>ollama:&lt;model-tag&gt;</code> entry with the exact "
+                "64-hex <code>/api/tags</code> digest and declared modalities "
+                "in <a href='/config?file=local-targets'>local-targets</a>. "
+                "The Ollama daemon and pulled model are external runtime "
+                "prerequisites.</p>"
+            )
+            + "</div>"
             + "<p class='note'>Hosted rosters are edited on the "
             "<a href='/config?file=api-targets'>api-targets</a> and "
             "<a href='/config?file=local-targets'>local-targets</a> Config "
@@ -452,9 +535,10 @@ class BuilderPageMixin:
                 else "curated default - run <code>local_targets --refresh</code> "
                 "to sync it to the rig's vLLM version"
             )
-            + "); vLLM downloads a chosen model on first run. Hosted targets "
-            "spend API budget; local vLLM targets use the rig's GPUs "
-            "(no API spend).</p>"
+            + "); vLLM downloads a chosen model on first run. Ollama targets "
+            "refer only to models already pulled into a separately managed "
+            "local Ollama daemon. Hosted targets spend API budget; both local "
+            "backends avoid hosted API spend.</p>"
         )
         gpu_rows = "".join(
             "<li><code>GPU "

@@ -29,13 +29,16 @@ product:
    card may host the independent scoring guard. Two-card sharding is a separate
    declared condition. A same-base unguarded/guarded pair is the defensible
    defense contrast when exact artifacts are available. The Build tab shows the
-   startup OS/CPU/core/RAM and per-GPU inventory. Hosted provider filtering and
-   local name, maximum-parameter (10M-3T), and rig-compatibility filters combine;
+   startup OS/CPU/core/RAM and per-GPU inventory. Hosted, Local vLLM, and Local
+   Ollama choices are separate groups. Hosted provider filtering and vLLM name,
+   maximum-parameter (10M-3T), and rig-compatibility filters combine;
    the separate compatibility card is on by default and applies automatic
    highest-fitting 16-bit, FP8 8-bit, then BitsAndBytes 4-bit selection.
    Known 16/8/4-bit recommendations are green/blue/amber; unknown fit is gray
    and appears only when the separate unchecked `Include unknown fit` control is
-   selected. Compatible local rows are single-choice radios even before their immutable revision is
+   selected. That checkbox admits an unknown-size row at every parameter cap;
+   known-size rows always obey the selected cap. Compatible local rows are
+   single-choice radios even before their immutable revision is
    filled, but non-dry submission still rejects `OPERATOR_TODO` before launch.
    MoE/expert-ambiguous names remain unknown/hidden until exact
    `parameter_count_b` is supplied; no fit or download is inferred. Auto
@@ -46,6 +49,13 @@ product:
    generation `max_tokens`. Omission uses the checkpoint native context, while
    an explicit integer in 1..1,000,000 must be at least `max_tokens`; the Build
    row labels the explicit cap or native model context.
+   An Ollama choice instead names an artifact already pulled into an external
+   local daemon. Its config requires the exact 64-hex `/api/tags` digest and a
+   unique explicit modality list containing `text` and optionally `image`. It
+   forbids vLLM-only revision, parameter, topology, memory, output, context,
+   quantization, and unknown-fit fields, so the UI provides no fit or precision
+   control. The Runner uses the daemon HTTP API directly;
+   no Ollama Python SDK is required.
 4. **Multimodal lanes.** Image, JALMBench audio, and Video-SafetyBench video are
    attempted only for exact target transports that pass bounded live
    attestation. Agent/tool sources additionally require their substantive
@@ -244,6 +254,18 @@ focused `experiments/rig_web_app/` modules for catalog/UI, artifacts/reports,
 sqlite state, job/request lifecycle, Build workflows, pages/settings, app
 composition, and the localhost server. The split changes no CLI, admission
 gate, database, or artifact contract.
+
+Jobs show the full start date and time in the browser's local time zone. Their
+state, text, From, and To filters combine and default to the previous seven days
+through now, with inclusive bounds at the selected input precision. Short tags
+distinguish `reported running`, `partial`, `blocked`, `stopped`, `orphaned`, and
+`unknown` external campaigns from console-owned process states. Task-process
+succeeded/failed/skipped/active/pending counts are separate from model work.
+Optional strict `planned_tasks` and `model_tasks` declarations plus a bounded
+`model-execution.jsonl` self-report make that distinction visible; a terminal
+campaign report, when present, has exactly one row per declared model task.
+Reserved calls and the self-report are not execution evidence. Validated
+response artifacts remain authoritative.
 
 ## Real-run invariants
 

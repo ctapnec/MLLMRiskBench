@@ -21,6 +21,7 @@ _MAX_CAMPAIGNS = 20
 _MAX_DIRECTORY_ENTRIES = 500
 _MAX_MARKER_BYTES = 64 * 1024
 _MAX_EVENT_LOG_BYTES = 512 * 1024
+_MAX_MODEL_EXECUTION_COUNT = 1_000_000
 _PHASE_TASKS = {"bootstrap", "stage2"}
 _TASK_SUCCEEDED = {"passed", "complete", "completed", "success", "succeeded"}
 _TASK_SKIPPED = {"skipped"}
@@ -146,6 +147,64 @@ def _planned_tasks(marker: dict[str, Any]) -> tuple[str, ...] | None:
     return tuple(tasks)
 
 
+def _declared_model_tasks(
+    marker: dict[str, Any],
+    planned_tasks: tuple[str, ...] | None,
+) -> tuple[tuple[str, ...] | None, str]:
+    """Return a strict declared model-task subset and a fail-closed error."""
+
+    raw = marker.get("model_tasks")
+    if raw is None:
+        return None, ""
+    if not isinstance(raw, list):
+        return None, "model_tasks must be a list"
+    if planned_tasks is None:
+        return None, "model_tasks requires a valid planned_tasks declaration"
+    planned = set(planned_tasks)
+    tasks: list[str] = []
+    seen: set[str] = set()
+    for value in raw:
+        if not isinstance(value, str):
+            return None, "model_tasks contains a non-string value"
+        task = value.strip()
+        if not task or len(task) > 256:
+            return None, "model_tasks contains an invalid task name"
+        if task not in planned:
+            return None, f"model task {task!r} is not in planned_tasks"
+        if task in seen:
+            return None, f"model task {task!r} is duplicated"
+        seen.add(task)
+        tasks.append(task)
+    return tuple(tasks), ""
+
+
+def _compact_status_tag(
+    state: str,
+    display_state: str,
+    *,
+    failed_tasks: int,
+    skipped_tasks: int,
+    pending_tasks: int | None,
+    unplanned_tasks: int,
+) -> str:
+    """Return a short lifecycle tag without overstating partial campaigns."""
+
+    raw = display_state.strip().lower()
+    if state == "complete":
+        return (
+            "partial"
+            if failed_tasks or skipped_tasks or pending_tasks or unplanned_tasks
+            else "passed"
+        )
+    if state == "running":
+        return "reported running"
+    if state in {"orphaned", "unknown"}:
+        return state
+    if raw in {"blocked", "cancelled", "canceled", "stopped"}:
+        return "stopped" if raw in {"cancelled", "canceled", "stopped"} else raw
+    return "failed"
+
+
 @dataclass(frozen=True)
 class EngineeringCampaign:
     """Filesystem-backed status for a campaign not owned by this console."""
@@ -155,6 +214,7 @@ class EngineeringCampaign:
     directory: Path
     state: str
     display_state: str
+    status_tag: str
     state_detail: str
     started_at: float
     ended_at: float | None
@@ -165,6 +225,19 @@ class EngineeringCampaign:
     skipped_tasks: int
     active_tasks: tuple[str, ...]
     pending_tasks: int | None
+    unplanned_tasks: tuple[str, ...]
+    task_outcomes: tuple[tuple[str, str, str], ...]
+    model_tasks: tuple[str, ...] | None
+    model_declaration_error: str
+    model_succeeded_tasks: int | None
+    model_failed_tasks: int | None
+    model_skipped_tasks: int | None
+    model_active_tasks: int | None
+    model_pending_tasks: int | None
+    model_attempted_calls: int | None
+    model_successful_generations: int | None
+    model_execution_covered_tasks: int | None
+    model_execution_error: str
     last_detail: str
     release_commit: str
     evidence_class: str
@@ -284,6 +357,138 @@ def _load_campaign(directory: Path) -> EngineeringCampaign | None:
         else None
     )
 
+    model_tasks, model_declaration_error = _declared_model_tasks(marker, planned_tasks)
+    model_task_set = set(model_tasks or ())
+    planned_task_set = set(planned_tasks or ())
+    task_order = list(planned_tasks or ())
+    task_order_seen = set(task_order)
+    task_order.extend(task for task in task_states if task not in task_order_seen)
+    task_outcomes = tuple(
+        (
+            task,
+            task_states.get(task, "pending"),
+            "unplanned"
+            if planned_tasks is not None and task not in planned_task_set
+            else "unclassified"
+            if model_tasks is None
+            else "model"
+            if task in model_task_set
+            else "support",
+        )
+        for task in task_order
+    )
+    unplanned_tasks = (
+        tuple(task for task in task_states if task not in planned_task_set)
+        if planned_tasks is not None
+        else ()
+    )
+    if model_tasks is None:
+        model_succeeded_tasks = None
+        model_failed_tasks = None
+        model_skipped_tasks = None
+        model_active_tasks = None
+        model_pending_tasks = None
+    else:
+        model_states = {task: task_states.get(task, "pending") for task in model_tasks}
+        model_succeeded_tasks = sum(
+            status in _TASK_SUCCEEDED for status in model_states.values()
+        )
+        model_skipped_tasks = sum(status in _TASK_SKIPPED for status in model_states.values())
+        model_active_tasks = sum(status in _TASK_ACTIVE for status in model_states.values())
+        model_pending_tasks = sum(status == "pending" for status in model_states.values())
+        model_failed_tasks = sum(
+            status not in _TASK_SUCCEEDED | _TASK_SKIPPED | _TASK_ACTIVE | {"pending"}
+            for status in model_states.values()
+        )
+
+    model_execution_path = directory / "model-execution.jsonl"
+    model_execution_events, model_execution_error = _events(model_execution_path)
+    execution_by_task: dict[str, tuple[int, int]] = {}
+    model_execution_present = (
+        model_execution_path.is_file() and not model_execution_path.is_symlink()
+    )
+    if model_execution_present:
+        if model_tasks is None:
+            model_execution_error = model_execution_error or (
+                "model execution log requires a valid model_tasks declaration"
+            )
+        for row in model_execution_events:
+            if row.get("event") != "model_execution":
+                model_execution_error = model_execution_error or "unsupported model execution event"
+                continue
+            task = row.get("task")
+            attempted = row.get("attempted_calls")
+            successful = row.get("successful_generations")
+            if (
+                not isinstance(task, str)
+                or not task.strip()
+                or len(task.strip()) > 256
+                or isinstance(attempted, bool)
+                or not isinstance(attempted, int)
+                or isinstance(successful, bool)
+                or not isinstance(successful, int)
+                or attempted < 0
+                or successful < 0
+                or successful > attempted
+                or attempted > _MAX_MODEL_EXECUTION_COUNT
+            ):
+                model_execution_error = model_execution_error or "invalid model execution event"
+                continue
+            normalized_task = task.strip()
+            if normalized_task in execution_by_task:
+                model_execution_error = model_execution_error or (
+                    "model execution report duplicates a task"
+                )
+                continue
+            if model_tasks is None or normalized_task not in model_task_set:
+                model_execution_error = model_execution_error or (
+                    "model execution event references an undeclared model task"
+                )
+                continue
+            task_status = task_states.get(normalized_task)
+            if (
+                (task_status is None or task_status in _TASK_SKIPPED)
+                and (attempted != 0 or successful != 0)
+            ):
+                model_execution_error = model_execution_error or (
+                    "positive model execution contradicts a pending or skipped task"
+                )
+                continue
+            execution_by_task[normalized_task] = (attempted, successful)
+        if not execution_by_task and model_execution_error is None:
+            model_execution_error = "empty model execution log"
+        if model_tasks is not None and state != "running":
+            missing_model_tasks = model_task_set - set(execution_by_task)
+            if missing_model_tasks:
+                model_execution_error = model_execution_error or (
+                    "terminal model execution report omits declared model task(s): "
+                    + ", ".join(sorted(missing_model_tasks))
+                )
+    if execution_by_task and model_execution_error is None:
+        model_attempted_calls = sum(value[0] for value in execution_by_task.values())
+        model_successful_generations = sum(value[1] for value in execution_by_task.values())
+        if model_attempted_calls > _MAX_MODEL_EXECUTION_COUNT:
+            model_execution_error = "model execution totals exceed the supported limit"
+            model_attempted_calls = None
+            model_successful_generations = None
+    else:
+        model_attempted_calls = None
+        model_successful_generations = None
+    model_execution_covered_tasks = (
+        len(execution_by_task)
+        if model_execution_present and model_execution_error is None
+        else None
+    )
+
+    status_tag = _compact_status_tag(
+        state,
+        display_state,
+        failed_tasks=failed_tasks,
+        skipped_tasks=skipped_tasks,
+        pending_tasks=pending_tasks,
+        unplanned_tasks=len(unplanned_tasks),
+    )
+
     reserved_calls = 0
     call_events, call_error = _events(directory / "local-call-ledger.jsonl")
     for row in call_events:
@@ -305,22 +510,47 @@ def _load_campaign(directory: Path) -> EngineeringCampaign | None:
         parts = [f"activity status unavailable: {activity_error}"]
     else:
         parts = [
-            f"tasks: {succeeded_tasks} succeeded; {failed_tasks} failed; "
+            f"task processes: {succeeded_tasks} succeeded; {failed_tasks} failed; "
             f"{skipped_tasks} skipped; {len(active_tasks)} active",
             (f"pending: {pending_tasks}" if pending_tasks is not None else "pending: not declared"),
         ]
         if active_tasks and state == "running":
-            parts.append("last recorded active: " + ", ".join(active_tasks))
+            parts.append("active task: " + ", ".join(active_tasks))
         if interrupted_tasks:
             parts.append(f"{len(interrupted_tasks)} interrupted without a terminal task event")
+        if unplanned_tasks:
+            parts.append("unplanned task event(s): " + ", ".join(unplanned_tasks))
         if terminal is not None:
             terminal_summary = f"campaign terminal: {display_state}"
             if state_detail:
-                terminal_summary += f" ({state_detail})"
+                terminal_summary += f" - {state_detail}"
             parts.append(terminal_summary)
+    if model_declaration_error:
+        parts.append(f"model tasks unavailable: {model_declaration_error}")
+    elif model_tasks is None:
+        parts.append("model tasks: not declared")
+    else:
+        parts.append(
+            f"model tasks: {model_succeeded_tasks} succeeded; "
+            f"{model_failed_tasks} failed; {model_skipped_tasks} skipped; "
+            f"{model_active_tasks} active; pending: {model_pending_tasks}"
+        )
+    if model_execution_error:
+        parts.append(f"model execution report invalid: {model_execution_error}")
+    elif model_attempted_calls is None:
+        parts.append("model execution: not reported")
+    else:
+        parts.append(
+            f"model execution report: {model_successful_generations} successful generation(s) "
+            f"from {model_attempted_calls} attempt(s); coverage "
+            f"{model_execution_covered_tasks}/{len(model_tasks or ())} model tasks"
+        )
     if target_call_cap is not None:
         calls = "unknown" if call_error else str(reserved_calls)
-        parts.append(f"local calls reserved: {calls}/{target_call_cap}")
+        parts.append(
+            f"call budget reserved: {calls}/{target_call_cap} "
+            "(not execution evidence)"
+        )
 
     last_detail = ""
     if all_events:
@@ -334,6 +564,7 @@ def _load_campaign(directory: Path) -> EngineeringCampaign | None:
             ("stage2", "Stage 2 activity", stage2_path),
             ("failures", "Stage 2 failures", directory / "stage2-failures.jsonl"),
             ("calls", "Local call ledger", directory / "local-call-ledger.jsonl"),
+            ("model", "Model execution report", model_execution_path),
         )
         if not path.is_symlink() and path.is_file()
     )
@@ -343,6 +574,7 @@ def _load_campaign(directory: Path) -> EngineeringCampaign | None:
         directory=directory,
         state=state,
         display_state=display_state,
+        status_tag=status_tag,
         state_detail=state_detail,
         started_at=started_at,
         ended_at=ended_at,
@@ -353,6 +585,19 @@ def _load_campaign(directory: Path) -> EngineeringCampaign | None:
         skipped_tasks=skipped_tasks,
         active_tasks=active_tasks,
         pending_tasks=pending_tasks,
+        unplanned_tasks=unplanned_tasks,
+        task_outcomes=task_outcomes,
+        model_tasks=model_tasks,
+        model_declaration_error=model_declaration_error,
+        model_succeeded_tasks=model_succeeded_tasks,
+        model_failed_tasks=model_failed_tasks,
+        model_skipped_tasks=model_skipped_tasks,
+        model_active_tasks=model_active_tasks,
+        model_pending_tasks=model_pending_tasks,
+        model_attempted_calls=model_attempted_calls,
+        model_successful_generations=model_successful_generations,
+        model_execution_covered_tasks=model_execution_covered_tasks,
+        model_execution_error=model_execution_error or "",
         last_detail=last_detail,
         release_commit=str(marker.get("release_commit") or ""),
         evidence_class=str(marker.get("evidence_class") or "engineering"),

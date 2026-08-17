@@ -104,7 +104,8 @@ incompatibility remains `N/A` rather than being counted as a failed experiment.
 Local startup uses `psutil`/platform probes for OS, CPU, physical/logical cores
 and RAM, and `nvidia-smi` for each GPU model, VRAM, PCI id, compute capability
 and driver. The dashboard and Build tab show this snapshot. Build filters hosted
-targets by provider (`All` by default). Local vLLM filters combine an immediate
+targets by provider (`All` by default) and presents separate Local vLLM and Local
+Ollama groups. Local vLLM filters combine an immediate
 case-insensitive name substring, a synchronized 10M-3T maximum-parameter
 slider/numeric input, and a separate `Automatic 16/8/4-bit fit` card (on by
 default). A separate `Include unknown fit` checkbox is off by default. Hardware
@@ -119,7 +120,9 @@ still `OPERATOR_TODO`, but every non-dry submission requires an exact immutable
 revision or digest before any subprocess starts. Expert/MoE-ambiguous names do
 not infer a dense total: fit stays unknown, so no download/fit is implied. These
 rows stay hidden until `Include unknown fit` is selected or
-`parameter_count_b` is declared. Hardware-auto remains blocked for
+`parameter_count_b` is declared. Selecting `Include unknown fit` makes an
+unknown-size row visible at any maximum-parameter setting; every known size
+still obeys the selected cap. Hardware-auto remains blocked for
 a live unknown-fit row; an explicit per-model choice (`none`, `fp8`,
 `bitsandbytes`, `awq`, or `gptq`) writes the narrow
 `allow_unknown_fit: true` opt-in and permits an operator-owned load attempt.
@@ -136,6 +139,17 @@ is passed to vLLM at engine construction, and `max_tokens` may not exceed it.
 Rig Web preserves the field in its selected local config, and the normalized
 value enters grid/run provenance. Each Build row labels either the explicit
 context cap or native model context.
+
+The Local Ollama group is an inventory of artifacts already pulled into a
+separately managed local daemon. An `ollama:<model-tag>` entry in
+`local-targets` must carry the exact 64-hex digest reported by `/api/tags` and
+an explicit unique modality list containing `text` and optionally `image`.
+Ollama entries reject vLLM-only revision, parameter, topology, memory, output,
+context, quantization, and unknown-fit fields; the pulled artifact fixes its
+precision, so the Build page shows no automatic fit or precision control for
+it. The Runner talks to the daemon over its HTTP
+API using the Python standard library, so no Ollama Python SDK is required. A
+running daemon and the matching pulled tag remain live-run prerequisites.
 
 The dependency check on that rig used Python 3.12.13, vLLM 0.27.1,
 BitsAndBytes 0.49.2, psutil 7.2.2 and torch 2.13.0+cu130/CUDA 13.0. The
@@ -493,6 +507,26 @@ runs the same maintained `experiments.*` command available on the CLI
 `run_matrix`/`rig_check`; `live_attestation --validate` revalidates a receipt),
 and the console's own bookkeeping is reachable headlessly too (`rig_web
 --reindex`, `rig_web --usage-report`).
+
+The Jobs view renders each full start date and time in the browser's local time
+zone. State, text, From, and To filters combine; the default interval is the
+previous seven days through the current browser time, and both selected bounds
+are inclusive at the input precision. Tags are deliberately short: console
+work uses `running`, `passed`, `failed`, or `orphaned`, while externally managed
+engineering campaigns can additionally use `reported running`, `partial`,
+`blocked`, `stopped`, or `unknown`. `Reported running` is an external marker
+state, not a console-owned process-liveness claim.
+
+External campaign task counts report task-process outcomes as succeeded,
+failed, skipped, active, or pending. They do not prove that a model was called.
+Optional strict `planned_tasks` and `model_tasks` declarations in
+`ENGINEERING_ONLY.json` separate model work from support work. An optional,
+bounded `model-execution.jsonl` self-report records attempted calls and
+successful generations by declared model task; when supplied for a terminal
+campaign it must contain exactly one valid row per model task. This operational
+self-report and any reserved-call ledger remain diagnostic context. Validated,
+completion-bound response artifacts are authoritative for actual execution and
+results.
 
 `experiments/rig_web.py` is the stable, thin import and `python -m` facade.
 The implementation lives in `experiments/rig_web_app/`: command/catalog and

@@ -471,6 +471,13 @@ an executed cell:
   remain blocked. The normalized selected config retains the resolved precision
   and this opt-in. It also retains `max_model_len` when declared, so its selected
   subset hash and grid/run provenance bind the context/KV admission setting.
+  Ollama uses a narrower shape: an `ollama:<model-tag>` entry requires the exact
+  64-hex digest returned by the daemon's `/api/tags` inventory and a unique
+  explicit modality list containing `text` and optionally `image`. It forbids
+  vLLM-only revision, parameter, multi-GPU, tensor-parallel, memory-utilization,
+  output/context-limit, quantization, and unknown-fit fields. Its pulled
+  artifact fixes precision. The adapter uses the daemon HTTP API via the Python
+  standard library and does not require an Ollama Python SDK.
 
 Unselected inventory entries are neither evidence nor requested cells. Secret
 values are environment-indirected and rejected from persisted configuration.
@@ -544,14 +551,17 @@ postprocessing provenance.
 
 The console's startup platform/CPU/core/RAM and NVIDIA inventory is an
 operator-visible runtime snapshot, not a scientific artifact schema. Likewise,
-the Build page's hosted-provider, local name/maximum-parameter/profile-fit, and
-separate unchecked unknown-fit controls only filter rendered choices. Known
+the Build page separates hosted API, Local vLLM, and Local Ollama choices. Its
+hosted-provider and vLLM name/maximum-parameter/profile-fit controls, plus the
+separate unchecked unknown-fit control, only filter rendered choices. Known
 16/8/4-bit recommendations use green/blue/amber; unknown fit is gray. Compatible
-local rows are single-choice
+vLLM rows are single-choice
 selectors even when the roster pin is unfinished, but non-dry submission still
 requires an exact revision/digest. An unknown-fit row remains blocked under auto;
-an explicit per-model precision binds `allow_unknown_fit: true`, while known
-non-fit remains blocked. A vLLM row labels an explicit `max_model_len` context
+selecting `Include unknown fit` exposes an unknown-size row at every parameter
+maximum, while known sizes still obey the cap. An explicit per-model precision
+binds `allow_unknown_fit: true`, while known non-fit remains blocked. A vLLM row
+labels an explicit `max_model_len` context
 cap or native model context. Source-ineligible rows may also remain visible and
 selectable with one custom hover/focus tooltip; server validation rejects them
 before a subprocess. Neither UI state replaces the local-config, source-evaluator, or
@@ -560,6 +570,38 @@ Dry builder state carries no real API/local target/config into the command
 because dry execution uses `MockTarget`. Local roster modality metadata is
 restricted to the Runner's text/image vLLM path, keeping audio mismatch rejection
 consistent between UI and CLI.
+Ollama rows follow only selected modality. They expose no fit, parameter,
+quantization, topology, or context controls and remain disabled until their
+narrow digest/modality config is valid. The daemon and pulled model are external
+live-run prerequisites.
+
+The Jobs page presents a full start date and time converted from the stored epoch
+to browser-local time. State, text, From, and To filters compose. Absent URL
+bounds, From defaults to seven days before the current browser time and To to
+the current time; both are inclusive at the selected datetime precision. Short
+status tags include console-owned `running`, `passed`, `failed`, and `orphaned`,
+plus external `reported running`, `partial`, `blocked`, `stopped`, and `unknown`.
+The console does not infer process liveness from an external running marker.
+
+An external engineering campaign is discovered only through a bounded regular,
+non-symlink `ENGINEERING_ONLY.json` object with schema
+`ura-engineering-campaign/1`, `thesis_empirical_evidence: false`, and an explicit
+boolean `hosted_calls_allowed`. Optional `planned_tasks` is a unique list of
+non-empty task names no longer than 256 characters, excluding the phase names
+`bootstrap` and `stage2`. Optional `model_tasks` is a unique subset of a valid
+`planned_tasks` list. Event logs yield task-process succeeded, failed, skipped,
+active, and pending counts; those outcomes do not establish model execution.
+
+An optional regular, non-symlink `model-execution.jsonl` file is bounded to 512
+KiB. Each complete JSON line has `event: "model_execution"`, one declared model
+task, and nonnegative integer `attempted_calls` and `successful_generations`,
+each bounded by 1,000,000 and with successes no greater than attempts. A task
+may appear only once. Positive counts contradict a pending or skipped task. If
+the file is supplied for a terminal campaign, every declared model task must
+have exactly one row; pending or skipped tasks use zero attempts and zero
+successes. This is an operational self-report, not confirmed execution or an
+evidence schema. Call reservations are also not execution observations.
+Completion-validated response artifacts remain authoritative.
 
 The rig console persists its operational state in a stdlib-sqlite database
 (`console.db` under the console state directory, schema version 3): `jobs`

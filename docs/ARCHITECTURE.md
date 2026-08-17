@@ -217,10 +217,11 @@ evidence for text alone. `rig_check` and dry-run remain no-attestation paths.
 The UTC observation is the probe Runner manifest's content-bound `started_at`,
 used as a conservative lower bound instead of mutable outer-grid `finished_at`
 metadata.
-Local vLLM/Ollama entries are content-bound by
-`--local-config`. The two-4090 operating topology admits one local model server
-per process: a model that fits one card normally uses tensor parallelism 1, the
-other card can host the scoring guard or independent evaluation, and a larger
+Local vLLM and Ollama configuration entries are content-bound, but they have
+separate runtime contracts. The two-4090 vLLM topology admits one local
+model server per process. A model that fits one card normally uses tensor
+parallelism 1; the other card can host the scoring guard or independent
+evaluation, and a larger
 profile-fit model may resolve to two-card tensor parallelism. Hardware auto
 chooses the highest fitting precision: unquantized 16-bit, FP8 8-bit on SM 7.5+,
 then BitsAndBytes 4-bit on SM 7.0+. The exact quantization and card count remain
@@ -232,6 +233,13 @@ admission cap independently of generation `max_tokens`. Omission uses the
 checkpoint's native context; an explicit integer in 1..1,000,000 must be at least
 `max_tokens`, is passed at engine construction, and is retained in normalized
 execution provenance.
+An Ollama entry instead identifies a tag already pulled into a separately
+managed local daemon. It requires the exact 64-hex `/api/tags` digest and a
+unique modality declaration containing `text` and optionally `image`, and it
+forbids every vLLM-only fit, quantization, topology, parameter, output, and
+context field. The pulled artifact fixes precision. The adapter uses the
+daemon's HTTP API through the Python standard library, with no Ollama Python SDK
+dependency.
 Runner 2.16 local vLLM/Ollama adapters use the shared deterministic rendered-
 dialog fingerprint as the non-blank `Response.attempt_id` placeholder required
 at target-return validation. Runner replaces that transport-local value with the
@@ -350,23 +358,49 @@ not a second interface or evidence path.
 At process startup the console snapshots platform, CPU model, physical/logical
 cores and total RAM through `psutil`/platform fallbacks, and NVIDIA card/model,
 VRAM, PCI, compute capability and driver data through `nvidia-smi`. The
-dashboard and Build tab render that one snapshot. Build target filters compose
-hosted provider selection (`All` initially) with local name substring, 10M-3T
-maximum parameter count and a separate automatic 16/8/4-bit fit control
+dashboard and Build tab render that one snapshot. Build presents separate hosted
+API, Local vLLM, and Local Ollama groups. Target filters compose hosted provider
+selection (`All` initially) with Local vLLM name substring, 10M-3T maximum
+parameter count and a separate automatic 16/8/4-bit fit control
 (initially on), plus a separate unchecked unknown-fit control. Known 16/8/4-bit
 recommendations use green/blue/amber badges; unknown fit is neutral gray. The
-per-model control names its precision. Compatible local
+unknown-fit control exposes an unknown-size row at every parameter maximum,
+while every known size obeys the cap. The per-model control names its precision.
+Compatible local vLLM
 rows are selectable single-choice radios even when still unpinned; non-dry
 server admission requires the exact revision/digest before launch. Unknown fit
 is blocked under auto; an explicit per-model precision binds
 `allow_unknown_fit: true` and permits only that operator-owned load attempt.
-Known non-fit remains blocked. These are presentation controls only. Source arms
+Known non-fit remains blocked. Ollama rows follow only modality and expose no
+vLLM fit or precision controls; their external daemon, pulled tag, digest, and
+modalities are server-validated prerequisites. These are presentation controls
+only. Source arms
 lacking an integrated evaluator also remain visible/selectable with a concise
 badge and one custom hover/focus tooltip, while the
 server rejects them before a subprocess; visibility never asserts runnability.
 Dry composition discards real API/local selections because the runner uses
 `MockTarget`, and local roster modality metadata is narrowed to its supported
 text/image path so audio mismatches fail UI/CLI parity.
+
+The Jobs view converts stored epoch timestamps to full browser-local start dates
+and times. Its state, text, From, and To filters combine, defaulting to the
+previous seven days through the current browser time with inclusive selected
+precision. Compact tags distinguish console-owned `running`, `passed`,
+`failed`, and `orphaned` states from external `reported running`, `partial`,
+`blocked`, `stopped`, and `unknown` states. An external running marker is only a
+reported state because the console does not own or inspect that process.
+
+External engineering campaign discovery is read-only and restricted to a
+bounded `ura-engineering-campaign/1` `ENGINEERING_ONLY.json` marker whose
+`thesis_empirical_evidence` is false. Optional strict `planned_tasks` and
+`model_tasks` fields distinguish model tasks, support tasks, pending work, and
+unplanned events. Task-event success means a task process ended successfully,
+not that inference occurred. An optional bounded `model-execution.jsonl`
+self-report provides attempted and successful counts per declared model task;
+for a terminal campaign, a supplied report must cover every model task exactly
+once. The report and any reserved-call ledger are operational diagnostics, not
+execution proof. Completion-validated response artifacts remain the measurement
+authority.
 
 Console state persists in a stdlib-sqlite database (`console.db` under the
 state directory): jobs with their exact argv and builder parameters, the

@@ -668,7 +668,7 @@ class LifecycleMixin:
                 data = dict(form or {})
                 confirmed = data.pop("confirm", "") == "yes"
                 preflight_only = data.pop("preflight_only", "") == "yes"
-                command, values, params = self._compose_from_builder(data)
+                params = self._builder_params(data)
                 errors = self._validate_builder(params)
                 if errors:
                     # Reject before any subprocess exists; re-render with
@@ -679,6 +679,17 @@ class LifecycleMixin:
                         self._build_page(
                             prefill=params,
                             errors=errors,
+                        ),
+                    )
+                try:
+                    command, values, params = self._compose_from_builder(params)
+                except ValueError as exc:
+                    return (
+                        200,
+                        "text/html; charset=utf-8",
+                        self._build_page(
+                            prefill=params,
+                            errors={"models": str(exc)},
                         ),
                     )
                 try:
