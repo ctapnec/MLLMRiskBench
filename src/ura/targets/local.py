@@ -37,6 +37,59 @@ _SHA256 = re.compile(r"[0-9a-f]{64}")
 _MAX_OLLAMA_RESPONSE_BYTES = 4 * 1024 * 1024
 _MAX_OLLAMA_JSON_NODES = 250_000
 _MAX_OLLAMA_JSON_DEPTH = 64
+MAX_VLLM_MODEL_LEN = 1_000_000
+MAX_VLLM_GENERATION_TOKENS = 25_000
+OLLAMA_FORBIDDEN_LOCAL_CONFIG_FIELDS = frozenset({
+    "revision",
+    "tensor_parallel_size",
+    "gpu_memory_utilization",
+    "max_tokens",
+    "max_model_len",
+    "parameter_count_b",
+    "multi_gpu_compatible",
+    "quantization",
+    "allow_unknown_fit",
+})
+_OLLAMA_RESERVED_CONSTRUCTOR_OPTIONS = (
+    OLLAMA_FORBIDDEN_LOCAL_CONFIG_FIELDS
+    | {"digest", "modalities", "multi_gpu_support_basis", "dtype"}
+)
+
+
+def validate_vllm_max_model_len(value: object) -> int:
+    """Return one bounded vLLM context limit or reject it.
+
+    ``max_model_len`` controls engine/KV-cache allocation, not generation
+    length.  The upper bound admits current long-context checkpoints while
+    preventing a malformed local registry from requesting an unbounded engine
+    allocation.
+    """
+
+    if (
+        isinstance(value, bool)
+        or not isinstance(value, int)
+        or not 1 <= value <= MAX_VLLM_MODEL_LEN
+    ):
+        raise ValueError(
+            "max_model_len must be an integer in "
+            f"1..{MAX_VLLM_MODEL_LEN}"
+        )
+    return value
+
+
+def validate_vllm_max_tokens(value: object) -> int:
+    """Return one bounded vLLM generation limit or reject it."""
+
+    if (
+        isinstance(value, bool)
+        or not isinstance(value, int)
+        or not 1 <= value <= MAX_VLLM_GENERATION_TOKENS
+    ):
+        raise ValueError(
+            "max_tokens must be an integer in "
+            f"1..{MAX_VLLM_GENERATION_TOKENS}"
+        )
+    return value
 
 
 def _strict_bounded_json_bytes(data: bytes) -> Any:
@@ -272,6 +325,7 @@ class VLLMTarget(BaseTarget):
         tensor_parallel_size: int = 2,
         quantization: Optional[str] = None,
         max_tokens: int = 512,
+        max_model_len: Optional[int] = None,
         temperature: float = 0.0,
         dtype: str = "auto",
         gpu_memory_utilization: float = 0.90,
@@ -310,7 +364,14 @@ class VLLMTarget(BaseTarget):
         self.media_roots = _media_roots(media_roots)
         self.tensor_parallel_size = tensor_parallel_size
         self.quantization = quantization
-        self.max_tokens = max_tokens
+        self.max_tokens = validate_vllm_max_tokens(max_tokens)
+        self.max_model_len = (
+            None
+            if max_model_len is None
+            else validate_vllm_max_model_len(max_model_len)
+        )
+        if self.max_model_len is not None and self.max_tokens > self.max_model_len:
+            raise ValueError("max_tokens must not exceed max_model_len")
         self.temperature = temperature
         self.dtype = dtype
         self.gpu_memory_utilization = gpu_memory_utilization
@@ -376,6 +437,9 @@ class VLLMTarget(BaseTarget):
                 # Pin the tokenizer/chat-template to the SAME immutable revision
                 # so it cannot drift independently of the model weights.
                 identity_kwargs["tokenizer_revision"] = self.revision
+            context_kwargs: dict[str, Any] = {}
+            if self.max_model_len is not None:
+                context_kwargs["max_model_len"] = self.max_model_len
             self._llm = LLM(
                 model=self._runtime_model,
                 tensor_parallel_size=self.tensor_parallel_size,
@@ -383,6 +447,7 @@ class VLLMTarget(BaseTarget):
                 dtype=self.dtype,
                 gpu_memory_utilization=self.gpu_memory_utilization,
                 **identity_kwargs,
+                **context_kwargs,
                 **self.engine_kwargs,
             )
         return self._llm
@@ -421,8 +486,10 @@ class VLLMTarget(BaseTarget):
         latency_ms = (time.perf_counter() - t0) * 1000.0
 
         text, tokens, finish_reason, stop_reason = self._extract(outputs)
+        from .api import _dialog_fingerprint
+
         return Response(
-            attempt_id="",
+            attempt_id=_dialog_fingerprint(dialog),
             target=self.name,
             output_turns=[DialogTurn(role="assistant", content=text)],
             latency_ms=latency_ms,
@@ -434,6 +501,11 @@ class VLLMTarget(BaseTarget):
                 "model_revision": self.revision,
                 "model_digest": self.model_digest,
                 "quantization": self.quantization or "none",
+                **(
+                    {"max_model_len": self.max_model_len}
+                    if self.max_model_len is not None
+                    else {}
+                ),
                 "finish_reason": finish_reason,
                 "stop_reason": stop_reason,
                 "requested_seed": seed,
@@ -531,6 +603,14 @@ class OllamaTarget(BaseTarget):
         from .api import _media_roots
 
         self.media_roots = _media_roots(media_roots)
+        forbidden_options = sorted(
+            set(options) & _OLLAMA_RESERVED_CONSTRUCTOR_OPTIONS
+        )
+        if forbidden_options:
+            raise ValueError(
+                "OllamaTarget does not accept reserved/vLLM-only option(s): "
+                + ", ".join(forbidden_options)
+            )
         self.options = options
 
     def validate_research_identity(self) -> None:
@@ -629,8 +709,10 @@ class OllamaTarget(BaseTarget):
         if not isinstance(text, str) or not text.strip():
             raise LocalTargetOutputError("Ollama returned an empty completion")
         tokens = self._token_counts(data)
+        from .api import _dialog_fingerprint
+
         return Response(
-            attempt_id="",
+            attempt_id=_dialog_fingerprint(dialog),
             target=self.name,
             output_turns=[DialogTurn(role="assistant", content=text)],
             latency_ms=latency_ms,
@@ -789,8 +871,13 @@ REGISTRY.register(
 
 
 __all__ = [
+    "MAX_VLLM_GENERATION_TOKENS",
+    "MAX_VLLM_MODEL_LEN",
+    "OLLAMA_FORBIDDEN_LOCAL_CONFIG_FIELDS",
     "VLLMTarget",
     "OllamaTarget",
     "make_vllm_target",
     "make_ollama_target",
+    "validate_vllm_max_model_len",
+    "validate_vllm_max_tokens",
 ]

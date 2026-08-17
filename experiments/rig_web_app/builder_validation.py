@@ -132,12 +132,32 @@ class BuilderValidationMixin:
             unknown_fit_without_precision = []
             incompatible = []
             for spec in local:
+                entry = catalog.get(spec, {})
+                if spec.startswith("ollama:"):
+                    try:
+                        self._validate_ollama_local_entry(spec, entry)
+                    except ValueError as exc:
+                        errors.setdefault("models", str(exc))
+                    continue
                 if not spec.startswith("vllm:"):
+                    continue
+                try:
+                    max_model_len = self._local_max_model_len(spec, entry)
+                    max_tokens = self._local_max_tokens(spec, entry)
+                except ValueError as exc:
+                    errors.setdefault("models", str(exc))
+                    continue
+                if max_model_len is not None and max_tokens > max_model_len:
+                    errors.setdefault(
+                        "models",
+                        f"local target {spec!r} max_tokens must not exceed "
+                        "max_model_len",
+                    )
                     continue
                 model_quantization = str(params.get(f"quantization::{spec}", "")).strip().lower()
                 fit = self._effective_local_profile(
                     spec,
-                    catalog.get(spec, {}),
+                    entry,
                     default_quantization=params.get("quantization", ""),
                     model_quantization=model_quantization,
                 ).get("fits")

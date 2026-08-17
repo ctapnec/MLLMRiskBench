@@ -434,7 +434,8 @@ _EDITABLE_CONFIGS: dict[str, tuple[str, str, str]] = {
         "experiments/local-targets.json",
         "experiments/rig/local-targets.example.json",
         "Local vLLM target registry: vllm:org/model -> pinned revision, "
-        "modalities, tensor-parallel size, GPU memory. Consumed via "
+        "modalities, tensor-parallel size, GPU memory, optional max_model_len "
+        "context cap, and generation max_tokens. Consumed via "
         "--local / --local-config; runs on the rig's own GPUs (no API spend).",
     ),
     "budgets": (

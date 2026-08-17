@@ -69,14 +69,16 @@ def _capture(
     engine_runner=None,
     limit: int = 1,
     converted_datapoints: list[DataPoint] | None = None,
+    output_dir: Path | None = None,
 ) -> tuple[Path, Path, DataPoint]:
     repo = tmp_path / "HarmBench"
     repo.mkdir(parents=True)
     _checkout(repo)
     source = tmp_path / "behaviors.csv"
     _source_csv(source)
-    artifact = tmp_path / "harmbench.replay.json"
-    config = tmp_path / "harmbench.attackers.json"
+    destination = output_dir or tmp_path
+    artifact = destination / "harmbench.replay.json"
+    config = destination / "harmbench.attackers.json"
     monkeypatch.setattr(shutil, "which", lambda _name: "git")
     monkeypatch.setattr(
         harmbench_module,
@@ -272,6 +274,70 @@ def test_harmbench_capture_replays_every_bound_case_without_native_overclaim(
     assert manifest.config["components"]["attacker"][
         "replay_artifact_identity"
     ] == identity
+
+
+def test_harmbench_capture_canonicalizes_symlinked_output_for_replay(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    real_output = tmp_path / "data-disk"
+    real_output.mkdir()
+    linked_output = tmp_path / "runs"
+    try:
+        linked_output.symlink_to(real_output, target_is_directory=True)
+    except OSError:
+        pytest.skip("this account cannot create directory symlinks")
+
+    artifact, config, point = _capture(
+        monkeypatch,
+        tmp_path,
+        cases_per_method=1,
+        output_dir=linked_output,
+    )
+    document = json.loads(config.read_text(encoding="utf-8"))
+    replay_path = Path(document["harmbench"]["replay_artifact"])
+
+    assert replay_path == artifact.resolve(strict=True)
+    assert replay_path.parent == real_output.resolve(strict=True)
+    assert not replay_path.is_symlink()
+
+    from experiments.run_matrix import _load_attacker_config
+
+    operational, _ = _load_attacker_config(str(config), ["harmbench"])
+    attacker = HarmBenchAttacker(**operational["harmbench"])
+    attacker.validate_measured_run([point])
+    attempts = list(
+        attacker.generate(
+            point,
+            AttackBudget(max_queries=2, max_turns=2, seed=7),
+        )
+    )
+    assert len(attempts) == 2
+
+
+def test_harmbench_capture_rejects_output_aliases_before_engine_calls(
+    tmp_path: Path,
+) -> None:
+    real_output = tmp_path / "data-disk"
+    real_output.mkdir()
+    linked_output = tmp_path / "runs"
+    try:
+        linked_output.symlink_to(real_output, target_is_directory=True)
+    except OSError:
+        pytest.skip("this account cannot create directory symlinks")
+
+    with pytest.raises(
+        ValueError,
+        match="artifact and attacker config outputs must differ",
+    ):
+        harmbench_capture.main([
+            "--repo", str(tmp_path / "unused-repo"),
+            "--revision", _REVISION,
+            "--source", str(tmp_path / "unused-source.csv"),
+            "--method", "PEZ",
+            "--artifact-out", str(linked_output / "same.json"),
+            "--attacker-config-out", str(real_output / "same.json"),
+        ])
 
 
 def test_harmbench_replay_rejects_missing_and_tampered_artifacts(

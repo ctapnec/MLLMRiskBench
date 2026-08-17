@@ -634,7 +634,7 @@ def test_prepared_workflows_live_under_attack_frameworks_without_nested_forms(
         app.close()
 
 
-def test_prepared_attack_configs_are_verified_and_materialized_portably(
+def test_prepared_attack_configs_are_verified_and_materialized_for_runtime(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     repo = tmp_path / "repo"
@@ -672,7 +672,7 @@ def test_prepared_attack_configs_are_verified_and_materialized_portably(
             "upstream_revision": "a" * 40,
             "source_provider": "openai",
             "source_model": "source-model",
-            "response_artifact": "runs/t3-bundle.json",
+            "response_artifact": str(t3_bundle.resolve()),
             "response_artifact_sha256": t3_sha,
         }
 
@@ -709,7 +709,7 @@ def test_prepared_attack_configs_are_verified_and_materialized_portably(
         generated = app._materialize_prepared_attacker_config(harm_params)
         assert generated is not None
         emitted = json.loads(generated.read_text(encoding="utf-8"))["harmbench"]
-        assert emitted["replay_artifact"] == "runs/harmbench-capture.json"
+        assert emitted["replay_artifact"] == str(harm_artifact.resolve())
         assert emitted["replay_artifact_sha256"] == harm_sha
 
         inadequate = {**harm_params, "max_queries": "3", "max_turns": "2"}
@@ -755,7 +755,9 @@ def test_prepared_attack_configs_are_verified_and_materialized_portably(
         assert command == "run_matrix" and values["--attackers"] == "t3mp3st"
         generated_path = Path(values["--attacker-config"])
         generated_doc = json.loads(generated_path.read_text(encoding="utf-8"))
-        assert generated_doc["t3mp3st"]["response_artifact"] == "runs/t3-bundle.json"
+        assert generated_doc["t3mp3st"]["response_artifact"] == str(
+            t3_bundle.resolve()
+        )
         run_matrix.build_parser().parse_args(build_argv(command, values)[3:])
 
         status, location, _ = app.handle("POST", "/build", {
@@ -768,10 +770,93 @@ def test_prepared_attack_configs_are_verified_and_materialized_portably(
         assert command == "run_matrix" and values["--attackers"] == "harmbench"
         generated_path = Path(values["--attacker-config"])
         generated_doc = json.loads(generated_path.read_text(encoding="utf-8"))
-        assert generated_doc["harmbench"]["replay_artifact"] == (
-            "runs/harmbench-capture.json"
+        assert generated_doc["harmbench"]["replay_artifact"] == str(
+            harm_artifact.resolve()
         )
         run_matrix.build_parser().parse_args(build_argv(command, values)[3:])
+    finally:
+        app.close()
+
+
+def test_prepared_attack_configs_use_canonical_paths_with_symlinked_results_root(
+    tmp_path: Path,
+) -> None:
+    repo = tmp_path / "repo"
+    (repo / "experiments").mkdir(parents=True)
+    (repo / "experiments" / "api-targets.json").write_text(
+        json.dumps({"openai:test-model": {"modalities": ["text"]}}),
+        encoding="utf-8",
+    )
+    real_results = tmp_path / "data-disk" / "runs"
+    real_results.mkdir(parents=True)
+    results = repo / "runs"
+    try:
+        results.symlink_to(real_results, target_is_directory=True)
+    except OSError:
+        pytest.skip("this account cannot create directory symlinks")
+
+    app = RigWebApp(
+        results_root=results,
+        state_dir=results / "state",
+        repo_root=repo,
+    )
+    try:
+        t3_bundle = results / "t3-bundle.json"
+        t3_bundle.write_text(
+            json.dumps({
+                "format_version": "ura-t3mp3st-plan-bundle/1",
+                "upstream_revision": "a" * 40,
+                "source_provider": "local",
+                "source_model": "planner",
+            }),
+            encoding="utf-8",
+        )
+        t3_sha = hashlib.sha256(t3_bundle.read_bytes()).hexdigest()
+
+        harm_bundle = results / "harmbench-capture.json"
+        harm_bundle.write_text(
+            json.dumps({
+                "format_version": "ura-harmbench-transfer-replay/1",
+                "upstream_revision": "b" * 40,
+                "experiment": "fixture-model",
+                "methods": ["PEZ"],
+            }),
+            encoding="utf-8",
+        )
+        harm_sha = hashlib.sha256(harm_bundle.read_bytes()).hexdigest()
+        harm_config = results / "harmbench-attackers.json"
+        harm_config.write_text(
+            json.dumps({"harmbench": {
+                "methods": ["PEZ"],
+                "experiment": "fixture-model",
+                "upstream_revision": "b" * 40,
+                "replay_artifact": str(harm_bundle),
+                "replay_artifact_sha256": harm_sha,
+            }}),
+            encoding="utf-8",
+        )
+
+        generated = app._materialize_prepared_attacker_config({
+            "attackers": "t3mp3st,harmbench",
+            "t3_artifact": str(t3_bundle),
+            "t3_artifact_sha": t3_sha,
+            "harm_config": str(harm_config),
+        })
+        assert generated is not None
+        document = json.loads(generated.read_text(encoding="utf-8"))
+        assert document["t3mp3st"]["response_artifact"] == str(
+            t3_bundle.resolve(strict=True)
+        )
+        assert document["harmbench"]["replay_artifact"] == str(
+            harm_bundle.resolve(strict=True)
+        )
+
+        operational, _ = run_matrix._load_attacker_config(
+            str(generated), ["t3mp3st", "harmbench"]
+        )
+        portable = run_matrix._portable_attacker_configs(operational)
+        assert "response_artifact" not in portable["t3mp3st"]
+        assert "replay_artifact" not in portable["harmbench"]
     finally:
         app.close()
 
@@ -876,6 +961,65 @@ def test_prepared_capture_forms_validate_preview_and_start_exact_commands(
             "command": "capture_t3mp3st", "--out": str(results / "forged"),
         })
         assert status == 400
+    finally:
+        app.close()
+
+
+def test_prepared_capture_forms_accept_canonical_symlinked_results_root(
+    tmp_path: Path,
+) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    real_results = tmp_path / "data-disk" / "runs"
+    real_results.mkdir(parents=True)
+    results = repo / "runs"
+    try:
+        results.symlink_to(real_results, target_is_directory=True)
+    except OSError:
+        pytest.skip("this account cannot create directory symlinks")
+
+    checkout = tmp_path / "HarmBench"
+    checkout.mkdir()
+    source = tmp_path / "behaviors.csv"
+    source.write_text("BehaviorID,Behavior\n1,test\n", encoding="utf-8")
+    app = RigWebApp(
+        results_root=results,
+        state_dir=results / "state",
+        repo_root=repo,
+    )
+    try:
+        status, _, body = app.handle("POST", "/build/t3mp3st/capture", {
+            "t3cap_corpus": "strongreject_official",
+            "t3cap_limit": "1",
+            "t3cap_sample_seed": "0",
+            "t3cap_endpoint": "http://127.0.0.1:3333/api/general/plan",
+            "t3cap_revision": "a" * 40,
+            "t3cap_provider": "local",
+            "t3cap_model": "source-model",
+            "t3cap_timeout": "120",
+            "t3cap_out": "runs/t3-captures",
+        })
+        text = body.decode("utf-8")
+        assert status == 200 and "Review T3MP3ST capture" in text
+        assert str((real_results / "t3-captures").resolve()) in text
+
+        status, _, body = app.handle("POST", "/build/harmbench/prepare", {
+            "hcap_repo": str(checkout),
+            "hcap_revision": "b" * 40,
+            "hcap_source": str(source),
+            "hcap_corpus": "harmbench_text",
+            "hcap_methods": "DirectRequest",
+            "hcap_experiment": "llama2_7b",
+            "hcap_limit": "1",
+            "hcap_sample_seed": "0",
+            "hcap_cases": "1",
+            "hcap_artifact_out": "runs/harm/capture.json",
+            "hcap_config_out": "runs/harm/attackers.json",
+        })
+        text = body.decode("utf-8")
+        assert status == 200 and "Review HarmBench prepare" in text
+        assert str((real_results / "harm" / "capture.json").resolve()) in text
+        assert str((real_results / "harm" / "attackers.json").resolve()) in text
     finally:
         app.close()
 

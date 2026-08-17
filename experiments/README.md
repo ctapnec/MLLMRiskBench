@@ -5,7 +5,7 @@ validity rules, then execute [RUN_AND_RETURN.md](RUN_AND_RETURN.md). A dry run,
 partial artifact family, source conversion, model-name assumption, native prompt
 export, or synthetic figure is not a measured thesis result.
 
-The maintained execution contract is Runner `ura-runner/2.15` with unified
+The maintained execution contract is Runner `ura-runner/2.16` with unified
 schema `1.4`; older artifacts are not mixed into the thesis run. The latest
 exact tested release and its local/rig evidence are retained in the sibling
 Thesis record
@@ -41,7 +41,11 @@ product:
    `parameter_count_b` is supplied; no fit or download is inferred. Auto
    precision cannot launch an unknown-fit row. An explicit per-model precision
    creates the bound `allow_unknown_fit: true` operator opt-in, while a known
-   incompatibility remains blocked.
+   incompatibility remains blocked. The optional vLLM-only `max_model_len`
+   field separately caps engine context and KV-cache admission; it is not
+   generation `max_tokens`. Omission uses the checkpoint native context, while
+   an explicit integer in 1..1,000,000 must be at least `max_tokens`; the Build
+   row labels the explicit cap or native model context.
 4. **Multimodal lanes.** Image, JALMBench audio, and Video-SafetyBench video are
    attempted only for exact target transports that pass bounded live
    attestation. Agent/tool sources additionally require their substantive
@@ -68,7 +72,10 @@ attacker in Build or pass that config to `run_matrix`. Preparation may use a
 source model or GPU and is outside the Runner's target/judge ceilings. The
 measured run makes no attacker-generation call: it verifies the artifact hash
 and exact converted selection before any target call, then replays the prepared
-attempts.
+attempts. Rig Web resolves a symlinked configured results root before capture and
+puts canonical absolute, runtime-only artifact paths in the generated attacker
+config. The hardened artifact reader still rejects symlink path components, and
+`run_matrix` persists content identity rather than those host paths.
 
 ## Source inventory
 

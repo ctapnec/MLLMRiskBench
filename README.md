@@ -129,6 +129,13 @@ target/judge calls. On
 the actual two-24,564-MiB rig, FP8 does not fit a 70B profile, so it is rostered
 only as an in-flight 4-bit BitsAndBytes, tensor-parallel-2 candidate rather than
 an unquantized model.
+The optional vLLM-only `max_model_len` field is an engine-context and KV-cache
+admission cap, not the response-generation `max_tokens` bound. Omission leaves
+the checkpoint's native context unchanged; an explicit integer in 1..1,000,000
+is passed to vLLM at engine construction, and `max_tokens` may not exceed it.
+Rig Web preserves the field in its selected local config, and the normalized
+value enters grid/run provenance. Each Build row labels either the explicit
+context cap or native model context.
 
 The dependency check on that rig used Python 3.12.13, vLLM 0.27.1,
 BitsAndBytes 0.49.2, psutil 7.2.2 and torch 2.13.0+cu130/CUDA 13.0. The
@@ -139,7 +146,7 @@ unused orphaned `datasets 2.14.7` installation. This verifies the environment
 and UI/admission prerequisites, not model inference; no provider/model call was
 made.
 
-Runner 2.15 makes that prerequisite machine-checked. A bounded non-dry
+Runner 2.16 makes that prerequisite machine-checked. A bounded non-dry
 `--attestation-probe` grid is converted by `experiments.live_attestation` into a
 content-addressed `ura-live-attestation/2` receipt. An ordinary measured grid
 must supply the exact receipt bytes and digest, the same operator-declared
@@ -382,7 +389,7 @@ Runner `RunManifest`; the URA revision that performed their import is retained
 in the return-package/importer context rather than relabelled as an upstream
 native field.
 
-Runner `ura-runner/2.15` writes unified schema `1.4`. Immutable planning/source
+Runner `ura-runner/2.16` writes unified schema `1.4`. Immutable planning/source
 stratum identity is stored separately from adaptive per-turn evaluation
 identity. Thus a Crescendo setup turn remains joined to its original planning
 stratum while receiving a typed `not_applicable` judgment and no judge call or
@@ -459,7 +466,11 @@ Build page exposes the separate preparation commands: T3MP3ST captures an exact
 planning bundle, while HarmBench captures generated text cases and writes the
 matching attacker config. These preparation jobs can use source-model or GPU
 compute; the measured Runner only validates and replays their content-addressed
-outputs.
+outputs. The Build preparation workflow resolves a symlinked configured results
+root before invoking either producer and emits canonical absolute artifact paths
+for runtime use. The native artifact readers still reject paths containing a
+symlink component. `run_matrix` removes those host-only paths before persistence
+and retains only the verified content identity.
 Before a paid mode, it shows the exact argv and offers a no-call preflight
 whose lane-projection gives the
 required target/judge/HTTP call upper bounds; Start is blocked until the entered

@@ -2,7 +2,7 @@
 
 `ura.data_models` is the typed Pydantic v2 contract shared by converters,
 attackers, targets, judges, persistence, and analysis. `SCHEMA_VERSION = "1.4"`
-is stamped on datapoints, checkpoints, and manifests. Runner 2.15 rejects mixed
+is stamped on datapoints, checkpoints, and manifests. Runner 2.16 rejects mixed
 schema versions and duplicate datapoint IDs before a target call.
 
 ## Records
@@ -50,6 +50,14 @@ before any target call. Persisted run identity retains content hashes and sizes,
 not an operator-specific absolute artifact path. These formats prove prepared
 input integrity only; they do not prove upstream evaluator validity, target
 safety or an empirical thesis result.
+
+The `response_artifact` and `replay_artifact` values are operational paths, not
+portable schema identity. Rig Web resolves its configured results root and emits
+canonical absolute runtime-only values, including when the configured root is a
+symlink. Native artifact readers still reject every symlink path component.
+After validating the declared digest and bounded regular file, `run_matrix`
+removes the path and persists `response_artifact_identity` or
+`replay_artifact_identity` with the observed SHA-256 and byte count.
 
 ## Prospective request envelope and early failures
 
@@ -443,7 +451,12 @@ an executed cell:
 - `--local-config` binds an exact local specification to one immutable model
   revision or digest, declared modalities, parameter count, multi-GPU support,
   per-model quantization, tensor-parallel size, memory utilization, and output
-  bound. A per-model quantization overrides the command default, which overrides
+  bound. `max_tokens` is the generation bound. The optional vLLM-only
+  `max_model_len` is a distinct engine-context/KV-cache cap: omission uses the
+  checkpoint native context, while an explicit non-boolean integer in
+  1..1,000,000 is passed to vLLM engine construction and must be at least
+  `max_tokens`. It is forbidden for Ollama. A per-model quantization overrides
+  the command default, which overrides
   hardware-auto selection. Auto chooses the highest fitting supported precision:
   unquantized 16-bit, FP8 8-bit (minimum SM 7.5), then BitsAndBytes 4-bit
   (minimum SM 7.0). The resolved quantization, precision, tensor-parallel size
@@ -456,7 +469,8 @@ an executed cell:
   `fp8`, `bitsandbytes`, `awq`, or `gptq`. It permits an operator-owned load
   attempt only when estimated fit is unknown; hardware auto and known non-fit
   remain blocked. The normalized selected config retains the resolved precision
-  and this opt-in.
+  and this opt-in. It also retains `max_model_len` when declared, so its selected
+  subset hash and grid/run provenance bind the context/KV admission setting.
 
 Unselected inventory entries are neither evidence nor requested cells. Secret
 values are environment-indirected and rejected from persisted configuration.
@@ -537,7 +551,8 @@ local rows are single-choice
 selectors even when the roster pin is unfinished, but non-dry submission still
 requires an exact revision/digest. An unknown-fit row remains blocked under auto;
 an explicit per-model precision binds `allow_unknown_fit: true`, while known
-non-fit remains blocked. Source-ineligible rows may also remain visible and
+non-fit remains blocked. A vLLM row labels an explicit `max_model_len` context
+cap or native model context. Source-ineligible rows may also remain visible and
 selectable with one custom hover/focus tooltip; server validation rejects them
 before a subprocess. Neither UI state replaces the local-config, source-evaluator, or
 hardware checks described above.

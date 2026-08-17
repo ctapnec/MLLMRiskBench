@@ -57,7 +57,7 @@ from .targets.base import BaseTarget
 from .targets.api import _logical_media_root_alias, _resolve_local_media_path
 
 #: Bumped when the orchestration semantics change (recorded in every manifest).
-CODE_VERSION = "ura-runner/2.15"
+CODE_VERSION = "ura-runner/2.16"
 _MAX_SCORED_MEDIA_BYTES = 25 * 1024 * 1024
 #: Video releases legitimately exceed the image/audio bound (Video-SafetyBench
 #: ships ~44 MiB MP4s); mirrors DEFAULT_MAX_VIDEO_ASSET_BYTES converter-side.
@@ -3723,6 +3723,7 @@ _CONFIG_CLASS_ATTRS = {
     "modality_support",
     "escalate_below",
     "max_tokens",
+    "max_model_len",
     "temperature",
     "dtype",
     "quantization",

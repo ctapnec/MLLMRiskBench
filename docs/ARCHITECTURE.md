@@ -71,6 +71,13 @@ synthetic dry-run is the sole explicit exemption and records
 `mode=not_required_diagnostic_dry_run` together with actual source digests.
 Neither mode authenticates a remote repository or proves empirical validity.
 
+Prepared attacker paths cross an explicit runtime boundary. The console resolves
+its configured results root before invoking T3MP3ST capture or HarmBench prepare,
+so a symlinked root yields canonical absolute operational artifact paths. Native
+artifact readers still reject any supplied path with a symlink component.
+`run_matrix` verifies the bounded file and declared digest, then persists only
+its content hash and byte size rather than the host path.
+
 ## Schema and source boundaries
 
 Converters preserve source item identifiers, policies, expected behavior,
@@ -139,7 +146,7 @@ is the operator-selection universe, not normalized config/receipt identity;
 config-only variants sharing it belong in separate Level-1 cohorts.
 
 After the whole request passes admission and before the first generation call,
-Runner 2.15 writes a content-addressed `ura-lane-projection/1`. The artifact
+Runner 2.16 writes a content-addressed `ura-lane-projection/1`. The artifact
 binds the exact experiment condition and eligibility descriptor, selected
 record/cluster/source-policy counts, deterministic sampling identities,
 selected physical input-media bytes, and the conservative complete-grid target,
@@ -220,6 +227,16 @@ then BitsAndBytes 4-bit on SM 7.0+. The exact quantization and card count remain
 a recorded execution condition; the estimate never substitutes for local-engine
 preflight. Expert/MoE-ambiguous names stay parameter/fit-unknown until an exact
 `parameter_count_b` is declared; their names never authorize a download or fit.
+An optional vLLM-only `max_model_len` sets the engine context and KV-cache
+admission cap independently of generation `max_tokens`. Omission uses the
+checkpoint's native context; an explicit integer in 1..1,000,000 must be at least
+`max_tokens`, is passed at engine construction, and is retained in normalized
+execution provenance.
+Runner 2.16 local vLLM/Ollama adapters use the shared deterministic rendered-
+dialog fingerprint as the non-blank `Response.attempt_id` placeholder required
+at target-return validation. Runner replaces that transport-local value with the
+canonical Attempt ID and run ID before judgment, checkpointing, or persistence.
+It is linkage scaffolding, not scientific identity or empirical evidence.
 
 This receipt is deliberately not a cryptographic identity or account credential.
 `execution_scope_id` is an operator assertion, so equivalence of accounts,

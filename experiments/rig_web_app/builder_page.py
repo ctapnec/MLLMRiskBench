@@ -182,6 +182,29 @@ class BuilderPageMixin:
                 row_attrs = f" data-provider='{html.escape(provider)}'"
             if kind == "local":
                 entry = local_catalog.get(value, {})
+                local_config_error = ""
+                context_limit = None
+                if value.startswith("ollama:"):
+                    try:
+                        self._validate_ollama_local_entry(value, entry)
+                    except ValueError as exc:
+                        local_config_error = str(exc)
+                        disabled = " disabled"
+                elif value.startswith("vllm:"):
+                    try:
+                        context_limit = self._local_max_model_len(value, entry)
+                        generation_limit = self._local_max_tokens(value, entry)
+                        if (
+                            context_limit is not None
+                            and generation_limit > context_limit
+                        ):
+                            raise ValueError(
+                                f"local target {value!r} max_tokens must not "
+                                "exceed max_model_len"
+                            )
+                    except ValueError as exc:
+                        local_config_error = str(exc)
+                        disabled = " disabled"
                 configured_quant = (
                     str(prefill.get(f"quantization::{value}", entry.get("quantization", "auto")))
                     .strip()
@@ -215,6 +238,12 @@ class BuilderPageMixin:
                 pinned = (
                     isinstance(revision, str) and re.fullmatch(r"[0-9a-fA-F]{40,64}", revision)
                 ) or (isinstance(digest, str) and re.fullmatch(r"[0-9a-fA-F]{64}", digest))
+                if local_config_error:
+                    context_text = "invalid local config"
+                elif context_limit is not None:
+                    context_text = f"context cap {context_limit:,} tokens"
+                else:
+                    context_text = "native model context"
                 # A known non-fit stays disabled. Unknown fit is an explicit UI
                 # opt-in; a live run additionally requires a per-model precision.
                 if fit is False:
@@ -291,6 +320,12 @@ class BuilderPageMixin:
                         + html.escape(quant_label)
                         + "</span>"
                     )
+                if local_config_error:
+                    name_html += (
+                        " <span class='badge red' title='"
+                        + html.escape(local_config_error, quote=True)
+                        + "'>invalid local config</span>"
+                    )
                 detail = (
                     "<span class='fieldhint'>"
                     + html.escape(
@@ -299,7 +334,8 @@ class BuilderPageMixin:
                         f"estimated / {profile.get('available_vram_gib', 0)} GiB available "
                         f"· {fit_text} · {quant_label} · TP"
                         f"{profile.get('recommended_tensor_parallel_size', 1)} · "
-                        f"multi-GPU {basis} · {'pinned' if pinned else 'revision required'}"
+                        f"multi-GPU {basis} · {context_text} · "
+                        f"{'pinned' if pinned else 'revision required'}"
                         + (
                             f" · {profile['compatibility_note']}"
                             if profile.get("compatibility_note")

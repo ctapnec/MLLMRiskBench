@@ -873,7 +873,8 @@ def _load_local_config(
         config = value[spec]
         if not isinstance(config, dict) or set(config) - {
             "revision", "digest", "modalities", "tensor_parallel_size",
-            "gpu_memory_utilization", "max_tokens", "parameter_count_b",
+            "gpu_memory_utilization", "max_tokens", "max_model_len",
+            "parameter_count_b",
             "multi_gpu_compatible", "quantization", "allow_unknown_fit",
         }:
             raise ValueError(
@@ -915,15 +916,29 @@ def _load_local_config(
                 raise ValueError(
                     f"vLLM config {spec!r} gpu_memory_utilization must be in [0.1, 0.95]"
                 )
-            max_tokens = config.get("max_tokens", 512)
-            if (
-                isinstance(max_tokens, bool)
-                or not isinstance(max_tokens, int)
-                or not 1 <= max_tokens <= 25_000
-            ):
-                raise ValueError(
-                    f"vLLM config {spec!r} max_tokens must be an integer in 1..25000"
+            from ura.targets.local import (  # noqa: PLC0415
+                validate_vllm_max_model_len,
+                validate_vllm_max_tokens,
+            )
+
+            try:
+                max_tokens = validate_vllm_max_tokens(
+                    config.get("max_tokens", 512)
                 )
+            except ValueError as exc:
+                raise ValueError(f"vLLM config {spec!r} {exc}") from exc
+            if "max_model_len" in config:
+                try:
+                    max_model_len = validate_vllm_max_model_len(
+                        config["max_model_len"]
+                    )
+                except ValueError as exc:
+                    raise ValueError(f"vLLM config {spec!r} {exc}") from exc
+                if max_tokens > max_model_len:
+                    raise ValueError(
+                        f"vLLM config {spec!r} max_tokens must not exceed "
+                        "max_model_len"
+                    )
             allow_unknown_fit = config.get("allow_unknown_fit", False)
             if not isinstance(allow_unknown_fit, bool):
                 raise ValueError(
@@ -989,17 +1004,13 @@ def _load_local_config(
                     )
             config["tensor_parallel_size"] = resolved_tp
         elif backend == "ollama":
+            from ura.targets.local import (  # noqa: PLC0415
+                OLLAMA_FORBIDDEN_LOCAL_CONFIG_FIELDS,
+            )
+
             if (
-                revision is not None
+                set(config) & OLLAMA_FORBIDDEN_LOCAL_CONFIG_FIELDS
                 or not isinstance(digest, str)
-                or any(
-                    field in config
-                    for field in (
-                        "tensor_parallel_size", "gpu_memory_utilization", "max_tokens",
-                        "parameter_count_b", "multi_gpu_compatible", "quantization",
-                        "allow_unknown_fit",
-                    )
-                )
             ):
                 raise ValueError(
                     f"Ollama config {spec!r} requires digest and forbids vLLM fields"
@@ -1725,6 +1736,7 @@ def build_target(
                         "gpu_memory_utilization", 0.90
                     ),
                     "max_tokens": local_identity.get("max_tokens", 512),
+                    "max_model_len": local_identity.get("max_model_len"),
                 }
                 resolved_quantization = str(
                     local_identity.get("quantization") or quantization

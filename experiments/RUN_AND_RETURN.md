@@ -7,7 +7,7 @@ source-native evaluators. Experiments and the human audit are still pending.
 Preflight, dry-run, diagnostic-canary, and bounded transport-probe artifacts are
 diagnostics, not thesis results.
 
-The maintained artifact contract is Runner `ura-runner/2.15` with unified schema
+The maintained artifact contract is Runner `ura-runner/2.16` with unified schema
 `1.4`. Do not combine older-runner artifacts with this program.
 
 Every `python -m experiments.*` command below can equivalently be started
@@ -931,6 +931,26 @@ card count needed for the estimate. The resolved hardware, quantization and
 tensor-parallel configuration enter normal local-config, grid and run
 provenance.
 
+`max_model_len` is an optional vLLM-only per-model field for engine context and
+KV-cache admission. It is separate from `max_tokens`, which remains the maximum
+generated response length. Omit `max_model_len` to let the pinned checkpoint
+declare its native context. If present, it must be a non-boolean integer in
+1..1,000,000 and `max_tokens` must not exceed it; null, strings, floats, and
+out-of-range values fail before engine construction. Rig Web preserves the
+field when materializing the selected local config. The normalized value enters
+the selected-config hash and grid/run provenance, is passed as
+`vllm.LLM(max_model_len=...)` before engine/KV admission, and is reported in the
+local response metadata. The Build row displays either the explicit context cap
+or `native model context`.
+
+Runner 2.16 local adapters construct each vLLM/Ollama `Response` with the same
+deterministic dialog-fingerprint placeholder used by hosted adapters: the first
+16 lowercase SHA-256 hex characters over ordered rendered roles, content, and
+media identities. This only satisfies transport-local response linkage. Runner
+replaces it with the canonical Attempt ID and run ID before judgment,
+checkpointing, or result persistence; do not analyze the placeholder as an
+attempt identity or outcome.
+
 The vLLM local-config field `allow_unknown_fit` is an optional boolean, default
 `false`. It is valid only with an explicit per-model `quantization` value from
 `none`, `fp8`, `bitsandbytes`, `awq`, or `gptq`; `auto` is rejected. The builder
@@ -977,11 +997,19 @@ Put those same revision strings into the three local JSON files below.
     "revision": "60595ebc30ec8e3b1d3b9e65d4943ca011c0006a",
     "modalities": ["text", "image"],
     "tensor_parallel_size": 1,
-    "gpu_memory_utilization": 0.85,
+    "gpu_memory_utilization": 0.90,
+    "max_model_len": 12288,
     "max_tokens": 4096
   }
 }
 ```
+
+Rig-specific boundary: the direct Qwen engine probe at
+`gpu_memory_utilization=0.90` measured a maximum admitted context of 13,040
+tokens. The tracked example therefore uses the conservative 12,288-token cap
+for the ordinary local target. This is local runtime-admission evidence, not an
+inference-quality or thesis result, and it must be rechecked for a different
+checkpoint, engine version, serving configuration, or hardware profile.
 
 `experiments/local-llava-base.json`:
 
@@ -1756,8 +1784,8 @@ python -m experiments.capture_t3mp3st \
   --out runs/thesis/prepared/t3mp3st
 ```
 
-The command prints the content-addressed artifact path and SHA-256. Put those
-exact values into a one-attacker config:
+The command prints the canonical absolute content-addressed artifact path and
+SHA-256. Put those exact values into a one-attacker config:
 
 ```json
 {
@@ -1774,6 +1802,11 @@ exact values into a one-attacker config:
 Use that file with `--attackers t3mp3st --attacker-config <file>` in both
 `rig_check` and `run_matrix`. The measured selection must match the captured
 arm, limit, sample seed and source bytes exactly.
+
+In Rig Web, a configured results-root symlink is resolved before the T3MP3ST
+capture command is built. The generated operational config therefore contains
+the canonical absolute artifact path, even though the retained experiment
+configuration contains only its verified content identity.
 
 #### HarmBench: capture, then replay
 
@@ -1812,6 +1845,15 @@ runs/thesis/prepared/harmbench-direct-config.json` in both `rig_check` and
 cases-per-method`; otherwise admission fails rather than dropping captured
 cases. This bridge is text-only and does not claim that the native HarmBench
 classifier ran.
+
+HarmBench resolves each output parent before generation and writes the canonical
+absolute replay path into its generated config. Rig Web likewise resolves a
+symlinked configured results root before building the prepare command. Use the
+canonical paths printed by the producer when an operator-facing path is an
+alias. The native replay reader continues to reject any supplied path containing
+a symlink component. `run_matrix` verifies the artifact and declared SHA-256,
+then replaces the runtime-only path with its SHA-256/byte identity in persisted
+configuration.
 
 ## 13. Tier 4: local targets and defense contrast
 

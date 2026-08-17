@@ -49,7 +49,7 @@ not replaced with a nearby model. A failed/stale live attestation or silent
 identity drift is a missing/failed prerequisite, not a safe zero and not
 silently rewritten as structural incompatibility.
 
-Runner 2.15 operationalizes this distinction. One completed, bounded, non-dry
+Runner 2.16 operationalizes this distinction. One completed, bounded, non-dry
 `--attestation-probe` is converted without another provider call into a strict
 `ura-live-attestation/2` receipt. Each ordinary measured grid must supply the
 receipt's exact byte digest, the same operator-declared non-secret
@@ -79,6 +79,16 @@ configuration and hardware enter normal grid/run provenance. A model fitting
 one card normally leaves the other for an independent scoring guard. A verified
 same-base unguarded/guarded local pair is the preferred defense effect;
 unrelated models cannot identify that effect.
+The optional per-vLLM-model `max_model_len` is distinct from generation
+`max_tokens`: it sets the engine-context ceiling passed before KV-cache
+allocation. Omission delegates context length to the immutable checkpoint;
+otherwise the value is an integer in 1..1,000,000 and `max_tokens` cannot exceed
+it. The normalized value is execution provenance.
+Runner 2.16 also makes local response construction valid before orchestration:
+vLLM and Ollama emit the shared deterministic rendered-dialog fingerprint as a
+temporary non-blank `attempt_id`, and Runner replaces it with the canonical
+Attempt ID and run ID before judgment or persistence. The placeholder is local
+transport linkage, not an empirical identity or result.
 
 `--api-config` and `--local-config` bind exact requested identities, controls,
 capabilities, and content provenance. Requested and provider-realized identities
@@ -395,7 +405,11 @@ content-addressed, text-only `ura-harmbench-transfer-replay/1` and its matching
 attacker config. A measured grid accepts only those exact prepared bytes and
 validates their revision, source selection, methods/model identity, counts and
 hashes before any target call. It never regenerates either attack inside the
-measured grid.
+measured grid. When the console results root is a symlink, the preparation
+boundary resolves it and uses canonical absolute artifact paths in the
+operational attacker config. Native artifact admission still rejects every
+symlink path component. `run_matrix` verifies the bytes, strips the runtime-only
+path, and persists the hash/byte content identity.
 
 ## Analysis and human validity
 

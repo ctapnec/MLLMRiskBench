@@ -134,6 +134,17 @@ def _atomic_exclusive_write(path: Path, payload: bytes) -> None:
         temporary.unlink(missing_ok=True)
 
 
+def _canonical_output_target(path: Path) -> Path:
+    """Resolve the output parent once and reject an occupied final name."""
+
+    requested = path.expanduser()
+    requested.parent.mkdir(parents=True, exist_ok=True)
+    target = requested.parent.resolve(strict=True) / requested.name
+    if target.exists() or target.is_symlink():
+        raise FileExistsError(f"refusing to overwrite existing output: {target}")
+    return target
+
+
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     if args.limit < 0:
@@ -142,13 +153,10 @@ def main(argv: list[str] | None = None) -> int:
         raise ValueError("--cases-per-method must be in [1, 1000]")
     if not args.corpus_name.strip():
         raise ValueError("--corpus-name must be non-blank")
-    artifact_out = Path(args.artifact_out)
-    config_out = Path(args.attacker_config_out)
+    artifact_out = _canonical_output_target(Path(args.artifact_out))
+    config_out = _canonical_output_target(Path(args.attacker_config_out))
     if artifact_out == config_out:
         raise ValueError("artifact and attacker config outputs must differ")
-    for path in (artifact_out, config_out):
-        if path.exists():
-            raise FileExistsError(f"refusing to overwrite existing output: {path}")
 
     source_path = Path(args.source)
     source_resolved, source_bytes = read_binary_artifact(source_path)
@@ -246,6 +254,7 @@ def main(argv: list[str] | None = None) -> int:
             f"HarmBench capture artifact exceeds {_MAX_REPLAY_BYTES} bytes"
         )
     artifact_sha256 = hashlib.sha256(artifact_bytes).hexdigest()
+    _atomic_exclusive_write(artifact_out, artifact_bytes)
     config = {
         "harmbench": {
             "methods": attacker.methods,
@@ -258,7 +267,6 @@ def main(argv: list[str] | None = None) -> int:
     config_bytes = (
         json.dumps(config, ensure_ascii=False, sort_keys=True, indent=2) + "\n"
     ).encode("utf-8")
-    _atomic_exclusive_write(artifact_out, artifact_bytes)
     _atomic_exclusive_write(config_out, config_bytes)
     print(
         f"captured {len(cases)} HarmBench cases for {len(selected)} behaviors "

@@ -46,9 +46,8 @@ class BuilderCaptureMixin:
         try:
             resolved = candidate.resolve(strict=False)
             resolved.relative_to(self.results_root.resolve())
-            resolved.relative_to(self.repo_root.resolve())
         except (OSError, ValueError) as exc:
-            raise ValueError(f"{label} must be under the repository results root") from exc
+            raise ValueError(f"{label} must be under the configured results root") from exc
         return resolved
 
     def _capture_values(

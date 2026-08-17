@@ -159,6 +159,49 @@ class BuilderModelsMixin:
             default_quantization=str(default_quantization).strip().lower(),
         )
 
+    @staticmethod
+    def _local_max_model_len(
+        spec: str, entry: Mapping[str, object]
+    ) -> int | None:
+        """Validate an optional per-model vLLM context/KV allocation cap."""
+
+        if "max_model_len" not in entry:
+            return None
+        from ura.targets.local import validate_vllm_max_model_len  # noqa: PLC0415
+
+        try:
+            return validate_vllm_max_model_len(entry["max_model_len"])
+        except ValueError as exc:
+            raise ValueError(f"local target {spec!r} {exc}") from exc
+
+    @staticmethod
+    def _local_max_tokens(spec: str, entry: Mapping[str, object]) -> int:
+        """Validate the vLLM generation cap with the shared CLI contract."""
+
+        from ura.targets.local import validate_vllm_max_tokens  # noqa: PLC0415
+
+        try:
+            return validate_vllm_max_tokens(entry.get("max_tokens", 512))
+        except ValueError as exc:
+            raise ValueError(f"local target {spec!r} {exc}") from exc
+
+    @staticmethod
+    def _validate_ollama_local_entry(
+        spec: str, entry: Mapping[str, object]
+    ) -> None:
+        """Reject vLLM-only execution fields before Web can strip them."""
+
+        from ura.targets.local import (  # noqa: PLC0415
+            OLLAMA_FORBIDDEN_LOCAL_CONFIG_FIELDS,
+        )
+
+        forbidden = sorted(set(entry) & OLLAMA_FORBIDDEN_LOCAL_CONFIG_FIELDS)
+        if forbidden:
+            raise ValueError(
+                f"local target {spec!r} Ollama config forbids vLLM fields: "
+                + ", ".join(forbidden)
+            )
+
     def _materialize_selected_local_config(
         self,
         specs: list[str],
@@ -177,6 +220,7 @@ class BuilderModelsMixin:
             "tensor_parallel_size",
             "gpu_memory_utilization",
             "max_tokens",
+            "max_model_len",
             "parameter_count_b",
             "multi_gpu_compatible",
             "quantization",
@@ -186,6 +230,7 @@ class BuilderModelsMixin:
             if entry is None:
                 raise ValueError(f"local target {spec!r} is not in the vLLM roster")
             if spec.startswith("ollama:"):
+                self._validate_ollama_local_entry(spec, entry)
                 selected[spec] = {
                     key: value for key, value in entry.items() if key in {"digest", "modalities"}
                 }
@@ -197,7 +242,16 @@ class BuilderModelsMixin:
                 default_quantization=default_quantization,
                 model_quantization=model_override,
             )
+            max_model_len = self._local_max_model_len(spec, entry)
+            max_tokens = self._local_max_tokens(spec, entry)
             resolved = {key: value for key, value in entry.items() if key in allowed}
+            if max_model_len is not None:
+                resolved["max_model_len"] = max_model_len
+                if max_tokens > max_model_len:
+                    raise ValueError(
+                        f"local target {spec!r} max_tokens must not exceed "
+                        "max_model_len"
+                    )
             raw_modalities = resolved.get("modalities")
             if isinstance(raw_modalities, list):
                 resolved["modalities"] = [
@@ -289,14 +343,6 @@ class BuilderModelsMixin:
             raise ValueError(f"{path.name} must contain a JSON object")
         return value
 
-    def _portable_repo_path(self, path: Path, *, label: str) -> str:
-        try:
-            return path.resolve().relative_to(self.repo_root.resolve()).as_posix()
-        except ValueError as exc:
-            raise ValueError(
-                f"{label} must be under the repository for portable provenance"
-            ) from exc
-
     def _prepared_attacker_entries(
         self,
         params: Mapping[str, str],
@@ -343,10 +389,9 @@ class BuilderModelsMixin:
                 "upstream_revision": revision.lower(),
                 "source_provider": provider.strip(),
                 "source_model": model.strip(),
-                "response_artifact": self._portable_repo_path(
-                    artifact,
-                    label="T3MP3ST plan bundle",
-                ),
+                # Runtime-only path: run_matrix replaces it with a content
+                # identity before persisting the experiment configuration.
+                "response_artifact": str(artifact),
                 "response_artifact_sha256": expected,
             }
         if "harmbench" in selected:
@@ -421,10 +466,9 @@ class BuilderModelsMixin:
             entries["harmbench"] = {
                 **config,
                 "upstream_revision": revision.lower(),
-                "replay_artifact": self._portable_repo_path(
-                    replay_artifact,
-                    label="HarmBench replay artifact",
-                ),
+                # Runtime-only path: run_matrix replaces it with a content
+                # identity before persisting the experiment configuration.
+                "replay_artifact": str(replay_artifact),
                 "replay_artifact_sha256": artifact_sha,
             }
         return entries
