@@ -2254,6 +2254,76 @@ def test_external_campaign_directory_scan_cap_is_visible(
     app.close()
 
 
+def test_dashboard_lists_external_running_and_failed_campaigns(
+    tmp_path: Path,
+) -> None:
+    app = _app(tmp_path)
+    campaign = _write_external_engineering_campaign(app.results_root)
+    marker_path = campaign / "ENGINEERING_ONLY.json"
+    marker = json.loads(marker_path.read_text(encoding="utf-8"))
+    marker["campaign_id"] = "<img src=x onerror=alert(1)>"
+    marker_path.write_text(json.dumps(marker), encoding="utf-8")
+
+    status, _, body = app.handle("GET", "/")
+    running = body.decode("utf-8")
+    assert status == 200
+    assert "jobs (console + external)" in running
+    assert "<span class='value'><span class='dot blue'></span>1</span>" in running
+    assert "<span class='value'><span class='dot red'></span>0</span>" in running
+    assert "Running jobs" in running
+    assert "/jobs/campaign/local-only-20260817T000000Z" in running
+    assert "<img src=x onerror=alert(1)>" not in running
+    assert "&lt;img src=x onerror=alert(1)&gt;" in running
+
+    with (campaign / "stage2-task-log.jsonl").open("a", encoding="utf-8") as handle:
+        handle.write(json.dumps({
+            "at": "2026-08-17T00:01:00Z", "event": "campaign_stop",
+            "task": "stage2", "status": "blocked", "detail": "wrong_release",
+        }) + "\n")
+    status, _, body = app.handle("GET", "/")
+    failed = body.decode("utf-8")
+    assert status == 200
+    assert "<span class='value'><span class='dot blue'></span>0</span>" in failed
+    assert "<span class='value'><span class='dot red'></span>1</span>" in failed
+    assert "Failed jobs" in failed and "wrong_release" not in failed
+    assert "/jobs/campaign/local-only-20260817T000000Z" in failed
+    assert "/jobs/campaign/local-only-20260817T000000Z/stop" not in failed
+    assert "setTimeout(function(){location.reload();}, 10000);" not in failed
+    app.close()
+
+
+def test_dashboard_samples_each_console_job_state_once(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    app = _app(tmp_path)
+
+    class FlippingJob:
+        job_id = "flipping-job"
+        command = "webui_selftest"
+        started_at = 1.0
+        calls = 0
+
+        def state(self) -> str:
+            self.calls += 1
+            return "running" if self.calls == 1 else "failed"
+
+        @staticmethod
+        def runtime_seconds() -> float:
+            return 1.0
+
+    job = FlippingJob()
+    app.jobs[job.job_id] = job  # type: ignore[assignment]
+    monkeypatch.setattr(app, "_reconcile", lambda: None)
+    status, _, body = app.handle("GET", "/")
+    text = body.decode("utf-8")
+    assert status == 200 and job.calls == 1
+    assert "Running jobs" in text and "flipping-job" in text
+    assert "Failed jobs" not in text
+    app.jobs.clear()
+    app.close()
+
+
 def test_run_forms_use_select_and_datalist_without_weakening_argv(
     tmp_path: Path,
 ) -> None:

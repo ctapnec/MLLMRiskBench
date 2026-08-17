@@ -30,6 +30,9 @@ from .artifacts import _PIPELINE_STAGES, artifact_inventory, _pipeline_svg, Job
 from .campaigns import EngineeringCampaign
 
 
+_DASHBOARD_RECENT_FAILURE_LIMIT = 5
+
+
 class PagesMixin:
     @staticmethod
     def _playbook_card() -> str:
@@ -176,8 +179,12 @@ class PagesMixin:
     def _overview(self, reindexed: str = "") -> bytes:
         self._reconcile()
         jobs = list(self.jobs.values())
-        running = [job for job in jobs if job.state() == "running"]
-        failed = [job for job in jobs if job.state() == "failed"]
+        campaigns, campaign_scan_note = self._engineering_campaign_scan()
+        job_states = [(job, job.state()) for job in jobs]
+        running_jobs = [job for job, state in job_states if state == "running"]
+        failed_jobs = [job for job, state in job_states if state == "failed"]
+        running_campaigns = [campaign for campaign in campaigns if campaign.state == "running"]
+        failed_campaigns = [campaign for campaign in campaigns if campaign.state == "failed"]
         counts, truncated = artifact_inventory(self.results_root)
         disk_html = "<p class='note'>disk usage unavailable</p>"
         try:
@@ -210,15 +217,15 @@ class PagesMixin:
         stats = (
             "<div class='cols'>"
             "<div class='card'><div class='stat'>"
-            f"<span class='value'>{len(jobs)}</span>"
-            "<span class='label'>jobs (persisted)</span></div></div>"
+            f"<span class='value'>{len(jobs) + len(campaigns)}</span>"
+            "<span class='label'>jobs (console + external)</span></div></div>"
             "<div class='card'><div class='stat'>"
             f"<span class='value'><span class='dot blue'></span>"
-            f"{len(running)}</span>"
-            "<span class='label'>running now</span></div></div>"
+            f"{len(running_jobs) + len(running_campaigns)}</span>"
+            "<span class='label'>running / last recorded active</span></div></div>"
             "<div class='card'><div class='stat'>"
             f"<span class='value'><span class='dot red'></span>"
-            f"{len(failed)}</span>"
+            f"{len(failed_jobs) + len(failed_campaigns)}</span>"
             "<span class='label'>failed</span></div></div>"
             "<div class='card'><div class='stat'>"
             f"<span class='value'><code>{html.escape(pin[:10] or 'unpinned')}"
@@ -230,18 +237,74 @@ class PagesMixin:
             f"<div class='card'>{disk_html}</div>"
             "</div>"
         )
-        running_rows = "".join(
-            f"<tr><td><a href='/jobs/{html.escape(job.job_id)}'>"
-            f"{html.escape(job.job_id)}</a></td>"
-            f"<td>{html.escape(job.command)}</td>"
-            f"<td>{job.runtime_seconds():,.0f}s</td></tr>"
-            for job in sorted(running, key=lambda item: item.started_at)
-        )
+        running_rows = []
+        for job in running_jobs:
+            running_rows.append(
+                (
+                    job.started_at,
+                    f"<tr><td><a href='/jobs/{html.escape(job.job_id)}'>"
+                    f"{html.escape(job.job_id)}</a></td>"
+                    f"<td>{html.escape(job.command)}</td>"
+                    f"<td>{_human_duration(job.runtime_seconds())}</td></tr>",
+                )
+            )
+        for campaign in running_campaigns:
+            route_id = quote(campaign.route_id)
+            running_rows.append(
+                (
+                    campaign.started_at,
+                    f"<tr><td><a href='/jobs/campaign/{route_id}'>"
+                    f"{html.escape(campaign.campaign_id)}</a></td>"
+                    "<td>engineering campaign "
+                    "<span class='badge gray'>external, last recorded</span></td>"
+                    f"<td>{_human_duration(campaign.runtime_seconds())}</td></tr>",
+                )
+            )
+        running_rows_html = "".join(row for _started, row in sorted(running_rows))
         running_html = (
             "<div class='card'><h2>" + _icon("pulse") + "Running jobs</h2>"
             "<div class='scroll'><table><tr><th>Job</th><th>Command</th>"
-            "<th>Runtime</th></tr>" + running_rows + "</table></div></div>"
-            if running_rows
+            "<th>Runtime</th></tr>" + running_rows_html + "</table></div>"
+            "<p class='note'>External engineering campaign state is the last "
+            "status recorded in retained task logs; this console does not own "
+            "or stop its process.</p></div>"
+            if running_rows_html
+            else ""
+        )
+        failed_rows = []
+        for job in failed_jobs:
+            failed_rows.append(
+                (
+                    job.started_at,
+                    f"<tr><td><a href='/jobs/{html.escape(job.job_id)}'>"
+                    f"{html.escape(job.job_id)}</a></td>"
+                    f"<td>{html.escape(job.command)}</td>"
+                    f"<td>{_human_duration(job.runtime_seconds())}</td></tr>",
+                )
+            )
+        for campaign in failed_campaigns:
+            route_id = quote(campaign.route_id)
+            failed_rows.append(
+                (
+                    campaign.started_at,
+                    f"<tr><td><a href='/jobs/campaign/{route_id}'>"
+                    f"{html.escape(campaign.campaign_id)}</a></td>"
+                    "<td>engineering campaign "
+                    "<span class='badge gray'>external, last recorded</span></td>"
+                    f"<td>{_human_duration(campaign.runtime_seconds())}</td></tr>",
+                )
+            )
+        recent_failed_rows = sorted(failed_rows, reverse=True)[:_DASHBOARD_RECENT_FAILURE_LIMIT]
+        failed_html = (
+            "<div class='card'><h2>" + _icon("pulse") + "Failed jobs</h2>"
+            "<div class='scroll'><table><tr><th>Job</th><th>Command</th>"
+            "<th>Runtime</th></tr>"
+            + "".join(row for _started, row in recent_failed_rows)
+            + "</table></div><p class='note'>Showing up to "
+            f"{_DASHBOARD_RECENT_FAILURE_LIMIT} most recently started failures. "
+            "External engineering campaign state is filesystem-backed and "
+            "read-only; open the job for its retained logs.</p></div>"
+            if recent_failed_rows
             else ""
         )
         stage_sections = []
@@ -265,7 +328,9 @@ class PagesMixin:
             )
         stage_files = "".join(stage_sections)
         refresh = (
-            "<script>setTimeout(function(){location.reload();}, 10000);</script>" if running else ""
+            "<script>setTimeout(function(){location.reload();}, 10000);</script>"
+            if running_rows
+            else ""
         )
         body = (
             "<h1>"
@@ -273,6 +338,11 @@ class PagesMixin:
             + "Dashboard</h1>"
             + self._health_banner()
             + self._warnings_html()
+            + (
+                "<div class='notice amber'>" + html.escape(campaign_scan_note) + "</div>"
+                if campaign_scan_note
+                else ""
+            )
             + stats
             + self._dashboard_hardware_card()
             + self._db_card(reindexed)
@@ -298,6 +368,7 @@ class PagesMixin:
             + self._next_hint(counts)
             + self._playbook_card()
             + running_html
+            + failed_html
             + self._budget_card()
             + self._policy_card()
             + "<div class='card'><h2>"
@@ -517,9 +588,7 @@ class PagesMixin:
             state_label = f"{state} (last recorded)"
             started = time.strftime("%H:%M:%S", time.localtime(campaign.started_at))
             route_id = quote(campaign.route_id)
-            hay = html.escape(
-                f"{campaign.campaign_id} engineering campaign external".lower()
-            )
+            hay = html.escape(f"{campaign.campaign_id} engineering campaign external".lower())
             rows.append(
                 f"<tr data-state='{html.escape(state)}' data-hay='{hay}'>"
                 f"<td><a href='/jobs/campaign/{route_id}'>"
@@ -610,14 +679,10 @@ class PagesMixin:
         }.get(campaign.state, "gray")
         route_id = quote(campaign.route_id)
         relative = f"engineering/{campaign.route_id}"
-        started = time.strftime(
-            "%Y-%m-%d %H:%M:%S", time.localtime(campaign.started_at)
-        )
+        started = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(campaign.started_at))
         call_cap = "-" if campaign.target_call_cap is None else str(campaign.target_call_cap)
         hard_stop = (
-            "-"
-            if campaign.hard_stop_hours is None
-            else f"{campaign.hard_stop_hours:g} hours"
+            "-" if campaign.hard_stop_hours is None else f"{campaign.hard_stop_hours:g} hours"
         )
         details = (
             "<div class='card scroll'><table>"
@@ -636,7 +701,9 @@ class PagesMixin:
             for key, label, _path in campaign.logs
         )
         logs = (
-            "<div class='card'><h2>" + _icon("pulse") + "Task logs</h2>"
+            "<div class='card'><h2>"
+            + _icon("pulse")
+            + "Task logs</h2>"
             + (f"<ul>{log_links}</ul>" if log_links else "<p class='note'>No task logs yet.</p>")
             + f"<p><a href='/artifacts?path={quote(relative)}'>"
             "Browse all retained campaign files</a></p></div>"
