@@ -152,9 +152,9 @@ test "$(git rev-parse HEAD)" = "$REF_URA"
 python3.12 -m venv .venv
 source .venv/bin/activate
 python -m pip install --upgrade pip
-python -m pip install -e ".[dev,analysis,api,guardrail,local-vllm]"
+python -m pip install -e ".[dev,analysis,api,guardrail,local-vllm,harmbench]"
 python -m pip install "huggingface_hub[cli]"
-python -c "import bitsandbytes, psutil, torch, vllm; print(vllm.__version__, bitsandbytes.__version__, psutil.__version__, torch.__version__, torch.version.cuda, torch.cuda.is_available(), torch.cuda.device_count())"
+python -c "import bitsandbytes, datasketch, en_core_web_sm, psutil, ray, spacy, torch, vllm; print(vllm.__version__, bitsandbytes.__version__, psutil.__version__, torch.__version__, torch.version.cuda, torch.cuda.is_available(), torch.cuda.device_count(), datasketch.__version__, ray.__version__, spacy.__version__)"
 python -m bitsandbytes
 python -m pip check
 
@@ -1778,7 +1778,19 @@ arm, limit, sample seed and source bytes exactly.
 #### HarmBench: capture, then replay
 
 Generate text cases from the clean pinned HarmBench checkout. The preparation
-command writes both the replay artifact and the matching one-attacker config:
+command writes both the replay artifact and the matching one-attacker config.
+Install the checked-in full local stack plus its `harmbench` supplement first;
+the supplement pins the tested FastChat, Ray, Accelerate, spaCy, `datasketch`,
+and SHA-256-bound `en_core_web_sm` dependencies instead of relying on an ad
+hoc upstream environment:
+
+```bash
+python -m pip install -e ".[dev,analysis,guardrail,local-vllm,harmbench]"
+python -c "import accelerate, datasketch, en_core_web_sm, fastchat.model, pandas, ray, spacy, torch, transformers, vllm, yaml; spacy.load('en_core_web_sm'); print(datasketch.__version__, ray.__version__, spacy.__version__, vllm.__version__)"
+python -m pip check
+```
+
+Then prepare the bundle:
 
 ```bash
 python -m experiments.harmbench_capture \

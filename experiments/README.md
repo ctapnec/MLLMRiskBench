@@ -172,8 +172,9 @@ nonempty subset as complete.
    the complete offline suite. Every non-dry preflight, probe, canary, or
    measured Runner request binds this receipt; a revision change starts a new
    recorded cohort. On the local-vLLM rig, install
-   `.[dev,analysis,api,guardrail,local-vllm]`; the extra pins `vllm==0.27.1`
-   and `bitsandbytes==0.49.2`, while the base dependency supplies
+   `.[dev,analysis,api,guardrail,local-vllm,harmbench]`; the extras pin
+   `vllm==0.27.1`, `bitsandbytes==0.49.2`, and the tested HarmBench
+   prepare/replay dependencies, while the base dependency supplies
    `psutil>=7.2,<8`. Import those packages and run `pip check` before local
    preflight.
 2. Acquire every selected release and upstream project at the recorded revision;

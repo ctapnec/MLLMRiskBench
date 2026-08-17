@@ -65,13 +65,15 @@ The rig's local-vLLM environment is installed from the checked-in extra rather
 than from separate version variables:
 
 ```bash
-python -m pip install -e ".[dev,analysis,api,guardrail,local-vllm]"
-python -c "import bitsandbytes, psutil, torch, vllm; print(vllm.__version__, bitsandbytes.__version__, psutil.__version__, torch.__version__)"
+python -m pip install -e ".[dev,analysis,api,guardrail,local-vllm,harmbench]"
+python -c "import bitsandbytes, datasketch, en_core_web_sm, psutil, ray, spacy, torch, vllm; print(vllm.__version__, bitsandbytes.__version__, psutil.__version__, torch.__version__, datasketch.__version__, ray.__version__, spacy.__version__)"
 ```
 
 `local-vllm` pins the tested `vllm==0.27.1` and `bitsandbytes==0.49.2` pair;
 `psutil>=7.2,<8` is a normal project dependency used for the startup CPU/core/RAM
-snapshot.
+snapshot. The `harmbench` extra pins the tested prepared-workflow dependencies,
+including `datasketch` and the SHA-256-bound `en_core_web_sm` model required by
+the pinned HarmBench checkout.
 
 Dry-run and synthetic output are plumbing evidence only and cannot enter the
 thesis results. This explicit offline form records

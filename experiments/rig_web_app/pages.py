@@ -256,7 +256,8 @@ class PagesMixin:
                     f"<tr><td><a href='/jobs/campaign/{route_id}'>"
                     f"{html.escape(campaign.campaign_id)}</a></td>"
                     "<td>engineering campaign "
-                    "<span class='badge gray'>external, last recorded</span></td>"
+                    "<span class='badge gray'>external, "
+                    f"{html.escape(campaign.display_state)}</span></td>"
                     f"<td>{_human_duration(campaign.runtime_seconds())}</td></tr>",
                 )
             )
@@ -284,13 +285,19 @@ class PagesMixin:
             )
         for campaign in failed_campaigns:
             route_id = quote(campaign.route_id)
+            detail = (
+                f" <span class='fieldhint'>{html.escape(campaign.state_detail)}</span>"
+                if campaign.state_detail
+                else ""
+            )
             failed_rows.append(
                 (
                     campaign.started_at,
                     f"<tr><td><a href='/jobs/campaign/{route_id}'>"
                     f"{html.escape(campaign.campaign_id)}</a></td>"
                     "<td>engineering campaign "
-                    "<span class='badge gray'>external, last recorded</span></td>"
+                    "<span class='badge gray'>external, "
+                    f"{html.escape(campaign.display_state)}</span>{detail}</td>"
                     f"<td>{_human_duration(campaign.runtime_seconds())}</td></tr>",
                 )
             )
@@ -585,10 +592,13 @@ class PagesMixin:
                 "failed": "red",
                 "orphaned": "amber",
             }.get(state, "gray")
-            state_label = f"{state} (last recorded)"
+            state_label = f"{campaign.display_state} (last recorded)"
             started = time.strftime("%H:%M:%S", time.localtime(campaign.started_at))
             route_id = quote(campaign.route_id)
-            hay = html.escape(f"{campaign.campaign_id} engineering campaign external".lower())
+            hay = html.escape(
+                f"{campaign.campaign_id} engineering campaign external "
+                f"{campaign.display_state} {campaign.progress}".lower()
+            )
             rows.append(
                 f"<tr data-state='{html.escape(state)}' data-hay='{hay}'>"
                 f"<td><a href='/jobs/campaign/{route_id}'>"
@@ -729,7 +739,8 @@ class PagesMixin:
             "<div class='cols'>"
             "<div class='card'><div class='stat'>"
             f"<span class='value'><span class='dot {tone}'></span>"
-            f"{html.escape(campaign.state)}</span><span class='label'>last recorded state</span>"
+            f"{html.escape(campaign.display_state)}</span>"
+            "<span class='label'>last recorded campaign status</span>"
             "</div></div>"
             "<div class='card'><div class='stat'>"
             f"<span class='value'>{_human_duration(campaign.runtime_seconds())}</span>"

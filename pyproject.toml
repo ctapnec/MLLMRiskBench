@@ -51,6 +51,16 @@ local-vllm = [
   "vllm==0.27.1",
   "bitsandbytes==0.49.2",
 ]
+harmbench = [
+  "accelerate==1.14.0",
+  "confection==0.1.4",
+  "datasketch==1.8.0",
+  "fschat==0.2.36",
+  "msgpack==1.2.1",
+  "ray==2.56.0",
+  "spacy==3.8.11",
+  "en-core-web-sm @ https://github.com/explosion/spacy-models/releases/download/en_core_web_sm-3.8.0/en_core_web_sm-3.8.0-py3-none-any.whl#sha256=1932429db727d4bff3deed6b34cfc05df17794f4a52eeb26cf8928f7c1a0fb85",
+]
 giskard-v2 = ["giskard[llm]==2.19.2"]
 
 [project.scripts]

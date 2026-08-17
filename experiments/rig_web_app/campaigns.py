@@ -21,6 +21,15 @@ _MAX_CAMPAIGNS = 20
 _MAX_DIRECTORY_ENTRIES = 500
 _MAX_MARKER_BYTES = 64 * 1024
 _MAX_EVENT_LOG_BYTES = 512 * 1024
+_PHASE_TASKS = {"bootstrap", "stage2"}
+_TASK_SUCCEEDED = {"passed", "complete", "completed", "success", "succeeded"}
+_TASK_ACTIVE = {"running", "active", "in_progress"}
+_CAMPAIGN_SUCCEEDED = {
+    "passed",
+    "complete",
+    "passed_with_optional_failures",
+    "complete_with_optional_failures",
+}
 
 
 def _timestamp(value: Any) -> float | None:
@@ -82,29 +91,58 @@ def _events(path: Path, *, required: bool = False) -> tuple[list[dict[str, Any]]
     return parsed, "malformed JSON event" if malformed else None
 
 
-def _phase_state(events: list[dict[str, Any]], phase: str) -> tuple[str | None, float | None]:
+def _phase_state(
+    events: list[dict[str, Any]],
+    phase: str,
+) -> tuple[str | None, float | None, dict[str, Any] | None]:
     starts = [
-        (_timestamp(row.get("at")) or 0.0, row)
-        for row in events
+        ((_timestamp(row.get("at")) or 0.0, index), row)
+        for index, row in enumerate(events)
         if row.get("event") == "campaign_start" and row.get("task") == phase
     ]
     if not starts:
-        return None, None
+        return None, None, None
     latest_start = max(item[0] for item in starts)
     terminals = [
-        (_timestamp(row.get("at")) or 0.0, row)
-        for row in events
+        ((_timestamp(row.get("at")) or 0.0, index), row)
+        for index, row in enumerate(events)
         if row.get("event") in {"campaign_end", "campaign_stop"}
         and row.get("task") == phase
-        and (_timestamp(row.get("at")) or 0.0) >= latest_start
+        and ((_timestamp(row.get("at")) or 0.0), index) >= latest_start
     ]
     if not terminals:
-        return "running", None
-    ended_at, terminal = max(terminals, key=lambda item: item[0])
-    status = str(terminal.get("status") or "failed").lower()
-    if terminal.get("event") == "campaign_end" and status in {"passed", "complete"}:
-        return "complete", ended_at
-    return "failed", ended_at
+        return "running", None, None
+    (ended_at, _index), terminal = max(terminals, key=lambda item: item[0])
+    status = str(terminal.get("status") or "failed").strip().lower()[:32]
+    if terminal.get("event") == "campaign_end" and status in _CAMPAIGN_SUCCEEDED:
+        return "complete", ended_at, terminal
+    return "failed", ended_at, terminal
+
+
+def _planned_tasks(marker: dict[str, Any]) -> tuple[str, ...] | None:
+    """Return a strict, unique declared plan, or ``None`` when unknown.
+
+    A campaign without ``planned_tasks`` has no knowable pending count. A
+    malformed optional declaration is treated the same way instead of
+    guessing from observed events or launcher implementation details.
+    """
+
+    raw = marker.get("planned_tasks")
+    if not isinstance(raw, list):
+        return None
+    tasks: list[str] = []
+    seen: set[str] = set()
+    for value in raw:
+        if not isinstance(value, str):
+            return None
+        task = value.strip()
+        if not task or len(task) > 256 or task in _PHASE_TASKS:
+            return None
+        if task in seen:
+            return None
+        seen.add(task)
+        tasks.append(task)
+    return tuple(tasks)
 
 
 @dataclass(frozen=True)
@@ -115,12 +153,16 @@ class EngineeringCampaign:
     campaign_id: str
     directory: Path
     state: str
+    display_state: str
+    state_detail: str
     started_at: float
     ended_at: float | None
     progress: str
     completed_tasks: int
+    succeeded_tasks: int
     failed_tasks: int
     active_tasks: tuple[str, ...]
+    pending_tasks: int | None
     last_detail: str
     release_commit: str
     evidence_class: str
@@ -163,13 +205,21 @@ def _load_campaign(directory: Path) -> EngineeringCampaign | None:
         key=lambda row: _timestamp(row.get("at")) or 0.0,
     )
 
-    stage2_state, stage2_end = _phase_state(stage2, "stage2")
-    bootstrap_state, bootstrap_end = _phase_state(bootstrap, "bootstrap")
+    stage2_state, stage2_end, stage2_terminal = _phase_state(stage2, "stage2")
+    bootstrap_state, bootstrap_end, bootstrap_terminal = _phase_state(bootstrap, "bootstrap")
     state = stage2_state or bootstrap_state or "unknown"
     ended_at = stage2_end if stage2_state is not None else bootstrap_end
+    terminal = stage2_terminal if stage2_state is not None else bootstrap_terminal
+    display_state = state
+    state_detail = ""
+    if terminal is not None:
+        display_state = str(terminal.get("status") or state).strip().lower()[:32] or state
+        state_detail = str(terminal.get("detail") or "").strip()[:1000]
     activity_error = bootstrap_error or stage2_error
     if activity_error:
         state = "unknown"
+        display_state = "unknown"
+        state_detail = ""
         ended_at = None
 
     started_at = _timestamp(marker.get("started_at"))
@@ -194,26 +244,41 @@ def _load_campaign(directory: Path) -> EngineeringCampaign | None:
         and time.time() > started_at + hard_stop_hours * 3600
     ):
         state = "orphaned"
+        display_state = "orphaned"
 
     task_states: dict[str, str] = {}
     for row in all_events:
         event = row.get("event")
-        task = str(row.get("task") or "")[:256]
-        if not task or task in {"bootstrap", "stage2"}:
+        raw_task = row.get("task")
+        if not isinstance(raw_task, str):
+            continue
+        task = raw_task.strip()[:256]
+        if not task or task in _PHASE_TASKS:
             continue
         if event == "task_start":
             task_states[task] = "running"
-        elif event == "task_end":
-            status = str(row.get("status") or "failed").lower()[:32]
+        elif event in {"task_end", "task_skip"}:
+            status = str(row.get("status") or "failed").strip().lower()[:32]
             task_states[task] = status
-    active_tasks = tuple(task for task, status in task_states.items() if status == "running")
-    completed_tasks = sum(status != "running" for status in task_states.values())
+    interrupted_tasks: tuple[str, ...] = ()
+    if state in {"complete", "failed", "orphaned"}:
+        interrupted_tasks = tuple(
+            task for task, status in task_states.items() if status in _TASK_ACTIVE
+        )
+        for task in interrupted_tasks:
+            task_states[task] = "interrupted"
+    succeeded_tasks = sum(status in _TASK_SUCCEEDED for status in task_states.values())
     failed_tasks = sum(
-        status not in {"running", "passed", "complete"}
-        for status in task_states.values()
+        status not in _TASK_SUCCEEDED | _TASK_ACTIVE for status in task_states.values()
     )
-    if state != "running":
-        active_tasks = ()
+    active_tasks = tuple(task for task, status in task_states.items() if status in _TASK_ACTIVE)
+    completed_tasks = succeeded_tasks + failed_tasks
+    planned_tasks = _planned_tasks(marker)
+    pending_tasks = (
+        sum(task not in task_states for task in planned_tasks)
+        if planned_tasks is not None and not activity_error
+        else None
+    )
 
     reserved_calls = 0
     call_events, call_error = _events(directory / "local-call-ledger.jsonl")
@@ -235,11 +300,20 @@ def _load_campaign(directory: Path) -> EngineeringCampaign | None:
     if activity_error:
         parts = [f"activity status unavailable: {activity_error}"]
     else:
-        parts = [f"{completed_tasks} task{'s' if completed_tasks != 1 else ''} finished"]
-        if failed_tasks:
-            parts.append(f"{failed_tasks} failed")
-        if active_tasks:
+        parts = [
+            f"tasks: {succeeded_tasks} succeeded; {failed_tasks} failed; "
+            f"{len(active_tasks)} active",
+            (f"pending: {pending_tasks}" if pending_tasks is not None else "pending: not declared"),
+        ]
+        if active_tasks and state == "running":
             parts.append("last recorded active: " + ", ".join(active_tasks))
+        if interrupted_tasks:
+            parts.append(f"{len(interrupted_tasks)} interrupted without a terminal task event")
+        if terminal is not None:
+            terminal_summary = f"campaign terminal: {display_state}"
+            if state_detail:
+                terminal_summary += f" ({state_detail})"
+            parts.append(terminal_summary)
     if target_call_cap is not None:
         calls = "unknown" if call_error else str(reserved_calls)
         parts.append(f"local calls reserved: {calls}/{target_call_cap}")
@@ -264,12 +338,16 @@ def _load_campaign(directory: Path) -> EngineeringCampaign | None:
         campaign_id=str(marker.get("campaign_id") or directory.name),
         directory=directory,
         state=state,
+        display_state=display_state,
+        state_detail=state_detail,
         started_at=started_at,
         ended_at=ended_at,
         progress="; ".join(parts),
         completed_tasks=completed_tasks,
+        succeeded_tasks=succeeded_tasks,
         failed_tasks=failed_tasks,
         active_tasks=active_tasks,
+        pending_tasks=pending_tasks,
         last_detail=last_detail,
         release_commit=str(marker.get("release_commit") or ""),
         evidence_class=str(marker.get("evidence_class") or "engineering"),
