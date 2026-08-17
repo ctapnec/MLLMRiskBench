@@ -2254,7 +2254,7 @@ def test_jobs_lists_external_engineering_campaign_read_only(tmp_path: Path) -> N
     assert "All (1)" in text and "Running (1)" in text
     assert "local-only-20260817T000000Z" in text
     assert "engineering campaign" in text and "external" in text
-    assert "tasks: 1 succeeded; 0 failed; 0 active" in text
+    assert "tasks: 1 succeeded; 0 failed; 0 skipped; 0 active" in text
     assert "tasks: 2 succeeded" not in text
     assert "pending: not declared" in text
     assert "/jobs/campaign/local-only-20260817T000000Z" in text
@@ -2332,6 +2332,7 @@ def test_external_campaign_task_failures_do_not_override_passing_terminal(
     assert observed is not None
     assert observed.state == "complete" and observed.display_state == terminal_status
     assert observed.succeeded_tasks == 1 and observed.failed_tasks == 1
+    assert observed.skipped_tasks == 0
     assert observed.active_tasks == () and observed.pending_tasks is None
 
     status, _, body = app.handle("GET", "/jobs")
@@ -2339,7 +2340,7 @@ def test_external_campaign_task_failures_do_not_override_passing_terminal(
     assert status == 200
     assert "Complete (1)" in text and "Failed (0)" in text
     assert f"{terminal_status} (last recorded)" in text
-    assert "tasks: 1 succeeded; 1 failed; 0 active" in text
+    assert "tasks: 1 succeeded; 1 failed; 0 skipped; 0 active" in text
     assert "pending: not declared" in text
     assert f"campaign terminal: {terminal_status} (optional_probe_failed)" in text
 
@@ -2347,6 +2348,81 @@ def test_external_campaign_task_failures_do_not_override_passing_terminal(
     assert "<span class='value'><span class='dot red'></span>0</span>" in dashboard
     assert "Failed jobs" not in dashboard
     assert app.db.health()["counts"]["jobs"] == 0
+    app.close()
+
+
+def test_external_campaign_reports_skipped_tasks_separately(
+    tmp_path: Path,
+) -> None:
+    app = _app(tmp_path)
+    campaign = _write_external_engineering_campaign(app.results_root)
+    marker_path = campaign / "ENGINEERING_ONLY.json"
+    marker = json.loads(marker_path.read_text(encoding="utf-8"))
+    marker["planned_tasks"] = [
+        "download-model",
+        "optional-probe",
+        "not-reached",
+        "never-started",
+    ]
+    marker_path.write_text(json.dumps(marker), encoding="utf-8")
+    with (campaign / "stage2-task-log.jsonl").open("a", encoding="utf-8") as handle:
+        for event in (
+            {
+                "at": "2026-08-17T00:00:03Z",
+                "event": "task_end",
+                "task": "download-model",
+                "status": "passed",
+                "detail": "done",
+            },
+            {
+                "at": "2026-08-17T00:00:04Z",
+                "event": "task_end",
+                "task": "optional-probe",
+                "status": "failed",
+                "detail": "optional",
+            },
+            {
+                "at": "2026-08-17T00:00:05Z",
+                "event": "task_skip",
+                "task": "not-reached",
+                "status": "skipped",
+                "detail": "not_reached_in_bounded_wave",
+            },
+            {
+                "at": "2026-08-17T00:00:06Z",
+                "event": "campaign_end",
+                "task": "stage2",
+                "status": "passed_with_optional_failures",
+                "detail": "bounded_wave_complete",
+            },
+        ):
+            handle.write(json.dumps(event) + "\n")
+
+    observed = app._engineering_campaign("local-only-20260817T000000Z")
+    assert observed is not None
+    assert observed.state == "complete"
+    assert observed.succeeded_tasks == 1
+    assert observed.failed_tasks == 1
+    assert observed.skipped_tasks == 1
+    assert observed.active_tasks == ()
+    assert observed.pending_tasks == 1
+    assert observed.completed_tasks == 3
+    assert (
+        observed.succeeded_tasks
+        + observed.failed_tasks
+        + observed.skipped_tasks
+        + len(observed.active_tasks)
+        + (observed.pending_tasks or 0)
+        == 4
+    )
+
+    jobs = app.handle("GET", "/jobs")[2].decode("utf-8")
+    detail = app.handle(
+        "GET", "/jobs/campaign/local-only-20260817T000000Z"
+    )[2].decode("utf-8")
+    expected = "tasks: 1 succeeded; 1 failed; 1 skipped; 0 active; pending: 1"
+    assert expected in jobs
+    assert expected in detail
     app.close()
 
 
@@ -2409,14 +2485,21 @@ def test_external_campaign_survives_restart_and_reads_terminal_log(tmp_path: Pat
     assert "local-only-20260817T000000Z" in text
     assert "last recorded active" not in text
     assert "0 active" in text
-    assert "0 succeeded; 1 failed; 0 active" in text
+    assert "0 succeeded; 1 failed; 0 skipped; 0 active" in text
     assert "pending: 1" in text
     assert "1 interrupted without a terminal task event" in text
     observed = restarted._engineering_campaign("local-only-20260817T000000Z")
     assert observed is not None
-    assert observed.succeeded_tasks + observed.failed_tasks + len(observed.active_tasks) + (
-        observed.pending_tasks or 0
-    ) == 2
+    assert (
+        observed.succeeded_tasks
+        + observed.failed_tasks
+        + observed.skipped_tasks
+        + len(observed.active_tasks)
+        + (
+            observed.pending_tasks or 0
+        )
+        == 2
+    )
     assert restarted.jobs == {}
     assert restarted.db.health()["counts"]["jobs"] == 0
     restarted.close()
@@ -2561,7 +2644,7 @@ def test_dashboard_lists_external_running_and_failed_campaigns(
     jobs = body.decode("utf-8")
     assert status == 200 and "Failed (1)" in jobs
     assert "blocked (last recorded)" in jobs
-    assert "tasks: 1 succeeded; 1 failed; 0 active" in jobs
+    assert "tasks: 1 succeeded; 1 failed; 0 skipped; 0 active" in jobs
     assert "pending: 1" in jobs
     assert "campaign terminal: blocked (wrong_release)" in jobs
 

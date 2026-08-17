@@ -23,6 +23,7 @@ _MAX_MARKER_BYTES = 64 * 1024
 _MAX_EVENT_LOG_BYTES = 512 * 1024
 _PHASE_TASKS = {"bootstrap", "stage2"}
 _TASK_SUCCEEDED = {"passed", "complete", "completed", "success", "succeeded"}
+_TASK_SKIPPED = {"skipped"}
 _TASK_ACTIVE = {"running", "active", "in_progress"}
 _CAMPAIGN_SUCCEEDED = {
     "passed",
@@ -161,6 +162,7 @@ class EngineeringCampaign:
     completed_tasks: int
     succeeded_tasks: int
     failed_tasks: int
+    skipped_tasks: int
     active_tasks: tuple[str, ...]
     pending_tasks: int | None
     last_detail: str
@@ -268,11 +270,13 @@ def _load_campaign(directory: Path) -> EngineeringCampaign | None:
         for task in interrupted_tasks:
             task_states[task] = "interrupted"
     succeeded_tasks = sum(status in _TASK_SUCCEEDED for status in task_states.values())
+    skipped_tasks = sum(status in _TASK_SKIPPED for status in task_states.values())
     failed_tasks = sum(
-        status not in _TASK_SUCCEEDED | _TASK_ACTIVE for status in task_states.values()
+        status not in _TASK_SUCCEEDED | _TASK_SKIPPED | _TASK_ACTIVE
+        for status in task_states.values()
     )
     active_tasks = tuple(task for task, status in task_states.items() if status in _TASK_ACTIVE)
-    completed_tasks = succeeded_tasks + failed_tasks
+    completed_tasks = succeeded_tasks + failed_tasks + skipped_tasks
     planned_tasks = _planned_tasks(marker)
     pending_tasks = (
         sum(task not in task_states for task in planned_tasks)
@@ -302,7 +306,7 @@ def _load_campaign(directory: Path) -> EngineeringCampaign | None:
     else:
         parts = [
             f"tasks: {succeeded_tasks} succeeded; {failed_tasks} failed; "
-            f"{len(active_tasks)} active",
+            f"{skipped_tasks} skipped; {len(active_tasks)} active",
             (f"pending: {pending_tasks}" if pending_tasks is not None else "pending: not declared"),
         ]
         if active_tasks and state == "running":
@@ -346,6 +350,7 @@ def _load_campaign(directory: Path) -> EngineeringCampaign | None:
         completed_tasks=completed_tasks,
         succeeded_tasks=succeeded_tasks,
         failed_tasks=failed_tasks,
+        skipped_tasks=skipped_tasks,
         active_tasks=active_tasks,
         pending_tasks=pending_tasks,
         last_detail=last_detail,
