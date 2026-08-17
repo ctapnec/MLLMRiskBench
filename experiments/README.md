@@ -9,7 +9,7 @@ The maintained execution contract is Runner `ura-runner/2.15` with unified
 schema `1.4`; older artifacts are not mixed into the thesis run. The latest
 exact tested release and its local/rig evidence are retained in the sibling
 Thesis record
-`../../../Thesis-EN/verification/2026-08-17-prepared-attack-workflows/`.
+`../../../Thesis-EN/verification/2026-08-17-campaign-status-harmbench/`.
 
 ## Experimental shape
 

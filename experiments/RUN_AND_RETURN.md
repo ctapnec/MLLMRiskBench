@@ -190,7 +190,7 @@ not a model load or inference; no provider/model call was made. Repeat these
 checks in the final detached measured checkout and retain their output.
 The latest exact tested release, dashboard/Build captures and local/rig results
 are retained in the sibling Thesis record
-`../../../Thesis-EN/verification/2026-08-17-prepared-attack-workflows/`; do not
+`../../../Thesis-EN/verification/2026-08-17-campaign-status-harmbench/`; do not
 copy a mutable hash or test count into this runbook. The earlier dashboard and
 quantization records remain historical evidence for their own snapshots.
 

@@ -13,7 +13,7 @@ The development tree implements the RUN-001 prospective-request and MET-001
 exact-selection interfaces described below, with offline contract tests. The
 latest exact tested software revision, raw local/rig logs, rendered dashboard
 and Build pages, project-revision receipt and source bundle are retained under
-`../../Thesis-EN/verification/2026-08-17-prepared-attack-workflows/`; that
+`../../Thesis-EN/verification/2026-08-17-campaign-status-harmbench/`; that
 record is the authority for its exact commit and verification results. The
 earlier quantization and dashboard/filter records remain historical evidence
 for their own snapshots. A retained
