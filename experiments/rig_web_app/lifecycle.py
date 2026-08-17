@@ -31,6 +31,11 @@ from .artifacts import (
 from .reports import collect_reports
 
 from .storage import ConsoleDB
+from .campaigns import (
+    EngineeringCampaign,
+    load_engineering_campaign,
+    scan_engineering_campaigns,
+)
 
 
 class LifecycleMixin:
@@ -539,6 +544,37 @@ class LifecycleMixin:
         data = path.read_bytes()
         return data[-_LOG_TAIL_BYTES:].decode("utf-8", errors="replace")
 
+    def _engineering_campaigns(self) -> list[EngineeringCampaign]:
+        """Discover external engineering work from its retained task logs."""
+
+        campaigns, _notice = self._engineering_campaign_scan()
+        return campaigns
+
+    def _engineering_campaign_scan(self) -> tuple[list[EngineeringCampaign], str]:
+        return scan_engineering_campaigns(self.results_root)
+
+    def _engineering_campaign(self, route_id: str) -> EngineeringCampaign | None:
+        return load_engineering_campaign(self.results_root, route_id)
+
+    @staticmethod
+    def _engineering_log_tail(campaign: EngineeringCampaign, stream: str) -> str | None:
+        path = next((path for key, _label, path in campaign.logs if key == stream), None)
+        if path is None:
+            return None
+        try:
+            if path.is_symlink():
+                return None
+            resolved = path.resolve(strict=True)
+            if resolved.parent != campaign.directory or not resolved.is_file():
+                return None
+            with resolved.open("rb") as handle:
+                handle.seek(0, os.SEEK_END)
+                handle.seek(max(0, handle.tell() - _LOG_TAIL_BYTES))
+                data = handle.read(_LOG_TAIL_BYTES)
+        except OSError:
+            return ""
+        return data[-_LOG_TAIL_BYTES:].decode("utf-8", errors="replace")
+
     # -- request handling --------------------------------------------------
 
     def handle(
@@ -578,6 +614,22 @@ class LifecycleMixin:
                 return 303, f"/jobs/{job.job_id}", b""
             if method == "GET" and path == "/jobs":
                 return 200, "text/html; charset=utf-8", self._jobs_page()
+            if method == "GET" and path.startswith("/jobs/campaign/"):
+                relative = path.removeprefix("/jobs/campaign/")
+                is_log = relative.endswith("/log")
+                route_id = relative.removesuffix("/log") if is_log else relative
+                if not route_id or "/" in route_id:
+                    return 404, "text/plain; charset=utf-8", b"unknown campaign"
+                campaign = self._engineering_campaign(route_id)
+                if campaign is None:
+                    return 404, "text/plain; charset=utf-8", b"unknown campaign"
+                if is_log:
+                    stream = query.get("stream", "bootstrap")
+                    text = self._engineering_log_tail(campaign, stream)
+                    if text is None:
+                        return 400, "text/plain; charset=utf-8", b"unknown campaign log"
+                    return 200, "text/plain; charset=utf-8", text.encode("utf-8")
+                return 200, "text/html; charset=utf-8", self._campaign_page(campaign)
             if method == "GET" and path.startswith("/jobs/") and path.endswith("/log"):
                 job_id = path.split("/")[2]
                 job = self.jobs.get(job_id)
@@ -595,6 +647,12 @@ class LifecycleMixin:
                     return 404, "text/plain; charset=utf-8", b"unknown job"
                 return 200, "text/html; charset=utf-8", self._job_page(job)
             if method == "POST" and path.startswith("/jobs/") and path.endswith("/stop"):
+                if path.startswith("/jobs/campaign/"):
+                    return (
+                        405,
+                        "text/plain; charset=utf-8",
+                        b"external campaigns are read-only and are not owned by this console",
+                    )
                 job_id = path.split("/")[2]
                 self.stop_job(job_id)
                 return 303, f"/jobs/{job_id}", b""

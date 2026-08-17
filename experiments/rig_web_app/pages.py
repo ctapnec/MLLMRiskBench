@@ -27,6 +27,7 @@ from .catalog import (
 from .ui import _page, _badges_html, _human_size, _human_duration, _crumbs
 
 from .artifacts import _PIPELINE_STAGES, artifact_inventory, _pipeline_svg, Job
+from .campaigns import EngineeringCampaign
 
 
 class PagesMixin:
@@ -468,6 +469,7 @@ class PagesMixin:
 
     def _jobs_page(self) -> bytes:
         self._reconcile()
+        campaigns, campaign_scan_note = self._engineering_campaign_scan()
         rows = []
         tallies: dict[str, int] = {"running": 0, "complete": 0, "failed": 0}
         for job_id in sorted(self.jobs, reverse=True):
@@ -486,7 +488,7 @@ class PagesMixin:
                 f"action='/jobs/{html.escape(job_id)}/stop'>"
                 "<button class='danger small' type='submit'>Stop</button>"
                 "</form>"
-                if state == "running"
+                if state == "running" and job.process is not None
                 else ""
             )
             hay = html.escape(f"{job_id} {job.command}".lower())
@@ -499,13 +501,42 @@ class PagesMixin:
                 f"<span class='badge {tone}'>{html.escape(state)}</span></td>"
                 f"<td>{started}</td>"
                 f"<td>{_human_duration(job.runtime_seconds())}</td>"
+                "<td>-</td>"
                 f"<td>{'' if job.exit_code() is None else job.exit_code()}"
                 f"</td><td>{stop}</td></tr>"
+            )
+        for campaign in campaigns:
+            state = campaign.state
+            tallies[state] = tallies.get(state, 0) + 1
+            tone = {
+                "running": "blue",
+                "complete": "green",
+                "failed": "red",
+                "orphaned": "amber",
+            }.get(state, "gray")
+            state_label = f"{state} (last recorded)"
+            started = time.strftime("%H:%M:%S", time.localtime(campaign.started_at))
+            route_id = quote(campaign.route_id)
+            hay = html.escape(
+                f"{campaign.campaign_id} engineering campaign external".lower()
+            )
+            rows.append(
+                f"<tr data-state='{html.escape(state)}' data-hay='{hay}'>"
+                f"<td><a href='/jobs/campaign/{route_id}'>"
+                f"{html.escape(campaign.campaign_id)}</a></td>"
+                "<td>engineering campaign <span class='badge gray'>external</span></td>"
+                f"<td><span class='dot {tone}'></span>"
+                f"<span class='badge {tone}'>{html.escape(state_label)}</span></td>"
+                f"<td>{started}</td>"
+                f"<td>{_human_duration(campaign.runtime_seconds())}</td>"
+                f"<td>{html.escape(campaign.progress)} "
+                f"<a href='/jobs/campaign/{route_id}'>logs</a></td>"
+                "<td>-</td><td></td></tr>"
             )
         chips = (
             "<div class='chips'>"
             f"<button type='button' class='chip on' data-state=''>All "
-            f"({len(self.jobs)})</button>"
+            f"({len(self.jobs) + len(campaigns)})</button>"
             + "".join(
                 f"<button type='button' class='chip' data-state='{state}'>"
                 f"{state.capitalize()} ({count})</button>"
@@ -521,7 +552,7 @@ class PagesMixin:
         table = (
             "<div class='card scroll'><table id='jobstable'>"
             "<tr><th>Job</th><th>Command</th>"
-            "<th>State</th><th>Started</th><th>Runtime</th><th>Exit</th>"
+            "<th>State</th><th>Started</th><th>Runtime</th><th>Progress</th><th>Exit</th>"
             "<th></th></tr>" + "".join(rows) + "</table></div>"
             if rows
             else "<div class='card'><p class='note'>No jobs this session. Start "
@@ -558,12 +589,95 @@ class PagesMixin:
             + _icon("pulse", size=22)
             + "Jobs</h1>"
             + self._health_banner()
+            + (
+                "<div class='notice amber'>" + html.escape(campaign_scan_note) + "</div>"
+                if campaign_scan_note
+                else ""
+            )
             + controls
             + table
             + script
             + refresh,
             active="Jobs",
         )
+
+    def _campaign_page(self, campaign: EngineeringCampaign) -> bytes:
+        tone = {
+            "running": "blue",
+            "complete": "green",
+            "failed": "red",
+            "orphaned": "amber",
+        }.get(campaign.state, "gray")
+        route_id = quote(campaign.route_id)
+        relative = f"engineering/{campaign.route_id}"
+        started = time.strftime(
+            "%Y-%m-%d %H:%M:%S", time.localtime(campaign.started_at)
+        )
+        call_cap = "-" if campaign.target_call_cap is None else str(campaign.target_call_cap)
+        hard_stop = (
+            "-"
+            if campaign.hard_stop_hours is None
+            else f"{campaign.hard_stop_hours:g} hours"
+        )
+        details = (
+            "<div class='card scroll'><table>"
+            f"<tr><td>Release commit</td><td><code>{html.escape(campaign.release_commit)}</code></td></tr>"
+            f"<tr><td>Evidence class</td><td>{html.escape(campaign.evidence_class)}</td></tr>"
+            "<tr><td>Thesis empirical evidence</td><td>no</td></tr>"
+            f"<tr><td>Hosted calls allowed</td><td>{'yes' if campaign.hosted_calls_allowed else 'no'}</td></tr>"
+            f"<tr><td>Local calls reserved</td><td>{campaign.reserved_calls}/{call_cap}</td></tr>"
+            f"<tr><td>Hard stop</td><td>{hard_stop}</td></tr>"
+            "</table></div>"
+        )
+        log_links = "".join(
+            "<li>"
+            f"<a href='/jobs/campaign/{route_id}/log?stream={quote(key)}'>"
+            f"{html.escape(label)}</a></li>"
+            for key, label, _path in campaign.logs
+        )
+        logs = (
+            "<div class='card'><h2>" + _icon("pulse") + "Task logs</h2>"
+            + (f"<ul>{log_links}</ul>" if log_links else "<p class='note'>No task logs yet.</p>")
+            + f"<p><a href='/artifacts?path={quote(relative)}'>"
+            "Browse all retained campaign files</a></p></div>"
+        )
+        last_detail = (
+            "<div class='card'><h2>" + _icon("terminal") + "Latest activity</h2>"
+            f"<pre>{html.escape(campaign.last_detail)}</pre></div>"
+            if campaign.last_detail
+            else ""
+        )
+        refresh = (
+            "<script>setTimeout(function(){location.reload();}, 5000);</script>"
+            if campaign.state == "running"
+            else ""
+        )
+        body = (
+            "<h1>" + _icon("pulse", size=22) + "Campaign "
+            f"{html.escape(campaign.campaign_id)}</h1>"
+            "<div class='notice amber'><strong>Externally managed engineering work.</strong> "
+            "This console observes its retained files read-only; process ownership remains "
+            "with the campaign launcher. Status is the last state recorded in the task logs, "
+            "not an operating-system liveness check. It is not thesis empirical evidence.</div>"
+            "<div class='cols'>"
+            "<div class='card'><div class='stat'>"
+            f"<span class='value'><span class='dot {tone}'></span>"
+            f"{html.escape(campaign.state)}</span><span class='label'>last recorded state</span>"
+            "</div></div>"
+            "<div class='card'><div class='stat'>"
+            f"<span class='value'>{_human_duration(campaign.runtime_seconds())}</span>"
+            "<span class='label'>runtime</span></div></div>"
+            "<div class='card'><div class='stat'>"
+            f"<span class='value'>{started}</span><span class='label'>started</span></div></div>"
+            "</div>"
+            "<div class='card'><h2>" + _icon("chart") + "Progress</h2>"
+            f"<p>{html.escape(campaign.progress)}</p></div>"
+            + details
+            + last_detail
+            + logs
+            + refresh
+        )
+        return _page(f"Campaign {campaign.campaign_id}", body, active="Jobs")
 
     def _job_page(self, job: Job) -> bytes:
         state = job.state()
@@ -573,7 +687,7 @@ class PagesMixin:
         stop_form = (
             f"<form method='post' action='/jobs/{html.escape(job.job_id)}/stop'>"
             "<button class='danger' type='submit'>Stop job</button></form>"
-            if state == "running"
+            if state == "running" and job.process is not None
             else ""
         )
         refresh = (

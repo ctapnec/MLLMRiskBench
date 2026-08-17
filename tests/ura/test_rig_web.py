@@ -2061,6 +2061,199 @@ def test_jobs_page_has_filter_chips_and_row_stop(tmp_path: Path) -> None:
         app.stop_job(job.job_id)
 
 
+def _write_external_engineering_campaign(results: Path) -> Path:
+    campaign = results / "engineering" / "local-only-20260817T000000Z"
+    campaign.mkdir(parents=True)
+    started_at = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+    (campaign / "ENGINEERING_ONLY.json").write_text(json.dumps({
+        "schema": "ura-engineering-campaign/1",
+        "campaign_id": "local-only-20260817T000000Z",
+        "release_commit": "a" * 40,
+        "evidence_class": "engineering_stress",
+        "thesis_empirical_evidence": False,
+        "hosted_calls_allowed": False,
+        "target_call_cap": 10,
+        "hard_stop_hours": 23,
+        "started_at": started_at,
+    }), encoding="utf-8")
+    (campaign / "task-log.jsonl").write_text("\n".join((
+        json.dumps({
+            "at": "2026-08-17T00:00:00Z", "event": "campaign_start",
+            "task": "bootstrap", "status": "running", "detail": "local-only",
+        }),
+        json.dumps({
+            "at": "2026-08-17T00:00:01Z", "event": "task_start",
+            "task": "download-model", "status": "running", "detail": "download",
+        }),
+    )) + "\n", encoding="utf-8")
+    (campaign / "stage2-task-log.jsonl").write_text(json.dumps({
+        "at": "2026-08-17T00:00:02Z", "event": "campaign_start",
+        "task": "stage2", "status": "running", "detail": "waiting_for_bootstrap",
+    }) + "\n", encoding="utf-8")
+    return campaign
+
+
+def test_jobs_lists_external_engineering_campaign_read_only(tmp_path: Path) -> None:
+    app = _app(tmp_path)
+    campaign = _write_external_engineering_campaign(app.results_root)
+    with (campaign / "task-log.jsonl").open("a", encoding="utf-8") as handle:
+        # A retried task is one task in progress, not two completed tasks.
+        for status in ("failed", "passed"):
+            handle.write(json.dumps({
+                "at": "2026-08-17T00:00:01Z", "event": "task_end",
+                "task": "download-model", "status": status, "detail": status,
+            }) + "\n")
+
+    status, _, body = app.handle("GET", "/jobs")
+    text = body.decode("utf-8")
+    assert status == 200
+    assert "All (1)" in text and "Running (1)" in text
+    assert "local-only-20260817T000000Z" in text
+    assert "engineering campaign" in text and "external" in text
+    assert "1 task finished" in text and "2 tasks finished" not in text
+    assert "/jobs/campaign/local-only-20260817T000000Z" in text
+    assert "/jobs/campaign/local-only-20260817T000000Z/stop" not in text
+
+    # Discovery is a filesystem-backed read-only view. It neither fabricates
+    # subprocess ownership nor inserts engineering work into the job/run DB.
+    assert app.jobs == {}
+    assert app.db.health()["counts"]["jobs"] == 0
+    assert app.db.list_runs() == []
+
+    status, _, detail = app.handle(
+        "GET", "/jobs/campaign/local-only-20260817T000000Z"
+    )
+    detail_text = detail.decode("utf-8")
+    assert status == 200
+    assert "Externally managed engineering work" in detail_text
+    assert "not thesis empirical evidence" in detail_text
+    assert "Hosted calls allowed</td><td>no" in detail_text
+    assert "Browse all retained campaign files" in detail_text
+    assert "stream=bootstrap" in detail_text and "stream=stage2" in detail_text
+    assert "/stop" not in detail_text
+
+    status, content_type, log = app.handle(
+        "GET",
+        "/jobs/campaign/local-only-20260817T000000Z/log?stream=stage2",
+    )
+    assert status == 200 and content_type.startswith("text/plain")
+    assert b"waiting_for_bootstrap" in log
+    status, _, message = app.handle(
+        "POST", "/jobs/campaign/local-only-20260817T000000Z/stop"
+    )
+    assert status == 405 and b"read-only" in message
+    assert campaign.is_dir()
+    app.close()
+
+
+def test_external_campaign_survives_restart_and_reads_terminal_log(tmp_path: Path) -> None:
+    app = _app(tmp_path)
+    campaign = _write_external_engineering_campaign(app.results_root)
+    app.close()
+
+    with (campaign / "stage2-task-log.jsonl").open("a", encoding="utf-8") as handle:
+        handle.write(json.dumps({
+            "at": "2026-08-17T00:01:00Z", "event": "campaign_end",
+            "task": "stage2", "status": "passed", "detail": "done",
+        }) + "\n")
+    restarted = RigWebApp(
+        results_root=tmp_path / "runs", state_dir=tmp_path / "state",
+    )
+    status, _, body = restarted.handle("GET", "/jobs")
+    text = body.decode("utf-8")
+    assert status == 200
+    assert "All (1)" in text and "Complete (1)" in text
+    assert "local-only-20260817T000000Z" in text
+    assert "last recorded active" not in text
+    assert restarted.jobs == {}
+    assert restarted.db.health()["counts"]["jobs"] == 0
+    restarted.close()
+
+
+def test_external_campaign_malformed_and_oversized_logs_do_not_break_jobs(
+    tmp_path: Path,
+) -> None:
+    app = _app(tmp_path)
+    campaign = _write_external_engineering_campaign(app.results_root)
+    (campaign / "task-log.jsonl").write_bytes(b"x" * (512 * 1024 + 1))
+
+    malformed = app.results_root / "engineering" / "malformed"
+    malformed.mkdir()
+    (malformed / "ENGINEERING_ONLY.json").write_bytes(b"\xff\xfeinvalid")
+    deep = app.results_root / "engineering" / "deep-json"
+    deep.mkdir()
+    (deep / "ENGINEERING_ONLY.json").write_bytes(b"[" * 2000 + b"]" * 2000)
+
+    status, _, body = app.handle("GET", "/jobs")
+    text = body.decode("utf-8")
+    assert status == 200
+    assert "All (1)" in text
+    assert "local-only-20260817T000000Z" in text
+    assert "unknown (last recorded)" in text
+    assert "activity status unavailable" in text
+    assert "0 tasks finished" not in text
+    assert "malformed" not in text and "deep-json" not in text
+    app.close()
+
+
+def test_external_campaign_rejects_symlink_root(tmp_path: Path) -> None:
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    _write_external_engineering_campaign(outside)
+    app = _app(tmp_path)
+    link = app.results_root / "engineering"
+    try:
+        link.symlink_to(outside / "engineering", target_is_directory=True)
+    except OSError:
+        app.close()
+        pytest.skip("directory symlinks are not available")
+    status, _, body = app.handle("GET", "/jobs")
+    assert status == 200 and b"All (0)" in body
+    app.close()
+
+
+def test_external_campaign_log_endpoint_reads_only_bounded_tail(tmp_path: Path) -> None:
+    # A normal campaign log endpoint reads only the configured tail, even
+    # when the retained activity file is larger.
+    normal_results = tmp_path / "normal-runs"
+    normal_results.mkdir()
+    normal = _write_external_engineering_campaign(normal_results)
+    event = json.dumps({
+        "at": "2026-08-17T00:00:01Z", "event": "task_start",
+        "task": "download-model", "status": "running", "detail": "x",
+    }).encode("utf-8") + b"\n"
+    (normal / "task-log.jsonl").write_bytes(event * 600)
+    normal_app = RigWebApp(
+        results_root=normal_results, state_dir=tmp_path / "normal-state",
+    )
+    status, _, log = normal_app.handle(
+        "GET", "/jobs/campaign/local-only-20260817T000000Z/log?stream=bootstrap"
+    )
+    assert status == 200 and len(log) == 64 * 1024
+    normal_app.close()
+
+
+def test_external_campaign_directory_scan_cap_is_visible(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from experiments.rig_web_app import campaigns as campaign_index
+
+    app = _app(tmp_path)
+    engineering = app.results_root / "engineering"
+    engineering.mkdir()
+    for index in range(4):
+        (engineering / f"junk-{index}").mkdir()
+    monkeypatch.setattr(campaign_index, "_MAX_DIRECTORY_ENTRIES", 3)
+
+    status, _, body = app.handle("GET", "/jobs")
+    text = body.decode("utf-8")
+    assert status == 200 and "All (0)" in text
+    assert "scan stopped after 3 directory entries" in text
+    assert "later entries were not inspected" in text
+    app.close()
+
+
 def test_run_forms_use_select_and_datalist_without_weakening_argv(
     tmp_path: Path,
 ) -> None:
