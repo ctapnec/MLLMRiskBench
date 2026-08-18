@@ -57,6 +57,8 @@ class BuilderCaptureMixin:
         "t3_artifact",
         "t3_artifact_sha",
         "harm_config",
+        "engine_runtime_config",
+        "engine_runtime_config_sha",
         "nanogcg_model_id",
         "nanogcg_model_revision",
         "nanogcg_suffix",
@@ -65,6 +67,7 @@ class BuilderCaptureMixin:
         "_local_config_snapshot_sha256",
         "_source_config_snapshot_sha256",
         "_attacker_config_snapshot_sha256",
+        "_engine_runtime_config_snapshot_sha256",
         "_execution_config_bundle_sha256",
         "_execution_snapshot_sha256",
     })
@@ -765,6 +768,20 @@ class BuilderCaptureMixin:
                     "review the lane again"
                 )
             params["_local_config_snapshot_sha256"] = durable_digest
+        engine_runtime_config, engine_runtime_config_sha256 = (
+            self._materialize_selected_engine_runtime_config(
+                params,
+                snapshot_payload=snapshot.get("engine_runtime_config"),
+            )
+        )
+        if (
+            engine_runtime_config is not None
+            and engine_runtime_config_sha256 is not None
+        ):
+            values["--engine-runtime-config"] = str(engine_runtime_config)
+            values["--engine-runtime-config-sha256"] = (
+                engine_runtime_config_sha256
+            )
         params = self._bind_execution_config_bundle_identity(params)
         return "run_matrix", values, params
 

@@ -7,10 +7,7 @@ from types import SimpleNamespace
 
 import pytest
 
-import ura.adapters.nanogcg as nanogcg_module
-from ura.adapters.base import AttackBudget
-from ura.adapters.nanogcg import NanoGCGAttacker
-from ura.converters.synth import synth_corpus
+from ura.adapters.nanogcg import LIVE_NANOGCG_DISABLED_MESSAGE, NanoGCGAttacker
 from ura.judges.guardrail import GuardrailJudge
 from ura.model_acquisition import ModelAcquisitionError
 from ura.targets.local import VLLMTarget, _tree_sha256
@@ -173,83 +170,13 @@ def test_guardrail_postverify_failure_releases_every_loaded_object(
     assert guard._model is None and guard._tokenizer is None
 
 
-def test_nanogcg_postverify_failure_releases_objects_without_optimization(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    snapshot = (tmp_path / "snapshot").resolve()
-    snapshot.mkdir()
-    events: list[str] = []
-    revision = "c" * 40
-
-    class Model:
-        config = SimpleNamespace(_commit_hash=revision)
-
-        def to(self, device: str):
-            events.append(f"model-to-{device}")
-            return self
-
-        def eval(self) -> None:
-            events.append("model-eval")
-
-        def close(self) -> None:
-            events.append("model-close")
-
-    class Tokenizer:
-        init_kwargs = {"_commit_hash": revision}
-
-        def close(self) -> None:
-            events.append("tokenizer-close")
-
-    fake_transformers = SimpleNamespace(
-        AutoModelForCausalLM=SimpleNamespace(
-            from_pretrained=lambda *_args, **_kwargs: Model()
-        ),
-        AutoTokenizer=SimpleNamespace(
-            from_pretrained=lambda *_args, **_kwargs: Tokenizer()
-        ),
-    )
-    fake_torch = SimpleNamespace(
-        float16="float16",
-        cuda=SimpleNamespace(
-            is_available=lambda: True,
-            empty_cache=lambda: events.append("cuda-empty"),
-        ),
-    )
-    fake_nanogcg = SimpleNamespace(
-        __version__="fixture",
-        run=lambda *_args: events.append("optimization"),
-    )
-    modules = {
-        "nanogcg": fake_nanogcg,
-        "torch": fake_torch,
-        "transformers": fake_transformers,
-    }
-    monkeypatch.setattr(
-        nanogcg_module,
-        "_require",
-        lambda module, *_args: modules[module],
-    )
-    runtime = _RejectAfterConstruction(snapshot)
-    attacker = NanoGCGAttacker(
-        model_id="Org/Surrogate",
-        model_revision=revision,
-        model_runtime=runtime,
-    )
-    with pytest.raises(ModelAcquisitionError, match="post-verification"):
-        list(
-            attacker.generate(
-                synth_corpus(1)[0],
-                AttackBudget(max_queries=1, max_turns=1, seed=0),
-            )
+def test_nanogcg_live_fails_before_snapshot_or_framework_construction() -> None:
+    runtime = SimpleNamespace(construct=lambda *_args, **_kwargs: pytest.fail(
+        "managed snapshot construction must not run before Stage 2 admission"
+    ))
+    with pytest.raises(RuntimeError, match=LIVE_NANOGCG_DISABLED_MESSAGE):
+        NanoGCGAttacker(
+            model_id="Org/Surrogate",
+            model_revision="c" * 40,
+            model_runtime=runtime,
         )
-    assert "optimization" not in events
-    assert events == [
-        "model-to-cuda",
-        "model-eval",
-        "tokenizer-close",
-        "model-close",
-        "model-to-cpu",
-        "cuda-empty",
-    ]
-    assert attacker._model is None and attacker._tokenizer is None

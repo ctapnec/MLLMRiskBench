@@ -116,6 +116,15 @@ def test_dashboard_and_build_sections_have_sensible_boundaries(tmp_path: Path) -
     assert "Local Ollama service" in builder[general_at:builder_form_at]
     assert "Mode" in builder[pipeline_at:evaluation_at]
     assert "Arms &amp; corpora" in builder[pipeline_at:evaluation_at]
+    assert "Isolated framework runtimes" in builder[pipeline_at:evaluation_at]
+    assert "name='engine_runtime_config'" in builder[pipeline_at:evaluation_at]
+    assert "name='engine_runtime_config_sha'" in builder[pipeline_at:evaluation_at]
+    assert "each framework must have its own virtual environment" in (
+        builder[pipeline_at:evaluation_at].lower()
+    )
+    assert "completion is published only after the closing seal verifies" in (
+        builder[pipeline_at:evaluation_at].lower()
+    )
     assert "Judges &amp; defense" in builder[evaluation_at:admission_at]
     assert "Receipts (fail-closed admission)" in builder[admission_at:execution_at]
     assert "Sampling &amp; turns" in builder[execution_at:modal_at]

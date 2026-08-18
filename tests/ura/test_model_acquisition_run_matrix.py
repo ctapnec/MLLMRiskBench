@@ -9,7 +9,6 @@ import sys
 import pytest
 
 from experiments import run_matrix
-from ura.model_acquisition import load_plan
 from ura.model_acquisition_runtime import (
     validate_model_acquisition_role_projection,
 )
@@ -58,6 +57,32 @@ def _preflight_plan_args(
     ]
 
 
+def _guardrail_preflight_plan_args(
+    tmp_path: Path,
+    project_revision_args: list[str],
+) -> list[str]:
+    return [
+        "--preflight-only",
+        *project_revision_args,
+        "--api",
+        "mock",
+        "--attackers",
+        "replay",
+        "--judges",
+        "guardrail",
+        "--guardrail-model",
+        "Org/Guardrail",
+        "--guardrail-revision",
+        REVISION,
+        "--corpora",
+        "synth",
+        "--limit",
+        "1",
+        "--out",
+        str(tmp_path / "run"),
+    ]
+
+
 def _forbid_component_constructors(
     monkeypatch: pytest.MonkeyPatch,
 ) -> list[str]:
@@ -76,7 +101,7 @@ def _forbid_component_constructors(
     return calls
 
 
-def test_plan_only_writes_exact_plan_before_any_component_constructor(
+def test_plan_only_rejects_live_nanogcg_before_plan_or_admission(
     tmp_path: Path,
     project_revision_args: list[str],
     monkeypatch: pytest.MonkeyPatch,
@@ -85,6 +110,13 @@ def test_plan_only_writes_exact_plan_before_any_component_constructor(
     private_plans = (tmp_path / "private-plans").resolve()
     private_plans.mkdir()
     calls = _forbid_component_constructors(monkeypatch)
+    admissions: list[str] = []
+
+    def reject_admission(*_args, **_kwargs):
+        admissions.append("called")
+        raise AssertionError("live NanoGCG must fail before acquisition planning")
+
+    monkeypatch.setattr(run_matrix, "collect_run_requirements", reject_admission)
 
     result = run_matrix.main([
         *_preflight_plan_args(
@@ -97,18 +129,52 @@ def test_plan_only_writes_exact_plan_before_any_component_constructor(
         str(private_plans),
     ])
 
-    assert result == 0
+    assert result == 1
     assert calls == []
-    plan_path = next(private_plans.glob("*.plan.json"))
-    plan = load_plan(
-        plan_path,
-        expected_sha256=hashlib.sha256(plan_path.read_bytes()).hexdigest(),
-    )
-    assert plan["resources"][0]["roles"] == ["nanogcg_surrogate"]
-    assert plan["resources"][0]["repo_id"] == "Org/Surrogate"
-    assert "launch_ticket_sha256" not in plan["bindings"]
-    assert "source_config_sha256" in plan["bindings"]
-    assert "source_conformance_sha256" in plan["bindings"]
+    assert admissions == []
+    assert list(private_plans.iterdir()) == []
+    errors = list((tmp_path / "run").glob("*.request.error.json"))
+    assert errors
+    payload = json.loads(errors[-1].read_text(encoding="utf-8"))
+    assert payload["failure"]["phase"] == "configuration_preflight"
+
+
+def test_plan_only_rejects_nanogcg_live_model_fields_with_suffix_before_admission(
+    tmp_path: Path,
+    project_revision_args: list[str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    config = _nano_config(tmp_path / "attackers.json", suffix=" sealed suffix")
+    private_plans = (tmp_path / "private-plans").resolve()
+    private_plans.mkdir()
+    calls = _forbid_component_constructors(monkeypatch)
+    admissions: list[str] = []
+
+    def reject_admission(*_args, **_kwargs):
+        admissions.append("called")
+        raise AssertionError("NanoGCG replay metadata must not enter acquisition")
+
+    monkeypatch.setattr(run_matrix, "collect_run_requirements", reject_admission)
+
+    result = run_matrix.main([
+        *_preflight_plan_args(
+            tmp_path,
+            project_revision_args,
+            attacker_config=config,
+        ),
+        "--model-acquisition-plan-only",
+        "--model-acquisition-plan-dir",
+        str(private_plans),
+    ])
+
+    assert result == 1
+    assert calls == []
+    assert admissions == []
+    assert list(private_plans.iterdir()) == []
+    errors = list((tmp_path / "run").glob("*.request.error.json"))
+    assert errors
+    payload = json.loads(errors[-1].read_text(encoding="utf-8"))
+    assert payload["failure"]["phase"] == "configuration_preflight"
 
 
 @pytest.mark.parametrize("failure", ["missing", "tampered"])
@@ -118,14 +184,9 @@ def test_receipt_admission_failure_has_zero_component_constructors(
     monkeypatch: pytest.MonkeyPatch,
     failure: str,
 ) -> None:
-    config = _nano_config(tmp_path / "attackers.json")
     private_plans = (tmp_path / "private-plans").resolve()
     private_plans.mkdir()
-    base_args = _preflight_plan_args(
-        tmp_path,
-        project_revision_args,
-        attacker_config=config,
-    )
+    base_args = _guardrail_preflight_plan_args(tmp_path, project_revision_args)
     assert run_matrix.main([
         *base_args,
         "--model-acquisition-plan-only",

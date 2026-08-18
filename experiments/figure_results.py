@@ -56,6 +56,11 @@ from ura.data_models import (
 )
 from ura.project_revision import validate_project_revision_binding
 from ura.eligibility import validate_eligibility_plan
+from ura.engine_runtime_evidence import (
+    validate_cell_engine_runtime_marker,
+    validate_engine_runtime_artifact_version,
+    validate_grid_engine_runtime_binding,
+)
 from ura.live_attestation import stable_realized_target_identity_keys
 from ura.model_acquisition_runtime import (
     model_acquisition_execution_descriptor,
@@ -102,6 +107,7 @@ class _GridReference:
     request: dict[str, Any]
     status: dict[str, Any]
     eligibility_plan: dict[str, Any]
+    engine_runtime_close: object = None
 
 
 @dataclass(frozen=True)
@@ -419,7 +425,12 @@ def _grid_allowlist(
                 raise ValueError(f"grid references an invalid completion marker: {marker_path}")
             markers_in_grid.add(marker_path)
             allowlist[marker_path].append(_GridReference(
-                grid_id, grid_path, request, status, eligibility_plan
+                grid_id,
+                grid_path,
+                request,
+                status,
+                eligibility_plan,
+                grid.get("engine_runtime_close"),
             ))
         if observed != expected:
             raise ValueError(
@@ -642,20 +653,38 @@ def _validate_cell(
         or marker.get("schema_version") != manifest.schema_version
     ):
         raise ValueError(f"marker/manifest lineage mismatch: {marker_path}")
-    if (
-        manifest.code_version != CODE_VERSION
-        or manifest.schema_version != SCHEMA_VERSION
-    ):
-        raise ValueError(
-            "measured figures require artifacts from the current runner/schema "
-            f"({CODE_VERSION}, {SCHEMA_VERSION}): {marker_path}"
-        )
     if len(manifest.models) != 1:
         raise ValueError(f"figure cell must have exactly one resolved target: {marker_path}")
     project_revision = _validate_source_identity(manifest, resolved["manifest"])
     run = manifest.config.get("run")
     if not isinstance(run, dict):
         raise ValueError(f"manifest lacks config.run: {resolved['manifest']}")
+    try:
+        legacy_runtime_free = validate_engine_runtime_artifact_version(
+            attacker=run.get("attacker"),
+            code_version=manifest.code_version,
+            schema_version=manifest.schema_version,
+            current_code_version=CODE_VERSION,
+            current_schema_version=SCHEMA_VERSION,
+        )
+        runtime_identity, runtime_close = validate_cell_engine_runtime_marker(
+            attacker=run.get("attacker"),
+            run_config=run,
+            completion_marker=marker,
+            allow_legacy_missing=legacy_runtime_free,
+        )
+        for ref in refs:
+            validate_grid_engine_runtime_binding(
+                attacker=run.get("attacker"),
+                cell_identity=runtime_identity,
+                cell_close=runtime_close,
+                grid_request=ref.request,
+                grid_close=ref.engine_runtime_close,
+            )
+    except ValueError as exc:
+        raise ValueError(
+            f"engine runtime evidence is invalid for {marker_path}: {exc}"
+        ) from exc
     try:
         cell_acquisition = validate_model_acquisition_role_projection(
             run.get("model_acquisition")

@@ -1,9 +1,17 @@
-# Unified schema v1.4
+# Unified schema v1.5
 
 `ura.data_models` is the typed Pydantic v2 contract shared by converters,
-attackers, targets, judges, persistence, and analysis. `SCHEMA_VERSION = "1.4"`
-is stamped on datapoints, checkpoints, and manifests. Runner 2.19 rejects mixed
+attackers, targets, judges, persistence, and analysis. `SCHEMA_VERSION = "1.5"`
+is stamped on datapoints, checkpoints, and manifests. Runner 2.20 rejects mixed
 schema versions and duplicate datapoint IDs before a target call.
+
+The 1.5 transition introduces isolated-engine identities and verified closing
+seals. Readers retain a narrow compatibility path for exact Runner 2.19/schema
+1.4 non-runtime evidence, `ura-eligibility-plan/2`, and
+`ura-level1-evidence/2`: missing runtime fields normalize to the explicit
+not-required/empty selection. Legacy evidence that selects PyRIT, DeepTeam,
+h4rm3l, or Spikee is rejected because those artifacts predate the closing seal;
+current artifacts may not omit or downgrade the new runtime fields.
 
 ## Records
 
@@ -27,7 +35,7 @@ that split controls ASR and FRR denominators.
 
 ## Prospective attacker-input contracts
 
-Runner 2.19 requires every Runner-eligible adapter to produce one
+Runner 2.20 requires every Runner-eligible adapter to produce one
 `ura-attacker-input-contract/1` for each selected datapoint and seed. The
 contract binds the source channel combination, every prospective target-call
 combination, policy-evaluation scope, and turn-count semantics before an engine
@@ -52,7 +60,7 @@ also fail before planning until a typed executable tool runtime and actual-use
 attestation exist; a serialized tool transcript is not execution. Crescendo
 retains an exact planned horizon and may execute only a content-bound prefix
 terminated by an authoritative harmful violation; an arbitrary short session
-is invalid. The `ura-eligibility-plan/2`, modality-coverage `/2`, lane, run, and
+is invalid. The `ura-eligibility-plan/3`, modality-coverage `/2`, lane, run, and
 completion evidence bind these contracts rather than inferring target inputs
 from source modalities alone.
 
@@ -158,7 +166,7 @@ this boundary rather than being reconstructed afterward.
 
 ## Planning eligibility artifact
 
-`run_matrix` and `rig_check` emit `ura-eligibility-plan/2` as
+`run_matrix` and `rig_check` emit `ura-eligibility-plan/3` as
 `eligibility-<content-id>.eligibility.json` after corpus conversion and before
 model calls. Each item binds the requested and resolved target identities,
 logical source arm, selected source stratum and item digest, exact modality,
@@ -322,7 +330,7 @@ not use this schema.
 
 ## Level-1 lifecycle evidence
 
-`python -m experiments.level1_evidence` emits `ura-level1-evidence/2` JSON and
+`python -m experiments.level1_evidence` emits `ura-level1-evidence/3` JSON and
 the existing deterministic CSV view of materialized planning strata. The
 operator supplies eligibility files and result roots; request envelopes and
 bound early errors are discovered automatically from those locations. A result
@@ -593,6 +601,66 @@ an executed cell:
   selected binding changes or invalidates it. Private plan, receipt, store,
   transport-cache, snapshot, and token values are never schema fields.
 
+### Isolated third-party engine runtime evidence
+
+Installer-owned retained environments use the outer
+`ura-framework-runtime-receipt/1` schema with a required nested
+`ura-framework-runtime-content-seal/2`. Version 2 binds every retained regular
+file, including executable bytecode. Receipts with an older nested seal schema
+are incompatible; a seal migration uses a new lock identity and store while
+preserving the old content-addressed store.
+
+- `ura-engine-runtime-config/1` is private operational input. Its exact root
+  fields are `schema` and `runtimes`; each PyRIT, DeepTeam, h4rm3l, or Spikee
+  entry contains exactly `interpreter` and `receipt`. The path is accepted only
+  with the paired `--engine-runtime-config-sha256`; neither the path nor the
+  interpreter is copied into run evidence. A selected framework must have an
+  entry, may not reuse the Runner venv or another selected framework venv, and
+  its live environment may not contain another registered framework package.
+- `ura-engine-runtime-receipt/1` is the path-free content identity observed by
+  the selected interpreter. It binds `engine`, fixed distribution/version,
+  Python implementation/version/cache tag plus executable hash/size,
+  `pyvenv.cfg` hash, installed inventory hash, primary package tree hash/count/
+  bytes, full `site-packages` tree hash/count/bytes including executable
+  bytecode, and the
+  content-derived `runtime_id`. The full tree includes untracked files and all
+  dependencies, so a same-version dependency or shadow-module mutation changes
+  the receipt. Relative inventory names make unchanged relocated venv content
+  retain the same identity.
+- `ura-engine-runtime-execution/1` contains exactly `schema`, lifecycle
+  `status` (`configured`, `verified`, or `closed_verified`), fixed worker
+  `bridge_sha256`, and the receipt. `ura-engine-runtime-identity/1` contains only
+  `schema`, `bridge_sha256`, and the receipt. The status-free identity, not
+  mutable lifecycle status, enters run IDs, grid IDs, eligibility conditions,
+  and scientific cohorts.
+- `ura-engine-runtime-selection/1` is the sorted, duplicate-free collection of
+  execution descriptors. `ura-engine-runtime-selection-identity/1` is its
+  status-free projection. Both retain `selection_sha256`, computed over the
+  identity projection, so `configured -> verified -> closed_verified` does not
+  change scientific identity.
+- A runtime-backed run manifest contains exactly its one status-free
+  `engine_runtime` identity. Its completion marker is unpublished until the
+  persistent worker has returned an exact per-cell
+  `engine_runtime_close` execution descriptor with
+  `status=closed_verified`. The completed grid contains the status-free opening
+  `request.engine_runtimes` selection and the full closed
+  `engine_runtime_close` selection. Completion, Figure, transfer, and Level-1
+  readers require manifest identity = marker close identity = matching grid
+  opening/close entry and require the grid selection to equal the selected
+  runtime-backed attackers. Missing, downgraded, path-bearing, different, or
+  extra runtime evidence fails closed. A non-runtime replay cell remains
+  independent of another cell's grid runtime seals and may carry only a null or
+  absent per-cell close.
+- The fixed bridge request/response and session control schemas are private,
+  bounded worker protocol artifacts. They accept only the operation registered
+  for the selected framework and exact, expected artifact names. They are not
+  scientific evidence and their temporary paths never enter durable records.
+- Stage-1 NanoGCG precomputed replay uses
+  `ura-engine-runtime-not-required/1` with
+  `framework_execution=not_invoked`. Live NanoGCG has no execution schema escape:
+  it fails before managed-snapshot, framework, model, or target construction
+  until the Stage-2 isolated snapshot seal handshake exists.
+
 Unselected inventory entries are neither evidence nor requested cells. Secret
 values are environment-indirected and rejected from persisted configuration.
 The manifest keeps requested and realized target identities distinct.
@@ -667,7 +735,7 @@ all case joins, outcomes, scores, aggregates, roles, hashes, byte counts, and
 record counts to match; physical paths may relocate with the complete tree.
 `experiments.suite_summary` joins completion-validated runner cells and these
 revalidated native envelopes only at an evidence-inventory layer; it does not
-coerce native outcomes into schema-v1.4 common metrics.
+coerce native outcomes into schema-v1.5 common metrics.
 `NativeEngineRun` retains its own upstream repository/revision and does not have
 a Runner `RunManifest`; the return-package/importer context records which URA
 revision performed import without rewriting the upstream-native schema. The
@@ -687,7 +755,7 @@ while live challenge rows collapse to conversation endpoints before equal
 conversation-within-cluster and equal-cluster weighting. Pair records expose
 `n_shared_endpoint_conversations`, `endpoint_unit`, and `weighting` alongside
 agreement and unique-cluster support. These are analysis artifacts rather than
-additions to schema v1.4's runtime record types.
+additions to schema v1.5's runtime record types.
 
 The exact URA project revision, source-byte identities, target snapshot,
 requested and realized judge identities, source and policy digests, code/schema

@@ -17,6 +17,7 @@ import http.client
 import json
 import os
 import re
+import shutil
 import sqlite3
 import stat
 import sys
@@ -63,6 +64,7 @@ from ura.model_acquisition import (
 )
 from ura.targets.api import MockTarget
 from ura.targets.base import BaseTarget
+from ura.adapters import _engine_runtime as engine_runtime
 
 
 def _app(tmp_path: Path) -> RigWebApp:
@@ -113,6 +115,66 @@ def _operator_registry_app(tmp_path: Path) -> RigWebApp:
         destination.parent.mkdir(parents=True, exist_ok=True)
         destination.write_bytes(source.read_bytes())
     return app
+
+
+def _engine_runtime_config(
+    tmp_path: Path,
+    *engines: str,
+) -> tuple[Path, str, dict[str, str]]:
+    """Create a structurally valid private runtime config without networking."""
+
+    entries: dict[str, object] = {}
+    interpreters: dict[str, str] = {}
+    for index, engine in enumerate(engines, start=1):
+        root = tmp_path / "operator-private-runtimes" / engine
+        binary_dir = root / ("Scripts" if os.name == "nt" else "bin")
+        binary_dir.mkdir(parents=True)
+        interpreter = binary_dir / ("python.exe" if os.name == "nt" else "python")
+        shutil.copy2(sys.executable, interpreter)
+        if os.name != "nt":
+            interpreter.chmod(0o700)
+        requirement = engine_runtime.ENGINE_RUNTIME_REQUIREMENTS[engine]
+        digit = str(index % 10)
+        receipt: dict[str, object] = {
+            "schema": engine_runtime.ENGINE_RUNTIME_RECEIPT_SCHEMA,
+            "engine": engine,
+            "distribution": requirement.distribution,
+            "version": requirement.version,
+            "python": {
+                "implementation": "cpython",
+                "version": "3.12.10",
+                "cache_tag": "cpython-312",
+                "executable_sha256": digit * 64,
+                "executable_bytes": 10,
+            },
+            "pyvenv_cfg_sha256": "2" * 64,
+            "package_tree_sha256": "3" * 64,
+            "package_files": 2,
+            "package_bytes": 20,
+            "inventory_sha256": "4" * 64,
+            "environment_tree_sha256": digit * 64,
+            "environment_files": 7,
+            "environment_bytes": 70,
+        }
+        receipt["runtime_id"] = (
+            "engine-runtime-" + engine_runtime._sha256_json(receipt)[:24]
+        )
+        entries[engine] = {
+            "interpreter": str(interpreter.resolve()),
+            "receipt": receipt,
+        }
+        interpreters[engine] = str(interpreter.resolve())
+    payload = json.dumps(
+        {
+            "schema": engine_runtime.ENGINE_RUNTIME_CONFIG_SCHEMA,
+            "runtimes": entries,
+        },
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
+    path = tmp_path / "operator-engine-runtimes.json"
+    path.write_bytes(payload)
+    return path, hashlib.sha256(payload).hexdigest(), interpreters
 
 
 def _opening_tag(document: str, marker: str) -> str:
@@ -200,6 +262,277 @@ def test_run_matrix_can_launch_only_through_validated_builder(
     })
     assert argv[2] == "experiments.source_conformance"
     assert "--scaffold" in argv and "--arm" in argv
+
+
+def test_builder_engine_runtime_config_is_exactly_selected_or_rejected(
+    tmp_path: Path,
+) -> None:
+    app = _app(tmp_path)
+    config, digest, _interpreters = _engine_runtime_config(
+        tmp_path,
+        "pyrit",
+        "deepteam",
+    )
+    base = {
+        "mode": "dry_run",
+        "corpora": "synth",
+        "judges": "rules",
+        "out": "runs/runtime-builder-validation",
+    }
+    try:
+        missing = app._validate_builder({**base, "attackers": "pyrit"})
+        assert "engine_runtime_config" in missing
+        assert "requires a path and exact SHA-256" in missing["engine_runtime_config"]
+
+        unused = app._validate_builder({
+            **base,
+            "attackers": "replay",
+            "engine_runtime_config": str(config),
+            "engine_runtime_config_sha": digest,
+        })
+        assert "engine_runtime_config" in unused
+        assert "allowed only when" in unused["engine_runtime_config"]
+
+        extra = app._validate_builder({
+            **base,
+            "attackers": "pyrit",
+            "engine_runtime_config": str(config),
+            "engine_runtime_config_sha": digest,
+        })
+        assert "engine_runtime_config" in extra
+        assert "exactly the selected" in extra["engine_runtime_config"]
+    finally:
+        app.close()
+
+
+def test_engine_runtime_config_is_ticket_bound_private_and_path_free(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    app = _app(tmp_path)
+    config, digest, interpreters = _engine_runtime_config(tmp_path, "pyrit")
+    params = {
+        "mode": "dry_run",
+        "corpora": "synth",
+        "attackers": "pyrit",
+        "judges": "rules",
+        "seeds": "0",
+        "out": "runs/private-engine-runtime",
+        "engine_runtime_config": str(config),
+        "engine_runtime_config_sha": digest,
+    }
+    reviewed, snapshot, _snapshot_digest = app._capture_execution_config_snapshot(
+        params
+    )
+    assert snapshot["engine_runtime_config"] == config.read_bytes()
+    command, values, rebound = app._compose_from_builder(
+        reviewed,
+        execution_snapshot=snapshot,
+    )
+    transient = Path(values["--engine-runtime-config"])
+    assert transient.parent == app.state_dir / ".private-engine-runtime-configs"
+    assert transient.read_bytes() == snapshot["engine_runtime_config"]
+
+    launched: dict[str, object] = {}
+
+    class FakeProcess:
+        pid = 4243
+        returncode: int | None = None
+
+        def poll(self) -> int | None:
+            return self.returncode
+
+    process = FakeProcess()
+
+    def fake_popen(argv, **kwargs):
+        launched["argv"] = list(argv)
+        launched["env"] = dict(kwargs.get("env") or {})
+        return process
+
+    import experiments.rig_web_app.lifecycle as lifecycle_module
+
+    monkeypatch.setattr(lifecycle_module.subprocess, "Popen", fake_popen)
+    monkeypatch.setattr(lifecycle_module, "_win_managed_job", lambda: None)
+    try:
+        preview = app._preview_page(command, values, rebound).decode("utf-8")
+        assert "private-engine-runtime-config@sha256:" in preview
+        assert str(config) not in preview and str(transient) not in preview
+        assert all(value not in preview for value in interpreters.values())
+        job = app.start_job(
+            command,
+            values,
+            builder_params=rebound,
+            execution_snapshot=snapshot,
+        )
+        assert str(transient) in launched["argv"]
+        assert launched["env"][
+            "URA_PRIVATE_TRANSIENT_ENGINE_RUNTIME_CONFIG"
+        ] == str(transient.resolve())
+        retained = json.dumps({
+            "argv": job.argv,
+            "builder_params": job.builder_params,
+            "command": json.loads(
+                (job.directory / "command.json").read_text(encoding="utf-8")
+            ),
+        }, sort_keys=True)
+        for private_value in (
+            str(config),
+            str(transient),
+            *interpreters.values(),
+        ):
+            assert private_value not in retained
+        assert "private-engine-runtime-config@sha256:" in retained
+        assert "ura-engine-runtime-selection-identity/1" not in retained
+
+        process.returncode = 0
+        app._reconcile()
+        assert not transient.exists()
+    finally:
+        app.close()
+
+
+def test_engine_runtime_private_config_is_consumed_and_restart_state_is_path_free(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    app = _app(tmp_path)
+    config, digest, interpreters = _engine_runtime_config(tmp_path, "pyrit")
+    params = {
+        "mode": "dry_run",
+        "corpora": "synth",
+        "attackers": "pyrit",
+        "judges": "rules",
+        "seeds": "0",
+        "out": "runs/private-engine-runtime-restart",
+        "engine_runtime_config": str(config),
+        "engine_runtime_config_sha": digest,
+    }
+    reviewed, snapshot, _snapshot_digest = app._capture_execution_config_snapshot(
+        params
+    )
+    command, values, rebound = app._compose_from_builder(
+        reviewed,
+        execution_snapshot=snapshot,
+    )
+    transient = Path(values["--engine-runtime-config"])
+
+    class FakeProcess:
+        pid = 4244
+        returncode: int | None = None
+
+        def poll(self) -> int | None:
+            return self.returncode
+
+    import experiments.rig_web_app.lifecycle as lifecycle_module
+
+    monkeypatch.setattr(
+        lifecycle_module.subprocess,
+        "Popen",
+        lambda *_args, **_kwargs: FakeProcess(),
+    )
+    monkeypatch.setattr(lifecycle_module, "_win_managed_job", lambda: None)
+    restarted: RigWebApp | None = None
+    app_closed = False
+    try:
+        job = app.start_job(
+            command,
+            values,
+            builder_params=rebound,
+            execution_snapshot=snapshot,
+        )
+        monkeypatch.setenv(
+            "URA_PRIVATE_TRANSIENT_ENGINE_RUNTIME_CONFIG",
+            str(transient.resolve()),
+        )
+        selection, artifact = run_matrix._load_engine_runtime_config(
+            str(transient),
+            ["pyrit"],
+            digest,
+        )
+        assert selection is not None
+        assert artifact == {
+            "file": f"private-engine-runtime-config@sha256:{digest}",
+            "sha256": digest,
+            "bytes": len(snapshot["engine_runtime_config"]),
+            "normalized_selected_sha256": run_matrix._sha256_json(
+                selection.identity_descriptor()
+            ),
+        }
+        assert not transient.exists()
+
+        app.close()
+        app_closed = True
+        restarted = _app(tmp_path)
+        restored = restarted.jobs[job.job_id]
+        assert restored.state() == "orphaned"
+        retained = json.dumps(
+            {
+                "argv": restored.argv,
+                "builder_params": restored.builder_params,
+                "command": json.loads(
+                    (restored.directory / "command.json").read_text(
+                        encoding="utf-8"
+                    )
+                ),
+            },
+            sort_keys=True,
+        )
+        assert f"private-engine-runtime-config@sha256:{digest}" in retained
+        for private_value in (str(config), str(transient), *interpreters.values()):
+            assert private_value not in retained
+    finally:
+        if restarted is not None:
+            restarted.close()
+        elif not app_closed:
+            app.close()
+
+
+def test_engine_runtime_transient_tamper_fails_before_popen(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    app = _app(tmp_path)
+    config, digest, _interpreters = _engine_runtime_config(tmp_path, "pyrit")
+    params = {
+        "mode": "dry_run",
+        "corpora": "synth",
+        "attackers": "pyrit",
+        "judges": "rules",
+        "out": "runs/runtime-tamper",
+        "engine_runtime_config": str(config),
+        "engine_runtime_config_sha": digest,
+    }
+    reviewed, snapshot, _snapshot_digest = app._capture_execution_config_snapshot(
+        params
+    )
+    command, values, rebound = app._compose_from_builder(
+        reviewed,
+        execution_snapshot=snapshot,
+    )
+    transient = Path(values["--engine-runtime-config"])
+    raw = transient.read_bytes()
+    transient.write_bytes(raw[:-1] + bytes([raw[-1] ^ 1]))
+    popen_calls: list[object] = []
+    import experiments.rig_web_app.lifecycle as lifecycle_module
+
+    monkeypatch.setattr(
+        lifecycle_module.subprocess,
+        "Popen",
+        lambda *_args, **_kwargs: popen_calls.append(object()),
+    )
+    try:
+        with pytest.raises(ValueError, match="SHA-256"):
+            app.start_job(
+                command,
+                values,
+                builder_params=rebound,
+                execution_snapshot=snapshot,
+            )
+        assert popen_calls == []
+        assert not transient.exists()
+        assert app.jobs == {}
+    finally:
+        app.close()
 
 
 def test_artifact_paths_are_contained(tmp_path: Path) -> None:
@@ -584,7 +917,7 @@ def test_badges_distinguish_measured_and_canary() -> None:
     assert ("campaign not authorized", "gray") in badges
 
 
-def test_console_covers_every_runbook_cli() -> None:
+def test_console_covers_runbook_clis_except_private_typed_controllers() -> None:
     # The console and the CLI are two interfaces to the same operations: every
     # experiments module the runbook invokes must be allowlisted (rig_web
     # itself excepted - the console does not launch itself).
@@ -599,7 +932,12 @@ def test_console_covers_every_runbook_cli() -> None:
     used = set(re.findall(r"python -m experiments\.([a-z0-9_]+)", runbook))
     used.discard("rig_web")
     allowlisted = {entry.module.split(".", 1)[1] for entry in COMMANDS.values()}
-    missing = sorted(used - allowlisted)
+    private_typed_controllers = {
+        "engine_runtime_config",
+        "framework_runtime_installer",
+    }
+    assert not (private_typed_controllers & allowlisted)
+    missing = sorted(used - allowlisted - private_typed_controllers)
     assert not missing, f"runbook CLIs missing from the console allowlist: {missing}"
 
 
@@ -904,10 +1242,16 @@ def test_prepared_workflows_live_under_attack_frameworks_without_nested_forms(
         frameworks_at = page.index("Attack frameworks")
         workflows_at = page.index("id='prepared-workflows'")
         assert builder_at < frameworks_at < workflows_at
-        # Ollama lifecycle/pull controls are deliberately separate forms before
-        # the campaign builder. They must never become nested in that form.
-        assert page[:builder_at].count("<form ") == 4
-        assert page[:builder_at].count("</form>") == 4
+        # Ollama lifecycle/pull controls and the one-action-per-runtime controls
+        # are deliberately separate forms before the campaign builder. They
+        # must never become nested in that form.
+        before_builder = page[:builder_at]
+        runtime_actions = before_builder.count(
+            "action='/build/framework-runtimes'"
+        )
+        assert runtime_actions == 15
+        assert before_builder.count("<form ") == 4 + runtime_actions
+        assert before_builder.count("</form>") == 4 + runtime_actions
         assert page[builder_at:].count("<form ") == 1
         assert "Prepared attack workflows" not in page
         assert (
@@ -1575,23 +1919,14 @@ def test_native_only_attacker_rejected_and_classified() -> None:
     # native-only attacker in a common-runner lane is rejected before Popen.
     import sys
     sys.path.insert(0, "src")
-    from ura.adapters.engines import ATTACKER_NAMES, get_attacker
+    from ura.adapters.engines import (
+        ATTACKER_NAMES,
+        attacker_runner_replay_eligible,
+    )
     from experiments.rig_web import _NATIVE_ONLY_ATTACKERS
     actual_native = {
         name for name in ATTACKER_NAMES
-        if getattr(
-            get_attacker(
-                name,
-                **(
-                    {"suffix": " fixture", "suffix_source": "registry-parity-test"}
-                    if name == "nanogcg"
-                    else {}
-                ),
-            ),
-            "runner_replay_eligible",
-            True,
-        )
-        is False
+        if attacker_runner_replay_eligible(name) is False
     }
     assert _NATIVE_ONLY_ATTACKERS == actual_native
 
@@ -5465,7 +5800,19 @@ def test_compute_costs_never_sums_mixed_currencies() -> None:
 
 def test_reindex_rebuilds_usage_and_spend_card_renders(tmp_path: Path) -> None:
     app = _isolated_app(tmp_path)
-    _write_marker_fixture(app.results_root / "lane")
+    lane = app.results_root / "lane"
+    _write_marker_fixture(lane)
+    job = Job(
+        job_id="job-owned-reindex",
+        command="run_matrix",
+        argv=["--diagnostic-canary", "--out", str(lane)],
+        directory=tmp_path / "job-owned-reindex",
+        process=None,
+        restored_state="complete",
+        restored_exit=0,
+    )
+    app.jobs[job.job_id] = job
+    assert app.db.record_terminal(job, "a" * 40, [], state="complete", exit_code=0)
     (app.repo_root / "experiments" / "pricing.json").write_text(json.dumps({
         "providers": {"anthropic": {"models": {
             "claude-fable-5": {"rates": [{
@@ -5533,6 +5880,17 @@ def test_budget_never_sums_or_mislabels_mixed_currencies(tmp_path: Path) -> None
         "artifacts": {"responses": _artifact_descriptor(responses),
                       "trails": _artifact_descriptor(trails)},
     }), encoding="utf-8")
+    job = Job(
+        job_id="job-owned-budget",
+        command="run_matrix",
+        argv=["--diagnostic-canary", "--out", str(cell)],
+        directory=tmp_path / "job-owned-budget",
+        process=None,
+        restored_state="complete",
+        restored_exit=0,
+    )
+    app.jobs[job.job_id] = job
+    assert app.db.record_terminal(job, "a" * 40, [], state="complete", exit_code=0)
     # fable priced in EUR, haiku in USD - the SAME provider, two currencies.
     (app.repo_root / "experiments" / "pricing.json").write_text(json.dumps({
         "providers": {"anthropic": {"models": {
@@ -5687,7 +6045,7 @@ def test_stats_renders_real_level1_evidence(tmp_path: Path) -> None:
     # The Level-1 card renders the REAL producer's document: run the actual
     # dry-run grid and the actual level1_evidence CLI, then render.
     app = _app(tmp_path)
-    grid_root = tmp_path / "grid"
+    grid_root = app.results_root / "thesis" / "grid"
     assert run_matrix.main([
         "--dry-run", "--corpora", "synth", "--limit", "2", "--seeds", "0",
         "--attackers", "replay", "--judges", "rules,llm",
@@ -5702,7 +6060,36 @@ def test_stats_renders_real_level1_evidence(tmp_path: Path) -> None:
         "--out-json", str(level1_dir / "level1.json"),
         "--out-csv", str(level1_dir / "level1.csv"),
     ]) == 0
-    status, _, body = app.handle("GET", "/stats")
+    run_job = Job(
+        job_id="job-level1-grid",
+        command="run_matrix",
+        argv=["--dry-run", "--corpora", "synth", "--out", str(grid_root)],
+        directory=tmp_path / "job-level1-grid",
+        process=None,
+        restored_state="complete",
+        restored_exit=0,
+    )
+    app.jobs[run_job.job_id] = run_job
+    assert app.db.record_terminal(
+        run_job, "a" * 40, [], state="complete", exit_code=0,
+    )
+    analysis_job = Job(
+        job_id="job-level1-analysis",
+        command="level1_evidence",
+        argv=[
+            "--results", str(grid_root),
+            "--out-json", str(level1_dir / "level1.json"),
+        ],
+        directory=tmp_path / "job-level1-analysis",
+        process=None,
+        restored_state="complete",
+        restored_exit=0,
+    )
+    app.jobs[analysis_job.job_id] = analysis_job
+    assert app.db.upsert_job(analysis_job, state="complete", exit_code=0)
+    status, _, body = app.handle(
+        "GET", "/stats/job/job-level1-grid?fragment=1",
+    )
     text = body.decode("utf-8")
     assert status == 200
     assert "diagnostic dry-run" in text  # the distinct diagnostic state
@@ -5729,8 +6116,8 @@ def test_stats_page_survives_malformed_level1_count(tmp_path: Path) -> None:
     status, _, body = app.handle("GET", "/stats")
     assert status == 200  # the page did not crash
     text = body.decode("utf-8")
-    assert "badge red'>invalid" in text
-    assert "Not rendered" in text
+    assert "badge red" in text and ">invalid</span>" in text
+    assert "class='barchart'" not in text
     assert "badge blue'>measured" not in text
     app.close()
 
@@ -5967,7 +6354,8 @@ def test_stats_renders_real_level2_report(
     # The Level-2 card renders the REAL producer's document from a measured
     # cohort (offline stable local target + probe + receipt + measured grid).
     receipt, sha = _probe_receipt(tmp_path, monkeypatch, project_revision_args)
-    root = tmp_path / "measured"
+    app = _app(tmp_path)
+    root = app.results_root / "thesis" / "measured"
     measured_args = [
         "--local", "vllm:fixture/local-model",
         "--local-config", str(tmp_path / "local-targets.json"),
@@ -5988,7 +6376,6 @@ def test_stats_renders_real_level2_report(
         measured_args,
     )
     assert run_matrix.main([*measured_args, *acquisition_args]) == 0
-    app = _app(tmp_path)
     level2_dir = app.results_root / "thesis" / "level2"
     level2_dir.mkdir(parents=True)
     assert level2_cli.main([
@@ -6002,10 +6389,44 @@ def test_stats_renders_real_level2_report(
     )
     assert report["schema_version"] == "ura-level2-report/1"
     metrics = {row["metric"] for row in report["common"]["estimates"]}
-    status, _, body = app.handle("GET", "/stats")
+    run_job = Job(
+        job_id="job-level2-grid",
+        command="run_matrix",
+        argv=[
+            "--local", "vllm:fixture/local-model",
+            "--corpora", "synth",
+            "--out", str(root),
+        ],
+        directory=tmp_path / "job-level2-grid",
+        process=None,
+        restored_state="complete",
+        restored_exit=0,
+    )
+    app.jobs[run_job.job_id] = run_job
+    assert app.db.record_terminal(
+        run_job, "a" * 40, [], state="complete", exit_code=0,
+    )
+    analysis_job = Job(
+        job_id="job-level2-analysis",
+        command="level2_report",
+        argv=[
+            "--results", str(root),
+            "--out-json", str(level2_dir / "level2.json"),
+        ],
+        directory=tmp_path / "job-level2-analysis",
+        process=None,
+        restored_state="complete",
+        restored_exit=0,
+    )
+    app.jobs[analysis_job.job_id] = analysis_job
+    assert app.db.upsert_job(analysis_job, state="complete", exit_code=0)
+    index = app.handle("GET", "/stats")[2].decode("utf-8")
+    assert "class='barchart'" not in index
+    status, _, body = app.handle(
+        "GET", "/stats/job/job-level2-grid?fragment=1",
+    )
     text = body.decode("utf-8")
     assert status == 200
-    assert "measured" in text  # the distinct measured state
     for metric in metrics:
         assert f">{metric} <" in text or metric in text  # one section per metric
     # Real fields, not invented ones.
@@ -6912,9 +7333,8 @@ def test_consoledb_close_is_thread_safe(tmp_path: Path) -> None:
 
 
 def test_reindex_preserves_usage_from_out_of_root_dirs(tmp_path: Path) -> None:
-    # MED/HIGH: reindex scans the results root AND every recorded run out_dir,
-    # so usage a job recorded from an --out outside the results root is not
-    # silently deleted by a rebuild.
+    # Reindex scans each exact recorded run out_dir (including an out-of-root
+    # one), never the generic results root, so copied fixtures cannot leak in.
     repo = tmp_path / "repo"
     (repo / "experiments").mkdir(parents=True)
     results = tmp_path / "results"
@@ -6943,7 +7363,7 @@ def test_reindex_preserves_usage_from_out_of_root_dirs(tmp_path: Path) -> None:
     restored = app.db.load_jobs()
     assert restored is not None and restored[0]["activity"] is None
     summary = app.reindex_all()
-    assert summary["roots"] >= 2
+    assert summary["roots"] == 1
     totals = app.db.usage_totals()
     assert totals is not None
     assert any(k[:3] == ("target", "anthropic", "claude-fable-5") for k in totals)
@@ -6956,8 +7376,23 @@ def test_headless_reindex_and_usage_report_cli(tmp_path: Path, capsys) -> None:
 
     results = tmp_path / "runs"
     results.mkdir()
-    _write_marker_fixture(results / "lane")
+    lane = results / "lane"
+    _write_marker_fixture(lane)
     state = tmp_path / "state"
+    seeded = ConsoleDB(state / "console.db")
+    owned = Job(
+        job_id="job-headless-owned",
+        command="run_matrix",
+        argv=["--diagnostic-canary", "--out", str(lane)],
+        directory=tmp_path / "job-headless-owned",
+        process=None,
+        restored_state="complete",
+        restored_exit=0,
+    )
+    assert seeded.record_terminal(
+        owned, "a" * 40, [], state="complete", exit_code=0,
+    )
+    seeded.close()
     assert rig_web.main([
         "--results-root", str(results), "--state-dir", str(state), "--reindex",
     ]) == 0

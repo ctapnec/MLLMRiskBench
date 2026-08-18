@@ -229,6 +229,176 @@ class BuilderPageMixin:
             f"<button type='submit'{pull_disabled}>Pull model</button></form></div>"
         )
 
+    def _framework_runtime_panel(
+        self,
+        *,
+        action_state: str = "",
+        action_error: str = "",
+    ) -> str:
+        """Render one state-derived installer action per isolated environment."""
+
+        snapshot = self.framework_runtimes.snapshot()
+        feedback = ""
+        if action_error:
+            feedback = (
+                "<div class='notice red'><strong>Runtime action was not launched.</strong> "
+                + html.escape(action_error[:500])
+                + "</div>"
+            )
+        elif action_state == "launched":
+            feedback = (
+                "<div class='notice blue'><strong>Named runtime session launched.</strong> "
+                "The installer owns the tmux/screen process. Follow its retained "
+                "engineering campaign in Jobs or Stats; no duplicate console Job "
+                "was created.</div>"
+            )
+        if not snapshot.available:
+            return (
+                feedback
+                + "<div class='card'><h2>"
+                + _icon("box")
+                + "Isolated framework runtimes <span class='badge red'>unavailable"
+                "</span></h2><p class='note'>"
+                + html.escape(snapshot.message)
+                + " No installer command was run.</p></div>"
+            )
+
+        campaign_link = ""
+        if snapshot.campaign_state != "idle":
+            campaign_link = (
+                " <a href='/jobs/campaign/"
+                + html.escape(snapshot.campaign_route_id, quote=True)
+                + "'>Open retained campaign</a>"
+            )
+        campaign_tone = {
+            "running": "blue",
+            "complete": "green",
+            "failed": "red",
+            "orphaned": "amber",
+        }.get(snapshot.campaign_state, "gray")
+        rows = []
+        for index, runtime in enumerate(snapshot.rows, start=1):
+            latest = runtime.latest
+            if latest is not None and latest.status == "running":
+                state_text = f"{latest.action.capitalize()} running"
+                tone = "blue"
+                next_action = (
+                    runtime.plan_action if runtime.plan_action in {"install", "resume", "verify"}
+                    else ""
+                )
+                history = (
+                    "The retained task log has no terminal event. The exact plan remains "
+                    "authoritative: dispatch safely rejoins an identical live named session, "
+                    "or lets the installer lock reject a conflicting live operation."
+                )
+            elif runtime.plan_action == "install":
+                state_text = "Not installed"
+                tone = "gray"
+                next_action = "install"
+                history = "No environment for this lock is published."
+            elif runtime.plan_action == "resume":
+                state_text = "Partial install retained"
+                tone = "amber"
+                next_action = "resume"
+                history = "Resume continues the exact retained staging environment."
+            elif runtime.plan_action == "verify":
+                state_text = "Published receipt present"
+                tone = "blue"
+                next_action = "verify"
+                history = (
+                    "This page does not rehash the environment; Verify checks the "
+                    "current installed bytes against the receipt."
+                )
+            else:
+                state_text = "Conflicting unverified path"
+                tone = "red"
+                next_action = ""
+                history = "Automatic replacement is refused; follow the lock's repair guidance."
+
+            if latest is not None and latest.status != "running":
+                when = f" at {latest.at}" if latest.at else ""
+                if latest.status == "passed" and latest.action == "verify":
+                    history = (
+                        f"Last full verification passed{when}. Current bytes are "
+                        "not implicitly rehashed on page load."
+                    )
+                elif latest.status == "passed" and latest.action in {"install", "resume"}:
+                    history = f"Publish verification passed{when}. " + history
+                elif latest.status == "failed":
+                    attempted = latest.action or "installer action"
+                    history = f"Last {attempted} failed{when}. " + history
+
+            action_html = "<span class='note'>manual repair required</span>"
+            if next_action:
+                label = {
+                    "install": "Install",
+                    "resume": "Resume",
+                    "verify": "Verify now",
+                }[next_action]
+                action_html = (
+                    "<form class='inline' method='post' "
+                    "action='/build/framework-runtimes' "
+                    "data-busy='Launching named framework runtime session...' "
+                    f"id='framework-runtime-action-{index}'>"
+                    "<input type='hidden' name='framework' value='"
+                    + html.escape(runtime.framework, quote=True)
+                    + "'><input type='hidden' name='action' value='"
+                    + next_action
+                    + "'><button type='submit' class='small'>"
+                    + label
+                    + "</button></form>"
+                )
+            rows.append(
+                "<tr><td><strong>"
+                + html.escape(runtime.display_name)
+                + "</strong><br><code>"
+                + html.escape(runtime.framework)
+                + "</code></td><td>"
+                + html.escape(runtime.version)
+                + "</td><td>"
+                + html.escape(runtime.runtime)
+                + "<br><span class='note'>"
+                + html.escape(runtime.kind)
+                + "</span></td><td><span class='badge "
+                + tone
+                + "'>"
+                + html.escape(state_text)
+                + "</span><br><span class='note'>"
+                + html.escape(history)
+                + "</span></td><td>"
+                + action_html
+                + "</td></tr>"
+            )
+        return (
+            feedback
+            + "<div class='card'><h2>"
+            + _icon("box")
+            + "Isolated framework runtimes <span class='badge blue'>one environment "
+            "per framework</span></h2><p class='note'>The checked-in content lock "
+            "selects every package, source, and runtime. UI requests contain only "
+            "one exact framework name and its currently required action; there is "
+            "no shell, path, package, provider, or model input. Install, resume, and "
+            "full verification run in installer-owned named tmux (screen fallback) "
+            "with a credential-free environment.</p><dl class='builder-summary'>"
+            "<div><dt>Runtime lock</dt><dd><code>sha256:"
+            + html.escape(snapshot.lock_id)
+            + "</code></dd></div><div><dt>Managed environments</dt><dd>"
+            + str(len(snapshot.rows))
+            + "</dd></div><div><dt>Engineering campaign</dt><dd><span class='badge "
+            + campaign_tone
+            + "'>"
+            + html.escape(snapshot.campaign_status_tag)
+            + "</span>"
+            + campaign_link
+            + "</dd></div></dl><p><a class='button ghost' "
+            "href='/build#build-runtimes'>Refresh status</a> "
+            "<a class='button ghost' href='/jobs'>Open Jobs</a></p></div>"
+            "<div class='card scroll'><table><tr><th>Framework</th><th>Version</th>"
+            "<th>Runtime</th><th>Installed state</th><th>Exact action</th></tr>"
+            + "".join(rows)
+            + "</table></div>"
+        )
+
     def _build_page(
         self,
         prefill: Mapping[str, str] | None = None,
@@ -236,6 +406,8 @@ class BuilderPageMixin:
         *,
         ollama_state: str = "",
         ollama_error: str = "",
+        framework_runtime_state: str = "",
+        framework_runtime_error: str = "",
     ) -> bytes:
         # The private local registry may use an operator workstation path as
         # vLLM's runtime locator.  Builder HTML is retained in browser history
@@ -1163,6 +1335,10 @@ class BuilderPageMixin:
             action_state=ollama_state,
             action_error=ollama_error,
         )
+        framework_runtime_panel = self._framework_runtime_panel(
+            action_state=framework_runtime_state,
+            action_error=framework_runtime_error,
+        )
         # (local targets are selected as checkboxes above, not free text)
         # Framework checkboxes (carry supported modalities so the wizard can
         # flag ones that cannot drive a chosen modality).  A native-artifact
@@ -1211,10 +1387,11 @@ class BuilderPageMixin:
                     badge = "prepare + replay"
                 else:
                     detail = (
-                        "Choose an immutable surrogate repository and commit for "
-                        "sealed acquisition, or an exact precomputed suffix replay."
+                        "Provide an exact precomputed suffix for replay. Live "
+                        "nanoGCG generation remains disabled until its isolated "
+                        "runtime handshake is implemented."
                     )
-                    badge = "surrogate / replay"
+                    badge = "precomputed replay"
                 prepared_badge = (
                     "<span class='badge blue tip prepared-framework-badge' "
                     "tabindex='0'>"
@@ -1323,6 +1500,33 @@ class BuilderPageMixin:
                 f"<input class='wide' type='{kind}'{step} "
                 f"name='{html.escape(field)}'{attrs}{ph}>{err(field)}</div>"
             )
+
+        engine_runtime_fields = (
+            "<section class='workflow-panel'><h3>Isolated framework runtimes "
+            "<span class='badge blue'>explicit venvs</span></h3>"
+            "<p class='note'>Required only for selected PyRIT 0.14.0, DeepTeam "
+            "1.0.7, h4rm3l 0.2.4, or Spikee 0.9.1 lanes. Each framework must "
+            "have its own virtual environment. Build the content-addressed file "
+            "with <code>python -m experiments.engine_runtime_config</code>. The "
+            "managed environments and their current verification state are in "
+            "the <a href='#build-runtimes'>Runtimes</a> tab. The "
+            "console holds its exact bytes behind the launch ticket and stores "
+            "only path-free runtime identities; completion is published only "
+            "after the closing seal verifies.</p><div class='cols'>"
+            + text_field(
+                "engine_runtime_config",
+                "Runtime config",
+                "private ura-engine-runtime-config/1 file",
+                placeholder="C:/private/engine-runtimes.json",
+            )
+            + text_field(
+                "engine_runtime_config_sha",
+                "Runtime config SHA-256",
+                "exact 64-lowercase-hex byte digest",
+                placeholder="64 lowercase hex characters",
+            )
+            + "</div></section>"
+        )
 
         selected_prepared = attackers_selected & {"t3mp3st", "harmbench", "nanogcg"}
 
@@ -1463,25 +1667,12 @@ class BuilderPageMixin:
             + "</div></div></section>"
             "<section class='workflow-panel prepared-fields' id='prepared-nanogcg' "
             "data-prepared='nanogcg'" + visibility("nanogcg") + ">"
-            "<h3>NanoGCG <span class='badge blue'>Surrogate transfer</span></h3>"
-            "<p class='note'>Choose exactly one mode. Live optimization uses a "
-            "different, immutable Hub surrogate acquired by the sealed acquisition "
-            "workflow. A suffix replay loads no model and records its source.</p>"
+            "<h3>NanoGCG <span class='badge blue'>Precomputed replay</span></h3>"
+            "<p class='note'>Live NanoGCG optimization is disabled until its isolated "
+            "runtime handshake is implemented. Supply an exact precomputed suffix "
+            "and its retained source; this path loads no framework model.</p>"
             + err("nanogcg")
-            + "<div class='workflow-step'><h4>Live surrogate optimization</h4>"
-            "<div class='cols'>"
-            + text_field(
-                "nanogcg_model_id",
-                "Surrogate repository",
-                "Hub namespace/name; must differ from every target",
-                placeholder="meta-llama/Llama-2-7b-chat-hf",
-            )
-            + text_field(
-                "nanogcg_model_revision",
-                "Surrogate revision",
-                "exact immutable 40-64 lowercase hex commit",
-            )
-            + "</div></div><div class='workflow-step'><h4>Or: precomputed suffix replay</h4>"
+            + "<div class='workflow-step'><h4>Precomputed suffix replay</h4>"
             "<div class='cols'>"
             + text_field(
                 "nanogcg_suffix",
@@ -1532,6 +1723,7 @@ class BuilderPageMixin:
             )
         build_tabs = (
             ("build-general", "General"),
+            ("build-runtimes", "Runtimes"),
             ("build-pipeline", "Pipeline"),
             ("build-evaluation", "Evaluation"),
             ("build-admission", "Admission"),
@@ -1547,6 +1739,7 @@ class BuilderPageMixin:
                     "corpora",
                     "models",
                     "attackers",
+                    "engine_runtime_config",
                     "nanogcg",
                     "t3_replay",
                     "harm_replay",
@@ -1591,6 +1784,8 @@ class BuilderPageMixin:
                     if error_fields & panel_fields:
                         build_default = panel_id
                         break
+        elif framework_runtime_state or framework_runtime_error:
+            build_default = "build-runtimes"
         general_panel = (
             hardware_card
             + ollama_card
@@ -1620,7 +1815,11 @@ class BuilderPageMixin:
             "<code id='buildpreview'>run_matrix (initializing current choices)</code>"
             "</div>"
         )
-        force_default = " data-force-default='true'" if errors else ""
+        force_default = (
+            " data-force-default='true'"
+            if errors or framework_runtime_state or framework_runtime_error
+            else ""
+        )
         body = (
             "<h1>" + _icon("flask", size=22) + "Campaign builder</h1>"
             "<p class='note'>Compose a lane by choosing modalities, target "
@@ -1634,6 +1833,7 @@ class BuilderPageMixin:
             + f"data-default-tab='{build_default}'{force_default}>"
             + _page_tablist("Builder sections", build_tabs, default=build_default)
             + _page_tabpanel("build-general", general_panel)
+            + _page_tabpanel("build-runtimes", framework_runtime_panel)
             + "<form method='post' action='/build' id='builder'>"
             # hidden composed fields
             "<input type='hidden' name='corpora'><input type='hidden' name='api'>"
@@ -1679,6 +1879,7 @@ class BuilderPageMixin:
             + "<div class='checkgrid'>"
             + framework_boxes
             + "</div>"
+            + engine_runtime_fields
             + prepared_workflow_fields
             + "</div>"
             "</section><section class='page-tabpanel' id='build-evaluation' "

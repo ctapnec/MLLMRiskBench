@@ -623,6 +623,12 @@ def _write_completed_cell(
                     "resolved_model": model_spec,
                 },
                 "attacker": attacker,
+                "engine_runtime": {
+                    "schema": "ura-engine-runtime-not-required/1",
+                    "framework_execution": (
+                        "not_invoked" if attacker == "nanogcg" else None
+                    ),
+                },
                 "judge_names": ["rules"],
                 "defense": defense,
                 "defense_guard": "rules",
@@ -2243,6 +2249,10 @@ def _write_human_artifacts(root: Path, *, descriptor_marker: bool = True) -> str
                     "resolved_model": model,
                 },
                 "attacker": "replay",
+                "engine_runtime": {
+                    "schema": "ura-engine-runtime-not-required/1",
+                    "framework_execution": None,
+                },
                 "defense": "none",
                 "judge_names": ["rules", "llm"],
                 "judge_model": judge_spec,
@@ -3525,6 +3535,10 @@ def _write_source_task_artifacts(root: Path, *, stem: str = "stcell") -> str:
                     "resolved_model": model,
                 },
                 "attacker": "replay",
+                "engine_runtime": {
+                    "schema": "ura-engine-runtime-not-required/1",
+                    "framework_execution": None,
+                },
                 "judge_names": ["rules"],
                 "defense": "none",
                 "dry_run": False,

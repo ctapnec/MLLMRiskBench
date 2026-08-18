@@ -1,14 +1,11 @@
 from __future__ import annotations
 
 import json
-import shutil
-import subprocess
-from pathlib import Path
 
 import pytest
 
-import ura.adapters.spikee as spikee_module
 from ura.adapters._engine_common import ExternalEngineOutputError
+from ura.adapters._engine_runtime import EngineExecution
 from ura.adapters.base import AttackBudget
 from ura.adapters.spikee import SpikeeAttacker
 from ura.data_models import DataPoint, DialogTurn, RiskCategory
@@ -45,37 +42,34 @@ def _row(*, row_id: int, plugin: str | None, position: str) -> dict:
     }
 
 
-def _fake_generator(rows: list[dict]):
-    def run(command, **kwargs):
-        assert command[1] == "generate"
-        out = Path(kwargs["cwd"]) / "datasets" / "generated.jsonl"
-        out.parent.mkdir(parents=True)
-        out.write_text(
-            "".join(json.dumps(row) + "\n" for row in rows), encoding="utf-8"
-        )
-        return subprocess.CompletedProcess(
-            command, returncode=0, stdout="Spikee Version: 0.9.1\n", stderr=""
-        )
+class _Runtime:
+    engine = "spikee"
+    admitted = True
 
-    return run
+    def __init__(self, raw: bytes) -> None:
+        self.raw = raw
+        self.calls: list[tuple[str, object]] = []
 
+    def public_descriptor(self) -> dict:
+        return {"schema": "test-runtime/1", "status": "verified"}
 
-def _fake_raw_generator(raw: str):
-    def run(command, **kwargs):
-        assert command[1] == "generate"
-        out = Path(kwargs["cwd"]) / "datasets" / "generated.jsonl"
-        out.parent.mkdir(parents=True)
-        out.write_text(raw + "\n", encoding="utf-8")
-        return subprocess.CompletedProcess(
-            command, returncode=0, stdout="Spikee Version: 0.9.1\n", stderr=""
+    def execute(self, operation: str, payload: object, **_kwargs: object) -> EngineExecution:
+        self.calls.append((operation, payload))
+        return EngineExecution(
+            result={},
+            artifacts={"spikee-dataset.jsonl": self.raw},
+            request_sha256="b" * 64,
+            runtime=self.public_descriptor(),
         )
 
-    return run
+
+def _runtime(rows: list[dict]) -> _Runtime:
+    return _Runtime(
+        "".join(json.dumps(row) + "\n" for row in rows).encode("utf-8")
+    )
 
 
-def test_spikee_preserves_exact_v091_rows_and_plugin_semantics(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
+def test_spikee_preserves_exact_v091_rows_and_plugin_semantics() -> None:
     rows = [
         _row(row_id=1, plugin=None, position="start"),
         _row(row_id=2, plugin="splat~base64", position="start"),
@@ -84,71 +78,71 @@ def test_spikee_preserves_exact_v091_rows_and_plugin_semantics(
         _row(row_id=5, plugin="splat~base64", position="end"),
         _row(row_id=6, plugin="1337", position="end"),
     ]
-    monkeypatch.setattr(shutil, "which", lambda _name: "spikee")
-    monkeypatch.setattr(spikee_module, "run_engine_command", _fake_generator(rows))
+    runtime = _runtime(rows)
     attacker = SpikeeAttacker(
         plugins=["splat|base64", "1337"],
         positions=["start", "end"],
         include_system_message=True,
+        engine_runtime=runtime,
     )
-
     attempts = list(
         attacker.generate(
             _datapoint(), AttackBudget(max_queries=3, max_turns=1, seed=9)
         )
     )
-
+    assert runtime.calls[0][0] == "spikee.generate"
     assert len(attempts) == 3
     assert attempts[0].params["attack_semantics"] == "generated_dataset_transfer"
     assert attempts[1].params["plugin_semantics"] == "piped"
     assert attempts[1].params["realized_plugin"] == "splat~base64"
     assert attempts[1].params["spikee_entry"] == rows[1]
     assert len(attempts[1].params["dataset_sha256"]) == 64
+    assert attempts[1].params["engine_request_sha256"] == "b" * 64
     assert attempts[1].rendered_input[0].role == "system"
     assert attempts[1].rendered_input[-1].content == rows[1]["content"]
 
 
-def test_spikee_system_message_does_not_restore_raw_source_objective(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
+def test_spikee_system_message_does_not_restore_raw_source_objective() -> None:
     row = _row(row_id=1, plugin=None, position="start")
-    monkeypatch.setattr(shutil, "which", lambda _name: "spikee")
-    monkeypatch.setattr(spikee_module, "run_engine_command", _fake_generator([row]))
     datapoint = _datapoint().model_copy(update={
         "dialog_history": [
             DialogTurn(role="system", content="Original context."),
             DialogTurn(role="user", content="RAW SOURCE OBJECTIVE"),
         ]
     })
-
     attacker = SpikeeAttacker(
-        plugins=[], positions=["start"], include_system_message=True
+        plugins=[],
+        positions=["start"],
+        include_system_message=True,
+        engine_runtime=_runtime([row]),
     )
     assert "RAW SOURCE OBJECTIVE" not in attacker._document_context(datapoint)
     attempt = next(iter(attacker.generate(
         datapoint, AttackBudget(max_queries=1, max_turns=1, seed=4)
     )))
-
     contents = [turn.content for turn in attempt.rendered_input]
     assert contents[0] == row["system_message"]
     assert contents[-1] == row["content"]
     assert "RAW SOURCE OBJECTIVE" not in contents
 
 
-def test_spikee_fails_when_a_configured_plugin_variant_disappears(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    monkeypatch.setattr(shutil, "which", lambda _name: "spikee")
-    monkeypatch.setattr(
-        spikee_module,
-        "run_engine_command",
-        _fake_generator([_row(row_id=1, plugin=None, position="end")]),
-    )
-
+def test_spikee_fails_when_a_configured_plugin_variant_disappears() -> None:
     with pytest.raises(ExternalEngineOutputError, match="omitted configured plugin"):
-        list(SpikeeAttacker(plugins=["base64"]).generate(
+        list(SpikeeAttacker(
+            plugins=["base64"],
+            engine_runtime=_runtime([_row(row_id=1, plugin=None, position="end")]),
+        ).generate(
             _datapoint(), AttackBudget(max_queries=1, max_turns=1, seed=0)
         ))
+
+
+def test_spikee_rejects_path_cli_and_credential_escape_hatches() -> None:
+    with pytest.raises(ValueError, match="path-based seed_folder"):
+        SpikeeAttacker(seed_folder="private/path")
+    with pytest.raises(ValueError, match="CLI overrides"):
+        SpikeeAttacker(cli="some-path-binary")
+    with pytest.raises(ValueError, match="does not forward credentials"):
+        SpikeeAttacker(credential_env=["OPENAI_API_KEY"])
 
 
 def test_spikee_rejects_legacy_guessed_prompt_fields() -> None:
@@ -158,24 +152,17 @@ def test_spikee_rejects_legacy_guessed_prompt_fields() -> None:
         )
 
 
-def test_spikee_rejects_duplicate_generated_dataset_keys(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
+def test_spikee_rejects_duplicate_generated_dataset_keys() -> None:
     row = _row(row_id=1, plugin=None, position="start")
     encoded = json.dumps(row)
     original = json.dumps(row["content"])
     duplicate = f'"first value", "content": {original}'
     ambiguous = encoded.replace(original, duplicate, 1)
-    monkeypatch.setattr(shutil, "which", lambda _name: "spikee")
-    monkeypatch.setattr(
-        spikee_module,
-        "run_engine_command",
-        _fake_raw_generator(ambiguous),
-    )
-
     with pytest.raises(ExternalEngineOutputError, match="invalid JSON at line 1"):
-        list(
-            SpikeeAttacker(plugins=[], positions=["start"]).generate(
-                _datapoint(), AttackBudget(max_queries=1, max_turns=1, seed=0)
-            )
-        )
+        list(SpikeeAttacker(
+            plugins=[],
+            positions=["start"],
+            engine_runtime=_Runtime((ambiguous + "\n").encode()),
+        ).generate(
+            _datapoint(), AttackBudget(max_queries=1, max_turns=1, seed=0)
+        ))

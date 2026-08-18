@@ -9,7 +9,15 @@ import pytest
 
 from experiments import figure_results
 from experiments.transfer_matrix import _cohort_payload, load as load_transfer
+from ura.adapters._engine_runtime import (
+    ENGINE_RUNTIME_EXECUTION_SCHEMA,
+    ENGINE_RUNTIME_IDENTITY_SCHEMA,
+    ENGINE_RUNTIME_RECEIPT_SCHEMA,
+    ENGINE_RUNTIME_REQUIREMENTS,
+    ENGINE_RUNTIME_SELECTION_IDENTITY_SCHEMA,
+)
 from ura.adapters.base import AttackBudget
+from ura.adapters.pyrit import PyRITAttacker
 from ura.adapters.replay import ReplayAttacker
 from ura.attacker_input_contract import attacker_input_payload_sha256
 from ura.data_models import (
@@ -297,6 +305,72 @@ def _canonical_sha256(value: Any) -> str:
     return hashlib.sha256(payload).hexdigest()
 
 
+def _runtime_evidence(
+    engine: str = "pyrit", *, digit: str = "1"
+) -> tuple[dict, dict, dict, dict]:
+    requirement = ENGINE_RUNTIME_REQUIREMENTS[engine]
+    receipt = {
+        "schema": ENGINE_RUNTIME_RECEIPT_SCHEMA,
+        "engine": engine,
+        "distribution": requirement.distribution,
+        "version": requirement.version,
+        "python": {
+            "implementation": "cpython",
+            "version": "3.12.10",
+            "cache_tag": "cpython-312",
+            "executable_sha256": digit * 64,
+            "executable_bytes": 10,
+        },
+        "pyvenv_cfg_sha256": "2" * 64,
+        "package_tree_sha256": "3" * 64,
+        "package_files": 2,
+        "package_bytes": 20,
+        "inventory_sha256": "4" * 64,
+        "environment_tree_sha256": digit * 64,
+        "environment_files": 7,
+        "environment_bytes": 70,
+    }
+    receipt["runtime_id"] = f"engine-runtime-{_canonical_sha256(receipt)[:24]}"
+    identity = {
+        "schema": ENGINE_RUNTIME_IDENTITY_SCHEMA,
+        "bridge_sha256": "a" * 64,
+        "receipt": receipt,
+    }
+    close = {
+        **identity,
+        "schema": ENGINE_RUNTIME_EXECUTION_SCHEMA,
+        "status": "closed_verified",
+    }
+    selection_identity = {
+        "schema": ENGINE_RUNTIME_SELECTION_IDENTITY_SCHEMA,
+        "runtimes": [identity],
+    }
+    closed_body = {
+        "schema": "ura-engine-runtime-selection/1",
+        "runtimes": [close],
+    }
+    selection_sha256 = _canonical_sha256(selection_identity)
+    opened = {**selection_identity, "selection_sha256": selection_sha256}
+    closed = {**closed_body, "selection_sha256": selection_sha256}
+    return identity, close, opened, closed
+
+
+def _attach_runtime_evidence(cell: dict[str, Any], grid_path: Path) -> None:
+    identity, close, opened, closed = _runtime_evidence()
+    manifest_path = cell["paths"]["manifest"]
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    manifest["config"]["run"]["engine_runtime"] = identity
+    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+    marker = json.loads(cell["marker"].read_text(encoding="utf-8"))
+    marker["engine_runtime_close"] = close
+    marker["artifacts"]["manifest"] = _descriptor(manifest_path)
+    cell["marker"].write_text(json.dumps(marker), encoding="utf-8")
+    grid = json.loads(grid_path.read_text(encoding="utf-8"))
+    grid["request"]["engine_runtimes"] = opened
+    grid["engine_runtime_close"] = closed
+    grid_path.write_text(json.dumps(grid), encoding="utf-8")
+
+
 def _identity_metadata(
     responses: list[dict[str, Any]], trails: list[dict[str, Any]], judges: list[str],
 ) -> tuple[dict[str, Any], str]:
@@ -398,7 +472,8 @@ def _cell(
                 "automated_metric_scope": "response_only",
             },
         )
-        contract = ReplayAttacker().plan_target_inputs(
+        planner = PyRITAttacker() if attacker == "pyrit" else ReplayAttacker()
+        contract = planner.plan_target_inputs(
             planned_datapoint,
             AttackBudget(max_queries=1, max_turns=1, seed=seed),
         )
@@ -654,6 +729,12 @@ def _cell(
                 "local_identity": local_identity,
                 "attacker": attacker,
                 "attacker_config": {},
+                "engine_runtime": {
+                    "schema": "ura-engine-runtime-not-required/1",
+                    "framework_execution": (
+                        "not_invoked" if attacker == "nanogcg" else None
+                    ),
+                },
                 "judge_names": ["rules"],
                 "judge_model": "rules-v1",
                 "group_keys": ["model", "risk", "modality"],
@@ -1082,6 +1163,75 @@ def test_multi_target_acquisition_survives_figure_and_transfer_loaders(
         with pytest.raises(ValueError, match="model-acquisition"):
             load_transfer(tmp_path)
     grid_path.write_text(json.dumps(original), encoding="utf-8")
+
+
+def test_runtime_backed_cell_seal_survives_figure_and_transfer_loaders(
+    tmp_path: Path,
+) -> None:
+    cell = _cell(
+        tmp_path,
+        stem="pyrit-sealed",
+        model_spec="fixture:runtime-target",
+        corpus="alpha",
+        attacker="pyrit",
+    )
+    grid_path = _grid(tmp_path, name="pyrit-sealed", cells=[cell])
+    _attach_runtime_evidence(cell, grid_path)
+
+    loaded = figure_results._load_cells(tmp_path)
+    assert len(loaded) == 1
+    per_model, audit = load_transfer(tmp_path, attacker="pyrit", corpus="alpha")
+    assert set(per_model) == {"resolved:fixture:runtime-target"}
+    assert audit["grid_audit"]["selected_cells"] == 1
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    [
+        "missing_marker_seal",
+        "downgraded_marker_seal",
+        "different_marker_bridge",
+        "extra_marker_runtime_inventory",
+        "missing_grid_close",
+        "different_grid_receipt",
+    ],
+)
+def test_figure_and_transfer_loaders_reject_runtime_seal_confusion(
+    tmp_path: Path,
+    mutation: str,
+) -> None:
+    cell = _cell(
+        tmp_path,
+        stem="pyrit-confused",
+        model_spec="fixture:runtime-target",
+        corpus="alpha",
+        attacker="pyrit",
+    )
+    grid_path = _grid(tmp_path, name="pyrit-confused", cells=[cell])
+    _attach_runtime_evidence(cell, grid_path)
+    marker = json.loads(cell["marker"].read_text(encoding="utf-8"))
+    grid = json.loads(grid_path.read_text(encoding="utf-8"))
+
+    if mutation == "missing_marker_seal":
+        marker.pop("engine_runtime_close")
+    elif mutation == "downgraded_marker_seal":
+        marker["engine_runtime_close"]["status"] = "verified"
+    elif mutation == "different_marker_bridge":
+        marker["engine_runtime_close"]["bridge_sha256"] = "b" * 64
+    elif mutation == "extra_marker_runtime_inventory":
+        marker["engine_runtime_close"]["runtimes"] = []
+    elif mutation == "missing_grid_close":
+        grid.pop("engine_runtime_close")
+    elif mutation == "different_grid_receipt":
+        _identity, _close, _opened, changed_close = _runtime_evidence(digit="5")
+        grid["engine_runtime_close"] = changed_close
+
+    cell["marker"].write_text(json.dumps(marker), encoding="utf-8")
+    grid_path.write_text(json.dumps(grid), encoding="utf-8")
+    with pytest.raises(ValueError, match="engine runtime"):
+        figure_results._load_cells(tmp_path)
+    with pytest.raises(ValueError, match="engine runtime"):
+        load_transfer(tmp_path, attacker="pyrit", corpus="alpha")
 
 
 def test_figure_loader_binds_realized_target_to_planned_attestation(

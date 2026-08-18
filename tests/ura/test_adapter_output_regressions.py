@@ -8,14 +8,11 @@ import subprocess
 import sys
 from collections.abc import Iterable
 from pathlib import Path
-from types import SimpleNamespace
 
 import pytest
 
 import ura.adapters.asb as asb_module
-import ura.adapters.h4rm3l as h4rm3l_module
 import ura.adapters.harmbench as harmbench_module
-import ura.adapters.spikee as spikee_module
 import ura.adapters.t3mp3st as t3mp3st_module
 import experiments.capture_t3mp3st as t3mp3st_capture_module
 from experiments.capture_t3mp3st import (
@@ -27,6 +24,7 @@ from ura.adapters._engine_common import (
     ExternalEngineOutputError,
     require_generated_texts,
 )
+from ura.adapters._engine_runtime import EngineExecution
 from ura.adapters.autodan import AutoDANTurboAttacker
 from ura.adapters.base import AttackBudget, AttackSession, BaseAttacker
 from ura.attacker_input_contract import (
@@ -169,6 +167,34 @@ def _completed(command) -> subprocess.CompletedProcess[str]:
     return subprocess.CompletedProcess(command, returncode=0, stdout="", stderr="")
 
 
+class _EngineRuntimeFixture:
+    admitted = True
+
+    def __init__(
+        self,
+        engine: str,
+        *,
+        result: object,
+        artifacts: dict[str, bytes] | None = None,
+    ) -> None:
+        self.engine = engine
+        self.result = result
+        self.artifacts = artifacts or {}
+
+    def public_descriptor(self) -> dict:
+        return {"schema": "test-runtime/1", "status": "verified"}
+
+    def execute(
+        self, _operation: str, _payload: object, **_kwargs: object
+    ) -> EngineExecution:
+        return EngineExecution(
+            result=self.result,
+            artifacts=self.artifacts,
+            request_sha256="a" * 64,
+            runtime=self.public_descriptor(),
+        )
+
+
 def test_generated_text_validator_rejects_non_strings_and_blank_values() -> None:
     with pytest.raises(ExternalEngineOutputError, match="no valid generated prompts"):
         require_generated_texts([None, 0, {}, "   "], feature="test engine")
@@ -194,14 +220,20 @@ def test_harmbench_and_spikee_fail_when_successful_commands_emit_nothing(
         return _completed(command)
 
     monkeypatch.setattr(harmbench_module, "run_engine_command", fake_run)
-    monkeypatch.setattr(spikee_module, "run_engine_command", fake_run)
     attackers = [
         HarmBenchAttacker(
             methods=["PEZ"],
             repo=str(tmp_path),
             upstream_revision=harmbench_revision,
         ),
-        SpikeeAttacker(cli=sys.executable),
+        SpikeeAttacker(
+            plugins=[],
+            engine_runtime=_EngineRuntimeFixture(
+                "spikee",
+                result={},
+                artifacts={"spikee-dataset.jsonl": b""},
+            ),
+        ),
     ]
     for attacker in attackers:
         with pytest.raises(ExternalEngineOutputError):
@@ -758,17 +790,17 @@ def test_asb_direct_and_observation_injection_risks_are_not_conflated() -> None:
     assert asb_module._RISK_BY_CLASS["opi"] == "prompt_injection_indirect"
 
 
-def test_in_process_generators_fail_closed_on_empty_or_invalid_output(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    empty_h4rm3l = SimpleNamespace(
-        __version__="0.2.4",
-        make_prompt_decorator=lambda *_args, **_kwargs: (lambda _seed: "  ")
-    )
-    monkeypatch.setattr(h4rm3l_module, "_require", lambda *_args: empty_h4rm3l)
-
+def test_generators_fail_closed_on_empty_or_invalid_output() -> None:
     attackers = [
-        H4rm3lAttacker(programs=["Base64Decorator()"]),
+        H4rm3lAttacker(
+            programs=["Base64Decorator()"],
+            engine_runtime=_EngineRuntimeFixture(
+                "h4rm3l",
+                result={
+                    "rendered": [{"program": "Base64Decorator()", "text": "  "}]
+                },
+            ),
+        ),
         IDEATORAttacker(seed_pairs=[]),
     ]
     for attacker in attackers:
@@ -776,67 +808,49 @@ def test_in_process_generators_fail_closed_on_empty_or_invalid_output(
             list(attacker.generate(_datapoint(), _budget()))
 
 
-def test_h4rm3l_rejects_partial_program_survivor_sets(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    calls = 0
-
-    def make_prompt_decorator(*_args, **_kwargs):
-        nonlocal calls
-        calls += 1
-        if calls == 2:
-            raise RuntimeError("invalid second DSL program")
-        return lambda seed: f"decorated::{seed}"
-
-    monkeypatch.setattr(
-        h4rm3l_module,
-        "_require",
-        lambda *_args: SimpleNamespace(
-            __version__="0.2.4",
-            make_prompt_decorator=make_prompt_decorator,
+def test_h4rm3l_rejects_partial_program_survivor_sets() -> None:
+    attacker = H4rm3lAttacker(
+        programs=["ProgramOne()", "ProgramTwo()"],
+        engine_runtime=_EngineRuntimeFixture(
+            "h4rm3l",
+            result={
+                "rendered": [
+                    {"program": "ProgramOne()", "text": "decorated::seed"}
+                ]
+            },
         ),
     )
-    attacker = H4rm3lAttacker(programs=["ProgramOne()", "ProgramTwo()"])
 
-    with pytest.raises(ExternalEngineOutputError, match="program 1 failed"):
+    with pytest.raises(ExternalEngineOutputError, match="incomplete program set"):
         list(attacker.generate(_datapoint(), _budget()))
 
 
-def test_h4rm3l_rejects_identity_transform(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    monkeypatch.setattr(
-        h4rm3l_module,
-        "_require",
-        lambda *_args: SimpleNamespace(
-            __version__="0.2.4",
-            make_prompt_decorator=lambda *_args, **_kwargs: (lambda seed: seed)
-        ),
-    )
-
+def test_h4rm3l_rejects_identity_transform() -> None:
     with pytest.raises(ExternalEngineOutputError, match="unchanged seed"):
         list(
-            H4rm3lAttacker(programs=["IdentityDecorator()"])
+            H4rm3lAttacker(
+                programs=["IdentityDecorator()"],
+                engine_runtime=_EngineRuntimeFixture(
+                    "h4rm3l",
+                    result={
+                        "rendered": [
+                            {
+                                "program": "IdentityDecorator()",
+                                "text": "harmful seed request",
+                            }
+                        ]
+                    },
+                ),
+            )
             .generate(_datapoint(), _budget())
         )
 
 
-def test_h4rm3l_requires_exact_pinned_package_version(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    monkeypatch.setattr(
-        h4rm3l_module,
-        "_require",
-        lambda *_args: SimpleNamespace(
-            __version__="0.2.3",
-            make_prompt_decorator=lambda *_args, **_kwargs: (lambda seed: seed + " x"),
-        ),
-    )
-
-    with pytest.raises(ExternalEngineOutputError, match="version mismatch"):
-        list(
-            H4rm3lAttacker(programs=["Base64Decorator()"])
-            .generate(_datapoint(), _budget())
+def test_h4rm3l_requires_exact_pinned_package_version() -> None:
+    with pytest.raises(ValueError, match="pinned to 0.2.4"):
+        H4rm3lAttacker(
+            programs=["Base64Decorator()"],
+            engine_version="0.2.3",
         )
 
 

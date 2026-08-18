@@ -19,9 +19,15 @@ from ura.strict_json import strict_json_loads
 from .catalog import _REPO_ROOT, _MAX_RENDER_BYTES, _INVENTORY_MAX_ENTRIES
 
 
-from .artifacts import _TOKEN_CATEGORIES, _BILLED_CATEGORIES, _UNBILLED_PROVIDERS
+from .artifacts import (
+    _TOKEN_CATEGORIES,
+    _BILLED_CATEGORIES,
+    _UNBILLED_PROVIDERS,
+    derived_scan_directory_excluded,
+)
 
 _REPORT_SCHEMAS = {
+    "ura-level1-evidence/3": "level1",
     "ura-level1-evidence/2": "level1",
     "ura-level2-report/1": "level2",
     "ura-suite-evidence/1": "suite",
@@ -129,7 +135,10 @@ def _validate_report_document(kind: str, document: Mapping[str, Any]) -> None:
     """Fail closed before a retained document receives a scientific badge."""
 
     if kind == "level1":
-        if document.get("schema_version") != "ura-level1-evidence/2":
+        if document.get("schema_version") not in {
+            "ura-level1-evidence/3",
+            "ura-level1-evidence/2",
+        }:
             raise ValueError("wrong Level-1 schema")
         if document.get("status") != "validated_unit_qualified_lifecycle_inventory":
             raise ValueError("Level-1 status is not validated")
@@ -400,7 +409,10 @@ def collect_reports(
             if seen > max_entries:
                 return rows
             if entry.is_dir():
-                stack.append(entry)
+                if not derived_scan_directory_excluded(entry):
+                    stack.append(entry)
+                continue
+            if entry.is_symlink():
                 continue
             if not entry.name.endswith(".json"):
                 continue
@@ -431,6 +443,40 @@ def collect_reports(
                 }
             )
     return rows
+
+
+def collect_report_file(root: Path, path: Path) -> dict[str, Any] | None:
+    """Index one exact, regular, in-root report output or return ``None``."""
+
+    try:
+        root_resolved = root.resolve(strict=True)
+        if path.is_symlink():
+            return None
+        resolved = path.resolve(strict=True)
+        relative = resolved.relative_to(root_resolved).as_posix()
+        if not resolved.is_file() or not resolved.name.endswith(".json"):
+            return None
+        size = resolved.stat().st_size
+        if size > _MAX_RENDER_BYTES:
+            return None
+        payload = resolved.read_bytes()
+        doc = strict_json_loads(payload.decode("utf-8"))
+        schema = doc.get("schema_version") if isinstance(doc, dict) else None
+        kind = _REPORT_SCHEMAS.get(schema or "")
+        if kind is None:
+            return None
+        metadata = resolved.stat()
+    except (OSError, UnicodeError, ValueError):
+        return None
+    return {
+        "path": relative,
+        "schema": str(schema),
+        "kind": kind,
+        "sha256": hashlib.sha256(payload).hexdigest(),
+        "bytes": size,
+        "mtime": metadata.st_mtime,
+        "recorded_at": time.time(),
+    }
 
 
 def load_pricing(repo_root: Path = _REPO_ROOT) -> dict[str, Any]:

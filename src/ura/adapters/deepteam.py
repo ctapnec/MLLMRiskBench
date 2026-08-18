@@ -16,27 +16,20 @@ from __future__ import annotations
 
 import hashlib
 from collections.abc import Iterable
-from importlib import metadata
 
 from ..attacker_input_contract import AttackerInputContract, text_only_transfer_contract
 from ..data_models import Attempt, DataPoint
-from ._engine_common import ExternalEngineOutputError, _attempt, _require
+from ._engine_common import ExternalEngineOutputError, _attempt
+from ._engine_runtime import (
+    EngineExecution,
+    require_admitted_engine_runtime,
+)
 from .base import AttackBudget, BaseAttacker
 
 
 DEEPTEAM_VERSION = "1.0.7"
 DEEPTEAM_REPOSITORY = "https://github.com/confident-ai/deepteam"
 DEEPTEAM_DETERMINISTIC_ATTACKS = {"Base64", "Leetspeak", "ROT13"}
-
-
-def _installed_deepteam_version() -> str:
-    try:
-        return metadata.version("deepteam")
-    except metadata.PackageNotFoundError as exc:
-        raise RuntimeError(
-            "DeepTeam is required; install the audited pin "
-            f"`deepteam=={DEEPTEAM_VERSION}`"
-        ) from exc
 
 
 class DeepTeamAttacker(BaseAttacker):
@@ -55,6 +48,7 @@ class DeepTeamAttacker(BaseAttacker):
         attack: str = "Base64",
         *,
         upstream_version: str = DEEPTEAM_VERSION,
+        engine_runtime: object = None,
     ) -> None:
         if attack not in DEEPTEAM_DETERMINISTIC_ATTACKS:
             raise ValueError(
@@ -65,12 +59,13 @@ class DeepTeamAttacker(BaseAttacker):
             raise ValueError(f"DeepTeam must be pinned to {DEEPTEAM_VERSION}")
         self.attack = attack
         self.upstream_version = upstream_version
+        self._engine_runtime = engine_runtime
 
     def generate(self, datapoint: DataPoint, budget: AttackBudget) -> Iterable[Attempt]:
         seed = datapoint.payload_text or datapoint.payload_code or ""
         if not seed.strip():
             raise ExternalEngineOutputError("DeepTeam enhancement seed must not be blank")
-        prompt = self._enhance(seed)
+        prompt, execution = self._enhance(seed)
         yield _attempt(
             datapoint,
             self.name,
@@ -89,36 +84,30 @@ class DeepTeamAttacker(BaseAttacker):
                 "deepteam_native_metric_executed": False,
                 "input_sha256": hashlib.sha256(seed.encode("utf-8")).hexdigest(),
                 "output_sha256": hashlib.sha256(prompt.encode("utf-8")).hexdigest(),
+                "engine_request_sha256": execution.request_sha256,
+                "engine_runtime": dict(execution.runtime),
             },
         )
 
-    def _enhance(self, seed: str) -> str:
-        observed_version = _installed_deepteam_version()
-        if observed_version != self.upstream_version:
-            raise ExternalEngineOutputError(
-                "DeepTeam package version mismatch: "
-                f"expected {self.upstream_version}, observed {observed_version}"
-            )
-        module = _require(
-            "deepteam.attacks.single_turn",
-            "DeepTeamAttacker",
-            f"deepteam=={self.upstream_version}",
+    def _enhance(self, seed: str) -> tuple[str, EngineExecution]:
+        runtime = require_admitted_engine_runtime(self._engine_runtime, self.name)
+        execution = runtime.execute(
+            "deepteam.enhance",
+            {"attack": self.attack, "seed": seed},
         )
-        attack_cls = getattr(module, self.attack, None)
-        if not isinstance(attack_cls, type):
+        if not isinstance(execution, EngineExecution):
             raise ExternalEngineOutputError(
-                f"DeepTeam {self.upstream_version} does not export {self.attack}"
+                "DeepTeam bridge returned no execution receipt"
             )
-        enhanced = attack_cls().enhance(seed)
-        if not isinstance(enhanced, str) or not enhanced.strip():
-            raise ExternalEngineOutputError(
-                f"DeepTeam {self.attack} returned no nonblank enhanced prompt"
-            )
-        if enhanced == seed:
-            raise ExternalEngineOutputError(
-                f"DeepTeam {self.attack} left the input unchanged"
-            )
-        return enhanced
+        result = execution.result
+        if not isinstance(result, dict) or set(result) != {"text"}:
+            raise ExternalEngineOutputError("DeepTeam bridge result fields are invalid")
+        enhanced = result.get("text")
+        if not isinstance(enhanced, str) or not enhanced.strip() or enhanced == seed:
+            raise ExternalEngineOutputError("DeepTeam bridge returned an invalid prompt")
+        if execution.artifacts:
+            raise ExternalEngineOutputError("DeepTeam bridge returned unexpected artifacts")
+        return enhanced, execution
 
 
 __all__ = [

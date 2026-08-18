@@ -1,4 +1,4 @@
-"""URA-Bench unified schema - version 1.4.
+"""URA-Bench unified schema - version 1.5.
 
 Typed data contract shared by every layer of the harness (see thesis III.3).
 Extends the pre-2025 prototype schema (v0.3: DataPoint / DialogTurn / EvalResult)
@@ -16,7 +16,7 @@ from typing import Any, Literal, Optional
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
-SCHEMA_VERSION = "1.4"
+SCHEMA_VERSION = "1.5"
 
 _HEX = frozenset("0123456789abcdef")
 

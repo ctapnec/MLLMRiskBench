@@ -33,6 +33,11 @@ from ura.data_models import (  # noqa: E402
     Response,
     RunManifest,
 )
+from ura.engine_runtime_evidence import (  # noqa: E402
+    validate_cell_engine_runtime_marker,
+    validate_engine_runtime_artifact_version,
+    validate_grid_engine_runtime_binding,
+)
 from ura.metrics import clustered_bootstrap_ci  # noqa: E402
 from ura.model_acquisition_runtime import (  # noqa: E402
     model_acquisition_execution_descriptor,
@@ -423,20 +428,29 @@ def _completed_cell(path: Path) -> dict[str, Any]:
         raise ValueError(f"completion/manifest code_version mismatch for {stem!r}")
     if marker.get("schema_version") != manifest.get("schema_version"):
         raise ValueError(f"completion/manifest schema_version mismatch for {stem!r}")
-    if manifest.get("code_version") != CODE_VERSION:
-        raise ValueError(
-            f"completed cell {stem!r} uses stale code_version "
-            f"{manifest.get('code_version')!r}; expected {CODE_VERSION!r}"
-        )
-    if manifest.get("schema_version") != SCHEMA_VERSION:
-        raise ValueError(
-            f"completed cell {stem!r} uses stale schema_version "
-            f"{manifest.get('schema_version')!r}; expected {SCHEMA_VERSION!r}"
-        )
     _validate_source_identity(manifest, path=manifest_path)
     run_config = (manifest.get("config") or {}).get("run")
     if not isinstance(run_config, dict):
         raise ValueError(f"completed cell manifest lacks config.run: {manifest_path}")
+    try:
+        legacy_runtime_free = validate_engine_runtime_artifact_version(
+            attacker=run_config.get("attacker"),
+            code_version=manifest.get("code_version"),
+            schema_version=manifest.get("schema_version"),
+            current_code_version=CODE_VERSION,
+            current_schema_version=SCHEMA_VERSION,
+        )
+        runtime_identity, runtime_close = validate_cell_engine_runtime_marker(
+            attacker=run_config.get("attacker"),
+            run_config=run_config,
+            completion_marker=marker,
+            allow_legacy_missing=legacy_runtime_free,
+        )
+    except ValueError as exc:
+        raise ValueError(
+            f"completed cell engine runtime evidence is invalid: "
+            f"{manifest_path}: {exc}"
+        ) from exc
     try:
         acquisition_execution = validate_model_acquisition_role_projection(
             run_config.get("model_acquisition")
@@ -596,6 +610,8 @@ def _completed_cell(path: Path) -> dict[str, Any]:
         "source_identity_validated": True,
         "realized_identities": identity_summary,
         "model_acquisition_execution": acquisition_execution,
+        "engine_runtime_identity": runtime_identity,
+        "engine_runtime_close": runtime_close,
     }
 
 
@@ -812,6 +828,19 @@ def _validate_grid_scope(
                 raise ValueError(f"grid/manifest run_id mismatch for {marker_path}")
             if status.get("target") not in (None, cell["model"]):
                 raise ValueError(f"grid/manifest target mismatch for {marker_path}")
+            try:
+                validate_grid_engine_runtime_binding(
+                    attacker=run.get("attacker"),
+                    cell_identity=cell["engine_runtime_identity"],
+                    cell_close=cell["engine_runtime_close"],
+                    grid_request=request,
+                    grid_close=grid.get("engine_runtime_close"),
+                )
+            except ValueError as exc:
+                raise ValueError(
+                    f"grid/completed-cell engine runtime mismatch for "
+                    f"{marker_path}: {exc}"
+                ) from exc
             try:
                 validate_model_acquisition_role_projection_binding(
                     cell["model_acquisition_execution"],

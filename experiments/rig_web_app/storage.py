@@ -13,6 +13,7 @@ from typing import Any
 from .artifacts import (
     Job,
     assert_durable_job_state_path_free,
+    derived_index_path_quarantined,
     run_kind,
     _argv_out_dir,
 )
@@ -37,8 +38,9 @@ class ConsoleDB:
 
     SCHEMA_VERSION = 4
 
-    def __init__(self, path: Path) -> None:
+    def __init__(self, path: Path, *, repo_root: Path | None = None) -> None:
         self.path = path
+        self.repo_root = repo_root if repo_root is not None else Path.cwd()
         self._lock = threading.Lock()
         self.healthy = False
         self.last_error = ""
@@ -423,11 +425,119 @@ class ConsoleDB:
         rows = self._query("SELECT * FROM jobs WHERE job_id = ? LIMIT 1", (job_id,))
         return rows[0] if rows else None
 
+    def load_report_jobs(self, *, limit: int) -> list[sqlite3.Row] | None:
+        """Bounded retained Level-1/2 Jobs for report ownership recovery."""
+
+        if (
+            isinstance(limit, bool)
+            or not isinstance(limit, int)
+            or not 1 <= limit <= 10_001
+        ):
+            raise ValueError("invalid report-job limit")
+        return self._query(
+            "SELECT job_id, command, argv, state, exit_code FROM jobs "
+            "WHERE command IN ('level1_evidence','level2_report') "
+            "ORDER BY started_at DESC, job_id DESC LIMIT ?",
+            (limit,),
+        )
+
     def list_runs(self) -> list[sqlite3.Row] | None:
         return self._query("SELECT * FROM runs ORDER BY created_at DESC LIMIT 500")
 
+    def list_runs_page(self, *, limit: int, offset: int) -> list[sqlite3.Row] | None:
+        """A bounded page of retained campaign-run rows."""
+
+        if (
+            isinstance(limit, bool)
+            or not isinstance(limit, int)
+            or not 1 <= limit <= 100
+            or isinstance(offset, bool)
+            or not isinstance(offset, int)
+            or offset < 0
+        ):
+            raise ValueError("invalid campaign-run page")
+        return self._query(
+            "SELECT * FROM runs ORDER BY created_at DESC, job_id DESC LIMIT ? OFFSET ?",
+            (limit, offset),
+        )
+
+    _CAMPAIGN_ROWS = (
+        "SELECT job_id,kind,command,out_dir,pin,state,exit_code,created_at,"
+        "record_source,source_priority FROM ("
+        "SELECT job_id,kind,command,out_dir,pin,state,exit_code,created_at,"
+        "'run' AS record_source,0 AS source_priority FROM runs UNION ALL "
+        "SELECT jobs.job_id,jobs.run_kind AS kind,jobs.command,jobs.out_dir,"
+        "jobs.pin,jobs.state,jobs.exit_code,jobs.started_at AS created_at,"
+        "'active_job' AS record_source,1 AS source_priority FROM jobs "
+        "WHERE jobs.run_kind IS NOT NULL AND jobs.state='running' AND NOT EXISTS ("
+        "SELECT 1 FROM runs WHERE runs.job_id=jobs.job_id))"
+    )
+
+    def list_campaigns_page(self, *, limit: int, offset: int) -> list[sqlite3.Row] | None:
+        """Page terminal runs plus active run-kind Jobs, with run precedence."""
+
+        if (
+            isinstance(limit, bool)
+            or not isinstance(limit, int)
+            or not 1 <= limit <= 100
+            or isinstance(offset, bool)
+            or not isinstance(offset, int)
+            or offset < 0
+        ):
+            raise ValueError("invalid campaign page")
+        return self._query(
+            self._CAMPAIGN_ROWS
+            + " ORDER BY created_at DESC,job_id DESC,source_priority ASC LIMIT ? OFFSET ?",
+            (limit, offset),
+        )
+
+    def load_campaign(self, job_id: str) -> sqlite3.Row | None:
+        """One terminal run, or its active run-kind Job before termination."""
+
+        if not isinstance(job_id, str) or not job_id:
+            return None
+        rows = self._query(
+            "SELECT job_id,kind,command,out_dir,pin,state,exit_code,created_at,"
+            "record_source,source_priority FROM ("
+            + self._CAMPAIGN_ROWS
+            + ") WHERE job_id=? ORDER BY source_priority ASC LIMIT 1",
+            (job_id,),
+        )
+        return rows[0] if rows else None
+
+    def load_run(self, job_id: str) -> sqlite3.Row | None:
+        if not isinstance(job_id, str) or not job_id:
+            return None
+        rows = self._query("SELECT * FROM runs WHERE job_id = ? LIMIT 1", (job_id,))
+        return rows[0] if rows else None
+
+    def list_run_owners(self, *, limit: int) -> list[sqlite3.Row] | None:
+        """Bounded canonical-output ownership inputs for report association."""
+
+        if (
+            isinstance(limit, bool)
+            or not isinstance(limit, int)
+            or not 1 <= limit <= 10_001
+        ):
+            raise ValueError("invalid run-owner limit")
+        return self._query(
+            "SELECT job_id, out_dir FROM runs "
+            "ORDER BY created_at DESC, job_id DESC LIMIT ?",
+            (limit,),
+        )
+
     def list_reports(self) -> list[sqlite3.Row] | None:
-        return self._query("SELECT * FROM reports ORDER BY mtime DESC LIMIT 500")
+        rows = self._query("SELECT * FROM reports ORDER BY mtime DESC LIMIT 500")
+        if rows is None:
+            return None
+        # Rows from an older, overly broad reindex remain non-authoritative
+        # derived state.  Hide them immediately; the next reindex deletes and
+        # rebuilds the table using the matching discovery boundary.
+        return [
+            row
+            for row in rows
+            if not derived_index_path_quarantined(str(row["path"] or ""))
+        ]
 
     def usage_totals(
         self,
@@ -435,21 +545,58 @@ class ConsoleDB:
         # Grouped by usage_date as well, so compute_costs can price each run at
         # the rate effective on ITS completion date, not today's.
         rows = self._query(
-            "SELECT role, provider, model, category, "
-            "COALESCE(usage_date,'') AS usage_date, SUM(amount) AS total "
-            "FROM usage GROUP BY role, provider, model, usage_date, category"
+            "SELECT role, provider, model, category, amount, out_dir, "
+            "COALESCE(usage_date,'') AS usage_date FROM usage"
         )
         if rows is None:
             return None
+        run_rows = self._query("SELECT out_dir FROM runs LIMIT 10001")
+        owned_roots: list[Path] = []
+        if run_rows is not None and len(run_rows) <= 10_000:
+            for run_row in run_rows:
+                value = str(run_row["out_dir"] or "").strip()
+                if not value:
+                    continue
+                try:
+                    candidate = Path(value).expanduser()
+                    if not candidate.is_absolute():
+                        candidate = self.repo_root / candidate
+                    owned_roots.append(candidate.resolve(strict=False))
+                except (OSError, RuntimeError):
+                    continue
+
+        def quarantined_locator(value: str) -> bool:
+            try:
+                locator = Path(value).expanduser().resolve(strict=False)
+            except (OSError, RuntimeError):
+                return derived_index_path_quarantined(value)
+            matching: list[Path] = []
+            for root in owned_roots:
+                try:
+                    locator.relative_to(root)
+                except ValueError:
+                    continue
+                matching.append(root)
+            if not matching:
+                return derived_index_path_quarantined(value)
+            owner = max(matching, key=lambda root: len(root.parts))
+            relative = locator.relative_to(owner).as_posix()
+            return derived_index_path_quarantined(relative)
+
         totals: dict[tuple[str, str, str, str], dict[str, int]] = {}
         for row in rows:
+            if quarantined_locator(str(row["out_dir"] or "")):
+                continue
             key = (
                 str(row["role"]),
                 str(row["provider"]),
                 str(row["model"]),
                 str(row["usage_date"] or ""),
             )
-            totals.setdefault(key, {})[str(row["category"])] = int(row["total"] or 0)
+            category = str(row["category"])
+            amount = int(row["amount"] or 0)
+            bucket = totals.setdefault(key, {})
+            bucket[category] = bucket.get(category, 0) + amount
         return totals
 
     def health(self) -> dict[str, Any]:

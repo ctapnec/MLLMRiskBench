@@ -134,23 +134,11 @@ def test_model_acquisition_is_controller_only_and_truthfully_classified(
         app.close()
 
 
-def test_nanogcg_builder_emits_one_exact_surrogate_or_suffix_mode(
+def test_nanogcg_builder_allows_only_exact_precomputed_suffix_replay(
     tmp_path: Path,
 ) -> None:
     app = _app(tmp_path)
     try:
-        revision = "a" * 40
-        live = app._prepared_attacker_entries({
-            "attackers": "nanogcg",
-            "nanogcg_model_id": "Org/Surrogate",
-            "nanogcg_model_revision": revision,
-        })
-        assert live == {
-            "nanogcg": {
-                "model_id": "Org/Surrogate",
-                "model_revision": revision,
-            }
-        }
         replay = app._prepared_attacker_entries({
             "attackers": "nanogcg",
             "nanogcg_suffix": " !fixture!",
@@ -162,22 +150,41 @@ def test_nanogcg_builder_emits_one_exact_surrogate_or_suffix_mode(
                 "suffix_source": "retained-run:fixture",
             }
         }
-        with pytest.raises(ValueError, match="must not also select"):
+        with pytest.raises(ValueError, match="live nanoGCG optimization is disabled"):
             app._prepared_attacker_entries({
                 "attackers": "nanogcg",
                 "nanogcg_model_id": "Org/Surrogate",
-                "nanogcg_model_revision": revision,
+                "nanogcg_model_revision": "a" * 40,
                 "nanogcg_suffix": "suffix",
                 "nanogcg_suffix_source": "fixture",
             })
+        with pytest.raises(ValueError, match="exact precomputed suffix"):
+            app._prepared_attacker_entries({"attackers": "nanogcg"})
         page = app.handle("GET", "/build")[2].decode("utf-8")
-        for field in (
-            "nanogcg_model_id",
-            "nanogcg_model_revision",
-            "nanogcg_suffix",
-            "nanogcg_suffix_source",
-        ):
+        for field in ("nanogcg_suffix", "nanogcg_suffix_source"):
             assert f"name='{field}'" in page
+        assert "name='nanogcg_model_id'" not in page
+        assert "name='nanogcg_model_revision'" not in page
+        assert "Live NanoGCG optimization is disabled" in page
+
+        status, _content_type, body = app.handle(
+            "POST",
+            "/build",
+            {
+                "mode": "dry_run",
+                "corpora": "synth",
+                "attackers": "nanogcg",
+                "judges": "rules",
+                "out": "runs/nanogcg-live-must-not-launch",
+                "nanogcg_model_id": "Org/Surrogate",
+                "nanogcg_model_revision": "a" * 40,
+            },
+        )
+        rendered = body.decode("utf-8")
+        assert status == 200
+        assert "live nanogcg optimization is disabled" in rendered.lower()
+        assert app.jobs == {}
+        assert not (app.state_dir / ".private-attacker-configs").exists()
     finally:
         app.close()
 
@@ -329,10 +336,10 @@ def test_reviewed_builder_stage_creates_only_a_plan_job_before_acquisition(
     params = {
         "mode": "measured",
         "corpora": "synth",
-        "attackers": "nanogcg",
-        "judges": "rules",
-        "nanogcg_model_id": "Org/Surrogate",
-        "nanogcg_model_revision": "c" * 40,
+        "attackers": "replay",
+        "judges": "guardrail",
+        "guardrail_model": "meta-llama/Llama-Guard-3-8B",
+        "guardrail_revision": "c" * 40,
         "out": "runs/measured",
         "_model_acquisition_next": "preflight",
     }
@@ -383,10 +390,10 @@ def test_measured_acquisition_plan_rechecks_exact_preflight_caps_before_job(
     params = {
         "mode": "measured",
         "corpora": "synth",
-        "attackers": "nanogcg",
-        "judges": "rules",
-        "nanogcg_model_id": "Org/Surrogate",
-        "nanogcg_model_revision": "c" * 40,
+        "attackers": "replay",
+        "judges": "guardrail",
+        "guardrail_model": "meta-llama/Llama-Guard-3-8B",
+        "guardrail_revision": "c" * 40,
         "out": "runs/measured",
         "_model_acquisition_next": "run",
     }

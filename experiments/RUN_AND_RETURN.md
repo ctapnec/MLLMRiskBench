@@ -7,8 +7,9 @@ source-native evaluators. Experiments and the human audit are still pending.
 Preflight, dry-run, diagnostic-canary, and bounded transport-probe artifacts are
 diagnostics, not thesis results.
 
-The maintained artifact contract is Runner `ura-runner/2.19` with unified schema
-`1.4`. Do not combine older-runner artifacts with this program.
+The maintained artifact contract is Runner `ura-runner/2.20` with unified schema
+`1.5`. Runner 2.19/schema 1.4 artifacts remain runtime-free legacy
+compatibility only; do not combine them with the current measured cohort.
 
 Every `python -m experiments.*` command below can equivalently be started
 from the rig console and campaign builder (section 18): the console builds
@@ -119,24 +120,32 @@ heterogeneous rates.
 
 *Console equivalent: this section's commands are also launchable as the `project_revision` form(s) in the rig console (section 18); identical argument vectors, gates and artifacts.*
 
-The intended rig is Linux, Python 3.12, two RTX 4090 cards, recent NVIDIA drivers,
-Git LFS, Git, Node.js for Promptfoo, and enough controlled storage for large audio
-and video releases. JALMBench alone is much larger than the three small core
-sources; inspect the official repository size before downloading it.
+The intended rig is Linux, exact CPython 3.12.13, two RTX 4090 cards, recent
+NVIDIA drivers, Git, tmux (screen is the only fallback), and enough controlled
+storage for large audio and video releases. Promptfoo receives its own official
+Node runtime, and a pinned user-local Git-LFS runtime is provisioned only when a
+locked source actually needs it; neither system Node nor system Git LFS is a
+prerequisite. JALMBench alone is much larger than the three small core sources;
+inspect the official repository size before downloading it.
 
 ```bash
 nvidia-smi
 git --version
-git lfs version
 python3.12 --version
-node --version
-npm --version
+if command -v tmux >/dev/null 2>&1; then
+  tmux -V
+elif command -v screen >/dev/null 2>&1; then
+  screen --version
+else
+  echo 'tmux is required (screen is the only fallback)' >&2
+  exit 1
+fi
 
 export URA_WORK="$HOME/ura-work"
 export URA_CORPORA="$URA_WORK/corpora"
 export URA_UPSTREAM="$URA_WORK/upstream"
-export URA_NATIVE_ENVS="$URA_WORK/native-envs"
-mkdir -p "$URA_CORPORA" "$URA_UPSTREAM" "$URA_NATIVE_ENVS"
+export URA_FRAMEWORK_ENVS="$URA_WORK/framework-venvs"
+mkdir -p "$URA_CORPORA" "$URA_UPSTREAM" "$URA_FRAMEWORK_ENVS"
 
 cd "$URA_WORK"
 git clone https://github.com/ctapnec/MLLMRiskBench.git
@@ -152,9 +161,9 @@ test "$(git rev-parse HEAD)" = "$REF_URA"
 python3.12 -m venv .venv
 source .venv/bin/activate
 python -m pip install --upgrade pip
-python -m pip install -e ".[dev,analysis,api,guardrail,local-vllm,harmbench]"
+python -m pip install -e ".[dev,analysis,api,guardrail,local-vllm]"
 python -m pip install "huggingface_hub[cli]"
-python -c "import bitsandbytes, datasketch, en_core_web_sm, psutil, ray, spacy, torch, vllm; print(vllm.__version__, bitsandbytes.__version__, psutil.__version__, torch.__version__, torch.version.cuda, torch.cuda.is_available(), torch.cuda.device_count(), datasketch.__version__, ray.__version__, spacy.__version__)"
+python -c "import bitsandbytes, psutil, torch, vllm; print(vllm.__version__, bitsandbytes.__version__, psutil.__version__, torch.__version__, torch.version.cuda, torch.cuda.is_available(), torch.cuda.device_count())"
 python -m bitsandbytes
 python -m pip check
 
@@ -188,11 +197,10 @@ with two GPUs and maximum compute capability 8.9, 24 logical CPUs, and
 `datasets 2.14.7` package was removed. This is dependency/hardware evidence,
 not a model load or inference; no provider/model call was made. Repeat these
 checks in the final detached measured checkout and retain their output.
-The latest exact tested release, dashboard/Build captures and local/rig results
-are retained in the sibling Thesis record
-`../../../Thesis-EN/verification/2026-08-17-campaign-status-harmbench/`; do not
-copy a mutable hash or test count into this runbook. The earlier dashboard and
-quantization records remain historical evidence for their own snapshots.
+Generated dashboard captures, installer logs, and local/rig engineering
+campaigns stay in ignored operator state. They are operational diagnostics, are
+not committed, and are not usable thesis evidence or authority for a revision;
+do not copy a mutable hash or test count into this runbook.
 
 `URA_PROJECT_REVISION_MANIFEST` and `URA_PROJECT_REVISION_SHA256` are consumed
 automatically by `run_matrix` and by `rig_check`'s forwarded non-dry request.
@@ -1103,7 +1111,7 @@ the selected-config hash and grid/run provenance, is passed as
 local response metadata. The Build row displays either the explicit context cap
 or `native model context`.
 
-Runner 2.19 local adapters construct each vLLM/Ollama `Response` with the same
+Runner 2.20 local adapters construct each vLLM/Ollama `Response` with the same
 deterministic dialog-fingerprint placeholder used by hosted adapters: the first
 16 lowercase SHA-256 hex characters over ordered rendered roles, content, and
 media identities. This only satisfies transport-local response linkage. Runner
@@ -1863,13 +1871,223 @@ endpoints; it does not enter static ASR.
 
 ### 12.2 Runner-safe external attack bridges
 
-Install only the adapters selected for this tier in the URA environment:
+Each Runner-safe third-party framework has its own explicit virtual environment.
+Do not activate these environments and do not install any of their packages in
+the Runner environment. Do not put two registered framework packages in one
+environment; live admission rejects that layout.
 
 ```bash
-python -m pip install 'pyrit==0.14.0' 'deepteam==1.0.7' 'h4rm3l==0.2.4' 'spikee==0.9.1'
-# nanoGCG is optional and needs a separately identified surrogate checkpoint.
-python -m pip install nanogcg
+export URA_FRAMEWORK_ENVS="$URA_WORK/framework-venvs"
+export URA_FRAMEWORK_LOCK="$PWD/experiments/framework_runtime_lock.json"
+URA_FRAMEWORK_LOCK_ID="$(python -c 'from pathlib import Path; from experiments.framework_runtime_installer import load_lock; import os; print(load_lock(Path(os.environ["URA_FRAMEWORK_LOCK"]))["lock_id"])')" || exit $?
+[[ "$URA_FRAMEWORK_LOCK_ID" =~ ^[0-9a-f]{64}$ ]] || exit 1
+export URA_FRAMEWORK_LOCK_ID
+export URA_FRAMEWORK_STATE="$URA_WORK/runs/engineering/framework-runtime-${URA_FRAMEWORK_LOCK_ID:0:12}"
+URA_FRAMEWORK_PYTHON="$(python -c 'import sys; print(sys._base_executable)')" || exit $?
+[[ -x "$URA_FRAMEWORK_PYTHON" ]] || exit 1
+export URA_FRAMEWORK_PYTHON
+
+ura_runtime_alias() {
+  python - "$1" <<'PY'
+import os
+import sys
+from pathlib import Path
+from experiments.framework_runtime_installer import load_lock
+
+lock = load_lock(Path(os.environ["URA_FRAMEWORK_LOCK"]))
+entry = next(item for item in lock["frameworks"] if item["name"] == sys.argv[1])
+print(Path(os.environ["URA_FRAMEWORK_ENVS"]) / entry["env_slug"])
+PY
+}
+
+ura_runtime_store() {
+  python - "$1" <<'PY'
+import os
+import sys
+from pathlib import Path
+from experiments.framework_runtime_installer import load_lock
+
+lock = load_lock(Path(os.environ["URA_FRAMEWORK_LOCK"]))
+entry = next(item for item in lock["frameworks"] if item["name"] == sys.argv[1])
+print(Path(os.environ["URA_FRAMEWORK_ENVS"]) / ".store" / f'{entry["env_slug"]}-{lock["lock_id"][:16]}')
+PY
+}
+
+ura_wait_session() {
+  local payload="$1" parsed session_name launcher log_rel exit_rel tmux_socket rc listing
+  local deadline=$((SECONDS + 168 * 60 * 60))
+  parsed="$(python - "$payload" <<'PY'
+import json
+import hashlib
+import re
+import sys
+
+row = json.loads(sys.argv[1])
+required = {
+    "schema", "launcher", "session_name", "attach_command",
+    "log", "exit_marker", "status",
+}
+if set(row) != required or row["schema"] != "ura-framework-runtime-session/1":
+    raise SystemExit(2)
+name = row["session_name"]
+if not isinstance(name, str) or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]*", name):
+    raise SystemExit(2)
+launcher = row["launcher"]
+if launcher not in {"tmux", "screen"} or row["status"] != "running":
+    raise SystemExit(2)
+log = f"sessions/{name}.log"
+marker = f"sessions/{name}.exit"
+if row["log"] != log or row["exit_marker"] != marker:
+    raise SystemExit(2)
+tmux_socket = "ura-fw-" + hashlib.sha256(name.encode("ascii")).hexdigest()[:16]
+attach = (
+    f"tmux -L {tmux_socket} attach -t {name}"
+    if launcher == "tmux"
+    else f"screen -r {name}"
+)
+if row["attach_command"] != attach:
+    raise SystemExit(2)
+print("\t".join((name, launcher, log, marker, tmux_socket)))
+PY
+)" || return $?
+  IFS=$'\t' read -r session_name launcher log_rel exit_rel tmux_socket <<<"$parsed"
+  [[ -n "$session_name" && -n "$exit_rel" ]] || return 1
+  case "$launcher" in
+    tmux) printf 'Attach with: tmux -L %s attach -t %s\n' "$tmux_socket" "$session_name" ;;
+    screen) printf 'Attach with: screen -r %s\n' "$session_name" ;;
+    *) return 1 ;;
+  esac
+  printf 'Tail with: tail -f -- %s\n' "$URA_FRAMEWORK_STATE/$log_rel"
+  while [[ ! -f "$URA_FRAMEWORK_STATE/$exit_rel" ]]; do
+    (( SECONDS < deadline )) || return 124
+    case "$launcher" in
+      tmux)
+        if ! tmux -L "$tmux_socket" has-session -t "$session_name" 2>/dev/null; then
+          sleep 1
+          [[ -f "$URA_FRAMEWORK_STATE/$exit_rel" ]] || return 1
+        fi
+        ;;
+      screen)
+        listing="$(screen -ls 2>/dev/null || true)"
+        if [[ ! "$listing" =~ [[:space:]][0-9]+\.${session_name}[[:space:]]+\((Attached|Detached|Multi(,[[:space:]]*attached)?)\) ]]; then
+          sleep 1
+          [[ -f "$URA_FRAMEWORK_STATE/$exit_rel" ]] || return 1
+        fi
+        ;;
+    esac
+    sleep 5
+  done
+  rc="$(tr -d '\r\n' < "$URA_FRAMEWORK_STATE/$exit_rel")"
+  [[ "$rc" =~ ^(0|[1-9][0-9]{0,2})$ ]] || return 1
+  (( rc <= 255 )) || return 1
+  (( rc == 0 ))
+}
+
+python -m experiments.framework_runtime_installer plan \
+  --lock "$URA_FRAMEWORK_LOCK" --env-root "$URA_FRAMEWORK_ENVS" \
+  --state-root "$URA_FRAMEWORK_STATE"
+URA_FRAMEWORK_SESSION_JSON="$(
+  python -m experiments.framework_runtime_installer install \
+    --lock "$URA_FRAMEWORK_LOCK" --env-root "$URA_FRAMEWORK_ENVS" \
+    --state-root "$URA_FRAMEWORK_STATE" --python "$URA_FRAMEWORK_PYTHON"
+)" || exit $?
+export URA_FRAMEWORK_SESSION_JSON
+printf '%s\n' "$URA_FRAMEWORK_SESSION_JSON"
+ura_wait_session "$URA_FRAMEWORK_SESSION_JSON" || exit $?
+URA_FRAMEWORK_SESSION_JSON="$(
+  python -m experiments.framework_runtime_installer verify \
+    --lock "$URA_FRAMEWORK_LOCK" --env-root "$URA_FRAMEWORK_ENVS" \
+    --state-root "$URA_FRAMEWORK_STATE" --python "$URA_FRAMEWORK_PYTHON"
+)" || exit $?
+export URA_FRAMEWORK_SESSION_JSON
+printf '%s\n' "$URA_FRAMEWORK_SESSION_JSON"
+ura_wait_session "$URA_FRAMEWORK_SESSION_JSON" || exit $?
 ```
+
+The repository has one strict `ura-framework-runtime-lock/1` manifest. It binds
+CPython 3.12.13, the official Promptfoo Node runtime, every package/source
+version and artifact/source SHA-256, fully hashed transitive dependency locks,
+the observed installed inventory, and the explicit 20-attacker coverage
+disposition. The installer creates one content-addressed store per managed
+framework, verifies there, and atomically publishes only a small stable alias;
+it never renames a built venv or shares site packages. DeepTeam's locked Sentry
+repair and AutoDAN's resolver-compatible repair are data in that same lock.
+
+`install`, `resume`, and `verify` automatically dispatch into a deterministic
+named tmux session (screen only when tmux is unavailable), with a credential-free
+environment and retained bounded log/exit marker under the engineering campaign.
+Wait for the exit marker before the next action. If an admitted install was
+interrupted, rerun the same command as `resume`; after a successful install, run
+the same argv as `verify`. Add repeated `--only NAME` (or a comma-separated
+value) for a bounded subset. An existing receipt never skips verification:
+`pip check` or npm inventory, offline import/CLI startup, exact installed
+inventory, and the deterministic whole-runtime seal including executable
+bytecode all run again. Those receipts retain their outer
+`ura-framework-runtime-receipt/1` schema, but their nested content identity must
+be `ura-framework-runtime-content-seal/2`; older nested seal schemas are not
+accepted. A seal-algorithm migration therefore receives a new lock identity and
+content-addressed store instead of verifying or rewriting the retained old
+store.
+A same-version dependency, source shadow, console script, or other retained-file
+change therefore invalidates verification.
+
+Rig Web exposes the same fixed interface under **Build → Runtimes**, with one
+lock-derived Install/Resume/Verify action per row and no package, path, shell,
+model, provider, or credential inputs. Its credential-free named-session work
+appears as a non-thesis engineering campaign in Jobs/Stats; it does not create a
+duplicate Console Job. With results root `$URA_WORK/runs`, the UI uses the same
+sibling `$URA_WORK/framework-venvs` environment root and lock-derived campaign
+state used above.
+
+Build one private, content-addressed runtime config for each one-framework lane
+from the canonical `.store` venv parent (preserve the final ordinary venv
+`bin/python` link; do not resolve it into the base interpreter). The config's engine inventory
+must equal the selected attacker inventory exactly; never carry unused runtimes
+into another lane's scientific identity. Interpreter locators never appear in
+controller argv or the printed build receipt. For the PyRIT lane:
+
+```bash
+URA_PYRIT_STORE="$(ura_runtime_store pyrit)" || exit $?
+URA_PYRIT_PYTHON="$URA_PYRIT_STORE/bin/python"
+[[ -x "$URA_PYRIT_PYTHON" ]] || exit 1
+export URA_PYRIT_STORE URA_PYRIT_PYTHON
+umask 077
+mkdir -p runs/private
+export ENGINE_RUNTIME_CONFIG='runs/private/engine-runtime-pyrit.json'
+python -m experiments.engine_runtime_config \
+  --runtime pyrit=URA_PYRIT_PYTHON \
+  --out "$ENGINE_RUNTIME_CONFIG"
+# Copy the exact lowercase sha256 from the path-free JSON printed above.
+export ENGINE_RUNTIME_CONFIG_SHA256='<printed-64-hex-sha256>'
+```
+
+Create separate DeepTeam, h4rm3l, and Spikee configs by resolving
+`ura_runtime_store deepteam`, `ura_runtime_store h4rm3l`, or
+`ura_runtime_store spikee`, appending `/bin/python`, and supplying only that
+lane's engine/environment pair and a distinct output file. The Builder performs
+the same exact-membership check through its typed private runtime-config fields;
+the private config generator is intentionally not exposed as a generic Console
+command.
+
+Both `rig_check` and `run_matrix` require the paired flags for a selected one of
+these attackers:
+
+```bash
+--engine-runtime-config "$ENGINE_RUNTIME_CONFIG" \
+--engine-runtime-config-sha256 "$ENGINE_RUNTIME_CONFIG_SHA256"
+```
+
+Admission runs the fixed standard-library worker with `-I -S -B`, an empty
+private HOME/cache, no ambient command-search path, and no provider or Hub
+credentials. It ignores `.pth`, `sitecustomize`, and pre-existing package
+bytecode, verifies the complete environment before making framework imports
+available, and starts no target/model component if the receipt differs. One
+admitted worker is reused for the matrix rather than rehashing a multi-gigabyte
+environment per attempt; completion is published only after a second full-tree
+closing seal. These controls establish execution identity and process-tree
+lifecycle, not a filesystem/network sandbox. Keep the config and environments
+operator-private; result, grid, completion, Figure, transfer, and Level-1
+evidence retain only path-free identities and exact closing seals.
 
 Use `experiments/attacker-config.json` to bind exact constructor arguments. A
 minimal deterministic-transfer configuration is:
@@ -1896,6 +2114,8 @@ export ATTACKER='pyrit'
 python -m experiments.rig_check \
   --api "$FOCAL_HOSTED" --api-config experiments/api-targets.json \
   --attackers "$ATTACKER" --attacker-config experiments/attacker-config.json \
+  --engine-runtime-config "$ENGINE_RUNTIME_CONFIG" \
+  --engine-runtime-config-sha256 "$ENGINE_RUNTIME_CONFIG_SHA256" \
   --judges rules,guardrail,llm --judge-model "$JUDGE" \
   --guardrail-model "$SCORE_GUARD" --guardrail-revision "$SCORE_GUARD_REV" --guardrail-device "$SCORE_GUARD_DEVICE" \
   --corpora "$TRANSFER_ARMS" --source-config experiments/source-instances.json \
@@ -1912,34 +2132,25 @@ configured maximum, establish the realized variant count.
 
 Because `attacker-config.json` must contain only selected attacker keys, create a
 one-attacker copy for each invocation or remove the unselected rows before the
-check. Repeat the successful check with `experiments.run_matrix`,
-`"${LIVE_ATTESTATION_ARGS[@]}"`, `--ack-hosted-judge-data-transfer`, its exact
-totals, and `--out "runs/thesis/runner/transfer-$ATTACKER"`.
+check. Repeat the successful check with `experiments.run_matrix`, the same
+paired engine-runtime flags, `"${LIVE_ATTESTATION_ARGS[@]}"`,
+`--ack-hosted-judge-data-transfer`, its exact totals, and
+`--out "runs/thesis/runner/transfer-$ATTACKER"`.
 
 The remaining runner bridges are specialized:
 
 | Bridge | Defensible use in this program |
 | --- | --- |
-| `nanogcg` | precomputed suffix with `suffix_source`, or live optimization on an immutable local surrogate; report as surrogate transfer |
+| `nanogcg` | Stage 1 accepts only a precomputed suffix with `suffix_source` and records that the framework was not invoked; live optimization remains fail-closed until the managed-snapshot subprocess handshake is implemented |
 | `harmbench` attacker | prepare text cases from a clean exact-revision checkout with `experiments.harmbench_capture`, then replay only its exact `ura-harmbench-transfer-replay/1` in the measured grid |
 | `purplellama` | only with `cyberseceval` rows; source-identity replay, not the native pipeline |
 | `ideator` | verified precomputed text-image `seed_pairs` only; live package path is disabled |
-| `t3mp3st` | prepare an exact `ura-t3mp3st-plan-bundle/1` through the literal-loopback Op-General planning route, then replay only that bundle in the measured grid; no mission or tool route is used |
+| `t3mp3st` | currently `blocked-unpinned`: no exact executable Op-General source URL/revision is documented; admit no live planner until a prospective lock amendment supplies both, and use only an already attributable replay bundle |
 
-For live NanoGCG, its one-attacker config must identify a surrogate that differs
-from every target and can enter section 6.1's sealed acquisition plan:
-
-```json
-{
-  "nanogcg": {
-    "model_id": "meta-llama/Llama-2-7b-chat-hf",
-    "model_revision": "<exact 40-64 lowercase hex commit>"
-  }
-}
-```
-
-The no-model-call alternative is an already retained suffix with an attributable
-source; do not include a model ID/revision in the same entry:
+NanoGCG live configuration is deliberately rejected before managed-snapshot,
+framework, target, or model construction in Stage 1. Use only an already
+retained suffix with an attributable source; do not include a model ID/revision
+in the same entry:
 
 ```json
 {
@@ -1950,23 +2161,28 @@ source; do not include a model ID/revision in the same entry:
 }
 ```
 
-Run these only after preparing their exact attacker config and passing
-`rig_check`. Do not claim that a complete upstream evaluator ran. Garak,
+The resulting provenance explicitly says `framework_execution=not_invoked`; it
+is replay evidence, never evidence that NanoGCG optimization ran. Run these only
+after preparing their exact attacker config and passing `rig_check`. Do not
+claim that a complete upstream evaluator ran. Garak,
 Promptfoo, Petri, FuzzyAI, EasyJailbreak, AutoDAN-Turbo, Giskard, ASB, and
 AgentDojo are not runner attackers; they belong in the native track below.
 
-T3MP3ST planning, HarmBench generation, and NanoGCG surrogate optimization are
-not target/judge/provider-HTTP calls covered by the Runner's common call ledger.
-T3MP3ST and HarmBench preparation run once out of band under their own cap or
-quota. A live NanoGCG adapter loads its sealed surrogate once per cell and
-caches it after post-load verification; a precomputed suffix performs no model
-load. Retain exact preparation/suffix provenance and never describe any of
-these operations as protected by the target/judge ceilings.
+T3MP3ST planning and HarmBench generation are not target/judge/provider-HTTP
+calls covered by the Runner's common call ledger. They run once out of band
+under their own cap or quota. A Stage-1 precomputed NanoGCG suffix performs no
+model load or framework execution. Retain exact preparation/suffix provenance
+and never describe any of these operations as protected by the target/judge
+ceilings.
 
 #### T3MP3ST: capture, then replay
 
-Start the pinned T3MP3ST Op-General service on loopback. Capture the exact same
-arm, limit and sample seed that the measured run will use:
+This preparation route is currently blocked: the repository has no exact
+executable Op-General source URL and revision, and the runtime lock records
+`t3mp3st` as `blocked-unpinned`. Do not improvise a checkout or service version.
+Only after a prospective lock/protocol amendment supplies and verifies both may
+an operator start that exact service on loopback and capture the same arm, limit,
+and sample seed that the measured run will use:
 
 ```bash
 python -m experiments.capture_t3mp3st \
@@ -2008,22 +2224,41 @@ configuration contains only its verified content identity.
 
 Generate text cases from the clean pinned HarmBench checkout. The preparation
 command writes both the replay artifact and the matching one-attacker config.
-Install the checked-in full local stack plus its `harmbench` supplement first;
-the supplement pins the tested FastChat, Ray, Accelerate, spaCy, `datasketch`,
-and SHA-256-bound `en_core_web_sm` dependencies instead of relying on an ad
-hoc upstream environment:
+HarmBench preparation has its own locked source checkout and runtime; it must
+not use the main local-vLLM environment. Install/resume and verify the
+`harmbench` row through the section 12.2 installer first. Its fully hashed lock
+pins the tested vLLM, BitsAndBytes, FastChat, Ray, Accelerate, spaCy,
+`datasketch`, and SHA-256-bound `en_core_web_sm` dependencies:
 
 ```bash
-python -m pip install -e ".[dev,analysis,guardrail,local-vllm,harmbench]"
-python -c "import accelerate, datasketch, en_core_web_sm, fastchat.model, pandas, ray, spacy, torch, transformers, vllm, yaml; spacy.load('en_core_web_sm'); print(datasketch.__version__, ray.__version__, spacy.__version__, vllm.__version__)"
-python -m pip check
+URA_FRAMEWORK_SESSION_JSON="$(
+  python -m experiments.framework_runtime_installer install \
+    --lock "$URA_FRAMEWORK_LOCK" --env-root "$URA_FRAMEWORK_ENVS" \
+    --state-root "$URA_FRAMEWORK_STATE" --python "$URA_FRAMEWORK_PYTHON" \
+    --only harmbench
+)" || exit $?
+export URA_FRAMEWORK_SESSION_JSON
+printf '%s\n' "$URA_FRAMEWORK_SESSION_JSON"
+ura_wait_session "$URA_FRAMEWORK_SESSION_JSON" || exit $?
+URA_FRAMEWORK_SESSION_JSON="$(
+  python -m experiments.framework_runtime_installer verify \
+    --lock "$URA_FRAMEWORK_LOCK" --env-root "$URA_FRAMEWORK_ENVS" \
+    --state-root "$URA_FRAMEWORK_STATE" --python "$URA_FRAMEWORK_PYTHON" \
+    --only harmbench
+)" || exit $?
+export URA_FRAMEWORK_SESSION_JSON
+printf '%s\n' "$URA_FRAMEWORK_SESSION_JSON"
+ura_wait_session "$URA_FRAMEWORK_SESSION_JSON" || exit $?
+URA_HARMBENCH_ENV="$(ura_runtime_store harmbench)" || exit $?
+[[ -d "$URA_HARMBENCH_ENV" ]] || exit 1
+export URA_HARMBENCH_ENV
 ```
 
 Then prepare the bundle:
 
 ```bash
-python -m experiments.harmbench_capture \
-  --repo "$URA_CORPORA/HarmBench" \
+PYTHONDONTWRITEBYTECODE=1 "$URA_HARMBENCH_ENV/bin/python" -m experiments.harmbench_capture \
+  --repo "$URA_HARMBENCH_ENV/source/harmbench" \
   --revision "$REF_HARMBENCH" \
   --source "$URA_HARMBENCH_TEXT_PATH" \
   --corpus-name harmbench_text \
@@ -2117,67 +2352,65 @@ benign refusal cost is an incomplete defense analysis.
 Each project gets an isolated environment and exact source revision. Do not
 install all of them into the URA environment.
 
-### 14.1 Acquire and install
+### 14.1 Install and verify from the global lock
+
+Reuse `URA_FRAMEWORK_LOCK`, `URA_FRAMEWORK_ENVS`, `URA_FRAMEWORK_STATE`, and
+`URA_FRAMEWORK_PYTHON` from section 12.2. The single lock owns the exact source
+checkout and dedicated runtime for all nine native projects; do not clone a
+second mutable source tree or run upstream requirements files by hand.
 
 ```bash
-export REF_FUZZYAI=8184b9667a665aa27fb69ef81a7a30615d13faf5
-export REF_PETRI=1f41e29f71f4fe407e9f9bd73be1893610dfed5e
-export REF_EASYJAILBREAK=bf3c162d54ba5c7818074c1e0b540947fbec348a
-export REF_ASB=1f561dccf92d55302368fa67679b4ba9d9c8fdc4
-export REF_AGENTDOJO=a75aba7631d3ca5fb7ab938965c97ead2f9ff84b
-export REF_GARAK=c43aed7d3e2b97e3b62c12a2eb5d171860bf8909
-export REF_PROMPTFOO=4805856060d026521794d4e69decb938155580ad
-export REF_AUTODAN=389df844439888fc44ea7f5e8e95fd2b5c82ea64
-export REF_GISKARD=86512399daf097358422e1f30d19abbacbe5ce9a
+export URA_NATIVE_SELECTION='fuzzyai,garak,promptfoo,petri,easyjailbreak,autodan,giskard,asb,agentdojo'
+python -m experiments.framework_runtime_installer plan \
+  --lock "$URA_FRAMEWORK_LOCK" --env-root "$URA_FRAMEWORK_ENVS" \
+  --state-root "$URA_FRAMEWORK_STATE" --only "$URA_NATIVE_SELECTION"
+URA_FRAMEWORK_SESSION_JSON="$(
+  python -m experiments.framework_runtime_installer install \
+    --lock "$URA_FRAMEWORK_LOCK" --env-root "$URA_FRAMEWORK_ENVS" \
+    --state-root "$URA_FRAMEWORK_STATE" --python "$URA_FRAMEWORK_PYTHON" \
+    --only "$URA_NATIVE_SELECTION"
+)" || exit $?
+export URA_FRAMEWORK_SESSION_JSON
+printf '%s\n' "$URA_FRAMEWORK_SESSION_JSON"
+ura_wait_session "$URA_FRAMEWORK_SESSION_JSON" || exit $?
+URA_FRAMEWORK_SESSION_JSON="$(
+  python -m experiments.framework_runtime_installer verify \
+    --lock "$URA_FRAMEWORK_LOCK" --env-root "$URA_FRAMEWORK_ENVS" \
+    --state-root "$URA_FRAMEWORK_STATE" --python "$URA_FRAMEWORK_PYTHON" \
+    --only "$URA_NATIVE_SELECTION"
+)" || exit $?
+export URA_FRAMEWORK_SESSION_JSON
+printf '%s\n' "$URA_FRAMEWORK_SESSION_JSON"
+ura_wait_session "$URA_FRAMEWORK_SESSION_JSON" || exit $?
 
-git clone https://github.com/cyberark/FuzzyAI.git "$URA_UPSTREAM/FuzzyAI"
-git -C "$URA_UPSTREAM/FuzzyAI" checkout --detach "$REF_FUZZYAI"
-python3.12 -m venv "$URA_NATIVE_ENVS/fuzzyai"
-"$URA_NATIVE_ENVS/fuzzyai/bin/python" -m pip install -e "$URA_UPSTREAM/FuzzyAI"
-
-git clone https://github.com/NVIDIA/garak.git "$URA_UPSTREAM/garak"
-git -C "$URA_UPSTREAM/garak" checkout --detach "$REF_GARAK"
-python3.12 -m venv "$URA_NATIVE_ENVS/garak"
-"$URA_NATIVE_ENVS/garak/bin/python" -m pip install -e "$URA_UPSTREAM/garak"
-
-git clone https://github.com/promptfoo/promptfoo.git "$URA_UPSTREAM/promptfoo"
-git -C "$URA_UPSTREAM/promptfoo" checkout --detach "$REF_PROMPTFOO"
-npm install --prefix "$URA_NATIVE_ENVS/promptfoo" promptfoo@0.121.15
-
-git clone https://github.com/meridianlabs-ai/inspect_petri.git "$URA_UPSTREAM/inspect_petri"
-git -C "$URA_UPSTREAM/inspect_petri" checkout --detach "$REF_PETRI"
-python3.12 -m venv "$URA_NATIVE_ENVS/petri"
-"$URA_NATIVE_ENVS/petri/bin/python" -m pip install 'inspect-ai>=0.3.236' -e "$URA_UPSTREAM/inspect_petri"
-
-git clone https://github.com/EasyJailbreak/EasyJailbreak.git "$URA_UPSTREAM/EasyJailbreak"
-git -C "$URA_UPSTREAM/EasyJailbreak" checkout --detach "$REF_EASYJAILBREAK"
-python3.12 -m venv "$URA_NATIVE_ENVS/easyjailbreak"
-"$URA_NATIVE_ENVS/easyjailbreak/bin/python" -m pip install -e "$URA_UPSTREAM/EasyJailbreak"
-
-git clone https://github.com/SaFo-Lab/AutoDAN-Turbo.git "$URA_UPSTREAM/AutoDAN-Turbo"
-git -C "$URA_UPSTREAM/AutoDAN-Turbo" checkout --detach "$REF_AUTODAN"
-python3.12 -m venv "$URA_NATIVE_ENVS/autodan"
-"$URA_NATIVE_ENVS/autodan/bin/python" -m pip install -r "$URA_UPSTREAM/AutoDAN-Turbo/requirements.txt"
-
-git clone https://github.com/Giskard-AI/giskard-oss.git "$URA_UPSTREAM/giskard-oss"
-git -C "$URA_UPSTREAM/giskard-oss" checkout --detach "$REF_GISKARD"
-python3.12 -m venv "$URA_NATIVE_ENVS/giskard-v2"
-"$URA_NATIVE_ENVS/giskard-v2/bin/python" -m pip install 'giskard[llm]==2.19.2'
-
-git clone https://github.com/agiresearch/ASB.git "$URA_UPSTREAM/ASB"
-git -C "$URA_UPSTREAM/ASB" checkout --detach "$REF_ASB"
-python3.12 -m venv "$URA_NATIVE_ENVS/asb"
-"$URA_NATIVE_ENVS/asb/bin/python" -m pip install -r "$URA_UPSTREAM/ASB/requirements.txt"
-
-git clone https://github.com/ethz-spylab/agentdojo.git "$URA_UPSTREAM/agentdojo"
-git -C "$URA_UPSTREAM/agentdojo" checkout --detach "$REF_AGENTDOJO"
-python3.12 -m venv "$URA_NATIVE_ENVS/agentdojo"
-"$URA_NATIVE_ENVS/agentdojo/bin/python" -m pip install -e "$URA_UPSTREAM/agentdojo"
+URA_FUZZYAI_ENV="$(ura_runtime_alias fuzzyai)" || exit $?
+URA_GARAK_ENV="$(ura_runtime_alias garak)" || exit $?
+URA_PROMPTFOO_ENV="$(ura_runtime_alias promptfoo)" || exit $?
+URA_PETRI_ENV="$(ura_runtime_alias petri)" || exit $?
+URA_EASYJAILBREAK_ENV="$(ura_runtime_alias easyjailbreak)" || exit $?
+URA_AUTODAN_ENV="$(ura_runtime_alias autodan)" || exit $?
+URA_GISKARD_ENV="$(ura_runtime_alias giskard)" || exit $?
+URA_ASB_ENV="$(ura_runtime_alias asb)" || exit $?
+URA_AGENTDOJO_ENV="$(ura_runtime_alias agentdojo)" || exit $?
+for URA_RUNTIME_ENV in \
+  "$URA_FUZZYAI_ENV" "$URA_GARAK_ENV" "$URA_PROMPTFOO_ENV" \
+  "$URA_PETRI_ENV" "$URA_EASYJAILBREAK_ENV" "$URA_AUTODAN_ENV" \
+  "$URA_GISKARD_ENV" "$URA_ASB_ENV" "$URA_AGENTDOJO_ENV"; do
+  [[ -d "$URA_RUNTIME_ENV" ]] || exit 1
+done
+export URA_FUZZYAI_ENV URA_GARAK_ENV URA_PROMPTFOO_ENV URA_PETRI_ENV
+export URA_EASYJAILBREAK_ENV URA_AUTODAN_ENV URA_GISKARD_ENV
+export URA_ASB_ENV URA_AGENTDOJO_ENV
 ```
 
-If an upstream pin does not support Python 3.12, create only that isolated
-environment with its documented Python version and record the interpreter. Do not
-change the URA environment to satisfy it.
+Wait for the named-session exit marker, use `resume` after an interruption, and
+then run `verify` with the identical flags. The lock installs Promptfoo in its
+own exact official Node runtime and all Python projects in separate exact
+CPython 3.12.13 venvs. Each published alias below points at a stable
+content-addressed store, while source checkouts are retained under that same
+runtime's `source/` directory. A pin that cannot satisfy the lock remains a
+failed/blocked isolated runtime; never repair it by changing the main URA
+environment or combining framework packages.
 
 ### 14.2 Execute upstream
 
@@ -2197,38 +2430,227 @@ Do not route these source-native canaries through
 `run_matrix --diagnostic-canary` or `experiments.lane_canary`: their target, attacker,
 runtime, and evaluator contract remains upstream-native. Retain their separate
 operator note and artifacts outside the canonical measured import input.
+Every long big-rig command below is the inner reviewed command of a uniquely
+named tmux session (screen only if tmux is unavailable) launched through the
+mandatory `ura_native_run` wrapper below. Build -> Runtimes installs and verifies
+the isolated software; it does not launch these provider-bearing campaigns.
+Never leave one as a foreground SSH child. Retain the session name, attach
+command, bounded log, and terminal exit marker with the engineering campaign.
+Set `URA_NATIVE_TARGET_CALL_CAP` to the approved positive integer cap for each
+provider-bearing reviewed command immediately before invoking it; model mode
+refuses an absent or non-positive cap. The offline Petri conversion alone uses
+`ura_native_support_run`, which records cap zero, hosted calls disabled, and no
+model tasks. Each attempt becomes a direct, explicitly non-thesis
+`ura-engineering-campaign/1` entry under `$URA_WORK/runs/engineering`, so its
+task and terminal status are visible in Jobs/Stats. tmux uses a unique private
+server/socket per attempt, so the child receives the current reviewed provider
+environment rather than stale variables from another tmux server. GNU `timeout`
+owns the command group, sends TERM at 168 hours, then KILL after 60 seconds;
+the waiter terminates the exact owned session and records a terminal code if
+the wrapper itself fails to finish.
 
 ```bash
+ura_native_session() {
+  local label="${1:-}" root attempt_dir session socket log marker script logger_python
+  local drain_code launcher timeout_bin cap task started_at kind hosted model_tasks
+  local cap_field detail evidence_class
+  shift || return 2
+  [[ "$label" =~ ^[a-z0-9][a-z0-9-]*$ && "$#" -gt 0 ]] || return 2
+  kind="${URA_NATIVE_SESSION_KIND:-model}"
+  cap="${URA_NATIVE_TARGET_CALL_CAP:-}"
+  if [[ "$kind" == model ]]; then
+    [[ "$cap" =~ ^[1-9][0-9]*$ ]] || return 2
+    hosted=true
+    model_tasks='["native-'"$label"'"]'
+    cap_field=',"target_call_cap":'"$cap"
+    detail=native-upstream
+    evidence_class=native_upstream_execution
+  elif [[ "$kind" == support && ( -z "$cap" || "$cap" == 0 ) ]]; then
+    hosted=false
+    model_tasks='[]'
+    cap_field=',"target_call_cap":0'
+    detail=native-support
+    evidence_class=native_upstream_support
+  else
+    return 2
+  fi
+  root="$URA_WORK/runs/engineering"
+  umask 077
+  mkdir -p "$root" || return
+  attempt_dir="$(mktemp -d "$root/ura-native-${label}-XXXXXXXX")" || return
+  session="${attempt_dir##*/}"
+  socket="${session}-socket"
+  log="$attempt_dir/$session.log"
+  marker="$attempt_dir/$session.exit"
+  script="$attempt_dir/$session.sh"
+  logger_python="$URA_WORK/MLLMRiskBench/.venv/bin/python"
+  timeout_bin="$(command -v timeout)" || return
+  [[ -x "$logger_python" && -x "$timeout_bin" ]] || return 1
+  task="native-$label"
+  started_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)" || return
+  printf '{"campaign_id":"%s","evidence_class":"%s","hard_stop_hours":168,"hosted_calls_allowed":%s,"model_tasks":%s,"planned_tasks":["%s"],"schema":"ura-engineering-campaign/1","started_at":"%s"%s,"thesis_empirical_evidence":false}\n' \
+    "$session" "$evidence_class" "$hosted" "$model_tasks" "$task" \
+    "$started_at" "$cap_field" \
+    > "$attempt_dir/ENGINEERING_ONLY.json" || return
+  drain_code="$(printf '%s\n' \
+    'import os, sys' \
+    'path, limit = sys.argv[1], int(sys.argv[2])' \
+    'notice = b"\n[native session log truncated at 16777216 bytes]\n"' \
+    'payload_limit = limit - len(notice)' \
+    'written = 0' \
+    'truncated = False' \
+    'with open(path, "xb", buffering=0) as sink:' \
+    '    while True:' \
+    '        chunk = sys.stdin.buffer.read(65536)' \
+    '        if not chunk: break' \
+    '        part = chunk[:max(0, payload_limit - written)]' \
+    '        if part: sink.write(part); written += len(part)' \
+    '        if len(part) != len(chunk): truncated = True' \
+    '    if truncated: sink.write(notice)' \
+    '    os.fsync(sink.fileno())')" || return
+  {
+    printf '#!/usr/bin/env bash\nset -o pipefail\ncd -- %q\n' "$PWD"
+    printf 'task=%q\ntask_log=%q\ndetail=%q\n' \
+      "$task" "$attempt_dir/task-log.jsonl" "$detail"
+    printf 'printf '\''{"at":"%%s","detail":"%%s","event":"campaign_start","status":"running","task":"bootstrap"}\\n'\'' "$(date -u +%%Y-%%m-%%dT%%H:%%M:%%SZ)" "$detail" >> "$task_log"\n'
+    printf 'printf '\''{"at":"%%s","detail":"%%s","event":"task_start","status":"running","task":"%%s"}\\n'\'' "$(date -u +%%Y-%%m-%%dT%%H:%%M:%%SZ)" "$detail" "$task" >> "$task_log"\n'
+    printf '%q --signal=TERM --kill-after=60s 168h' "$timeout_bin"
+    printf ' %q' "$@"
+    printf ' 2>&1 | %q -c %q %q 16777216\n' \
+      "$logger_python" "$drain_code" "$log"
+    printf 'status=("${PIPESTATUS[@]}")\nrc="${status[0]}"\n'
+    printf 'if [[ "$rc" == 0 && "${status[1]}" != 0 ]]; then rc="${status[1]}"; fi\n'
+    printf 'if [[ "$rc" == 0 ]]; then outcome=passed; campaign=complete; else outcome=failed; campaign=failed; fi\n'
+    printf 'printf '\''{"at":"%%s","detail":"%%s","event":"task_end","status":"%%s","task":"%%s"}\\n'\'' "$(date -u +%%Y-%%m-%%dT%%H:%%M:%%SZ)" "$detail" "$outcome" "$task" >> "$task_log"\n'
+    printf 'printf '\''{"at":"%%s","detail":"%%s","event":"campaign_end","status":"%%s","task":"bootstrap"}\\n'\'' "$(date -u +%%Y-%%m-%%dT%%H:%%M:%%SZ)" "$detail" "$campaign" >> "$task_log"\n'
+    printf 'printf "%%s\\n" "$rc" > %q\nmv -- %q %q\nexit "$rc"\n' \
+      "$marker.tmp" "$marker.tmp" "$marker"
+  } > "$script" || return
+  chmod 700 "$script" || return
+  if command -v tmux >/dev/null 2>&1; then
+    tmux -L "$socket" new-session -d -s "$session" "$script" || return
+    launcher=tmux
+  elif command -v screen >/dev/null 2>&1; then
+    screen -DmS "$session" "$script" || return
+    launcher=screen
+  else
+    return 1
+  fi
+  export URA_NATIVE_SESSION_NAME="$session" URA_NATIVE_SESSION_LAUNCHER="$launcher"
+  export URA_NATIVE_SESSION_LOG="$log" URA_NATIVE_SESSION_EXIT="$marker"
+  export URA_NATIVE_SESSION_ROOT="$attempt_dir" URA_NATIVE_SESSION_TASK="$task"
+  export URA_NATIVE_TMUX_SOCKET="$socket"
+  printf 'session=%s\nattach=%s\nlog=%s\nexit_marker=%s\n' \
+    "$session" "$([[ "$launcher" == tmux ]] && printf 'tmux -L %s attach -t %s' "$socket" "$session" || printf 'screen -r %s' "$session")" \
+    "$log" "$marker"
+}
+
+ura_abort_native_session() {
+  local rc="$1" now temporary
+  if [[ "$URA_NATIVE_SESSION_LAUNCHER" == tmux ]]; then
+    tmux -L "$URA_NATIVE_TMUX_SOCKET" kill-session \
+      -t "$URA_NATIVE_SESSION_NAME" 2>/dev/null || true
+  else
+    screen -S "$URA_NATIVE_SESSION_NAME" -X quit 2>/dev/null || true
+  fi
+  sleep 1
+  if [[ ! -f "$URA_NATIVE_SESSION_EXIT" ]]; then
+    now="$(date -u +%Y-%m-%dT%H:%M:%SZ)" || return
+    printf '{"at":"%s","detail":"session-aborted","event":"task_end","status":"failed","task":"%s"}\n' \
+      "$now" "$URA_NATIVE_SESSION_TASK" >> "$URA_NATIVE_SESSION_ROOT/task-log.jsonl" || return
+    printf '{"at":"%s","detail":"session-aborted","event":"campaign_end","status":"failed","task":"bootstrap"}\n' \
+      "$now" >> "$URA_NATIVE_SESSION_ROOT/task-log.jsonl" || return
+    temporary="$URA_NATIVE_SESSION_EXIT.wait-$$"
+    printf '%s\n' "$rc" > "$temporary" || return
+    mv -- "$temporary" "$URA_NATIVE_SESSION_EXIT" || return
+  fi
+  return "$rc"
+}
+
+ura_wait_native_session() {
+  local deadline=$((SECONDS + 168 * 60 * 60 + 120)) listing rc
+  while [[ ! -f "$URA_NATIVE_SESSION_EXIT" ]]; do
+    if (( SECONDS >= deadline )); then
+      ura_abort_native_session 124
+      return $?
+    fi
+    if [[ "$URA_NATIVE_SESSION_LAUNCHER" == tmux ]]; then
+      if ! tmux -L "$URA_NATIVE_TMUX_SOCKET" has-session \
+        -t "$URA_NATIVE_SESSION_NAME" 2>/dev/null; then
+        sleep 1
+        if [[ ! -f "$URA_NATIVE_SESSION_EXIT" ]]; then
+          ura_abort_native_session 125
+          return $?
+        fi
+      fi
+    else
+      listing="$(screen -ls 2>/dev/null || true)"
+      if [[ ! "$listing" =~ [[:space:]][0-9]+\.${URA_NATIVE_SESSION_NAME}[[:space:]]+\((Attached|Detached|Multi(,[[:space:]]*attached)?)\) ]]; then
+        sleep 1
+        if [[ ! -f "$URA_NATIVE_SESSION_EXIT" ]]; then
+          ura_abort_native_session 125
+          return $?
+        fi
+      fi
+    fi
+    sleep 5
+  done
+  rc="$(tr -d '\r\n' < "$URA_NATIVE_SESSION_EXIT")"
+  [[ "$rc" =~ ^(0|[1-9][0-9]{0,2})$ ]] && (( rc <= 255 && rc == 0 ))
+}
+
+ura_native_run() {
+  ura_native_session "$@" || return
+  printf 'Tail with: tail -f -- %s\n' "$URA_NATIVE_SESSION_LOG"
+  ura_wait_native_session
+}
+
+ura_native_support_run() {
+  URA_NATIVE_SESSION_KIND=support URA_NATIVE_TARGET_CALL_CAP=0 \
+    ura_native_run "$@"
+}
+
 # FuzzyAI: retains a complete timestamped result directory with raw.jsonl and report.json.
-"$URA_NATIVE_ENVS/fuzzyai/bin/fuzzyai" fuzz \
-  -m '<native-target-route>' -a asc -a bon -T '<prompt-file>'
+URA_NATIVE_TARGET_CALL_CAP='<approved-positive-integer-for-this-command>' \
+ura_native_run fuzzyai "$URA_FUZZYAI_ENV/bin/fuzzyai" fuzz \
+  -m '<native-target-route>' -a asc -a bon -T '<prompt-file>' || exit $?
 
 # Garak 0.15.1: retains <prefix>.report.jsonl.
-"$URA_NATIVE_ENVS/garak/bin/python" -m garak \
+URA_NATIVE_TARGET_CALL_CAP='<approved-positive-integer-for-this-command>' \
+ura_native_run garak "$URA_GARAK_ENV/bin/python" -m garak \
   --target_type openai.OpenAICompatible --target_name '<exact-target>' \
   --probes dan.Dan_11_0 --detectors auto --generations 1 --seed 0 \
-  --eval_threshold 0.5 --report_prefix '<absolute-run-prefix>'
+  --eval_threshold 0.5 --report_prefix '<absolute-run-prefix>' || exit $?
 
 # Promptfoo 0.121.15: configure all three model roles in promptfooconfig.yaml.
-"$URA_NATIVE_ENVS/promptfoo/node_modules/.bin/promptfoo" redteam generate \
+URA_NATIVE_TARGET_CALL_CAP='<approved-positive-integer-for-this-command>' \
+ura_native_run promptfoo-generate "$URA_PROMPTFOO_ENV/runtime/node-v24.16.0-linux-x64/bin/node" \
+  "$URA_PROMPTFOO_ENV/node_modules/promptfoo/dist/src/entrypoint.js" redteam generate \
   -c promptfooconfig.yaml --strict --force --no-cache --no-progress-bar \
-  -o generated-redteam.yaml
-"$URA_NATIVE_ENVS/promptfoo/node_modules/.bin/promptfoo" redteam eval \
+  -o generated-redteam.yaml || exit $?
+URA_NATIVE_TARGET_CALL_CAP='<approved-positive-integer-for-this-command>' \
+ura_native_run promptfoo-eval "$URA_PROMPTFOO_ENV/runtime/node-v24.16.0-linux-x64/bin/node" \
+  "$URA_PROMPTFOO_ENV/node_modules/promptfoo/dist/src/entrypoint.js" redteam eval \
   -c generated-redteam.yaml --no-cache --no-share --no-progress-bar --no-table \
-  -o results.json
+  -o results.json || exit $?
 
 # Petri: auditor, target, and judge are three different declared roles.
-"$URA_NATIVE_ENVS/petri/bin/inspect" eval inspect_petri/audit \
+URA_NATIVE_TARGET_CALL_CAP='<approved-positive-integer-for-this-command>' \
+ura_native_run petri-eval "$URA_PETRI_ENV/bin/inspect" eval inspect_petri/audit \
   --model-role auditor='<provider/auditor>' \
   --model-role target='<provider/target>' \
-  --model-role judge='<provider/judge>'
-"$URA_NATIVE_ENVS/petri/bin/inspect" log convert --to json \
-  --output-dir '<converted-dir>' '<path-to-run.eval>'
+  --model-role judge='<provider/judge>' || exit $?
+ura_native_support_run petri-convert \
+  "$URA_PETRI_ENV/bin/inspect" log convert --to json \
+  --output-dir '<converted-dir>' '<path-to-run.eval>' || exit $?
 
 # AutoDAN-Turbo: run standard or reasoning entrypoint in the exact checkout.
-cd "$URA_UPSTREAM/AutoDAN-Turbo"
-"$URA_NATIVE_ENVS/autodan/bin/python" main.py
-# Or, as a separate condition: "$URA_NATIVE_ENVS/autodan/bin/python" main_r.py
+cd "$URA_AUTODAN_ENV/source/autodan" || exit $?
+URA_NATIVE_TARGET_CALL_CAP='<approved-positive-integer-for-this-command>' \
+ura_native_run autodan-standard "$URA_AUTODAN_ENV/bin/python" main.py || exit $?
+# Or, as a separate condition, set a fresh cap and call:
+# URA_NATIVE_TARGET_CALL_CAP='<approved-positive-integer-for-this-command>' \
+# ura_native_run autodan-reasoning "$URA_AUTODAN_ENV/bin/python" main_r.py || exit $?
 
 # Immediately write the mandatory URA provenance sidecar. Substitute the exact
 # output directory, role identities, dataset digest, variant, and upstream
@@ -2238,7 +2660,7 @@ cd "$URA_UPSTREAM/AutoDAN-Turbo"
 URA_AUTODAN_LOGS='<exact-AutoDAN-output-directory>' \
 URA_AUTODAN_RUN_ID='<recorded-run-id>' \
 URA_AUTODAN_DATASET_SHA256='<64-hex-dataset-sha256>' \
-"$URA_WORK/MLLMRiskBench/.venv/bin/python" - <<'PY'
+"$URA_WORK/MLLMRiskBench/.venv/bin/python" - <<'PY' || exit $?
 import os
 from ura.adapters.autodan import AutoDANTurboAttacker
 
@@ -2263,23 +2685,32 @@ AutoDANTurboAttacker.write_run_manifest(
 PY
 
 # ASB: DPI, OPI, memory poisoning, and PoT are separate native surfaces.
-cd "$URA_UPSTREAM/ASB"
-"$URA_NATIVE_ENVS/asb/bin/python" scripts/agent_attack.py --cfg_path config/DPI.yml
-"$URA_NATIVE_ENVS/asb/bin/python" scripts/agent_attack.py --cfg_path config/OPI.yml
-"$URA_NATIVE_ENVS/asb/bin/python" scripts/agent_attack.py --cfg_path config/MP.yml
-"$URA_NATIVE_ENVS/asb/bin/python" scripts/agent_attack_pot.py
+cd "$URA_ASB_ENV/source/asb" || exit $?
+URA_NATIVE_TARGET_CALL_CAP='<approved-positive-integer-for-this-command>' \
+ura_native_run asb-dpi "$URA_ASB_ENV/bin/python" scripts/agent_attack.py --cfg_path config/DPI.yml || exit $?
+URA_NATIVE_TARGET_CALL_CAP='<approved-positive-integer-for-this-command>' \
+ura_native_run asb-opi "$URA_ASB_ENV/bin/python" scripts/agent_attack.py --cfg_path config/OPI.yml || exit $?
+URA_NATIVE_TARGET_CALL_CAP='<approved-positive-integer-for-this-command>' \
+ura_native_run asb-mp "$URA_ASB_ENV/bin/python" scripts/agent_attack.py --cfg_path config/MP.yml || exit $?
+URA_NATIVE_TARGET_CALL_CAP='<approved-positive-integer-for-this-command>' \
+ura_native_run asb-pot "$URA_ASB_ENV/bin/python" scripts/agent_attack_pot.py || exit $?
 
 # AgentDojo: retain the fresh pipeline/suite trace subtree.
-"$URA_NATIVE_ENVS/agentdojo/bin/python" -m agentdojo.scripts.benchmark \
+URA_NATIVE_TARGET_CALL_CAP='<approved-positive-integer-for-this-command>' \
+ura_native_run agentdojo "$URA_AGENTDOJO_ENV/bin/python" -m agentdojo.scripts.benchmark \
   --model '<exact-model>' --benchmark-version v1.2.2 \
-  --attack important_instructions -s workspace --logdir '<native-logdir>'
+  --attack important_instructions -s workspace --logdir '<native-logdir>' || exit $?
 ```
 
 EasyJailbreak has no single universal recipe command: execute one exact recipe
 class exported by 0.1.3 with explicit attack, target, and evaluator models, then
-call `JailbreakDataset.save_to_jsonl()` on the complete `attack_results`. Giskard
+call `JailbreakDataset.save_to_jsonl()` on the complete `attack_results`; pass
+that reviewed Python argv through
+`URA_NATIVE_TARGET_CALL_CAP='<approved-positive-integer-for-this-command>' ura_native_run easyjailbreak ...`.
+Giskard
 likewise uses its Python API: run `giskard.scan(model, dataset)` or
-`giskard.rag.evaluate()`, then export the complete Scan or RAGET artifact family.
+`giskard.rag.evaluate()` through the same fresh-cap pattern with
+`ura_native_run giskard`, then export the complete Scan or RAGET artifact family.
 The URA adapter helpers and exact required artifacts are documented in
 [`docs/NATIVE_ENGINE_IMPORTS.md`](../docs/NATIVE_ENGINE_IMPORTS.md).
 
@@ -2528,7 +2959,7 @@ python -m experiments.level1_evidence \
 ```
 
 The command is create-only; use new output names when rebuilding. Its
-`ura-level1-evidence/2` JSON distinguishes prospective whole-arm request units,
+`ura-level1-evidence/3` JSON distinguishes prospective whole-arm request units,
 materialized planning strata, whole-arm execution units, and judgment-record
 support. It validates exact
 plan/grid conditions and descriptors, content descriptors for grid and
@@ -2758,7 +3189,7 @@ a mode-aware builder (dry run, attestation probe, diagnostic canary, measured
 execution) with mode-specific validation and an exact-argv confirmation step
 before any paid mode starts, streams job logs, edits the operator-local
 registries (api-targets, local-targets, source-instances, budgets, pricing)
-through an allowlisted JSON editor, renders retained `ura-level1-evidence/2`
+through an allowlisted JSON editor, renders retained `ura-level1-evidence/3`
 and `ura-level2-report/1` artifacts with explicit diagnostic/measured,
 structural-`N/A`, and error distinctions after reconciling their reported
 counts, sample sizes, and confidence intervals, and accounts recorded token

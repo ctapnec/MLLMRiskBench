@@ -232,7 +232,7 @@ completed Judgment-record counts. Analysis-inclusion counts remain null and
 `experiments.level1_evidence` implements this accounting by automatically
 discovering `ura-request-envelope/2` artifacts from supplied result roots and
 eligibility siblings, then joining any materialized plans and final
-complete/partial grids. It emits `ura-level1-evidence/2` JSON and the existing
+complete/partial grids. It emits `ura-level1-evidence/3` JSON and the existing
 deterministic planning-stratum CSV. It
 reports scientific compatibility separately from whole-arm execution
 eligibility, distinguishes errors before and after execution started, verifies
@@ -343,7 +343,7 @@ in human-labelled outcomes.
 
 `experiments.suite_summary` accepts completion-validated runner cells,
 canonical re-imported `ura-native-import-envelope/2` evidence, and separately
-validated `ura-eligibility-plan/2` planning ledgers supplied through repeatable
+validated `ura-eligibility-plan/3` planning ledgers supplied through repeatable
 `--eligibility` arguments. Eligibility counts remain explicitly labelled as
 planning rather than execution evidence. Each native envelope is validated
 against its hashed relative config and authoritative raw artifacts before its

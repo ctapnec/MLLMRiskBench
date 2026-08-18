@@ -34,13 +34,29 @@ def test_attacker_config_rejects_literal_secrets(tmp_path: Path) -> None:
         run_matrix._load_attacker_config(str(config), ["promptfoo"])
 
 
+def test_attacker_config_rejects_private_runtime_locator_fields(tmp_path: Path) -> None:
+    private_interpreter = tmp_path / "private-pyrit" / "bin" / "python"
+    config = tmp_path / "attackers.json"
+    config.write_text(
+        json.dumps({
+            "pyrit": {
+                "converters": ["Base64Converter"],
+                "engine_runtime": str(private_interpreter),
+            }
+        }),
+        encoding="utf-8",
+    )
+    with pytest.raises(ValueError, match="private runtime fields") as caught:
+        run_matrix._load_attacker_config(str(config), ["pyrit"])
+    assert str(private_interpreter) not in str(caught.value)
+
+
 def test_run_matrix_applies_and_persists_attacker_config(tmp_path: Path) -> None:
     config = tmp_path / "attackers.json"
     config_value = {
         "nanogcg": {
             "suffix": " suffix",
             "suffix_source": "fixture",
-            "model_revision": "0123456789abcdef",
         }
     }
     config.write_text(json.dumps(config_value), encoding="utf-8")
@@ -87,7 +103,6 @@ def test_attacker_config_formatting_does_not_change_selected_grid_identity(
     value = {"nanogcg": {
         "suffix": " suffix",
         "suffix_source": "fixture",
-        "model_revision": "0123456789abcdef",
     }}
     identities: list[tuple[str, str]] = []
     for index, indent in enumerate((None, 4)):

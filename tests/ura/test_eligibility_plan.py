@@ -64,7 +64,7 @@ def _plan() -> dict:
 def test_plan_retains_incompatible_target_source_modality_as_na() -> None:
     plan = _plan()
 
-    assert plan["schema"] == "ura-eligibility-plan/2"
+    assert plan["schema"] == "ura-eligibility-plan/3"
     assert plan["counts"] == {
         "cells_total": 4,
         "compatible_if_isolated": 3,

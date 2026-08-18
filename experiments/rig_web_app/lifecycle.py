@@ -17,6 +17,7 @@ from typing import Any, Callable, Mapping
 from urllib.parse import parse_qs, quote, urlparse
 
 from ura.strict_json import strict_json_loads
+from ura.adapters._engine_runtime import RUNTIME_REQUIRED_ATTACKERS
 
 from .catalog import _REPO_ROOT, _LOG_TAIL_BYTES, Command, COMMANDS, build_argv
 
@@ -32,9 +33,10 @@ from .artifacts import (
     _win_close_handle,
     _win_terminate_job,
     collect_usage,
+    derived_path_quarantined,
 )
 
-from .reports import collect_reports
+from .reports import collect_report_file
 from .log_supervisor import (
     bounded_log_write as _supervisor_bounded_log_write,
     capture_stream as _supervisor_capture_stream,
@@ -44,6 +46,12 @@ from .log_supervisor import (
 
 from .storage import ConsoleDB
 from .ollama_service import OllamaError, OllamaService, validate_ollama_tag
+from .framework_runtimes import (
+    FrameworkRuntimeConflict,
+    FrameworkRuntimeError,
+    FrameworkRuntimeService,
+    runtime_action_form,
+)
 from .campaigns import (
     EngineeringCampaign,
     load_engineering_campaign,
@@ -55,6 +63,7 @@ _PRIVATE_LOCAL_CONFIG_ENV = "URA_PRIVATE_TRANSIENT_LOCAL_CONFIG"
 _PRIVATE_API_CONFIG_ENV = "URA_PRIVATE_TRANSIENT_API_CONFIG"
 _PRIVATE_SOURCE_CONFIG_ENV = "URA_PRIVATE_TRANSIENT_SOURCE_CONFIG"
 _PRIVATE_ATTACKER_CONFIG_ENV = "URA_PRIVATE_TRANSIENT_ATTACKER_CONFIG"
+_PRIVATE_ENGINE_RUNTIME_CONFIG_ENV = "URA_PRIVATE_TRANSIENT_ENGINE_RUNTIME_CONFIG"
 _PRIVATE_PROJECT_REVISION_ENV = "URA_PRIVATE_TRANSIENT_PROJECT_REVISION"
 _PRIVATE_SOURCE_CONFORMANCE_ENV = "URA_PRIVATE_TRANSIENT_SOURCE_CONFORMANCE"
 _PRIVATE_LIVE_ATTESTATION_ENV_PREFIX = "URA_PRIVATE_TRANSIENT_LIVE_ATTESTATION_"
@@ -88,6 +97,7 @@ class LifecycleMixin:
         gpu_hardware: Mapping[str, Any] | None = None,
         system_hardware: Mapping[str, Any] | None = None,
         ollama_service: OllamaService | None = None,
+        framework_runtime_service: FrameworkRuntimeService | None = None,
     ) -> None:
         self.results_root = results_root
         self.state_dir = state_dir
@@ -156,7 +166,12 @@ class LifecycleMixin:
         self._model_acquisition_workflows: dict[str, dict[str, Any]] = {}
         self._model_acquisition_activity: dict[str, dict[str, Any]] = {}
         self.ollama = ollama_service or OllamaService(state_dir)
-        self.db = ConsoleDB(state_dir / "console.db")
+        self.framework_runtimes = framework_runtime_service or FrameworkRuntimeService(
+            repo_root=self.repo_root,
+            results_root=self.results_root,
+            state_dir=self.state_dir,
+        )
+        self.db = ConsoleDB(state_dir / "console.db", repo_root=self.repo_root)
         self._restore_jobs()
         self._restore_model_acquisition_workflows()
         self._recover_unrecorded_runs()
@@ -578,6 +593,11 @@ class LifecycleMixin:
             "source_conformance_sha",
         )
         bind_path("t3_artifact", "private-t3mp3st-artifact", "t3_artifact_sha")
+        bind_path(
+            "engine_runtime_config",
+            "private-engine-runtime-config",
+            "engine_runtime_config_sha",
+        )
         if projected.get("harm_config"):
             digest = str(
                 projected.get("_attacker_config_snapshot_sha256", "")
@@ -821,6 +841,16 @@ class LifecycleMixin:
             filename_prefix="attacker",
         )
 
+    def _private_engine_runtime_config_path(
+        self, values: Mapping[str, str]
+    ) -> Path | None:
+        return self._private_selected_config_path(
+            values,
+            flag="--engine-runtime-config",
+            directory_name=".private-engine-runtime-configs",
+            filename_prefix="engine-runtime",
+        )
+
     def _private_source_conformance_path(
         self, values: Mapping[str, str]
     ) -> Path | None:
@@ -918,6 +948,7 @@ class LifecycleMixin:
         paths = [
             path
             for path in (
+                self._private_engine_runtime_config_path(values),
                 self._private_source_conformance_path(values),
                 self._private_project_revision_path(values),
             )
@@ -1008,6 +1039,56 @@ class LifecycleMixin:
                 )
             durable_values["--attacker-config"] = (
                 f"private-attacker-config@sha256:{attacker_digest}"
+            )
+        selected_runtime_attackers = sorted(
+            {
+                item.strip().lower()
+                for item in str(values.get("--attackers", "")).split(",")
+                if item.strip()
+            }
+            & RUNTIME_REQUIRED_ATTACKERS
+        )
+        private_engine_runtime_config = (
+            self._private_engine_runtime_config_path(values)
+        )
+        if selected_runtime_attackers:
+            if private_engine_runtime_config is None or builder_params is None:
+                raise ValueError(
+                    "selected third-party frameworks require a reviewed private "
+                    "engine runtime config"
+                )
+            engine_digest = str(
+                values.get("--engine-runtime-config-sha256", "")
+            ).strip()
+            if re.fullmatch(r"[0-9a-f]{64}", engine_digest) is None:
+                raise ValueError(
+                    "private --engine-runtime-config requires an exact lowercase "
+                    "SHA-256"
+                )
+            runtime_params = {
+                key: str(value) for key, value in builder_params.items()
+            }
+            runtime_params["attackers"] = ",".join(selected_runtime_attackers)
+            runtime_params["engine_runtime_config"] = str(
+                private_engine_runtime_config
+            )
+            runtime_params["engine_runtime_config_sha"] = engine_digest
+            _projection, runtime_binding, _raw, _actual = (
+                self._selected_engine_runtime_config_snapshot(runtime_params)
+            )
+            if runtime_binding != str(
+                builder_params.get("_engine_runtime_config_snapshot_sha256", "")
+            ):
+                raise ValueError(
+                    "selected engine runtime config differs from the reviewed snapshot"
+                )
+            durable_values["--engine-runtime-config"] = (
+                f"private-engine-runtime-config@sha256:{engine_digest}"
+            )
+        elif values.get("--engine-runtime-config"):
+            raise ValueError(
+                "engine runtime config is not allowed without a selected "
+                "third-party framework"
             )
         private_source_conformance = self._private_source_conformance_path(values)
         if private_source_conformance is not None:
@@ -1525,6 +1606,7 @@ class LifecycleMixin:
     _PRIVATE_LOG_LOCATOR_FLAGS = frozenset({
         "--api-config",
         "--attacker-config",
+        "--engine-runtime-config",
         "--local-config",
         "--project-revision",
         "--source-config",
@@ -1663,6 +1745,7 @@ class LifecycleMixin:
         for flag in (
             "--api-config",
             "--attacker-config",
+            "--engine-runtime-config",
             "--local-config",
             "--source-config",
         ):
@@ -1886,6 +1969,7 @@ class LifecycleMixin:
         allowed = {
             "api_config",
             "attacker_config",
+            "engine_runtime_config",
             "local_config",
             "project_revision",
             "source_config",
@@ -2912,6 +2996,7 @@ class LifecycleMixin:
             child_env.pop(_PRIVATE_API_CONFIG_ENV, None)
             child_env.pop(_PRIVATE_SOURCE_CONFIG_ENV, None)
             child_env.pop(_PRIVATE_ATTACKER_CONFIG_ENV, None)
+            child_env.pop(_PRIVATE_ENGINE_RUNTIME_CONFIG_ENV, None)
             child_env.pop(_PRIVATE_PROJECT_REVISION_ENV, None)
             child_env.pop(_PRIVATE_SOURCE_CONFORMANCE_ENV, None)
             for index in range(1, 13):
@@ -2930,6 +3015,13 @@ class LifecycleMixin:
                 child_env[_PRIVATE_SOURCE_CONFIG_ENV] = str(transient_source_config)
             if transient_attacker_config is not None:
                 child_env[_PRIVATE_ATTACKER_CONFIG_ENV] = str(transient_attacker_config)
+            private_engine_runtime_config = (
+                self._private_engine_runtime_config_path(values)
+            )
+            if private_engine_runtime_config is not None:
+                child_env[_PRIVATE_ENGINE_RUNTIME_CONFIG_ENV] = str(
+                    private_engine_runtime_config
+                )
             if transient_source_conformance is not None:
                 child_env[_PRIVATE_SOURCE_CONFORMANCE_ENV] = str(
                     transient_source_conformance
@@ -3241,22 +3333,51 @@ class LifecycleMixin:
         """Rebuild the derived usage and report indexes from retained artifacts.
 
         Serialized with reconcile/start/stop under the application lock so it
-        cannot delete a usage row another thread is committing.  It scans the
-        results root AND every output directory recorded in the runs registry
-        (a lane's --out may legitimately point outside the results root), so a
-        rebuild never silently drops usage that reconcile recorded from such a
-        directory.
+        cannot delete a usage row another thread is committing.  It scans only
+        exact output directories owned by retained run records (a lane's
+        ``--out`` may legitimately point outside the results root) and indexes
+        only exact ``--out-json`` files owned by retained analysis Jobs.  A
+        recursive results-root scan would import copied pytest/engineering
+        fixtures that merely resemble campaign evidence.
         """
 
         with self._app_lock:
-            roots: dict[str, Path] = {str(self.results_root.resolve()): self.results_root}
-            runs = self.db.list_runs() or []
+            roots: dict[str, Path] = {}
+            runs = self.db.list_run_owners(limit=10_001)
+            report_jobs = self.db.load_report_jobs(limit=10_001)
+            if (
+                runs is None
+                or report_jobs is None
+                or len(runs) > 10_000
+                or len(report_jobs) > 10_000
+            ):
+                return {
+                    "ok": False,
+                    "roots": 0,
+                    "usage_rows": 0,
+                    "reports": 0,
+                    "markers": 0,
+                    "skipped_error": 0,
+                    "skipped_invalid": 0,
+                    "orphan_responses": 0,
+                    "truncated": 1,
+                    "unreadable_artifacts": 0,
+                    "error": "retained ownership registry unavailable or over limit",
+                }
             for row in runs:
                 out = str(row["out_dir"] or "").strip()
                 if not out:
                     continue
                 candidate = self.repo_root / out
-                roots.setdefault(str(candidate.resolve()), candidate)
+                try:
+                    resolved = candidate.resolve(strict=True)
+                except OSError:
+                    continue
+                if resolved.is_dir() and not derived_path_quarantined(
+                    resolved,
+                    self.results_root,
+                ):
+                    roots.setdefault(str(resolved), resolved)
             usage_rows: list[dict[str, Any]] = []
             merged = {
                 "markers": 0,
@@ -3267,10 +3388,24 @@ class LifecycleMixin:
                 "unreadable_artifacts": 0,
             }
             seen: set[tuple[str, str, str, str, str]] = set()
-            for root in roots.values():
+            owned_roots = tuple(roots.values())
+            for root in owned_roots:
                 if not root.exists():
                     continue
-                rows, stats = collect_usage(root, verify_sha=True)
+                excluded_roots = []
+                for candidate in owned_roots:
+                    if candidate == root:
+                        continue
+                    try:
+                        candidate.relative_to(root)
+                    except ValueError:
+                        continue
+                    excluded_roots.append(candidate)
+                rows, stats = collect_usage(
+                    root,
+                    verify_sha=True,
+                    excluded_roots=tuple(excluded_roots),
+                )
                 for key in merged:
                     merged[key] += int(stats.get(key, 0))
                 for entry in rows:
@@ -3285,7 +3420,23 @@ class LifecycleMixin:
                         continue
                     seen.add(dedup)
                     usage_rows.append(entry)
-            report_rows = collect_reports(self.results_root)
+            report_rows: list[dict[str, Any]] = []
+            seen_report_paths: set[str] = set()
+            # DashboardMixin resolves live + DB-only producers against the
+            # complete bounded run registry and selects one unique deepest
+            # owner.  Reindex consumes that same ownership decision so restart
+            # cannot widen discovery or resurrect stale recursive fixtures.
+            for binding in self._stats_report_bindings():
+                relative = str(binding["path"])
+                if relative in seen_report_paths:
+                    continue
+                report = collect_report_file(
+                    self.results_root,
+                    self.results_root / relative,
+                )
+                if report is not None:
+                    report_rows.append(report)
+                    seen_report_paths.add(relative)
             ok = self.db.reindex(usage_rows, report_rows)
             return {
                 "ok": ok,
@@ -3498,8 +3649,19 @@ class LifecycleMixin:
                 job_id = path.split("/")[2]
                 self.stop_job(job_id)
                 return 303, f"/jobs/{job_id}", b""
+            if method == "GET" and path.startswith("/stats/job/"):
+                job_id = path.removeprefix("/stats/job/")
+                if not job_id or "/" in job_id:
+                    return 404, "text/plain; charset=utf-8", b"unknown campaign job"
+                detail = self._stats_job_detail_page(
+                    job_id,
+                    fragment=query.get("fragment") == "1",
+                )
+                if detail is None:
+                    return 404, "text/plain; charset=utf-8", b"unknown campaign job"
+                return 200, "text/html; charset=utf-8", detail
             if method == "GET" and path == "/stats":
-                return 200, "text/html; charset=utf-8", self._stats_page()
+                return 200, "text/html; charset=utf-8", self._stats_page(query)
             if method == "GET" and path == "/build":
                 return (
                     200,
@@ -3507,8 +3669,35 @@ class LifecycleMixin:
                     self._build_page(
                         ollama_state=query.get("ollama_state", ""),
                         ollama_error=query.get("ollama_error", ""),
+                        framework_runtime_state=query.get(
+                            "framework_runtime_state", ""
+                        ),
                     ),
                 )
+            if method == "POST" and path == "/build/framework-runtimes":
+                try:
+                    framework, action = runtime_action_form(dict(form or {}))
+                except FrameworkRuntimeError as exc:
+                    return (
+                        400,
+                        "text/html; charset=utf-8",
+                        self._build_page(framework_runtime_error=str(exc)),
+                    )
+                try:
+                    self.framework_runtimes.launch(framework, action)
+                except FrameworkRuntimeConflict as exc:
+                    return (
+                        409,
+                        "text/html; charset=utf-8",
+                        self._build_page(framework_runtime_error=str(exc)),
+                    )
+                except FrameworkRuntimeError as exc:
+                    return (
+                        503,
+                        "text/html; charset=utf-8",
+                        self._build_page(framework_runtime_error=str(exc)),
+                    )
+                return 303, "/build?framework_runtime_state=launched#build-runtimes", b""
             if method == "POST" and path == "/build/t3mp3st/capture":
                 return self._handle_capture("t3mp3st", dict(form or {}))
             if method == "POST" and path == "/build/harmbench/prepare":

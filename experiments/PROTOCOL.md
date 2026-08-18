@@ -49,7 +49,7 @@ not replaced with a nearby model. A failed/stale live attestation or silent
 identity drift is a missing/failed prerequisite, not a safe zero and not
 silently rewritten as structural incompatibility.
 
-Runner 2.19 operationalizes this distinction. One completed, bounded, non-dry
+Runner 2.20 operationalizes this distinction. One completed, bounded, non-dry
 `--attestation-probe` is converted without another provider call into a strict
 `ura-live-attestation/2` receipt. Each ordinary measured grid must supply the
 receipt's exact byte digest, the same operator-declared non-secret
@@ -98,7 +98,7 @@ roots retain portable path-free plan/receipt evidence and a stable seal-based
 condition identity. Receipt wall-clock time remains audit provenance but cannot
 split otherwise identical experimental strata.
 
-Runner 2.19 also makes local response construction valid before orchestration:
+Runner 2.20 also makes local response construction valid before orchestration:
 vLLM and Ollama emit the shared deterministic rendered-dialog fingerprint as a
 temporary non-blank `attempt_id`, and Runner replaces it with the canonical
 Attempt ID and run ID before judgment or persistence. The placeholder is local
@@ -235,7 +235,7 @@ is not a universal empirical safety score, and weights are never renormalized
 over each model's observed survivors.
 
 Level 1 is materialized by `experiments.level1_evidence` as
-`ura-level1-evidence/2` JSON and a deterministic planning-stratum CSV.
+`ura-level1-evidence/3` JSON and a deterministic planning-stratum CSV.
 Level 2 tabulation is materialized by `experiments.level2_report` as
 deterministic `ura-level2-report/1` JSON/CSV/Markdown over exact
 compatibility keys, with native evidence in a separate original-scale table.

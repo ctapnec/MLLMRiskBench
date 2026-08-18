@@ -146,6 +146,7 @@ def _sanitised_child_env(
     *,
     allow_credentials: Iterable[str] = (),
     env_overrides: Mapping[str, str] | None = None,
+    inherit_environment: bool = True,
 ) -> dict[str, str]:
     """Return a compatibility-preserving environment with secrets removed.
 
@@ -161,16 +162,17 @@ def _sanitised_child_env(
     child: dict[str, str] = {}
     source_by_upper = {name.upper(): (name, value) for name, value in os.environ.items()}
 
-    for upper_name, (name, value) in source_by_upper.items():
-        is_sensitive = _is_credential_or_carrier(upper_name)
-        is_runtime_injection = (
-            upper_name in _RUNTIME_INJECTION_NAMES or upper_name.startswith("DYLD_")
-        )
-        if is_runtime_injection:
-            continue
-        if is_sensitive and upper_name not in allowed:
-            continue
-        child[name] = value
+    if inherit_environment:
+        for upper_name, (name, value) in source_by_upper.items():
+            is_sensitive = _is_credential_or_carrier(upper_name)
+            is_runtime_injection = (
+                upper_name in _RUNTIME_INJECTION_NAMES or upper_name.startswith("DYLD_")
+            )
+            if is_runtime_injection:
+                continue
+            if is_sensitive and upper_name not in allowed:
+                continue
+            child[name] = value
 
     # Re-add explicitly allowed credentials using their original spelling.
     for upper_name in allowed:
@@ -227,12 +229,23 @@ def _read_bounded(stream, limit: int) -> str:
     return data.decode("utf-8", errors="replace")
 
 
-def _redact(text: str, env: Mapping[str, str], allowed: set[str]) -> str:
-    """Redact deliberately forwarded credentials from child diagnostics."""
+def _redact(
+    text: str,
+    env: Mapping[str, str],
+    allowed: set[str],
+    extra_values: Iterable[str] = (),
+) -> str:
+    """Redact deliberately forwarded credentials and private runtime values."""
 
     for name, value in env.items():
         if name.upper() in allowed and value:
             text = text.replace(value, "[REDACTED]")
+    for value in sorted(
+        {item for item in extra_values if isinstance(item, str) and item},
+        key=len,
+        reverse=True,
+    ):
+        text = text.replace(value, "[REDACTED-PRIVATE]")
     return text
 
 
@@ -248,6 +261,8 @@ def run_engine_command(
     cwd: str | os.PathLike[str] | None = None,
     allow_credentials: Iterable[str] = (),
     env_overrides: Mapping[str, str] | None = None,
+    inherit_environment: bool = True,
+    redact_values: Iterable[str | os.PathLike[str]] = (),
     timeout_seconds: float | None = None,
     diagnostic_limit_bytes: int = DEFAULT_DIAGNOSTIC_LIMIT_BYTES,
     check: bool = True,
@@ -286,8 +301,12 @@ def run_engine_command(
     child_env = _sanitised_child_env(
         allow_credentials=allowed,
         env_overrides=env_overrides,
+        inherit_environment=inherit_environment,
     )
-    command_text = _redact(_command_label(args), child_env, allowed)
+    private_values = tuple(os.fspath(value) for value in redact_values)
+    command_text = _redact(
+        _command_label(args), child_env, allowed, private_values
+    )
 
     with tempfile.TemporaryFile(mode="w+b") as stdout_file, tempfile.TemporaryFile(
         mode="w+b"
@@ -305,10 +324,16 @@ def run_engine_command(
             )
         except subprocess.TimeoutExpired as exc:
             stdout = _redact(
-                _read_bounded(stdout_file, diagnostic_limit_bytes), child_env, allowed
+                _read_bounded(stdout_file, diagnostic_limit_bytes),
+                child_env,
+                allowed,
+                private_values,
             )
             stderr = _redact(
-                _read_bounded(stderr_file, diagnostic_limit_bytes), child_env, allowed
+                _read_bounded(stderr_file, diagnostic_limit_bytes),
+                child_env,
+                allowed,
+                private_values,
             )
             detail = _diagnostic_detail(stdout, stderr)
             raise ExternalEngineError(
@@ -316,15 +341,22 @@ def run_engine_command(
                 f"{command_text}{detail}"
             ) from exc
         except OSError as exc:
+            safe_error = _redact(str(exc), child_env, allowed, private_values)
             raise ExternalEngineError(
-                f"{feature} could not start external command {command_text}: {exc}"
+                f"{feature} could not start external command {command_text}: {safe_error}"
             ) from exc
 
         stdout = _redact(
-            _read_bounded(stdout_file, diagnostic_limit_bytes), child_env, allowed
+            _read_bounded(stdout_file, diagnostic_limit_bytes),
+            child_env,
+            allowed,
+            private_values,
         )
         stderr = _redact(
-            _read_bounded(stderr_file, diagnostic_limit_bytes), child_env, allowed
+            _read_bounded(stderr_file, diagnostic_limit_bytes),
+            child_env,
+            allowed,
+            private_values,
         )
         result = subprocess.CompletedProcess(
             args=args,

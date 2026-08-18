@@ -365,6 +365,124 @@ _BILLED_CATEGORIES = ("input", "output", "cache_read", "cache_write")
 _UNBILLED_PROVIDERS = {"vllm", "ollama", "mock", "local"}
 _MARKER_SUFFIX = ".complete.json"
 
+# Derived console indexes must not treat retained engineering harnesses as
+# research runs.  Those trees deliberately contain copied fixtures, temporary
+# pytest workspaces, and smoke-test artifacts that may themselves look like
+# valid Runner outputs.  They remain browsable as raw engineering evidence,
+# but recursive scientific/usage discovery stops at these boundaries.
+_DERIVED_SCAN_EXCLUDED_DIRS = frozenset(
+    {
+        "engineering",
+        "verification",
+        "verifications",
+        ".pytest_cache",
+        "__pycache__",
+    }
+)
+
+
+def derived_scan_directory_excluded(path: Path) -> bool:
+    """Whether a recursive derived-index scan must not enter ``path``.
+
+    This is intentionally based on retained evidence boundaries, not a broad
+    substring match: a workstation's own temporary parent may legitimately
+    contain the configured results root.  Symlinked directories are also
+    excluded so an artifact tree cannot redirect a bounded scan elsewhere.
+    """
+
+    if path.is_symlink():
+        return True
+    name = path.name.casefold()
+    if name in _DERIVED_SCAN_EXCLUDED_DIRS or name.startswith("pytest-"):
+        return True
+    marker = path / "ENGINEERING_ONLY.json"
+    try:
+        return marker.is_file() and not marker.is_symlink()
+    except (OSError, RuntimeError):
+        return True
+
+
+def derived_index_path_quarantined(value: str) -> bool:
+    """Reject a stale derived row whose recorded locator crosses engineering.
+
+    SQLite may contain rows written by an older broad recursive reindex.  The
+    read boundary therefore mirrors discovery until the next reindex replaces
+    those rows.  Only path *segments* are inspected; words such as
+    ``engineering-study`` do not match.
+    """
+
+    parts = tuple(
+        part.casefold()
+        for part in value.replace("\\", "/").split("/")
+        if part
+    )
+    return any(
+        part in _DERIVED_SCAN_EXCLUDED_DIRS or part.startswith("pytest-")
+        for part in parts
+    )
+
+
+def explicit_engineering_boundary(path: Path) -> bool:
+    """Whether ``path`` is at/below an explicit engineering-only marker."""
+
+    for directory in (path, *path.parents):
+        marker = directory / "ENGINEERING_ONLY.json"
+        try:
+            if marker.is_file() and not marker.is_symlink():
+                return True
+        except (OSError, RuntimeError):
+            return True
+    return False
+
+
+def derived_path_quarantined(path: Path, results_root: Path) -> bool:
+    """Scientific-index boundary for one exact canonical path.
+
+    Relative segment exclusions apply only inside ``results_root`` so a
+    workstation parent called ``pytest-*`` or ``engineering`` cannot taint an
+    exact external run.  An explicit ``ENGINEERING_ONLY.json`` boundary applies
+    everywhere, including ordinary-name directories inside the results tree.
+    """
+
+    if explicit_engineering_boundary(path):
+        return True
+    try:
+        resolved = path.resolve(strict=True)
+        relative = resolved.relative_to(results_root.resolve(strict=True)).as_posix()
+    except ValueError:
+        return False
+    except (OSError, RuntimeError):
+        return True
+    return derived_index_path_quarantined(relative)
+
+
+def _canonical_excluded_roots(values: tuple[Path, ...]) -> tuple[Path, ...]:
+    roots: set[Path] = set()
+    for value in values:
+        try:
+            resolved = value.resolve(strict=True)
+        except (OSError, RuntimeError):
+            continue
+        if resolved.is_dir():
+            roots.add(resolved)
+    return tuple(roots)
+
+
+def _under_excluded_root(path: Path, roots: tuple[Path, ...]) -> bool:
+    if not roots:
+        return False
+    try:
+        resolved = path.resolve(strict=True)
+    except (OSError, RuntimeError):
+        return True
+    for root in roots:
+        try:
+            resolved.relative_to(root)
+        except ValueError:
+            continue
+        return True
+    return False
+
 
 def _tokens_by_category(tokens: Any, provider_usage: Any) -> dict[str, int]:
     """Normalize one call's recorded token counts into billing categories.
@@ -494,16 +612,19 @@ def iter_completed_markers(
     root: Path,
     *,
     max_entries: int = _INVENTORY_MAX_ENTRIES,
+    excluded_roots: tuple[Path, ...] = (),
 ) -> tuple[list[tuple[Path, dict[str, Any]]], dict[str, int]]:
     """Completion markers under root plus honest skip accounting.
 
     Only ``*.complete.json`` markers with ``status: complete`` and
     ``format_version: 2`` and no sibling ``<stem>.error.json`` are returned;
     everything else (orphan cell files, checkpoints, errored cells) is
-    excluded and counted so truncation is never silent.
+    excluded and counted so truncation is never silent.  ``excluded_roots``
+    are exact descendant outputs owned by other retained Jobs.
     """
 
     markers: list[tuple[Path, dict[str, Any]]] = []
+    canonical_exclusions = _canonical_excluded_roots(excluded_roots)
     stats = {
         "markers": 0,
         "skipped_error": 0,
@@ -527,7 +648,10 @@ def iter_completed_markers(
                 stats["truncated"] = 1
                 break
             if entry.is_dir():
-                stack.append(entry)
+                if not derived_scan_directory_excluded(
+                    entry
+                ) and not _under_excluded_root(entry, canonical_exclusions):
+                    stack.append(entry)
                 continue
             name = entry.name
             if name.endswith(".responses.jsonl") and not name.endswith(
@@ -724,6 +848,7 @@ def failed_cell_usage_rows(
     root: Path,
     *,
     max_entries: int = _INVENTORY_MAX_ENTRIES,
+    excluded_roots: tuple[Path, ...] = (),
 ) -> list[dict[str, Any]]:
     """Observable paid target/judge work in FAILED cells (operational only).
 
@@ -735,9 +860,11 @@ def failed_cell_usage_rows(
     A failed provider call's bounded ``call_audit.logical_call_count`` is
     surfaced as reserved-call exposure (N/A tokens).  ``completed_attempts`` is
     deliberately not used: an experiment attempt is not a provider-call count.
+    Descendant outputs in ``excluded_roots`` belong to other Jobs.
     """
 
     rows: list[dict[str, Any]] = []
+    canonical_exclusions = _canonical_excluded_roots(excluded_roots)
     seen = 0
     stack: list[Path] = [root]
     while stack:
@@ -751,7 +878,10 @@ def failed_cell_usage_rows(
             if seen > max_entries:
                 return rows
             if entry.is_dir():
-                stack.append(entry)
+                if not derived_scan_directory_excluded(
+                    entry
+                ) and not _under_excluded_root(entry, canonical_exclusions):
+                    stack.append(entry)
                 continue
             if not entry.name.endswith(".error.json"):
                 continue
@@ -873,14 +1003,20 @@ def collect_usage(
     root: Path,
     *,
     verify_sha: bool = False,
+    excluded_roots: tuple[Path, ...] = (),
 ) -> tuple[list[dict[str, Any]], dict[str, int]]:
     """All recorded usage rows under root, with honest skip accounting.
 
     Completion-marker-bound rows (scientific + operational) plus failed-cell
     rows (operational spend only, distinct ``*_failed``/``reserved`` roles).
+    Exact descendant outputs in ``excluded_roots`` are not attributed to this
+    root's Job.
     """
 
-    markers, stats = iter_completed_markers(root)
+    markers, stats = iter_completed_markers(
+        root,
+        excluded_roots=excluded_roots,
+    )
     rows: list[dict[str, Any]] = []
     stats["unreadable_artifacts"] = 0
     for marker_path, doc in markers:
@@ -888,7 +1024,7 @@ def collect_usage(
             rows.extend(usage_rows_from_marker(marker_path, doc, verify_sha=verify_sha))
         except (OSError, ValueError):
             stats["unreadable_artifacts"] += 1
-    failed = failed_cell_usage_rows(root)
+    failed = failed_cell_usage_rows(root, excluded_roots=excluded_roots)
     stats["failed_cells"] = len({row["marker_sha"] for row in failed})
     rows.extend(failed)
     return rows, stats

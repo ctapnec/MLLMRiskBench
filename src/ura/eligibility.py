@@ -32,7 +32,8 @@ from .modality_coverage import (
 from .source_metrics import source_evaluator_implemented
 
 
-ELIGIBILITY_SCHEMA = "ura-eligibility-plan/2"
+ELIGIBILITY_SCHEMA = "ura-eligibility-plan/3"
+LEGACY_ELIGIBILITY_SCHEMA = "ura-eligibility-plan/2"
 _HEX64 = re.compile(r"[0-9a-f]{64}")
 _MODALITY_ORDER = ("text", "image", "audio", "video", "tool")
 _PHYSICAL = frozenset({"image", "audio", "video"})
@@ -890,7 +891,7 @@ def build_eligibility_plan(
 
 
 def validate_eligibility_plan(value: object) -> dict[str, Any]:
-    """Fail-closed validation for a loaded ``ura-eligibility-plan/2`` value."""
+    """Fail-closed validation for current or runtime-free legacy plans."""
 
     if not isinstance(value, dict):
         raise ValueError("eligibility artifact must be a JSON object")
@@ -904,7 +905,10 @@ def validate_eligibility_plan(value: object) -> dict[str, Any]:
         raise ValueError(
             f"eligibility artifact fields mismatch; missing={missing}, unknown={unknown}"
         )
-    if value["schema"] != ELIGIBILITY_SCHEMA or value["status"] != "complete":
+    if value["schema"] not in {
+        ELIGIBILITY_SCHEMA,
+        LEGACY_ELIGIBILITY_SCHEMA,
+    } or value["status"] != "complete":
         raise ValueError("unsupported or incomplete eligibility artifact")
     body = {key: item for key, item in value.items() if key != "plan_id"}
     expected_plan_id = eligibility_plan_id(body)
@@ -925,6 +929,12 @@ def validate_eligibility_plan(value: object) -> dict[str, Any]:
             or len(set(entries)) != len(entries)
         ):
             raise ValueError(f"eligibility request {field} must be unique strings")
+    if value["schema"] == LEGACY_ELIGIBILITY_SCHEMA and {
+        item.strip().lower() for item in request["selected_attackers"]
+    } & {"pyrit", "deepteam", "h4rm3l", "spikee"}:
+        raise ValueError(
+            "legacy eligibility plans cannot attest isolated framework runtimes"
+        )
     if not isinstance(request["dry_run"], bool) or not isinstance(value["bindings"], dict):
         raise ValueError("eligibility request/bindings types are invalid")
     expected_request_id = _request_id(request, value["bindings"])
@@ -1431,6 +1441,7 @@ def summarize_eligibility_plans(
 
 __all__ = [
     "ELIGIBILITY_SCHEMA",
+    "LEGACY_ELIGIBILITY_SCHEMA",
     "build_eligibility_plan",
     "canonical_json_sha256",
     "eligibility_plan_id",

@@ -18,6 +18,22 @@ and optional local media. Treat run artifacts as sensitive research data.
   explicit network policy, process-tree termination, CPU/memory/time limits, and
   output/filesystem quotas. Forward only individually approved credentials and
   never give an engine a live offensive target.
+- PyRIT, DeepTeam, h4rm3l, and Spikee are admitted only through their own
+  explicit virtual environments; the Runner environment and a venv containing
+  another registered framework are rejected. The fixed worker starts with
+  `-I -S -B`, a private HOME/cache, a PATH containing only the selected venv's
+  executable directory, and no provider/Hub credentials. It does not process
+  `.pth` or `sitecustomize`, does not accept package bytecode as a framework
+  import source, and hashes every non-bytecode `site-packages` file before
+  framework import. One process-tree-bound worker is reused after admission and
+  the full environment is hashed again before completion. Receipt drift,
+  timeout, abnormal exit, descendant-tree cleanup failure, or closing-seal
+  failure prevents completed evidence. This is still not a filesystem, network,
+  syscall, or account sandbox; use the external isolation above for hostile
+  framework code.
+  Abrupt Runner death closes a POSIX parent-liveness pipe or a Windows
+  kill-on-close Job Object, terminating the isolated worker tree rather than
+  leaving it detached.
 - A hosted judge receives the evaluated prompt and response. Use a local judge,
   a same-provider approved endpoint, or an explicit data-processing approval for
   private, personal, gated, or export-controlled material.
@@ -66,6 +82,10 @@ and optional local media. Treat run artifacts as sensitive research data.
   removed and offline/local-only policy set before third-party imports. Treat a
   same-repository target/judge/guard or target/NanoGCG surrogate as a forbidden
   self-evaluation collision, even when one resource is already cached.
+- Stage 1 has no isolated managed-snapshot handshake for live NanoGCG, so live
+  optimization fails before snapshot, framework, model, or target construction.
+  Only attributable precomputed-suffix replay is admitted, and its evidence says
+  `framework_execution=not_invoked`.
 - Treat the managed model store, acquisition plan/receipt locations, transport
   cache, and resolved snapshot paths as private controller state. They must not
   appear in durable argv, stdout/stderr, exceptions, Jobs state, manifests, or

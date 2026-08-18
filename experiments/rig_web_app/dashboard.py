@@ -8,6 +8,7 @@ import json
 import os
 import re
 import time
+from pathlib import Path
 from typing import Any, Mapping
 from urllib.parse import quote
 
@@ -15,9 +16,17 @@ from ura.strict_json import strict_json_loads
 
 from .catalog import _WARNINGS_FILE, _WARNINGS_MAX, _WARNING_TONES, _CAMPAIGN_POLICY, _icon
 
-from .ui import _page
+from .ui import _page, _page_tablist, _page_tabpanel
 
-from .artifacts import StageInventory, _TOKEN_CATEGORIES, iter_completed_markers, run_kind
+from .artifacts import (
+    StageInventory,
+    _TOKEN_CATEGORIES,
+    collect_usage,
+    derived_index_path_quarantined,
+    derived_path_quarantined,
+    iter_completed_markers,
+    run_kind,
+)
 
 from .reports import (
     _LEVEL2_STRATUM_FIELDS,
@@ -548,13 +557,951 @@ class DashboardMixin:
             "</div>"
         )
 
+    # -- campaign-first Stats presentation --------------------------------
+
+    @staticmethod
+    def _stats_argv_value(argv: list[str], *flags: str) -> str:
+        for flag in flags:
+            try:
+                index = argv.index(flag)
+            except ValueError:
+                continue
+            if index + 1 < len(argv):
+                return str(argv[index + 1]).strip()
+        return ""
+
+    @classmethod
+    def _stats_argv_list(cls, argv: list[str], *flags: str) -> tuple[str, ...]:
+        raw = cls._stats_argv_value(argv, *flags)
+        return tuple(item.strip() for item in raw.split(",") if item.strip())
+
+    def _stats_resolve_path(self, value: str, *, strict: bool = True) -> Path | None:
+        if not value:
+            return None
+        candidate = Path(value).expanduser()
+        if not candidate.is_absolute():
+            candidate = self.repo_root / candidate
+        try:
+            return candidate.resolve(strict=strict)
+        except (OSError, RuntimeError):
+            return None
+
+    @staticmethod
+    def _stats_exact_argv_value(argv: list[str], flag: str) -> str:
+        """One unambiguous bounded flag value, or an empty fail-closed result."""
+
+        positions = [index for index, part in enumerate(argv) if part == flag]
+        if len(positions) != 1 or positions[0] + 1 >= len(argv):
+            return ""
+        value = argv[positions[0] + 1].strip()
+        if not value or len(value) > 32_768 or "\x00" in value or value.startswith("--"):
+            return ""
+        return value
+
+    def _stats_artifact_relative(self, path: Path | None) -> str:
+        if path is None:
+            return ""
+        try:
+            return path.relative_to(self.results_root.resolve()).as_posix()
+        except (OSError, ValueError):
+            return ""
+
+    @staticmethod
+    def _stats_usage_totals(
+        usage_rows: list[dict[str, Any]],
+    ) -> dict[tuple[str, str, str, str], dict[str, int]]:
+        totals: dict[tuple[str, str, str, str], dict[str, int]] = {}
+        for row in usage_rows:
+            key = (
+                str(row.get("role") or "unknown"),
+                str(row.get("provider") or "unknown"),
+                str(row.get("model") or "unknown"),
+                str(row.get("usage_date") or ""),
+            )
+            category = str(row.get("category") or "")
+            amount = row.get("amount")
+            if (
+                not category
+                or not isinstance(amount, int)
+                or isinstance(amount, bool)
+                or amount < 0
+            ):
+                continue
+            bucket = totals.setdefault(key, {})
+            bucket[category] = bucket.get(category, 0) + amount
+        return totals
+
+    @staticmethod
+    def _stats_cost_text(cost_rows: list[dict[str, Any]]) -> str:
+        billable = [row for row in cost_rows if row.get("billable")]
+        if not billable:
+            return "local / not billed" if cost_rows else "N/A"
+        if any(row.get("cost") is None for row in billable):
+            return "N/A (incomplete pricing or usage)"
+        by_currency: dict[str, float] = {}
+        for row in billable:
+            currency = str(row.get("currency") or "")
+            cost = row.get("cost")
+            if not currency or not isinstance(cost, (int, float)):
+                return "N/A (incomplete pricing or usage)"
+            by_currency[currency] = by_currency.get(currency, 0.0) + float(cost)
+        return " + ".join(
+            DashboardMixin._fmt_money(value, currency)
+            for currency, value in sorted(by_currency.items())
+        )
+
+    @staticmethod
+    def _stats_usage_summary(
+        usage_rows: list[dict[str, Any]],
+    ) -> dict[str, int]:
+        summary = {
+            "target_calls": 0,
+            "judge_calls": 0,
+            "input_tokens": 0,
+            "output_tokens": 0,
+        }
+        for row in usage_rows:
+            role = str(row.get("role") or "")
+            category = str(row.get("category") or "")
+            amount = row.get("amount")
+            if not isinstance(amount, int) or isinstance(amount, bool) or amount < 0:
+                continue
+            if category == "calls":
+                if role == "target":
+                    summary["target_calls"] += amount
+                elif role == "judge":
+                    summary["judge_calls"] += amount
+            elif category == "input":
+                summary["input_tokens"] += amount
+            elif category == "output":
+                summary["output_tokens"] += amount
+        return summary
+
+    @staticmethod
+    def _stats_work_label(kind: str) -> str:
+        return {
+            "acquisition_plan": "model acquisition plan - no model call",
+            "preflight": "preflight - no model call",
+            "dry_run": "offline dry run - no model call",
+            "diagnostic_canary": "diagnostic model-capable run",
+            "attestation_probe": "model probe",
+            "measured": "model campaign",
+        }.get(kind, kind or "unknown")
+
+    @staticmethod
+    def _stats_authority(
+        *,
+        kind: str,
+        corpora: tuple[str, ...],
+        state: str,
+        evidence: Mapping[str, int],
+        engineering: bool,
+    ) -> tuple[str, str, str]:
+        if engineering:
+            return "engineering", "engineering / non-thesis", "gray"
+        if kind in {"preflight", "acquisition_plan"}:
+            return "preflight", "preflight / no-call", "gray"
+        if kind in {"dry_run", "diagnostic_canary", "attestation_probe"}:
+            return "diagnostic", "diagnostic / non-thesis", "amber"
+        if any("synth" in corpus.casefold() for corpus in corpora):
+            return "synthetic", "synthetic / non-authoritative", "amber"
+        complete = int(evidence.get("markers", 0))
+        invalid = (
+            int(evidence.get("skipped_invalid", 0))
+            + int(evidence.get("unreadable_artifacts", 0))
+            + int(evidence.get("truncated", 0))
+        )
+        if (
+            kind == "measured"
+            and corpora
+            and state == "complete"
+            and complete > 0
+            and invalid == 0
+        ):
+            return "thesis-measured", "thesis measured evidence", "green"
+        if kind == "measured":
+            return "measured-incomplete", "measured attempt / evidence incomplete", "amber"
+        return "unknown", "unclassified / non-authoritative", "gray"
+
+    _STATS_PAGE_SIZE = 24
+
+    def _stats_analysis_job_records(self) -> list[dict[str, Any]]:
+        """Live and DB-only analysis Jobs with strict argv recovery.
+
+        ``self.jobs`` is a recent process cache, not retained history.  Live
+        records take precedence, while persisted rows restore completed report
+        ownership after a console restart.  An oversized DB result fails closed
+        instead of treating a truncated producer set as complete.
+        """
+
+        records: dict[str, dict[str, Any]] = {}
+        live_job_ids: set[str] = set()
+        for job in self.jobs.values():
+            if job.command not in {"level1_evidence", "level2_report"}:
+                continue
+            live_job_ids.add(job.job_id)
+            # A path from a running/failed producer may name a valid stale file.
+            # It becomes campaign evidence only after that exact Job succeeds.
+            if job.state() != "complete" or job.exit_code() != 0:
+                continue
+            argv = list(job.argv)
+            if not all(isinstance(part, str) for part in argv):
+                continue
+            records[job.job_id] = {
+                "job_id": job.job_id,
+                "command": job.command,
+                "argv": argv,
+            }
+        stored = self.db.load_report_jobs(limit=10_001)
+        if stored is None or len(stored) > 10_000:
+            return list(records.values())
+        for row in stored:
+            job_id = str(row["job_id"] or "")
+            command = str(row["command"] or "")
+            if not job_id or job_id in live_job_ids or command not in {
+                "level1_evidence",
+                "level2_report",
+            }:
+                continue
+            if str(row["state"] or "") != "complete" or row["exit_code"] != 0:
+                continue
+            try:
+                loaded = strict_json_loads(str(row["argv"] or "[]"))
+            except (TypeError, ValueError):
+                continue
+            if not isinstance(loaded, list) or not all(
+                isinstance(part, str) for part in loaded
+            ):
+                continue
+            records[job_id] = {
+                "job_id": job_id,
+                "command": command,
+                "argv": list(loaded),
+            }
+        return list(records.values())
+
+    def _stats_bounded_run_owners(self) -> list[dict[str, Any]]:
+        """Complete bounded canonical run-output ownership set."""
+
+        rows = self.db.list_run_owners(limit=10_001)
+        if rows is None or len(rows) > 10_000:
+            return []
+        owners: list[dict[str, Any]] = []
+        for row in rows:
+            job_id = str(row["job_id"] or "")
+            root = self._stats_resolve_path(str(row["out_dir"] or ""))
+            if not job_id or root is None or not root.is_dir():
+                continue
+            relative = self._stats_artifact_relative(root)
+            if derived_path_quarantined(root, self.results_root):
+                continue
+            owners.append(
+                {
+                    "job_id": job_id,
+                    "root": root,
+                    "artifact_relative": relative,
+                }
+            )
+        return owners
+
+    def _stats_report_bindings(self) -> list[dict[str, Any]]:
+        """Bind each exact report to one unique most-specific retained run."""
+
+        owners = self._stats_bounded_run_owners()
+        if not owners:
+            return []
+        bindings_by_path: dict[Path, dict[str, Any]] = {}
+        ambiguous_paths: set[Path] = set()
+        for analysis_job in self._stats_analysis_job_records():
+            argv = analysis_job["argv"]
+            results_value = self._stats_exact_argv_value(argv, "--results")
+            report_value = self._stats_exact_argv_value(argv, "--out-json")
+            result_root = self._stats_resolve_path(results_value)
+            report_path = self._stats_resolve_path(report_value)
+            if (
+                result_root is None
+                or not result_root.is_dir()
+                or report_path is None
+                or not report_path.is_file()
+            ):
+                continue
+            raw_report = Path(report_value).expanduser()
+            if not raw_report.is_absolute():
+                raw_report = self.repo_root / raw_report
+            try:
+                if raw_report.is_symlink():
+                    continue
+            except OSError:
+                continue
+            report_relative = self._stats_artifact_relative(report_path)
+            if (
+                derived_path_quarantined(result_root, self.results_root)
+                or derived_path_quarantined(report_path, self.results_root)
+            ):
+                continue
+            candidates = [
+                owner
+                for owner in owners
+                if owner["root"] == result_root
+                or self._stats_contains_path(owner["root"], result_root)
+            ]
+            if not candidates:
+                continue
+            deepest = max(len(owner["root"].parts) for owner in candidates)
+            most_specific = [
+                owner for owner in candidates if len(owner["root"].parts) == deepest
+            ]
+            owner_ids = {str(owner["job_id"]) for owner in most_specific}
+            if len(owner_ids) != 1:
+                continue
+            binding = {
+                "owner_job_id": next(iter(owner_ids)),
+                "path": report_relative,
+                # Canonical source is retained only in memory. External
+                # locators are never rendered or placed in artifact links.
+                "source_path": report_path,
+                "display_name": report_relative or report_path.name,
+                "kind": (
+                    "level1"
+                    if analysis_job["command"] == "level1_evidence"
+                    else "level2"
+                ),
+                "producer_job_id": str(analysis_job["job_id"]),
+            }
+            prior = bindings_by_path.get(report_path)
+            if prior is None:
+                bindings_by_path[report_path] = binding
+            elif (
+                prior["owner_job_id"] != binding["owner_job_id"]
+                or prior["kind"] != binding["kind"]
+            ):
+                ambiguous_paths.add(report_path)
+        return [
+            binding
+            for path, binding in bindings_by_path.items()
+            if path not in ambiguous_paths
+        ]
+
+    def _stats_run_campaigns(
+        self,
+        *,
+        page: int = 1,
+        exact_job_id: str = "",
+    ) -> tuple[list[dict[str, Any]], str, bool]:
+        if exact_job_id:
+            exact = self.db.load_campaign(exact_job_id)
+            runs = [] if exact is None else [exact]
+            has_more = False
+        else:
+            offset = (page - 1) * self._STATS_PAGE_SIZE
+            runs = self.db.list_campaigns_page(
+                limit=self._STATS_PAGE_SIZE + 1,
+                offset=offset,
+            )
+            has_more = runs is not None and len(runs) > self._STATS_PAGE_SIZE
+            if runs is not None:
+                runs = runs[: self._STATS_PAGE_SIZE]
+        if runs is None:
+            return (
+                [],
+                "Campaign registry unavailable; no empty history is inferred.",
+                False,
+            )
+        pricing = load_pricing(self.repo_root)
+        run_owners = self._stats_bounded_run_owners()
+        owners_by_root: dict[Path, set[str]] = {}
+        for owner in run_owners:
+            owners_by_root.setdefault(owner["root"], set()).add(owner["job_id"])
+        owned_roots = tuple(owners_by_root)
+        campaigns: list[dict[str, Any]] = []
+        for run_row in runs:
+            row = dict(run_row)
+            job_id = str(row.get("job_id") or "")
+            job = self.jobs.get(job_id)
+            argv: list[str] = []
+            started_at = float(row.get("created_at") or 0)
+            ended_at: float | None = None
+            state = str(row.get("state") or "unknown")
+            command = str(row.get("command") or "")
+            terminal_run = str(row.get("record_source") or "run") == "run"
+            if job is not None:
+                argv = list(job.argv)
+                started_at = float(job.started_at)
+                ended_at = job.ended_at
+                if not terminal_run:
+                    state = job.state()
+                    command = job.command
+            else:
+                stored = self.db.load_job(job_id)
+                if stored is not None:
+                    try:
+                        loaded = strict_json_loads(str(stored["argv"] or "[]"))
+                    except (TypeError, ValueError):
+                        loaded = []
+                    if isinstance(loaded, list) and all(
+                        isinstance(part, str) for part in loaded
+                    ):
+                        argv = list(loaded)
+                    started_at = float(stored["started_at"] or started_at)
+                    ended_at = (
+                        float(stored["ended_at"])
+                        if stored["ended_at"] is not None
+                        else None
+                    )
+                    if not terminal_run:
+                        state = str(stored["state"] or state)
+                        command = str(stored["command"] or command)
+            kind = run_kind(command, argv) or str(row.get("kind") or "")
+            out_dir = str(row.get("out_dir") or "")
+            output_root = self._stats_resolve_path(out_dir)
+            artifact_relative = self._stats_artifact_relative(output_root)
+            quarantined_output = (
+                derived_path_quarantined(output_root, self.results_root)
+                if output_root is not None
+                else False
+            )
+            uniquely_owned = (
+                output_root is not None
+                and owners_by_root.get(output_root) == {job_id}
+            )
+            usage_rows: list[dict[str, Any]] = []
+            evidence: dict[str, int] = {
+                "markers": 0,
+                "skipped_error": 0,
+                "skipped_invalid": 0,
+                "orphan_responses": 0,
+                "truncated": 0,
+                "unreadable_artifacts": 0,
+                "failed_cells": 0,
+            }
+            if (
+                output_root is not None
+                and output_root.is_dir()
+                and not quarantined_output
+                and uniquely_owned
+            ):
+                excluded_roots = tuple(
+                    root
+                    for root in owned_roots
+                    if root != output_root
+                    and self._stats_contains_path(output_root, root)
+                )
+                usage_rows, observed = collect_usage(
+                    output_root,
+                    verify_sha=True,
+                    excluded_roots=excluded_roots,
+                )
+                evidence.update(
+                    {
+                        key: int(value)
+                        for key, value in observed.items()
+                        if isinstance(value, int) and not isinstance(value, bool)
+                    }
+                )
+            usage_totals = self._stats_usage_totals(usage_rows)
+            cost_rows = compute_costs(usage_totals, pricing)
+            usage = self._stats_usage_summary(usage_rows)
+            corpora = self._stats_argv_list(argv, "--corpora")
+            authority, authority_label, authority_tone = self._stats_authority(
+                kind=kind,
+                corpora=corpora,
+                state=state,
+                evidence=evidence,
+                engineering=quarantined_output,
+            )
+            campaigns.append(
+                {
+                    "job_id": job_id,
+                    "command": command,
+                    "argv": argv,
+                    "kind": kind,
+                    "work_label": self._stats_work_label(kind),
+                    "state": state,
+                    "started_at": started_at,
+                    "ended_at": ended_at,
+                    "out_dir": out_dir,
+                    "output_root": output_root,
+                    "artifact_relative": artifact_relative,
+                    "targets": (
+                        self._stats_argv_list(argv, "--api", "--models")
+                        + self._stats_argv_list(argv, "--local")
+                    ),
+                    "frameworks": self._stats_argv_list(argv, "--attackers"),
+                    "corpora": corpora,
+                    "usage_rows": usage_rows,
+                    "usage": usage,
+                    "cost_rows": cost_rows,
+                    "cost_text": self._stats_cost_text(cost_rows),
+                    "evidence": evidence,
+                    "authority": authority,
+                    "authority_label": authority_label,
+                    "authority_tone": authority_tone,
+                    "reports": [],
+                }
+            )
+        return campaigns, "", has_more
+
+    @staticmethod
+    def _stats_contains_path(parent: Path, child: Path) -> bool:
+        try:
+            child.relative_to(parent)
+            return True
+        except ValueError:
+            return False
+
+    def _stats_attach_job_reports(self, campaigns: list[dict[str, Any]]) -> set[str]:
+        """Attach exact analysis-job outputs to the run they analysed."""
+
+        attached: set[str] = set()
+        by_job_id = {str(campaign["job_id"]): campaign for campaign in campaigns}
+        for binding in self._stats_report_bindings():
+            owner = by_job_id.get(str(binding["owner_job_id"]))
+            if owner is None:
+                continue
+            owner["reports"].append(binding)
+            if binding["path"]:
+                attached.add(str(binding["path"]))
+        return attached
+
+    def _stats_owned_report_paths(self) -> set[str]:
+        return {
+            str(binding["path"])
+            for binding in self._stats_report_bindings()
+            if binding["path"]
+        }
+
+    @staticmethod
+    def _stats_state_badge(state: str) -> tuple[str, str]:
+        label = "passed" if state == "complete" else state or "unknown"
+        tone = {
+            "complete": "green",
+            "running": "blue",
+            "failed": "red",
+            "orphaned": "amber",
+        }.get(state, "gray")
+        return label, tone
+
+    @staticmethod
+    def _stats_list_text(values: tuple[str, ...]) -> str:
+        return ", ".join(values) if values else "not declared"
+
+    @staticmethod
+    def _stats_coverage_text(evidence: Mapping[str, int]) -> str:
+        complete = int(evidence.get("markers", 0))
+        failed = int(evidence.get("failed_cells", 0))
+        invalid = int(evidence.get("skipped_invalid", 0)) + int(
+            evidence.get("unreadable_artifacts", 0)
+        )
+        text = f"{complete} complete cell{'s' if complete != 1 else ''}"
+        extras = []
+        if failed:
+            extras.append(f"{failed} failed")
+        if invalid:
+            extras.append(f"{invalid} invalid/unreadable")
+        if evidence.get("truncated"):
+            extras.append("scan truncated")
+        return text + ("; " + ", ".join(extras) if extras else "")
+
+    def _stats_usage_table(self, campaign: Mapping[str, Any]) -> str:
+        rows = []
+        for cost in campaign["cost_rows"]:
+            tokens = cost["tokens"]
+            if not cost["billable"]:
+                cost_text = "local / not billed"
+            elif cost["cost"] is not None:
+                cost_text = self._fmt_money(cost["cost"], cost["currency"])
+            elif cost.get("currency") == "mixed" and cost.get("by_currency"):
+                cost_text = " + ".join(
+                    self._fmt_money(value, currency)
+                    for currency, value in sorted(cost["by_currency"].items())
+                )
+            else:
+                cost_text = "N/A"
+            rows.append(
+                "<tr>"
+                f"<td>{html.escape(str(cost['role']))}</td>"
+                f"<td>{html.escape(str(cost['provider']))}<br><code>"
+                f"{html.escape(str(cost['model']))}</code></td>"
+                f"<td>{int(cost['calls']):,}</td>"
+                f"<td>{int(tokens['input']):,}</td>"
+                f"<td>{int(tokens['output']):,}</td>"
+                f"<td>{html.escape(cost_text)}</td></tr>"
+            )
+        if not rows:
+            return "<p class='note'>No completion-bound model usage was recorded.</p>"
+        return (
+            "<div class='scroll'><table><tr><th>Role</th><th>Provider / model</th>"
+            "<th>Calls</th><th>Input tokens</th><th>Output tokens</th>"
+            "<th>Calculated cost</th></tr>"
+            + "".join(rows)
+            + "</table></div>"
+        )
+
+    def _stats_campaign_card(self, campaign: Mapping[str, Any]) -> str:
+        state_label, state_tone = self._stats_state_badge(str(campaign["state"]))
+        started = time.strftime(
+            "%Y-%m-%d %H:%M:%S UTC", time.gmtime(float(campaign["started_at"]))
+        )
+        ended_at = campaign["ended_at"]
+        ended = (
+            time.strftime("%Y-%m-%d %H:%M:%S UTC", time.gmtime(float(ended_at)))
+            if ended_at is not None
+            else "running / not recorded"
+        )
+        usage = campaign["usage"]
+        return (
+            "<article class='stats-campaign-card' "
+            f"data-job-id='{html.escape(str(campaign['job_id']))}' "
+            f"data-authority='{html.escape(str(campaign['authority']))}'>"
+            "<div class='stats-campaign-head'><div><h3><a href='/jobs/"
+            f"{quote(str(campaign['job_id']))}'>{html.escape(str(campaign['job_id']))}</a>"
+            "</h3><p class='note'>"
+            f"{html.escape(str(campaign['work_label']))}</p></div>"
+            "<div class='stats-badges'>"
+            f"<span class='badge {state_tone}'>{html.escape(state_label)}</span>"
+            f"<span class='badge {html.escape(str(campaign['authority_tone']))}'>"
+            f"{html.escape(str(campaign['authority_label']))}</span></div></div>"
+            "<dl class='stats-campaign-meta'>"
+            f"<dt>Target</dt><dd>{html.escape(self._stats_list_text(campaign['targets']))}</dd>"
+            f"<dt>Framework</dt><dd>{html.escape(self._stats_list_text(campaign['frameworks']))}</dd>"
+            f"<dt>Corpus</dt><dd>{html.escape(self._stats_list_text(campaign['corpora']))}</dd>"
+            f"<dt>Started</dt><dd>{html.escape(started)}</dd>"
+            f"<dt>Ended</dt><dd>{html.escape(ended)}</dd>"
+            "<dt>Calls</dt><dd>"
+            f"{usage['target_calls']:,} target / {usage['judge_calls']:,} judge</dd>"
+            "<dt>Tokens</dt><dd>"
+            f"{usage['input_tokens']:,} input / {usage['output_tokens']:,} output</dd>"
+            f"<dt>Cost</dt><dd>{html.escape(str(campaign['cost_text']))}</dd>"
+            f"<dt>Results</dt><dd>{html.escape(self._stats_coverage_text(campaign['evidence']))}</dd>"
+            "</dl><div class='stats-campaign-actions'>"
+            f"<a class='button ghost stats-detail-trigger' href='/stats/job/"
+            f"{quote(str(campaign['job_id']))}' data-stats-job='"
+            f"{html.escape(str(campaign['job_id']))}' "
+            "aria-controls='campaign-stats-modal' aria-haspopup='dialog' "
+            "aria-expanded='false'>"
+            "Statistics &amp; diagrams</a></div></article>"
+        )
+
+    def _stats_report_card(self, report: Mapping[str, Any]) -> str:
+        rel = str(report.get("path") or "")
+        display_name = str(report.get("display_name") or rel or "external report")
+        kind = str(report.get("kind") or "")
+        source = report.get("source_path")
+        report_path = source if isinstance(source, Path) else self.results_root / rel
+        try:
+            doc = strict_json_loads(report_path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            return (
+                "<div class='card'><h3>"
+                + _icon("file")
+                + f"{html.escape(display_name)} <span class='badge red'>invalid</span></h3>"
+                "<p class='note'>The exact report output is missing or malformed; "
+                "no chart is rendered.</p></div>"
+            )
+        if not isinstance(doc, dict):
+            return (
+                f"<div class='card'><h3>{html.escape(display_name)} "
+                "<span class='badge red'>invalid</span></h3></div>"
+            )
+        expected = (
+            {"ura-level1-evidence/3", "ura-level1-evidence/2"}
+            if kind == "level1"
+            else {"ura-level2-report/1"}
+        )
+        if str(doc.get("schema_version")) not in expected:
+            return (
+                "<div class='card'><h3>"
+                + _icon("file")
+                + f"{html.escape(display_name)} <span class='badge red'>invalid</span></h3>"
+                "<p class='note'>The declared schema does not match this analysis job; "
+                "no chart is rendered.</p></div>"
+            )
+        try:
+            _validate_report_document(kind, doc)
+        except ValueError as exc:
+            return (
+                "<div class='card'><h3>"
+                + _icon("file")
+                + f"{html.escape(display_name)} <span class='badge red'>invalid</span></h3>"
+                f"<p class='note'>{html.escape(str(exc))}. Not rendered; no chart "
+                "is produced.</p></div>"
+            )
+        try:
+            return (
+                self._render_level2(display_name, doc, artifact_relative=rel)
+                if kind == "level2"
+                else self._render_level1(display_name, doc, artifact_relative=rel)
+            )
+        except (KeyError, TypeError, ValueError):
+            return (
+                f"<div class='card'><h3>{html.escape(display_name)} "
+                "<span class='badge red'>invalid</span></h3>"
+                "<p class='note'>Validated identity but unrenderable structure; "
+                "no chart is rendered.</p></div>"
+            )
+
+    def _stats_report_index_badge(self, report: Mapping[str, Any]) -> str:
+        """Compact validation status for an unlinked report; never a chart."""
+
+        rel = str(report.get("path") or "")
+        kind = str(report.get("kind") or "")
+        if kind not in {"level1", "level2"}:
+            return (
+                "<span class='badge red' title='Only Level-1/Level-2 reports "
+                "belong in this compatibility list'>unsupported kind</span>"
+            )
+        try:
+            doc = strict_json_loads((self.results_root / rel).read_text(encoding="utf-8"))
+            if not isinstance(doc, dict):
+                raise ValueError("report is not an object")
+            _validate_report_document(kind, doc)
+        except (OSError, TypeError, ValueError) as exc:
+            return (
+                "<span class='badge red' title='"
+                + html.escape(str(exc), quote=True)
+                + "'>invalid</span>"
+            )
+        return "<span class='badge green'>validated but unlinked</span>"
+
+    def _stats_campaign_detail(self, campaign: Mapping[str, Any]) -> str:
+        state_label, state_tone = self._stats_state_badge(str(campaign["state"]))
+        artifact_link = ""
+        if campaign["artifact_relative"]:
+            artifact_link = (
+                " <a href='/artifacts?path="
+                + quote(str(campaign["artifact_relative"]))
+                + "'>Browse exact output artifacts</a>."
+            )
+        evidence = campaign["evidence"]
+        evidence_tone = "green"
+        evidence_label = "validated"
+        if (
+            evidence.get("skipped_invalid")
+            or evidence.get("unreadable_artifacts")
+            or evidence.get("truncated")
+        ):
+            evidence_tone = "red"
+            evidence_label = "incomplete / invalid"
+        elif not evidence.get("markers") and campaign["kind"] not in {
+            "preflight",
+            "acquisition_plan",
+            "dry_run",
+        }:
+            evidence_tone = "amber"
+            evidence_label = "not established"
+        reports = "".join(
+            self._stats_report_card(report) for report in campaign["reports"]
+        )
+        if not reports:
+            reports = (
+                "<div class='card'><p class='note'>No validated Level-1/Level-2 "
+                "analysis job is bound to this campaign yet. Completion-bound "
+                "usage and result coverage are still shown above.</p></div>"
+            )
+        return (
+            "<p class='stats-detail-state'>Campaign status: "
+            f"<span class='badge {state_tone}'>{html.escape(state_label)}</span></p>"
+            f"<div class='notice {evidence_tone}'><strong>Evidence {evidence_label}."
+            "</strong><p class='note'>"
+            f"{html.escape(self._stats_coverage_text(evidence))}. "
+            "Charts below are rendered only from producer-contract-validated "
+            f"reports attached to this job.{artifact_link}</p></div>"
+            "<div class='card'><h3>Recorded calls, tokens &amp; calculated cost</h3>"
+            + self._stats_usage_table(campaign)
+            + "<p class='note'>Usage is read only from this job's exact output "
+            "root and completion-bound artifacts. It is not mixed with diagnostic, "
+            "synthetic, engineering, or temporary trees.</p></div>"
+            + reports
+            + "<p class='stats-modal-links'><a href='/jobs/"
+            f"{quote(str(campaign['job_id']))}'>Open full job record</a></p>"
+        )
+
+    def _stats_campaign_panel(self, page: int) -> str:
+        campaigns, unavailable, has_more = self._stats_run_campaigns(page=page)
+        cards = [self._stats_campaign_card(campaign) for campaign in campaigns]
+        if unavailable:
+            listing = f"<div class='notice red'>{html.escape(unavailable)}</div>"
+        elif cards:
+            listing = "<div class='stats-campaign-list'>" + "".join(cards) + "</div>"
+        else:
+            listing = (
+                "<div class='card'><p class='note'>No console-owned campaign jobs "
+                "are retained yet. Start a preflight, diagnostic, or measured lane "
+                "from Build; it will appear here without importing unrelated files.</p></div>"
+            )
+        try:
+            engineering, engineering_note = self._engineering_campaign_scan()
+        except (AttributeError, OSError, ValueError):
+            engineering, engineering_note = [], "Engineering campaign scan unavailable."
+        engineering_cards = []
+        for campaign in engineering:
+            label = html.escape(campaign.campaign_id)
+            route = quote(campaign.route_id)
+            engineering_cards.append(
+                "<article class='stats-campaign-card engineering' "
+                "data-authority='engineering'><div class='stats-campaign-head'>"
+                f"<div><h3><a href='/jobs/campaign/{route}'>{label}</a></h3>"
+                "<p class='note'>externally managed engineering campaign</p></div>"
+                f"<span class='badge gray'>{html.escape(campaign.status_tag)}</span>"
+                "</div><dl class='stats-campaign-meta'>"
+                "<dt>Authority</dt><dd>engineering / non-thesis</dd>"
+                f"<dt>Progress</dt><dd>{html.escape(campaign.progress)}</dd>"
+                "<dt>Reported calls</dt><dd>"
+                + (
+                    "not reported"
+                    if campaign.model_attempted_calls is None
+                    else str(campaign.model_attempted_calls)
+                )
+                + " (operational self-report)</dd></dl>"
+                f"<p><a href='/jobs/campaign/{route}'>Open engineering details</a></p>"
+                "</article>"
+            )
+        engineering_html = (
+            "<h2>Engineering campaigns <span class='badge gray'>never thesis "
+            "evidence</span></h2>"
+            + (
+                f"<div class='notice amber'>{html.escape(engineering_note)}</div>"
+                if engineering_note
+                else ""
+            )
+            + (
+                "<div class='stats-campaign-list'>"
+                + "".join(engineering_cards)
+                + "</div>"
+                if engineering_cards
+                else "<p class='note'>No external engineering campaigns retained.</p>"
+            )
+        )
+        page_links = "<nav class='stats-pagination' aria-label='Campaign pages'>"
+        if page > 1:
+            page_links += f"<a class='button ghost' href='/stats?page={page - 1}'>Newer</a>"
+        page_links += f"<span>Page {page}</span>"
+        if has_more:
+            page_links += f"<a class='button ghost' href='/stats?page={page + 1}'>Older</a>"
+        page_links += "</nav>"
+        reusable_modal = (
+            "<section class='stats-modal' id='campaign-stats-modal' data-stats-modal "
+            "role='dialog' aria-modal='false' aria-labelledby='campaign-stats-title' "
+            "tabindex='-1'><div class='stats-modal-shell'>"
+            "<header class='stats-modal-head'><div><p class='wizard-kicker'>"
+            "Campaign details</p><h2 id='campaign-stats-title'>"
+            "<span data-stats-modal-title>Statistics &amp; diagrams</span>"
+            "</h2></div><button type='button' class='ghost small "
+            "stats-modal-close' data-stats-close aria-label='Close campaign "
+            "statistics'>Close</button></header><div class='stats-modal-body' "
+            "data-stats-modal-body aria-live='polite'><p class='note'>Choose a "
+            "campaign to load its validated details.</p></div></div></section>"
+        )
+        return (
+            "<h2>Campaign runs</h2>"
+            "<p class='note'>Actual console Job/run records, newest first. Passed "
+            "means the CLI exited with status 0; only completion-bound artifacts "
+            "establish model execution. Thesis-measured, diagnostic, synthetic, "
+            "engineering, and preflight work remain visibly separate.</p>"
+            + listing
+            + page_links
+            + engineering_html
+            + reusable_modal
+            + self._stats_modal_script()
+        )
+
+    def _stats_job_detail_page(
+        self,
+        job_id: str,
+        *,
+        fragment: bool,
+    ) -> bytes | None:
+        if re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{0,127}", job_id) is None:
+            return None
+        self._reconcile()
+        campaigns, unavailable, _has_more = self._stats_run_campaigns(
+            exact_job_id=job_id
+        )
+        if unavailable or not campaigns:
+            return None
+        campaign = campaigns[0]
+        self._stats_attach_job_reports(campaigns)
+        detail = self._stats_campaign_detail(campaign)
+        if fragment:
+            return detail.encode("utf-8")
+        title = f"Campaign statistics: {job_id}"
+        return _page(
+            title,
+            "<p><a href='/stats'>&larr; Back to campaign statistics</a></p>"
+            f"<h1>{_icon('chart', size=22)}{html.escape(job_id)}</h1>"
+            + detail,
+            active="Stats",
+        )
+
+    @staticmethod
+    def _stats_modal_script() -> str:
+        return """<script>(function(){
+var root=document.documentElement;root.classList.add('stats-modal-ready');
+var modal=document.getElementById('campaign-stats-modal');
+var body=modal&&modal.querySelector('[data-stats-modal-body]');
+var title=modal&&modal.querySelector('[data-stats-modal-title]');
+var active=false,lastFocus=null,requestId=0;
+function focusable(modal){return Array.prototype.slice.call(modal.querySelectorAll(
+'a[href],button:not([disabled]),[tabindex]:not([tabindex="-1"])'))
+.filter(function(node){return !node.hidden;});}
+function close(){if(!active||!modal){return;}modal.classList.remove('is-open');
+modal.setAttribute('aria-modal','false');document.body.classList.remove(
+'stats-modal-open');var prior=lastFocus;active=false;lastFocus=null;requestId++;
+if(prior){prior.setAttribute('aria-expanded','false');}
+if(prior&&prior.focus){prior.focus();}}
+function open(opener){if(!modal||!body){return;}if(active){close();}
+active=true;lastFocus=opener||document.activeElement;modal.classList.add('is-open');
+modal.setAttribute('aria-modal','true');document.body.classList.add(
+'stats-modal-open');var nodes=focusable(modal);(nodes[0]||modal).focus();}
+document.querySelectorAll('[data-stats-job]').forEach(function(trigger){
+trigger.addEventListener('click',function(event){event.preventDefault();
+open(trigger);if(title){title.textContent=trigger.getAttribute('data-stats-job')||
+'Campaign statistics';}trigger.setAttribute('aria-expanded','true');
+var current=++requestId;body.setAttribute('aria-busy','true');
+body.innerHTML="<p class='note'>Loading " +
+"validated campaign statistics...</p>";var separator=trigger.href.indexOf('?')>=0?'&':'?';
+fetch(trigger.href+separator+'fragment=1',{credentials:'same-origin',headers:{
+'X-Requested-With':'ura-stats-modal'}}).then(function(response){
+if(!response.ok){throw new Error('detail request failed');}return response.text();})
+.then(function(markup){if(active&&current===requestId){body.innerHTML=markup;
+body.removeAttribute('aria-busy');}})
+.catch(function(){if(active&&current===requestId){body.innerHTML=
+"<div class='notice red'>Campaign details could not be loaded. <a href='"+
+trigger.href+"'>Open the standalone detail page</a>.</div>";
+body.removeAttribute('aria-busy');}});});});
+document.querySelectorAll('[data-stats-close]').forEach(function(button){
+button.addEventListener('click',close);});
+if(modal){modal.addEventListener('click',function(event){
+if(event.target===modal){close();}});}
+document.addEventListener('keydown',function(event){if(!active){return;}
+if(event.key==='Escape'){event.preventDefault();close();return;}
+if(event.key!=='Tab'){return;}var nodes=focusable(modal);if(!nodes.length){
+event.preventDefault();modal.focus();return;}var first=nodes[0],last=nodes[nodes.length-1];
+if(event.shiftKey&&document.activeElement===first){event.preventDefault();last.focus();}
+else if(!event.shiftKey&&document.activeElement===last){event.preventDefault();first.focus();}});
+})();</script>"""
+
     def _report_index(self) -> list[dict[str, Any]]:
-        """Indexed report artifacts: the database index, else a live scan."""
+        """Unlinked-compatible Level-1/2 reports, DB index then live scan."""
 
         rows = self.db.list_reports()
         if rows:
-            return [dict(row) for row in rows]
-        return collect_reports(self.results_root)
+            candidates = [dict(row) for row in rows]
+        else:
+            candidates = collect_reports(self.results_root)
+        reports = []
+        for report in candidates:
+            relative = str(report.get("path") or "")
+            if (
+                str(report.get("kind") or "") in {"level1", "level2"}
+                and relative
+                and not derived_path_quarantined(
+                    self.results_root / relative,
+                    self.results_root,
+                )
+            ):
+                reports.append(report)
+        return reports
 
     #: The fields that define a compatible Level-2 metric stratum.  Two
     #: estimates may share a chart/section ONLY when every one of these matches
@@ -566,7 +1513,13 @@ class DashboardMixin:
     #: so nothing is silently dropped.
     _LEVEL2_CHART_CAP = 40
 
-    def _render_level2(self, rel: str, doc: Mapping[str, Any]) -> str:
+    def _render_level2(
+        self,
+        rel: str,
+        doc: Mapping[str, Any],
+        *,
+        artifact_relative: str | None = None,
+    ) -> str:
         """Render one ura-level2-report/1: real estimate rows, one chart per
         COMPATIBLE metric stratum, never a cross-stratum combination or a
         universal score."""
@@ -746,6 +1699,15 @@ class DashboardMixin:
                 + "".join(table_rows)
                 + "</table></div>"
             )
+        if artifact_relative is None:
+            artifact_relative = rel
+        artifact_note = (
+            f"<p class='note'><a href='/artifacts?path={quote(artifact_relative)}'>open "
+            "the full validated artifact &rarr;</a></p>"
+            if artifact_relative
+            else "<p class='note'>This report is retained outside the configured "
+            "artifact root, so no artifact-browser link is offered.</p>"
+        )
         return (
             "<div class='card'><h2>"
             + _icon("chart")
@@ -764,12 +1726,18 @@ class DashboardMixin:
             "score exists. Diagnostic evidence cannot reach this report by "
             "construction.</p>"
             + "".join(sections)
-            + f"<p class='note'><a href='/artifacts?path={quote(rel)}'>open "
-            "the full validated artifact &rarr;</a></p></div>"
+            + artifact_note
+            + "</div>"
         )
 
-    def _render_level1(self, rel: str, doc: Mapping[str, Any]) -> str:
-        """Render one ura-level1-evidence/2: separate unit ledgers with the
+    def _render_level1(
+        self,
+        rel: str,
+        doc: Mapping[str, Any],
+        *,
+        artifact_relative: str | None = None,
+    ) -> str:
+        """Render one supported Level-1 artifact: separate unit ledgers with the
         real count fields, diagnostic/measured distinct."""
 
         scope = doc.get("scope") if isinstance(doc.get("scope"), Mapping) else {}
@@ -827,6 +1795,15 @@ class DashboardMixin:
                 f"{html.escape(str(block.get('unit', '')))}</span></h3>"
                 "<div class='scroll'><table>" + cells + "</table></div>"
             )
+        if artifact_relative is None:
+            artifact_relative = rel
+        artifact_note = (
+            f"<p class='note'><a href='/artifacts?path={quote(artifact_relative)}'>open "
+            "the full validated artifact &rarr;</a></p>"
+            if artifact_relative
+            else "<p class='note'>This report is retained outside the configured "
+            "artifact root, so no artifact-browser link is offered.</p>"
+        )
         return (
             "<div class='card'><h2>" + _icon("file") + f"{html.escape(rel)} {badge}</h2>"
             "<p class='note'>Level-1 lifecycle inventory. Request units, "
@@ -834,98 +1811,86 @@ class DashboardMixin:
             "separate unit ledgers and are never summed into each other; "
             "structural N/A, missing, and error are distinct states.</p>"
             + "".join(tables)
-            + f"<p class='note'><a href='/artifacts?path={quote(rel)}'>open "
-            "the full validated artifact &rarr;</a></p></div>"
+            + artifact_note
+            + "</div>"
         )
 
-    def _stats_page(self) -> bytes:
+    def _stats_page(self, query: Mapping[str, str] | None = None) -> bytes:
         self._reconcile()
+        raw_page = str((query or {}).get("page", "1"))
+        try:
+            page = int(raw_page)
+        except ValueError:
+            page = 1
+        page = min(max(page, 1), 100_000)
+        campaign_panel = self._stats_campaign_panel(page)
+        attached_reports = self._stats_owned_report_paths()
         reports = self._report_index()
-        cards = []
         listed = []
         for report in reports:
             rel = str(report["path"])
+            if (
+                str(report.get("kind") or "") not in {"level1", "level2"}
+                or rel in attached_reports
+                or derived_index_path_quarantined(rel)
+                or derived_path_quarantined(
+                    self.results_root / rel,
+                    self.results_root,
+                )
+            ):
+                continue
             listed.append(
                 f"<li><a href='/artifacts?path={quote(rel)}'>"
                 f"{html.escape(rel)}</a> <span class='modtag'>"
-                f"{html.escape(str(report['kind']))}</span></li>"
+                f"{html.escape(str(report['kind']))}</span> "
+                f"{self._stats_report_index_badge(report)}</li>"
             )
-            if report["kind"] not in {"level1", "level2"} or len(cards) >= 6:
-                continue
-            try:
-                doc = strict_json_loads(
-                    (self.results_root / rel).read_text(encoding="utf-8")
-                )
-            except (OSError, ValueError):
-                continue
-            if not isinstance(doc, dict):
-                continue
-            # Validate the declared schema before rendering, so a malformed or
-            # mislabelled artifact is shown as invalid rather than rendered (and
-            # possibly badged measured) from untrusted content.
-            expected = {"level1": "ura-level1-evidence/2", "level2": "ura-level2-report/1"}[
-                report["kind"]
-            ]
-            if str(doc.get("schema_version")) != expected:
-                cards.append(
-                    "<div class='card'><h2>"
-                    + _icon("file")
-                    + f"{html.escape(rel)} <span class='badge red'>invalid"
-                    "</span></h2><p class='note'>Declared schema "
-                    f"<code>{html.escape(str(doc.get('schema_version')))}</code> "
-                    f"does not match the expected <code>{expected}</code>; not "
-                    "rendered.</p></div>"
-                )
-                continue
-            try:
-                _validate_report_document(str(report["kind"]), doc)
-            except ValueError as exc:
-                cards.append(
-                    "<div class='card'><h2>"
-                    + _icon("file")
-                    + f"{html.escape(rel)} <span class='badge red'>invalid"
-                    "</span></h2><p class='note'>The declared schema matches, "
-                    "but the producer contract or content-derived identity "
-                    f"does not: {html.escape(str(exc))}. Not rendered.</p></div>"
-                )
-                continue
-            try:
-                if report["kind"] == "level2":
-                    cards.append(self._render_level2(rel, doc))
-                else:
-                    cards.append(self._render_level1(rel, doc))
-            except (KeyError, ValueError, TypeError):
-                # A version-valid but structurally malformed artifact must not
-                # 500 the whole Stats page; show it as unrenderable (fail
-                # closed) and keep every other card.
-                cards.append(
-                    "<div class='card'><h2>"
-                    + _icon("file")
-                    + f"{html.escape(rel)} <span class='badge red'>invalid"
-                    "</span></h2><p class='note'>The artifact declares the "
-                    "expected schema but could not be rendered (malformed "
-                    "structure); not shown.</p></div>"
-                )
         results = (
-            "<div class='card'><h2>" + _icon("file") + "Report artifacts</h2>"
+            "<div class='card'><h2>" + _icon("file") + "Unlinked report artifacts</h2>"
             f"<ul>{''.join(listed)}</ul></div>"
             if listed
             else "<div class='card'><p class='note'>No Level-1/Level-2 report "
-            "artifacts retained yet. They appear here once lanes and the "
-            "analysis CLIs have run; diagrams render from the real "
-            "<code>ura-level2-report/1</code> estimate rows.</p></div>"
+            "artifacts remain unlinked. Analysis jobs attached to a campaign "
+            "appear only in that campaign's Statistics &amp; diagrams modal.</p></div>"
+        )
+        unlinked_panel = (
+            "<div class='notice amber'><strong>Unlinked analysis artifacts are "
+            "not campaign evidence.</strong><p class='note'>This compatibility "
+            "view contains only report schemas outside explicit analysis-job "
+            "bindings. It never contributes to a thesis aggregate. Engineering "
+            "and temporary subtrees are excluded. Full tables are not expanded "
+            "here; bind an analysis Job to a campaign to render its diagrams in "
+            "that job's detail view.</p></div>"
+            + results
+        )
+        stats_tabs = (
+            ("stats-campaigns", "Campaigns"),
+            ("stats-operational", "Operational cost"),
+            ("stats-unlinked", "Unlinked reports"),
         )
         body = (
             "<h1>"
             + _icon("chart", size=22)
-            + "Campaign stats</h1>"
+            + "Campaign statistics</h1>"
             + self._health_banner()
-            + self._spend_card()
-            + self._runs_card()
-            + "".join(cards)
-            + results
+            + "<div class='notice blue'><strong>Campaign-first evidence view.</strong>"
+            "<p class='note'>Each card is one retained console Job/run. Calls, "
+            "tokens, costs, coverage, and diagrams stay bound to that job; "
+            "non-authoritative diagnostics are never blended into thesis "
+            "results.</p></div>"
+            + "<div class='page-tabs' data-page-tabs data-tab-key='stats' "
+            "data-default-tab='stats-campaigns'>"
+            + _page_tablist("Statistics sections", stats_tabs, default="stats-campaigns")
+            + _page_tabpanel("stats-campaigns", campaign_panel)
+            + _page_tabpanel(
+                "stats-operational",
+                "<p class='note'>Operational spend is accounting only; it is "
+                "never a scientific aggregate.</p>" + self._spend_card(),
+            )
+            + _page_tabpanel("stats-unlinked", unlinked_panel)
+            + "</div>"
         )
-        return _page("Campaign stats", body, active="Stats")
+        return _page("Campaign statistics", body, active="Stats")
 
     # -- campaign builder --------------------------------------------------
 

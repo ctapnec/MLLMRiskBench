@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Any, Mapping
 
 from ura.strict_json import strict_json_loads
+from ura.adapters.nanogcg import LIVE_NANOGCG_DISABLED_MESSAGE
 
 
 class BuilderModelsMixin:
@@ -841,41 +842,21 @@ class BuilderModelsMixin:
             suffix_source = str(params.get("nanogcg_suffix_source", "")).strip()
             model_id = str(params.get("nanogcg_model_id", "")).strip()
             revision = str(params.get("nanogcg_model_revision", "")).strip()
-            if suffix:
-                if not suffix_source:
-                    raise ValueError(
-                        "NanoGCG precomputed suffix replay requires an exact suffix source"
-                    )
-                if model_id or revision:
-                    raise ValueError(
-                        "NanoGCG suffix replay must not also select a live surrogate"
-                    )
-                entries["nanogcg"] = {
-                    "suffix": suffix,
-                    "suffix_source": suffix_source,
-                }
-            else:
-                from ura.model_acquisition import (  # noqa: PLC0415
-                    validate_repo_id,
-                    validate_revision,
+            if model_id or revision:
+                raise ValueError(LIVE_NANOGCG_DISABLED_MESSAGE)
+            if not suffix:
+                raise ValueError(
+                    "NanoGCG requires an exact precomputed suffix replay; "
+                    + LIVE_NANOGCG_DISABLED_MESSAGE
                 )
-
-                if suffix_source:
-                    raise ValueError(
-                        "NanoGCG suffix source is valid only with a precomputed suffix"
-                    )
-                try:
-                    model_id = validate_repo_id(model_id)
-                    revision = validate_revision(revision)
-                except ValueError as exc:
-                    raise ValueError(
-                        "NanoGCG live optimization requires a Hub namespace/name and "
-                        "an immutable 40-64 lowercase hex revision"
-                    ) from exc
-                entries["nanogcg"] = {
-                    "model_id": model_id,
-                    "model_revision": revision,
-                }
+            if not suffix_source:
+                raise ValueError(
+                    "NanoGCG precomputed suffix replay requires an exact suffix source"
+                )
+            entries["nanogcg"] = {
+                "suffix": suffix,
+                "suffix_source": suffix_source,
+            }
         return entries
 
     def _harmbench_replay_requirements(

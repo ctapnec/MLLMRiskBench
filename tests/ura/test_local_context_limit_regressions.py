@@ -26,7 +26,7 @@ REVISION = "6" * 40
 
 
 def test_local_context_contract_bumps_runner_version() -> None:
-    assert CODE_VERSION == "ura-runner/2.19"
+    assert CODE_VERSION == "ura-runner/2.20"
 
 
 def _rig_hardware() -> dict[str, object]:

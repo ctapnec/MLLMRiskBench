@@ -803,7 +803,7 @@ class OllamaService:
         )
 
         def remaining() -> float:
-            return min(
+            budget = min(
                 self.api.timeout,
                 remaining_seconds(
                     deadline,
@@ -811,6 +811,13 @@ class OllamaService:
                     label="Ollama status",
                 ),
             )
+            # OllamaAPI deliberately rejects sub-50 ms overrides.  A slow tags
+            # sample can consume all but that sliver of the shared status
+            # deadline; treat it as an exhausted optional sample instead of
+            # leaking the API's argument ValueError into page rendering.
+            if budget < 0.05:
+                raise TimeoutError("Ollama status request budget is exhausted")
+            return budget
 
         try:
             tags, tag_issues = _tag_rows(self.api.tags(timeout=remaining()))

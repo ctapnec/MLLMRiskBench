@@ -593,6 +593,39 @@ def test_absent_daemon_status_is_stopped_and_unowned(tmp_path: Path) -> None:
     assert status["can_stop"] is False
 
 
+def test_status_skips_optional_ps_when_shared_deadline_is_below_api_floor(
+    tmp_path: Path,
+) -> None:
+    class Clock:
+        now = 0.0
+
+        def __call__(self) -> float:
+            return self.now
+
+    class DeadlineAPI(_FakeAPI):
+        def tags(self, *, timeout: float | None = None) -> dict[str, object]:
+            document = super().tags(timeout=timeout)
+            clock.now = 0.19
+            return document
+
+        def ps(self, *, timeout: float | None = None) -> dict[str, object]:
+            raise AssertionError("expired status budget must not reach /api/ps")
+
+    clock = Clock()
+    service = OllamaService(
+        tmp_path,
+        api=DeadlineAPI([_tags()]),
+        platform="posix",
+        monotonic=clock,
+    )
+
+    reachable, loaded, warning = service._api_state(deadline=0.20)
+
+    assert reachable is True
+    assert loaded == ()
+    assert warning == "Ollama status request budget is exhausted"
+
+
 def test_unexpected_owned_parent_exit_retains_group_without_signal(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

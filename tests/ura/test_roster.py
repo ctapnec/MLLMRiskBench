@@ -10,6 +10,7 @@ from pathlib import Path
 import pytest
 
 from ura.adapters.base import AttackBudget
+from ura.adapters._engine_runtime import RUNTIME_REQUIRED_ATTACKERS
 from ura.adapters.engines import get_attacker
 from ura.converters import CorpusNotFoundError, get_converter, synth_corpus
 from ura.converters import _CONVERTERS
@@ -22,19 +23,30 @@ WRAPPED_ENGINES = ["pyrit", "garak", "deepteam", "promptfoo", "t3mp3st",
                    "asb", "harmbench"]
 NATIVE_ATTACKERS = ["replay", "crescendo"]
 
-# NanoGCG's live optimization path is intentionally construct-time fail-closed:
-# it must name an immutable surrogate revision even when this roster test never
-# admits or loads the model.  Keep that production contract exercised instead
-# of relying on the obsolete mutable default.
-_NANOGCG_TEST_REVISION = "a" * 40
+class _RosterRuntime:
+    """Minimal admitted handle for constructor-only registry coverage."""
+
+    admitted = True
+
+    def __init__(self, engine: str) -> None:
+        self.engine = engine
+
+    def execute(self, *_args: object, **_kwargs: object) -> object:
+        raise RuntimeError("roster fixture never executes an isolated runtime")
+
+    def public_descriptor(self) -> dict[str, str]:
+        return {"schema": "test-engine-runtime/1", "engine": self.engine}
 
 
 def _roster_attacker(name: str):  # noqa: ANN202
-    config = (
-        {"model_revision": _NANOGCG_TEST_REVISION}
-        if name == "nanogcg"
-        else {}
-    )
+    config: dict[str, object] = {}
+    if name in RUNTIME_REQUIRED_ATTACKERS:
+        config["engine_runtime"] = _RosterRuntime(name)
+    elif name == "nanogcg":
+        config.update(
+            suffix=" !precomputed-test-suffix!",
+            suffix_source="unit-test fixture",
+        )
     return get_attacker(name, **config)
 
 
@@ -58,6 +70,14 @@ def test_attacker_roster_resolves():
 def test_wrapped_engine_guarded_offline(name: str):
     """With no third-party lib/CLI installed, generate() raises a clear error
     (import-clean module, cost paid only at the edge)."""
+    if name in RUNTIME_REQUIRED_ATTACKERS:
+        with pytest.raises(RuntimeError, match="explicit virtual environment"):
+            get_attacker(name)
+        return
+    if name == "nanogcg":
+        with pytest.raises(RuntimeError, match="live nanoGCG optimization is disabled"):
+            get_attacker(name)
+        return
     attacker = _roster_attacker(name)
     dp = synth_corpus(1)[0]
     with pytest.raises(Exception):  # RuntimeError in practice; never a bare ImportError at import

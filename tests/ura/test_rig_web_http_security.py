@@ -18,6 +18,7 @@ _MUTATING_ROUTES = (
     "/pricing/fetch",
     "/db/reindex",
     "/build",
+    "/build/framework-runtimes",
     "/build/t3mp3st/capture",
     "/build/harmbench/prepare",
     "/jobs",

@@ -52,6 +52,7 @@ import platform
 import random
 import re
 import secrets
+import signal
 import stat
 import sys
 import time
@@ -64,7 +65,17 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from ura.adapters.base import AttackBudget           # noqa: E402
+from ura.adapters._engine_runtime import (            # noqa: E402
+    RUNTIME_REQUIRED_ATTACKERS,
+    EngineRuntimeSelection,
+    engine_runtime_identity_descriptor,
+    parse_engine_runtime_config,
+    validate_engine_runtime_execution_descriptor,
+    validate_engine_runtime_identity_descriptor,
+    validate_engine_runtime_selection_descriptor,
+)
 from ura.adapters.engines import get_attacker         # noqa: E402
+from ura.adapters.nanogcg import LIVE_NANOGCG_DISABLED_MESSAGE  # noqa: E402
 from ura.attacker_input_contract import (              # noqa: E402
     AttackerInputContract,
     AttackerInputContractError,
@@ -286,6 +297,44 @@ def _remove_superseded_cell_errors(
             and payload.get("attacker") == attacker
         ):
             path.unlink(missing_ok=True)
+
+
+def _discard_unsealed_engine_cell_state(paths: dict[str, Path]) -> tuple[str, ...]:
+    """Make an incomplete runtime-backed cell non-resumable across sessions.
+
+    A checkpoint is useful only inside the still-open worker session that
+    produced it. Without a verified completion marker and closing seal, a new
+    process must regenerate the cell rather than attach a different session's
+    seal to old attempts, responses, judgments, or aggregates.
+    """
+
+    removable = (
+        "attempts",
+        "responses",
+        "judgments",
+        "trails",
+        "results",
+        "manifest",
+        "checkpoint",
+        "response_checkpoint",
+    )
+    candidates = [paths[name] for name in removable if name in paths]
+    complete = paths.get("complete")
+    if complete is not None:
+        candidates.extend(
+            complete.parent.glob(f".{complete.name}.pending-*")
+        )
+    removed: list[str] = []
+    for path in dict.fromkeys(candidates):
+        if not path.exists() and not path.is_symlink():
+            continue
+        if path.is_dir() and not path.is_symlink():
+            raise ValueError(
+                f"unsealed engine cell artifact {path.name!r} is not a file"
+            )
+        path.unlink()
+        removed.append(path.name)
+    return tuple(sorted(removed))
 
 
 def _safe_component(value: str, *, max_base: int = 48) -> str:
@@ -674,6 +723,23 @@ def _portable_attacker_configs(
     portable: dict[str, dict[str, object]] = {}
     for name, config in configs.items():
         item = dict(config)
+        reserved_runtime_fields = {
+            "engine_runtime",
+            "model_runtime",
+            "interpreter",
+            "interpreter_path",
+            "python_path",
+            "runtime_path",
+            "venv",
+            "venv_path",
+        }
+        forbidden_runtime_fields = sorted(set(item) & reserved_runtime_fields)
+        if forbidden_runtime_fields:
+            raise ValueError(
+                f"attacker config {name!r} contains private runtime fields; "
+                "supply them only through their typed private controller: "
+                + ", ".join(forbidden_runtime_fields)
+            )
         if name == "ideator" and "out_dir" in item:
             out_dir = item.pop("out_dir")
             if out_dir is not None and (
@@ -1026,6 +1092,51 @@ def _load_attacker_config(
         "sha256": observed_sha256,
         "bytes": size,
         "normalized_selected_sha256": _sha256_json(portable),
+    }
+
+
+def _load_engine_runtime_config(
+    path_value: str,
+    selected_attackers: list[str],
+    expected_sha256: str = "",
+) -> tuple[EngineRuntimeSelection | None, dict[str, object] | None]:
+    """Load private venv locators and return only their path-free projection."""
+
+    if bool(path_value) != bool(expected_sha256):
+        raise ValueError(
+            "--engine-runtime-config and --engine-runtime-config-sha256 "
+            "must be provided together"
+        )
+    required = sorted(
+        set(name.strip().lower() for name in selected_attackers)
+        & RUNTIME_REQUIRED_ATTACKERS
+    )
+    loaded = _read_optional_bound_config(
+        path_value,
+        expected_sha256,
+        flag_name="--engine-runtime-config",
+        transient_environment="URA_PRIVATE_TRANSIENT_ENGINE_RUNTIME_CONFIG",
+        transient_directory=".private-engine-runtime-configs",
+        transient_prefix="engine-runtime",
+        max_bytes=4 * 1024 * 1024,
+    )
+    if loaded is None:
+        if required:
+            raise ValueError(
+                "selected third-party attackers require --engine-runtime-config "
+                "and --engine-runtime-config-sha256: " + ", ".join(required)
+            )
+        return None, None
+    raw, _path, size, observed_sha256, _transient = loaded
+    selection = parse_engine_runtime_config(
+        raw, selected_attackers=selected_attackers
+    )
+    projection = selection.identity_descriptor()
+    return selection, {
+        "file": f"private-engine-runtime-config@sha256:{observed_sha256}",
+        "sha256": observed_sha256,
+        "bytes": size,
+        "normalized_selected_sha256": _sha256_json(projection),
     }
 
 
@@ -1863,6 +1974,71 @@ def _same_grid_budget_snapshot(
     return dict(value)
 
 
+def _manifest_engine_runtime_identity(
+    run_config: object,
+) -> dict[str, object] | None:
+    """Return one cell's immutable engine identity, or ``None`` for replay."""
+
+    if not isinstance(run_config, dict):
+        raise ValueError("manifest run configuration is invalid")
+    value = run_config.get("engine_runtime")
+    if not isinstance(value, dict):
+        raise ValueError("manifest lacks engine-runtime disposition")
+    if value.get("schema") == "ura-engine-runtime-not-required/1":
+        if set(value) != {"schema", "framework_execution"} or value.get(
+            "framework_execution"
+        ) not in {None, "not_invoked"}:
+            raise ValueError("manifest engine-runtime replay disposition is invalid")
+        return None
+    return validate_engine_runtime_identity_descriptor(value)
+
+
+def _validate_completion_engine_runtime_close(
+    marker: dict[str, object],
+    run_config: object,
+    *,
+    allow_pending: bool = False,
+) -> dict[str, object] | None:
+    """Bind a runtime-backed completion to its verified closing observation."""
+
+    identity = _manifest_engine_runtime_identity(run_config)
+    close_value = marker.get("engine_runtime_close")
+    if identity is None:
+        if close_value is not None:
+            raise ValueError(
+                "completion marker has unexpected engine-runtime closing evidence"
+            )
+        return None
+    if close_value is None and allow_pending:
+        return None
+    close = validate_engine_runtime_execution_descriptor(
+        close_value, required_status="closed_verified"
+    )
+    if engine_runtime_identity_descriptor(close) != identity:
+        raise ValueError(
+            "completion marker engine-runtime closing identity differs from manifest"
+        )
+    return close
+
+
+def _closed_runtime_descriptor_for_engine(
+    selection: object,
+    engine: str,
+) -> dict[str, object]:
+    closed = validate_engine_runtime_selection_descriptor(
+        selection, required_status="closed_verified"
+    )
+    matches = [
+        item for item in closed["runtimes"]
+        if item["receipt"]["engine"] == engine
+    ]
+    if len(matches) != 1:
+        raise ValueError(
+            f"engine runtime closing selection does not contain exactly one {engine!r}"
+        )
+    return matches[0]
+
+
 def _completion_budget_snapshots(
     out: Path, current: dict[str, object],
 ) -> list[tuple[str, dict[str, object]]]:
@@ -1921,6 +2097,7 @@ def _completion_budget_snapshots(
             raise ValueError(
                 f"same-grid completion marker {marker_path.name!r} budget lineage mismatch"
             )
+        _validate_completion_engine_runtime_close(marker, run_config)
         found.append((f"completion marker {marker_path.name}", snapshot))
     return found
 
@@ -2078,6 +2255,8 @@ def _validate_completion_marker(
     planned: RunManifest,
     required: tuple[str, ...],
     grid_acquisition: dict[str, object],
+    *,
+    allow_pending_engine_runtime_close: bool = False,
 ) -> dict:
     """Validate a completed cell before allowing a call-free skip."""
     marker = _json_loads_strict(paths["complete"].read_text(encoding="utf-8"))
@@ -2132,6 +2311,11 @@ def _validate_completion_marker(
     )
     if stored_acquisition != planned_acquisition:
         raise ValueError("stored model acquisition evidence differs from plan")
+    _validate_completion_engine_runtime_close(
+        marker,
+        stored_run_config,
+        allow_pending=allow_pending_engine_runtime_close,
+    )
     validate_model_acquisition_role_projection_binding(
         stored_acquisition,
         grid_acquisition,
@@ -2724,12 +2908,23 @@ def _attacker_constructor_kwargs(
     name: str,
     configs: dict[str, dict[str, object]],
     model_runtime: ManagedModelRuntime | None,
+    engine_runtimes: EngineRuntimeSelection | None = None,
 ) -> dict[str, object]:
-    """Attach the private surrogate runtime only to NanoGCG."""
+    """Attach private runtime handles without persisting their locators."""
 
     kwargs = dict(configs.get(name.lower(), {}))
-    if name.lower() == "nanogcg":
-        kwargs["model_runtime"] = model_runtime
+    key = name.lower()
+    if key in RUNTIME_REQUIRED_ATTACKERS:
+        if engine_runtimes is None:
+            raise RuntimeError(
+                f"selected third-party attacker {key!r} has no runtime selection"
+            )
+        kwargs["engine_runtime"] = engine_runtimes.runtime_for(key)
+    if key == "nanogcg" and "suffix" not in kwargs:
+        # The configuration gate should reject this before any acquisition or
+        # component construction.  Keep the constructor boundary independently
+        # fail-closed if it is called by another entry point.
+        raise RuntimeError(LIVE_NANOGCG_DISABLED_MESSAGE)
     return kwargs
 
 
@@ -3457,6 +3652,20 @@ def build_parser() -> argparse.ArgumentParser:
         default="",
         help="optional exact byte digest for a read-once selected attacker config",
     )
+    ap.add_argument(
+        "--engine-runtime-config",
+        default="",
+        help=(
+            "private ura-engine-runtime-config/1 mapping selected PyRIT, DeepTeam, "
+            "h4rm3l, and Spikee adapters to their explicit venv interpreters and "
+            "approved path-free receipts"
+        ),
+    )
+    ap.add_argument(
+        "--engine-runtime-config-sha256",
+        default="",
+        help="exact byte digest paired with --engine-runtime-config",
+    )
     ap.add_argument("--judges", default="rules,llm")
     ap.add_argument("--judge-model", default="mock", help="target id used by LLMJudge")
     ap.add_argument(
@@ -3642,7 +3851,17 @@ def build_parser() -> argparse.ArgumentParser:
     return ap
 
 
-def main(argv=None) -> int:
+_ACTIVE_ENGINE_RUNTIME_SELECTION: EngineRuntimeSelection | None = None
+
+
+class _EngineRuntimeTermination(BaseException):
+    def __init__(self, signum: int) -> None:
+        super().__init__(f"termination signal {signum}")
+        self.signum = signum
+
+
+def _main(argv=None) -> int:
+    global _ACTIVE_ENGINE_RUNTIME_SELECTION
     invocation_started_epoch = time.time()
     ap = build_parser()
     raw_argv = list(sys.argv[1:] if argv is None else argv)
@@ -4100,6 +4319,7 @@ def main(argv=None) -> int:
 
         configured_paths = [
             args.attacker_config,
+            args.engine_runtime_config,
             args.api_config,
             args.local_config,
             args.source_config,
@@ -4172,6 +4392,10 @@ def main(argv=None) -> int:
 
     source_conformance_manifest: dict[str, object] | None = None
     source_conformance_artifact: dict[str, object] | None = None
+    engine_runtime_selection: EngineRuntimeSelection | None = None
+    engine_runtime_config_artifact: dict[str, object] | None = None
+    engine_runtime_descriptor: dict[str, object] | None = None
+    engine_runtime_close_descriptor: dict[str, object] | None = None
     live_attestation_manifests: list[dict[str, object]] = []
     live_attestation_artifacts: list[dict[str, object]] = []
     try:
@@ -4181,6 +4405,13 @@ def main(argv=None) -> int:
             args.attacker_config_sha256,
         )
         portable_attacker_configs = _portable_attacker_configs(attacker_configs)
+        engine_runtime_selection, engine_runtime_config_artifact = (
+            _load_engine_runtime_config(
+                args.engine_runtime_config,
+                attacker_names,
+                args.engine_runtime_config_sha256,
+            )
+        )
         configured_api_specs = list(api_specs)
         if (
             not args.dry_run
@@ -4507,6 +4738,29 @@ def main(argv=None) -> int:
             )
             ap.error(str(exc))
 
+    # Stage 1 NanoGCG is precomputed-suffix replay only.  Reject live
+    # optimization before deriving an acquisition plan so a disabled surrogate
+    # can never cause snapshot planning, verification, or admission.
+    if "nanogcg" in {name.lower() for name in attacker_names}:
+        nanogcg_config = attacker_configs.get("nanogcg", {})
+        suffix = nanogcg_config.get("suffix")
+        live_model_fields = sorted(
+            {"model_id", "model_revision"} & set(nanogcg_config)
+        )
+        if (
+            not isinstance(suffix, str)
+            or not suffix.strip()
+            or live_model_fields
+        ):
+            exc = RuntimeError(LIVE_NANOGCG_DISABLED_MESSAGE)
+            persist_request_error(
+                phase="configuration_preflight",
+                category="configuration_invalid",
+                exc=exc,
+            )
+            print(f"nanoGCG runtime admission failed: {exc}", file=sys.stderr)
+            return 1
+
     # Derive and admit the complete immutable Hugging Face selection before
     # constructing any attacker, target, judge, or defense object. Normal and
     # preflight runs have no network fallback: every Hub role needs the exact
@@ -4556,6 +4810,9 @@ def main(argv=None) -> int:
         input_bindings = {
             "api_configs_sha256": _sha256_json(portable_api_configs),
             "attacker_configs_sha256": _sha256_json(portable_attacker_configs),
+            "engine_runtime_config_sha256": _sha256_json(
+                _selected_config_artifact_identity(engine_runtime_config_artifact)
+            ),
             "local_configs_sha256": _sha256_json(acquisition_local_configs),
             "project_revision_sha256": _sha256_json(project_revision_state),
             "request_envelope_sha256": str(request_envelope_artifact["sha256"]),
@@ -4802,6 +5059,42 @@ def main(argv=None) -> int:
             print(f"source conformance preflight failed: {exc}", file=sys.stderr)
             return 1
 
+    # Admit every selected third-party engine before constructing an attacker,
+    # target, judge, or defense object.  Each runtime starts one persistent sealed
+    # worker for this matrix; private interpreter paths never enter run state.
+    if engine_runtime_selection is not None:
+        try:
+            engine_runtime_selection.admit()
+            engine_runtime_descriptor = engine_runtime_selection.identity_descriptor()
+            _ACTIVE_ENGINE_RUNTIME_SELECTION = engine_runtime_selection
+            run_env["engine_runtimes"] = engine_runtime_descriptor
+        except (OSError, RuntimeError, TypeError, ValueError) as exc:
+            cleanup_failure: Exception | None = None
+            try:
+                engine_runtime_selection.abort()
+            except Exception as cleanup_exc:
+                cleanup_failure = cleanup_exc
+            reported = cleanup_failure or exc
+            persist_request_error(
+                phase="engine_runtime_admission",
+                category="engine_runtime_invalid",
+                exc=reported,
+            )
+            print(
+                "engine runtime admission failed: "
+                + safe_request_error_message(reported),
+                file=sys.stderr,
+            )
+            return 1
+
+    def close_engine_runtimes() -> dict[str, object] | None:
+        global _ACTIVE_ENGINE_RUNTIME_SELECTION
+        if engine_runtime_selection is None:
+            return None
+        descriptor = engine_runtime_selection.close()
+        _ACTIVE_ENGINE_RUNTIME_SELECTION = None
+        return descriptor
+
     prebuilt_targets: dict[str, object] = {}
     prebuilt_judge_target: object | None = None
     base_target_identities: list[frozenset[tuple[str, ...]]] = []
@@ -4828,6 +5121,7 @@ def main(argv=None) -> int:
                     attacker_name,
                     attacker_configs,
                     model_runtime,
+                    engine_runtime_selection,
                 ),
             )
             if getattr(attacker, "runner_replay_eligible", True) is False:
@@ -4958,6 +5252,9 @@ def main(argv=None) -> int:
             "attacker_config": _selected_config_artifact_identity(
                 attacker_config_artifact
             ),
+            "engine_runtime_config": _selected_config_artifact_identity(
+                engine_runtime_config_artifact
+            ),
             "api_config": _selected_config_artifact_identity(api_config_artifact),
             "local_config": _selected_config_artifact_identity(
                 local_config_artifact
@@ -5008,6 +5305,7 @@ def main(argv=None) -> int:
                 args.ack_hosted_judge_data_transfer
             ),
             "selected_config_identities": selected_artifact_identities,
+            "engine_runtimes": engine_runtime_descriptor,
             "model_acquisition": acquisition_shared_projection,
             "live_attestation": live_attestation_projection,
         }
@@ -5041,6 +5339,7 @@ def main(argv=None) -> int:
                     for spec in local_specs
                 }),
                 "selected_config_identities": selected_artifact_identities,
+                "engine_runtimes": engine_runtime_descriptor,
                 "model_acquisition": acquisition_execution_descriptor,
                 "experiment_conditions": experiment_conditions,
                 "selected_corpora": compact_corpus_bindings,
@@ -5548,6 +5847,8 @@ def main(argv=None) -> int:
         "attackers": attacker_names,
         "attacker_configs": portable_attacker_configs,
         "attacker_config_artifact": attacker_config_artifact,
+        "engine_runtimes": engine_runtime_descriptor,
+        "engine_runtime_config_artifact": engine_runtime_config_artifact,
         "api_configs": portable_api_configs,
         "api_config_artifact": api_config_artifact,
         "local_configs": {
@@ -5659,6 +5960,9 @@ def main(argv=None) -> int:
         "attacker_config_artifact": _selected_config_artifact_identity(
             attacker_config_artifact
         ),
+        "engine_runtime_config_artifact": _selected_config_artifact_identity(
+            engine_runtime_config_artifact
+        ),
         "api_config_artifact": _selected_config_artifact_identity(
             api_config_artifact
         ),
@@ -5679,8 +5983,9 @@ def main(argv=None) -> int:
     if args.preflight_only:
         try:
             recheck_bound_project_revision()
-        except (OSError, TypeError, ValueError) as exc:
-            print(f"project revision changed during preflight: {exc}", file=sys.stderr)
+            engine_runtime_close_descriptor = close_engine_runtimes()
+        except (OSError, RuntimeError, TypeError, ValueError) as exc:
+            print(f"preflight closing verification failed: {exc}", file=sys.stderr)
             return 1
         if hosted_runtime_checks:
             print(
@@ -5695,7 +6000,7 @@ def main(argv=None) -> int:
             )
         print(
             f"rig preflight passed for {grid_id}; no target or judge generation "
-            "calls were made"
+            "calls were made; isolated engine closing seals passed"
         )
         return 0
 
@@ -5845,6 +6150,7 @@ def main(argv=None) -> int:
     n_cells = 0
     n_skipped = 0
     n_errors = 0
+    deferred_engine_completions: list[dict[str, object]] = []
     executed_modality_evidence: dict[
         str, set[tuple[str, str, tuple[str, ...]]]
     ] = {
@@ -5964,6 +6270,7 @@ def main(argv=None) -> int:
                         attacker_name,
                         attacker_configs,
                         model_runtime,
+                        engine_runtime_selection,
                     )
                     attacker = (
                         planned_attackers[attacker_name]
@@ -6019,6 +6326,26 @@ def main(argv=None) -> int:
                         "attacker": attacker_name,
                         "attacker_config": portable_attacker_configs.get(
                             attacker_name.lower(), {}
+                        ),
+                        "engine_runtime": (
+                            engine_runtime_identity_descriptor(
+                                engine_runtime_selection.runtime_for(
+                                    attacker_name.lower()
+                                ).public_descriptor()
+                            )
+                            if (
+                                engine_runtime_selection is not None
+                                and attacker_name.lower()
+                                in RUNTIME_REQUIRED_ATTACKERS
+                            )
+                            else {
+                                "schema": "ura-engine-runtime-not-required/1",
+                                "framework_execution": (
+                                    "not_invoked"
+                                    if attacker_name.lower() == "nanogcg"
+                                    else None
+                                ),
+                            }
                         ),
                         "judge_names": judge_names,
                         "judge_model": persisted_judge_model,
@@ -6177,6 +6504,13 @@ def main(argv=None) -> int:
                         })
                         continue
 
+                    if attacker_name.lower() in RUNTIME_REQUIRED_ATTACKERS:
+                        discarded = _discard_unsealed_engine_cell_state(paths)
+                        if discarded:
+                            print(
+                                f"  [{stem}] discarded {len(discarded)} unsealed "
+                                "cross-session runtime artifact(s); regenerating"
+                            )
                     resumed = Runner.load_checkpoint(
                         paths["checkpoint"], expected_run_id=planned.run_id
                     )
@@ -6230,6 +6564,10 @@ def main(argv=None) -> int:
                         "realized_identities_sha256": manifest.config[
                             "realized_identities_sha256"
                         ],
+                        # A runtime-backed cell remains pending until the global
+                        # worker closing seal is projected here. Replay cells
+                        # explicitly carry no such observation.
+                        "engine_runtime_close": None,
                         "call_budget_snapshot": call_budget.snapshot(),
                         "artifacts": {
                             name: _artifact_descriptor(paths[name])
@@ -6247,38 +6585,66 @@ def main(argv=None) -> int:
                             planned,
                             required,
                             acquisition_execution_descriptor,
+                            allow_pending_engine_runtime_close=(
+                                attacker_name.lower() in RUNTIME_REQUIRED_ATTACKERS
+                            ),
                         )
                         recheck_bound_project_revision()
                     except Exception:
                         pending_complete.unlink(missing_ok=True)
                         raise
-                    pending_complete.replace(paths["complete"])
-                    paths["error"].unlink(missing_ok=True)
-                    paths["checkpoint"].unlink(missing_ok=True)
-                    paths["response_checkpoint"].unlink(missing_ok=True)
-                    fallback_error.unlink(missing_ok=True)
-                    _remove_superseded_cell_errors(
-                        out, corpus=corpus_name,
-                        model_spec=persisted_model_specs[spec],
-                        attacker=attacker_name,
-                    )
-                    for stale in out.glob("*.lock.error.json"):
-                        if stale.name.startswith(f"{stem}__"):
-                            stale.unlink(missing_ok=True)
-                    print(
-                        f"  [{stem}] {len(judgments)} judgments -> {len(results)} "
-                        f"results (run {manifest.run_id}; resumed {len(resumed)})"
-                    )
-                    n_cells += 1
-                    cell_statuses.append({
+                    status_entry: dict[str, object] = {
                         "corpus": corpus_name,
                         "model_spec": persisted_model_specs[spec],
                         "target": target.name,
                         "attacker": attacker_name,
                         "run_id": manifest.run_id,
-                        "status": "complete",
-                        "completion_marker": paths["complete"].name,
-                    })
+                        "status": "pending_engine_runtime_seal",
+                        "completion_marker": pending_complete.name,
+                    }
+                    if attacker_name.lower() in RUNTIME_REQUIRED_ATTACKERS:
+                        deferred_engine_completions.append({
+                            "pending": pending_complete,
+                            "complete": paths["complete"],
+                            "checkpoint": paths["checkpoint"],
+                            "response_checkpoint": paths["response_checkpoint"],
+                            "error": paths["error"],
+                            "fallback_error": fallback_error,
+                            "corpus": corpus_name,
+                            "model_spec": persisted_model_specs[spec],
+                            "attacker": attacker_name,
+                            "stem": stem,
+                            "status_entry": status_entry,
+                            "paths": dict(paths),
+                            "planned": planned,
+                            "required": required,
+                        })
+                        print(
+                            f"  [{stem}] {len(judgments)} judgments -> {len(results)} "
+                            "results pending the isolated-engine closing seal"
+                        )
+                    else:
+                        pending_complete.replace(paths["complete"])
+                        paths["error"].unlink(missing_ok=True)
+                        paths["checkpoint"].unlink(missing_ok=True)
+                        paths["response_checkpoint"].unlink(missing_ok=True)
+                        fallback_error.unlink(missing_ok=True)
+                        _remove_superseded_cell_errors(
+                            out, corpus=corpus_name,
+                            model_spec=persisted_model_specs[spec],
+                            attacker=attacker_name,
+                        )
+                        for stale in out.glob("*.lock.error.json"):
+                            if stale.name.startswith(f"{stem}__"):
+                                stale.unlink(missing_ok=True)
+                        status_entry["status"] = "complete"
+                        status_entry["completion_marker"] = paths["complete"].name
+                        print(
+                            f"  [{stem}] {len(judgments)} judgments -> {len(results)} "
+                            f"results (run {manifest.run_id}; resumed {len(resumed)})"
+                        )
+                        n_cells += 1
+                    cell_statuses.append(status_entry)
                 except Exception as exc:  # noqa: BLE001 - isolate matrix cells
                     n_errors += 1
                     if isinstance(exc, BudgetExhausted):
@@ -6396,6 +6762,114 @@ def main(argv=None) -> int:
                 for key, value in executed_modality_evidence.items()
             },
         }
+    try:
+        engine_runtime_close_descriptor = close_engine_runtimes()
+        recheck_bound_project_revision()
+        for deferred in deferred_engine_completions:
+            pending = deferred["pending"]
+            complete = deferred["complete"]
+            paths_value = deferred["paths"]
+            planned_value = deferred["planned"]
+            required_value = deferred["required"]
+            status_entry = deferred["status_entry"]
+            if (
+                not isinstance(pending, Path)
+                or not isinstance(complete, Path)
+                or not isinstance(paths_value, dict)
+                or not isinstance(status_entry, dict)
+                or not isinstance(required_value, tuple)
+            ):
+                raise ValueError("deferred engine completion state is invalid")
+            pending_payload = _json_loads_strict(
+                pending.read_text(encoding="utf-8")
+            )
+            if not isinstance(pending_payload, dict):
+                raise ValueError("deferred engine completion marker is invalid")
+            pending_payload["engine_runtime_close"] = (
+                _closed_runtime_descriptor_for_engine(
+                    engine_runtime_close_descriptor,
+                    str(deferred["attacker"]).lower(),
+                )
+            )
+            _write_json(pending, pending_payload)
+            _validate_completion_marker(
+                {**paths_value, "complete": pending},
+                planned_value,
+                required_value,
+                acquisition_execution_descriptor,
+            )
+            pending.replace(complete)
+            for field in ("error", "checkpoint", "response_checkpoint"):
+                path = paths_value.get(field)
+                if isinstance(path, Path):
+                    path.unlink(missing_ok=True)
+            fallback_error = deferred.get("fallback_error")
+            if isinstance(fallback_error, Path):
+                fallback_error.unlink(missing_ok=True)
+            _remove_superseded_cell_errors(
+                out,
+                corpus=str(deferred["corpus"]),
+                model_spec=str(deferred["model_spec"]),
+                attacker=str(deferred["attacker"]),
+            )
+            stem_value = str(deferred["stem"])
+            for stale in out.glob("*.lock.error.json"):
+                if stale.name.startswith(f"{stem_value}__"):
+                    stale.unlink(missing_ok=True)
+            status_entry["status"] = "complete"
+            status_entry["completion_marker"] = complete.name
+            n_cells += 1
+    except (OSError, RuntimeError, TypeError, ValueError) as exc:
+        invalidated = 0
+        for deferred in deferred_engine_completions:
+            status_entry = deferred.get("status_entry")
+            if not isinstance(status_entry, dict) or status_entry.get("status") != (
+                "pending_engine_runtime_seal"
+            ):
+                continue
+            invalidated += 1
+            pending = deferred.get("pending")
+            if isinstance(pending, Path):
+                pending.unlink(missing_ok=True)
+            paths_value = deferred.get("paths")
+            if isinstance(paths_value, dict) and all(
+                isinstance(key, str) and isinstance(value, Path)
+                for key, value in paths_value.items()
+            ):
+                _discard_unsealed_engine_cell_state(paths_value)
+            error_path = deferred.get("error")
+            if isinstance(error_path, Path):
+                _write_json(error_path, {
+                    "status": "error",
+                    "grid_id": grid_id,
+                    "run_id": status_entry.get("run_id"),
+                    "phase": "engine_runtime_closing_seal",
+                    "corpus": status_entry.get("corpus"),
+                    "model_spec": status_entry.get("model_spec"),
+                    "attacker": status_entry.get("attacker"),
+                    "exception_type": type(exc).__name__,
+                    "message": safe_request_error_message(exc),
+                    "execution_started": True,
+                })
+                status_entry["error_artifact"] = _artifact_descriptor(error_path)
+            status_entry.pop("completion_marker", None)
+            status_entry["status"] = "error"
+            status_entry["phase"] = "engine_runtime_closing_seal"
+        n_errors += max(1, invalidated)
+        if invalidated:
+            modality_result_payload = {
+                "status": "failed",
+                "error": (
+                    "isolated-engine cells were invalidated because their "
+                    "closing runtime seal failed"
+                ),
+            }
+        engine_runtime_close_descriptor = {
+            "status": "failed",
+            "error_type": type(exc).__name__,
+            "message": safe_request_error_message(exc),
+        }
+        print(f"engine runtime closing seal failed: {exc}", file=sys.stderr)
     final_grid = {
         "status": "complete" if n_errors == 0 else "partial",
         "grid_id": grid_id,
@@ -6410,6 +6884,7 @@ def main(argv=None) -> int:
         "call_budget_snapshot": call_budget.snapshot(),
         "modality_coverage_plan": modality_plan_payload,
         "modality_coverage_result": modality_result_payload,
+        "engine_runtime_close": engine_runtime_close_descriptor,
         "cells": cell_statuses,
     }
     try:
@@ -6433,6 +6908,43 @@ def main(argv=None) -> int:
         "# pass explicit completed result artifacts and corpus facets"
     )
     return 1 if n_errors else 0
+
+
+def main(argv=None) -> int:
+    """Run one matrix and always tear down any admitted engine sessions."""
+
+    global _ACTIVE_ENGINE_RUNTIME_SELECTION
+    if _ACTIVE_ENGINE_RUNTIME_SELECTION is not None:
+        raise RuntimeError("an isolated engine runtime selection is already active")
+    prior_sigterm: object | None = None
+    installed_sigterm = False
+    if os.name == "posix":
+        try:
+            prior_sigterm = signal.getsignal(signal.SIGTERM)
+
+            def terminate(signum: int, _frame: object) -> None:
+                raise _EngineRuntimeTermination(signum)
+
+            signal.signal(signal.SIGTERM, terminate)
+            installed_sigterm = True
+        except ValueError:
+            # Library callers may run a no-call matrix from a non-main thread.
+            # Only the process main thread can own POSIX signal dispatch.
+            pass
+    try:
+        try:
+            return _main(argv)
+        except _EngineRuntimeTermination as exc:
+            return 128 + exc.signum
+    finally:
+        selection = _ACTIVE_ENGINE_RUNTIME_SELECTION
+        _ACTIVE_ENGINE_RUNTIME_SELECTION = None
+        try:
+            if selection is not None:
+                selection.abort()
+        finally:
+            if installed_sigterm:
+                signal.signal(signal.SIGTERM, prior_sigterm)
 
 
 if __name__ == "__main__":

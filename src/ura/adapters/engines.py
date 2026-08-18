@@ -11,6 +11,10 @@ inside its own module, so importing this file needs only pydantic + stdlib.
 from __future__ import annotations
 
 from .agentdojo import AgentDojoAttacker
+from ._engine_runtime import (
+    RUNTIME_REQUIRED_ATTACKERS,
+    require_admitted_engine_runtime,
+)
 from .asb import ASBAttacker
 from .autodan import AutoDANTurboAttacker
 from .base import BaseAttacker
@@ -42,6 +46,40 @@ ATTACKER_NAMES: tuple[str, ...] = (
     "spikee", "ideator", "purplellama", "asb", "harmbench",
 )
 
+_ENGINE_TYPES: dict[str, type[BaseAttacker]] = {
+    "pyrit": PyRITAttacker,
+    "garak": GarakAttacker,
+    "deepteam": DeepTeamAttacker,
+    "promptfoo": PromptfooAttacker,
+    "t3mp3st": T3MP3STAttacker,
+    "petri": PetriAttacker,
+    "fuzzyai": FuzzyAIAttacker,
+    "nanogcg": NanoGCGAttacker,
+    "autodan": AutoDANTurboAttacker,
+    "agentdojo": AgentDojoAttacker,
+    "giskard": GiskardAttacker,
+    "easyjailbreak": EasyJailbreakAttacker,
+    "h4rm3l": H4rm3lAttacker,
+    "spikee": SpikeeAttacker,
+    "ideator": IDEATORAttacker,
+    "purplellama": PurpleLlamaAttacker,
+    "asb": ASBAttacker,
+    "harmbench": HarmBenchAttacker,
+}
+
+
+def attacker_runner_replay_eligible(name: str) -> bool:
+    """Return static Runner eligibility without constructing an adapter."""
+
+    key = name.strip().lower()
+    if key in {"replay", "crescendo"}:
+        return True
+    try:
+        attacker_type = _ENGINE_TYPES[key]
+    except KeyError as exc:
+        raise ValueError(f"unknown attacker {name!r}") from exc
+    return bool(getattr(attacker_type, "runner_replay_eligible", True))
+
 
 def get_attacker(name: str, **config: object) -> BaseAttacker:
     """Resolve an attacker adapter by name.
@@ -58,31 +96,13 @@ def get_attacker(name: str, **config: object) -> BaseAttacker:
         from .crescendo import CrescendoAttacker
 
         return CrescendoAttacker(**config)
-    engines: dict[str, type[BaseAttacker]] = {
-        "pyrit": PyRITAttacker,
-        "garak": GarakAttacker,
-        "deepteam": DeepTeamAttacker,
-        "promptfoo": PromptfooAttacker,
-        "t3mp3st": T3MP3STAttacker,
-        "petri": PetriAttacker,
-        "fuzzyai": FuzzyAIAttacker,
-        "nanogcg": NanoGCGAttacker,
-        "autodan": AutoDANTurboAttacker,
-        "agentdojo": AgentDojoAttacker,
-        "giskard": GiskardAttacker,
-        "easyjailbreak": EasyJailbreakAttacker,
-        "h4rm3l": H4rm3lAttacker,
-        "spikee": SpikeeAttacker,
-        "ideator": IDEATORAttacker,
-        "purplellama": PurpleLlamaAttacker,
-        "asb": ASBAttacker,
-        "harmbench": HarmBenchAttacker,
-    }
-    if key in engines:
-        return engines[key](**config)
+    if key in _ENGINE_TYPES:
+        if key in RUNTIME_REQUIRED_ATTACKERS:
+            require_admitted_engine_runtime(config.get("engine_runtime"), key)
+        return _ENGINE_TYPES[key](**config)
     raise ValueError(
         f"unknown attacker {name!r}; "
-        f"choose from replay, crescendo, {', '.join(engines)}"
+        f"choose from replay, crescendo, {', '.join(_ENGINE_TYPES)}"
     )
 
 
@@ -106,5 +126,6 @@ __all__ = [
     "PurpleLlamaAttacker",
     "ASBAttacker",
     "HarmBenchAttacker",
+    "attacker_runner_replay_eligible",
     "get_attacker",
 ]

@@ -2,7 +2,7 @@
 
 The Level-1 artifact is an accounting surface, not a safety score.  A prospective
 ``ura-request-envelope/2`` fixes whole-arm request units before source loading;
-after selected corpora materialize, ``ura-eligibility-plan/2`` names their exact
+after selected corpora materialize, ``ura-eligibility-plan/3`` names their exact
 planning strata.  Bound early failures remain request-unit evidence only because
 their modality/source strata cannot be reconstructed honestly.
 """
@@ -33,7 +33,12 @@ from experiments.figure_results import (  # noqa: E402
 )
 from experiments.suite_summary import _load_eligibility_plan  # noqa: E402
 from ura.data_models import Attempt  # noqa: E402
+from ura.adapters._engine_runtime import (  # noqa: E402
+    validate_engine_runtime_selection_identity_descriptor,
+)
 from ura.eligibility import (  # noqa: E402
+    ELIGIBILITY_SCHEMA,
+    LEGACY_ELIGIBILITY_SCHEMA,
     canonical_json_sha256,
     lifecycle_stratum_id,
     planning_stratum_sha256,
@@ -70,7 +75,7 @@ from ura.request_envelope import (  # noqa: E402
 )
 
 
-LEVEL1_SCHEMA = "ura-level1-evidence/2"
+LEVEL1_SCHEMA = "ura-level1-evidence/3"
 _HEX64 = re.compile(r"[0-9a-f]{64}")
 _CONDITION_ID = re.compile(r"condition-[0-9a-f]{24}")
 _LIVE_ATTESTATION_ID = re.compile(r"live-attestation-[0-9a-f]{24}")
@@ -108,6 +113,7 @@ _CONDITION_FIELDS = frozenset({
     "dry_run",
     "hosted_judge_data_transfer_acknowledged",
     "selected_config_identities",
+    "engine_runtimes",
     "model_acquisition",
     "live_attestation",
 })
@@ -171,6 +177,19 @@ def _selected_identity(value: object, *, label: str) -> dict[str, str] | None:
     if not isinstance(digest, str) or _HEX64.fullmatch(digest) is None:
         raise ValueError(f"{label} lacks normalized selected SHA-256")
     return {"normalized_selected_sha256": digest}
+
+
+def _engine_runtime_selection_identity(
+    value: object,
+    *,
+    label: str,
+) -> dict[str, Any] | None:
+    if value is None:
+        return None
+    try:
+        return validate_engine_runtime_selection_identity_descriptor(value)
+    except ValueError as exc:
+        raise ValueError(f"{label} is invalid: {exc}") from exc
 
 
 def _live_attestation_projection(value: object) -> dict[str, Any] | None:
@@ -338,6 +357,7 @@ def _condition_values(value: object) -> dict[str, Any]:
         "source_config",
         "source_conformance",
         "attacker_config",
+        "engine_runtime_config",
         "api_config",
         "local_config",
     }
@@ -345,6 +365,9 @@ def _condition_values(value: object) -> dict[str, Any]:
         raise ValueError("experiment condition selected-config identities are incomplete")
     for field in sorted(expected_selected):
         _selected_identity(selected[field], label=f"selected {field}")
+    _engine_runtime_selection_identity(
+        value["engine_runtimes"], label="experiment condition engine runtimes"
+    )
     acquisition = validate_model_acquisition_role_projection(
         value["model_acquisition"]
     )
@@ -357,6 +380,35 @@ def _condition_values(value: object) -> dict[str, Any]:
     return value
 
 
+def _legacy_condition_values(value: object) -> dict[str, Any]:
+    """Normalize the exact runtime-free eligibility-v2 projection."""
+
+    legacy_fields = _CONDITION_FIELDS - {"engine_runtimes"}
+    if not isinstance(value, dict) or set(value) != legacy_fields:
+        raise ValueError(
+            "legacy eligibility experiment-condition fields are incomplete"
+        )
+    selected = value.get("selected_config_identities")
+    legacy_selected_fields = {
+        "source_config",
+        "source_conformance",
+        "attacker_config",
+        "api_config",
+        "local_config",
+    }
+    if not isinstance(selected, dict) or set(selected) != legacy_selected_fields:
+        raise ValueError(
+            "legacy eligibility selected-config identities are incomplete"
+        )
+    normalized = dict(value)
+    normalized["selected_config_identities"] = {
+        **selected,
+        "engine_runtime_config": None,
+    }
+    normalized["engine_runtimes"] = None
+    return _condition_values(normalized)
+
+
 def _condition_from_plan(plan: dict[str, Any]) -> dict[str, Any]:
     bindings = plan["bindings"]
     raw = bindings.get("experiment_conditions")
@@ -364,12 +416,16 @@ def _condition_from_plan(plan: dict[str, Any]) -> dict[str, Any]:
         raise ValueError(
             f"eligibility plan {plan['plan_id']} lacks exact experiment conditions"
         )
-    values = _condition_values(raw["values"])
+    raw_values = raw["values"]
+    if plan["schema"] == LEGACY_ELIGIBILITY_SCHEMA:
+        values = _legacy_condition_values(raw_values)
+    else:
+        values = _condition_values(raw_values)
     condition_id = raw["condition_id"]
     if (
         not isinstance(condition_id, str)
         or _CONDITION_ID.fullmatch(condition_id) is None
-        or condition_id != "condition-" + _strict_json_sha256(values)[:24]
+        or condition_id != "condition-" + _strict_json_sha256(raw_values)[:24]
     ):
         raise ValueError("eligibility experiment condition ID/content mismatch")
     if values["dry_run"] is not plan["request"]["dry_run"]:
@@ -381,10 +437,25 @@ def _condition_from_plan(plan: dict[str, Any]) -> dict[str, Any]:
     if project_revision != values["project_revision"]:
         raise ValueError("eligibility project-revision condition mismatch")
     selected = bindings.get("selected_config_identities")
+    if plan["schema"] == LEGACY_ELIGIBILITY_SCHEMA:
+        if "engine_runtimes" in bindings:
+            raise ValueError(
+                "legacy eligibility binding unexpectedly contains engine runtimes"
+            )
+        selected = _legacy_condition_values({
+            **raw_values,
+            "selected_config_identities": selected,
+        })["selected_config_identities"]
     if not isinstance(selected, dict) or selected != values[
         "selected_config_identities"
     ]:
         raise ValueError("eligibility selected-config condition mismatch")
+    if _engine_runtime_selection_identity(
+        bindings.get("engine_runtimes"), label="eligibility engine runtimes"
+    ) != _engine_runtime_selection_identity(
+        values["engine_runtimes"], label="experiment condition engine runtimes"
+    ):
+        raise ValueError("eligibility engine-runtime condition mismatch")
     full_acquisition = validate_model_acquisition_execution_descriptor(
         bindings.get("model_acquisition")
     )
@@ -405,16 +476,26 @@ def _condition_from_plan(plan: dict[str, Any]) -> dict[str, Any]:
         digest = bindings.get(field)
         if not isinstance(digest, str) or _HEX64.fullmatch(digest) is None:
             raise ValueError(f"eligibility binding {field} is not SHA-256")
-    return raw
+    return {"condition_id": condition_id, "values": values}
 
 
-def _grid_condition(request: Mapping[str, Any]) -> dict[str, Any]:
+def _grid_condition(
+    request: Mapping[str, Any], *, eligibility_schema: str = ELIGIBILITY_SCHEMA
+) -> dict[str, Any]:
     judges = request.get("judges")
     if not isinstance(judges, list):
         raise ValueError("grid request judges must be a list")
     budget = request.get("global_call_budget")
     if not isinstance(budget, dict):
         raise ValueError("grid request lacks the global call-budget condition")
+    legacy = eligibility_schema == LEGACY_ELIGIBILITY_SCHEMA
+    if legacy and (
+        "engine_runtime_config_artifact" in request
+        or "engine_runtimes" in request
+    ):
+        raise ValueError(
+            "legacy runtime-free grid unexpectedly contains engine runtime fields"
+        )
     selected = {
         "source_config": _selected_identity(
             request.get("source_config_artifact"), label="source config"
@@ -424,6 +505,10 @@ def _grid_condition(request: Mapping[str, Any]) -> dict[str, Any]:
         ),
         "attacker_config": _selected_identity(
             request.get("attacker_config_artifact"), label="attacker config"
+        ),
+        "engine_runtime_config": _selected_identity(
+            request.get("engine_runtime_config_artifact"),
+            label="engine runtime config",
         ),
         "api_config": _selected_identity(
             request.get("api_config_artifact"), label="API config"
@@ -468,6 +553,9 @@ def _grid_condition(request: Mapping[str, Any]) -> dict[str, Any]:
             "hosted_judge_data_transfer_acknowledged"
         ),
         "selected_config_identities": selected,
+        "engine_runtimes": _engine_runtime_selection_identity(
+            request.get("engine_runtimes"), label="grid engine runtimes"
+        ),
         "model_acquisition": model_acquisition_shared_role_projection(
             request.get("model_acquisition_execution")
         ),
@@ -475,8 +563,17 @@ def _grid_condition(request: Mapping[str, Any]) -> dict[str, Any]:
             request.get("live_attestation")
         ),
     }
+    if legacy:
+        legacy_values = dict(values)
+        legacy_selected = dict(selected)
+        del legacy_selected["engine_runtime_config"]
+        legacy_values["selected_config_identities"] = legacy_selected
+        del legacy_values["engine_runtimes"]
+        condition_id = "condition-" + _strict_json_sha256(legacy_values)[:24]
+    else:
+        condition_id = "condition-" + _strict_json_sha256(values)[:24]
     return {
-        "condition_id": "condition-" + _strict_json_sha256(values)[:24],
+        "condition_id": condition_id,
         "values": values,
     }
 
@@ -504,6 +601,12 @@ def _validate_grid_plan_bindings(
         bindings.get("model_acquisition")
     ):
         raise ValueError("grid/eligibility model-acquisition binding mismatch")
+    if _engine_runtime_selection_identity(
+        request.get("engine_runtimes"), label="grid engine runtimes"
+    ) != _engine_runtime_selection_identity(
+        bindings.get("engine_runtimes"), label="eligibility engine runtimes"
+    ):
+        raise ValueError("grid/eligibility engine-runtime binding mismatch")
     harness_source = request.get("harness_source")
     driver_source = request.get("driver_source")
     if (
@@ -900,16 +1003,27 @@ def _artifact_path(
     return path
 
 
-def _grid_id(grid: dict[str, Any]) -> str:
+def _grid_id(grid: dict[str, Any], *, legacy_runtime_free: bool = False) -> str:
     request = grid["request"]
     identity = dict(request)
-    for field in (
+    config_fields = [
         "source_config_artifact",
         "source_conformance_artifact",
         "attacker_config_artifact",
         "api_config_artifact",
         "local_config_artifact",
-    ):
+    ]
+    if legacy_runtime_free:
+        if (
+            "engine_runtime_config_artifact" in request
+            or "engine_runtimes" in request
+        ):
+            raise ValueError(
+                "legacy runtime-free grid unexpectedly contains engine runtime fields"
+            )
+    else:
+        config_fields.insert(3, "engine_runtime_config_artifact")
+    for field in config_fields:
         identity[field] = _selected_identity(
             request.get(field), label=field.replace("_", " ")
         )
@@ -1015,8 +1129,6 @@ def _load_results(
                 raise ValueError(
                     f"diagnostic canary is not Level-1 measured evidence: {grid_path}"
                 )
-            if grid_id != _grid_id(grid) or grid_path.name != f"{grid_id}.grid.json":
-                raise ValueError(f"grid ID/content/filename mismatch: {grid_path}")
             try:
                 _validate_grid_model_acquisition(
                     request,
@@ -1027,9 +1139,6 @@ def _load_results(
                     f"grid model-acquisition evidence is invalid: "
                     f"{grid_path}: {exc}"
                 ) from exc
-            if grid_id in seen_grid_ids:
-                raise ValueError(f"duplicate grid identity: {grid_id}")
-            seen_grid_ids.add(grid_id)
             descriptor = request.get("eligibility_plan")
             if not isinstance(descriptor, dict):
                 raise ValueError(f"grid lacks eligibility descriptor: {grid_path}")
@@ -1040,9 +1149,19 @@ def _load_results(
                 raise ValueError(f"more than one grid binds eligibility plan {plan_id}")
             plan_artifact = plans[plan_id]
             plan = plan_artifact[0]
+            if grid_id != _grid_id(
+                grid,
+                legacy_runtime_free=plan["schema"] == LEGACY_ELIGIBILITY_SCHEMA,
+            ) or grid_path.name != f"{grid_id}.grid.json":
+                raise ValueError(f"grid ID/content/filename mismatch: {grid_path}")
+            if grid_id in seen_grid_ids:
+                raise ValueError(f"duplicate grid identity: {grid_id}")
+            seen_grid_ids.add(grid_id)
             if not _plan_descriptor_matches(descriptor, plan_artifact):
                 raise ValueError(f"grid/eligibility artifact descriptor mismatch: {grid_path}")
-            if _grid_condition(request) != _condition_from_plan(plan):
+            if _grid_condition(
+                request, eligibility_schema=plan["schema"]
+            ) != _condition_from_plan(plan):
                 raise ValueError(f"grid/eligibility experiment-condition mismatch: {grid_path}")
             _validate_grid_plan_bindings(request, plan)
 
@@ -1125,7 +1244,12 @@ def _load_results(
                         raise ValueError("completion marker referenced more than once")
                     referenced_markers.add(marker_path)
                     ref = _GridReference(
-                        grid_id, grid_path, request, raw_status, plan
+                        grid_id,
+                        grid_path,
+                        request,
+                        raw_status,
+                        plan,
+                        grid.get("engine_runtime_close"),
                     )
                     cell = _validate_cell(
                         marker_path,
@@ -2265,7 +2389,8 @@ def build_level1_evidence(
             "fixed_universe": (
                 "prospective whole-arm request units from supplied "
                 "ura-request-envelope/2 artifacts, plus exact materialized planning "
-                "strata from supplied ura-eligibility-plan/2 artifacts"
+                "strata from supplied ura-eligibility-plan/3 artifacts "
+                "(or exact runtime-free legacy /2 artifacts)"
             ),
             "pre_materialization_failures": (
                 "bound to prospective request units only; exact source/modality "
@@ -2463,7 +2588,10 @@ def main(argv: list[str] | None = None) -> int:
         type=Path,
         action="append",
         default=[],
-        help="validated ura-eligibility-plan/2 JSON; repeat per request condition",
+        help=(
+            "validated ura-eligibility-plan/3 JSON (or exact runtime-free legacy "
+            "/2); repeat per request condition"
+        ),
     )
     parser.add_argument(
         "--results",

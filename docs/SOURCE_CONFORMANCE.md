@@ -54,13 +54,11 @@ JSONL line count must not be relabelled as upstream discovery.
 
 ## Historical receipt boundary
 
-The retained workspace receipt
-[`source-conformance.json`](../../../Thesis-EN/verification/2026-08-15-web002-builder/source-conformance.json)
-(SHA-256
-`19a728d872d8fa94a28370fd10a6889c969d41b20943b2b8a37f3c07dd7cced1`) is
-immutable historical acquisition/conversion evidence, not current admission or
-a model result. All 26 entries remain historical. The current audit found no
-new issue in 19 entries. Six mapping reviews are superseded pending a fresh
+Operator-local source-conformance receipts and engineering logs remain ignored
+diagnostics. They are not committed repository material, current admission,
+usable thesis evidence, or authority for a software/source revision. A previous
+26-entry diagnostic audit found no new issue in 19 entries, but those entries
+remain historical traceability only. Six mapping reviews are superseded pending a fresh
 observation and review: `siuo_release`, `vlsbench_release`,
 `mllmguard_position_swapping`, `mllmguard_noise_injection`,
 `videosafetybench_benign_query`, and `videosafetybench_harmful_query`.

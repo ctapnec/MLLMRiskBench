@@ -21,6 +21,12 @@ from ura.targets.api import (
 )
 from ura.targets.local import canonical_local_model_identity
 from ura.strict_json import strict_json_loads
+from ura.adapters._engine_runtime import (
+    ENGINE_RUNTIME_CONFIG_SCHEMA,
+    RUNTIME_REQUIRED_ATTACKERS,
+    parse_engine_runtime_config,
+)
+from ura.adapters.nanogcg import LIVE_NANOGCG_DISABLED_MESSAGE
 
 from .catalog import (
     _ARM_CATALOG,
@@ -461,6 +467,83 @@ class BuilderValidationMixin:
         bound["_source_config_snapshot_sha256"] = digest
         return bound
 
+    def _selected_engine_runtime_config_snapshot(
+        self,
+        params: Mapping[str, str],
+    ) -> tuple[dict[str, object], str, bytes | None, str | None]:
+        """Bind the exact private venv selection without retaining locators."""
+
+        selected = sorted(
+            set(self._split_list(str(params.get("attackers", ""))))
+            & RUNTIME_REQUIRED_ATTACKERS
+        )
+        path_value = str(params.get("engine_runtime_config", "")).strip()
+        expected = str(params.get("engine_runtime_config_sha", "")).strip().lower()
+        if not selected:
+            if path_value or expected:
+                raise ValueError(
+                    "engine runtime config is allowed only when PyRIT, DeepTeam, "
+                    "h4rm3l, or Spikee is selected"
+                )
+            projection: dict[str, object] = {
+                "schema": "ura-builder-selected-engine-runtime-config/1",
+                "engines": [],
+                "selection": None,
+            }
+            return projection, _condition_sha256(projection), None, None
+
+        candidate = Path(path_value).expanduser()
+        if not candidate.is_absolute():
+            candidate = self.repo_root / candidate
+        raw, actual = self._bounded_content_snapshot(
+            str(candidate),
+            expected,
+            label="engine runtime config",
+            max_bytes=4 * 1024 * 1024,
+        )
+        try:
+            document = strict_json_loads(raw, max_nodes=100_000, max_depth=16)
+        except (UnicodeError, ValueError) as exc:
+            raise ValueError("engine runtime config is not strict JSON") from exc
+        if (
+            not isinstance(document, dict)
+            or set(document) != {"schema", "runtimes"}
+            or document.get("schema") != ENGINE_RUNTIME_CONFIG_SCHEMA
+            or not isinstance(document.get("runtimes"), dict)
+            or set(document["runtimes"]) != set(selected)
+        ):
+            raise ValueError(
+                "engine runtime config must contain exactly the selected "
+                "third-party framework runtimes"
+            )
+        selection = parse_engine_runtime_config(
+            raw,
+            selected_attackers=selected,
+        )
+        projection = {
+            "schema": "ura-builder-selected-engine-runtime-config/1",
+            "engines": selected,
+            "selection": selection.identity_descriptor(),
+        }
+        return projection, _condition_sha256(projection), raw, actual
+
+    def _bind_selected_engine_runtime_config_identity(
+        self,
+        params: Mapping[str, str],
+    ) -> dict[str, str]:
+        _snapshot, digest, _raw, _actual = (
+            self._selected_engine_runtime_config_snapshot(params)
+        )
+        prior = str(params.get("_engine_runtime_config_snapshot_sha256", ""))
+        if prior and prior != digest:
+            raise ValueError(
+                "selected engine runtime config changed after review; "
+                "review the lane again"
+            )
+        bound = {key: str(value) for key, value in params.items()}
+        bound["_engine_runtime_config_snapshot_sha256"] = digest
+        return bound
+
     def _source_conformance_snapshot(
         self,
         params: Mapping[str, str],
@@ -506,6 +589,7 @@ class BuilderValidationMixin:
         bound = self._bind_selected_api_config_identity(params)
         bound = self._bind_selected_source_config_identity(bound)
         bound = self._bind_selected_prepared_attacker_identity(bound)
+        bound = self._bind_selected_engine_runtime_config_identity(bound)
         components: dict[str, bytes] = {}
 
         _api_snapshot, _api_digest, _relative, api_configs = (
@@ -551,6 +635,15 @@ class BuilderValidationMixin:
                     max_bytes=max_bytes,
                 )
                 components[f"attacker_artifact_{attacker}"] = raw
+
+        _engine_snapshot, _engine_digest, engine_raw, engine_actual = (
+            self._selected_engine_runtime_config_snapshot(bound)
+        )
+        if engine_raw is not None:
+            components["engine_runtime_config"] = engine_raw
+            if engine_actual is None:  # pragma: no cover - tuple invariant
+                raise ValueError("engine runtime config lacks a byte identity")
+            bound["engine_runtime_config_sha"] = engine_actual
 
         mode = bound.get("mode", "measured")
         dry = mode == "dry_run" or (
@@ -631,6 +724,7 @@ class BuilderValidationMixin:
         allowed_components = {
             "api_config",
             "attacker_config",
+            "engine_runtime_config",
             "local_config",
             "project_revision",
             "source_config",
@@ -660,6 +754,7 @@ class BuilderValidationMixin:
                 for name in (
                     "_api_config_snapshot_sha256",
                     "_attacker_config_snapshot_sha256",
+                    "_engine_runtime_config_snapshot_sha256",
                     "_local_config_snapshot_sha256",
                     "_source_config_snapshot_sha256",
                 )
@@ -749,6 +844,7 @@ class BuilderValidationMixin:
             "_local_config_snapshot_sha256",
             "_source_config_snapshot_sha256",
             "_attacker_config_snapshot_sha256",
+            "_engine_runtime_config_snapshot_sha256",
         )
         snapshot = {
             "schema": "ura-builder-selected-execution-config/1",
@@ -782,6 +878,7 @@ class BuilderValidationMixin:
         bound = self._bind_selected_api_config_identity(params)
         bound = self._bind_selected_source_config_identity(bound)
         bound = self._bind_selected_prepared_attacker_identity(bound)
+        bound = self._bind_selected_engine_runtime_config_identity(bound)
         conformance = self._source_conformance_snapshot(bound)
         if conformance is not None:
             bound["source_conformance_sha"] = conformance[1]
@@ -881,6 +978,86 @@ class BuilderValidationMixin:
             directory_name=".private-source-configs",
             filename_prefix="source",
         )
+
+    def _materialize_selected_engine_runtime_config(
+        self,
+        params: Mapping[str, str],
+        *,
+        snapshot_payload: bytes | None = None,
+    ) -> tuple[Path | None, str | None]:
+        """Create one ticket-bound, read-once explicit-venv config."""
+
+        selected = sorted(
+            set(self._split_list(str(params.get("attackers", ""))))
+            & RUNTIME_REQUIRED_ATTACKERS
+        )
+        expected = str(params.get("engine_runtime_config_sha", "")).strip().lower()
+        if not selected:
+            if snapshot_payload is not None:
+                raise ValueError(
+                    "reviewed engine runtime config exists without a selected runtime"
+                )
+            return None, None
+        if re.fullmatch(r"[0-9a-f]{64}", expected) is None:
+            raise ValueError("engine runtime config requires an exact SHA-256")
+        if snapshot_payload is None:
+            _snapshot, digest, raw, actual = (
+                self._selected_engine_runtime_config_snapshot(params)
+            )
+            if raw is None or actual is None:  # pragma: no cover - selection invariant
+                raise ValueError("selected engine runtime config is missing")
+            payload = raw
+        else:
+            payload = bytes(snapshot_payload)
+            actual = hashlib.sha256(payload).hexdigest()
+            if not payload or len(payload) > 4 * 1024 * 1024 or actual != expected:
+                raise ValueError(
+                    "reviewed engine runtime config bytes do not match the ticket"
+                )
+            try:
+                document = strict_json_loads(
+                    payload,
+                    max_nodes=100_000,
+                    max_depth=16,
+                )
+            except (UnicodeError, ValueError) as exc:
+                raise ValueError("reviewed engine runtime config is invalid") from exc
+            if (
+                not isinstance(document, dict)
+                or set(document) != {"schema", "runtimes"}
+                or document.get("schema") != ENGINE_RUNTIME_CONFIG_SCHEMA
+                or not isinstance(document.get("runtimes"), dict)
+                or set(document["runtimes"]) != set(selected)
+            ):
+                raise ValueError(
+                    "reviewed engine runtime config no longer matches selection"
+                )
+            selection = parse_engine_runtime_config(
+                payload,
+                selected_attackers=selected,
+            )
+            projection = {
+                "schema": "ura-builder-selected-engine-runtime-config/1",
+                "engines": selected,
+                "selection": selection.identity_descriptor(),
+            }
+            digest = _condition_sha256(projection)
+        if actual != expected:
+            raise ValueError("engine runtime config SHA-256 no longer matches")
+        if str(params.get("_engine_runtime_config_snapshot_sha256", "")) != digest:
+            raise ValueError(
+                "selected engine runtime config changed after review; "
+                "review the lane again"
+            )
+        path, materialized_digest = self._materialize_private_config(
+            payload=payload,
+            directory_name=".private-engine-runtime-configs",
+            filename_prefix="engine-runtime",
+        )
+        if materialized_digest != expected:  # pragma: no cover - direct hash invariant
+            path.unlink(missing_ok=True)
+            raise ValueError("engine runtime config digest changed while materializing")
+        return path, materialized_digest
 
     def _materialize_selected_source_conformance(
         self,
@@ -1178,22 +1355,22 @@ class BuilderValidationMixin:
             self._bind_selected_source_config_identity(params)
         except (KeyError, OSError, TypeError, ValueError) as exc:
             errors["corpora"] = str(exc)
+        try:
+            self._bind_selected_engine_runtime_config_identity(params)
+        except (KeyError, OSError, TypeError, ValueError) as exc:
+            errors["engine_runtime_config"] = str(exc)
         local_catalog, _configured_local = self._local_entry_catalog()
-        if "nanogcg" in attackers and not params.get("nanogcg_suffix", "").strip():
-            surrogate_repo = params.get("nanogcg_model_id", "").strip()
-            surrogate_revision = params.get("nanogcg_model_revision", "").strip().lower()
-            for target_spec in local:
-                entry = local_catalog.get(target_spec, {})
-                if (
-                    target_spec == f"vllm:{surrogate_repo}"
-                    and str(entry.get("revision", "")).strip().lower()
-                    == surrogate_revision
-                ):
-                    errors["nanogcg"] = (
-                        "the NanoGCG surrogate must differ from every evaluated "
-                        "target; this campaign is surrogate-transfer, not white-box"
-                    )
-                    break
+        if "nanogcg" in attackers:
+            if (
+                params.get("nanogcg_model_id", "").strip()
+                or params.get("nanogcg_model_revision", "").strip()
+            ):
+                errors["nanogcg"] = LIVE_NANOGCG_DISABLED_MESSAGE
+            elif not params.get("nanogcg_suffix", "").strip():
+                errors["nanogcg"] = (
+                    "NanoGCG requires an exact precomputed suffix replay; "
+                    + LIVE_NANOGCG_DISABLED_MESSAGE
+                )
         hosted_identity_conditions = []
         for spec in api:
             selected_config = (

@@ -130,7 +130,10 @@ def test_adapters_have_no_unmediated_subprocess_calls() -> None:
     adapters = Path(__file__).parents[2] / "src" / "ura" / "adapters"
     offenders: list[str] = []
     for source in adapters.glob("*.py"):
-        if source.name == "_engine_common.py":
+        if source.name in {"_engine_common.py", "_engine_runtime.py"}:
+            # `_engine_runtime` is the one fixed, content-bound persistent
+            # worker controller. It owns stricter argv/environment/artifact and
+            # whole-process-tree tests; ordinary adapters still may not spawn.
             continue
         text = source.read_text(encoding="utf-8")
         if "subprocess.run(" in text or "subprocess.Popen(" in text:

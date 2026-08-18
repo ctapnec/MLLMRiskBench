@@ -630,7 +630,7 @@ def test_rig_check_runs_preflights_and_projects_calls_without_generation(
     artifacts = list(tmp_path.glob("eligibility-*.eligibility.json"))
     assert len(artifacts) == 1
     plan = json.loads(artifacts[0].read_text(encoding="utf-8"))
-    assert plan["schema"] == "ura-eligibility-plan/2"
+    assert plan["schema"] == "ura-eligibility-plan/3"
     assert plan["request"]["requested_target_specs"] == ["mock"]
     assert plan["counts"]["not_applicable"] == 0
     assert plan["counts"]["compatible_if_isolated"] > 0

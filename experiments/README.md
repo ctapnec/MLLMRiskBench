@@ -5,11 +5,19 @@ validity rules, then execute [RUN_AND_RETURN.md](RUN_AND_RETURN.md). A dry run,
 partial artifact family, source conversion, model-name assumption, native prompt
 export, or synthetic figure is not a measured thesis result.
 
-The maintained execution contract is Runner `ura-runner/2.19` with unified
-schema `1.4`; older artifacts are not mixed into the thesis run. The latest
-exact tested release and its local/rig evidence are retained in the sibling
-Thesis record
-`../../../Thesis-EN/verification/2026-08-17-campaign-status-harmbench/`.
+The maintained execution contract is Runner `ura-runner/2.20` with unified
+schema `1.5`. Runner 2.19/schema 1.4 artifacts remain runtime-free legacy
+compatibility only and are not mixed into the current measured cohort.
+Ignored local/rig engineering logs are operational diagnostics, not committed
+or usable thesis evidence and not authority for a software revision.
+
+All managed third-party framework dependencies and exact source/runtime
+provenance live only in
+[`framework_runtime_lock.json`](framework_runtime_lock.json). Install, resume,
+or verify one isolated runtime through
+`python -m experiments.framework_runtime_installer`; the same typed actions are
+available in Build → Runtimes and appear as non-thesis engineering campaigns in
+Jobs/Stats. Do not install a framework package in the main URA environment.
 
 ## Experimental shape
 
@@ -216,10 +224,11 @@ nonempty subset as complete.
    the complete offline suite. Every non-dry preflight, probe, canary, or
    measured Runner request binds this receipt; a revision change starts a new
    recorded cohort. On the local-vLLM rig, install
-   `.[dev,analysis,api,guardrail,local-vllm,harmbench]`; the extras pin
-   `vllm==0.27.1`, `bitsandbytes==0.49.2`, and the tested HarmBench
-   prepare/replay dependencies, while the base dependency supplies
-   `psutil>=7.2,<8`. Import those packages and run `pip check` before local
+   `.[dev,analysis,api,guardrail,local-vllm]`; that extra pins
+   `vllm==0.27.1` and `bitsandbytes==0.49.2`, while the base dependency supplies
+   `psutil>=7.2,<8`. Install every attack/native framework in its dedicated
+   hash-locked runtime with `experiments.framework_runtime_installer`; never add
+   those packages to the main URA environment. Run `pip check` before local
    preflight.
 2. Acquire every selected release and upstream project at the recorded revision;
    copy and configure the operator-local `--source-config`, bind

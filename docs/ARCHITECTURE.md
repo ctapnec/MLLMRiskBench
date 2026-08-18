@@ -124,7 +124,7 @@ requires real eligible Attempt-Response evidence for each delivered
 combination. Tags without byte-backed delivery, setup-only turns, and input-side
 defense blocks do not count.
 
-Runner 2.19 plans a path-free attacker-input contract for every selected
+Runner 2.20 plans a path-free attacker-input contract for every selected
 attacker x datapoint x seed before constructing target or model-backed defense
 engines. Eligibility, modality coverage, attestation keys, and lane identity use
 the attacker-produced target-call combinations. Immediately before each budget
@@ -139,7 +139,7 @@ tool trace without changing admission evidence.
 Eligibility is represented as a requested-target x selected-source-stratum x
 exact-modality x attacker relation, not an invented complete Cartesian product.
 After the selected corpora materialize, `run_matrix` writes a content-addressed
-`ura-eligibility-plan/2` artifact before any model call. It retains every
+`ura-eligibility-plan/3` artifact before any model call. It retains every
 requested planning stratum as `compatible_if_isolated` or `N/A`, with its failed
 gates, whole-arm execution-unit status, and bound configuration/corpus digests.
 This is planning evidence only: it is not a live
@@ -163,7 +163,7 @@ local-judge requests retain false. It does not certify privacy review or
 provider retention behavior.
 
 After the whole request passes admission and before the first generation call,
-Runner 2.19 writes a content-addressed `ura-lane-projection/1`. The artifact
+Runner 2.20 writes a content-addressed `ura-lane-projection/1`. The artifact
 binds the exact experiment condition and eligibility descriptor, selected
 record/cluster/source-policy counts, deterministic sampling identities,
 selected physical input-media bytes, and the conservative complete-grid target,
@@ -179,7 +179,7 @@ The read-only `experiments.level1_evidence` boundary automatically discovers
 request envelopes from supplied result roots and eligibility siblings, then
 joins any final plan in one selected `run_matrix` cohort, including plan-only
 structural-`N/A` or blocked requests, to complete or partial grids under the
-same content-derived condition. Its `ura-level1-evidence/2` output retains four non-interchangeable units:
+same content-derived condition. Its `ura-level1-evidence/3` output retains four non-interchangeable units:
 prospective whole-arm request units, materialized planning strata, whole-arm
 execution units, and completed Judgment records. Prospective units stay in the
 JSON and are not planning rows. Whole-arm execution is projected onto a
@@ -289,6 +289,61 @@ elsewhere in a mixed grid from fragmenting a hosted cell or transfer cohort.
 Figure, transfer, Level-1, and Level-2 ingestion revalidate the complete grid
 documents and require each role projection to be their exact subset.
 
+PyRIT 0.14.0, DeepTeam 1.0.7, h4rm3l 0.2.4, and Spikee 0.9.1 use a separate
+engine-runtime boundary. Each framework lives in its own explicit venv; no
+adapter imports it in the Runner process and there is no PATH or in-process
+fallback. A private `ura-engine-runtime-config/1` pairs each selected interpreter
+with a previously observed path-free receipt and is itself accepted only with
+its exact file SHA-256. Before targets, judges, or attacker objects are built,
+the Runner starts one fixed standard-library worker with `-I -S -B`, no
+credential-bearing environment, a private HOME/cache, a PATH limited to that
+venv, and a dedicated process group/job. The worker derives its venv and exact
+site-packages root from its executable and `pyvenv.cfg` without importing
+`site`, hashes the interpreter, installed inventory, primary RECORD tree, and
+the complete site tree including executable bytecode, then adds only that
+verified directory via a source/extension-only top-level finder. `.pth`,
+`sitecustomize`, ambient import roots, and top-level sourceless bytecode cannot
+run before or substitute for this admission. Any nested legacy sourceless
+bytecode Python may execute is bound by both the opening and closing tree seals.
+Installer receipts express that complete retained-tree algorithm as
+`ura-framework-runtime-content-seal/2`; the outer receipt remains
+`ura-framework-runtime-receipt/1`. An older nested seal cannot verify under the
+current installer, and each seal migration receives a new lock identity/store
+without rewriting its predecessor.
+
+The admitted worker persists for all operations in the matrix. Requests and
+results cross a fixed strict-JSON/create-only artifact protocol with bounded
+depth, nodes, sizes, names, counts, regular-file identity, and no-follow reads;
+Spikee's generated dataset is the sole file result. This avoids a full
+multi-gigabyte environment hash per attempt. Close performs a second full
+content verification, terminates the complete descendant tree, and produces an
+exact closing seal. Runtime-backed completion markers remain pending until that
+seal succeeds. Stable run/grid/eligibility identity contains only the receipt
+and bridge hash, never the private interpreter or mutable lifecycle status;
+the grid retains opening and `closed_verified` selections for audit. Figure,
+transfer, and Level-1 consumers bind manifest identity, per-cell close, selected
+attacker set, and grid close before accepting evidence. This boundary limits
+dependency collision and evidence ambiguity but is not a network, filesystem,
+or account sandbox.
+
+The process boundary is parent-death-bound as well as explicitly stoppable: a
+POSIX watchdog owns a liveness pipe from the Runner, while the Windows worker
+tree lives in a dedicated `KILL_ON_JOB_CLOSE` Job Object. If the Runner exits
+without reaching its close path, loss of that parent-owned capability tears
+down the worker and descendants; no completion seal is published.
+
+NanoGCG live optimization needs a stronger cross-process managed-snapshot
+load/post-load verification handshake. Until that Stage-2 protocol exists it
+fails before framework, snapshot, model, or target construction. Stage 1 admits
+only attributable precomputed-suffix replay and explicitly records
+`framework_execution=not_invoked`.
+
+This material evidence change advances the current contracts to Runner 2.20,
+unified schema 1.5, `ura-eligibility-plan/3`, and
+`ura-level1-evidence/3`. Exact Runner 2.19/schema 1.4 non-runtime artifacts stay
+readable through an explicit empty-runtime normalization; no legacy artifact is
+allowed to attest runtime-backed framework execution.
+
 An Ollama entry instead identifies a tag present in the live loopback daemon
 after a successful pull or discovery transaction. Rig Web may Start, Stop, and
 Pull only through its proven current-console-owned child; an external daemon is
@@ -299,7 +354,7 @@ forbids every vLLM-only fit, quantization, topology, parameter, output, and
 context field. The pulled artifact fixes precision. The adapter uses the
 daemon's HTTP API through the Python standard library, with no Ollama Python SDK
 dependency.
-Runner 2.19 local vLLM/Ollama adapters use the shared deterministic rendered-
+Runner 2.20 local vLLM/Ollama adapters use the shared deterministic rendered-
 dialog fingerprint as the non-blank `Response.attempt_id` placeholder required
 at target-return validation. Runner replaces that transport-local value with the
 canonical Attempt ID and run ID before judgment, checkpointing, or persistence.

@@ -291,6 +291,19 @@ def test_picker_has_one_selector_per_hosted_vllm_and_ollama_row_and_safe_layout(
     assert page.count("class='modelbox'") == 4
     assert "judge-modelbox" not in page
 
+    # The local filter UI belongs only to the vLLM list. Ollama is a separate
+    # daemon inventory and therefore follows modality scope without inheriting
+    # the vLLM name, size, fit, count, or empty-state semantics.
+    local_count_at = page.index("id='local-filter-count'")
+    vllm_list_at = page.index("id='vllm-target-list'")
+    ollama_list_at = page.index("id='ollama-target-list'")
+    assert local_count_at < vllm_list_at < ollama_list_at
+    assert "else if(kind==='local'&&backend==='ollama')" not in page
+    assert (
+        "if(visible&&kind==='local'&&backend==='vllm'){counts.local++;}"
+        in page
+    )
+
     # Grid tracks can shrink to the containing modal/card instead of imposing
     # a wider intrinsic minimum; the vLLM range/number pair stacks on phones.
     for contract in (

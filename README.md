@@ -10,13 +10,11 @@ Experiments are pending. The repository establishes no model ranking, defense
 effect, compliance finding, or other empirical result yet.
 
 The development tree implements the RUN-001 prospective-request and MET-001
-exact-selection interfaces described below, with offline contract tests. The
-latest exact tested software revision, raw local/rig logs, rendered dashboard
-and Build pages, project-revision receipt and source bundle are retained under
-`../../Thesis-EN/verification/2026-08-17-campaign-status-harmbench/`; that
-record is the authority for its exact commit and verification results. The
-earlier quantization and dashboard/filter records remain historical evidence
-for their own snapshots. A retained
+exact-selection interfaces described below, with offline contract tests.
+Generated local/rig logs and engineering-campaign records stay under ignored
+operator state; they are diagnostics, are not committed, and are not usable
+thesis evidence or authority for a software revision. Exact revision identity
+comes from the tracked checkout and the typed receipts described below. A retained
 26-arm receipt is historical acquisition/conversion
 traceability, not current admission or a result: the current audit found no new
 issue in 19 entries; the SIUO, VLSBench, MLLMGuard position-swapping and
@@ -65,15 +63,31 @@ The rig's local-vLLM environment is installed from the checked-in extra rather
 than from separate version variables:
 
 ```bash
-python -m pip install -e ".[dev,analysis,api,guardrail,local-vllm,harmbench]"
-python -c "import bitsandbytes, datasketch, en_core_web_sm, psutil, ray, spacy, torch, vllm; print(vllm.__version__, bitsandbytes.__version__, psutil.__version__, torch.__version__, datasketch.__version__, ray.__version__, spacy.__version__)"
+python -m pip install -e ".[dev,analysis,api,guardrail,local-vllm]"
+python -c "import bitsandbytes, psutil, torch, vllm; print(vllm.__version__, bitsandbytes.__version__, psutil.__version__, torch.__version__)"
 ```
 
 `local-vllm` pins the tested `vllm==0.27.1` and `bitsandbytes==0.49.2` pair;
 `psutil>=7.2,<8` is a normal project dependency used for the startup CPU/core/RAM
-snapshot. The `harmbench` extra pins the tested prepared-workflow dependencies,
-including `datasketch` and the SHA-256-bound `en_core_web_sm` model required by
-the pinned HarmBench checkout.
+snapshot. HarmBench and every other third-party attack/native framework are
+installed only through the strict isolated-runtime lock described in the
+operator runbook; they are not main-environment extras.
+
+### Isolated framework runtimes
+
+[`experiments/framework_runtime_lock.json`](experiments/framework_runtime_lock.json)
+is the sole dependency/source/runtime manifest for every managed attack,
+preparation, and native framework. Use
+`python -m experiments.framework_runtime_installer plan|install|resume|verify`
+with an exact CPython 3.12.13 base interpreter; never install those packages in
+the main URA venv. Each long mutating/verification action automatically runs in
+a credential-free named tmux session (screen is the only fallback), publishes
+one stable alias to a content-addressed store, and writes only path-free
+receipts/summaries plus a non-thesis engineering campaign. Build → Runtimes
+exposes the same fixed per-row actions, while Jobs/Stats shows their bounded
+campaign events. The full CLI, state-root convention, canonical `.store`
+runtime-config handoff, and 20-attacker coverage dispositions are in the
+[operator runbook](experiments/RUN_AND_RETURN.md#122-runner-safe-external-attack-bridges).
 
 Dry-run and synthetic output are plumbing evidence only and cannot enter the
 thesis results. This explicit offline form records
@@ -191,6 +205,18 @@ Identical bytes remain one
 scientific condition while the exact receipt event and its admission-only stat
 inventory stay auditable.
 
+Runner-safe PyRIT 0.14.0, DeepTeam 1.0.7, h4rm3l 0.2.4, and Spikee 0.9.1
+execute only in four separate, explicitly selected virtual environments. A
+private content-addressed config admits one fixed isolated worker per selected
+framework, verifies the interpreter and complete package tree including
+executable bytecode under `ura-framework-runtime-content-seal/2`
+before any component construction, reuses that worker across attempts, and
+requires a second full-tree closing seal before completed evidence is
+published. Durable artifacts contain only the path-free receipt/bridge identity.
+Live NanoGCG remains disabled until its managed-snapshot subprocess handshake is
+implemented; precomputed suffix replay explicitly records that NanoGCG itself
+was not invoked.
+
 The Local Ollama group is a live inventory from the fixed loopback daemon
 (`http://127.0.0.1:11434` by default). Rig Web provides Status, Start, Stop,
 and Pull controls. It classifies a daemon already on that endpoint as external
@@ -243,7 +269,7 @@ unused orphaned `datasets 2.14.7` installation. This verifies the environment
 and UI/admission prerequisites, not model inference; no provider/model call was
 made.
 
-Runner 2.19 makes that prerequisite machine-checked. A bounded non-dry
+Runner 2.20 makes that prerequisite machine-checked. A bounded non-dry
 `--attestation-probe` grid is converted by `experiments.live_attestation` into a
 content-addressed `ura-live-attestation/2` receipt. An ordinary measured grid
 must supply the exact receipt bytes and digest, the same operator-declared
@@ -307,7 +333,7 @@ occurrences and binds IDEATOR's generated image bytes plus adversarial-text
 digest; Runner compares every realized turn before budget reservation or target
 invocation. Tool-conditioned rows remain fail-closed until a typed executable
 runtime and actual-use attestation exist. Before calls,
-the content-addressed `ura-eligibility-plan/2` ledger retains each requested
+the content-addressed `ura-eligibility-plan/3` ledger retains each requested
 selected-source stratum as `compatible_if_isolated` or `N/A`, together with its
 whole-arm execution-unit status and failed gate, and
 `modality_coverage_plan` verifies the admitted intersection; afterward,
@@ -322,7 +348,7 @@ silently removed, caption-substituted, or counted merely from a tag.
 `python -m experiments.level1_evidence` performs the bounded lifecycle join.
 The operator supplies the existing eligibility files and result roots; the
 command automatically discovers their request envelopes and bound early
-errors. It writes `ura-level1-evidence/2` JSON plus the existing deterministic
+errors. It writes `ura-level1-evidence/3` JSON plus the existing deterministic
 materialized-planning-stratum CSV. Prospective whole-arm request units remain a
 separate, unit-labelled JSON collection rather than being mixed into that CSV.
 Bound early errors can mark applicable prospective units blocked, but never
@@ -501,7 +527,9 @@ Runner `RunManifest`; the URA revision that performed their import is retained
 in the return-package/importer context rather than relabelled as an upstream
 native field.
 
-Runner `ura-runner/2.19` writes unified schema `1.4`. Immutable planning/source
+Runner `ura-runner/2.20` writes unified schema `1.5`. Runner 2.19/schema 1.4
+artifacts remain readable only as runtime-free legacy compatibility and are not
+mixed into the current measured cohort. Immutable planning/source
 stratum identity is stored separately from adaptive per-turn evaluation
 identity. Thus a Crescendo setup turn remains joined to its original planning
 stratum while receiving a typed `not_applicable` judgment and no judge call or

@@ -14,6 +14,7 @@ from experiments.level1_evidence import (
     _approximate_decision_state,
     _decision_state,
     _grid_condition,
+    _grid_id,
     _load_live_attestation_artifact,
     _load_results,
     _plan_artifact,
@@ -33,7 +34,11 @@ from ura.adapters.replay import ReplayAttacker
 from ura.attacker_input_contract import attacker_input_payload_sha256
 from ura.converters.synth import synth_corpus
 from ura.data_models import DataPoint, DialogTurn, Judgment, Response, RiskCategory
-from ura.eligibility import build_eligibility_plan, canonical_json_sha256
+from ura.eligibility import (
+    build_eligibility_plan,
+    canonical_json_sha256,
+    eligibility_plan_id,
+)
 from ura.live_attestation import (
     build_live_attestation_manifest,
     route_config_sha256,
@@ -109,6 +114,7 @@ def _conditions(
         "source_config": None,
         "source_conformance": None,
         "attacker_config": None,
+        "engine_runtime_config": None,
         "api_config": None,
         "local_config": None,
     }
@@ -162,6 +168,7 @@ def _conditions(
         "dry_run": dry_run,
         "hosted_judge_data_transfer_acknowledged": False,
         "selected_config_identities": selected,
+        "engine_runtimes": None,
         "model_acquisition": acquisition_condition,
         "live_attestation": live_attestation or {
             "mode": "not_required",
@@ -184,6 +191,7 @@ def _conditions(
         "api_configs_sha256": "3" * 64,
         "local_configs_sha256": "4" * 64,
         "selected_config_identities": selected,
+        "engine_runtimes": None,
         "model_acquisition": model_acquisition,
         "experiment_conditions": condition,
         "selected_corpora": {},
@@ -267,6 +275,34 @@ def _write_plan(
         encoding="utf-8",
     )
     return plan
+
+
+def _runtime_free_legacy_plan(plan: dict) -> dict:
+    """Project a current replay fixture back to the exact pre-runtime v2 shape."""
+
+    legacy = json.loads(json.dumps(plan))
+    legacy["schema"] = "ura-eligibility-plan/2"
+    bindings = legacy["bindings"]
+    bindings.pop("engine_runtimes")
+    bindings["selected_config_identities"].pop("engine_runtime_config")
+    condition = bindings["experiment_conditions"]
+    values = condition["values"]
+    values.pop("engine_runtimes")
+    values["selected_config_identities"].pop("engine_runtime_config")
+    condition["condition_id"] = (
+        "condition-" + canonical_json_sha256(values)[:24]
+    )
+    legacy["request_id"] = (
+        "eligibility-request-"
+        + canonical_json_sha256({
+            "request": legacy["request"],
+            "bindings": bindings,
+        })[:24]
+    )
+    legacy["plan_id"] = eligibility_plan_id({
+        key: value for key, value in legacy.items() if key != "plan_id"
+    })
+    return legacy
 
 
 def _write_live_attestation(
@@ -362,7 +398,7 @@ def test_planning_only_keeps_structural_na_separate_from_missing(tmp_path: Path)
 
     report = build_level1_evidence([artifact], {}, [])
 
-    assert report["schema_version"] == "ura-level1-evidence/2"
+    assert report["schema_version"] == "ura-level1-evidence/3"
     counts = report["counts"]["planning_strata"]
     assert counts["requested"] == 2
     assert counts["scientifically_compatible"] == 1
@@ -377,6 +413,91 @@ def test_planning_only_keeps_structural_na_separate_from_missing(tmp_path: Path)
     )
     assert report["availability"]["live_attestation"]["status"] == "not_supplied"
     assert report["requests"][0]["plan_id"] == plan["plan_id"]
+
+
+def test_level1_reads_exact_pre_runtime_replay_plan_grid_and_cell(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "legacy-replay"
+    assert run_matrix.main([
+        "--dry-run", "--corpora", "synth", "--limit", "1",
+        "--seeds", "0", "--attackers", "replay", "--judges", "rules",
+        "--max-queries", "1", "--max-turns", "1", "--out", str(root),
+    ]) == 0
+    grid_path = next(root.glob("*.grid.json"))
+    grid = json.loads(grid_path.read_text(encoding="utf-8"))
+    plan_path = root / grid["request"]["eligibility_plan"]["file"]
+    legacy_plan = _runtime_free_legacy_plan(
+        json.loads(plan_path.read_text(encoding="utf-8"))
+    )
+    plan_path.write_text(
+        json.dumps(legacy_plan, sort_keys=True, indent=2) + "\n",
+        encoding="utf-8",
+    )
+    artifact = _plan_artifact(plan_path)
+    grid["request"]["eligibility_plan"] = {
+        "plan_id": legacy_plan["plan_id"],
+        "file": artifact[2],
+        "sha256": artifact[1],
+        "bytes": artifact[3],
+        "records": artifact[4],
+        "counts": legacy_plan["counts"],
+    }
+    grid["request"].pop("engine_runtime_config_artifact")
+    grid["request"].pop("engine_runtimes")
+    grid.pop("engine_runtime_close")
+
+    marker_path = root / grid["cells"][0]["completion_marker"]
+    marker = json.loads(marker_path.read_text(encoding="utf-8"))
+    manifest_path = root / marker["artifacts"]["manifest"]["file"]
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    manifest["code_version"] = "ura-runner/2.19"
+    manifest["schema_version"] = "1.4"
+    manifest["config"]["run"].pop("engine_runtime")
+
+    new_grid_id = _grid_id(grid, legacy_runtime_free=True)
+    manifest["config"]["run"]["grid_id"] = new_grid_id
+    run_matrix._write_json(manifest_path, manifest)
+    marker["code_version"] = "ura-runner/2.19"
+    marker["schema_version"] = "1.4"
+    marker.pop("engine_runtime_close")
+    marker["artifacts"]["manifest"] = run_matrix._artifact_descriptor(
+        manifest_path
+    )
+    run_matrix._write_json(marker_path, marker)
+
+    grid["grid_id"] = new_grid_id
+    new_grid_path = root / f"{new_grid_id}.grid.json"
+    run_matrix._write_json(new_grid_path, grid)
+    grid_path.unlink()
+
+    grids, errors = _load_results(
+        [root], {legacy_plan["plan_id"]: artifact}
+    )
+    report = build_level1_evidence([artifact], grids, errors)
+
+    assert report["schema_version"] == "ura-level1-evidence/3"
+    assert report["counts"]["execution_units"]["completed"] == 1
+    condition = report["requests"][0]["condition"]
+    assert condition["engine_runtimes"] is None
+    assert condition["selected_config_identities"]["engine_runtime_config"] is None
+
+
+@pytest.mark.parametrize("attacker", ["PyRIT", "DeepTeam", "H4rm3l", "Spikee"])
+def test_legacy_eligibility_cannot_claim_runtime_backed_framework(
+    tmp_path: Path,
+    attacker: str,
+) -> None:
+    plan_path = tmp_path / "legacy-runtime.json"
+    plan = _runtime_free_legacy_plan(_write_plan(plan_path))
+    plan["request"]["selected_attackers"] = [attacker]
+    plan["plan_id"] = eligibility_plan_id({
+        key: value for key, value in plan.items() if key != "plan_id"
+    })
+    plan_path.write_text(json.dumps(plan, sort_keys=True), encoding="utf-8")
+
+    with pytest.raises(ValueError, match="cannot attest isolated framework"):
+        _plan_artifact(plan_path)
 
 
 def test_condition_projection_rejects_malformed_types() -> None:

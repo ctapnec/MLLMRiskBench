@@ -505,6 +505,64 @@ input.wide { width:100%; padding:.4rem .55rem; border:1px solid var(--line);
 .barchart .bn { font-weight:500; fill:var(--muted); }
 .barchart .bt { fill:var(--soft); stroke:var(--line); stroke-width:1; }
 .barchart .bv { fill:var(--accent); }
+.stats-campaign-list { display:grid; grid-template-columns:repeat(auto-fit,
+  minmax(min(360px,100%),1fr)); gap:.85rem; margin:.7rem 0 1.2rem; }
+.stats-campaign-card { min-width:0; padding:.85rem .95rem; background:var(--card);
+  border:1px solid var(--line); border-radius:12px; box-shadow:var(--shadow); }
+.stats-campaign-card[data-authority=thesis-measured] {
+  border-left:4px solid #4fa66a; }
+.stats-campaign-card[data-authority=diagnostic],
+.stats-campaign-card[data-authority=synthetic],
+.stats-campaign-card[data-authority=measured-incomplete] {
+  border-left:4px solid #c9922a; }
+.stats-campaign-card.engineering { border-left:4px solid var(--muted); }
+.stats-campaign-head { display:flex; align-items:flex-start;
+  justify-content:space-between; gap:.65rem; flex-wrap:wrap; }
+.stats-campaign-head h3 { margin:0; font-size:1rem; overflow-wrap:anywhere; }
+.stats-campaign-head p { margin:.15rem 0 0; }
+.stats-badges { display:flex; flex-wrap:wrap; gap:.3rem; align-items:center; }
+.stats-campaign-meta { display:grid; grid-template-columns:minmax(5.2rem,auto)
+  minmax(0,1fr); gap:.3rem .65rem; margin:.75rem 0; font-size:.84rem; }
+.stats-campaign-meta dt { color:var(--muted); }
+.stats-campaign-meta dd { margin:0; min-width:0; overflow-wrap:anywhere; }
+.stats-campaign-actions { display:flex; flex-wrap:wrap; gap:.5rem; }
+a.button { display:inline-flex; align-items:center; justify-content:center;
+  padding:.42rem .8rem; border-radius:8px; text-decoration:none;
+  font-size:.86rem; font-weight:600; }
+a.button.ghost { color:var(--accent); border:1px solid var(--line);
+  background:transparent; }
+.stats-pagination { display:flex; align-items:center; justify-content:center;
+  gap:.65rem; flex-wrap:wrap; margin:.7rem 0 1.2rem; }
+.stats-modal { display:none; min-width:0; margin:1rem 0; }
+.stats-modal-shell { min-width:0; padding:.9rem; background:var(--card);
+  border:1px solid var(--line); border-radius:12px; }
+.stats-modal-head { display:flex; align-items:flex-start;
+  justify-content:space-between; gap:.75rem; border-bottom:1px solid var(--line);
+  padding-bottom:.65rem; margin-bottom:.75rem; }
+.stats-modal-head h2 { margin:0; overflow-wrap:anywhere; }
+.stats-modal-close { display:none; }
+.stats-modal-body { min-width:0; }
+.stats-modal-body > *, .stats-modal-body .card { min-width:0; max-width:100%; }
+.stats-modal-links { margin:.7rem 0 0; }
+.stats-modal-ready .stats-modal { display:none; position:fixed; inset:0;
+  z-index:920; margin:0; padding:clamp(.35rem,3vw,2rem);
+  align-items:center; justify-content:center;
+  background:color-mix(in srgb,var(--bg) 62%,transparent);
+  backdrop-filter:blur(3px); }
+.stats-modal-ready .stats-modal.is-open { display:flex; }
+.stats-modal-ready .stats-modal-shell { width:min(1120px,100%);
+  max-height:calc(100vh - 2rem); overflow:auto; padding:1rem 1.15rem;
+  box-shadow:0 18px 60px rgba(0,0,0,.28); }
+.stats-modal-ready .stats-modal-close { display:inline-flex; }
+body.stats-modal-open { overflow:hidden; }
+@media (max-width:640px) {
+  .stats-campaign-list { grid-template-columns:minmax(0,1fr); }
+  .stats-campaign-meta { grid-template-columns:1fr; gap:.1rem; }
+  .stats-campaign-meta dd { margin:0 0 .35rem; }
+  .stats-modal-ready .stats-modal { padding:.2rem; }
+  .stats-modal-ready .stats-modal-shell { max-height:calc(100vh - .4rem);
+    border-radius:9px; padding:.75rem; }
+}
 #busy-overlay { position:fixed; inset:0; z-index:1000; display:none;
   align-items:center; justify-content:center;
   background:color-mix(in srgb, var(--bg) 78%, transparent);
@@ -571,16 +629,13 @@ var fit=row.getAttribute('data-compatible')||'unknown';
 var compatOk=fit==='true'||(fit==='false'&&!compatible)||
 (fit==='unknown'&&includeUnknown);
 filterOk=name.indexOf(query)!==-1&&paramsOk&&compatOk;}
-else if(kind==='local'&&backend==='ollama'){
-var ollamaName=(row.getAttribute('data-name')||'').toLowerCase();
-filterOk=ollamaName.indexOf(query)!==-1;}
 var visible=scopeOk&&filterOk;row.style.display=visible?'':'none';
 // A presentation filter never changes a selected target. Modality scope keeps
 // its established behavior because an out-of-scope target cannot serve a lane.
 if(role==='target'&&!scopeOk){var cb=row.querySelector('.modelbox');if(cb){
 cb.checked=false;cb.setAttribute('data-target-selected','false');}}
 if(visible&&kind==='api'){counts.api++;}
-if(visible&&kind==='local'){counts.local++;}
+if(visible&&kind==='local'&&backend==='vllm'){counts.local++;}
 });
 setFilterCount('api',counts.api);setFilterCount('local',counts.local);}
 function applyScope(){var sc=scopeSet();
