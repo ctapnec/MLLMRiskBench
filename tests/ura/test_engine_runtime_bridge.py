@@ -802,10 +802,20 @@ def test_parent_guard_eof_terminates_worker_session_and_descendant(
     read_fd, write_fd = os.pipe()
     pid_path = tmp_path / "descendant.pid"
     code = (
-        "import os,sys,time\n"
-        "sys.path.insert(0, os.path.join(os.getcwd(), 'src'))\n"
-        "from ura.adapters._engine_worker import _start_parent_guard\n"
-        "_start_parent_guard(int(sys.argv[1]))\n"
+        "import importlib.util,os,sys,time\n"
+        # Load the worker straight from its FILE, exactly as production does
+        # (_engine_runtime spawns "-I -S -B <path>/_engine_worker.py").
+        # Importing ura.adapters._engine_worker instead executes
+        # ura/__init__.py and pulls in pydantic, which -S makes unimportable,
+        # so the package import failed on the rig while production was fine.
+        "spec = importlib.util.spec_from_file_location(\n"
+        "    '_engine_worker',\n"
+        "    os.path.join(os.getcwd(), 'src', 'ura', 'adapters',\n"
+        "                 '_engine_worker.py'),\n"
+        ")\n"
+        "worker = importlib.util.module_from_spec(spec)\n"
+        "spec.loader.exec_module(worker)\n"
+        "worker._start_parent_guard(int(sys.argv[1]))\n"
         "child=os.fork()\n"
         "if child == 0:\n"
         "    while True: time.sleep(1)\n"

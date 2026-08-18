@@ -31,6 +31,10 @@ import experiments.run_matrix as run_matrix
 from experiments import level1_evidence as level1_cli
 from experiments import level2_report as level2_cli
 from experiments import live_attestation as live_attestation_cli
+from experiments.rig_web_app.ollama_service import (
+    DEFAULT_OLLAMA_URL,
+    OllamaService,
+)
 from experiments import rig_check
 from experiments.rig_web import (
     _LEVEL2_ROW_FIELDS,
@@ -67,7 +71,27 @@ from ura.targets.base import BaseTarget
 from ura.adapters import _engine_runtime as engine_runtime
 
 
-def _app(tmp_path: Path) -> RigWebApp:
+class _EmptyOllamaAPI:
+    """A reachable Ollama daemon that serves no models.
+
+    The rig runs a real Ollama daemon and the workstation does not, so any
+    builder assertion about Ollama candidates is host-dependent unless the
+    daemon is injected. This keeps that surface deterministic on both.
+    """
+
+    timeout = 0.5
+    base_url = DEFAULT_OLLAMA_URL
+
+    def tags(self, *, timeout=None):
+        del timeout
+        return {"models": []}
+
+    def ps(self, *, timeout=None):
+        del timeout
+        return {"models": []}
+
+
+def _app(tmp_path: Path, *, ollama_service=None) -> RigWebApp:
     results = tmp_path / "runs"
     results.mkdir(exist_ok=True)
     counter = iter(range(1, 1000))
@@ -75,6 +99,7 @@ def _app(tmp_path: Path) -> RigWebApp:
         results_root=results,
         state_dir=tmp_path / "state",
         job_id_factory=lambda: f"job-{next(counter):04d}",
+        ollama_service=ollama_service,
     )
 
 
@@ -2718,10 +2743,17 @@ def test_builder_targets_split_hosted_and_local_vllm_roster(tmp_path: Path) -> N
     # over temporary state so the checkout is never touched.
     from experiments import local_targets
 
-    app = _app(tmp_path)
+    state = tmp_path / "state"
+    state.mkdir(parents=True, exist_ok=True)
+    app = _app(
+        tmp_path,
+        ollama_service=OllamaService(state, api=_EmptyOllamaAPI()),
+    )
     page = app.handle("GET", "/build")[2].decode("utf-8")
     assert "Hosted API" in page and "Local vLLM" in page
     assert "Local Ollama (local daemon)" in page
+    # Deterministic: the injected daemon serves no models, so the builder
+    # reports no candidate regardless of any daemon on the host.
     assert "No exact Ollama candidate is available" in page
     assert "stable tag/digest inventory plus explicit show capabilities" in page
     assert "data-kind='api'" in page and "data-kind='local'" in page

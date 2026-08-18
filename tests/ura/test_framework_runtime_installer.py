@@ -381,7 +381,9 @@ def test_stable_alias_preserves_console_script_and_bridge_root(tmp_path: Path) -
     assert installer._content_seal(alias) == installer._content_seal(store)
     from ura.adapters._engine_runtime import _resolve_interpreter
 
-    configured, _resolved = _resolve_interpreter(alias / "bin" / "python", label="demo")
+    configured, _resolved = _resolve_interpreter(
+        str(alias / "bin" / "python"), label="demo"
+    )
     assert configured.parent.resolve(strict=True).parent == store
     entry = {"runtime": "python", "env_slug": "demo"}
     lock = {"lock_id": "a" * 64}
