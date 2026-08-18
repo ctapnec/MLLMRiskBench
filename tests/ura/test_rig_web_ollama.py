@@ -688,6 +688,125 @@ def test_pull_stream_emits_bounded_normalized_progress(capsys) -> None:
     assert emitted[1]["percent"] == 50.0
 
 
+def test_pull_coalesces_more_than_ten_thousand_normal_1_3gb_frames(
+    capsys, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    total = 1_336_082_784
+    frame_count = 12_500
+    # Storage admission and reported-remaining checks have dedicated tests;
+    # keep this high-frame integration regression focused and fast.
+    monkeypatch.setattr(
+        ollama_pull,
+        "validate_ollama_pull_storage",
+        lambda *_args, **_kwargs: {"models_path": str(Path.cwd().resolve())},
+    )
+    rows = [json.dumps({"status": "pulling manifest"}).encode("utf-8")]
+    rows.extend(
+        json.dumps({
+            "status": "pulling 751872507196",
+            "digest": "sha256:" + "7" * 64,
+            "completed": total * index // frame_count,
+            "total": total,
+        }).encode("utf-8")
+        for index in range(1, frame_count + 1)
+    )
+    rows.append(json.dumps({"status": "success"}).encode("utf-8"))
+
+    assert ollama_pull.pull(
+        "fixture:latest",
+        models_path=str(Path.cwd().resolve()),
+        owned_pid=4242,
+        owned_process_identity="linux-proc-v1:4242:1",
+        open_request=lambda *_args, **_kwargs: _Response(b"\n".join(rows) + b"\n"),
+        disk_usage=lambda _path: SimpleNamespace(free=100 * 1024**3),
+        process_identity=lambda _pid: "linux-proc-v1:4242:1",
+        listener_owner=lambda *_args: True,
+    ) == 0
+    emitted = [json.loads(line) for line in capsys.readouterr().out.splitlines()]
+    assert frame_count > 10_000
+    assert len(emitted) < 500
+    assert emitted[0]["status"] == "pulling manifest"
+    assert emitted[-1]["status"] == "success"
+    assert max(
+        int(row.get("completed", 0)) for row in emitted
+    ) == total
+
+
+def test_pull_caps_malicious_tiny_zero_progress_frames(
+    capsys, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(ollama_pull, "_MAX_STALLED_RAW_EVENTS", 32)
+    raw = b'{"status":"downloading"}\n' * 64
+    assert ollama_pull.pull(
+        "fixture:latest",
+        models_path=str(Path.cwd().resolve()),
+        owned_pid=4242,
+        owned_process_identity="linux-proc-v1:4242:1",
+        open_request=lambda *_args, **_kwargs: _Response(raw),
+        disk_usage=lambda _path: SimpleNamespace(free=100 * 1024**3),
+        process_identity=lambda _pid: "linux-proc-v1:4242:1",
+        listener_owner=lambda *_args: True,
+    ) == 1
+    captured = capsys.readouterr()
+    emitted = [json.loads(line) for line in captured.out.splitlines()]
+    assert [row["status"] for row in emitted] == ["downloading", "error"]
+    assert "stalled across too many raw frames" in captured.err
+
+
+def test_pull_raw_frame_ceiling_is_derived_and_independently_enforced(
+    capsys, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    assert ollama_pull._MAX_RAW_EVENTS == (
+        ollama_pull._MAX_NORMAL_MODEL_BYTES
+        // ollama_pull._NORMAL_PROGRESS_FRAME_BYTES
+        + ollama_pull._RAW_EVENT_OVERHEAD
+    )
+    monkeypatch.setattr(ollama_pull, "_MAX_RAW_EVENTS", 32)
+    monkeypatch.setattr(ollama_pull, "_MAX_STALLED_RAW_EVENTS", 128)
+    raw = b"".join(
+        b'{"status":"phase-a"}\n' if index % 2 else b'{"status":"phase-b"}\n'
+        for index in range(64)
+    )
+    assert ollama_pull.pull(
+        "fixture:latest",
+        models_path=str(Path.cwd().resolve()),
+        owned_pid=4242,
+        owned_process_identity="linux-proc-v1:4242:1",
+        open_request=lambda *_args, **_kwargs: _Response(raw),
+        disk_usage=lambda _path: SimpleNamespace(free=100 * 1024**3),
+        process_identity=lambda _pid: "linux-proc-v1:4242:1",
+        listener_owner=lambda *_args: True,
+    ) == 1
+    captured = capsys.readouterr()
+    assert "raw progress frame limit" in captured.err
+    assert len(captured.out.splitlines()) <= 33
+
+
+def test_progress_emitter_heartbeats_and_reserves_terminal_capacity(
+    capsys, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(ollama_pull, "_MAX_EMITTED_EVENTS", 3)
+    state = ollama_pull._EmissionState()
+    progress = {
+        "activity": "model_download",
+        "event": "ollama_pull_progress",
+        "model": "fixture:latest",
+        "status": "downloading",
+    }
+    assert ollama_pull._emit_progress(progress, state, now=0.0) is True
+    assert ollama_pull._emit_progress(progress, state, now=14.9) is False
+    assert ollama_pull._emit_progress(progress, state, now=15.0) is True
+    assert ollama_pull._emit_progress(
+        {**progress, "status": "another phase"}, state, now=16.0
+    ) is False
+    assert ollama_pull._emit_progress(
+        {**progress, "status": "success"}, state, now=17.0, terminal=True
+    ) is True
+    assert [
+        json.loads(line)["status"] for line in capsys.readouterr().out.splitlines()
+    ] == ["downloading", "downloading", "success"]
+
+
 def test_pull_rejects_deep_oversized_and_nonterminal_streams(capsys) -> None:
     deep: object = "leaf"
     for _index in range(70):

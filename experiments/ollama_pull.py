@@ -16,6 +16,7 @@ import sys
 import time
 import urllib.error
 import urllib.request
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlsplit
@@ -38,8 +39,122 @@ from ura.ollama_security import (
 
 
 _MAX_EVENT_BYTES = 64 * 1024
-_MAX_EVENTS = 10_000
 _MAX_RUNTIME_SECONDS = 24 * 60 * 60
+
+# Ollama currently reports ordinary layer progress roughly once per 64 KiB.
+# Keep the raw-frame ceiling high enough for a 256 GiB model at that cadence,
+# while bounding even a hostile loopback stream independently of the wall-clock
+# deadline and per-frame byte cap. Persisted UI output has a much smaller bound
+# and is coalesced below.
+_NORMAL_PROGRESS_FRAME_BYTES = 64 * 1024
+_MAX_NORMAL_MODEL_BYTES = 256 * 1024**3
+# Leave bounded headroom for manifest/status frames and layers that report more
+# frequently than the ordinary cadence.  The stream is still independently
+# constrained by the 24-hour wall and per-frame byte ceiling.
+_RAW_EVENT_OVERHEAD = 65_536
+_MAX_RAW_EVENTS = (
+    _MAX_NORMAL_MODEL_BYTES // _NORMAL_PROGRESS_FRAME_BYTES
+    + _RAW_EVENT_OVERHEAD
+)
+_MAX_STALLED_RAW_EVENTS = 4_096
+_MAX_EMITTED_EVENTS = 10_000
+_PROGRESS_EMIT_BYTES = 32 * 1024**2
+_PROGRESS_EMIT_PERCENT = 0.5
+_PROGRESS_HEARTBEAT_SECONDS = 15.0
+
+
+@dataclass
+class _EmissionState:
+    emitted: int = 0
+    last_at: float | None = None
+    last_status: str = ""
+    last_digest: str = ""
+    last_completed: int | None = None
+    last_percent: float | None = None
+
+
+def _emit_progress(
+    progress: dict[str, object],
+    state: _EmissionState,
+    *,
+    now: float,
+    terminal: bool = False,
+) -> bool:
+    """Emit one bounded, coalesced UI row and reserve space for termination."""
+
+    if terminal:
+        if state.emitted >= _MAX_EMITTED_EVENTS:
+            return False
+    elif state.emitted >= _MAX_EMITTED_EVENTS - 1:
+        return False
+
+    status = str(progress.get("status", ""))
+    digest = str(progress.get("digest", ""))
+    completed = progress.get("completed")
+    completed = completed if isinstance(completed, int) else None
+    percent = progress.get("percent")
+    percent = float(percent) if isinstance(percent, (int, float)) else None
+
+    status_changed = status != state.last_status
+    digest_changed = bool(digest) and digest != state.last_digest
+    byte_advance = bool(
+        completed is not None
+        and (
+            state.last_completed is None
+            or completed - state.last_completed >= _PROGRESS_EMIT_BYTES
+        )
+    )
+    percent_advance = bool(
+        percent is not None
+        and (
+            state.last_percent is None
+            or percent - state.last_percent >= _PROGRESS_EMIT_PERCENT
+        )
+    )
+    heartbeat = bool(
+        state.last_at is not None
+        and now - state.last_at >= _PROGRESS_HEARTBEAT_SECONDS
+    )
+    complete_progress = percent is not None and percent >= 100.0
+    if not (
+        terminal
+        or state.emitted == 0
+        or status_changed
+        or digest_changed
+        or byte_advance
+        or percent_advance
+        or heartbeat
+        or complete_progress
+    ):
+        return False
+
+    print(
+        json.dumps(progress, sort_keys=True, separators=(",", ":")),
+        flush=True,
+    )
+    state.emitted += 1
+    state.last_at = now
+    state.last_status = status
+    state.last_digest = digest
+    if completed is not None:
+        state.last_completed = completed
+    if percent is not None:
+        state.last_percent = percent
+    return True
+
+
+def _terminal_error(model: str, message: str) -> dict[str, object]:
+    bounded = str(message).strip()
+    if not bounded or len(bounded) > 1000 or any(ord(char) < 32 for char in bounded):
+        bounded = "Ollama pull failed"
+    return {
+        "activity": "model_download",
+        "at": _timestamp(),
+        "error": bounded,
+        "event": "ollama_pull_progress",
+        "model": model,
+        "status": "error",
+    }
 
 
 def _timestamp() -> str:
@@ -252,7 +367,10 @@ def pull(
     started = monotonic()
     deadline = started + _MAX_RUNTIME_SECONDS
     success = False
-    events = 0
+    raw_events = 0
+    stalled_events = 0
+    last_raw_signature: tuple[object, ...] | None = None
+    emission = _EmissionState()
     try:
         with OllamaProcessLock(
             base_url=endpoint,
@@ -297,9 +415,9 @@ def pull(
                 ):
                     if not raw.strip():
                         continue
-                    events += 1
-                    if events > _MAX_EVENTS:
-                        raise ValueError("pull emitted too many progress rows")
+                    raw_events += 1
+                    if raw_events > _MAX_RAW_EVENTS:
+                        raise ValueError("pull exceeded the raw progress frame limit")
                     progress = _normalize_progress(tag, _strict_event(raw))
                     completed = progress.get("completed")
                     total = progress.get("total")
@@ -309,21 +427,59 @@ def pull(
                             required_bytes=total - completed,
                             disk_usage=disk_usage,
                         )
-                    print(
-                        json.dumps(progress, sort_keys=True, separators=(",", ":")),
-                        flush=True,
+                    signature = (
+                        progress.get("status"),
+                        progress.get("digest"),
+                        completed,
+                        total,
                     )
-                    if str(progress["status"]).strip().lower() == "success":
+                    if signature == last_raw_signature:
+                        stalled_events += 1
+                        if stalled_events > _MAX_STALLED_RAW_EVENTS:
+                            raise ValueError(
+                                "pull progress stalled across too many raw frames"
+                            )
+                    else:
+                        stalled_events = 0
+                        last_raw_signature = signature
+                    terminal = str(progress["status"]).strip().lower() == "success"
+                    _emit_progress(
+                        progress,
+                        emission,
+                        now=monotonic(),
+                        terminal=terminal,
+                    )
+                    if terminal:
                         success = True
                         break
     except urllib.error.URLError:
-        print("ollama pull failed: loopback daemon unavailable", file=sys.stderr)
+        message = "loopback daemon unavailable"
+        _emit_progress(
+            _terminal_error(tag, message),
+            emission,
+            now=monotonic(),
+            terminal=True,
+        )
+        print(f"ollama pull failed: {message}", file=sys.stderr)
         return 1
     except (TimeoutError, OSError, UnicodeError, ValueError, RuntimeError) as exc:
+        _emit_progress(
+            _terminal_error(tag, str(exc)),
+            emission,
+            now=monotonic(),
+            terminal=True,
+        )
         print(f"ollama pull failed: {exc}", file=sys.stderr)
         return 1
     if not success:
-        print("ollama pull failed: stream ended without success", file=sys.stderr)
+        message = "stream ended without success"
+        _emit_progress(
+            _terminal_error(tag, message),
+            emission,
+            now=monotonic(),
+            terminal=True,
+        )
+        print(f"ollama pull failed: {message}", file=sys.stderr)
         return 1
     return 0
 
