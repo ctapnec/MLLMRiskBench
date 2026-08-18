@@ -4447,7 +4447,9 @@ def _is_diagnostic_mock_judge(
         return False
     return (
         run.get("dry_run") is True
-        and run.get("execution_purpose") == "diagnostic_dry_run"
+        and run.get("execution_purpose") in {
+            "diagnostic_dry_run", "diagnostic_canary",
+        }
         and run.get("judge_model") == "mock"
         and str(judge_target.get("class", "")).rsplit(".", 1)[-1]
         == "MockTarget"

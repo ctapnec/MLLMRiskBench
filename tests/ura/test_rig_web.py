@@ -6482,18 +6482,26 @@ def test_builder_probe_auto_fixes_one_query_one_turn(tmp_path: Path) -> None:
 def test_builder_dry_canary_composes_synth_and_validates(tmp_path: Path) -> None:
     # MED: the advertised dry synthetic canary must be composable from the
     # real form (which has no synth arm checkbox): compose forces --corpora
-    # synth and drops targets, and validation requires no arm selection.
-    app = _app(tmp_path)
+    # synth and drops targets, and validation requires no arm selection.  Run
+    # the exact source-config-bound argv emitted by the operator UI so the
+    # offline LLM judge's planned/realized identity remains covered end to end.
+    app = _operator_registry_app(tmp_path)
     form = {
         "mode": "diagnostic_canary", "canary_dry": "on", "attackers": "replay",
-        "judges": "rules", "limit": "1", "seeds": "0", "out": "runs/c",
+        "judges": "rules,llm", "judge_model": "anthropic:claude-opus-5",
+        "limit": "1", "seeds": "0", "max_queries": "1", "max_turns": "1",
+        "out": str(app.results_root / "c"),
         "api": "anthropic:claude-opus-5",  # should be dropped for a dry canary
     }
     assert app._validate_builder(form) == {}
     _cmd, values, _params = app._compose_from_builder(form)
     assert values["--corpora"] == "synth"
     assert "--api" not in values and values["--dry-run"] == "on"
-    run_matrix.build_parser().parse_args(build_argv(_cmd, values)[3:])
+    assert values["--judge-model"] == "mock"
+    assert "--source-config" in values and "--source-config-sha256" in values
+    argv = build_argv(_cmd, values)[3:]
+    run_matrix.build_parser().parse_args(argv)
+    assert run_matrix.main(argv) == 0
     app.close()
 
 
