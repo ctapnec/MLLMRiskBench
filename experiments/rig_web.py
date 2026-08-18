@@ -1,6 +1,6 @@
 """Rig-local campaign builder and console over the maintained experiment CLIs.
 
-A single-operator, localhost-only application (WEB-001 basic console, promoted
+A single-operator application (WEB-001 basic console, promoted
 to the WEB-002 campaign builder): it starts allowlisted ``python -m
 experiments.*`` commands from typed forms, composes campaign lanes through a
 mode-aware builder (dry run, attestation probe, diagnostic canary, measured
@@ -22,8 +22,9 @@ typed allowlist (parity is tested against the real module parsers); the
 console's own bookkeeping - reindexing the usage/report indexes and printing
 the recorded-usage cost report - is additionally reachable headlessly via
 ``rig_web --reindex`` / ``--usage-report``.  No arbitrary shell input is ever
-executed (``shell=False``), the server binds 127.0.0.1 only, POST bodies are
-size-capped, and no dependency outside the standard library is added.
+executed (``shell=False``), the server binds the operator-configured host and
+port, POST bodies are size-capped, and no dependency outside the standard
+library is added.
 """
 
 from __future__ import annotations

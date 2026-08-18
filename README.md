@@ -557,7 +557,7 @@ scoring support. See the protocol for the current inventory.
 
 ## Rig console and campaign builder
 
-`python -m experiments.rig_web` serves a single-operator, localhost-only
+`python -m experiments.rig_web` serves a single-operator
 campaign builder and console over the same maintained CLIs: mode-aware lane
 composition (an ordinary offline dry run over the synthetic corpus, attestation
 probe, diagnostic canary, measured execution) with complete server-side

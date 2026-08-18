@@ -650,7 +650,7 @@ class OllamaService:
         self.action_token = secrets.token_urlsafe(32)
 
     def validate_action(self, token: str, confirmed: str) -> None:
-        """Require both this-process CSRF token and explicit confirmation."""
+        """Require the route-specific action capability and confirmation."""
 
         if confirmed != "yes" or not hmac.compare_digest(token, self.action_token):
             raise ValueError("Ollama action requires a fresh confirmation token")

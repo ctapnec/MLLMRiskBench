@@ -2752,7 +2752,7 @@ diagnostics and cannot be promoted to thesis evidence.
 
 ## 18. Rig-local console and campaign builder
 
-A single-operator localhost application starts, monitors, and stops the
+A single-operator application starts, monitors, and stops the
 allowlisted experiment CLIs from typed forms, composes campaign lanes through
 a mode-aware builder (dry run, attestation probe, diagnostic canary, measured
 execution) with mode-specific validation and an exact-argv confirmation step
@@ -2826,9 +2826,10 @@ Dry mode removes any selected real API/local targets and target configs because
 only the text/image modalities supported by the Runner's vLLM path; audio
 target/arm combinations are rejected by the same UI/CLI parity checks.
 
-The console binds only `127.0.0.1`, builds argument vectors exclusively from a
-typed allowlist (no shell), caps POST bodies, runs each job in its own process
-group, and keeps per-job argv/stdout/stderr under the state directory. Closing
+The console binds the operator-configured `--host` and `--port`, builds argument
+vectors exclusively from a typed allowlist (no shell), caps POST bodies, runs
+each job in its own process group, and keeps per-job argv/stdout/stderr under the
+state directory. Closing
 the console leaves detached jobs running; the explicit Stop action terminates
 the complete child tree. Builder preflights are kept under
 `<results-root>/preflight`; changing only execution caps may reuse the same exact

@@ -382,7 +382,7 @@ silently aggregated.
 ## Console and operational state
 
 The rig console (`experiments/rig_web.py`) is the approved campaign builder
-over the maintained CLIs: a localhost-only, single-operator HTTP application
+over the maintained CLIs: a single-operator HTTP application
 that launches every experiment as one allowlisted `python -m experiments.*`
 argument vector (`shell=False`, typed parameters, interface-parity-tested
 against the real module parsers). Its mode-aware builder enforces the
