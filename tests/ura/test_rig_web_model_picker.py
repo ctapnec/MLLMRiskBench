@@ -134,9 +134,9 @@ def _repo_app(
     return app
 
 
-def _judge_tags(document: str) -> list[str]:
+def _model_selection_tags(document: str) -> list[str]:
     return re.findall(
-        r"<input\b[^>]*class='judge-modelbox'[^>]*>", document
+        r"<input\b[^>]*class='modelbox'[^>]*>", document
     )
 
 
@@ -224,12 +224,32 @@ def test_shared_picker_is_accessible_and_keeps_target_and_judge_state_isolated(
     ):
         assert f"id='{control}'" in text
 
-    judge_tags = _judge_tags(text)
-    assert len(judge_tags) == 3
-    assert all("name='_judge_model_ui'" in tag for tag in judge_tags)
-    assert sum(" checked" in tag for tag in judge_tags) == 1
+    # Each card owns exactly one native selection input. The same input is a
+    # target checkbox/radio or a judge radio depending on the caller; rendering
+    # separate hidden role controls caused two visible selectors under author CSS.
+    model_tags = _model_selection_tags(text)
+    assert len(model_tags) == text.count("<div class='modelrow'") == 3
+    assert text.count("class='modelbox'") == 3
+    assert "judge-modelbox" not in text
+    assert "data-judge-for" not in text and "data-target-for" not in text
+    assert all("data-target-selected='false'" in tag for tag in model_tags)
+    assert sum("type='checkbox'" in tag for tag in model_tags) == 2
+    assert sum("type='radio'" in tag for tag in model_tags) == 1
+    for tag in model_tags:
+        control_id = re.search(r"\bid='([^']+)'", tag)
+        assert control_id is not None
+        assert f"for='{control_id.group(1)}'" in text
     assert "id='judge-model-input' name='judge_model'" in text
+    assert f"value='{_HOSTED_B}'" in text
     assert "hosted Haiku judge" not in text
+
+    # Step one itself is the back-navigation control; no redundant button is
+    # rendered inside step two. The second step becomes revisit-able only after
+    # a runtime has been chosen.
+    assert "data-picker-step='runtime'" in text
+    assert "aria-controls='model-picker-runtime'" in text
+    assert "data-picker-step='models'" in text
+    assert "Back to runtime" not in text and "model-picker-back" not in text
 
     # The dialog restores/traps focus and synchronizes its exposed state.
     for contract in (
@@ -238,9 +258,50 @@ def test_shared_picker_is_accessible_and_keeps_target_and_judge_state_isolated(
         "setAttribute('aria-hidden','true')", "setAttribute('aria-expanded','false')",
     ):
         assert contract in text
-    # Role-specific controls are switched without changing the other role.
-    assert "target.hidden=pickerRole!=='target'" in text
-    assert "judge.hidden=pickerRole!=='judge'" in text
+    # Role-specific semantics are switched on that single input while target
+    # state and the hidden submitted judge value remain independent.
+    assert "input.type='radio';input.name='_judge_model_ui'" in text
+    assert "input.type=input.getAttribute('data-target-type')||'checkbox'" in text
+    assert "data-target-selected" in text
+    assert "rememberPickerSelection();" in text
+    assert "setPickerRole('target')" in text
+    app.close()
+
+
+def test_picker_has_one_selector_per_hosted_vllm_and_ollama_row_and_safe_layout(
+    tmp_path: Path,
+) -> None:
+    ollama = "ollama:fixture-unique:latest"
+    app = _repo_app(tmp_path, local={
+        _LOCAL: {
+            "revision": "a" * 40,
+            "modalities": ["text"],
+            "parameter_count_b": 7,
+            "tensor_parallel_size": 1,
+        },
+        ollama: {"digest": "b" * 64, "modalities": ["text"]},
+    })
+    page = app._build_page().decode("utf-8")
+    style = app.handle("GET", "/static/style.css")[2].decode("utf-8")
+
+    tags = _model_selection_tags(page)
+    assert len(tags) == page.count("<div class='modelrow'") == 4
+    assert page.count("data-backend='vllm'") == 1
+    assert page.count("data-backend='ollama'") == 1
+    assert page.count("class='modelbox'") == 4
+    assert "judge-modelbox" not in page
+
+    # Grid tracks can shrink to the containing modal/card instead of imposing
+    # a wider intrinsic minimum; the vLLM range/number pair stacks on phones.
+    for contract in (
+        "minmax(min(14rem,100%),1fr)",
+        "minmax(min(290px,100%),1fr)",
+        "grid-template-columns:minmax(0,1fr) minmax(5.5rem,7rem)",
+        ".paramfilter > * { min-width:0; max-width:100%; }",
+        ".paramfilter { grid-template-columns:1fr; }",
+        ".modelquant select { width:min(100%,24rem); min-width:0; max-width:100%; }",
+    ):
+        assert contract in style
     app.close()
 
 

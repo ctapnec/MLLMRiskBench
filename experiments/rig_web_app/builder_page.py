@@ -284,6 +284,11 @@ class BuilderPageMixin:
             for key, value in dict(errors or {}).items()
         }
         selected_judge_model = prefill.get("judge_model", "").strip()
+        selected_target_models = {
+            model
+            for field in ("api", "local")
+            for model in self._split_list(prefill.get(field, ""))
+        }
 
         def err(field: str) -> str:
             message = errors.get(field, "")
@@ -485,7 +490,6 @@ class BuilderPageMixin:
             control_id = (
                 "target-" + hashlib.sha256(f"{kind}:{value}".encode("utf-8")).hexdigest()[:16]
             )
-            judge_control_id = control_id + "-judge"
             if kind == "api":
                 provider = _api_provider(value)
                 row_attrs = f" data-provider='{html.escape(provider)}'"
@@ -773,23 +777,22 @@ class BuilderPageMixin:
                 row_attrs += " data-backend='vllm'"
             input_type = "radio" if kind == "local" else "checkbox"
             input_name = " name='local_choice'" if kind == "local" else ""
+            target_selected = value in selected_target_models
             return (
                 "<div class='modelrow' "
                 f"data-mods='{html.escape(','.join(mods))}' "
                 f"data-kind='{html.escape(kind)}'{row_attrs}>"
-                "<div class='check modelchoice' "
-                f"data-target-for='{control_id}' data-judge-for='{judge_control_id}'>"
+                f"<label class='check modelchoice' for='{control_id}'>"
                 f"<input id='{control_id}' type='{input_type}' class='modelbox'"
                 f"{input_name} "
                 f"data-kind='{html.escape(kind)}' "
-                f"data-model='{html.escape(value)}'{disabled}>"
-                f"<input id='{judge_control_id}' type='radio' class='judge-modelbox' "
-                "name='_judge_model_ui' "
-                f"data-kind='{html.escape(kind)}' data-model='{html.escape(value)}'"
-                + (" checked" if value == selected_judge_model else "")
-                + f"{disabled} hidden>"
-                f"<label class='modelchoice-label' for='{control_id}'>"
-                f"<span>{_arm_head(name_html, mods)}{detail}</span></label></div>"
+                f"data-model='{html.escape(value)}' "
+                f"data-target-type='{input_type}' "
+                f"data-target-selected='{'true' if target_selected else 'false'}'"
+                + (" checked" if target_selected else "")
+                + f"{disabled}>"
+                f"<span class='modelchoice-copy'>{_arm_head(name_html, mods)}"
+                f"{detail}</span></label>"
                 f"{quant_control}</div>"
             )
 
@@ -838,7 +841,6 @@ class BuilderPageMixin:
             control_id = "target-" + hashlib.sha256(
                 f"ollama:{value}".encode("utf-8")
             ).hexdigest()[:16]
-            judge_control_id = control_id + "-judge"
             name_html = (
                 html.escape(label)
                 + " <span class='badge gray'>Ollama</span>"
@@ -877,22 +879,20 @@ class BuilderPageMixin:
                 + (" - " + html.escape(error) if error else "")
                 + "</span>"
             )
+            target_selected = value in selected_target_models
             return (
                 "<div class='modelrow' "
                 f"data-mods='{html.escape(','.join(mods))}' data-kind='local' "
                 f"data-backend='ollama' data-name='{html.escape(value)}'>"
-                "<div class='check modelchoice' "
-                f"data-target-for='{control_id}' data-judge-for='{judge_control_id}'>"
+                f"<label class='check modelchoice' for='{control_id}'>"
                 f"<input id='{control_id}' type='radio' class='modelbox' "
                 "name='local_choice' data-kind='local' "
-                f"data-model='{html.escape(value)}'{disabled}>"
-                f"<input id='{judge_control_id}' type='radio' class='judge-modelbox' "
-                "name='_judge_model_ui' "
-                f"data-kind='local' data-model='{html.escape(value)}'"
-                + (" checked" if value == selected_judge_model else "")
-                + f"{disabled} hidden>"
-                f"<label class='modelchoice-label' for='{control_id}'>"
-                f"<span>{_arm_head(name_html, mods)}{detail}</span></label></div></div>"
+                f"data-model='{html.escape(value)}' data-target-type='radio' "
+                f"data-target-selected='{'true' if target_selected else 'false'}'"
+                + (" checked" if target_selected else "")
+                + f"{disabled}>"
+                f"<span class='modelchoice-copy'>{_arm_head(name_html, mods)}"
+                f"{detail}</span></label></div>"
             )
 
         options = self._model_options()
@@ -1075,9 +1075,12 @@ class BuilderPageMixin:
             "<button type='button' class='ghost small' data-close-model-picker "
             "aria-label='Close model selector'>Close</button></div>"
             "<div class='wizard-steps' aria-label='Selection steps'>"
-            "<span class='wizard-step on' data-picker-step-label='runtime'>"
-            "1. Runtime</span><span class='wizard-step' "
-            "data-picker-step-label='models'>2. Filter and choose</span></div>"
+            "<button type='button' class='wizard-step on' "
+            "data-picker-step='runtime' aria-controls='model-picker-runtime' "
+            "aria-current='step'>1. Runtime</button>"
+            "<button type='button' class='wizard-step' data-picker-step='models' "
+            "aria-controls='model-picker-models' disabled>"
+            "2. Filter and choose</button></div>"
             "<section id='model-picker-runtime' class='picker-runtime-step'>"
             "<p class='note'>Where will this model run?</p>"
             "<div class='picker-runtime-grid'>"
@@ -1090,9 +1093,7 @@ class BuilderPageMixin:
             "<span>Use the full vLLM fit, parameter, name, and precision filters, "
             "or an exact pulled Ollama artifact.</span></button></div></section>"
             "<section id='model-picker-models' class='picker-model-step' hidden>"
-            "<div class='picker-step-actions'><button type='button' class='ghost small' "
-            "id='model-picker-back'>Back to runtime</button>"
-            "<span id='model-picker-role-note' class='fieldhint'></span></div>"
+            "<p id='model-picker-role-note' class='fieldhint picker-role-note'></p>"
             + model_boxes
             + "</section><div class='model-picker-foot'>"
             "<span class='fieldhint'>Disabled rows failed exact configuration or "
