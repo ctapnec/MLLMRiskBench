@@ -5,6 +5,7 @@ import json
 import os
 import signal
 import stat
+import tempfile
 import threading
 import time
 import urllib.request
@@ -22,7 +23,12 @@ from experiments.rig_web_app.ollama_service import (
     OllamaUnavailable,
 )
 from ura.data_models import DialogTurn
-from ura.ollama_security import NoRedirect, OllamaProcessLock, model_identity_keys
+from ura.ollama_security import (
+    NoRedirect,
+    OllamaProcessLock,
+    model_identity_keys,
+    ollama_lock_path,
+)
 from ura.targets.local import LocalTargetOutputError, OllamaTarget
 
 
@@ -536,3 +542,33 @@ def test_external_daemon_never_has_a_pull_storage_contract(tmp_path: Path) -> No
     assert service.status()["state"] == "external"
     with pytest.raises(OllamaUnavailable, match="external/ambiguous"):
         service.validate_pull_storage()
+
+
+def test_lock_directory_is_per_account_and_never_the_shared_literal(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    # Windows has no os.getuid.  The old fallback used the literal "windows"
+    # for every account, so all identities shared ONE directory created with
+    # mode 0o700 - which Windows honours as a DACL carrying no user ACE.  The
+    # first creator then locked out every other account, and the workstation
+    # itself once the entry went stale (36 tests failed this way).  The suffix
+    # must be per-account and must never be that shared literal again.
+    monkeypatch.setattr(tempfile, "gettempdir", lambda: str(tmp_path))
+    monkeypatch.delattr(os, "getuid", raising=False)
+
+    monkeypatch.setenv("USERDOMAIN", "DOMAIN-A")
+    monkeypatch.setenv("USERNAME", "alice")
+    alice = ollama_lock_path()
+    monkeypatch.setenv("USERNAME", "bob")
+    bob = ollama_lock_path()
+
+    assert alice.parent != bob.parent, "accounts must not share a lock directory"
+    for path in (alice, bob):
+        assert path.parent.name != "ura-ollama-lock-windows"
+        assert path.parent.name.startswith("ura-ollama-lock-")
+    # The same endpoint still maps to the same lock file name within an account.
+    assert alice.name == bob.name
+
+    # The POSIX branch stays byte-identical to the original behaviour.
+    monkeypatch.setattr(os, "getuid", lambda: 1000, raising=False)
+    assert ollama_lock_path().parent.name == "ura-ollama-lock-1000"

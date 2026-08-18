@@ -409,7 +409,19 @@ def ollama_lock_path(base_url: str = DEFAULT_OLLAMA_URL) -> Path:
     """Return one per-endpoint, per-user cross-process lock path."""
 
     canonical = canonicalize_ollama_url(base_url)
-    user = str(getattr(os, "getuid", lambda: "windows")())
+    # POSIX gives every uid its own directory.  Windows has no getuid, and a
+    # shared literal would put every account on ONE directory created with
+    # mode 0o700 - which Windows honours as a DACL carrying no user ACE, so
+    # the first creator permanently locks out every other account, and the
+    # workstation itself once that entry goes stale.  Derive a per-account
+    # suffix instead; the POSIX branch is byte-identical to before.
+    if hasattr(os, "getuid"):
+        user = str(os.getuid())
+    else:
+        account = "\\".join(
+            (os.environ.get("USERDOMAIN", ""), os.environ.get("USERNAME", ""))
+        )
+        user = hashlib.sha256(account.encode("utf-8", "replace")).hexdigest()[:16]
     directory = Path(tempfile.gettempdir()) / f"ura-ollama-lock-{user}"
     directory.mkdir(mode=0o700, parents=True, exist_ok=True)
     if directory.is_symlink() or not directory.is_dir():
