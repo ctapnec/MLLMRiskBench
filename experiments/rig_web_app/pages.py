@@ -29,7 +29,15 @@ from .catalog import (
     _icon,
 )
 
-from .ui import _page, _badges_html, _human_size, _human_duration, _crumbs
+from .ui import (
+    _badges_html,
+    _crumbs,
+    _human_duration,
+    _human_size,
+    _page,
+    _page_tablist,
+    _page_tabpanel,
+)
 
 from .artifacts import _PIPELINE_STAGES, artifact_inventory, _pipeline_svg, Job, run_kind
 from .campaigns import EngineeringCampaign
@@ -537,21 +545,25 @@ class PagesMixin:
             if running_rows
             else ""
         )
-        body = (
-            "<h1>"
-            + _icon("grid", size=22)
-            + "Dashboard</h1>"
-            + self._health_banner()
+        global_notices = (
+            self._health_banner()
             + self._warnings_html()
             + (
                 "<div class='notice amber'>" + html.escape(campaign_scan_note) + "</div>"
                 if campaign_scan_note
                 else ""
             )
-            + stats
+        )
+        system_panel = (
+            stats
             + self._dashboard_hardware_card()
             + self._db_card(reindexed)
-            + "<div class='card'><h2>"
+            + running_html
+            + partial_html
+            + attention_html
+        )
+        campaign_panel = (
+            "<div class='card'><h2>"
             + _icon("chart")
             + "Campaign pipeline"
             "</h2>"
@@ -572,20 +584,41 @@ class PagesMixin:
             + "</div>"
             + self._next_hint(counts)
             + self._playbook_card()
-            + running_html
-            + partial_html
-            + attention_html
-            + self._budget_card()
-            + self._policy_card()
             + "<div class='card'><h2>"
             + _icon("file")
-            + "Campaign bindings"
-            "</h2>" + self._campaign_context() + "</div>"
-            "<div class='card'><h2>" + _icon("logo") + "Boundaries</h2>"
+            + "Campaign bindings</h2>"
+            + self._campaign_context()
+            + "</div>"
+        )
+        governance_panel = (
+            self._budget_card()
+            + self._policy_card()
+            + "<div class='card'><h2>"
+            + _icon("logo")
+            + "Boundaries</h2>"
             "<p class='note'>Allowlisted commands only; no arbitrary shell. "
             "Dry-run/canary/probe artifacts stay diagnostic; measured "
             "claims come only from validated artifacts and the maintained "
-            "analysis CLIs.</p></div>" + refresh
+            "analysis CLIs.</p></div>"
+        )
+        dashboard_tabs = (
+            ("dashboard-system", "System"),
+            ("dashboard-campaigns", "Campaigns"),
+            ("dashboard-governance", "Governance"),
+        )
+        body = (
+            "<h1>"
+            + _icon("grid", size=22)
+            + "Dashboard</h1>"
+            + global_notices
+            + "<div class='page-tabs' data-page-tabs data-tab-key='dashboard' "
+            "data-default-tab='dashboard-system'>"
+            + _page_tablist("Dashboard sections", dashboard_tabs, default="dashboard-system")
+            + _page_tabpanel("dashboard-system", system_panel)
+            + _page_tabpanel("dashboard-campaigns", campaign_panel)
+            + _page_tabpanel("dashboard-governance", governance_panel)
+            + "</div>"
+            + refresh
         )
         return _page("URA rig console", body, active="Dashboard")
 
@@ -993,7 +1026,7 @@ class PagesMixin:
             "url.searchParams.delete('to');url.searchParams.delete('to_ms');}"
             "url.searchParams.set('state',state);"
             "url.searchParams.set('q',box?box.value:'');"
-            "history.replaceState(null,'',url.pathname+url.search);}"
+            "history.replaceState(null,'',url.pathname+url.search+url.hash);}"
             "function apply(){var q=box?box.value.toLowerCase():'';"
             "var from=lowerBound(fromBox,Number.NEGATIVE_INFINITY);"
             "var to=upperBound(toBox,Number.POSITIVE_INFINITY);"
@@ -1038,6 +1071,69 @@ class PagesMixin:
             if tallies.get("running", 0)
             else ""
         )
+        attention_count = sum(
+            tallies.get(state, 0)
+            for state in (
+                "failed",
+                "blocked",
+                "stopped",
+                "partial",
+                "orphaned",
+                "unknown",
+            )
+        )
+        overview_items = (
+            ("All in current window", len(history_jobs) + len(campaigns), ""),
+            ("Console jobs", len(history_jobs), None),
+            ("External campaigns", len(campaigns), None),
+            ("Running", tallies.get("running", 0), "running"),
+            ("Needs attention", attention_count, None),
+            ("Passed", tallies.get("passed", 0), "passed"),
+        )
+        overview_cards_parts = []
+        for label, count, state in overview_items:
+            content = (
+                "<div class='stat'>"
+                f"<span class='value'>{count}</span>"
+                f"<span class='label'>{html.escape(label)}</span></div>"
+            )
+            if state is None:
+                overview_cards_parts.append("<div class='card'>" + content + "</div>")
+            else:
+                overview_cards_parts.append(
+                    "<a class='card' href='/jobs"
+                    + (f"?state={quote(state)}" if state else "")
+                    + "#jobs-history'>"
+                    + content
+                    + "</a>"
+                )
+        overview_cards = "".join(overview_cards_parts)
+        overview_panel = (
+            "<div class='cols tab-summary'>"
+            + overview_cards
+            + "</div><div class='card'><h2>Job sources</h2>"
+            "<p class='note'>Console jobs are owned by this process. External "
+            "campaigns are read-only task-log reports. Open History for the "
+            "full table, date window, state chips, text search, logs, and "
+            "available stop controls.</p></div>"
+        )
+        history_panel = (
+            controls
+            + table
+            + "<p id='jobs-filter-empty' class='notice amber' hidden>"
+            "No jobs match the selected dates, state, and text.</p>"
+            + script
+        )
+        jobs_tabs = (
+            ("jobs-overview", "Overview"),
+            ("jobs-history", "History"),
+        )
+        explicit_filter = any(
+            str(filters.get(name, "")).strip()
+            for name in ("from", "to", "from_ms", "to_ms", "state", "q")
+        )
+        jobs_default = "jobs-history" if explicit_filter else "jobs-overview"
+        force_default = " data-force-default='true'" if explicit_filter else ""
         return _page(
             "Jobs",
             "<h1>"
@@ -1054,11 +1150,12 @@ class PagesMixin:
                 if history_note
                 else ""
             )
-            + controls
-            + table
-            + "<p id='jobs-filter-empty' class='notice amber' hidden>"
-            "No jobs match the selected dates, state, and text.</p>"
-            + script
+            + "<div class='page-tabs' data-page-tabs data-tab-key='jobs' "
+            f"data-default-tab='{jobs_default}'{force_default}>"
+            + _page_tablist("Job sections", jobs_tabs, default=jobs_default)
+            + _page_tabpanel("jobs-overview", overview_panel)
+            + _page_tabpanel("jobs-history", history_panel)
+            + "</div>"
             + refresh,
             active="Jobs",
         )

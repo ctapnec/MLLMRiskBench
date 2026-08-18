@@ -24,7 +24,7 @@ from .catalog import (
     _arm_head,
 )
 
-from .ui import _BUILDER_SCRIPT, _page
+from .ui import _BUILDER_SCRIPT, _page, _page_tablist, _page_tabpanel
 from .reports import load_pricing, rate_for
 
 
@@ -1530,6 +1530,97 @@ class BuilderPageMixin:
                 "also flagged next to its control below. Nothing was "
                 "composed or executed.</p></div>"
             )
+        build_tabs = (
+            ("build-general", "General"),
+            ("build-pipeline", "Pipeline"),
+            ("build-evaluation", "Evaluation"),
+            ("build-admission", "Admission"),
+            ("build-execution", "Execution"),
+        )
+        build_default = "build-general"
+        error_fields = set(errors)
+        error_panel_fields = (
+            (
+                "build-pipeline",
+                {
+                    "mode",
+                    "corpora",
+                    "models",
+                    "attackers",
+                    "nanogcg",
+                    "t3_replay",
+                    "harm_replay",
+                },
+            ),
+            (
+                "build-evaluation",
+                {
+                    "judges",
+                    "judge_model",
+                    "approximate_common_metrics",
+                    "ack_hosted_judge_data_transfer",
+                    "defense",
+                    "defense_guard",
+                    "guardrail_model",
+                    "guardrail_revision",
+                    "guardrail_device",
+                    "defense_guardrail_model",
+                    "defense_guardrail_revision",
+                    "defense_guardrail_device",
+                },
+            ),
+            (
+                "build-admission",
+                {
+                    "project_revision",
+                    "project_revision_sha",
+                    "source_conformance",
+                    "source_conformance_sha",
+                    "scope",
+                    "max_age",
+                    "att",
+                },
+            ),
+        )
+        if errors:
+            build_default = "build-execution"
+            if any(field.startswith(("t3cap_", "hcap_")) for field in error_fields):
+                build_default = "build-pipeline"
+            else:
+                for panel_id, panel_fields in error_panel_fields:
+                    if error_fields & panel_fields:
+                        build_default = panel_id
+                        break
+        general_panel = (
+            hardware_card
+            + ollama_card
+            + "<div class='card'><h2>"
+            + _icon("flask")
+            + "Current pipeline</h2>"
+            "<p class='note'>A live summary of the controls across every builder "
+            "section. Receipt rows report presence only; Compose &amp; review "
+            "produces the exact validated command before execution.</p>"
+            "<dl class='builder-summary' aria-live='polite'>"
+            "<div><dt>Composition</dt><dd id='build-summary-composition'>"
+            "initializing</dd></div>"
+            "<div><dt>Evaluation</dt><dd id='build-summary-evaluation'>"
+            "initializing</dd></div>"
+            "<div><dt>Admission</dt><dd id='build-summary-admission'>"
+            "initializing</dd></div>"
+            "<div><dt>Trajectory</dt><dd id='build-summary-trajectory'>"
+            "initializing</dd></div>"
+            "<div><dt>Budget guards</dt><dd id='build-summary-budget'>"
+            "initializing</dd></div>"
+            "<div><dt>Local serving</dt><dd id='build-summary-local'>"
+            "initializing</dd></div>"
+            "<div><dt>Output</dt><dd id='build-summary-output'>"
+            "initializing</dd></div></dl>"
+            "<p class='fieldlabel'>High-level composition preview "
+            "<span class='fieldhint'>(not the final reviewed command)</span></p>"
+            "<code id='buildpreview'>run_matrix (initializing current choices)</code>"
+            "</div>"
+        )
+        force_default = " data-force-default='true'" if errors else ""
         body = (
             "<h1>" + _icon("flask", size=22) + "Campaign builder</h1>"
             "<p class='note'>Compose a lane by choosing modalities, target "
@@ -1539,14 +1630,19 @@ class BuilderPageMixin:
             "exact command and its call ceilings for confirmation before "
             "anything starts.</p>"
             + error_summary
-            + hardware_card
-            + ollama_card
+            + "<div class='page-tabs' data-page-tabs data-tab-key='build' "
+            + f"data-default-tab='{build_default}'{force_default}>"
+            + _page_tablist("Builder sections", build_tabs, default=build_default)
+            + _page_tabpanel("build-general", general_panel)
             + "<form method='post' action='/build' id='builder'>"
             # hidden composed fields
             "<input type='hidden' name='corpora'><input type='hidden' name='api'>"
             "<input type='hidden' name='local'>"
             "<input type='hidden' name='attackers'>"
             "<input type='hidden' name='judges'>"
+            "<section class='page-tabpanel' id='build-pipeline' role='tabpanel' "
+            "aria-labelledby='build-pipeline-tab' tabindex='0' "
+            "data-page-panel='build-pipeline'>"
             "<div class='card'><h2>" + _icon("play") + "Mode</h2>"
             "<div class='radios'>" + mode_html + "</div></div>"
             "<div class='card'><h2>" + _icon("grid") + "Modality scope</h2>"
@@ -1585,6 +1681,9 @@ class BuilderPageMixin:
             + "</div>"
             + prepared_workflow_fields
             + "</div>"
+            "</section><section class='page-tabpanel' id='build-evaluation' "
+            "role='tabpanel' aria-labelledby='build-evaluation-tab' tabindex='0' "
+            "data-page-panel='build-evaluation'>"
             "<div class='card'><h2>" + _icon("receipt") + "Judges &amp; defense"
             "</h2>"
             + err("judges")
@@ -1655,6 +1754,9 @@ class BuilderPageMixin:
                 "defense_guardrail_device", "--defense-guardrail-device", "required explicit device"
             )
             + "</div></div>"
+            "</section><section class='page-tabpanel' id='build-admission' "
+            "role='tabpanel' aria-labelledby='build-admission-tab' tabindex='0' "
+            "data-page-panel='build-admission'>"
             "<div class='card'><h2>" + _icon("receipt") + "Receipts (fail-closed admission)</h2>"
             "<p class='note'>Every non-dry run requires the validated "
             "project-revision receipt; every real source arm requires the "
@@ -1704,6 +1806,9 @@ class BuilderPageMixin:
             + "</div>"
             "<button type='button' class='ghost' id='addatt'>"
             "Add receipt row</button></div>"
+            "</section><section class='page-tabpanel' id='build-execution' "
+            "role='tabpanel' aria-labelledby='build-execution-tab' tabindex='0' "
+            "data-page-panel='build-execution'>"
             "<div class='card'><h2>"
             + _icon("sliders")
             + "Sampling &amp; turns</h2><div class='cols'>"
@@ -1782,12 +1887,12 @@ class BuilderPageMixin:
                 default="runs/thesis/lane",
             )
             + "</div></div>"
-            + model_picker_modal
             + "<div class='buildbar'><button type='submit'>"
             + _icon("play", size=15)
-            + "Compose &amp; review</button>"
-            "<span id='buildpreview' class='note'></span></div>"
-            "</form>"
+            + "Compose &amp; review</button></div>"
+            "</section>"
+            + model_picker_modal
+            + "</form></div>"
             "<script type='application/json' id='builder-prefill'>"
             + json.dumps(
                 {

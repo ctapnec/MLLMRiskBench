@@ -1056,9 +1056,10 @@ def test_build_renders_owned_boundaries_and_pull_controls_without_nested_forms(
         assert "action='/ollama/pull'" in page
         assert page.index("action='/ollama/start'") < page.index("id='builder'")
         assert page.count("value='fresh-token'") == 3
-        assert "<label class='check modelchoice'" not in page
-        assert "<div class='check modelchoice'" in page
-        assert "<label class='modelchoice-label'" in page
+        assert page.count("<div class='modelrow'") == page.count(
+            "class='modelbox'"
+        )
+        assert "judge-modelbox" not in page
         parser = _LabelInputCounter()
         parser.feed(page)
         assert parser.counts and max(parser.counts) <= 1
