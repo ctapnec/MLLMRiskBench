@@ -3751,8 +3751,16 @@ def main(argv=None) -> int:
                     project_revision_receipt,
                     Path(__file__).resolve(),
                 )
+                revision_filename = (
+                    f"{project_revision_receipt['revision_id']}"
+                    ".project-revision.json"
+                )
                 project_revision_artifact = {
-                    "file": revision_path.name,
+                    # The randomized private path is a read-once transport
+                    # detail.  The persisted binding names the canonical
+                    # content-addressed receipt that is retained below, just
+                    # like the ordinary non-private loader does.
+                    "file": revision_filename,
                     "sha256": revision_sha256,
                     "bytes": revision_size,
                     "revision_id": project_revision_receipt["revision_id"],

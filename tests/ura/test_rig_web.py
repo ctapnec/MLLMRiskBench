@@ -61,6 +61,7 @@ from ura.model_acquisition import (
     build_upstream_manifest,
     write_document_create_only,
 )
+from ura.targets.api import MockTarget
 from ura.targets.base import BaseTarget
 
 
@@ -2022,6 +2023,92 @@ def test_builder_preflight_strips_live_fields_and_uses_dedicated_output(
     app.close()
 
 
+def test_builder_preflight_consumes_private_project_receipt_and_makes_no_calls(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    project_revision_args,
+) -> None:
+    """A Builder-held receipt keeps its canonical persisted filename.
+
+    The web process deliberately gives the child a randomized, path-private,
+    read-once file.  That transport basename must not leak into the typed
+    project-revision binding, whose filename is fixed by the receipt id.
+    """
+
+    app = _operator_registry_app(tmp_path)
+    receipt_path = Path(project_revision_args.values[1])
+    receipt_sha256 = project_revision_args.values[3]
+    form = {
+        "mode": "attestation_probe",
+        "corpora": "synth",
+        "api": "anthropic:claude-haiku-4-5-20251001",
+        "attackers": "replay",
+        "judges": "rules",
+        "defense": "none",
+        "limit": "1",
+        "sample_seed": "0",
+        "seeds": "0",
+        "scope": "fixture-scope",
+        "max_queries": "1",
+        "max_turns": "1",
+        "cap_target": "1",
+        "cap_judge": "1",
+        "cap_http": "3",
+        "deadline": "900",
+        "project_revision": str(receipt_path),
+        "project_revision_sha": receipt_sha256,
+        "out": str(app.results_root / "paid-probe"),
+    }
+    assert app._validate_builder(form) == {}
+    command, values, _params = app._compose_from_builder(form)
+    private_revision = Path(values["--project-revision"])
+    assert private_revision != receipt_path
+    assert private_revision.parent.name == ".private-project-revision"
+    assert private_revision.read_bytes() == receipt_path.read_bytes()
+
+    for flag, marker in (
+        ("--api-config", "URA_PRIVATE_TRANSIENT_API_CONFIG"),
+        ("--source-config", "URA_PRIVATE_TRANSIENT_SOURCE_CONFIG"),
+        (
+            "--project-revision",
+            "URA_PRIVATE_TRANSIENT_PROJECT_REVISION",
+        ),
+    ):
+        if flag in values:
+            monkeypatch.setenv(marker, values[flag])
+
+    generation_calls = 0
+
+    class NoGenerationTarget(MockTarget):
+        def generate(self, *_args, **_kwargs):
+            nonlocal generation_calls
+            generation_calls += 1
+            raise AssertionError("a no-call preflight invoked target generation")
+
+    monkeypatch.setattr(
+        run_matrix,
+        "build_target",
+        lambda *_args, **_kwargs: NoGenerationTarget(
+            "anthropic:claude-haiku-4-5-20251001"
+        ),
+    )
+    preflight_out = app.results_root / "preflight" / "private-revision"
+    preflight_values = app._builder_preflight_values(
+        values,
+        output=preflight_out,
+    )
+    assert run_matrix.main(build_argv(command, preflight_values)[3:]) == 0
+    assert generation_calls == 0
+    assert not private_revision.exists()
+
+    revision_id = project_revision_args.binding["revision_id"]
+    retained = preflight_out / f"{revision_id}.project-revision.json"
+    assert retained.read_bytes() == receipt_path.read_bytes()
+    projection = next(preflight_out.glob("*.lane-projection.json"))
+    assert projection.is_file()
+    app.close()
+
+
 def test_local_targets_repo_root_parity() -> None:
     from experiments.rig_web import build_argv
     argv = build_argv("local_targets", {"--repo-root": "/some/repo", "--refresh": "on"})
@@ -2653,7 +2740,7 @@ def test_builder_model_filters_and_quantization_warning_are_rendered(
     row_start = page.rfind("<div class='modelrow'", 0, at)
     quant_at = page.index(f"name='quantization::{lower}'", at)
     assert f"for='{control_id}'" in page[row_start:at]
-    assert "</label></div><div class='modelquant'>" in page[at:quant_at]
+    assert "</label><div class='modelquant'>" in page[at:quant_at]
     quant_tag = page[page.rfind("<select", at, quant_at):page.find(">", quant_at)]
     assert "disabled" not in quant_tag
     # Filter controls have no server-side campaign fields. A submitted target
