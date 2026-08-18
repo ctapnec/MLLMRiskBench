@@ -409,18 +409,17 @@ small, acyclic responsibility modules:
   and current-process-only daemon lifecycle;
 - `builder_models.py`, `builder_capture.py`, `builder_validation.py`, and
   `builder_page.py` implement the Build workflow without changing its gates;
-- `app.py` composes those focused mixins and `server.py` provides the localhost
+- `app.py` composes those focused mixins and `server.py` provides the configured
   HTTP/headless adapter.
 
-The HTTP adapter treats localhost as a privileged control plane, not as an
-authentication mechanism. Before reading a POST body or rendering a tokenized
-page, it requires exactly one literal `127.0.0.1` or `[::1]` Host authority;
-the port may be a local forwarded port. A present Origin must be the exact same
-loopback HTTP origin, and cross-site Fetch Metadata is rejected. One
-high-entropy process token is injected centrally into every POST form and must
-be supplied exactly once before any application route runs. All control
-responses deny framing through CSP `frame-ancestors 'none'` and
-`X-Frame-Options: DENY`, preventing clickjacking of an otherwise valid form.
+The HTTP adapter binds the operator-configured `--host` and `--port`. It does
+not use `Host`, `Origin`, Fetch Metadata, or a centrally injected CSRF field as
+request-admission controls. POST framing remains bounded and unambiguous:
+Content-Length must be singular and within the byte cap, transfer framing is
+rejected, and URL-encoded form names must be valid and unique. Application
+capabilities such as paid-launch tickets and model/evidence bindings remain
+authoritative. All control responses continue to deny framing through CSP
+`frame-ancestors 'none'` and `X-Frame-Options: DENY`.
 
 The facade continues to expose the established imports and
 `python -m experiments.rig_web` entry point. This is an implementation boundary,

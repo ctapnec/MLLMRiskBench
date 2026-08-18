@@ -3,11 +3,9 @@
 from __future__ import annotations
 
 import http.client
-import re
 import threading
 from dataclasses import dataclass, field
 from typing import Iterable
-from urllib.parse import urlencode
 
 import pytest
 
@@ -49,7 +47,7 @@ class _RecordingApp:
             # Exercise both quote styles and case-insensitive method matching.
             forms += '<form class="extra" method="POST" action="/build"></form>'
             forms += "<form method=post action='/jobs'></form>"
-            # A similarly named data attribute must not put a token in a GET form.
+            # A similarly named data attribute must remain untouched.
             forms += (
                 "<form data-method='post' method='get' "
                 "action='/search'></form>"
@@ -115,31 +113,31 @@ def running_server():
         thread.join(timeout=10)
 
 
-def _get_token(port: int, authority: str) -> tuple[str, dict[str, str], bytes]:
+def test_server_honors_configured_non_loopback_socket_bind() -> None:
+    app = _RecordingApp()
+    server = _make_server(app, "0.0.0.0", 0)
+    try:
+        assert server.server_address[0] == "0.0.0.0"
+        assert int(server.server_address[1]) > 0
+    finally:
+        server.server_close()
+
+
+def test_html_forms_are_unchanged_and_keep_clickjacking_headers(
+    running_server,
+) -> None:
+    app, port = running_server
     status, headers, body = _request(
         port,
         "GET",
         "/",
-        headers=(("Host", authority),),
+        headers=(("Host", f"console.example:{port}"),),
     )
+
     assert status == 200
-    tokens = re.findall(rb"name='_csrf' value='([^']+)'", body)
-    assert len(tokens) == len(_MUTATING_ROUTES) + 2
-    assert len(set(tokens)) == 1
-    token = tokens[0].decode("ascii")
-    assert len(token) >= 40
-    return token, headers, body
-
-
-def test_html_forms_get_one_process_token_and_clickjacking_headers(
-    running_server,
-) -> None:
-    app, port = running_server
-    token, headers, body = _get_token(port, f"127.0.0.1:{port}")
-
-    assert token.encode("ascii") in body
+    assert b"name='_csrf'" not in body
     assert body.lower().count(b"<form ") == len(_MUTATING_ROUTES) + 3
-    assert b"data-method='post' method='get'><input" not in body
+    assert b"data-method='post' method='get'" in body
     assert headers["x-frame-options"] == "DENY"
     assert "frame-ancestors 'none'" in headers["content-security-policy"]
     assert "form-action 'self'" in headers["content-security-policy"]
@@ -149,36 +147,10 @@ def test_html_forms_get_one_process_token_and_clickjacking_headers(
     assert app.calls == [("GET", "/", {})]
 
 
-@pytest.mark.parametrize(
-    ("authority", "origin"),
-    (
-        ("127.0.0.1:43123", "http://127.0.0.1:43123"),
-        ("[::1]:43124", "http://[::1]:43124"),
-        ("127.0.0.1", "http://127.0.0.1"),
-        ("[::1]", "http://[::1]"),
-    ),
-)
-def test_literal_loopback_forwarded_authorities_are_supported(
-    running_server,
-    authority: str,
-    origin: str,
-) -> None:
-    app, port = running_server
-    status, _headers, body = _request(
-        port,
-        "GET",
-        "/build",
-        headers=(("Host", authority), ("Origin", origin)),
-    )
-    assert status == 200 and b"name='_csrf'" in body
-    assert app.calls == [("GET", "/build", {})]
-
-
-def test_host_origin_and_fetch_site_fail_before_dispatch_or_token_disclosure(
+def test_host_origin_and_fetch_site_headers_do_not_gate_dispatch(
     running_server,
 ) -> None:
     app, port = running_server
-    good_host = f"127.0.0.1:{port}"
     probes: tuple[tuple[tuple[str, str], ...], ...] = (
         (),
         (("Host", "localhost:8642"),),
@@ -186,18 +158,17 @@ def test_host_origin_and_fetch_site_fail_before_dispatch_or_token_disclosure(
         (("Host", "127.0.0.1.attacker.example:8642"),),
         (("Host", "2130706433:8642"),),
         (("Host", "127.0.0.1:080"),),
-        (("Host", good_host), ("Host", good_host)),
-        (("Host", good_host), ("Origin", "null")),
-        (("Host", good_host), ("Origin", "https://127.0.0.1:%d" % port)),
-        (("Host", good_host), ("Origin", "https://attacker.example")),
-        (("Host", good_host), ("Origin", "http://127.0.0.1:1")),
+        (("Host", "first.example"), ("Host", "second.example")),
+        (("Origin", "null"),),
+        (("Origin", "https://127.0.0.1:%d" % port),),
+        (("Origin", "https://attacker.example"),),
+        (("Origin", "http://127.0.0.1:1"),),
         (
-            ("Host", good_host),
-            ("Origin", f"http://{good_host}"),
-            ("Origin", f"http://{good_host}"),
+            ("Origin", "https://first.example"),
+            ("Origin", "https://second.example"),
         ),
-        (("Host", good_host), ("Sec-Fetch-Site", "cross-site")),
-        (("Host", good_host), ("Sec-Fetch-Site", "same-site")),
+        (("Sec-Fetch-Site", "cross-site"),),
+        (("Sec-Fetch-Site", "same-site"),),
     )
     for request_headers in probes:
         app.calls.clear()
@@ -207,67 +178,44 @@ def test_host_origin_and_fetch_site_fail_before_dispatch_or_token_disclosure(
             "/config/secrets",
             headers=request_headers,
         )
-        assert status in {400, 403}
+        assert status == 200
         assert b"_csrf" not in body
-        assert app.calls == []
+        assert app.calls == [("GET", "/config/secrets", {})]
         assert headers["x-frame-options"] == "DENY"
         assert "frame-ancestors 'none'" in headers["content-security-policy"]
 
-    # Host admission happens before a declared request body is read or drained.
-    status, _headers, body = _request(
+    app.calls.clear()
+    status, headers, _body = _request(
         port,
         "POST",
         "/config",
         headers=(
             ("Host", "attacker.example:8642"),
-            ("Content-Length", str(1024 * 1024)),
+            ("Origin", "https://attacker.example"),
+            ("Sec-Fetch-Site", "cross-site"),
         ),
+        body=b"marker=x",
     )
-    assert status == 403 and b"literal loopback" in body
-    assert app.calls == []
+    assert status == 303 and headers["location"] == "/done"
+    assert app.calls == [("POST", "/config", {"marker": "x"})]
 
 
-def test_every_mutating_route_requires_one_valid_csrf_before_dispatch(
+def test_mutating_routes_dispatch_without_csrf_or_origin_admission(
     running_server,
 ) -> None:
     app, port = running_server
-    authority = f"127.0.0.1:{port}"
-    origin = f"http://{authority}"
-    token, _headers, _body = _get_token(port, authority)
-    app.calls.clear()
 
     for route in _MUTATING_ROUTES:
-        for payload, expected_status in (
-            (b"marker=x", 403),
-            (urlencode({"_csrf": "wrong", "marker": "x"}).encode(), 403),
-            (
-                (
-                    f"_csrf={token}&_csrf={token}&marker=x"
-                ).encode("ascii"),
-                400,
-            ),
-        ):
-            status, _response_headers, _response_body = _request(
-                port,
-                "POST",
-                route,
-                headers=(("Host", authority), ("Origin", origin)),
-                body=payload,
-            )
-            assert status == expected_status
-            assert app.calls == []
-
-        valid = urlencode({"_csrf": token, "marker": "x"}).encode("ascii")
         status, headers, _response_body = _request(
             port,
             "POST",
             route,
             headers=(
-                ("Host", authority),
-                ("Origin", origin),
-                ("Sec-Fetch-Site", "same-origin"),
+                ("Host", "attacker.example"),
+                ("Origin", "https://attacker.example"),
+                ("Sec-Fetch-Site", "cross-site"),
             ),
-            body=valid,
+            body=b"marker=x",
         )
         assert status == 303
         assert headers["location"] == "/done"
@@ -275,32 +223,16 @@ def test_every_mutating_route_requires_one_valid_csrf_before_dispatch(
         assert app.calls == [("POST", route, {"marker": "x"})]
         app.calls.clear()
 
-        # Browser-origin admission happens before the body or its token is read.
-        for hostile_header in (
-            ("Origin", "null"),
-            ("Origin", "https://attacker.example"),
-            ("Sec-Fetch-Site", "cross-site"),
-        ):
-            status, _headers, _body = _request(
-                port,
-                "POST",
-                route,
-                headers=(("Host", authority), hostile_header),
-                body=b"",
-            )
-            assert status == 403
-            assert app.calls == []
-
-    # A non-browser client may omit Origin only when it possesses the token.
-    status, _headers, _body = _request(
+    # Removing CSRF special handling does not weaken strict duplicate-key parsing.
+    status, _headers, body = _request(
         port,
         "POST",
         "/db/reindex",
-        headers=(("Host", authority),),
-        body=urlencode({"_csrf": token}).encode("ascii"),
+        body=b"marker=x&marker=y",
     )
-    assert status == 303
-    assert app.calls == [("POST", "/db/reindex", {})]
+    assert status == 400
+    assert b"duplicate URL-encoded" in body
+    assert app.calls == []
 
 
 @pytest.mark.parametrize(
