@@ -200,7 +200,9 @@ def test_matrix_rejects_native_importer_as_runner_replay(tmp_path: Path) -> None
         str(out),
     ])
     assert result == 1
-    error = json.loads(next(out.glob("*.error.json")).read_text(encoding="utf-8"))
+    error = json.loads(
+        (out / "attacker-input-contract.error.json").read_text(encoding="utf-8")
+    )
     assert "native-artifact integration" in error["message"]
 
 

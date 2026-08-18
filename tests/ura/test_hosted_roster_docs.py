@@ -93,10 +93,14 @@ def test_advertised_hosted_roster_builds_offline_and_exactly_matches_pricing(
 
     results = tmp_path / "runs"
     results.mkdir()
+    fixture_root = tmp_path / "repo"
+    fixture_registry = fixture_root / "experiments" / "rig" / _ROSTER.name
+    fixture_registry.parent.mkdir(parents=True)
+    fixture_registry.write_bytes(_ROSTER.read_bytes())
     app = RigWebApp(
         results_root=results,
         state_dir=tmp_path / "state",
-        repo_root=_ROOT,
+        repo_root=fixture_root,
         gpu_hardware=_gpu(),
     )
     try:

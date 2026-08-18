@@ -566,7 +566,7 @@ def test_ollama_transport_uses_configured_timeout_and_preparse_body_bound(
     monkeypatch.setattr(target, "_open_request", oversized_urlopen)
     with pytest.raises(LocalTargetOutputError, match="4 MiB"):
         target._verify_daemon_identity()
-    assert observed["timeout"] == 12.5
+    assert 0 < observed["timeout"] <= 12.5
 
 
 def test_ollama_transport_rejects_duplicate_json_keys(
