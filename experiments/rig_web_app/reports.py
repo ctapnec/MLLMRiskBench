@@ -11,6 +11,11 @@ import time
 from pathlib import Path
 from typing import Any, Mapping
 
+from ura.model_identity import canonical_provider_name
+
+from ura.approximate_metrics import validate_approximate_metric_provenance
+from ura.strict_json import strict_json_loads
+
 from .catalog import _REPO_ROOT, _MAX_RENDER_BYTES, _INVENTORY_MAX_ENTRIES
 
 
@@ -53,6 +58,10 @@ _LEVEL2_STRATUM_FIELDS = (
     "semantic_family",
     "metric",
     "endpoint_status",
+    "metric_authority",
+    "warning_tag",
+    "evidence_class",
+    "reliability_kind",
     "polarity",
     "group_refinements",
     "execution_modes",
@@ -74,6 +83,14 @@ _LEVEL2_ROW_FIELDS = frozenset(
         "judgments_abstained",
         "judgments_non_evaluable",
         "cross_stratum_pooling_permitted",
+        "metric_authority",
+        "warning_tag",
+        "evidence_class",
+        "reliability_score",
+        "reliability_kind",
+        "approximate_provenance",
+        "approximate_model_query_count",
+        "approximate_source_reference_use_count",
     }
 )
 
@@ -135,10 +152,14 @@ def _validate_report_document(kind: str, document: Mapping[str, Any]) -> None:
             "planning_strata",
             "execution_units",
             "judgment_records",
+            "approximate_proxy_judgment_records",
             "request_level_errors",
         ):
             block = counts.get(name)
-            if name == "prospective_request_units" and block is None:
+            if name in {
+                "prospective_request_units",
+                "approximate_proxy_judgment_records",
+            } and block is None:
                 continue
             if (
                 not isinstance(block, Mapping)
@@ -174,6 +195,50 @@ def _validate_report_document(kind: str, document: Mapping[str, Any]) -> None:
                 and evaluable != decided + abstained
             ):
                 raise ValueError("Level-1 evaluable judgment counts do not reconcile")
+        approximate_counts = counts.get("approximate_proxy_judgment_records")
+        if isinstance(approximate_counts, Mapping):
+            evaluable = approximate_counts.get("evaluable")
+            decided = approximate_counts.get("decided")
+            abstained = approximate_counts.get("abstained")
+            if (
+                all(
+                    isinstance(item, int) and not isinstance(item, bool)
+                    for item in (evaluable, decided, abstained)
+                )
+                and evaluable != decided + abstained
+            ):
+                raise ValueError(
+                    "Level-1 approximate proxy decision counts do not reconcile"
+                )
+            planning_rows = document.get("planning_strata")
+            if not isinstance(planning_rows, list):
+                raise ValueError(
+                    "Level-1 approximate proxy counts require planning strata"
+                )
+            row_fields = {
+                "evaluable": "approximate_proxy_evaluable_judgment_records",
+                "decided": "approximate_proxy_decided_judgment_records",
+                "abstained": "approximate_proxy_abstained_judgment_records",
+            }
+            for count_name, row_name in row_fields.items():
+                values = [
+                    row.get(row_name)
+                    for row in planning_rows
+                    if isinstance(row, Mapping)
+                ]
+                if len(values) != len(planning_rows) or any(
+                    not isinstance(value, int)
+                    or isinstance(value, bool)
+                    or value < 0
+                    for value in values
+                ):
+                    raise ValueError(
+                        f"Level-1 planning-stratum {row_name} is malformed"
+                    )
+                if sum(values) != approximate_counts.get(count_name):
+                    raise ValueError(
+                        "Level-1 approximate proxy counts do not match planning strata"
+                    )
         return
 
     if kind != "level2":
@@ -202,6 +267,67 @@ def _validate_report_document(kind: str, document: Mapping[str, Any]) -> None:
     for row in estimates:
         if not isinstance(row, Mapping) or not _LEVEL2_ROW_FIELDS.issubset(row):
             raise ValueError("Level-2 estimate row is incomplete")
+        metric = row.get("metric")
+        is_approximate = isinstance(metric, str) and metric.startswith("approximate_")
+        approximate_value = row.get("approximate_provenance")
+        if is_approximate:
+            approximate = validate_approximate_metric_provenance(
+                metric, approximate_value
+            )
+            expected_flat = {
+                "metric_authority": "supplementary_non_authoritative",
+                "warning_tag": approximate.warning_tag,
+                "evidence_class": approximate.evidence_class,
+                "reliability_score": approximate.reliability_score,
+                "reliability_kind": approximate.reliability_kind,
+            }
+            if any(row.get(name) != value for name, value in expected_flat.items()):
+                raise ValueError(
+                    "Level-2 approximate warning/provenance fields are incoherent"
+                )
+            if row.get("endpoint_status") != "approximate_common_proxy":
+                raise ValueError("Level-2 approximate endpoint status is incoherent")
+            expected_counts = {
+                "n_records": approximate.n_result_units,
+                "judgments_completed": approximate.n_supporting_decisions,
+                "judgments_evaluable": approximate.n_supporting_decisions,
+                "judgments_decided": approximate.n_supporting_decisions,
+                "judgments_abstained": 0,
+                "judgments_non_evaluable": 0,
+                "approximate_model_query_count": (
+                    approximate.n_model_queried_decisions
+                ),
+                "approximate_source_reference_use_count": (
+                    approximate.n_source_reference_context_used
+                ),
+            }
+            if any(
+                isinstance(row.get(name), bool)
+                or not isinstance(row.get(name), int)
+                or row.get(name) != value
+                for name, value in expected_counts.items()
+            ):
+                raise ValueError(
+                    "Level-2 approximate support/query/reference counts are incoherent"
+                )
+        elif (
+            approximate_value is not None
+            or row.get("metric_authority") != "authoritative_or_source_native"
+            or any(
+                row.get(name) is not None
+                for name in (
+                    "warning_tag",
+                    "evidence_class",
+                    "reliability_score",
+                    "reliability_kind",
+                    "approximate_model_query_count",
+                    "approximate_source_reference_use_count",
+                )
+            )
+        ):
+            raise ValueError(
+                "Level-2 authoritative/source-native row carries approximate semantics"
+            )
         value = row.get("value")
         if (
             not isinstance(value, (int, float))
@@ -282,7 +408,7 @@ def collect_reports(
                 size = entry.stat().st_size
                 if size > _MAX_RENDER_BYTES:
                     continue
-                doc = json.loads(entry.read_text(encoding="utf-8"))
+                doc = strict_json_loads(entry.read_text(encoding="utf-8"))
             except (OSError, ValueError):
                 continue
             schema = doc.get("schema_version") if isinstance(doc, dict) else None
@@ -313,7 +439,7 @@ def load_pricing(repo_root: Path = _REPO_ROOT) -> dict[str, Any]:
     for candidate in ("pricing.json", "rig/pricing.example.json"):
         path = repo_root / "experiments" / candidate
         try:
-            data = json.loads(path.read_text(encoding="utf-8"))
+            data = strict_json_loads(path.read_text(encoding="utf-8"))
         except (OSError, ValueError):
             continue
         if isinstance(data, dict):
@@ -335,6 +461,7 @@ def rate_for(
     exact missing field so the page can display N/A with its reason.
     """
 
+    provider = canonical_provider_name(provider)
     providers = pricing.get("providers")
     if not isinstance(providers, Mapping):
         return None, "pricing table has no providers section"
@@ -443,10 +570,27 @@ def compute_costs(
     combined figure.  Local providers are not billable rather than zero.
     """
 
-    grouped: dict[tuple[str, str, str], dict[str, Mapping[str, int]]] = {}
+    grouped: dict[tuple[str, str, str], dict[str, dict[str, Any]]] = {}
     for key, categories in usage_totals.items():
         role, provider, model, usage_date = key
-        grouped.setdefault((role, provider, model), {})[usage_date] = categories
+        canonical_provider = canonical_provider_name(provider)
+        by_date = grouped.setdefault((role, canonical_provider, model), {})
+        bucket = by_date.setdefault(usage_date, {})
+        for category, value in categories.items():
+            prior = bucket.get(category)
+            if prior is None:
+                bucket[category] = value
+            elif (
+                isinstance(prior, int)
+                and not isinstance(prior, bool)
+                and isinstance(value, int)
+                and not isinstance(value, bool)
+            ):
+                bucket[category] = prior + value
+            else:
+                # Preserve malformed evidence so recorded_count reports it as
+                # N/A instead of silently coercing or dropping the row.
+                bucket[category] = value
 
     rows: list[dict[str, Any]] = []
     for (role, provider, model), by_date in sorted(grouped.items()):

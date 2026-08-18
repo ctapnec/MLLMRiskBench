@@ -50,6 +50,7 @@ coverage.xml
 .hypothesis/
 .pytest_cache/
 /.pytest-*/
+/.test-tmp/
 /tests/.tmp-*/
 /.smoke-*/
 /.tmp-*/
@@ -213,6 +214,9 @@ cython_debug/
 
 # Generated experiment evidence is retained outside Git source identity.
 /runs
+
+# Local verification logs are disposable execution output, never thesis source.
+verifications/
 
 # Operational console state is never executable source. The maintained
 # runbook stores it under ignored runs/rig-web; keep a legacy root launch from

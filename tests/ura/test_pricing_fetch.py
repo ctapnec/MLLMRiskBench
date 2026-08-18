@@ -550,8 +550,9 @@ def test_fetch_pricing_records_parser_failure(
 
 def test_full_roster_fetch_covers_every_machine_readable_provider(tmp_path: Path) -> None:
     # The shipped example roster + sources must fetch rates for ALL machine-
-    # readable providers and every model on the page - not just two Anthropic
-    # models - with Kimi/Qwen honestly reported as manual.
+    # readable providers and every advertised model represented in the pricing
+    # registry - not speculative/unavailable page rows - with Kimi/Qwen honestly
+    # reported as manual.
     import shutil
 
     proj = Path(__file__).parents[2]
@@ -575,8 +576,8 @@ def test_full_roster_fetch_covers_every_machine_readable_provider(tmp_path: Path
 
     anthropic = set(summary["providers"]["anthropic"]["matched"])
     assert anthropic == {
-        "claude-opus-5", "claude-sonnet-5", "claude-mythos-5",
-        "claude-fable-5", "claude-haiku-4-5-20251001",
+        "claude-opus-5", "claude-sonnet-5", "claude-fable-5",
+        "claude-haiku-4-5-20251001",
     }
     assert summary["providers"]["google"]["matched"]  # Gemini extractor wired
     assert summary["providers"]["deepseek"]["matched"] == ["deepseek-v4-pro"]
@@ -627,6 +628,99 @@ def test_fetch_pricing_corrupt_file_is_not_overwritten(tmp_path: Path) -> None:
     assert "error" in summary and "not valid JSON" in summary["error"]
     # Untouched.
     assert pricing_path.read_text(encoding="utf-8") == corrupt
+
+
+def _strict_pricing_payloads() -> list[str]:
+    valid_provider = (
+        '"glm":{"models":{"glm-5.2":{"rates":[]}}}'
+    )
+    deep_value = "[" * 70 + "0" + "]" * 70
+    return [
+        '{"providers":{"unused":{}},"providers":{' + valid_provider + "}}",
+        '{"metadata":NaN,"providers":{' + valid_provider + "}}",
+        '{"metadata":' + deep_value + ',"providers":{' + valid_provider + "}}",
+    ]
+
+
+@pytest.mark.parametrize("ambiguous_pricing", _strict_pricing_payloads())
+def test_fetch_pricing_strict_merge_errors_preserve_operator_bytes_and_do_not_fetch(
+    tmp_path: Path,
+    ambiguous_pricing: str,
+) -> None:
+    repo = _write_repo(
+        tmp_path,
+        pricing={"providers": {}},
+        sources={"providers": {"glm": {"url": "https://z/pricing"}}},
+    )
+    pricing_path = repo / "experiments" / "pricing.json"
+    pricing_path.write_text(ambiguous_pricing, encoding="utf-8")
+    prior = pricing_path.read_bytes()
+    calls: list[str] = []
+
+    def forbidden_fetch(url: str) -> str:
+        calls.append(url)
+        raise AssertionError("ambiguous pricing must be rejected before fetch")
+
+    summary = pf.fetch_pricing(
+        repo,
+        today="2026-08-16",
+        fetcher=forbidden_fetch,
+    )
+    assert summary["rates_written"] == 0
+    assert "error" in summary
+    assert calls == []
+    assert pricing_path.read_bytes() == prior
+    assert not pricing_path.with_name("pricing.json.bak").exists()
+    assert not pricing_path.with_name("pricing.json.tmp").exists()
+
+
+def _strict_source_payloads() -> list[str]:
+    valid = '"glm":{"url":"https://z/pricing"}'
+    deep_value = "[" * 70 + "0" + "]" * 70
+    return [
+        '{"providers":{"unused":{}},"providers":{' + valid + "}}",
+        '{"metadata":NaN,"providers":{' + valid + "}}",
+        '{"metadata":' + deep_value + ',"providers":{' + valid + "}}",
+    ]
+
+
+@pytest.mark.parametrize("ambiguous_sources", _strict_source_payloads())
+def test_fetch_pricing_strict_source_errors_make_zero_calls_and_preserve_table(
+    tmp_path: Path,
+    ambiguous_sources: str,
+) -> None:
+    repo = _write_repo(
+        tmp_path,
+        pricing={
+            "providers": {
+                "glm": {"models": {"glm-5.2": {"rates": []}}},
+            },
+        },
+        sources={"providers": {}},
+    )
+    pricing_path = repo / "experiments" / "pricing.json"
+    sources_path = repo / "experiments" / "pricing-sources.json"
+    sources_path.write_text(ambiguous_sources, encoding="utf-8")
+    prior_pricing = pricing_path.read_bytes()
+    prior_sources = sources_path.read_bytes()
+    calls: list[str] = []
+
+    def forbidden_fetch(url: str) -> str:
+        calls.append(url)
+        raise AssertionError("ambiguous sources must be rejected before fetch")
+
+    summary = pf.fetch_pricing(
+        repo,
+        today="2026-08-16",
+        fetcher=forbidden_fetch,
+    )
+    assert summary["rates_written"] == 0
+    assert "error" in summary
+    assert calls == []
+    assert pricing_path.read_bytes() == prior_pricing
+    assert sources_path.read_bytes() == prior_sources
+    assert not pricing_path.with_name("pricing.json.bak").exists()
+    assert not pricing_path.with_name("pricing.json.tmp").exists()
 
 
 def test_fetch_pricing_unreadable_file_is_refused_and_preserved(

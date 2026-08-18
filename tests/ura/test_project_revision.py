@@ -9,6 +9,7 @@ import sys
 
 import pytest
 
+import ura.project_revision as project_revision_module
 from experiments import project_revision as revision_cli
 from experiments import rig_check, run_matrix
 from ura.project_revision import (
@@ -54,6 +55,18 @@ def _repo(tmp_path: Path) -> tuple[Path, Path, Path, str]:
     _git(root, "add", ".")
     _git(root, "commit", "-qm", "fixture")
     return root, driver, harness, _git(root, "rev-parse", "HEAD")
+
+
+def _alternate_valid_receipt(receipt: dict) -> dict:
+    alternate = json.loads(json.dumps(receipt))
+    alternate["source"]["driver_source"]["sha256"] = "f" * 64
+    body = {key: item for key, item in alternate.items() if key != "revision_id"}
+    from ura.eligibility import canonical_json_sha256
+
+    alternate["revision_id"] = (
+        "project-revision-" + canonical_json_sha256(body)[:24]
+    )
+    return validate_project_revision(alternate)
 
 
 def test_clean_exact_receipt_round_trip_and_cli_validation(
@@ -261,6 +274,151 @@ def test_receipt_loader_rejects_symlink(
             recheck_checkout=False,
             harness_module_path=harness,
         )
+
+
+def test_receipt_loader_rejects_same_size_valid_inode_swap_before_parse(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _root, driver, harness, revision = _repo(tmp_path)
+    receipt_a = create_project_revision(revision, driver, harness_module_path=harness)
+    receipt_b = _alternate_valid_receipt(receipt_a)
+    payload_a = project_revision_bytes(receipt_a)
+    payload_b = project_revision_bytes(receipt_b)
+    assert len(payload_a) == len(payload_b)
+    candidate = tmp_path / "candidate.project-revision.json"
+    replacement = tmp_path / "replacement.project-revision.json"
+    candidate.write_bytes(payload_a)
+    replacement.write_bytes(payload_b)
+    digest_a = hashlib.sha256(payload_a).hexdigest()
+    original_open = project_revision_module.os.open
+    parsed = 0
+    rechecked = 0
+
+    def swap_then_open(path, flags, *args):
+        if Path(path) == candidate and replacement.exists():
+            candidate.unlink()
+            replacement.replace(candidate)
+        return original_open(path, flags, *args)
+
+    def forbidden_parse(*_args, **_kwargs):
+        nonlocal parsed
+        parsed += 1
+        raise AssertionError("a swapped receipt must not reach JSON parsing")
+
+    def forbidden_recheck(*_args, **_kwargs):
+        nonlocal rechecked
+        rechecked += 1
+        raise AssertionError("a swapped receipt must not reach checkout recheck")
+
+    monkeypatch.setattr(project_revision_module.os, "open", swap_then_open)
+    monkeypatch.setattr(project_revision_module, "_strict_json_object", forbidden_parse)
+    monkeypatch.setattr(project_revision_module, "recheck_project_revision", forbidden_recheck)
+    with pytest.raises(ValueError, match="changed while it was opened"):
+        load_project_revision_file(
+            candidate,
+            digest_a,
+            driver,
+            harness_module_path=harness,
+        )
+    assert parsed == 0
+    assert rechecked == 0
+
+
+def test_receipt_loader_rejects_hardlinks_and_oversize_files(
+    tmp_path: Path,
+) -> None:
+    _root, driver, harness, revision = _repo(tmp_path)
+    receipt = create_project_revision(revision, driver, harness_module_path=harness)
+    path = write_project_revision(tmp_path / "receipts", receipt)
+    digest = hashlib.sha256(path.read_bytes()).hexdigest()
+    hardlink = tmp_path / "hardlinked.project-revision.json"
+    try:
+        os.link(path, hardlink)
+    except OSError:
+        pytest.skip("hardlink creation is unavailable for this test account")
+    with pytest.raises(ValueError, match="one regular non-symlink"):
+        load_project_revision_file(
+            hardlink,
+            digest,
+            driver,
+            recheck_checkout=False,
+            harness_module_path=harness,
+        )
+    hardlink.unlink()
+
+    oversize = tmp_path / "oversize.project-revision.json"
+    oversize.write_bytes(b"x" * (project_revision_module._MAX_RECEIPT_BYTES + 1))
+    with pytest.raises(ValueError, match="size bound"):
+        load_project_revision_file(
+            oversize,
+            hashlib.sha256(oversize.read_bytes()).hexdigest(),
+            driver,
+            recheck_checkout=False,
+            harness_module_path=harness,
+        )
+
+
+def test_swapped_project_receipt_stops_run_matrix_before_any_model_constructor(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _root, driver, harness, revision = _repo(tmp_path)
+    receipt_a = create_project_revision(revision, driver, harness_module_path=harness)
+    receipt_b = _alternate_valid_receipt(receipt_a)
+    payload_a = project_revision_bytes(receipt_a)
+    payload_b = project_revision_bytes(receipt_b)
+    assert len(payload_a) == len(payload_b)
+    candidate = tmp_path / "run-candidate.project-revision.json"
+    replacement = tmp_path / "run-replacement.project-revision.json"
+    candidate.write_bytes(payload_a)
+    replacement.write_bytes(payload_b)
+    digest_a = hashlib.sha256(payload_a).hexdigest()
+    original_open = project_revision_module.os.open
+    constructions: list[str] = []
+
+    def swap_then_open(path, flags, *args):
+        if Path(path) == candidate and replacement.exists():
+            candidate.unlink()
+            replacement.replace(candidate)
+        return original_open(path, flags, *args)
+
+    def forbidden(name: str):
+        def reject(*_args, **_kwargs):
+            constructions.append(name)
+            raise AssertionError(f"{name} constructor must not run")
+
+        return reject
+
+    monkeypatch.setattr(project_revision_module.os, "open", swap_then_open)
+    monkeypatch.setattr(run_matrix, "build_target", forbidden("target"))
+    monkeypatch.setattr(run_matrix, "build_judges", forbidden("judges"))
+    monkeypatch.setattr(run_matrix, "get_attacker", forbidden("attacker"))
+    out = tmp_path / "run-output"
+    with pytest.raises(SystemExit) as exc:
+        run_matrix.main([
+            "--preflight-only",
+            "--api",
+            "openai:fixture-target",
+            "--judges",
+            "rules",
+            "--attackers",
+            "replay",
+            "--corpora",
+            "synth",
+            "--limit",
+            "1",
+            "--project-revision",
+            str(candidate),
+            "--project-revision-sha256",
+            digest_a,
+            "--out",
+            str(out),
+        ])
+
+    assert exc.value.code == 2
+    assert constructions == []
+    assert not list(out.glob("*.complete.json"))
 
 
 def test_publication_boundary_recheck_prevents_completion_and_final_grid(

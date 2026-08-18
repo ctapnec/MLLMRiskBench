@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import os
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -48,8 +50,25 @@ def test_optimization_requires_pinned_surrogate_revision() -> None:
 
 def test_optimization_preserves_resolved_model_and_full_trace(
     monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
 ) -> None:
     commit = "0123456789abcdef0123456789abcdef01234567"
+    snapshot = tmp_path / "managed-snapshot"
+    snapshot.mkdir()
+
+    class FakeRuntime:
+        def construct(self, requirement, constructor, *, cleanup=None):
+            del cleanup
+            assert requirement.repo_id == "surrogate/model"
+            assert requirement.revision == commit
+            assert requirement.role == "nanogcg_surrogate"
+            assert os.environ["HF_HUB_OFFLINE"] == "1"
+            assert os.environ["TRANSFORMERS_OFFLINE"] == "1"
+            return constructor(snapshot.resolve())
+
+        @staticmethod
+        def private_execution(_role, callback):
+            return callback()
 
     class FakeModel:
         config = SimpleNamespace(_commit_hash=commit)
@@ -64,15 +83,17 @@ def test_optimization_preserves_resolved_model_and_full_trace(
     class FakeModelLoader:
         @staticmethod
         def from_pretrained(model_id: str, **kwargs):
-            assert model_id == "surrogate/model"
-            assert kwargs["revision"] == commit
+            assert model_id == str(snapshot.resolve())
+            assert kwargs["local_files_only"] is True
+            assert "revision" not in kwargs
             return FakeModel()
 
     class FakeTokenizerLoader:
         @staticmethod
         def from_pretrained(model_id: str, **kwargs):
-            assert model_id == "surrogate/model"
-            assert kwargs["revision"] == commit
+            assert model_id == str(snapshot.resolve())
+            assert kwargs["local_files_only"] is True
+            assert "revision" not in kwargs
             return SimpleNamespace(init_kwargs={"_commit_hash": commit})
 
     fake_transformers = SimpleNamespace(
@@ -101,15 +122,23 @@ def test_optimization_preserves_resolved_model_and_full_trace(
     monkeypatch.setattr(
         nanogcg_module, "_require", lambda module, *_args: modules[module]
     )
+    for name in (
+        "HF_DATASETS_OFFLINE",
+        "HF_HUB_DISABLE_TELEMETRY",
+        "HF_HUB_OFFLINE",
+        "TRANSFORMERS_OFFLINE",
+    ):
+        monkeypatch.delenv(name, raising=False)
 
     attempt = list(
         NanoGCGAttacker(
             model_id="surrogate/model",
             model_revision=commit,
-            num_steps=2,
-            search_width=4,
-            topk=2,
-        ).generate(_datapoint(), _budget())
+                num_steps=2,
+                search_width=4,
+                topk=2,
+                model_runtime=FakeRuntime(),
+            ).generate(_datapoint(), _budget())
     )[0]
 
     assert attempt.params["attack_semantics"] == "surrogate_transfer"

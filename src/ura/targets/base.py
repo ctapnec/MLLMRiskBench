@@ -23,6 +23,11 @@ class BaseTarget(ABC):
 
     name: str = "base"
     modality_support: tuple[str, ...] = ("text",)
+    # Research evidence produced by this target. Real provider/local targets use
+    # the measured default; deterministic fixtures must opt into ``synthetic``.
+    # Runner treats a response-level mock marker as an additional fail-safe, so
+    # a caller cannot upgrade mock evidence merely by overriding this attribute.
+    evidence_class: str = "measured"
 
     @abstractmethod
     def generate(

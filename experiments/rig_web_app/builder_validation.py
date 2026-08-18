@@ -7,8 +7,20 @@ import html
 import json
 import os
 import re
+import secrets
+import stat
 from pathlib import Path
-from typing import Mapping
+from typing import Any, Mapping
+
+from ura.targets.api import (
+    api_target_endpoint_identity,
+    api_target_requires_config,
+    build_api_target,
+    canonical_api_target_identity,
+    normalize_api_target_config,
+)
+from ura.targets.local import canonical_local_model_identity
+from ura.strict_json import strict_json_loads
 
 from .catalog import (
     _ARM_CATALOG,
@@ -19,7 +31,6 @@ from .catalog import (
     _NATIVE_ONLY_ATTACKERS,
     _FRAMEWORKS,
     _BUILD_MODES,
-    build_argv,
     _icon,
 )
 
@@ -28,7 +39,1036 @@ from .ui import _page
 from .artifacts import _argv_out_dir
 
 
+def _hosted_model_identity(
+    spec: str,
+    config: Mapping[str, object] | None = None,
+) -> frozenset[tuple[str, ...]] | None:
+    """Strong hosted identities without changing the requested execution route."""
+
+    try:
+        provider, model = canonical_api_target_identity(spec)
+        endpoint = api_target_endpoint_identity(spec, dict(config or {}))
+        if endpoint is not None:
+            keys: set[tuple[str, ...]] = {("endpoint-model", endpoint, model)}
+        else:
+            keys = {("provider-model", provider, model)}
+        return frozenset(keys)
+    except (KeyError, ValueError):
+        return None
+
+
+def _local_model_identity(
+    spec: str,
+    entry: Mapping[str, object],
+) -> tuple[str, ...] | None:
+    """Immutable local identity shared with runtime duplicate admission."""
+
+    backend, separator, model = spec.partition(":")
+    if separator != ":" or backend.lower() not in {"vllm", "ollama"}:
+        return None
+    return canonical_local_model_identity(
+        model,
+        revision=entry.get("revision"),
+        model_digest=entry.get("digest"),
+    )
+
+
+def _condition_sha256(value: Mapping[str, object]) -> str:
+    return hashlib.sha256(
+        json.dumps(
+            value,
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+            allow_nan=False,
+        ).encode("utf-8")
+    ).hexdigest()
+
+
+def _hosted_target_condition(
+    spec: str,
+    config: Mapping[str, object] | None,
+) -> str:
+    try:
+        if not api_target_requires_config(spec):
+            built = build_api_target(spec)
+            provider, model = canonical_api_target_identity(spec)
+            return _condition_sha256({
+                "fixed_inherent_route_class": (
+                    f"{built.__class__.__module__}."
+                    f"{built.__class__.__qualname__}"
+                ),
+                "provider": provider,
+                "model": model,
+            })
+        normalized = normalize_api_target_config(spec, dict(config or {}))
+        normalized.pop("base_url", None)
+        return _condition_sha256({"generic_route_config": normalized})
+    except (KeyError, TypeError, ValueError):
+        # Validation reports the authoritative route/config error separately;
+        # keep duplicate accounting total and deterministic meanwhile.
+        return _condition_sha256({"invalid_route": spec})
+
+
+def _local_target_condition(
+    spec: str,
+    entry: Mapping[str, object],
+    *,
+    quantization: str,
+    dtype: str,
+) -> str:
+    condition = {
+        key: value
+        for key, value in entry.items()
+        if key not in {"revision", "digest"}
+    }
+    backend = spec.partition(":")[0].lower()
+    condition["backend"] = backend
+    if backend == "vllm":
+        condition.update({"quantization": quantization, "dtype": dtype})
+    return _condition_sha256(condition)
+
+
 class BuilderValidationMixin:
+    @staticmethod
+    def _bounded_content_snapshot(
+        path_value: str,
+        expected_sha256: str,
+        *,
+        label: str,
+        max_bytes: int,
+    ) -> tuple[bytes, str]:
+        """Read one exact regular file once and bind the bytes to its digest."""
+
+        expected = str(expected_sha256).strip().lower()
+        if not path_value or re.fullmatch(r"[0-9a-f]{64}", expected) is None:
+            raise ValueError(f"{label} requires a path and exact SHA-256")
+        candidate = Path(path_value).expanduser()
+        descriptor: int | None = None
+        try:
+            initial = candidate.lstat()
+            if (
+                candidate.is_symlink()
+                or candidate.is_junction()
+                or not stat.S_ISREG(initial.st_mode)
+                or initial.st_nlink != 1
+                or not 0 < initial.st_size <= max_bytes
+            ):
+                raise ValueError(
+                    f"{label} must be one non-link file within its size bound"
+                )
+            path = candidate.resolve(strict=True)
+            resolved = path.lstat()
+            if (
+                path.is_symlink()
+                or path.is_junction()
+                or (resolved.st_dev, resolved.st_ino, resolved.st_mode)
+                != (initial.st_dev, initial.st_ino, initial.st_mode)
+            ):
+                raise ValueError(f"{label} must not be a link")
+            flags = (
+                os.O_RDONLY
+                | getattr(os, "O_BINARY", 0)
+                | getattr(os, "O_NOFOLLOW", 0)
+            )
+            descriptor = os.open(path, flags)
+            opened = os.fstat(descriptor)
+            if (
+                not stat.S_ISREG(opened.st_mode)
+                or opened.st_nlink != 1
+                or opened.st_size != initial.st_size
+                or (opened.st_dev, opened.st_ino, opened.st_mode)
+                != (initial.st_dev, initial.st_ino, initial.st_mode)
+            ):
+                raise ValueError(f"{label} changed while being opened")
+            with os.fdopen(descriptor, "rb", closefd=True) as handle:
+                descriptor = None
+                raw = handle.read(max_bytes + 1)
+                after = os.fstat(handle.fileno())
+            final = path.lstat()
+        except OSError as exc:
+            raise ValueError(f"{label} must be a readable regular file") from exc
+        finally:
+            if descriptor is not None:
+                os.close(descriptor)
+        identity = (opened.st_dev, opened.st_ino, opened.st_mode)
+        if (
+            len(raw) != opened.st_size
+            or len(raw) > max_bytes
+            or (after.st_dev, after.st_ino, after.st_mode) != identity
+            or after.st_size != opened.st_size
+            or after.st_mtime_ns != opened.st_mtime_ns
+            or path.is_symlink()
+            or path.is_junction()
+            or final.st_nlink != 1
+            or (final.st_dev, final.st_ino, final.st_mode) != identity
+        ):
+            raise ValueError(f"{label} changed while being read")
+        actual = hashlib.sha256(raw).hexdigest()
+        if actual != expected:
+            raise ValueError(f"{label} SHA-256 does not match the file")
+        return raw, actual
+
+    def _selected_api_config_snapshot(
+        self,
+        params: Mapping[str, str],
+    ) -> tuple[
+        dict[str, object],
+        str,
+        str,
+        dict[str, dict[str, object]],
+    ]:
+        """Validate and bind the exact selected hosted execution conditions.
+
+        The snapshot contains no endpoint URL: compatible routes retain only a
+        typed SHA-256 endpoint identity.  Its digest is used by confirmation
+        tickets and no-call projection reuse, while the complete registry byte
+        digest makes an operator edit require a fresh review.
+        """
+
+        api_specs = self._split_list(params.get("api", ""))
+        judges = self._split_list(params.get("judges", ""))
+        mode = params.get("mode", "measured")
+        dry = mode == "dry_run" or (
+            mode == "diagnostic_canary" and params.get("canary_dry") == "on"
+        )
+        judge_model = params.get("judge_model", "").strip()
+        if (
+            not dry
+            and "llm" in judges
+            and judge_model
+            and judge_model != "mock"
+            and not judge_model.startswith(("vllm:", "ollama:"))
+            and judge_model not in api_specs
+        ):
+            api_specs.append(judge_model)
+
+        registry_candidates = (
+            self.repo_root / "experiments" / "api-targets.json",
+            self.repo_root / "experiments" / "rig" / "api-targets.example.json",
+        )
+        path = next((candidate for candidate in registry_candidates if candidate.exists()), None)
+        registry: dict[str, object] = {}
+        registry_sha256 = "none"
+        registry_relative = ""
+        if path is not None:
+            if path.is_symlink() or not path.is_file():
+                raise ValueError("API target registry must be a regular non-symlink file")
+            raw = path.read_bytes()
+            if not raw or len(raw) > 1024 * 1024:
+                raise ValueError("API target registry must be a regular <=1 MiB JSON file")
+
+            def unique_object(pairs: list[tuple[str, object]]) -> dict[str, object]:
+                value: dict[str, object] = {}
+                for key, child in pairs:
+                    if key in value:
+                        raise ValueError(f"API target registry has duplicate key {key!r}")
+                    value[key] = child
+                return value
+
+            try:
+                loaded = json.loads(raw.decode("utf-8"), object_pairs_hook=unique_object)
+            except (UnicodeError, json.JSONDecodeError) as exc:
+                raise ValueError(f"API target registry is invalid UTF-8 JSON: {exc}") from exc
+            if not isinstance(loaded, dict):
+                raise ValueError("API target registry must be a JSON object")
+            registry = loaded
+            registry_sha256 = hashlib.sha256(raw).hexdigest()
+            registry_relative = path.relative_to(self.repo_root).as_posix()
+        elif api_specs:
+            raise ValueError("selected hosted models require an API target registry")
+
+        routes: list[dict[str, object]] = []
+        runtime_configs: dict[str, dict[str, object]] = {}
+        for spec in api_specs:
+            entry = registry.get(spec)
+            provider, model = canonical_api_target_identity(spec)
+            if api_target_requires_config(spec):
+                if not isinstance(entry, dict):
+                    raise ValueError(
+                        f"API target registry is missing selected generic route {spec!r}"
+                    )
+                normalized = normalize_api_target_config(spec, entry)
+                runtime_configs[spec] = normalized
+                # The constructor is side-effect free; this is the authoritative
+                # adapter compatibility gate before any Job/Popen is possible.
+                built = build_api_target(spec, config=normalized)
+                portable_config = dict(normalized)
+                endpoint_identity = api_target_endpoint_identity(spec, normalized)
+                portable_config.pop("base_url", None)
+                if endpoint_identity is not None:
+                    portable_config["base_url_identity"] = endpoint_identity
+            else:
+                built = build_api_target(spec)
+                declared = (
+                    entry.get("modalities") if isinstance(entry, dict) else None
+                )
+                if declared is not None and (
+                    not isinstance(declared, list)
+                    or any(not isinstance(item, str) for item in declared)
+                    or tuple(declared) != tuple(built.modality_support)
+                ):
+                    raise ValueError(
+                        f"fixed API route {spec!r} registry modalities must exactly "
+                        "match the authoritative adapter"
+                    )
+                if isinstance(entry, dict) and set(entry) != {"modalities"}:
+                    raise ValueError(
+                        f"fixed API route {spec!r} must not advertise mutable "
+                        "execution config"
+                    )
+                portable_config = {
+                    "inherent_route": True,
+                    "modalities": list(built.modality_support),
+                }
+                endpoint_identity = api_target_endpoint_identity(spec)
+            routes.append({
+                "requested_spec": spec,
+                "provider": provider,
+                "model": model,
+                "endpoint_identity": endpoint_identity,
+                "config": portable_config,
+                "selected_entry_sha256": (
+                    hashlib.sha256(
+                        json.dumps(
+                            entry,
+                            ensure_ascii=False,
+                            sort_keys=True,
+                            separators=(",", ":"),
+                            allow_nan=False,
+                        ).encode("utf-8")
+                    ).hexdigest()
+                    if entry is not None
+                    else "inherent-not-in-registry"
+                ),
+            })
+        snapshot: dict[str, object] = {
+            "schema": "ura-builder-selected-api-config/1",
+            "registry_sha256": registry_sha256,
+            "routes": routes,
+        }
+        digest = hashlib.sha256(
+            json.dumps(
+                snapshot,
+                ensure_ascii=False,
+                sort_keys=True,
+                separators=(",", ":"),
+                allow_nan=False,
+            ).encode("utf-8")
+        ).hexdigest()
+        return snapshot, digest, registry_relative, runtime_configs
+
+    def _bind_selected_api_config_identity(
+        self,
+        params: Mapping[str, str],
+    ) -> dict[str, str]:
+        """Return params bound to the current selected registry snapshot."""
+
+        _snapshot, digest, _relative, _configs = (
+            self._selected_api_config_snapshot(params)
+        )
+        prior = params.get("_api_config_snapshot_sha256", "")
+        if prior and prior != digest:
+            raise ValueError(
+                "selected API registry/config changed after review; review the lane again"
+            )
+        bound = {key: str(value) for key, value in params.items()}
+        bound["_api_config_snapshot_sha256"] = digest
+        return bound
+
+    def _selected_source_config_snapshot(
+        self,
+        params: Mapping[str, str],
+    ) -> tuple[dict[str, object], str, dict[str, dict[str, object]]]:
+        """Bind the exact selected logical-source execution mapping.
+
+        The example registry is presentation/setup material, never execution
+        authority.  Every selected non-synthetic arm therefore requires the
+        operator registry.  Only the literal ``synth`` arm may use the built-in
+        generated fixture; a mutable registry can never relabel a real arm as
+        synthetic and thereby make Runner discard its source receipt.
+        """
+
+        corpora = self._split_list(params.get("corpora", ""))
+        if (
+            params.get("mode") == "diagnostic_canary"
+            and params.get("canary_dry") == "on"
+        ):
+            corpora = ["synth"]
+        registry = self.repo_root / "experiments" / "source-instances.json"
+        real_arms = [arm for arm in corpora if arm != "synth"]
+        if real_arms and not registry.exists():
+            raise ValueError(
+                "selected real source arms require the executable operator "
+                "registry experiments/source-instances.json"
+            )
+        if registry.exists():
+            if registry.is_symlink() or not registry.is_file():
+                raise ValueError(
+                    "source instance registry must be a regular non-symlink file"
+                )
+            from experiments import run_matrix  # noqa: PLC0415
+
+            configs, _artifact = run_matrix._load_source_config(  # noqa: SLF001
+                str(registry), corpora
+            )
+        else:
+            configs = {
+                "synth": {"converter": "synth", "synth": True}
+            } if corpora == ["synth"] else {}
+        for arm in corpora:
+            config = configs.get(arm)
+            if not isinstance(config, dict):
+                raise ValueError(f"source registry omits selected arm {arm!r}")
+            synthetic = config.get("synth") is True
+            if arm == "synth":
+                if not synthetic or config.get("converter") != "synth":
+                    raise ValueError(
+                        "the literal synth arm must use converter='synth' and synth=true"
+                    )
+            elif synthetic or config.get("converter") == "synth":
+                raise ValueError(
+                    f"real source arm {arm!r} cannot be reclassified as synthetic"
+                )
+        runtime_fields = {"converter", "path_env", "synth", "source_label", "split"}
+        runtime_configs = {
+            arm: {
+                key: value
+                for key, value in configs[arm].items()
+                if key in runtime_fields
+            }
+            for arm in corpora
+        }
+        snapshot: dict[str, object] = {
+            "schema": "ura-builder-selected-source-config/1",
+            "arms": runtime_configs,
+        }
+        digest = _condition_sha256(snapshot)
+        return snapshot, digest, runtime_configs
+
+    def _bind_selected_source_config_identity(
+        self,
+        params: Mapping[str, str],
+    ) -> dict[str, str]:
+        _snapshot, digest, _configs = self._selected_source_config_snapshot(params)
+        prior = params.get("_source_config_snapshot_sha256", "")
+        if prior and prior != digest:
+            raise ValueError(
+                "selected source registry/config changed after review; "
+                "review the lane again"
+            )
+        bound = {key: str(value) for key, value in params.items()}
+        bound["_source_config_snapshot_sha256"] = digest
+        return bound
+
+    def _source_conformance_snapshot(
+        self,
+        params: Mapping[str, str],
+    ) -> tuple[bytes, str] | None:
+        path_value = str(params.get("source_conformance", "")).strip()
+        expected = str(params.get("source_conformance_sha", "")).strip().lower()
+        if not path_value and not expected:
+            return None
+        candidate = Path(path_value).expanduser()
+        if not candidate.is_absolute():
+            candidate = self.repo_root / candidate
+        return self._bounded_content_snapshot(
+            str(candidate),
+            expected,
+            label="source conformance",
+            max_bytes=4 * 1024 * 1024,
+        )
+
+    def _project_revision_snapshot(
+        self,
+        params: Mapping[str, str],
+    ) -> tuple[bytes, str] | None:
+        path_value = str(params.get("project_revision", "")).strip()
+        expected = str(params.get("project_revision_sha", "")).strip().lower()
+        if not path_value and not expected:
+            return None
+        candidate = Path(path_value).expanduser()
+        if not candidate.is_absolute():
+            candidate = self.repo_root / candidate
+        return self._bounded_content_snapshot(
+            str(candidate),
+            expected,
+            label="project revision",
+            max_bytes=4 * 1024 * 1024,
+        )
+
+    def _capture_execution_config_snapshot(
+        self,
+        params: Mapping[str, str],
+    ) -> tuple[dict[str, str], dict[str, bytes], str]:
+        """Capture deterministic reviewed bytes for every mutable launch input."""
+
+        bound = self._bind_selected_api_config_identity(params)
+        bound = self._bind_selected_source_config_identity(bound)
+        bound = self._bind_selected_prepared_attacker_identity(bound)
+        components: dict[str, bytes] = {}
+
+        _api_snapshot, _api_digest, _relative, api_configs = (
+            self._selected_api_config_snapshot(bound)
+        )
+        if api_configs:
+            components["api_config"] = self._canonical_json_bytes(api_configs)
+
+        _source_snapshot, _source_digest, source_configs = (
+            self._selected_source_config_snapshot(bound)
+        )
+        if source_configs:
+            components["source_config"] = self._canonical_json_bytes(source_configs)
+
+        _attacker_snapshot, _attacker_digest, attacker_configs = (
+            self._selected_prepared_attacker_snapshot(bound)
+        )
+        if attacker_configs:
+            components["attacker_config"] = self._canonical_json_bytes(
+                attacker_configs
+            )
+            for attacker, path_field, digest_field, max_bytes in (
+                (
+                    "t3mp3st",
+                    "response_artifact",
+                    "response_artifact_sha256",
+                    256 * 1024 * 1024,
+                ),
+                (
+                    "harmbench",
+                    "replay_artifact",
+                    "replay_artifact_sha256",
+                    64 * 1024 * 1024,
+                ),
+            ):
+                entry = attacker_configs.get(attacker)
+                if not isinstance(entry, Mapping) or path_field not in entry:
+                    continue
+                raw, _actual = self._bounded_content_snapshot(
+                    str(entry[path_field]),
+                    str(entry.get(digest_field, "")),
+                    label=f"prepared {attacker} artifact",
+                    max_bytes=max_bytes,
+                )
+                components[f"attacker_artifact_{attacker}"] = raw
+
+        mode = bound.get("mode", "measured")
+        dry = mode == "dry_run" or (
+            mode == "diagnostic_canary" and bound.get("canary_dry") == "on"
+        )
+        local_specs = [] if dry else self._split_list(bound.get("local", ""))
+        judge_model = str(bound.get("judge_model", "")).strip()
+        if (
+            not dry
+            and judge_model.startswith(("vllm:", "ollama:"))
+            and judge_model not in local_specs
+        ):
+            local_specs.append(judge_model)
+        if local_specs:
+            local_payload = self._selected_local_config_payload(
+                local_specs,
+                default_quantization=str(bound.get("quantization", "")),
+                quantization_overrides={
+                    key.removeprefix("quantization::"): str(value)
+                    for key, value in bound.items()
+                    if key.startswith("quantization::")
+                },
+                require_live_ollama=True,
+            )
+            _byte_digest, durable_digest = self._local_config_snapshot_digests(
+                local_payload,
+                local_specs,
+            )
+            prior = str(bound.get("_local_config_snapshot_sha256", ""))
+            if prior and prior != durable_digest:
+                raise ValueError(
+                    "selected local registry/model changed after review; "
+                    "review the lane again"
+                )
+            bound["_local_config_snapshot_sha256"] = durable_digest
+            components["local_config"] = local_payload
+
+        source_conformance = self._source_conformance_snapshot(bound)
+        if source_conformance is not None:
+            components["source_conformance"] = source_conformance[0]
+            bound["source_conformance_sha"] = source_conformance[1]
+        project_revision = self._project_revision_snapshot(bound)
+        if project_revision is not None:
+            components["project_revision"] = project_revision[0]
+            bound["project_revision_sha"] = project_revision[1]
+
+        for index in range(1, self._MAX_ATT_ROWS + 1):
+            path_value = str(bound.get(f"att_path{index}", "")).strip()
+            expected = str(bound.get(f"att_sha{index}", "")).strip().lower()
+            if not path_value and not expected:
+                continue
+            candidate = Path(path_value).expanduser()
+            if not candidate.is_absolute():
+                candidate = self.repo_root / candidate
+            raw, actual = self._bounded_content_snapshot(
+                str(candidate),
+                expected,
+                label=f"live attestation row {index}",
+                max_bytes=4 * 1024 * 1024,
+            )
+            components[f"live_attestation_{index:02d}"] = raw
+            bound[f"att_sha{index}"] = actual
+
+        snapshot_sha256 = self._execution_snapshot_digest(bound, components)
+        prior_snapshot = str(bound.get("_execution_snapshot_sha256", ""))
+        if prior_snapshot and prior_snapshot != snapshot_sha256:
+            raise ValueError(
+                "selected execution snapshot changed after review; review the lane again"
+            )
+        bound["_execution_snapshot_sha256"] = snapshot_sha256
+        return bound, components, snapshot_sha256
+
+    def _execution_snapshot_digest(
+        self,
+        params: Mapping[str, str],
+        components: Mapping[str, bytes],
+    ) -> str:
+        allowed_components = {
+            "api_config",
+            "attacker_config",
+            "local_config",
+            "project_revision",
+            "source_config",
+            "source_conformance",
+        }
+        dynamic_components = {
+            name
+            for name in components
+            if re.fullmatch(
+                r"(?:live_attestation_\d{2}|attacker_artifact_(?:t3mp3st|harmbench))",
+                name,
+            )
+        }
+        if set(components) - allowed_components - dynamic_components:
+            raise ValueError("reviewed execution snapshot has unsupported components")
+        component_manifest = {
+            name: {
+                "bytes": len(payload),
+                "sha256": hashlib.sha256(payload).hexdigest(),
+            }
+            for name, payload in sorted(components.items())
+        }
+        manifest = {
+            "schema": "ura-builder-execution-snapshot/1",
+            "bindings": {
+                name: str(params.get(name, "none"))
+                for name in (
+                    "_api_config_snapshot_sha256",
+                    "_attacker_config_snapshot_sha256",
+                    "_local_config_snapshot_sha256",
+                    "_source_config_snapshot_sha256",
+                )
+            },
+            "components": component_manifest,
+        }
+        return hashlib.sha256(
+            self._canonical_json_bytes(manifest)
+        ).hexdigest()
+
+    def _validate_execution_snapshot(
+        self,
+        params: Mapping[str, str],
+        components: Mapping[str, bytes],
+    ) -> dict[str, bytes]:
+        """Validate one controller-held byte snapshot without mutable re-reads."""
+
+        snapshot = {
+            str(name): bytes(payload) for name, payload in components.items()
+        }
+        expected = str(params.get("_execution_snapshot_sha256", "")).strip()
+        if re.fullmatch(r"[0-9a-f]{64}", expected) is None:
+            raise ValueError("reviewed execution snapshot identity is missing")
+        actual = self._execution_snapshot_digest(params, snapshot)
+        if not secrets.compare_digest(actual, expected):
+            raise ValueError("reviewed execution snapshot bytes do not match the ticket")
+        return snapshot
+
+    @staticmethod
+    def _portable_prepared_attacker_entries(
+        entries: Mapping[str, Mapping[str, object]],
+    ) -> dict[str, dict[str, object]]:
+        portable: dict[str, dict[str, object]] = {}
+        for name, raw_entry in entries.items():
+            entry = dict(raw_entry)
+            for path_field, digest_field in (
+                ("response_artifact", "response_artifact_sha256"),
+                ("replay_artifact", "replay_artifact_sha256"),
+            ):
+                if path_field not in entry:
+                    continue
+                entry.pop(path_field)
+                digest = entry.get(digest_field)
+                if not isinstance(digest, str) or re.fullmatch(
+                    r"[0-9a-f]{64}", digest
+                ) is None:
+                    raise ValueError(
+                        f"prepared {name} artifact lacks an exact content digest"
+                    )
+            portable[str(name)] = entry
+        return portable
+
+    def _selected_prepared_attacker_snapshot(
+        self,
+        params: Mapping[str, str],
+    ) -> tuple[dict[str, object], str, dict[str, dict[str, object]]]:
+        entries = self._prepared_attacker_entries(params)
+        snapshot: dict[str, object] = {
+            "schema": "ura-builder-selected-attacker-config/1",
+            "attackers": self._portable_prepared_attacker_entries(entries),
+        }
+        return snapshot, _condition_sha256(snapshot), entries
+
+    def _bind_selected_prepared_attacker_identity(
+        self,
+        params: Mapping[str, str],
+    ) -> dict[str, str]:
+        _snapshot, digest, _entries = self._selected_prepared_attacker_snapshot(params)
+        prior = params.get("_attacker_config_snapshot_sha256", "")
+        if prior and prior != digest:
+            raise ValueError(
+                "selected prepared attacker config changed after review; "
+                "review the lane again"
+            )
+        bound = {key: str(value) for key, value in params.items()}
+        bound["_attacker_config_snapshot_sha256"] = digest
+        return bound
+
+    def _bind_execution_config_bundle_identity(
+        self,
+        params: Mapping[str, str],
+    ) -> dict[str, str]:
+        """Bind one deterministic digest across every selected config class."""
+
+        fields = (
+            "_api_config_snapshot_sha256",
+            "_local_config_snapshot_sha256",
+            "_source_config_snapshot_sha256",
+            "_attacker_config_snapshot_sha256",
+        )
+        snapshot = {
+            "schema": "ura-builder-selected-execution-config/1",
+            "bindings": {field: str(params.get(field, "none")) for field in fields},
+            "project_revision_sha256": str(
+                params.get("project_revision_sha", "")
+            ).lower(),
+            "source_conformance_sha256": str(
+                params.get("source_conformance_sha", "")
+            ).lower(),
+            "live_attestation_sha256": [
+                str(params.get(f"att_sha{index}", "")).lower()
+                for index in range(1, self._MAX_ATT_ROWS + 1)
+                if str(params.get(f"att_sha{index}", "")).strip()
+            ],
+        }
+        digest = _condition_sha256(snapshot)
+        prior = params.get("_execution_config_bundle_sha256", "")
+        if prior and prior != digest:
+            raise ValueError(
+                "selected execution config changed after review; review the lane again"
+            )
+        bound = {key: str(value) for key, value in params.items()}
+        bound["_execution_config_bundle_sha256"] = digest
+        return bound
+
+    def _bind_selected_execution_config_identity(
+        self,
+        params: Mapping[str, str],
+    ) -> dict[str, str]:
+        bound = self._bind_selected_api_config_identity(params)
+        bound = self._bind_selected_source_config_identity(bound)
+        bound = self._bind_selected_prepared_attacker_identity(bound)
+        conformance = self._source_conformance_snapshot(bound)
+        if conformance is not None:
+            bound["source_conformance_sha"] = conformance[1]
+        return bound
+
+    @staticmethod
+    def _canonical_json_bytes(value: Any) -> bytes:
+        return (
+            json.dumps(
+                value,
+                ensure_ascii=False,
+                sort_keys=True,
+                separators=(",", ":"),
+                allow_nan=False,
+            )
+            + "\n"
+        ).encode("utf-8")
+
+    def _materialize_private_config(
+        self,
+        *,
+        payload: bytes,
+        directory_name: str,
+        filename_prefix: str,
+    ) -> tuple[Path, str]:
+        digest = hashlib.sha256(payload).hexdigest()
+        directory = self.state_dir / directory_name
+        if directory.is_symlink():
+            raise ValueError(f"private {filename_prefix} directory must not be a symlink")
+        directory.mkdir(parents=True, exist_ok=True)
+        if directory.is_symlink() or not directory.is_dir():
+            raise ValueError(f"private {filename_prefix} directory must be a directory")
+        try:
+            os.chmod(directory, 0o700)
+        except OSError:
+            pass
+        path = directory / (
+            f"selected-{filename_prefix}-{digest[:24]}-{os.urandom(8).hex()}.json"
+        )
+        try:
+            with path.open("xb") as handle:
+                handle.write(payload)
+            try:
+                os.chmod(path, 0o600)
+            except OSError:
+                pass
+        except OSError:
+            path.unlink(missing_ok=True)
+            raise
+        return path, digest
+
+    def _materialize_selected_source_config(
+        self,
+        params: Mapping[str, str],
+        *,
+        snapshot_payload: bytes | None = None,
+    ) -> tuple[Path | None, str | None]:
+        if snapshot_payload is None:
+            _snapshot, digest, configs = self._selected_source_config_snapshot(params)
+            if params.get("_source_config_snapshot_sha256", "") != digest:
+                raise ValueError(
+                    "selected source registry/config changed after review; "
+                    "review the lane again"
+                )
+            if not configs:
+                return None, None
+            payload = self._canonical_json_bytes(configs)
+        else:
+            payload = bytes(snapshot_payload)
+        try:
+            snapshot_configs = strict_json_loads(payload.decode("utf-8"))
+        except (UnicodeError, ValueError) as exc:
+            raise ValueError("reviewed source config snapshot is invalid") from exc
+        selected = self._split_list(params.get("corpora", ""))
+        if (
+            params.get("mode") == "diagnostic_canary"
+            and params.get("canary_dry") == "on"
+        ):
+            selected = ["synth"]
+        if (
+            not isinstance(snapshot_configs, dict)
+            or set(snapshot_configs) != set(selected)
+            or payload != self._canonical_json_bytes(snapshot_configs)
+        ):
+            raise ValueError("reviewed source config snapshot no longer matches selection")
+        for arm, config in snapshot_configs.items():
+            if not isinstance(config, dict):
+                raise ValueError("reviewed source config snapshot contains an invalid arm")
+            synthetic = config.get("synth") is True
+            if arm == "synth":
+                if not synthetic or config.get("converter") != "synth":
+                    raise ValueError("reviewed synth arm is not the exact synthetic fixture")
+            elif synthetic or config.get("converter") == "synth":
+                raise ValueError(f"real source arm {arm!r} cannot be synthetic")
+        return self._materialize_private_config(
+            payload=payload,
+            directory_name=".private-source-configs",
+            filename_prefix="source",
+        )
+
+    def _materialize_selected_source_conformance(
+        self,
+        params: Mapping[str, str],
+        *,
+        snapshot_payload: bytes | None = None,
+    ) -> tuple[Path | None, str | None]:
+        expected = str(params.get("source_conformance_sha", "")).strip().lower()
+        if snapshot_payload is None:
+            snapshot = self._source_conformance_snapshot(params)
+            if snapshot is None:
+                return None, None
+            raw, expected = snapshot
+        else:
+            raw = bytes(snapshot_payload)
+        if hashlib.sha256(raw).hexdigest() != expected:
+            raise ValueError("reviewed source conformance snapshot no longer matches")
+        path, actual = self._materialize_private_config(
+            payload=raw,
+            directory_name=".private-source-conformance",
+            filename_prefix="source-conformance",
+        )
+        if actual != expected:  # pragma: no cover - direct hash invariant
+            path.unlink(missing_ok=True)
+            raise ValueError("source conformance snapshot digest changed")
+        return path, actual
+
+    def _materialize_selected_project_revision(
+        self,
+        params: Mapping[str, str],
+        *,
+        snapshot_payload: bytes | None = None,
+    ) -> tuple[Path | None, str | None]:
+        expected = str(params.get("project_revision_sha", "")).strip().lower()
+        if snapshot_payload is None:
+            snapshot = self._project_revision_snapshot(params)
+            if snapshot is None:
+                return None, None
+            raw, expected = snapshot
+        else:
+            raw = bytes(snapshot_payload)
+        if hashlib.sha256(raw).hexdigest() != expected:
+            raise ValueError("reviewed project revision snapshot no longer matches")
+        path, actual = self._materialize_private_config(
+            payload=raw,
+            directory_name=".private-project-revision",
+            filename_prefix="project-revision",
+        )
+        if actual != expected:  # pragma: no cover - direct hash invariant
+            path.unlink(missing_ok=True)
+            raise ValueError("project revision snapshot digest changed")
+        return path, actual
+
+    def _materialize_selected_live_attestations(
+        self,
+        params: Mapping[str, str],
+        *,
+        execution_snapshot: Mapping[str, bytes] | None = None,
+    ) -> list[tuple[Path, str]]:
+        materialized: list[tuple[Path, str]] = []
+        snapshot = dict(execution_snapshot or {})
+        try:
+            for index in range(1, self._MAX_ATT_ROWS + 1):
+                path_value = str(params.get(f"att_path{index}", "")).strip()
+                expected = str(params.get(f"att_sha{index}", "")).strip().lower()
+                if not path_value and not expected:
+                    continue
+                key = f"live_attestation_{index:02d}"
+                payload = snapshot.get(key)
+                if payload is None:
+                    candidate = Path(path_value).expanduser()
+                    if not candidate.is_absolute():
+                        candidate = self.repo_root / candidate
+                    payload, _actual = self._bounded_content_snapshot(
+                        str(candidate),
+                        expected,
+                        label=f"live attestation row {index}",
+                        max_bytes=4 * 1024 * 1024,
+                    )
+                if hashlib.sha256(payload).hexdigest() != expected:
+                    raise ValueError(
+                        f"reviewed live attestation row {index} no longer matches"
+                    )
+                path, actual = self._materialize_private_config(
+                    payload=bytes(payload),
+                    directory_name=".private-live-attestations",
+                    filename_prefix=f"live-attestation-{index:02d}",
+                )
+                materialized.append((path, actual))
+        except BaseException:
+            for path, _digest in materialized:
+                path.unlink(missing_ok=True)
+            raise
+        return materialized
+
+    def _selected_api_registry_relative_path(
+        self,
+        params: Mapping[str, str],
+    ) -> str:
+        """Return the exact registry path already covered by the bound snapshot."""
+
+        _snapshot, digest, relative, _configs = (
+            self._selected_api_config_snapshot(params)
+        )
+        if params.get("_api_config_snapshot_sha256", "") != digest:
+            raise ValueError(
+                "selected API registry/config changed after review; review the lane again"
+            )
+        return relative
+
+    def _materialize_selected_api_config(
+        self,
+        params: Mapping[str, str],
+        *,
+        snapshot_payload: bytes | None = None,
+    ) -> tuple[Path | None, str | None]:
+        """Create one private read-once config containing selected routes only."""
+
+        if snapshot_payload is None:
+            _snapshot, digest, _relative, configs = (
+                self._selected_api_config_snapshot(params)
+            )
+            if params.get("_api_config_snapshot_sha256", "") != digest:
+                raise ValueError(
+                    "selected API registry/config changed after review; review the lane again"
+                )
+            if not configs:
+                return None, None
+            payload = self._canonical_json_bytes(configs)
+        else:
+            payload = bytes(snapshot_payload)
+        try:
+            snapshot_configs = strict_json_loads(payload.decode("utf-8"))
+        except (UnicodeError, ValueError) as exc:
+            raise ValueError("reviewed API config snapshot is invalid") from exc
+        selected = self._split_list(params.get("api", ""))
+        judges = self._split_list(params.get("judges", ""))
+        judge_model = str(params.get("judge_model", "")).strip()
+        if (
+            "llm" in judges
+            and judge_model
+            and judge_model != "mock"
+            and not judge_model.startswith(("vllm:", "ollama:"))
+            and judge_model not in selected
+        ):
+            selected.append(judge_model)
+        expected_configured = {
+            spec for spec in selected if api_target_requires_config(spec)
+        }
+        if (
+            not isinstance(snapshot_configs, dict)
+            or set(snapshot_configs) != expected_configured
+            or payload != self._canonical_json_bytes(snapshot_configs)
+        ):
+            raise ValueError("reviewed API config snapshot no longer matches selection")
+        for spec, entry in snapshot_configs.items():
+            if not isinstance(entry, dict):
+                raise ValueError("reviewed API config snapshot contains an invalid route")
+            normalized = normalize_api_target_config(spec, entry)
+            if normalized != entry:
+                raise ValueError("reviewed API config snapshot is not normalized")
+            build_api_target(spec, config=normalized)
+        payload_sha256 = hashlib.sha256(payload).hexdigest()
+        directory = self.state_dir / ".private-api-configs"
+        if directory.is_symlink():
+            raise ValueError("private API-config directory must not be a symlink")
+        directory.mkdir(parents=True, exist_ok=True)
+        if directory.is_symlink() or not directory.is_dir():
+            raise ValueError("private API-config directory must be a directory")
+        try:
+            os.chmod(directory, 0o700)
+        except OSError:
+            pass
+        path = directory / (
+            f"selected-api-{payload_sha256[:24]}-{os.urandom(8).hex()}.json"
+        )
+        try:
+            with path.open("xb") as handle:
+                handle.write(payload)
+            try:
+                os.chmod(path, 0o600)
+            except OSError:
+                pass
+        except OSError:
+            path.unlink(missing_ok=True)
+            raise
+        return path, payload_sha256
+
     def _preflight_output_dir(self, params: Mapping[str, str]) -> Path:
         """Dedicated no-call output, separate from the measured run tree."""
 
@@ -60,6 +1100,12 @@ class BuilderValidationMixin:
         corpora = self._split_list(params.get("corpora", ""))
         attackers = self._split_list(params.get("attackers", ""))
         judges_list = self._split_list(params.get("judges", ""))
+        approximate_common_metrics = params.get("approximate_common_metrics", "")
+        if approximate_common_metrics not in {"", "on"}:
+            errors["approximate_common_metrics"] = (
+                "the approximate-metrics opt-in must be an explicit checkbox"
+            )
+        approximate_common_metrics_enabled = approximate_common_metrics == "on"
         seeds = self._split_list(params.get("seeds", "") or "0")
         targets = len(api) + len(local)
         real_corpora = [arm for arm in corpora if arm != "synth"]
@@ -95,6 +1141,7 @@ class BuilderValidationMixin:
         for attacker, error_field in (
             ("t3mp3st", "t3_replay"),
             ("harmbench", "harm_replay"),
+            ("nanogcg", "nanogcg"),
         ):
             if attacker not in attackers:
                 continue
@@ -116,6 +1163,103 @@ class BuilderValidationMixin:
 
         model_options = self._model_options()
         target_mods = {(kind, value): set(mods) for value, _label, mods, kind in model_options}
+        option_kind = {value: kind for value, _label, _mods, kind in model_options}
+        local_options = {
+            value for value, _label, _mods, kind in model_options if kind == "local"
+        }
+        api_catalog = self._load_registry(
+            "api-targets.json", "rig/api-targets.example.json"
+        )
+        try:
+            self._bind_selected_api_config_identity(params)
+        except (KeyError, OSError, TypeError, ValueError) as exc:
+            errors["models"] = str(exc)
+        try:
+            self._bind_selected_source_config_identity(params)
+        except (KeyError, OSError, TypeError, ValueError) as exc:
+            errors["corpora"] = str(exc)
+        local_catalog, _configured_local = self._local_entry_catalog()
+        if "nanogcg" in attackers and not params.get("nanogcg_suffix", "").strip():
+            surrogate_repo = params.get("nanogcg_model_id", "").strip()
+            surrogate_revision = params.get("nanogcg_model_revision", "").strip().lower()
+            for target_spec in local:
+                entry = local_catalog.get(target_spec, {})
+                if (
+                    target_spec == f"vllm:{surrogate_repo}"
+                    and str(entry.get("revision", "")).strip().lower()
+                    == surrogate_revision
+                ):
+                    errors["nanogcg"] = (
+                        "the NanoGCG surrogate must differ from every evaluated "
+                        "target; this campaign is surrogate-transfer, not white-box"
+                    )
+                    break
+        hosted_identity_conditions = []
+        for spec in api:
+            selected_config = (
+                api_catalog.get(spec)
+                if isinstance(api_catalog.get(spec), Mapping)
+                else None
+            )
+            identity = _hosted_model_identity(spec, selected_config)
+            if identity is not None:
+                hosted_identity_conditions.append((
+                    identity,
+                    _hosted_target_condition(spec, selected_config),
+                ))
+        hosted_target_identities = [
+            identity for identity, _condition in hosted_identity_conditions
+        ]
+        seen_hosted_identity_keys: set[tuple[tuple[str, ...], str]] = set()
+        duplicate_hosted_identity = False
+        for identity_keys, condition in hosted_identity_conditions:
+            condition_keys = {(identity, condition) for identity in identity_keys}
+            if seen_hosted_identity_keys & condition_keys:
+                duplicate_hosted_identity = True
+            seen_hosted_identity_keys.update(condition_keys)
+        if duplicate_hosted_identity:
+            errors["models"] = (
+                "hosted targets must be unique after provider-alias resolution "
+                "and hosted-route identity resolution, including endpoint identity "
+                "resolution"
+            )
+        local_identity_conditions = []
+        for spec in local:
+            entry = local_catalog.get(spec, {})
+            identity = _local_model_identity(spec, entry)
+            if identity is None:
+                continue
+            local_identity_conditions.append((
+                identity,
+                _local_target_condition(
+                    spec,
+                    entry,
+                    quantization=(
+                        params.get(f"quantization::{spec}", "").strip().lower()
+                        or str(entry.get("quantization") or "")
+                        or params.get("quantization", "").strip().lower()
+                    ),
+                    dtype=params.get("dtype", "").strip().lower(),
+                ),
+            ))
+        local_target_identities = [
+            identity for identity, _condition in local_identity_conditions
+        ]
+        if len(local_identity_conditions) != len(set(local_identity_conditions)):
+            errors["models"] = (
+                "local targets must be unique after immutable content-identity and "
+                "execution-condition resolution"
+            )
+        precision_specs = {
+            key.removeprefix("quantization::")
+            for key in params
+            if key.startswith("quantization::")
+        }
+        if precision_specs - local_options:
+            errors["models"] = (
+                "the request contains a per-model precision field for an "
+                "unknown local model"
+            )
         unknown_api = sorted(value for value in api if ("api", value) not in target_mods)
         unknown_local = sorted(value for value in local if ("local", value) not in target_mods)
         if unknown_api or unknown_local:
@@ -125,19 +1269,120 @@ class BuilderValidationMixin:
             if unknown_local:
                 details.append("local: " + ", ".join(unknown_local))
             errors["models"] = "unknown target selection(s): " + "; ".join(details)
-        if local and mode != "dry_run" and not canary_dry and not unknown_local:
+        live_llm_judge = "llm" in judges_list and mode != "dry_run" and not canary_dry
+        judge_model = params.get("judge_model", "").strip()
+        judge_kind = option_kind.get(judge_model)
+        hosted_judge_selected = live_llm_judge and judge_kind == "api"
+        transfer_ack = params.get("ack_hosted_judge_data_transfer", "")
+        if transfer_ack not in {"", "on"}:
+            errors["ack_hosted_judge_data_transfer"] = (
+                "the hosted-judge data-transfer acknowledgement must be an "
+                "explicit checkbox"
+            )
+        elif hosted_judge_selected and transfer_ack != "on":
+            errors["ack_hosted_judge_data_transfer"] = (
+                "required: acknowledge that target responses and source/reference "
+                "context may be sent to the selected hosted judge provider and "
+                "handled under its retention terms"
+            )
+        elif not hosted_judge_selected and transfer_ack == "on":
+            errors["ack_hosted_judge_data_transfer"] = (
+                "this acknowledgement applies only to a live hosted LLM judge"
+            )
+        if judge_model and judge_model != "mock" and judge_kind is None:
+            errors["judge_model"] = "unknown LLM judge model selection"
+        if live_llm_judge:
+            if not judge_model:
+                errors["judge_model"] = "choose an explicit hosted or local LLM judge model"
+            elif judge_model == "mock":
+                if real_corpora:
+                    errors["judge_model"] = (
+                        "a real-source live lane cannot use the mock LLM judge"
+                    )
+            elif judge_kind is None:
+                errors.setdefault("judge_model", "unknown LLM judge model selection")
+            elif judge_model in {*api, *local}:
+                errors["judge_model"] = (
+                    "the LLM judge must differ from every target model"
+                )
+            elif (
+                judge_kind == "api"
+                and (
+                    judge_identity := _hosted_model_identity(
+                        judge_model,
+                        api_catalog.get(judge_model)
+                        if isinstance(api_catalog.get(judge_model), Mapping)
+                        else None,
+                    )
+                ) is not None
+                and any(
+                    judge_identity & target_identity
+                    for target_identity in hosted_target_identities
+                )
+            ):
+                errors["judge_model"] = (
+                    "the LLM judge must differ from every target model after "
+                    "provider-alias resolution and hosted-route identity resolution, "
+                    "including endpoint identity resolution"
+                )
+            elif (
+                judge_kind == "local"
+                and (
+                    judge_identity := _local_model_identity(
+                        judge_model, local_catalog.get(judge_model, {})
+                    )
+                ) is not None
+                and judge_identity in set(local_target_identities)
+            ):
+                errors["judge_model"] = (
+                    "the LLM judge must differ from every target model after "
+                    "immutable content-identity resolution"
+                )
+            elif judge_kind == "local" and local:
+                errors["judge_model"] = (
+                    "a local target and a distinct local LLM judge cannot share "
+                    "one process; choose a hosted judge or hosted targets"
+                )
+            else:
+                durable_local_identities = self._catalog_local_identities()
+                durable_judge = durable_local_identities.get(
+                    judge_model,
+                    judge_model,
+                )
+                durable_targets = {
+                    durable_local_identities.get(spec, spec)
+                    for spec in (*api, *local)
+                }
+                if durable_judge in durable_targets:
+                    errors["judge_model"] = (
+                        "the LLM judge must differ from every target model "
+                        "after content-identity resolution"
+                    )
+        local_judge = (
+            judge_model
+            if live_llm_judge and judge_kind == "local" and judge_model not in local
+            else ""
+        )
+        local_execution_specs = [*local, *([local_judge] if local_judge else [])]
+        if (
+            local_execution_specs
+            and mode != "dry_run"
+            and not canary_dry
+            and not unknown_local
+        ):
             from ura.targets.local import _is_explicit_local_path  # noqa: PLC0415
 
-            catalog, _configured = self._local_entry_catalog()
+            catalog = local_catalog
+            local_error_field = "judge_model" if local_judge and not local else "models"
             unknown_fit_without_precision = []
             incompatible = []
-            for spec in local:
+            for spec in local_execution_specs:
                 entry = catalog.get(spec, {})
                 if spec.startswith("ollama:"):
                     try:
                         self._validate_ollama_local_entry(spec, entry)
                     except ValueError as exc:
-                        errors.setdefault("models", str(exc))
+                        errors.setdefault(local_error_field, str(exc))
                     continue
                 if not spec.startswith("vllm:"):
                     continue
@@ -155,11 +1400,11 @@ class BuilderValidationMixin:
                         model_quantization=params.get(f"quantization::{spec}", ""),
                     ).get("fits")
                 except ValueError as exc:
-                    errors.setdefault("models", str(exc))
+                    errors.setdefault(local_error_field, str(exc))
                     continue
                 if max_model_len is not None and max_tokens > max_model_len:
                     errors.setdefault(
-                        "models",
+                        local_error_field,
                         f"local target {spec!r} max_tokens must not exceed "
                         "max_model_len",
                     )
@@ -172,19 +1417,19 @@ class BuilderValidationMixin:
                     incompatible.append(spec)
             if incompatible:
                 errors.setdefault(
-                    "models",
+                    local_error_field,
                     "live local target is known incompatible with this "
                     "hardware: " + ", ".join(incompatible),
                 )
             elif unknown_fit_without_precision:
                 errors.setdefault(
-                    "models",
+                    local_error_field,
                     "live local target hardware fit is unknown; choose an "
                     "explicit per-model precision before running: "
                     + ", ".join(unknown_fit_without_precision),
                 )
             unpinned = []
-            for spec in local:
+            for spec in local_execution_specs:
                 entry = catalog.get(spec, {})
                 revision = entry.get("revision")
                 digest = entry.get("digest")
@@ -215,7 +1460,7 @@ class BuilderValidationMixin:
                     unpinned.append(spec)
             if unpinned:
                 errors.setdefault(
-                    "models",
+                    local_error_field,
                     "live hub vLLM targets require a 40-64 hex revision; "
                     "explicit local checkpoints and Ollama targets require a "
                     "64-hex digest: " + ", ".join(unpinned),
@@ -350,10 +1595,10 @@ class BuilderValidationMixin:
         if not judges_list:
             errors["judges"] = "select at least one judge"
         if len(local) > 1:
-            errors["models"] = (
+            errors.setdefault("models", (
                 "one local target per process (vLLM/Ollama engines must not "
                 "accumulate on the rig GPUs)"
-            )
+            ))
 
         # -- exact modality + agentic + guardrail-separation admission --------
         # Server-side and complete: a target/attacker must serve EVERY modality
@@ -376,8 +1621,14 @@ class BuilderValidationMixin:
         fw_mods = {fw: set(mods) for fw, _d, mods in _FRAMEWORKS}
         for arm in real_corpora:
             if arm in _INELIGIBLE_ARMS:
-                errors["corpora"] = f"{arm} is common-metric-ineligible: {_INELIGIBLE_REASONS[arm]}"
-                continue
+                if not approximate_common_metrics_enabled:
+                    errors["approximate_common_metrics"] = (
+                        f"{arm} is common-metric-ineligible: "
+                        f"{_INELIGIBLE_REASONS[arm]} Select the explicit "
+                        "approximate common-security metrics opt-in to run "
+                        "separate response proxies."
+                    )
+                    continue
             if arm in _SOURCE_METRIC_ARMS:
                 metric, allowed = _SOURCE_METRIC_ARMS[arm]
                 unsupported = [a for a in attackers if a not in allowed]
@@ -392,6 +1643,15 @@ class BuilderValidationMixin:
             needed = arm_mods.get(arm)
             if needed is None:
                 continue  # unknown arm id: left to the CLI's own registry check
+            if "tool" in needed:
+                errors["corpora"] = (
+                    f"arm {arm} converts to a text+tool source construct, but "
+                    "the maintained Runner targets do not declare executable "
+                    "tool-environment support. The approximate response-proxy "
+                    "route therefore remains fail-closed; use a validated native "
+                    "tool runtime/import instead"
+                )
+                continue
             for kind, target in [("api", value) for value in api] + [
                 ("local", value) for value in local
             ]:
@@ -462,6 +1722,25 @@ class BuilderValidationMixin:
         ):
             errors["judge_model"] = "a real-source live lane cannot use the mock LLM judge"
 
+        no_call_mode = mode == "dry_run" or canary_dry
+        if no_call_mode and scoring_guardrail:
+            errors["judges"] = (
+                "a no-call dry lane cannot load a model-backed scoring guardrail"
+            )
+        if no_call_mode and defense_guardrail:
+            errors["defense_guard"] = (
+                "a no-call dry lane cannot load a model-backed defense guardrail"
+            )
+        if (
+            no_call_mode
+            and "nanogcg" in attackers
+            and not params.get("nanogcg_suffix", "").strip()
+        ):
+            errors["nanogcg"] = (
+                "a no-call dry lane permits NanoGCG only as an exact precomputed "
+                "suffix replay; live surrogate loading is forbidden"
+            )
+
         if mode == "dry_run":
             forbid_live_fields("a diagnostic dry run cannot consume or produce live attestation")
         elif mode == "attestation_probe":
@@ -520,13 +1799,14 @@ class BuilderValidationMixin:
             if targets < 1:
                 errors["models"] = "select at least one target model"
             require_live_admission()
-            if api and (limit is None or (limit is not None and limit <= 0)):
+            paid_hosted_route = bool(api) or hosted_judge_selected
+            if paid_hosted_route and (limit is None or limit <= 0):
                 errors["limit"] = (
                     "hosted paid lanes must carry a positive pre-registered "
                     "--limit that bounds spend (campaign sampling policy); "
                     "--limit 0 would run the full corpus"
                 )
-            if api and not params.get("sample_seed", ""):
+            if paid_hosted_route and not params.get("sample_seed", ""):
                 errors["sample_seed"] = (
                     "hosted paid lanes must record --sample-seed (identical "
                     "subset across conditions)"
@@ -604,6 +1884,61 @@ class BuilderValidationMixin:
             }, ""
         return None, "the matching preflight's lane projection is missing or invalid"
 
+    def _builder_model_acquisition_required(
+        self,
+        params: Mapping[str, str],
+    ) -> bool:
+        """Return whether this exact Builder lane has any Hub-backed role."""
+
+        from ura.model_acquisition_runtime import (  # noqa: PLC0415
+            collect_run_requirements,
+        )
+
+        targets = self._split_list(params.get("local", ""))
+        judges = self._split_list(params.get("judges", ""))
+        attackers = self._split_list(params.get("attackers", ""))
+        judge_model = params.get("judge_model", "").strip()
+        selected_local = list(targets)
+        if judge_model.startswith("vllm:") and judge_model not in selected_local:
+            selected_local.append(judge_model)
+        catalog, _configured = self._local_entry_catalog()
+        local_configs = {
+            spec: catalog[spec]
+            for spec in selected_local
+            if spec in catalog
+        }
+        attacker_configs = self._prepared_attacker_entries(params)
+        scoring_guardrail = "guardrail" in judges
+        defense_guardrail = (
+            params.get("defense_guard", "") == "guardrail"
+            and params.get("defense", "") not in {"", "none"}
+        )
+        requirements = collect_run_requirements(
+            target_specs=targets,
+            local_configs=local_configs,
+            judge_names=judges,
+            judge_model=judge_model,
+            attacker_names=attackers,
+            attacker_configs=attacker_configs,
+            guardrail_model=(
+                params.get("guardrail_model", "") if scoring_guardrail else None
+            ),
+            guardrail_revision=(
+                params.get("guardrail_revision", "") if scoring_guardrail else None
+            ),
+            defense_guardrail_model=(
+                params.get("defense_guardrail_model", "")
+                if defense_guardrail
+                else None
+            ),
+            defense_guardrail_revision=(
+                params.get("defense_guardrail_revision", "")
+                if defense_guardrail
+                else None
+            ),
+        )
+        return bool(requirements.requirements)
+
     def _ceilings_card(self, params: Mapping[str, str]) -> tuple[str, bool]:
         """The call-ceiling summary shown before a non-dry job starts.
 
@@ -636,7 +1971,7 @@ class BuilderValidationMixin:
                 (
                     "cap_judge",
                     "--max-total-judge-calls",
-                    "hard circuit-breaker on hosted judge calls",
+                    "hard circuit-breaker on model-backed judge calls (hosted or local)",
                 ),
                 (
                     "cap_http",
@@ -728,39 +2063,101 @@ class BuilderValidationMixin:
         values: Mapping[str, str],
         params: Mapping[str, str],
     ) -> bytes:
-        """Exact argv + ceilings confirmation before a non-dry job starts."""
+        """Durable argv identity + ceilings confirmation before a paid start."""
 
-        argv = build_argv(command, values, commands=self.commands)
+        reviewed_params, execution_snapshot, _snapshot_sha256 = (
+            self._capture_execution_config_snapshot(params)
+        )
+        (
+            argv,
+            _retained_params,
+            _private_config,
+            _private_api_config,
+            _private_source_config,
+            _private_attacker_config,
+            _private_source_conformance,
+            _private_evidence_files,
+        ) = (
+            self._durable_launch_state(
+            command, values, reviewed_params
+            )
+        )
         argv_chips = (
             "<div class='argv'>"
             + "".join(f"<code>{html.escape(part)}</code>" for part in argv)
             + "</div>"
         )
-        hidden = "".join(
-            f"<input type='hidden' name='{html.escape(key)}' value='{html.escape(value)}'>"
-            for key, value in sorted(params.items())
-        )
+        params = reviewed_params
         mode = params.get("mode", "measured")
         ceilings_html, caps_ok = self._ceilings_card(params)
+        needs_acquisition = self._builder_model_acquisition_required(params)
+
+        def ticket_input(token: str) -> str:
+            return (
+                "<input type='hidden' name='launch_ticket' value='"
+                + html.escape(token)
+                + "'>"
+            )
+
+        if needs_acquisition:
+            preflight_hidden = ticket_input(self._new_launch_ticket(
+                {**params, "_model_acquisition_next": "preflight"},
+                purpose="acquisition_plan",
+                execution_snapshot=execution_snapshot,
+            ))
+            start_hidden = ticket_input(self._new_launch_ticket(
+                {**params, "_model_acquisition_next": "run"},
+                purpose="acquisition_plan",
+                execution_snapshot=execution_snapshot,
+            ))
+            preflight_action = "/build/model-acquisition/plan"
+            start_action = "/build/model-acquisition/plan"
+            preflight_extra = ""
+            start_extra = ""
+            acquisition_notice = (
+                "<div class='notice blue'><strong>Sealed model acquisition is "
+                "required.</strong><p class='note'>The next job derives a public, "
+                "immutable plan without loading a model. After review, a dedicated "
+                "acquisition job may transfer missing bytes. Measured and preflight "
+                "runs remain offline and require the exact plan and receipt.</p></div>"
+            )
+            preflight_label = "Plan & acquire models for no-call preflight"
+            start_label = "Plan & acquire models for this job"
+        else:
+            hidden = ticket_input(self._new_launch_ticket(
+                params,
+                execution_snapshot=execution_snapshot,
+            ))
+            preflight_hidden = hidden
+            start_hidden = hidden
+            preflight_action = "/build"
+            start_action = "/build"
+            preflight_extra = (
+                "<input type='hidden' name='confirm' value='yes'>"
+                "<input type='hidden' name='preflight_only' value='yes'>"
+            )
+            start_extra = "<input type='hidden' name='confirm' value='yes'>"
+            acquisition_notice = ""
+            preflight_label = "Run no-call preflight (projection, no calls)"
+            start_label = "Start this job"
         # A "Run no-call preflight" action composes the SAME grid with
         # --preflight-only (no calls) so the operator can produce the projection
         # this page reads and compares against.
-        preflight_hidden = "".join(
-            f"<input type='hidden' name='{html.escape(key)}' value='{html.escape(value)}'>"
-            for key, value in sorted(params.items())
-        )
         preflight_form = (
-            "<form method='post' action='/build'>"
+            f"<form method='post' action='{preflight_action}'>"
             + preflight_hidden
-            + "<input type='hidden' name='confirm' value='yes'>"
-            "<input type='hidden' name='preflight_only' value='yes'>"
-            "<button type='submit' class='ghost' "
-            "data-busy='Running the no-call preflight projection...'>"
+            + preflight_extra
+            + "<button type='submit' class='ghost' "
+            "data-busy='Preparing the sealed model workflow...'>"
             + _icon("pulse", size=15)
-            + "Run no-call preflight (projection, no calls)</button></form> "
+            + html.escape(preflight_label)
+            + "</button></form> "
         )
         start_button = (
-            "<button type='submit'>" + _icon("play", size=15) + "Start this job</button>"
+            "<button type='submit'>"
+            + _icon("play", size=15)
+            + html.escape(start_label)
+            + "</button>"
             if caps_ok
             else "<button type='submit' disabled>"
             + _icon("play", size=15)
@@ -772,17 +2169,21 @@ class BuilderValidationMixin:
             "money.</strong><p class='note'>Mode: "
             f"<code>{html.escape(mode)}</code>. Review the exact command and "
             "ceilings below; nothing has started yet.</p></div>"
-            "<div class='card'><h2>"
+            + acquisition_notice
+            + "<div class='card'><h2>"
             + _icon("terminal")
-            + "Exact command</h2>"
+            + "Durable command identity</h2>"
             + argv_chips
+            + "<p class='note'>Explicit workstation checkpoint locators are "
+            "shown and retained only as their declared SHA-256 content identity. "
+            "The launched child verifies that identity before model calls.</p>"
             + preflight_form
             + "</div>"
             + ceilings_html
-            + "<form method='post' action='/build'>"
-            + hidden
-            + "<input type='hidden' name='confirm' value='yes'>"
-            "<div class='buildbar'>"
+            + f"<form method='post' action='{start_action}'>"
+            + start_hidden
+            + start_extra
+            + "<div class='buildbar'>"
             + start_button
             + "<a href='/build'><button type='button' class='ghost'>Back to "
             "builder</button></a></div></form>"

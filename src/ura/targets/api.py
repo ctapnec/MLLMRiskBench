@@ -25,6 +25,7 @@ import json
 import math
 import mimetypes
 import os
+import ssl
 import time
 from pathlib import Path, PurePosixPath
 from typing import Any, Iterable, Optional
@@ -35,6 +36,11 @@ from ..data_models import (
     MediaRef,
     ProviderContinuationState,
     Response,
+)
+from ..model_identity import (
+    canonical_https_endpoint,
+    canonical_https_endpoint_identity,
+    canonical_provider_name,
 )
 from .base import REGISTRY, BaseTarget
 
@@ -70,21 +76,101 @@ _MOCK_REFUSAL_CUES: tuple[str, ...] = (
     "must decline",
 )
 
+_NATIVE_PROVIDER_ENDPOINTS = {
+    "anthropic": "https://api.anthropic.com",
+    "openai": "https://api.openai.com/v1",
+    "google": "https://generativelanguage.googleapis.com",
+}
+
+_SDK_REQUEST_LOG_ENV = {
+    "openai": "OPENAI_LOG",
+    "anthropic": "ANTHROPIC_LOG",
+}
+
+
+def _reject_sdk_request_logging(module: str) -> None:
+    """Fail before SDK import when request-body debug logging is enabled.
+
+    Provider SDK debug loggers can emit the complete prompt/message payload to
+    stderr, which Rig Web retains as a job artifact.  The measured transport
+    contract therefore admits no process-environment override for those
+    loggers; operator diagnostics must use the harness' redacted call audit.
+    """
+
+    env_name = _SDK_REQUEST_LOG_ENV.get(module)
+    if env_name is not None and os.environ.get(env_name, "").strip():
+        raise RuntimeError(
+            f"{env_name} is forbidden because provider SDK request logging may "
+            "disclose prompts in durable job logs"
+        )
+
+
+def _sealed_ssl_context(feature: str) -> ssl.SSLContext:
+    """Build a CA-verified TLS context independent of process TLS env vars."""
+
+    certifi = _require("certifi", feature)
+    context = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+    context.check_hostname = True
+    context.verify_mode = ssl.CERT_REQUIRED
+    context.load_verify_locations(cafile=str(certifi.where()))
+    # Constructing SSLContext directly (rather than create_default_context)
+    # prevents SSLKEYLOGFILE from silently enabling TLS secret logging.
+    context.keylog_filename = None
+    return context
+
+
+def _sealed_http_client(feature: str):
+    """Return an SDK-compatible sync client with environment routing disabled."""
+
+    httpx = _require("httpx", feature)
+    return httpx.Client(
+        trust_env=False,
+        verify=_sealed_ssl_context(feature),
+    )
+
 
 # Capabilities below describe what this adapter actually serializes, capped by
 # the named model's documented inputs. Unknown/account-private IDs default to
 # text rather than inheriting a provider-wide vision claim. This keeps a broad
 # roster honest: an image/video cell is admitted only for an exact attested ID.
-_PROVIDER_ALIASES = {
-    "claude": "anthropic",
-    "gpt": "openai",
-    "gemini": "google",
-    "zhipu": "glm",
-    "moonshot": "kimi",
-    "dashscope": "qwen",
-    "alibaba": "qwen",
-    "bytedance": "doubao",
-}
+def canonical_api_target_identity(spec: str) -> tuple[str, str]:
+    """Resolve a hosted request spelling to its executed provider/model pair.
+
+    This is deliberately side-effect free: Builder admission can compare bare
+    registry conveniences, provider aliases, and fixed Fable/Sol routes without
+    constructing a client or changing the requested route retained in evidence.
+    The cases mirror :func:`build_api_target` and use registry provider metadata
+    for every supported bare id.
+    """
+
+    requested = spec.strip()
+    if not requested:
+        raise ValueError("API target identity requires a non-blank spec")
+    if requested in {_ANTHROPIC_FABLE_MODEL, _ANTHROPIC_FABLE_SPEC}:
+        return "anthropic", _ANTHROPIC_FABLE_MODEL
+    if requested == _OPENAI_SOL_PRO_SPEC:
+        return "openai", _OPENAI_SOL_PRO_MODEL
+    if ":" in requested:
+        provider, model = requested.split(":", 1)
+        provider = provider.strip().lower()
+        model = model.strip()
+        if not provider or not model:
+            raise ValueError(
+                "provider-qualified targets require non-blank provider/model"
+            )
+        if provider == "anthropic-fable":
+            raise ValueError("unknown fixed Anthropic Fable target condition")
+        if provider == "openai-responses":
+            raise ValueError("unknown fixed OpenAI Responses target condition")
+        return canonical_provider_name(provider), model
+    if requested == "mock":
+        return "runtime-name", requested
+    provider = REGISTRY.meta(requested).get("provider")
+    if not isinstance(provider, str) or not provider.strip():
+        raise KeyError(f"unknown bare API target {requested!r}")
+    return canonical_provider_name(provider), requested
+
+
 _MODEL_ADAPTER_MODALITIES: dict[tuple[str, str], tuple[str, ...]] = {
     ("anthropic", "claude-opus-5"): ("text", "image"),
     ("anthropic", "claude-sonnet-5"): ("text", "image"),
@@ -114,7 +200,7 @@ _MODEL_ADAPTER_MODALITIES: dict[tuple[str, str], tuple[str, ...]] = {
 
 
 def _adapter_modalities(provider: str, model: str) -> tuple[str, ...]:
-    canonical = _PROVIDER_ALIASES.get(provider.lower(), provider.lower())
+    canonical = canonical_provider_name(provider)
     return _MODEL_ADAPTER_MODALITIES.get((canonical, model), ("text",))
 
 
@@ -134,7 +220,7 @@ def _validated_modalities(value: Iterable[str]) -> tuple[str, ...]:
 def _provider_serialized_modalities(provider: str) -> frozenset[str]:
     """Return physical inputs that the selected provider adapter can encode."""
 
-    canonical = _PROVIDER_ALIASES.get(provider.lower(), provider.lower())
+    canonical = canonical_provider_name(provider)
     if canonical == "google":
         return frozenset({"text", "image", "audio", "video"})
     return frozenset({"text", "image"})
@@ -674,6 +760,7 @@ class MockTarget(BaseTarget):
     """
 
     name = "mock"
+    evidence_class = "synthetic"
     # The offline mock is the universal stand-in for bounded dry-run and
     # source-conformance observations, so it accepts every physical modality
     # (it reads only the last user text and never processes the media bytes).
@@ -753,6 +840,7 @@ class AnthropicTarget(BaseTarget):
     ) -> None:
         self.model = model
         self.provider = "anthropic"
+        self.base_url = _NATIVE_PROVIDER_ENDPOINTS["anthropic"]
         self.requested_spec = requested_spec or f"anthropic:{model}"
         self.name = self.requested_spec
         self.max_tokens = max_tokens
@@ -791,6 +879,7 @@ class AnthropicTarget(BaseTarget):
 
     def _get_client(self):
         if self._client is None:
+            _reject_sdk_request_logging("anthropic")
             anthropic = _require("anthropic", "AnthropicTarget")
             key = os.environ.get("ANTHROPIC_API_KEY")
             if not key:
@@ -800,6 +889,8 @@ class AnthropicTarget(BaseTarget):
                 )
             self._client = anthropic.Anthropic(
                 api_key=key,
+                base_url=self.base_url,
+                http_client=_sealed_http_client("AnthropicTarget transport"),
                 timeout=self.timeout,
                 max_retries=self.sdk_max_retries,
             )
@@ -1025,6 +1116,11 @@ class AnthropicTarget(BaseTarget):
                 "id": response_id,
                 "response_id": response_id,
                 "provider": self.provider,
+                "endpoint_identity": (
+                    canonical_https_endpoint_identity(self.base_url)
+                    if isinstance(getattr(self, "base_url", None), str)
+                    else None
+                ),
                 "requested_spec": self.requested_spec,
                 "requested_model": self.model,
                 "resolved_model": resolved_model,
@@ -1419,6 +1515,9 @@ class AnthropicFableTarget(AnthropicTarget):
                 "response_id": response_id,
                 "provider_request_id": _provider_field(resp, "_request_id"),
                 "provider": "anthropic",
+                "endpoint_identity": canonical_https_endpoint_identity(
+                    self.base_url
+                ),
                 "api_surface": "messages",
                 "requested_spec": self.requested_spec,
                 "requested_model": self.model,
@@ -1488,6 +1587,8 @@ class OpenAITarget(BaseTarget):
     ) -> None:
         self.model = model
         self.provider = provider
+        if canonical_provider_name(provider) == "openai":
+            self.base_url = _NATIVE_PROVIDER_ENDPOINTS["openai"]
         self.requested_spec = requested_spec or f"{provider}:{model}"
         self.name = self.requested_spec
         self.max_tokens = max_tokens
@@ -1516,6 +1617,7 @@ class OpenAITarget(BaseTarget):
 
     def _get_client(self):
         if self._client is None:
+            _reject_sdk_request_logging("openai")
             openai = _require("openai", "OpenAITarget")
             key = os.environ.get("OPENAI_API_KEY")
             if not key:
@@ -1525,6 +1627,14 @@ class OpenAITarget(BaseTarget):
                 )
             self._client = openai.OpenAI(
                 api_key=key,
+                # Empty explicit values prevent the SDK from inheriting
+                # OPENAI_ORG_ID / OPENAI_PROJECT_ID.  Inheriting either can
+                # select an unreviewed billing project on native routes and
+                # leak OpenAI account identifiers to compatible providers.
+                organization="",
+                project="",
+                base_url=self.base_url,
+                http_client=_sealed_http_client("OpenAITarget transport"),
                 timeout=self.timeout,
                 max_retries=self.sdk_max_retries,
             )
@@ -1688,6 +1798,11 @@ class OpenAITarget(BaseTarget):
                 "id": response_id,
                 "response_id": response_id,
                 "provider": self.provider,
+                "endpoint_identity": (
+                    canonical_https_endpoint_identity(self.base_url)
+                    if isinstance(getattr(self, "base_url", None), str)
+                    else None
+                ),
                 "requested_spec": self.requested_spec,
                 "requested_model": self.model,
                 "resolved_model": resolved_model,
@@ -2273,6 +2388,9 @@ class OpenAIResponsesTarget(OpenAITarget):
                 "response_id": response_id,
                 "provider_request_id": _provider_field(resp, "_request_id"),
                 "provider": "openai",
+                "endpoint_identity": canonical_https_endpoint_identity(
+                    self.base_url
+                ),
                 "api_surface": self.api_surface,
                 "requested_spec": self.requested_spec,
                 "requested_model": self.model,
@@ -2286,7 +2404,9 @@ class OpenAIResponsesTarget(OpenAITarget):
                 "usage": dict(tokens),
                 "provider_usage": self._provider_usage(resp),
                 "provider_refusal": provider_refusal,
-                "provider_refusal_category": None,
+                "provider_refusal_category": (
+                    "openai_responses_refusal" if provider_refusal else None
+                ),
                 "provider_refusal_reason": text if provider_refusal else None,
                 "output_item_count": output_item_count,
                 "reasoning_item_count": reasoning_item_count,
@@ -2355,6 +2475,7 @@ class OpenAICompatibleTarget(OpenAITarget):
 
     def _get_client(self):
         if self._client is None:
+            _reject_sdk_request_logging("openai")
             openai = _require("openai", f"{self.name} (OpenAI-compatible)")
             key = os.environ.get(self.key_env)
             if not key:
@@ -2362,7 +2483,12 @@ class OpenAICompatibleTarget(OpenAITarget):
                     f"{self.key_env} is required for {self.name}; set it in the environment")
             self._client = openai.OpenAI(
                 api_key=key,
+                organization="",
+                project="",
                 base_url=self.base_url,
+                http_client=_sealed_http_client(
+                    f"{self.name} compatible transport"
+                ),
                 timeout=self.timeout,
                 max_retries=self.sdk_max_retries,
             )
@@ -2391,6 +2517,7 @@ class GeminiTarget(BaseTarget):
     ) -> None:
         self.model = model
         self.provider = "google"
+        self.base_url = _NATIVE_PROVIDER_ENDPOINTS["google"]
         self.requested_spec = requested_spec or f"google:{model}"
         self.name = self.requested_spec
         self.max_tokens = int(max_tokens)
@@ -2417,6 +2544,11 @@ class GeminiTarget(BaseTarget):
     def _get_client(self):
         if self._client is None:
             genai = _require("google.genai", "GeminiTarget")
+            if os.environ.get("GOOGLE_GENAI_CLIENT_MODE", "").strip():
+                raise RuntimeError(
+                    "GOOGLE_GENAI_CLIENT_MODE is forbidden; Gemini transport "
+                    "mode is fixed by the harness"
+                )
             key = os.environ.get("GEMINI_API_KEY") or os.environ.get("GOOGLE_API_KEY")
             if not key:
                 raise RuntimeError(
@@ -2424,9 +2556,23 @@ class GeminiTarget(BaseTarget):
                     "GeminiTarget; set it in the environment"
                 )
             self._client = genai.Client(
+                vertexai=False,
                 api_key=key,
                 http_options={
+                    "base_url": self.base_url,
                     "timeout": int(self.timeout * 1000),
+                    "client_args": {
+                        "trust_env": False,
+                        "verify": _sealed_ssl_context(
+                            "GeminiTarget sync transport"
+                        ),
+                    },
+                    "async_client_args": {
+                        "trust_env": False,
+                        "verify": _sealed_ssl_context(
+                            "GeminiTarget async transport"
+                        ),
+                    },
                     # One SDK attempt. The harness wrapper performs and records
                     # any requested retry itself.
                     "retry_options": {"attempts": 1},
@@ -2660,6 +2806,9 @@ class GeminiTarget(BaseTarget):
             tokens=tokens,
             raw={
                 "provider": self.provider,
+                "endpoint_identity": canonical_https_endpoint_identity(
+                    self.base_url
+                ),
                 "requested_spec": self.requested_spec,
                 "requested_model": self.model,
                 "resolved_model": resolved_model,
@@ -2802,19 +2951,12 @@ _COMPAT_ENDPOINT_ENV = {
 def _validated_https_base_url(value: str, *, source: str) -> str:
     """Validate one non-secret provider endpoint for safe manifest persistence."""
 
-    parsed = urlsplit(value)
-    if (
-        parsed.scheme != "https"
-        or not parsed.hostname
-        or parsed.username is not None
-        or parsed.password is not None
-        or parsed.query
-        or parsed.fragment
-    ):
+    try:
+        return canonical_https_endpoint(value)
+    except ValueError as exc:
         raise ValueError(
-            f"{source} must be a credential-free HTTPS base URL"
-        )
-    return value.rstrip("/")
+            f"{source} must be a credential-free canonical HTTPS base URL"
+        ) from exc
 
 
 def _compat_endpoint(provider: str, default: str) -> str:
@@ -2825,6 +2967,47 @@ def _compat_endpoint(provider: str, default: str) -> str:
         configured or default,
         source=_COMPAT_ENDPOINT_ENV[provider],
     )
+
+
+def api_target_endpoint_identity(
+    spec: str,
+    config: dict[str, object] | None = None,
+) -> str | None:
+    """Resolve a non-disclosing compatible-API endpoint identity."""
+
+    requested = spec.strip()
+    if ":" in requested:
+        provider = requested.split(":", 1)[0].strip().lower()
+    else:
+        provider = next(
+            (
+                candidate
+                for candidate, models in _COMPAT_DEFAULTS.items()
+                if requested in models
+            ),
+            "",
+        )
+    try:
+        canonical_provider, _model = canonical_api_target_identity(requested)
+    except (KeyError, ValueError):
+        canonical_provider = canonical_provider_name(provider)
+    native_endpoint = _NATIVE_PROVIDER_ENDPOINTS.get(canonical_provider)
+    if native_endpoint is not None:
+        return canonical_https_endpoint_identity(native_endpoint)
+    if provider not in _COMPAT:
+        return None
+    configured = (config or {}).get("base_url")
+    if configured is not None:
+        if not isinstance(configured, str):
+            raise ValueError("API target base_url must be a string")
+        return canonical_https_endpoint_identity(
+            _validated_https_base_url(
+                configured,
+                source=f"API config {requested!r} base_url",
+            )
+        )
+    default, _key = _COMPAT[provider]
+    return canonical_https_endpoint_identity(_compat_endpoint(provider, default))
 
 
 def api_target_requires_config(spec: str) -> bool:
@@ -2883,7 +3066,7 @@ def normalize_api_target_config(
         provider = next(
             name for name, models in _COMPAT_DEFAULTS.items() if spec in models
         )
-    canonical_provider = _PROVIDER_ALIASES.get(provider, provider)
+    canonical_provider = canonical_provider_name(provider)
     known_native = {"anthropic", "openai", "google"}
     if canonical_provider not in known_native and provider not in _COMPAT:
         raise ValueError(f"unknown API provider {provider!r} in {spec!r}")
@@ -3005,6 +3188,7 @@ def preflight_api_target_runtime(target: BaseTarget) -> dict[str, str] | None:
         return None
 
     module, credential_envs = requirement
+    _reject_sdk_request_logging(module)
     _require(module, f"{target.name} local preflight")
     present_env = next(
         (name for name in credential_envs if os.environ.get(name, "").strip()),
@@ -3144,7 +3328,10 @@ __all__ = [
     "ProviderTransportError",
     "OpenAICompatibleTarget",
     "GeminiTarget",
+    "api_target_endpoint_identity",
     "api_target_requires_config",
+    "canonical_api_target_identity",
+    "canonical_provider_name",
     "normalize_api_target_config",
     "preflight_api_target_runtime",
     "build_api_target",

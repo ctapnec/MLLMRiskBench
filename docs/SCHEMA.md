@@ -2,7 +2,7 @@
 
 `ura.data_models` is the typed Pydantic v2 contract shared by converters,
 attackers, targets, judges, persistence, and analysis. `SCHEMA_VERSION = "1.4"`
-is stamped on datapoints, checkpoints, and manifests. Runner 2.16 rejects mixed
+is stamped on datapoints, checkpoints, and manifests. Runner 2.19 rejects mixed
 schema versions and duplicate datapoint IDs before a target call.
 
 ## Records
@@ -24,6 +24,45 @@ schema versions and duplicate datapoint IDs before a target call.
 Enumerations are defined in code. In particular, expected behavior separates
 harmful `refuse` probes from benign `safe_answer` and `comply_safely` probes;
 that split controls ASR and FRR denominators.
+
+## Prospective attacker-input contracts
+
+Runner 2.19 requires every Runner-eligible adapter to produce one
+`ura-attacker-input-contract/1` for each selected datapoint and seed. The
+contract binds the source channel combination, every prospective target-call
+combination, policy-evaluation scope, and turn-count semantics before an engine
+is loaded or a target call is charged. Native-only adapters retain their
+canonical upstream execution/import path and are not admitted through this
+Runner contract.
+
+Physical inputs use a path-free, content-addressed asset inventory
+(`origin`, modality, MIME, SHA-256, and byte count) plus explicit ordered
+occurrence sequences. Repeated references therefore remain repeated even when
+their bytes are identical, and runtime delivery must equal the planned tuple.
+IDEATOR additionally binds each ordered seed pair's adversarial-text SHA-256
+and UTF-8 byte length; its image and output-directory paths are runtime-only and
+are absent from component, request, eligibility, run, checkpoint, and grid
+identity. A path alias with the same bytes and text yields the same contract/run
+identity, while changed text or media bytes changes it.
+
+Runner validates the realized rendered input against the corresponding planned
+turn before reserving the call budget or invoking the target. Channel changes,
+media loss/reordering, or bound-text drift fail closed. Tool-conditioned rows
+also fail before planning until a typed executable tool runtime and actual-use
+attestation exist; a serialized tool transcript is not execution. Crescendo
+retains an exact planned horizon and may execute only a content-bound prefix
+terminated by an authoritative harmful violation; an arbitrary short session
+is invalid. The `ura-eligibility-plan/2`, modality-coverage `/2`, lane, run, and
+completion evidence bind these contracts rather than inferring target inputs
+from source modalities alone.
+
+Completion reuse and Level-1 ingestion apply the same four-way
+contract/`Attempt`/`Response`/`Judgment` validator. It recomputes the policy
+scope, challenge index and horizon, turn behavior, source/delivered/effective
+modality, input-delivery state, and target modality capability projection from
+the immutable plan, rendered request, response state, and manifest component.
+Changing a Judgment and refreshing only its artifact descriptor therefore
+cannot change an execution's estimand or evaluability.
 
 ## Prepared attacker artifacts
 
@@ -62,7 +101,7 @@ removes the path and persists `response_artifact_identity` or
 ## Prospective request envelope and early failures
 
 Before planning exists, `run_matrix` emits strict
-`ura-request-envelope/1` as
+`ura-request-envelope/2` as
 `<envelope_id>.request-envelope.json`. Its exact top-level
 fields are `schema`, `status`, `envelope_id`, `request`, `bindings`,
 `execution_units`, and `limitations`. `request` fixes execution purpose,
@@ -72,6 +111,15 @@ call caps. `bindings` fixes project-revision, harness-source, and driver-source
 identity. Every execution unit has exactly `request_unit_id`,
 `requested_target_key`, `logical_source_arm`, and `attacker`; the list is the
 complete exact cross-product of those three selected axes.
+
+In version 2, `request.hosted_judge_data_transfer_acknowledged` is a required
+Boolean. It is `true` only when the operator supplied
+`--ack-hosted-judge-data-transfer` for a live non-local LLM judge. The flag
+records acknowledgement that target output and source/reference grading context
+will leave the rig under the selected judge provider's retention and data-use
+terms; it is not proof of institutional approval, a retention guarantee, or
+provider deletion. It remains `false` for dry runs, no-call `rig_check`, rules-
+only judging, and a local LLM judge.
 
 The envelope is created after basic CLI/axis validation but before selected
 config loading, source-conformance input loading, or conversion. It is a
@@ -110,12 +158,23 @@ this boundary rather than being reconstructed afterward.
 
 ## Planning eligibility artifact
 
-`run_matrix` and `rig_check` emit `ura-eligibility-plan/1` as
+`run_matrix` and `rig_check` emit `ura-eligibility-plan/2` as
 `eligibility-<content-id>.eligibility.json` after corpus conversion and before
 model calls. Each item binds the requested and resolved target identities,
 logical source arm, selected source stratum and item digest, exact modality,
 attacker, execution/metric mode, evaluator/reference mode, disposition, and
 failed gates. The artifact self-validates its content-derived `plan_id`.
+
+Validation strictly reconstructs the embedded grid attacker-input plan and
+recomputes every media ID, contract ID, and plan digest. Each eligibility cell
+must then equal its exact arm/attacker/datapoint/seed partition: contract IDs
+and horizons, all-turn and evaluable modality unions, generated-media
+inventory, tool requirement, source combination, and datapoint accounting must
+match, with no omitted or extra contracts. A completed manifest repeats only
+its relevant Runner-plan subset. Completion, Level-1, and figure loaders rejoin
+every persisted Attempt to that subset and verify the exact planned turn,
+ordered media occurrences, MIME/digest tuple, bound text, and valid horizon
+termination even when outer artifact descriptors were refreshed.
 
 Its stratum statuses are only `compatible_if_isolated` and structural `N/A`;
 separate execution-unit accounting says whether the whole logical arm can pass
@@ -310,6 +369,15 @@ do not enter these authoritative-judgment counts. Adaptive setup and challenge
 turns retain the same immutable planning/source-stratum identity even when their
 per-turn expected behavior and policy-evaluation status differ.
 
+When supplementary approximate decisions are present, Level-1 also validates
+their exact manifest policy and authoritative response bindings. Its selected
+and rubric stage projections are strict typed records and must equal the
+completion-hashed trail members field for field; self-asserted judgment caller
+metadata cannot replace those retained artifacts. Raw optional stage markers
+for synthetic/mock evidence, model queries, provider refusal, and source
+reference use are strict Booleans. Direct Runner aggregation also requires the
+same projection to equal its retained in-memory trail.
+
 For a measured cohort, the current schema consumes repeatable typed
 live-attestation artifacts paired with their approved byte SHA-256 values. It
 matches each grid's exact bound descriptor, reruns the scope/route/config/age/
@@ -351,6 +419,13 @@ original scales. Outputs are create-only, contain a content-derived
 `report_id`, and declare `empirical_validity_established=false`: the export is
 descriptive and is never a ranking or a universal score.
 
+Approximate Level-2 rows retain proxy decision coverage separately from
+source-native coverage. For a static proxy, aggregate `EvalResult.n` equals the
+metric-specific supporting-decision count. Only an explicitly typed
+response-conditioned trajectory metric may use its distinct trajectory-unit
+count, and every selected/rubric stage must still reconcile with the exact
+completion-hashed trail and authoritative response.
+
 ## Lineage and continuation state
 
 Each cell persists attempts, responses, authoritative judgments, full-shadow
@@ -374,7 +449,13 @@ challenge index, receive `Judgment.label="not_applicable"`, and record
 `stage_queried=false` for every shadow stage; no judge is called and the row is
 ineligible for common or source metrics. Trail rows additionally bind every
 queried judge stage to the exact persisted response SHA-256 and record
-confidence, parse status, cascade role, and provider identity.
+confidence, parse status, cascade role, and provider identity. For a
+multi-stage cascade, the final authoritative `Judgment.raw` also carries the
+complete ordered `judge_stage_bindings` projection. Completion and every
+postprocessor require field-present, type-strict equality with all retained
+trail rows, including non-authoritative, non-rubric shadows. The immutable
+`Attempt.params.planning_common_metrics_eligible` flag must be present; missing
+eligibility state is never inferred as eligible.
 
 Provider-native continuation data is explicit rather than hidden:
 
@@ -447,7 +528,11 @@ an executed cell:
   required. The full file byte count/SHA-256 and normalized selected-subset
   digest are retained, but only the selected subset enters execution identity.
   Capability declarations are planning inputs and require live attestation
-  before measured use.
+  before measured use. Durable route records use
+  `endpoint_identity=https-base-url-sha256:<64 lowercase hex>`; they never
+  retain the raw URL. The identity is computed from the credential-free
+  canonical HTTPS base URL and is paired with the canonical provider/model.
+  This proves only configuration equality, not endpoint ownership or access.
 - `--local-config` binds an exact local specification to one immutable model
   revision or digest, declared modalities, parameter count, multi-GPU support,
   per-model quantization, tensor-parallel size, memory utilization, and output
@@ -479,9 +564,71 @@ an executed cell:
   artifact fixes precision. The adapter uses the daemon HTTP API via the Python
   standard library and does not require an Ollama Python SDK.
 
+- Hugging Face model bytes are a separate immutable evidence family, not part
+  of `--local-config`. `ura-model-acquisition-selection/1` retains path-free
+  `input_bindings`, public `resources` (`repo_id`, exact 40-64-hex `revision`,
+  sorted roles), explicit-local/precomputed-suffix exceptions, and a
+  recomputable `selection_sha256`. The five Hub roles are `vllm_target`,
+  `llm_judge`, `guardrail_judge`, `defense_guardrail`, and
+  `nanogcg_surrogate`; one immutable resource may serve compatible roles, but a
+  target may not also be its judge, guard, or NanoGCG surrogate.
+- Plan-only mode emits the strict, path/token-free
+  `ura-model-acquisition-plan/1`; the dedicated acquisition controller emits
+  its paired `ura-model-acquisition-receipt/1` after complete upstream-manifest
+  and snapshot sealing.
+  Verified run evidence uses `ura-model-acquisition-runtime/1` with exact
+  plan/receipt IDs and SHA-256s, public resources/selection, and bounded
+  create-only plan/receipt file descriptors relative to the result root.
+  `status=not_required` is valid only when the selection has no Hub resource.
+  Missing, oversized, linked, tampered, internally inconsistent, or
+  role-mismatched evidence is rejected at completion, Figure, transfer,
+  Level-1, and Level-2 boundaries.
+- `ura-model-acquisition-execution/1` is the stable scientific/grid projection.
+  It retains selection, plan identity, and every immutable resource seal
+  (`resource_id`, repo/revision/roles, upstream-manifest ID/SHA-256, file/byte
+  counts, inventory SHA-256, and tree SHA-256), then computes
+  `execution_sha256`. It deliberately omits only receipt-event timestamp,
+  receipt ID/document hash, and evidence filename. Reacquiring identical bytes
+  therefore preserves the condition/grid identity; any changed content seal or
+  selected binding changes or invalidates it. Private plan, receipt, store,
+  transport-cache, snapshot, and token values are never schema fields.
+
 Unselected inventory entries are neither evidence nor requested cells. Secret
 values are environment-indirected and rejected from persisted configuration.
 The manifest keeps requested and realized target identities distinct.
+
+### Rig Web execution-config bundle and confirmation ticket
+
+Rig Web derives internal selected API, local, source, and prepared-attacker
+snapshots, then binds their digests plus source-conformance/project/attestation
+digests in `ura-builder-selected-execution-config/1`. These are operational
+execution snapshots, not Runner evidence artifacts. The API component remains
+`ura-builder-selected-api-config/1` and binds the
+complete registry SHA-256 and, for each selected target or hosted judge, the
+requested spec, canonical provider/model, selected-entry SHA-256, portable
+normalized controls, and typed `endpoint_identity`. A compatible route's raw
+`base_url` is removed. Source snapshots bind the immutable selected arm class
+and canonical entry; prepared-attacker snapshots bind exact replay/response
+artifact digests. A reviewed real arm cannot become synthetic, and an attacker
+artifact cannot be swapped, without changing the unified bundle. The fixed
+Fable and Sol conditions have inherent execution controls and may advertise
+only their exact modality list; they do not create a mutable runtime-config
+entry.
+
+Paid confirmation retains the exact builder parameters and selected-bundle
+digest behind one opaque, purpose-bound, process-memory ticket. The ticket
+expires after 30 minutes and is atomically consumed once; replay, changed form
+fields, a changed selected registry entry, or a different purpose fails closed.
+Immediately before launch, Rig Web revalidates the unified snapshot and writes
+only the selected hosted, local, source, prepared-attacker, and conformance
+bytes to private mode-600 files. Each receives its exact paired SHA-256 flag;
+Runner performs a bounded read, verifies the digest, and unlinks it before
+model work. Raw compatible URLs, explicit local filesystem locators, and
+prepared/source paths therefore remain launch-only. HTML, `Job`,
+`command.json`, and SQLite retain typed digest placeholders and portable
+identities, never those private values. Tickets, private files, and their
+snapshots are operational controls, not provider attestation or scientific
+evidence.
 
 ## Enforced invariants
 
@@ -563,8 +710,11 @@ maximum, while known sizes still obey the cap. An explicit per-model precision
 binds `allow_unknown_fit: true`, while known non-fit remains blocked. A vLLM row
 labels an explicit `max_model_len` context
 cap or native model context. Source-ineligible rows may also remain visible and
-selectable with one custom hover/focus tooltip; server validation rejects them
-before a subprocess. Neither UI state replaces the local-config, source-evaluator, or
+selectable with one custom hover/focus tooltip. Server validation rejects them
+before a subprocess by default. Eligible non-tool rows show `⚠ approximate
+opt-in`; the explicit opt-in admits only supplementary `approximate_*` response
+proxies. Tool-conditioned rows show `tool runtime required` and remain
+fail-closed. Neither UI state replaces the local-config, source-evaluator, or
 hardware checks described above.
 Dry builder state carries no real API/local target/config into the command
 because dry execution uses `MockTarget`. Local roster modality metadata is
@@ -572,16 +722,23 @@ restricted to the Runner's text/image vLLM path, keeping audio mismatch rejectio
 consistent between UI and CLI.
 Ollama rows follow only selected modality. They expose no fit, parameter,
 quantization, topology, or context controls and remain disabled until their
-narrow digest/modality config is valid. The daemon and pulled model are external
-live-run prerequisites.
+narrow digest/modality config is valid and the tag is present in the live
+loopback daemon. Rig Web may Start, Stop, and Pull only through its proven
+current-console-owned child; an external daemon is available for bounded
+discovery and inference but not UI Stop or Pull.
 
 The Jobs page presents a full start date and time converted from the stored epoch
 to browser-local time. State, text, From, and To filters compose. Absent URL
 bounds, From defaults to seven days before the current browser time and To to
-the current time; both are inclusive at the selected datetime precision. Short
-status tags include console-owned `running`, `passed`, `failed`, and `orphaned`,
-plus external `reported running`, `partial`, `blocked`, `stopped`, and `unknown`.
-The console does not infer process liveness from an external running marker.
+the current time; both are inclusive at the selected datetime precision. The
+browser persists epoch bounds and reloads a date-aware SQLite query rather than
+filtering only the 500-row restart cache. Campaign marker start times are
+filtered before their 20-row display cap. A 5,000-job or 20-campaign truncation
+is disclosed and can be narrowed with From/To. Short
+status tags include blue `running`, `passed`, `failed`, `orphaned`, `partial`,
+`blocked`, `stopped`, and `unknown`. Detail text distinguishes a console-owned
+process from an external task-log `running` marker; the latter never implies
+operating-system process liveness.
 
 An external engineering campaign is discovered only through a bounded regular,
 non-symlink `ENGINEERING_ONLY.json` object with schema
@@ -604,8 +761,8 @@ evidence schema. Call reservations are also not execution observations.
 Completion-validated response artifacts remain authoritative.
 
 The rig console persists its operational state in a stdlib-sqlite database
-(`console.db` under the console state directory, schema version 3): `jobs`
-(exact argv, builder parameters, state, exit code, failure context, pinned
+(`console.db` under the console state directory, schema version 4): `jobs`
+(durable argv identity, builder parameters, state, exit code, failure context, pinned
 revision), `runs` (the campaign-run registry: kind, output directory, pin),
 `usage` (per-completion-marker recorded token amounts keyed by role,
 provider, model, and billing category - input, output, cache_read,
@@ -616,6 +773,10 @@ reachable through a valid `*.complete.json` completion marker and can be
 rebuilt at any time from the retained artifacts (dashboard Reindex, with
 digest verification). None of these tables is an evidence schema: they index
 and mirror the validated artifacts, which remain authoritative.
+
+Explicit local vLLM filesystem locators are never members of this schema. The
+console projects them to `vllm:local-checkpoint@sha256:<digest>` before writing
+the Job row; storage also rejects an unprojected explicit locator fail-closed.
 
 `experiments/pricing.json` (editable copy of
 `experiments/rig/pricing.example.json`, schema tag `ura-console-pricing/1`)
@@ -661,8 +822,10 @@ rather than reset, so operator rates are never lost to a corrupt file.
 
 Provider API keys are managed from the same Config section
 (`/config/secrets`). The console records only presence and a last-four masked
-hint; it never displays, logs, or stores a key value, and writes keys only to
-the operator secrets file (mode 600, `~/.ura_env` by default) as
-`export NAME=...` lines - rejecting any value containing a single quote or
-control character so a stored key can never break or inject into that sourced
-file.
+hint; it never displays, logs, or stores a key value outside the operator secret
+boundary. Hosted-provider keys are written to the operator secrets file (mode
+600, `~/.ura_env` by default) as `export NAME=...` lines - rejecting any value
+containing a single quote or control character so a stored key can never break
+or inject into that sourced file. `HF_TOKEN` is presence-only and process-memory
+only; setting or clearing it also removes any legacy `HF_TOKEN` line from the
+operator file.

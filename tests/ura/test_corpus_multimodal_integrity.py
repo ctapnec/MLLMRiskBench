@@ -562,8 +562,8 @@ def test_ollama_transport_uses_configured_timeout_and_preparse_body_bound(
         observed["timeout"] = timeout
         return _HTTPResponse(b"{}", str(4 * 1024 * 1024 + 1))
 
-    monkeypatch.setattr("urllib.request.urlopen", oversized_urlopen)
     target = OllamaTarget("fixture", model_digest="0" * 64, timeout=12.5)
+    monkeypatch.setattr(target, "_open_request", oversized_urlopen)
     with pytest.raises(LocalTargetOutputError, match="4 MiB"):
         target._verify_daemon_identity()
     assert observed["timeout"] == 12.5
@@ -572,13 +572,14 @@ def test_ollama_transport_uses_configured_timeout_and_preparse_body_bound(
 def test_ollama_transport_rejects_duplicate_json_keys(
     monkeypatch: pytest.MonkeyPatch,
 ):
+    target = OllamaTarget("fixture", model_digest="0" * 64)
     monkeypatch.setattr(
-        "urllib.request.urlopen",
+        target,
+        "_open_request",
         lambda _request, *, timeout: _HTTPResponse(
             b'{"models":[],"models":[]}'
         ),
     )
-    target = OllamaTarget("fixture", model_digest="0" * 64)
     with pytest.raises(LocalTargetOutputError, match="standards-conforming JSON"):
         target._verify_daemon_identity()
 
@@ -588,8 +589,8 @@ def test_ollama_reverifies_daemon_digest_before_each_generation_boundary(
 ):
     expected = "a" * 64
     inventories = iter([
-        {"models": [{"model": "fixture", "digest": f"sha256:{expected}"}]},
-        {"models": [{"model": "fixture", "digest": "sha256:" + "b" * 64}]},
+        {"models": [{"name": "fixture", "model": "fixture", "digest": f"sha256:{expected}"}]},
+        {"models": [{"name": "fixture", "model": "fixture", "digest": "sha256:" + "b" * 64}]},
     ])
     target = OllamaTarget("fixture", model_digest=expected)
     monkeypatch.setattr(

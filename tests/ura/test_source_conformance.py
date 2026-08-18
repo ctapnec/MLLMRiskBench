@@ -21,6 +21,14 @@ from ura.source_conformance import (
 from ura.targets.api import MockTarget
 
 
+def test_source_receipt_parser_rejects_duplicate_json_keys() -> None:
+    with pytest.raises(ValueError, match="duplicate JSON object key 'status'"):
+        conformance_cli._loads_strict(
+            b'{"status":"pending","status":"passed"}',
+            label="source receipt",
+        )
+
+
 def _point(identifier: str, *, cluster: str | None = None) -> DataPoint:
     meta: dict[str, object] = {"common_metrics_eligible": True}
     if cluster is not None:
@@ -514,11 +522,11 @@ def test_synthetic_offline_path_ignores_real_source_receipt_environment(
     assert not list((tmp_path / "synthetic").glob("source-conformance-*.json"))
 
 
-def test_synthetic_transport_diagnostic_allows_offline_mock_judge(
+def test_synthetic_transport_probe_ignores_real_source_receipt_environment(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
     project_revision_args,
 ) -> None:
-    """An all-synthetic target diagnostic may use mock labels without a receipt."""
+    """An all-synthetic transport probe needs no real-source receipt."""
 
     monkeypatch.setenv(
         "URA_SOURCE_CONFORMANCE_MANIFEST", str(tmp_path / "not-present.json")
@@ -537,12 +545,11 @@ def test_synthetic_transport_diagnostic_allows_offline_mock_judge(
         "--attestation-probe", "--execution-scope-id", "test-scope",
         *project_revision_args,
         "--api", "diagnostic-target", "--attackers", "replay",
-        "--judges", "rules,llm",
-        "--judge-model", "mock",
-        "--corpora", "synth", "--limit", "2", "--seeds", "0",
+        "--judges", "rules",
+        "--corpora", "synth", "--limit", "1", "--seeds", "0",
         "--max-queries", "1", "--max-turns", "1",
-        "--max-total-target-calls", "2", "--max-total-judge-calls", "2",
-        "--max-total-http-attempts", "2", "--deadline-seconds", "60",
+        "--max-total-target-calls", "1", "--max-total-judge-calls", "1",
+        "--max-total-http-attempts", "1", "--deadline-seconds", "60",
         "--out", str(tmp_path / "synthetic-transport"),
     ]) == 0
     assert not list(

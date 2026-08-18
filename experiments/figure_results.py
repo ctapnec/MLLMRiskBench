@@ -40,6 +40,12 @@ from ura.converters.release_specs import (
     mm_safetybench_policy,
     mossbench_policy,
 )
+from ura.attacker_input_contract import (
+    AttackerInputContractError,
+    reconcile_runner_and_grid_attacker_input_plans,
+    target_modality_support_from_component_config,
+    validate_attempts_against_attacker_input_plan,
+)
 from ura.data_models import (
     SCHEMA_VERSION,
     Attempt,
@@ -49,8 +55,23 @@ from ura.data_models import (
     RunManifest,
 )
 from ura.project_revision import validate_project_revision_binding
+from ura.eligibility import validate_eligibility_plan
+from ura.live_attestation import stable_realized_target_identity_keys
+from ura.model_acquisition_runtime import (
+    model_acquisition_execution_descriptor,
+    validate_model_acquisition_execution_descriptor,
+    validate_model_acquisition_grid_binding,
+    validate_model_acquisition_role_projection,
+    validate_model_acquisition_role_projection_binding,
+)
 from ura.request_envelope import validate_request_envelope_descriptor
-from ura.runner import CODE_VERSION, realized_identity_summary
+from ura.runner import (
+    CODE_VERSION,
+    realized_identity_summary,
+    validate_persisted_judgment_trails,
+    validate_planned_realized_identities,
+)
+from ura.strict_json import strict_json_loads
 
 _MAX_JSON_BYTES = 4 * 1024 * 1024
 _MAX_JSONL_BYTES = 512 * 1024 * 1024
@@ -80,6 +101,7 @@ class _GridReference:
     grid_path: Path
     request: dict[str, Any]
     status: dict[str, Any]
+    eligibility_plan: dict[str, Any]
 
 
 @dataclass(frozen=True)
@@ -107,10 +129,7 @@ class _Unit:
 
 
 def _strict_loads(text: str) -> object:
-    def reject_constant(value: str) -> None:
-        raise ValueError(f"non-finite JSON number {value!r} is forbidden")
-
-    return json.loads(text, parse_constant=reject_constant)
+    return strict_json_loads(text)
 
 
 def _read_object(path: Path) -> dict[str, Any]:
@@ -271,6 +290,60 @@ def _grid_allowlist(
         request = grid.get("request")
         if not isinstance(request, dict):
             raise ValueError(f"grid lacks its request: {grid_path}")
+        eligibility_descriptor = request.get("eligibility_plan")
+        if not isinstance(eligibility_descriptor, dict) or set(
+            eligibility_descriptor
+        ) != {"plan_id", "file", "sha256", "bytes", "records", "counts"}:
+            raise ValueError(f"grid lacks an exact eligibility descriptor: {grid_path}")
+        eligibility_name = eligibility_descriptor.get("file")
+        if (
+            not isinstance(eligibility_name, str)
+            or Path(eligibility_name).name != eligibility_name
+        ):
+            raise ValueError(f"grid has an unsafe eligibility filename: {grid_path}")
+        eligibility_path = _inside(root, grid_path.parent / eligibility_name)
+        if not eligibility_path.is_file() or eligibility_path.is_symlink():
+            raise ValueError(f"grid eligibility artifact is invalid: {grid_path}")
+        with eligibility_path.open("r", encoding="utf-8") as handle:
+            eligibility_records = sum(1 for line in handle if line.strip())
+        if (
+            eligibility_descriptor.get("bytes") != eligibility_path.stat().st_size
+            or eligibility_descriptor.get("sha256") != _sha256_file(eligibility_path)
+            or eligibility_descriptor.get("records") != eligibility_records
+        ):
+            raise ValueError(f"grid eligibility descriptor mismatch: {grid_path}")
+        eligibility_plan = validate_eligibility_plan(_read_object(eligibility_path))
+        if (
+            eligibility_descriptor.get("plan_id") != eligibility_plan["plan_id"]
+            or eligibility_descriptor.get("counts") != eligibility_plan["counts"]
+        ):
+            raise ValueError(f"grid eligibility identity/count mismatch: {grid_path}")
+        try:
+            acquisition_execution = model_acquisition_execution_descriptor(
+                request.get("model_acquisition"),
+                evidence_root=grid_path.parent.resolve(),
+            )
+            requested_acquisition_execution = (
+                validate_model_acquisition_execution_descriptor(
+                    request.get("model_acquisition_execution")
+                )
+            )
+            validate_model_acquisition_grid_binding(
+                requested_acquisition_execution,
+                request,
+            )
+        except ValueError as exc:
+            raise ValueError(
+                f"grid model-acquisition evidence is invalid: {grid_path}: {exc}"
+            ) from exc
+        if (
+            acquisition_execution != requested_acquisition_execution
+            or eligibility_plan["bindings"].get("model_acquisition")
+            != acquisition_execution
+        ):
+            raise ValueError(
+                f"grid/eligibility model-acquisition identity mismatch: {grid_path}"
+            )
         models = _string_list(request.get("models"), f"request.models in {grid_path}")
         corpora = _string_list(request.get("corpora"), f"request.corpora in {grid_path}")
         attackers = _string_list(
@@ -345,7 +418,9 @@ def _grid_allowlist(
             if not marker_path.is_file() or marker_path.is_symlink():
                 raise ValueError(f"grid references an invalid completion marker: {marker_path}")
             markers_in_grid.add(marker_path)
-            allowlist[marker_path].append(_GridReference(grid_id, grid_path, request, status))
+            allowlist[marker_path].append(_GridReference(
+                grid_id, grid_path, request, status, eligibility_plan
+            ))
         if observed != expected:
             raise ValueError(
                 f"grid Cartesian cell inventory mismatch: missing={sorted(expected - observed)!r}, "
@@ -487,6 +562,9 @@ def _validate_trails(
         authorities = [row for row in rows if row.get("cascade_role") == "authoritative"]
         if len(authorities) != 1 or authorities[0].get("cascade_confident") is not True:
             raise ValueError(f"trail must have one confident authority for {attempt_id!r}")
+    validate_persisted_judgment_trails(
+        attempts, responses, judgments, trails, manifest.config, manifest.judges
+    )
 
 
 def _validate_realized_identity_inventory(
@@ -520,6 +598,18 @@ def _validate_realized_identity_inventory(
             raise ValueError(
                 f"manifest {field} mismatch for {path}: {value!r} != {expected}"
             )
+    run = manifest.config.get("run")
+    if not isinstance(run, dict):
+        raise ValueError(f"manifest lacks config.run for identity validation: {path}")
+    components = manifest.config.get("components")
+    if not isinstance(components, dict):
+        raise ValueError(f"manifest lacks config.components: {path}")
+    try:
+        validate_planned_realized_identities(
+            run, components, responses, trails, summary
+        )
+    except ValueError as exc:
+        raise ValueError(f"planned/realized identity mismatch for {path}: {exc}") from exc
     return summary
 
 
@@ -566,6 +656,15 @@ def _validate_cell(
     run = manifest.config.get("run")
     if not isinstance(run, dict):
         raise ValueError(f"manifest lacks config.run: {resolved['manifest']}")
+    try:
+        cell_acquisition = validate_model_acquisition_role_projection(
+            run.get("model_acquisition")
+        )
+    except ValueError as exc:
+        raise ValueError(
+            f"manifest model-acquisition binding is invalid: "
+            f"{resolved['manifest']}: {exc}"
+        ) from exc
     completed_request_envelope = validate_request_envelope_descriptor(
         run.get("request_envelope")
     )
@@ -585,6 +684,20 @@ def _validate_cell(
             raise ValueError(
                 f"grid/completed-artifact request-envelope mismatch: {marker_path}"
             )
+        grid_acquisition = validate_model_acquisition_execution_descriptor(
+            ref.request.get("model_acquisition_execution")
+        )
+        try:
+            validate_model_acquisition_role_projection_binding(
+                cell_acquisition,
+                grid_acquisition,
+                run_config=run,
+            )
+        except ValueError as exc:
+            raise ValueError(
+                f"grid/completed-artifact model-acquisition mismatch: {marker_path}: "
+                f"{exc}"
+            ) from exc
     for field in ("corpus", "attacker", "model_spec", "defense"):
         _nonblank(run.get(field), f"manifest run.{field} in {resolved['manifest']}")
     if run.get("dry_run") is not False and not allow_diagnostic_dry_run:
@@ -634,6 +747,38 @@ def _validate_cell(
         judgment_ids
     ):
         raise ValueError(f"Attempt/Response/Judgment identities do not join exactly: {marker_path}")
+    plan = manifest.config.get("attacker_input_plan")
+    plan_sha256 = manifest.config.get("attacker_input_plan_sha256")
+    plan_count = manifest.config.get("n_attacker_input_contracts")
+    if not isinstance(plan_sha256, str) or isinstance(plan_count, bool) or not isinstance(
+        plan_count, int
+    ):
+        raise ValueError(f"manifest attacker input plan metadata is invalid: {marker_path}")
+    try:
+        validate_attempts_against_attacker_input_plan(
+            plan,
+            attempts,
+            responses,
+            judgments,
+            target_modalities=target_modality_support_from_component_config(
+                manifest.config["components"]["target"]
+            ),
+            expected_sha256=plan_sha256,
+            expected_count=plan_count,
+        )
+        for ref in refs:
+            grid_plan = ref.eligibility_plan["bindings"]["attacker_input_plan"]
+            reconcile_runner_and_grid_attacker_input_plans(
+                plan,
+                grid_plan,
+                runner_sha256=plan_sha256,
+                logical_source_arm=str(run["corpus"]),
+                attacker=str(run["attacker"]),
+            )
+    except (AttackerInputContractError, KeyError, TypeError) as exc:
+        raise ValueError(
+            f"manifest/execution attacker input plan mismatch: {marker_path}"
+        ) from exc
     attempts_by_id = {row.id: row for row in attempts}
     responses_by_id = {row.attempt_id: row for row in responses}
     judgments_by_id = {row.attempt_id: row for row in judgments}
@@ -752,13 +897,123 @@ def _validate_cell(
     }
 
 
+_TARGET_EXECUTION_CONDITION_FIELDS = frozenset({
+    "api_config",
+    "local_identity",
+    "quantization",
+    "resolved_quantization",
+    "dtype",
+})
+_COMPONENT_BASE_IDENTITY_FIELDS = frozenset({
+    "name",
+    "model",
+    "provider",
+    "requested_spec",
+    "requested_model",
+    "requested_target_spec",
+    "resolved_model",
+    "revision",
+    "digest",
+    "model_digest",
+    "model_identity",
+    "endpoint_identity",
+    "base_url_identity",
+    "tag",
+    "base_url",
+    "key_env",
+})
+
+
+def _component_execution_condition(value: Any) -> Any:
+    if isinstance(value, dict):
+        return {
+            key: _component_execution_condition(child)
+            for key, child in sorted(value.items())
+            if key not in _COMPONENT_BASE_IDENTITY_FIELDS
+        }
+    if isinstance(value, list):
+        return [_component_execution_condition(child) for child in value]
+    return value
+
+
+def _base_target_component(value: Any) -> Any:
+    """Unwrap defense-only GuardedTarget layers for model-arm identity."""
+
+    current = value
+    while (
+        isinstance(current, dict)
+        and str(current.get("class", "")).endswith(".GuardedTarget")
+        and isinstance(current.get("base"), dict)
+    ):
+        current = current["base"]
+    return current
+
+
+def _target_arm_condition_sha256(cell: dict[str, Any]) -> str:
+    """Bind one realized base route to its target execution condition only.
+
+    Corpus, attacker, judge, seed, and attack-horizon strata may repeat one
+    requested target, but they must not let aliases for that target become
+    distinct portfolio model identities.  Precision, decoding/context and
+    other actual target component knobs remain legitimate target variants.
+    """
+
+    manifest = cell["manifest"]
+    config = manifest["config"]
+    run = config["run"]
+    run_condition = {
+        field: run.get(field) for field in _TARGET_EXECUTION_CONDITION_FIELDS
+    }
+    components = config.get("components")
+    target_component = (
+        components.get("target") if isinstance(components, dict) else None
+    )
+    return _sha256_json({
+        "run": _component_execution_condition(run_condition),
+        "target_component_condition": _component_execution_condition(
+            _base_target_component(target_component)
+        ),
+    })
+
+
+def _reject_duplicate_realized_target_arms(cells: list[dict[str, Any]]) -> None:
+    """Prevent aliases for one realized model/condition becoming separate arms.
+
+    One requested target may legitimately recur across corpus, attacker,
+    defense, judge, seed, and horizon strata.  A distinct requested alias may
+    not claim those strata as a second portfolio model.  Only a distinct target
+    execution condition (for example BF16 vs FP8 or decoding/context knobs)
+    permits distinct arm labels for one immutable base identity.
+    """
+
+    identity_owners: dict[tuple[tuple[str, ...], str], str] = {}
+    for cell in cells:
+        run = cell["manifest"]["config"]["run"]
+        owner = str(
+            run.get("requested_model_spec") or run.get("model_spec") or ""
+        ).removesuffix("+guard")
+        snapshot = cell["realized_identities"]["target"]["snapshot"]
+        expected = run.get("expected_target_identity")
+        keys = stable_realized_target_identity_keys(snapshot)
+        if isinstance(expected, dict):
+            keys.update(stable_realized_target_identity_keys(expected))
+        condition = _target_arm_condition_sha256(cell)
+        for key in keys:
+            prior = identity_owners.setdefault((key, condition), owner)
+            if prior != owner:
+                raise ValueError(
+                    "distinct figure target arms resolve to one stable realized "
+                    "model identity"
+                )
+
+
 def _load_cells(
     root: Path, *, _allow_diagnostic_canary: bool = False,
 ) -> list[dict[str, Any]]:
     allowlist = _grid_allowlist(
         root, allow_diagnostic_canary=_allow_diagnostic_canary
     )
-    return [
+    cells = [
         _validate_cell(
             marker,
             allowlist[marker],
@@ -767,6 +1022,8 @@ def _load_cells(
         )
         for marker in sorted(allowlist)
     ]
+    _reject_duplicate_realized_target_arms(cells)
+    return cells
 
 
 def _run_config(cell: dict[str, Any]) -> dict[str, Any]:
@@ -862,13 +1119,16 @@ def _paired_units(
             f"right_only={sorted(set(right_units) - set(left_units))!r}"
         )
     paired: dict[tuple[str, str, str, int], tuple[_Unit, _Unit]] = {}
+    defense_intervention = (
+        semantic.get("comparison_type") == "within_target_defense_intervention"
+    )
     for key in sorted(left_units):
         left_unit, right_unit = left_units[key], right_units[key]
         comparable = (
             left_unit.expected_behavior,
             left_unit.risk_category,
             left_unit.declared_modality,
-            left_unit.effective_modality,
+            None if defense_intervention else left_unit.effective_modality,
             left_unit.eligible,
             left_unit.attack_fingerprint,
             left_unit.transfer_key,
@@ -877,7 +1137,7 @@ def _paired_units(
             right_unit.expected_behavior,
             right_unit.risk_category,
             right_unit.declared_modality,
-            right_unit.effective_modality,
+            None if defense_intervention else right_unit.effective_modality,
             right_unit.eligible,
             right_unit.attack_fingerprint,
             right_unit.transfer_key,

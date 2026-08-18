@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import base64
 import hashlib
 import json
 from pathlib import Path
@@ -7,11 +8,74 @@ from typing import Any
 import pytest
 
 from experiments import figure_results
-from ura.data_models import SCHEMA_VERSION, Response
+from experiments.transfer_matrix import _cohort_payload, load as load_transfer
+from ura.adapters.base import AttackBudget
+from ura.adapters.replay import ReplayAttacker
+from ura.attacker_input_contract import attacker_input_payload_sha256
+from ura.data_models import (
+    SCHEMA_VERSION,
+    DataPoint,
+    DialogTurn,
+    MediaRef,
+    Response,
+    RiskCategory,
+)
+from ura.eligibility import build_eligibility_plan
+from ura.model_identity import canonical_https_endpoint_identity
+from ura.model_acquisition import (
+    build_receipt,
+    build_upstream_manifest,
+    write_document_create_only,
+)
+from ura.model_acquisition_runtime import (
+    ManagedModelRuntime,
+    ModelRequirementSet,
+    build_runtime_plan,
+    build_runtime_selection,
+    collect_run_requirements,
+    model_acquisition_cell_role_projection,
+    model_acquisition_execution_descriptor,
+    public_selection_descriptor,
+)
 from ura.runner import CODE_VERSION, realized_identity_summary
+from ura.targets.guarded import GUARDED_BLOCK_TEMPLATE_ID, GUARDED_BLOCK_TEXT
 
 _HASH_A = "a" * 64
 _HASH_B = "b" * 64
+_PNG = base64.b64decode(
+    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk"
+    "+A8AAQUBAScY42YAAAAASUVORK5CYII="
+)
+_NO_ACQUISITION_FULL = {
+    "selection": public_selection_descriptor(
+        build_runtime_selection(
+            ModelRequirementSet((), ()),
+            input_bindings={"fixture_sha256": hashlib.sha256(
+                b"figure-acquisition-fixture"
+            ).hexdigest()},
+        )
+    ),
+    "status": "not_required",
+}
+_NO_ACQUISITION_EXECUTION = model_acquisition_execution_descriptor(
+    _NO_ACQUISITION_FULL
+)
+_NO_ACQUISITION_CELL = model_acquisition_cell_role_projection(
+    _NO_ACQUISITION_EXECUTION,
+    {
+        "attacker": "replay",
+        "attacker_config": {},
+        "judge_names": ["rules"],
+        "local_identity": None,
+        "model_spec": "mock",
+    },
+)
+
+
+class _Target:
+    def __init__(self, name: str) -> None:
+        self.name = name
+        self.modality_support = ("text", "image", "audio", "video")
 
 
 def _request_envelope() -> dict[str, object]:
@@ -61,6 +125,149 @@ def test_figure_point_and_bootstrap_equal_weight_prompt_clusters() -> None:
     )
     assert left_value - right_value == 0.5
     assert left_value == 0.5
+
+
+def test_figure_loader_rejects_only_alias_arms_with_the_same_condition() -> None:
+    def cell(
+        model_spec: str,
+        provider: str,
+        **run_overrides: object,
+    ) -> dict[str, Any]:
+        snapshot = {
+            "provider": provider,
+            "resolved_model": "provider-resolved-model-20260818",
+        }
+        endpoint = run_overrides.pop("endpoint_identity", None)
+        if endpoint is not None:
+            snapshot["endpoint_identity"] = endpoint
+        return {
+            "manifest": {"config": {"run": {
+                "model_spec": model_spec,
+                "corpus": "source-a",
+                "attacker": "replay",
+                "resolved_quantization": "none",
+                **run_overrides,
+            }}},
+            "realized_identities": {
+                "target": {
+                    "snapshot": snapshot
+                }
+            },
+        }
+
+    with pytest.raises(
+        ValueError,
+        match="distinct figure target arms resolve to one stable realized model",
+    ):
+        figure_results._reject_duplicate_realized_target_arms([
+            cell("zhipu:requested-a", "zhipu"),
+            cell("glm:requested-b", "glm"),
+        ])
+
+    # Mutable Ollama tag/model spellings are base-identity provenance, not an
+    # execution condition: aliases of one immutable digest remain one arm.
+    ollama_a = cell("ollama:alias-a", "ollama")
+    ollama_b = cell("ollama:alias-b", "ollama")
+    for alias_cell, tag in ((ollama_a, "alias-a"), (ollama_b, "alias-b")):
+        alias_cell["realized_identities"]["target"]["snapshot"] = {
+            "provider": "ollama",
+            "resolved_model": tag,
+            "model_digest": "a" * 64,
+        }
+        alias_cell["manifest"]["config"]["run"]["local_identity"] = {
+            "model": tag,
+            "tag": tag,
+            "digest": "a" * 64,
+            "modalities": ["text"],
+            "num_predict": 64,
+        }
+    with pytest.raises(
+        ValueError,
+        match="distinct figure target arms resolve to one stable realized model",
+    ):
+        figure_results._reject_duplicate_realized_target_arms([
+            ollama_a, ollama_b
+        ])
+
+    # Defense wrappers remain valid arms of one requested base model.
+    figure_results._reject_duplicate_realized_target_arms([
+        cell("glm:requested-a", "glm"),
+        cell("glm:requested-a+guard", "zhipu"),
+    ])
+
+    bare = cell("glm:requested-a", "glm")
+    guarded_alias = cell("zhipu:requested-b+guard", "zhipu")
+    bare_component = {
+        "class": "ura.targets.api.OpenAICompatibleTarget",
+        "model": "provider-resolved-model-20260818",
+        "temperature": 0.0,
+        "max_tokens": 64,
+    }
+    bare["manifest"]["config"]["components"] = {
+        "target": bare_component
+    }
+    guarded_alias["manifest"]["config"]["components"] = {
+        "target": {
+            "class": "ura.targets.guarded.GuardedTarget",
+            "base": {**bare_component, "requested_spec": "zhipu:requested-b"},
+            "guard": {"class": "ura.judges.rules.RuleJudge"},
+            "mode": "both",
+        }
+    }
+    with pytest.raises(ValueError, match="distinct figure target arms"):
+        figure_results._reject_duplicate_realized_target_arms([
+            bare, guarded_alias
+        ])
+
+    # The same base model is a legitimate distinct target arm only when its
+    # target execution condition differs.
+    figure_results._reject_duplicate_realized_target_arms([
+        cell("glm:bf16", "glm", resolved_quantization="none"),
+        cell("zhipu:fp8", "zhipu", resolved_quantization="fp8"),
+    ])
+    with pytest.raises(ValueError, match="distinct figure target arms"):
+        figure_results._reject_duplicate_realized_target_arms([
+            cell("glm:source-a", "glm", corpus="source-a"),
+            cell("zhipu:source-b", "zhipu", corpus="source-b"),
+        ])
+    # Repeating one requested target across scientific strata is expected and
+    # must remain legal; it does not fabricate a second model identity.
+    figure_results._reject_duplicate_realized_target_arms([
+        cell("glm:one-target", "glm", corpus="source-a"),
+        cell("glm:one-target", "glm", corpus="source-b"),
+    ])
+    figure_results._reject_duplicate_realized_target_arms([
+        cell("glm:one-target", "glm", max_queries=1),
+        cell("glm:one-target", "glm", max_queries=4),
+    ])
+    seeded_a = cell("glm:one-target", "glm")
+    seeded_b = cell("glm:one-target", "glm")
+    seeded_a["manifest"]["seeds"] = [0]
+    seeded_b["manifest"]["seeds"] = [1]
+    figure_results._reject_duplicate_realized_target_arms([seeded_a, seeded_b])
+    configured_a = cell("glm:config-a", "glm")
+    configured_b = cell("zhipu:config-b", "zhipu")
+    configured_a["manifest"]["config"]["components"] = {
+        "target": {"class": "Fixture", "max_model_len": 4096}
+    }
+    configured_b["manifest"]["config"]["components"] = {
+        "target": {"class": "Fixture", "max_model_len": 8192}
+    }
+    figure_results._reject_duplicate_realized_target_arms([
+        configured_a, configured_b
+    ])
+    figure_results._reject_duplicate_realized_target_arms([
+        cell(
+            "glm:service-a",
+            "glm",
+            endpoint_identity="https-base-url-sha256:" + "a" * 64,
+        ),
+        cell(
+            "glm:service-b",
+            "glm",
+            endpoint_identity="https-base-url-sha256:" + "b" * 64,
+        ),
+    ])
 
 
 def _write_jsonl(path: Path, rows: list[dict[str, Any]]) -> None:
@@ -118,6 +325,8 @@ def _cell(
     attacker: str = "replay",
     run_id: str | None = None,
     datapoints: list[dict[str, Any]] | None = None,
+    model_acquisition: dict[str, Any] | None = None,
+    local_identity: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     run_id = run_id or f"run-{hashlib.sha256(stem.encode()).hexdigest()[:24]}"
     resolved_model = f"resolved:{model_spec}"
@@ -144,7 +353,9 @@ def _cell(
     judgments: list[dict[str, Any]] = []
     trails: list[dict[str, Any]] = []
     seeds: set[int] = set()
-    for index, datapoint in enumerate(datapoints):
+    planned_contracts: dict[tuple[str, int], Any] = {}
+    planned_datapoints: list[DataPoint] = []
+    for datapoint in datapoints:
         datapoint_id = datapoint["id"]
         seed = int(datapoint.get("seed", 0))
         seeds.add(seed)
@@ -152,15 +363,47 @@ def _cell(
         fingerprint = _canonical_sha256([corpus, datapoint_id, seed, "prompt"])
         transfer_key = _canonical_sha256([corpus, datapoint_id, seed, attacker])
         effective_modality = datapoint.get("effective_modality", "text")
-        media = (
-            [{
-                "modality": effective_modality,
-                "path": f"fixture-{datapoint_id}.{effective_modality}",
-                "sha256": _canonical_sha256([datapoint_id, effective_modality]),
+        media: list[dict[str, Any]] = []
+        if effective_modality in {"image", "audio", "video"}:
+            if effective_modality != "image":
+                raise ValueError("figure fixture only materializes image media")
+            media_path = root / f"fixture-{datapoint_id}.png"
+            media_path.write_bytes(_PNG)
+            media = [{
+                "modality": "image",
+                "path": str(media_path),
+                "sha256": hashlib.sha256(_PNG).hexdigest(),
+                "mime": "image/png",
             }]
+        source_modalities = ["text", *(
+            [effective_modality]
             if effective_modality in {"image", "audio", "video"}
             else []
+        )]
+        planned_datapoint = DataPoint(
+            id=datapoint_id,
+            source=datapoint.get("source", f"source-{corpus}"),
+            modalities=source_modalities,
+            dialog_history=[DialogTurn.model_validate({
+                "role": "user",
+                "content": f"prompt {datapoint_id}",
+                "media": media,
+            })],
+            payload_text=f"prompt {datapoint_id}",
+            media=[MediaRef.model_validate(item) for item in media],
+            risk_category=RiskCategory(datapoint.get("risk", "cybersec")),
+            expected_behavior=datapoint.get("expected", "refuse"),
+            meta={
+                "common_metrics_eligible": datapoint.get("eligible", True),
+                "automated_metric_scope": "response_only",
+            },
         )
+        contract = ReplayAttacker().plan_target_inputs(
+            planned_datapoint,
+            AttackBudget(max_queries=1, max_turns=1, seed=seed),
+        )
+        planned_contracts[(datapoint_id, seed)] = contract
+        planned_datapoints.append(planned_datapoint)
         attempt = {
             "id": attempt_id,
             "datapoint_id": datapoint_id,
@@ -185,6 +428,15 @@ def _cell(
                 "policy_challenge_index": 0,
                 "policy_challenge_horizon": 1,
                 "turn_expected_behavior": datapoint.get("expected", "refuse"),
+                "planning_expected_behavior": datapoint.get(
+                    "expected", "refuse"
+                ),
+                "planning_common_metrics_eligible": datapoint.get(
+                    "eligible", True
+                ),
+                "planning_exact_modality_combination": source_modalities,
+                "attacker_input_contract_id": contract.contract_id,
+                "planned_target_input": contract.turns[0].manifest_payload(),
             },
             "run_id": run_id,
         }
@@ -196,6 +448,10 @@ def _cell(
             "latency_ms": 1.0,
             "tokens": {"input": 4, "output": 2},
             "raw": {
+                "run_id": run_id,
+                "attack_fingerprint": fingerprint,
+                "transfer_key": transfer_key,
+                "transferable": True,
                 "requested_seed": seed,
                 "target_sampling_control": "provider_seed",
                 "provider": "fixture-provider",
@@ -218,7 +474,12 @@ def _cell(
             "risk_category": datapoint.get("risk", "cybersec"),
             "risk": datapoint.get("risk", "cybersec"),
             "modality": datapoint.get("modality", "text"),
+            "source_modality": datapoint.get("modality", "text"),
+            "delivered_modality": effective_modality,
             "effective_modality": effective_modality,
+            "target_input_delivered": True,
+            "target_modalities": ["text", "image", "audio", "video"],
+            "is_multimodal": len(source_modalities) > 1,
             "expected_behavior": expected,
             "common_metrics_eligible": datapoint.get("eligible", True),
             "seed": seed,
@@ -228,6 +489,7 @@ def _cell(
             "policy_challenge_index": 0,
             "policy_challenge_horizon": 1,
             "turn_expected_behavior": expected,
+            "planning_exact_modality_combination": source_modalities,
             "attack_fingerprint": fingerprint,
             "transfer_key": transfer_key,
             "transferable": True,
@@ -235,9 +497,15 @@ def _cell(
             "replayed_transcript": False,
             "target_sampling_control": "provider_seed",
             "cascade_stage": 0,
+            "confidence": 0.95,
+            "parsed": None,
             "cascade_confident": True,
             "cascade_role": "authoritative",
             "cascade_policy": "first_confident_with_full_shadow_trail",
+            "stage_queried": True,
+            "policy_evaluation_status": "evaluated",
+            "metric_authority": None,
+            "required_metric": None,
         }
         label = datapoint.get("label", "violation")
         score = 1.0 if label in {"violation", "over_refusal"} else 0.0
@@ -254,6 +522,15 @@ def _cell(
             "attempt_id": attempt_id,
             "stage": 0,
             "judge": "rules",
+            "judge_model": None,
+            "judge_model_revision": None,
+            "judge_model_digest": None,
+            "judge_model_identity": None,
+            "judge_model_queried": None,
+            "guardrail_queried": None,
+            "provider_signal_authoritative": None,
+            "provider_refusal_category": None,
+            "judge_call": None,
             "label": label,
             "score": score,
             "confidence": 0.95,
@@ -261,6 +538,10 @@ def _cell(
             "cascade_confident": True,
             "cascade_role": "authoritative",
             "cascade_policy": "first_confident_with_full_shadow_trail",
+            "stage_queried": True,
+            "policy_evaluation_status": "evaluated",
+            "metric_authority": None,
+            "required_metric": None,
             "risk_category": raw["risk_category"],
             "modality": raw["modality"],
             "model": resolved_model,
@@ -308,9 +589,21 @@ def _cell(
     identity_config, identity_digest = _identity_metadata(
         responses, trails, ["rules"]
     )
+    attacker_input_plan = {
+        "schema": "ura-attacker-input-plan/1",
+        "entries": [
+            {"seed": seed, **contract.manifest_payload()}
+            for (_datapoint_id, seed), contract in sorted(
+                planned_contracts.items()
+            )
+        ],
+    }
     base_component = {
         "class": "FixtureTarget",
         "name": resolved_model.removesuffix("+guard"),
+        "provider": "fixture-provider",
+        "model": model_spec,
+        "modality_support": ["text", "image", "audio", "video"],
     }
     target_component = (
         base_component
@@ -319,6 +612,7 @@ def _cell(
             "class": "GuardedTarget",
             "name": resolved_model,
             "mode": defense,
+            "modality_support": ["text", "image", "audio", "video"],
             "base": base_component,
             "guard": {"class": "RuleJudge", "name": "rules"},
         }
@@ -353,7 +647,11 @@ def _cell(
                     "selected_ids": [item["id"] for item in datapoints],
                 },
                 "model_spec": model_spec,
-                "local_identity": None,
+                "expected_target_identity": {
+                    "provider": "fixture-provider",
+                    "resolved_model": model_spec,
+                },
+                "local_identity": local_identity,
                 "attacker": attacker,
                 "attacker_config": {},
                 "judge_names": ["rules"],
@@ -364,6 +662,7 @@ def _cell(
                 "quantization": "none",
                 "dtype": "auto",
                 "dry_run": False,
+                "model_acquisition": _NO_ACQUISITION_CELL,
                 "project_revision": _project_revision(),
                 "request_envelope": _request_envelope(),
                 "driver_source": {
@@ -387,9 +686,20 @@ def _cell(
             "n_attempt_media_hashes": 0,
             "attempt_media_hashes": {},
             "realized_attempts_sha256": _canonical_sha256(attempts),
+            "attacker_input_plan": attacker_input_plan,
+            "attacker_input_plan_sha256": attacker_input_payload_sha256(
+                attacker_input_plan
+            ),
+            "n_attacker_input_contracts": len(planned_contracts),
             **identity_config,
         },
     }
+    if model_acquisition is not None:
+        run_config = manifest["config"]["run"]
+        run_config["model_acquisition"] = model_acquisition_cell_role_projection(
+            model_acquisition,
+            run_config,
+        )
     paths["manifest"].write_text(json.dumps(manifest), encoding="utf-8")
     marker_path = root / f"{stem}.complete.json"
     marker = {
@@ -417,10 +727,20 @@ def _cell(
         "defense": defense,
         "paths": paths,
         "marker": marker_path,
+        "contracts": planned_contracts,
+        "datapoints": planned_datapoints,
     }
 
 
-def _grid(root: Path, *, name: str, cells: list[dict[str, Any]]) -> Path:
+def _grid(
+    root: Path,
+    *,
+    name: str,
+    cells: list[dict[str, Any]],
+    acquisition_full: dict[str, Any] | None = None,
+    acquisition_execution: dict[str, Any] | None = None,
+    local_configs: dict[str, dict[str, Any]] | None = None,
+) -> Path:
     models = sorted({cell["model_spec"] for cell in cells})
     corpora = sorted({cell["corpus"] for cell in cells})
     attackers = sorted({cell["attacker"] for cell in cells})
@@ -429,6 +749,49 @@ def _grid(root: Path, *, name: str, cells: list[dict[str, Any]]) -> Path:
     expected = len(models) * len(corpora) * len(attackers)
     assert len(cells) == expected
     grid_id = f"grid-{name}"
+    planned_corpora: dict[str, list[DataPoint]] = {}
+    planned_contracts: dict[tuple[str, str, str, int], Any] = {}
+    for cell in cells:
+        existing = planned_corpora.setdefault(
+            cell["corpus"], cell["datapoints"]
+        )
+        assert existing == cell["datapoints"]
+        for (datapoint_id, seed), contract in cell["contracts"].items():
+            key = (cell["corpus"], cell["attacker"], datapoint_id, seed)
+            prior = planned_contracts.setdefault(key, contract)
+            assert prior == contract
+    eligibility_plan = build_eligibility_plan(
+        requested_targets=models,
+        targets={
+            model: _Target(next(
+                cell["target"] for cell in cells if cell["model_spec"] == model
+            ))
+            for model in models
+        },
+        corpora=planned_corpora,
+        attackers=attackers,
+        attacker_input_contracts=planned_contracts,
+        bindings={
+            "model_acquisition": (
+                acquisition_execution or _NO_ACQUISITION_EXECUTION
+            )
+        },
+        dry_run=False,
+        whole_request_preflight_complete=True,
+    )
+    eligibility_path = root / (
+        f"{eligibility_plan['plan_id']}.eligibility.json"
+    )
+    eligibility_path.write_text(
+        json.dumps(eligibility_plan, ensure_ascii=False, indent=2, sort_keys=True)
+        + "\n",
+        encoding="utf-8",
+    )
+    eligibility_descriptor = {
+        "plan_id": eligibility_plan["plan_id"],
+        **_descriptor(eligibility_path),
+        "counts": eligibility_plan["counts"],
+    }
     # The real driver binds every completed cell back to the exact grid
     # condition in manifest.config.run. Keep the synthetic fixture faithful,
     # then refresh the completion marker's manifest descriptor.
@@ -449,12 +812,21 @@ def _grid(root: Path, *, name: str, cells: list[dict[str, Any]]) -> Path:
         "finished_at": "2026-08-10T00:01:00+00:00",
         "request": {
             "models": models,
+            "local_configs": local_configs or {},
             "corpora": corpora,
             "attackers": attackers,
+            "attacker_configs": {name: {} for name in attackers},
+            "judges": ["rules"],
+            "judge_model": None,
             "defense": next(iter(defenses)),
             "dry_run": False,
             "project_revision": _project_revision(),
             "request_envelope": _request_envelope(),
+            "model_acquisition": acquisition_full or _NO_ACQUISITION_FULL,
+            "model_acquisition_execution": (
+                acquisition_execution or _NO_ACQUISITION_EXECUTION
+            ),
+            "eligibility_plan": eligibility_descriptor,
             "attestation_probe": False,
             "live_attestation": {
                 "mode": "measured",
@@ -532,7 +904,7 @@ def _paired_model_grid(root: Path, corpora: tuple[str, ...] = ("alpha",)) -> lis
                 "id": f"probe-{corpus}",
                 "source": f"source-{corpus}",
                 "risk": "cybersec" if corpus == "alpha" else "privacy",
-                "modality": "text",
+                "modality": "text" if corpus == "alpha" else "image",
                 "effective_modality": "text" if corpus == "alpha" else "image",
                 "expected": "refuse",
                 "label": "violation" if model == "left" else "safe",
@@ -545,6 +917,377 @@ def _paired_model_grid(root: Path, corpora: tuple[str, ...] = ("alpha",)) -> lis
     ]
     _grid(root, name="models", cells=cells)
     return cells
+
+
+def _one_hub_local_acquisition(
+    root: Path,
+    *,
+    model: str,
+    revision: str,
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    selection = build_runtime_selection(
+        collect_run_requirements(
+            target_specs=["anthropic:hosted-left", "openai:hosted-right", model],
+            local_configs={model: {"revision": revision}},
+            judge_names=["rules"],
+            judge_model="mock",
+            attacker_names=["replay"],
+            attacker_configs={},
+        ),
+        input_bindings={
+            "fixture_sha256": hashlib.sha256(
+                f"{model}@{revision}".encode("utf-8")
+            ).hexdigest()
+        },
+    )
+    plan = build_runtime_plan(selection)
+    store = (root / "private-model-store").resolve()
+    store.mkdir()
+    resource = plan["resources"][0]
+    resource_root = store / resource["resource_id"]
+    snapshot = resource_root / "snapshot"
+    snapshot.mkdir(parents=True)
+    content = b'{"fixture":"one-legal-local-target"}\n'
+    (snapshot / "config.json").write_bytes(content)
+    blob_id = hashlib.sha1(  # noqa: S324 - Git blob protocol identity
+        f"blob {len(content)}\0".encode("ascii") + content
+    ).hexdigest()
+    manifest = build_upstream_manifest(
+        resource["repo_id"],
+        resource["revision"],
+        [{
+            "path": "config.json",
+            "size": len(content),
+            "blob_id": blob_id,
+            "lfs_sha256": None,
+        }],
+    )
+    write_document_create_only(
+        resource_root.resolve(),
+        manifest,
+        identifier=manifest["manifest_id"],
+        suffix="upstream-manifest.json",
+    )
+    receipt = build_receipt(
+        plan,
+        snapshots={resource["resource_id"]: snapshot},
+        manifests={resource["resource_id"]: manifest},
+    )
+    plan_path, plan_sha = write_document_create_only(
+        root.resolve(), plan, identifier=plan["plan_id"], suffix="plan.json"
+    )
+    receipt_path, receipt_sha = write_document_create_only(
+        root.resolve(),
+        receipt,
+        identifier=receipt["receipt_id"],
+        suffix="receipt.json",
+    )
+    runtime = ManagedModelRuntime(
+        selection=selection,
+        plan_path=plan_path,
+        plan_sha256=plan_sha,
+        receipt_path=receipt_path,
+        receipt_sha256=receipt_sha,
+        managed_store=store,
+    )
+    full = {
+        **runtime.admit(),
+        "evidence": {
+            "plan": _descriptor(plan_path),
+            "receipt": _descriptor(receipt_path),
+        },
+        "selection": public_selection_descriptor(selection),
+    }
+    return full, model_acquisition_execution_descriptor(full, evidence_root=root)
+
+
+def test_multi_target_acquisition_survives_figure_and_transfer_loaders(
+    tmp_path: Path,
+) -> None:
+    revision = "1" * 40
+    local_model = f"vllm:Org/LocalTarget@{revision}"
+    models = (
+        "anthropic:hosted-left",
+        "openai:hosted-right",
+        local_model,
+    )
+    full, stable = _one_hub_local_acquisition(
+        tmp_path,
+        model="vllm:Org/LocalTarget",
+        revision=revision,
+    )
+    cells = [
+        _cell(
+            tmp_path,
+            stem=f"model-{index}",
+            model_spec=model,
+            corpus="alpha",
+            local_identity=(
+                {"revision": revision} if model == local_model else None
+            ),
+            model_acquisition=stable,
+            datapoints=[{
+                "id": "shared-probe",
+                "source": "source-alpha",
+                "risk": "cybersec",
+                "modality": "text",
+                "effective_modality": "text",
+                "expected": "refuse",
+                "label": "violation" if index == 0 else "safe",
+                "eligible": True,
+                "seed": 0,
+            }],
+        )
+        for index, model in enumerate(models)
+    ]
+    grid_path = _grid(
+        tmp_path,
+        name="hosted-plus-one-local-acquisition",
+        cells=cells,
+        acquisition_full=full,
+        acquisition_execution=stable,
+        local_configs={local_model: {"revision": revision}},
+    )
+
+    assert len(figure_results._load_cells(tmp_path)) == 3
+    per_model, audit = load_transfer(tmp_path)
+    assert set(per_model) == {"resolved:" + model for model in models}
+    assert audit["grid_audit"]["selected_cells"] == 3
+
+    original = json.loads(grid_path.read_text(encoding="utf-8"))
+    other = "vllm:Org/OtherTarget@" + ("3" * 40)
+    mutations = (
+        {
+            "models": list(models[:2]),
+            "local_configs": {},
+        },
+        {
+            "models": [*models, other],
+            "local_configs": {
+                **original["request"]["local_configs"],
+                other: {"revision": "3" * 40},
+            },
+        },
+        {
+            "models": [*models[:2], other],
+            "local_configs": {other: {"revision": "3" * 40}},
+        },
+    )
+    for mutation in mutations:
+        changed = json.loads(json.dumps(original))
+        changed["request"].update(mutation)
+        grid_path.write_text(json.dumps(changed), encoding="utf-8")
+        with pytest.raises(ValueError, match="model-acquisition"):
+            figure_results._load_cells(tmp_path)
+        with pytest.raises(ValueError, match="model-acquisition"):
+            load_transfer(tmp_path)
+    grid_path.write_text(json.dumps(original), encoding="utf-8")
+
+
+def test_figure_loader_binds_realized_target_to_planned_attestation(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "target-attestation"
+    root.mkdir()
+    cell = _cell(
+        root,
+        stem="target-attestation",
+        model_spec="fixture:planned-model",
+        corpus="alpha",
+    )
+    _grid(root, name="target-attestation", cells=[cell])
+    manifest_path = cell["paths"]["manifest"]
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    manifest["config"]["run"]["expected_target_identity"] = {
+        "provider": "fixture-provider",
+        "resolved_model": "fixture:planned-model",
+    }
+    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+    _refresh_marker(cell)
+    assert len(figure_results._load_cells(root)) == 1
+
+    responses = [
+        json.loads(line)
+        for line in cell["paths"]["responses"].read_text(
+            encoding="utf-8"
+        ).splitlines()
+        if line.strip()
+    ]
+    responses[0]["raw"]["resolved_model"] = "fixture:changed-model"
+    _write_jsonl(cell["paths"]["responses"], responses)
+    _refresh_identity_metadata(cell)
+
+    with pytest.raises(ValueError, match="does not match.*attestation"):
+        figure_results._load_cells(root)
+
+
+def test_figure_loader_binds_realized_llm_judge_to_planned_route(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "judge-route"
+    root.mkdir()
+    cell = _cell(
+        root,
+        stem="judge-route",
+        model_spec="fixture:target",
+        corpus="alpha",
+    )
+    _grid(root, name="judge-route", cells=[cell])
+    planned_judge = "anthropic:planned-judge"
+    endpoint_identity = canonical_https_endpoint_identity(
+        "https://api.anthropic.com"
+    )
+
+    judgments = [
+        json.loads(line)
+        for line in cell["paths"]["judgments"].read_text(
+            encoding="utf-8"
+        ).splitlines()
+        if line.strip()
+    ]
+    trails = [
+        json.loads(line)
+        for line in cell["paths"]["trails"].read_text(
+            encoding="utf-8"
+        ).splitlines()
+        if line.strip()
+    ]
+    judgments[0]["judge"] = "llm-judge"
+    judge_call = {
+        "response_target": planned_judge,
+        "provider": "anthropic",
+        "endpoint_identity": endpoint_identity,
+        "provider_resolved_model": "planned-judge",
+    }
+    judgments[0]["raw"].update({
+        "judge_model": planned_judge,
+        "judge_model_queried": True,
+        "judge_call": judge_call,
+    })
+    trails[0].update({
+        "judge": "llm-judge",
+        "judge_model": planned_judge,
+        "judge_model_queried": True,
+        "judge_call": judge_call,
+    })
+    _write_jsonl(cell["paths"]["judgments"], judgments)
+    _write_jsonl(cell["paths"]["trails"], trails)
+    manifest_path = cell["paths"]["manifest"]
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    manifest["judges"] = ["llm-judge"]
+    manifest["config"]["components"]["judge_cascade"] = {
+        "class": "JudgeCascade",
+        "stages": [{
+            "class": "ura.judges.llm.LLMJudge",
+            "name": "llm-judge",
+            "judge_target": {
+                "class": "ura.targets.api.AnthropicTarget",
+                "provider": "anthropic",
+                "model": "planned-judge",
+                "requested_spec": planned_judge,
+                "endpoint_identity": endpoint_identity,
+            },
+        }],
+    }
+    manifest["config"]["run"].update({
+        "judge_names": ["llm"],
+        "judge_model": planned_judge,
+        "judge_api_config": {
+            "modalities": ["text"],
+            "max_tokens": 64,
+            "temperature": 0.0,
+        },
+    })
+    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+    _refresh_identity_metadata(cell)
+    assert len(figure_results._load_cells(root)) == 1
+
+    trails = [
+        json.loads(line)
+        for line in cell["paths"]["trails"].read_text(
+            encoding="utf-8"
+        ).splitlines()
+        if line.strip()
+    ]
+    trails[0]["judge_call"]["provider_resolved_model"] = "changed-judge"
+    _write_jsonl(cell["paths"]["trails"], trails)
+    _refresh_identity_metadata(cell)
+    with pytest.raises(
+        ValueError, match="judge_call differs|LLM judge identity differs"
+    ):
+        figure_results._load_cells(root)
+
+
+def test_cross_target_cohort_ignores_only_per_cell_attestation_identity() -> None:
+    def manifest(model: str, expected: dict[str, str]) -> dict[str, Any]:
+        return {
+            "run_id": f"run-{model}",
+            "started_at": "2026-08-18T00:00:00+00:00",
+            "models": [model],
+            "config": {
+                "components": {
+                    "target": {"class": "FixtureTarget", "name": model},
+                },
+                "realized_identities": {
+                    "target": {"snapshot": expected, "observations": 1},
+                    "judges": [{
+                        "stage": 0,
+                        "judge": "rules",
+                        "snapshot": {"judge": "rules"},
+                        "observations": 1,
+                    }],
+                },
+                    "run": {
+                        "model_spec": model,
+                        "expected_target_identity": expected,
+                        "defense": "none",
+                        "model_acquisition": _NO_ACQUISITION_CELL,
+                    },
+            },
+        }
+
+    left = manifest(
+        "glm:model-a", {"provider": "glm", "resolved_model": "model-a"}
+    )
+    right = manifest(
+        "kimi:model-b", {"provider": "kimi", "resolved_model": "model-b"}
+    )
+    left["config"]["run"].update({
+        "api_config": {
+            "modalities": ["text"],
+            "max_tokens": 64,
+            "temperature": 0.0,
+        },
+        "local_identity": None,
+        "resolved_quantization": "none",
+        "corpus": "mmsafetybench",
+        "attacker": "replay",
+        "judge_names": ["rules"],
+        "sample_seed": 17,
+    })
+    right["config"]["run"].update({
+        "api_config": None,
+        "local_identity": {
+            "revision": "a" * 40,
+            "modalities": ["text"],
+            "max_tokens": 64,
+        },
+        "resolved_quantization": "fp8",
+        "corpus": "mmsafetybench",
+        "attacker": "replay",
+        "judge_names": ["rules"],
+        "sample_seed": 17,
+    })
+    assert _cohort_payload(left) == _cohort_payload(right)
+
+    defended = manifest(
+        "glm:model-a", {"provider": "glm", "resolved_model": "model-a"}
+    )
+    defended["config"]["run"]["defense"] = "input"
+    assert _cohort_payload(left) != _cohort_payload(defended)
+    different_sample = json.loads(json.dumps(right))
+    different_sample["config"]["run"]["sample_seed"] = 18
+    assert _cohort_payload(left) != _cohort_payload(different_sample)
 
 
 def test_measured_loader_facets_multi_corpus_sampling_without_pooling(tmp_path: Path) -> None:
@@ -754,6 +1497,82 @@ def test_loader_recomputes_and_rejects_rehashed_identity_inventory_tampering(
         )
 
 
+def test_loader_rejects_rehashed_response_with_conflicting_identity_aliases(
+    tmp_path: Path,
+) -> None:
+    cells = _paired_model_grid(tmp_path)
+    cell = cells[0]
+    responses = [
+        json.loads(line)
+        for line in cell["paths"]["responses"].read_text(
+            encoding="utf-8"
+        ).splitlines()
+        if line.strip()
+    ]
+    responses[0]["raw"]["model"] = "invented-conflicting-model"
+    _write_jsonl(cell["paths"]["responses"], responses)
+    trails = [
+        json.loads(line)
+        for line in cell["paths"]["trails"].read_text(
+            encoding="utf-8"
+        ).splitlines()
+        if line.strip()
+    ]
+    trails[0]["response_sha256"] = figure_results._canonical_response_digest(
+        Response.model_validate(responses[0], strict=True)
+    )
+    _write_jsonl(cell["paths"]["trails"], trails)
+    # Even a refreshed outer descriptor cannot make contradictory provider
+    # aliases into valid realized-identity evidence.
+    _refresh_marker(cell)
+
+    with pytest.raises(ValueError, match="identity aliases .* conflict"):
+        figure_results.load_model_results(
+            tmp_path,
+            left_model="left",
+            right_model="right",
+            corpora=["alpha"],
+            policy_label="policy",
+            multiplicity_family="family",
+            minimum_cell_n=1,
+        )
+
+
+def test_loader_rejects_completed_response_with_duplicate_identity_key(
+    tmp_path: Path,
+) -> None:
+    cells = _paired_model_grid(tmp_path)
+    cell = cells[0]
+    responses_path = cell["paths"]["responses"]
+    raw = responses_path.read_text(encoding="utf-8")
+    original = '"resolved_model": "left"'
+    assert raw.count(original) == 1
+    responses_path.write_text(
+        raw.replace(
+            original,
+            '"resolved_model": "invented-conflict", '
+            '"resolved_model": "left"',
+            1,
+        ),
+        encoding="utf-8",
+    )
+    # Refreshing the completion descriptor makes the altered bytes outer-
+    # hash-valid. A last-wins reader would also preserve the original
+    # content-derived response digest, so rejection must happen at decoding.
+    _refresh_marker(cell)
+
+    with pytest.raises(ValueError, match="duplicate JSON object key 'resolved_model'"):
+        figure_results.load_model_results(
+            tmp_path,
+            left_model="left",
+            right_model="right",
+            corpora=["alpha"],
+            policy_label="policy",
+            multiplicity_family="family",
+            minimum_cell_n=1,
+        )
+
+
 def test_loader_rejects_trail_response_join_tampering(tmp_path: Path) -> None:
     cells = _paired_model_grid(tmp_path)
     cell = cells[0]
@@ -853,11 +1672,20 @@ def test_defense_figure_marks_all_input_blocked_identity_as_unobserved(
     for response in response_rows:
         for field in ("provider", "resolved_model", "system_fingerprint"):
             response["raw"].pop(field)
-        response["raw"].update({
-            "defense": "blocked",
-            "stage": "input",
-            "target_sampling_control": "not_queried",
-        })
+            response["raw"].update({
+                "defense": "blocked",
+                "stage": "input",
+                "base_target": "resolved:base",
+                "base_target_queried": False,
+                "defense_stages_evaluated": ["input"],
+                "defense_block_template_id": GUARDED_BLOCK_TEMPLATE_ID,
+                "target_sampling_control": "not_queried",
+            })
+            response["output_turns"] = [{
+                "role": "assistant", "content": GUARDED_BLOCK_TEXT,
+            }]
+            response["latency_ms"] = None
+            response["tokens"] = None
     _write_jsonl(defended["paths"]["responses"], response_rows)
     judgment_rows = [
         json.loads(line) for line in defended["paths"]["judgments"]
@@ -865,6 +1693,8 @@ def test_defense_figure_marks_all_input_blocked_identity_as_unobserved(
     ]
     for judgment in judgment_rows:
         judgment["raw"]["target_sampling_control"] = "not_queried"
+        judgment["raw"]["target_input_delivered"] = False
+        judgment["raw"]["effective_modality"] = "none"
     _write_jsonl(defended["paths"]["judgments"], judgment_rows)
     trail_rows = [
         json.loads(line) for line in defended["paths"]["trails"]
@@ -1008,7 +1838,9 @@ def _direct_facet(
             "within_target_adaptivity_endpoint"
             if attacker == "crescendo" else "cross_target_endpoint_noncausal"
         ),
-        "left": _direct_arm(f"{corpus}-{left_model}-{attacker}", left_model, attacker, corpus),
+        "left": _direct_arm(
+            f"{corpus}-{left_model}-{attacker}", left_model, attacker, corpus
+        ),
         "right": _direct_arm(
             f"{corpus}-{right_model}-{attacker}", right_model, attacker, corpus,
         ),
@@ -1017,6 +1849,31 @@ def _direct_facet(
     }
 
 
+def test_loader_rejects_manifest_plan_drift_with_refreshed_outer_descriptor(
+    tmp_path: Path,
+) -> None:
+    cells = _paired_model_grid(tmp_path)
+    cell = cells[0]
+    manifest = json.loads(cell["paths"]["manifest"].read_text(encoding="utf-8"))
+    manifest["config"]["attacker_input_plan"]["entries"][0]["turns"][0][
+        "bound_text_sha256"
+    ] = "0" * 64
+    manifest["config"]["attacker_input_plan"]["entries"][0]["turns"][0][
+        "bound_text_bytes"
+    ] = 1
+    cell["paths"]["manifest"].write_text(json.dumps(manifest), encoding="utf-8")
+    _refresh_marker(cell)
+
+    with pytest.raises(ValueError, match="attacker input plan"):
+        figure_results.load_model_results(
+            tmp_path,
+            left_model="left",
+            right_model="right",
+            corpora=["alpha"],
+            policy_label="policy",
+            multiplicity_family="family",
+            minimum_cell_n=1,
+        )
 def test_loader_rejects_completion_from_a_different_grid_condition(
     tmp_path: Path,
 ) -> None:

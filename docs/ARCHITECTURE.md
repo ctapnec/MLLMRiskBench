@@ -124,17 +124,29 @@ requires real eligible Attempt-Response evidence for each delivered
 combination. Tags without byte-backed delivery, setup-only turns, and input-side
 defense blocks do not count.
 
+Runner 2.19 plans a path-free attacker-input contract for every selected
+attacker x datapoint x seed before constructing target or model-backed defense
+engines. Eligibility, modality coverage, attestation keys, and lane identity use
+the attacker-produced target-call combinations. Immediately before each budget
+reservation and call, Runner compares the rendered request's exact channel
+combination, ordered/repeated physical-media identities, policy-evaluation
+scope, and any bound adversarial-text identity with that prospective turn.
+Tool-conditioned input is rejected unless a typed executable runtime and
+actual-use attestation exist. This closes the former source-only planning gap in
+which an attacker could add media (IDEATOR), lose repeated media, or serialize a
+tool trace without changing admission evidence.
+
 Eligibility is represented as a requested-target x selected-source-stratum x
 exact-modality x attacker relation, not an invented complete Cartesian product.
 After the selected corpora materialize, `run_matrix` writes a content-addressed
-`ura-eligibility-plan/1` artifact before any model call. It retains every
+`ura-eligibility-plan/2` artifact before any model call. It retains every
 requested planning stratum as `compatible_if_isolated` or `N/A`, with its failed
 gates, whole-arm execution-unit status, and bound configuration/corpus digests.
 This is planning evidence only: it is not a live
 attestation, attempted/completed-cell record, or scientific result.
 
 At the earlier boundary, after basic argument/axis validation but before config
-or source materialization, `run_matrix` writes `ura-request-envelope/1`. Its
+or source materialization, `run_matrix` writes `ura-request-envelope/2`. Its
 units are exactly requested target x logical source arm x attacker. A bound
 `ura-request-error/1` may then record a configuration, source-integrity,
 conversion, empty-corpus, or diagnostic-admission failure at whole-request,
@@ -144,9 +156,14 @@ strata or claims attempted execution. Argument parsing and basic request-shape
 rejections before this boundary are not retroactively represented. The envelope
 is the operator-selection universe, not normalized config/receipt identity;
 config-only variants sharing it belong in separate Level-1 cohorts.
+Version 2 also binds the Boolean
+`request.hosted_judge_data_transfer_acknowledged`: true records the explicit CLI
+acknowledgement for a live hosted judge, while preflight, dry, rules-only, and
+local-judge requests retain false. It does not certify privacy review or
+provider retention behavior.
 
 After the whole request passes admission and before the first generation call,
-Runner 2.16 writes a content-addressed `ura-lane-projection/1`. The artifact
+Runner 2.19 writes a content-addressed `ura-lane-projection/1`. The artifact
 binds the exact experiment condition and eligibility descriptor, selected
 record/cluster/source-policy counts, deterministic sampling identities,
 selected physical input-media bytes, and the conservative complete-grid target,
@@ -233,14 +250,56 @@ admission cap independently of generation `max_tokens`. Omission uses the
 checkpoint's native context; an explicit integer in 1..1,000,000 must be at least
 `max_tokens`, is passed at engine construction, and is retained in normalized
 execution provenance.
-An Ollama entry instead identifies a tag already pulled into a separately
-managed local daemon. It requires the exact 64-hex `/api/tags` digest and a
+
+Every Hugging Face model is admitted through one sealed acquisition boundary.
+`collect_run_requirements` projects the five supported roles (vLLM target,
+local vLLM LLM judge, scoring Guardrail, defense Guardrail, and NanoGCG
+surrogate) into unique public repository plus immutable 40-64-hex commit
+resources. It rejects target/judge/guard and target/surrogate identity
+collisions before plan generation. Path-free explicit-checkpoint digest and
+precomputed-NanoGCG-suffix exceptions remain in the same selection. The
+selection digest covers the portable API/local/source/attacker/project/request
+bindings; controller ticket nonces and receipt timestamps do not become
+scientific identity.
+
+Plan-only execution writes one strict `ura-model-acquisition-plan/1` document
+and returns before any model-bearing component is constructed. Only the
+dedicated `experiments.model_acquire` controller may contact the fixed Hugging
+Face endpoint or receive `HF_TOKEN`. It resolves the complete upstream file
+inventory, transfers only missing bytes under cross-process locks and bounded
+byte/free-space/deadline limits, seals each immutable snapshot, and writes a
+path/token-free receipt. A cache hit is fully reverified and emits no download
+activity. Normal and preflight processes require the exact plan/receipt/store
+triple, remove Hub tokens, set Hugging Face/Transformers/vLLM offline and
+telemetry-disabled variables before optional imports, and pass only private
+managed snapshot locators to constructors. One shared resource lease spans the
+full pre-load hash, construction, and full post-load hash; post-load drift
+drops the object and no target, judge, guard, or surrogate call may occur.
+Explicit local checkpoint directories use the same pre/post content seal.
+
+The result tree retains create-only canonical plan and receipt copies and a
+strict `ura-model-acquisition-runtime/1` provenance descriptor. Scientific
+grid provenance uses `ura-model-acquisition-execution/1`, which retains the
+selection, plan, upstream-manifest, size, and content-tree facts while excluding
+receipt-event fields and the mtime-bearing stat inventory. Scientific common
+conditions use a plan-free `ura-model-acquisition-role-projection/1` containing
+only shared judge/guard/defense/surrogate facts. Each Runner cell uses the same
+projection plus its own local target, if any. This prevents an unrelated target
+elsewhere in a mixed grid from fragmenting a hosted cell or transfer cohort.
+Figure, transfer, Level-1, and Level-2 ingestion revalidate the complete grid
+documents and require each role projection to be their exact subset.
+
+An Ollama entry instead identifies a tag present in the live loopback daemon
+after a successful pull or discovery transaction. Rig Web may Start, Stop, and
+Pull only through its proven current-console-owned child; an external daemon is
+available for bounded discovery and inference but not UI Stop or Pull. Each tag
+requires the exact 64-hex `/api/tags` digest and a
 unique modality declaration containing `text` and optionally `image`, and it
 forbids every vLLM-only fit, quantization, topology, parameter, output, and
 context field. The pulled artifact fixes precision. The adapter uses the
 daemon's HTTP API through the Python standard library, with no Ollama Python SDK
 dependency.
-Runner 2.16 local vLLM/Ollama adapters use the shared deterministic rendered-
+Runner 2.19 local vLLM/Ollama adapters use the shared deterministic rendered-
 dialog fingerprint as the non-blank `Response.attempt_id` placeholder required
 at target-return validation. Runner replaces that transport-local value with the
 canonical Attempt ID and run ID before judgment, checkpointing, or persistence.
@@ -346,10 +405,22 @@ small, acyclic responsibility modules:
   validated reports/pricing, and sqlite operational state;
 - `lifecycle.py`, `dashboard.py`, `settings.py`, and `pages.py` handle jobs,
   routing, dashboard/report views, configuration, and general pages;
+- `ollama_service.py` owns the bounded loopback Ollama API, exact live roster,
+  and current-process-only daemon lifecycle;
 - `builder_models.py`, `builder_capture.py`, `builder_validation.py`, and
   `builder_page.py` implement the Build workflow without changing its gates;
 - `app.py` composes those focused mixins and `server.py` provides the localhost
   HTTP/headless adapter.
+
+The HTTP adapter treats localhost as a privileged control plane, not as an
+authentication mechanism. Before reading a POST body or rendering a tokenized
+page, it requires exactly one literal `127.0.0.1` or `[::1]` Host authority;
+the port may be a local forwarded port. A present Origin must be the exact same
+loopback HTTP origin, and cross-site Fetch Metadata is rejected. One
+high-entropy process token is injected centrally into every POST form and must
+be supplied exactly once before any application route runs. All control
+responses deny framing through CSP `frame-ancestors 'none'` and
+`X-Frame-Options: DENY`, preventing clickjacking of an otherwise valid form.
 
 The facade continues to expose the established imports and
 `python -m experiments.rig_web` entry point. This is an implementation boundary,
@@ -358,9 +429,17 @@ not a second interface or evidence path.
 At process startup the console snapshots platform, CPU model, physical/logical
 cores and total RAM through `psutil`/platform fallbacks, and NVIDIA card/model,
 VRAM, PCI, compute capability and driver data through `nvidia-smi`. The
-dashboard and Build tab render that one snapshot. Build presents separate hosted
-API, Local vLLM, and Local Ollama groups. Target filters compose hosted provider
-selection (`All` initially) with Local vLLM name substring, 10M-3T maximum
+dashboard and Build tab render that one snapshot. A single role-aware modal
+picker serves target and LLM-judge selection. Its first step chooses hosted or
+local; the second applies hosted-provider (`All` initially) or local filters.
+Target mode binds one or more hosted targets and at most one local target. Judge
+mode binds exactly one model, distinct from every target; a local target and a
+distinct local judge cannot share one process. Different local targets are
+scheduled as separate rig jobs/grids, while each grid may also contain multiple
+hosted targets. The judge role alone marks the
+highest comparable configured rate per currency as expensive; this is a cost
+signal, never a capability score. Build presents separate hosted API, Local vLLM,
+and Local Ollama groups. Filters compose Local vLLM name substring, 10M-3T maximum
 parameter count and a separate automatic 16/8/4-bit fit control
 (initially on), plus a separate unchecked unknown-fit control. Known 16/8/4-bit
 recommendations use green/blue/amber badges; unknown fit is neutral gray. The
@@ -372,23 +451,114 @@ server admission requires the exact revision/digest before launch. Unknown fit
 is blocked under auto; an explicit per-model precision binds
 `allow_unknown_fit: true` and permits only that operator-owned load attempt.
 Known non-fit remains blocked. Ollama rows follow only modality and expose no
-vLLM fit or precision controls; their external daemon, pulled tag, digest, and
-modalities are server-validated prerequisites. These are presentation controls
-only. Source arms
-lacking an integrated evaluator also remain visible/selectable with a concise
-badge and one custom hover/focus tooltip, while the
-server rejects them before a subprocess; visibility never asserts runnability.
+vLLM fit or precision controls. The live roster is assembled from bounded
+loopback `/api/tags`, `/api/ps`, and `/api/show` calls: at most 64 installed
+models, a five-second aggregate capability deadline, explicit completion/vision
+capabilities, exact lowercase digests, and matching before/after tag snapshots.
+No row is invented when discovery is absent, malformed, slow, or races a tag
+change. Bounded tags/show family fields and
+`model_info.general.architecture` are cross-checked; missing or conflicting
+identity evidence fails closed, and architecture feeds the overlap index.
+Normalized upstream/name/family overlaps are unavailable for Ollama
+execution; a stale/manual overlap is visibly disabled with the exact reason and
+cannot bypass the distinct-model requirement. These are presentation controls
+only. Source arms lacking an integrated evaluator remain visible with a concise
+badge and hover/focus explanation. They fail closed by default. The explicit
+approximate-common-metrics opt-in admits only a separately named, supplementary,
+non-authoritative proxy with warning, strict provenance, separate coverage, and
+an uncalibrated reliability indicator; visibility never asserts authoritative
+evaluator support.
 Dry composition discards real API/local selections because the runner uses
 `MockTarget`, and local roster modality metadata is narrowed to its supported
 text/image path so audio mismatches fail UI/CLI parity.
 
+For a reviewed paid launch, Builder first derives exact selected API, local,
+source, source-conformance, and prepared-attacker snapshots, then binds their
+digests in the internal `ura-builder-selected-execution-config/1` bundle. The
+API component remains `ura-builder-selected-api-config/1`; it retains the full
+registry digest and each selected target/judge
+route's canonical provider/model, selected-entry digest, portable controls, and
+`endpoint_identity=https-base-url-sha256:<64 lowercase hex>`. Source and
+attacker components retain the canonical selected entries and exact referenced
+artifact/content digests, so replacing a real source with synthetic conversion
+or swapping a prepared replay after review cannot launch. Compatible raw base
+URLs and filesystem locators are used only to construct private runtime configs;
+no raw URL enters the bundle or durable job/evidence surfaces. Native routes
+use the same typed endpoint-identity form, so aliases share one route identity
+without exposing its authority.
+
+The reviewed parameters and bundle digest live behind an opaque, purpose-bound
+confirmation ticket in bounded process memory. It expires after 30 minutes and
+is atomically burned by success, replay, tampering, purpose mismatch, or
+selected-registry/artifact drift. Immediately before `Popen`, Builder
+revalidates the bundle and materializes selected generic API, local, source, and
+prepared-attacker configs plus source-conformance evidence as private mode-600
+files with exact SHA-256 arguments. Runner reads each once, verifies the bound
+bytes, and unlinks it before model work. The launch argv may therefore
+contain a raw compatible endpoint or explicit checkpoint locator only through a
+private config; preview HTML, retained argv, `Job`, `command.json`, and SQLite
+use typed digest placeholders and portable identities. This boundary is an
+operational TOCTOU/privacy control, not an evidence or access claim.
+
+When that reviewed lane contains a Hub role, Rig Web replaces the ordinary
+launch with a purpose-bound plan -> acquisition -> offline preflight/measured
+workflow. The visible plan Job is explicitly `acquisition plan / no model
+call`; the generic Commands route cannot launch `model_acquire`. The acquisition
+child receives a minimal runtime environment, the optional canonical
+write-only `HF_TOKEN`, and a job-bound activity secret, but no hosted-provider,
+AWS, proxy, or debug credentials. An authenticated event toggles
+`model_download` only during confirmed missing-byte transfer; absent events and
+cache hits show no badge, and reconcile/Stop/cancel always clear it. The final
+one-shot stage rechecks the exact execution-config bundle, plan, receipt,
+preflight/call caps, live attestation, and deadline before launching offline.
+
+Private plan/receipt/store/config/snapshot values exist only in process memory
+and transient child argv. The controller persists typed digest placeholders,
+captures the whole child stdout/stderr pipe (including native writes and
+descendant processes), performs bounded streaming redaction of every private
+locator/token spelling, and writes only the sanitized stream to Job logs. The
+safe canonical plan/receipt evidence copied into the result tree contains no
+locator or credential.
+
+Ollama lifecycle actions use a process-local confirmation token. The API origin
+is literal loopback HTTP, request/response sizes and timeouts are bounded,
+redirects and proxies are disabled, response opens and reads obey hard monotonic
+deadlines, and `ollama serve` is launched with a fixed argument vector and a
+dedicated process group. Status distinguishes absent, external, starting,
+ambiguous, cleanup-error, busy, and proven current-console-owned daemons.
+Listener ownership and a PID-reuse-resistant process-start identity must both be
+proved before the console claims ownership for pulls. Stop and clean shutdown
+terminate only that recorded owned group, including descendants; unconfirmed
+residue remains owned/error so Stop can retry, while a pre-existing or
+post-restart daemon is external and is never killed. POSIX cleanup re-proves the
+live leader's captured process-start identity immediately before each group
+signal; leader exit or PID/PGID reuse prevents escalation and retains the
+retryable owned/error state. A model pull is a typed
+console job, not a generic command form, and carries explicit
+`activity=model_download` while running so Jobs can render downloading without
+guessing from its name. The daemon child receives an explicit local-runtime,
+GPU, Ollama, certificate, and safe unauthenticated-proxy allowlist; unrelated
+environment values and hosted credentials are never copied. Pull admission is
+available only for the owned daemon and exact storage path frozen at Start. The
+worker re-proves PID/start/listener identity while holding the exclusive
+cross-process endpoint lock, verifies five GiB of model-volume headroom, and
+rechecks that reserve plus each API-reported remaining byte count. Inference and
+discovery take the corresponding shared lock, preventing pull/stop/model-mutation
+races. Ollama inference also verifies one exact tag/digest before chat, again
+after chat, and as exactly one matching loaded `/api/ps` row; Runner admission
+independently repeats live show-backed overlap and digest/modality validation.
+
 The Jobs view converts stored epoch timestamps to full browser-local start dates
 and times. Its state, text, From, and To filters combine, defaulting to the
 previous seven days through the current browser time with inclusive selected
-precision. Compact tags distinguish console-owned `running`, `passed`,
-`failed`, and `orphaned` states from external `reported running`, `partial`,
-`blocked`, `stopped`, and `unknown` states. An external running marker is only a
-reported state because the console does not own or inspect that process.
+precision. Browser-derived epoch bounds drive a date-aware SQLite query, so the
+view is not restricted to the 500-row restart cache. Campaign markers are also
+date-filtered before their 20-row display cap; both bounded paths disclose
+truncation. Compact tags use blue `running` for both console-owned work and an
+external task-log marker, plus `passed`, `failed`, `orphaned`, `partial`,
+`blocked`, `stopped`, and `unknown`. The surrounding detail labels an external
+running marker as reported state because the console does not own or inspect
+that process.
 
 External engineering campaign discovery is read-only and restricted to a
 bounded `ura-engineering-campaign/1` `ENGINEERING_ONLY.json` marker whose
@@ -403,7 +573,8 @@ execution proof. Completion-validated response artifacts remain the measurement
 authority.
 
 Console state persists in a stdlib-sqlite database (`console.db` under the
-state directory): jobs with their exact argv and builder parameters, the
+state directory): jobs with their durable argv identities and builder
+parameters, the
 campaign-run registry, per-artifact recorded token usage, and a report
 index; it carries a schema version, a startup integrity check, transactional
 terminal-state commits, and a Reindex action that rebuilds every derived row
@@ -413,6 +584,12 @@ completion-marker-bound artifacts, cost is calculated only from the
 operator-edited effective-dated pricing registry (missing data renders N/A,
 never zero), and the validated filesystem artifacts remain the sole
 measurement authority.
+
+For an explicit workstation vLLM checkpoint, the raw filesystem locator is a
+launch-only input. The confirmation capability and raw builder selection are
+short-lived process memory, the selected config is a private one-shot file
+removed after the child reads it, and all rendered/persisted job surfaces use
+`vllm:local-checkpoint@sha256:<digest>`.
 
 The pricing registry can be populated by hand or by the pricing fetcher
 (`experiments/pricing_fetch.py`), which does read-only HTTPS GETs of each
@@ -424,7 +601,10 @@ operator-entered rate; the merge is atomic with a prior-file backup and refuses
 a corrupt table rather than resetting it. Provider API keys are managed
 write-only from the console's Config section (`/config/secrets`): presence and
 a masked last-four hint only, written to the operator secrets file (mode 600),
-never displayed, logged, or stored in the database.
+never displayed, logged, or stored in the database. `HF_TOKEN` is the stricter
+exception: it exposes presence only without a suffix, remains process-memory
+only (legacy file entries are scrubbed), and is forwarded only to the dedicated
+acquisition child.
 
 ## Defense and judge separation
 

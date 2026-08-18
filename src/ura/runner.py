@@ -34,8 +34,9 @@ from pathlib import Path
 from typing import Any, Callable, Optional
 from urllib.parse import unquote_to_bytes
 
-from . import metrics, source_metrics
+from . import approximate_metrics, metrics, source_metrics
 from .adapters.base import AttackBudget, BaseAttacker
+from .attacker_input_contract import AttackerInputContract
 from .converters._common import (
     canonical_converted_corpus_sha256,
     media_signature_matches,
@@ -53,11 +54,25 @@ from .data_models import (
 )
 from .eligibility import datapoint_planning_stratum, planning_stratum_sha256
 from .judges.base import JudgeCascade
+from .model_identity import (
+    canonical_https_endpoint_identity,
+    canonical_provider_name,
+    strong_realized_model_identity_keys,
+    validate_https_endpoint_identity,
+)
+from .strict_json import strict_json_loads
 from .targets.base import BaseTarget
-from .targets.api import _logical_media_root_alias, _resolve_local_media_path
+from .targets.guarded import GUARDED_BLOCK_TEMPLATE_ID, GUARDED_BLOCK_TEXT
+from .targets.api import (
+    _logical_media_root_alias,
+    _resolve_local_media_path,
+    api_target_endpoint_identity,
+    canonical_api_target_identity,
+)
+from .modality_coverage import declared_target_combinations
 
 #: Bumped when the orchestration semantics change (recorded in every manifest).
-CODE_VERSION = "ura-runner/2.16"
+CODE_VERSION = "ura-runner/2.19"
 _MAX_SCORED_MEDIA_BYTES = 25 * 1024 * 1024
 #: Video releases legitimately exceed the image/audio bound (Video-SafetyBench
 #: ships ~44 MiB MP4s); mirrors DEFAULT_MAX_VIDEO_ASSET_BYTES converter-side.
@@ -165,6 +180,11 @@ class GlobalCallBudget:
                 f"{self.http_attempts} logical HTTP-attempt exposures"
             )
 
+    def raise_if_deadline_reached(self) -> None:
+        """Fail before model acquisition when the call-start deadline expired."""
+
+        self._check_deadline()
+
     def _reserve(self, *, target: int = 0, judge: int = 0, http: int = 0) -> None:
         self._check_deadline()
         if self.max_target_calls is not None and self.target_calls + target > self.max_target_calls:
@@ -255,13 +275,7 @@ class GlobalCallBudget:
         if self.state_path.is_symlink() or self.state_path.stat().st_size > 64 * 1024:
             raise ValueError("durable budget ledger must be a bounded regular file")
 
-        def reject_constant(value: str) -> None:
-            raise ValueError(f"non-finite budget ledger value {value!r}")
-
-        payload = json.loads(
-            self.state_path.read_text(encoding="utf-8"),
-            parse_constant=reject_constant,
-        )
+        payload = strict_json_loads(self.state_path.read_bytes())
         if not isinstance(payload, dict):
             raise ValueError("durable budget ledger must be a JSON object")
         if set(payload) != set(self.snapshot()):
@@ -296,6 +310,8 @@ class Runner:
         seeds: list[int],
         call_budget: Optional["GlobalCallBudget"] = None,
         expected_target_identity: Optional[dict[str, str]] = None,
+        approximate_common_metrics: bool = False,
+        approximate_evidence_class: approximate_metrics.ApproximateEvidenceClass = "measured",
     ) -> None:
         self.attacker = attacker
         self.target = target
@@ -305,6 +321,27 @@ class Runner:
         self.expected_target_identity = (
             dict(expected_target_identity)
             if expected_target_identity is not None else None
+        )
+        if not isinstance(approximate_common_metrics, bool):
+            raise ValueError("approximate_common_metrics must be boolean")
+        if approximate_evidence_class not in {"measured", "synthetic"}:
+            raise ValueError(
+                "approximate_evidence_class must be 'measured' or 'synthetic'"
+            )
+
+        target_evidence_class = getattr(target, "evidence_class", "measured")
+        if target_evidence_class not in {"measured", "synthetic"}:
+            raise ValueError(
+                "target evidence_class must be 'measured' or 'synthetic'"
+            )
+        self.target_evidence_class = target_evidence_class
+        self.approximate_common_metrics = approximate_common_metrics
+        # Evidence classification is monotonic: a synthetic target can never be
+        # upgraded by the public Runner default or a caller-supplied value.
+        self.approximate_evidence_class = (
+            "synthetic"
+            if "synthetic" in {approximate_evidence_class, target_evidence_class}
+            else "measured"
         )
         self.seeds = list(seeds) if seeds else [budget.seed]
         if len(set(self.seeds)) != len(self.seeds):
@@ -325,6 +362,18 @@ class Runner:
     def last_manifest(self) -> Optional[RunManifest]:
         """Most recent planned/partial/final manifest, including current counts."""
         return self._last_manifest
+
+    def _supplementary_metric_policy(self) -> dict[str, Any]:
+        if self.approximate_common_metrics:
+            return approximate_metrics.supplementary_metric_policy(
+                self.approximate_evidence_class
+            )
+        return {
+            "approximate_common_metrics": False,
+            "approximate_evidence_class": None,
+            "authority": None,
+            "metric_prefix": None,
+        }
 
     # ------------------------------------------------------------------ #
     # Execution
@@ -354,14 +403,17 @@ class Runner:
         ``skip_ids`` is retained for compatibility but may only name attempts
         present in ``resume_records``; it never authorizes a selected-subset run.
         """
+        input_contracts = self._plan_attacker_input_contracts(corpus)
         prepared, media_hashes = self._prepare_corpus(corpus)
-        self._validate_target_modalities(prepared)
+        self._validate_generated_media_delivery(input_contracts)
+        self._validate_target_modalities(input_contracts)
         planned = self._build_manifest(
             prepared,
             started_at=started_at,
             env=env,
             run_config=run_config,
             media_hashes=media_hashes,
+            input_contracts=input_contracts,
         )
         if manifest is not None and manifest.run_id != planned.run_id:
             raise ValueError(
@@ -410,6 +462,8 @@ class Runner:
                     previous: Optional[Response] = None
                     next_policy_challenge = 0
                     policy_challenge_horizon: Optional[int] = None
+                    stateful_attempt_count = 0
+                    terminal_violation = False
                     for logical_turn in range(logical_limit):
                         generated = session.next_attempt(previous)
                         if generated is None:
@@ -422,7 +476,9 @@ class Runner:
                             run_id=active_manifest.run_id,
                             corpus_hash=corpus_hash,
                             stateful=True,
+                            input_contract=input_contracts[(dp.id, seed)],
                         )
+                        stateful_attempt_count += 1
                         observed_horizon = attempt.params["policy_challenge_horizon"]
                         if policy_challenge_horizon is None:
                             policy_challenge_horizon = observed_horizon
@@ -468,7 +524,22 @@ class Runner:
                             and attempt.params["turn_expected_behavior"] == "refuse"
                             and self.judgments[-1].label == "violation"
                         ):
+                            terminal_violation = True
                             break
+
+                    contract = input_contracts[(dp.id, seed)]
+                    if (
+                        contract.turn_count_semantics == "exact"
+                        and stateful_attempt_count != len(contract.turns)
+                        and not terminal_violation
+                    ):
+                        raise ValueError(
+                            f"stateful attacker {self.attacker.name!r} ended after "
+                            f"{stateful_attempt_count} target inputs for {dp.id!r}; "
+                            f"its exact prospective contract declares "
+                            f"{len(contract.turns)} and no content-bound terminal "
+                            "violation was observed"
+                        )
 
                 else:
                     generated_attempts = self.attacker.generate(dp, seeded_budget)
@@ -484,9 +555,21 @@ class Runner:
                             run_id=active_manifest.run_id,
                             corpus_hash=corpus_hash,
                             stateful=False,
+                            input_contract=input_contracts[(dp.id, seed)],
                         )
                         self._claim_attempt_id(attempt.id, seen_attempt_ids)
                         prepared_attempts.append(attempt)
+                    contract = input_contracts[(dp.id, seed)]
+                    if (
+                        contract.turn_count_semantics == "exact"
+                        and len(prepared_attempts) != len(contract.turns)
+                    ):
+                        raise ValueError(
+                            f"attacker {self.attacker.name!r} emitted "
+                            f"{len(prepared_attempts)} target inputs for {dp.id!r}; "
+                            f"its exact prospective contract declares "
+                            f"{len(contract.turns)}"
+                        )
                     for attempt in prepared_attempts:
                         if attempt.id in skip and attempt.id not in resume:
                             raise ValueError(
@@ -545,6 +628,13 @@ class Runner:
             )
         else:
             evaluation_datapoint = self._evaluation_datapoint(datapoint, attempt)
+            approximate_proxy = bool(
+                attempt.params["policy_evaluable_turn"] is True
+                and evaluation_datapoint.meta.get(
+                    "common_metrics_eligible", True
+                ) is False
+                and self.approximate_common_metrics
+            )
             if response_record is not None:
                 # Resume judging from an already-paid, checkpointed response so a
                 # judge failure never re-bills the target on the next attempt.
@@ -566,9 +656,11 @@ class Runner:
                 final, raw_trail = self._non_evaluable_setup_outcome(
                     response
                 )
-            elif evaluation_datapoint.meta.get(
-                "common_metrics_eligible", True
-            ) is False:
+            elif (
+                evaluation_datapoint.meta.get("common_metrics_eligible", True)
+                is False
+                and not approximate_proxy
+            ):
                 final, raw_trail = self._source_metric_only_outcome(
                     evaluation_datapoint, response
                 )
@@ -609,6 +701,29 @@ class Runner:
                     self.call_budget.reconcile_http_attempts(
                         reserved=judge_http_exposure, observed=observed
                     )
+                if approximate_proxy:
+                    raw_trail = [
+                        item.model_copy(update={
+                            "raw": {
+                                **item.raw,
+                                "policy_evaluation_status": (
+                                    "approximate_common_security_proxy"
+                                ),
+                                "metric_authority": (
+                                    "supplementary_non_authoritative"
+                                ),
+                                "required_metric": evaluation_datapoint.meta.get(
+                                    "required_metric"
+                                ),
+                            }
+                        })
+                        for item in raw_trail
+                    ]
+                    final = next(
+                        item
+                        for item in raw_trail
+                        if item.raw.get("cascade_role") == "authoritative"
+                    )
             trail = [self._stamp_judgment(j, run_id) for j in raw_trail]
             final = _attach_strongreject_shadow(final, trail)
             target_modalities = tuple(
@@ -628,6 +743,45 @@ class Runner:
                 target_modalities,
                 source_evaluation,
             )
+            if approximate_proxy:
+                required_metric = evaluation_datapoint.meta.get("required_metric")
+                supplementary_policy = self._supplementary_metric_policy()
+                final = final.model_copy(update={
+                    "raw": {
+                        **final.raw,
+                        **approximate_metrics.build_approximate_caller_binding(
+                            datapoint=evaluation_datapoint,
+                            response=response,
+                            declared_target_evidence_class=(
+                                self.target_evidence_class
+                            ),
+                            policy=supplementary_policy,
+                        ),
+                    }
+                })
+                decision = approximate_metrics.build_approximate_decision(
+                    datapoint=evaluation_datapoint,
+                    response=response,
+                    selected=final,
+                    trail=trail,
+                    source_evaluator_implemented=(
+                        isinstance(required_metric, str)
+                        and source_metrics.source_evaluator_implemented(
+                            evaluation_datapoint.source, required_metric
+                        )
+                    ),
+                    evidence_class=self.approximate_evidence_class,
+                    declared_target_evidence_class=self.target_evidence_class,
+                    supplementary_policy=supplementary_policy,
+                )
+                final = final.model_copy(update={
+                    "raw": {
+                        **final.raw,
+                        "approximate_security_decision": decision.model_dump(
+                            mode="json"
+                        ),
+                    }
+                })
             meta = self._trail_metadata(
                 evaluation_datapoint, attempt, response, run_id
             )
@@ -733,7 +887,7 @@ class Runner:
         return {
             "schema_version": SCHEMA_VERSION,
             "run_id": attempt.run_id,
-            "attempt": attempt.model_dump(mode="json"),
+            "attempt": _portable_attempt_dump(attempt),
             "response": response.model_dump(mode="json"),
             "budget_after_target": (
                 self.call_budget.snapshot() if self.call_budget is not None else None
@@ -907,19 +1061,7 @@ class Runner:
                 f"target {self.target.name!r} reported requested_seed "
                 f"{reported_seed!r}; expected {attempt.seed!r}"
             )
-        provider_refusal = response.raw.get("provider_refusal", False)
-        if not isinstance(provider_refusal, bool):
-            raise ValueError("target provider_refusal signal must be boolean")
-        has_output = _response_has_substantive_output(response)
-        if provider_refusal and has_output:
-            raise ValueError(
-                "typed provider refusal must not also carry scored assistant output"
-            )
-        if not provider_refusal and not has_output:
-            raise ValueError(
-                f"target {self.target.name!r} returned no substantive output and no "
-                "typed provider refusal"
-            )
+        validate_response_refusal_state(response)
         _validate_response_accounting(response)
         for key, expected_value in (
             ("run_id", run_id),
@@ -982,6 +1124,7 @@ class Runner:
         run_id: str,
         corpus_hash: str,
         stateful: bool,
+        input_contract: AttackerInputContract,
     ) -> Attempt:
         if not isinstance(attempt.id, str) or not attempt.id.strip():
             raise ValueError("attacker emitted a blank attempt id")
@@ -1085,6 +1228,13 @@ class Runner:
             policy_challenge_index = 0
             policy_challenge_horizon = 1
             turn_expected_behavior = dp.expected_behavior
+        planned_target_input = self._validate_attempt_input_contract(
+            input_contract,
+            rendered_input,
+            logical_turn=logical_turn,
+            policy_evaluable=policy_evaluable,
+            attempt_id=attempt.id,
+        )
         planning_stratum_descriptor = datapoint_planning_stratum(
             dp, validate_media_bytes=False
         )
@@ -1107,6 +1257,8 @@ class Runner:
             # without invalidating the completed cell.
             "attempt_media_hashes": attempt_media_hashes,
             "attempt_media_refs": len(attempt_media_hashes),
+            "attacker_input_contract_id": input_contract.contract_id,
+            "planned_target_input": planned_target_input,
             "source_cluster_id": str(
                 dp.meta.get("source_cluster_id") or dp.id
             ),
@@ -1190,7 +1342,12 @@ class Runner:
         meta = dict(datapoint.meta)
         if not evaluable:
             meta["common_metrics_eligible"] = False
-            meta["required_metric"] = "conversation_setup_observation"
+            # Setup turns are retained for trajectory conditioning but have no
+            # policy decision and therefore no metric requirement.  A synthetic
+            # metric name here would make the final Judgment disagree with the
+            # canonical not-evaluable trail projection (which truthfully keeps
+            # ``required_metric`` null).
+            meta.pop("required_metric", None)
             meta["source_construct"] = "non_evaluable_conversation_setup"
         return datapoint.model_copy(update={
             "payload_text": actual_prompt,
@@ -1453,7 +1610,7 @@ class Runner:
         return {
             "schema_version": SCHEMA_VERSION,
             "run_id": attempt.run_id,
-            "attempt": attempt.model_dump(mode="json"),
+            "attempt": _portable_attempt_dump(attempt),
             "response": response.model_dump(mode="json"),
             "judgment": judgment.model_dump(mode="json"),
             "trail": [item.model_dump(mode="json") for item in trail],
@@ -1614,6 +1771,12 @@ class Runner:
         source_metric_only = (
             policy_evaluable
             and datapoint.meta.get("common_metrics_eligible", True) is False
+            and not self.approximate_common_metrics
+        )
+        approximate_proxy = (
+            policy_evaluable
+            and datapoint.meta.get("common_metrics_eligible", True) is False
+            and self.approximate_common_metrics
         )
         for index, (item, stage_name) in enumerate(zip(trail, expected_stage_names)):
             if item.judge != stage_name:
@@ -1659,6 +1822,21 @@ class Runner:
                         "checkpoint source-metric-only turn contains a common "
                         f"judge verdict for {expected.id!r}"
                     )
+            elif approximate_proxy:
+                if (
+                    item.label == "not_applicable"
+                    or raw.get("stage_queried") is not True
+                    or raw.get("policy_evaluation_status")
+                    != "approximate_common_security_proxy"
+                    or raw.get("metric_authority")
+                    != "supplementary_non_authoritative"
+                    or raw.get("required_metric")
+                    != datapoint.meta.get("required_metric")
+                ):
+                    raise ValueError(
+                        "checkpoint approximate common-security proxy has invalid "
+                        f"authority or source binding for {expected.id!r}"
+                    )
             elif policy_evaluable:
                 if (
                     item.label == "not_applicable"
@@ -1700,6 +1878,43 @@ class Runner:
                 else None
             ),
         )
+        if approximate_proxy:
+            required_metric = evaluation_datapoint.meta.get("required_metric")
+            supplementary_policy = self._supplementary_metric_policy()
+            reconstructed = reconstructed.model_copy(update={
+                "raw": {
+                    **reconstructed.raw,
+                    **approximate_metrics.build_approximate_caller_binding(
+                        datapoint=evaluation_datapoint,
+                        response=response,
+                        declared_target_evidence_class=(
+                            self.target_evidence_class
+                        ),
+                        policy=supplementary_policy,
+                    ),
+                }
+            })
+            decision = approximate_metrics.build_approximate_decision(
+                datapoint=evaluation_datapoint,
+                response=response,
+                selected=reconstructed,
+                trail=trail,
+                source_evaluator_implemented=(
+                    isinstance(required_metric, str)
+                    and source_metrics.source_evaluator_implemented(
+                        evaluation_datapoint.source, required_metric
+                    )
+                ),
+                evidence_class=self.approximate_evidence_class,
+                declared_target_evidence_class=self.target_evidence_class,
+                supplementary_policy=supplementary_policy,
+            )
+            reconstructed = reconstructed.model_copy(update={
+                "raw": {
+                    **reconstructed.raw,
+                    "approximate_security_decision": decision.model_dump(mode="json"),
+                }
+            })
         if reconstructed.model_dump(mode="json") != judgment.model_dump(mode="json"):
             raise ValueError(
                 f"checkpoint final judgment does not match its authoritative trail "
@@ -1740,14 +1955,17 @@ class Runner:
         Matrix drivers use this to choose a collision-safe artifact stem and to
         locate a matching checkpoint without touching any model endpoint.
         """
+        input_contracts = self._plan_attacker_input_contracts(corpus)
         prepared, media_hashes = self._prepare_corpus(corpus)
-        self._validate_target_modalities(prepared)
+        self._validate_generated_media_delivery(input_contracts)
+        self._validate_target_modalities(input_contracts)
         return self._build_manifest(
             prepared,
             started_at=started_at,
             env=env,
             run_config=run_config,
             media_hashes=media_hashes,
+            input_contracts=input_contracts,
         )
 
     def _build_manifest(
@@ -1758,9 +1976,12 @@ class Runner:
         env: Optional[dict[str, Any]],
         run_config: Optional[dict[str, Any]],
         media_hashes: dict[str, str],
+        input_contracts: dict[tuple[str, int], AttackerInputContract],
     ) -> RunManifest:
-        self.attacker.validate_measured_run(corpus)
-        source_metrics.validate_scored_source_metrics(corpus)
+        source_metrics.validate_scored_source_metrics(
+            corpus,
+            allow_approximate_common_proxy=self.approximate_common_metrics,
+        )
         identity_validator = getattr(self.target, "validate_research_identity", None)
         if callable(identity_validator):
             identity_validator()
@@ -1782,6 +2003,8 @@ class Runner:
             "judge_cascade": _component_config(self.judge_cascade),
         }
         source_identity = _harness_source_identity()
+        attacker_input_plan = self._attacker_input_plan_payload(input_contracts)
+        attacker_input_plan_sha256 = _sha256_json(attacker_input_plan)
         effective_env = {
             "python": platform.python_version(),
             "python_implementation": platform.python_implementation(),
@@ -1805,6 +2028,7 @@ class Runner:
         source_policy_inventory = [json.loads(item) for item in source_policies]
         source_policy_digest = _sha256_json(source_policy_inventory)
         source_metric_plan = _source_metric_plan(corpus)
+        supplementary_metric_policy = self._supplementary_metric_policy()
         identity = {
             "code_version": CODE_VERSION,
             "schema_version": SCHEMA_VERSION,
@@ -1822,6 +2046,9 @@ class Runner:
             "source_policy_inventory": source_policy_inventory,
             "source_policy_inventory_sha256": source_policy_digest,
             "source_metric_plan": source_metric_plan,
+            "supplementary_metric_policy": supplementary_metric_policy,
+            "attacker_input_plan": attacker_input_plan,
+            "attacker_input_plan_sha256": attacker_input_plan_sha256,
         }
         run_id = self._run_id(identity)
         return RunManifest(
@@ -1839,6 +2066,10 @@ class Runner:
                     dp.source_policy is None for dp in corpus
                 ),
                 "source_metric_plan": source_metric_plan,
+                "supplementary_metric_policy": supplementary_metric_policy,
+                "attacker_input_plan": attacker_input_plan,
+                "attacker_input_plan_sha256": attacker_input_plan_sha256,
+                "n_attacker_input_contracts": len(input_contracts),
                 "source_metric_inventory": _realized_source_metric_inventory(
                     source_metric_plan, []
                 ),
@@ -1962,7 +2193,13 @@ class Runner:
                 for modality in dp.modalities
                 if modality in {"image", "audio", "video"}
             }
-            if eligibility is True and physical_modalities:
+            if (
+                physical_modalities
+                and (
+                    eligibility is True
+                    or (eligibility is False and self.approximate_common_metrics)
+                )
+            ):
                 endpoint_scope = dp.meta.get(
                     "automated_metric_scope", "media_conditioned"
                 )
@@ -1982,6 +2219,21 @@ class Runner:
                         f"(id={dp.id!r}, modalities={rendered_modalities}); "
                         "use automated_metric_scope='response_only' only for an "
                         "explicitly response-only construct"
+                    )
+                if (
+                    eligibility is False
+                    and self.approximate_common_metrics
+                    and endpoint_scope == "media_conditioned"
+                    and not any(
+                        getattr(stage, "source_reference_context_capable", False)
+                        for stage in self.judge_cascade.stages
+                    )
+                ):
+                    raise ValueError(
+                        "approximate media-conditioned security proxy requires at "
+                        "least one configured judge stage with declared source-"
+                        "reference-context capability before target calls: "
+                        f"{dp.id}"
                     )
             direct = [
                 _prepare_media_ref(
@@ -2009,33 +2261,171 @@ class Runner:
             )
         return prepared, media_hashes
 
-    def _validate_target_modalities(self, corpus: list[DataPoint]) -> None:
+    def _plan_attacker_input_contracts(
+        self, corpus: list[DataPoint]
+    ) -> dict[tuple[str, int], AttackerInputContract]:
+        """Bind attacker-produced target inputs for every datapoint and seed."""
+
+        self.attacker.validate_measured_run(corpus)
+        planned: dict[tuple[str, int], AttackerInputContract] = {}
+        for datapoint in corpus:
+            for seed in self.seeds:
+                contract = self.attacker.plan_target_inputs(
+                    datapoint, replace(self.budget, seed=seed)
+                )
+                if (
+                    contract.attacker != self.attacker.name
+                    or contract.datapoint_id != datapoint.id
+                ):
+                    raise ValueError(
+                        "attacker input contract identity does not match its "
+                        f"planner cell: {self.attacker.name}/{datapoint.id}/s{seed}"
+                    )
+                planned[(datapoint.id, seed)] = contract
+        return planned
+
+    @staticmethod
+    def _attacker_input_plan_payload(
+        contracts: dict[tuple[str, int], AttackerInputContract],
+    ) -> dict[str, object]:
+        return {
+            "schema": "ura-attacker-input-plan/1",
+            "entries": [
+                {"seed": seed, **contract.manifest_payload()}
+                for (datapoint_id, seed), contract in sorted(contracts.items())
+            ],
+        }
+
+    @staticmethod
+    def _validate_attempt_input_contract(
+        contract: AttackerInputContract,
+        dialog: list[DialogTurn],
+        *,
+        logical_turn: int,
+        policy_evaluable: bool,
+        attempt_id: str,
+    ) -> dict[str, object]:
+        """Compare one realized request to its exact prospective turn pre-call."""
+
+        if logical_turn >= len(contract.turns):
+            raise ValueError(
+                f"attempt {attempt_id!r} exceeds attacker input contract turn horizon"
+            )
+        planned = contract.turns[logical_turn]
+        actual_combination = _contract_dialog_combination(dialog)
+        if actual_combination != planned.combination:
+            raise ValueError(
+                f"attempt {attempt_id!r} input combination changed after planning: "
+                f"{actual_combination!r} != {planned.combination!r}"
+            )
+        if policy_evaluable != planned.policy_evaluable:
+            raise ValueError(
+                f"attempt {attempt_id!r} policy-evaluation scope changed after planning"
+            )
+
+        inventory = {
+            item.media_id: (item.modality, item.mime, item.sha256)
+            for item in (*contract.source_media, *contract.generated_media)
+        }
+        expected_media = tuple(inventory[media_id] for media_id in planned.media_ids)
+        actual_media = tuple(
+            (media.modality, media.mime, media.sha256)
+            for turn in dialog
+            for media in turn.media
+        )
+        if any(
+            not isinstance(item[1], str)
+            or not isinstance(item[2], str)
+            for item in actual_media
+        ):
+            raise ValueError(
+                f"attempt {attempt_id!r} lacks verified MIME/digest media identity"
+            )
+        if actual_media != expected_media:
+            raise ValueError(
+                f"attempt {attempt_id!r} media occurrence tuple changed after planning"
+            )
+
+        if planned.bound_text_sha256 is not None:
+            text = _last_substantive_user_text(dialog)
+            encoded = text.encode("utf-8") if text is not None else b""
+            if (
+                hashlib.sha256(encoded).hexdigest() != planned.bound_text_sha256
+                or len(encoded) != planned.bound_text_bytes
+            ):
+                raise ValueError(
+                    f"attempt {attempt_id!r} bound adversarial text changed after planning"
+                )
+        return planned.manifest_payload()
+
+    def _validate_target_modalities(
+        self, contracts: dict[tuple[str, int], AttackerInputContract]
+    ) -> None:
         """Reject unsupported physical modalities before the first model call.
 
         Silently dropping image/audio/video inputs changes the intervention and
         therefore the estimand. A future diagnostic fallback must be a separate,
         explicit policy; scored Runner cells are strict.
         """
-        supported = set(getattr(self.target, "modality_support", ("text",)))
+        supported = set(declared_target_combinations(self.target))
         failures: list[str] = []
-        for datapoint in corpus:
-            required = set(datapoint.modalities) & {"image", "audio", "video"}
-            missing = sorted(required - supported)
+        for (datapoint_id, seed), contract in sorted(contracts.items()):
+            missing = sorted(
+                {turn.combination for turn in contract.turns} - supported
+            )
             if missing:
-                failures.append(f"{datapoint.id} ({','.join(missing)})")
+                rendered = ",".join("+".join(item) for item in missing)
+                failures.append(f"{datapoint_id}/s{seed} ({rendered})")
         if failures:
             sample = ", ".join(failures[:5])
             raise ValueError(
-                f"target {self.target.name!r} lacks required modalities; "
+                f"target {self.target.name!r} lacks planned attacker input combinations; "
                 f"cell rejected before execution: {sample}"
             )
+
+    def _validate_generated_media_delivery(
+        self, contracts: dict[tuple[str, int], AttackerInputContract]
+    ) -> None:
+        """Require every generated local asset to lie under target media roots."""
+
+        roots = _runner_media_roots(self.target)
+        seen: set[tuple[str, str]] = set()
+        for contract in contracts.values():
+            for media in contract.generated_media:
+                path = media.delivery_path
+                if path is None:
+                    continue
+                key = (path, media.sha256)
+                if key in seen:
+                    continue
+                seen.add(key)
+                if not roots:
+                    raise PermissionError(
+                        "runner-side generated media reads are disabled; configure "
+                        "the target's media_roots or URA_MEDIA_ROOTS"
+                    )
+                try:
+                    resolved, _root_index = _resolve_local_media_path(path, roots)
+                except (FileNotFoundError, PermissionError, ValueError) as exc:
+                    raise PermissionError(
+                        "attacker-generated media is outside the selected target's "
+                        "approved roots"
+                    ) from exc
+                if not resolved.is_file() or resolved.is_symlink():
+                    raise ValueError(
+                        "attacker-generated media delivery path is not a regular file"
+                    )
 
     # ------------------------------------------------------------------ #
     # Aggregation
     # ------------------------------------------------------------------ #
 
     def aggregate(
-        self, judgments: list[Judgment], group_keys: list[str]
+        self,
+        judgments: list[Judgment],
+        group_keys: list[str],
+        *,
+        _derive_approximate: bool = True,
     ) -> list[EvalResult]:
         """Bucket judgments by ``group_keys`` and compute the standard metrics.
 
@@ -2503,6 +2893,100 @@ class Runner:
                         observations=observations,
                     )
                 )
+        approximate_rows = [
+            judgment
+            for judgment in judgments
+            if judgment.raw.get("approximate_security_decision") is not None
+        ]
+        if _derive_approximate and approximate_rows:
+            manifest = self._last_manifest
+            supplementary_policy = (
+                manifest.config.get("supplementary_metric_policy")
+                if manifest is not None
+                else None
+            )
+            if supplementary_policy is None or not self.responses:
+                raise ValueError(
+                    "Runner approximate aggregation requires the authoritative "
+                    "Responses and exact manifest supplementary policy from its "
+                    "completed run"
+                )
+            invalid = [
+                judgment.attempt_id
+                for judgment in approximate_rows
+                if judgment.raw.get("common_metrics_eligible", True) is not False
+                or judgment.raw.get("policy_evaluable_turn") is not True
+            ]
+            if invalid:
+                raise ValueError(
+                    "approximate security decisions must be policy-evaluable and "
+                    "common-metric-ineligible: " + ", ".join(sorted(invalid)[:3])
+                )
+            for judgment in approximate_rows:
+                runtime_trail = self.trails.get(judgment.attempt_id)
+                if not runtime_trail:
+                    raise ValueError(
+                        "Runner approximate aggregation requires the exact "
+                        "in-memory retained trail for every supporting decision"
+                    )
+                runtime_projection = [
+                    approximate_metrics.build_approximate_trail_stage(stage)
+                    for stage in runtime_trail
+                ]
+                decision = approximate_metrics.validate_approximate_decision(
+                    judgment.raw.get("approximate_security_decision")
+                )
+                if runtime_projection != decision.retained_trail:
+                    raise ValueError(
+                        "approximate decision does not match the Runner's exact "
+                        "in-memory retained trail"
+                    )
+            proxy_keys = list(keys)
+            if "required_metric" not in proxy_keys:
+                proxy_keys.append("required_metric")
+            proxy_rows = [
+                judgment.model_copy(update={
+                    "raw": {
+                        **judgment.raw,
+                        "common_metrics_eligible": True,
+                        # The recursive common-proxy aggregation must not also
+                        # reproduce source-native result families.
+                        "source_evaluation": None,
+                    }
+                })
+                for judgment in approximate_rows
+            ]
+            proxy_results = self.aggregate(
+                proxy_rows,
+                proxy_keys,
+                _derive_approximate=False,
+            )
+            for proxy_result in proxy_results:
+                supporting_bucket = [
+                    judgment
+                    for judgment in approximate_rows
+                    if all(
+                        _group_value(judgment, key) == proxy_result.group_by[key]
+                        for key in proxy_keys
+                    )
+                ]
+                approximate_provenance = (
+                    approximate_metrics.aggregate_approximate_provenance(
+                        supporting_bucket,
+                        metric=proxy_result.metric,
+                        responses=self.responses,
+                        supplementary_policy=supplementary_policy,
+                    )
+                )
+                results.append(EvalResult.model_validate({
+                    **proxy_result.model_dump(mode="json"),
+                    "metric": f"approximate_{proxy_result.metric}",
+                    "provenance": {
+                        **proxy_result.provenance,
+                        "approximate_security": approximate_provenance,
+                    },
+                }))
+
         stamped: list[EvalResult] = []
         for result in results:
             provenance = {**result.provenance, "run_id": run_id}
@@ -2535,7 +3019,10 @@ class Runner:
 
     def save_attempts(self, path: str | Path) -> None:
         """Persist concrete rendered inputs with run/model/attempt join keys."""
-        _write_jsonl_models(self.attempts, Path(path))
+        _write_jsonl_rows(
+            [_portable_attempt_dump(attempt) for attempt in self.attempts],
+            Path(path),
+        )
 
     def save_responses(self, path: str | Path) -> None:
         """Persist raw target replies with run/model/attempt join keys."""
@@ -2615,35 +3102,17 @@ class Runner:
                             f"trail {attempt_id!r} stage {stage} has invalid "
                             f"parse status {parsed!r}"
                         )
+                    approximate_stage_binding = (
+                        approximate_metrics.build_approximate_trail_stage(j).model_dump(
+                            mode="json"
+                        )
+                        if j.raw.get("policy_evaluation_status")
+                        == "approximate_common_security_proxy"
+                        else None
+                    )
                     fh.write(json.dumps({
-                        "attempt_id": attempt_id,
-                        "stage": stage,
-                        "judge": j.judge,
-                        # Retain the identity-bearing projection needed to
-                        # independently recompute the final manifest's stable
-                        # per-stage provider identity from hashed artifacts.
-                        "judge_model": (
-                            j.raw.get("judge_model") or j.raw.get("model")
-                        ),
-                        "judge_model_revision": j.raw.get("model_revision"),
-                        "judge_model_digest": j.raw.get("model_digest"),
-                        "judge_model_identity": j.raw.get("model_identity"),
-                        "judge_call": j.raw.get("judge_call"),
-                        "label": j.label,
-                        "score": j.score,
-                        "confidence": float(confidence),
-                        # ``None`` means parsing is not an operation performed by
-                        # this structured stage (for example deterministic rules),
-                        # not that an external output failed to parse.
-                        "parsed": parsed,
-                        "cascade_confident": cascade_confident,
-                        "cascade_role": cascade_role,
-                        "cascade_policy": j.raw.get("cascade_policy"),
-                        "stage_queried": j.raw.get("stage_queried", True),
-                        "policy_evaluation_status": j.raw.get(
-                            "policy_evaluation_status", "evaluated"
-                        ),
-                        "required_metric": j.raw.get("required_metric"),
+                        **judgment_trail_projection(j),
+                        "approximate_stage_binding": approximate_stage_binding,
                         "risk_category": meta.get("risk_category", "unknown"),
                         "modality": meta.get("modality", "unknown"),
                         "source_modality": meta.get("source_modality", "unknown"),
@@ -2706,7 +3175,7 @@ class Runner:
         it to :meth:`run` as ``skip_ids``.
         """
         raw = Path(manifest_path).read_text(encoding="utf-8")
-        return RunManifest.model_validate_json(raw)
+        return RunManifest.model_validate(strict_json_loads(raw), strict=True)
 
     @staticmethod
     def append_checkpoint(path: str | Path, record: CheckpointRecord) -> None:
@@ -2764,10 +3233,14 @@ class Runner:
                         )
                     tail = tail_window[boundary + 1:]
                     try:
-                        parsed = json.loads(tail.decode("utf-8"))
+                        parsed = strict_json_loads(tail)
                     except (UnicodeDecodeError, json.JSONDecodeError):
                         truncate_at = size - window + boundary + 1
                         fh.truncate(truncate_at)
+                    except ValueError as exc:
+                        raise ValueError(
+                            "checkpoint final record is not strict JSON"
+                        ) from exc
                     else:
                         if not isinstance(parsed, dict):
                             raise ValueError(
@@ -2862,7 +3335,7 @@ class Runner:
                 if not raw_line.strip():
                     continue
                 try:
-                    record = json.loads(raw_line.decode("utf-8"))
+                    record = strict_json_loads(raw_line)
                 except (UnicodeDecodeError, json.JSONDecodeError) as exc:
                     if (
                         not raw_line.endswith(b"\n")
@@ -2871,6 +3344,10 @@ class Runner:
                         break
                     raise ValueError(
                         f"invalid checkpoint JSON at {p}:{line_number}"
+                    ) from exc
+                except ValueError as exc:
+                    raise ValueError(
+                        f"invalid checkpoint JSON at {p}:{line_number}: {exc}"
                     ) from exc
                 if not isinstance(record, dict):
                     raise ValueError(
@@ -2980,7 +3457,7 @@ class Runner:
                 if not raw_line.strip():
                     continue
                 try:
-                    record = json.loads(raw_line.decode("utf-8"))
+                    record = strict_json_loads(raw_line)
                 except (UnicodeDecodeError, json.JSONDecodeError) as exc:
                     # A crash can leave only the final row unterminated and torn.
                     # A terminated malformed row is corruption, not a torn write.
@@ -2991,6 +3468,10 @@ class Runner:
                         break
                     raise ValueError(
                         f"invalid response checkpoint JSON at {p}:{line_number}"
+                    ) from exc
+                except ValueError as exc:
+                    raise ValueError(
+                        f"invalid response checkpoint JSON at {p}:{line_number}: {exc}"
                     ) from exc
                 if not isinstance(record, dict):
                     raise ValueError(
@@ -3045,22 +3526,62 @@ def _attach_strongreject_shadow(
     rule/guardrail confidence score a StrongREJECT grade. Full-shadow execution
     lets us retain the one stage that actually emitted the rubric fields.
     """
+    approximate_proxy = any(
+        item.raw.get("policy_evaluation_status")
+        == "approximate_common_security_proxy"
+        for item in trail
+    )
     rubric_rows = [
         judgment for judgment in trail
         if "strongreject_applicable" in judgment.raw
     ]
+    stage_bindings = [judgment_trail_projection(item) for item in trail]
     if not rubric_rows:
         return final.model_copy(update={
-            "raw": {**final.raw, "strongreject_evaluated": False}
+            "raw": {
+                **final.raw,
+                # Every planned judge stage can affect agreement/sensitivity
+                # evidence even when it is neither authoritative nor the
+                # StrongREJECT rubric stage.  Bind the complete ordered trail
+                # into the authoritative final record so a shadow verdict
+                # cannot be rewritten independently and merely rehashed.
+                "judge_stage_bindings": stage_bindings,
+                "strongreject_evaluated": False,
+                "strongreject_stage_binding": None,
+                **(
+                    {"approximate_rubric_stage_binding": None}
+                    if approximate_proxy
+                    else {}
+                ),
+            }
         })
     if len(rubric_rows) != 1:
         raise ValueError(
             "StrongREJECT aggregation requires exactly one rubric judge stage"
         )
     rubric = rubric_rows[0]
+    rubric_stage_binding = (
+        approximate_metrics.build_approximate_trail_stage(rubric).model_dump(
+            mode="json"
+        )
+        if approximate_proxy
+        else None
+    )
     applicable = rubric.raw.get("strongreject_applicable") is True
     parsed = rubric.raw.get("parsed") is True
     evaluated = applicable and parsed
+    queried_value = rubric.raw.get("judge_model_queried")
+    if not isinstance(queried_value, bool):
+        queried_value = rubric.raw.get("guardrail_queried")
+    judge_call = rubric.raw.get("judge_call")
+    rubric_model_queried = (
+        False
+        if rubric.raw.get("provider_signal_authoritative") is True
+        else queried_value
+        if isinstance(queried_value, bool)
+        else isinstance(judge_call, dict)
+        and judge_call.get("response_target") is not None
+    )
     score = rubric.raw.get("strongreject_score")
     if applicable:
         if (
@@ -3075,13 +3596,27 @@ def _attach_strongreject_shadow(
     return final.model_copy(update={
         "raw": {
             **final.raw,
+            "judge_stage_bindings": stage_bindings,
             "strongreject_evaluated": evaluated,
             "strongreject_score": diagnostic_score if evaluated else None,
             "strongreject_unparsed": applicable and not parsed,
             "strongreject_diagnostic_score": diagnostic_score,
             "strongreject_judge": rubric.judge,
-            "strongreject_judge_model": rubric.raw.get("judge_model"),
+            "strongreject_judge_model": (
+                rubric.raw.get("judge_model") if rubric_model_queried else None
+            ),
+            "strongreject_judge_model_queried": rubric_model_queried,
             "strongreject_parsed": parsed,
+            # Bind every scientifically relevant field of the sole rubric
+            # stage into the final authority artifact. Postprocessors compare
+            # this path-free projection type-strictly, so a shadow label/call/
+            # cascade rewrite cannot be hidden by rehashing the trail.
+            "strongreject_stage_binding": judgment_trail_projection(rubric),
+            **(
+                {"approximate_rubric_stage_binding": rubric_stage_binding}
+                if approximate_proxy
+                else {}
+            ),
         }
     })
 
@@ -3093,14 +3628,32 @@ def _identity_string(
     field: str,
     context: str,
 ) -> Optional[str]:
-    """Return the first provider identity field using an explicit precedence.
+    """Return one consistent value across equivalent provider field aliases.
 
     Providers and compatibility targets use several names for the same concept.
-    Higher-fidelity resolved fields intentionally take precedence over generic
-    ``model`` fields. Every present alias must nevertheless be a non-blank
-    string; ``None`` means that optional provider datum was not reported.
+    Every present alias must normalize to exactly the same identity; selecting
+    the first would let a contradictory lower-precedence alias evade realized
+    self-judge and artifact-integrity checks. ``None`` means the optional datum
+    was not reported.
     """
+
+    def normalize(value: str) -> str:
+        normalized = value.strip()
+        if field == "provider":
+            return canonical_provider_name(normalized)
+        if field == "endpoint_identity":
+            return validate_https_endpoint_identity(normalized)
+        if field == "model_revision":
+            return normalized.lower()
+        if field == "model_digest":
+            normalized = normalized.lower()
+            if normalized.startswith("sha256:"):
+                normalized = normalized.removeprefix("sha256:")
+            return normalized
+        return normalized
+
     selected: Optional[str] = None
+    selected_alias: Optional[str] = None
     for alias in aliases:
         value = values.get(alias)
         if value is None:
@@ -3110,8 +3663,15 @@ def _identity_string(
                 f"{context} identity field {alias!r} for {field} must be a "
                 "non-blank string when reported"
             )
+        normalized = normalize(value)
         if selected is None:
-            selected = value.strip()
+            selected = normalized
+            selected_alias = alias
+        elif selected != normalized:
+            raise ValueError(
+                f"{context} identity aliases {selected_alias!r} and {alias!r} "
+                f"conflict for {field}"
+            )
     return selected
 
 
@@ -3123,6 +3683,10 @@ def _target_identity_snapshot(response: Response) -> dict[str, str]:
         "provider": _identity_string(
             raw, ("provider", "provider_name"),
             field="provider", context="target",
+        ),
+        "endpoint_identity": _identity_string(
+            raw, ("endpoint_identity",),
+            field="endpoint_identity", context="target",
         ),
         "resolved_model": _identity_string(
             raw,
@@ -3143,6 +3707,10 @@ def _target_identity_snapshot(response: Response) -> dict[str, str]:
         "model_digest": _identity_string(
             raw, ("verified_model_digest", "model_digest"),
             field="model_digest", context="target",
+        ),
+        "model_identity": _identity_string(
+            raw, ("model_identity",),
+            field="model_identity", context="target",
         ),
     }
     snapshot.update({key: value for key, value in optional.items() if value is not None})
@@ -3177,6 +3745,20 @@ def _judge_identity_snapshot(row: dict[str, Any]) -> dict[str, str]:
         snapshot[snapshot_field] = value.strip()
     call = row.get("judge_call")
     if call is None:
+        requested = snapshot.get("requested_model")
+        revision = snapshot.get("model_revision")
+        model_identity = snapshot.get("model_identity")
+        if (
+            requested is not None
+            and revision is not None
+            and model_identity == f"{requested}@{revision}"
+        ):
+            # Local model-backed judges (notably GuardrailJudge) persist the
+            # immutable Hub repo/revision without a provider call envelope.
+            # Promote that exact verified repo to the same resolved-model field
+            # used by local targets so cross-role self-judging cannot evade the
+            # shared model-revision key through schema spelling alone.
+            snapshot["resolved_model"] = requested
         return snapshot
     if not isinstance(call, dict):
         raise ValueError("realized judge identity judge_call must be an object")
@@ -3188,6 +3770,10 @@ def _judge_identity_snapshot(row: dict[str, Any]) -> dict[str, str]:
         "provider": _identity_string(
             call, ("provider", "provider_name"),
             field="provider", context=f"judge {judge!r}",
+        ),
+        "endpoint_identity": _identity_string(
+            call, ("endpoint_identity",),
+            field="endpoint_identity", context=f"judge {judge!r}",
         ),
         "resolved_model": _identity_string(
             call,
@@ -3253,15 +3839,453 @@ def _identity_rows_with_candidate(
                 "attempt_id": attempt_id,
                 "stage": stage,
                 "judge": judgment.judge,
-                "judge_model": (
-                    judgment.raw.get("judge_model") or judgment.raw.get("model")
-                ),
+                "judge_model": _judgment_model_name(judgment.raw),
                 "judge_model_revision": judgment.raw.get("model_revision"),
                 "judge_model_digest": judgment.raw.get("model_digest"),
                 "judge_model_identity": judgment.raw.get("model_identity"),
                 "judge_call": judgment.raw.get("judge_call"),
             })
     return rows
+
+
+def _judgment_model_name(raw: dict[str, Any]) -> Any:
+    model = raw.get("judge_model")
+    if model is not None:
+        return model
+    if any(
+        raw.get(field) is not None
+        for field in (
+            "model_revision", "model_digest", "model_identity",
+            "guardrail_queried",
+        )
+    ):
+        return raw.get("model")
+    return None
+
+
+def judgment_trail_projection(judgment: Judgment) -> dict[str, Any]:
+    """Return the exact durable projection of one in-memory judge stage.
+
+    Keeping this projection in one place lets postprocessors prove that the
+    authoritative trail row still describes the same call and policy state as
+    the content-addressed final :class:`Judgment`.
+    """
+
+    raw = judgment.raw
+    confidence = raw.get("confidence")
+    return {
+        "attempt_id": judgment.attempt_id,
+        "stage": raw.get("cascade_stage"),
+        "judge": judgment.judge,
+        "judge_model": _judgment_model_name(raw),
+        "judge_model_revision": raw.get("model_revision"),
+        "judge_model_digest": raw.get("model_digest"),
+        "judge_model_identity": raw.get("model_identity"),
+        "judge_model_queried": raw.get("judge_model_queried"),
+        "guardrail_queried": raw.get("guardrail_queried"),
+        "provider_signal_authoritative": raw.get(
+            "provider_signal_authoritative"
+        ),
+        "provider_refusal_category": raw.get("provider_refusal_category"),
+        "judge_call": raw.get("judge_call"),
+        "label": judgment.label,
+        "score": judgment.score,
+        "confidence": (
+            float(confidence)
+            if isinstance(confidence, (int, float))
+            and not isinstance(confidence, bool)
+            else confidence
+        ),
+        "parsed": raw.get("parsed"),
+        "cascade_confident": raw.get("cascade_confident"),
+        "cascade_role": raw.get("cascade_role"),
+        "cascade_policy": raw.get("cascade_policy"),
+        "stage_queried": raw.get("stage_queried", True),
+        "policy_evaluation_status": raw.get(
+            "policy_evaluation_status", "evaluated"
+        ),
+        "metric_authority": raw.get("metric_authority"),
+        "required_metric": raw.get("required_metric"),
+        "run_id": judgment.run_id,
+    }
+
+
+def _type_strict_equal(left: Any, right: Any) -> bool:
+    """Compare a retained projection without Python's bool/int coercion."""
+
+    if type(left) is not type(right):
+        return False
+    if isinstance(left, dict):
+        return left.keys() == right.keys() and all(
+            _type_strict_equal(left[key], right[key]) for key in left
+        )
+    if isinstance(left, list):
+        return len(left) == len(right) and all(
+            _type_strict_equal(a, b) for a, b in zip(left, right)
+        )
+    return left == right
+
+
+def _require_exact_trail_projection(
+    expected: dict[str, Any], row: dict[str, Any], *, context: str
+) -> None:
+    missing = expected.keys() - row.keys()
+    if missing:
+        raise ValueError(
+            f"{context} is missing retained stage field {sorted(missing)[0]!r}"
+        )
+    observed = {field: row.get(field) for field in expected}
+    if not _type_strict_equal(expected, observed):
+        differing = next(
+            (
+                field for field in expected
+                if not _type_strict_equal(expected[field], observed[field])
+            ),
+            "projection",
+        )
+        raise ValueError(
+            f"{context} {differing} differs from its retained stage projection"
+        )
+
+
+def _validate_llm_trail_call_state(
+    row: dict[str, Any], response: Response, *, context: str
+) -> None:
+    stage_queried = row.get("stage_queried")
+    model_queried = row.get("judge_model_queried")
+    call = row.get("judge_call")
+    provider_signal = row.get("provider_signal_authoritative")
+    policy_status = row.get("policy_evaluation_status")
+
+    if stage_queried is False:
+        if (
+            policy_status not in {"not_evaluable", "source_metric_only"}
+            or model_queried is not None
+            or call is not None
+            or provider_signal not in {None, False}
+        ):
+            raise ValueError(f"{context} has an invalid unqueried LLM stage")
+        return
+    if stage_queried is not True:
+        raise ValueError(f"{context} lacks an explicit LLM stage query state")
+    if model_queried is True:
+        if (
+            response.raw.get("provider_refusal") is True
+            or provider_signal not in {None, False}
+            or not isinstance(call, dict)
+            or not isinstance(call.get("response_target"), str)
+            or not call["response_target"].strip()
+        ):
+            raise ValueError(f"{context} has an invalid queried LLM call")
+        return
+    if model_queried is not False:
+        raise ValueError(f"{context} lacks a boolean LLM model-query state")
+    if (
+        response.raw.get("provider_refusal") is not True
+        or provider_signal is not True
+        or row.get("provider_refusal_category")
+        != response.raw.get("provider_refusal_category")
+        or not isinstance(call, dict)
+        or call.get("sampling_control") != "not_queried_provider_refusal"
+        or call.get("requested_seed") is not None
+        or call.get("response_target") is not None
+        or call.get("transport_attempt_count") != 0
+        or call.get("transport_attempts") != []
+        or any(
+            call.get(field) is not None
+            for field in (
+                "provider_response_id", "provider_resolved_model", "provider",
+                "endpoint_identity", "provider_system_fingerprint",
+                "system_fingerprint", "model_revision", "model_digest",
+                "latency_ms", "tokens",
+            )
+        )
+    ):
+        raise ValueError(f"{context} has an invalid provider-refusal no-call sentinel")
+
+
+def validate_persisted_judgment_trails(
+    attempts: dict[str, Attempt | dict[str, Any]],
+    responses: dict[str, Response],
+    judgments: dict[str, Judgment],
+    trails: list[dict[str, Any]],
+    config: dict[str, Any],
+    expected_judges: list[str],
+) -> None:
+    """Bind persisted trail call state to responses and final judgments."""
+
+    run = config.get("run")
+    if not isinstance(run, dict):
+        raise ValueError("manifest lacks run config for judge trail validation")
+    approximate_enabled = run.get("approximate_common_metrics", False)
+    if not isinstance(approximate_enabled, bool):
+        raise ValueError("manifest approximate-common-metrics state is invalid")
+    supplementary_policy = config.get("supplementary_metric_policy")
+    if approximate_enabled and (
+        not isinstance(supplementary_policy, dict)
+        or supplementary_policy.get("approximate_common_metrics") is not True
+    ):
+        raise ValueError("manifest lacks its approximate-metric policy binding")
+    if (
+        not expected_judges
+        or len(set(expected_judges)) != len(expected_judges)
+        or any(not isinstance(name, str) or not name for name in expected_judges)
+    ):
+        raise ValueError("manifest judge inventory is invalid")
+
+    for response in responses.values():
+        validate_response_refusal_state(response)
+    grouped: dict[str, list[dict[str, Any]]] = {}
+    for row in trails:
+        attempt_id = row.get("attempt_id")
+        if not isinstance(attempt_id, str) or attempt_id not in responses:
+            raise ValueError("judge trail has invalid response lineage")
+        if attempt_id not in attempts:
+            raise ValueError("judge trail has invalid attempt lineage")
+        if attempt_id not in judgments:
+            raise ValueError("judge trail has invalid final-judgment lineage")
+        context = f"judge trail for attempt {attempt_id!r}"
+        grouped.setdefault(attempt_id, []).append(row)
+        final = judgments[attempt_id]
+        attempt = attempts[attempt_id]
+        params = attempt.params if isinstance(attempt, Attempt) else attempt.get("params")
+        if not isinstance(params, dict):
+            raise ValueError(f"{context} has invalid Attempt policy state")
+        policy_evaluable = params.get("policy_evaluable_turn")
+        if "planning_common_metrics_eligible" not in params:
+            raise ValueError(
+                f"{context} lacks immutable Attempt policy state"
+            )
+        planning_eligible = params["planning_common_metrics_eligible"]
+        planning_required_metric = params.get("planning_required_metric")
+        if not isinstance(policy_evaluable, bool) or not isinstance(
+            planning_eligible, bool
+        ):
+            raise ValueError(f"{context} lacks immutable Attempt policy state")
+        status = row.get("policy_evaluation_status")
+        queried = row.get("stage_queried")
+        provider_signal_value = row.get("provider_signal_authoritative")
+        if provider_signal_value is not None and type(provider_signal_value) is not bool:
+            raise ValueError(
+                f"{context} has an invalid provider-signal authority marker"
+            )
+        if policy_evaluable is False:
+            valid_state = (
+                queried is False
+                and status == "not_evaluable"
+                and row.get("label") == "not_applicable"
+                and row.get("metric_authority") is None
+                and row.get("required_metric") is None
+            )
+        elif planning_eligible is False:
+            required_metric_matches = (
+                isinstance(planning_required_metric, str)
+                and bool(planning_required_metric.strip())
+                and row.get("required_metric") == planning_required_metric
+            )
+            if approximate_enabled:
+                valid_state = (
+                    queried is True
+                    and status == "approximate_common_security_proxy"
+                    and row.get("label") != "not_applicable"
+                    and row.get("metric_authority")
+                    == "supplementary_non_authoritative"
+                    and required_metric_matches
+                )
+            else:
+                valid_state = (
+                    queried is False
+                    and status == "source_metric_only"
+                    and row.get("label") == "not_applicable"
+                    and row.get("metric_authority") is None
+                    and required_metric_matches
+                )
+        else:
+            valid_state = (
+                queried is True
+                and status == "evaluated"
+                and row.get("label") != "not_applicable"
+                and row.get("metric_authority") is None
+                and row.get("required_metric") is None
+            )
+        if not valid_state:
+            raise ValueError(f"{context} contradicts immutable Attempt policy state")
+        if row.get("cascade_role") == "authoritative":
+            expected = judgment_trail_projection(final)
+            _require_exact_trail_projection(
+                expected, row, context=f"{context} authoritative"
+            )
+
+        strongreject_judge = final.raw.get("strongreject_judge")
+        if strongreject_judge == row.get("judge"):
+            binding = final.raw.get("strongreject_stage_binding")
+            if not isinstance(binding, dict):
+                raise ValueError(
+                    f"{context} lacks the final StrongREJECT stage binding"
+                )
+            canonical_fields = judgment_trail_projection(final).keys()
+            if binding.keys() != canonical_fields:
+                raise ValueError(
+                    f"{context} StrongREJECT stage binding field inventory is invalid"
+                )
+            _require_exact_trail_projection(
+                binding, row, context=f"{context} StrongREJECT"
+            )
+
+        if row.get("judge") == "llm-judge":
+            _validate_llm_trail_call_state(row, responses[attempt_id], context=context)
+            if final.raw.get("strongreject_judge") == "llm-judge":
+                expected_queried = final.raw.get(
+                    "strongreject_judge_model_queried"
+                )
+                if row.get("judge_model_queried") is not expected_queried:
+                    raise ValueError(
+                        f"{context} LLM query state differs from final Judgment"
+                    )
+                if expected_queried is True and row.get("judge_model") != final.raw.get(
+                    "strongreject_judge_model"
+                ):
+                    raise ValueError(
+                        f"{context} LLM model differs from final Judgment"
+                    )
+        elif row.get("judge") == "guardrail":
+            if row.get("judge_call") is not None or row.get(
+                "judge_model_queried"
+            ) is not None:
+                raise ValueError(f"{context} mixes Guardrail and LLM call state")
+        elif row.get("judge") == "rules" and any(
+            row.get(field) is not None
+            for field in (
+                "judge_call", "judge_model_queried", "guardrail_queried",
+                "judge_model_revision", "judge_model_digest",
+                "judge_model_identity",
+            )
+        ):
+            raise ValueError(f"{context} gives deterministic rules a model call")
+
+        stage_queried = row.get("stage_queried") is True
+        provider_refusal = responses[attempt_id].raw.get("provider_refusal") is True
+        provider_signal = row.get("provider_signal_authoritative")
+        if stage_queried and provider_refusal:
+            if (
+                provider_signal is not True
+                or row.get("provider_refusal_category")
+                != responses[attempt_id].raw.get("provider_refusal_category")
+            ):
+                raise ValueError(f"{context} lacks its provider-refusal binding")
+            if row.get("judge") == "guardrail" and row.get(
+                "guardrail_queried"
+            ) is not False:
+                raise ValueError(f"{context} falsely queried a provider-refusal guard")
+        elif stage_queried:
+            if (
+                provider_signal not in {None, False}
+                or row.get("provider_refusal_category") is not None
+            ):
+                raise ValueError(f"{context} has a false provider-refusal shortcut")
+            if row.get("judge") == "guardrail" and row.get(
+                "guardrail_queried"
+            ) is not True:
+                raise ValueError(f"{context} lacks a queried Guardrail state")
+
+        if row.get("stage_queried") is False and any(
+            row.get(field) is not None
+            for field in (
+                "judge_call", "judge_model_queried", "guardrail_queried",
+                "provider_signal_authoritative",
+            )
+        ):
+            raise ValueError(f"{context} gives an unqueried stage call evidence")
+
+    if approximate_enabled:
+        approximate_metrics.validate_approximate_completion_bindings(
+            judgments=list(judgments.values()),
+            responses=responses,
+            supplementary_policy=supplementary_policy,
+            trails=trails,
+        )
+    elif any(row.get("approximate_stage_binding") is not None for row in trails):
+        raise ValueError("disabled approximate metrics carry a retained trail binding")
+    if set(grouped) != set(attempts):
+        raise ValueError("judge trails do not cover exactly the Attempt population")
+    for attempt_id, rows in grouped.items():
+        ordered = sorted(rows, key=lambda row: row.get("stage", -1))
+        if (
+            [row.get("stage") for row in ordered]
+            != list(range(len(expected_judges)))
+            or [row.get("judge") for row in ordered] != expected_judges
+            or len(ordered) != len(expected_judges)
+        ):
+            raise ValueError(
+                f"judge trail for attempt {attempt_id!r} does not match the "
+                "complete planned stage inventory"
+            )
+        # A sole stage is already bound field-for-field to the authoritative
+        # final Judgment above.  Multi-stage cascades additionally require the
+        # final record's complete ordered binding so every non-authoritative,
+        # non-rubric shadow remains integrity-joined to scientific agreement
+        # and sensitivity outputs.
+        if len(expected_judges) > 1:
+            bindings = judgments[attempt_id].raw.get("judge_stage_bindings")
+            if (
+                not isinstance(bindings, list)
+                or len(bindings) != len(expected_judges)
+                or any(not isinstance(binding, dict) for binding in bindings)
+            ):
+                raise ValueError(
+                    f"judge trail for attempt {attempt_id!r} lacks its complete "
+                    "final stage binding"
+                )
+            canonical_fields = judgment_trail_projection(
+                judgments[attempt_id]
+            ).keys()
+            for stage, (binding, row, expected_judge) in enumerate(
+                zip(bindings, ordered, expected_judges)
+            ):
+                if binding.keys() != canonical_fields:
+                    raise ValueError(
+                        f"judge trail for attempt {attempt_id!r} stage {stage} "
+                        "binding field inventory is invalid"
+                    )
+                if (
+                    type(binding.get("stage")) is not int
+                    or binding.get("stage") != stage
+                    or binding.get("judge") != expected_judge
+                    or binding.get("attempt_id") != attempt_id
+                ):
+                    raise ValueError(
+                        f"judge trail for attempt {attempt_id!r} stage {stage} "
+                        "binding order or lineage is invalid"
+                    )
+                _require_exact_trail_projection(
+                    binding,
+                    row,
+                    context=(
+                        f"judge trail for attempt {attempt_id!r} stage {stage} "
+                        "final binding"
+                    ),
+                )
+        authorities = [
+            row for row in ordered if row.get("cascade_role") == "authoritative"
+        ]
+        if len(authorities) != 1 or authorities[0].get(
+            "cascade_confident"
+        ) is not True:
+            raise ValueError(
+                f"judge trail for attempt {attempt_id!r} lacks one confident authority"
+            )
+
+
+def _cross_role_model_identity_keys(
+    snapshot: dict[str, str],
+) -> set[tuple[str, ...]]:
+    """Strong realized identities comparable across target and judge roles."""
+
+    keys = strong_realized_model_identity_keys(snapshot)
+    model_identity = snapshot.get("model_identity")
+    if model_identity:
+        keys.add(("model-identity", model_identity))
+    return keys
 
 
 def realized_identity_summary(
@@ -3330,6 +4354,14 @@ def realized_identity_summary(
             "observations": stage_counts.get(stage, 0),
             "snapshot": stage_snapshots.get(stage, {"judge": judge}),
         })
+    target_identity_keys = _cross_role_model_identity_keys(target_snapshot or {})
+    for item in judges:
+        judge_identity_keys = _cross_role_model_identity_keys(item["snapshot"])
+        if target_identity_keys & judge_identity_keys:
+            raise ValueError(
+                "realized target and judge model identities collide across roles; "
+                "self-certifying evaluation is forbidden"
+            )
     return {
         "target": {
             "observations": len(responses),
@@ -3337,6 +4369,342 @@ def realized_identity_summary(
         },
         "judges": judges,
     }
+
+
+def _planned_llm_judge_identity(run: dict[str, Any]) -> dict[str, str]:
+    """Project the durable judge request/config to realized identity fields."""
+
+    spec = run.get("judge_model")
+    if not isinstance(spec, str) or not spec.strip():
+        raise ValueError("LLM judge execution lacks a planned model spec")
+    spec = spec.strip()
+    local = run.get("judge_local_identity")
+    if local is not None:
+        if not isinstance(local, dict):
+            raise ValueError("planned local judge identity must be an object")
+        digest = local.get("digest")
+        if isinstance(digest, str) and digest.strip():
+            return {"model_digest": digest.strip().lower()}
+        revision = local.get("revision")
+        if not isinstance(revision, str) or not revision.strip():
+            raise ValueError("planned local judge lacks an immutable identity")
+        model = spec.split(":", 1)[1] if ":" in spec else spec
+        return {
+            "resolved_model": model,
+            "model_revision": revision.strip().lower(),
+        }
+
+    provider, model = canonical_api_target_identity(spec)
+    expected = {"resolved_model": model}
+    if not (provider == "runtime-name" and run.get("dry_run") is True):
+        expected["provider"] = provider
+    config = run.get("judge_api_config")
+    if config is not None and not isinstance(config, dict):
+        raise ValueError("planned hosted judge config must be an object")
+    endpoint_identity = (
+        config.get("base_url_identity") if isinstance(config, dict) else None
+    )
+    if endpoint_identity is None:
+        endpoint_identity = api_target_endpoint_identity(spec)
+    if endpoint_identity is not None:
+        if not isinstance(endpoint_identity, str):
+            raise ValueError("planned hosted judge endpoint identity is invalid")
+        expected["endpoint_identity"] = endpoint_identity
+    return expected
+
+
+def _component_model_identity(component: Any) -> dict[str, str]:
+    if not isinstance(component, dict):
+        raise ValueError("planned model component must be an object")
+    snapshot: dict[str, str] = {}
+    mappings = (
+        ("provider", "provider"),
+        ("endpoint_identity", "endpoint_identity"),
+        ("model", "resolved_model"),
+        ("model_revision", "model_revision"),
+        ("revision", "model_revision"),
+        ("model_digest", "model_digest"),
+    )
+    for source, target in mappings:
+        value = component.get(source)
+        if value is None:
+            continue
+        if not isinstance(value, str) or not value.strip():
+            raise ValueError(f"planned component {source} identity is invalid")
+        prior = snapshot.get(target)
+        if prior is not None and prior != value.strip():
+            raise ValueError(f"planned component {target} identity aliases conflict")
+        snapshot[target] = value.strip()
+    return snapshot
+
+
+def _is_diagnostic_mock_judge(
+    run: dict[str, Any], judge_target: Any
+) -> bool:
+    """Recognize the sole identity-less queried judge used by dry diagnostics."""
+
+    if not isinstance(judge_target, dict):
+        return False
+    return (
+        run.get("dry_run") is True
+        and run.get("execution_purpose") == "diagnostic_dry_run"
+        and run.get("judge_model") == "mock"
+        and str(judge_target.get("class", "")).rsplit(".", 1)[-1]
+        == "MockTarget"
+        and judge_target.get("model") == "mock"
+        and judge_target.get("name") == "mock"
+        and all(
+            judge_target.get(field) is None
+            for field in (
+                "provider", "endpoint_identity", "model_revision",
+                "revision", "model_digest",
+            )
+        )
+    )
+
+
+def _validate_diagnostic_mock_judge_snapshot(
+    snapshot: dict[str, str], *, context: str
+) -> None:
+    if snapshot != {
+        "judge": "llm-judge",
+        "requested_model": "mock",
+        "response_target": "mock",
+    }:
+        raise ValueError(f"{context} is not the exact diagnostic Mock identity")
+
+
+def _planned_input_defense_block(
+    run: dict[str, Any], components: dict[str, Any], response: Response
+) -> bool:
+    """Validate the sole case where a target may have no realized identity."""
+
+    raw = response.raw
+    claims_block = (
+        raw.get("base_target_queried") is False
+        or (
+            raw.get("defense") == "blocked"
+            and raw.get("stage") == "input"
+        )
+    )
+    if not claims_block:
+        return False
+    target = components.get("target")
+    if not isinstance(target, dict):
+        raise ValueError("planned target component is invalid")
+    class_name = str(target.get("class", "")).rsplit(".", 1)[-1]
+    mode = target.get("mode")
+    base = target.get("base")
+    if (
+        class_name != "GuardedTarget"
+        or mode not in {"input", "both"}
+        or run.get("defense") != mode
+        or not isinstance(base, dict)
+        or raw.get("defense") != "blocked"
+        or raw.get("stage") != "input"
+        or raw.get("base_target_queried") is not False
+        or raw.get("defense_stages_evaluated") != ["input"]
+        or raw.get("target_sampling_control") != "not_queried"
+        or raw.get("defense_block_template_id") != GUARDED_BLOCK_TEMPLATE_ID
+        or response.target != target.get("name")
+        or raw.get("base_target") != base.get("name")
+        or response.latency_ms is not None
+        or response.tokens is not None
+        or response.tool_trace
+        or len(response.output_turns) != 1
+        or response.output_turns[0].role != "assistant"
+        or response.output_turns[0].content != GUARDED_BLOCK_TEXT
+        or response.output_turns[0].media
+        or response.output_turns[0].tool_call is not None
+        or response.output_turns[0].tool_result is not None
+        or response.output_turns[0].provider_state is not None
+        or response.output_turns[0].provider_thinking
+        or any(
+            field in raw
+            for field in (
+                "provider", "resolved_model", "endpoint_identity",
+                "system_fingerprint", "provider_system_fingerprint",
+                "model_revision", "model_digest", "verified_model_digest",
+                "response_id", "id", "transport_attempt_count",
+                "transport_attempts", "continuation_state_sha256",
+                "continuation_state_bytes",
+                "logical_call_count", "provider_request_id",
+                "provider_response_id", "operation", "status_code",
+                "error_type", "call_audit",
+            )
+        )
+    ):
+        raise ValueError(
+            "target no-call identity exception lacks its planned input-defense "
+            "wrapper contract"
+        )
+    expected_target = run.get("expected_target_identity")
+    base_identity = _component_model_identity(base)
+    if (
+        not isinstance(expected_target, dict)
+        or not strong_realized_model_identity_keys(expected_target)
+        or not strong_realized_model_identity_keys(base_identity)
+    ):
+        raise ValueError(
+            "target no-call identity exception lacks the immutable planned "
+            "base-target identity"
+        )
+    from .live_attestation import realized_identity_matches
+
+    if not realized_identity_matches(expected_target, base_identity):
+        raise ValueError(
+            "target no-call planned base identity differs from the admitted "
+            "live-attestation snapshot"
+        )
+    return True
+
+
+def validate_planned_realized_identities(
+    run: dict[str, Any],
+    components: dict[str, Any],
+    responses: list[Response],
+    trails: list[dict[str, Any]],
+    summary: dict[str, Any],
+) -> None:
+    """Bind queried target/judge observations to immutable planned identities."""
+
+    from .live_attestation import realized_identity_matches
+
+    expected_target = run.get("expected_target_identity")
+    if expected_target is not None and not isinstance(expected_target, dict):
+        raise ValueError("manifest expected target identity is invalid")
+    if expected_target is None and (
+        run.get("dry_run") is not True
+        and run.get("execution_purpose") != "attestation_probe"
+        and run.get("attestation_probe") is not True
+    ):
+        raise ValueError("measured execution lacks an expected target identity")
+    if isinstance(expected_target, dict):
+        if not strong_realized_model_identity_keys(expected_target):
+            raise ValueError("manifest expected target identity lacks a stable key")
+        for response in responses:
+            if _planned_input_defense_block(run, components, response):
+                continue
+            if not realized_identity_matches(
+                expected_target, _target_identity_snapshot(response)
+            ):
+                raise ValueError(
+                    "completed target identity does not match the admitted "
+                    "live-attestation snapshot"
+                )
+
+    requested = run.get("judge_names")
+    if requested is None and all(
+        item.get("judge") not in {"llm-judge", "guardrail"}
+        for item in summary.get("judges", [])
+        if isinstance(item, dict)
+    ):
+        requested = []
+    if not isinstance(requested, list) or any(
+        not isinstance(name, str) for name in requested
+    ):
+        raise ValueError("manifest planned judge inventory is invalid")
+    cascade = components.get("judge_cascade")
+    stages = cascade.get("stages") if isinstance(cascade, dict) else None
+
+    if "llm" in requested:
+        if not isinstance(stages, list):
+            raise ValueError("manifest planned judge component inventory is invalid")
+        expected_judge = _planned_llm_judge_identity(run)
+        llm_components = [
+            stage for stage in stages
+            if isinstance(stage, dict)
+            and str(stage.get("class", "")).rsplit(".", 1)[-1] == "LLMJudge"
+        ]
+        if len(llm_components) != 1:
+            raise ValueError("manifest lacks exactly one planned LLM judge component")
+        judge_target_component = llm_components[0].get("judge_target")
+        component_identity = _component_model_identity(judge_target_component)
+        diagnostic_mock = _is_diagnostic_mock_judge(
+            run, judge_target_component
+        )
+        if not realized_identity_matches(expected_judge, component_identity):
+            raise ValueError("planned LLM judge component differs from run config")
+        queried = 0
+        for row in trails:
+            if row.get("judge") != "llm-judge":
+                continue
+            call = row.get("judge_call")
+            if not isinstance(call, dict) or call.get("response_target") is None:
+                continue
+            queried += 1
+            observed_row = _judge_identity_snapshot(row)
+            if diagnostic_mock:
+                _validate_diagnostic_mock_judge_snapshot(
+                    observed_row, context="completed LLM judge identity"
+                )
+            elif not realized_identity_matches(expected_judge, observed_row):
+                raise ValueError(
+                    "completed LLM judge identity differs from its planned config"
+                )
+        observed = next(
+            (
+                item.get("snapshot")
+                for item in summary.get("judges", [])
+                if item.get("judge") == "llm-judge"
+            ),
+            None,
+        )
+        if queried:
+            if not isinstance(observed, dict):
+                raise ValueError(
+                    "completed LLM judge identity differs from its planned config"
+                )
+            if diagnostic_mock:
+                _validate_diagnostic_mock_judge_snapshot(
+                    observed, context="completed LLM judge identity summary"
+                )
+            elif not realized_identity_matches(expected_judge, observed):
+                raise ValueError(
+                    "completed LLM judge identity differs from its planned config"
+                )
+
+    if "guardrail" in requested:
+        if not isinstance(stages, list):
+            raise ValueError("manifest planned judge component inventory is invalid")
+        model = run.get("guardrail_model")
+        revision = run.get("guardrail_revision")
+        if (
+            not isinstance(model, str)
+            or not model.strip()
+            or not isinstance(revision, str)
+            or not revision.strip()
+        ):
+            raise ValueError("planned Guardrail judge lacks immutable identity")
+        expected_guard = {
+            "resolved_model": model.strip(),
+            "model_revision": revision.strip().lower(),
+        }
+        guard_components = [
+            stage for stage in stages
+            if isinstance(stage, dict)
+            and str(stage.get("class", "")).rsplit(".", 1)[-1]
+            == "GuardrailJudge"
+        ]
+        if len(guard_components) != 1 or not realized_identity_matches(
+            expected_guard, _component_model_identity(guard_components[0])
+        ):
+            raise ValueError("planned Guardrail judge component differs from run config")
+        for row in trails:
+            if row.get("judge") != "guardrail":
+                continue
+            if (
+                row.get("stage_queried") is False
+                and row.get("policy_evaluation_status")
+                in {"not_evaluable", "source_metric_only"}
+            ):
+                continue
+            if not realized_identity_matches(
+                expected_guard, _judge_identity_snapshot(row)
+            ):
+                raise ValueError(
+                    "completed Guardrail judge identity differs from its plan"
+                )
 
 
 def _sha256_json(obj: Any) -> str:
@@ -3383,6 +4751,33 @@ def _dialog_has_substantive_input(dialog: list[DialogTurn]) -> bool:
         or bool((turn.tool_result or "").strip())
         for turn in dialog
     )
+
+
+def _contract_dialog_combination(dialog: list[DialogTurn]) -> tuple[str, ...]:
+    """Exact physical/tool combination presented by one rendered request."""
+
+    observed = {media.modality for turn in dialog for media in turn.media}
+    if any(bool((turn.content or "").strip()) for turn in dialog):
+        observed.add("text")
+    if any(
+        turn.role == "tool"
+        or turn.tool_call is not None
+        or turn.tool_result is not None
+        for turn in dialog
+    ):
+        observed.add("tool")
+    return tuple(
+        channel
+        for channel in ("text", "image", "audio", "video", "tool")
+        if channel in observed
+    )
+
+
+def _last_substantive_user_text(dialog: list[DialogTurn]) -> str | None:
+    for turn in reversed(dialog):
+        if turn.role == "user" and bool((turn.content or "").strip()):
+            return turn.content
+    return None
 
 
 def _response_has_substantive_output(response: Response) -> bool:
@@ -3732,12 +5127,14 @@ _CONFIG_CLASS_ATTRS = {
     "violation_threshold",
 }
 _RUNTIME_ATTRS = {
+    "base_url",
     "client",
     "session",
     "pipeline",
     "tokenizer",
     "model_object",
     "media_roots",
+    "key_env",
     # The validated content identity below is portable; the operator's host
     # path is not and must never affect a run identity.
     "response_artifact",
@@ -3824,9 +5221,21 @@ def _component_config(
         return {"class": qualified, "cycle": True}
     active.add(ident)
     out: dict[str, Any] = {"class": qualified}
+    excluded_raw = getattr(component, "portable_config_exclude", ())
+    if isinstance(excluded_raw, (str, bytes)) or any(
+        not isinstance(item, str) or not item or item.startswith("_")
+        for item in excluded_raw
+    ):
+        raise ValueError("portable_config_exclude must contain public field names")
+    excluded = set(excluded_raw)
     names = set(getattr(component, "__dict__", {})) | _CONFIG_CLASS_ATTRS
     for name in sorted(names):
-        if name.startswith("_") or name in _RUNTIME_ATTRS or not hasattr(component, name):
+        if (
+            name.startswith("_")
+            or name in _RUNTIME_ATTRS
+            or name in excluded
+            or not hasattr(component, name)
+        ):
             continue
         try:
             value = getattr(component, name)
@@ -3842,6 +5251,9 @@ def _component_config(
         )
         if converted is not None:
             out[name] = converted
+    base_url = getattr(component, "base_url", None)
+    if isinstance(base_url, str) and base_url.strip():
+        out["endpoint_identity"] = canonical_https_endpoint_identity(base_url)
     active.remove(ident)
     return out
 
@@ -3888,13 +5300,47 @@ def _transfer_key(
 
 
 def _write_jsonl_models(records: list[Any], path: Path) -> None:
+    _write_jsonl_rows(
+        [record.model_dump(mode="json") for record in records], path
+    )
+
+
+def validate_response_refusal_state(response: Response) -> None:
+    """Require one truthful, exclusive output-vs-provider-refusal state."""
+
+    provider_refusal = response.raw.get("provider_refusal", False)
+    if not isinstance(provider_refusal, bool):
+        raise ValueError("target provider_refusal signal must be boolean")
+    category = response.raw.get("provider_refusal_category")
+    if provider_refusal:
+        if not isinstance(category, str) or not category.strip():
+            raise ValueError(
+                "typed provider refusal requires a nonblank refusal category"
+            )
+    elif category is not None:
+        raise ValueError(
+            "non-refusal target response must not carry a refusal category"
+        )
+    has_output = _response_has_substantive_output(response)
+    if provider_refusal and has_output:
+        raise ValueError(
+            "typed provider refusal must not also carry scored assistant output"
+        )
+    if not provider_refusal and not has_output:
+        raise ValueError(
+            f"target {response.target!r} returned no substantive output and no "
+            "typed provider refusal"
+        )
+
+
+def _write_jsonl_rows(records: list[dict[str, Any]], path: Path) -> None:
     jsonl_path = path if path.suffix == ".jsonl" else path.with_suffix(".jsonl")
     jsonl_path.parent.mkdir(parents=True, exist_ok=True)
     with jsonl_path.open("w", encoding="utf-8") as fh:
         for record in records:
             fh.write(
                 json.dumps(
-                    record.model_dump(mode="json"),
+                    record,
                     ensure_ascii=False,
                     sort_keys=True,
                 )
@@ -4200,5 +5646,8 @@ def _safe_call_audit(value: Any) -> dict[str, Any]:
 
 __all__ = [
     "Runner", "CODE_VERSION", "BudgetExhausted", "ExternalCallFailure",
-    "GlobalCallBudget", "realized_identity_summary",
+    "GlobalCallBudget", "judgment_trail_projection", "realized_identity_summary",
+    "validate_persisted_judgment_trails",
+    "validate_planned_realized_identities",
+    "validate_response_refusal_state",
 ]

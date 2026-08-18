@@ -34,7 +34,9 @@ import hashlib
 import re
 from collections.abc import Iterable
 
+from ..attacker_input_contract import AttackerInputContract, text_only_transfer_contract
 from ..data_models import Attempt, DataPoint, DialogTurn
+from ..strict_json import strict_json_loads
 from .base import AttackBudget, BaseAttacker
 from ._engine_common import ExternalEngineOutputError, _attempt, run_engine_command
 from ._native_artifacts import read_utf8_artifact
@@ -60,6 +62,17 @@ class SpikeeAttacker(BaseAttacker):
     """
 
     name = "spikee"
+
+    def plan_target_inputs(
+        self, datapoint: DataPoint, budget: AttackBudget
+    ) -> AttackerInputContract:
+        return text_only_transfer_contract(
+            self.name,
+            datapoint,
+            budget,
+            planned_turns=min(budget.max_queries, budget.max_turns),
+            turn_count_semantics="upper_bound",
+        )
 
     def __init__(
         self,
@@ -263,7 +276,6 @@ class SpikeeAttacker(BaseAttacker):
         ``spikee test`` or a dynamic attack against a live target (harness safety
         principle N5)."""
         import glob
-        import json
         import os
         import shutil
         import tempfile
@@ -331,13 +343,8 @@ class SpikeeAttacker(BaseAttacker):
                 if not line.strip():
                     continue
                 try:
-                    raw = json.loads(
-                        line,
-                        parse_constant=lambda value: (_ for _ in ()).throw(
-                            ValueError(f"invalid JSON constant {value}")
-                        ),
-                    )
-                except (json.JSONDecodeError, RecursionError, ValueError) as exc:
+                    raw = strict_json_loads(line)
+                except ValueError as exc:
                     raise ExternalEngineOutputError(
                         f"Spikee dataset has invalid JSON at line {line_no}"
                     ) from exc

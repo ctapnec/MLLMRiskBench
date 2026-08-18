@@ -7,7 +7,7 @@ source-native evaluators. Experiments and the human audit are still pending.
 Preflight, dry-run, diagnostic-canary, and bounded transport-probe artifacts are
 diagnostics, not thesis results.
 
-The maintained artifact contract is Runner `ura-runner/2.16` with unified schema
+The maintained artifact contract is Runner `ura-runner/2.19` with unified schema
 `1.4`. Do not combine older-runner artifacts with this program.
 
 Every `python -m experiments.*` command below can equivalently be started
@@ -721,7 +721,7 @@ is an operator-attested condition. Add its exact spec to the local JSON with
 explicit `modalities`, `max_tokens`, and `temperature` only after reviewing the
 account documentation, then retain it only if the bounded live checks below
 return the expected served identity for every claimed modality. Examples such
-as `openai:gpt-5.6-tera`, `openai:gpt-5.6-luna`, or `glm:glm-5.2` become usable
+as `openai:gpt-5.6-terra`, `openai:gpt-5.6-luna`, or `glm:glm-5.2` become usable
 rows through that path: operator attestation of account visibility plus a
 probe-confirmed served identity; the document itself cannot see any account.
 Do not silently substitute another model.
@@ -747,6 +747,23 @@ The generic LLM judge is loaded through the same `--api-config` path as generic
 targets. Its exact `JUDGE` key must therefore remain in the JSON even when it is
 not itself a model-under-test.
 
+Rig Web binds reviewed API, local, source, source-conformance, and
+prepared-attacker selections in one internal
+`ura-builder-selected-execution-config/1` digest bundle. Its API component
+remains `ura-builder-selected-api-config/1` and contains the complete registry
+digest, canonical provider/model,
+selected-entry digest, portable controls, and
+`endpoint_identity=https-base-url-sha256:<64 lowercase hex>` for every target
+and hosted judge. It never puts a raw URL or filesystem locator in the bundle
+or durable job state. The exact selection is held behind a 30-minute,
+purpose-bound, one-shot confirmation ticket. Immediately before launch, only
+selected bytes are materialized as private digest-bound configs/evidence;
+Runner reads each once, verifies its paired API/local/source/attacker SHA-256,
+and unlinks it. Changing a source from real to synthetic or swapping prepared
+attacker/conformance bytes after review burns/rejects the ticket. These are
+operational TOCTOU/privacy controls, not live attestation or scientific
+evidence.
+
 Define the documented candidate lanes below, then remove any condition that
 does not pass section 8. Append additional account-attested specs only after
 adding their config rows and completing those checks.
@@ -763,6 +780,21 @@ if [[ -n "$OPERATOR_TEXT_TARGETS" ]]; then export TEXT_TARGETS="$TEXT_TARGETS,$O
 if [[ -n "$OPERATOR_IMAGE_TARGETS" ]]; then export IMAGE_TARGETS="$IMAGE_TARGETS,$OPERATOR_IMAGE_TARGETS"; fi
 ```
 
+Before any live hosted-judge command, record the corpus handling decision and
+the selected judge provider's current retention, training/data-use, regional
+routing, and abuse-monitoring terms in the dated run note, and obtain the
+required institutional/operator approval. Only after that review may a live
+`run_matrix` command include the explicit
+`--ack-hosted-judge-data-transfer` flag shown below. The acknowledgement records
+that target output and source/reference grading
+context will leave the rig; it does not prove approval or provider deletion.
+Never pass it to `rig_check`, `--dry-run`, rules-only judging, or a local LLM
+judge because those paths perform no hosted-judge data transfer.
+Before configuration loading, `ura-request-envelope/2` copies this decision to
+the required Boolean
+`request.hosted_judge_data_transfer_acknowledged`; a no-transfer path records
+false rather than omitting the field.
+
 Remove a target from a lane if its probe did not produce a complete, correctly
 resolved response. A local preflight cannot establish remote entitlement.
 
@@ -775,9 +807,10 @@ candidate lanes above; it never adds a route the section 8 gates have not
 confirmed.
 
 - Focal pair: the Fable and Sol conditions above; both are measured targets.
-- Hosted judge: `anthropic:claude-haiku-4-5-20251001`. The judge model is
-  excluded as a target (self-judgment bias); its registry row exists only as
-  the judge condition.
+- Funded-campaign judge default: `anthropic:claude-haiku-4-5-20251001`. This is
+  the recorded condition for that campaign, not a UI restriction: the shared
+  picker can bind any admitted hosted or local model as the LLM judge. The
+  selected judge is excluded as a target (self-judgment bias).
 - Anthropic breadth: `anthropic:claude-sonnet-5`; add `anthropic:claude-opus-5`
   only if the prepaid budget, conservative call projection, and the canary's
   exact observed token-derived spend support the operator decision.
@@ -829,9 +862,10 @@ campaign runs two pre-registered population tiers:
   full-corpus local lanes double as an internal check of the design: on a
   local model, the subset estimate can be compared with the full-corpus
   estimate to quantify the subsampling error empirically.
-- Judge budget: the hosted Haiku judge is metered on every judged response
-  regardless of whether the target is local, so full-corpus local lanes
-  cannot default to hosted LLM judging. Full local corpora score through
+- Judge budget: in the recorded funded plan, the selected hosted Haiku judge is
+  metered on every judged response regardless of whether the target is local,
+  so full-corpus local lanes cannot default to hosted LLM judging. Full local
+  corpora score through
   the deterministic rules stage; the hosted LLM-judge stage runs on the
   pre-registered common subset (identical to the hosted lanes) unless
   post-canary projections show budget for more. Rules-only and cascade
@@ -855,8 +889,6 @@ an exact accessible model revision and load it before paid calls.
 export SCORE_GUARD='meta-llama/Llama-Guard-3-8B'
 export SCORE_GUARD_REV='7327bd9f6efbbe6101dc6cc4736302b3cbb6e425'
 export SCORE_GUARD_DEVICE='cuda:1'
-
-python -c "import os; from huggingface_hub import snapshot_download; snapshot_download(repo_id=os.environ['SCORE_GUARD'], revision=os.environ['SCORE_GUARD_REV'], token=os.environ.get('HF_TOKEN'))"
 ```
 
 For the optional text-only defense lane, use a different Llama-Guard-family model
@@ -867,9 +899,95 @@ as the hosted LLM judge.
 export DEFENSE_GUARD='meta-llama/Llama-Guard-3-1B'
 export DEFENSE_GUARD_REV='acf7aafa60f0410f8f42b1fa35e077d705892029'
 export DEFENSE_GUARD_DEVICE='cuda:1'
-
-python -c "import os; from huggingface_hub import snapshot_download; snapshot_download(repo_id=os.environ['DEFENSE_GUARD'], revision=os.environ['DEFENSE_GUARD_REV'], token=os.environ.get('HF_TOKEN'))"
 ```
+
+Do not call `snapshot_download` or let Guardrail/Transformers download these on
+first load. The exact selected guards enter the sealed acquisition workflow in
+section 6.1 together with every other Hub-backed role.
+
+### 6.1 Sealed Hugging Face model acquisition
+
+This workflow is mandatory for all five Hub-backed roles: vLLM target, local
+vLLM LLM judge, scoring Guardrail, defense Guardrail, and NanoGCG surrogate.
+Each selection needs a public repository ID plus an immutable 40-64 lowercase
+hex commit. A target may not share that identity with its judge, either guard,
+or NanoGCG surrogate. An explicit local checkpoint-directory plus full tree
+SHA-256, and a sourced precomputed NanoGCG suffix, are the only no-Hub
+exceptions.
+
+Rig Web is the recommended controller. Review the exact Builder lane, then use
+the visible `Plan & acquire` action. It creates three purpose-bound Jobs:
+`acquisition plan / no model call`, `model acquisition`, and finally the exact
+offline no-call preflight or measured run. The generic Commands page cannot
+launch the acquisition worker. Set `HF_TOKEN` through the write-only Config
+entry (presence is shown, never its value or suffix; it remains process-memory
+only and is never written to the operator secrets file), or in the console's
+secret-manager environment before starting Rig Web. Only the acquisition child
+receives it.
+
+For a direct CLI lane, keep one exact argument vector in a shell array and use
+it for both planning and execution. The template below deliberately uses
+placeholders for the content-addressed filenames printed by each preceding
+stage; do not choose or edit those values by hand.
+
+```bash
+export URA_STATE="$URA_WORK/state"
+export URA_MODEL_STORE="$URA_STATE/model-acquisition/store"
+export URA_MODEL_PLANS="$URA_STATE/model-acquisition/plans"
+export URA_MODEL_RECEIPTS="$URA_STATE/model-acquisition/receipts"
+export URA_MODEL_TRANSPORT="$URA_MODEL_STORE/.transport-cache"
+mkdir -p "$URA_MODEL_STORE" "$URA_MODEL_PLANS" "$URA_MODEL_RECEIPTS" "$URA_MODEL_TRANSPORT"
+
+# EXACT_LANE_ARGS contains the complete intended run_matrix selection and
+# immutable source/config/project/request inputs. Plan-only stops before every
+# attacker, target, judge, guard, surrogate, or engine constructor.
+python -m experiments.run_matrix "${EXACT_LANE_ARGS[@]}" \
+  --model-acquisition-plan-only \
+  --model-acquisition-plan-dir "$URA_MODEL_PLANS" \
+  --out "$URA_STATE/model-acquisition/planning-output"
+
+# Copy plan_id/plan_sha256 and its create-only filename from that output.
+export URA_MODEL_PLAN='<absolute acquisition-plan-*.plan.json>'
+export URA_MODEL_PLAN_SHA256='<64 lowercase hex printed by plan-only>'
+
+# Only this controller may have HF_TOKEN/network access. Its byte/free-space/
+# deadline values are hard admission bounds; choose and record lane-appropriate
+# values rather than silently increasing them after failure.
+python -m experiments.model_acquire \
+  --plan "$URA_MODEL_PLAN" \
+  --plan-sha256 "$URA_MODEL_PLAN_SHA256" \
+  --store "$URA_MODEL_STORE" \
+  --receipts-dir "$URA_MODEL_RECEIPTS" \
+  --transport-cache "$URA_MODEL_TRANSPORT" \
+  --max-download-bytes 2199023255552 \
+  --min-free-bytes 21474836480 \
+  --deadline-seconds 86400
+
+# Copy receipt_id/receipt_sha256 and its create-only filename from the
+# controller output. The normal process removes Hub tokens and is offline.
+export URA_MODEL_RECEIPT='<absolute acquisition-receipt-*.receipt.json>'
+export URA_MODEL_RECEIPT_SHA256='<64 lowercase hex printed by acquisition>'
+python -m experiments.run_matrix "${EXACT_LANE_ARGS[@]}" \
+  --model-acquisition-plan "$URA_MODEL_PLAN" \
+  --model-acquisition-plan-sha256 "$URA_MODEL_PLAN_SHA256" \
+  --model-acquisition-receipt "$URA_MODEL_RECEIPT" \
+  --model-acquisition-receipt-sha256 "$URA_MODEL_RECEIPT_SHA256" \
+  --model-acquisition-store "$URA_MODEL_STORE"
+```
+
+The controller revalidates cache hits but reports zero downloaded bytes and no
+`model_download` activity for them. Rig Web shows that badge only while an
+authenticated worker confirms missing-byte transfer, and clears it on finish,
+failure, or cancellation. Normal/preflight construction holds a shared resource
+lease across complete pre-load hash, constructor/load, and complete post-load
+hash; any drift destroys the object before a model call. Result roots retain
+safe, path/token-free canonical plan and receipt copies plus their strict
+full-grid descriptor. Shared scientific conditions retain only acquisition for
+the judge, guards, defense, and surrogate; each cell additionally retains only
+its own local-target seal. Different grid rosters therefore do not fragment the
+same hosted condition. Private plan/receipt/store/snapshot locators, activity
+secrets, and `HF_TOKEN` remain controller-only and must not be copied into
+returned logs or reports.
 
 ## 7. Configure local models: one model per process
 
@@ -885,9 +1003,17 @@ support was declared or assumed. No provider/model call is made by this
 inventory. `python -m experiments.local_targets` prints the GPU/profile data for
 CLI inspection.
 
-In the Build tab, hosted, Local vLLM, and Local Ollama targets are separate
-groups. Hosted targets have a provider selector whose default is `All`. Local
-vLLM targets have four combinative presentation filters: an
+In the Build tab, one large role-aware model-picker modal serves both target and
+LLM-judge selection. Choose hosted or local, then use the hosted provider filter
+(`All` by default) or the local filtering surface. Target mode binds one or more
+hosted targets and at most one local target. Judge mode binds exactly one model,
+distinct from every target; a local target and distinct local judge cannot share
+one process. Schedule different local target models as separate rig jobs/grids;
+each such grid may still include multiple hosted targets. A judge-only warning
+marks the highest configured comparable
+input/output rate in each currency; it is a cost signal, not a quality claim.
+Hosted, Local vLLM, and Local Ollama choices remain separate
+groups. Local vLLM choices have four combinative presentation filters: an
 immediate case-insensitive name substring, one synchronized slider/numeric
 maximum from 0.01B (10M) to 3000B (3T), and a visually separate `Automatic
 16/8/4-bit fit` card selected by default, plus an unchecked `Include unknown
@@ -908,10 +1034,21 @@ the selected maximum. The checkbox controls visibility only and does not make
 hardware-auto valid for an unknown fit.
 
 Local Ollama rows do not use those vLLM name, parameter, fit, or precision
-controls. They refer to model tags already pulled into a separately managed
-local Ollama daemon. Each `ollama:<model-tag>` entry in `local-targets` requires
-the exact 64-hex digest reported by `/api/tags` and a unique explicit modality
-list containing `text` and optionally `image`. vLLM-only revision,
+controls. Status, Start, Stop, and Pull operate only on the default literal
+loopback API. A daemon found there is external and cannot be stopped by Rig Web;
+only the dedicated process group started by the current console is owned and
+cleaned up. Pull is a typed Jobs entry whose live activity is `model_download`.
+The selectable live roster accepts at most 64 installed models under a
+five-second aggregate discovery budget, requires exact tag/digest stability
+across two `/api/tags` reads, and gets text/image modalities only from explicit
+`/api/show` completion/vision capabilities. Missing, malformed, slow, or racing
+data produces no fabricated rows. Ollama identities with normalized
+upstream/name/family overlaps in the vLLM roster are unavailable for execution.
+A stale/manual overlap remains visible and disabled with its exact reason; it
+cannot override the distinct-model requirement. Each
+`ollama:<model-tag>` entry requires the exact lowercase 64-hex digest reported
+by `/api/tags` and a unique explicit modality list containing `text` and
+optionally `image`. vLLM-only revision,
 quantization, tensor parallelism, memory utilization, parameter count, output
 and context bounds, and unknown-fit fields are forbidden. The pulled artifact
 fixes precision. Runner
@@ -938,6 +1075,13 @@ the ordinary missing dependency earlier. The estimate is not an allocation
 guarantee: the local preflight must still load the exact revision at the
 selected context and serving settings.
 
+The disabled LLaVA-v1.6 FP8 profile is evidence from vLLM 0.27.1 loading the
+weights and then failing in multimodal encoder profiling when its scaled-matrix
+kernel used `.view()` on a non-contiguous tensor. The disabled GraySwan RR
+BitsAndBytes profile was rejected because that `LlavaNext` implementation lacks
+`packed_modules_mapping`. These are exact architecture/runtime incompatibilities,
+not VRAM-fit failures; both occurred before any target inference.
+
 Precedence is per-model `quantization` in `--local-config`, then the command's
 `--quantization` override, then hardware auto-selection. A missing
 `multi_gpu_compatible` field means supported by assumption and is labelled
@@ -959,7 +1103,7 @@ the selected-config hash and grid/run provenance, is passed as
 local response metadata. The Build row displays either the explicit context cap
 or `native model context`.
 
-Runner 2.16 local adapters construct each vLLM/Ollama `Response` with the same
+Runner 2.19 local adapters construct each vLLM/Ollama `Response` with the same
 deterministic dialog-fingerprint placeholder used by hosted adapters: the first
 16 lowercase SHA-256 hex characters over ordered rendered roles, content, and
 media identities. This only satisfies transport-local response linkage. Runner
@@ -991,16 +1135,16 @@ Create a separate local config for each selected model because the file keys mus
 exactly match that command's `--local` value. Replace each revision with the
 actual full Hugging Face commit.
 
-Resolve and cache the exact reviewed revisions before starting vLLM:
+Record the exact reviewed revisions before starting vLLM. Do **not** run a
+separate `hf download` for these model repositories: put the same revisions in
+the selected local configs, include those configs in `EXACT_LANE_ARGS`, and let
+section 6.1 derive one complete plan, perform the bounded acquisition, and seal
+the resulting bytes before vLLM construction:
 
 ```bash
 export REF_LOCAL_QWEN3_VL='60595ebc30ec8e3b1d3b9e65d4943ca011c0006a'
 export REF_LOCAL_LLAVA_BASE='2424fdd47412fccc66d91719126b420e9fbd7065'
 export REF_LOCAL_LLAVA_RR='d11b3d7ae2fb21e984f197a83c15bbb0deb66b7e'
-
-hf download Qwen/Qwen3-VL-8B-Instruct --revision "$REF_LOCAL_QWEN3_VL"
-hf download llava-hf/llava-v1.6-mistral-7b-hf --revision "$REF_LOCAL_LLAVA_BASE"
-hf download GraySwanAI/llava-v1.6-mistral-7b-hf-RR --revision "$REF_LOCAL_LLAVA_RR"
 ```
 
 Put those same revision strings into the three local JSON files below.
@@ -1305,6 +1449,11 @@ admission and before its first generation call. These artifacts are planning
 evidence only and are not live attestations.
 `rig_check` and `run_matrix --dry-run` neither require nor accept
 `--execution-scope-id` or live-attestation arguments.
+They also neither require nor accept
+`--ack-hosted-judge-data-transfer`: even when a hosted judge is selected for
+projection, the no-call preflight sends it no grading context. Add
+`--ack-hosted-judge-data-transfer` only to the corresponding live measured or
+diagnostic `run_matrix` invocation.
 The preflight is nevertheless non-dry internally and therefore requires the
 environment-bound project-revision receipt from section 2; `rig_check` verifies
 that the forwarded request retained it. Every non-dry probe, canary, and measured
@@ -1350,7 +1499,9 @@ done
 ```
 
 Append `"${LIVE_ATTESTATION_ARGS[@]}"` to **every** measured `run_matrix`
-invocation below, never to `rig_check`. The driver retains content-addressed
+invocation below, never to `rig_check`. When that invocation uses the hosted
+`$JUDGE`, also append `--ack-hosted-judge-data-transfer`; omit it for a local
+judge or a non-LLM stage. The driver retains content-addressed
 copies and fails before target calls if any compatible planning row lacks a
 fresh exact receipt. Its first newly executed or restored response must also
 match the receipt's stable realized provider/runtime identity. The non-secret
@@ -1404,6 +1555,7 @@ export CANARY_HTTP_CAP='<complete-canary-projected-http-total>'
 
 python -m experiments.run_matrix \
   --diagnostic-canary "${CANARY_LIVE_ATTESTATION_ARGS[@]}" \
+  --ack-hosted-judge-data-transfer \
   --api "$CANARY_TARGET" --api-config experiments/api-targets.json \
   --attackers replay --judges rules,guardrail,llm --judge-model "$JUDGE" \
   --guardrail-model "$SCORE_GUARD" --guardrail-revision "$SCORE_GUARD_REV" \
@@ -1523,6 +1675,7 @@ python -m experiments.rig_check \
 
 python -m experiments.run_matrix \
   "${LIVE_ATTESTATION_ARGS[@]}" \
+  --ack-hosted-judge-data-transfer \
   --api "$TEXT_TARGETS" --api-config experiments/api-targets.json \
   --attackers replay --judges rules,guardrail,llm --judge-model "$JUDGE" \
   --guardrail-model "$SCORE_GUARD" --guardrail-revision "$SCORE_GUARD_REV" --guardrail-device "$SCORE_GUARD_DEVICE" \
@@ -1562,7 +1715,8 @@ python -m experiments.rig_check \
 
 After the check succeeds, replace `experiments.rig_check` with
 `experiments.run_matrix` and replace all three planning ceilings with the printed
-totals; append `"${LIVE_ATTESTATION_ARGS[@]}"` and write the measured grid to
+totals; append `"${LIVE_ATTESTATION_ARGS[@]}"` and
+`--ack-hosted-judge-data-transfer`, and write the measured grid to
 `runs/thesis/runner/static-image`. Automated
 stages do not inspect image pixels: for released image sources
 they grade the target output with the source-provided safety reason/reference,
@@ -1605,7 +1759,7 @@ python -m experiments.rig_check \
 ```
 
 For each, repeat with `experiments.run_matrix`, the exact successful projection,
-`"${LIVE_ATTESTATION_ARGS[@]}"`, and measured outputs
+`"${LIVE_ATTESTATION_ARGS[@]}"`, `--ack-hosted-judge-data-transfer`, and measured outputs
 `runs/thesis/runner/static-audio` and
 `runs/thesis/runner/static-video`, respectively. Do not send transcripts,
 captions, or extracted frames to a target
@@ -1702,7 +1856,8 @@ python -m experiments.rig_check \
   --out runs/thesis/preflight/crescendo-text
 ```
 
-Repeat with `experiments.run_matrix`, `"${LIVE_ATTESTATION_ARGS[@]}"`, the printed totals, and
+Repeat with `experiments.run_matrix`, `"${LIVE_ATTESTATION_ARGS[@]}"`,
+`--ack-hosted-judge-data-transfer`, the printed totals, and
 `--out runs/thesis/runner/crescendo-text`. This lane reports conversation
 endpoints; it does not enter static ASR.
 
@@ -1758,7 +1913,7 @@ configured maximum, establish the realized variant count.
 Because `attacker-config.json` must contain only selected attacker keys, create a
 one-attacker copy for each invocation or remove the unselected rows before the
 check. Repeat the successful check with `experiments.run_matrix`,
-`"${LIVE_ATTESTATION_ARGS[@]}"`, its exact
+`"${LIVE_ATTESTATION_ARGS[@]}"`, `--ack-hosted-judge-data-transfer`, its exact
 totals, and `--out "runs/thesis/runner/transfer-$ATTACKER"`.
 
 The remaining runner bridges are specialized:
@@ -1771,17 +1926,42 @@ The remaining runner bridges are specialized:
 | `ideator` | verified precomputed text-image `seed_pairs` only; live package path is disabled |
 | `t3mp3st` | prepare an exact `ura-t3mp3st-plan-bundle/1` through the literal-loopback Op-General planning route, then replay only that bundle in the measured grid; no mission or tool route is used |
 
+For live NanoGCG, its one-attacker config must identify a surrogate that differs
+from every target and can enter section 6.1's sealed acquisition plan:
+
+```json
+{
+  "nanogcg": {
+    "model_id": "meta-llama/Llama-2-7b-chat-hf",
+    "model_revision": "<exact 40-64 lowercase hex commit>"
+  }
+}
+```
+
+The no-model-call alternative is an already retained suffix with an attributable
+source; do not include a model ID/revision in the same entry:
+
+```json
+{
+  "nanogcg": {
+    "suffix": "<exact precomputed suffix>",
+    "suffix_source": "<retained artifact/run identity>"
+  }
+}
+```
+
 Run these only after preparing their exact attacker config and passing
 `rig_check`. Do not claim that a complete upstream evaluator ran. Garak,
 Promptfoo, Petri, FuzzyAI, EasyJailbreak, AutoDAN-Turbo, Giskard, ASB, and
 AgentDojo are not runner attackers; they belong in the native track below.
 
-T3MP3ST planning, HarmBench generation, and local nanoGCG optimization are
-out-of-band activities not covered by the Runner's target/judge/HTTP budget or
-post-generation checkpoint. Run preparation once under its own authorized cap
-or quota, retain its exact output, then use only that output in the measured
-Runner. Never describe preparation calls as protected by the common Runner
-ceilings.
+T3MP3ST planning, HarmBench generation, and NanoGCG surrogate optimization are
+not target/judge/provider-HTTP calls covered by the Runner's common call ledger.
+T3MP3ST and HarmBench preparation run once out of band under their own cap or
+quota. A live NanoGCG adapter loads its sealed surrogate once per cell and
+caches it after post-load verification; a precomputed suffix performs no model
+load. Retain exact preparation/suffix provenance and never describe any of
+these operations as protected by the target/judge ceilings.
 
 #### T3MP3ST: capture, then replay
 
@@ -1894,7 +2074,8 @@ CUDA_VISIBLE_DEVICES=0,1 python -m experiments.rig_check \
   --deadline-seconds 7776000 --out runs/thesis/preflight/local-qwen3-vl-text
 ```
 
-Repeat with `run_matrix`, `"${LIVE_ATTESTATION_ARGS[@]}"`, exact totals, and
+Repeat with `run_matrix`, `"${LIVE_ATTESTATION_ARGS[@]}"`,
+`--ack-hosted-judge-data-transfer`, exact totals, and
 `--out runs/thesis/runner/local-qwen3-vl-text`; allow the process to exit, then
 run the image lane. Repeat both for the LLaVA base and GraySwan RR checkpoint using their
 own exact local configs. Their paired comparison is meaningful only on identical
@@ -1923,7 +2104,7 @@ python -m experiments.rig_check \
 ```
 
 Repeat the successful defense check with `run_matrix`,
-`"${LIVE_ATTESTATION_ARGS[@]}"`, exact totals, and
+`"${LIVE_ATTESTATION_ARGS[@]}"`, `--ack-hosted-judge-data-transfer`, exact totals, and
 `--out runs/thesis/runner/defense-text`. Run matching no-defense cells for the
 same focal targets and clusters in their own checked/measured lane directories.
 Added value is measured as the harmful/benign tradeoff; lower harmful ASR without the
@@ -2302,7 +2483,7 @@ directory rather than mixing conditions. Within a `run_matrix` invocation the
 driver replaces its preliminary plan with the final plan. The Level-1 validator
 rejects duplicate request identities, and every supplied grid must still bind
 the exact plan descriptor and experiment condition.
-`run_matrix` already wrote each `ura-request-envelope/1` before config/source
+`run_matrix` already wrote each `ura-request-envelope/2` before config/source
 materialization. Level-1 discovers those files and any bound
 `ura-request-error/1` automatically from the measured result tree and plan
 siblings; there is no extra request-manifest setup or CLI argument.
@@ -2615,19 +2796,30 @@ precision, which binds `allow_unknown_fit: true`; auto remains blocked, as does
 every known incompatibility. These filters are convenience only; shared CLI/UI
 admission remains authoritative.
 
-Local Ollama rows follow only selected modality. Each row describes a model
-already pulled into an external local daemon and requires its exact 64-hex
-`/api/tags` digest plus a unique modality list containing `text` and optionally
-`image`. It rejects vLLM-only fit and quantization fields and exposes no fit or
-precision selector because precision belongs to the pulled artifact. Runner
-uses the daemon's HTTP API directly and needs no Ollama Python SDK.
+Local Ollama rows follow only selected modality. Live discovery uses the literal
+loopback daemon's bounded tags, loaded-model, and show-capability APIs; it binds
+the exact lowercase 64-hex digest, checks the tag snapshot again after show,
+and never guesses a model or modality. Tags/show family fields and bounded
+`model_info.general.architecture` must provide compatible upstream identity
+evidence; architecture is included in overlap matching and missing or ambiguous
+evidence fails closed. Automatic rows overlapping the vLLM
+upstream/name/family index are unavailable. A stale/manual overlap is shown
+disabled with its exact reason and cannot override that requirement. Ollama rejects vLLM-only fit and
+quantization fields and exposes no fit or precision selector because precision
+belongs to the pulled artifact. Runner uses the daemon's HTTP API directly and
+needs no Ollama Python SDK. Runner admission independently refreshes the live
+show-backed roster, then every inference holds the shared endpoint lock and
+binds exact pre-chat tags, returned model, post-chat tags, and post-chat loaded
+tag/digest evidence under one hard wall-clock deadline.
 
-Source arms without an integrated evaluator remain visible/selectable with a
-concise `no evaluator` badge and one custom hover/focus tooltip containing the
-exact limitation. The server
-rejects such a selection before a subprocess. This preserves the full research
-programme without falsely calling the lane runnable; implemented source-metric
-arms and common-metric arms retain their distinct admission paths.
+Source arms without an integrated evaluator remain visible/selectable, with the
+exact limitation in a custom hover/focus tooltip. They are rejected before a
+subprocess by default. Eligible non-tool rows show `⚠ approximate opt-in`; the
+explicit opt-in admits only separately named, supplementary `approximate_*`
+response proxies and never claims to run the missing source evaluator.
+Tool-conditioned rows show `tool runtime required` and remain fail-closed.
+Implemented source-metric and common-metric arms retain their distinct admission
+paths.
 
 Dry mode removes any selected real API/local targets and target configs because
 `run_matrix --dry-run` always executes `MockTarget`. The local roster advertises
@@ -2642,15 +2834,41 @@ the complete child tree. Builder preflights are kept under
 `<results-root>/preflight`; changing only execution caps may reuse the same exact
 projection, while a semantic lane change requires a new preflight.
 
+The Ollama service is the intentional exception to detached experiment jobs:
+clean console shutdown stops only an `ollama serve` group started by that same
+console process. It never stops a daemon that was already present or one merely
+rediscovered after restart. Start uses a fixed no-shell argument vector and
+loopback `OLLAMA_HOST`. Console API/pull requests ignore proxies and redirects,
+and their opens, reads, bodies, and aggregate operations have hard monotonic
+bounds. The daemon child receives only an explicit local runtime/GPU/Ollama/
+certificate/safe-proxy environment allowlist. Pulls are disabled for external
+or ambiguous daemons. Start freezes the owned model-storage path; the worker
+re-proves the PID/start identity and exact listener after acquiring the
+exclusive cross-process endpoint lock. Pull admission requires five GiB of
+model-volume headroom; the worker rechecks that reserve plus each API-reported
+remaining byte count. Discovery and inference use shared locks, so they cannot
+race a pull, Stop, or model mutation. Unconfirmed descendant cleanup retains
+owned/error state for a later Stop retry. POSIX cleanup sends no group signal
+without a current exact process-start identity for the original live leader and
+does not escalate after that proof disappears. Daemon output is
+discarded instead of creating an unbounded log. The Pull form
+launches the typed internal `ollama_pull` job and
+streams bounded normalized progress to its ordinary job log; it is deliberately
+absent from the generic Commands forms.
+
 The Jobs table renders each full start date and time in the browser's local time
 zone. State chips, free-text search, From, and To filters compose. Unless the
 URL supplies either bound, From defaults to exactly seven days before the
 current browser time and To defaults to that current time. Both bounds are
-inclusive at the precision selected by the datetime input. Compact tags avoid
-repeating terminal prose: console-owned jobs use `running`, `passed`, `failed`,
-or `orphaned`; external engineering campaigns can also use `reported running`,
-`partial`, `blocked`, `stopped`, or `unknown`. `Reported running` mirrors an
-external marker without asserting operating-system process liveness. A terminal
+inclusive at the precision selected by the datetime input. The page persists
+browser-derived epoch bounds and reloads a date-aware SQLite query, so older jobs
+are retrievable beyond the 500-row restart cache. External campaign markers are
+also filtered before the 20-row display cap. The page discloses either the
+5,000-job or 20-campaign cap so operators can narrow From/To. Compact tags avoid
+repeating terminal prose: jobs use blue `running`, plus `passed`, `failed`,
+`orphaned`, `partial`, `blocked`, `stopped`, or `unknown`. For an external
+engineering campaign, the surrounding detail identifies `running` as a task-log
+marker without asserting operating-system process liveness. A terminal
 campaign is `partial` when declared work is failed, skipped, pending, or when
 unplanned task events exist.
 
@@ -2673,7 +2891,7 @@ This report can distinguish a completed support stub from reported generation,
 but it is not confirmed execution or scientific evidence. Only validated,
 completion-bound response artifacts establish actual calls and results.
 
-Console state (jobs with their exact argv and builder parameters, the
+Console state (jobs with their durable argv identities and builder parameters, the
 campaign-run registry, recorded per-artifact token usage, and the report
 index) persists in a stdlib-sqlite database `console.db` under the state
 directory, with a schema version, a startup integrity check, transactional
@@ -2683,6 +2901,12 @@ database is operational state only - the validated filesystem artifacts
 remain the scientific authority, a database fault is surfaced visibly (never
 as a silently empty history or zero spend), and neither the database nor the
 state directory is return-package evidence.
+
+An explicit vLLM checkpoint path remains only in the launch-time argv and the
+private selected-config file that `run_matrix` unlinks immediately after its
+bounded startup read. Confirmation HTML, `Job`, `command.json`, and SQLite use
+the declared `vllm:local-checkpoint@sha256:<digest>` identity; the child
+verifies the digest before any model call.
 
 Token usage is never estimated: target usage is read from completion-bound
 `*.responses.jsonl` records (`Response.tokens` plus the detailed
@@ -2725,7 +2949,9 @@ a corrupt or non-object `pricing.json` is refused rather than reset, so
 hand-entered rates are never lost. Provider API keys are set or rotated from
 the Config section (`/config/secrets`); the console records only presence and a
 last-four hint, never the value, and writes keys write-only to the operator
-secrets file (mode 600).
+secrets file (mode 600). `HF_TOKEN` is stricter: it displays presence only (no
+suffix), remains process-memory only (legacy file entries are scrubbed), and is
+forwarded only to the dedicated sealed-acquisition child.
 
 Console-form to runbook-section mapping (the console builds the identical
 argument vectors; nothing below is console-only):
@@ -2735,6 +2961,7 @@ argument vectors; nothing below is console-only):
 | `project_revision` | 2, 17 |
 | `source_conformance` (scaffold and validate) | 4/4.1, 17 |
 | `export_jalmbench` / `export_vlsbench` | 3.2 |
+| sealed model plan/acquire/offline run (Builder-only workflow) | 6.1, 7-13 |
 | `rig_check` | 8.1, 9-13 |
 | `run_matrix` (dry-run, probe, canary, measured) | 4.1, 8/8.1, 9/9.1, 10-13 |
 | `live_attestation` | 8.1, 9 |

@@ -29,6 +29,7 @@ from ura.source_conformance import (  # noqa: E402
     validate_source_conformance_manifest,
     verify_manifest_components,
 )
+from ura.strict_json import strict_json_loads  # noqa: E402
 
 
 _MAX_MANIFEST_BYTES = 4 * 1024 * 1024
@@ -51,12 +52,9 @@ def _read_regular(path: Path, *, label: str, max_bytes: int) -> bytes:
 
 
 def _loads_strict(payload: bytes, *, label: str) -> object:
-    def reject_constant(value: str) -> None:
-        raise ValueError(f"{label} contains non-finite JSON number {value!r}")
-
     try:
-        return json.loads(payload.decode("utf-8"), parse_constant=reject_constant)
-    except (UnicodeError, json.JSONDecodeError) as exc:
+        return strict_json_loads(payload.decode("utf-8"))
+    except (UnicodeError, ValueError, RecursionError) as exc:
         raise ValueError(f"invalid {label} JSON: {exc}") from exc
 
 

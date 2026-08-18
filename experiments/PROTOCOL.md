@@ -49,7 +49,7 @@ not replaced with a nearby model. A failed/stale live attestation or silent
 identity drift is a missing/failed prerequisite, not a safe zero and not
 silently rewritten as structural incompatibility.
 
-Runner 2.16 operationalizes this distinction. One completed, bounded, non-dry
+Runner 2.19 operationalizes this distinction. One completed, bounded, non-dry
 `--attestation-probe` is converted without another provider call into a strict
 `ura-live-attestation/2` receipt. Each ordinary measured grid must supply the
 receipt's exact byte digest, the same operator-declared non-secret
@@ -84,7 +84,21 @@ The optional per-vLLM-model `max_model_len` is distinct from generation
 allocation. Omission delegates context length to the immutable checkpoint;
 otherwise the value is an integer in 1..1,000,000 and `max_tokens` cannot exceed
 it. The normalized value is execution provenance.
-Runner 2.16 also makes local response construction valid before orchestration:
+
+Hub bytes are fixed before model construction through the sealed acquisition
+protocol. The prospective selection covers vLLM targets, local vLLM LLM judges,
+scoring Guardrails, defense Guardrails, and NanoGCG surrogates, each by public
+repository and immutable 40-64-hex commit; evaluated targets may not share the
+judge, guard, or surrogate identity. Plan-only execution makes no model call.
+The dedicated controller then either fully verifies a cache hit or transfers
+and seals missing bytes. Preflight/probe/measured children require the exact
+plan, receipt, and managed-store snapshot, run offline/local-only, and rehash
+the complete resource immediately before and after construction. Their result
+roots retain portable path-free plan/receipt evidence and a stable seal-based
+condition identity. Receipt wall-clock time remains audit provenance but cannot
+split otherwise identical experimental strata.
+
+Runner 2.19 also makes local response construction valid before orchestration:
 vLLM and Ollama emit the shared deterministic rendered-dialog fingerprint as a
 temporary non-blank `attempt_id`, and Runner replaces it with the canonical
 Attempt ID and run ID before judgment or persistence. The placeholder is local
@@ -196,7 +210,10 @@ Every evaluable common-run response passes through the configured ordered judge
 cascade. Queried stage labels, scores, confidence and parse flags are retained;
 the first confidence-clearing stage is authoritative. An unresolved cascade is
 an error/abstention, not a safe zero. The cascade runs full-shadow for
-diagnostics; it is not a cost-saving early-exit design.
+diagnostics; it is not a cost-saving early-exit design. The authoritative final
+Judgment binds the complete ordered projection of every planned stage, and
+completion/report loaders compare every field type-strictly so a non-rubric
+shadow cannot be independently rewritten for agreement or sensitivity output.
 
 The reporting ontology contains coverage/conformance, unsafe-response rate,
 benign-refusal rate, adaptive compromise, classification quality,

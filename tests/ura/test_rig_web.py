@@ -11,6 +11,7 @@ so the checkout is never dirtied.
 from __future__ import annotations
 
 import argparse
+import copy
 import hashlib
 import http.client
 import json
@@ -38,6 +39,8 @@ from experiments.rig_web import (
     Job,
     RigWebApp,
     _tokens_by_category,
+    _judge_row_usage,
+    _response_identity,
     _validate_report_document,
     build_argv,
     collect_usage,
@@ -49,6 +52,15 @@ from experiments.rig_web import (
     usage_rows_from_marker,
 )
 from ura.data_models import DialogTurn, Response
+from ura.approximate_metrics import (
+    ApproximateMetricProvenance,
+    supplementary_metric_policy,
+)
+from ura.model_acquisition import (
+    build_receipt as build_model_acquisition_receipt,
+    build_upstream_manifest,
+    write_document_create_only,
+)
 from ura.targets.base import BaseTarget
 
 
@@ -73,6 +85,33 @@ def _isolated_app(tmp_path: Path) -> RigWebApp:
     return RigWebApp(
         results_root=results, state_dir=tmp_path / "state", repo_root=repo,
     )
+
+
+def _operator_registry_app(tmp_path: Path) -> RigWebApp:
+    """An isolated app with executable hosted and source registries.
+
+    Real source arms intentionally never fall back to the checked-in example
+    at execution time.  Builder unit tests that exercise those arms therefore
+    install an explicit operator registry in their private repository instead
+    of weakening that fail-closed boundary or writing into the checkout.
+    """
+
+    app = _isolated_app(tmp_path)
+    checkout = Path(__file__).resolve().parents[2]
+    copies = (
+        (
+            checkout / "experiments" / "rig" / "api-targets.example.json",
+            app.repo_root / "experiments" / "rig" / "api-targets.example.json",
+        ),
+        (
+            checkout / "experiments" / "rig" / "source-instances.example.json",
+            app.repo_root / "experiments" / "source-instances.json",
+        ),
+    )
+    for source, destination in copies:
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        destination.write_bytes(source.read_bytes())
+    return app
 
 
 def _opening_tag(document: str, marker: str) -> str:
@@ -104,6 +143,41 @@ def test_command_construction_is_typed_and_allowlisted() -> None:
         build_argv("level1_evidence", {"--exec": "evil"})
     with pytest.raises(ValueError):
         build_argv("run_matrix", {"--limit": "12; rm -rf /"})
+
+
+def test_run_matrix_can_launch_only_through_validated_builder(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    app = _app(tmp_path)
+    launches: list[tuple[object, ...]] = []
+    monkeypatch.setattr(
+        app,
+        "start_job",
+        lambda *args, **kwargs: launches.append((args, kwargs)),
+    )
+    try:
+        commands_page = app._commands_page().decode("utf-8")
+        assert "data-name='run_matrix'" not in commands_page
+        assert "name='command' value='run_matrix'" not in commands_page
+
+        status, _content_type, body = app.handle(
+            "POST",
+            "/jobs",
+            {
+                "command": "run_matrix",
+                "--api": "anthropic:target",
+                "--judges": "llm",
+                "--judge-model": "anthropic:judge",
+                "--max-total-target-calls": "999",
+                "--max-total-judge-calls": "999",
+            },
+        )
+        assert status == 400
+        assert b"validated Build workflow" in body
+        assert launches == []
+    finally:
+        app.close()
     # Flag parameters never smuggle values.
     with pytest.raises(ValueError, match="checkbox flag"):
         build_argv("run_matrix", {"--dry-run": "--models evil"})
@@ -188,6 +262,240 @@ def test_job_lifecycle_start_monitor_stop(tmp_path: Path) -> None:
     )
     assert log_status == 200
     assert b"selftest complete" in log_body
+
+
+@pytest.mark.parametrize("local_role", ["target", "judge"])
+def test_explicit_local_path_is_launch_only_not_durable_console_state(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    local_role: str,
+) -> None:
+    """Raw checkpoint locators reach Popen but no retained console surface."""
+
+    app = _app(tmp_path)
+    checkpoint = (tmp_path / "operator-private" / local_role / "checkpoint").resolve()
+    spec = f"vllm:{checkpoint}"
+    digest = ("ab" if local_role == "target" else "cd") * 32
+    selected = {
+        spec: {
+            "digest": digest,
+            "modalities": ["text"],
+            "tensor_parallel_size": 1,
+            "gpu_memory_utilization": 0.9,
+            "parameter_count_b": 1,
+            "quantization": "none",
+        }
+    }
+    monkeypatch.setattr(
+        app,
+        "_local_entry_catalog",
+        lambda: (selected, set(selected)),
+    )
+    payload = app._selected_local_config_payload(
+        [spec],
+        quantization_overrides={spec: "none"},
+        require_live_ollama=True,
+    )
+    payload_digest = hashlib.sha256(payload).hexdigest()
+    private_dir = app.state_dir / ".private-local-configs"
+    private_dir.mkdir(parents=True)
+    local_config = private_dir / f"selected-{payload_digest[:24]}-0123456789abcdef.json"
+    local_config.write_bytes(payload)
+
+    values = {
+        "--local-config": str(local_config),
+        "--local-config-sha256": payload_digest,
+        "--judges": "rules,llm",
+        "--out": f"runs/{local_role}-path-boundary",
+    }
+    params = {
+        "mode": "measured",
+        "judges": "rules,llm",
+        "out": values["--out"],
+        f"quantization::{spec}": "none",
+    }
+    if local_role == "target":
+        values["--local"] = spec
+        params["local"] = spec
+    else:
+        values["--api"] = "mock"
+        values["--judge-model"] = spec
+        params["api"] = "mock"
+        params["judge_model"] = spec
+    _identities, _private_path, durable_digest = app._local_config_projection(
+        values
+    )
+    assert durable_digest is not None
+    params["_local_config_snapshot_sha256"] = durable_digest
+
+    launched: dict[str, object] = {}
+
+    class FakeProcess:
+        pid = 4242
+        returncode: int | None = None
+
+        def poll(self) -> int | None:
+            return self.returncode
+
+    fake_process = FakeProcess()
+
+    def fake_popen(argv, **kwargs):
+        launched["argv"] = list(argv)
+        launched["env"] = dict(kwargs.get("env") or {})
+        return fake_process
+
+    import experiments.rig_web_app.lifecycle as lifecycle_module
+
+    monkeypatch.setattr(lifecycle_module.subprocess, "Popen", fake_popen)
+    monkeypatch.setattr(lifecycle_module, "_win_managed_job", lambda: None)
+    try:
+        identity = f"vllm:local-checkpoint@sha256:{digest}"
+        preview = app._preview_page("run_matrix", values, params).decode("utf-8")
+        assert str(checkpoint) not in preview and spec not in preview
+        assert identity in preview
+        ticket_match = re.search(
+            r"name='launch_ticket' value='([^']+)'", preview
+        )
+        assert ticket_match is not None
+        ticket_params = app._launch_ticket_params(ticket_match.group(1))
+        assert ticket_params is not None
+        assert spec in ticket_params.values()
+
+        job = app.start_job("run_matrix", values, builder_params=params)
+
+        # Execution parity: the child receives the exact real locator/config.
+        assert spec in launched["argv"]
+        assert str(local_config) in launched["argv"]
+        assert launched["env"]["URA_PRIVATE_TRANSIENT_LOCAL_CONFIG"] == str(
+            local_config.resolve()
+        )
+        assert local_config.is_file()
+
+        # Retention parity: every durable/rendered projection is content-only.
+        retained_job = json.dumps(
+            {"argv": job.argv, "builder_params": job.builder_params},
+            sort_keys=True,
+        )
+        assert str(checkpoint) not in retained_job and spec not in retained_job
+        assert identity in retained_job
+        assert f"quantization::{identity}" in (job.builder_params or {})
+        assert "private-local-config@sha256:" in retained_job
+
+        command_doc = (job.directory / "command.json").read_text(encoding="utf-8")
+        assert str(checkpoint) not in command_doc and spec not in command_doc
+        assert identity in command_doc
+        with sqlite3.connect(app.state_dir / "console.db") as conn:
+            db_argv, db_params = conn.execute(
+                "SELECT argv, builder_params FROM jobs WHERE job_id = ?",
+                (job.job_id,),
+            ).fetchone()
+        retained_db = f"{db_argv}\n{db_params}"
+        assert str(checkpoint) not in retained_db and spec not in retained_db
+        assert identity in retained_db
+        status, _, body = app.handle("GET", f"/jobs/{job.job_id}")
+        assert status == 200
+        assert str(checkpoint) not in body.decode("utf-8")
+        assert identity in body.decode("utf-8")
+
+        # A child that exits before consuming the one-shot input is still
+        # cleaned by lifecycle reconciliation.
+        fake_process.returncode = 0
+        app._reconcile()
+        assert not local_config.exists()
+        app.close()
+
+        restored = _app(tmp_path)
+        try:
+            restored_job = restored.jobs[job.job_id]
+            restored_text = json.dumps({
+                "argv": restored_job.argv,
+                "builder_params": restored_job.builder_params,
+            })
+            assert str(checkpoint) not in restored_text and spec not in restored_text
+            assert identity in restored_text
+            assert run_kind(restored_job.command, restored_job.argv) == "measured"
+        finally:
+            restored.close()
+    finally:
+        if app.db.healthy:
+            app.close()
+
+
+def test_duplicate_local_config_is_rejected_before_job_or_popen(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    app = _app(tmp_path)
+    checkpoint = (tmp_path / "operator-private" / "checkpoint").resolve()
+    spec = f"vllm:{checkpoint}"
+    encoded_spec = json.dumps(spec)
+    raw = (
+        "{" + encoded_spec + ':{"digest":"' + "a" * 64 + '"},'
+        + encoded_spec + ':{"digest":"' + "b" * 64 + '"}}'
+    )
+    local_config = tmp_path / "ambiguous-local-targets.json"
+    local_config.write_text(raw, encoding="utf-8")
+    values = {
+        "--dry-run": "on",
+        "--local": spec,
+        "--local-config": str(local_config),
+        "--local-config-sha256": hashlib.sha256(raw.encode("utf-8")).hexdigest(),
+        "--out": "runs/ambiguous-local-config",
+    }
+    popen_calls: list[object] = []
+
+    import experiments.rig_web_app.lifecycle as lifecycle_module
+
+    monkeypatch.setattr(
+        lifecycle_module.subprocess,
+        "Popen",
+        lambda *_args, **_kwargs: popen_calls.append(object()),
+    )
+    before_jobs = set(app.jobs)
+    before_directories = set(app.state_dir.glob("job-*"))
+    with pytest.raises(ValueError, match="JSON object"):
+        app.start_job("run_matrix", values)
+
+    assert popen_calls == []
+    assert set(app.jobs) == before_jobs
+    assert set(app.state_dir.glob("job-*")) == before_directories
+    assert local_config.read_text(encoding="utf-8") == raw
+    with sqlite3.connect(app.state_dir / "console.db") as connection:
+        assert connection.execute("SELECT COUNT(*) FROM jobs").fetchone()[0] == 0
+    app.close()
+
+
+@pytest.mark.parametrize(
+    ("argv", "builder_params"),
+    [
+        (["python", "--local", "vllm:/operator-private/target"], None),
+        (
+            ["python", "--judge-model", "vllm:/operator-private/judge"],
+            {"judge_model": "vllm:/operator-private/judge"},
+        ),
+    ],
+)
+def test_storage_rejects_unprojected_explicit_local_paths(
+    tmp_path: Path,
+    argv: list[str],
+    builder_params: dict[str, str] | None,
+) -> None:
+    db = ConsoleDB(tmp_path / "console.db")
+    job = Job(
+        job_id="unsafe-path",
+        command="run_matrix",
+        argv=argv,
+        builder_params=builder_params,
+        directory=tmp_path / "job",
+        process=None,
+        restored_state="failed",
+        restored_exit=1,
+    )
+    try:
+        with pytest.raises(ValueError, match="refusing to persist"):
+            db.upsert_job(job)
+    finally:
+        db.close()
 
 
 def test_close_detaches_running_job_without_killing_it(tmp_path: Path) -> None:
@@ -350,6 +658,38 @@ def test_config_editor_writes_only_allowlisted_json_with_backup(tmp_path: Path) 
     assert all("env" not in key for key in _EDITABLE_CONFIGS)
 
 
+def test_config_editor_rejects_duplicate_content_without_writing(
+    tmp_path: Path,
+) -> None:
+    app = _isolated_app(tmp_path)
+    target = app.repo_root / "experiments" / "api-targets.json"
+    ambiguous = '{"api:model":{"modalities":["text"]},' \
+        '"api:model":{"modalities":["image"]}}'
+
+    with pytest.raises(ValueError, match="duplicate JSON object key"):
+        app.save_config("api-targets", ambiguous)
+
+    assert not target.exists()
+    assert not (app.state_dir / "config-backups").exists()
+    app.close()
+
+
+def test_pricing_editor_preserves_ambiguous_on_disk_table(tmp_path: Path) -> None:
+    app = _isolated_app(tmp_path)
+    pricing_path = app.repo_root / "experiments" / "pricing.json"
+    ambiguous = '{"providers":{"glm":{}},"providers":{"anthropic":{}}}'
+    pricing_path.write_text(ambiguous, encoding="utf-8")
+    prior = pricing_path.read_bytes()
+
+    with pytest.raises(ValueError, match="existing pricing config is not strict JSON"):
+        app.save_config("pricing", '{"providers":{}}')
+
+    assert pricing_path.read_bytes() == prior
+    backups = app.state_dir / "config-backups"
+    assert not backups.exists() or list(backups.iterdir()) == []
+    app.close()
+
+
 def test_builder_page_renders_full_surface(tmp_path: Path) -> None:
     # The builder page carries the complete lane surface: modality wizard,
     # receipts, scope + repeatable attestation rows, sampling, call ceilings,
@@ -358,13 +698,13 @@ def test_builder_page_renders_full_surface(tmp_path: Path) -> None:
     status, _, body = app.handle("GET", "/build")
     text = body.decode("utf-8")
     assert status == 200
-    for modality in ("text", "image", "audio", "video"):
+    for modality in ("text", "image", "audio", "video", "tool"):
         assert f"data-mod='{modality}'" in text
     assert "data-mods='text,image'" in text
     assert "data-arm='mmsafety_official'" in text
     assert "data-fw='crescendo'" in text
     assert "data-judge='guardrail'" in text  # the guardrail judge option
-    assert text.count("class='modbox' data-mod") == 4
+    assert text.count("class='modbox' data-mod") == 5
     assert "data-mod='text' checked" in text
     assert "modtoggle" in text
     assert "applyScope" in text and "intersects" in text
@@ -377,7 +717,7 @@ def test_builder_page_renders_full_surface(tmp_path: Path) -> None:
         "name='max_turns'", "name='cap_target'", "name='cap_judge'",
         "name='cap_http'", "name='deadline'", "name='dtype'",
         "name='quantization'", "name='judge_model'", "name='defense_guard'",
-        "name='canary_dry'",
+        "name='canary_dry'", "name='approximate_common_metrics'",
         # Scoring and defense guardrail inputs (model/revision/device each).
         "name='guardrail_model'", "name='guardrail_revision'",
         "name='guardrail_device'", "name='defense_guardrail_model'",
@@ -448,9 +788,9 @@ def test_builder_lists_all_arms_and_only_campaign_attackers(tmp_path: Path) -> N
             at = text.index(marker)
             input_tag = text[text.rfind("<input", 0, at):text.find(">", at)]
             assert "disabled" not in input_tag
-        assert "source-specific metric - not yet runnable (evaluator not integrated)" in text
+        assert "source-specific metric - approximate proxy available (evaluator not integrated)" in text
         assert "source-specific metric - runnable (replay attacker only)" in text
-        assert "badge gray tip" in text and "no evaluator" in text
+        assert "badge amber tip" in text and "approximate opt-in" in text
         assert "badge amber tip" in text and "source-metric" in text
         assert "data-arm='rjudge_release'" in text
         assert "data-arm='gptgeochat_release'" in text
@@ -563,7 +903,11 @@ def test_prepared_workflows_live_under_attack_frameworks_without_nested_forms(
         frameworks_at = page.index("Attack frameworks")
         workflows_at = page.index("id='prepared-workflows'")
         assert builder_at < frameworks_at < workflows_at
-        assert page.count("<form ") == 1
+        # Ollama lifecycle/pull controls are deliberately separate forms before
+        # the campaign builder. They must never become nested in that form.
+        assert page[:builder_at].count("<form ") == 4
+        assert page[:builder_at].count("</form>") == 4
+        assert page[builder_at:].count("<form ") == 1
         assert "Prepared attack workflows" not in page
         assert (
             "formaction='/build/t3mp3st/capture' formmethod='post'" in page
@@ -618,7 +962,7 @@ def test_prepared_workflows_live_under_attack_frameworks_without_nested_forms(
         assert "t3cap_model" not in projection and "hcap_repo" not in projection
         assert "t3_artifact" not in projection and "harm_config" not in projection
 
-        _command, _values, selected = app._compose_from_builder({
+        selected = app._builder_params({
             "mode": "dry_run", "corpora": "synth",
             "attackers": "t3mp3st,harmbench", "judges": "rules",
             "out": "runs/dry", "seeds": "0",
@@ -629,8 +973,10 @@ def test_prepared_workflows_live_under_attack_frameworks_without_nested_forms(
         assert selected["t3_artifact"] == "runs/selected-t3.json"
         assert selected["harm_config"] == "runs/selected-harm.json"
         selected_projection = app._projection_params(selected)
-        assert selected_projection["t3_artifact"] == "runs/selected-t3.json"
-        assert selected_projection["harm_config"] == "runs/selected-harm.json"
+        assert selected_projection["t3_artifact"] == (
+            "private-t3mp3st-artifact@sha256:" + "b" * 64
+        )
+        assert selected_projection["harm_config"] == "private-harmbench-config"
     finally:
         app.close()
 
@@ -641,7 +987,19 @@ def test_prepared_attack_configs_are_verified_and_materialized_for_runtime(
     repo = tmp_path / "repo"
     (repo / "experiments").mkdir(parents=True)
     (repo / "experiments" / "api-targets.json").write_text(json.dumps({
-        "openai:test-model": {"modalities": ["text"]},
+        "openai:test-model": {
+            "modalities": ["text"], "max_tokens": 64, "temperature": 0.0,
+        },
+    }), encoding="utf-8")
+    (repo / "experiments" / "source-instances.json").write_text(json.dumps({
+        "strongreject_official": {
+            "converter": "strongreject",
+            "path_env": "URA_STRONGREJECT_OFFICIAL_PATH",
+        },
+        "harmbench_text": {
+            "converter": "harmbench",
+            "path_env": "URA_HARMBENCH_TEXT_PATH",
+        },
     }), encoding="utf-8")
     results = repo / "runs"
     results.mkdir()
@@ -735,45 +1093,88 @@ def test_prepared_attack_configs_are_verified_and_materialized_for_runtime(
                               "http_attempts": 1}, ""),
         )
         common = {
-            "confirm": "yes", "mode": "measured", "api": "openai:test-model",
+            "mode": "measured", "api": "openai:test-model",
             "judges": "rules", "seeds": "0", "limit": "1",
             "cap_target": "10", "cap_judge": "10", "cap_http": "10",
             "deadline": "600", "scope": "scope-1", "max_age": "24",
-            "att_path1": "runs/att.json", "att_sha1": "1" * 64,
+            "att_path1": "runs/att.json", "att_sha1": "",
             "project_revision": "runs/project.json",
-            "project_revision_sha": "2" * 64,
-            "source_conformance": "runs/source.json",
-            "source_conformance_sha": "3" * 64,
+            "project_revision_sha": "",
+            "source_conformance": str(results / "source.json"),
+            "source_conformance_sha": "",
         }
-        status, location, _ = app.handle("POST", "/build", {
+        attestation_receipt = results / "att.json"
+        attestation_receipt.write_text(
+            '{"schema":"fixture-attestation"}\n', encoding="utf-8"
+        )
+        project_receipt = results / "project.json"
+        project_receipt.write_text(
+            '{"schema":"fixture-project"}\n', encoding="utf-8"
+        )
+        source_receipt = results / "source.json"
+        source_receipt.write_text('{"schema":"fixture"}\n', encoding="utf-8")
+        common["att_sha1"] = hashlib.sha256(
+            attestation_receipt.read_bytes()
+        ).hexdigest()
+        common["project_revision_sha"] = hashlib.sha256(
+            project_receipt.read_bytes()
+        ).hexdigest()
+        common["source_conformance_sha"] = hashlib.sha256(
+            source_receipt.read_bytes()
+        ).hexdigest()
+        status, _, body = app.handle("POST", "/build", {
             **common, "corpora": "strongreject_official",
             "attackers": "t3mp3st", "sample_seed": "0",
             "max_queries": "1", "max_turns": "1", "out": "runs/t3-measured",
             "t3_artifact": str(t3_bundle), "t3_artifact_sha": t3_sha,
+        })
+        assert status == 200
+        ticket = re.search(
+            rb"name='launch_ticket' value='([^']+)'",
+            body,
+        )
+        assert ticket is not None
+        status, location, _ = app.handle("POST", "/build", {
+            "confirm": "yes",
+            "launch_ticket": ticket.group(1).decode("ascii"),
         })
         assert status == 303 and location == "/jobs/replay-1"
         command, values, _params = started[-1]
         assert command == "run_matrix" and values["--attackers"] == "t3mp3st"
         generated_path = Path(values["--attacker-config"])
         generated_doc = json.loads(generated_path.read_text(encoding="utf-8"))
-        assert generated_doc["t3mp3st"]["response_artifact"] == str(
-            t3_bundle.resolve()
-        )
+        held_t3 = Path(generated_doc["t3mp3st"]["response_artifact"])
+        assert held_t3 != t3_bundle.resolve()
+        assert held_t3.parent.name == ".private-attacker-artifacts"
+        assert held_t3.read_bytes() == t3_bundle.read_bytes()
+        assert generated_doc["t3mp3st"]["response_artifact_sha256"] == t3_sha
         run_matrix.build_parser().parse_args(build_argv(command, values)[3:])
 
-        status, location, _ = app.handle("POST", "/build", {
+        status, _, body = app.handle("POST", "/build", {
             **common, "corpora": "harmbench_text", "attackers": "harmbench",
             "sample_seed": "7", "max_queries": "4", "max_turns": "4",
             "out": "runs/harm-measured", "harm_config": str(harm_config),
+        })
+        assert status == 200
+        ticket = re.search(
+            rb"name='launch_ticket' value='([^']+)'",
+            body,
+        )
+        assert ticket is not None
+        status, location, _ = app.handle("POST", "/build", {
+            "confirm": "yes",
+            "launch_ticket": ticket.group(1).decode("ascii"),
         })
         assert status == 303 and location == "/jobs/replay-2"
         command, values, _params = started[-1]
         assert command == "run_matrix" and values["--attackers"] == "harmbench"
         generated_path = Path(values["--attacker-config"])
         generated_doc = json.loads(generated_path.read_text(encoding="utf-8"))
-        assert generated_doc["harmbench"]["replay_artifact"] == str(
-            harm_artifact.resolve()
-        )
+        held_harm = Path(generated_doc["harmbench"]["replay_artifact"])
+        assert held_harm != harm_artifact.resolve()
+        assert held_harm.parent.name == ".private-attacker-artifacts"
+        assert held_harm.read_bytes() == harm_artifact.read_bytes()
+        assert generated_doc["harmbench"]["replay_artifact_sha256"] == harm_sha
         run_matrix.build_parser().parse_args(build_argv(command, values)[3:])
     finally:
         app.close()
@@ -917,12 +1318,67 @@ def test_prepared_capture_forms_validate_preview_and_start_exact_commands(
         assert "Out-of-band paid/compute step" in text
         assert "experiments.capture_t3mp3st" in text
         assert "unrelated-builder-value" not in text
-        status, location, _ = app.handle(
+        ticket_match = re.search(
+            r"name='launch_ticket' value='([^']+)'",
+            text,
+        )
+        assert ticket_match is not None
+
+        # Full parameters plus confirm=yes are not a confirmation capability.
+        no_ticket = app.handle(
             "POST", "/build/t3mp3st/capture", {**t3_form, "confirm": "yes"},
+        )
+        assert no_ticket[0] == 200 and not captured
+        assert b"confirmation expired or was changed" in no_ticket[2]
+
+        status, location, _ = app.handle(
+            "POST",
+            "/build/t3mp3st/capture",
+            {
+                "launch_ticket": ticket_match.group(1),
+                "confirm": "yes",
+            },
         )
         assert status == 303 and location == "/jobs/capture-job"
         assert captured[-1][0] == "capture_t3mp3st"
         assert captured[-1][1]["--out"] == str(results / "t3-captures")
+        replayed = app.handle(
+            "POST",
+            "/build/t3mp3st/capture",
+            {
+                "launch_ticket": ticket_match.group(1),
+                "confirm": "yes",
+            },
+        )
+        assert replayed[0] == 200 and len(captured) == 1
+
+        # A changed confirmation burns its ticket before rejection.
+        tamper_preview = app.handle(
+            "POST", "/build/t3mp3st/capture", t3_form,
+        )[2].decode("utf-8")
+        tamper_ticket = re.search(
+            r"name='launch_ticket' value='([^']+)'",
+            tamper_preview,
+        )
+        assert tamper_ticket is not None
+        tampered = app.handle(
+            "POST",
+            "/build/t3mp3st/capture",
+            {
+                "launch_ticket": tamper_ticket.group(1),
+                "confirm": "yes",
+                "t3cap_model": "changed-model",
+            },
+        )
+        burned = app.handle(
+            "POST",
+            "/build/t3mp3st/capture",
+            {
+                "launch_ticket": tamper_ticket.group(1),
+                "confirm": "yes",
+            },
+        )
+        assert tampered[0] == burned[0] == 200 and len(captured) == 1
 
         harm_form = {
             "hcap_repo": str(checkout), "hcap_revision": "b" * 40,
@@ -949,14 +1405,38 @@ def test_prepared_capture_forms_validate_preview_and_start_exact_commands(
         assert "unrelated-builder-value" not in text
 
         status, _, body = app.handle("POST", "/build/harmbench/prepare", harm_form)
-        assert status == 200 and "experiments.harmbench_capture" in body.decode()
-        status, location, _ = app.handle(
+        harm_preview = body.decode()
+        assert status == 200 and "experiments.harmbench_capture" in harm_preview
+        harm_ticket = re.search(
+            r"name='launch_ticket' value='([^']+)'",
+            harm_preview,
+        )
+        assert harm_ticket is not None
+        harm_no_ticket = app.handle(
             "POST", "/build/harmbench/prepare", {**harm_form, "confirm": "yes"},
+        )
+        assert harm_no_ticket[0] == 200 and len(captured) == 1
+        status, location, _ = app.handle(
+            "POST",
+            "/build/harmbench/prepare",
+            {
+                "launch_ticket": harm_ticket.group(1),
+                "confirm": "yes",
+            },
         )
         assert status == 303 and location == "/jobs/capture-job"
         command, values = captured[-1]
         assert command == "harmbench_capture"
         assert [values["--method"], values["--method#1"]] == ["PEZ", "PAP-top5"]
+        harm_replay = app.handle(
+            "POST",
+            "/build/harmbench/prepare",
+            {
+                "launch_ticket": harm_ticket.group(1),
+                "confirm": "yes",
+            },
+        )
+        assert harm_replay[0] == 200 and len(captured) == 2
 
         status, _, _ = app.handle("POST", "/jobs", {
             "command": "capture_t3mp3st", "--out": str(results / "forged"),
@@ -1098,7 +1578,19 @@ def test_native_only_attacker_rejected_and_classified() -> None:
     from experiments.rig_web import _NATIVE_ONLY_ATTACKERS
     actual_native = {
         name for name in ATTACKER_NAMES
-        if getattr(get_attacker(name), "runner_replay_eligible", True) is False
+        if getattr(
+            get_attacker(
+                name,
+                **(
+                    {"suffix": " fixture", "suffix_source": "registry-parity-test"}
+                    if name == "nanogcg"
+                    else {}
+                ),
+            ),
+            "runner_replay_eligible",
+            True,
+        )
+        is False
     }
     assert _NATIVE_ONLY_ATTACKERS == actual_native
 
@@ -1119,12 +1611,14 @@ def test_native_only_attacker_rejected_server_side(tmp_path: Path) -> None:
         app.close()
 
 
-def test_agentic_arm_rejected_server_side(tmp_path: Path) -> None:
+def test_ineligible_arm_requires_explicit_approximate_metrics_opt_in(
+    tmp_path: Path,
+) -> None:
     import html as html_lib
 
     from experiments.rig_web import _INELIGIBLE_REASONS
 
-    app = _app(tmp_path)
+    app = _operator_registry_app(tmp_path)
     started = len(app.jobs)
     try:
         page = app.handle("GET", "/build")[2].decode("utf-8")
@@ -1132,11 +1626,11 @@ def test_agentic_arm_rejected_server_side(tmp_path: Path) -> None:
         at = page.index(marker)
         input_tag = page[page.rfind("<input", 0, at):page.find(">", at)]
         assert "disabled" not in input_tag  # operator can choose the row
-        assert "no evaluator" in page and "badge gray tip" in page
+        assert "approximate opt-in" in page and "badge amber tip" in page
         reason = html_lib.escape(_INELIGIBLE_REASONS["agentharm_harmful"])
         row = page[page.rfind("<label", 0, at):page.find("</label>", at)]
         assert row.count(reason) == 1  # one custom tooltip, no title duplicate
-        badge_at = page.index("<span class='badge gray tip'", at)
+        badge_at = page.index("<span class='badge amber tip'", at)
         badge_tag = page[badge_at:page.find(">", badge_at)]
         assert "title=" not in badge_tag
         _s, _c, body = app.handle("POST", "/build", {
@@ -1146,7 +1640,7 @@ def test_agentic_arm_rejected_server_side(tmp_path: Path) -> None:
         })
         text = body.decode("utf-8")
         assert "common-metric-ineligible" in text
-        assert "not a native_import target" in text  # honest: NOT the fix path
+        assert "Select the explicit approximate" in text
         assert len(app.jobs) == started  # no Popen
         # A source-specific-metric arm (not agentic) is also rejected.
         _s2, _c2, body2 = app.handle("POST", "/build", {
@@ -1165,7 +1659,52 @@ def test_agentic_arm_rejected_server_side(tmp_path: Path) -> None:
                 "api": "anthropic:claude-opus-5", "attackers": "replay",
                 "judges": "rules", "out": f"runs/{arm}", "seeds": "0",
             })
-            assert "truthfulness" in errors.get("corpora", "")
+            assert "truthfulness" in errors.get(
+                "approximate_common_metrics", ""
+            )
+
+        enabled = {
+            "mode": "dry_run",
+            "corpora": "cyberseceval_prompt_injection",
+            "attackers": "replay",
+            "judges": "rules",
+            "out": "runs/approximate",
+            "seeds": "0",
+            "approximate_common_metrics": "on",
+        }
+        errors = app._validate_builder(enabled)
+        assert "approximate_common_metrics" not in errors
+        assert "corpora" not in errors
+        command, values, params = app._compose_from_builder(enabled)
+        assert params["approximate_common_metrics"] == "on"
+        assert values["--approximate-common-metrics"] == "on"
+        assert "--approximate-common-metrics" in build_argv(command, values)
+
+        _command, default_values, _params = app._compose_from_builder({
+            **enabled,
+            "corpora": "strongreject_official",
+            "approximate_common_metrics": "",
+        })
+        assert "--approximate-common-metrics" not in default_values
+
+        checked_page = app._build_page(enabled).decode("utf-8")
+        checkbox = _opening_tag(
+            checked_page, "name='approximate_common_metrics'"
+        )
+        assert " checked" in checkbox
+        assert "Non-authoritative" in checked_page
+        assert "not probability or accuracy" in checked_page
+
+        tool_errors = app._validate_builder({
+            **enabled,
+            "corpora": "agentharm_harmful",
+        })
+        assert "text+tool source construct" in tool_errors["corpora"]
+        assert "fail-closed" in tool_errors["corpora"]
+        assert app._validate_builder({
+            **enabled,
+            "corpora": "injecagent_direct_harm_base",
+        })["corpora"].startswith("arm injecagent_direct_harm_base converts")
     finally:
         app.close()
 
@@ -1175,7 +1714,7 @@ def test_source_metric_arm_runnable_and_replay_guarded(tmp_path: Path) -> None:
     # source evaluators ARE implemented, so run_matrix scores them as
     # source-metric lanes (replay only).  The builder must NOT reject them as
     # ineligible, and must require the replay attacker their converter declares.
-    app = _app(tmp_path)
+    app = _operator_registry_app(tmp_path)
     try:
         # replay selected -> no ineligible error, no source-metric guard error.
         errors = app._validate_builder({
@@ -1273,16 +1812,26 @@ def test_exact_modality_admission_before_popen(
 ) -> None:
     # A target that serves only text cannot run a text+image arm - complete
     # exact modality, not "shares any" - and it is rejected on the form.
-    app = _app(tmp_path)
+    app = _operator_registry_app(tmp_path)
     started = len(app.jobs)
+    api_registry = (
+        app.repo_root / "experiments" / "rig" / "api-targets.example.json"
+    )
+    api_document = json.loads(api_registry.read_text(encoding="utf-8"))
+    api_document["anthropic:textonly"] = {
+        "modalities": ["text"],
+        "max_tokens": 64,
+        "temperature": 0.0,
+    }
+    api_registry.write_text(json.dumps(api_document), encoding="utf-8")
     monkeypatch.setattr(
         app, "_model_options",
-        lambda: [("prov:textonly", "textonly", ("text",), "api")],
+        lambda: [("anthropic:textonly", "textonly", ("text",), "api")],
     )
     try:
         _s, _c, body = app.handle("POST", "/build", {
             "mode": "dry_run", "corpora": "mmsafety_official",
-            "api": "prov:textonly", "attackers": "replay",
+            "api": "anthropic:textonly", "attackers": "replay",
             "judges": "rules", "out": "runs/m", "seeds": "0",
         })
         text = body.decode("utf-8")
@@ -1291,7 +1840,7 @@ def test_exact_modality_admission_before_popen(
         # A compatible target (serves image) is admitted: no modality error.
         errors = app._validate_builder({
             "mode": "dry_run", "corpora": "strongreject_official",
-            "api": "prov:textonly", "attackers": "replay",
+            "api": "anthropic:textonly", "attackers": "replay",
             "judges": "rules", "out": "runs/m", "seeds": "0",
         })
         assert "models" not in errors  # text arm on a text target is fine
@@ -1300,7 +1849,7 @@ def test_exact_modality_admission_before_popen(
 
 
 def test_guardrail_separation_and_wiring(tmp_path: Path) -> None:
-    app = _app(tmp_path)
+    app = _operator_registry_app(tmp_path)
     try:
         # Same model for scoring + defense guard is rejected (a guard must not
         # grade its own output).
@@ -1337,7 +1886,10 @@ def test_guardrail_separation_and_wiring(tmp_path: Path) -> None:
             "api": "anthropic:claude-opus-5", "attackers": "replay",
             "judges": "rules,guardrail", "defense": "output",
             "defense_guard": "guardrail", "guardrail_model": "vllm:scorer",
-            "guardrail_device": "cuda:0", "defense_guardrail_model": "vllm:defender",
+            "guardrail_revision": "d" * 40, "guardrail_device": "cuda:0",
+            "defense_guardrail_model": "vllm:defender",
+            "defense_guardrail_revision": "e" * 40,
+            "defense_guardrail_device": "cuda:1",
             "out": "runs/g", "seeds": "0",
         })
         assert values["--guardrail-model"] == "vllm:scorer"
@@ -1415,11 +1967,26 @@ def test_no_call_projection_gates_start(
 def test_builder_preflight_strips_live_fields_and_uses_dedicated_output(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setenv("URA_PROJECT_REVISION_MANIFEST", str(tmp_path / "p.json"))
-    monkeypatch.setenv("URA_PROJECT_REVISION_SHA256", "a" * 64)
-    monkeypatch.setenv("URA_SOURCE_CONFORMANCE_MANIFEST", str(tmp_path / "s.json"))
-    monkeypatch.setenv("URA_SOURCE_CONFORMANCE_SHA256", "b" * 64)
-    app = _app(tmp_path)
+    project_receipt = tmp_path / "p.json"
+    source_receipt = tmp_path / "s.json"
+    project_receipt.write_text('{"schema":"fixture-project"}\n', encoding="utf-8")
+    source_receipt.write_text('{"schema":"fixture-source"}\n', encoding="utf-8")
+    monkeypatch.setenv("URA_PROJECT_REVISION_MANIFEST", str(project_receipt))
+    monkeypatch.setenv(
+        "URA_PROJECT_REVISION_SHA256",
+        hashlib.sha256(project_receipt.read_bytes()).hexdigest(),
+    )
+    monkeypatch.setenv("URA_SOURCE_CONFORMANCE_MANIFEST", str(source_receipt))
+    monkeypatch.setenv(
+        "URA_SOURCE_CONFORMANCE_SHA256",
+        hashlib.sha256(source_receipt.read_bytes()).hexdigest(),
+    )
+    app = _operator_registry_app(tmp_path)
+    attestation_receipt = tmp_path / "att.json"
+    attestation_receipt.write_text(
+        '{"schema":"fixture-attestation"}\n', encoding="utf-8"
+    )
+    attestation_sha = hashlib.sha256(attestation_receipt.read_bytes()).hexdigest()
     captured: dict[str, object] = {}
 
     def fake_start(command, values, *, builder_params=None, **_kwargs):
@@ -1438,8 +2005,8 @@ def test_builder_preflight_strips_live_fields_and_uses_dedicated_output(
         "corpora": "strongreject_official", "api": "anthropic:claude-opus-5",
         "attackers": "replay", "judges": "rules", "limit": "1",
         "sample_seed": "0", "seeds": "0", "scope": "scope-1",
-        "max_age": "24", "att_path1": "runs/att.json",
-        "att_sha1": "c" * 64, "cap_target": "10", "cap_judge": "10",
+        "max_age": "24", "att_path1": str(attestation_receipt),
+        "att_sha1": attestation_sha, "cap_target": "10", "cap_judge": "10",
         "cap_http": "30", "deadline": "600", "out": measured_out,
     })
     assert status == 303 and location == "/jobs/preflight"
@@ -1510,7 +2077,7 @@ def test_builder_mode_validation_rejects_before_subprocess(tmp_path: Path) -> No
 
     # Measured execution requires receipts, scope, age, attestations, caps.
     status, _, body = app.handle("POST", "/build", {
-        "mode": "measured", "corpora": "strongreject_official",
+        "mode": "measured", "corpora": "synth",
         "api": "anthropic:claude-opus-5", "attackers": "replay",
         "judges": "rules", "out": "runs/m", "seeds": "0",
     })
@@ -1568,10 +2135,11 @@ def test_builder_paid_modes_preview_exact_argv_then_confirm(
 ) -> None:
     # A non-dry lane never starts on first submit: the exact complete argv
     # and the call ceilings are shown for confirmation first.
-    monkeypatch.setenv("URA_PROJECT_REVISION_MANIFEST", str(tmp_path / "r.json"))
-    monkeypatch.setenv("URA_PROJECT_REVISION_SHA256", "a" * 64)
-    monkeypatch.setenv("URA_SOURCE_CONFORMANCE_MANIFEST", str(tmp_path / "s.json"))
-    monkeypatch.setenv("URA_SOURCE_CONFORMANCE_SHA256", "b" * 64)
+    project_receipt = tmp_path / "r.json"
+    project_receipt.write_text('{"schema":"fixture-project"}\n', encoding="utf-8")
+    project_sha = hashlib.sha256(project_receipt.read_bytes()).hexdigest()
+    monkeypatch.setenv("URA_PROJECT_REVISION_MANIFEST", str(project_receipt))
+    monkeypatch.setenv("URA_PROJECT_REVISION_SHA256", project_sha)
     app = _app(tmp_path)
     monkeypatch.setattr(
         app, "_read_lane_projection",
@@ -1579,7 +2147,7 @@ def test_builder_paid_modes_preview_exact_argv_then_confirm(
                           "http_attempts": 12}, ""),
     )
     form = {
-        "mode": "attestation_probe", "corpora": "strongreject_official",
+        "mode": "attestation_probe", "corpora": "synth",
         "api": "anthropic:claude-opus-5", "attackers": "replay",
         "judges": "rules", "limit": "1", "seeds": "0", "sample_seed": "0",
         "scope": "acct-scope-1", "max_queries": "1", "max_turns": "1",
@@ -1594,10 +2162,14 @@ def test_builder_paid_modes_preview_exact_argv_then_confirm(
     assert "--attestation-probe" in text
     assert "--max-total-target-calls" in text and ">4<" in text
     assert "spends real money" in text
-    # The confirmation re-submits the identical parameters plus confirm=yes.
+    # The confirmation submits only its opaque, one-shot exact-parameter ticket.
     assert "name='confirm' value='yes'" in text
-    form["confirm"] = "yes"
-    status, location, _ = app.handle("POST", "/build", form)
+    ticket_match = re.search(r"name='launch_ticket' value='([^']+)'", text)
+    assert ticket_match is not None
+    status, location, _ = app.handle("POST", "/build", {
+        "confirm": "yes",
+        "launch_ticket": ticket_match.group(1),
+    })
     assert status == 303 and len(app.jobs) == started + 1
     job = app.jobs[location.rsplit("/", 1)[1]]
     assert "--attestation-probe" in job.argv
@@ -1606,6 +2178,115 @@ def test_builder_paid_modes_preview_exact_argv_then_confirm(
     run_matrix.build_parser().parse_args(job.argv[3:])
     app.stop_job(job.job_id)
     app.close()
+
+
+def test_paid_launch_ticket_is_atomic_one_shot_under_concurrent_replay(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    project_receipt = tmp_path / "r.json"
+    project_receipt.write_text('{"schema":"fixture-project"}\n', encoding="utf-8")
+    project_sha = hashlib.sha256(project_receipt.read_bytes()).hexdigest()
+    monkeypatch.setenv("URA_PROJECT_REVISION_MANIFEST", str(project_receipt))
+    monkeypatch.setenv("URA_PROJECT_REVISION_SHA256", project_sha)
+    app = _app(tmp_path)
+    monkeypatch.setattr(
+        app,
+        "_read_lane_projection",
+        lambda _params: (
+            {"target_calls": 4, "judge_calls": 4, "http_attempts": 12},
+            "",
+        ),
+    )
+    params = {
+        "mode": "attestation_probe",
+        "corpora": "synth",
+        "api": "anthropic:claude-opus-5",
+        "attackers": "replay",
+        "judges": "rules",
+        "limit": "1",
+        "sample_seed": "0",
+        "seeds": "0",
+        "scope": "atomic-ticket-scope",
+        "max_queries": "1",
+        "max_turns": "1",
+        "cap_target": "4",
+        "cap_judge": "4",
+        "cap_http": "12",
+        "deadline": "600",
+        "project_revision": str(project_receipt),
+        "project_revision_sha": project_sha,
+        "out": "runs/atomic-ticket",
+    }
+    popen_calls: list[list[str]] = []
+
+    class FakeProcess:
+        pid = 5252
+
+        @staticmethod
+        def poll() -> None:
+            return None
+
+    def fake_popen(argv, **_kwargs):
+        popen_calls.append(list(argv))
+        return FakeProcess()
+
+    import experiments.rig_web_app.lifecycle as lifecycle_module
+
+    monkeypatch.setattr(lifecycle_module.subprocess, "Popen", fake_popen)
+    monkeypatch.setattr(lifecycle_module, "_win_managed_job", lambda: None)
+    no_ticket = app.handle(
+        "POST",
+        "/build",
+        {**params, "confirm": "yes"},
+    )
+    assert no_ticket[0] == 200
+    assert b"confirmation expired or was changed" in no_ticket[2]
+    assert popen_calls == []
+
+    ticket = app._new_launch_ticket(params)
+    barrier = threading.Barrier(3)
+    responses: list[tuple[int, str, bytes]] = []
+
+    def replay() -> None:
+        barrier.wait()
+        responses.append(app.handle("POST", "/build", {
+            "confirm": "yes",
+            "launch_ticket": ticket,
+        }))
+
+    threads = [threading.Thread(target=replay) for _ in range(2)]
+    for thread in threads:
+        thread.start()
+    barrier.wait()
+    for thread in threads:
+        thread.join(timeout=30)
+
+    try:
+        assert all(not thread.is_alive() for thread in threads)
+        assert sorted(response[0] for response in responses) == [200, 303]
+        assert len(popen_calls) == 1
+        rejected = next(response for response in responses if response[0] == 200)
+        assert b"confirmation expired or was changed" in rejected[2]
+
+        # A changed POST consumes its capability before it is rejected, so a
+        # later clean replay cannot recover or launch it.
+        changed_ticket = app._new_launch_ticket(params)
+        changed = app.handle("POST", "/build", {
+            "confirm": "yes",
+            "launch_ticket": changed_ticket,
+            "mode": "dry_run",
+        })
+        replayed = app.handle("POST", "/build", {
+            "confirm": "yes",
+            "launch_ticket": changed_ticket,
+        })
+        assert changed[0] == replayed[0] == 200
+        assert b"confirmation expired or was changed" in changed[2]
+        assert b"confirmation expired or was changed" in replayed[2]
+        assert len(popen_calls) == 1
+    finally:
+        app.close()
 
 
 def test_builder_targets_split_hosted_and_local_vllm_roster(tmp_path: Path) -> None:
@@ -1619,8 +2300,8 @@ def test_builder_targets_split_hosted_and_local_vllm_roster(tmp_path: Path) -> N
     page = app.handle("GET", "/build")[2].decode("utf-8")
     assert "Hosted API" in page and "Local vLLM" in page
     assert "Local Ollama (local daemon)" in page
-    assert "No Ollama targets are configured" in page
-    assert "64-hex <code>/api/tags</code> digest" in page
+    assert "No exact Ollama candidate is available" in page
+    assert "stable tag/digest inventory plus explicit show capabilities" in page
     assert "data-kind='api'" in page and "data-kind='local'" in page
     # The curated vLLM roster is real and modality-tagged.
     roster = local_targets.roster_models(include_unfit=True)
@@ -1629,7 +2310,7 @@ def test_builder_targets_split_hosted_and_local_vllm_roster(tmp_path: Path) -> N
     # A build with a local target composes --local and binds --local-config
     # only when a local target is selected.
     _cmd, values, _params = app._compose_from_builder({
-        "mode": "measured", "corpora": "strongreject_official",
+        "mode": "measured", "corpora": "synth",
         "local": "vllm:Qwen/Qwen3-VL-8B-Instruct", "attackers": "replay",
         "judges": "rules", "out": "runs/x",
     })
@@ -1694,13 +2375,20 @@ def test_dashboard_and_builder_show_startup_system_and_gpu_hardware(
 
 def test_builder_model_filters_and_quantization_warning_are_rendered(
     tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     repo = tmp_path / "repo"
     rig = repo / "experiments" / "rig"
     rig.mkdir(parents=True)
     (rig / "api-targets.example.json").write_text(json.dumps({
-        "anthropic:claude-test": {"modalities": ["text"]},
-        "openai:gpt-test": {"modalities": ["text", "image"]},
+        "anthropic:claude-test": {
+            "modalities": ["text"], "max_tokens": 64, "temperature": 0.0,
+        },
+        "openai:gpt-test": {
+            "modalities": ["text", "image"],
+            "max_tokens": 64,
+            "temperature": 0.0,
+        },
     }), encoding="utf-8")
     local_checkpoint = f"vllm:{(tmp_path / 'checkpoint').resolve()}"
     ollama_spec = "ollama:fixture:latest"
@@ -1869,6 +2557,23 @@ def test_builder_model_filters_and_quantization_warning_are_rendered(
     assert ollama_config == {
         ollama_spec: {"digest": "a" * 64, "modalities": ["text"]}
     }
+    from experiments.rig_web_app.ollama_service import OllamaService  # noqa: PLC0415
+
+    monkeypatch.setattr(
+        OllamaService,
+        "roster",
+        lambda _self, _entries, *, force=False: {
+            "available": True,
+            "models": [
+                {
+                    "spec": ollama_spec,
+                    "digest": "a" * 64,
+                    "modalities": ["text"],
+                }
+            ],
+            "excluded": [],
+        },
+    )
     loaded_ollama, _artifact = run_matrix._load_local_config(
         str(ollama_config_path), [ollama_spec]
     )
@@ -1948,7 +2653,7 @@ def test_builder_model_filters_and_quantization_warning_are_rendered(
     row_start = page.rfind("<div class='modelrow'", 0, at)
     quant_at = page.index(f"name='quantization::{lower}'", at)
     assert f"for='{control_id}'" in page[row_start:at]
-    assert "</label><div class='modelquant'>" in page[at:quant_at]
+    assert "</label></div><div class='modelquant'>" in page[at:quant_at]
     quant_tag = page[page.rfind("<select", at, quant_at):page.find(">", quant_at)]
     assert "disabled" not in quant_tag
     # Filter controls have no server-side campaign fields. A submitted target
@@ -2213,10 +2918,13 @@ def test_command_groups_partition_the_allowlist_exactly() -> None:
     # failure would silently hide a command from the Run page groups.
     from experiments.rig_web import COMMAND_GROUPS, COMMANDS
 
+    # These controller commands are reachable only through validated Build
+    # actions, never a generic raw-argv form.
+    internal = {"model_acquire", "ollama_pull", "run_matrix"}
     named = [name for _, _, _, names in COMMAND_GROUPS for name in names]
     assert len(named) == len(set(named)), "command grouped twice"
-    assert set(named) == set(COMMANDS), (
-        sorted(set(named) ^ set(COMMANDS))
+    assert set(named) == set(COMMANDS) - internal, (
+        sorted(set(named) ^ (set(COMMANDS) - internal))
     )
 
 
@@ -2261,13 +2969,17 @@ def test_dashboard_shows_presence_only_pipeline(tmp_path: Path) -> None:
             # their pre-subprocess checks.
             assert run_text.count(f"data-name='{name}'") == 1
             assert "/build#prepared-workflows" in run_text
+        elif name in {"model_acquire", "ollama_pull", "run_matrix"}:
+            # Pull and measured matrix execution require their validated
+            # Build controller, not a raw generic argv form.
+            assert f"name='command' value='{name}'" not in run_text
         else:
             assert run_text.count(
                 f"<input type='hidden' name='command' value='{name}'>"
             ) == 1
     # The client-side filter is present and cards carry filterable names.
     assert "cmdfilter" in run_text
-    assert "data-name='run_matrix" in run_text
+    assert "data-name='run_matrix'" not in run_text
 
 
 def test_dashboard_notices_and_policy_card(tmp_path: Path) -> None:
@@ -2350,8 +3062,25 @@ def test_jobs_page_has_filter_chips_and_row_stop(tmp_path: Path) -> None:
         assert "localValue(now-7*86400000)" in text
         assert "localValue(now)" in text
         assert "out.textContent=localStamp(ms)" in text
-        assert "url.searchParams.set('from',fromBox.value)" in text
-        assert "url.searchParams.set('to',toBox.value)" in text
+        assert "var explicitFrom=params.has('from')" in text
+        assert "var explicitTo=params.has('to')" in text
+        assert "if(explicitFrom&&Number.isFinite(fromMs))" in text
+        assert "if(explicitTo&&Number.isFinite(toMs))" in text
+        assert "url.searchParams.delete('from')" in text
+        assert "url.searchParams.delete('to')" in text
+        assert "url.searchParams.set('from_ms',String(fromMs))" in text
+        assert "url.searchParams.set('to_ms',String(toMs))" in text
+        assert "syncFilters();location.reload()" in text
+        assert "fromBox.addEventListener('change',function(){explicitFrom=true" in text
+        assert "toBox.addEventListener('change',function(){explicitTo=true" in text
+        # The default seven-day window remains implicit. Initial sync and the
+        # five-second running-job reload therefore recalculate `to=now` instead
+        # of freezing the first-render timestamp in the URL. Only a user's
+        # date-control change promotes either bound to an explicit filter.
+        assert text.count("explicitFrom=true") == 1
+        assert text.count("explicitTo=true") == 1
+        assert "else{url.searchParams.delete('from');url.searchParams.delete('from_ms');}" in text
+        assert "else{url.searchParams.delete('to');url.searchParams.delete('to_ms');}" in text
         assert "state=params.get('state')||''" in text
         assert "box.value=params.get('q')" in text
         assert "url.searchParams.set('state',state)" in text
@@ -2404,6 +3133,47 @@ def test_jobs_truthfully_labels_no_call_and_preparation_modes(tmp_path: Path) ->
     app.close()
 
 
+def test_jobs_date_window_queries_persisted_history_beyond_restore_cache(
+    tmp_path: Path,
+) -> None:
+    state = tmp_path / "state"
+    db = ConsoleDB(state / "console.db")
+    base = 1_700_000_000.0
+    for index in range(501):
+        job = Job(
+            job_id=f"job-history-{index:04d}",
+            command="webui_selftest",
+            argv=[],
+            directory=state / f"job-history-{index:04d}",
+            process=None,
+            started_at=base + index,
+            ended_at=base + index + 0.5,
+            restored_state="complete",
+            restored_exit=0,
+        )
+        assert db.upsert_job(job, state="complete", exit_code=0)
+    db.close()
+
+    results = tmp_path / "runs"
+    results.mkdir()
+    app = RigWebApp(results_root=results, state_dir=state)
+    try:
+        assert len(app.jobs) == 500
+        assert "job-history-0000" not in app.jobs
+        status, _, body = app.handle(
+            "GET",
+            "/jobs?from_ms=1699999999000&to_ms=1700000000500",
+        )
+        text = body.decode("utf-8")
+        assert status == 200
+        assert "job-history-0000" in text
+        assert "job-history-0500" not in text
+        detail = app.handle("GET", "/jobs/job-history-0000")
+        assert detail[0] == 200
+    finally:
+        app.close()
+
+
 def test_jobs_date_filter_uses_browser_timezone_not_server_timezone(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -2426,7 +3196,10 @@ def test_jobs_date_filter_uses_browser_timezone_not_server_timezone(
         raise AssertionError("Jobs must not format filter timestamps in server local time")
 
     monkeypatch.setattr(pages_module.time, "localtime", reject_server_localtime)
-    text = app.handle("GET", "/jobs")[2].decode("utf-8")
+    text = app.handle(
+        "GET",
+        "/jobs?from_ms=1699999999000&to_ms=1700000001000",
+    )[2].decode("utf-8")
     assert "2023-11-14 22:13:20 UTC" in text
     assert "new Date(ms)" in text
     assert "date.getFullYear()" in text and "date.getHours()" in text
@@ -2466,6 +3239,62 @@ def _write_external_engineering_campaign(results: Path) -> Path:
     return campaign
 
 
+def test_jobs_date_window_filters_campaign_markers_before_recent_cap(
+    tmp_path: Path,
+) -> None:
+    app = _app(tmp_path)
+    engineering = app.results_root / "engineering"
+    engineering.mkdir()
+    for index in range(21):
+        campaign_id = f"campaign-{index:02d}"
+        directory = engineering / campaign_id
+        directory.mkdir()
+        started_at = (
+            "2000-01-01T00:00:00Z"
+            if index == 0
+            else f"2026-08-17T00:00:{index:02d}Z"
+        )
+        (directory / "ENGINEERING_ONLY.json").write_text(
+            json.dumps({
+                "schema": "ura-engineering-campaign/1",
+                "campaign_id": campaign_id,
+                "release_commit": "a" * 40,
+                "evidence_class": "engineering_stress",
+                "thesis_empirical_evidence": False,
+                "hosted_calls_allowed": False,
+                "target_call_cap": 1,
+                "started_at": started_at,
+            }),
+            encoding="utf-8",
+        )
+        (directory / "task-log.jsonl").write_text(
+            json.dumps({
+                "at": started_at,
+                "event": "campaign_start",
+                "task": "bootstrap",
+                "status": "running",
+                "detail": campaign_id,
+            }) + "\n",
+            encoding="utf-8",
+        )
+        os.utime(directory, (1_700_000_000 + index, 1_700_000_000 + index))
+
+    recent, notice = app._engineering_campaign_scan()
+    assert len(recent) == 20
+    assert all(item.campaign_id != "campaign-00" for item in recent)
+    assert "1 additional scanned directory was omitted" in notice
+
+    status, _, body = app.handle(
+        "GET",
+        "/jobs?from_ms=946684799000&to_ms=946684801000",
+    )
+    text = body.decode("utf-8")
+    assert status == 200
+    assert "campaign-00" in text
+    assert "campaign-20" not in text
+    app.close()
+
+
 def test_jobs_lists_external_engineering_campaign_read_only(tmp_path: Path) -> None:
     app = _app(tmp_path)
     campaign = _write_external_engineering_campaign(app.results_root)
@@ -2481,7 +3310,7 @@ def test_jobs_lists_external_engineering_campaign_read_only(tmp_path: Path) -> N
     text = body.decode("utf-8")
     assert status == 200
     assert "All (<span class='chip-count'>1</span>)" in text
-    assert "Reported running (<span class='chip-count'>1</span>)" in text
+    assert "Running (<span class='chip-count'>1</span>)" in text
     assert "local-only-20260817T000000Z" in text
     assert "engineering campaign" in text and "external" in text
     assert "task processes: 1 succeeded; 0 failed; 0 skipped; 0 active" in text
@@ -2746,6 +3575,118 @@ def test_external_campaign_separates_process_results_from_model_execution(
     jobs = app.handle("GET", "/jobs")[2].decode("utf-8")
     assert "1/1 reported successful" in jobs
     assert "model execution report: 1 successful generation(s) from 1 attempt(s)" in jobs
+    app.close()
+
+
+def test_external_campaign_duplicate_status_and_execution_counts_fail_closed(
+    tmp_path: Path,
+) -> None:
+    app = _app(tmp_path)
+    campaign = _write_external_engineering_campaign(app.results_root)
+    marker_path = campaign / "ENGINEERING_ONLY.json"
+    marker = json.loads(marker_path.read_text(encoding="utf-8"))
+    marker["planned_tasks"] = ["model-probe"]
+    marker["model_tasks"] = ["model-probe"]
+    marker_path.write_text(json.dumps(marker), encoding="utf-8")
+    (campaign / "task-log.jsonl").write_text(
+        json.dumps({
+            "at": "2026-08-17T00:00:00Z",
+            "event": "campaign_start",
+            "task": "bootstrap",
+            "status": "running",
+        }) + "\n",
+        encoding="utf-8",
+    )
+    (campaign / "stage2-task-log.jsonl").write_text(
+        "\n".join((
+            json.dumps({
+                "at": "2026-08-17T00:00:01Z",
+                "event": "campaign_start",
+                "task": "stage2",
+                "status": "running",
+            }),
+            json.dumps({
+                "at": "2026-08-17T00:00:02Z",
+                "event": "task_end",
+                "task": "model-probe",
+                "status": "passed",
+            }),
+            # A last-wins decoder would call this a passed campaign.
+            '{"at":"2026-08-17T00:00:03Z","event":"campaign_end",'
+            '"task":"stage2","status":"failed","status":"passed"}',
+        )) + "\n",
+        encoding="utf-8",
+    )
+
+    ambiguous_status = app._engineering_campaign("local-only-20260817T000000Z")
+    assert ambiguous_status is not None
+    assert ambiguous_status.state == "unknown"
+    assert ambiguous_status.status_tag == "unknown"
+    assert "activity status unavailable: malformed JSON event" in (
+        ambiguous_status.progress
+    )
+
+    # Restore an unambiguous terminal process record, then make the separate
+    # execution-evidence stream ambiguous. It must not become a 1/1 claim.
+    (campaign / "stage2-task-log.jsonl").write_text(
+        "\n".join(json.dumps(event) for event in (
+            {
+                "at": "2026-08-17T00:00:01Z",
+                "event": "campaign_start",
+                "task": "stage2",
+                "status": "running",
+            },
+            {
+                "at": "2026-08-17T00:00:02Z",
+                "event": "task_end",
+                "task": "model-probe",
+                "status": "passed",
+            },
+            {
+                "at": "2026-08-17T00:00:03Z",
+                "event": "campaign_end",
+                "task": "stage2",
+                "status": "passed",
+            },
+        )) + "\n",
+        encoding="utf-8",
+    )
+    (campaign / "model-execution.jsonl").write_text(
+        '{"event":"model_execution","task":"model-probe",'
+        '"attempted_calls":0,"attempted_calls":1,'
+        '"successful_generations":1}\n',
+        encoding="utf-8",
+    )
+    ambiguous_execution = app._engineering_campaign(
+        "local-only-20260817T000000Z"
+    )
+    assert ambiguous_execution is not None
+    assert ambiguous_execution.model_attempted_calls is None
+    assert ambiguous_execution.model_successful_generations is None
+    assert ambiguous_execution.model_execution_error == "malformed JSON event"
+    jobs = app.handle("GET", "/jobs")[2].decode("utf-8")
+    assert "1/1 reported successful" not in jobs
+    assert "model execution report invalid: malformed JSON event" in jobs
+    app.close()
+
+
+def test_external_campaign_rejects_ambiguous_marker_json(tmp_path: Path) -> None:
+    app = _app(tmp_path)
+    campaign = _write_external_engineering_campaign(app.results_root)
+    marker_path = campaign / "ENGINEERING_ONLY.json"
+    raw = marker_path.read_text(encoding="utf-8")
+    field = '"hosted_calls_allowed": false'
+    assert raw.count(field) == 1
+    marker_path.write_text(
+        raw.replace(
+            field,
+            '"hosted_calls_allowed": true, ' + field,
+            1,
+        ),
+        encoding="utf-8",
+    )
+
+    assert app._engineering_campaign("local-only-20260817T000000Z") is None
     app.close()
 
 
@@ -3188,9 +4129,10 @@ def test_dashboard_lists_external_running_and_failed_campaigns(
     assert status == 200
     assert "jobs (console + external)" in running
     assert "<span class='value'><span class='dot blue'></span>0</span>" in running
-    assert "<span class='value'><span class='dot amber'></span>1</span>" in running
+    assert "<span class='value'><span class='dot blue'></span>1</span>" in running
     assert "<span class='value'><span class='dot red'></span>0</span>" in running
-    assert "Running / reported running" in running
+    assert "running (external task-log report)" in running
+    assert "External running state is a task-log report" in running
     assert "/jobs/campaign/local-only-20260817T000000Z" in running
     assert "<img src=x onerror=alert(1)>" not in running
     assert "&lt;img src=x onerror=alert(1)&gt;" in running
@@ -3265,7 +4207,7 @@ def test_dashboard_samples_each_console_job_state_once(
     status, _, body = app.handle("GET", "/")
     text = body.decode("utf-8")
     assert status == 200 and job.calls == 1
-    assert "Running / reported running" in text and "flipping-job" in text
+    assert "running (console-owned)" in text and "flipping-job" in text
     assert "Needs attention" not in text
     app.jobs.clear()
     app.close()
@@ -3359,6 +4301,9 @@ def test_jobs_and_runs_persist_across_console_restart(tmp_path: Path) -> None:
     assert run_kind("run_matrix", ["--attestation-probe"]) == "attestation_probe"
     assert run_kind("run_matrix", ["--dry-run"]) == "dry_run"
     assert run_kind("run_matrix", ["--preflight-only"]) == "preflight"
+    assert run_kind(
+        "run_matrix", ["--preflight-only", "--model-acquisition-plan-only"]
+    ) == "acquisition_plan"
     assert run_kind(
         "run_matrix", ["--diagnostic-canary", "--dry-run"]
     ) == "dry_run"
@@ -3547,6 +4492,7 @@ def test_every_ui_command_parses_with_its_real_module_parser() -> None:
         "run_matrix": [{
             "--dry-run": "on", "--corpora": "synth", "--attackers": "replay",
             "--judges": "rules", "--judge-model": "mock", "--limit": "2",
+            "--approximate-common-metrics": "on",
             "--sample-seed": "0", "--seeds": "0", "--max-queries": "1",
             "--max-turns": "1", "--group": "model,source",
             "--defense": "both", "--defense-guard": "guardrail",
@@ -3666,10 +4612,14 @@ def test_every_ui_command_parses_with_its_real_module_parser() -> None:
         "local_targets": [{"--refresh": "on", "--vllm-version": "0.27.1"}],
         "webui_selftest": [{"--selftest-sleep": "0"}],
     }
-    assert set(forms) == set(COMMANDS), (
-        sorted(set(forms) ^ set(COMMANDS))
+    # Typed controller commands with dedicated workflows; never generic forms.
+    internal = {"model_acquire", "ollama_pull"}
+    assert set(forms) == set(COMMANDS) - internal, (
+        sorted(set(forms) ^ (set(COMMANDS) - internal))
     )
     for name, entry in COMMANDS.items():
+        if name in internal:
+            continue
         if name == "rig_check":
             continue  # pure argv forwarder to run_matrix (covered above)
         module = importlib.import_module(entry.module)
@@ -3757,6 +4707,88 @@ def test_models_flag_runs_an_offline_dry_lane(tmp_path: Path) -> None:
     ]) == 0
 
 
+def _sealed_web_model_acquisition_args(
+    tmp_path: Path,
+    planned_args: list[str],
+) -> list[str]:
+    """Build one exact offline managed-model receipt for a Web fixture."""
+
+    plan_directory = (tmp_path / "plans").resolve()
+    plan_directory.mkdir(parents=True)
+    assert run_matrix.main([
+        *planned_args,
+        "--model-acquisition-plan-only",
+        "--model-acquisition-plan-dir",
+        str(plan_directory),
+    ]) == 0
+    plan_path = next(plan_directory.glob("*.plan.json"))
+    plan = json.loads(plan_path.read_text(encoding="utf-8"))
+    store = (tmp_path / "store").resolve()
+    store.mkdir()
+    snapshots: dict[str, Path] = {}
+    manifests: dict[str, dict[str, object]] = {}
+    for index, resource in enumerate(plan["resources"]):
+        resource_root = store / resource["resource_id"]
+        snapshot = resource_root / "snapshot"
+        snapshot.mkdir(parents=True)
+        content = (
+            json.dumps(
+                {
+                    "fixture": index,
+                    "repo": resource["repo_id"],
+                    "revision": resource["revision"],
+                },
+                sort_keys=True,
+            )
+            + "\n"
+        ).encode("utf-8")
+        (snapshot / "config.json").write_bytes(content)
+        blob_id = hashlib.sha1(  # noqa: S324 - Git protocol blob identity
+            f"blob {len(content)}\0".encode("ascii") + content
+        ).hexdigest()
+        manifest = build_upstream_manifest(
+            resource["repo_id"],
+            resource["revision"],
+            [{
+                "path": "config.json",
+                "size": len(content),
+                "blob_id": blob_id,
+                "lfs_sha256": None,
+            }],
+        )
+        write_document_create_only(
+            resource_root.resolve(),
+            manifest,
+            identifier=manifest["manifest_id"],
+            suffix="upstream-manifest.json",
+        )
+        snapshots[resource["resource_id"]] = snapshot
+        manifests[resource["resource_id"]] = manifest
+    receipt = build_model_acquisition_receipt(
+        plan,
+        snapshots=snapshots,
+        manifests=manifests,
+    )
+    receipt_path, receipt_sha = write_document_create_only(
+        (tmp_path / "receipts").resolve(),
+        receipt,
+        identifier=receipt["receipt_id"],
+        suffix="receipt.json",
+    )
+    return [
+        "--model-acquisition-plan",
+        str(plan_path),
+        "--model-acquisition-plan-sha256",
+        hashlib.sha256(plan_path.read_bytes()).hexdigest(),
+        "--model-acquisition-receipt",
+        str(receipt_path),
+        "--model-acquisition-receipt-sha256",
+        receipt_sha,
+        "--model-acquisition-store",
+        str(store),
+    ]
+
+
 def _probe_receipt(
     tmp_path: Path, monkeypatch, project_revision_args,
 ) -> tuple[Path, str]:
@@ -3794,7 +4826,7 @@ def _probe_receipt(
         run_matrix, "build_target", lambda *_a, **_kw: _StableLocalTarget()
     )
     probe_root = tmp_path / "probe"
-    assert run_matrix.main([
+    probe_args = [
         "--local", spec, "--local-config", str(local_config),
         "--attackers", "replay", "--judges", "rules", "--corpora", "synth",
         "--limit", "1", "--max-queries", "1", "--max-turns", "1",
@@ -3804,7 +4836,12 @@ def _probe_receipt(
         *project_revision_args,
         "--attestation-probe", "--execution-scope-id", "webtest-scope",
         "--out", str(probe_root),
-    ]) == 0
+    ]
+    acquisition_args = _sealed_web_model_acquisition_args(
+        tmp_path / "probe-model-acquisition",
+        probe_args,
+    )
+    assert run_matrix.main([*probe_args, *acquisition_args]) == 0
     receipt = tmp_path / "receipt.live-attestation.json"
     assert live_attestation_cli.main([
         "--probe-root", str(probe_root),
@@ -3923,6 +4960,51 @@ def _write_marker_fixture(cell_dir: Path, stem: str = "cell-a") -> Path:
         },
     }), encoding="utf-8")
     return marker
+
+
+def test_usage_index_rejects_duplicate_marker_and_response_fields(
+    tmp_path: Path,
+) -> None:
+    duplicate_marker = _write_marker_fixture(tmp_path / "marker", stem="ambiguous")
+    marker_raw = duplicate_marker.read_text(encoding="utf-8")
+    marker_field = '"status": "complete"'
+    assert marker_raw.count(marker_field) == 1
+    duplicate_marker.write_text(
+        marker_raw.replace(
+            marker_field,
+            '"status": "error", ' + marker_field,
+            1,
+        ),
+        encoding="utf-8",
+    )
+    rows, stats = collect_usage(duplicate_marker.parent, verify_sha=True)
+    assert rows == []
+    assert stats["markers"] == 0
+    assert stats["skipped_invalid"] == 1
+
+    duplicate_response = _write_marker_fixture(
+        tmp_path / "response", stem="ambiguous"
+    )
+    response_path = duplicate_response.parent / "ambiguous.responses.jsonl"
+    response_raw = response_path.read_text(encoding="utf-8")
+    response_field = '"resolved_model": "claude-fable-5"'
+    assert response_raw.count(response_field) == 2
+    response_path.write_text(
+        response_raw.replace(
+            response_field,
+            '"resolved_model": "invented", ' + response_field,
+            1,
+        ),
+        encoding="utf-8",
+    )
+    marker_doc = json.loads(duplicate_response.read_text(encoding="utf-8"))
+    marker_doc["artifacts"]["responses"] = _artifact_descriptor(response_path)
+    duplicate_response.write_text(json.dumps(marker_doc), encoding="utf-8")
+
+    rows, stats = collect_usage(duplicate_response.parent, verify_sha=True)
+    assert rows == []
+    assert stats["markers"] == 1
+    assert stats["unreadable_artifacts"] == 1
 
 
 def test_failed_cell_usage_accounted_operationally_not_scientifically(
@@ -4130,6 +5212,85 @@ def test_costs_from_pricing_are_exact_or_na_never_zero() -> None:
     }, pricing)
     assert rows[0]["cost"] is None
     assert any("incomplete token usage" in item for item in rows[0]["missing"])
+
+
+@pytest.mark.parametrize(
+    ("alias", "canonical"),
+    (
+        ("zhipu", "glm"),
+        ("moonshot", "kimi"),
+        ("dashscope", "qwen"),
+        ("alibaba", "qwen"),
+        ("bytedance", "doubao"),
+    ),
+)
+def test_provider_alias_usage_and_cost_are_canonicalized(
+    alias: str, canonical: str,
+) -> None:
+    pricing = {"providers": {canonical: {"models": {"served-model": {"rates": [{
+        "effective_date": "2026-01-01",
+        "currency": "USD",
+        "per_million_tokens": {"input": 1.0, "output": 2.0},
+    }]}}}}}
+    assert _response_identity({
+        "target": f"{alias}:requested",
+        "raw": {"provider": alias, "resolved_model": "served-model"},
+    }) == (canonical, "served-model")
+    judged = _judge_row_usage({
+        "raw": {
+            "judge_model": f"{alias}:requested",
+            "judge_call": {
+                "provider": alias,
+                "provider_resolved_model": "served-model",
+                "tokens": {"input": 1_000_000, "output": 1_000_000},
+            },
+        },
+    })
+    assert judged is not None and judged[:2] == (canonical, "served-model")
+    rows = compute_costs({
+        ("target", alias, "served-model", "2026-08-18"): {
+            "calls": 1, "input": 1_000_000, "output": 1_000_000,
+        },
+        ("judge", alias, "served-model", "2026-08-18"): {
+            "calls": 1, "input": 1_000_000, "output": 1_000_000,
+        },
+    }, pricing)
+    assert {row["provider"] for row in rows} == {canonical}
+    assert all(row["cost"] == pytest.approx(3.0) for row in rows)
+
+
+def test_overview_never_fabricates_or_cross_sums_currency_spend(
+    tmp_path: Path,
+) -> None:
+    app = _app(tmp_path)
+    base = {
+        "role": "target", "provider": "fixture", "model": "m",
+        "billable": True, "missing": [], "cost": 1.0,
+    }
+    try:
+        app._usage_cost_rows = lambda: ([], "")
+        empty = app._overview().decode("utf-8")
+        assert "no recorded billable usage" in empty
+        assert "$0.0000" not in empty
+
+        app._usage_cost_rows = lambda: ([{
+            **base, "currency": "EUR", "by_currency": {"EUR": 2.0},
+            "cost": 2.0,
+        }], "")
+        single = app._overview().decode("utf-8")
+        assert "EUR 2.0000" in single
+        assert "$2.0000" not in single
+
+        app._usage_cost_rows = lambda: ([
+            {**base, "currency": "USD", "by_currency": {"USD": 1.0}},
+            {**base, "currency": "EUR", "by_currency": {"EUR": 2.0}, "cost": 2.0},
+        ], "")
+        mixed = app._overview().decode("utf-8")
+        assert "mixed currencies; not summed" in mixed
+        assert "$1.0000" in mixed and "EUR 2.0000" in mixed
+        assert "$3.0000" not in mixed
+    finally:
+        app.close()
 
 
 def test_compute_costs_rejects_invalid_pricing_values() -> None:
@@ -4389,7 +5550,7 @@ def test_v1_database_migrates_preserving_history(tmp_path: Path) -> None:
     conn.close()
     db = ConsoleDB(state / "console.db")
     health = db.health()
-    assert health["healthy"] and health["schema_version"] == 3
+    assert health["healthy"] and health["schema_version"] == 4
     runs = db.list_runs()
     assert runs is not None and runs[0]["job_id"] == "job-v1"
     db.close()
@@ -4487,6 +5648,133 @@ def test_stats_page_survives_malformed_level1_count(tmp_path: Path) -> None:
     app.close()
 
 
+def test_stats_never_indexes_last_wins_duplicate_report_authority(
+    tmp_path: Path,
+) -> None:
+    """Outer-valid report IDs cannot bless ambiguous raw JSON fields."""
+
+    app = _app(tmp_path)
+
+    level1: dict[str, object] = {
+        "schema_version": "ura-level1-evidence/2",
+        "status": "validated_unit_qualified_lifecycle_inventory",
+        "scope": {
+            "evidence_kind": "measured_run",
+            "contains_diagnostic_dry_run": False,
+            "empirical_validity_established": False,
+        },
+        "counts": {
+            "prospective_request_units": None,
+            "planning_strata": {"unit": "planning_stratum", "observed": 1},
+            "execution_units": {"unit": "execution_unit", "completed": 1},
+            "judgment_records": {
+                "unit": "judgment_record",
+                "completed": 1,
+                "evaluable": 1,
+                "decided": 1,
+                "abstained": 0,
+                "non_evaluable": 0,
+                "included": None,
+            },
+            "request_level_errors": {
+                "unit": "request_error_artifact",
+                "observed": 0,
+            },
+        },
+    }
+    material = json.dumps(
+        level1,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+        allow_nan=False,
+    ).encode("utf-8")
+    level1["evidence_id"] = "level1-" + hashlib.sha256(material).hexdigest()[:24]
+    raw_level1 = json.dumps(level1, indent=2, sort_keys=True)
+    status_field = '"status": "validated_unit_qualified_lifecycle_inventory"'
+    assert raw_level1.count(status_field) == 1
+    raw_level1 = raw_level1.replace(
+        status_field,
+        '"status": "unvalidated_stub",\n  ' + status_field,
+        1,
+    )
+    # The vulnerable last-wins interpretation still has a valid content ID.
+    _validate_report_document("level1", json.loads(raw_level1))
+
+    row = {field: None for field in _LEVEL2_ROW_FIELDS}
+    row.update({
+        "run_id": "run-1",
+        "corpus_arm": "arm",
+        "model_spec": "api:model",
+        "resolved_model": "model",
+        "source": "source",
+        "risk_category": "risk",
+        "effective_modality": "text",
+        "expected_behavior": "refuse",
+        "attacker": "replay",
+        "defense": "none",
+        "semantic_family": "safety",
+        "metric": "ASR",
+        "metric_authority": "authoritative_or_source_native",
+        "value": 0.5,
+        "ci_low": 0.25,
+        "ci_high": 0.75,
+        "n_records": 1,
+        "n_clusters": 1,
+        "judgments_completed": 1,
+        "judgments_evaluable": 1,
+        "judgments_decided": 1,
+        "judgments_abstained": 0,
+        "judgments_non_evaluable": 0,
+        "cross_stratum_pooling_permitted": False,
+    })
+    level2: dict[str, object] = {
+        "schema_version": "ura-level2-report/1",
+        "status": "deterministic_compatible_stratum_export",
+        "empirical_validity_established": False,
+        "pooling_policy": {
+            "universal_safety_score_defined": False,
+            "cross_stratum_pooling_permitted": False,
+            "native_scale_pooling_permitted": False,
+        },
+        "common": {"n_estimate_rows": 1, "estimates": [row]},
+    }
+    material = json.dumps(
+        level2,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+        allow_nan=False,
+    ).encode("utf-8")
+    level2["report_id"] = "level2-" + hashlib.sha256(material).hexdigest()[:24]
+    raw_level2 = json.dumps(level2, indent=2, sort_keys=True)
+    authority_field = '"metric_authority": "authoritative_or_source_native"'
+    assert raw_level2.count(authority_field) == 1
+    raw_level2 = raw_level2.replace(
+        authority_field,
+        '"metric_authority": "supplementary_non_authoritative",\n        '
+        + authority_field,
+        1,
+    )
+    _validate_report_document("level2", json.loads(raw_level2))
+
+    level1_path = app.results_root / "thesis" / "level1" / "ambiguous-level1.json"
+    level2_path = app.results_root / "thesis" / "level2" / "ambiguous-level2.json"
+    level1_path.parent.mkdir(parents=True)
+    level2_path.parent.mkdir(parents=True)
+    level1_path.write_text(raw_level1, encoding="utf-8")
+    level2_path.write_text(raw_level2, encoding="utf-8")
+
+    assert app._report_index() == []
+    status, _, body = app.handle("GET", "/stats")
+    text = body.decode("utf-8")
+    assert status == 200
+    assert "ambiguous-level1.json" not in text
+    assert "ambiguous-level2.json" not in text
+    assert "badge blue'>measured" not in text
+    app.close()
+
+
 def test_level1_validation_rejects_inconsistent_judgment_counts() -> None:
     base = {
         "unit": "judgment_record", "completed": 2, "evaluable": 2,
@@ -4530,6 +5818,62 @@ def test_level1_validation_rejects_inconsistent_judgment_counts() -> None:
         )
 
 
+def test_level1_validation_separates_and_reconciles_proxy_counts() -> None:
+    def document(*, proxy_decided: int) -> dict[str, object]:
+        result: dict[str, object] = {
+            "schema_version": "ura-level1-evidence/2",
+            "status": "validated_unit_qualified_lifecycle_inventory",
+            "scope": {
+                "evidence_kind": "measured_run",
+                "contains_diagnostic_dry_run": False,
+                "empirical_validity_established": False,
+            },
+            "counts": {
+                "prospective_request_units": None,
+                "planning_strata": {"unit": "planning_stratum", "observed": 1},
+                "execution_units": {"unit": "execution_unit", "completed": 1},
+                "judgment_records": {
+                    "unit": "judgment_record",
+                    "completed": 1,
+                    "evaluable": 1,
+                    "decided": 0,
+                    "abstained": 1,
+                    "non_evaluable": 0,
+                    "included": None,
+                },
+                "approximate_proxy_judgment_records": {
+                    "unit": "supplementary_approximate_judgment_record",
+                    "evaluable": 1,
+                    "decided": proxy_decided,
+                    "abstained": 0,
+                    "included": None,
+                },
+                "request_level_errors": {
+                    "unit": "request_error_artifact",
+                    "observed": 0,
+                },
+            },
+            "planning_strata": [{
+                "approximate_proxy_evaluable_judgment_records": 1,
+                "approximate_proxy_decided_judgment_records": 1,
+                "approximate_proxy_abstained_judgment_records": 0,
+            }],
+        }
+        material = json.dumps(
+            result,
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+            allow_nan=False,
+        ).encode("utf-8")
+        result["evidence_id"] = "level1-" + hashlib.sha256(material).hexdigest()[:24]
+        return result
+
+    _validate_report_document("level1", document(proxy_decided=1))
+    with pytest.raises(ValueError, match="proxy decision counts do not reconcile"):
+        _validate_report_document("level1", document(proxy_decided=0))
+
+
 def test_stats_renders_real_level2_report(
     tmp_path: Path, monkeypatch, project_revision_args,
 ) -> None:
@@ -4537,7 +5881,7 @@ def test_stats_renders_real_level2_report(
     # cohort (offline stable local target + probe + receipt + measured grid).
     receipt, sha = _probe_receipt(tmp_path, monkeypatch, project_revision_args)
     root = tmp_path / "measured"
-    assert run_matrix.main([
+    measured_args = [
         "--local", "vllm:fixture/local-model",
         "--local-config", str(tmp_path / "local-targets.json"),
         "--attackers", "replay", "--judges", "rules", "--corpora", "synth",
@@ -4551,7 +5895,12 @@ def test_stats_renders_real_level2_report(
         "--live-attestation-sha256", sha,
         "--live-attestation-max-age-hours", "1",
         "--out", str(root),
-    ]) == 0
+    ]
+    acquisition_args = _sealed_web_model_acquisition_args(
+        tmp_path / "measured-model-acquisition",
+        measured_args,
+    )
+    assert run_matrix.main([*measured_args, *acquisition_args]) == 0
     app = _app(tmp_path)
     level2_dir = app.results_root / "thesis" / "level2"
     level2_dir.mkdir(parents=True)
@@ -4605,6 +5954,7 @@ def test_level2_validation_rejects_malformed_ci_and_sample_sizes(
         "n_records": 1, "n_clusters": 1, "judgments_completed": 1,
         "judgments_evaluable": 1, "judgments_decided": 1,
         "judgments_abstained": 0, "judgments_non_evaluable": 0,
+        "metric_authority": "authoritative_or_source_native",
         "cross_stratum_pooling_permitted": False,
     })
 
@@ -4631,6 +5981,130 @@ def test_level2_validation_rejects_malformed_ci_and_sample_sizes(
     row.update(mutation)
     with pytest.raises(ValueError, match=message):
         _validate_report_document("level2", document(row))
+
+
+def test_level2_approximate_contract_is_strict_and_visibly_warned(
+    tmp_path: Path,
+) -> None:
+    proxy = ApproximateMetricProvenance(
+        warning_tag="warning_synthetic_approximate",
+        evidence_class="synthetic",
+        source_required_metric="fixture_source_metric",
+        source_evaluator_implemented=False,
+        supplementary_metric_policy=supplementary_metric_policy("synthetic"),
+        declared_target_evidence_classes=["measured"],
+        target_evidence_classes=["synthetic"],
+        n_synthetic_response_decisions=0,
+        reliability_score=0.08,
+        reliability_mean=0.08,
+        metric_name="ASR",
+        n_supporting_decisions=1,
+        result_count_unit="supporting_decision",
+        n_result_units=1,
+        contribution_role="selected",
+        selected_judges=["rules"],
+        judge_kinds=["rules"],
+        judge_models=[],
+        judge_model_identities=[],
+        judge_model_identity_types=[],
+        judge_identity_kinds=["not_applicable"],
+        n_model_queried_decisions=0,
+        evidence_scopes=["response_only"],
+        n_source_reference_context_used=0,
+        limitations=["fixture construct mismatch"],
+    ).model_dump(mode="json")
+    row = {field: None for field in _LEVEL2_ROW_FIELDS}
+    row.update({
+        "run_id": "run-1",
+        "corpus_arm": "arm",
+        "model_spec": "mock",
+        "resolved_model": "mock",
+        "source": "source",
+        "risk_category": "risk",
+        "effective_modality": "text",
+        "expected_behavior": "refuse",
+        "attacker": "replay",
+        "defense": "none",
+        "ordered_judges": ["rules"],
+        "seeds": [0],
+        "semantic_family": "approximate_unsafe_response_rate",
+        "metric": "approximate_ASR",
+        "endpoint_status": "approximate_common_proxy",
+        "metric_authority": "supplementary_non_authoritative",
+        "warning_tag": "warning_synthetic_approximate",
+        "evidence_class": "synthetic",
+        "reliability_score": 0.08,
+        "reliability_kind": "uncalibrated_heuristic_indicator_not_probability",
+        "approximate_provenance": proxy,
+        "approximate_model_query_count": 0,
+        "approximate_source_reference_use_count": 0,
+        "polarity": "higher_adverse",
+        "value": 0.5,
+        "ci_low": 0.25,
+        "ci_high": 0.75,
+        "n_records": 1,
+        "n_clusters": 1,
+        "execution_modes": ["direct_prompt"],
+        "judgments_completed": 1,
+        "judgments_evaluable": 1,
+        "judgments_decided": 1,
+        "judgments_abstained": 0,
+        "judgments_non_evaluable": 0,
+        "cross_stratum_pooling_permitted": False,
+    })
+
+    def document(estimate: dict[str, object]) -> dict[str, object]:
+        result: dict[str, object] = {
+            "schema_version": "ura-level2-report/1",
+            "status": "deterministic_compatible_stratum_export",
+            "empirical_validity_established": False,
+            "pooling_policy": {
+                "universal_safety_score_defined": False,
+                "cross_stratum_pooling_permitted": False,
+                "native_scale_pooling_permitted": False,
+            },
+            "common": {"n_estimate_rows": 1, "estimates": [estimate]},
+        }
+        material = json.dumps(
+            result,
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+            allow_nan=False,
+        ).encode("utf-8")
+        result["report_id"] = "level2-" + hashlib.sha256(material).hexdigest()[:24]
+        return result
+
+    valid = document(dict(row))
+    _validate_report_document("level2", valid)
+    app = _app(tmp_path)
+    try:
+        rendered = app._render_level2("approximate.json", valid)
+    finally:
+        app.close()
+    assert "synthetic + approximate" in rendered
+    assert "contains supplementary proxies" in rendered
+    assert "heuristic (not probability)" in rendered
+
+    for mutation in (
+        {"warning_tag": None},
+        {"evidence_class": "measured"},
+        {"metric_authority": "authoritative_or_source_native"},
+        {"approximate_provenance": {}},
+        {"approximate_model_query_count": 1},
+        {"approximate_source_reference_use_count": 1},
+    ):
+        invalid_row = {**row, **mutation}
+        with pytest.raises(ValueError):
+            _validate_report_document("level2", document(invalid_row))
+
+    detached_support = copy.deepcopy(proxy)
+    detached_support["n_supporting_decisions"] = 99
+    with pytest.raises(ValueError, match="supporting decisions"):
+        _validate_report_document(
+            "level2",
+            document({**row, "approximate_provenance": detached_support}),
+        )
 
 
 # -- process lifecycle -------------------------------------------------------
@@ -4824,6 +6298,44 @@ def test_http_post_body_limit_enforced(tmp_path: Path) -> None:
         app.close()
 
 
+def test_http_rejects_duplicate_and_malformed_form_keys_before_dispatch(
+    tmp_path: Path,
+) -> None:
+    from experiments.rig_web import _make_server
+
+    app = _app(tmp_path)
+    server = _make_server(app, "127.0.0.1", 0)
+    port = server.server_address[1]
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        for payload in (
+            "confirm=yes&confirm=yes&launch_ticket=forged",
+            "judge_model=openai%3Afirst&judge_model=vllm%3AC%3A%5Cprivate",
+            "confirm=yes&bad%ZZ=value",
+            "confirm=yes&bare-field",
+        ):
+            connection = http.client.HTTPConnection("127.0.0.1", port, timeout=10)
+            connection.request(
+                "POST",
+                "/build",
+                body=payload,
+                headers={"Content-Type": "application/x-www-form-urlencoded"},
+            )
+            response = connection.getresponse()
+            body = response.read()
+            connection.close()
+            assert response.status == 400
+            assert b"invalid or duplicate" in body
+        assert app.jobs == {}
+        assert app.db.health()["counts"]["jobs"] == 0
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=10)
+        app.close()
+
+
 # -- regression tests for the WEB-002 adversarial-review findings -----------
 
 
@@ -4956,7 +6468,7 @@ def test_builder_probe_auto_fixes_one_query_one_turn(tmp_path: Path) -> None:
     # MED parity: a probe is one query/one turn by definition; the builder
     # composes them so the argv matches the shape run_matrix enforces (rather
     # than inheriting the driver default of 4 and dying at the CLI).
-    app = _app(tmp_path)
+    app = _operator_registry_app(tmp_path)
     _cmd, values, _params = app._compose_from_builder({
         "mode": "attestation_probe", "corpora": "strongreject_official",
         "api": "anthropic:claude-opus-5", "attackers": "replay",
@@ -5013,22 +6525,45 @@ def test_builder_measured_argv_is_self_contained_from_env(
     # MED: a measured lane admitted via campaign-env receipts must compose
     # those receipts into the argv, so the retained "Exact command" reproduces
     # the same admission in a clean shell.
-    monkeypatch.setenv("URA_PROJECT_REVISION_MANIFEST", str(tmp_path / "r.json"))
-    monkeypatch.setenv("URA_PROJECT_REVISION_SHA256", "a" * 64)
-    monkeypatch.setenv("URA_SOURCE_CONFORMANCE_MANIFEST", str(tmp_path / "s.json"))
-    monkeypatch.setenv("URA_SOURCE_CONFORMANCE_SHA256", "b" * 64)
-    app = _app(tmp_path)
+    project_receipt = tmp_path / "r.json"
+    source_receipt = tmp_path / "s.json"
+    project_receipt.write_text('{"schema":"fixture-project"}\n', encoding="utf-8")
+    source_receipt.write_text('{"schema":"fixture-source"}\n', encoding="utf-8")
+    project_sha = hashlib.sha256(project_receipt.read_bytes()).hexdigest()
+    source_sha = hashlib.sha256(source_receipt.read_bytes()).hexdigest()
+    monkeypatch.setenv("URA_PROJECT_REVISION_MANIFEST", str(project_receipt))
+    monkeypatch.setenv("URA_PROJECT_REVISION_SHA256", project_sha)
+    monkeypatch.setenv("URA_SOURCE_CONFORMANCE_MANIFEST", str(source_receipt))
+    monkeypatch.setenv("URA_SOURCE_CONFORMANCE_SHA256", source_sha)
+    app = _operator_registry_app(tmp_path)
+    attestation_receipt = tmp_path / "a.json"
+    attestation_receipt.write_text(
+        '{"schema":"fixture-attestation"}\n', encoding="utf-8"
+    )
+    attestation_sha = hashlib.sha256(attestation_receipt.read_bytes()).hexdigest()
     _cmd, values, _params = app._compose_from_builder({
         "mode": "measured", "corpora": "strongreject_official",
         "api": "anthropic:claude-opus-5", "attackers": "replay",
         "judges": "rules", "out": "runs/m", "seeds": "0", "sample_seed": "0",
-        "scope": "sc", "max_age": "24", "att_path1": "a.json",
-        "att_sha1": "c" * 64, "cap_target": "4", "cap_judge": "4",
+        "scope": "sc", "max_age": "24", "att_path1": str(attestation_receipt),
+        "att_sha1": attestation_sha, "cap_target": "4", "cap_judge": "4",
         "cap_http": "12", "deadline": "600", "limit": "5",
     })
-    assert values["--project-revision"] == str(tmp_path / "r.json")
-    assert values["--project-revision-sha256"] == "a" * 64
-    assert values["--source-conformance"] == str(tmp_path / "s.json")
+    private_project_receipt = Path(values["--project-revision"])
+    assert private_project_receipt != project_receipt
+    assert private_project_receipt.parent.name == ".private-project-revision"
+    assert private_project_receipt.read_bytes() == project_receipt.read_bytes()
+    assert values["--project-revision-sha256"] == project_sha
+    private_source_receipt = Path(values["--source-conformance"])
+    assert private_source_receipt != source_receipt
+    assert private_source_receipt.parent.name == ".private-source-conformance"
+    assert hashlib.sha256(private_source_receipt.read_bytes()).hexdigest() == source_sha
+    assert values["--source-conformance-sha256"] == source_sha
+    private_attestation = Path(values["--live-attestation#1"])
+    assert private_attestation != attestation_receipt
+    assert private_attestation.parent.name == ".private-live-attestations"
+    assert private_attestation.read_bytes() == attestation_receipt.read_bytes()
+    assert values["--live-attestation-sha256#1"] == attestation_sha
     app.close()
 
 
@@ -5198,7 +6733,7 @@ def test_http_rejects_negative_and_nonnumeric_content_length(tmp_path: Path) -> 
             conn = socket.create_connection(("127.0.0.1", port), timeout=10)
             body = b"content=x"
             conn.sendall(
-                b"POST /config HTTP/1.1\r\nHost: localhost\r\n"
+                f"POST /config HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\n".encode()
                 + f"Content-Length: {content_length}\r\n".encode()
                 + b"Content-Type: application/x-www-form-urlencoded\r\n\r\n"
                 + body
@@ -5310,6 +6845,8 @@ def test_reindex_preserves_usage_from_out_of_root_dirs(tmp_path: Path) -> None:
             return 0
 
     assert app.db.record_terminal(_Job(), "p", [], state="complete", exit_code=0)
+    restored = app.db.load_jobs()
+    assert restored is not None and restored[0]["activity"] is None
     summary = app.reindex_all()
     assert summary["roots"] >= 2
     totals = app.db.usage_totals()

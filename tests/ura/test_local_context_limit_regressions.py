@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import builtins
 import json
+import os
 import sys
 from pathlib import Path
 from types import SimpleNamespace
@@ -24,7 +26,7 @@ REVISION = "6" * 40
 
 
 def test_local_context_contract_bumps_runner_version() -> None:
-    assert CODE_VERSION == "ura-runner/2.16"
+    assert CODE_VERSION == "ura-runner/2.19"
 
 
 def _rig_hardware() -> dict[str, object]:
@@ -193,12 +195,32 @@ def test_context_cap_is_not_a_generation_limit_alias(tmp_path: Path) -> None:
 
 def test_vllm_engine_receives_only_explicit_context_cap(
     monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
 ) -> None:
     engine_kwargs: list[dict[str, object]] = []
     sampling_kwargs: list[dict[str, object]] = []
+    snapshot = tmp_path / "managed-snapshot"
+    snapshot.mkdir()
+
+    class FakeRuntime:
+        def construct(self, requirement, constructor, *, cleanup=None):
+            del cleanup
+            assert requirement.role == "vllm_target"
+            assert os.environ["HF_HUB_OFFLINE"] == "1"
+            assert os.environ["TRANSFORMERS_OFFLINE"] == "1"
+            return constructor(snapshot.resolve())
+
+        @staticmethod
+        def private_execution(_role, callback):
+            return callback()
 
     class FakeLLM:
         def __init__(self, **kwargs: object) -> None:
+            assert os.environ["HF_HUB_OFFLINE"] == "1"
+            assert kwargs["model"] == str(snapshot.resolve())
+            assert kwargs["tokenizer"] == str(snapshot.resolve())
+            assert "revision" not in kwargs
+            assert "tokenizer_revision" not in kwargs
             engine_kwargs.append(kwargs)
 
         def chat(self, _messages: object, _sampling: object) -> list[object]:
@@ -219,12 +241,29 @@ def test_vllm_engine_receives_only_explicit_context_cap(
         "vllm",
         SimpleNamespace(LLM=FakeLLM, SamplingParams=FakeSamplingParams),
     )
+    real_import = builtins.__import__
+
+    def offline_import(name: str, *args: object, **kwargs: object):
+        if name == "vllm":
+            assert os.environ["HF_HUB_OFFLINE"] == "1"
+            assert os.environ["TRANSFORMERS_OFFLINE"] == "1"
+        return real_import(name, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, "__import__", offline_import)
+    for name in (
+        "HF_DATASETS_OFFLINE",
+        "HF_HUB_DISABLE_TELEMETRY",
+        "HF_HUB_OFFLINE",
+        "TRANSFORMERS_OFFLINE",
+    ):
+        monkeypatch.delenv(name, raising=False)
     capped = VLLMTarget(
         SPEC.split(":", 1)[1],
         revision=REVISION,
         modality_support=("text", "image"),
         max_tokens=4096,
         max_model_len=15360,
+        model_runtime=FakeRuntime(),
     )
     response = capped.generate([DialogTurn(role="user", content="probe")], seed=7)
     repeated = capped.generate([DialogTurn(role="user", content="probe")], seed=7)
@@ -266,6 +305,7 @@ def test_vllm_engine_receives_only_explicit_context_cap(
         SPEC.split(":", 1)[1],
         revision=REVISION,
         modality_support=("text",),
+        model_runtime=FakeRuntime(),
     )
     native_response = native.generate([DialogTurn(role="user", content="probe")])
     assert "max_model_len" not in engine_kwargs[1]
@@ -277,11 +317,16 @@ def test_ollama_uses_the_same_nonblank_deterministic_attempt_placeholder(
 ) -> None:
     digest = "a" * 64
     target = OllamaTarget("fixture:latest", model_digest=digest)
-    monkeypatch.setattr(target, "_verify_daemon_identity", lambda: digest)
+    monkeypatch.setattr(
+        target, "_verify_daemon_identity", lambda *, deadline=None: digest
+    )
+    monkeypatch.setattr(
+        target, "_verify_loaded_identity", lambda _model, *, deadline: digest
+    )
     monkeypatch.setattr(
         target,
         "_chat",
-        lambda _messages, *, seed=None: {
+        lambda _messages, *, seed=None, deadline=None: {
             "model": "fixture:latest",
             "message": {"role": "assistant", "content": "local response"},
             "done": True,

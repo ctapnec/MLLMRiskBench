@@ -4,16 +4,114 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
+import secrets
 import sys
 import time
 from pathlib import Path
 from typing import Any
-from urllib.parse import parse_qs
+from urllib.parse import parse_qsl
 
 from .app import RigWebApp
 from .reports import compute_costs, load_pricing
 
 _MAX_POST_BYTES = 2 * 1024 * 1024
+_MAX_FORM_FIELDS = 2048
+_INVALID_PERCENT_ESCAPE = re.compile(r"%(?![0-9A-Fa-f]{2})")
+_CSRF_FIELD = "_csrf"
+_LOOPBACK_AUTHORITY = re.compile(
+    r"(?P<host>127\.0\.0\.1|\[::1\])(?::(?P<port>[0-9]{1,5}))?\Z"
+)
+_POST_FORM_OPEN = re.compile(
+    br"<form\b(?=[^>]*\smethod\s*=\s*"
+    br"(?:'post'|\"post\"|post(?=\s|/?>)))[^>]*>",
+    re.IGNORECASE,
+)
+
+
+def _literal_loopback_authority(value: str) -> tuple[str, int] | None:
+    """Return one canonical loopback-origin tuple, rejecting aliases.
+
+    Only the two literal browser authorities served by this console are
+    admitted. In particular, ``localhost``, integer/short IPv4 spellings,
+    userinfo, and DNS names are not trusted as loopback. The port is allowed to
+    differ from the rig listener so an operator can use a local forwarded port.
+    """
+
+    if not isinstance(value, str) or not value:
+        return None
+    match = _LOOPBACK_AUTHORITY.fullmatch(value)
+    if match is None:
+        return None
+    raw_port = match.group("port")
+    if raw_port is None:
+        port = 80
+    else:
+        port = int(raw_port)
+        if not 1 <= port <= 65535 or str(port) != raw_port:
+            return None
+    host = "::1" if match.group("host") == "[::1]" else "127.0.0.1"
+    return host, port
+
+
+def _same_loopback_origin(origin: str, authority: tuple[str, int]) -> bool:
+    """Return whether an Origin is exact loopback HTTP for ``authority``."""
+
+    prefix = "http://"
+    return (
+        isinstance(origin, str)
+        and origin.startswith(prefix)
+        and _literal_loopback_authority(origin[len(prefix):]) == authority
+    )
+
+
+def _inject_csrf_token(body: bytes, token: str) -> bytes:
+    """Add one server-owned token control to every rendered POST form."""
+
+    hidden = (
+        f"<input type='hidden' name='{_CSRF_FIELD}' value='{token}'>"
+    ).encode("ascii")
+    return _POST_FORM_OPEN.sub(lambda match: match.group(0) + hidden, body)
+
+
+def _parse_form_payload(payload: bytes) -> dict[str, str]:
+    """Decode one strict, unambiguous URL-encoded form body.
+
+    Repeatable application inputs use distinct indexed names. Duplicate HTTP
+    keys therefore have no legitimate meaning and are rejected instead of
+    silently choosing the first value.
+    """
+
+    try:
+        text = payload.decode("utf-8")
+        if _INVALID_PERCENT_ESCAPE.search(text):
+            raise ValueError("malformed percent escape")
+        pairs = parse_qsl(
+            text,
+            keep_blank_values=True,
+            strict_parsing=True,
+            encoding="utf-8",
+            errors="strict",
+            max_num_fields=_MAX_FORM_FIELDS,
+        )
+    except (UnicodeDecodeError, ValueError) as exc:
+        raise ValueError("invalid URL-encoded form body") from exc
+    form: dict[str, str] = {}
+    seen: set[str] = set()
+    for key, value in pairs:
+        if (
+            not key
+            or len(key) > 4096
+            or any(ord(character) < 32 or ord(character) == 127 for character in key)
+        ):
+            raise ValueError("invalid URL-encoded form field name")
+        if key in seen:
+            raise ValueError("duplicate URL-encoded form field name")
+        seen.add(key)
+        # Preserve the prior request-core contract: empty controls are absent.
+        if value:
+            form[key] = value
+    return form
 
 
 def _make_server(app: RigWebApp, host: str, port: int):
@@ -21,13 +119,102 @@ def _make_server(app: RigWebApp, host: str, port: int):
 
     from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
+    # This capability lives only in the serving process. It is neither put in
+    # URLs nor handed to the application core, logs, jobs, or retained state.
+    csrf_token = secrets.token_urlsafe(32)
+
     class Handler(BaseHTTPRequestHandler):
+        def _send(
+            self,
+            status: int,
+            content_type: str | None,
+            body: bytes,
+            *,
+            location: str | None = None,
+        ) -> None:
+            self.send_response(status)
+            if location is not None:
+                self.send_header("Location", location)
+            if content_type is not None:
+                self.send_header("Content-Type", content_type)
+            # The console is a control surface. These headers apply even to
+            # errors and redirects so an attacker cannot frame a valid form or
+            # reinterpret a response while probing the boundary.
+            self.send_header(
+                "Content-Security-Policy",
+                "frame-ancestors 'none'; form-action 'self'; base-uri 'none'",
+            )
+            self.send_header("X-Frame-Options", "DENY")
+            self.send_header("X-Content-Type-Options", "nosniff")
+            self.send_header("Referrer-Policy", "no-referrer")
+            if content_type is None or content_type.startswith("text/html"):
+                self.send_header("Cache-Control", "no-store")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            if body:
+                self.wfile.write(body)
+
+        def _request_boundary_allows(self) -> bool:
+            host_values = self.headers.get_all("Host", [])
+            if len(host_values) != 1:
+                self._send(
+                    400,
+                    "text/plain; charset=utf-8",
+                    b"exactly one Host header is required",
+                )
+                return False
+            authority = _literal_loopback_authority(host_values[0])
+            if authority is None:
+                self._send(
+                    403,
+                    "text/plain; charset=utf-8",
+                    b"Host must be literal loopback",
+                )
+                return False
+
+            origin_values = self.headers.get_all("Origin", [])
+            if len(origin_values) > 1 or (
+                origin_values
+                and not _same_loopback_origin(origin_values[0], authority)
+            ):
+                self._send(
+                    403,
+                    "text/plain; charset=utf-8",
+                    b"Origin must exactly match the loopback request origin",
+                )
+                return False
+
+            fetch_site_values = self.headers.get_all("Sec-Fetch-Site", [])
+            if len(fetch_site_values) > 1 or (
+                fetch_site_values
+                and fetch_site_values[0].strip().lower()
+                not in {"same-origin", "none"}
+            ):
+                self._send(
+                    403,
+                    "text/plain; charset=utf-8",
+                    b"cross-site browser requests are forbidden",
+                )
+                return False
+            return True
+
         def _dispatch(self, method: str) -> None:
+            # Admit the authority/origin before reading a POST body or asking
+            # the application for a page containing the process CSRF token.
+            if not self._request_boundary_allows():
+                self.close_connection = True
+                return
             form: dict[str, str] = {}
             if method == "POST":
-                raw_length = self.headers.get("Content-Length")
+                raw_lengths = self.headers.get_all("Content-Length", [])
+                transfer_encodings = self.headers.get_all("Transfer-Encoding", [])
+                raw_length = raw_lengths[0] if len(raw_lengths) == 1 else None
                 try:
-                    length = int(raw_length) if raw_length is not None else 0
+                    length = (
+                        int(raw_length)
+                        if raw_length is not None and not transfer_encodings
+                        else -1
+                    )
                 except ValueError:
                     length = -1
                 # A missing/malformed/negative length, or one over the cap, is
@@ -50,25 +237,33 @@ def _make_server(app: RigWebApp, host: str, port: int):
                     else:
                         status_code = 400
                         body = b"invalid Content-Length"
-                    self.send_response(status_code)
-                    self.send_header("Content-Type", "text/plain; charset=utf-8")
-                    self.send_header("Content-Length", str(len(body)))
-                    self.end_headers()
-                    self.wfile.write(body)
+                    self._send(status_code, "text/plain; charset=utf-8", body)
                     return
-                payload = self.rfile.read(length).decode("utf-8")
-                form = {key: values[0] for key, values in parse_qs(payload).items() if values}
+                payload = self.rfile.read(length)
+                try:
+                    form = _parse_form_payload(payload)
+                except ValueError:
+                    body = b"invalid or duplicate URL-encoded form fields"
+                    self._send(400, "text/plain; charset=utf-8", body)
+                    return
+                submitted_token = form.pop(_CSRF_FIELD, None)
+                if (
+                    submitted_token is None
+                    or not secrets.compare_digest(submitted_token, csrf_token)
+                ):
+                    self._send(
+                        403,
+                        "text/plain; charset=utf-8",
+                        b"missing or invalid CSRF token",
+                    )
+                    return
             status, content_type, body = app.handle(method, self.path, form)
             if status == 303:
-                self.send_response(303)
-                self.send_header("Location", content_type)
-                self.end_headers()
+                self._send(303, None, b"", location=content_type)
                 return
-            self.send_response(status)
-            self.send_header("Content-Type", content_type)
-            self.send_header("Content-Length", str(len(body)))
-            self.end_headers()
-            self.wfile.write(body)
+            if content_type.startswith("text/html"):
+                body = _inject_csrf_token(body, csrf_token)
+            self._send(status, content_type, body)
 
         def do_GET(self) -> None:  # noqa: N802 - http.server contract
             self._dispatch("GET")

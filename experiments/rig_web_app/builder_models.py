@@ -6,8 +6,11 @@ import hashlib
 import json
 import os
 import re
+import secrets
 from pathlib import Path
 from typing import Any, Mapping
+
+from ura.strict_json import strict_json_loads
 
 
 class BuilderModelsMixin:
@@ -17,7 +20,7 @@ class BuilderModelsMixin:
         for candidate in (name, example):
             path = self.repo_root / "experiments" / candidate
             try:
-                data = json.loads(path.read_text(encoding="utf-8"))
+                data = strict_json_loads(path.read_text(encoding="utf-8"))
             except (OSError, ValueError):
                 continue
             if isinstance(data, dict):
@@ -40,6 +43,53 @@ class BuilderModelsMixin:
         except Exception:  # noqa: BLE001 - convenience metadata only
             return None
 
+    def _ollama_roster_snapshot(self, *, force: bool = False) -> dict[str, object]:
+        """Return exact daemon-backed candidates after vLLM de-duplication."""
+
+        from experiments.local_targets import load_roster, _models_map  # noqa: PLC0415
+
+        vllm = {
+            str(spec): dict(entry)
+            for spec, entry in _models_map(load_roster(self.repo_root)).items()
+            if str(spec).startswith("vllm:") and isinstance(entry, dict)
+        }
+        return self.ollama.roster(vllm, force=force)
+
+    def _ollama_overlap_warning(
+        self, spec: str, entry: Mapping[str, object] | None = None
+    ) -> str:
+        """Explain a normalized manual Ollama/vLLM identity overlap."""
+
+        if not spec.startswith("ollama:"):
+            return ""
+        from experiments.local_targets import load_roster, _models_map  # noqa: PLC0415
+        from .ollama_service import ollama_overlap_specs, vllm_identity_index
+
+        vllm = {
+            str(candidate): dict(value)
+            for candidate, value in _models_map(load_roster(self.repo_root)).items()
+            if str(candidate).startswith("vllm:") and isinstance(value, dict)
+        }
+        identity_details: dict[str, object] = {}
+        nested_details = (entry or {}).get("details")
+        if isinstance(nested_details, Mapping):
+            identity_details.update(nested_details)
+        for key in ("architecture", "family", "families"):
+            if key in (entry or {}):
+                identity_details[key] = (entry or {})[key]
+        overlaps = ollama_overlap_specs(
+            spec.removeprefix("ollama:"),
+            identity_details,
+            vllm_identity_index(vllm),
+        )
+        if not overlaps:
+            return ""
+        return (
+            "normalized Ollama identity overlaps vLLM roster: "
+            + ", ".join(overlaps)
+            + "; Ollama execution is disabled for this identity"
+        )
+
     def _model_options(self) -> list[tuple[str, str, tuple[str, ...], str]]:
         """Selectable targets as (spec, label, modalities, kind).
 
@@ -48,7 +98,7 @@ class BuilderModelsMixin:
         each roster entry so the builder can hide a target that cannot handle a
         selected modality. Local targets are the hand-configured local-targets
         registry plus the vLLM roster (the models the rig's vLLM can serve;
-        vLLM downloads a chosen one on first run). The focal Anthropic/OpenAI
+        Hub-backed choices require an explicit sealed acquisition job). The focal Anthropic/OpenAI
         pair are the inherent env adapters if exported.
         """
 
@@ -116,6 +166,26 @@ class BuilderModelsMixin:
             )
             if mods:
                 options.append((spec, spec, mods, "local"))
+        live_ollama = self._ollama_roster_snapshot()
+        for model in live_ollama.get("models", []):
+            if not isinstance(model, dict):
+                continue
+            spec = str(model.get("spec", ""))
+            if not spec.startswith("ollama:") or spec in local_seen:
+                continue
+            modalities = model.get("modalities")
+            mods = (
+                tuple(
+                    str(modality)
+                    for modality in modalities
+                    if modality in {"text", "image"}
+                )
+                if isinstance(modalities, list)
+                else ()
+            )
+            if mods:
+                local_seen.add(spec)
+                options.append((spec, spec, mods, "local"))
         return options
 
     def _local_entry_catalog(
@@ -131,6 +201,22 @@ class BuilderModelsMixin:
         }
         configured = self._load_registry("local-targets.json", "rig/local-targets.example.json")
         explicit = {str(spec) for spec, entry in configured.items() if isinstance(entry, dict)}
+        live_ollama = self._ollama_roster_snapshot()
+        for model in live_ollama.get("models", []):
+            if not isinstance(model, dict):
+                continue
+            spec = str(model.get("spec", ""))
+            digest = model.get("digest")
+            modalities = model.get("modalities")
+            if (
+                spec.startswith("ollama:")
+                and isinstance(digest, str)
+                and isinstance(modalities, list)
+            ):
+                catalog[spec] = {
+                    "digest": digest,
+                    "modalities": list(modalities),
+                }
         for spec, entry in configured.items():
             if isinstance(entry, dict):
                 catalog[str(spec)] = dict(entry)
@@ -146,7 +232,10 @@ class BuilderModelsMixin:
     ) -> dict[str, object]:
         """Resolve one model exactly as the generated local config does."""
 
-        from experiments.local_targets import model_hardware_profile  # noqa: PLC0415
+        from experiments.local_targets import (  # noqa: PLC0415
+            installed_vllm_version,
+            model_hardware_profile,
+        )
 
         profile_entry = dict(entry)
         if "quantization" in profile_entry:
@@ -170,6 +259,7 @@ class BuilderModelsMixin:
             profile_entry,
             self.gpu_hardware,
             default_quantization=default_override,
+            runtime_version=(installed_vllm_version() or self._vllm_roster_version()),
         )
 
     @staticmethod
@@ -296,17 +386,42 @@ class BuilderModelsMixin:
                 f"local target {spec!r} Ollama config requires a 64-hex digest"
             )
         BuilderModelsMixin._validated_local_modalities(spec, entry)
+        if "allow_vllm_overlap" in entry:
+            raise ValueError(
+                f"local target {spec!r} manual overlap override is not supported"
+            )
 
-    def _materialize_selected_local_config(
+    def _selected_local_config_payload(
         self,
         specs: list[str],
         *,
         default_quantization: str = "",
         quantization_overrides: Mapping[str, str] | None = None,
-    ) -> Path:
-        """Write the exact selected vLLM execution subset under console state."""
+        require_live_ollama: bool = False,
+    ) -> bytes:
+        """Return canonical bytes for the exact selected local execution subset."""
 
-        catalog, explicitly_configured = self._local_entry_catalog()
+        catalog, _explicitly_configured = self._local_entry_catalog()
+        live_ollama: dict[str, Mapping[str, object]] = {}
+        if require_live_ollama and any(spec.startswith("ollama:") for spec in specs):
+            snapshot = self._ollama_roster_snapshot(force=True)
+            if snapshot.get("available") is not True:
+                reason = str(snapshot.get("error") or "daemon discovery unavailable")
+                raise ValueError(
+                    "selected Ollama targets require a current exact live roster: "
+                    + reason
+                )
+            for section in ("models", "excluded"):
+                rows = snapshot.get(section)
+                if not isinstance(rows, list):
+                    raise ValueError("live Ollama roster has malformed candidate sections")
+                for row in rows:
+                    if not isinstance(row, Mapping):
+                        raise ValueError("live Ollama roster contains a malformed row")
+                    live_spec = str(row.get("spec", ""))
+                    if not live_spec.startswith("ollama:") or live_spec in live_ollama:
+                        raise ValueError("live Ollama roster contains an ambiguous model spec")
+                    live_ollama[live_spec] = row
         selected: dict[str, dict[str, object]] = {}
         allowed = {
             "revision",
@@ -323,12 +438,49 @@ class BuilderModelsMixin:
         for spec in specs:
             entry = catalog.get(spec)
             if entry is None:
-                raise ValueError(f"local target {spec!r} is not in the vLLM roster")
+                raise ValueError(
+                    f"local target {spec!r} is not in the local target catalog"
+                )
             if spec.startswith("ollama:"):
                 self._validate_ollama_local_entry(spec, entry)
+                live_entry = live_ollama.get(spec) if require_live_ollama else None
+                if require_live_ollama:
+                    if live_entry is None:
+                        raise ValueError(
+                            f"local target {spec!r} is absent from the current exact "
+                            "Ollama daemon roster; refresh or pull it before starting"
+                        )
+                    try:
+                        self._validate_ollama_local_entry(spec, live_entry)
+                    except ValueError as exc:
+                        raise ValueError(
+                            f"local target {spec!r} live daemon row is invalid: {exc}"
+                        ) from exc
+                    configured_modalities = self._validated_local_modalities(spec, entry)
+                    live_modalities = self._validated_local_modalities(spec, live_entry)
+                    if (
+                        str(entry["digest"]).lower()
+                        != str(live_entry["digest"]).lower()
+                        or configured_modalities != live_modalities
+                    ):
+                        raise ValueError(
+                            f"local target {spec!r} configured digest/modalities do "
+                            "not match current live Ollama discovery"
+                        )
+                # The daemon's show details can reveal an upstream/family
+                # overlap that is absent from a minimal manual config. Never
+                # discard that stronger live identity evidence.
+                warning = self._ollama_overlap_warning(spec, live_entry or entry)
+                if warning:
+                    raise ValueError(
+                        f"local target {spec!r} is unavailable: {warning}; "
+                        "a manual overlap override is not supported"
+                    )
                 selected[spec] = {
-                    "digest": str(entry["digest"]).lower(),
-                    "modalities": self._validated_local_modalities(spec, entry),
+                    "digest": str((live_entry or entry)["digest"]).lower(),
+                    "modalities": self._validated_local_modalities(
+                        spec, live_entry or entry
+                    ),
                 }
                 continue
             model_override = str((quantization_overrides or {}).get(spec, "")).strip().lower()
@@ -371,17 +523,135 @@ class BuilderModelsMixin:
             # Hardware-auto TP: persist exactly what the model row displays.
             resolved["tensor_parallel_size"] = profile["recommended_tensor_parallel_size"]
             selected[spec] = resolved
-        payload = (
-            json.dumps(selected, ensure_ascii=False, sort_keys=True, separators=(",", ":")) + "\n"
+        return (
+            json.dumps(
+                selected,
+                ensure_ascii=False,
+                sort_keys=True,
+                separators=(",", ":"),
+                allow_nan=False,
+            )
+            + "\n"
+        ).encode("utf-8")
+
+    @staticmethod
+    def _local_config_snapshot_digests(
+        payload: bytes,
+        specs: list[str],
+    ) -> tuple[str, str]:
+        """Return exact-byte and path-independent local-config identities."""
+
+        try:
+            document = strict_json_loads(payload.decode("utf-8"))
+        except (UnicodeError, ValueError) as exc:
+            raise ValueError("selected local config snapshot is invalid") from exc
+        if not isinstance(document, dict) or set(document) != set(specs):
+            raise ValueError("selected local config snapshot does not match selected models")
+        identities: dict[str, str] = {}
+        for spec in specs:
+            if not spec.startswith("vllm:"):
+                continue
+            model = spec.removeprefix("vllm:")
+            if not (Path(model).is_absolute() or re.match(r"^[A-Za-z]:[\\/]", model)):
+                continue
+            entry = document.get(spec)
+            digest = entry.get("digest") if isinstance(entry, dict) else None
+            if not isinstance(digest, str) or re.fullmatch(
+                r"[0-9a-fA-F]{64}", digest
+            ) is None:
+                raise ValueError(
+                    "an explicit local checkpoint requires a 64-hex content digest"
+                )
+            identities[spec] = f"vllm:local-checkpoint@sha256:{digest.lower()}"
+        durable = {
+            identities.get(str(spec), str(spec)): entry
+            for spec, entry in document.items()
+        }
+        if len(durable) != len(document):
+            raise ValueError(
+                "selected local configs collapse to a duplicate content identity"
+            )
+        durable_payload = (
+            json.dumps(
+                durable,
+                ensure_ascii=False,
+                sort_keys=True,
+                separators=(",", ":"),
+                allow_nan=False,
+            )
+            + "\n"
+        ).encode("utf-8")
+        return (
+            hashlib.sha256(payload).hexdigest(),
+            hashlib.sha256(durable_payload).hexdigest(),
         )
-        digest = hashlib.sha256(payload.encode("utf-8")).hexdigest()
-        directory = self.state_dir / "generated-local-configs"
+
+    def _materialize_selected_local_config(
+        self,
+        specs: list[str],
+        *,
+        default_quantization: str = "",
+        quantization_overrides: Mapping[str, str] | None = None,
+        require_live_ollama: bool = False,
+        snapshot_payload: bytes | None = None,
+    ) -> Path:
+        """Write one read-once local config, optionally from a reviewed snapshot."""
+
+        payload = (
+            bytes(snapshot_payload)
+            if snapshot_payload is not None
+            else self._selected_local_config_payload(
+                specs,
+                default_quantization=default_quantization,
+                quantization_overrides=quantization_overrides,
+                require_live_ollama=require_live_ollama,
+            )
+        )
+        if not payload or len(payload) > 1024 * 1024:
+            raise ValueError("selected local config snapshot must be a non-empty <=1 MiB file")
+        try:
+            parsed = strict_json_loads(payload.decode("utf-8"))
+        except (UnicodeError, ValueError) as exc:
+            raise ValueError("selected local config snapshot is invalid") from exc
+        if not isinstance(parsed, dict) or set(parsed) != set(specs):
+            raise ValueError("selected local config snapshot does not match selected models")
+        canonical = (
+            json.dumps(
+                parsed,
+                ensure_ascii=False,
+                sort_keys=True,
+                separators=(",", ":"),
+                allow_nan=False,
+            )
+            + "\n"
+        ).encode("utf-8")
+        if canonical != payload:
+            raise ValueError("selected local config snapshot is not canonical")
+        digest = hashlib.sha256(payload).hexdigest()
+        # This file carries the runtime checkpoint locator and is therefore a
+        # one-shot private launch input, not a durable console artifact. Each
+        # composition gets a unique name so concurrent preview/start requests
+        # cannot delete one another's config. run_matrix removes it immediately
+        # after its bounded startup read; lifecycle handles early failures.
+        directory = self.state_dir / ".private-local-configs"
+        if directory.is_symlink():
+            raise ValueError("private local-config directory must not be a symlink")
         directory.mkdir(parents=True, exist_ok=True)
-        path = directory / f"selected-{digest[:24]}.json"
-        if not path.is_file():
-            tmp = path.with_suffix(".tmp")
-            tmp.write_text(payload, encoding="utf-8")
-            os.replace(tmp, path)
+        if directory.is_symlink() or not directory.is_dir():
+            raise ValueError("private local-config directory must be a directory")
+        try:
+            os.chmod(directory, 0o700)
+        except OSError:
+            pass  # Windows inherits the state directory's operator ACL.
+        path = directory / f"selected-{digest[:24]}-{secrets.token_hex(8)}.json"
+        tmp = path.with_suffix(".tmp")
+        with tmp.open("xb") as handle:
+            handle.write(payload)
+        try:
+            os.chmod(tmp, 0o600)
+        except OSError:
+            pass
+        os.replace(tmp, path)
         return path
 
     def _prepared_file(self, raw: str, *, label: str) -> Path:
@@ -444,7 +714,7 @@ class BuilderModelsMixin:
         *,
         verify_digest: bool = True,
     ) -> dict[str, dict[str, object]]:
-        """Load and normalize the two capture-first attacker configurations."""
+        """Load and normalize prepared and immutable attacker configurations."""
 
         selected = set(self._split_list(params.get("attackers", "")))
         entries: dict[str, dict[str, object]] = {}
@@ -566,6 +836,46 @@ class BuilderModelsMixin:
                 "replay_artifact": str(replay_artifact),
                 "replay_artifact_sha256": artifact_sha,
             }
+        if "nanogcg" in selected:
+            suffix = str(params.get("nanogcg_suffix", "")).strip()
+            suffix_source = str(params.get("nanogcg_suffix_source", "")).strip()
+            model_id = str(params.get("nanogcg_model_id", "")).strip()
+            revision = str(params.get("nanogcg_model_revision", "")).strip()
+            if suffix:
+                if not suffix_source:
+                    raise ValueError(
+                        "NanoGCG precomputed suffix replay requires an exact suffix source"
+                    )
+                if model_id or revision:
+                    raise ValueError(
+                        "NanoGCG suffix replay must not also select a live surrogate"
+                    )
+                entries["nanogcg"] = {
+                    "suffix": suffix,
+                    "suffix_source": suffix_source,
+                }
+            else:
+                from ura.model_acquisition import (  # noqa: PLC0415
+                    validate_repo_id,
+                    validate_revision,
+                )
+
+                if suffix_source:
+                    raise ValueError(
+                        "NanoGCG suffix source is valid only with a precomputed suffix"
+                    )
+                try:
+                    model_id = validate_repo_id(model_id)
+                    revision = validate_revision(revision)
+                except ValueError as exc:
+                    raise ValueError(
+                        "NanoGCG live optimization requires a Hub namespace/name and "
+                        "an immutable 40-64 lowercase hex revision"
+                    ) from exc
+                entries["nanogcg"] = {
+                    "model_id": model_id,
+                    "model_revision": revision,
+                }
         return entries
 
     def _harmbench_replay_requirements(
@@ -617,28 +927,107 @@ class BuilderModelsMixin:
     def _materialize_prepared_attacker_config(
         self,
         params: Mapping[str, str],
+        *,
+        snapshot_payload: bytes | None = None,
+        artifact_snapshots: Mapping[str, bytes] | None = None,
     ) -> Path | None:
-        entries = self._prepared_attacker_entries(params)
-        if not entries:
-            return None
-        payload = (
-            json.dumps(
-                entries,
+        prior = str(params.get("_attacker_config_snapshot_sha256", ""))
+        if snapshot_payload is None:
+            _snapshot, digest, entries = self._selected_prepared_attacker_snapshot(
+                params
+            )
+            if prior and prior != digest:
+                raise ValueError(
+                    "selected prepared attacker config changed after review; "
+                    "review the lane again"
+                )
+            payload = self._canonical_json_bytes(entries)
+        else:
+            payload = bytes(snapshot_payload)
+            try:
+                loaded = strict_json_loads(payload.decode("utf-8"))
+            except (UnicodeError, ValueError) as exc:
+                raise ValueError("reviewed attacker config snapshot is invalid") from exc
+            if not isinstance(loaded, dict):
+                raise ValueError("reviewed attacker config snapshot must be an object")
+            entries = {
+                str(name): dict(entry)
+                for name, entry in loaded.items()
+                if isinstance(name, str) and isinstance(entry, dict)
+            }
+            expected_names = set(self._split_list(params.get("attackers", ""))) & {
+                "t3mp3st",
+                "harmbench",
+                "nanogcg",
+            }
+            if set(entries) != expected_names or len(entries) != len(loaded):
+                raise ValueError(
+                    "reviewed attacker config snapshot no longer matches selection"
+                )
+            portable = self._portable_prepared_attacker_entries(entries)
+            digest = hashlib.sha256(json.dumps(
+                {
+                    "schema": "ura-builder-selected-attacker-config/1",
+                    "attackers": portable,
+                },
                 ensure_ascii=False,
                 sort_keys=True,
                 separators=(",", ":"),
+                allow_nan=False,
+            ).encode("utf-8")).hexdigest()
+            if not prior or prior != digest:
+                raise ValueError(
+                    "reviewed attacker config snapshot identity does not match"
+                )
+        if not entries:
+            return None
+        try:
+            snapshot_entries = strict_json_loads(payload.decode("utf-8"))
+        except (UnicodeError, ValueError) as exc:
+            raise ValueError("reviewed attacker config snapshot is invalid") from exc
+        if snapshot_entries != entries or payload != self._canonical_json_bytes(entries):
+            raise ValueError("reviewed attacker config snapshot no longer matches selection")
+        runtime_entries = {
+            str(name): dict(entry)
+            for name, entry in snapshot_entries.items()
+            if isinstance(name, str) and isinstance(entry, dict)
+        }
+        materialized_artifacts: list[Path] = []
+        try:
+            for attacker, path_field, digest_field in (
+                ("t3mp3st", "response_artifact", "response_artifact_sha256"),
+                ("harmbench", "replay_artifact", "replay_artifact_sha256"),
+            ):
+                entry = runtime_entries.get(attacker)
+                if entry is None or path_field not in entry:
+                    continue
+                artifact_payload = (artifact_snapshots or {}).get(
+                    f"attacker_artifact_{attacker}"
+                )
+                if artifact_payload is None:
+                    continue
+                expected = str(entry.get(digest_field, "")).lower()
+                if hashlib.sha256(artifact_payload).hexdigest() != expected:
+                    raise ValueError(
+                        f"reviewed {attacker} artifact snapshot no longer matches"
+                    )
+                artifact_path, _artifact_digest = self._materialize_private_config(
+                    payload=bytes(artifact_payload),
+                    directory_name=".private-attacker-artifacts",
+                    filename_prefix=f"{attacker}-artifact",
+                )
+                materialized_artifacts.append(artifact_path)
+                entry[path_field] = str(artifact_path)
+            path, _payload_sha256 = self._materialize_private_config(
+                payload=self._canonical_json_bytes(runtime_entries),
+                directory_name=".private-attacker-configs",
+                filename_prefix="attacker",
             )
-            + "\n"
-        )
-        digest = hashlib.sha256(payload.encode("utf-8")).hexdigest()
-        directory = self.state_dir / "generated-attacker-configs"
-        directory.mkdir(parents=True, exist_ok=True)
-        path = directory / f"prepared-{digest[:24]}.json"
-        if not path.is_file():
-            tmp = path.with_suffix(".tmp")
-            tmp.write_text(payload, encoding="utf-8")
-            os.replace(tmp, path)
-        return path
+            return path
+        except BaseException:
+            for artifact_path in materialized_artifacts:
+                artifact_path.unlink(missing_ok=True)
+            raise
 
     #: How many repeatable live-attestation rows the builder form accepts.
     _MAX_ATT_ROWS = 12

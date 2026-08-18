@@ -7,6 +7,8 @@ from pathlib import Path
 from typing import Any, Iterable
 from urllib.parse import quote, unquote
 
+from ura.strict_json import strict_json_loads
+
 _REPO_ROOT = Path(__file__).resolve().parents[1]
 _MAX_ANALYSIS_JSON_BYTES = 64 * 1024 * 1024
 
@@ -65,8 +67,8 @@ def read_bound_json(path: Path, *, expected_sha256: str | None = None) -> dict[s
             f"analysis artifact digest mismatch for {path}: {observed} != {expected_sha256}"
         )
     try:
-        value = json.loads(payload.decode("utf-8"))
-    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        value = strict_json_loads(payload.decode("utf-8"))
+    except (UnicodeDecodeError, ValueError, RecursionError) as exc:
         raise ValueError(f"invalid UTF-8 JSON analysis artifact {path}: {exc}") from exc
     if not isinstance(value, dict):
         raise ValueError(f"analysis artifact must be a JSON object: {path}")

@@ -29,8 +29,8 @@ and optional local media. Treat run artifacts as sensitive research data.
 - Claude Fable is a Covered Model with mandatory 30-day provider retention and
   is not available under Zero Data Retention. Obtain explicit institutional or
   operator approval for that retention before sending any corpus row; do not
-  upload data whose license or handling rules prohibit it. See Anthropic's
-  [Fable/Mythos documentation](https://platform.claude.com/docs/en/about-claude/models/introducing-claude-fable-5-and-claude-mythos-5).
+  upload data whose license or handling rules prohibit it. Review Anthropic's
+  current model and privacy documentation as part of that approval.
 - OpenAI Responses `store=false` disables response application-state storage;
   it does not by itself disable provider abuse-monitoring logs or prompt-cache
   retention. Record the organization's effective data controls and approvals
@@ -59,6 +59,28 @@ and optional local media. Treat run artifacts as sensitive research data.
   to the intended CUDA topology. Run only one local target server per matrix
   process. A defense guard and a scoring guard must have distinct identities;
   do not give a tested guard the authority to grade its own blocks or outputs.
+- Never let vLLM, Transformers, Guardrail, or NanoGCG fetch a model implicitly.
+  Hub-backed targets, local LLM judges, scoring/defense guards, and NanoGCG
+  surrogates must use the explicit immutable plan -> dedicated acquisition ->
+  exact receipt workflow. Normal/preflight children run with Hub credentials
+  removed and offline/local-only policy set before third-party imports. Treat a
+  same-repository target/judge/guard or target/NanoGCG surrogate as a forbidden
+  self-evaluation collision, even when one resource is already cached.
+- Treat the managed model store, acquisition plan/receipt locations, transport
+  cache, and resolved snapshot paths as private controller state. They must not
+  appear in durable argv, stdout/stderr, exceptions, Jobs state, manifests, or
+  reports. Rig Web captures and redacts the complete child process stream; do
+  not bypass that boundary by launching model children manually. The portable
+  result evidence is the path-free canonical plan/receipt copy and its strict
+  content descriptor, not a host locator.
+- `HF_TOKEN` is a write-only acquisition credential. Supply it through the
+  operator secret environment or Rig Web's presence-only Config entry, which
+  holds it only in the console process and scrubs legacy operator-file entries;
+  never place it in a registry, plan, receipt, command argument, log, or result.
+  The dedicated acquisition controller receives no unrelated provider/AWS/proxy
+  secrets. A download badge is authenticated activity evidence only for
+  confirmed missing-byte transfer, not proof of model validity; cache hits show
+  no badge and terminal/cancelled jobs clear it.
 - Human-audit exports may contain harmful or personal content. Encrypt or
   access-control them, disclose the exposure to raters, and delete them under the
   study's retention schedule.

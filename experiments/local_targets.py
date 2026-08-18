@@ -4,8 +4,9 @@ The roster is the set of vLLM-supported models offered as free on-rig targets.
 It is a checked-in curated default that the operator refreshes from vLLM's own
 supported-models documentation for the exact vLLM version installed on the rig,
 so the roster never drifts from what the rig's vLLM can actually serve.
-Selecting a roster model runs it through ``--local`` and vLLM downloads the
-weights automatically on first use.
+Selecting a roster model runs it through ``--local``. Hub-backed entries must
+first pass the explicit sealed model-acquisition job; measured and preflight
+runs use only the verified managed snapshot and never download implicitly.
 
 This performs no provider call or scientific validation. ``--refresh`` makes
 read-only HTTPS requests to the public vLLM documentation at the installed
@@ -24,6 +25,8 @@ import sys
 from functools import lru_cache
 from pathlib import Path
 from typing import Callable
+
+from ura.strict_json import strict_json_loads
 
 _REPO_ROOT = Path(__file__).resolve().parents[1]
 
@@ -57,6 +60,58 @@ _QUANTIZATION_BITS = {
     "awq": 4,
     "gptq": 4,
 }
+
+# Exact runtime/model/revision/quantization combinations that failed before a
+# model call on the maintained rig. These are capability facts, not a blanket
+# model blacklist: only the proven-bad precision is excluded from automatic
+# selection and operator-visible alternatives (including BF16) remain.
+_KNOWN_VLLM_QUANTIZATION_FAILURES = {
+    (
+        "0.27.1",
+        "vllm:llava-hf/llava-v1.6-mistral-7b-hf",
+        "2424fdd47412fccc66d91719126b420e9fbd7065",
+        "fp8",
+    ): (
+        "vLLM 0.27.1 loaded this exact LLaVA revision in FP8, then failed "
+        "during multimodal-encoder profiling when the scaled-matrix kernel "
+        "used .view() on a non-contiguous tensor. This is a proven runtime/"
+        "profile incompatibility, not a VRAM shortage; automatic selection "
+        "will not retry FP8. BF16 remains available when its hardware fit is "
+        "admitted."
+    ),
+    (
+        "0.27.1",
+        "vllm:GraySwanAI/llava-v1.6-mistral-7b-hf-RR",
+        "d11b3d7ae2fb21e984f197a83c15bbb0deb66b7e",
+        "bitsandbytes",
+    ): (
+        "vLLM 0.27.1 BitsAndBytes 4-bit loading failed for this exact "
+        "GraySwan RR revision because its model integration has no "
+        "packed_modules_mapping. This is a proven architecture/backend "
+        "incompatibility, not a VRAM shortage; automatic selection will not "
+        "retry BitsAndBytes. BF16 remains available when its hardware fit is "
+        "admitted."
+    ),
+}
+
+
+def known_vllm_quantization_issue(
+    spec: str,
+    revision: object,
+    quantization: str,
+    runtime_version: str | None,
+) -> str:
+    """Return an exact proven runtime incompatibility, never a name guess."""
+
+    if not isinstance(revision, str) or not runtime_version:
+        return ""
+    key = (
+        runtime_version.strip().lstrip("v"),
+        spec,
+        revision.strip().lower(),
+        quantization.strip().lower(),
+    )
+    return _KNOWN_VLLM_QUANTIZATION_FAILURES.get(key, "")
 
 
 def detect_gpu_hardware(
@@ -330,6 +385,7 @@ def model_hardware_profile(
     hardware: dict[str, object],
     *,
     default_quantization: str = "",
+    runtime_version: str | None = None,
 ) -> dict[str, object]:
     """Resolve parameters, multi-GPU fit, and one exact quantization choice."""
 
@@ -390,6 +446,13 @@ def model_hardware_profile(
         minimum_capability >= 7.0 if minimum_capability is not None else None
     )
     compatibility_note = ""
+    revision = config.get("revision")
+
+    def known_issue(candidate: str) -> str:
+        return known_vllm_quantization_issue(
+            spec, revision, candidate, runtime_version
+        )
+
     explicit = config.get("quantization")
     if isinstance(explicit, str) and explicit.strip():
         quantization = explicit.strip().lower()
@@ -403,15 +466,19 @@ def model_hardware_profile(
         if full_precision <= available:
             quantization = "none"
             source = "hardware_auto"
-        elif fp8_supported is True and fp8_precision <= available:
+        elif (
+            fp8_supported is True
+            and fp8_precision <= available
+            and not known_issue("fp8")
+        ):
             # Prefer the highest precision that fits: 16-bit, then FP8,
             # then in-flight BitsAndBytes 4-bit.
             quantization = "fp8"
             source = "hardware_auto"
-        elif bnb_supported is True:
+        elif bnb_supported is True and not known_issue("bitsandbytes"):
             quantization = "bitsandbytes"
             source = "hardware_auto"
-        elif fp8_supported is True:
+        elif fp8_supported is True and not known_issue("fp8"):
             # The model remains visibly incompatible, but FP8 is the smallest
             # supported automatic fallback available on this hardware.
             quantization = "fp8"
@@ -420,11 +487,15 @@ def model_hardware_profile(
             quantization = "none"
             source = "hardware_auto_unavailable"
             compatibility_note = (
-                "automatic FP8/4-bit fallback requires NVIDIA compute "
-                "capability 7.0+"
-                if bnb_supported is False else
-                "automatic FP8/4-bit fallback requires a known NVIDIA "
-                "compute capability 7.0+"
+                known_issue("fp8")
+                or known_issue("bitsandbytes")
+                or (
+                    "automatic FP8/4-bit fallback requires NVIDIA compute "
+                    "capability 7.0+"
+                    if bnb_supported is False else
+                    "automatic FP8/4-bit fallback requires a known NVIDIA "
+                    "compute capability 7.0+"
+                )
             )
     else:
         quantization = "none"
@@ -432,6 +503,7 @@ def model_hardware_profile(
     if quantization not in _QUANTIZATIONS:
         raise ValueError(f"unsupported quantization {quantization!r} for {spec!r}")
     quantization_available: bool | None = None
+    selected_known_issue = known_issue(quantization)
     if quantization == "bitsandbytes":
         quantization_available = bnb_supported
         if bnb_supported is not True and not compatibility_note:
@@ -444,6 +516,9 @@ def model_hardware_profile(
             compatibility_note = (
                 "FP8 requires a known NVIDIA compute capability 7.5+"
             )
+    if selected_known_issue:
+        quantization_available = False
+        compatibility_note = selected_known_issue
     estimated = (
         round(params * _VRAM_GIB_PER_BILLION[quantization], 2)
         if params is not None else None
@@ -454,6 +529,7 @@ def model_hardware_profile(
     if (
         (quantization == "bitsandbytes" and bnb_supported is not True)
         or (quantization == "fp8" and fp8_supported is not True)
+        or bool(selected_known_issue)
     ):
         fits = False
     tensor_parallel_size = min(fitting_tp) if fitting_tp else 1
@@ -518,7 +594,7 @@ def load_roster(repo_root: Path = _REPO_ROOT) -> dict[str, object]:
     for candidate in (_ROSTER_LOCAL, _ROSTER_EXAMPLE):
         path = repo_root / candidate
         try:
-            data = json.loads(path.read_text(encoding="utf-8"))
+            data = strict_json_loads(path.read_text(encoding="utf-8"))
         except (OSError, ValueError):
             continue
         if isinstance(data, dict):

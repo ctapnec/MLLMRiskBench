@@ -17,6 +17,12 @@ import json
 import re
 from typing import Any, Mapping, Sequence
 
+from .attacker_input_contract import (
+    AttackerInputContract,
+    AttackerInputContractError,
+    deserialize_attacker_input_plan,
+    grid_attacker_input_plan_payload,
+)
 from .data_models import DataPoint
 from .modality_coverage import (
     canonical_modality_combination,
@@ -26,7 +32,7 @@ from .modality_coverage import (
 from .source_metrics import source_evaluator_implemented
 
 
-ELIGIBILITY_SCHEMA = "ura-eligibility-plan/1"
+ELIGIBILITY_SCHEMA = "ura-eligibility-plan/2"
 _HEX64 = re.compile(r"[0-9a-f]{64}")
 _MODALITY_ORDER = ("text", "image", "audio", "video", "tool")
 _PHYSICAL = frozenset({"image", "audio", "video"})
@@ -54,10 +60,35 @@ _CELL_IDENTITY_FIELDS = (
     "resolved_target",
     "selected_datapoint_count",
     "selected_datapoint_ids_sha256",
+    "source_exact_modality_combination",
+    "target_call_modality_combinations",
+    "evaluable_modality_combinations",
+    "attacker_input_contract_bindings",
+    "attacker_input_contract_bindings_sha256",
+    "generated_media_inventory",
+    "generated_media_inventory_sha256",
+    "tool_runtime_required",
 )
+_ATTACKER_CONTRACT_FIELDS = {
+    "source_exact_modality_combination",
+    "target_call_modality_combinations",
+    "evaluable_modality_combinations",
+    "attacker_input_contract_bindings",
+    "attacker_input_contract_bindings_sha256",
+    "generated_media_inventory",
+    "generated_media_inventory_sha256",
+    "tool_runtime_required",
+}
+_CELL_CONTRACT_BINDING_FIELDS = frozenset({
+    "datapoint_id", "seed", "contract_id", "planned_turns",
+    "turn_count_semantics",
+})
 _STRATUM_IDENTITY_FIELDS = tuple(
     field for field in _CELL_IDENTITY_FIELDS
-    if field not in {"requested_target_spec", "attacker", "resolved_target"}
+    if field not in {
+        "requested_target_spec", "attacker", "resolved_target",
+        *_ATTACKER_CONTRACT_FIELDS,
+    }
 )
 _ITEM_FIELDS = frozenset({
     *_CELL_IDENTITY_FIELDS,
@@ -330,10 +361,14 @@ def build_eligibility_plan(
     targets: Mapping[str, object],
     corpora: Mapping[str, Sequence[DataPoint]],
     attackers: Sequence[str],
+    attacker_input_contracts: Mapping[
+        tuple[str, str, str, int], AttackerInputContract
+    ],
     target_failures: Mapping[str, Mapping[str, str]] | None = None,
     global_failures: Sequence[Mapping[str, str]] = (),
     bindings: Mapping[str, Any] | None = None,
     dry_run: bool = False,
+    approximate_common_metrics: bool = False,
     whole_request_preflight_complete: bool = False,
 ) -> dict[str, Any]:
     """Build the explicit requested-target x selected-source eligibility ledger.
@@ -365,6 +400,41 @@ def build_eligibility_plan(
         or len(set(selected_attackers)) != len(selected_attackers)
     ):
         raise ValueError("eligibility plan requires unique non-blank attackers")
+    expected_contract_prefixes = {
+        (arm, attacker, datapoint.id)
+        for arm, rows in corpora.items()
+        for attacker in selected_attackers
+        for datapoint in rows
+    }
+    observed_contract_prefixes = {
+        (arm, attacker, datapoint_id)
+        for arm, attacker, datapoint_id, _seed in attacker_input_contracts
+    }
+    if expected_contract_prefixes != observed_contract_prefixes:
+        raise ValueError(
+            "attacker input contracts do not cover the selected "
+            "source/attacker/datapoint universe"
+        )
+    seeds_by_prefix: dict[tuple[str, str, str], set[int]] = defaultdict(set)
+    for key, contract in attacker_input_contracts.items():
+        if (
+            not isinstance(key, tuple)
+            or len(key) != 4
+            or not isinstance(key[3], int)
+            or isinstance(key[3], bool)
+            or key[3] < 0
+            or contract.attacker != key[1]
+            or contract.datapoint_id != key[2]
+        ):
+            raise ValueError("attacker input contract mapping has an invalid identity")
+        seeds_by_prefix[key[:3]].add(key[3])
+    seed_sets = {tuple(sorted(value)) for value in seeds_by_prefix.values()}
+    if len(seed_sets) != 1 or not seed_sets:
+        raise ValueError(
+            "attacker input contracts must cover one consistent non-empty seed set"
+        )
+    contract_seeds = next(iter(seed_sets))
+
     unknown_targets = set(targets) - set(requested)
     unknown_failures = set(target_failures or {}) - set(requested)
     if unknown_targets or unknown_failures:
@@ -427,6 +497,54 @@ def build_eligibility_plan(
         for descriptor, rows in strata:
             exact = tuple(descriptor["exact_modality_combination"])
             for attacker in selected_attackers:
+                arm = str(descriptor["logical_source_arm"])
+                contracts = [
+                    attacker_input_contracts[(arm, attacker, datapoint.id, seed)]
+                    for datapoint in sorted(rows, key=lambda item: item.id)
+                    for seed in contract_seeds
+                ]
+                if any(contract.source_combination != exact for contract in contracts):
+                    raise ValueError(
+                        "attacker input contract source combination differs from "
+                        "the eligibility source stratum"
+                    )
+                target_combinations = sorted({
+                    turn.combination
+                    for contract in contracts
+                    for turn in contract.turns
+                })
+                evaluable_combinations = sorted({
+                    turn.combination
+                    for contract in contracts
+                    for turn in contract.turns
+                    if turn.policy_evaluable
+                })
+                if not evaluable_combinations:
+                    raise ValueError(
+                        "attacker input contract has no policy-evaluable target input"
+                    )
+                contract_bindings = [
+                    {
+                        "datapoint_id": contract.datapoint_id,
+                        "seed": seed,
+                        "contract_id": contract.contract_id,
+                        "planned_turns": len(contract.turns),
+                        "turn_count_semantics": contract.turn_count_semantics,
+                    }
+                    for datapoint in sorted(rows, key=lambda item: item.id)
+                    for seed in contract_seeds
+                    for contract in [
+                        attacker_input_contracts[(arm, attacker, datapoint.id, seed)]
+                    ]
+                ]
+                generated_by_id = {
+                    media.media_id: media.manifest_payload()
+                    for contract in contracts
+                    for media in contract.generated_media
+                }
+                generated_inventory = [
+                    generated_by_id[key] for key in sorted(generated_by_id)
+                ]
                 failed_gates: list[dict[str, str]] = [
                     dict(failure) for failure in normalized_global_failures
                 ]
@@ -444,12 +562,15 @@ def build_eligibility_plan(
                         "gate": "target_capability_declaration",
                         "reason": capability_errors[spec][:2000],
                     })
-                elif exact not in declared_by_target.get(spec, set()):
+                elif missing_combinations := sorted(
+                    set(target_combinations) - declared_by_target.get(spec, set())
+                ):
                     failed_gates.append({
                         "gate": "target_transport",
                         "reason": (
-                            f"target does not declare exact input combination "
-                            f"{'+'.join(exact)}"
+                            "target does not declare planned attacker input "
+                            "combination(s) "
+                            + ",".join("+".join(item) for item in missing_combinations)
                         ),
                     })
 
@@ -471,6 +592,7 @@ def build_eligibility_plan(
                 elif (
                     common is False
                     and descriptor["source_evaluator_implemented"] is not True
+                    and not approximate_common_metrics
                 ):
                     reason = "exact source/required_metric evaluator is not implemented"
                     if descriptor["source_metric_runtime"]:
@@ -482,9 +604,12 @@ def build_eligibility_plan(
                         "gate": "source_evaluator",
                         "reason": reason[:2000],
                     })
-                elif common is True and descriptor["automated_metric_scope"] not in {
+                elif (
+                    (common is True or (common is False and approximate_common_metrics))
+                    and descriptor["automated_metric_scope"] not in {
                     None, "media_conditioned", "response_only"
-                }:
+                    }
+                ):
                     failed_gates.append({
                         "gate": "automated_common_evaluator",
                         "reason": (
@@ -493,7 +618,7 @@ def build_eligibility_plan(
                         ),
                     })
                 elif (
-                    common is True
+                    (common is True or (common is False and approximate_common_metrics))
                     and descriptor["automated_metric_scope"] == "media_conditioned"
                     and descriptor["source_reference_available"] is not True
                 ):
@@ -551,9 +676,21 @@ def build_eligibility_plan(
                     disposition = (
                         "compatible_common_proxy_if_isolated"
                         if common is True
+                        else "compatible_source_plus_approximate_proxy_if_isolated"
+                        if descriptor["source_evaluator_implemented"] is True
+                        and approximate_common_metrics
+                        else "compatible_approximate_proxy_if_isolated"
+                        if approximate_common_metrics
                         else "compatible_source_specific_evaluator_if_isolated"
                     )
-                    effective = descriptor["exact_modality"]
+                    effective = _richest_modality(
+                        tuple({
+                            modality
+                            for combination in evaluable_combinations
+                            for modality in combination
+                            if modality != "tool"
+                        })
+                    )
 
                 ids = sorted(datapoint.id for datapoint in rows)
                 identity = {
@@ -592,6 +729,24 @@ def build_eligibility_plan(
                     "resolved_target": resolved_by_target.get(spec),
                     "selected_datapoint_count": len(rows),
                     "selected_datapoint_ids_sha256": canonical_json_sha256(ids),
+                    "source_exact_modality_combination": list(exact),
+                    "target_call_modality_combinations": [
+                        list(item) for item in target_combinations
+                    ],
+                    "evaluable_modality_combinations": [
+                        list(item) for item in evaluable_combinations
+                    ],
+                    "attacker_input_contract_bindings": contract_bindings,
+                    "attacker_input_contract_bindings_sha256": canonical_json_sha256(
+                        contract_bindings
+                    ),
+                    "generated_media_inventory": generated_inventory,
+                    "generated_media_inventory_sha256": canonical_json_sha256(
+                        generated_inventory
+                    ),
+                    "tool_runtime_required": any(
+                        contract.tool_runtime_required for contract in contracts
+                    ),
                 }
                 items.append({
                     "cell_id": _cell_id(identity),
@@ -676,6 +831,30 @@ def build_eligibility_plan(
         "dry_run": bool(dry_run),
     }
     binding_payload = dict(bindings or {})
+    canonical_attacker_plan = grid_attacker_input_plan_payload(
+        attacker_input_contracts
+    )
+    supplied_attacker_plan = binding_payload.get("attacker_input_plan")
+    if supplied_attacker_plan is not None:
+        try:
+            supplied_contracts = deserialize_attacker_input_plan(
+                supplied_attacker_plan
+            )
+        except AttackerInputContractError as exc:
+            raise ValueError(
+                "eligibility attacker input plan binding is invalid"
+            ) from exc
+        if supplied_contracts != dict(attacker_input_contracts):
+            raise ValueError(
+                "eligibility attacker input plan differs from planned contracts"
+            )
+    binding_payload["attacker_input_plan"] = canonical_attacker_plan
+    if approximate_common_metrics:
+        binding_payload["supplementary_metric_policy"] = {
+            "approximate_common_metrics": True,
+            "authority": "supplementary_non_authoritative",
+            "metric_prefix": "approximate_",
+        }
     payload: dict[str, Any] = {
         "schema": ELIGIBILITY_SCHEMA,
         "status": "complete",
@@ -711,7 +890,7 @@ def build_eligibility_plan(
 
 
 def validate_eligibility_plan(value: object) -> dict[str, Any]:
-    """Fail-closed validation for a loaded ``ura-eligibility-plan/1`` value."""
+    """Fail-closed validation for a loaded ``ura-eligibility-plan/2`` value."""
 
     if not isinstance(value, dict):
         raise ValueError("eligibility artifact must be a JSON object")
@@ -751,6 +930,25 @@ def validate_eligibility_plan(value: object) -> dict[str, Any]:
     expected_request_id = _request_id(request, value["bindings"])
     if value["request_id"] != expected_request_id:
         raise ValueError("eligibility artifact request_id/content mismatch")
+    try:
+        attacker_plan = deserialize_attacker_input_plan(
+            value["bindings"].get("attacker_input_plan")
+        )
+    except AttackerInputContractError as exc:
+        raise ValueError(
+            "eligibility attacker input plan binding is invalid"
+        ) from exc
+    if any(len(key) != 4 for key in attacker_plan):
+        raise ValueError("eligibility requires a grid attacker input plan")
+    grid_arms = {key[0] for key in attacker_plan}
+    grid_attackers = {key[1] for key in attacker_plan}
+    if (
+        grid_arms != set(request["logical_source_arms"])
+        or grid_attackers != set(request["selected_attackers"])
+    ):
+        raise ValueError(
+            "eligibility attacker input plan differs from requested arms/attackers"
+        )
 
     requested_strata = request["source_strata"]
     if not isinstance(requested_strata, list) or not requested_strata:
@@ -782,6 +980,7 @@ def validate_eligibility_plan(value: object) -> dict[str, Any]:
     status_counts: Counter[str] = Counter()
     disposition_counts: Counter[str] = Counter()
     items_by_unit: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    consumed_contract_cells: set[tuple[str, tuple[str, str, str, int]]] = set()
     for item in items:
         if not isinstance(item, dict) or set(item) != _ITEM_FIELDS:
             raise ValueError("eligibility item has an invalid field inventory")
@@ -819,6 +1018,159 @@ def validate_eligibility_plan(value: object) -> dict[str, Any]:
             combination
         ):
             raise ValueError("eligibility exact modality is inconsistent")
+        if item.get("source_exact_modality_combination") != combination:
+            raise ValueError("eligibility source modality projection is inconsistent")
+        target_combinations = item.get("target_call_modality_combinations")
+        evaluable_combinations = item.get("evaluable_modality_combinations")
+        if (
+            not isinstance(target_combinations, list)
+            or not target_combinations
+            or not isinstance(evaluable_combinations, list)
+            or not evaluable_combinations
+        ):
+            raise ValueError("eligibility cell lacks attacker target combinations")
+        try:
+            canonical_target = sorted(
+                list(canonical_modality_combination(entry))
+                for entry in target_combinations
+            )
+            canonical_evaluable = sorted(
+                list(canonical_modality_combination(entry))
+                for entry in evaluable_combinations
+            )
+        except ValueError as exc:
+            raise ValueError(
+                "eligibility attacker target combination is invalid"
+            ) from exc
+        if (
+            canonical_target != target_combinations
+            or canonical_evaluable != evaluable_combinations
+            or any(entry not in target_combinations for entry in evaluable_combinations)
+        ):
+            raise ValueError("eligibility attacker target combinations are inconsistent")
+        bindings = item.get("attacker_input_contract_bindings")
+        binding_digest = item.get("attacker_input_contract_bindings_sha256")
+        if (
+            not isinstance(bindings, list)
+            or not bindings
+            or any(
+                not isinstance(binding, dict)
+                or set(binding) != _CELL_CONTRACT_BINDING_FIELDS
+                or not isinstance(binding["datapoint_id"], str)
+                or not binding["datapoint_id"]
+                or isinstance(binding["seed"], bool)
+                or not isinstance(binding["seed"], int)
+                or binding["seed"] < 0
+                or re.fullmatch(
+                    r"attacker-input-[0-9a-f]{24}", binding["contract_id"]
+                ) is None
+                or isinstance(binding["planned_turns"], bool)
+                or not isinstance(binding["planned_turns"], int)
+                or binding["planned_turns"] < 1
+                or binding["turn_count_semantics"] not in {
+                    "exact", "upper_bound"
+                }
+                for binding in bindings
+            )
+            or binding_digest != canonical_json_sha256(bindings)
+        ):
+            raise ValueError("eligibility attacker input contract binding is invalid")
+        binding_keys = [
+            (arm, attacker, binding["datapoint_id"], binding["seed"])
+            for binding in bindings
+        ]
+        if binding_keys != sorted(binding_keys) or len(set(binding_keys)) != len(
+            binding_keys
+        ):
+            raise ValueError(
+                "eligibility attacker input contract bindings are not canonical"
+            )
+        try:
+            contracts = [attacker_plan[key] for key in binding_keys]
+        except KeyError as exc:
+            raise ValueError(
+                "eligibility cell references a contract outside its bound plan"
+            ) from exc
+        expected_bindings = [
+            {
+                "datapoint_id": contract.datapoint_id,
+                "seed": key[3],
+                "contract_id": contract.contract_id,
+                "planned_turns": len(contract.turns),
+                "turn_count_semantics": contract.turn_count_semantics,
+            }
+            for key, contract in zip(binding_keys, contracts, strict=True)
+        ]
+        if bindings != expected_bindings:
+            raise ValueError(
+                "eligibility cell contract bindings differ from the full plan"
+            )
+        if any(
+            list(contract.source_combination) != combination
+            for contract in contracts
+        ):
+            raise ValueError(
+                "eligibility cell source combination differs from its contracts"
+            )
+        expected_target_combinations = [list(entry) for entry in sorted({
+            turn.combination
+            for contract in contracts
+            for turn in contract.turns
+        })]
+        expected_evaluable_combinations = [list(entry) for entry in sorted({
+            turn.combination
+            for contract in contracts
+            for turn in contract.turns
+            if turn.policy_evaluable
+        })]
+        if (
+            target_combinations != expected_target_combinations
+            or evaluable_combinations != expected_evaluable_combinations
+        ):
+            raise ValueError(
+                "eligibility cell target combinations differ from its contracts"
+            )
+        datapoint_ids = sorted({key[2] for key in binding_keys})
+        if (
+            item.get("selected_datapoint_count") != len(datapoint_ids)
+            or item.get("selected_datapoint_ids_sha256")
+            != canonical_json_sha256(datapoint_ids)
+        ):
+            raise ValueError(
+                "eligibility cell datapoint accounting differs from its contracts"
+            )
+        expected_generated_by_id: dict[str, dict[str, object]] = {}
+        for contract in contracts:
+            for media in contract.generated_media:
+                payload = media.manifest_payload()
+                previous = expected_generated_by_id.setdefault(
+                    media.media_id, payload
+                )
+                if previous != payload:
+                    raise ValueError(
+                        "eligibility contracts conflict on generated media identity"
+                    )
+        expected_generated = [
+            expected_generated_by_id[media_id]
+            for media_id in sorted(expected_generated_by_id)
+        ]
+        generated = item.get("generated_media_inventory")
+        if (
+            not isinstance(generated, list)
+            or generated != expected_generated
+            or item.get("generated_media_inventory_sha256")
+            != canonical_json_sha256(generated)
+            or item.get("tool_runtime_required")
+            != any(contract.tool_runtime_required for contract in contracts)
+        ):
+            raise ValueError("eligibility generated media inventory is invalid")
+        for key in binding_keys:
+            consumed_key = (target, key)
+            if consumed_key in consumed_contract_cells:
+                raise ValueError(
+                    "eligibility contract appears in multiple source strata"
+                )
+            consumed_contract_cells.add(consumed_key)
         declared = item.get("declared_modalities")
         if (
             not isinstance(declared, list)
@@ -833,12 +1185,18 @@ def validate_eligibility_plan(value: object) -> dict[str, Any]:
             raise ValueError("eligibility cell has invalid status/gates")
         if (status == "compatible_if_isolated") != (not gates):
             raise ValueError("eligibility status and failed gates disagree")
-        if status == "compatible_if_isolated" and item.get(
-            "effective_modality"
-        ) != item.get(
-            "exact_modality"
+        expected_effective = _richest_modality(tuple({
+            modality
+            for entry in evaluable_combinations
+            for modality in entry
+        }))
+        if (
+            status == "compatible_if_isolated"
+            and item.get("effective_modality") != expected_effective
         ):
-            raise ValueError("compatible eligibility cell must preserve exact modality")
+            raise ValueError(
+                "compatible eligibility cell must preserve attacker-delivered modality"
+            )
         if status == "N/A" and item.get("effective_modality") is not None:
             raise ValueError("N/A eligibility cell must not claim effective delivery")
         for gate in gates:
@@ -881,6 +1239,15 @@ def validate_eligibility_plan(value: object) -> dict[str, Any]:
         raise ValueError(
             "eligibility artifact does not cover the requested "
             "target/source-stratum/attacker cross-product"
+        )
+    expected_contract_cells = {
+        (target, key)
+        for target in request["requested_target_specs"]
+        for key in attacker_plan
+    }
+    if consumed_contract_cells != expected_contract_cells:
+        raise ValueError(
+            "eligibility cells do not fully and exactly cover the attacker input plan"
         )
 
     execution = value["execution"]

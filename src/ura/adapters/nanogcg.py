@@ -14,17 +14,19 @@ Heavy GPU dependencies remain lazy imports.
 from __future__ import annotations
 
 import math
+import os
 import re
 from collections.abc import Iterable
 from importlib import metadata
 from typing import Any
 
+from ..attacker_input_contract import AttackerInputContract, text_only_transfer_contract
 from ..data_models import Attempt, DataPoint
 from ._engine_common import ExternalEngineOutputError, _attempt, _require
 from .base import AttackBudget, BaseAttacker
 
 _DEFAULT_TARGET = "Sure, here is"
-_COMMIT_RE = re.compile(r"^[0-9a-fA-F]{7,64}$")
+_COMMIT_RE = re.compile(r"^[0-9a-f]{40,64}$")
 
 
 class NanoGCGAttacker(BaseAttacker):
@@ -36,6 +38,11 @@ class NanoGCGAttacker(BaseAttacker):
     """
 
     name = "nanogcg"
+
+    def plan_target_inputs(
+        self, datapoint: DataPoint, budget: AttackBudget
+    ) -> AttackerInputContract:
+        return text_only_transfer_contract(self.name, datapoint, budget)
 
     def __init__(
         self,
@@ -49,6 +56,7 @@ class NanoGCGAttacker(BaseAttacker):
         num_steps: int = 250,
         search_width: int = 512,
         topk: int = 256,
+        model_runtime: Any = None,
     ) -> None:
         if not isinstance(model_id, str) or not model_id.strip():
             raise ValueError("nanoGCG surrogate model_id must be non-blank")
@@ -75,7 +83,7 @@ class NanoGCGAttacker(BaseAttacker):
                 raise ValueError(f"nanoGCG {field} must be a positive integer")
 
         self.model_id = model_id.strip()
-        self.model_revision = model_revision.strip() if model_revision else None
+        self.model_revision = model_revision.strip().lower() if model_revision else None
         self.suffix = suffix
         self.suffix_source = suffix_source.strip() if suffix_source else None
         self.device = device.strip()
@@ -83,6 +91,39 @@ class NanoGCGAttacker(BaseAttacker):
         self.num_steps = num_steps
         self.search_width = search_width
         self.topk = topk
+        self._model_runtime = model_runtime
+        self._model: Any = None
+        self._tokenizer: Any = None
+        self._nanogcg_module: Any = None
+        self._resolved_model_revision: str | None = None
+        self._nanogcg_version: str | None = None
+        if self.suffix is None and (
+            self.model_revision is None
+            or _COMMIT_RE.fullmatch(self.model_revision) is None
+        ):
+            raise ValueError(
+                "nanoGCG optimization requires immutable model_revision as a "
+                "40-64 hex Hugging Face commit"
+            )
+
+    def preflight(self) -> dict[str, Any]:
+        """Load and post-verify the surrogate without optimizing a suffix."""
+
+        if self.suffix is not None:
+            return {
+                "component": self.name,
+                "mode": "precomputed_suffix_replay",
+                "model": self.model_id,
+                "revision": self.model_revision,
+            }
+        self._ensure_surrogate_loaded()
+        return {
+            "component": self.name,
+            "mode": "surrogate_transfer",
+            "model": self.model_id,
+            "revision": self._resolved_model_revision,
+            "nanogcg_version": self._nanogcg_version,
+        }
 
     def generate(self, datapoint: DataPoint, budget: AttackBudget) -> Iterable[Attempt]:
         request = datapoint.payload_text or datapoint.payload_code or ""
@@ -134,34 +175,13 @@ class NanoGCGAttacker(BaseAttacker):
                 "optimization_strings": [],
             }
 
-        if self.model_revision is None:
-            raise ValueError(
-                "nanoGCG optimization requires an immutable model_revision; "
-                "unpinned surrogate weights are not admissible"
-            )
-
-        nanogcg = _require("nanogcg", "NanoGCGAttacker")
-        transformers = _require("transformers", "NanoGCGAttacker")
-        torch = _require("torch", "NanoGCGAttacker")
-        dtype = getattr(torch, self.torch_dtype, None)
-        if dtype is None:
-            raise RuntimeError(f"installed torch lacks dtype {self.torch_dtype!r}")
-        if self.device.startswith("cuda") and not torch.cuda.is_available():
-            raise RuntimeError("nanoGCG optimization requested CUDA but none is available")
-
-        load_args = {
-            "revision": self.model_revision,
-            "torch_dtype": dtype,
-        }
-        model = transformers.AutoModelForCausalLM.from_pretrained(
-            self.model_id, **load_args
-        ).to(self.device)
-        model.eval()
-        tokenizer = transformers.AutoTokenizer.from_pretrained(
-            self.model_id, revision=self.model_revision
-        )
-        resolved_revision = self._resolved_revision(model, tokenizer)
-        package_version = self._package_version(nanogcg)
+        (
+            nanogcg,
+            model,
+            tokenizer,
+            resolved_revision,
+            package_version,
+        ) = self._ensure_surrogate_loaded()
 
         config = nanogcg.GCGConfig(
             num_steps=self.num_steps,
@@ -169,7 +189,10 @@ class NanoGCGAttacker(BaseAttacker):
             topk=self.topk,
             seed=budget.seed,
         )
-        result = nanogcg.run(model, tokenizer, request, target, config)
+        result = self._model_runtime.private_execution(
+            "nanogcg_surrogate",
+            lambda: nanogcg.run(model, tokenizer, request, target, config),
+        )
         best_string, best_loss, losses, strings = self._validate_result(result)
         return best_string, {
             "mode": "optimize",
@@ -181,6 +204,107 @@ class NanoGCGAttacker(BaseAttacker):
             "losses": losses,
             "optimization_strings": strings,
         }
+
+    def _ensure_surrogate_loaded(
+        self,
+    ) -> tuple[Any, Any, Any, str, str]:
+        if (
+            self._model is not None
+            and self._tokenizer is not None
+            and self._nanogcg_module is not None
+            and self._resolved_model_revision is not None
+            and self._nanogcg_version is not None
+        ):
+            return (
+                self._nanogcg_module,
+                self._model,
+                self._tokenizer,
+                self._resolved_model_revision,
+                self._nanogcg_version,
+            )
+        if self._model_runtime is None:
+            raise RuntimeError(
+                "nanoGCG optimization requires an admitted managed-model runtime; "
+                "implicit Hugging Face downloads are disabled"
+            )
+        from ..model_acquisition_runtime import hf_offline_environment_overrides
+
+        # Transformers and huggingface_hub may cache offline policy on import.
+        os.environ.update(hf_offline_environment_overrides())
+
+        nanogcg = _require("nanogcg", "NanoGCGAttacker")
+        transformers = _require("transformers", "NanoGCGAttacker")
+        torch = _require("torch", "NanoGCGAttacker")
+        dtype = getattr(torch, self.torch_dtype, None)
+        if dtype is None:
+            raise RuntimeError(f"installed torch lacks dtype {self.torch_dtype!r}")
+        if self.device.startswith("cuda") and not torch.cuda.is_available():
+            raise RuntimeError("nanoGCG optimization requested CUDA but none is available")
+
+        from ..model_acquisition import nanogcg_requirement
+        from ..model_acquisition_runtime import (
+            transformers_managed_snapshot_args,
+        )
+
+        requirement = nanogcg_requirement({
+            "model_id": self.model_id,
+            "model_revision": self.model_revision,
+        })
+        if requirement is None:  # pragma: no cover - suffix returned above
+            raise RuntimeError("nanoGCG managed requirement is unexpectedly absent")
+
+        def construct(snapshot: Any) -> tuple[Any, Any]:
+            local_model, local_only = transformers_managed_snapshot_args(snapshot)
+            model = transformers.AutoModelForCausalLM.from_pretrained(
+                local_model,
+                torch_dtype=dtype,
+                trust_remote_code=False,
+                **local_only,
+            ).to(self.device)
+            model.eval()
+            tokenizer = transformers.AutoTokenizer.from_pretrained(
+                local_model,
+                trust_remote_code=False,
+                **local_only,
+            )
+            return model, tokenizer
+
+        def cleanup(loaded: tuple[Any, Any]) -> None:
+            model, tokenizer = loaded
+            operations = (
+                getattr(tokenizer, "close", None),
+                getattr(model, "close", None),
+                (
+                    (lambda: model.to("cpu"))
+                    if callable(getattr(model, "to", None))
+                    else None
+                ),
+                (
+                    torch.cuda.empty_cache
+                    if torch.cuda.is_available()
+                    else None
+                ),
+            )
+            for operation in operations:
+                if callable(operation):
+                    try:
+                        operation()
+                    except Exception:
+                        pass
+
+        model, tokenizer = self._model_runtime.construct(
+            requirement,
+            construct,
+            cleanup=cleanup,
+        )
+        resolved_revision = self._resolved_revision(model, tokenizer)
+        package_version = self._package_version(nanogcg)
+        self._model = model
+        self._tokenizer = tokenizer
+        self._nanogcg_module = nanogcg
+        self._resolved_model_revision = resolved_revision
+        self._nanogcg_version = package_version
+        return nanogcg, model, tokenizer, resolved_revision, package_version
 
     def _resolved_revision(self, model: Any, tokenizer: Any) -> str:
         model_commit = getattr(getattr(model, "config", None), "_commit_hash", None)

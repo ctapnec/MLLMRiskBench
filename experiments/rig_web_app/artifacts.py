@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import hashlib
 import html
-import json
 import math
 import os
 import subprocess
@@ -13,6 +12,9 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Mapping
 from urllib.parse import quote
+
+from ura.model_identity import canonical_provider_name
+from ura.strict_json import strict_json_loads
 
 from .catalog import _INVENTORY_MAX_ENTRIES, _INVENTORY_MAX_DEPTH
 
@@ -160,13 +162,17 @@ class Job:
     stderr_handle: Any = None
     started_at: float = field(default_factory=time.time)
     ended_at: float | None = None
-    #: The raw builder/form parameters this job was composed from (persisted
-    #: so a restored job still shows how it was built).
+    #: Durable builder/form parameters this job was composed from. Explicit
+    #: workstation checkpoint paths are projected to content identities before
+    #: this object is created, so restore/UI state never needs the locator.
     builder_params: dict[str, str] | None = None
     #: The pinned project revision exported when the job started.
     pin: str = ""
     #: Short failure context (stderr tail) persisted for a failed job.
     failure: str | None = None
+    #: Explicit active-work classification. Presentation code may surface it
+    #: only while ``state() == "running"``; a command/name is never inferred.
+    activity: str | None = None
     #: A Windows Job Object handle the process is assigned to, used by explicit
     #: Stop as the reliable whole-tree kill fallback. None on POSIX / when
     #: unavailable; closing it alone never terminates a running experiment.
@@ -201,6 +207,43 @@ class Job:
         return max(0.0, end - self.started_at)
 
 
+def assert_durable_job_state_path_free(
+    argv: list[str],
+    builder_params: Mapping[str, str] | None,
+) -> None:
+    """Reject any explicit vLLM checkpoint locator in retained job state.
+
+    Runtime argv may need an operator-local path long enough for vLLM to open
+    a checkpoint.  Durable argv, builder keys, and builder values must carry
+    only the checkpoint's content identity.  Keep this validator neutral so
+    lifecycle can run the exact same persistence boundary *before* Popen and
+    SQLite can retain a redundant fail-closed check for alternate callers.
+    """
+
+    from ura.targets.local import _is_explicit_local_path  # noqa: PLC0415
+
+    retained_strings = [str(value) for value in argv]
+    if builder_params:
+        retained_strings.extend(str(key) for key in builder_params)
+        retained_strings.extend(str(value) for value in builder_params.values())
+    for retained in retained_strings:
+        # Model lists are comma-delimited.  Iterate every marker in each token
+        # too, so a safe first identity cannot hide a later path-bearing one.
+        for token in retained.split(","):
+            lowered = token.casefold()
+            offset = 0
+            while True:
+                marker = lowered.find("vllm:", offset)
+                if marker < 0:
+                    break
+                model = token[marker + len("vllm:") :].strip()
+                if _is_explicit_local_path(model):
+                    raise ValueError(
+                        "refusing to persist an explicit local checkpoint path"
+                    )
+                offset = marker + len("vllm:")
+
+
 #: Map a job's command + argv to a campaign-run kind for the registry.
 def run_kind(command: str, argv: list[str]) -> str | None:
     if command not in {"run_matrix", "rig_check"}:
@@ -209,6 +252,8 @@ def run_kind(command: str, argv: list[str]) -> str | None:
         return "preflight"
     # No-call modes take precedence over any lane-shape flag that may also be
     # present in a composed or restored argv.
+    if "--model-acquisition-plan-only" in argv:
+        return "acquisition_plan"
     if "--preflight-only" in argv:
         return "preflight"
     if "--dry-run" in argv:
@@ -413,7 +458,7 @@ def _response_identity(record: Mapping[str, Any]) -> tuple[str, str]:
         if isinstance(candidate, str) and candidate:
             model = candidate
             break
-    return str(provider), str(model or target or "unknown")
+    return canonical_provider_name(str(provider)), str(model or target or "unknown")
 
 
 def _marker_artifact_path(
@@ -497,7 +542,7 @@ def iter_completed_markers(
                 stats["skipped_error"] += 1
                 continue
             try:
-                doc = json.loads(entry.read_text(encoding="utf-8"))
+                doc = strict_json_loads(entry.read_text(encoding="utf-8"))
             except (OSError, ValueError):
                 stats["skipped_invalid"] += 1
                 continue
@@ -544,6 +589,7 @@ def usage_rows_from_marker(
     tallies: dict[tuple[str, str, str, str], int] = {}
 
     def add(role: str, provider: str, model: str, category: str, amount: int) -> None:
+        provider = canonical_provider_name(provider)
         key = (role, provider, model, category)
         tallies[key] = tallies.get(key, 0) + amount
 
@@ -557,11 +603,15 @@ def usage_rows_from_marker(
                 continue
             n_lines += 1
             try:
-                record = json.loads(line)
-            except ValueError:
-                continue
+                record = strict_json_loads(line)
+            except (ValueError, RecursionError) as exc:
+                raise ValueError(
+                    f"invalid responses usage JSON at {responses_path}:{n_lines}: {exc}"
+                ) from exc
             if not isinstance(record, Mapping):
-                continue
+                raise ValueError(
+                    f"non-object responses usage row at {responses_path}:{n_lines}"
+                )
             provider, model = _response_identity(record)
             raw = record.get("raw")
             raw = raw if isinstance(raw, Mapping) else {}
@@ -578,15 +628,19 @@ def usage_rows_from_marker(
         )
     trails_path = _marker_artifact_path(marker_path, artifacts.get("trails"), verify_sha=verify_sha)
     with trails_path.open(encoding="utf-8") as handle:
-        for line in handle:
+        for line_number, line in enumerate(handle, 1):
             if not line.strip():
                 continue
             try:
-                record = json.loads(line)
-            except ValueError:
-                continue
+                record = strict_json_loads(line)
+            except (ValueError, RecursionError) as exc:
+                raise ValueError(
+                    f"invalid trails usage JSON at {trails_path}:{line_number}: {exc}"
+                ) from exc
             if not isinstance(record, Mapping):
-                continue
+                raise ValueError(
+                    f"non-object trails usage row at {trails_path}:{line_number}"
+                )
             raw = record.get("raw")
             raw = raw if isinstance(raw, Mapping) else {}
             judge_call = raw.get("judge_call")
@@ -594,7 +648,9 @@ def usage_rows_from_marker(
                 continue  # stage made no judge call
             if judge_call.get("sampling_control") == "not_queried_provider_refusal":
                 continue  # provider refused; no call was made or billed
-            provider = str(judge_call.get("provider") or "unknown")
+            provider = canonical_provider_name(
+                str(judge_call.get("provider") or "unknown")
+            )
             model = str(
                 judge_call.get("provider_resolved_model") or raw.get("judge_model") or "unknown"
             )
@@ -657,7 +713,9 @@ def _judge_row_usage(record: Mapping[str, Any]) -> tuple[str, str, dict[str, int
         return None
     if judge_call.get("sampling_control") == "not_queried_provider_refusal":
         return None
-    provider = str(judge_call.get("provider") or "unknown")
+    provider = canonical_provider_name(
+        str(judge_call.get("provider") or "unknown")
+    )
     model = str(judge_call.get("provider_resolved_model") or raw.get("judge_model") or "unknown")
     return provider, model, _tokens_by_category(judge_call.get("tokens"), None)
 
@@ -699,7 +757,7 @@ def failed_cell_usage_rows(
                 continue
             stem = entry.name[: -len(".error.json")]
             try:
-                err = json.loads(entry.read_text(encoding="utf-8"))
+                err = strict_json_loads(entry.read_text(encoding="utf-8"))
                 err_sha = hashlib.sha256(entry.read_bytes()).hexdigest()
             except (OSError, ValueError):
                 continue
@@ -720,6 +778,7 @@ def failed_cell_usage_rows(
                 *,
                 _t: dict = tallies,
             ) -> None:
+                provider = canonical_provider_name(provider)
                 key = (role, provider, model, category)
                 _t[key] = _t.get(key, 0) + amount
 
@@ -730,7 +789,7 @@ def failed_cell_usage_rows(
                         if not line.strip():
                             continue
                         try:
-                            record = json.loads(line)
+                            record = strict_json_loads(line)
                         except ValueError:
                             continue
                         if not isinstance(record, Mapping):
@@ -753,7 +812,7 @@ def failed_cell_usage_rows(
                         if not line.strip():
                             continue
                         try:
-                            record = json.loads(line)
+                            record = strict_json_loads(line)
                         except ValueError:
                             continue
                         if not isinstance(record, Mapping):
@@ -780,7 +839,9 @@ def failed_cell_usage_rows(
                 and not isinstance(logical_calls, bool)
                 and logical_calls > 0
             ):
-                provider = str(audit.get("provider") or "unknown")
+                provider = canonical_provider_name(
+                    str(audit.get("provider") or "unknown")
+                )
                 model = str(
                     audit.get("resolved_model")
                     or err.get("target")

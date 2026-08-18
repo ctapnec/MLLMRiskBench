@@ -35,6 +35,7 @@ import re
 from collections.abc import Iterable
 from importlib import metadata
 
+from ..attacker_input_contract import AttackerInputContract, text_only_transfer_contract
 from ..data_models import Attempt, DataPoint
 from .base import AttackBudget, BaseAttacker
 from ._engine_common import ExternalEngineOutputError, _attempt, _require
@@ -72,6 +73,19 @@ class H4rm3lAttacker(BaseAttacker):
     """
 
     name = "h4rm3l"
+
+    def plan_target_inputs(
+        self, datapoint: DataPoint, budget: AttackBudget
+    ) -> AttackerInputContract:
+        planned_turns = min(
+            len(self.programs), budget.max_queries, budget.max_turns
+        )
+        return text_only_transfer_contract(
+            self.name,
+            datapoint,
+            budget,
+            planned_turns=planned_turns,
+        )
 
     def __init__(
         self,

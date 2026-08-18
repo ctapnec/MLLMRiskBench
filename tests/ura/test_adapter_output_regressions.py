@@ -29,6 +29,10 @@ from ura.adapters._engine_common import (
 )
 from ura.adapters.autodan import AutoDANTurboAttacker
 from ura.adapters.base import AttackBudget, AttackSession, BaseAttacker
+from ura.attacker_input_contract import (
+    AttackerInputContract,
+    text_only_transfer_contract,
+)
 from ura.adapters.easyjailbreak import EasyJailbreakAttacker
 from ura.adapters.fuzzyai import FuzzyAIAttacker
 from ura.adapters.giskard import GiskardAttacker
@@ -227,6 +231,17 @@ def test_harmbench_rejects_unrepresented_multimodal_outputs(tmp_path: Path) -> N
         encoding="utf-8",
     )
     with pytest.raises(ExternalEngineOutputError, match="multimodal test case"):
+        HarmBenchAttacker._read_test_cases(output, "behavior")
+
+
+def test_harmbench_rejects_duplicate_behavior_keys(tmp_path: Path) -> None:
+    output = tmp_path / "test_cases.json"
+    output.write_text(
+        '{"behavior":["first"],"behavior":["last-wins attack"]}',
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ExternalEngineOutputError, match="missing or invalid"):
         HarmBenchAttacker._read_test_cases(output, "behavior")
 
 
@@ -827,6 +842,17 @@ def test_h4rm3l_requires_exact_pinned_package_version(
 
 class _EmptyAttacker(BaseAttacker):
     name = "empty"
+
+    def plan_target_inputs(
+        self, datapoint: DataPoint, budget: AttackBudget
+    ) -> AttackerInputContract:
+        return text_only_transfer_contract(
+            self.name,
+            datapoint,
+            budget,
+            planned_turns=min(budget.max_queries, budget.max_turns),
+            turn_count_semantics="upper_bound",
+        )
 
     def generate(
         self, datapoint: DataPoint, budget: AttackBudget

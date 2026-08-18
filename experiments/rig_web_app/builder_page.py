@@ -5,9 +5,12 @@ from __future__ import annotations
 import hashlib
 import html
 import json
+import math
 import os
 import re
 from typing import Mapping
+
+from ura.targets.api import canonical_api_target_identity
 
 from .catalog import (
     _MODALITIES,
@@ -22,16 +25,265 @@ from .catalog import (
 )
 
 from .ui import _BUILDER_SCRIPT, _page
+from .reports import load_pricing, rate_for
 
 
 class BuilderPageMixin:
+    def _ollama_service_card(
+        self,
+        status: Mapping[str, object],
+        roster: Mapping[str, object],
+        *,
+        action_state: str = "",
+        action_error: str = "",
+    ) -> str:
+        """Render lifecycle controls outside the campaign-builder form."""
+
+        state = str(status.get("state", "unknown"))
+        if state not in {
+            "stopped", "starting", "external", "owned", "ambiguous", "busy", "error"
+        }:
+            state = "unknown"
+        tone = {
+            "owned": "green",
+            "external": "blue",
+            "starting": "amber",
+            "ambiguous": "amber",
+            "busy": "amber",
+            "error": "red",
+            "stopped": "gray",
+        }.get(state, "red")
+        state_copy = {
+            "owned": "running and owned by this console process",
+            "external": (
+                "running externally; discovery is read-only and pulls are disabled"
+            ),
+            "starting": "console-owned process is starting; the API is not ready yet",
+            "ambiguous": (
+                "API reachable, but listener ownership is unverified; pulls are disabled"
+            ),
+            "busy": "another Ollama mutation or inference holds the endpoint lock",
+            "error": (
+                "console-owned process residue could not be fully cleaned; Stop can retry"
+            ),
+            "stopped": "no compatible daemon is reachable on the loopback endpoint",
+            "unknown": "daemon state could not be classified",
+        }[state]
+        can_stop = status.get("can_stop") is True
+        loaded_value = status.get("loaded_models")
+        loaded = (
+            [str(value) for value in loaded_value if isinstance(value, str)][:16]
+            if isinstance(loaded_value, list)
+            else []
+        )
+        roster_models = roster.get("models")
+        models = roster_models if isinstance(roster_models, list) else []
+        roster_excluded = roster.get("excluded")
+        excluded = roster_excluded if isinstance(roster_excluded, list) else []
+        roster_issues = roster.get("issues")
+        issues = roster_issues if isinstance(roster_issues, list) else []
+
+        feedback = ""
+        bounded_error = action_error.strip()[:1000]
+        if bounded_error:
+            feedback = (
+                "<div class='notice red'><strong>Ollama action failed.</strong> "
+                + html.escape(bounded_error)
+                + "</div>"
+            )
+        elif action_state in {
+            "stopped", "starting", "external", "owned", "ambiguous", "busy", "error"
+        }:
+            feedback = (
+                "<div class='notice green'><strong>Ollama action completed.</strong> "
+                "Current state: "
+                + html.escape(state)
+                + ".</div>"
+            )
+
+        diagnostics: list[str] = []
+        for value in (status.get("warning"), status.get("last_error")):
+            if (
+                isinstance(value, str)
+                and value.strip()
+                and value.strip() not in diagnostics
+            ):
+                diagnostics.append(value.strip())
+        roster_error = roster.get("error")
+        if isinstance(roster_error, str) and roster_error.strip():
+            diagnostics.append(roster_error.strip())
+        diagnostics.extend(
+            str(value).strip()
+            for value in issues[:8]
+            if isinstance(value, str) and value.strip()
+        )
+        diagnostic_html = (
+            "<details><summary>Discovery diagnostics ("
+            + str(len(diagnostics))
+            + ")</summary><ul>"
+            + "".join(f"<li>{html.escape(value)}</li>" for value in diagnostics)
+            + "</ul></details>"
+            if diagnostics
+            else ""
+        )
+
+        excluded_rows = []
+        for row in excluded:
+            if not isinstance(row, Mapping):
+                continue
+            overlaps = row.get("overlap_with")
+            overlap_text = (
+                ", ".join(
+                    str(value) for value in overlaps if isinstance(value, str)
+                )
+                if isinstance(overlaps, list)
+                else "normalized vLLM identity"
+            )
+            excluded_rows.append(
+                "<li><code>"
+                + html.escape(str(row.get("spec", "unknown")))
+                + "</code> overlaps "
+                + html.escape(overlap_text or "normalized vLLM identity")
+                + "</li>"
+            )
+        excluded_html = (
+            "<details><summary>Excluded vLLM overlaps ("
+            + str(len(excluded_rows))
+            + ")</summary><p class='note'>These live tags are not automatic "
+            "testing candidates and cannot be enabled by a manual entry. "
+            "Use a distinct Ollama model identity for testing.</p><ul>"
+            + "".join(excluded_rows)
+            + "</ul></details>"
+            if excluded_rows
+            else ""
+        )
+        loaded_html = (
+            "<p class='note'>Loaded now: "
+            + ", ".join(f"<code>{html.escape(value)}</code>" for value in loaded)
+            + (
+                " and more"
+                if isinstance(loaded_value, list) and len(loaded_value) > 16
+                else ""
+            )
+            + ".</p>"
+            if loaded
+            else (
+                "<p class='note'>No loaded model is reported by "
+                "<code>/api/ps</code>.</p>"
+            )
+        )
+
+        token = html.escape(str(self.ollama.action_token), quote=True)
+        start_disabled = "" if state == "stopped" else " disabled"
+        stop_disabled = "" if can_stop else " disabled"
+        pull_disabled = "" if status.get("can_pull") is True else " disabled"
+        return (
+            "<div class='card' id='ollama-service'><h2>Local Ollama service</h2>"
+            + feedback
+            + "<p><span class='badge "
+            + tone
+            + "'>"
+            + html.escape("absent" if state == "stopped" else state)
+            + "</span> "
+            + html.escape(state_copy)
+            + ".</p><p class='note'>Fixed loopback API: <code>"
+            + html.escape(
+                str(status.get("base_url", "http://127.0.0.1:11434"))
+            )
+            + "</code>. Discovery and inference use bounded standard-library "
+            "HTTP; no Ollama Python SDK is required. "
+            "<a href='/ollama/status'>JSON status</a>.</p>"
+            + "<p><strong>"
+            + str(len(models))
+            + " exact live candidate(s)</strong>; "
+            + str(len(excluded))
+            + " normalized vLLM overlap(s) excluded.</p>"
+            + loaded_html
+            + diagnostic_html
+            + excluded_html
+            + "<div class='workflow-actions'>"
+            "<form class='inline' method='get' action='/build#ollama-service'>"
+            "<button class='ghost' type='submit'>Status</button></form>"
+            "<form class='inline' method='post' action='/ollama/start' data-busy>"
+            f"<input type='hidden' name='action_token' value='{token}'>"
+            "<input type='hidden' name='confirm' value='yes'>"
+            f"<button type='submit'{start_disabled}>Start</button></form>"
+            "<form class='inline' method='post' action='/ollama/stop' data-busy>"
+            f"<input type='hidden' name='action_token' value='{token}'>"
+            "<input type='hidden' name='confirm' value='yes'>"
+            f"<button class='danger' type='submit'{stop_disabled}>Stop</button>"
+            "</form></div><h3>Pull a model</h3>"
+            "<p class='note'>Enter the daemon model tag without the "
+            "<code>ollama:</code> target prefix. The typed job streams bounded "
+            "download progress; Jobs shows "
+            "<span class='badge blue'>downloading</span> only while its explicit "
+            "activity is live.</p>"
+            "<form class='cmd' method='post' action='/ollama/pull' data-busy>"
+            f"<input type='hidden' name='action_token' value='{token}'>"
+            "<input type='hidden' name='confirm' value='yes'>"
+            "<label for='ollama-pull-model'>Exact model tag</label>"
+            f"<input id='ollama-pull-model' type='text' name='model' "
+            f"maxlength='256' autocomplete='off' placeholder='llama3.2:3b' "
+            f"required{pull_disabled}>"
+            "<span></span>"
+            f"<button type='submit'{pull_disabled}>Pull model</button></form></div>"
+        )
+
     def _build_page(
         self,
         prefill: Mapping[str, str] | None = None,
         errors: Mapping[str, str] | None = None,
+        *,
+        ollama_state: str = "",
+        ollama_error: str = "",
     ) -> bytes:
-        prefill = dict(prefill or {})
-        errors = dict(errors or {})
+        # The private local registry may use an operator workstation path as
+        # vLLM's runtime locator.  Builder HTML is retained in browser history
+        # and may be copied into evidence, so it receives the same content-only
+        # identity boundary as Jobs/SQLite.  Unknown/tampered explicit paths
+        # have no trustworthy identity and are omitted rather than echoed.
+        from .artifacts import assert_durable_job_state_path_free  # noqa: PLC0415
+
+        durable_local_identities = self._catalog_local_identities()
+
+        def durable_ui_text(value: object) -> str:
+            projected = str(value)
+            for runtime_spec, identity in sorted(
+                durable_local_identities.items(),
+                key=lambda item: len(item[0]),
+                reverse=True,
+            ):
+                projected = projected.replace(runtime_spec, identity)
+                # Defensive coverage for an exception that mentions only the
+                # locator portion instead of the complete ``vllm:`` spec.
+                runtime_path = runtime_spec.partition(":")[2]
+                if runtime_path:
+                    projected = projected.replace(
+                        runtime_path,
+                        identity.removeprefix("vllm:"),
+                    )
+            try:
+                assert_durable_job_state_path_free([projected], None)
+            except ValueError:
+                return "private explicit-local value omitted"
+            return projected
+
+        safe_prefill: dict[str, str] = {}
+        for key, value in dict(prefill or {}).items():
+            safe_key = durable_ui_text(key)
+            safe_value = durable_ui_text(value)
+            # Multiple private locators can intentionally share a content
+            # digest.  A presentation collision must not silently choose one.
+            if safe_key in safe_prefill and safe_prefill[safe_key] != safe_value:
+                safe_prefill[safe_key] = "private explicit-local value omitted"
+            else:
+                safe_prefill[safe_key] = safe_value
+        prefill = safe_prefill
+        errors = {
+            durable_ui_text(key): durable_ui_text(value)
+            for key, value in dict(errors or {}).items()
+        }
+        selected_judge_model = prefill.get("judge_model", "").strip()
 
         def err(field: str) -> str:
             message = errors.get(field, "")
@@ -69,13 +321,21 @@ class BuilderPageMixin:
         # Group ALL 39 catalogue arms for a readable layout: common lanes first
         # (by modality signature), then the source-metric scored lanes, then the
         # common-metric-ineligible arms. A source-metric arm runs in run_matrix
-        # with replay. An ineligible arm remains selectable so the server can
-        # return its exact fail-before-subprocess reason; it never becomes a
-        # scored lane merely because the builder exposes the choice.
+        # with replay. An ineligible arm remains default-closed and becomes
+        # runnable only through the explicit, separately labelled approximate
+        # response-proxy opt-in rendered with the judge controls below.
         signatures: dict[str, list[tuple[str, tuple[str, ...], str]]] = {}
         for arm, mods, reason in _ARM_CATALOG:
-            if reason:
-                bucket = "source-specific metric - not yet runnable (evaluator not integrated)"
+            if reason and "tool" in mods:
+                bucket = (
+                    "source-specific tool metric - native runtime required "
+                    "(Runner proxy unavailable)"
+                )
+            elif reason:
+                bucket = (
+                    "source-specific metric - approximate proxy available "
+                    "(evaluator not integrated)"
+                )
             elif arm in _SOURCE_METRIC_ARMS:
                 bucket = "source-specific metric - runnable (replay attacker only)"
             else:
@@ -84,7 +344,7 @@ class BuilderPageMixin:
         arm_groups = []
 
         def _bucket_rank(name: str) -> tuple[int, int, str]:
-            if "not yet runnable" in name:
+            if "approximate proxy available" in name:
                 return (2, len(name), name)
             if name.startswith("source-specific metric"):
                 return (1, len(name), name)
@@ -96,16 +356,24 @@ class BuilderPageMixin:
             for arm, mods, reason in signatures[signature]:
                 known = arm in registry_arms
                 if reason:
+                    tool_unavailable = "tool" in mods
                     boxes.append(
                         "<label class='check'>"
                         "<input type='checkbox' class='armbox' "
                         f"data-mods='{html.escape(','.join(mods))}' "
                         f"data-arm='{html.escape(arm)}'>"
                         f"<span>{_arm_head(html.escape(arm), mods)}"
-                        "<span class='badge gray tip' tabindex='0'>no evaluator"
-                        f"<span class='tiptext'>{html.escape(reason)}</span>"
-                        "</span>"
-                        "</span></label>"
+                        "<span class='badge "
+                        + ("red" if tool_unavailable else "amber")
+                        + " tip' tabindex='0'>"
+                        + (
+                            "tool runtime required"
+                            if tool_unavailable
+                            else "⚠ approximate opt-in"
+                        )
+                        + f"<span class='tiptext'>{html.escape(reason)}</span>"
+                        + "</span>"
+                        + "</span></label>"
                     )
                     continue
                 if arm in _SOURCE_METRIC_ARMS:
@@ -164,11 +432,51 @@ class BuilderPageMixin:
         )
         # Target checkboxes carry supported modalities (so an out-of-scope
         # target is hidden) and a kind (hosted API vs on-rig local vLLM).
-        from experiments.local_targets import installed_vllm_version  # noqa: PLC0415
+        from experiments.local_targets import (  # noqa: PLC0415
+            installed_vllm_version,
+            known_vllm_quantization_issue,
+        )
+        from ura.targets.local import _is_explicit_local_path  # noqa: PLC0415
 
-        local_catalog, _explicit_local = self._local_entry_catalog()
+        local_catalog, explicit_local = self._local_entry_catalog()
+        ollama_roster = self._ollama_roster_snapshot()
+        ollama_status = self.ollama.status()
+        live_ollama_by_spec = {
+            str(row.get("spec")): row
+            for key in ("models", "excluded")
+            for row in ollama_roster.get(key, [])
+            if isinstance(row, Mapping) and str(row.get("spec", "")).startswith("ollama:")
+        }
+        runtime_vllm_version = installed_vllm_version() or self._vllm_roster_version()
+        expensive_judges: dict[str, str] = {}
+
+        def _api_provider(value: str) -> str:
+            try:
+                provider, _model = canonical_api_target_identity(value)
+            except (KeyError, ValueError):
+                return "unknown"
+            return provider
 
         def _target_box(value: str, label: str, mods: tuple[str, ...], kind: str) -> str:
+            runtime_value = value
+            private_identity_unavailable = False
+            if kind == "local":
+                value = durable_local_identities.get(runtime_value, runtime_value)
+                backend, separator, model = runtime_value.partition(":")
+                if (
+                    value == runtime_value
+                    and separator == ":"
+                    and backend.casefold() == "vllm"
+                    and _is_explicit_local_path(model)
+                ):
+                    private_identity_unavailable = True
+                    value = (
+                        "vllm:private-checkpoint-unavailable@opaque:"
+                        + hashlib.sha256(runtime_value.encode("utf-8")).hexdigest()[:16]
+                    )
+                if label == runtime_value:
+                    label = value
+            label = durable_ui_text(label)
             detail = ""
             quant_control = ""
             disabled = ""
@@ -177,27 +485,55 @@ class BuilderPageMixin:
             control_id = (
                 "target-" + hashlib.sha256(f"{kind}:{value}".encode("utf-8")).hexdigest()[:16]
             )
+            judge_control_id = control_id + "-judge"
             if kind == "api":
-                provider = value.partition(":")[0].strip().lower() or "unknown"
+                provider = _api_provider(value)
                 row_attrs = f" data-provider='{html.escape(provider)}'"
+                warning = expensive_judges.get(value)
+                if warning:
+                    name_html += (
+                        " <span class='badge amber tip judge-cost-warning' "
+                        "tabindex='0' role='img' aria-label='Warning: expensive "
+                        "judge model'>"
+                        "&#9888; expensive"
+                        f"<span class='tiptext'>{html.escape(warning)}</span></span>"
+                    )
             if kind == "local":
-                entry = local_catalog.get(value, {})
+                entry = local_catalog.get(runtime_value, {})
                 local_config_error = ""
+                known_quant_issues: dict[str, str] = {}
                 context_limit = None
-                if value.startswith("ollama:"):
+                if private_identity_unavailable:
+                    local_config_error = (
+                        "private explicit checkpoint has no durable digest identity"
+                    )
+                    disabled = " disabled"
+                elif runtime_value.startswith("ollama:"):
                     try:
-                        self._validate_ollama_local_entry(value, entry)
+                        self._validate_ollama_local_entry(runtime_value, entry)
                     except ValueError as exc:
-                        local_config_error = str(exc)
+                        local_config_error = durable_ui_text(exc)
                         disabled = " disabled"
-                elif value.startswith("vllm:"):
+                elif runtime_value.startswith("vllm:"):
+                    known_quant_issues = {
+                        quantization: issue
+                        for quantization in ("fp8", "bitsandbytes")
+                        if (
+                            issue := known_vllm_quantization_issue(
+                                runtime_value,
+                                entry.get("revision"),
+                                quantization,
+                                runtime_vllm_version,
+                            )
+                        )
+                    }
                     try:
                         self._validated_local_modalities(
-                            value, entry, project_richer=True
+                            runtime_value, entry, project_richer=True
                         )
-                        self._local_gpu_memory_utilization(value, entry)
-                        context_limit = self._local_max_model_len(value, entry)
-                        generation_limit = self._local_max_tokens(value, entry)
+                        self._local_gpu_memory_utilization(runtime_value, entry)
+                        context_limit = self._local_max_model_len(runtime_value, entry)
+                        generation_limit = self._local_max_tokens(runtime_value, entry)
                         if (
                             context_limit is not None
                             and generation_limit > context_limit
@@ -207,7 +543,7 @@ class BuilderPageMixin:
                                 "exceed max_model_len"
                             )
                     except ValueError as exc:
-                        local_config_error = str(exc)
+                        local_config_error = durable_ui_text(exc)
                         disabled = " disabled"
                 configured_quant = (
                     str(prefill.get(f"quantization::{value}", entry.get("quantization", "auto")))
@@ -218,21 +554,22 @@ class BuilderPageMixin:
                     if local_config_error:
                         raise ValueError(local_config_error)
                     profile = self._effective_local_profile(
-                        value,
+                        runtime_value,
                         entry,
                         default_quantization=prefill.get("quantization", ""),
                         model_quantization=configured_quant,
                     )
                 except ValueError as exc:
-                    local_config_error = str(exc)
+                    local_config_error = durable_ui_text(exc)
                     disabled = " disabled"
                     configured_quant = "auto"
                     profile = self._effective_local_profile(
-                        value,
+                        runtime_value,
                         {},
                         default_quantization="",
                         model_quantization="auto",
                     )
+                quant_control_disabled = disabled
                 params = profile.get("parameter_count_b")
                 params_text = (
                     f"{float(params):g}B params" if params is not None else "params unknown"
@@ -316,6 +653,19 @@ class BuilderPageMixin:
                     quant_label = precision_label + (
                         f" {precision_status}" if precision_status else ""
                     )
+                if known_quant_issues:
+                    known_details = " ".join(
+                        known_quant_issues[quantization]
+                        for quantization in sorted(known_quant_issues)
+                    )
+                    known_details = durable_ui_text(known_details)
+                    name_html += (
+                        " <span class='badge amber tip' tabindex='0' role='img' "
+                        "aria-label='Warning: known unsupported precision profile'>"
+                        "&#9888; known unsupported precision"
+                        f"<span class='tiptext'>{html.escape(known_details)}</span>"
+                        "</span>"
+                    )
                 precision_tone = (
                     "gray"
                     if fit is None
@@ -346,6 +696,7 @@ class BuilderPageMixin:
                 detail = (
                     "<span class='fieldhint'>"
                     + html.escape(
+                        durable_ui_text(
                         f"{params_text} ({parameter_basis}) · "
                         f"{profile.get('estimated_vram_gib', '?')} GiB "
                         f"estimated / {profile.get('available_vram_gib', 0)} GiB available "
@@ -358,6 +709,7 @@ class BuilderPageMixin:
                             if profile.get("compatibility_note")
                             else ""
                         )
+                        )
                     )
                     + "</span>"
                 )
@@ -369,16 +721,51 @@ class BuilderPageMixin:
                     ("awq", "4-bit AWQ"),
                     ("gptq", "4-bit GPTQ"),
                 )
+                choice_fits: dict[str, str] = {}
+                if known_quant_issues and not local_config_error:
+                    for choice, _label in choices:
+                        try:
+                            choice_fit = self._effective_local_profile(
+                                runtime_value,
+                                entry,
+                                default_quantization=prefill.get("quantization", ""),
+                                model_quantization=choice,
+                            ).get("fits")
+                        except ValueError:
+                            choice_fit = False
+                        choice_fits[choice] = (
+                            "true"
+                            if choice_fit is True
+                            else "false"
+                            if choice_fit is False
+                            else "unknown"
+                        )
+                    row_attrs += (
+                        " data-profile-overrides='true'"
+                        f" data-config-invalid='{'true' if local_config_error else 'false'}'"
+                    )
                 quant_id = control_id + "-quantization"
                 quant_control = (
                     "<div class='modelquant'><label for='" + quant_id + "'>"
                     "Per-model quantization</label>"
                     f"<select id='{quant_id}' "
-                    f"name='quantization::{html.escape(value)}'{disabled}>"
+                    f"name='quantization::{html.escape(value)}'{quant_control_disabled}>"
                     + "".join(
                         f"<option value='{choice}'"
                         + (" selected" if choice == configured_quant else "")
-                        + f">{label}</option>"
+                        + (" disabled" if choice in known_quant_issues else "")
+                        + (
+                            f" data-fit='{choice_fits[choice]}'"
+                            if choice in choice_fits
+                            else ""
+                        )
+                        + f">{label}"
+                        + (
+                            " - unsupported for this exact vLLM/revision profile"
+                            if choice in known_quant_issues
+                            else ""
+                        )
+                        + "</option>"
                         for choice, label in choices
                     )
                     + "</select></div>"
@@ -390,23 +777,59 @@ class BuilderPageMixin:
                 "<div class='modelrow' "
                 f"data-mods='{html.escape(','.join(mods))}' "
                 f"data-kind='{html.escape(kind)}'{row_attrs}>"
-                f"<label class='check modelchoice' for='{control_id}'>"
+                "<div class='check modelchoice' "
+                f"data-target-for='{control_id}' data-judge-for='{judge_control_id}'>"
                 f"<input id='{control_id}' type='{input_type}' class='modelbox'"
                 f"{input_name} "
                 f"data-kind='{html.escape(kind)}' "
                 f"data-model='{html.escape(value)}'{disabled}>"
-                f"<span>{_arm_head(name_html, mods)}{detail}</span></label>"
+                f"<input id='{judge_control_id}' type='radio' class='judge-modelbox' "
+                "name='_judge_model_ui' "
+                f"data-kind='{html.escape(kind)}' data-model='{html.escape(value)}'"
+                + (" checked" if value == selected_judge_model else "")
+                + f"{disabled} hidden>"
+                f"<label class='modelchoice-label' for='{control_id}'>"
+                f"<span>{_arm_head(name_html, mods)}{detail}</span></label></div>"
                 f"{quant_control}</div>"
             )
 
         def _ollama_target_box(value: str, label: str, mods: tuple[str, ...]) -> str:
             entry = local_catalog.get(value, {})
             disabled = ""
-            error = ""
+            problems: list[str] = []
+            live_entry = live_ollama_by_spec.get(value)
+            overlap_warning = self._ollama_overlap_warning(
+                value, live_entry or entry
+            )
             try:
                 self._validate_ollama_local_entry(value, entry)
             except ValueError as exc:
-                error = str(exc)
+                problems.append(str(exc))
+            manual = value in explicit_local
+            if overlap_warning:
+                problems.append(overlap_warning)
+            if manual and live_entry is None:
+                problems.append(
+                    "manual entry is not verified in the current live daemon roster"
+                )
+            elif manual and live_entry is not None:
+                live_digest = str(live_entry.get("digest", "")).lower()
+                live_modalities = live_entry.get("modalities")
+                configured_modalities = entry.get("modalities")
+                modalities_match = (
+                    isinstance(live_modalities, list)
+                    and isinstance(configured_modalities, list)
+                    and list(configured_modalities) == list(live_modalities)
+                )
+                if (
+                    str(entry.get("digest", "")).lower() != live_digest
+                    or not modalities_match
+                ):
+                    problems.append(
+                        "manual digest/modalities do not match live daemon discovery"
+                    )
+            error = "; ".join(dict.fromkeys(problems))
+            if error:
                 disabled = " disabled"
             digest = entry.get("digest")
             pinned = isinstance(digest, str) and re.fullmatch(
@@ -415,9 +838,29 @@ class BuilderPageMixin:
             control_id = "target-" + hashlib.sha256(
                 f"ollama:{value}".encode("utf-8")
             ).hexdigest()[:16]
+            judge_control_id = control_id + "-judge"
             name_html = (
                 html.escape(label)
                 + " <span class='badge gray'>Ollama</span>"
+                + (
+                    " <span class='badge amber'>manual config</span>"
+                    if manual
+                    else " <span class='badge green'>live installed</span>"
+                )
+                + (
+                    " <span class='badge green'>daemon matched</span>"
+                    if manual and live_entry is not None
+                    else ""
+                )
+                + (
+                    " <span class='badge amber tip' tabindex='0' role='img' "
+                    "aria-label='Warning: ambiguous Ollama and vLLM identity'>"
+                    "&#9888; overlaps vLLM"
+                    f"<span class='tiptext'>{html.escape(overlap_warning)}</span>"
+                    "</span>"
+                    if overlap_warning
+                    else ""
+                )
                 + (
                     " <span class='badge red'>invalid local config</span>"
                     if error
@@ -438,14 +881,70 @@ class BuilderPageMixin:
                 "<div class='modelrow' "
                 f"data-mods='{html.escape(','.join(mods))}' data-kind='local' "
                 f"data-backend='ollama' data-name='{html.escape(value)}'>"
-                f"<label class='check modelchoice' for='{control_id}'>"
+                "<div class='check modelchoice' "
+                f"data-target-for='{control_id}' data-judge-for='{judge_control_id}'>"
                 f"<input id='{control_id}' type='radio' class='modelbox' "
                 "name='local_choice' data-kind='local' "
                 f"data-model='{html.escape(value)}'{disabled}>"
-                f"<span>{_arm_head(name_html, mods)}{detail}</span></label></div>"
+                f"<input id='{judge_control_id}' type='radio' class='judge-modelbox' "
+                "name='_judge_model_ui' "
+                f"data-kind='local' data-model='{html.escape(value)}'"
+                + (" checked" if value == selected_judge_model else "")
+                + f"{disabled} hidden>"
+                f"<label class='modelchoice-label' for='{control_id}'>"
+                f"<span>{_arm_head(name_html, mods)}{detail}</span></label></div></div>"
             )
 
         options = self._model_options()
+
+        # Cost warnings are derived from the operator's effective-dated pricing
+        # table.  Only exact maxima among at least two comparable, fully priced
+        # models in the same currency are marked; missing/null/mixed prices never
+        # turn into an invented "expensive" label.
+        comparable: dict[str, list[tuple[str, float]]] = {}
+        pricing = load_pricing(self.repo_root)
+        for spec, _label, _mods, kind in options:
+            if kind != "api":
+                continue
+            try:
+                provider, model = canonical_api_target_identity(spec)
+            except (KeyError, ValueError):
+                continue
+            rate, _why = rate_for(pricing, provider, model)
+            if not isinstance(rate, Mapping):
+                continue
+            currency = rate.get("currency")
+            per_million = rate.get("per_million_tokens")
+            if (
+                not isinstance(currency, str)
+                or re.fullmatch(r"[A-Za-z]{3}", currency) is None
+                or not isinstance(per_million, Mapping)
+            ):
+                continue
+            values = [per_million.get(category) for category in ("input", "output")]
+            if any(
+                isinstance(value, bool)
+                or not isinstance(value, (int, float))
+                or not math.isfinite(float(value))
+                or float(value) < 0
+                for value in values
+            ):
+                continue
+            comparable.setdefault(currency.upper(), []).append(
+                (spec, sum(float(value) for value in values))
+            )
+        for currency, entries in comparable.items():
+            if len(entries) < 2:
+                continue
+            maximum = max(score for _spec, score in entries)
+            for spec, score in entries:
+                if score == maximum:
+                    expensive_judges[spec] = (
+                        "Highest configured current input + output judging rate "
+                        f"among comparable {currency} models: {score:g} {currency} "
+                        "per one million input + output tokens. Actual cost depends "
+                        "on recorded usage."
+                    )
         api_boxes = "".join(
             _target_box(v, lbl, mods, kind) for v, lbl, mods, kind in options if kind == "api"
         )
@@ -461,7 +960,7 @@ class BuilderPageMixin:
         )
         providers = sorted(
             {
-                value.partition(":")[0].strip().lower() or "unknown"
+                _api_provider(value)
                 for value, _label, _mods, kind in options
                 if kind == "api"
             }
@@ -471,6 +970,7 @@ class BuilderPageMixin:
             for provider in providers
         )
         model_boxes = (
+            "<section class='picker-model-panel' data-picker-panel='api' hidden>"
             "<div class='grouphead'><h3>Hosted API</h3>"
             "<span class='fieldhint' id='api-filter-count'></span></div>"
             "<div class='targetfilters'><div class='fieldcell'>"
@@ -482,6 +982,8 @@ class BuilderPageMixin:
             + (api_boxes or "<p class='note'>No hosted targets configured.</p>")
             + "</div><p class='filter-empty' id='api-filter-empty'>No hosted "
             "models match the current provider and modality filters.</p>"
+            "</section><section class='picker-model-panel' "
+            "data-picker-panel='local' hidden>"
             "<div class='grouphead'><h3>Local vLLM (on-rig GPUs)</h3>"
             "<span class='fieldhint' id='local-filter-count'></span></div>"
             "<div class='targetfilters'><div class='fieldcell'>"
@@ -517,12 +1019,12 @@ class BuilderPageMixin:
             "</div><div class='checkgrid' id='ollama-target-list'>"
             + (
                 ollama_boxes
-                or "<p class='note'>No Ollama targets are configured. Add an "
-                "<code>ollama:&lt;model-tag&gt;</code> entry with the exact "
-                "64-hex <code>/api/tags</code> digest and declared modalities "
-                "in <a href='/config?file=local-targets'>local-targets</a>. "
-                "The Ollama daemon and pulled model are external runtime "
-                "prerequisites.</p>"
+                or "<p class='note'>No exact Ollama candidate is available. "
+                "Start or connect to the loopback daemon and pull a model above. "
+                "Live rows come only from stable tag/digest inventory plus "
+                "explicit show capabilities. A manual "
+                "<a href='/config?file=local-targets'>local-targets</a> escape "
+                "remains visibly flagged and must match live discovery.</p>"
             )
             + "</div>"
             + "<p class='note'>Hosted rosters are edited on the "
@@ -535,10 +1037,68 @@ class BuilderPageMixin:
                 else "curated default - run <code>local_targets --refresh</code> "
                 "to sync it to the rig's vLLM version"
             )
-            + "); vLLM downloads a chosen model on first run. Ollama targets "
-            "refer only to models already pulled into a separately managed "
-            "local Ollama daemon. Hosted targets spend API budget; both local "
-            "backends avoid hosted API spend.</p>"
+            + "); Hub-backed vLLM models require an explicit sealed acquisition "
+            "job before a measured or preflight run. Automatic Ollama "
+            "targets come only from the live loopback roster. Hosted targets "
+            "spend API budget; both local "
+            "backends avoid hosted API spend.</p></section>"
+        )
+        target_selector = (
+            "<div class='model-picker-selection'><button type='button' class='ghost' "
+            "data-open-model-picker='target' aria-controls='model-picker' "
+            "aria-expanded='false'>Choose target models</button>"
+            "<output id='target-model-summary' class='selection-summary' "
+            "aria-live='polite'>No target models selected</output></div>"
+        )
+        judge_selector = (
+            f"<input type='hidden' id='judge-model-input' name='judge_model' "
+            f"value='{html.escape(selected_judge_model)}'>"
+            "<div class='model-picker-selection'><button type='button' class='ghost' "
+            "data-open-model-picker='judge' aria-controls='model-picker' "
+            "aria-expanded='false'>Choose LLM judge model</button>"
+            "<output id='judge-model-summary' class='selection-summary' "
+            "aria-live='polite'>"
+            + (
+                html.escape(selected_judge_model)
+                if selected_judge_model
+                else "No LLM judge model selected"
+            )
+            + "</output></div>"
+        )
+        model_picker_modal = (
+            "<div id='model-picker' class='model-picker' role='dialog' "
+            "aria-modal='true' aria-labelledby='model-picker-title' "
+            "aria-hidden='true' hidden>"
+            "<div class='model-picker-shell'><div class='model-picker-head'>"
+            "<div><p class='wizard-kicker'>Model selector</p>"
+            "<h2 id='model-picker-title'>Choose models</h2></div>"
+            "<button type='button' class='ghost small' data-close-model-picker "
+            "aria-label='Close model selector'>Close</button></div>"
+            "<div class='wizard-steps' aria-label='Selection steps'>"
+            "<span class='wizard-step on' data-picker-step-label='runtime'>"
+            "1. Runtime</span><span class='wizard-step' "
+            "data-picker-step-label='models'>2. Filter and choose</span></div>"
+            "<section id='model-picker-runtime' class='picker-runtime-step'>"
+            "<p class='note'>Where will this model run?</p>"
+            "<div class='picker-runtime-grid'>"
+            "<button type='button' class='picker-runtime-choice' "
+            "data-picker-kind='api'><strong>Hosted API</strong>"
+            "<span>Filter by provider or show all configured hosted routes. "
+            "Hosted calls may spend API budget.</span></button>"
+            "<button type='button' class='picker-runtime-choice' "
+            "data-picker-kind='local'><strong>Local rig</strong>"
+            "<span>Use the full vLLM fit, parameter, name, and precision filters, "
+            "or an exact pulled Ollama artifact.</span></button></div></section>"
+            "<section id='model-picker-models' class='picker-model-step' hidden>"
+            "<div class='picker-step-actions'><button type='button' class='ghost small' "
+            "id='model-picker-back'>Back to runtime</button>"
+            "<span id='model-picker-role-note' class='fieldhint'></span></div>"
+            + model_boxes
+            + "</section><div class='model-picker-foot'>"
+            "<span class='fieldhint'>Disabled rows failed exact configuration or "
+            "hardware admission checks.</span>"
+            "<button type='button' data-close-model-picker>Done</button>"
+            "</div></div></div>"
         )
         gpu_rows = "".join(
             "<li><code>GPU "
@@ -596,6 +1156,12 @@ class BuilderPageMixin:
             "<code>bitsandbytes</code>, an optional runtime dependency. "
             "Fit values are conservative estimates, not allocation guarantees.</p></div>"
         )
+        ollama_card = self._ollama_service_card(
+            ollama_status,
+            ollama_roster,
+            action_state=ollama_state,
+            action_error=ollama_error,
+        )
         # (local targets are selected as checkboxes above, not free text)
         # Framework checkboxes (carry supported modalities so the wizard can
         # flag ones that cannot drive a chosen modality).  A native-artifact
@@ -629,18 +1195,29 @@ class BuilderPageMixin:
                 )
             prepared_badge = ""
             prepared_control = ""
-            if fw in {"t3mp3st", "harmbench"}:
-                detail = (
-                    "Capture a validated planning bundle first; measured replay "
-                    "checks the exact selected corpus and digest before calls."
-                    if fw == "t3mp3st"
-                    else "Prepare generated cases first; measured replay checks the "
-                    "capture config, corpus, and digest before calls."
-                )
+            if fw in {"t3mp3st", "harmbench", "nanogcg"}:
+                if fw == "t3mp3st":
+                    detail = (
+                        "Capture a validated planning bundle first; measured replay "
+                        "checks the exact selected corpus and digest before calls."
+                    )
+                    badge = "capture + replay"
+                elif fw == "harmbench":
+                    detail = (
+                        "Prepare generated cases first; measured replay checks the "
+                        "capture config, corpus, and digest before calls."
+                    )
+                    badge = "prepare + replay"
+                else:
+                    detail = (
+                        "Choose an immutable surrogate repository and commit for "
+                        "sealed acquisition, or an exact precomputed suffix replay."
+                    )
+                    badge = "surrogate / replay"
                 prepared_badge = (
                     "<span class='badge blue tip prepared-framework-badge' "
                     "tabindex='0'>"
-                    + ("capture + replay" if fw == "t3mp3st" else "prepare + replay")
+                    + badge
                     + f"<span class='tiptext'>{html.escape(detail)}</span></span>"
                 )
                 prepared_control = (
@@ -678,7 +1255,8 @@ class BuilderPageMixin:
             "data-judge='llm'"
             + (" checked" if "llm" in judges_selected else "")
             + "><span><strong>llm</strong> "
-            "<span class='fieldhint'>hosted Haiku judge (metered per response)"
+            "<span class='fieldhint'>explicit hosted or local model judge; "
+            "hosted calls are metered"
             "</span></span></label>"
             "<label class='check'><input type='checkbox' class='judgebox' "
             "data-judge='guardrail'"
@@ -687,6 +1265,22 @@ class BuilderPageMixin:
             "<span class='fieldhint'>model-backed guardrail grader; set the "
             "scoring guardrail model below (distinct from any defense guard)"
             "</span></span></label>"
+        )
+        approximate_metrics_control = (
+            "<label class='check'><input type='checkbox' "
+            "name='approximate_common_metrics'"
+            + (
+                " checked"
+                if prefill.get("approximate_common_metrics") == "on"
+                else ""
+            )
+            + "><span><strong>⚠ approximate common-security metrics</strong> "
+            "<span class='fieldhint'>explicit opt-in for separate supplementary "
+            "response proxies when a source evaluator is not integrated. "
+            "Non-authoritative; never replaces source-native metrics. Reliability "
+            "is an uncalibrated heuristic indicator, not probability or accuracy."
+            "</span></span></label>"
+            + err("approximate_common_metrics")
         )
         defense_selected = prefill.get("defense", "none")
         defense_opts = "".join(
@@ -729,7 +1323,7 @@ class BuilderPageMixin:
                 f"name='{html.escape(field)}'{attrs}{ph}>{err(field)}</div>"
             )
 
-        selected_prepared = attackers_selected & {"t3mp3st", "harmbench"}
+        selected_prepared = attackers_selected & {"t3mp3st", "harmbench", "nanogcg"}
 
         def visibility(name: str) -> str:
             return (
@@ -740,13 +1334,14 @@ class BuilderPageMixin:
 
         workflows_visibility = (
             " aria-hidden='false'"
-            if selected_prepared & {"t3mp3st", "harmbench"}
+            if selected_prepared
             else " hidden aria-hidden='true'"
         )
         prepared_workflow_fields = (
             "<div class='prepared-workflows' id='prepared-workflows'" + workflows_visibility + ">"
-            "<p class='note'>Capture or prepare is an out-of-band paid/compute "
-            "step. Measured replay still uses the normal admission and budget gates."
+            "<p class='note'>Prepared replay and model-backed attack inputs are "
+            "explicitly bound before execution. Measured runs still use the normal "
+            "admission and budget gates."
             "</p><div class='workflow-grid'>"
             "<section class='workflow-panel prepared-fields' id='prepared-t3mp3st' "
             "data-prepared='t3mp3st'" + visibility("t3mp3st") + ">"
@@ -864,6 +1459,39 @@ class BuilderPageMixin:
             + err("harm_replay")
             + "<div class='cols'>"
             + text_field("harm_config", "Capture config", "generated attackers.json path")
+            + "</div></div></section>"
+            "<section class='workflow-panel prepared-fields' id='prepared-nanogcg' "
+            "data-prepared='nanogcg'" + visibility("nanogcg") + ">"
+            "<h3>NanoGCG <span class='badge blue'>Surrogate transfer</span></h3>"
+            "<p class='note'>Choose exactly one mode. Live optimization uses a "
+            "different, immutable Hub surrogate acquired by the sealed acquisition "
+            "workflow. A suffix replay loads no model and records its source.</p>"
+            + err("nanogcg")
+            + "<div class='workflow-step'><h4>Live surrogate optimization</h4>"
+            "<div class='cols'>"
+            + text_field(
+                "nanogcg_model_id",
+                "Surrogate repository",
+                "Hub namespace/name; must differ from every target",
+                placeholder="meta-llama/Llama-2-7b-chat-hf",
+            )
+            + text_field(
+                "nanogcg_model_revision",
+                "Surrogate revision",
+                "exact immutable 40-64 lowercase hex commit",
+            )
+            + "</div></div><div class='workflow-step'><h4>Or: precomputed suffix replay</h4>"
+            "<div class='cols'>"
+            + text_field(
+                "nanogcg_suffix",
+                "Exact suffix",
+                "non-empty replay payload; no model is loaded",
+            )
+            + text_field(
+                "nanogcg_suffix_source",
+                "Suffix source",
+                "paper, artifact, or retained run identity",
+            )
             + "</div></div></section></div></div>"
         )
 
@@ -911,6 +1539,7 @@ class BuilderPageMixin:
             "anything starts.</p>"
             + error_summary
             + hardware_card
+            + ollama_card
             + "<form method='post' action='/build' id='builder'>"
             # hidden composed fields
             "<input type='hidden' name='corpora'><input type='hidden' name='api'>"
@@ -940,7 +1569,11 @@ class BuilderPageMixin:
             + _icon("coins")
             + "Target models</h2>"
             + err("models")
-            + model_boxes
+            + "<p class='note'>Use the shared selector to choose one or more "
+            "hosted targets and at most one local runtime target. To compare "
+            "multiple local models, run each local model as a separate job/grid "
+            "under the same reviewed rig plan.</p>"
+            + target_selector
             + "</div>"
             "<div class='card'><h2>"
             + _icon("pulse")
@@ -956,13 +1589,28 @@ class BuilderPageMixin:
             + err("judges")
             + "<div class='checkgrid'>"
             + judge_boxes
-            + "</div><div class='cols'>"
-            + text_field(
-                "judge_model",
-                "--judge-model",
-                "target id for the LLM judge (default: the Haiku campaign judge)",
-                placeholder="anthropic:claude-haiku-4-5-20251001",
+            + approximate_metrics_control
+            + "</div>"
+            + err("judge_model")
+            + "<p class='note'>The LLM judge uses an explicitly selected hosted "
+            "or local configured model. Dry lanes still replace it with the "
+            "offline mock and make no provider call.</p>"
+            + judge_selector
+            + err("ack_hosted_judge_data_transfer")
+            + "<label class='check hosted-judge-transfer-ack'>"
+            + "<input type='checkbox' name='ack_hosted_judge_data_transfer'"
+            + (
+                " checked"
+                if prefill.get("ack_hosted_judge_data_transfer") == "on"
+                else ""
             )
+            + "><span><strong>Hosted-judge data transfer acknowledgement</strong> "
+            + "I understand that target responses, the harmful source request, "
+            + "and source/reference grading context may be sent to the selected "
+            + "second provider and may be subject to that provider's retention, "
+            + "usage, and corpus-license terms. I reviewed those terms for this "
+            + "live condition.</span></label>"
+            + "<div class='cols'>"
             + "<div class='fieldcell'><label class='fieldlabel'>--defense</label>"
             f"<select name='defense'>{defense_opts}</select>{err('defense')}"
             "</div>"
@@ -1098,7 +1746,7 @@ class BuilderPageMixin:
             + text_field(
                 "cap_judge",
                 "--max-total-judge-calls",
-                "hard cap on hosted judge calls",
+                "hard cap on model-backed judge calls (hosted or local)",
                 kind="number",
             )
             + text_field(
@@ -1133,7 +1781,8 @@ class BuilderPageMixin:
                 default="runs/thesis/lane",
             )
             + "</div></div>"
-            "<div class='buildbar'><button type='submit'>"
+            + model_picker_modal
+            + "<div class='buildbar'><button type='submit'>"
             + _icon("play", size=15)
             + "Compose &amp; review</button>"
             "<span id='buildpreview' class='note'></span></div>"

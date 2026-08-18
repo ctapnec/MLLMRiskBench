@@ -21,6 +21,7 @@ from ura.data_models import (
 )
 from ura.judges.guardrail import GuardrailJudge
 from ura.judges.rules import RuleJudge
+from ura.model_identity import canonical_https_endpoint_identity
 from ura.targets.api import (
     AnthropicOutputError,
     AnthropicTarget,
@@ -32,6 +33,7 @@ from ura.targets.api import (
     OpenAIChatOutputError,
     OpenAIResponsesOutputError,
     OpenAIResponsesTarget,
+    OpenAICompatibleTarget,
     OpenAITarget,
     ProviderTransportError,
     _encode_media,
@@ -84,6 +86,180 @@ def test_hosted_runtime_preflight_checks_import_and_key_without_building_client(
         ("openai", "openai:fixture local preflight"),
     ]
     assert target._client is None
+
+
+def test_native_clients_pin_recorded_endpoint_against_hostile_environment(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    calls: dict[str, list[dict[str, object]]] = {}
+
+    def factory(name: str):
+        def construct(**kwargs):
+            calls.setdefault(name, []).append(kwargs)
+            return SimpleNamespace()
+        return construct
+
+    modules = {
+        "openai": SimpleNamespace(OpenAI=factory("openai")),
+        "anthropic": SimpleNamespace(Anthropic=factory("anthropic")),
+        "google.genai": SimpleNamespace(Client=factory("google")),
+    }
+    original_require = api_module._require
+    monkeypatch.setattr(api_module, "_require", lambda module, feature: (
+        modules[module] if module in modules else original_require(module, feature)
+    ))
+    monkeypatch.setenv("OPENAI_API_KEY", "fixture")
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "fixture")
+    monkeypatch.setenv("GEMINI_API_KEY", "fixture")
+    monkeypatch.setenv("DEEPSEEK_API_KEY", "fixture")
+    monkeypatch.setenv("OPENAI_BASE_URL", "https://attacker.example/openai")
+    monkeypatch.setenv("OPENAI_ORG_ID", "org-hostile")
+    monkeypatch.setenv("OPENAI_PROJECT_ID", "proj-hostile")
+    monkeypatch.setenv("ANTHROPIC_BASE_URL", "https://attacker.example/anthropic")
+    monkeypatch.setenv("GOOGLE_GENAI_USE_VERTEXAI", "true")
+    monkeypatch.setenv("HTTPS_PROXY", "http://proxy.fixture:8080")
+    monkeypatch.setenv("SSL_CERT_FILE", str(tmp_path / "missing-hostile-ca.pem"))
+    monkeypatch.setenv("SSL_CERT_DIR", str(tmp_path / "missing-hostile-ca-dir"))
+    keylog = tmp_path / "must-not-be-created.keys"
+    monkeypatch.setenv("SSLKEYLOGFILE", str(keylog))
+
+    openai_target = OpenAITarget("fixture", requested_spec="openai:fixture")
+    anthropic_target = AnthropicTarget(
+        "fixture", requested_spec="anthropic:fixture"
+    )
+    google_target = GeminiTarget("fixture", requested_spec="google:fixture")
+    compatible_target = OpenAICompatibleTarget(
+        "fixture",
+        "https://api.deepseek.com",
+        "DEEPSEEK_API_KEY",
+        provider="deepseek",
+        requested_spec="deepseek:fixture",
+    )
+    openai_target._get_client()
+    anthropic_target._get_client()
+    google_target._get_client()
+    compatible_target._get_client()
+
+    assert calls["openai"][0]["base_url"] == "https://api.openai.com/v1"
+    assert calls["openai"][1]["base_url"] == "https://api.deepseek.com"
+    assert all(call["organization"] == "" for call in calls["openai"])
+    assert all(call["project"] == "" for call in calls["openai"])
+    assert calls["anthropic"][0]["base_url"] == "https://api.anthropic.com"
+    for provider_calls in (calls["openai"], calls["anthropic"]):
+        for kwargs in provider_calls:
+            http_client = kwargs["http_client"]
+            assert http_client._trust_env is False
+            assert http_client._transport._pool._ssl_context.keylog_filename is None
+            http_client.close()
+    assert calls["google"][0]["vertexai"] is False
+    google_options = calls["google"][0]["http_options"]
+    assert isinstance(google_options, dict)
+    assert google_options["base_url"] == (
+        "https://generativelanguage.googleapis.com"
+    )
+    for field in ("client_args", "async_client_args"):
+        args = google_options[field]
+        assert args["trust_env"] is False
+        assert args["verify"].keylog_filename is None
+    assert not keylog.exists()
+
+    monkeypatch.setenv("GOOGLE_GENAI_CLIENT_MODE", "replay")
+    with pytest.raises(RuntimeError, match="GOOGLE_GENAI_CLIENT_MODE is forbidden"):
+        GeminiTarget("fixture-2", requested_spec="google:fixture-2")._get_client()
+
+
+def test_openai_clients_neutralize_account_routing_environment(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    pytest.importorskip("openai")
+    monkeypatch.setenv("OPENAI_API_KEY", "fixture")
+    monkeypatch.setenv("DEEPSEEK_API_KEY", "fixture")
+    monkeypatch.setenv("OPENAI_ORG_ID", "org-hostile")
+    monkeypatch.setenv("OPENAI_PROJECT_ID", "proj-hostile")
+
+    targets = [
+        OpenAITarget("fixture", requested_spec="openai:fixture"),
+        OpenAICompatibleTarget(
+            "fixture",
+            "https://api.deepseek.com",
+            "DEEPSEEK_API_KEY",
+            provider="deepseek",
+            requested_spec="deepseek:fixture",
+        ),
+    ]
+    try:
+        clients = [target._get_client() for target in targets]
+        for client in clients:
+            assert client.organization == ""
+            assert client.project == ""
+            headers = dict(client.default_headers)
+            assert headers.get("OpenAI-Organization") != "org-hostile"
+            assert headers.get("OpenAI-Project") != "proj-hostile"
+            assert client._client._trust_env is False
+    finally:
+        for target in targets:
+            if target._client is not None:
+                target._client.close()
+
+
+@pytest.mark.parametrize(
+    ("log_env", "credential_env", "target_factory"),
+    [
+        (
+            "OPENAI_LOG",
+            "OPENAI_API_KEY",
+            lambda: OpenAITarget("fixture", requested_spec="openai:fixture"),
+        ),
+        (
+            "OPENAI_LOG",
+            "DEEPSEEK_API_KEY",
+            lambda: OpenAICompatibleTarget(
+                "fixture",
+                "https://api.deepseek.com",
+                "DEEPSEEK_API_KEY",
+                provider="deepseek",
+                requested_spec="deepseek:fixture",
+            ),
+        ),
+        (
+            "ANTHROPIC_LOG",
+            "ANTHROPIC_API_KEY",
+            lambda: AnthropicTarget(
+                "fixture", requested_spec="anthropic:fixture"
+            ),
+        ),
+    ],
+)
+def test_provider_sdk_request_logging_env_is_rejected_before_import_or_prompt(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    log_env: str,
+    credential_env: str,
+    target_factory,
+) -> None:
+    imports: list[str] = []
+
+    def forbidden_import(module: str, _feature: str):
+        imports.append(module)
+        raise AssertionError("provider SDK must not be imported")
+
+    monkeypatch.setattr(api_module, "_require", forbidden_import)
+    monkeypatch.setenv(credential_env, "fixture")
+    monkeypatch.setenv(log_env, "debug")
+    target = target_factory()
+
+    with pytest.raises(RuntimeError, match=rf"{log_env} is forbidden"):
+        preflight_api_target_runtime(target)
+    with pytest.raises(RuntimeError, match=rf"{log_env} is forbidden"):
+        target.generate([
+            DialogTurn(role="user", content="PROMPT-SENTINEL-MUST-NOT-LOG")
+        ])
+
+    assert imports == []
+    captured = capsys.readouterr()
+    assert "PROMPT-SENTINEL-MUST-NOT-LOG" not in captured.out
+    assert "PROMPT-SENTINEL-MUST-NOT-LOG" not in captured.err
 
 
 def test_local_media_is_allowlisted_and_hash_verified(tmp_path: Path) -> None:
@@ -514,6 +690,9 @@ def test_fable_omits_temperature_and_records_request_and_usage_provenance() -> N
     assert response.raw["response_id"] == "msg_fixture_1"
     assert response.raw["provider_request_id"] == "req_anthropic_fixture_1"
     assert response.raw["resolved_model"] == "claude-fable-5"
+    assert response.raw["endpoint_identity"] == (
+        canonical_https_endpoint_identity(target.base_url)
+    )
     assert response.raw["requested_seed"] == 41
     assert response.raw["target_sampling_control"] == (
         "uncontrolled_anthropic_no_seed"
@@ -796,6 +975,9 @@ def test_sol_pro_renders_recorded_multimodal_input_and_persists_provenance(
     }
     assert response.raw["response_id"] == "resp_fixture_1"
     assert response.raw["resolved_model"] == "gpt-5.6-sol"
+    assert response.raw["endpoint_identity"] == (
+        canonical_https_endpoint_identity(target.base_url)
+    )
     assert response.raw["reasoning"] == captured["reasoning"]
     assert response.raw["requested_seed"] == 41
     assert response.raw["target_sampling_control"] == (
@@ -896,6 +1078,7 @@ def test_sol_pro_accepts_an_explicit_refusal_but_rejects_ambiguous_output() -> N
     refusal = target.generate([DialogTurn(role="user", content="request")])
     assert refusal.output_turns == []
     assert refusal.raw["provider_refusal"] is True
+    assert refusal.raw["provider_refusal_category"] == "openai_responses_refusal"
     assert refusal.raw["provider_refusal_reason"] == "I cannot assist with that request."
 
     target = OpenAIResponsesTarget()
@@ -1056,6 +1239,28 @@ def test_generic_openai_chat_terminal_states_fail_closed() -> None:
     _install_chat_fixture(target, _chat_result(content=""))
     with pytest.raises(OpenAIChatOutputError, match="no visible text"):
         target.generate([DialogTurn(role="user", content="request")])
+
+
+def test_openai_compatible_response_retains_only_hashed_endpoint_identity() -> None:
+    endpoint = "https://Same.Example:443/compatible/../v1/"
+    target = OpenAICompatibleTarget(
+        "requested-alias",
+        endpoint,
+        "FIXTURE_KEY",
+        provider="qwen",
+        requested_spec="qwen:requested-alias",
+    )
+    provider_result = _chat_result()
+    provider_result.model = "requested-alias-2026-08-18"
+    _install_chat_fixture(target, provider_result)
+
+    response = target.generate([DialogTurn(role="user", content="request")])
+
+    assert response.raw["endpoint_identity"] == (
+        canonical_https_endpoint_identity(endpoint)
+    )
+    assert "endpoint" not in response.raw and "base_url" not in response.raw
+    assert "same.example" not in json.dumps(response.raw).lower()
 
 
 def _install_gemini_fixture(target: GeminiTarget, result) -> None:

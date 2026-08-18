@@ -22,6 +22,22 @@ WRAPPED_ENGINES = ["pyrit", "garak", "deepteam", "promptfoo", "t3mp3st",
                    "asb", "harmbench"]
 NATIVE_ATTACKERS = ["replay", "crescendo"]
 
+# NanoGCG's live optimization path is intentionally construct-time fail-closed:
+# it must name an immutable surrogate revision even when this roster test never
+# admits or loads the model.  Keep that production contract exercised instead
+# of relying on the obsolete mutable default.
+_NANOGCG_TEST_REVISION = "a" * 40
+
+
+def _roster_attacker(name: str):  # noqa: ANN202
+    config = (
+        {"model_revision": _NANOGCG_TEST_REVISION}
+        if name == "nanogcg"
+        else {}
+    )
+    return get_attacker(name, **config)
+
+
 EXPECTED_CONVERTERS = {
     "rjudge", "mmsafety", "jailbreakv", "gptgeochat", "agentharm", "strongreject",
     "bipia", "harmbench", "vlsbench", "mossbench", "siuo",
@@ -32,17 +48,17 @@ EXPECTED_CONVERTERS = {
 
 def test_attacker_roster_resolves():
     for name in NATIVE_ATTACKERS + WRAPPED_ENGINES:
-        assert get_attacker(name) is not None
+        assert _roster_attacker(name) is not None
     # every wrapped engine reports its own name
     for name in WRAPPED_ENGINES:
-        assert get_attacker(name).name == name
+        assert _roster_attacker(name).name == name
 
 
 @pytest.mark.parametrize("name", WRAPPED_ENGINES)
 def test_wrapped_engine_guarded_offline(name: str):
     """With no third-party lib/CLI installed, generate() raises a clear error
     (import-clean module, cost paid only at the edge)."""
-    attacker = get_attacker(name)
+    attacker = _roster_attacker(name)
     dp = synth_corpus(1)[0]
     with pytest.raises(Exception):  # RuntimeError in practice; never a bare ImportError at import
         list(attacker.generate(dp, AttackBudget(max_queries=2)))

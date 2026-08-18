@@ -14,6 +14,10 @@ import json
 import random
 from collections.abc import Iterable
 
+from ..attacker_input_contract import (
+    AttackerInputContract,
+    crescendo_input_contract,
+)
 from ..data_models import Attempt, DataPoint, DialogTurn, Response
 from .base import AttackBudget, AttackSession, BaseAttacker
 
@@ -70,16 +74,17 @@ class _CrescendoSession(AttackSession):
         self._rng = random.Random(budget.seed)
         self._topic = attacker._topic(datapoint)
         self._payload = attacker._payload(datapoint)
-        payload_media = [*datapoint.media]
-        for turn in datapoint.dialog_history:
-            payload_media.extend(turn.media)
-        self._payload_media = []
-        seen_media: set[str] = set()
-        for media in payload_media:
-            identity = media.model_dump_json()
-            if identity not in seen_media:
-                seen_media.add(identity)
-                self._payload_media.append(media)
+        # Existing dialogue is authoritative, matching Replay: top-level media
+        # may mirror it but must not create a second delivered occurrence. Within
+        # the rendered dialogue itself, ordering and repeated refs are preserved.
+        if datapoint.dialog_history:
+            self._payload_media = [
+                media
+                for turn in datapoint.dialog_history
+                for media in turn.media
+            ]
+        else:
+            self._payload_media = list(datapoint.media)
         available_physical = {media.modality for media in self._payload_media}
         required_physical = set(datapoint.modalities) & {
             "image", "audio", "video"
@@ -207,6 +212,18 @@ class CrescendoAttacker(BaseAttacker):
     """
 
     name = "crescendo"
+
+    def plan_target_inputs(
+        self, datapoint: DataPoint, budget: AttackBudget
+    ) -> AttackerInputContract:
+        logical_limit = min(budget.max_queries, budget.max_turns)
+        ladder = self._ladder(logical_limit)
+        return crescendo_input_contract(
+            self.name,
+            datapoint,
+            budget,
+            policy_evaluable=tuple(rung >= 2 for rung in ladder),
+        )
 
     def _topic(self, dp: DataPoint) -> str:
         """Derive a human-readable topic label from the DataPoint."""

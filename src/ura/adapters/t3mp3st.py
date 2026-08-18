@@ -28,6 +28,8 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import urlsplit
 
+from ..attacker_input_contract import AttackerInputContract, text_only_transfer_contract
+from ..converters._common import canonical_converted_corpus_sha256
 from ..data_models import Attempt, DataPoint
 from ._engine_common import (
     ExternalEngineConformanceError,
@@ -37,7 +39,6 @@ from ._engine_common import (
 )
 from ._native_artifacts import read_binary_artifact
 from .base import AttackBudget, BaseAttacker
-from ..converters._common import canonical_converted_corpus_sha256
 
 
 _REPLAY_FORMAT = "ura-t3mp3st-plan-replay/1"
@@ -494,6 +495,17 @@ class T3MP3STAttacker(BaseAttacker):
     """Generate transfer prompts from a pinned, planning-only Op-General call."""
 
     name = "t3mp3st"
+
+    def plan_target_inputs(
+        self, datapoint: DataPoint, budget: AttackBudget
+    ) -> AttackerInputContract:
+        return text_only_transfer_contract(
+            self.name,
+            datapoint,
+            budget,
+            planned_turns=min(budget.max_queries, budget.max_turns),
+            turn_count_semantics="upper_bound",
+        )
 
     def __init__(
         self,

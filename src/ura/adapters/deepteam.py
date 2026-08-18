@@ -18,6 +18,7 @@ import hashlib
 from collections.abc import Iterable
 from importlib import metadata
 
+from ..attacker_input_contract import AttackerInputContract, text_only_transfer_contract
 from ..data_models import Attempt, DataPoint
 from ._engine_common import ExternalEngineOutputError, _attempt, _require
 from .base import AttackBudget, BaseAttacker
@@ -43,6 +44,11 @@ class DeepTeamAttacker(BaseAttacker):
 
     name = "deepteam"
     supported_integration_mode = "deterministic_enhancement_transfer"
+
+    def plan_target_inputs(
+        self, datapoint: DataPoint, budget: AttackBudget
+    ) -> AttackerInputContract:
+        return text_only_transfer_contract(self.name, datapoint, budget)
 
     def __init__(
         self,

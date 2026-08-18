@@ -18,6 +18,10 @@ import json
 from collections import Counter
 from collections.abc import Iterable
 
+from ..attacker_input_contract import (
+    AttackerInputContract,
+    identity_replay_contract,
+)
 from ..data_models import Attempt, DataPoint, MediaRef
 from ._engine_common import (
     ExternalEngineConformanceError,
@@ -39,6 +43,15 @@ class PurpleLlamaAttacker(BaseAttacker):
     """Replay only source-authentic CyberSecEval inputs under their native name."""
 
     name = "purplellama"
+
+    def plan_target_inputs(
+        self, datapoint: DataPoint, budget: AttackBudget
+    ) -> AttackerInputContract:
+        if datapoint.source != "cyberseceval":
+            raise ExternalEngineConformanceError(
+                "PurpleLlama input planning accepts only CyberSecEval DataPoints"
+            )
+        return identity_replay_contract(self.name, datapoint, budget)
 
     def generate(
         self,

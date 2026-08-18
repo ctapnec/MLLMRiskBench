@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import html
 import math
 import os
@@ -16,10 +17,111 @@ from .ui import _page
 
 
 class BuilderCaptureMixin:
-    @classmethod
-    def _projection_params(cls, params: Mapping[str, str]) -> dict[str, str]:
+    _BUILDER_FIELDS = frozenset({
+        "mode",
+        "canary_dry",
+        "corpora",
+        "api",
+        "local",
+        "attackers",
+        "judges",
+        "judge_model",
+        "ack_hosted_judge_data_transfer",
+        "approximate_common_metrics",
+        "defense",
+        "defense_guard",
+        "guardrail_model",
+        "guardrail_revision",
+        "guardrail_device",
+        "defense_guardrail_model",
+        "defense_guardrail_revision",
+        "defense_guardrail_device",
+        "project_revision",
+        "project_revision_sha",
+        "source_conformance",
+        "source_conformance_sha",
+        "scope",
+        "max_age",
+        "limit",
+        "sample_seed",
+        "seeds",
+        "max_queries",
+        "max_turns",
+        "cap_target",
+        "cap_judge",
+        "cap_http",
+        "deadline",
+        "dtype",
+        "quantization",
+        "out",
+        "t3_artifact",
+        "t3_artifact_sha",
+        "harm_config",
+        "nanogcg_model_id",
+        "nanogcg_model_revision",
+        "nanogcg_suffix",
+        "nanogcg_suffix_source",
+        "_api_config_snapshot_sha256",
+        "_local_config_snapshot_sha256",
+        "_source_config_snapshot_sha256",
+        "_attacker_config_snapshot_sha256",
+        "_execution_config_bundle_sha256",
+        "_execution_snapshot_sha256",
+    })
+    _CAPTURE_FIELDS = frozenset({
+        "t3cap_corpus",
+        "t3cap_limit",
+        "t3cap_sample_seed",
+        "t3cap_endpoint",
+        "t3cap_revision",
+        "t3cap_provider",
+        "t3cap_model",
+        "t3cap_out",
+        "t3cap_timeout",
+        "hcap_repo",
+        "hcap_revision",
+        "hcap_source",
+        "hcap_corpus",
+        "hcap_methods",
+        "hcap_experiment",
+        "hcap_limit",
+        "hcap_sample_seed",
+        "hcap_cases",
+        "hcap_artifact_out",
+        "hcap_config_out",
+        "hcap_python",
+        "hcap_credentials",
+        "hcap_timeout",
+    })
+    _BUILDER_UI_ONLY_FIELDS = frozenset({"_judge_model_ui", "local_choice"})
+
+    def _validate_builder_form_keys(self, form: Mapping[str, str]) -> None:
+        """Reject unknown or malformed builder keys before any composition."""
+
+        for key in form:
+            if (
+                not isinstance(key, str)
+                or not key
+                or len(key) > 4096
+                or any(ord(character) < 32 or ord(character) == 127 for character in key)
+            ):
+                raise ValueError("builder form contains a malformed field name")
+            if key in (
+                self._BUILDER_FIELDS
+                | self._CAPTURE_FIELDS
+                | self._BUILDER_UI_ONLY_FIELDS
+            ):
+                continue
+            if re.fullmatch(r"att_(?:path|sha)(?:[1-9]|1[0-2])", key):
+                continue
+            if key.startswith("quantization::") and key != "quantization::":
+                continue
+            raise ValueError("builder form contains an unsupported field name")
+
+    def _projection_params(self, params: Mapping[str, str]) -> dict[str, str]:
         """Normalized grid identity for safe preflight reuse."""
 
+        params = self._durable_builder_params(params)
         attackers = {
             item.strip() for item in str(params.get("attackers", "")).split(",") if item.strip()
         }
@@ -27,7 +129,7 @@ class BuilderCaptureMixin:
             key: str(value).strip()
             for key, value in params.items()
             if (
-                key not in cls._PROJECTION_CAP_FIELDS
+                key not in self._PROJECTION_CAP_FIELDS
                 and not key.startswith(("t3cap_", "hcap_"))
                 and (key not in {"t3_artifact", "t3_artifact_sha"} or "t3mp3st" in attackers)
                 and (key != "harm_config" or "harmbench" in attackers)
@@ -289,9 +391,9 @@ class BuilderCaptureMixin:
             + "".join(f"<code>{html.escape(part)}</code>" for part in argv)
             + "</div>"
         )
-        hidden = "".join(
-            f"<input type='hidden' name='{html.escape(key)}' value='{html.escape(value)}'>"
-            for key, value in sorted(params.items())
+        launch_ticket = self._new_launch_ticket(
+            params,
+            purpose=f"capture:{kind}",
         )
         action = "/build/t3mp3st/capture" if kind == "t3mp3st" else "/build/harmbench/prepare"
         body = (
@@ -302,7 +404,9 @@ class BuilderCaptureMixin:
             "or judges. Review the exact command before starting.</p></div>"
             "<div class='card'><h2>Exact command</h2>" + chips + "</div>"
             f"<form method='post' action='{action}'>"
-            + hidden
+            + "<input type='hidden' name='launch_ticket' value='"
+            + html.escape(launch_ticket)
+            + "'>"
             + "<input type='hidden' name='confirm' value='yes'>"
             "<div class='buildbar'><button type='submit'>"
             + _icon("play", size=15)
@@ -317,9 +421,50 @@ class BuilderCaptureMixin:
         kind: str,
         form: Mapping[str, str],
     ) -> tuple[int, str, bytes]:
-        confirmed = str(form.get("confirm", "")).strip() == "yes"
+        data = dict(form)
+        confirm_value = str(data.pop("confirm", "")).strip()
+        launch_ticket = str(data.pop("launch_ticket", "")).strip()
         prefix = "t3cap_" if kind == "t3mp3st" else "hcap_"
-        params = {key: str(value).strip() for key, value in form.items() if key.startswith(prefix)}
+
+        def confirmation_error() -> tuple[int, str, bytes]:
+            return (
+                200,
+                "text/html; charset=utf-8",
+                self._build_page(
+                    prefill={"attackers": kind},
+                    errors={
+                        prefix + ("out" if kind == "t3mp3st" else "artifact_out"): (
+                            "the confirmation expired or was changed; review "
+                            "the capture command again"
+                        )
+                    },
+                ),
+            )
+
+        if launch_ticket or confirm_value:
+            ticket_params = (
+                self._launch_ticket_params(
+                    launch_ticket,
+                    purpose=f"capture:{kind}",
+                )
+                if launch_ticket
+                else None
+            )
+            if confirm_value != "yes" or ticket_params is None or data:
+                return confirmation_error()
+            params = ticket_params
+            confirmed = True
+        else:
+            try:
+                self._validate_builder_form_keys(data)
+            except ValueError:
+                return confirmation_error()
+            params = {
+                key: str(value).strip()
+                for key, value in data.items()
+                if key.startswith(prefix)
+            }
+            confirmed = False
         command, values, errors = self._capture_values(kind, params)
         if errors:
             return (
@@ -347,10 +492,16 @@ class BuilderCaptureMixin:
     def _builder_params(self, form: Mapping[str, str]) -> dict[str, str]:
         """Normalize builder fields without materializing runtime config."""
 
+        self._validate_builder_form_keys(form)
+
         params = {
             key: str(value).strip()
             for key, value in form.items()
-            if (not key.startswith(("t3cap_", "hcap_")) and str(value).strip())
+            if (
+                key not in self._CAPTURE_FIELDS
+                and key not in self._BUILDER_UI_ONLY_FIELDS
+                and str(value).strip()
+            )
         }
         attackers = set(self._split_list(params.get("attackers", "")))
         if "t3mp3st" not in attackers:
@@ -358,11 +509,21 @@ class BuilderCaptureMixin:
             params.pop("t3_artifact_sha", None)
         if "harmbench" not in attackers:
             params.pop("harm_config", None)
+        if "nanogcg" not in attackers:
+            for field in (
+                "nanogcg_model_id",
+                "nanogcg_model_revision",
+                "nanogcg_suffix",
+                "nanogcg_suffix_source",
+            ):
+                params.pop(field, None)
         return params
 
     def _compose_from_builder(
         self,
         form: Mapping[str, str],
+        *,
+        execution_snapshot: Mapping[str, bytes] | None = None,
     ) -> tuple[str, dict[str, str], dict[str, str]]:
         """Turn builder selections into a validated run_matrix value map.
 
@@ -378,6 +539,22 @@ class BuilderCaptureMixin:
         dry = mode == "dry_run" or (
             mode == "diagnostic_canary" and params.get("canary_dry") == "on"
         )
+        snapshot = dict(execution_snapshot or {})
+        if snapshot:
+            snapshot = self._validate_execution_snapshot(params, snapshot)
+        if not dry and not snapshot:
+            for field, env_name in (
+                ("project_revision", "URA_PROJECT_REVISION_MANIFEST"),
+                ("project_revision_sha", "URA_PROJECT_REVISION_SHA256"),
+                ("source_conformance", "URA_SOURCE_CONFORMANCE_MANIFEST"),
+                ("source_conformance_sha", "URA_SOURCE_CONFORMANCE_SHA256"),
+            ):
+                if not params.get(field) and os.environ.get(env_name):
+                    params[field] = os.environ[env_name]
+        if snapshot:
+            params = {key: str(value) for key, value in params.items()}
+        else:
+            params = self._bind_selected_execution_config_identity(params)
         values: dict[str, str] = {}
         for source, flag in (
             ("corpora", "--corpora"),
@@ -446,13 +623,17 @@ class BuilderCaptureMixin:
                     values[flag] = params[src]
         if "llm" in judges.split(","):
             # A dry lane must grade with the offline mock LLM - never a real,
-            # metered hosted judge - so a "no calls, no spend" mode cannot
-            # silently issue paid Haiku judge calls.
+            # metered judge - so a "no calls, no spend" mode cannot silently
+            # issue a hosted or local model call.
             values["--judge-model"] = (
                 "mock"
                 if dry
-                else (params.get("judge_model", "") or "anthropic:claude-haiku-4-5-20251001")
+                else params.get("judge_model", "")
             )
+        if params.get("ack_hosted_judge_data_transfer") == "on" and not dry:
+            values["--ack-hosted-judge-data-transfer"] = "on"
+        if params.get("approximate_common_metrics") == "on":
+            values["--approximate-common-metrics"] = "on"
         for token, mode_flag, _desc in _BUILD_MODES:
             if token == mode and mode_flag:
                 values[mode_flag] = "on"
@@ -500,14 +681,61 @@ class BuilderCaptureMixin:
                     values[flag] = os.environ[env_name]
         # Bind the operator-local registries so a lane resolves its roster,
         # local target config, and source receipt as the runbook expects.
-        for relative, flag in (
-            ("experiments/api-targets.json", "--api-config"),
-            ("experiments/source-instances.json", "--source-config"),
-        ):
-            if (self.repo_root / relative).is_file():
-                values[flag] = relative
-        if not dry and values.get("--local"):
-            selected = self._split_list(values["--local"])
+        api_config, api_config_sha256 = self._materialize_selected_api_config(
+            params,
+            snapshot_payload=snapshot.get("api_config"),
+        )
+        if api_config is not None and api_config_sha256 is not None:
+            values["--api-config"] = str(api_config)
+            values["--api-config-sha256"] = api_config_sha256
+        source_config, source_config_sha256 = (
+            self._materialize_selected_source_config(
+                params,
+                snapshot_payload=snapshot.get("source_config"),
+            )
+        )
+        if source_config is not None and source_config_sha256 is not None:
+            values["--source-config"] = str(source_config)
+            values["--source-config-sha256"] = source_config_sha256
+        source_receipt, source_receipt_sha256 = (
+            self._materialize_selected_source_conformance(
+                params,
+                snapshot_payload=snapshot.get("source_conformance"),
+            )
+        )
+        if source_receipt is not None and source_receipt_sha256 is not None:
+            values["--source-conformance"] = str(source_receipt)
+            values["--source-conformance-sha256"] = source_receipt_sha256
+        project_receipt, project_receipt_sha256 = (
+            self._materialize_selected_project_revision(
+                params,
+                snapshot_payload=snapshot.get("project_revision"),
+            )
+        )
+        if project_receipt is not None and project_receipt_sha256 is not None:
+            values["--project-revision"] = str(project_receipt)
+            values["--project-revision-sha256"] = project_receipt_sha256
+        live_attestations = self._materialize_selected_live_attestations(
+            params,
+            execution_snapshot=snapshot,
+        )
+        materialized_iterator = iter(live_attestations)
+        for index in range(1, self._MAX_ATT_ROWS + 1):
+            if not str(params.get(f"att_path{index}", "")).strip():
+                continue
+            attestation_path, attestation_sha256 = next(materialized_iterator)
+            values[f"--live-attestation#{index}"] = str(attestation_path)
+            values[f"--live-attestation-sha256#{index}"] = attestation_sha256
+        judge_model = values.get("--judge-model", "")
+        judge_local = (
+            judge_model
+            if judge_model.startswith(("vllm:", "ollama:"))
+            else ""
+        )
+        if not dry and (values.get("--local") or judge_local):
+            selected = self._split_list(values.get("--local", ""))
+            if judge_local and judge_local not in selected:
+                selected.append(judge_local)
             local_cfg = self._materialize_selected_local_config(
                 selected,
                 default_quantization=params.get("quantization", ""),
@@ -516,8 +744,28 @@ class BuilderCaptureMixin:
                     for key, value in params.items()
                     if key.startswith("quantization::")
                 },
+                require_live_ollama=True,
+                snapshot_payload=snapshot.get("local_config"),
             )
             values["--local-config"] = str(local_cfg)
+            values["--local-config-sha256"] = hashlib.sha256(
+                local_cfg.read_bytes()
+            ).hexdigest()
+            _identities, private_config, durable_digest = (
+                self._local_config_projection(values)
+            )
+            if private_config != local_cfg or durable_digest is None:
+                self._unlink_transient_local_config(local_cfg)
+                raise ValueError("selected local config lacks a durable identity")
+            prior_digest = params.get("_local_config_snapshot_sha256", "")
+            if prior_digest and prior_digest != durable_digest:
+                self._unlink_transient_local_config(local_cfg)
+                raise ValueError(
+                    "selected local registry/model changed after review; "
+                    "review the lane again"
+                )
+            params["_local_config_snapshot_sha256"] = durable_digest
+        params = self._bind_execution_config_bundle_identity(params)
         return "run_matrix", values, params
 
     @staticmethod

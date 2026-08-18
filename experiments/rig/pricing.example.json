@@ -37,23 +37,6 @@
             }
           ]
         },
-        "claude-mythos-5": {
-          "rates": [
-            {
-              "currency": "USD",
-              "effective_date": "2026-08-15",
-              "per_million_tokens": {
-                "batch_input": null,
-                "batch_output": null,
-                "cache_read": null,
-                "cache_write": null,
-                "input": null,
-                "output": null,
-                "reasoning": null
-              }
-            }
-          ]
-        },
         "claude-opus-5": {
           "rates": [
             {
@@ -329,7 +312,7 @@
             }
           ]
         },
-        "gpt-5.6-tera": {
+        "gpt-5.6-terra": {
           "rates": [
             {
               "currency": "USD",

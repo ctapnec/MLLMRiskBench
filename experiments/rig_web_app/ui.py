@@ -138,6 +138,16 @@ form.inline { display:inline; margin:0; }
   color:var(--ink); font-size:.9rem; }
 #jobfilter:focus { outline:2px solid
   color-mix(in srgb, var(--accent) 45%, transparent); border-color:var(--accent); }
+.job-date-filters { max-width:720px; grid-template-columns:repeat(2,
+  minmax(220px,1fr)); }
+.job-date-filters input[type=datetime-local] { width:100%; min-height:2.35rem;
+  padding:.42rem .65rem; border:1px solid var(--line); border-radius:8px;
+  background:var(--bg); color:var(--ink); font:inherit; font-size:.86rem;
+  color-scheme:light dark; }
+.job-date-filters input[type=datetime-local]:hover { border-color:
+  color-mix(in srgb, var(--accent) 55%, var(--line)); }
+.job-date-filters input[type=datetime-local]:focus { outline:2px solid
+  color-mix(in srgb, var(--accent) 45%, transparent); border-color:var(--accent); }
 a { color:var(--accent); }
 p.note { color:var(--muted); font-size:.84rem; }
 footer.note { color:var(--muted); font-size:.8rem; margin-top:2rem;
@@ -267,9 +277,13 @@ button.ghost { background:transparent; color:var(--accent);
 .modelrow { min-width:0; padding:.5rem .55rem; background:var(--card);
   border:1px solid var(--line); border-radius:9px; }
 .modelrow:focus-within { border-color:var(--accent); }
-.modelrow:has(.modelbox:checked) { background:color-mix(in srgb,
-  var(--accent) 8%, var(--card)); border-color:var(--accent); }
+.model-picker[data-role=target] .modelrow:has(.modelbox:checked),
+.model-picker[data-role=judge] .modelrow:has(.judge-modelbox:checked) {
+  background:color-mix(in srgb, var(--accent) 8%, var(--card));
+  border-color:var(--accent); }
 .modelchoice { width:100%; padding:0; }
+.modelchoice > .modelchoice-label { flex:1 1 auto; min-width:0; cursor:pointer; }
+.modelchoice > .modelchoice-label > span { display:block; }
 .modelrow .fieldhint { display:block; margin-top:.18rem; line-height:1.35; }
 .modelquant { display:flex; align-items:center; gap:.45rem; margin:.4rem 0 0 1.45rem;
   flex-wrap:wrap; }
@@ -282,6 +296,55 @@ button.ghost { background:transparent; color:var(--accent);
 .precision-badge.precision-unknown { box-shadow:inset 0 0 0 1px var(--line); }
 .filter-empty { display:none; color:var(--muted); font-size:.84rem;
   margin:.35rem 0; }
+.model-picker-selection { display:flex; align-items:center; gap:.75rem;
+  flex-wrap:wrap; padding:.65rem .75rem; background:var(--soft);
+  border:1px solid var(--line); border-radius:10px; }
+.selection-summary { color:var(--muted); font-size:.86rem; overflow-wrap:anywhere; }
+.model-picker { position:fixed; inset:0; z-index:900; padding:clamp(.5rem,3vw,2rem);
+  background:color-mix(in srgb, var(--bg) 62%, transparent);
+  backdrop-filter:blur(3px); display:flex; align-items:center; justify-content:center; }
+.model-picker[hidden] { display:none; }
+.model-picker-shell { width:min(1080px,100%); max-height:calc(100vh - 2rem);
+  overflow:auto; background:var(--card); border:1px solid var(--line);
+  border-radius:14px; box-shadow:0 18px 60px rgba(0,0,0,.28);
+  padding:1rem 1.15rem; }
+.model-picker-head, .model-picker-foot, .picker-step-actions {
+  display:flex; justify-content:space-between; align-items:center; gap:.75rem;
+  flex-wrap:wrap; }
+.model-picker-head { position:sticky; top:-1rem; z-index:4; margin:-1rem -1.15rem 0;
+  padding:1rem 1.15rem .75rem; background:var(--card);
+  border-bottom:1px solid var(--line); }
+.model-picker-head h2 { margin:0; font-size:1.1rem; }
+.wizard-kicker { margin:0 0 .1rem; color:var(--accent); font-size:.72rem;
+  font-weight:700; text-transform:uppercase; letter-spacing:.08em; }
+.wizard-steps { display:flex; gap:.45rem; margin:.85rem 0; }
+.wizard-step { padding:.25rem .65rem; border:1px solid var(--line);
+  border-radius:999px; color:var(--muted); font-size:.78rem; font-weight:600; }
+.wizard-step.on { color:var(--accent); border-color:var(--accent);
+  background:color-mix(in srgb, var(--accent) 9%, var(--card)); }
+.picker-runtime-grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr));
+  gap:.8rem; margin:.75rem 0 1rem; }
+button.picker-runtime-choice { display:flex; flex-direction:column; align-items:flex-start;
+  min-height:9rem; padding:1rem; text-align:left; color:var(--ink);
+  background:var(--soft); border:1px solid var(--line); }
+button.picker-runtime-choice:hover, button.picker-runtime-choice:focus-visible {
+  border-color:var(--accent); background:color-mix(in srgb,var(--accent) 8%,var(--card)); }
+.picker-runtime-choice strong { color:var(--accent); font-size:1rem; }
+.picker-runtime-choice span { color:var(--muted); font-weight:400; line-height:1.45; }
+.picker-step-actions { margin:.2rem 0 .65rem; }
+.picker-model-panel .checkgrid { grid-template-columns:repeat(auto-fill,minmax(290px,1fr));
+  max-height:48vh; overflow:auto; padding:.15rem; }
+.model-picker-foot { position:sticky; bottom:-1rem; z-index:4;
+  margin:.85rem -1.15rem -1rem; padding:.75rem 1.15rem 1rem;
+  background:var(--card); border-top:1px solid var(--line); }
+.model-picker[data-role=target] .judge-cost-warning { display:none; }
+body.model-picker-open { overflow:hidden; }
+@media (max-width:640px) {
+  .picker-runtime-grid, .job-date-filters { grid-template-columns:1fr; }
+  .model-picker { padding:.25rem; }
+  .model-picker-shell { max-height:calc(100vh - .5rem); border-radius:10px; }
+  .picker-model-panel .checkgrid { grid-template-columns:1fr; }
+}
 .hardware-grid { display:grid; grid-template-columns:minmax(220px,.8fr) 2fr;
   gap:1rem; align-items:start; }
 .hardware-grid h3 { margin:.15rem 0 .45rem; }
@@ -422,6 +485,9 @@ button.is-busy { opacity:.6; pointer-events:none; }
 _BUILDER_SCRIPT = """<script>(function(){
 var form=document.getElementById('builder');
 if(!form){return;}
+var picker=document.getElementById('model-picker');
+var pickerRole='target';var pickerKind='';var pickerLastFocus=null;
+function pickerIsOpen(){return !!(picker&&!picker.hidden);}
 function checked(sel,attr){var out=[];
 form.querySelectorAll(sel).forEach(function(el){
 if(el.checked){out.push(el.getAttribute(attr));}});return out;}
@@ -437,7 +503,7 @@ var out=document.getElementById(kind+'-filter-count');
 if(out){out.textContent=count+' shown';}
 var empty=document.getElementById(kind+'-filter-empty');
 if(empty){empty.style.display=count?'none':'block';}}
-function applyTargetFilters(sc){
+function applyTargetFilters(sc,role){
 var provider=(document.getElementById('api-provider-filter')||{}).value||'all';
 var query=((document.getElementById('local-name-filter')||{}).value||'')
 .trim().toLowerCase();
@@ -461,12 +527,15 @@ var fit=row.getAttribute('data-compatible')||'unknown';
 var compatOk=fit==='true'||(fit==='false'&&!compatible)||
 (fit==='unknown'&&includeUnknown);
 filterOk=name.indexOf(query)!==-1&&paramsOk&&compatOk;}
+else if(kind==='local'&&backend==='ollama'){
+var ollamaName=(row.getAttribute('data-name')||'').toLowerCase();
+filterOk=ollamaName.indexOf(query)!==-1;}
 var visible=scopeOk&&filterOk;row.style.display=visible?'':'none';
 // A presentation filter never changes a selected target. Modality scope keeps
 // its established behavior because an out-of-scope target cannot serve a lane.
-if(!scopeOk){var cb=row.querySelector('.modelbox');if(cb){cb.checked=false;}}
+if(role==='target'&&!scopeOk){var cb=row.querySelector('.modelbox');if(cb){cb.checked=false;}}
 if(visible&&kind==='api'){counts.api++;}
-if(visible&&kind==='local'&&backend==='vllm'){counts.local++;}
+if(visible&&kind==='local'){counts.local++;}
 });
 setFilterCount('api',counts.api);setFilterCount('local',counts.local);}
 function applyScope(){var sc=scopeSet();
@@ -485,7 +554,9 @@ form.querySelectorAll('.fwrow').forEach(function(row){
 var mods=(row.getAttribute('data-mods')||'').split(',').filter(Boolean);
 var ok=intersects(mods,sc);row.style.display=ok?'':'none';
 if(!ok){var cb=row.querySelector('.fwbox');if(cb){cb.checked=false;}}});
-applyTargetFilters(sc);}
+if(pickerIsOpen()&&pickerRole==='judge'){
+applyTargetFilters({text:1},'judge');
+}else{applyTargetFilters(sc,'target');}}
 function updateUnknownPrecisionBadges(){
 var labels={none:'16-bit',fp8:'8-bit FP8',bitsandbytes:'4-bit BitsAndBytes',
 awq:'4-bit AWQ',gptq:'4-bit GPTQ'};
@@ -498,7 +569,14 @@ label.textContent=value==='auto'?'fit unknown':
 (labels[value]||value)+' selected · fit unknown';
 if(tip){tip.textContent=value==='auto'?
 'The operator must choose a per-model precision before a live run.':
-'Operator-selected precision; hardware fit remains unknown.';}});}
+'Operator-selected precision; hardware fit remains unknown.';}});
+form.querySelectorAll(".modelrow[data-profile-overrides='true']").forEach(function(row){
+var select=row.querySelector('.modelquant select');if(!select){return;}
+var option=select.options[select.selectedIndex];var fit=option&&option.getAttribute('data-fit');
+if(!fit){return;}row.setAttribute('data-compatible',fit);
+var disabled=row.getAttribute('data-config-invalid')==='true'||fit==='false';
+row.querySelectorAll('.modelbox,.judge-modelbox').forEach(function(input){
+input.disabled=disabled;});});}
 function applyPreparedFields(){
 var any=false;
 form.querySelectorAll('.prepared-fields').forEach(function(panel){
@@ -510,7 +588,90 @@ if(box){box.setAttribute('aria-expanded',visible?'true':'false');}
 if(visible){any=true;}});
 var group=document.getElementById('prepared-workflows');
 if(group){group.hidden=!any;group.setAttribute('aria-hidden',any?'false':'true');}}
+function updateSelectionSummaries(){
+var targets=checked('.modelbox','data-model');
+var targetOut=document.getElementById('target-model-summary');
+if(targetOut){targetOut.textContent=targets.length?
+targets.length+' selected: '+targets.join(', '):'No target models selected';}
+var judgeInput=document.getElementById('judge-model-input');
+var judgeOut=document.getElementById('judge-model-summary');
+if(judgeOut){judgeOut.textContent=judgeInput&&judgeInput.value?
+judgeInput.value:'No LLM judge model selected';}}
+function setPickerRole(role){
+pickerRole=role==='judge'?'judge':'target';
+if(!picker){return;}picker.setAttribute('data-role',pickerRole);
+var title=document.getElementById('model-picker-title');
+if(title){title.textContent=pickerRole==='judge'?'Choose LLM judge model':'Choose target models';}
+var note=document.getElementById('model-picker-role-note');
+if(note){note.textContent=pickerRole==='judge'?
+'Choose exactly one judge. It must differ from every target model.':
+'Choose one or more hosted targets and at most one local target.';}
+form.querySelectorAll('.modelchoice').forEach(function(choice){
+var target=choice.querySelector('.modelbox');var judge=choice.querySelector('.judge-modelbox');
+var label=choice.querySelector('.modelchoice-label');
+if(target){target.hidden=pickerRole!=='target';}
+if(judge){judge.hidden=pickerRole!=='judge';}
+if(label){label.setAttribute('for',choice.getAttribute(
+pickerRole==='judge'?'data-judge-for':'data-target-for'));}});}
+function showPickerRuntime(){
+pickerKind='';var runtime=document.getElementById('model-picker-runtime');
+var models=document.getElementById('model-picker-models');
+if(runtime){runtime.hidden=false;}if(models){models.hidden=true;}
+document.querySelectorAll('[data-picker-step-label]').forEach(function(step){
+step.classList.toggle('on',step.getAttribute('data-picker-step-label')==='runtime');});
+if(runtime){var first=runtime.querySelector('button');if(first){first.focus();}}}
+function showPickerModels(kind){
+pickerKind=kind==='local'?'local':'api';
+var runtime=document.getElementById('model-picker-runtime');
+var models=document.getElementById('model-picker-models');
+if(runtime){runtime.hidden=true;}if(models){models.hidden=false;}
+document.querySelectorAll('.picker-model-panel').forEach(function(panel){
+panel.hidden=panel.getAttribute('data-picker-panel')!==pickerKind;});
+document.querySelectorAll('[data-picker-step-label]').forEach(function(step){
+step.classList.toggle('on',step.getAttribute('data-picker-step-label')==='models');});
+applyTargetFilters(pickerRole==='judge'?{text:1}:scopeSet(),pickerRole);
+var panel=document.querySelector(".picker-model-panel[data-picker-panel='"+pickerKind+"']");
+if(panel){var first=panel.querySelector('select,input:not([hidden]),button');
+if(first){first.focus();}}}
+function openPicker(role,opener){
+if(!picker){return;}pickerLastFocus=opener||document.activeElement;
+setPickerRole(role);picker.hidden=false;picker.setAttribute('aria-hidden','false');
+document.body.classList.add('model-picker-open');
+document.querySelectorAll('[data-open-model-picker]').forEach(function(button){
+button.setAttribute('aria-expanded',button===opener?'true':'false');});
+showPickerRuntime();}
+function closePicker(){
+if(!picker||picker.hidden){return;}picker.hidden=true;picker.setAttribute('aria-hidden','true');
+document.body.classList.remove('model-picker-open');
+document.querySelectorAll('[data-open-model-picker]').forEach(function(button){
+button.setAttribute('aria-expanded','false');});
+applyTargetFilters(scopeSet(),'target');
+if(pickerLastFocus&&typeof pickerLastFocus.focus==='function'){pickerLastFocus.focus();}}
+document.querySelectorAll('[data-open-model-picker]').forEach(function(button){
+button.addEventListener('click',function(){openPicker(this.getAttribute('data-open-model-picker'),this);});});
+document.querySelectorAll('[data-close-model-picker]').forEach(function(button){
+button.addEventListener('click',closePicker);});
+document.querySelectorAll('[data-picker-kind]').forEach(function(button){
+button.addEventListener('click',function(){showPickerModels(this.getAttribute('data-picker-kind'));});});
+var pickerBack=document.getElementById('model-picker-back');
+if(pickerBack){pickerBack.addEventListener('click',showPickerRuntime);}
+if(picker){picker.addEventListener('click',function(event){if(event.target===picker){closePicker();}});
+picker.addEventListener('keydown',function(event){
+if(event.key==='Escape'){event.preventDefault();closePicker();return;}
+if(event.key!=='Tab'){return;}
+var focusable=Array.prototype.filter.call(picker.querySelectorAll(
+'button:not([disabled]),input:not([disabled]):not([hidden]),select:not([disabled]),[tabindex]:not([tabindex="-1"])'),
+function(node){return !node.hidden&&node.offsetParent!==null;});
+if(!focusable.length){event.preventDefault();return;}
+var first=focusable[0];var last=focusable[focusable.length-1];
+if(event.shiftKey&&document.activeElement===first){event.preventDefault();last.focus();}
+else if(!event.shiftKey&&document.activeElement===last){event.preventDefault();first.focus();}});}
+form.querySelectorAll('.judge-modelbox').forEach(function(input){
+input.addEventListener('change',function(){if(!this.checked){return;}
+var hidden=document.getElementById('judge-model-input');
+if(hidden){hidden.value=this.getAttribute('data-model')||'';}updateSelectionSummaries();});});
 function refresh(){updateUnknownPrecisionBadges();applyScope();applyPreparedFields();
+updateSelectionSummaries();
 // live preview
 var mode=(form.querySelector('input[name=mode]:checked')||{}).value||'measured';
 var flagFor={dry_run:'--dry-run',attestation_probe:'--attestation-probe',

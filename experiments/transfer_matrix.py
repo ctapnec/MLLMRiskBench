@@ -34,8 +34,22 @@ from ura.data_models import (  # noqa: E402
     RunManifest,
 )
 from ura.metrics import clustered_bootstrap_ci  # noqa: E402
+from ura.model_acquisition_runtime import (  # noqa: E402
+    model_acquisition_execution_descriptor,
+    model_acquisition_shared_from_cell_projection,
+    validate_model_acquisition_execution_descriptor,
+    validate_model_acquisition_grid_binding,
+    validate_model_acquisition_role_projection,
+    validate_model_acquisition_role_projection_binding,
+)
 from experiments.analysis_integrity import analysis_source_identity  # noqa: E402
-from ura.runner import CODE_VERSION, realized_identity_summary  # noqa: E402
+from ura.runner import (  # noqa: E402
+    CODE_VERSION,
+    realized_identity_summary,
+    validate_persisted_judgment_trails,
+    validate_planned_realized_identities,
+)
+from ura.strict_json import strict_json_loads  # noqa: E402
 
 
 _MAX_JSON_BYTES = 4 * 1024 * 1024
@@ -82,8 +96,8 @@ def _read_object(path: Path) -> dict[str, Any]:
     if path.stat().st_size > _MAX_JSON_BYTES:
         raise ValueError(f"JSON object exceeds {_MAX_JSON_BYTES} bytes: {path}")
     try:
-        value = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError) as exc:
+        value = strict_json_loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError, RecursionError) as exc:
         raise ValueError(f"cannot read valid JSON object from {path}: {exc}") from exc
     if not isinstance(value, dict):
         raise ValueError(f"expected JSON object in {path}")
@@ -255,6 +269,23 @@ def _cohort_payload(manifest: dict[str, Any]) -> dict[str, Any]:
     if not isinstance(run_config, dict) or not run_config.get("model_spec"):
         raise ValueError("manifest lacks config.run.model_spec")
     run_config.pop("model_spec")
+    # Each cell has already been checked against its own immutable attestation
+    # snapshot.  That snapshot is target-specific provenance, so retaining it
+    # here would make every honest cross-model cohort incompatible.  Defense
+    # comparisons separately require identical planned base components and
+    # compatible realized base identities in paired_compare.
+    run_config.pop("expected_target_identity", None)
+    for target_specific_field in (
+        "api_config",
+        "local_identity",
+        "resolved_quantization",
+    ):
+        run_config.pop(target_specific_field, None)
+    run_config["model_acquisition"] = (
+        model_acquisition_shared_from_cell_projection(
+            run_config.get("model_acquisition")
+        )
+    )
     return payload
 
 
@@ -315,6 +346,18 @@ def _validate_realized_identity_inventory(
             raise ValueError(
                 f"manifest {field} mismatch for {context}: {value!r} != {expected}"
             )
+    run = config.get("run")
+    components = config.get("components")
+    if not isinstance(run, dict) or not isinstance(components, dict):
+        raise ValueError(f"manifest {context} lacks planned identity config")
+    try:
+        validate_planned_realized_identities(
+            run, components, responses, trails, summary
+        )
+    except ValueError as exc:
+        raise ValueError(
+            f"planned/realized identity mismatch for {context}: {exc}"
+        ) from exc
     return summary
 
 
@@ -324,8 +367,8 @@ def _read_jsonl(path: Path) -> list[dict[str, Any]]:
         if not line.strip():
             continue
         try:
-            row = json.loads(line)
-        except json.JSONDecodeError as exc:
+            row = strict_json_loads(line)
+        except (ValueError, RecursionError) as exc:
             raise ValueError(f"invalid JSON at {path}:{line_no}: {exc}") from exc
         if not isinstance(row, dict):
             raise ValueError(f"non-object JSONL row at {path}:{line_no}")
@@ -394,6 +437,15 @@ def _completed_cell(path: Path) -> dict[str, Any]:
     run_config = (manifest.get("config") or {}).get("run")
     if not isinstance(run_config, dict):
         raise ValueError(f"completed cell manifest lacks config.run: {manifest_path}")
+    try:
+        acquisition_execution = validate_model_acquisition_role_projection(
+            run_config.get("model_acquisition")
+        )
+    except ValueError as exc:
+        raise ValueError(
+            f"completed cell model-acquisition binding is invalid: "
+            f"{manifest_path}: {exc}"
+        ) from exc
     if run_config.get("execution_purpose") == "diagnostic_canary":
         raise ValueError(
             f"diagnostic canary is not measured postprocessing evidence: {manifest_path}"
@@ -431,8 +483,13 @@ def _completed_cell(path: Path) -> dict[str, Any]:
             {key: value for key, value in row.items() if key != "_line"},
             strict=True,
         ))
+    parsed_judgments: list[Judgment] = []
     for row in judgments:
         _validate_model(Judgment, row, path=path, line=int(row["_line"]))
+        parsed_judgments.append(Judgment.model_validate(
+            {key: value for key, value in row.items() if key != "_line"},
+            strict=True,
+        ))
     for row in trails:
         _validate_model(
             Judgment, row, path=resolved["trails"], line=int(row["_line"])
@@ -505,6 +562,15 @@ def _completed_cell(path: Path) -> dict[str, Any]:
         if any(row.get("run_id") != run_id for row in artifact_rows):
             raise ValueError(f"mixed or missing run_id in completed {role} for {stem!r}")
 
+    validate_persisted_judgment_trails(
+        attempt_by_id,
+        {row.attempt_id: row for row in parsed_responses},
+        {row.attempt_id: row for row in parsed_judgments},
+        trails,
+        manifest["config"],
+        list(manifest["judges"]),
+    )
+
     identity_summary = _validate_realized_identity_inventory(
         manifest,
         marker,
@@ -529,6 +595,7 @@ def _completed_cell(path: Path) -> dict[str, Any]:
         "integrity_mode": "v2_sha256_bytes_records",
         "source_identity_validated": True,
         "realized_identities": identity_summary,
+        "model_acquisition_execution": acquisition_execution,
     }
 
 
@@ -646,6 +713,28 @@ def _validate_grid_scope(
         ):
             raise ValueError(f"incomplete grid accounting in {path}")
         request = grid["request"]
+        try:
+            stable_acquisition = model_acquisition_execution_descriptor(
+                request.get("model_acquisition"),
+                evidence_root=path.parent.resolve(),
+            )
+            requested_stable_acquisition = (
+                validate_model_acquisition_execution_descriptor(
+                    request.get("model_acquisition_execution")
+                )
+            )
+            validate_model_acquisition_grid_binding(
+                requested_stable_acquisition,
+                request,
+            )
+        except ValueError as exc:
+            raise ValueError(
+                f"grid model-acquisition evidence is invalid: {path}: {exc}"
+            ) from exc
+        if stable_acquisition != requested_stable_acquisition:
+            raise ValueError(
+                f"grid model-acquisition execution identity is stale: {path}"
+            )
         if request.get("execution_purpose") == "diagnostic_canary":
             raise ValueError(f"diagnostic canary is not measured evidence: {path}")
         if (
@@ -723,6 +812,17 @@ def _validate_grid_scope(
                 raise ValueError(f"grid/manifest run_id mismatch for {marker_path}")
             if status.get("target") not in (None, cell["model"]):
                 raise ValueError(f"grid/manifest target mismatch for {marker_path}")
+            try:
+                validate_model_acquisition_role_projection_binding(
+                    cell["model_acquisition_execution"],
+                    stable_acquisition,
+                    run_config=run,
+                )
+            except ValueError as exc:
+                raise ValueError(
+                    f"grid/manifest model-acquisition mismatch for {marker_path}: "
+                    f"{exc}"
+                ) from exc
             accounted_markers.add(marker_path)
         grid_ids.append(str(grid.get("grid_id") or path.stem))
 

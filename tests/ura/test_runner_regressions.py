@@ -22,7 +22,16 @@ from experiments.suite_summary import main as suite_summary_main
 from experiments.run_matrix import _safe_component
 from ura.adapters.base import AttackBudget, BaseAttacker
 from ura.adapters.crescendo import CrescendoAttacker
+from ura.adapters.ideator import IDEATORAttacker
 from ura.adapters.replay import ReplayAttacker
+from ura.attacker_input_contract import (
+    AttackerInputContract,
+    attacker_input_payload_sha256,
+    generated_image_input_contract,
+    identity_replay_contract,
+    media_input_identity,
+    text_only_transfer_contract,
+)
 from ura.converters.harmbench import HarmBenchConverter
 from ura.converters.synth import synth_corpus
 from ura.data_models import (
@@ -36,10 +45,17 @@ from ura.data_models import (
     RiskCategory,
 )
 from ura.judges.base import BaseJudge, JudgeCascade
+from ura.judges.llm import LLMJudge
 from ura.judges.rules import RuleJudge
 from ura.live_attestation import (
     build_live_attestation_manifest,
     route_config_sha256,
+)
+from ura.model_identity import canonical_https_endpoint_identity
+from ura.model_acquisition import (
+    build_receipt as build_model_acquisition_receipt,
+    build_upstream_manifest,
+    write_document_create_only,
 )
 from ura.runner import (
     CODE_VERSION,
@@ -63,6 +79,35 @@ _PNG = base64.b64decode(
     "+A8AAQUBAScY42YAAAAASUVORK5CYII="
 )
 
+_PROVIDER_ALIAS_PAIRS = (
+    ("anthropic", "claude"),
+    ("openai", "gpt"),
+    ("google", "gemini"),
+    ("glm", "zhipu"),
+    ("kimi", "moonshot"),
+    ("qwen", "dashscope"),
+    ("qwen", "alibaba"),
+    ("doubao", "bytedance"),
+)
+_RUNTIME_ROUTE_IDENTITY_PAIRS = (
+    (
+        "claude-haiku-4-5-20251001",
+        "anthropic:claude-haiku-4-5-20251001",
+        True,
+    ),
+    (
+        "claude-fable-5",
+        "anthropic-fable:claude-fable-5;effort=high;max_tokens=25000",
+        True,
+    ),
+    (
+        "openai:gpt-5.6-sol",
+        "openai-responses:gpt-5.6-sol;reasoning_mode=pro;"
+        "reasoning_effort=medium;reasoning_context=all_turns",
+        False,
+    ),
+)
+
 
 def _finite_budget_args() -> list[str]:
     return [
@@ -81,6 +126,86 @@ def _api_config_args(tmp_path: Path, *specs: str) -> list[str]:
         "temperature": 0.0,
     } for spec in specs}), encoding="utf-8")
     return ["--api-config", str(path)]
+
+
+def _git_blob_id(content: bytes) -> str:
+    return hashlib.sha1(  # noqa: S324 - Git blob identity by protocol
+        f"blob {len(content)}\0".encode("ascii") + content
+    ).hexdigest()
+
+
+def _sealed_model_acquisition_args(
+    tmp_path: Path,
+    planned_args: list[str],
+) -> list[str]:
+    """Build an exact offline managed-model receipt for one CLI fixture."""
+
+    plan_directory = (tmp_path / "private-acquisition-plans").resolve()
+    plan_directory.mkdir(parents=True)
+    assert run_matrix.main([
+        *planned_args,
+        "--model-acquisition-plan-only",
+        "--model-acquisition-plan-dir",
+        str(plan_directory),
+    ]) == 0
+    plan_path = next(plan_directory.glob("*.plan.json"))
+    plan = json.loads(plan_path.read_text(encoding="utf-8"))
+    store = (tmp_path / "private-managed-model-store").resolve()
+    store.mkdir()
+    snapshots: dict[str, Path] = {}
+    manifests: dict[str, dict[str, object]] = {}
+    for index, resource in enumerate(plan["resources"]):
+        resource_root = store / resource["resource_id"]
+        snapshot = resource_root / "snapshot"
+        snapshot.mkdir(parents=True)
+        content = (
+            json.dumps(
+                {
+                    "fixture": index,
+                    "repo": resource["repo_id"],
+                    "revision": resource["revision"],
+                },
+                sort_keys=True,
+            )
+            + "\n"
+        ).encode("utf-8")
+        (snapshot / "config.json").write_bytes(content)
+        manifest = build_upstream_manifest(
+            resource["repo_id"],
+            resource["revision"],
+            [{
+                "path": "config.json",
+                "size": len(content),
+                "blob_id": _git_blob_id(content),
+                "lfs_sha256": None,
+            }],
+        )
+        write_document_create_only(
+            resource_root.resolve(),
+            manifest,
+            identifier=manifest["manifest_id"],
+            suffix="upstream-manifest.json",
+        )
+        snapshots[resource["resource_id"]] = snapshot
+        manifests[resource["resource_id"]] = manifest
+    receipt = build_model_acquisition_receipt(
+        plan, snapshots=snapshots, manifests=manifests
+    )
+    receipt_directory = (tmp_path / "private-acquisition-receipts").resolve()
+    receipt_path, receipt_sha = write_document_create_only(
+        receipt_directory,
+        receipt,
+        identifier=receipt["receipt_id"],
+        suffix="receipt.json",
+    )
+    return [
+        "--model-acquisition-plan", str(plan_path),
+        "--model-acquisition-plan-sha256",
+        hashlib.sha256(plan_path.read_bytes()).hexdigest(),
+        "--model-acquisition-receipt", str(receipt_path),
+        "--model-acquisition-receipt-sha256", receipt_sha,
+        "--model-acquisition-store", str(store),
+    ]
 
 
 def _live_attestation_args(
@@ -505,7 +630,7 @@ def test_rig_check_runs_preflights_and_projects_calls_without_generation(
     artifacts = list(tmp_path.glob("eligibility-*.eligibility.json"))
     assert len(artifacts) == 1
     plan = json.loads(artifacts[0].read_text(encoding="utf-8"))
-    assert plan["schema"] == "ura-eligibility-plan/1"
+    assert plan["schema"] == "ura-eligibility-plan/2"
     assert plan["request"]["requested_target_specs"] == ["mock"]
     assert plan["counts"]["not_applicable"] == 0
     assert plan["counts"]["compatible_if_isolated"] > 0
@@ -528,7 +653,7 @@ def test_rig_check_retains_source_receipt_with_eligibility_evidence(
     scratch.mkdir()
     eligibility = scratch / "eligibility-a.eligibility.json"
     receipt = scratch / "source-conformance-b.json"
-    eligibility.write_text('{"schema":"ura-eligibility-plan/1"}\n', encoding="utf-8")
+    eligibility.write_text('{"schema":"ura-eligibility-plan/2"}\n', encoding="utf-8")
     receipt.write_text('{"schema":"ura-source-conformance/1"}\n', encoding="utf-8")
 
     retained = rig_check._persist_eligibility_artifacts(scratch, destination)
@@ -724,12 +849,18 @@ def test_measured_run_without_attestation_persists_pre_call_gate(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, project_revision_args,
 ) -> None:
     constructions = 0
+    preflights = 0
     generations = 0
 
     class NeverCalledTarget(BaseTarget):
         name = "missing-attestation-target"
         modality_support = ("text",)
         max_transport_attempts_per_call = 1
+
+        def preflight_base(self) -> None:
+            nonlocal preflights
+            preflights += 1
+            raise AssertionError("missing attestation must precede model preflight")
 
         def generate(self, dialog, *, seed=None):
             nonlocal generations
@@ -749,10 +880,11 @@ def test_measured_run_without_attestation_persists_pre_call_gate(
         "--execution-scope-id", "test-scope",
         "--live-attestation-max-age-hours", "24",
         "--attackers", "replay", "--judges", "rules",
-        "--corpora", "synth", "--limit", "1",
+        "--corpora", "synth", "--limit", "1", "--sample-seed", "0",
         "--out", str(out), *_finite_budget_args(), *project_revision_args,
     ]) == 1
     assert constructions == 1
+    assert preflights == 0
     assert generations == 0
     error = json.loads((out / "live-attestation.error.json").read_text(
         encoding="utf-8"
@@ -790,6 +922,11 @@ def test_stale_or_route_mismatched_attestation_fails_before_generation(
 
         def __init__(self) -> None:
             self.calls = 0
+            self.preflight_calls = 0
+
+        def preflight_base(self) -> None:
+            self.preflight_calls += 1
+            raise AssertionError("cap rejection must happen before target preflight")
 
         def generate(self, dialog, *, seed=None):
             self.calls += 1
@@ -810,12 +947,13 @@ def test_stale_or_route_mismatched_attestation_fails_before_generation(
         "--api", target_spec, *_api_config_args(tmp_path, target_spec),
         *receipt_args,
         "--attackers", "replay", "--judges", "rules",
-        "--corpora", "synth", "--limit", "1",
+        "--corpora", "synth", "--limit", "1", "--sample-seed", "0",
         "--max-queries", "1", "--max-turns", "1",
         "--out", str(tmp_path / "measured"), *_finite_budget_args(),
         *project_revision_args,
     ]) == 1
     assert target.calls == 0
+    assert target.preflight_calls == 0
     error = json.loads(
         (tmp_path / "measured" / "live-attestation.error.json").read_text(
             encoding="utf-8"
@@ -864,7 +1002,7 @@ def test_probe_producer_and_measured_run_bind_one_fake_live_route(
     common = [
         "--api", target_spec, *api_args,
         "--attackers", "replay", "--judges", "rules",
-        "--corpora", "synth", "--limit", "1",
+        "--corpora", "synth", "--limit", "1", "--sample-seed", "0",
         "--max-queries", "1", "--max-turns", "1", *_finite_budget_args(),
         *project_revision_args,
     ]
@@ -1055,52 +1193,164 @@ def test_diagnostic_canary_is_typed_and_excluded_from_measured_consumers(
 
 
 @pytest.mark.parametrize("diagnostic_canary", [False, True])
+@pytest.mark.parametrize("insufficient_cap", ["target", "judge", "http"])
 def test_provider_backed_request_requires_caps_for_full_projected_work(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     diagnostic_canary: bool,
+    insufficient_cap: str,
     project_revision_args,
 ) -> None:
     class NeverCalledTarget(BaseTarget):
-        name = "canary-cap-target"
         modality_support = ("text",)
         max_transport_attempts_per_call = 1
 
-        def __init__(self) -> None:
+        def __init__(self, *, name: str, model: str) -> None:
+            self.name = name
+            self.requested_spec = name
+            self.provider = "openai"
+            self.model = model
+            self.base_url = "https://api.openai.com/v1"
             self.calls = 0
+            self.preflight_calls = 0
+
+        def preflight_base(self) -> None:  # pragma: no cover - admission blocks
+            self.preflight_calls += 1
+            raise AssertionError("call budget admission should fail before preflight")
 
         def generate(self, dialog, *, seed=None):  # pragma: no cover - admission blocks
             self.calls += 1
             raise AssertionError("call budget admission should fail before generation")
 
-    target = NeverCalledTarget()
-    monkeypatch.setattr(run_matrix, "build_target", lambda *_a, **_kw: target)
     target_spec = "openai:fixture-canary-cap"
+    judge_spec = "openai:fixture-cap-judge"
+    target = NeverCalledTarget(name=target_spec, model="fixture-canary-cap")
+    judge_target = NeverCalledTarget(name=judge_spec, model="fixture-cap-judge")
+
+    def build(spec: str, *_args, **_kwargs):
+        return judge_target if spec == judge_spec else target
+
+    monkeypatch.setattr(run_matrix, "build_target", build)
     out = tmp_path / ("canary-cap" if diagnostic_canary else "measured-cap")
     purpose_args = ["--diagnostic-canary"] if diagnostic_canary else []
+    cap_values = {"target": "100", "judge": "100", "http": "100"}
+    cap_values[insufficient_cap] = "1"
     result = run_matrix.main([
         *purpose_args,
-        "--api", target_spec, *_api_config_args(tmp_path, target_spec),
+        "--api", target_spec,
+        *_api_config_args(tmp_path, target_spec, judge_spec),
         *_live_attestation_args(
             tmp_path,
             target_spec=target_spec,
             resolved_target=target.name,
             project_revision=project_revision_args.binding,
         ),
-        "--attackers", "crescendo", "--judges", "rules",
-        "--corpora", "synth", "--limit", "1", "--seeds", "0",
+        "--attackers", "crescendo", "--judges", "llm",
+        "--judge-model", judge_spec,
+        "--ack-hosted-judge-data-transfer",
+        "--corpora", "synth", "--limit", "1", "--sample-seed", "0",
+        "--seeds", "0",
         "--max-queries", "4", "--max-turns", "4",
-        "--max-total-target-calls", "1",
-        "--max-total-judge-calls", "1",
-        "--max-total-http-attempts", "1",
+        "--max-total-target-calls", cap_values["target"],
+        "--max-total-judge-calls", cap_values["judge"],
+        "--max-total-http-attempts", cap_values["http"],
         "--deadline-seconds", "3600", "--out", str(out),
         *project_revision_args,
     ])
 
     assert result == 1
     assert target.calls == 0
+    assert target.preflight_calls == 0
+    assert judge_target.calls == 0
+    assert judge_target.preflight_calls == 0
     error = json.loads((out / "grid-planning.error.json").read_text(encoding="utf-8"))
     assert "for the complete planned grid" in error["message"]
+
+
+def test_invocation_deadline_is_bound_once_and_never_extended(tmp_path: Path) -> None:
+    envelope_id = "request-envelope-" + "a" * 24
+    first, path = run_matrix._load_or_create_invocation_deadline(
+        tmp_path,
+        request_envelope_id=envelope_id,
+        invocation_started_epoch=1_000.0,
+        deadline_seconds=60,
+    )
+    assert first == 1_060.0
+    assert path is not None
+
+    resumed, resumed_path = run_matrix._load_or_create_invocation_deadline(
+        tmp_path,
+        request_envelope_id=envelope_id,
+        invocation_started_epoch=1_030.0,
+        deadline_seconds=60,
+    )
+    assert resumed_path == path
+    assert resumed == first
+    assert json.loads(path.read_text(encoding="utf-8"))["deadline_epoch"] == first
+
+    with pytest.raises(ValueError, match="clock moved backward"):
+        run_matrix._load_or_create_invocation_deadline(
+            tmp_path,
+            request_envelope_id=envelope_id,
+            invocation_started_epoch=900.0,
+            deadline_seconds=60,
+        )
+
+
+def test_deadline_expiring_during_model_preflight_makes_no_reservation_or_call(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    clock = {"now": 1_000.0}
+
+    class DeadlineTarget(BaseTarget):
+        modality_support = ("text",)
+        max_transport_attempts_per_call = 1
+
+        def __init__(self, name: str, *, advances_clock: bool) -> None:
+            self.name = name
+            self.advances_clock = advances_clock
+            self.preflight_calls = 0
+            self.calls = 0
+
+        def preflight_base(self) -> None:
+            self.preflight_calls += 1
+            if self.advances_clock:
+                clock["now"] = 1_002.0
+            else:  # pragma: no cover - the prior component expires the deadline
+                raise AssertionError("later model preflight must remain unstarted")
+
+        def generate(self, dialog, *, seed=None):  # pragma: no cover - deadline blocks
+            self.calls += 1
+            raise AssertionError("expired deadline must block generation")
+
+    target = DeadlineTarget("deadline-target", advances_clock=True)
+    judge_target = DeadlineTarget("deadline-judge", advances_clock=False)
+    built = iter((target, judge_target))
+    monkeypatch.setattr(run_matrix.time, "time", lambda: clock["now"])
+    monkeypatch.setattr(run_matrix, "build_target", lambda *_a, **_kw: next(built))
+    out = tmp_path / "deadline-expired-during-preflight"
+
+    assert run_matrix.main([
+        "--dry-run", "--attackers", "replay", "--judges", "llm",
+        "--judge-model", "mock",
+        "--corpora", "synth", "--limit", "1", "--seeds", "0",
+        "--max-queries", "1", "--max-turns", "1",
+        "--max-total-target-calls", "1",
+        "--max-total-judge-calls", "1",
+        "--max-total-http-attempts", "1",
+        "--deadline-seconds", "1", "--out", str(out),
+    ]) == 1
+    assert target.preflight_calls == 1
+    assert judge_target.preflight_calls == 0
+    assert target.calls == 0
+    assert judge_target.calls == 0
+    budget = json.loads(next(out.glob("grid-*.budget.json")).read_text(
+        encoding="utf-8"
+    ))
+    assert budget["target_calls"] == 0
+    assert budget["judge_calls"] == 0
+    assert budget["http_attempts"] == 0
 
 
 def test_local_probe_receipt_admits_measured_run_and_level1(
@@ -1158,11 +1408,15 @@ def test_local_probe_receipt_admits_measured_run_and_level1(
         *project_revision_args,
     ]
     probe_root = tmp_path / "local-probe"
-    assert run_matrix.main([
+    probe_args = [
         *common,
         "--attestation-probe", "--execution-scope-id", "local-test-scope",
         "--out", str(probe_root),
-    ]) == 0
+    ]
+    probe_acquisition = _sealed_model_acquisition_args(
+        tmp_path / "probe-acquisition", probe_args
+    )
+    assert run_matrix.main([*probe_args, *probe_acquisition]) == 0
     probe_grid = json.loads(next(probe_root.glob("*.grid.json")).read_text(
         encoding="utf-8"
     ))
@@ -1198,14 +1452,18 @@ def test_local_probe_receipt_admits_measured_run_and_level1(
     receipt_sha256 = hashlib.sha256(receipt_path.read_bytes()).hexdigest()
 
     measured_root = tmp_path / "local-measured"
-    assert run_matrix.main([
+    measured_args = [
         *common,
         "--execution-scope-id", "local-test-scope",
         "--live-attestation", str(receipt_path),
         "--live-attestation-sha256", receipt_sha256,
         "--live-attestation-max-age-hours", "1",
         "--out", str(measured_root),
-    ]) == 0
+    ]
+    measured_acquisition = _sealed_model_acquisition_args(
+        tmp_path / "measured-acquisition", measured_args
+    )
+    assert run_matrix.main([*measured_args, *measured_acquisition]) == 0
     measured_grid = json.loads(next(measured_root.glob("*.grid.json")).read_text(
         encoding="utf-8"
     ))
@@ -1328,6 +1586,36 @@ def test_call_projection_excludes_common_judges_for_source_metric_only_rows() ->
     assert projection["local_guardrail_evaluations"] == 0
 
 
+def test_call_projection_adds_only_opted_in_approximate_judge_work() -> None:
+    source_only = _datapoint("source-only").model_copy(update={
+        "source": "agentharm",
+        "meta": {
+            "common_metrics_eligible": False,
+            "required_metric": "official_agentharm_tool_grading",
+        },
+    })
+    cascade = run_matrix.build_judges(["rules", "llm"], "mock")
+    common = {
+        "targets": {"mock": MockTarget()},
+        "corpora": {"agentharm": [source_only]},
+        "attackers": {"replay": run_matrix.get_attacker("replay")},
+        "cascade": cascade,
+        "seeds": [0, 1],
+        "max_queries": 1,
+        "max_turns": 1,
+    }
+
+    default_off = run_matrix._project_grid_call_upper_bounds(**common)
+    opted_in = run_matrix._project_grid_call_upper_bounds(
+        **common, approximate_common_metrics=True
+    )
+
+    assert default_off["target_calls"] == opted_in["target_calls"] == 2
+    assert default_off["judge_calls"] == 0
+    assert opted_in["judge_calls"] == 2
+    assert default_off["http_attempts"] == opted_in["http_attempts"] == 0
+
+
 def test_call_projection_includes_input_and_output_defense_guard_work() -> None:
     class _Guard(BaseJudge):
         name = "guardrail"
@@ -1375,6 +1663,86 @@ def test_matrix_guardrail_requires_and_records_immutable_revision(
     assert guard.model_id == "meta-llama/Llama-Guard-3-8B"
     assert guard.revision == revision
     assert guard.device == "cuda:0"
+
+    target = run_matrix.build_target(
+        "vllm:meta-llama/Llama-Guard-3-8B",
+        local_identity={
+            "revision": revision,
+            "modalities": ["text"],
+            "tensor_parallel_size": 1,
+        },
+    )
+    assert run_matrix._precall_model_identity(target) == (
+        run_matrix._pinned_hub_model_identity(guard.model_id, guard.revision)
+    )
+
+
+def test_matrix_rejects_target_guardrail_same_hub_revision_before_preflight(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    project_revision_args,
+) -> None:
+    from ura.judges.guardrail import GuardrailJudge
+
+    model = "org/shared-target-guard"
+    revision = "d" * 40
+    spec = f"vllm:{model}"
+    local_config = tmp_path / "guardrail-self-local.json"
+    local_config.write_text(json.dumps({spec: {
+        "revision": revision,
+        "modalities": ["text"],
+        "tensor_parallel_size": 1,
+        "gpu_memory_utilization": 0.5,
+        "max_tokens": 64,
+    }}), encoding="utf-8")
+
+    class NeverPreflightTarget(BaseTarget):
+        name = f"{spec}@{revision}"
+        modality_support = ("text",)
+        max_transport_attempts_per_call = 0
+        model_digest = None
+        quantization = None
+        dtype = "auto"
+
+        def __init__(self) -> None:
+            self.model = model
+            self.revision = revision
+            self.preflight_calls = 0
+            self.calls = 0
+
+        def preflight_base(self) -> None:  # pragma: no cover - identity blocks
+            self.preflight_calls += 1
+            raise AssertionError("self-guard collision must precede model preload")
+
+        def generate(self, dialog, *, seed=None):  # pragma: no cover - identity blocks
+            self.calls += 1
+            raise AssertionError("self-guard collision must precede generation")
+
+    target = NeverPreflightTarget()
+    guard_preflights = 0
+
+    def forbidden_guard_preflight(_self) -> None:  # pragma: no cover - identity blocks
+        nonlocal guard_preflights
+        guard_preflights += 1
+        raise AssertionError("self-guard collision must precede guard preload")
+
+    monkeypatch.setattr(run_matrix, "build_target", lambda *_a, **_kw: target)
+    monkeypatch.setattr(run_matrix, "_require_local_hardware_fit", lambda *_a: None)
+    monkeypatch.setattr(GuardrailJudge, "preflight", forbidden_guard_preflight)
+
+    assert run_matrix.main([
+        "--preflight-only", "--local", spec,
+        "--local-config", str(local_config),
+        "--attackers", "replay", "--judges", "guardrail",
+        "--guardrail-model", model,
+        "--guardrail-revision", revision,
+        "--corpora", "synth", "--limit", "1",
+        "--out", str(tmp_path / "self-guard"),
+        *_finite_budget_args(), *project_revision_args,
+    ]) == 1
+    assert target.preflight_calls == 0
+    assert target.calls == 0
+    assert guard_preflights == 0
 
 
 def test_model_defense_requires_separate_guard_identity_and_device(
@@ -1425,6 +1793,7 @@ def test_matrix_rejects_a_target_that_is_also_the_llm_judge(
         "--attackers", "replay",
         "--judges", "rules,llm",
         "--judge-model", judge_spec,
+        "--ack-hosted-judge-data-transfer",
         "--corpora", "synth",
         "--limit", "1",
         "--max-queries", "1", "--max-turns", "1",
@@ -1434,6 +1803,656 @@ def test_matrix_rejects_a_target_that_is_also_the_llm_judge(
     ])
 
     assert result == 1
+
+
+@pytest.mark.parametrize(("canonical", "alias"), _PROVIDER_ALIAS_PAIRS)
+def test_matrix_rejects_provider_alias_duplicate_targets_and_self_judge_before_calls(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    project_revision_args,
+    canonical: str,
+    alias: str,
+) -> None:
+    model = "shared-account-model"
+    target_spec = f"{alias}:{model}"
+    equivalent_spec = f"{canonical}:{model}"
+    native = canonical in {"anthropic", "openai", "google"}
+    condition: dict[str, object] = {
+        "modalities": ["text"],
+        "max_tokens": 64,
+        "temperature": 0.0,
+    }
+    if not native:
+        condition["base_url"] = "https://example.invalid/compatible/v1"
+    config = tmp_path / f"api-alias-{canonical}-{alias}.json"
+    config.write_text(json.dumps({
+        target_spec: condition,
+        equivalent_spec: condition,
+    }), encoding="utf-8")
+
+    first = run_matrix.build_target(target_spec, api_config=dict(condition))
+    second = run_matrix.build_target(equivalent_spec, api_config=dict(condition))
+    assert run_matrix._precall_model_identity(first) == (
+        run_matrix._precall_model_identity(second)
+    )
+    assert any(
+        key[0] in {"provider-model", "endpoint-model"}
+        for key in run_matrix._precall_model_identity(first)
+    )
+
+    runner_calls: list[str] = []
+
+    def unexpected_run(*_args, **_kwargs):
+        runner_calls.append("run")
+        raise AssertionError("alias collision must reject before model calls")
+
+    monkeypatch.setattr(run_matrix.Runner, "run", unexpected_run)
+    common = [
+        "--api-config", str(config),
+        "--attackers", "replay", "--corpora", "synth", "--limit", "1",
+        "--max-queries", "1", "--max-turns", "1",
+        *_finite_budget_args(), *project_revision_args,
+    ]
+
+    assert run_matrix.main([
+        *common,
+        "--attestation-probe", "--execution-scope-id", "test-scope",
+        "--api", target_spec,
+        "--judges", "rules,llm",
+        "--judge-model", equivalent_spec,
+        "--ack-hosted-judge-data-transfer",
+        "--out", str(tmp_path / f"self-{canonical}-{alias}"),
+    ]) == 1
+    with pytest.raises(SystemExit):
+        run_matrix.main([
+            *common,
+            "--execution-scope-id", "test-scope",
+            "--live-attestation-max-age-hours", "2",
+            "--api", f"{target_spec},{equivalent_spec}",
+            "--judges", "rules",
+            "--out", str(tmp_path / f"duplicate-{canonical}-{alias}"),
+        ])
+    assert runner_calls == []
+
+
+@pytest.mark.parametrize(
+    ("first_spec", "second_spec", "same_condition"),
+    _RUNTIME_ROUTE_IDENTITY_PAIRS,
+)
+def test_matrix_rejects_bare_and_inherent_route_collisions_before_calls(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    project_revision_args,
+    first_spec: str,
+    second_spec: str,
+    same_condition: bool,
+) -> None:
+    condition = {
+        "modalities": ["text"],
+        "max_tokens": 64,
+        "temperature": 0.0,
+    }
+    required_specs = [
+        spec
+        for spec in (first_spec, second_spec)
+        if target_api_module.api_target_requires_config(spec)
+    ]
+    config_args: list[str] = []
+    if required_specs:
+        config = tmp_path / "route-identities.json"
+        config.write_text(
+            json.dumps({spec: condition for spec in required_specs}),
+            encoding="utf-8",
+        )
+        config_args = ["--api-config", str(config)]
+
+    runner_calls: list[str] = []
+
+    def unexpected_run(*_args, **_kwargs):
+        runner_calls.append("run")
+        raise AssertionError("route collision must reject before model calls")
+
+    monkeypatch.setattr(run_matrix.Runner, "run", unexpected_run)
+    common = [
+        *config_args,
+        "--attackers", "replay", "--corpora", "synth", "--limit", "1",
+        "--max-queries", "1", "--max-turns", "1",
+        *_finite_budget_args(), *project_revision_args,
+    ]
+
+    assert run_matrix.main([
+        *common,
+        "--attestation-probe", "--execution-scope-id", "test-scope",
+        "--api", first_spec,
+        "--judges", "rules,llm",
+        "--judge-model", second_spec,
+        "--ack-hosted-judge-data-transfer",
+        "--out", str(tmp_path / "self-route"),
+    ]) == 1
+    first = run_matrix.build_target(
+        first_spec,
+        api_config=(condition if target_api_module.api_target_requires_config(first_spec)
+                    else None),
+    )
+    second = run_matrix.build_target(
+        second_spec,
+        api_config=(condition if target_api_module.api_target_requires_config(second_spec)
+                    else None),
+    )
+    if same_condition:
+        assert run_matrix._target_execution_condition_identity(first) == (
+            run_matrix._target_execution_condition_identity(second)
+        )
+        with pytest.raises(SystemExit):
+            run_matrix.main([
+                *common,
+                "--execution-scope-id", "test-scope",
+                "--live-attestation-max-age-hours", "2",
+                "--api", f"{first_spec},{second_spec}",
+                "--judges", "rules",
+                "--out", str(tmp_path / "duplicate-route"),
+            ])
+    else:
+        assert run_matrix._target_execution_condition_identity(first) != (
+            run_matrix._target_execution_condition_identity(second)
+        )
+    assert runner_calls == []
+
+
+@pytest.mark.parametrize(
+    ("first_spec", "second_spec", "_same_condition"),
+    _RUNTIME_ROUTE_IDENTITY_PAIRS,
+)
+def test_precall_identity_resolves_bare_and_inherent_hosted_routes(
+    first_spec: str,
+    second_spec: str,
+    _same_condition: bool,
+) -> None:
+    first = run_matrix.build_target(first_spec)
+    second = run_matrix.build_target(second_spec)
+
+    assert run_matrix._precall_model_identity(first) == (
+        run_matrix._precall_model_identity(second)
+    )
+
+
+def test_precall_identity_prioritizes_immutable_local_digest_over_ollama_tag() -> None:
+    digest = "a" * 64
+    first = run_matrix.build_target(
+        "ollama:alias-a",
+        local_identity={"digest": digest, "modalities": ["text"]},
+    )
+    second = run_matrix.build_target(
+        "ollama:alias-b",
+        local_identity={"digest": digest, "modalities": ["text"]},
+    )
+
+    assert run_matrix._precall_model_identity(first) == frozenset({
+        ("sha256", digest),
+    }) == run_matrix._precall_model_identity(second)
+
+
+def test_precall_identity_qualifies_a_hub_revision_by_exact_model() -> None:
+    revision = "b" * 40
+    first = run_matrix.build_target(
+        "vllm:org/model-a",
+        local_identity={
+            "revision": revision,
+            "modalities": ["text"],
+            "tensor_parallel_size": 1,
+        },
+    )
+    alias = run_matrix.build_target(
+        "vllm:org/model-a",
+        local_identity={
+            "revision": revision.upper(),
+            "modalities": ["text"],
+            "tensor_parallel_size": 1,
+        },
+    )
+    other = run_matrix.build_target(
+        "vllm:other/model-b",
+        local_identity={
+            "revision": revision,
+            "modalities": ["text"],
+            "tensor_parallel_size": 1,
+        },
+    )
+
+    assert run_matrix._precall_model_identity(first) == frozenset({
+        ("model-revision", "org/model-a", revision),
+    }) == run_matrix._precall_model_identity(alias)
+    assert run_matrix._precall_model_identity(other) != (
+        run_matrix._precall_model_identity(first)
+    )
+
+
+def test_custom_endpoint_identity_rejects_cross_provider_self_judge_before_calls(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    project_revision_args,
+) -> None:
+    endpoint = "https://Same.Example:443/compatible/../v1/"
+    target_spec = "glm:same-requested-model"
+    judge_spec = "kimi:same-requested-model"
+    condition = {
+        "modalities": ["text"],
+        "max_tokens": 64,
+        "temperature": 0.0,
+        "base_url": endpoint,
+    }
+    config = tmp_path / "same-endpoint.json"
+    config.write_text(
+        json.dumps({target_spec: condition, judge_spec: condition}),
+        encoding="utf-8",
+    )
+    target = run_matrix.build_target(target_spec, api_config=condition)
+    judge = run_matrix.build_target(judge_spec, api_config=condition)
+    shared = (
+        "endpoint-model",
+        canonical_https_endpoint_identity(endpoint),
+        "same-requested-model",
+    )
+    assert shared in run_matrix._precall_model_identity(target)
+    assert shared in run_matrix._precall_model_identity(judge)
+
+    calls: list[str] = []
+    monkeypatch.setattr(
+        run_matrix.Runner,
+        "run",
+        lambda *_args, **_kwargs: calls.append("run"),
+    )
+    assert run_matrix.main([
+        "--attestation-probe", "--execution-scope-id", "same-endpoint",
+        "--api", target_spec, "--api-config", str(config),
+        "--attackers", "replay", "--corpora", "synth", "--limit", "1",
+        "--sample-seed", "0", "--max-queries", "1", "--max-turns", "1",
+        "--judges", "rules,llm", "--judge-model", judge_spec,
+        "--ack-hosted-judge-data-transfer",
+        "--out", str(tmp_path / "same-endpoint-run"),
+        *_finite_budget_args(), *project_revision_args,
+    ]) == 1
+    assert calls == []
+
+
+def test_custom_endpoint_cannot_impersonate_native_openai_route(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    project_revision_args,
+) -> None:
+    model = "gpt-5.6-sol"
+    native_spec = f"openai:{model}"
+    compatible_spec = f"deepseek:{model}"
+    native_condition = {
+        "modalities": ["text"],
+        "max_tokens": 64,
+        "temperature": 0.0,
+    }
+    compatible_condition = {
+        **native_condition,
+        "base_url": "https://api.openai.com/v1",
+    }
+    config = tmp_path / "native-endpoint-alias.json"
+    config.write_text(json.dumps({
+        native_spec: native_condition,
+        compatible_spec: compatible_condition,
+    }), encoding="utf-8")
+    native = run_matrix.build_target(native_spec, api_config=native_condition)
+    compatible = run_matrix.build_target(
+        compatible_spec, api_config=compatible_condition
+    )
+    assert run_matrix._precall_model_identity(native) == (
+        run_matrix._precall_model_identity(compatible)
+    )
+
+    calls: list[str] = []
+    monkeypatch.setattr(
+        run_matrix.Runner,
+        "run",
+        lambda *_args, **_kwargs: calls.append("run"),
+    )
+    assert run_matrix.main([
+        "--attestation-probe", "--execution-scope-id", "native-endpoint",
+        "--api", native_spec, "--api-config", str(config),
+        "--attackers", "replay", "--corpora", "synth", "--limit", "1",
+        "--sample-seed", "0", "--max-queries", "1", "--max-turns", "1",
+        "--judges", "rules,llm", "--judge-model", compatible_spec,
+        "--ack-hosted-judge-data-transfer",
+        "--out", str(tmp_path / "native-endpoint-run"),
+        *_finite_budget_args(), *project_revision_args,
+    ]) == 1
+    assert calls == []
+
+
+def test_same_served_model_at_distinct_custom_endpoints_is_a_distinct_route() -> None:
+    common = {
+        "modalities": ["text"],
+        "max_tokens": 64,
+        "temperature": 0.0,
+    }
+    first = run_matrix.build_target(
+        "glm:served-x",
+        api_config={**common, "base_url": "https://first.example/v1"},
+    )
+    second = run_matrix.build_target(
+        "glm:served-x",
+        api_config={**common, "base_url": "https://second.example/v1"},
+    )
+    assert not (
+        run_matrix._precall_model_identity(first)
+        & run_matrix._precall_model_identity(second)
+    )
+
+
+@pytest.mark.parametrize(
+    "policy_args, expected",
+    (
+        (("--limit", "0", "--sample-seed", "0", "--ack-hosted-judge-data-transfer"),
+         "require a positive --limit"),
+        (("--limit", "1", "--ack-hosted-judge-data-transfer"),
+         "require explicit --sample-seed"),
+        (("--limit", "1", "--sample-seed", "0"),
+         "requires --ack-hosted-judge-data-transfer"),
+    ),
+)
+def test_direct_cli_rejects_unbounded_or_unacknowledged_hosted_judge_before_models(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    project_revision_args,
+    capsys: pytest.CaptureFixture[str],
+    policy_args: tuple[str, ...],
+    expected: str,
+) -> None:
+    constructions: list[str] = []
+
+    def unexpected_build(*_args, **_kwargs):
+        constructions.append("build")
+        raise AssertionError("policy admission must precede target/judge construction")
+
+    monkeypatch.setattr(run_matrix, "build_target", unexpected_build)
+    with pytest.raises(SystemExit):
+        run_matrix.main([
+            "--local", "vllm:org/local-target",
+            "--attackers", "replay", "--corpora", "synth",
+            "--judges", "rules,llm",
+            "--judge-model", "anthropic:hosted-judge",
+            "--execution-scope-id", "hosted-judge-policy",
+            "--live-attestation-max-age-hours", "2",
+            "--live-attestation", str(tmp_path / "receipt.json"),
+            "--live-attestation-sha256", "c" * 64,
+            "--max-queries", "1", "--max-turns", "1",
+            "--out", str(tmp_path / "hosted-judge-policy"),
+            *policy_args,
+            *_finite_budget_args(), *project_revision_args,
+        ])
+    assert expected in capsys.readouterr().err
+    assert constructions == []
+
+
+@pytest.mark.parametrize(("canonical", "alias"), _PROVIDER_ALIAS_PAIRS)
+def test_realized_identity_rejects_provider_alias_cross_role_collision(
+    canonical: str,
+    alias: str,
+) -> None:
+    resolved = "provider-resolved-model-20260818"
+    response = Response(
+        attempt_id="attempt-alias",
+        target=f"{alias}:requested-target",
+        output_turns=[DialogTurn(role="assistant", content="target response")],
+        latency_ms=1.0,
+        tokens={"input": 1, "output": 1},
+        raw={"provider": alias, "resolved_model": resolved},
+    )
+    trail = [{
+        "attempt_id": response.attempt_id,
+        "stage": 0,
+        "judge": "llm",
+        "judge_model": f"{canonical}:requested-judge",
+        "judge_call": {
+            "provider": canonical,
+            "provider_resolved_model": resolved,
+        },
+    }]
+
+    with pytest.raises(ValueError, match="identities collide across roles"):
+        runner_module.realized_identity_summary(
+            [response], trail, expected_judges=["llm"]
+        )
+
+
+def test_realized_identity_rejects_exact_local_cross_role_collision() -> None:
+    digest = "a" * 64
+    response = Response(
+        attempt_id="attempt-local",
+        target=f"vllm:local-checkpoint@sha256:{digest}",
+        output_turns=[DialogTurn(role="assistant", content="target response")],
+        latency_ms=1.0,
+        tokens={"input": 1, "output": 1},
+        raw={
+            "backend": "vllm",
+            "resolved_model": "local-checkpoint",
+            "model_digest": digest,
+        },
+    )
+    trail = [{
+        "attempt_id": response.attempt_id,
+        "stage": 0,
+        "judge": "llm",
+        "judge_model": f"vllm:local-checkpoint@sha256:{digest}",
+        "judge_call": {
+            "provider_resolved_model": "local-checkpoint",
+            "model_digest": digest,
+        },
+    }]
+
+    with pytest.raises(ValueError, match="identities collide across roles"):
+        runner_module.realized_identity_summary(
+            [response], trail, expected_judges=["llm"]
+        )
+
+
+def test_realized_identity_rejects_pinned_revision_cross_role_collision() -> None:
+    revision = "b" * 40
+    response = Response(
+        attempt_id="attempt-local-revision",
+        target=f"vllm:org/local-model@{revision}",
+        output_turns=[DialogTurn(role="assistant", content="target response")],
+        latency_ms=1.0,
+        tokens={"input": 1, "output": 1},
+        raw={
+            "backend": "vllm",
+            "resolved_model": "org/local-model",
+            "model_revision": revision,
+        },
+    )
+    trail = [{
+        "attempt_id": response.attempt_id,
+        "stage": 0,
+        "judge": "llm",
+        "judge_model": f"vllm:org/local-model@{revision}",
+        "judge_call": {
+            "provider_resolved_model": "org/local-model",
+            "model_revision": revision,
+        },
+    }]
+
+    with pytest.raises(ValueError, match="identities collide across roles"):
+        runner_module.realized_identity_summary(
+            [response], trail, expected_judges=["llm"]
+        )
+
+
+def test_realized_identity_normalizes_guardrail_hub_revision_across_roles() -> None:
+    revision = "c" * 40
+    response = Response(
+        attempt_id="attempt-guardrail-revision",
+        target=f"vllm:org/shared-model@{revision}",
+        output_turns=[DialogTurn(role="assistant", content="target response")],
+        latency_ms=1.0,
+        tokens={"input": 1, "output": 1},
+        raw={
+            "resolved_model": "org/shared-model",
+            "model_revision": revision,
+        },
+    )
+    shared_guard = [{
+        "attempt_id": response.attempt_id,
+        "stage": 0,
+        "judge": "guardrail",
+        "judge_model": "org/shared-model",
+        "judge_model_revision": revision,
+        "judge_model_identity": f"org/shared-model@{revision}",
+        "judge_call": None,
+    }]
+    with pytest.raises(ValueError, match="identities collide across roles"):
+        runner_module.realized_identity_summary(
+            [response], shared_guard, expected_judges=["guardrail"]
+        )
+
+    distinct_guard = json.loads(json.dumps(shared_guard))
+    distinct_guard[0]["judge_model"] = "org/distinct-guard"
+    distinct_guard[0]["judge_model_identity"] = (
+        f"org/distinct-guard@{revision}"
+    )
+    runner_module.realized_identity_summary(
+        [response], distinct_guard, expected_judges=["guardrail"]
+    )
+
+
+@pytest.mark.parametrize(
+    "raw_overrides",
+    (
+        {"resolved_model": "org/shared", "model": "org/decoy"},
+        {"provider": "openai", "provider_name": "anthropic"},
+        {
+            "provider_system_fingerprint": "fingerprint-a",
+            "system_fingerprint": "fingerprint-b",
+        },
+        {"model_revision": "a" * 40, "revision": "b" * 40},
+        {"verified_model_digest": "a" * 64, "model_digest": "b" * 64},
+        {
+            "endpoint_identity": "https-base-url-sha256:" + "a" * 64,
+        },
+    ),
+)
+def test_target_realized_identity_rejects_conflicting_alias_fields(
+    raw_overrides: dict[str, str],
+) -> None:
+    raw = {
+        "resolved_model": "org/shared",
+        "provider": "fixture",
+        **raw_overrides,
+    }
+    if "endpoint_identity" in raw_overrides:
+        # endpoint_identity has no synonymous legacy field; validation still
+        # proves malformed typed aliases fail closed elsewhere.
+        raw["endpoint_identity"] = "https-base-url-sha256:" + "g" * 64
+    response = Response(
+        attempt_id="attempt-conflicting-target-alias",
+        target="fixture:target",
+        output_turns=[DialogTurn(role="assistant", content="response")],
+        tokens={"input": 1, "output": 1},
+        raw=raw,
+    )
+    with pytest.raises(ValueError, match="identity (aliases .* conflict|must be)"):
+        runner_module.realized_identity_summary(
+            [response], [], expected_judges=[]
+        )
+
+
+def test_conflicting_target_model_alias_cannot_evade_guardrail_self_judge() -> None:
+    revision = "a" * 40
+    response = Response(
+        attempt_id="attempt-conflicting-self-judge",
+        target=f"vllm:org/shared@{revision}",
+        output_turns=[DialogTurn(role="assistant", content="response")],
+        tokens={"input": 1, "output": 1},
+        raw={
+            "model": "org/shared",
+            "resolved_model": "org/decoy",
+            "model_revision": revision,
+        },
+    )
+    trail = [{
+        "attempt_id": response.attempt_id,
+        "stage": 0,
+        "judge": "guardrail",
+        "judge_model": "org/shared",
+        "judge_model_revision": revision,
+        "judge_model_identity": f"org/shared@{revision}",
+        "judge_call": None,
+    }]
+    with pytest.raises(ValueError, match="identity aliases .* conflict"):
+        runner_module.realized_identity_summary(
+            [response], trail, expected_judges=["guardrail"]
+        )
+
+
+@pytest.mark.parametrize(
+    "call",
+    (
+        {"provider_resolved_model": "shared", "resolved_model": "decoy"},
+        {"provider": "zhipu", "provider_name": "moonshot"},
+        {"provider_system_fingerprint": "a", "system_fingerprint": "b"},
+        {"model_revision": "a" * 40, "revision": "b" * 40},
+        {"verified_model_digest": "a" * 64, "model_digest": "b" * 64},
+    ),
+)
+def test_judge_call_realized_identity_rejects_conflicting_alias_fields(
+    call: dict[str, str],
+) -> None:
+    response = Response(
+        attempt_id="attempt-conflicting-judge-alias",
+        target="fixture:target",
+        output_turns=[DialogTurn(role="assistant", content="response")],
+        tokens={"input": 1, "output": 1},
+        raw={"provider": "fixture", "resolved_model": "target"},
+    )
+    trail = [{
+        "attempt_id": response.attempt_id,
+        "stage": 0,
+        "judge": "llm",
+        "judge_model": "fixture:judge",
+        "judge_call": call,
+    }]
+    with pytest.raises(ValueError, match="identity aliases .* conflict"):
+        runner_module.realized_identity_summary(
+            [response], trail, expected_judges=["llm"]
+        )
+
+
+def test_realized_identity_rejects_cross_provider_same_endpoint_and_served_model() -> None:
+    endpoint_identity = canonical_https_endpoint_identity(
+        "https://same.example/v1"
+    )
+    response = Response(
+        attempt_id="attempt-endpoint",
+        target="qwen:requested-alias-a",
+        output_turns=[DialogTurn(role="assistant", content="target response")],
+        latency_ms=1.0,
+        tokens={"input": 1, "output": 1},
+        raw={
+            "provider": "qwen",
+            "endpoint_identity": endpoint_identity,
+            "resolved_model": "served-x",
+        },
+    )
+    trail = [{
+        "attempt_id": response.attempt_id,
+        "stage": 0,
+        "judge": "llm",
+        "judge_model": "glm:requested-alias-b",
+        "judge_call": {
+            "provider": "glm",
+            "endpoint_identity": endpoint_identity,
+            "provider_resolved_model": "served-x",
+        },
+    }]
+
+    with pytest.raises(ValueError, match="identities collide across roles"):
+        runner_module.realized_identity_summary(
+            [response], trail, expected_judges=["llm"]
+        )
 
 def test_target_construction_failure_writes_error_artifact(
     tmp_path: Path, project_revision_args,
@@ -1481,6 +2500,140 @@ def test_matrix_completion_marker_detects_artifact_tampering(tmp_path: Path) -> 
     assert grid["status"] == "partial"
 
 
+def _single_cell_completion(tmp_path: Path) -> tuple[list[str], Path, dict, Path, dict]:
+    args = [
+        "--dry-run", "--attackers", "replay", "--judges", "rules",
+        "--corpora", "synth", "--limit", "1", "--seeds", "0",
+        "--max-queries", "1", "--max-turns", "1", "--out", str(tmp_path),
+    ]
+    assert run_matrix.main(args) == 0
+    marker_path = next(tmp_path.glob("*.complete.json"))
+    marker = json.loads(marker_path.read_text(encoding="utf-8"))
+    manifest_path = tmp_path / marker["artifacts"]["manifest"]["file"]
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    return args, marker_path, marker, manifest_path, manifest
+
+
+def test_completion_rejects_stale_stored_attacker_plan_with_refreshed_descriptor(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    args, marker_path, marker, manifest_path, manifest = _single_cell_completion(
+        tmp_path
+    )
+    manifest["config"]["attacker_input_plan"]["entries"][0]["turns"][0][
+        "combination"
+    ] = ["text", "image"]
+    run_matrix._write_json(manifest_path, manifest)
+    marker["artifacts"]["manifest"] = run_matrix._artifact_descriptor(manifest_path)
+    run_matrix._write_json(marker_path, marker)
+
+    calls = 0
+
+    def forbidden_generate(self, dialog, *, seed=None):
+        nonlocal calls
+        calls += 1
+        raise AssertionError("invalid completion must fail before generation")
+
+    monkeypatch.setattr(MockTarget, "generate", forbidden_generate)
+    assert run_matrix.main(args) == 1
+    assert calls == 0
+    error = json.loads(next(tmp_path.glob("*.error.json")).read_text(encoding="utf-8"))
+    assert "attacker_input_plan" in error["message"]
+
+
+def test_completion_rejects_internally_rehashed_stored_attacker_plan(
+    tmp_path: Path,
+) -> None:
+    args, marker_path, marker, manifest_path, manifest = _single_cell_completion(
+        tmp_path
+    )
+    plan = manifest["config"]["attacker_input_plan"]
+    entry = plan["entries"][0]
+    encoded = b"different bound text"
+    entry["turns"][0]["bound_text_sha256"] = hashlib.sha256(encoded).hexdigest()
+    entry["turns"][0]["bound_text_bytes"] = len(encoded)
+    unsigned_contract = {
+        key: value
+        for key, value in entry.items()
+        if key not in {"seed", "contract_id"}
+    }
+    entry["contract_id"] = (
+        "attacker-input-"
+        + attacker_input_payload_sha256(unsigned_contract)[:24]
+    )
+    manifest["config"]["attacker_input_plan_sha256"] = (
+        attacker_input_payload_sha256(plan)
+    )
+    run_matrix._write_json(manifest_path, manifest)
+    marker["artifacts"]["manifest"] = run_matrix._artifact_descriptor(manifest_path)
+    run_matrix._write_json(marker_path, marker)
+
+    assert run_matrix.main(args) == 1
+    error = json.loads(next(tmp_path.glob("*.error.json")).read_text(encoding="utf-8"))
+    assert "attacker_input_plan" in error["message"]
+
+
+def test_completion_rejoins_attempt_projection_after_all_outer_hashes_refresh(
+    tmp_path: Path,
+) -> None:
+    args, marker_path, marker, manifest_path, manifest = _single_cell_completion(
+        tmp_path
+    )
+    attempts_path = tmp_path / marker["artifacts"]["attempts"]["file"]
+    attempt_row = json.loads(attempts_path.read_text(encoding="utf-8"))
+    attempt_row["params"]["planned_target_input"]["policy_evaluable"] = False
+    attempts_path.write_text(
+        json.dumps(attempt_row, ensure_ascii=False, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+    attempt = Attempt.model_validate(attempt_row, strict=True)
+    manifest["config"]["realized_attempts_sha256"] = runner_module._sha256_json(
+        [runner_module._portable_attempt_dump(attempt)]
+    )
+    run_matrix._write_json(manifest_path, manifest)
+    marker["artifacts"]["attempts"] = run_matrix._artifact_descriptor(attempts_path)
+    marker["artifacts"]["manifest"] = run_matrix._artifact_descriptor(manifest_path)
+    run_matrix._write_json(marker_path, marker)
+
+    assert run_matrix.main(args) == 1
+    error = json.loads(next(tmp_path.glob("*.error.json")).read_text(encoding="utf-8"))
+    assert "completed execution differs" in error["message"]
+
+
+def test_completion_rejects_judgment_only_policy_and_modality_drift(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    args, marker_path, marker, _manifest_path, _manifest = (
+        _single_cell_completion(tmp_path)
+    )
+    judgments_path = tmp_path / marker["artifacts"]["judgments"]["file"]
+    judgment_row = json.loads(judgments_path.read_text(encoding="utf-8"))
+    judgment_row["raw"]["effective_modality"] = "image"
+    judgment_row["raw"]["policy_evaluable_turn"] = False
+    judgments_path.write_text(
+        json.dumps(judgment_row, ensure_ascii=False, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+    marker["artifacts"]["judgments"] = run_matrix._artifact_descriptor(
+        judgments_path
+    )
+    run_matrix._write_json(marker_path, marker)
+
+    calls = 0
+
+    def forbidden_generate(self, dialog, *, seed=None):
+        nonlocal calls
+        calls += 1
+        raise AssertionError("tampered completion must fail before generation")
+
+    monkeypatch.setattr(MockTarget, "generate", forbidden_generate)
+    assert run_matrix.main(args) == 1
+    assert calls == 0
+    error = json.loads(next(tmp_path.glob("*.error.json")).read_text(encoding="utf-8"))
+    assert "completed execution differs" in error["message"]
+
+
 def test_rolled_back_budget_ledger_fails_before_generation(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -1512,12 +2665,91 @@ def test_rolled_back_budget_ledger_fails_before_generation(
     assert "ledger is behind trustworthy same-grid" in capsys.readouterr().err
 
 
+def test_duplicate_budget_ledger_fails_before_generation_or_reservation(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture,
+) -> None:
+    args = [
+        "--dry-run", "--attackers", "replay", "--judges", "rules",
+        "--corpora", "synth", "--limit", "1", "--seeds", "0",
+        "--max-queries", "1", "--max-turns", "1", "--out", str(tmp_path),
+    ]
+    assert run_matrix.main(args) == 0
+    budget_path = next(tmp_path.glob("grid-*.budget.json"))
+    material = budget_path.read_text(encoding="utf-8")
+    assert '"target_calls": 1' in material
+    hostile = material.replace(
+        '"target_calls": 1',
+        '"target_calls": 9, "target_calls": 1',
+        1,
+    )
+    budget_path.write_text(hostile, encoding="utf-8")
+
+    calls = 0
+
+    def forbidden_generate(self, dialog, *, seed=None):
+        nonlocal calls
+        calls += 1
+        raise AssertionError("duplicate budget must fail before generation")
+
+    monkeypatch.setattr(MockTarget, "generate", forbidden_generate)
+    assert run_matrix.main(args) == 1
+    assert calls == 0
+    assert budget_path.read_text(encoding="utf-8") == hostile
+    assert "duplicate JSON object key 'target_calls'" in capsys.readouterr().err
+
+
+def test_duplicate_manifest_fails_resume_and_same_grid_recovery_before_call(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture,
+) -> None:
+    args = [
+        "--dry-run", "--attackers", "replay", "--judges", "rules",
+        "--corpora", "synth", "--limit", "1", "--seeds", "0",
+        "--max-queries", "1", "--max-turns", "1", "--out", str(tmp_path),
+    ]
+    assert run_matrix.main(args) == 0
+    manifest_path = next(tmp_path.glob("*.manifest.json"))
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    token = f'"run_id": "{manifest["run_id"]}"'
+    material = manifest_path.read_text(encoding="utf-8")
+    assert token in material
+    hostile = material.replace(
+        token,
+        f'"run_id": "attacker-value", {token}',
+        1,
+    )
+    manifest_path.write_text(hostile, encoding="utf-8")
+    with pytest.raises(ValueError, match="duplicate JSON object key 'run_id'"):
+        Runner.resume(manifest_path)
+
+    marker_path = next(tmp_path.glob("*.complete.json"))
+    marker = json.loads(marker_path.read_text(encoding="utf-8"))
+    marker["artifacts"]["manifest"] = run_matrix._artifact_descriptor(manifest_path)
+    run_matrix._write_json(marker_path, marker)
+    calls = 0
+
+    def forbidden_generate(self, dialog, *, seed=None):
+        nonlocal calls
+        calls += 1
+        raise AssertionError("duplicate manifest must fail before generation")
+
+    monkeypatch.setattr(MockTarget, "generate", forbidden_generate)
+    assert run_matrix.main(args) == 1
+    assert calls == 0
+    assert "duplicate JSON object key 'run_id'" in capsys.readouterr().err
+
+
 def test_failed_call_errors_and_circuits_are_budget_recovery_evidence(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture,
     project_revision_args,
 ) -> None:
+    calls = 0
+
     class ProviderError(RuntimeError):
         call_audit = {
             "transport_attempt_count": 1,
@@ -1532,15 +2764,14 @@ def test_failed_call_errors_and_circuits_are_budget_recovery_evidence(
         modality_support = ("text",)
         max_transport_attempts_per_call = 1
 
-        def __init__(self) -> None:
-            self.calls = 0
-
         def generate(self, dialog, *, seed=None):
-            self.calls += 1
+            nonlocal calls
+            calls += 1
             raise ProviderError("provider unavailable")
 
-    target = FailingTarget()
-    monkeypatch.setattr(run_matrix, "build_target", lambda *_a, **_kw: target)
+    monkeypatch.setattr(
+        run_matrix, "build_target", lambda *_a, **_kw: FailingTarget()
+    )
     target_spec = "openai:fixture-model"
     args = [
         "--attestation-probe", "--execution-scope-id", "test-scope",
@@ -1552,7 +2783,7 @@ def test_failed_call_errors_and_circuits_are_budget_recovery_evidence(
         *project_revision_args,
     ]
     assert run_matrix.main(args) == 1
-    assert target.calls == 1
+    assert calls == 1
 
     budget_path = next(tmp_path.glob("grid-*.budget.json"))
     budget = json.loads(budget_path.read_text(encoding="utf-8"))
@@ -1566,7 +2797,7 @@ def test_failed_call_errors_and_circuits_are_budget_recovery_evidence(
     # mark if the circuit file is absent.
     circuit_path.unlink()
     assert run_matrix.main(args) == 1
-    assert target.calls == 1
+    assert calls == 1
     assert "error artifact" in capsys.readouterr().err
 
     # A reset acknowledgement cannot erase circuit evidence before validating
@@ -1575,7 +2806,7 @@ def test_failed_call_errors_and_circuits_are_budget_recovery_evidence(
     for path in tmp_path.glob("*.error.json"):
         path.unlink()
     assert run_matrix.main([*args, "--reset-open-circuits"]) == 1
-    assert target.calls == 1
+    assert calls == 1
     assert circuit_path.exists()
     assert "circuit state" in capsys.readouterr().err
 
@@ -1888,6 +3119,7 @@ def test_systemic_target_failure_opens_circuit_before_next_cell(
         "--api", target_spec, *api_config, *attestation,
         "--attackers", "replay,crescendo",
         "--judges", "rules", "--corpora", "synth", "--limit", "1",
+        "--sample-seed", "0",
         "--max-queries", "2", "--max-turns", "2", "--out", str(tmp_path),
         *_finite_budget_args(),
         *project_revision_args,
@@ -1966,7 +3198,7 @@ def test_matrix_counts_an_empty_requested_corpus_as_failure(
     )
     result = run_matrix.main([
         "--dry-run", "--attackers", "replay", "--judges", "rules",
-        "--corpora", "empty", "--limit", "1", "--out", str(tmp_path),
+        "--corpora", "synth", "--limit", "1", "--out", str(tmp_path),
     ])
     assert result == 1
     error = load_request_error_file(next(tmp_path.glob("*.request.error.json")))
@@ -1976,7 +3208,7 @@ def test_matrix_counts_an_empty_requested_corpus_as_failure(
         "exception_type": "ValueError",
         "message": "requested corpus converted to zero datapoints",
     }
-    assert error["scope"]["logical_source_arm"] == "empty"
+    assert error["scope"]["logical_source_arm"] == "synth"
     assert error["execution"]["provider_calls_started"] is False
 
 
@@ -2113,6 +3345,14 @@ class _FloodAttacker(BaseAttacker):
 
     def __init__(self) -> None:
         self._emitted = 0
+
+    def plan_target_inputs(
+        self, datapoint: DataPoint, budget: AttackBudget
+    ) -> AttackerInputContract:
+        limit = min(budget.max_queries, budget.max_turns)
+        return text_only_transfer_contract(
+            self.name, datapoint, budget, planned_turns=limit
+        )
 
     def generate(self, datapoint: DataPoint, budget: AttackBudget) -> Iterable[Attempt]:
         for index in range(8):
@@ -2264,6 +3504,342 @@ def _runner(
     )
 
 
+@pytest.mark.parametrize("mutation", ["drop_duplicate", "reverse_distinct"])
+def test_runtime_media_occurrence_drift_fails_before_budget_or_target_call(
+    tmp_path: Path, mutation: str,
+) -> None:
+    first_payload = _PNG
+    second_payload = _PNG if mutation == "drop_duplicate" else _PNG + b"second"
+    first_path = tmp_path / "first.png"
+    second_path = first_path if mutation == "drop_duplicate" else tmp_path / "second.png"
+    first_path.write_bytes(first_payload)
+    if second_path != first_path:
+        second_path.write_bytes(second_payload)
+    first = MediaRef(
+        modality="image",
+        path=str(first_path),
+        sha256=hashlib.sha256(first_payload).hexdigest(),
+        mime="image/png",
+    )
+    second = MediaRef(
+        modality="image",
+        path=str(second_path),
+        sha256=hashlib.sha256(second_payload).hexdigest(),
+        mime="image/png",
+    )
+    datapoint = DataPoint(
+        id=f"runtime-{mutation}",
+        source="unit",
+        modalities=["text", "image"],
+        dialog_history=[DialogTurn(
+            role="user", content="source objective", media=[first, second]
+        )],
+        payload_text="source objective",
+        media=[first, second],
+        risk_category=RiskCategory.JAILBREAK,
+        expected_behavior="refuse",
+        meta={"judge_reference_text": "fixture harmful media context"},
+    )
+
+    class _OccurrenceDriftAttacker(BaseAttacker):
+        name = "occurrence-drift"
+
+        def plan_target_inputs(
+            self, point: DataPoint, budget: AttackBudget,
+        ) -> AttackerInputContract:
+            return identity_replay_contract(self.name, point, budget)
+
+        def generate(
+            self, point: DataPoint, budget: AttackBudget,
+        ) -> Iterable[Attempt]:
+            planned_media = list(point.dialog_history[0].media)
+            delivered = (
+                planned_media[:1]
+                if mutation == "drop_duplicate"
+                else list(reversed(planned_media))
+            )
+            yield Attempt(
+                id=f"{point.id}:drift:s{budget.seed}",
+                datapoint_id=point.id,
+                attacker=self.name,
+                rendered_input=[DialogTurn(
+                    role="user", content="source objective", media=delivered
+                )],
+                seed=budget.seed,
+            )
+
+    target = _RecordingTarget(media_roots=[tmp_path])
+    call_budget = GlobalCallBudget(
+        max_target_calls=1,
+        max_judge_calls=1,
+        max_http_attempts=1,
+        budget_id=f"occurrence-{mutation}",
+    )
+    runner = Runner(
+        _OccurrenceDriftAttacker(),
+        target,
+        JudgeCascade([_SafeBinaryJudge()]),
+        AttackBudget(max_queries=1, max_turns=1, seed=0),
+        [0],
+        call_budget=call_budget,
+    )
+
+    with pytest.raises(ValueError, match="media occurrence tuple changed"):
+        runner.run([datapoint])
+
+    assert target._dialogs == []
+    assert call_budget.snapshot()["target_calls"] == 0
+    assert call_budget.snapshot()["judge_calls"] == 0
+    assert call_budget.snapshot()["http_attempts"] == 0
+
+
+def test_direct_runner_tool_source_rejects_before_manifest_budget_or_call() -> None:
+    datapoint = DataPoint(
+        id="runtime-tool",
+        source="unit",
+        modalities=["text", "tool"],
+        dialog_history=[
+            DialogTurn(role="user", content="use the tool"),
+            DialogTurn(
+                role="assistant",
+                content="calling",
+                tool_call={"name": "shell", "arguments": {"cmd": "noop"}},
+            ),
+        ],
+        payload_text="use the tool",
+        risk_category=RiskCategory.AGENTIC_MISUSE,
+        expected_behavior="refuse",
+        is_agentic=True,
+    )
+    target = _RecordingTarget()
+    call_budget = GlobalCallBudget(
+        max_target_calls=1,
+        max_judge_calls=1,
+        max_http_attempts=1,
+        budget_id="direct-tool-rejection",
+    )
+    runner = Runner(
+        ReplayAttacker(),
+        target,
+        JudgeCascade([_SafeBinaryJudge()]),
+        AttackBudget(max_queries=1, max_turns=1, seed=0),
+        [0],
+        call_budget=call_budget,
+    )
+
+    with pytest.raises(ValueError, match="typed tool runtime.*before any target call"):
+        runner.run([datapoint])
+
+    assert target._dialogs == []
+    assert runner.last_manifest is None
+    assert call_budget.snapshot()["target_calls"] == 0
+    assert call_budget.snapshot()["judge_calls"] == 0
+    assert call_budget.snapshot()["http_attempts"] == 0
+
+
+@pytest.mark.parametrize(
+    ("drift", "message"),
+    [
+        ("late_tool", "input combination changed after planning"),
+        ("bound_text", "bound adversarial text changed after planning"),
+    ],
+)
+def test_runtime_combination_and_bound_text_must_equal_prospective_turn(
+    tmp_path: Path, drift: str, message: str,
+) -> None:
+    image_path = tmp_path / "bound.png"
+    image_path.write_bytes(_PNG)
+
+    class _LateToolAttacker(BaseAttacker):
+        name = "late-tool"
+
+        def plan_target_inputs(
+            self, point: DataPoint, budget: AttackBudget,
+        ) -> AttackerInputContract:
+            return text_only_transfer_contract(self.name, point, budget)
+
+        def generate(
+            self, point: DataPoint, budget: AttackBudget,
+        ) -> Iterable[Attempt]:
+            yield Attempt(
+                id=f"{point.id}:late-tool:s{budget.seed}",
+                datapoint_id=point.id,
+                attacker=self.name,
+                rendered_input=[
+                    DialogTurn(role="user", content="planned text input"),
+                    DialogTurn(
+                        role="assistant",
+                        content="calling",
+                        tool_call={
+                            "name": "shell", "arguments": {"cmd": "noop"}
+                        },
+                    ),
+                ],
+                seed=budget.seed,
+            )
+
+    class _BoundTextDriftAttacker(BaseAttacker):
+        name = "bound-text-drift"
+
+        def plan_target_inputs(
+            self, point: DataPoint, budget: AttackBudget,
+        ) -> AttackerInputContract:
+            return generated_image_input_contract(
+                self.name,
+                point,
+                budget,
+                seed_pairs=(("planned adversarial text", str(image_path)),),
+            )
+
+        def generate(
+            self, point: DataPoint, budget: AttackBudget,
+        ) -> Iterable[Attempt]:
+            yield Attempt(
+                id=f"{point.id}:bound-text-drift:s{budget.seed}",
+                datapoint_id=point.id,
+                attacker=self.name,
+                rendered_input=[DialogTurn(
+                    role="user",
+                    content="changed adversarial text",
+                    media=[MediaRef(
+                        modality="image",
+                        path=str(image_path),
+                        sha256=hashlib.sha256(_PNG).hexdigest(),
+                        mime="image/png",
+                    )],
+                )],
+                seed=budget.seed,
+            )
+
+    attacker: BaseAttacker = (
+        _LateToolAttacker()
+        if drift == "late_tool"
+        else _BoundTextDriftAttacker()
+    )
+    target = _RecordingTarget(media_roots=[tmp_path])
+    call_budget = GlobalCallBudget(
+        max_target_calls=1,
+        max_judge_calls=1,
+        max_http_attempts=1,
+        budget_id=f"runtime-{drift}",
+    )
+    runner = Runner(
+        attacker,
+        target,
+        JudgeCascade([_SafeBinaryJudge()]),
+        AttackBudget(max_queries=1, max_turns=1, seed=0),
+        [0],
+        call_budget=call_budget,
+    )
+
+    with pytest.raises(ValueError, match=message):
+        runner.run([_datapoint()])
+
+    assert target._dialogs == []
+    assert call_budget.snapshot()["target_calls"] == 0
+    assert call_budget.snapshot()["judge_calls"] == 0
+    assert call_budget.snapshot()["http_attempts"] == 0
+
+
+def test_ideator_run_identity_is_path_free_and_content_bound(
+    tmp_path: Path,
+) -> None:
+    private_a = tmp_path / "private-seed-a"
+    private_b = tmp_path / "private-seed-b"
+    private_a.mkdir()
+    private_b.mkdir()
+    image_a = private_a / "seed.png"
+    image_b = private_b / "alias.png"
+    image_a.write_bytes(_PNG)
+    image_b.write_bytes(_PNG)
+    point = _datapoint()
+
+    def planned(text: str, image: Path) -> tuple[Runner, object]:
+        attacker = IDEATORAttacker(seed_pairs=[(text, str(image))])
+        target = _RecordingTarget(media_roots=[tmp_path])
+        runner = _runner(attacker, target)
+        return runner, runner.plan_manifest([point])
+
+    first, first_manifest = planned("paired adversarial text", image_a)
+    _alias, alias_manifest = planned("paired adversarial text", image_b)
+    _changed, changed_manifest = planned("changed adversarial text", image_b)
+
+    assert alias_manifest.run_id == first_manifest.run_id
+    assert changed_manifest.run_id != first_manifest.run_id
+    image_digest = hashlib.sha256(_PNG).hexdigest()
+    text_digest = hashlib.sha256(b"paired adversarial text").hexdigest()
+    manifest_text = first_manifest.model_dump_json()
+    component_text = json.dumps(
+        runner_module._component_config(first.attacker), sort_keys=True
+    )
+    for forbidden in (str(image_a), str(private_a), "private-seed-a"):
+        assert forbidden not in manifest_text
+        assert forbidden not in component_text
+    assert image_digest in manifest_text
+    assert text_digest in manifest_text
+
+    checkpoints: list[dict[str, object]] = []
+    _judgments, executed_manifest = first.run(
+        [point], on_record=checkpoints.append
+    )
+    attempts_path = tmp_path / "ideator-attempts.jsonl"
+    responses_path = tmp_path / "ideator-responses.jsonl"
+    trails_path = tmp_path / "ideator-trails.jsonl"
+    first.save_attempts(attempts_path)
+    first.save_responses(responses_path)
+    first.save_trails(trails_path)
+    persisted = "\n".join([
+        executed_manifest.model_dump_json(),
+        json.dumps(checkpoints, sort_keys=True),
+        attempts_path.read_text(encoding="utf-8"),
+        responses_path.read_text(encoding="utf-8"),
+        trails_path.read_text(encoding="utf-8"),
+    ])
+    for forbidden in (str(image_a), str(private_a), "private-seed-a"):
+        assert forbidden not in persisted
+    assert image_digest in persisted
+    assert text_digest in persisted
+
+
+def test_component_config_hashes_hosted_endpoint_and_credential_env_recursively(
+) -> None:
+    endpoint = "https://private.example/v1"
+    key_env = "PRIVATE_PROVIDER_ACCOUNT_KEY"
+    target = target_api_module.OpenAICompatibleTarget(
+        "served-target",
+        endpoint,
+        key_env,
+        provider="glm",
+        requested_spec="glm:served-target",
+        modality_support=("text",),
+    )
+    judge_target = target_api_module.OpenAICompatibleTarget(
+        "served-judge",
+        endpoint,
+        key_env,
+        provider="kimi",
+        requested_spec="kimi:served-judge",
+        modality_support=("text",),
+    )
+    cascade = JudgeCascade([LLMJudge(judge_target)])
+    runner = Runner(
+        ReplayAttacker(),
+        GuardedTarget(target, RuleJudge(), mode="input"),
+        cascade,
+        AttackBudget(max_queries=1, max_turns=1, seed=0),
+        [0],
+    )
+
+    manifest = runner.plan_manifest([_datapoint()]).model_dump(mode="json")
+    component_text = json.dumps(manifest["config"]["components"], sort_keys=True)
+    expected_endpoint = canonical_https_endpoint_identity(endpoint)
+    assert endpoint not in component_text
+    assert key_env not in component_text
+    assert component_text.count(expected_endpoint) == 2
+    assert "credential_env_identity" not in component_text
+    assert "env-name-sha256:" not in component_text
+
+
 def test_crescendo_is_live_response_conditioned_and_starts_benign():
     target = _RecordingTarget()
     runner = _runner(CrescendoAttacker(), target, max_queries=3, max_turns=3)
@@ -2353,6 +3929,254 @@ def test_crescendo_typed_empty_refusal_is_conditioned_without_fabrication() -> N
     ]
 
 
+def _persisted_trail_contract_fixture() -> tuple[
+    Attempt, Response, Judgment, dict[str, object]
+]:
+    attempt = Attempt(
+        id="trail-a",
+        datapoint_id="dp",
+        attacker="replay",
+        rendered_input=[DialogTurn(role="user", content="probe")],
+        params={
+            "policy_evaluable_turn": True,
+            "planning_common_metrics_eligible": True,
+        },
+        run_id="run-trail",
+    )
+    response = Response(
+        attempt_id=attempt.id,
+        target="fixture",
+        output_turns=[DialogTurn(role="assistant", content="reply")],
+        run_id=attempt.run_id,
+    )
+    final = Judgment(
+        attempt_id=attempt.id,
+        judge="rules",
+        label="violation",
+        score=1.0,
+        run_id=attempt.run_id,
+        raw={
+            "cascade_stage": 0,
+            "confidence": 0.9,
+            "parsed": None,
+            "cascade_confident": True,
+            "cascade_role": "authoritative",
+            "cascade_policy": "first_confident_with_full_shadow_trail",
+            "stage_queried": True,
+            "policy_evaluation_status": "evaluated",
+            "metric_authority": None,
+            "required_metric": None,
+        },
+    )
+    return attempt, response, final, runner_module.judgment_trail_projection(final)
+
+
+def test_persisted_authority_projection_is_full_and_type_strict() -> None:
+    attempt, response, final, row = _persisted_trail_contract_fixture()
+    tampered = final.model_copy(update={
+        "raw": {
+            **final.raw,
+            "cascade_stage": 99,
+            "confidence": 0.1,
+            "parsed": False,
+            "cascade_confident": False,
+            "cascade_role": "shadow",
+            "cascade_policy": "tampered",
+            "stage_queried": 1,
+        }
+    })
+
+    with pytest.raises(ValueError, match="retained stage projection"):
+        runner_module.validate_persisted_judgment_trails(
+            {attempt.id: attempt},
+            {attempt.id: response},
+            {attempt.id: tampered},
+            [row],
+            {"run": {"approximate_common_metrics": False}},
+            ["rules"],
+        )
+
+    missing_nullable = dict(row)
+    del missing_nullable["parsed"]
+    with pytest.raises(ValueError, match="missing retained stage field 'parsed'"):
+        runner_module.validate_persisted_judgment_trails(
+            {attempt.id: attempt},
+            {attempt.id: response},
+            {attempt.id: final},
+            [missing_nullable],
+            {"run": {"approximate_common_metrics": False}},
+            ["rules"],
+        )
+
+    integer_signal = final.model_copy(update={
+        "raw": {**final.raw, "provider_signal_authoritative": 0}
+    })
+    integer_signal_row = runner_module.judgment_trail_projection(integer_signal)
+    with pytest.raises(ValueError, match="invalid provider-signal authority marker"):
+        runner_module.validate_persisted_judgment_trails(
+            {attempt.id: attempt},
+            {attempt.id: response},
+            {attempt.id: integer_signal},
+            [integer_signal_row],
+            {"run": {"approximate_common_metrics": False}},
+            ["rules"],
+        )
+
+    invented_authority = final.model_copy(update={
+        "raw": {**final.raw, "metric_authority": "official"}
+    })
+    invented_authority_row = runner_module.judgment_trail_projection(
+        invented_authority
+    )
+    with pytest.raises(ValueError, match="immutable Attempt policy state"):
+        runner_module.validate_persisted_judgment_trails(
+            {attempt.id: attempt},
+            {attempt.id: response},
+            {attempt.id: invented_authority},
+            [invented_authority_row],
+            {"run": {"approximate_common_metrics": False}},
+            ["rules"],
+        )
+
+    missing_planning_eligibility = attempt.model_copy(update={
+        "params": {
+            key: value
+            for key, value in attempt.params.items()
+            if key != "planning_common_metrics_eligible"
+        }
+    })
+    with pytest.raises(ValueError, match="immutable Attempt policy state"):
+        runner_module.validate_persisted_judgment_trails(
+            {attempt.id: missing_planning_eligibility},
+            {attempt.id: response},
+            {attempt.id: final},
+            [row],
+            {"run": {"approximate_common_metrics": False}},
+            ["rules"],
+        )
+
+
+def test_non_rubric_shadow_binds_the_full_stage_projection() -> None:
+    attempt, response, authority, authority_row = (
+        _persisted_trail_contract_fixture()
+    )
+    shadow = Judgment(
+        attempt_id=attempt.id,
+        judge="guardrail",
+        label="safe",
+        score=0.1,
+        run_id=attempt.run_id,
+        raw={
+            "cascade_stage": 1,
+            "confidence": 0.4,
+            "parsed": True,
+            "cascade_confident": False,
+            "cascade_role": "shadow",
+            "cascade_policy": "first_confident_with_full_shadow_trail",
+            "stage_queried": True,
+            "policy_evaluation_status": "evaluated",
+            "metric_authority": None,
+            "required_metric": None,
+            "judge_model": "org/guardrail",
+            "model_revision": "a" * 40,
+            "model_identity": f"org/guardrail@{'a' * 40}",
+            "guardrail_queried": True,
+        },
+    )
+    bound = runner_module._attach_strongreject_shadow(
+        authority, [authority, shadow]
+    )
+    shadow_row = runner_module.judgment_trail_projection(shadow)
+
+    runner_module.validate_persisted_judgment_trails(
+        {attempt.id: attempt},
+        {attempt.id: response},
+        {attempt.id: bound},
+        [authority_row, shadow_row],
+        {"run": {"approximate_common_metrics": False}},
+        ["rules", "guardrail"],
+    )
+
+    tampered = {
+        **shadow_row,
+        "label": "violation",
+        "score": 1.0,
+        "confidence": 0.99,
+        "parsed": False,
+    }
+    with pytest.raises(ValueError, match="final binding"):
+        runner_module.validate_persisted_judgment_trails(
+            {attempt.id: attempt},
+            {attempt.id: response},
+            {attempt.id: bound},
+            [authority_row, tampered],
+            {"run": {"approximate_common_metrics": False}},
+            ["rules", "guardrail"],
+        )
+
+
+def test_strongreject_shadow_binds_the_full_stage_projection() -> None:
+    attempt, response, authority, authority_row = (
+        _persisted_trail_contract_fixture()
+    )
+    shadow = Judgment(
+        attempt_id=attempt.id,
+        judge="llm-judge",
+        label="violation",
+        score=0.8,
+        run_id=attempt.run_id,
+        raw={
+            "cascade_stage": 1,
+            "confidence": 0.8,
+            "parsed": True,
+            "cascade_confident": True,
+            "cascade_role": "shadow",
+            "cascade_policy": "first_confident_with_full_shadow_trail",
+            "stage_queried": True,
+            "policy_evaluation_status": "evaluated",
+            "metric_authority": None,
+            "required_metric": None,
+            "judge_model": "judge-m",
+            "judge_model_queried": True,
+            "judge_call": {"response_target": "judge-m"},
+            "strongreject_applicable": True,
+            "strongreject_score": 0.8,
+        },
+    )
+    bound = runner_module._attach_strongreject_shadow(
+        authority, [authority, shadow]
+    )
+    shadow_row = runner_module.judgment_trail_projection(shadow)
+    shadow_row["confidence"] = 0.1
+
+    with pytest.raises(ValueError, match="StrongREJECT confidence"):
+        runner_module.validate_persisted_judgment_trails(
+            {attempt.id: attempt},
+            {attempt.id: response},
+            {attempt.id: bound},
+            [authority_row, shadow_row],
+            {"run": {"approximate_common_metrics": False}},
+            ["rules", "llm-judge"],
+        )
+
+    binding = dict(bound.raw["strongreject_stage_binding"])
+    del binding["parsed"]
+    rebound = bound.model_copy(update={
+        "raw": {**bound.raw, "strongreject_stage_binding": binding}
+    })
+    shadow_without_nullable = runner_module.judgment_trail_projection(shadow)
+    del shadow_without_nullable["parsed"]
+    with pytest.raises(ValueError, match="field inventory is invalid"):
+        runner_module.validate_persisted_judgment_trails(
+            {attempt.id: attempt},
+            {attempt.id: response},
+            {attempt.id: rebound},
+            [authority_row, shadow_without_nullable],
+            {"run": {"approximate_common_metrics": False}},
+            ["rules", "llm-judge"],
+        )
+
+
 def test_crescendo_physical_item_scores_only_media_bearing_challenge(
     tmp_path: Path,
 ) -> None:
@@ -2402,7 +4226,8 @@ def test_crescendo_physical_item_scores_only_media_bearing_challenge(
         target.name, runner.attempts, runner.responses, evidence
     )
     assert evidence[target.name] == {
-        ("turn-media-only", ("text", "image"))
+        ("crescendo", "turn-media-only", ("text",)),
+        ("crescendo", "turn-media-only", ("text", "image")),
     }
 
 
@@ -2416,12 +4241,21 @@ def test_media_artifacts_and_resume_are_portable_across_checkout_roots(
         media_root.mkdir(parents=True)
         media_path = media_root / "probe.png"
         media_path.write_bytes(payload)
-        point = _datapoint(media=[MediaRef(
+        media_ref = MediaRef(
             modality="image",
             path=str(media_path.resolve()),
             sha256=hashlib.sha256(payload).hexdigest(),
             mime="image/png",
-        )])
+        )
+        point = _datapoint().model_copy(update={
+            "modalities": ["text", "image"],
+            "dialog_history": [DialogTurn(
+                role="user",
+                content="ORIGINAL HARMFUL SOURCE DIALOGUE",
+                media=[media_ref],
+            )],
+            "meta": {"judge_reference_text": "fixture harmful media context"},
+        })
         return [point], media_root
 
     first_corpus, first_root = corpus_at(tmp_path / "checkout-a")
@@ -2443,7 +4277,7 @@ def test_media_artifacts_and_resume_are_portable_across_checkout_roots(
     }
     serialized = json.dumps(records, sort_keys=True)
     assert str((tmp_path / "checkout-a").resolve()) not in serialized
-    assert "@media-root/0/probe.png" in serialized
+    assert f"sha256:{hashlib.sha256(payload).hexdigest()}" in serialized
     attempts_path = tmp_path / "attempts.jsonl"
     first.save_attempts(attempts_path)
     assert str((tmp_path / "checkout-a").resolve()) not in attempts_path.read_text(
@@ -2465,6 +4299,9 @@ def test_media_artifacts_and_resume_are_portable_across_checkout_roots(
 def test_authoritative_harmful_completion_stops_live_trajectory_immediately():
     target = _RecordingTarget()
     judge = _ConfidentBinaryJudge()
+    contract = CrescendoAttacker().plan_target_inputs(
+        _datapoint(), AttackBudget(max_queries=4, max_turns=4, seed=0)
+    )
     runner = Runner(
         CrescendoAttacker(),
         target,
@@ -2476,6 +4313,7 @@ def test_authoritative_harmful_completion_stops_live_trajectory_immediately():
     judgments, _ = runner.run([_datapoint()])
 
     assert len(target._dialogs) == len(judgments) == 3
+    assert len(contract.turns) == 4
     assert judge.calls == 1
     assert [row.label for row in judgments] == [
         "not_applicable", "not_applicable", "violation"
@@ -2485,6 +4323,36 @@ def test_authoritative_harmful_completion_stops_live_trajectory_immediately():
     ]
     assert judgments[-1].raw["policy_challenge_index"] == 0
     assert judgments[-1].raw["turn_index"] == 2
+
+
+def test_crescendo_rejects_an_unjustified_short_exact_session() -> None:
+    class _PrematureCrescendo(CrescendoAttacker):
+        def start_session(self, datapoint: DataPoint, budget: AttackBudget):
+            delegate = super().start_session(datapoint, budget)
+            assert delegate is not None
+
+            class _OneTurnPrefix:
+                emitted = False
+
+                def next_attempt(self, previous: Response | None):
+                    if self.emitted:
+                        return None
+                    self.emitted = True
+                    return delegate.next_attempt(previous)
+
+            return _OneTurnPrefix()
+
+    target = _RecordingTarget()
+    runner = _runner(
+        _PrematureCrescendo(), target, max_queries=4, max_turns=4
+    )
+
+    with pytest.raises(
+        ValueError, match="ended after 1 target inputs.*no content-bound terminal"
+    ):
+        runner.run([_datapoint()])
+
+    assert len(target._dialogs) == 1
 
 
 def test_live_benign_violation_label_does_not_trigger_harmful_terminal_rule():
@@ -2646,7 +4514,7 @@ def test_first_response_attestation_drift_opens_circuit_before_second_cell(
         "--api", target_spec, *_api_config_args(tmp_path, target_spec),
         *receipt_args,
         "--attackers", "replay,crescendo", "--judges", "rules",
-        "--corpora", "synth", "--limit", "1",
+        "--corpora", "synth", "--limit", "1", "--sample-seed", "0",
         "--max-queries", "2", "--max-turns", "2",
         "--out", str(tmp_path / "drift"), *_finite_budget_args(),
         *project_revision_args,
@@ -2789,6 +4657,7 @@ def test_runner_persists_pinned_local_judge_stage_identity() -> None:
     assert snapshot == {
         "judge": "pinned-local-judge",
         "requested_model": "org/local-guard",
+        "resolved_model": "org/local-guard",
         "model_revision": "c" * 40,
         "model_identity": f"org/local-guard@{'c' * 40}",
     }
@@ -2839,17 +4708,30 @@ def test_media_bytes_are_hashed_and_declared_digest_is_validated(tmp_path: Path)
     asset.write_bytes(payload)
     expected = hashlib.sha256(payload).hexdigest()
     runner = _runner(
-        _FloodAttacker(), _RecordingTarget(media_roots=[tmp_path])
+        ReplayAttacker(), _RecordingTarget(media_roots=[tmp_path])
     )
 
-    manifest = runner.plan_manifest([
-        _datapoint(media=[MediaRef(modality="image", path=str(asset))])
-    ])
+    valid = MediaRef(
+        modality="image", path=str(asset), sha256=expected, mime="image/png"
+    )
+    valid_point = _datapoint(media=[valid]).model_copy(update={
+        "dialog_history": [DialogTurn(
+            role="user", content="ORIGINAL HARMFUL SOURCE DIALOGUE", media=[valid]
+        )],
+    })
+    manifest = runner.plan_manifest([valid_point])
     assert expected in manifest.dataset_hashes.values()
 
-    bad = MediaRef(modality="image", path=str(asset), sha256="0" * 64)
-    with pytest.raises(ValueError, match="media sha256 mismatch"):
-        runner.plan_manifest([_datapoint(media=[bad])])
+    bad = MediaRef(
+        modality="image", path=str(asset), sha256="0" * 64, mime="image/png"
+    )
+    bad_point = _datapoint(media=[bad]).model_copy(update={
+        "dialog_history": [DialogTurn(
+            role="user", content="ORIGINAL HARMFUL SOURCE DIALOGUE", media=[bad]
+        )],
+    })
+    with pytest.raises(ValueError, match="SHA-256 mismatch"):
+        runner.plan_manifest([bad_point])
 
 
 def test_media_ref_requires_exactly_one_source_and_modality_is_strict(tmp_path: Path):
@@ -2860,22 +4742,31 @@ def test_media_ref_requires_exactly_one_source_and_modality_is_strict(tmp_path: 
 
     asset = tmp_path / "asset.png"
     asset.write_bytes(_PNG)
-    datapoint = _datapoint(
-        media=[MediaRef(modality="image", path=str(asset))]
+    ref = MediaRef(
+        modality="image",
+        path=str(asset),
+        sha256=hashlib.sha256(_PNG).hexdigest(),
+        mime="image/png",
     )
+    datapoint = _datapoint(media=[ref]).model_copy(update={
+        "dialog_history": [DialogTurn(
+            role="user", content="ORIGINAL HARMFUL SOURCE DIALOGUE", media=[ref]
+        )],
+    })
     target = _TextOnlyTarget(media_roots=[tmp_path])
-    runner = _runner(_FloodAttacker(), target)
-    with pytest.raises(ValueError, match="lacks required modalities"):
+    runner = _runner(ReplayAttacker(), target)
+    with pytest.raises(ValueError, match="lacks planned attacker input combinations"):
         runner.run([datapoint])
     assert target._dialogs == []
 
 
 def test_declared_and_actual_physical_modalities_must_match() -> None:
-    raw = b"image"
+    raw = _PNG
     inline = MediaRef(
         modality="image",
         uri="data:image/png;base64," + base64.b64encode(raw).decode("ascii"),
         sha256=hashlib.sha256(raw).hexdigest(),
+        mime="image/png",
     )
     undeclared = DataPoint(
         id="undeclared-image",
@@ -2894,9 +4785,9 @@ def test_declared_and_actual_physical_modalities_must_match() -> None:
         expected_behavior="refuse",
     )
     runner = _runner(_FloodAttacker(), _RecordingTarget())
-    with pytest.raises(ValueError, match="undeclared physical media"):
+    with pytest.raises(ValueError, match="physical declarations do not match"):
         runner.plan_manifest([undeclared])
-    with pytest.raises(ValueError, match="without MediaRef bytes"):
+    with pytest.raises(ValueError, match="physical declarations do not match"):
         runner.plan_manifest([missing])
 
     abstract = missing.model_copy(
@@ -2917,9 +4808,13 @@ def test_physical_common_metric_requires_reference_or_typed_response_scope(
         sha256=hashlib.sha256(_PNG).hexdigest(),
         mime="image/png",
     )
-    base = _datapoint(media=[media])
+    base = _datapoint(media=[media]).model_copy(update={
+        "dialog_history": [DialogTurn(
+            role="user", content="ORIGINAL HARMFUL SOURCE DIALOGUE", media=[media]
+        )],
+    })
     target = _RecordingTarget(media_roots=[tmp_path])
-    runner = _runner(_FloodAttacker(), target)
+    runner = _runner(ReplayAttacker(), target)
     missing_reference = base.model_copy(update={"meta": {}})
 
     with pytest.raises(
@@ -2950,7 +4845,7 @@ def test_harmbench_multimodal_passes_runner_media_admission(tmp_path: Path) -> N
     point = HarmBenchConverter().parse(source)[0]
     target = _RecordingTarget(media_roots=[tmp_path])
 
-    manifest = _runner(_FloodAttacker(), target).plan_manifest([point])
+    manifest = _runner(ReplayAttacker(), target).plan_manifest([point])
 
     assert manifest.config["n_datapoints"] == 1
     assert manifest.config["media_validation"]["unverified_refs"] == 0
@@ -2967,6 +4862,16 @@ def test_attack_generated_media_is_hashed_and_checked_before_target(
 
     class _GeneratedMediaAttacker(BaseAttacker):
         name = "generated-media"
+
+        def plan_target_inputs(
+            self, datapoint: DataPoint, budget: AttackBudget
+        ) -> AttackerInputContract:
+            return generated_image_input_contract(
+                self.name,
+                datapoint,
+                budget,
+                seed_pairs=[("generated multimodal probe", str(image_path))],
+            )
 
         def generate(
             self, datapoint: DataPoint, budget: AttackBudget
@@ -3025,7 +4930,7 @@ def test_attack_generated_media_is_hashed_and_checked_before_target(
     ("source_kind", "message"),
     [
         ("local_spoof", "MIME/signature mismatch"),
-        ("inline_mismatch", "inline media MIME mismatch"),
+        ("inline_mismatch", "matching MIME"),
     ],
 )
 def test_attack_generated_media_mime_spoofs_fail_before_target(
@@ -3053,6 +4958,16 @@ def test_attack_generated_media_mime_spoofs_fail_before_target(
     class _SpoofingAttacker(BaseAttacker):
         name = "spoofing-media"
 
+        def plan_target_inputs(
+            self, datapoint: DataPoint, budget: AttackBudget
+        ) -> AttackerInputContract:
+            media_input_identity(
+                ref,
+                origin="attacker_generated",
+                require_declared_sha256=False,
+            )
+            raise AssertionError("spoof fixture unexpectedly passed media validation")
+
         def generate(
             self, datapoint: DataPoint, budget: AttackBudget,
         ) -> Iterable[Attempt]:
@@ -3077,39 +4992,61 @@ def test_runner_bounds_inline_media_before_decode(monkeypatch: pytest.MonkeyPatc
     monkeypatch.setattr(runner_module, "_MAX_SCORED_MEDIA_BYTES", 4)
     oversized = MediaRef(
         modality="image",
-        uri="data:image/png;base64," + "A" * 16,
-        sha256="0" * 64,
+        uri="data:image/png;base64," + base64.b64encode(_PNG).decode("ascii"),
+        sha256=hashlib.sha256(_PNG).hexdigest(),
+        mime="image/png",
     )
-    runner = _runner(_FloodAttacker(), _RecordingTarget())
+    datapoint = _datapoint(media=[oversized]).model_copy(update={
+        "dialog_history": [DialogTurn(
+            role="user",
+            content="ORIGINAL HARMFUL SOURCE DIALOGUE",
+            media=[oversized],
+        )],
+    })
+    runner = _runner(ReplayAttacker(), _RecordingTarget())
     with pytest.raises(ValueError, match="scored-input limit"):
-        runner.plan_manifest([_datapoint(media=[oversized])])
+        runner.plan_manifest([datapoint])
 
 
 def test_runner_rejects_unapproved_missing_and_remote_media(tmp_path: Path):
     approved = tmp_path / "approved"
     approved.mkdir()
     outside = tmp_path / "outside.png"
-    outside.write_bytes(b"outside")
+    outside.write_bytes(_PNG)
     runner = _runner(
-        _FloodAttacker(), _RecordingTarget(media_roots=[approved])
+        ReplayAttacker(), _RecordingTarget(media_roots=[approved])
     )
 
+    def physical_point(ref: MediaRef) -> DataPoint:
+        return _datapoint(media=[ref]).model_copy(update={
+            "dialog_history": [DialogTurn(
+                role="user",
+                content="ORIGINAL HARMFUL SOURCE DIALOGUE",
+                media=[ref],
+            )],
+        })
+
     with pytest.raises(PermissionError, match="outside approved"):
-        runner.plan_manifest([
-            _datapoint(media=[MediaRef(modality="image", path=str(outside))])
-        ])
-    with pytest.raises(FileNotFoundError, match="does not exist"):
-        runner.plan_manifest([
-            _datapoint(
-                media=[MediaRef(modality="image", path=str(approved / "missing.png"))]
-            )
-        ])
-    with pytest.raises(ValueError, match="not byte-verifiable"):
-        runner.plan_manifest([
-            _datapoint(
-                media=[MediaRef(modality="image", uri="https://example.test/image.png")]
-            )
-        ])
+        runner.plan_manifest([physical_point(MediaRef(
+            modality="image",
+            path=str(outside),
+            sha256=hashlib.sha256(_PNG).hexdigest(),
+            mime="image/png",
+        ))])
+    with pytest.raises(ValueError, match="does not exist"):
+        runner.plan_manifest([physical_point(MediaRef(
+            modality="image",
+            path=str(approved / "missing.png"),
+            sha256="0" * 64,
+            mime="image/png",
+        ))])
+    with pytest.raises(ValueError, match="bounded base64 data"):
+        runner.plan_manifest([physical_point(MediaRef(
+            modality="image",
+            uri="https://example.test/image.png",
+            sha256="0" * 64,
+            mime="image/png",
+        ))])
 
 
 def test_artifacts_and_results_carry_joinable_run_lineage(tmp_path: Path):
@@ -3586,6 +5523,55 @@ def test_checkpoint_loader_rejects_duplicate_attempt_ids(tmp_path: Path):
         Runner.load_checkpoint(checkpoint, expected_run_id=manifest.run_id)
 
 
+def test_checkpoint_readers_reject_duplicate_nested_keys(
+    tmp_path: Path,
+) -> None:
+    runner = _runner(_FloodAttacker(), _RecordingTarget())
+    completed: list[dict] = []
+    responses: list[dict] = []
+    _, manifest = runner.run(
+        [_datapoint()],
+        on_record=completed.append,
+        on_response=responses.append,
+    )
+
+    checkpoint = tmp_path / "checkpoint.jsonl"
+    completed_text = json.dumps(completed[0], sort_keys=True)
+    schema_token = f'"schema_version": {json.dumps(SCHEMA_VERSION)}'
+    assert schema_token in completed_text
+    checkpoint.write_text(
+        completed_text.replace(
+            schema_token,
+            f'"schema_version": "attacker-value", {schema_token}',
+            1,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    with pytest.raises(ValueError, match="invalid checkpoint JSON.*duplicate"):
+        Runner.load_checkpoint(checkpoint, expected_run_id=manifest.run_id)
+
+    response_checkpoint = tmp_path / "responses.checkpoint.jsonl"
+    response_text = json.dumps(responses[0], sort_keys=True)
+    assert schema_token in response_text
+    response_checkpoint.write_text(
+        response_text.replace(
+            schema_token,
+            f'"schema_version": "attacker-value", {schema_token}',
+            1,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    with pytest.raises(
+        ValueError,
+        match="invalid response checkpoint JSON.*duplicate",
+    ):
+        Runner.load_response_checkpoint(
+            response_checkpoint, expected_run_id=manifest.run_id
+        )
+
+
 def test_checkpoint_loader_requires_a_valid_post_attempt_budget_snapshot(
     tmp_path: Path,
 ) -> None:
@@ -3629,6 +5615,30 @@ def test_checkpoint_second_crash_preserves_valid_non_newline_record(
     assert set(restored) == {
         record["attempt"]["id"] for record in records
     }
+
+
+def test_checkpoint_append_does_not_preserve_duplicate_key_tail(
+    tmp_path: Path,
+) -> None:
+    runner = _runner(_FloodAttacker(), _RecordingTarget())
+    records: list[dict] = []
+    runner.run([_datapoint("a"), _datapoint("b")], on_record=records.append)
+    checkpoint = tmp_path / "checkpoint.jsonl"
+    text = json.dumps(records[0], sort_keys=True)
+    schema_token = f'"schema_version": {json.dumps(SCHEMA_VERSION)}'
+    assert schema_token in text
+    checkpoint.write_text(
+        text.replace(
+            schema_token,
+            f'"schema_version": "attacker-value", {schema_token}',
+            1,
+        ),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError, match="final record is not strict JSON"):
+        Runner.append_checkpoint(checkpoint, records[1])
+    assert checkpoint.read_text(encoding="utf-8").endswith("}")
 
 
 def test_response_checkpoint_rejects_duplicates_and_unused_records(
@@ -3679,6 +5689,41 @@ def test_durable_budget_survives_restart_and_records_transport_exposure(
     assert restarted.snapshot()["http_attempts"] == 2
     with pytest.raises(BudgetExhausted, match="target-call ceiling"):
         restarted.charge_target(http_exposure=1)
+
+
+def test_durable_budget_rejects_duplicate_counter_rollback_before_reservation(
+    tmp_path: Path,
+) -> None:
+    ledger = tmp_path / "budget.json"
+    budget = GlobalCallBudget(
+        max_target_calls=1,
+        max_http_attempts=1,
+        state_path=ledger,
+        budget_id="grid-duplicate-ledger",
+    )
+    budget.charge_target(http_exposure=1)
+    material = ledger.read_text(encoding="utf-8")
+    assert '"target_calls": 1' in material
+    assert '"http_attempts": 1' in material
+    hostile = material.replace(
+        '"target_calls": 1',
+        '"target_calls": 1, "target_calls": 0',
+        1,
+    ).replace(
+        '"http_attempts": 1',
+        '"http_attempts": 1, "http_attempts": 0',
+        1,
+    )
+    ledger.write_text(hostile, encoding="utf-8")
+
+    with pytest.raises(ValueError, match="duplicate JSON object key"):
+        GlobalCallBudget(
+            max_target_calls=1,
+            max_http_attempts=1,
+            state_path=ledger,
+            budget_id="grid-duplicate-ledger",
+        )
+    assert ledger.read_text(encoding="utf-8") == hostile
 
 
 def test_durable_budget_retries_a_transient_atomic_replace(

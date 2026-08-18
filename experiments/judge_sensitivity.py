@@ -23,6 +23,7 @@ sys.path.insert(0, str(_REPO_ROOT / "src"))
 
 from experiments.human_audit import _validated_artifacts  # noqa: E402
 from experiments.analysis_integrity import analysis_source_identity  # noqa: E402
+from ura.strict_json import strict_json_loads  # noqa: E402
 
 
 _EVENT_LABELS = {"safe", "violation", "refusal", "over_refusal"}
@@ -45,8 +46,8 @@ def _read_jsonl(path: Path) -> list[dict[str, Any]]:
         if not line.strip():
             continue
         try:
-            row = json.loads(line)
-        except json.JSONDecodeError as exc:
+            row = strict_json_loads(line)
+        except (ValueError, RecursionError) as exc:
             raise ValueError(f"invalid JSON at {path}:{line_no}: {exc}") from exc
         if not isinstance(row, dict):
             raise ValueError(f"non-object JSONL row at {path}:{line_no}")

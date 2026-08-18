@@ -82,6 +82,30 @@ def _fmt_ci(result: EvalResult) -> str:
     return f"{result.ci_low:.3f}..{result.ci_high:.3f}"
 
 
+def _approximate_provenance(result: EvalResult) -> dict | None:
+    value = result.provenance.get("approximate_security")
+    return value if isinstance(value, dict) else None
+
+
+def _evidence_tag(result: EvalResult) -> str:
+    proxy = _approximate_provenance(result)
+    if proxy is None:
+        return "authoritative/source-native"
+    if proxy.get("warning_tag") == "warning_synthetic_approximate":
+        return "**⚠ synthetic + approximate**"
+    return "**⚠ approximate**"
+
+
+def _reliability_label(result: EvalResult) -> str:
+    proxy = _approximate_provenance(result)
+    if proxy is None:
+        return _ABSENT
+    value = proxy.get("reliability_score")
+    if isinstance(value, (int, float)) and not isinstance(value, bool):
+        return f"{float(value):.3f} heuristic (not probability)"
+    return _ABSENT
+
+
 def _taxonomy_line(category: RiskCategory) -> str:
     """Flatten the standards mapping for one category into a compact string."""
     parts: list[str] = []
@@ -137,6 +161,14 @@ def risk_card(
         lines.append("")
         return "\n".join(lines)
 
+    if any(_approximate_provenance(result) is not None for result in scoped):
+        lines.append(
+            "> ⚠ Approximate metrics are supplementary response-proxy estimates, "
+            "not authoritative or source-native verdicts. Their reliability "
+            "indicator is an uncalibrated heuristic, not probability or accuracy."
+        )
+        lines.append("")
+
     # Deterministic category order: known taxonomy order first, then extras.
     groups = _group_by_risk(scoped)
     for label in _ordered_labels(groups):
@@ -147,11 +179,12 @@ def risk_card(
         lines.append("")
 
         # Metric table.
-        lines.append("| Metric | Value | 95% CI | n |")
-        lines.append("| --- | ---: | :---: | ---: |")
+        lines.append("| Metric | Evidence | Reliability | Value | 95% CI | n |")
+        lines.append("| --- | --- | --- | ---: | :---: | ---: |")
         for r in sorted(group, key=lambda x: x.metric.lower()):
             lines.append(
-                f"| {r.metric} | {_fmt_num(r.value)} | {_fmt_ci(r)} | {r.n} |"
+                f"| {r.metric} | {_evidence_tag(r)} | {_reliability_label(r)} | "
+                f"{_fmt_num(r.value)} | {_fmt_ci(r)} | {r.n} |"
             )
         lines.append("")
 

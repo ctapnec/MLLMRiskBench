@@ -30,7 +30,11 @@ def _runner():
 
 
 def test_end_to_end_run_and_report(tmp_path: Path):
-    corpus = synth_corpus(12)
+    selected = synth_corpus(12)
+    assert any("tool" in datapoint.modalities for datapoint in selected)
+    corpus = [
+        datapoint for datapoint in selected if "tool" not in datapoint.modalities
+    ]
     runner = _runner()
 
     judgments, manifest = runner.run(corpus, started_at="2026-08-09T00:00:00Z")
@@ -64,7 +68,11 @@ def test_end_to_end_run_and_report(tmp_path: Path):
 
 
 def test_run_is_deterministic():
-    corpus = synth_corpus(8)
+    corpus = [
+        datapoint
+        for datapoint in synth_corpus(8)
+        if "tool" not in datapoint.modalities
+    ]
     j1, _ = _runner().run(corpus, started_at="t")
     j2, _ = _runner().run(corpus, started_at="t")
     assert [(j.attempt_id, j.label) for j in j1] == [(j.attempt_id, j.label) for j in j2]

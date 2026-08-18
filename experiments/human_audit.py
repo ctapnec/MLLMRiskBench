@@ -45,6 +45,7 @@ from ura.converters.release_specs import (  # noqa: E402
     MOSSBENCH_POLICY_DESCRIPTOR,
     canonical_descriptor_sha256,
 )
+from ura.strict_json import strict_json_loads  # noqa: E402
 
 VALID_LABELS = {"safe", "violation", "refusal", "over_refusal"}
 _ARTIFACT_LABELS = VALID_LABELS | {"not_applicable"}
@@ -145,8 +146,8 @@ def _read_jsonl_paths(files: list[Path]) -> list[dict]:
         for line_no, line in enumerate(file.read_text(encoding="utf-8").splitlines(), 1):
             if line.strip():
                 try:
-                    row = json.loads(line)
-                except json.JSONDecodeError as exc:
+                    row = strict_json_loads(line)
+                except (ValueError, RecursionError) as exc:
                     raise ValueError(f"invalid JSON at {file}:{line_no}: {exc}") from exc
                 if not isinstance(row, dict):
                     raise ValueError(f"JSONL row at {file}:{line_no} is not an object")

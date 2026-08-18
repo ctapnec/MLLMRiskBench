@@ -34,6 +34,10 @@ from __future__ import annotations
 
 from collections.abc import Iterable
 
+from ..attacker_input_contract import (
+    AttackerInputContract,
+    generated_image_input_contract,
+)
 from ..data_models import Attempt, DataPoint, MediaRef
 from .base import AttackBudget, BaseAttacker
 from ._engine_common import (
@@ -62,6 +66,19 @@ class IDEATORAttacker(BaseAttacker):
     """
 
     name = "ideator"
+    # Raw host paths are execution locators, not portable scientific identity.
+    # Runner binds the ordered text/image pair content through input contracts.
+    portable_config_exclude = ("seed_pairs", "out_dir")
+
+    def plan_target_inputs(
+        self, datapoint: DataPoint, budget: AttackBudget
+    ) -> AttackerInputContract:
+        return generated_image_input_contract(
+            self.name,
+            datapoint,
+            budget,
+            seed_pairs=tuple(self.seed_pairs or ()),
+        )
 
     def __init__(
         self,
@@ -83,8 +100,27 @@ class IDEATORAttacker(BaseAttacker):
 
     def generate(self, datapoint: DataPoint, budget: AttackBudget) -> Iterable[Attempt]:
         objective = datapoint.payload_text or datapoint.payload_code or ""
-        pairs, mode = self._pairs(objective, max(1, budget.max_queries), budget)
+        pairs, mode = self._pairs(
+            objective,
+            min(budget.max_queries, budget.max_turns),
+            budget,
+        )
+        # Preserve the adapter's established conformance/output exceptions from
+        # ``_pairs`` while still binding every accepted image before yielding an
+        # Attempt. Runner admission calls ``plan_target_inputs`` on the original
+        # configuration, where ignored/malformed configured pairs fail closed.
+        input_contract = generated_image_input_contract(
+            self.name,
+            datapoint,
+            budget,
+            seed_pairs=tuple(pairs),
+        )
+        generated_by_id = {
+            item.media_id: item for item in input_contract.generated_media
+        }
         for i, (text, image_path) in enumerate(pairs):
+            media_id = input_contract.turns[i].media_ids[0]
+            identity = generated_by_id[media_id]
             attempt = _attempt(
                 datapoint,
                 self.name,
@@ -95,7 +131,13 @@ class IDEATORAttacker(BaseAttacker):
                 params={
                     "vlm": self.vlm,
                     "diffusion_model": self.diffusion_model,
-                    "image": image_path,
+                    "image_identity": {
+                        "media_id": media_id,
+                        "modality": identity.modality,
+                        "mime": identity.mime,
+                        "sha256": identity.sha256,
+                        "bytes": identity.bytes,
+                    },
                     "modalities": ["image", "text"],
                     "mode": mode,
                 },
@@ -104,7 +146,12 @@ class IDEATORAttacker(BaseAttacker):
             # the last (user) turn now carries both the jailbreak text and the image.
             if image_path:
                 attempt.rendered_input[-1].media.append(
-                    MediaRef(modality="image", path=image_path, mime="image/png")
+                    MediaRef(
+                        modality="image",
+                        path=image_path,
+                        sha256=identity.sha256,
+                        mime="image/png",
+                    )
                 )
             yield attempt
 

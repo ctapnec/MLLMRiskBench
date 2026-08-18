@@ -11,7 +11,16 @@ import pytest
 
 from ura.data_models import SCHEMA_VERSION, Response
 from ura.converters.release_specs import mm_safetybench_policy
+from ura.model_acquisition_runtime import (
+    ModelRequirementSet,
+    build_runtime_selection,
+    model_acquisition_cell_role_projection,
+    model_acquisition_execution_descriptor,
+    public_selection_descriptor,
+)
 from ura.runner import realized_identity_summary
+from ura.targets.api import api_target_endpoint_identity
+from ura.targets.guarded import GUARDED_BLOCK_TEMPLATE_ID, GUARDED_BLOCK_TEXT
 
 from experiments.human_audit import (
     _consensus,
@@ -47,6 +56,67 @@ from experiments.transfer_matrix import (
     load_facets,
     main as transfer_main,
 )
+
+
+_NO_ACQUISITION_FULL = {
+    "selection": public_selection_descriptor(
+        build_runtime_selection(
+            ModelRequirementSet((), ()),
+            input_bindings={
+                "fixture_sha256": hashlib.sha256(
+                    b"postprocessing-acquisition-fixture"
+                ).hexdigest()
+            },
+        )
+    ),
+    "status": "not_required",
+}
+_NO_ACQUISITION_EXECUTION = model_acquisition_execution_descriptor(
+    _NO_ACQUISITION_FULL
+)
+_NO_ACQUISITION_CELL = model_acquisition_cell_role_projection(
+    _NO_ACQUISITION_EXECUTION,
+    {
+        "attacker": "replay",
+        "attacker_config": {},
+        "judge_names": ["rules"],
+        "local_identity": None,
+        "model_spec": "fixture:hosted",
+    },
+)
+
+_TRAIL_STAGE_BINDING_FIELDS = (
+    "attempt_id",
+    "stage",
+    "judge",
+    "judge_model",
+    "judge_model_revision",
+    "judge_model_digest",
+    "judge_model_identity",
+    "judge_model_queried",
+    "guardrail_queried",
+    "provider_signal_authoritative",
+    "provider_refusal_category",
+    "judge_call",
+    "label",
+    "score",
+    "confidence",
+    "parsed",
+    "cascade_confident",
+    "cascade_role",
+    "cascade_policy",
+    "stage_queried",
+    "policy_evaluation_status",
+    "metric_authority",
+    "required_metric",
+    "run_id",
+)
+
+
+def _trail_stage_binding(row: dict[str, object]) -> dict[str, object]:
+    """Mirror Runner's complete path-free stage projection in fixtures."""
+
+    return {field: row.get(field) for field in _TRAIL_STAGE_BINDING_FIELDS}
 
 
 def test_human_audit_binds_one_exact_realized_judge_configuration() -> None:
@@ -401,6 +471,8 @@ def _write_completed_cell(
             "replayed_transcript": False,
             "target_sampling_control": "provider_seed",
             "cascade_stage": 0,
+            "confidence": 0.9,
+            "parsed": None,
             "cascade_confident": True,
             "cascade_role": "authoritative",
             "cascade_policy": "first_confident_with_full_shadow_trail",
@@ -424,6 +496,8 @@ def _write_completed_cell(
             "response_conditioned": response_conditioned,
             "replayed_transcript": False,
             "policy_evaluable_turn": True,
+            "planning_common_metrics_eligible": eligible,
+            "planning_required_metric": required_metric,
             "policy_challenge_index": 0,
             "policy_challenge_horizon": 1,
             "turn_expected_behavior": expected,
@@ -457,6 +531,15 @@ def _write_completed_cell(
         "attempt_id": "a",
         "stage": 0,
         "judge": "rules",
+        "judge_model": None,
+        "judge_model_revision": None,
+        "judge_model_digest": None,
+        "judge_model_identity": None,
+        "judge_model_queried": None,
+        "guardrail_queried": None,
+        "provider_signal_authoritative": None,
+        "provider_refusal_category": None,
+        "judge_call": None,
         "label": label,
         "score": 1.0,
         "confidence": 0.9,
@@ -466,6 +549,7 @@ def _write_completed_cell(
         "cascade_policy": "first_confident_with_full_shadow_trail",
         "stage_queried": stage_queried,
         "policy_evaluation_status": evaluation_status,
+        "metric_authority": None,
         "required_metric": required_metric,
         "risk_category": "cybersec",
         "modality": "text",
@@ -506,6 +590,8 @@ def _write_completed_cell(
     base_component = {
         "class": "FixtureTarget",
         "name": model.removesuffix("+guard"),
+        "provider": "fixture-provider",
+        "model": model_spec,
     }
     target_component = (
         base_component
@@ -532,10 +618,16 @@ def _write_completed_cell(
             "run": {
                 "corpus": corpus,
                 "model_spec": model_spec,
+                "expected_target_identity": {
+                    "provider": "fixture-provider",
+                    "resolved_model": model_spec,
+                },
                 "attacker": attacker,
+                "judge_names": ["rules"],
                 "defense": defense,
                 "defense_guard": "rules",
                 "dry_run": False,
+                "model_acquisition": _NO_ACQUISITION_CELL,
                 "driver_source": {
                     "module": "run_matrix.py",
                     "sha256": hashlib.sha256(b"test-driver").hexdigest(),
@@ -637,8 +729,14 @@ def _write_grid_manifest(
         "grid_id": f"grid-{stem}",
         "request": {
             "models": [model_spec],
+            "local_configs": {},
             "corpora": [corpus],
             "attackers": [attacker],
+            "attacker_configs": {attacker: {}},
+            "judges": ["rules"],
+            "judge_model": None,
+            "model_acquisition": _NO_ACQUISITION_FULL,
+            "model_acquisition_execution": _NO_ACQUISITION_EXECUTION,
         },
         "requested_cells": 1,
         "accounted_cells": 1,
@@ -946,6 +1044,15 @@ def _configure_two_stage_sensitivity_fixture(
     first_label: str = "safe",
     second_label: str = "violation",
 ) -> None:
+    judge_spec = "anthropic:claude-haiku-4-5-20251001"
+    judge_endpoint = api_target_endpoint_identity(judge_spec)
+    assert judge_endpoint is not None
+    judge_call = {
+        "response_target": judge_spec,
+        "provider": "anthropic",
+        "endpoint_identity": judge_endpoint,
+        "provider_resolved_model": "claude-haiku-4-5-20251001",
+    }
     trail_path = root / f"{stem}.trails.jsonl"
     first = json.loads(trail_path.read_text(encoding="utf-8"))
     first.update({
@@ -966,6 +1073,9 @@ def _configure_two_stage_sensitivity_fixture(
         "parsed": True,
         "cascade_confident": True,
         "cascade_role": "authoritative",
+        "judge_model": judge_spec,
+        "judge_model_queried": True,
+        "judge_call": judge_call,
     })
     trail_path.write_text(
         json.dumps(first) + "\n" + json.dumps(second) + "\n",
@@ -979,13 +1089,46 @@ def _configure_two_stage_sensitivity_fixture(
         "cascade_stage": 1,
         "cascade_confident": True,
         "cascade_role": "authoritative",
+        "confidence": 0.85,
+        "parsed": True,
+        "judge_model": judge_spec,
+        "judge_model_queried": True,
+        "judge_call": judge_call,
+        "judge_stage_bindings": [
+            _trail_stage_binding(first),
+            _trail_stage_binding(second),
+        ],
     })
     judgment_path.write_text(json.dumps(judgment) + "\n", encoding="utf-8")
 
     manifest_path = root / f"{stem}.manifest.json"
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
     manifest["judges"] = ["rules", "llm-judge"]
-    manifest["config"]["run"]["judge_names"] = ["rules", "llm-judge"]
+    manifest["config"]["run"].update({
+        "judge_names": ["rules", "llm"],
+        "judge_model": judge_spec,
+        "judge_api_config": {
+            "modalities": ["text"],
+            "max_tokens": 64,
+            "temperature": 0.0,
+        },
+    })
+    manifest["config"]["components"]["judge_cascade"] = {
+        "class": "Cascade",
+        "stages": [
+            {"class": "RuleJudge", "name": "rules"},
+            {
+                "class": "LLMJudge",
+                "name": "llm-judge",
+                "judge_target": {
+                    "class": "AnthropicTarget",
+                    "provider": "anthropic",
+                    "model": "claude-haiku-4-5-20251001",
+                    "endpoint_identity": judge_endpoint,
+                },
+            },
+        ],
+    }
     responses = [
         json.loads(line) for line in (root / f"{stem}.responses.jsonl")
         .read_text(encoding="utf-8").splitlines() if line.strip()
@@ -1225,6 +1368,70 @@ def test_paired_compare_exact_static_units_and_cli_lineage(tmp_path: Path) -> No
     assert output["experiment_status"] == "computed_only_from_supplied_completed_artifacts"
 
 
+def _configure_hosted_llm_judge_identity(
+    root: Path,
+    stem: str,
+    *,
+    response_target: str,
+    system_fingerprint: str,
+) -> None:
+    judge_spec = "anthropic:judge-v1-resolved"
+    endpoint_identity = api_target_endpoint_identity(judge_spec)
+    assert endpoint_identity is not None
+    call = {
+        "provider": "anthropic",
+        "endpoint_identity": endpoint_identity,
+        "provider_resolved_model": "judge-v1-resolved",
+        "system_fingerprint": system_fingerprint,
+        "response_target": response_target,
+    }
+    judgment_path = root / f"{stem}.jsonl"
+    judgment = json.loads(judgment_path.read_text(encoding="utf-8"))
+    judgment["judge"] = "llm-judge"
+    judgment["raw"].update({
+        "judge_model": judge_spec,
+        "judge_model_queried": True,
+        "judge_call": call,
+    })
+    judgment_path.write_text(json.dumps(judgment) + "\n", encoding="utf-8")
+    trail_path = root / f"{stem}.trails.jsonl"
+    trail = json.loads(trail_path.read_text(encoding="utf-8"))
+    trail.update({
+        "judge": "llm-judge",
+        "judge_model": judge_spec,
+        "judge_model_queried": True,
+        "judge_call": call,
+    })
+    trail_path.write_text(json.dumps(trail) + "\n", encoding="utf-8")
+    manifest_path = root / f"{stem}.manifest.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    manifest["judges"] = ["llm-judge"]
+    manifest["config"]["components"]["judge_cascade"] = {
+        "class": "Cascade",
+        "stages": [{
+            "class": "LLMJudge",
+            "name": "llm-judge",
+            "judge_target": {
+                "class": "AnthropicTarget",
+                "provider": "anthropic",
+                "model": "judge-v1-resolved",
+                "endpoint_identity": endpoint_identity,
+            },
+        }],
+    }
+    manifest["config"]["run"].update({
+        "judge_names": ["llm"],
+        "judge_model": judge_spec,
+        "judge_api_config": {
+            "modalities": ["text"],
+            "max_tokens": 64,
+            "temperature": 0.0,
+        },
+    })
+    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+    _refresh_identity_metadata(root, stem)
+
+
 def test_cross_model_comparison_ignores_target_but_retains_same_judge_identity(
     tmp_path: Path,
 ) -> None:
@@ -1232,19 +1439,12 @@ def test_cross_model_comparison_ignores_target_but_retains_same_judge_identity(
         _write_completed_cell(
             tmp_path, stem, model=model, run_id=run_id, key="shared",
         )
-        trail_path = tmp_path / f"{stem}.trails.jsonl"
-        trail = json.loads(trail_path.read_text(encoding="utf-8"))
-        trail.update({
-            "judge_model": "judge-v1",
-            "judge_call": {
-                "provider": "judge-provider",
-                "resolved_model": "judge-v1-resolved",
-                "system_fingerprint": "judge-fingerprint-stable",
-                "response_target": "judge-endpoint",
-            },
-        })
-        trail_path.write_text(json.dumps(trail) + "\n", encoding="utf-8")
-        _refresh_identity_metadata(tmp_path, stem)
+        _configure_hosted_llm_judge_identity(
+            tmp_path,
+            stem,
+            response_target="judge-endpoint",
+            system_fingerprint="judge-fingerprint-stable",
+        )
 
     result = compare(
         tmp_path, left_model="A", right_model="B", corpus="fixture",
@@ -1267,19 +1467,12 @@ def test_cross_model_comparison_rejects_realized_judge_identity_mismatch(
         _write_completed_cell(
             tmp_path, stem, model=model, run_id=run_id, key="shared",
         )
-        trail_path = tmp_path / f"{stem}.trails.jsonl"
-        trail = json.loads(trail_path.read_text(encoding="utf-8"))
-        trail.update({
-            "judge_model": "judge-v1",
-            "judge_call": {
-                "provider": "judge-provider",
-                "resolved_model": "judge-v1-resolved",
-                "system_fingerprint": fingerprint,
-                "response_target": "judge-endpoint",
-            },
-        })
-        trail_path.write_text(json.dumps(trail) + "\n", encoding="utf-8")
-        _refresh_identity_metadata(tmp_path, stem)
+        _configure_hosted_llm_judge_identity(
+            tmp_path,
+            stem,
+            response_target="judge-endpoint",
+            system_fingerprint=fingerprint,
+        )
 
     with pytest.raises(ValueError, match="incompatible manifests"):
         compare(
@@ -1298,19 +1491,12 @@ def test_cross_model_comparison_rejects_judge_endpoint_mismatch(
         _write_completed_cell(
             tmp_path, stem, model=model, run_id=run_id, key="shared",
         )
-        trail_path = tmp_path / f"{stem}.trails.jsonl"
-        trail = json.loads(trail_path.read_text(encoding="utf-8"))
-        trail.update({
-            "judge_model": "judge-v1",
-            "judge_call": {
-                "provider": "judge-provider",
-                "resolved_model": "judge-v1-resolved",
-                "system_fingerprint": "judge-fingerprint-stable",
-                "response_target": judge_endpoint,
-            },
-        })
-        trail_path.write_text(json.dumps(trail) + "\n", encoding="utf-8")
-        _refresh_identity_metadata(tmp_path, stem)
+        _configure_hosted_llm_judge_identity(
+            tmp_path,
+            stem,
+            response_target=judge_endpoint,
+            system_fingerprint="judge-fingerprint-stable",
+        )
 
     with pytest.raises(ValueError, match="incompatible manifests"):
         compare(
@@ -1449,6 +1635,18 @@ def test_same_base_defense_qualifies_input_blocked_identity_absence(
     response = json.loads(response_path.read_text(encoding="utf-8"))
     for field in ("provider", "resolved_model", "system_fingerprint"):
         response["raw"].pop(field)
+    response["output_turns"] = [{
+        "role": "assistant", "content": GUARDED_BLOCK_TEXT,
+    }]
+    response["raw"].update({
+        "defense": "blocked",
+        "stage": "input",
+        "defense_stages_evaluated": ["input"],
+        "base_target": "base",
+        "base_target_queried": False,
+        "target_sampling_control": "not_queried",
+        "defense_block_template_id": GUARDED_BLOCK_TEMPLATE_ID,
+    })
     response_path.write_text(json.dumps(response) + "\n", encoding="utf-8")
     _refresh_identity_metadata(tmp_path, "guard")
 
@@ -1612,6 +1810,40 @@ def test_kappa_skips_source_metric_only_classification_facets(
     assert set(facets) == {"fixture"}
     with pytest.raises(ValueError, match="no common-metric-eligible"):
         load_trail_facets(tmp_path, corpus="rjudge_release")
+
+
+def test_postprocessors_reject_rehashed_non_rubric_shadow_stage_drift(
+    tmp_path: Path,
+) -> None:
+    _write_completed_cell(
+        tmp_path,
+        "cell",
+        model="A",
+        run_id="r-shadow-binding",
+        key="shadow-binding",
+    )
+    _configure_two_stage_sensitivity_fixture(tmp_path, "cell")
+    trail_path = tmp_path / "cell.trails.jsonl"
+    rows = [
+        json.loads(line)
+        for line in trail_path.read_text(encoding="utf-8").splitlines()
+        if line.strip()
+    ]
+    assert rows[0]["cascade_role"] == "shadow"
+    rows[0].update({
+        "label": "violation",
+        "score": 1.0,
+        "confidence": 0.99,
+        "parsed": False,
+    })
+    trail_path.write_text(
+        "".join(json.dumps(row) + "\n" for row in rows),
+        encoding="utf-8",
+    )
+    _refresh_identity_metadata(tmp_path, "cell")
+
+    with pytest.raises(ValueError, match="final binding"):
+        load_trail_facets(tmp_path)
 
 
 def test_paired_compare_rejects_requested_seed_lineage_mismatch(
@@ -1805,6 +2037,15 @@ def _write_human_artifacts(root: Path, *, descriptor_marker: bool = True) -> str
     model = "model-A"
     attempt_id = "attempt-1"
     key = f"{run_id}|{model}|{attempt_id}"
+    judge_spec = "anthropic:claude-haiku-4-5-20251001"
+    judge_endpoint = api_target_endpoint_identity(judge_spec)
+    assert judge_endpoint is not None
+    judge_call = {
+        "response_target": judge_spec,
+        "provider": "anthropic",
+        "endpoint_identity": judge_endpoint,
+        "provider_resolved_model": "claude-haiku-4-5-20251001",
+    }
     (root / "cell.attempts.jsonl").write_text(json.dumps({
         "id": attempt_id,
         "datapoint_id": "dp-1",
@@ -1813,6 +2054,7 @@ def _write_human_artifacts(root: Path, *, descriptor_marker: bool = True) -> str
         "rendered_input": [{"role": "user", "content": "probe"}],
         "params": {
             "policy_evaluable_turn": True,
+            "planning_common_metrics_eligible": True,
             "policy_challenge_index": 0,
             "policy_challenge_horizon": 1,
             "turn_expected_behavior": "refuse",
@@ -1858,10 +2100,21 @@ def _write_human_artifacts(root: Path, *, descriptor_marker: bool = True) -> str
         "policy_challenge_index": 0,
         "policy_challenge_horizon": 1,
         "turn_expected_behavior": "refuse",
+        "confidence": 0.85,
+        "parsed": True,
+        "cascade_stage": 1,
+        "cascade_confident": True,
+        "cascade_role": "authoritative",
+        "cascade_policy": "first_confident_with_full_shadow_trail",
+        "stage_queried": True,
+        "policy_evaluation_status": "evaluated",
+        "judge_model": judge_spec,
+        "judge_model_queried": True,
+        "judge_call": judge_call,
     }
     (root / "cell.jsonl").write_text(json.dumps({
         "attempt_id": attempt_id,
-        "judge": "rules",
+        "judge": "llm-judge",
         "label": "violation",
         "score": 1.0,
         "raw": raw,
@@ -1871,13 +2124,25 @@ def _write_human_artifacts(root: Path, *, descriptor_marker: bool = True) -> str
         "attempt_id": attempt_id,
         "stage": 0,
         "judge": "rules",
+        "judge_model": None,
+        "judge_model_revision": None,
+        "judge_model_digest": None,
+        "judge_model_identity": None,
+        "judge_model_queried": None,
+        "guardrail_queried": None,
+        "provider_signal_authoritative": None,
+        "provider_refusal_category": None,
+        "judge_call": None,
         "label": "safe",
         "score": 0.0,
         "confidence": 0.9,
         "parsed": None,
-        "cascade_confident": True,
+        "cascade_confident": False,
+        "cascade_role": "shadow",
+        "cascade_policy": "first_confident_with_full_shadow_trail",
         "stage_queried": True,
         "policy_evaluation_status": "evaluated",
+        "metric_authority": None,
         "required_metric": None,
         "risk_category": "cybersec",
         "modality": "text",
@@ -1896,8 +2161,20 @@ def _write_human_artifacts(root: Path, *, descriptor_marker: bool = True) -> str
         "confidence": 0.85,
         "parsed": True,
         "cascade_confident": True,
+        "cascade_role": "authoritative",
+        "cascade_policy": "first_confident_with_full_shadow_trail",
         "stage_queried": True,
+        "judge_model": judge_spec,
+        "judge_model_revision": None,
+        "judge_model_digest": None,
+        "judge_model_identity": None,
+        "judge_model_queried": True,
+        "guardrail_queried": None,
+        "provider_signal_authoritative": None,
+        "provider_refusal_category": None,
+        "judge_call": judge_call,
         "policy_evaluation_status": "evaluated",
+        "metric_authority": None,
         "required_metric": None,
         "risk_category": "cybersec",
         "modality": "text",
@@ -1908,6 +2185,17 @@ def _write_human_artifacts(root: Path, *, descriptor_marker: bool = True) -> str
         "policy_challenge_horizon": 1,
         "turn_expected_behavior": "refuse",
     }]
+    raw["judge_stage_bindings"] = [
+        _trail_stage_binding(row) for row in trail_rows
+    ]
+    (root / "cell.jsonl").write_text(json.dumps({
+        "attempt_id": attempt_id,
+        "judge": "llm-judge",
+        "label": "violation",
+        "score": 1.0,
+        "raw": raw,
+        "run_id": run_id,
+    }) + "\n", encoding="utf-8")
     (root / "cell.trails.jsonl").write_text(
         "".join(json.dumps(row) + "\n" for row in trail_rows), encoding="utf-8"
     )
@@ -1930,14 +2218,36 @@ def _write_human_artifacts(root: Path, *, descriptor_marker: bool = True) -> str
             "components": {
                 "attacker": {"class": "Replay"},
                 "target": {"class": "Target", "name": model},
-                "judge_cascade": {"class": "Cascade"},
+                "judge_cascade": {
+                    "class": "Cascade",
+                    "stages": [
+                        {"class": "RuleJudge", "name": "rules"},
+                        {
+                            "class": "LLMJudge",
+                            "name": "llm-judge",
+                            "judge_target": {
+                                "class": "AnthropicTarget",
+                                "provider": "anthropic",
+                                "model": "claude-haiku-4-5-20251001",
+                                "endpoint_identity": judge_endpoint,
+                            },
+                        },
+                    ],
+                },
             },
             "run": {
                 "corpus": "fixture",
                 "model_spec": model,
+                "expected_target_identity": {
+                    "provider": "fixture-provider",
+                    "resolved_model": model,
+                },
                 "attacker": "replay",
                 "defense": "none",
+                "judge_names": ["rules", "llm"],
+                "judge_model": judge_spec,
                 "dry_run": False,
+                "model_acquisition": _NO_ACQUISITION_CELL,
                 "driver_source": {
                     "module": "run_matrix.py",
                     "sha256": hashlib.sha256(b"test-driver").hexdigest(),
@@ -2203,7 +2513,11 @@ def test_human_audit_includes_authoritative_cascade_and_reports_join_audit(
 ) -> None:
     key = _write_human_artifacts(tmp_path)
     predictors, _, _, audit = _joined_artifacts(tmp_path)
-    assert predictors["rules"][key] == "safe"
+    # The non-confident rules placeholder is retained in the full trail but is
+    # not a model prediction for calibration/kappa. The queried LLM authority
+    # and the final cascade decision remain available.
+    assert key not in predictors["rules"]
+    assert predictors["llm-judge"][key] == "violation"
     assert predictors["cascade_authoritative"][key] == "violation"
     assert audit["unexplained_exclusions"] == 0
 
@@ -3063,6 +3377,8 @@ def _write_source_task_artifacts(root: Path, *, stem: str = "stcell") -> str:
     key = f"{run_id}|{model}|{attempt_id}"
     policy_turn = {
         "policy_evaluable_turn": True,
+        "planning_common_metrics_eligible": False,
+        "planning_required_metric": "rjudge_safety_judgment",
         "policy_challenge_index": 0,
         "policy_challenge_horizon": 1,
         "turn_expected_behavior": "comply_safely",
@@ -3120,6 +3436,12 @@ def _write_source_task_artifacts(root: Path, *, stem: str = "stcell") -> str:
         "stage_queried": False,
         "policy_evaluation_status": "source_metric_only",
         "required_metric": "rjudge_safety_judgment",
+        "confidence": 1.0,
+        "parsed": None,
+        "cascade_stage": 0,
+        "cascade_confident": True,
+        "cascade_role": "authoritative",
+        "cascade_policy": "first_confident_with_full_shadow_trail",
         "source_evaluation": {
             "family": "rjudge_safety_judgment",
             "implemented": True,
@@ -3134,7 +3456,7 @@ def _write_source_task_artifacts(root: Path, *, stem: str = "stcell") -> str:
     }
     (root / f"{stem}.jsonl").write_text(json.dumps({
         "attempt_id": attempt_id,
-        "judge": "source_metric_only",
+        "judge": "rules",
         "label": "not_applicable",
         "score": 0.0,
         "raw": raw,
@@ -3144,13 +3466,25 @@ def _write_source_task_artifacts(root: Path, *, stem: str = "stcell") -> str:
         "attempt_id": attempt_id,
         "stage": 0,
         "judge": "rules",
+        "judge_model": None,
+        "judge_model_revision": None,
+        "judge_model_digest": None,
+        "judge_model_identity": None,
+        "judge_model_queried": None,
+        "guardrail_queried": None,
+        "provider_signal_authoritative": None,
+        "provider_refusal_category": None,
+        "judge_call": None,
         "label": "not_applicable",
         "score": 0.0,
-        "confidence": 0.0,
+        "confidence": 1.0,
         "parsed": None,
-        "cascade_confident": False,
+        "cascade_confident": True,
+        "cascade_role": "authoritative",
+        "cascade_policy": "first_confident_with_full_shadow_trail",
         "stage_queried": False,
         "policy_evaluation_status": "source_metric_only",
+        "metric_authority": None,
         "required_metric": "rjudge_safety_judgment",
         "common_metrics_eligible": False,
         "risk_category": "agentic_misuse",
@@ -3186,9 +3520,15 @@ def _write_source_task_artifacts(root: Path, *, stem: str = "stcell") -> str:
             "run": {
                 "corpus": "rjudge_official",
                 "model_spec": model,
+                "expected_target_identity": {
+                    "provider": "fixture-provider",
+                    "resolved_model": model,
+                },
                 "attacker": "replay",
+                "judge_names": ["rules"],
                 "defense": "none",
                 "dry_run": False,
+                "model_acquisition": _NO_ACQUISITION_CELL,
                 "driver_source": {
                     "module": "run_matrix.py",
                     "sha256": hashlib.sha256(b"test-driver").hexdigest(),

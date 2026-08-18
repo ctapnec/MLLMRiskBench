@@ -12,6 +12,10 @@ from __future__ import annotations
 
 from collections.abc import Iterable
 
+from ..attacker_input_contract import (
+    AttackerInputContract,
+    identity_replay_contract,
+)
 from ..data_models import Attempt, DataPoint, DialogTurn
 from .base import AttackBudget, BaseAttacker
 
@@ -20,6 +24,11 @@ class ReplayAttacker(BaseAttacker):
     """Turn a DataPoint into exactly one Attempt, replaying it verbatim."""
 
     name: str = "replay"
+
+    def plan_target_inputs(
+        self, datapoint: DataPoint, budget: AttackBudget
+    ) -> AttackerInputContract:
+        return identity_replay_contract(self.name, datapoint, budget)
 
     def generate(self, datapoint: DataPoint, budget: AttackBudget) -> Iterable[Attempt]:
         """Yield a single deterministic Attempt for ``datapoint``.

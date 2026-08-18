@@ -24,6 +24,7 @@ the pinned model, or on the first direct library call if preflight was skipped.
 from __future__ import annotations
 
 import hashlib
+import os
 import re
 import unicodedata
 from typing import Any, Optional
@@ -80,6 +81,7 @@ class GuardrailJudge(BaseJudge):
     """
 
     name = "guardrail"
+    source_reference_context_capable = True
 
     def __init__(
         self,
@@ -89,6 +91,8 @@ class GuardrailJudge(BaseJudge):
         revision: str,
         escalate_below: float = 0.75,
         max_new_tokens: int = 20,
+        model_runtime: Any = None,
+        managed_model_role: str = "guardrail_judge",
     ) -> None:
         if not isinstance(model, str) or not model.strip():
             raise ValueError("guardrail model must be a non-blank Hugging Face id")
@@ -105,6 +109,10 @@ class GuardrailJudge(BaseJudge):
         self.device = device
         self.escalate_below = float(escalate_below)
         self.max_new_tokens = int(max_new_tokens)
+        if managed_model_role not in {"guardrail_judge", "defense_guardrail"}:
+            raise ValueError("GuardrailJudge managed model role is invalid")
+        self._model_runtime = model_runtime
+        self._managed_model_role = managed_model_role
         # Populated by preflight or, for direct library use, the first judge call.
         self._tokenizer: Any = None
         self._model: Any = None
@@ -116,6 +124,15 @@ class GuardrailJudge(BaseJudge):
         """Import transformers/torch and load the guard model exactly once."""
         if self._model is not None:
             return
+        if self._model_runtime is None:
+            raise RuntimeError(
+                "Hub guardrail models require an admitted managed-model runtime; "
+                "implicit Hugging Face downloads are disabled"
+            )
+        from ..model_acquisition_runtime import hf_offline_environment_overrides
+
+        # Transformers reads offline policy during import in supported releases.
+        os.environ.update(hf_offline_environment_overrides())
         try:
             import torch  # noqa: F401
             from transformers import AutoModelForCausalLM, AutoTokenizer
@@ -124,23 +141,67 @@ class GuardrailJudge(BaseJudge):
                 "transformers is required for GuardrailJudge; pip install transformers torch"
             ) from exc
 
-        self._tokenizer = AutoTokenizer.from_pretrained(
-            self.model_id,
-            revision=self.revision,
-            trust_remote_code=False,
+        from ..model_acquisition import guardrail_requirement
+        from ..model_acquisition_runtime import (
+            transformers_managed_snapshot_args,
         )
-        kwargs: dict[str, Any] = {"torch_dtype": "auto"}
-        if self.device is None:
-            kwargs["device_map"] = "auto"
-        self._model = AutoModelForCausalLM.from_pretrained(
+
+        requirement = guardrail_requirement(
             self.model_id,
-            revision=self.revision,
-            trust_remote_code=False,
-            **kwargs,
+            self.revision,
+            defense=self._managed_model_role == "defense_guardrail",
         )
-        if self.device is not None:
-            self._model = self._model.to(self.device)
-        self._model.eval()
+
+        def construct(snapshot: Any) -> tuple[Any, Any]:
+            local_model, local_only = transformers_managed_snapshot_args(snapshot)
+            tokenizer = AutoTokenizer.from_pretrained(
+                local_model,
+                trust_remote_code=False,
+                **local_only,
+            )
+            kwargs: dict[str, Any] = {
+                "torch_dtype": "auto",
+                "trust_remote_code": False,
+                **local_only,
+            }
+            if self.device is None:
+                kwargs["device_map"] = "auto"
+            model = AutoModelForCausalLM.from_pretrained(local_model, **kwargs)
+            if self.device is not None:
+                model = model.to(self.device)
+            model.eval()
+            return tokenizer, model
+
+        def cleanup(loaded: tuple[Any, Any]) -> None:
+            tokenizer, model = loaded
+            operations = (
+                getattr(tokenizer, "close", None),
+                getattr(model, "close", None),
+                (
+                    (lambda: model.to("cpu"))
+                    if callable(getattr(model, "to", None))
+                    else None
+                ),
+                (
+                    torch.cuda.empty_cache
+                    if torch.cuda.is_available()
+                    else None
+                ),
+            )
+            for operation in operations:
+                if callable(operation):
+                    try:
+                        operation()
+                    except Exception:
+                        pass
+
+        tokenizer, model = self._model_runtime.construct(
+            requirement,
+            construct,
+            cleanup=cleanup,
+        )
+        self._tokenizer = tokenizer
+        self._model = model
 
     def preflight(self) -> dict[str, str]:
         """Load the pinned tokenizer and model without evaluating a response.
@@ -211,31 +272,39 @@ class GuardrailJudge(BaseJudge):
     ) -> list[dict[str, str]]:
         """Assemble a chat-template conversation: prompt history then the reply."""
         conv: list[dict[str, str]] = []
-        represented_text = {
-            self._semantic_text_key(turn.content)
-            for turn in datapoint.dialog_history
-            if turn.content and self._semantic_text_key(turn.content)
-        }
-        for turn in datapoint.dialog_history:
-            text = self._turn_text(turn)
-            if text:
-                conv.append({"role": _GUARD_ROLE.get(turn.role, "user"), "content": text})
-        payload_key = (
-            self._semantic_text_key(datapoint.payload_text)
-            if datapoint.payload_text
-            else ""
+        response_only_physical = (
+            bool({"image", "audio", "video"}.intersection(datapoint.modalities))
+            and datapoint.meta.get("automated_metric_scope") == "response_only"
         )
-        if payload_key and payload_key not in represented_text:
-            conv.append({"role": "user", "content": datapoint.payload_text})
-        reference = datapoint.meta.get("judge_reference_text")
-        if isinstance(reference, str) and reference.strip():
-            conv.append({
-                "role": "user",
-                "content": (
-                    "[source reference context for grading only] "
-                    + reference.strip()
-                ),
-            })
+        if not response_only_physical:
+            represented_text = {
+                self._semantic_text_key(turn.content)
+                for turn in datapoint.dialog_history
+                if turn.content and self._semantic_text_key(turn.content)
+            }
+            for turn in datapoint.dialog_history:
+                text = self._turn_text(turn)
+                if text:
+                    conv.append({
+                        "role": _GUARD_ROLE.get(turn.role, "user"),
+                        "content": text,
+                    })
+            payload_key = (
+                self._semantic_text_key(datapoint.payload_text)
+                if datapoint.payload_text
+                else ""
+            )
+            if payload_key and payload_key not in represented_text:
+                conv.append({"role": "user", "content": datapoint.payload_text})
+            reference = datapoint.meta.get("judge_reference_text")
+            if isinstance(reference, str) and reference.strip():
+                conv.append({
+                    "role": "user",
+                    "content": (
+                        "[source reference context for grading only] "
+                        + reference.strip()
+                    ),
+                })
         for turn in response.output_turns:
             text = self._turn_text(turn)
             if text:
@@ -253,20 +322,26 @@ class GuardrailJudge(BaseJudge):
     # ------------------------------------------------------------------ #
     def _run_guard(self, conversation: list[dict[str, str]]) -> str:
         """Tokenize with the chat template, generate, and return decoded verdict."""
-        import torch
+        def execute() -> str:
+            import torch
 
-        input_ids = self._tokenizer.apply_chat_template(
-            conversation, return_tensors="pt"
-        ).to(self._model.device)
-        with torch.no_grad():
-            output = self._model.generate(
-                input_ids=input_ids,
-                max_new_tokens=self.max_new_tokens,
-                do_sample=False,
-                pad_token_id=self._tokenizer.eos_token_id,
-            )
-        generated = output[0][input_ids.shape[-1]:]
-        return self._tokenizer.decode(generated, skip_special_tokens=True)
+            input_ids = self._tokenizer.apply_chat_template(
+                conversation, return_tensors="pt"
+            ).to(self._model.device)
+            with torch.no_grad():
+                output = self._model.generate(
+                    input_ids=input_ids,
+                    max_new_tokens=self.max_new_tokens,
+                    do_sample=False,
+                    pad_token_id=self._tokenizer.eos_token_id,
+                )
+            generated = output[0][input_ids.shape[-1]:]
+            return self._tokenizer.decode(generated, skip_special_tokens=True)
+
+        return self._model_runtime.private_execution(
+            self._managed_model_role,
+            execute,
+        )
 
     # ------------------------------------------------------------------ #
     # Parsing
@@ -366,7 +441,11 @@ class GuardrailJudge(BaseJudge):
         physical_input = bool(
             {"image", "audio", "video"}.intersection(datapoint.modalities)
         )
-        scoring_reference = (
+        response_only_physical = (
+            physical_input
+            and datapoint.meta.get("automated_metric_scope") == "response_only"
+        )
+        scoring_reference = "" if response_only_physical else (
             reference.strip()
             if isinstance(reference, str) and reference.strip()
             else (datapoint.payload_text or "").strip()
@@ -431,6 +510,7 @@ class GuardrailJudge(BaseJudge):
                 "categories": categories,
                 "output": raw_output.strip(),
                 "moderation_subject": subject,
+                "guardrail_queried": True,
             },
         )
 

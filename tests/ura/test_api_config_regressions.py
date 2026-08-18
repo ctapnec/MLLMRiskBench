@@ -26,6 +26,14 @@ def _write_config(path: Path, spec: str, value: dict[str, object]) -> Path:
     return path
 
 
+def _load_config(
+    path: Path, specs: list[str]
+) -> tuple[dict[str, dict[str, object]], dict[str, object] | None]:
+    return run_matrix._load_api_config(
+        str(path), specs, hashlib.sha256(path.read_bytes()).hexdigest()
+    )
+
+
 def test_api_config_is_exact_normalized_and_constructs_declared_target(
     tmp_path: Path,
 ) -> None:
@@ -37,7 +45,7 @@ def test_api_config_is_exact_normalized_and_constructs_declared_target(
         "temperature": None,
     })
 
-    loaded, artifact = run_matrix._load_api_config(str(path), [spec])
+    loaded, artifact = _load_config(path, [spec])
 
     assert loaded == {spec: {
         "modalities": ["text", "image"],
@@ -69,9 +77,7 @@ def test_generic_measured_api_requires_exact_config_but_fixed_targets_do_not(
     empty = tmp_path / "empty.json"
     empty.write_text("{}", encoding="utf-8")
     with pytest.raises(ValueError, match="missing selected generic"):
-        run_matrix._load_api_config(
-            str(empty), ["openai:account-visible-model"]
-        )
+        _load_config(empty, ["openai:account-visible-model"])
 
 
 def test_api_config_can_be_a_reusable_roster_superset(tmp_path: Path) -> None:
@@ -89,14 +95,14 @@ def test_api_config_can_be_a_reusable_roster_superset(tmp_path: Path) -> None:
     path = tmp_path / "roster.json"
     path.write_text(json.dumps(config), encoding="utf-8")
 
-    loaded, artifact = run_matrix._load_api_config(str(path), [selected])
+    loaded, artifact = _load_config(path, [selected])
 
     assert set(loaded) == {selected}
     selected_identity = run_matrix._selected_config_artifact_identity(artifact)
     config["google:other-lane"]["max_tokens"] = 4096
     path.write_text(json.dumps(config), encoding="utf-8")
     loaded_after_unused_edit, artifact_after_unused_edit = (
-        run_matrix._load_api_config(str(path), [selected])
+        _load_config(path, [selected])
     )
     assert loaded_after_unused_edit == loaded
     assert run_matrix._selected_config_artifact_identity(
@@ -106,12 +112,101 @@ def test_api_config_can_be_a_reusable_roster_superset(tmp_path: Path) -> None:
 
     config[selected]["max_tokens"] = 4096
     path.write_text(json.dumps(config), encoding="utf-8")
-    _, artifact_after_selected_edit = run_matrix._load_api_config(
-        str(path), [selected]
-    )
+    _, artifact_after_selected_edit = _load_config(path, [selected])
     assert run_matrix._selected_config_artifact_identity(
         artifact_after_selected_edit
     ) != selected_identity
+
+
+def test_private_api_config_digest_mismatch_unlinks_before_construction(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    spec = "glm:tampered-private"
+    directory = tmp_path / ".private-api-configs"
+    directory.mkdir()
+    path = directory / ("selected-api-" + "a" * 24 + "-" + "b" * 16 + ".json")
+    first = {spec: {
+        "modalities": ["text"], "max_tokens": 64, "temperature": 0.0,
+        "base_url": "https://first.example/v1",
+    }}
+    path.write_text(json.dumps(first), encoding="utf-8")
+    expected = hashlib.sha256(path.read_bytes()).hexdigest()
+    path.write_text(
+        json.dumps({spec: {**first[spec], "max_tokens": 128}}),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("URA_PRIVATE_TRANSIENT_API_CONFIG", str(path))
+
+    with pytest.raises(ValueError, match="does not match the read config bytes"):
+        run_matrix._load_api_config(str(path), [spec], expected)
+    assert not path.exists()
+
+
+def test_private_local_config_digest_mismatch_unlinks_before_construction(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    spec = "vllm:org/private-tamper"
+    directory = tmp_path / ".private-local-configs"
+    directory.mkdir()
+    path = directory / ("selected-" + "a" * 24 + "-" + "b" * 16 + ".json")
+    first = {spec: {
+        "revision": "a" * 40,
+        "modalities": ["text"],
+        "tensor_parallel_size": 1,
+    }}
+    path.write_text(json.dumps(first), encoding="utf-8")
+    expected = hashlib.sha256(path.read_bytes()).hexdigest()
+    path.write_text(
+        json.dumps({spec: {**first[spec], "revision": "b" * 40}}),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("URA_PRIVATE_TRANSIENT_LOCAL_CONFIG", str(path))
+
+    with pytest.raises(ValueError, match="does not match the read config bytes"):
+        run_matrix._load_local_config(
+            str(path), [spec], expected_sha256=expected
+        )
+    assert not path.exists()
+
+
+def test_selected_configs_reject_duplicate_json_keys_at_every_depth(
+    tmp_path: Path,
+) -> None:
+    api_spec = "glm:duplicate-config"
+    api_path = tmp_path / "duplicate-api.json"
+    api_path.write_text(
+        '{"glm:duplicate-config":{"modalities":["text"],'
+        '"max_tokens":64,"max_tokens":128,"temperature":0.0,'
+        '"base_url":"https://example.invalid/v1"}}',
+        encoding="utf-8",
+    )
+    with pytest.raises(ValueError, match="duplicate JSON object key 'max_tokens'"):
+        _load_config(api_path, [api_spec])
+
+    local_spec = "vllm:org/duplicate-config"
+    local_path = tmp_path / "duplicate-local.json"
+    local_path.write_text(
+        '{"vllm:org/duplicate-config":{"revision":"' + "a" * 40
+        + '","modalities":["text"]},'
+        '"vllm:org/duplicate-config":{"revision":"' + "b" * 40
+        + '","modalities":["text"]}}',
+        encoding="utf-8",
+    )
+    with pytest.raises(
+        ValueError,
+        match="duplicate JSON object key 'vllm:org/duplicate-config'",
+    ):
+        run_matrix._load_local_config(str(local_path), [local_spec])
+
+    retained = tmp_path / "retained.json"
+    retained.write_text('{"binding":"first","binding":"second"}', encoding="utf-8")
+    digest = hashlib.sha256(retained.read_bytes()).hexdigest()
+    with pytest.raises(ValueError, match="invalid --fixture JSON: duplicate JSON"):
+        run_matrix._read_content_addressed_json(
+            str(retained), digest, flag_name="--fixture", max_bytes=4096
+        )
 
 
 @pytest.mark.parametrize(
@@ -135,7 +230,7 @@ def test_api_config_can_be_a_reusable_roster_superset(tmp_path: Path) -> None:
                 "max_tokens": 100,
                 "temperature": 0.0,
             },
-            "credential-free HTTPS",
+            "credential-free .*HTTPS",
         ),
         (
             "deepseek:fixture",
@@ -156,7 +251,7 @@ def test_api_config_rejects_unpersistable_or_unserializable_claims(
 ) -> None:
     path = _write_config(tmp_path / "bad.json", spec, config)
     with pytest.raises(ValueError, match=message):
-        run_matrix._load_api_config(str(path), [spec])
+        _load_config(path, [spec])
 
 
 def test_known_text_only_model_cannot_be_declared_image_capable() -> None:

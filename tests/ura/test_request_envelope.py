@@ -63,6 +63,8 @@ def _request() -> dict[str, object]:
         "quantization": "",
         "dtype": "auto",
         "dry_run": True,
+        "approximate_common_metrics": False,
+        "hosted_judge_data_transfer_acknowledged": False,
         "call_caps": {
             "target": None,
             "judge": None,
@@ -153,6 +155,20 @@ def test_envelope_loader_is_canonical_strict_and_content_addressed(
     )
     with pytest.raises(ValueError, match="duplicate JSON key"):
         load_request_envelope_file(path)
+
+
+def test_legacy_v1_envelope_remains_readable_without_relabeling() -> None:
+    envelope = copy.deepcopy(_envelope())
+    envelope["schema"] = "ura-request-envelope/1"
+    del envelope["request"]["approximate_common_metrics"]
+    del envelope["request"]["hosted_judge_data_transfer_acknowledged"]
+    _refresh_envelope_id(envelope)
+
+    validated = validate_request_envelope(envelope)
+
+    assert validated == envelope
+    assert validated["schema"] == "ura-request-envelope/1"
+    assert "approximate_common_metrics" not in validated["request"]
 
 
 def test_envelope_rejects_missing_units_and_source_binding_substitution() -> None:

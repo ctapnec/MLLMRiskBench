@@ -5,7 +5,7 @@ validity rules, then execute [RUN_AND_RETURN.md](RUN_AND_RETURN.md). A dry run,
 partial artifact family, source conversion, model-name assumption, native prompt
 export, or synthetic figure is not a measured thesis result.
 
-The maintained execution contract is Runner `ura-runner/2.16` with unified
+The maintained execution contract is Runner `ura-runner/2.19` with unified
 schema `1.4`; older artifacts are not mixed into the thesis run. The latest
 exact tested release and its local/rig evidence are retained in the sibling
 Thesis record
@@ -25,12 +25,18 @@ product:
    are candidates only; the exact route, returned identity, access, and physical
    modalities must be attested live.
 3. **Local breadth/defense lane.** One local vLLM/Ollama target runs per process.
+   Different local target models run as separate rig jobs/grids; a legal grid may
+   combine multiple hosted targets with at most one of those local targets.
    A model fitting one RTX 4090 normally uses tensor parallelism 1; the second
    card may host the independent scoring guard. Two-card sharding is a separate
    declared condition. A same-base unguarded/guarded pair is the defensible
    defense contrast when exact artifacts are available. The Build tab shows the
-   startup OS/CPU/core/RAM and per-GPU inventory. Hosted, Local vLLM, and Local
-   Ollama choices are separate groups. Hosted provider filtering and vLLM name,
+   startup OS/CPU/core/RAM and per-GPU inventory. A shared role-aware modal
+   chooses either target models or the LLM-judge model through hosted/local and
+   then provider/local-filter steps. Judge rows with the highest comparable
+   configured rate per currency carry a cost warning, not a quality score.
+   Hosted, Local vLLM, and Local Ollama choices are separate groups. Hosted
+   provider filtering and vLLM name,
    maximum-parameter (10M-3T), and rig-compatibility filters combine;
    the separate compatibility card is on by default and applies automatic
    highest-fitting 16-bit, FP8 8-bit, then BitsAndBytes 4-bit selection.
@@ -49,8 +55,25 @@ product:
    generation `max_tokens`. Omission uses the checkpoint native context, while
    an explicit integer in 1..1,000,000 must be at least `max_tokens`; the Build
    row labels the explicit cap or native model context.
-   An Ollama choice instead names an artifact already pulled into an external
-   local daemon. Its config requires the exact 64-hex `/api/tags` digest and a
+   Every Hub-backed vLLM target, local LLM judge, scoring/defense Guardrail, and
+   NanoGCG surrogate first passes the sealed model workflow. An exact public
+   repo plus immutable 40-64-hex commit is planned without constructing a
+   model, the dedicated acquisition controller verifies/downloads and seals it,
+   and only the exact receipt/store can enter an offline preflight or measured
+   child. There is no implicit first-load network fallback. Rig Web exposes the
+   three stages explicitly; cache hits have no download badge, while confirmed
+   missing-byte transfer alone shows `model_download`. The write-only
+   `HF_TOKEN` remains process-memory only (never in the operator secrets file),
+   reaches only acquisition, and result artifacts retain safe path-free
+   plan/receipt evidence rather than private store locators. The full grid keeps
+   the complete acquisition roster; scientific conditions keep shared roles and
+   each cell adds only its own local target, so unrelated grid targets do not
+   split hosted conditions or transfer cohorts.
+   An Ollama choice instead names a tag present in the live loopback daemon after
+   a successful pull or discovery transaction. Rig Web may Start, Stop, and Pull
+   only through its proven current-console-owned child; an external daemon is
+   available for bounded discovery and inference but not UI Stop or Pull. Its
+   config requires the exact 64-hex `/api/tags` digest and a
    unique explicit modality list containing `text` and optionally `image`. It
    forbids vLLM-only revision, parameter, topology, memory, output, context,
    quantization, and unknown-fit fields, so the UI provides no fit or precision
@@ -66,9 +89,13 @@ product:
    reproduces the source experiment.
 
 The Build page keeps source arms with unavailable source-specific evaluators
-visible and selectable for planning, labelled `no evaluator`; one custom
-hover/focus tooltip carries the full reason and server-side submission rejects
-the lane before a subprocess.
+visible and selectable for planning; one custom hover/focus tooltip carries the
+full reason and server-side submission rejects them by default. Eligible
+non-tool rows show `⚠ approximate opt-in`. The explicit opt-in admits only
+separate warning-tagged, non-authoritative `approximate_*` proxy results with
+separate coverage and an uncalibrated reliability indicator; it never upgrades
+source-native evaluator status. Tool-conditioned rows show `tool runtime
+required` and remain fail-closed.
 Visibility is not a runnable or empirical claim.
 Dry mode removes selected real API/local targets and configs because the runner
 uses `MockTarget`; local roster modalities are text/image only, so audio
@@ -257,9 +284,13 @@ gate, database, or artifact contract.
 
 Jobs show the full start date and time in the browser's local time zone. Their
 state, text, From, and To filters combine and default to the previous seven days
-through now, with inclusive bounds at the selected input precision. Short tags
-distinguish `reported running`, `partial`, `blocked`, `stopped`, `orphaned`, and
-`unknown` external campaigns from console-owned process states. Task-process
+through now, with inclusive bounds at the selected input precision. Date changes
+query persisted jobs and campaign markers before their bounded display caps;
+truncation is explicit rather than silently inherited from the restart cache.
+Short tags
+use blue `running` plus `partial`, `blocked`, `stopped`, `orphaned`, and `unknown`;
+detail text distinguishes an external task-log marker from a console-owned
+process. Task-process
 succeeded/failed/skipped/active/pending counts are separate from model work.
 Optional strict `planned_tasks` and `model_tasks` declarations plus a bounded
 `model-execution.jsonl` self-report make that distinction visible; a terminal

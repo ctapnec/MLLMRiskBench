@@ -24,6 +24,10 @@ class BaseJudge(ABC):
     name: str = "base"
     #: confidence below which the cascade escalates to the next stage
     escalate_below: float = 0.0
+    # True only when the stage can incorporate
+    # DataPoint.meta["judge_reference_text"] into its scoring input. Runtime
+    # provenance still has to report that the context was actually consumed.
+    source_reference_context_capable: bool = False
 
     @abstractmethod
     def judge(self, datapoint: DataPoint, response: Response) -> Judgment:

@@ -54,6 +54,8 @@ from pathlib import Path
 from typing import Any, Callable, Iterator
 from urllib.request import Request, urlopen
 
+from ura.strict_json import strict_json_loads
+
 _REPO_ROOT = Path(__file__).resolve().parents[1]
 _SOURCES_LOCAL = "experiments/pricing-sources.json"
 _SOURCES_EXAMPLE = "experiments/rig/pricing-sources.example.json"
@@ -522,11 +524,21 @@ def load_sources(repo_root: Path = _REPO_ROOT) -> dict[str, Any]:
     for candidate in (_SOURCES_LOCAL, _SOURCES_EXAMPLE):
         path = repo_root / candidate
         try:
-            data = json.loads(path.read_text(encoding="utf-8"))
-        except (OSError, ValueError):
+            raw = path.read_text(encoding="utf-8")
+        except FileNotFoundError:
             continue
-        if isinstance(data, dict) and isinstance(data.get("providers"), dict):
-            return data
+        except OSError as exc:
+            raise ValueError(f"{candidate} could not be read: {exc}") from exc
+        try:
+            data = strict_json_loads(raw)
+        except (UnicodeError, ValueError, RecursionError) as exc:
+            # A present operator file is authoritative. Never fall through to
+            # the example after an ambiguous parse and issue requests from a
+            # different source set.
+            raise ValueError(f"{candidate} is not strict JSON: {exc}") from exc
+        if not isinstance(data, dict) or not isinstance(data.get("providers"), dict):
+            raise ValueError(f"{candidate} must contain a providers JSON object")
+        return data
     return {"providers": {}}
 
 
@@ -610,14 +622,25 @@ def _load_pricing_for_merge(
         existing_raw: str | None = pricing_path.read_text(encoding="utf-8")
     except FileNotFoundError:
         # Genuinely absent: start from the checked-in null example.
+        example_path = repo_root / _PRICING_EXAMPLE
         try:
-            pricing = json.loads(
-                (repo_root / _PRICING_EXAMPLE).read_text(encoding="utf-8")
+            example_raw = example_path.read_text(encoding="utf-8")
+        except FileNotFoundError:
+            return {"providers": {}}, None, None
+        except OSError as exc:
+            return None, None, (
+                f"{_PRICING_EXAMPLE} could not be read ({exc}); not fetching"
             )
-        except (OSError, ValueError):
-            pricing = {"providers": {}}
+        try:
+            pricing = strict_json_loads(example_raw)
+        except (UnicodeError, ValueError, RecursionError) as exc:
+            return None, None, (
+                f"{_PRICING_EXAMPLE} is not valid JSON ({exc}); not fetching"
+            )
         if not isinstance(pricing, dict):
-            pricing = {"providers": {}}
+            return None, None, (
+                f"{_PRICING_EXAMPLE} is not a JSON object; not fetching"
+            )
         return pricing, None, None
     except OSError as exc:
         # Present but UNREADABLE (a permission denial, a transient share lock
@@ -631,10 +654,10 @@ def _load_pricing_for_merge(
         )
 
     try:
-        pricing = json.loads(existing_raw)
-    except ValueError:
+        pricing = strict_json_loads(existing_raw)
+    except (UnicodeError, ValueError, RecursionError) as exc:
         return None, existing_raw, (
-            "experiments/pricing.json is not valid JSON; not fetching so "
+            f"experiments/pricing.json is not valid JSON ({exc}); not fetching so "
             "operator-entered rates are preserved (fix the file and retry)"
         )
     if not isinstance(pricing, dict):
@@ -682,7 +705,15 @@ def fetch_pricing(
     contexts and it keeps the merge deterministic in tests).
     """
 
-    sources = load_sources(repo_root)
+    try:
+        sources = load_sources(repo_root)
+    except ValueError as exc:
+        return {
+            "fetched_at": today,
+            "providers": {},
+            "rates_written": 0,
+            "error": str(exc),
+        }
     pricing_path = repo_root / _PRICING_LOCAL
     pricing, existing_raw, load_error = _load_pricing_for_merge(repo_root, pricing_path)
     if pricing is None:

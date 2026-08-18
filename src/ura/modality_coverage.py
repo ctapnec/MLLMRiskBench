@@ -18,6 +18,7 @@ import hashlib
 from pathlib import Path
 from typing import Iterable, Literal, Mapping, Sequence
 
+from .attacker_input_contract import AttackerInputContract
 from .converters._common import (
     DEFAULT_MAX_MEDIA_ASSET_BYTES,
     ConverterError,
@@ -213,6 +214,7 @@ class ModalityCoverageItem:
     eligible_datapoint_ids: tuple[str, ...]
     known_eligible_corpora: tuple[str, ...]
     justification: str | None = None
+    attacker: str | None = None
 
 
 @dataclass(frozen=True)
@@ -233,6 +235,9 @@ def plan_modality_coverage(
     targets: Sequence[BaseTarget],
     corpora: Mapping[str, Sequence[DataPoint]],
     *,
+    attacker_input_contracts: Mapping[
+        tuple[str, str, str, int], AttackerInputContract
+    ] | None = None,
     enforce_available: bool = True,
 ) -> ModalityCoveragePlan:
     """Plan supported combinations that are present in the selected grid.
@@ -244,7 +249,9 @@ def plan_modality_coverage(
     actual delivery evidence.
     """
 
-    points_by_combination: dict[tuple[str, ...], list[tuple[str, DataPoint]]] = {}
+    points_by_combination: dict[
+        tuple[str | None, tuple[str, ...]], list[tuple[str, DataPoint]]
+    ] = {}
     datapoint_owners: dict[str, str] = {}
     for corpus_name, points in corpora.items():
         if not isinstance(corpus_name, str) or not corpus_name.strip():
@@ -257,10 +264,35 @@ def plan_modality_coverage(
                     f"corpora/rows ({previous_owner!r}, {corpus_name!r})"
                 )
             datapoint_owners[datapoint.id] = corpus_name
-            combination = datapoint_modality_combination(datapoint)
-            points_by_combination.setdefault(combination, []).append(
-                (corpus_name, datapoint)
-            )
+            source_combination = datapoint_modality_combination(datapoint)
+            if attacker_input_contracts is None:
+                combinations = [(None, source_combination)]
+            else:
+                matching = [
+                    (attacker, contract)
+                    for (arm, attacker, datapoint_id, _seed), contract
+                    in attacker_input_contracts.items()
+                    if arm == corpus_name and datapoint_id == datapoint.id
+                ]
+                if not matching:
+                    raise ModalityCoverageError(
+                        "attacker input contracts omit a selected datapoint"
+                    )
+                combinations = sorted({
+                    (attacker, turn.combination)
+                    for attacker, contract in matching
+                    for turn in contract.turns
+                })
+            for attacker, combination in combinations:
+                points_by_combination.setdefault((attacker, combination), []).append(
+                    (corpus_name, datapoint)
+                )
+
+    attackers: tuple[str | None, ...]
+    if attacker_input_contracts is None:
+        attackers = (None,)
+    else:
+        attackers = tuple(sorted({key[1] for key in attacker_input_contracts}))
 
     items: list[ModalityCoverageItem] = []
     target_names: set[str] = set()
@@ -273,41 +305,54 @@ def plan_modality_coverage(
         target_names.add(target_name)
         support = set(getattr(target, "modality_support", ("text",)))
         declared = set(declared_target_combinations(target))
-        incompatible = sorted(set(points_by_combination) - declared)
+        incompatible = sorted({
+            (attacker, combination)
+            for attacker, combination in points_by_combination
+            if combination not in declared
+        })
         if incompatible:
-            rendered = ", ".join("+".join(item) for item in incompatible)
+            rendered = ", ".join(
+                f"{attacker or 'source'}:{'+'.join(combination)}"
+                for attacker, combination in incompatible
+            )
             raise ModalityCoverageError(
-                f"target {target_name!r} cannot receive selected input "
+                f"target {target_name!r} cannot receive selected attacker input "
                 f"combination(s): {rendered}"
             )
         if not support.intersection(_PHYSICAL):
             continue
 
-        for combination in sorted(declared):
-            selected = points_by_combination.get(combination, [])
-            selected_corpora = tuple(sorted({name for name, _ in selected}))
-            ids = tuple(sorted({point.id for _, point in selected}))
-            if ids:
-                status: CoverageStatus = "planned"
-                justification = None
-            else:
-                status = "unavailable"
-                justification = (
-                    "no selected datapoint in this grid exercises this exact "
-                    "adapter-supported combination"
-                )
-            items.append(ModalityCoverageItem(
-                target=target_name,
-                combination=combination,
-                status=status,
-                selected_corpora=selected_corpora,
-                eligible_datapoint_ids=ids,
-                known_eligible_corpora=(),
-                justification=justification,
-            ))
+        for attacker in attackers:
+            for combination in sorted(declared):
+                selected = points_by_combination.get((attacker, combination), [])
+                selected_corpora = tuple(sorted({name for name, _ in selected}))
+                ids = tuple(sorted({point.id for _, point in selected}))
+                if ids:
+                    status: CoverageStatus = "planned"
+                    justification = None
+                else:
+                    status = "unavailable"
+                    justification = (
+                        "no selected datapoint/attacker-produced input in this grid "
+                        "exercises this exact adapter-supported combination"
+                    )
+                items.append(ModalityCoverageItem(
+                    target=target_name,
+                    combination=combination,
+                    status=status,
+                    selected_corpora=selected_corpora,
+                    eligible_datapoint_ids=ids,
+                    known_eligible_corpora=(),
+                    justification=justification,
+                    attacker=attacker,
+                ))
 
     plan = ModalityCoveragePlan(
-        schema="ura-modality-coverage-plan/1",
+        schema=(
+            "ura-modality-coverage-plan/2"
+            if attacker_input_contracts is not None
+            else "ura-modality-coverage-plan/1"
+        ),
         enforcement="strict" if enforce_available else "diagnostic",
         items=tuple(items),
     )
@@ -317,7 +362,10 @@ def plan_modality_coverage(
 def verify_executed_modality_coverage(
     plan: ModalityCoveragePlan,
     executed_evidence: Mapping[
-        str, Iterable[tuple[str, tuple[str, ...]]]
+        str, Iterable[
+            tuple[str, tuple[str, ...]]
+            | tuple[str, str, tuple[str, ...]]
+        ]
     ],
 ) -> ModalityCoveragePlan:
     """Require exact delivered-combination evidence for every planned item.
@@ -327,16 +375,25 @@ def verify_executed_modality_coverage(
     therefore binds the id to the combination actually sent to the base target.
     """
 
-    executed = {
-        target: {
-            (
+    executed: dict[str, set[tuple[str | None, str, tuple[str, ...]]]] = {}
+    for target, evidence in executed_evidence.items():
+        normalized: set[tuple[str | None, str, tuple[str, ...]]] = set()
+        for row in evidence:
+            if len(row) == 2:
+                datapoint_id, combination = row
+                attacker = None
+            elif len(row) == 3:
+                attacker, datapoint_id, combination = row
+            else:
+                raise ModalityCoverageError(
+                    "executed modality evidence has an invalid identity tuple"
+                )
+            normalized.add((
+                str(attacker) if attacker is not None else None,
                 str(datapoint_id),
                 canonical_modality_combination(combination),
-            )
-            for datapoint_id, combination in evidence
-        }
-        for target, evidence in executed_evidence.items()
-    }
+            ))
+        executed[target] = normalized
     updated: list[ModalityCoverageItem] = []
     missing: list[ModalityCoverageItem] = []
     for item in plan.items:
@@ -345,9 +402,10 @@ def verify_executed_modality_coverage(
             continue
         observed = executed.get(item.target, set())
         if any(
-            datapoint_id in item.eligible_datapoint_ids
+            attacker == item.attacker
+            and datapoint_id in item.eligible_datapoint_ids
             and combination == item.combination
-            for datapoint_id, combination in observed
+            for attacker, datapoint_id, combination in observed
         ):
             updated.append(ModalityCoverageItem(
                 **{**asdict(item), "status": "executed"}
@@ -357,13 +415,18 @@ def verify_executed_modality_coverage(
             updated.append(item)
     if missing:
         detail = "; ".join(
-            f"{item.target}:{'+'.join(item.combination)}" for item in missing
+            f"{item.target}:{item.attacker or 'source'}:{'+'.join(item.combination)}"
+            for item in missing
         )
         raise ModalityCoverageError(
             "planned multimodal capabilities received no real executed probe: " + detail
         )
     return ModalityCoveragePlan(
-        schema="ura-modality-coverage-result/1",
+        schema=(
+            "ura-modality-coverage-result/2"
+            if plan.schema.endswith("/2")
+            else "ura-modality-coverage-result/1"
+        ),
         enforcement=plan.enforcement,
         items=tuple(updated),
     )

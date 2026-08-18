@@ -46,11 +46,13 @@ import atexit
 import difflib
 import hashlib
 import json
+import math
 import os
 import platform
 import random
 import re
 import secrets
+import stat
 import sys
 import time
 from collections import Counter, defaultdict
@@ -63,6 +65,14 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from ura.adapters.base import AttackBudget           # noqa: E402
 from ura.adapters.engines import get_attacker         # noqa: E402
+from ura.attacker_input_contract import (              # noqa: E402
+    AttackerInputContract,
+    AttackerInputContractError,
+    deserialize_attacker_input_plan,
+    media_input_identity,
+    target_modality_support_from_component_config,
+    validate_attempts_against_attacker_input_plan,
+)
 from ura.converters import get_converter, synth_corpus  # noqa: E402
 from ura.converters._common import (                    # noqa: E402
     canonical_converted_corpus_sha256,
@@ -74,6 +84,7 @@ from ura.data_models import (                         # noqa: E402
     DataPoint,
     EvalResult,
     Judgment,
+    MediaRef,
     Response,
     RunManifest,
 )
@@ -85,12 +96,38 @@ from ura.lane_projection import (                     # noqa: E402
     build_lane_projection,
     write_lane_projection,
 )
+from ura.model_identity import canonical_https_endpoint_identity  # noqa: E402
+from ura.model_acquisition import (                     # noqa: E402
+    ModelAcquisitionError,
+    load_plan,
+    load_receipt,
+    write_document_create_only,
+)
+from ura.model_acquisition_runtime import (             # noqa: E402
+    ManagedModelRuntime,
+    RuntimeSelection,
+    admit_managed_model_runtime,
+    build_runtime_plan,
+    build_runtime_selection,
+    collect_run_requirements,
+    hf_offline_environment_overrides,
+    model_acquisition_cell_role_projection,
+    model_acquisition_execution_descriptor,
+    model_acquisition_shared_role_projection,
+    public_selection_descriptor,
+    sanitize_private_paths,
+    validate_model_acquisition_descriptor,
+    validate_model_acquisition_grid_binding,
+    validate_model_acquisition_role_projection,
+    validate_model_acquisition_role_projection_binding,
+)
 from ura.live_attestation import (                    # noqa: E402
     load_live_attestation_file,
     required_attestation_keys,
     route_config_sha256,
     stable_realized_target_identity,
     validate_execution_scope_id,
+    validate_live_attestation_manifest,
     validate_required_live_attestations,
 )
 from ura.modality_coverage import (                    # noqa: E402
@@ -103,6 +140,7 @@ from ura.project_revision import (                     # noqa: E402
     load_project_revision_file,
     project_revision_binding,
     recheck_project_revision,
+    validate_project_revision,
 )
 from ura.request_envelope import (                     # noqa: E402
     build_request_envelope,
@@ -122,7 +160,10 @@ from ura.runner import (                              # noqa: E402
     _harness_source_identity,
     _portable_attempt_dump,
     realized_identity_summary,
+    validate_persisted_judgment_trails,
+    validate_planned_realized_identities,
 )
+from ura.strict_json import strict_json_loads         # noqa: E402
 from ura.source_conformance import (                  # noqa: E402
     observed_arm_conformance,
     validate_selected_source_conformance,
@@ -132,9 +173,11 @@ from ura.source_conformance import (                  # noqa: E402
 from ura.targets.api import (                              # noqa: E402
     api_target_requires_config,
     build_api_target,
+    canonical_provider_name,
     normalize_api_target_config,
     preflight_api_target_runtime,
 )
+from ura.targets.local import canonical_local_model_identity  # noqa: E402
 
 
 _WINDOWS_RESERVED = {
@@ -289,6 +332,63 @@ def _write_json(path: Path, payload: dict) -> None:
     temporary.replace(path)
 
 
+def _load_or_create_invocation_deadline(
+    out: Path,
+    *,
+    request_envelope_id: str,
+    invocation_started_epoch: float,
+    deadline_seconds: int,
+) -> tuple[float | None, Path | None]:
+    """Persist the first-invocation deadline before expensive preparation."""
+
+    if deadline_seconds <= 0:
+        return None, None
+    if re.fullmatch(r"request-envelope-[0-9a-f]{24}", request_envelope_id) is None:
+        raise ValueError("invocation deadline requires a valid request-envelope id")
+    proposed = float(invocation_started_epoch) + deadline_seconds
+    path = out / f"{request_envelope_id}.deadline.json"
+    record = {
+        "schema": "ura-invocation-deadline/1",
+        "request_envelope_id": request_envelope_id,
+        "deadline_seconds": deadline_seconds,
+        "deadline_epoch": proposed,
+    }
+    try:
+        with path.open("x", encoding="utf-8", newline="\n") as handle:
+            json.dump(
+                record,
+                handle,
+                ensure_ascii=False,
+                sort_keys=True,
+                separators=(",", ":"),
+                allow_nan=False,
+            )
+            handle.write("\n")
+        return proposed, path
+    except FileExistsError:
+        pass
+    if path.is_symlink() or not path.is_file() or path.stat().st_size > 4096:
+        raise ValueError("invocation deadline artifact is not a bounded regular file")
+    existing = _json_loads_strict(path.read_text(encoding="utf-8"))
+    if (
+        not isinstance(existing, dict)
+        or set(existing) != set(record)
+        or existing.get("schema") != record["schema"]
+        or existing.get("request_envelope_id") != request_envelope_id
+        or existing.get("deadline_seconds") != deadline_seconds
+        or isinstance(existing.get("deadline_epoch"), bool)
+        or not isinstance(existing.get("deadline_epoch"), (int, float))
+        or not math.isfinite(float(existing["deadline_epoch"]))
+    ):
+        raise ValueError("invocation deadline artifact is invalid or mismatched")
+    retained = float(existing["deadline_epoch"])
+    if retained > proposed:
+        raise ValueError(
+            "system clock moved backward across invocation deadline recovery"
+        )
+    return retained, path
+
+
 def _sha256_file(path: Path) -> str:
     digest = hashlib.sha256()
     with path.open("rb") as handle:
@@ -325,10 +425,7 @@ def _artifact_descriptor(path: Path) -> dict[str, object]:
 
 
 def _json_loads_strict(text: str) -> object:
-    def reject_constant(value: str) -> None:
-        raise ValueError(f"non-finite JSON number {value!r} is forbidden")
-
-    return json.loads(text, parse_constant=reject_constant)
+    return strict_json_loads(text)
 
 
 def _read_content_addressed_json(
@@ -341,23 +438,14 @@ def _read_content_addressed_json(
     """Read a bounded regular JSON file only when its exact bytes are approved."""
     if re.fullmatch(r"[0-9a-fA-F]{64}", expected_sha256 or "") is None:
         raise ValueError(f"{flag_name}-sha256 must be exactly 64 hexadecimal digits")
-    path = Path(path_value)
-    if path.is_symlink():
-        raise ValueError(f"{flag_name} must be a regular non-symlink JSON file")
-    path = path.resolve(strict=True)
-    if not path.is_file() or path.is_symlink():
-        raise ValueError(f"{flag_name} must be a regular non-symlink JSON file")
-    size = path.stat().st_size
-    if size <= 0 or size > max_bytes:
-        raise ValueError(
-            f"{flag_name} must be non-empty and no larger than {max_bytes} bytes"
-        )
-    try:
-        raw = path.read_bytes()
-    except OSError as exc:
-        raise ValueError(f"cannot read {flag_name}: {exc}") from exc
-    if len(raw) != size:
-        raise ValueError(f"{flag_name} changed while being read")
+    # Keep the unresolved final component so O_NOFOLLOW and the descriptor/path
+    # identity checks can actually detect a link or an inspect -> open swap.
+    path = Path(os.path.abspath(Path(path_value).expanduser()))
+    raw, opened = _bounded_nofollow_read(
+        path,
+        label=flag_name,
+        max_bytes=max_bytes,
+    )
     actual_sha256 = hashlib.sha256(raw).hexdigest()
     if actual_sha256 != expected_sha256.lower():
         raise ValueError(
@@ -366,12 +454,12 @@ def _read_content_addressed_json(
         )
     try:
         value = _json_loads_strict(raw.decode("utf-8"))
-    except (OSError, UnicodeError, json.JSONDecodeError) as exc:
+    except (OSError, UnicodeError, ValueError) as exc:
         raise ValueError(f"invalid {flag_name} JSON: {exc}") from exc
     return value, {
         "file": path.name,
         "sha256": actual_sha256,
-        "bytes": size,
+        "bytes": opened.st_size,
     }
 
 
@@ -381,31 +469,142 @@ def _retain_content_addressed_input(
 ) -> Path:
     """Copy an already approved input into the return tree without overwrite."""
 
-    source = Path(path_value)
-    if source.is_symlink():
-        raise ValueError(f"{stem} input must not be a symlink")
-    source = source.resolve(strict=True)
-    payload = source.read_bytes()
-    actual = hashlib.sha256(payload).hexdigest()
-    if actual != expected_sha256.lower():
+    if re.fullmatch(r"[0-9a-fA-F]{64}", expected_sha256 or "") is None:
+        raise ValueError(f"{stem} input digest must be exactly 64 hexadecimal digits")
+    # Do not resolve the final component before the no-follow open: resolving it
+    # would turn a symlink into an apparently safe regular target.
+    source = Path(os.path.abspath(Path(path_value).expanduser()))
+    payload, _opened = _bounded_nofollow_read(
+        source,
+        label=f"{stem} input",
+        max_bytes=256 * 1024 * 1024,
+    )
+    if not secrets.compare_digest(
+        hashlib.sha256(payload).hexdigest(), expected_sha256.lower()
+    ):
         raise ValueError(f"{stem} input changed after content validation")
+    return _retain_content_addressed_bytes(
+        out,
+        payload,
+        expected_sha256,
+        stem=stem,
+        filename=filename,
+    )
+
+
+def _retain_content_addressed_bytes(
+    out: Path,
+    payload: bytes,
+    expected_sha256: str,
+    *,
+    stem: str,
+    filename: str | None = None,
+) -> Path:
+    """Retain already-approved held bytes without reopening a private input."""
+
+    actual = hashlib.sha256(payload).hexdigest()
+    if not secrets.compare_digest(actual, expected_sha256.lower()):
+        raise ValueError(f"held {stem} bytes no longer match their digest")
     if filename is not None and (
         not filename or Path(filename).name != filename
     ):
         raise ValueError(f"content-addressed {stem} filename must be a safe basename")
-    destination = out / (filename or f"{stem}-{actual[:24]}.json")
-    if destination.exists():
-        if (
-            not destination.is_file()
-            or destination.is_symlink()
-            or destination.read_bytes() != payload
-        ):
+    if out.is_symlink() or out.is_junction():
+        raise ValueError(f"content-addressed {stem} output directory is unsafe")
+    output = out.resolve(strict=True)
+    output_info = output.lstat()
+    if (
+        output.is_symlink()
+        or output.is_junction()
+        or not stat.S_ISDIR(output_info.st_mode)
+    ):
+        raise ValueError(f"content-addressed {stem} output directory is unsafe")
+    destination = output / (filename or f"{stem}-{actual[:24]}.json")
+    try:
+        destination_info = destination.lstat()
+    except FileNotFoundError:
+        destination_info = None
+    if destination_info is not None:
+        existing, _opened = _bounded_nofollow_read(
+            destination,
+            label=f"retained {stem}",
+            max_bytes=max(len(payload), 1),
+        )
+        if existing != payload:
             raise ValueError(
                 f"content-addressed {stem} artifact collision: {destination}"
             )
-    else:
-        with destination.open("xb") as handle:
+        return destination
+
+    descriptor: int | None = None
+    created_identity: tuple[int, int, int] | None = None
+    creation_complete = False
+    try:
+        descriptor = os.open(
+            destination,
+            os.O_WRONLY
+            | os.O_CREAT
+            | os.O_EXCL
+            | getattr(os, "O_BINARY", 0)
+            | getattr(os, "O_NOFOLLOW", 0),
+            0o600,
+        )
+        opened = os.fstat(descriptor)
+        created_identity = (opened.st_dev, opened.st_ino, opened.st_mode)
+        visible = destination.lstat()
+        if (
+            not stat.S_ISREG(opened.st_mode)
+            or opened.st_nlink != 1
+            or visible.st_nlink != 1
+            or (visible.st_dev, visible.st_ino, visible.st_mode)
+            != created_identity
+        ):
+            raise ValueError(f"retained {stem} inode changed while being created")
+        with os.fdopen(descriptor, "wb", closefd=True) as handle:
+            descriptor = None
             handle.write(payload)
+            handle.flush()
+            os.fsync(handle.fileno())
+            after = os.fstat(handle.fileno())
+        final = destination.lstat()
+        if (
+            after.st_nlink != 1
+            or after.st_size != len(payload)
+            or (after.st_dev, after.st_ino, after.st_mode) != created_identity
+            or final.st_nlink != 1
+            or (final.st_dev, final.st_ino, final.st_mode) != created_identity
+        ):
+            raise ValueError(f"retained {stem} inode changed while being written")
+        creation_complete = True
+    except FileExistsError:
+        # A concurrent exact writer is admitted only after the same bounded
+        # no-follow byte comparison as the pre-existing branch.
+        existing, _opened = _bounded_nofollow_read(
+            destination,
+            label=f"retained {stem}",
+            max_bytes=max(len(payload), 1),
+        )
+        if existing != payload:
+            raise ValueError(
+                f"content-addressed {stem} artifact collision: {destination}"
+            )
+    except OSError as exc:
+        raise ValueError(f"content-addressed {stem} artifact cannot be retained") from exc
+    finally:
+        if descriptor is not None:
+            os.close(descriptor)
+        if created_identity is not None and not creation_complete:
+            try:
+                current = destination.lstat()
+            except OSError:
+                current = None
+            if current is not None and (
+                (current.st_dev, current.st_ino, current.st_mode)
+                == created_identity
+                and not destination.is_symlink()
+                and not destination.is_junction()
+            ):
+                destination.unlink(missing_ok=True)
     return destination
 
 
@@ -475,6 +674,46 @@ def _portable_attacker_configs(
     portable: dict[str, dict[str, object]] = {}
     for name, config in configs.items():
         item = dict(config)
+        if name == "ideator" and "out_dir" in item:
+            out_dir = item.pop("out_dir")
+            if out_dir is not None and (
+                not isinstance(out_dir, str) or not out_dir.strip()
+            ):
+                raise ValueError("IDEATOR out_dir must be null or a non-blank path")
+            item["out_dir_configured"] = out_dir is not None
+        if name == "ideator" and "seed_pairs" in item:
+            raw_pairs = item.pop("seed_pairs")
+            if not isinstance(raw_pairs, list) or not raw_pairs:
+                raise ValueError("IDEATOR seed_pairs must be a non-empty list")
+            portable_pairs: list[dict[str, object]] = []
+            for index, pair in enumerate(raw_pairs):
+                if (
+                    not isinstance(pair, (list, tuple))
+                    or len(pair) != 2
+                    or not isinstance(pair[0], str)
+                    or not pair[0].strip()
+                    or not isinstance(pair[1], str)
+                    or not pair[1].strip()
+                ):
+                    raise ValueError(
+                        f"IDEATOR seed_pairs[{index}] must be a non-blank "
+                        "(text, image_path) pair"
+                    )
+                encoded_text = pair[0].encode("utf-8")
+                media = media_input_identity(
+                    MediaRef(
+                        modality="image", path=pair[1], mime="image/png"
+                    ),
+                    origin="attacker_generated",
+                    require_declared_sha256=False,
+                )
+                portable_pairs.append({
+                    "index": index,
+                    "text_sha256": hashlib.sha256(encoded_text).hexdigest(),
+                    "text_bytes": len(encoded_text),
+                    "image": media.manifest_payload(),
+                })
+            item["seed_pairs_identity"] = portable_pairs
         artifact_spec = (
             ("response_artifact", "response_artifact_sha256", 256 * 1024 * 1024)
             if name == "t3mp3st"
@@ -528,8 +767,193 @@ def _portable_attacker_configs(
     return portable
 
 
+def _portable_api_configs(
+    configs: dict[str, dict[str, object]],
+) -> dict[str, dict[str, object]]:
+    """Project hosted configs without disclosing compatible endpoint URLs."""
+
+    portable: dict[str, dict[str, object]] = {}
+    for spec, config in configs.items():
+        item = dict(config)
+        base_url = item.pop("base_url", None)
+        if base_url is not None:
+            if not isinstance(base_url, str):
+                raise ValueError(f"API config {spec!r} base_url must be a string")
+            item["base_url_identity"] = canonical_https_endpoint_identity(base_url)
+        portable[spec] = item
+    return portable
+
+
+def _bounded_nofollow_read(
+    path: Path,
+    *,
+    label: str,
+    max_bytes: int,
+) -> tuple[bytes, os.stat_result]:
+    """Read one exact regular inode through a bounded no-follow descriptor."""
+
+    descriptor: int | None = None
+    try:
+        initial = path.lstat()
+        if (
+            path.is_symlink()
+            or path.is_junction()
+            or not stat.S_ISREG(initial.st_mode)
+            or initial.st_nlink != 1
+            or not 0 < initial.st_size <= max_bytes
+        ):
+            raise ValueError(f"{label} must be one regular file within its size bound")
+        flags = (
+            os.O_RDONLY
+            | getattr(os, "O_BINARY", 0)
+            | getattr(os, "O_NOFOLLOW", 0)
+        )
+        descriptor = os.open(path, flags)
+        opened = os.fstat(descriptor)
+        identity = (initial.st_dev, initial.st_ino, initial.st_mode)
+        if (
+            not stat.S_ISREG(opened.st_mode)
+            or opened.st_nlink != 1
+            or opened.st_size != initial.st_size
+            or (opened.st_dev, opened.st_ino, opened.st_mode) != identity
+        ):
+            raise ValueError(f"{label} changed while it was opened")
+        with os.fdopen(descriptor, "rb", closefd=True) as stream:
+            descriptor = None
+            raw = stream.read(max_bytes + 1)
+            after = os.fstat(stream.fileno())
+        if (
+            len(raw) != opened.st_size
+            or len(raw) > max_bytes
+            or (after.st_dev, after.st_ino, after.st_mode)
+            != (opened.st_dev, opened.st_ino, opened.st_mode)
+            or after.st_nlink != 1
+            or after.st_size != opened.st_size
+            or after.st_mtime_ns != opened.st_mtime_ns
+        ):
+            raise ValueError(f"{label} changed while it was read")
+        final = path.lstat()
+        if (
+            path.is_symlink()
+            or path.is_junction()
+            or not stat.S_ISREG(final.st_mode)
+            or final.st_nlink != 1
+            or (final.st_dev, final.st_ino, final.st_mode)
+            != (opened.st_dev, opened.st_ino, opened.st_mode)
+            or final.st_size != opened.st_size
+            or final.st_mtime_ns != opened.st_mtime_ns
+        ):
+            raise ValueError(f"{label} path changed while it was read")
+        return raw, opened
+    except OSError as exc:
+        raise ValueError(f"{label} cannot be read safely") from exc
+    finally:
+        if descriptor is not None:
+            os.close(descriptor)
+
+
+def _consume_exact_transient_file(
+    path: Path,
+    *,
+    opened: os.stat_result,
+    label: str,
+) -> None:
+    """Move the opened inode into a private quarantine, verify it, then unlink."""
+
+    quarantine = path.parent / (".ura-consumed-" + secrets.token_hex(16))
+    destination = quarantine / path.name
+    try:
+        quarantine.mkdir(mode=0o700)
+        os.rename(path, destination)
+        moved = destination.lstat()
+        if (
+            destination.is_symlink()
+            or moved.st_nlink != 1
+            or (moved.st_dev, moved.st_ino, moved.st_mode)
+            != (opened.st_dev, opened.st_ino, opened.st_mode)
+            or moved.st_size != opened.st_size
+        ):
+            raise ValueError(f"{label} changed before it could be consumed")
+        destination.unlink()
+        quarantine.rmdir()
+    except OSError as exc:
+        raise ValueError(f"{label} could not be consumed after its exact read") from exc
+
+
+def _read_optional_bound_config(
+    path_value: str,
+    expected_sha256: str,
+    *,
+    flag_name: str,
+    transient_environment: str,
+    transient_directory: str,
+    transient_prefix: str,
+    max_bytes: int = 1024 * 1024,
+) -> tuple[bytes, Path, int, str, bool] | None:
+    """Read one optional config exactly once and consume private materialization."""
+
+    transient_marker = os.environ.pop(transient_environment, "").strip()
+    if expected_sha256 and not path_value:
+        raise ValueError(
+            f"{flag_name} and {flag_name}-sha256 must be provided together"
+        )
+    if transient_marker and not path_value:
+        raise ValueError(f"private transient {flag_name} marker has no config")
+    if not path_value:
+        return None
+    if transient_marker and not expected_sha256:
+        raise ValueError(f"private transient {flag_name} requires {flag_name}-sha256")
+    unresolved = Path(path_value).expanduser()
+    if unresolved.is_symlink() or unresolved.is_junction():
+        raise ValueError(f"{flag_name} must be a regular non-symlink JSON file")
+    path = unresolved.resolve(strict=True)
+    transient = bool(transient_marker)
+    if transient_marker:
+        try:
+            marked_path = Path(transient_marker).expanduser().resolve(strict=True)
+        except OSError as exc:
+            raise ValueError(
+                f"private transient {flag_name} marker is invalid"
+            ) from exc
+        if (
+            marked_path != path
+            or path.parent.name != transient_directory
+            or re.fullmatch(
+                rf"selected-{transient_prefix}-[0-9a-f]{{24}}-"
+                rf"[0-9a-f]{{16}}\.json",
+                path.name,
+            )
+            is None
+        ):
+            raise ValueError(
+                f"private transient {flag_name} marker does not match the config"
+            )
+    raw, opened = _bounded_nofollow_read(
+        path,
+        label=flag_name,
+        max_bytes=max_bytes,
+    )
+    if transient:
+        _consume_exact_transient_file(
+            path,
+            opened=opened,
+            label=f"private transient {flag_name}",
+        )
+    observed_sha256 = hashlib.sha256(raw).hexdigest()
+    if expected_sha256:
+        if re.fullmatch(r"[0-9a-f]{64}", expected_sha256) is None:
+            raise ValueError(
+                f"{flag_name}-sha256 must be exactly 64 lowercase hex"
+            )
+        if not secrets.compare_digest(observed_sha256, expected_sha256):
+            raise ValueError(f"{flag_name}-sha256 does not match the read bytes")
+    return raw, path, opened.st_size, observed_sha256, transient
+
+
 def _load_attacker_config(
-    path_value: str, selected_attackers: list[str]
+    path_value: str,
+    selected_attackers: list[str],
+    expected_sha256: str = "",
 ) -> tuple[dict[str, dict[str, object]], dict[str, object] | None]:
     """Load constructor kwargs without admitting literal secrets.
 
@@ -539,15 +963,19 @@ def _load_attacker_config(
     nesting level.
     """
 
-    if not path_value:
+    loaded = _read_optional_bound_config(
+        path_value,
+        expected_sha256,
+        flag_name="--attacker-config",
+        transient_environment="URA_PRIVATE_TRANSIENT_ATTACKER_CONFIG",
+        transient_directory=".private-attacker-configs",
+        transient_prefix="attacker",
+    )
+    if loaded is None:
         return {}, None
-    path = Path(path_value).resolve(strict=True)
-    if not path.is_file() or path.is_symlink():
-        raise ValueError("--attacker-config must be a regular non-symlink JSON file")
-    if path.stat().st_size > 1024 * 1024:
-        raise ValueError("--attacker-config exceeds the 1 MiB limit")
+    raw, path, size, observed_sha256, transient = loaded
     try:
-        value = _json_loads_strict(path.read_text(encoding="utf-8"))
+        value = _json_loads_strict(raw.decode("utf-8"))
     except (OSError, UnicodeError, json.JSONDecodeError) as exc:
         raise ValueError(f"invalid --attacker-config JSON: {exc}") from exc
     if not isinstance(value, dict):
@@ -590,21 +1018,31 @@ def _load_attacker_config(
         )
     portable = _portable_attacker_configs(normalized)
     return normalized, {
-        "file": path.name,
-        "sha256": _sha256_file(path),
-        "bytes": path.stat().st_size,
+        "file": (
+            f"private-attacker-config@sha256:{observed_sha256}"
+            if transient
+            else path.name
+        ),
+        "sha256": observed_sha256,
+        "bytes": size,
         "normalized_selected_sha256": _sha256_json(portable),
     }
 
 
 def _load_api_config(
-    path_value: str, selected_specs: list[str]
+    path_value: str,
+    selected_specs: list[str],
+    expected_sha256: str = "",
 ) -> tuple[dict[str, dict[str, object]], dict[str, object] | None]:
     """Load exact, credential-free execution conditions for generic API targets."""
 
     required_specs = [
         spec for spec in selected_specs if api_target_requires_config(spec)
     ]
+    if expected_sha256 and not path_value:
+        raise ValueError(
+            "--api-config and --api-config-sha256 must be provided together"
+        )
     if not path_value:
         if required_specs:
             raise ValueError(
@@ -617,10 +1055,48 @@ def _load_api_config(
     if unresolved.is_symlink():
         raise ValueError("--api-config must be a regular non-symlink JSON file")
     path = unresolved.resolve(strict=True)
-    if not path.is_file() or path.is_symlink() or path.stat().st_size > 1024 * 1024:
+    size = path.stat().st_size
+    if not path.is_file() or path.is_symlink() or size <= 0 or size > 1024 * 1024:
         raise ValueError("--api-config must be a regular <=1 MiB JSON file")
+    raw = path.read_bytes()
+    if len(raw) != size:
+        raise ValueError("--api-config changed while it was read")
+    observed_sha256 = hashlib.sha256(raw).hexdigest()
+    transient_marker = os.environ.pop("URA_PRIVATE_TRANSIENT_API_CONFIG", "").strip()
+    transient = False
+    if transient_marker:
+        if not expected_sha256:
+            raise ValueError(
+                "private transient API config requires --api-config-sha256"
+            )
+        try:
+            marked_path = Path(transient_marker).expanduser().resolve(strict=True)
+        except OSError as exc:
+            raise ValueError("private transient API config marker is invalid") from exc
+        if (
+            marked_path != path
+            or path.parent.name != ".private-api-configs"
+            or re.fullmatch(
+                r"selected-api-[0-9a-f]{24}-[0-9a-f]{16}\.json", path.name
+            ) is None
+        ):
+            raise ValueError(
+                "private transient API config marker does not match the selected config"
+            )
+        try:
+            path.unlink()
+        except OSError as exc:
+            raise ValueError(
+                "private transient API config could not be removed after startup read"
+            ) from exc
+        transient = True
+    if expected_sha256:
+        if re.fullmatch(r"[0-9a-f]{64}", expected_sha256) is None:
+            raise ValueError("--api-config-sha256 must be exactly 64 lowercase hex")
+        if not secrets.compare_digest(observed_sha256, expected_sha256):
+            raise ValueError("--api-config-sha256 does not match the read config bytes")
     try:
-        value = _json_loads_strict(path.read_text(encoding="utf-8"))
+        value = _json_loads_strict(raw.decode("utf-8"))
     except (OSError, UnicodeError, json.JSONDecodeError) as exc:
         raise ValueError(f"invalid --api-config JSON: {exc}") from exc
     if not isinstance(value, dict) or not set(required_specs).issubset(value):
@@ -637,9 +1113,13 @@ def _load_api_config(
             raise ValueError(f"API config {spec!r} must be a JSON object")
         normalized[spec] = normalize_api_target_config(spec, config)
     return normalized, {
-        "file": path.name,
-        "sha256": _sha256_file(path),
-        "bytes": path.stat().st_size,
+        "file": (
+            f"private-api-config@sha256:{observed_sha256}"
+            if transient
+            else path.name
+        ),
+        "sha256": observed_sha256,
+        "bytes": size,
         "normalized_selected_sha256": _sha256_json(normalized),
     }
 
@@ -668,7 +1148,9 @@ def _default_source_instance(arm_id: str) -> dict[str, object]:
 
 
 def _load_source_config(
-    path_value: str, selected_arms: list[str],
+    path_value: str,
+    selected_arms: list[str],
+    expected_sha256: str = "",
 ) -> tuple[dict[str, dict[str, object]], dict[str, object] | None]:
     """Load logical source arms without persisting checkout-specific paths.
 
@@ -680,24 +1162,31 @@ def _load_source_config(
 
     raw_configs: dict[str, object] = {}
     artifact: dict[str, object] | None = None
-    if path_value:
-        unresolved = Path(path_value).expanduser()
-        if unresolved.is_symlink():
-            raise ValueError("--source-config must not be a symlink")
-        path = unresolved.resolve(strict=True)
-        if not path.is_file() or path.stat().st_size > 1024 * 1024:
-            raise ValueError("--source-config must be a regular <=1 MiB JSON file")
+    loaded = _read_optional_bound_config(
+        path_value,
+        expected_sha256,
+        flag_name="--source-config",
+        transient_environment="URA_PRIVATE_TRANSIENT_SOURCE_CONFIG",
+        transient_directory=".private-source-configs",
+        transient_prefix="source",
+    )
+    if loaded is not None:
+        raw, path, size, observed_sha256, transient = loaded
         try:
-            value = _json_loads_strict(path.read_text(encoding="utf-8"))
+            value = _json_loads_strict(raw.decode("utf-8"))
         except (OSError, UnicodeError, json.JSONDecodeError) as exc:
             raise ValueError(f"invalid --source-config JSON: {exc}") from exc
         if not isinstance(value, dict):
             raise ValueError("--source-config must be an object keyed by corpus arm id")
         raw_configs = value
         artifact = {
-            "file": path.name,
-            "sha256": _sha256_file(path),
-            "bytes": path.stat().st_size,
+            "file": (
+                f"private-source-config@sha256:{observed_sha256}"
+                if transient
+                else path.name
+            ),
+            "sha256": observed_sha256,
+            "bytes": size,
         }
 
     for raw_arm in raw_configs:
@@ -714,8 +1203,13 @@ def _load_source_config(
     normalized: dict[str, dict[str, object]] = {}
     for arm_id in selected_arms:
         if arm_id not in raw_configs:
-            normalized[arm_id] = _default_source_instance(arm_id)
-            continue
+            if arm_id == "synth":
+                normalized[arm_id] = _default_source_instance(arm_id)
+                continue
+            raise ValueError(
+                f"real source arm {arm_id!r} requires an explicit "
+                "--source-config entry"
+            )
         raw_config = raw_configs[arm_id]
         if not isinstance(raw_config, dict):
             raise ValueError(f"source config {arm_id!r} must be an object")
@@ -734,6 +1228,15 @@ def _load_source_config(
         synth = raw_config.get("synth", False)
         if not isinstance(synth, bool):
             raise ValueError(f"source config {arm_id!r} synth marker must be boolean")
+        if arm_id != "synth" and (converter == "synth" or synth):
+            raise ValueError(
+                f"real source arm {arm_id!r} cannot be reclassified as synthetic; "
+                "use the literal 'synth' arm"
+            )
+        if arm_id == "synth" and (converter != "synth" or synth is not True):
+            raise ValueError(
+                "literal 'synth' arm requires converter='synth' and synth=true"
+            )
         if converter == "synth":
             if synth is not True or "path_env" in raw_config:
                 raise ValueError(
@@ -800,13 +1303,33 @@ def _selected_config_artifact_identity(
     return {"normalized_selected_sha256": digest}
 
 
+def _content_artifact_identity(
+    artifact: dict[str, object] | None,
+) -> dict[str, object] | None:
+    """Return the exact byte identity of one standalone bound artifact."""
+
+    if artifact is None:
+        return None
+    digest = artifact.get("sha256")
+    size = artifact.get("bytes")
+    if (
+        not isinstance(digest, str)
+        or re.fullmatch(r"[0-9a-f]{64}", digest) is None
+        or isinstance(size, bool)
+        or not isinstance(size, int)
+        or size <= 0
+    ):
+        raise ValueError("content artifact identity requires exact SHA-256 and bytes")
+    return {"bytes": size, "sha256": digest}
+
+
 def _record_executed_modality_evidence(
     target_name: str,
     attempts: list[Attempt],
     responses: list[Response],
-    destination: dict[str, set[tuple[str, tuple[str, ...]]]],
+    destination: dict[str, set[tuple[str, str, tuple[str, ...]]]],
 ) -> None:
-    """Record exact evaluable combinations that reached the base target."""
+    """Record every contract-verified combination that reached the base target."""
     response_by_attempt = {response.attempt_id: response for response in responses}
     if len(response_by_attempt) != len(responses):
         raise ValueError("duplicate response attempt id in modality evidence")
@@ -818,29 +1341,18 @@ def _record_executed_modality_evidence(
             response.raw.get("defense") == "blocked"
             and response.raw.get("stage") == "input"
         )
-        policy_evaluable = attempt.params.get("policy_evaluable_turn")
-        if not isinstance(policy_evaluable, bool):
-            raise ValueError(
-                "modality evidence attempt lacks boolean policy_evaluable_turn"
-            )
-        if not input_blocked and policy_evaluable:
-            physical = {
-                media.modality
-                for turn in attempt.rendered_input
-                for media in turn.media
-            }
-            has_text = any(
-                bool((turn.content or "").strip())
-                or turn.tool_call is not None
-                or bool((turn.tool_result or "").strip())
-                for turn in attempt.rendered_input
-            )
-            combination = tuple(
-                modality
-                for modality in ("text", "image", "audio", "video")
-                if modality in physical or (modality == "text" and has_text)
-            )
-            destination[target_name].add((attempt.datapoint_id, combination))
+        planned_input = attempt.params.get("planned_target_input")
+        if not isinstance(planned_input, dict):
+            raise ValueError("modality evidence lacks planned target-input binding")
+        combination = planned_input.get("combination")
+        if not isinstance(combination, list):
+            raise ValueError("modality evidence has an invalid target combination")
+        if not input_blocked:
+            destination[target_name].add((
+                attempt.attacker,
+                attempt.datapoint_id,
+                tuple(str(item) for item in combination),
+            ))
 
 
 def _load_local_config(
@@ -849,6 +1361,7 @@ def _load_local_config(
     *,
     quantization: str = "",
     hardware: dict[str, object] | None = None,
+    expected_sha256: str = "",
 ) -> tuple[dict[str, dict[str, object]], dict[str, object] | None]:
     """Load exact immutable identities and declared modalities for local targets."""
     if not selected_specs:
@@ -860,10 +1373,58 @@ def _load_local_config(
             "measured --local targets require --local-config with immutable identity "
             "and modalities"
         )
-    path = Path(path_value).resolve(strict=True)
-    if not path.is_file() or path.is_symlink() or path.stat().st_size > 1024 * 1024:
+    unresolved_path = Path(path_value).expanduser()
+    if unresolved_path.is_symlink():
         raise ValueError("--local-config must be a regular <=1 MiB JSON file")
-    value = _json_loads_strict(path.read_text(encoding="utf-8"))
+    path = unresolved_path.resolve(strict=True)
+    size = path.stat().st_size
+    if not path.is_file() or size <= 0 or size > 1024 * 1024:
+        raise ValueError("--local-config must be a regular <=1 MiB JSON file")
+    raw = path.read_bytes()
+    if len(raw) != size:
+        raise ValueError("--local-config changed while it was read")
+    raw_sha256 = hashlib.sha256(raw).hexdigest()
+    transient_marker = os.environ.pop(
+        "URA_PRIVATE_TRANSIENT_LOCAL_CONFIG", ""
+    ).strip()
+    if transient_marker:
+        if not expected_sha256:
+            raise ValueError(
+                "private transient local config requires --local-config-sha256"
+            )
+        try:
+            marked_path = Path(transient_marker).expanduser().resolve(strict=True)
+        except OSError as exc:
+            raise ValueError("private transient local config marker is invalid") from exc
+        if (
+            marked_path != path
+            or path.parent.name
+            not in {"generated-local-configs", ".private-local-configs"}
+            or re.fullmatch(
+                r"selected-[0-9a-f]{24}(?:-[0-9a-f]{16})?\.json",
+                path.name,
+            )
+            is None
+        ):
+            raise ValueError(
+                "private transient local config marker does not match the "
+                "generated selected config"
+            )
+        try:
+            path.unlink()
+        except OSError as exc:
+            raise ValueError(
+                "private transient local config could not be removed after startup read"
+            ) from exc
+    if expected_sha256:
+        if re.fullmatch(r"[0-9a-f]{64}", expected_sha256) is None:
+            raise ValueError("--local-config-sha256 must be exactly 64 lowercase hex")
+        if not secrets.compare_digest(raw_sha256, expected_sha256):
+            raise ValueError("--local-config-sha256 does not match the read config bytes")
+    try:
+        value = _json_loads_strict(raw.decode("utf-8"))
+    except UnicodeDecodeError as exc:
+        raise ValueError("--local-config must be UTF-8 JSON") from exc
     if not isinstance(value, dict) or set(value) != set(selected_specs):
         raise ValueError(
             "--local-config keys must exactly match the selected --local specs"
@@ -871,6 +1432,22 @@ def _load_local_config(
     normalized: dict[str, dict[str, object]] = {}
     for spec in selected_specs:
         config = value[spec]
+        display_spec = spec
+        if isinstance(config, dict) and spec.startswith("vllm:"):
+            from ura.targets.local import _is_explicit_local_path  # noqa: PLC0415
+
+            runtime_model = spec.split(":", 1)[1]
+            if _is_explicit_local_path(runtime_model):
+                configured_digest = config.get("digest")
+                if isinstance(configured_digest, str) and re.fullmatch(
+                    r"[0-9a-fA-F]{64}", configured_digest
+                ):
+                    display_spec = (
+                        "vllm:local-checkpoint@sha256:"
+                        + configured_digest.lower()
+                    )
+                else:
+                    display_spec = _prematerialization_target_key(spec)
         if not isinstance(config, dict) or set(config) - {
             "revision", "digest", "modalities", "tensor_parallel_size",
             "gpu_memory_utilization", "max_tokens", "max_model_len",
@@ -878,7 +1455,7 @@ def _load_local_config(
             "multi_gpu_compatible", "quantization", "allow_unknown_fit",
         }:
             raise ValueError(
-                f"local config {spec!r} contains unsupported execution fields"
+                f"local config {display_spec!r} contains unsupported execution fields"
             )
         modalities = config.get("modalities")
         if (
@@ -892,7 +1469,7 @@ def _load_local_config(
             or len(set(modalities)) != len(modalities)
         ):
             raise ValueError(
-                f"local config {spec!r} requires unique declared text[/image] modalities"
+                f"local config {display_spec!r} requires unique declared text[/image] modalities"
             )
         backend = spec.split(":", 1)[0].lower()
         config = dict(config)
@@ -907,7 +1484,7 @@ def _load_local_config(
         if backend == "vllm":
             if bool(revision) == bool(digest):
                 raise ValueError(
-                    f"vLLM config {spec!r} requires exactly one revision or digest"
+                    f"vLLM config {display_spec!r} requires exactly one revision or digest"
                 )
             tensor_parallel_size = config.get("tensor_parallel_size")
             if (
@@ -915,7 +1492,7 @@ def _load_local_config(
                 or tensor_parallel_size not in {None, "auto", 1, 2}
             ):
                 raise ValueError(
-                    f"vLLM config {spec!r} requires tensor_parallel_size auto, 1, or 2"
+                    f"vLLM config {display_spec!r} requires tensor_parallel_size auto, 1, or 2"
                 )
             utilization = config.get("gpu_memory_utilization", 0.90)
             if (
@@ -924,7 +1501,7 @@ def _load_local_config(
                 or not 0.1 <= float(utilization) <= 0.95
             ):
                 raise ValueError(
-                    f"vLLM config {spec!r} gpu_memory_utilization must be in [0.1, 0.95]"
+                    f"vLLM config {display_spec!r} gpu_memory_utilization must be in [0.1, 0.95]"
                 )
             from ura.targets.local import (  # noqa: PLC0415
                 validate_vllm_max_model_len,
@@ -936,45 +1513,56 @@ def _load_local_config(
                     config.get("max_tokens", 512)
                 )
             except ValueError as exc:
-                raise ValueError(f"vLLM config {spec!r} {exc}") from exc
+                raise ValueError(f"vLLM config {display_spec!r} {exc}") from exc
             if "max_model_len" in config:
                 try:
                     max_model_len = validate_vllm_max_model_len(
                         config["max_model_len"]
                     )
                 except ValueError as exc:
-                    raise ValueError(f"vLLM config {spec!r} {exc}") from exc
+                    raise ValueError(f"vLLM config {display_spec!r} {exc}") from exc
                 if max_tokens > max_model_len:
                     raise ValueError(
-                        f"vLLM config {spec!r} max_tokens must not exceed "
+                        f"vLLM config {display_spec!r} max_tokens must not exceed "
                         "max_model_len"
                     )
             allow_unknown_fit = config.get("allow_unknown_fit", False)
             if not isinstance(allow_unknown_fit, bool):
                 raise ValueError(
-                    f"vLLM config {spec!r} allow_unknown_fit must be boolean"
+                    f"vLLM config {display_spec!r} allow_unknown_fit must be boolean"
                 )
             explicit_quantization = config.get("quantization")
             if allow_unknown_fit and explicit_quantization not in {
                 "none", "fp8", "bitsandbytes", "awq", "gptq",
             }:
                 raise ValueError(
-                    f"vLLM config {spec!r} allow_unknown_fit requires an "
+                    f"vLLM config {display_spec!r} allow_unknown_fit requires an "
                     "explicit per-model quantization"
                 )
             from experiments.local_targets import (  # noqa: PLC0415
-                detect_gpu_hardware, model_hardware_profile,
+                detect_gpu_hardware, installed_vllm_version,
+                model_hardware_profile,
                 tensor_parallel_capacity_gib,
             )
             selected_hardware = (
                 hardware if hardware is not None else detect_gpu_hardware()
             )
-            profile = model_hardware_profile(
-                spec,
-                config,
-                selected_hardware,
-                default_quantization=quantization,
-            )
+            try:
+                profile = model_hardware_profile(
+                    spec,
+                    config,
+                    selected_hardware,
+                    default_quantization=quantization,
+                    runtime_version=installed_vllm_version(),
+                )
+            except (OSError, TypeError, ValueError) as exc:
+                safe_message = str(exc).replace(spec, display_spec)
+                safe_message = safe_message.replace(
+                    spec.split(":", 1)[1], display_spec.split(":", 1)[1]
+                )
+                raise ValueError(
+                    f"vLLM config {display_spec!r} {safe_message}"
+                ) from exc
             config["parameter_count_b"] = profile["parameter_count_b"]
             config["multi_gpu_compatible"] = profile["multi_gpu_compatible"]
             config["multi_gpu_support_basis"] = profile["multi_gpu_support_basis"]
@@ -987,19 +1575,21 @@ def _load_local_config(
             )
             if resolved_tp > 1 and profile["multi_gpu_compatible"] is False:
                 raise ValueError(
-                    f"vLLM config {spec!r} declares multi_gpu_compatible false "
+                    f"vLLM config {display_spec!r} declares multi_gpu_compatible false "
                     "but requests tensor_parallel_size > 1"
                 )
             if selected_hardware.get("available"):
                 gpu_count = int(selected_hardware.get("gpu_count", 0) or 0)
                 if resolved_tp > gpu_count:
                     raise ValueError(
-                        f"vLLM config {spec!r} requests tensor_parallel_size "
+                        f"vLLM config {display_spec!r} requests tensor_parallel_size "
                         f"{resolved_tp} but only {gpu_count} GPU(s) were detected"
                     )
                 if profile["fits"] is False:
                     note = str(profile.get("compatibility_note") or "estimated VRAM exceeds available VRAM")
-                    raise ValueError(f"vLLM config {spec!r} does not fit: {note}")
+                    raise ValueError(
+                        f"vLLM config {display_spec!r} does not fit: {note}"
+                    )
                 estimated = profile.get("estimated_vram_gib")
                 tp_capacity = tensor_parallel_capacity_gib(
                     selected_hardware, float(utilization), resolved_tp
@@ -1008,7 +1598,7 @@ def _load_local_config(
                     tp_capacity is None or float(estimated) > tp_capacity
                 ):
                     raise ValueError(
-                        f"vLLM config {spec!r} tensor_parallel_size {resolved_tp} "
+                        f"vLLM config {display_spec!r} tensor_parallel_size {resolved_tp} "
                         "cannot fit its estimated VRAM across the detected cards"
                     )
             config["tensor_parallel_size"] = resolved_tp
@@ -1025,14 +1615,137 @@ def _load_local_config(
                 raise ValueError(
                     f"Ollama config {spec!r} requires digest and forbids vLLM fields"
                 )
+            unsupported = sorted(set(config) - {"digest", "modalities"})
+            if unsupported:
+                raise ValueError(
+                    f"Ollama config {spec!r} contains unsupported fields: "
+                    + ", ".join(unsupported)
+                )
         else:
             raise ValueError(f"unsupported local backend in {spec!r}")
         normalized[spec] = dict(config)
+    # Independent runner gate: UI visibility/materialization is not authority.
+    # A crafted local config cannot run an Ollama base-family/name alias that
+    # is represented by the maintained vLLM roster.
+    from experiments.local_targets import _models_map, load_roster  # noqa: PLC0415
+    from ura.ollama_security import (  # noqa: PLC0415
+        ollama_overlap_specs,
+        vllm_identity_index,
+    )
+
+    vllm_entries = {
+        str(spec): dict(entry)
+        for spec, entry in _models_map(load_roster()).items()
+        if str(spec).startswith("vllm:") and isinstance(entry, dict)
+    }
+    vllm_entries.update(
+        {
+            spec: dict(config)
+            for spec, config in normalized.items()
+            if spec.startswith("vllm:")
+        }
+    )
+    identity_index = vllm_identity_index(vllm_entries)
+    for spec in normalized:
+        if not spec.startswith("ollama:"):
+            continue
+        overlaps = ollama_overlap_specs(
+            spec.removeprefix("ollama:"),
+            {},
+            identity_index,
+        )
+        if overlaps:
+            raise ValueError(
+                f"Ollama config {spec!r} overlaps the vLLM roster by normalized "
+                "base-family/name identity and is unavailable: "
+                + ", ".join(overlaps)
+            )
+    ollama_specs = [spec for spec in normalized if spec.startswith("ollama:")]
+    if ollama_specs:
+        # Re-query under the shared inference/mutation lock at Runner
+        # admission. Builder materialization is useful UX, never authority:
+        # an opaque tag can reveal a vLLM-overlapping upstream family only in
+        # /api/show, and a pulled tag/digest can change after preview.
+        from experiments.rig_web_app.ollama_service import (  # noqa: PLC0415
+            OllamaService,
+        )
+
+        live = OllamaService(Path.cwd()).roster(vllm_entries, force=True)
+        if live.get("available") is not True:
+            raise ValueError(
+                "Runner Ollama admission requires a current exact live roster: "
+                + str(live.get("error") or "discovery unavailable")
+            )
+        candidates: dict[str, dict[str, object]] = {}
+        excluded: dict[str, dict[str, object]] = {}
+        for section, destination in (("models", candidates), ("excluded", excluded)):
+            rows = live.get(section)
+            if not isinstance(rows, list):
+                raise ValueError("Runner Ollama live roster is malformed")
+            for row in rows:
+                if not isinstance(row, dict):
+                    raise ValueError("Runner Ollama live roster row is malformed")
+                live_spec = row.get("spec")
+                if (
+                    not isinstance(live_spec, str)
+                    or not live_spec.startswith("ollama:")
+                    or live_spec in candidates
+                    or live_spec in excluded
+                ):
+                    raise ValueError("Runner Ollama live roster identity is ambiguous")
+                destination[live_spec] = row
+        for spec in ollama_specs:
+            if spec in excluded:
+                overlaps = excluded[spec].get("overlap_with")
+                overlap_text = (
+                    ", ".join(str(value) for value in overlaps)
+                    if isinstance(overlaps, list)
+                    else "normalized vLLM identity"
+                )
+                raise ValueError(
+                    f"Ollama config {spec!r} is unavailable because live /api/show "
+                    f"identity overlaps the vLLM roster: {overlap_text}"
+                )
+            row = candidates.get(spec)
+            if row is None:
+                raise ValueError(
+                    f"Ollama config {spec!r} is absent from the current exact live roster"
+                )
+            if (
+                row.get("digest") != normalized[spec].get("digest")
+                or row.get("modalities") != normalized[spec].get("modalities")
+            ):
+                raise ValueError(
+                    f"Ollama config {spec!r} digest/modalities do not match current "
+                    "live Runner admission"
+                )
+    durable_normalized: list[dict[str, object]] = []
+    seen_local_conditions: set[tuple[str, str]] = set()
+    for spec, config in sorted(normalized.items()):
+        persisted_spec = _persisted_model_spec(spec, config)
+        condition_config = {
+            key: value
+            for key, value in config.items()
+            if key not in {"revision", "digest"}
+        }
+        condition_sha256 = _sha256_json(condition_config)
+        key = (persisted_spec, condition_sha256)
+        if key in seen_local_conditions:
+            raise ValueError(
+                "local configs collapse to a duplicate content identity and "
+                "execution condition"
+            )
+        seen_local_conditions.add(key)
+        durable_normalized.append({
+            "model_spec": persisted_spec,
+            "execution_condition_sha256": condition_sha256,
+            "config": config,
+        })
     return normalized, {
         "file": path.name,
-        "sha256": _sha256_file(path),
-        "bytes": path.stat().st_size,
-        "normalized_selected_sha256": _sha256_json(normalized),
+        "sha256": raw_sha256,
+        "bytes": size,
+        "normalized_selected_sha256": _sha256_json(durable_normalized),
     }
 
 
@@ -1195,8 +1908,9 @@ def _completion_budget_snapshots(
             raise ValueError(
                 f"same-grid completion marker {marker_path.name!r} manifest mismatch"
             )
-        manifest = RunManifest.model_validate_json(
-            manifest_path.read_text(encoding="utf-8")
+        manifest = RunManifest.model_validate(
+            _json_loads_strict(manifest_path.read_text(encoding="utf-8")),
+            strict=True,
         )
         run_config = manifest.config.get("run")
         if (
@@ -1360,7 +2074,10 @@ def _validate_budget_recovery_high_water(
 
 
 def _validate_completion_marker(
-    paths: dict[str, Path], planned: RunManifest, required: tuple[str, ...]
+    paths: dict[str, Path],
+    planned: RunManifest,
+    required: tuple[str, ...],
+    grid_acquisition: dict[str, object],
 ) -> dict:
     """Validate a completed cell before allowing a call-free skip."""
     marker = _json_loads_strict(paths["complete"].read_text(encoding="utf-8"))
@@ -1393,13 +2110,33 @@ def _validate_completion_marker(
         if descriptor.get("records") != _record_count(path):
             raise ValueError(f"completion artifact {name!r} record count mismatch")
 
-    manifest = RunManifest.model_validate_json(
-        paths["manifest"].read_text(encoding="utf-8")
+    manifest = RunManifest.model_validate(
+        _json_loads_strict(paths["manifest"].read_text(encoding="utf-8")),
+        strict=True,
     )
     if manifest.run_id != planned.run_id:
         raise ValueError("stored manifest run_id differs from planned cell")
     if manifest.code_version != CODE_VERSION or manifest.schema_version != SCHEMA_VERSION:
         raise ValueError("stored manifest code/schema version is stale")
+    planned_run_config = planned.config.get("run")
+    stored_run_config = manifest.config.get("run")
+    if not isinstance(planned_run_config, dict) or not isinstance(
+        stored_run_config, dict
+    ):
+        raise ValueError("completion manifest lacks run configuration")
+    planned_acquisition = validate_model_acquisition_role_projection(
+        planned_run_config.get("model_acquisition")
+    )
+    stored_acquisition = validate_model_acquisition_role_projection(
+        stored_run_config.get("model_acquisition")
+    )
+    if stored_acquisition != planned_acquisition:
+        raise ValueError("stored model acquisition evidence differs from plan")
+    validate_model_acquisition_role_projection_binding(
+        stored_acquisition,
+        grid_acquisition,
+        run_config=stored_run_config,
+    )
     if marker.get("call_budget_snapshot") != manifest.config.get(
         "call_budget_snapshot"
     ):
@@ -1410,10 +2147,10 @@ def _validate_completion_marker(
     judgment_rows = _read_jsonl(paths["judgments"])
     trails = _read_jsonl(paths["trails"])
     result_rows = _read_jsonl(paths["results"])
-    attempts = [Attempt.model_validate(row) for row in attempt_rows]
-    responses = [Response.model_validate(row) for row in response_rows]
-    judgments = [Judgment.model_validate(row) for row in judgment_rows]
-    results = [EvalResult.model_validate(row) for row in result_rows]
+    attempts = [Attempt.model_validate(row, strict=True) for row in attempt_rows]
+    responses = [Response.model_validate(row, strict=True) for row in response_rows]
+    judgments = [Judgment.model_validate(row, strict=True) for row in judgment_rows]
+    results = [EvalResult.model_validate(row, strict=True) for row in result_rows]
     expected_counts = {
         "n_attempts": len(attempts),
         "n_responses": len(responses),
@@ -1459,9 +2196,50 @@ def _validate_completion_marker(
         "budget", "components", "run", "media_validation", "n_datapoints",
         "n_media_hashes", "harness_source", "source_policy_inventory",
         "source_policy_inventory_sha256", "source_metric_plan",
+        "attacker_input_plan", "attacker_input_plan_sha256",
+        "n_attacker_input_contracts",
     ):
         if manifest.config.get(key) != planned.config.get(key):
             raise ValueError(f"stored manifest config field {key!r} changed")
+    for label, candidate in (("planned", planned), ("stored", manifest)):
+        plan = candidate.config.get("attacker_input_plan")
+        digest = candidate.config.get("attacker_input_plan_sha256")
+        count = candidate.config.get("n_attacker_input_contracts")
+        try:
+            contracts = deserialize_attacker_input_plan(
+                plan,
+                expected_sha256=digest if isinstance(digest, str) else None,
+            )
+        except AttackerInputContractError as exc:
+            raise ValueError(
+                f"{label} manifest attacker input plan is invalid"
+            ) from exc
+        if (
+            not isinstance(digest, str)
+            or isinstance(count, bool)
+            or not isinstance(count, int)
+            or count != len(contracts)
+            or any(len(key) != 3 for key in contracts)
+        ):
+            raise ValueError(
+                f"{label} manifest attacker input plan count/schema mismatch"
+            )
+    try:
+        validate_attempts_against_attacker_input_plan(
+            manifest.config["attacker_input_plan"],
+            attempts,
+            responses,
+            judgments,
+            target_modalities=target_modality_support_from_component_config(
+                manifest.config["components"]["target"]
+            ),
+            expected_sha256=manifest.config["attacker_input_plan_sha256"],
+            expected_count=manifest.config["n_attacker_input_contracts"],
+        )
+    except AttackerInputContractError as exc:
+        raise ValueError(
+            "completed execution differs from the stored attacker input plan"
+        ) from exc
     if manifest.config.get("realized_attempts_sha256") != _sha256_json(
         [_portable_attempt_dump(row) for row in attempts]
     ):
@@ -1507,7 +2285,7 @@ def _validate_completion_marker(
             if attempt.params.get("source_policy") is not None
         }
     )
-    reconstructed_policies = [json.loads(item) for item in policy_inventory]
+    reconstructed_policies = [_json_loads_strict(item) for item in policy_inventory]
     if manifest.config.get("source_policy_inventory") != reconstructed_policies:
         raise ValueError("stored manifest source-policy inventory mismatch")
     if manifest.config.get("source_policy_inventory_sha256") != _sha256_json(
@@ -1614,6 +2392,27 @@ def _validate_completion_marker(
         trails,
         expected_judges=planned.judges,
     )
+    validate_persisted_judgment_trails(
+        {row.id: row for row in attempts},
+        {row.attempt_id: row for row in responses},
+        {row.attempt_id: row for row in judgments},
+        trails,
+        planned.config,
+        planned.judges,
+    )
+    planned_run = planned.config.get("run")
+    planned_components = planned.config.get("components")
+    if not isinstance(planned_run, dict) or not isinstance(
+        planned_components, dict
+    ):
+        raise ValueError("planned manifest lacks identity-bearing run/components")
+    validate_planned_realized_identities(
+        planned_run,
+        planned_components,
+        responses,
+        trails,
+        identity_summary,
+    )
     identity_digest = _sha256_json(identity_summary)
     if manifest.config.get("realized_identities") != identity_summary:
         raise ValueError("stored manifest realized identity inventory mismatch")
@@ -1702,6 +2501,8 @@ def build_target(
     dtype: str = "auto",
     local_identity: dict[str, object] | None = None,
     api_config: dict[str, object] | None = None,
+    model_runtime: ManagedModelRuntime | None = None,
+    managed_model_role: str = "vllm_target",
 ):
     """Resolve a target spec to a :class:`BaseTarget`.
 
@@ -1753,7 +2554,12 @@ def build_target(
                 ).strip().lower()
                 if resolved_quantization and resolved_quantization != "none":
                     kwargs["quantization"] = resolved_quantization
-                target = VLLMTarget(model=model, **kwargs)
+                target = VLLMTarget(
+                    model=model,
+                    model_runtime=model_runtime,
+                    managed_model_role=managed_model_role,
+                    **kwargs,
+                )
                 target.validate_research_identity()
                 return target
             from ura.targets.local import OllamaTarget
@@ -1783,8 +2589,13 @@ def _require_local_hardware_fit(
         return
     if not hardware.get("available"):
         raise ValueError(f"local vLLM target {spec!r} requires a detected NVIDIA GPU")
-    from experiments.local_targets import model_hardware_profile  # noqa: PLC0415
-    profile = model_hardware_profile(spec, config, hardware)
+    from experiments.local_targets import (  # noqa: PLC0415
+        installed_vllm_version,
+        model_hardware_profile,
+    )
+    profile = model_hardware_profile(
+        spec, config, hardware, runtime_version=installed_vllm_version()
+    )
     if profile["fits"] is None and config.get("allow_unknown_fit") is True:
         if config.get("quantization") in {
             "none", "fp8", "bitsandbytes", "awq", "gptq",
@@ -1849,16 +2660,16 @@ def _artifact_safe_model_error(
     if backend.lower() != "vllm":
         return message
     logical_model = persisted_spec.split(":", 1)[-1]
-    message = message.replace(spec, persisted_spec)
-    candidates = {runtime_model}
+    candidates: set[str | Path] = {runtime_model}
     try:
-        candidates.add(str(Path(runtime_model).expanduser().resolve(strict=False)))
+        candidates.add(Path(runtime_model).expanduser().resolve(strict=False))
     except (OSError, RuntimeError):
         pass
-    for candidate in sorted(candidates, key=len, reverse=True):
-        if candidate:
-            message = message.replace(candidate, logical_model)
-    return message
+    return sanitize_private_paths(
+        message,
+        candidates,
+        replacement=logical_model,
+    )
 
 
 def build_judges(
@@ -1866,9 +2677,11 @@ def build_judges(
     judge_model: str,
     *,
     judge_api_config: dict[str, object] | None = None,
+    judge_target: object | None = None,
     guardrail_model: str = "meta-llama/Llama-Guard-3-8B",
     guardrail_revision: str = "",
     guardrail_device: str = "",
+    model_runtime: ManagedModelRuntime | None = None,
 ) -> JudgeCascade:
     if "llm" in names and judge_model == "mock":
         # The llm judge backed by the offline MockTarget is a keyword heuristic, not
@@ -1886,22 +2699,38 @@ def build_judges(
         if n == "rules":
             stages.append(RuleJudge())
         elif n == "llm":
-            # build_api_target resolves both bare registered ids and provider:model
-            # forms, so the judge can be any provider (e.g. kimi:kimi-k3), not only a
-            # registry default; falls back to REGISTRY.create for bare ids like "mock".
-            stages.append(LLMJudge(judge_target=build_api_target(
+            # A caller may supply one already-validated local or hosted target.
+            # Reuse it so a local judge engine is never constructed twice. The
+            # fallback retains the standalone hosted/mock helper contract.
+            resolved_judge = judge_target or build_api_target(
                 judge_model, config=judge_api_config
-            )))
+            )
+            stages.append(LLMJudge(judge_target=resolved_judge))
         elif n == "guardrail":
             from ura.judges.guardrail import GuardrailJudge
             stages.append(GuardrailJudge(
                 model=guardrail_model,
                 revision=guardrail_revision,
                 device=guardrail_device or None,
+                model_runtime=model_runtime,
+                managed_model_role="guardrail_judge",
             ))
         else:
             raise ValueError(f"unknown judge {n!r}")
     return JudgeCascade(stages or [RuleJudge()])
+
+
+def _attacker_constructor_kwargs(
+    name: str,
+    configs: dict[str, dict[str, object]],
+    model_runtime: ManagedModelRuntime | None,
+) -> dict[str, object]:
+    """Attach the private surrogate runtime only to NanoGCG."""
+
+    kwargs = dict(configs.get(name.lower(), {}))
+    if name.lower() == "nanogcg":
+        kwargs["model_runtime"] = model_runtime
+    return kwargs
 
 
 def _cluster_key(index: int, record: object) -> str:
@@ -1949,19 +2778,66 @@ def _declared_transport_attempts(component: object) -> int:
     return value
 
 
-def _precall_model_identity(component: object) -> tuple[str, str]:
-    """Canonical provider/model identity for anti-self-certification checks."""
+def _precall_model_identity(component: object) -> frozenset[tuple[str, ...]]:
+    """Independent strong identities for pre-call duplicate/self-judge checks."""
 
-    provider = str(getattr(component, "provider", "")).strip().lower()
-    provider = {
-        "claude": "anthropic",
-        "gemini": "google",
-        "gpt": "openai",
-    }.get(provider, provider)
+    local_identity = canonical_local_model_identity(
+        getattr(component, "model", None),
+        revision=getattr(component, "revision", None),
+        model_digest=getattr(component, "model_digest", None),
+    )
+    if local_identity is not None:
+        return frozenset({local_identity})
+    keys: set[tuple[str, ...]] = set()
     model = str(getattr(component, "model", "")).strip()
-    if provider and model:
-        return provider, model
-    return "runtime-name", str(getattr(component, "name", "")).strip()
+    endpoint = getattr(component, "base_url", None)
+    if isinstance(endpoint, str) and endpoint.strip() and model:
+        keys.add((
+            "endpoint-model",
+            canonical_https_endpoint_identity(endpoint),
+            model,
+        ))
+    else:
+        provider = canonical_provider_name(
+            str(getattr(component, "provider", ""))
+        )
+        if provider and model:
+            keys.add(("provider-model", provider, model))
+    if not keys:
+        keys.add(("runtime-name", str(getattr(component, "name", "")).strip()))
+    return frozenset(keys)
+
+
+def _target_execution_condition_identity(component: object) -> str:
+    """Hash effective target knobs separately from immutable/base identity.
+
+    Duplicate target admission combines this value with a strong model/route
+    identity.  Consequently two aliases for the same route and condition are
+    rejected, while explicit precision, context, decoding, or API-surface
+    comparisons remain distinct scientific arms.
+    """
+
+    condition = _component_config(component)
+    for identity_field in {
+        "name",
+        "model",
+        "provider",
+        "requested_spec",
+        "revision",
+        "model_digest",
+        "key_env",
+        "base_url",
+    }:
+        condition.pop(identity_field, None)
+    return _sha256_json(condition)
+
+
+def _pinned_hub_model_identity(model: str, revision: str) -> frozenset[tuple[str, ...]]:
+    model = model.strip()
+    revision = revision.strip().lower()
+    if not model or re.fullmatch(r"[0-9a-f]{40,64}", revision) is None:
+        return frozenset()
+    return frozenset({("model-revision", model, revision)})
 
 
 def _project_grid_call_upper_bounds(
@@ -1973,6 +2849,7 @@ def _project_grid_call_upper_bounds(
     seeds: list[int],
     max_queries: int,
     max_turns: int,
+    approximate_common_metrics: bool = False,
 ) -> dict[str, object]:
     """Conservative complete-grid exposure using already-built components.
 
@@ -2015,16 +2892,21 @@ def _project_grid_call_upper_bounds(
         attacker_local_guardrail = 0
         for target in targets.values():
             trajectories = sum(len(rows) for rows in corpora.values()) * len(seeds)
-            common_trajectories = sum(
+            judge_eligible_trajectories = sum(
                 sum(
-                    int(row.meta.get("common_metrics_eligible", True) is True)
+                    int(
+                        row.meta.get("common_metrics_eligible", True) is True
+                        or approximate_common_metrics
+                    )
                     for row in rows
                 )
                 for rows in corpora.values()
             ) * len(seeds)
             target_calls = trajectories * target_turns
             judge_calls = (
-                common_trajectories * evaluable_turns * judge_calls_per_evaluable
+                judge_eligible_trajectories
+                * evaluable_turns
+                * judge_calls_per_evaluable
             )
             defense_guard = getattr(target, "guard", None)
             defense_mode = getattr(target, "mode", None)
@@ -2035,14 +2917,16 @@ def _project_grid_call_upper_bounds(
                 else 0
             )
             local_guardrail_evaluations = (
-                common_trajectories
+                judge_eligible_trajectories
                 * evaluable_turns
                 * local_guardrails_per_evaluable
                 + trajectories * target_turns * defense_guardrails_per_target_turn
             )
             http_attempts = (
                 target_calls * _declared_transport_attempts(target)
-                + common_trajectories * evaluable_turns * judge_http_per_evaluable
+                + judge_eligible_trajectories
+                * evaluable_turns
+                * judge_http_per_evaluable
             )
             attacker_trajectories += trajectories
             attacker_target += target_calls
@@ -2356,7 +3240,7 @@ def _resolve_model_selection(
         if not path.is_file():
             return {}
         try:
-            data = json.loads(path.read_text(encoding="utf-8"))
+            data = _json_loads_strict(path.read_text(encoding="utf-8"))
         except (OSError, ValueError) as exc:
             raise ValueError(
                 f"--models could not read the target registry {path}: {exc}"
@@ -2540,6 +3424,11 @@ def build_parser() -> argparse.ArgumentParser:
                 "providers may declare an HTTPS base_url"
             ),
     )
+    ap.add_argument(
+        "--api-config-sha256",
+        default="",
+        help="exact byte digest paired with --api-config",
+    )
     ap.add_argument("--local", default="", help="comma list of backend:model specs")
     ap.add_argument(
         "--local-config",
@@ -2548,6 +3437,11 @@ def build_parser() -> argparse.ArgumentParser:
             "JSON keyed by each exact --local spec with immutable revision/digest "
             "and explicit modalities"
         ),
+    )
+    ap.add_argument(
+        "--local-config-sha256",
+        default="",
+        help="optional exact byte digest for a read-once selected local config",
     )
     ap.add_argument("--attackers", default="replay,crescendo")
     ap.add_argument(
@@ -2558,8 +3452,30 @@ def build_parser() -> argparse.ArgumentParser:
             "literal secrets are forbidden (use credential_env names)"
         ),
     )
+    ap.add_argument(
+        "--attacker-config-sha256",
+        default="",
+        help="optional exact byte digest for a read-once selected attacker config",
+    )
     ap.add_argument("--judges", default="rules,llm")
     ap.add_argument("--judge-model", default="mock", help="target id used by LLMJudge")
+    ap.add_argument(
+        "--ack-hosted-judge-data-transfer",
+        action="store_true",
+        help=(
+            "acknowledge that a hosted judge receives target output and "
+            "source/reference grading context under that provider's terms"
+        ),
+    )
+    ap.add_argument(
+        "--approximate-common-metrics",
+        action="store_true",
+        help=(
+            "opt in to separately named, non-authoritative approximate_* common "
+            "response-proxy metrics for source-specific constructs; reliability "
+            "is an uncalibrated heuristic indicator, not probability or accuracy"
+        ),
+    )
     ap.add_argument(
         "--guardrail-model",
         default="meta-llama/Llama-Guard-3-8B",
@@ -2602,6 +3518,11 @@ def build_parser() -> argparse.ArgumentParser:
             "{converter:'synth',synth:true}, plus optional source_label/split; "
             "path values stay in environment variables"
         ),
+    )
+    ap.add_argument(
+        "--source-config-sha256",
+        default="",
+        help="optional exact byte digest for a read-once selected source config",
     )
     ap.add_argument(
         "--source-conformance",
@@ -2679,14 +3600,97 @@ def build_parser() -> argparse.ArgumentParser:
     ap.add_argument("--reset-open-circuits", action="store_true",
                     help="operator acknowledgement: clear the durable provider/"
                          "judge circuit after correcting its root cause")
+    ap.add_argument(
+        "--model-acquisition-plan-only",
+        action="store_true",
+        help=(
+            "derive the exact sealed-Hugging-Face acquisition plan and stop "
+            "before constructing any attacker, target, judge, or model"
+        ),
+    )
+    ap.add_argument(
+        "--model-acquisition-plan-dir",
+        default=os.environ.get("URA_MODEL_ACQUISITION_PLAN_DIR", ""),
+        help="private create-only destination used only by plan-only mode",
+    )
+    ap.add_argument(
+        "--model-acquisition-plan",
+        default=os.environ.get("URA_MODEL_ACQUISITION_PLAN", ""),
+        help="private exact acquisition-plan locator for normal/preflight execution",
+    )
+    ap.add_argument(
+        "--model-acquisition-plan-sha256",
+        default=os.environ.get("URA_MODEL_ACQUISITION_PLAN_SHA256", ""),
+        help="exact byte digest paired with --model-acquisition-plan",
+    )
+    ap.add_argument(
+        "--model-acquisition-receipt",
+        default=os.environ.get("URA_MODEL_ACQUISITION_RECEIPT", ""),
+        help="private exact acquisition-receipt locator",
+    )
+    ap.add_argument(
+        "--model-acquisition-receipt-sha256",
+        default=os.environ.get("URA_MODEL_ACQUISITION_RECEIPT_SHA256", ""),
+        help="exact byte digest paired with --model-acquisition-receipt",
+    )
+    ap.add_argument(
+        "--model-acquisition-store",
+        default=os.environ.get("URA_MODEL_ACQUISITION_STORE", ""),
+        help="private managed immutable model store",
+    )
     ap.add_argument("--out", default="runs/exp")
     return ap
 
 
 def main(argv=None) -> int:
+    invocation_started_epoch = time.time()
     ap = build_parser()
-    args = ap.parse_args(argv)
+    raw_argv = list(sys.argv[1:] if argv is None else argv)
+    sample_seed_explicit = any(
+        token == "--sample-seed" or token.startswith("--sample-seed=")
+        for token in raw_argv
+    )
+    args = ap.parse_args(raw_argv)
+    # Only the explicit model-acquisition controller may receive Hub tokens.
+    # Planned and measured children use sealed local snapshots exclusively.
+    os.environ.pop("HF_TOKEN", None)
+    os.environ.pop("HUGGING_FACE_HUB_TOKEN", None)
     _apply_model_selection(ap, args)
+
+    for left, right in (
+        (
+            args.model_acquisition_plan,
+            args.model_acquisition_plan_sha256,
+        ),
+        (
+            args.model_acquisition_receipt,
+            args.model_acquisition_receipt_sha256,
+        ),
+    ):
+        if bool(left) != bool(right):
+            ap.error("each private model-acquisition locator requires its exact SHA-256")
+    normal_acquisition_values = (
+        args.model_acquisition_plan,
+        args.model_acquisition_plan_sha256,
+        args.model_acquisition_receipt,
+        args.model_acquisition_receipt_sha256,
+        args.model_acquisition_store,
+    )
+    if args.model_acquisition_plan_only:
+        if any(normal_acquisition_values):
+            ap.error(
+                "--model-acquisition-plan-only cannot consume a plan, receipt, or store"
+            )
+        if not args.model_acquisition_plan_dir:
+            ap.error(
+                "--model-acquisition-plan-only requires "
+                "--model-acquisition-plan-dir"
+            )
+    elif args.model_acquisition_plan_dir:
+        ap.error(
+            "--model-acquisition-plan-dir is valid only with "
+            "--model-acquisition-plan-only"
+        )
 
     if args.diagnostic_canary and (args.preflight_only or args.attestation_probe):
         ap.error(
@@ -2716,19 +3720,55 @@ def main(argv=None) -> int:
         )
     project_revision_receipt: dict[str, object] | None = None
     project_revision_artifact: dict[str, object] | None = None
+    project_revision_payload: bytes | None = None
     if args.project_revision:
         try:
-            project_revision_receipt, project_revision_artifact = (
-                load_project_revision_file(
-                    Path(args.project_revision),
+            if os.environ.get("URA_PRIVATE_TRANSIENT_PROJECT_REVISION", "").strip():
+                loaded_revision = _read_optional_bound_config(
+                    args.project_revision,
                     args.project_revision_sha256,
+                    flag_name="--project-revision",
+                    transient_environment=(
+                        "URA_PRIVATE_TRANSIENT_PROJECT_REVISION"
+                    ),
+                    transient_directory=".private-project-revision",
+                    transient_prefix="project-revision",
+                    max_bytes=4 * 1024 * 1024,
+                )
+                if loaded_revision is None:  # pragma: no cover - path is present
+                    raise ValueError("private project revision is missing")
+                (
+                    project_revision_payload,
+                    revision_path,
+                    revision_size,
+                    revision_sha256,
+                    _revision_transient,
+                ) = loaded_revision
+                project_revision_receipt = validate_project_revision(
+                    _json_loads_strict(project_revision_payload.decode("utf-8"))
+                )
+                recheck_project_revision(
+                    project_revision_receipt,
                     Path(__file__).resolve(),
                 )
-            )
+                project_revision_artifact = {
+                    "file": revision_path.name,
+                    "sha256": revision_sha256,
+                    "bytes": revision_size,
+                    "revision_id": project_revision_receipt["revision_id"],
+                }
+            else:
+                project_revision_receipt, project_revision_artifact = (
+                    load_project_revision_file(
+                        Path(args.project_revision),
+                        args.project_revision_sha256,
+                        Path(__file__).resolve(),
+                    )
+                )
             project_revision_state = project_revision_binding(
                 project_revision_receipt, project_revision_artifact
             )
-        except (OSError, TypeError, ValueError) as exc:
+        except (OSError, TypeError, UnicodeError, ValueError) as exc:
             ap.error(str(exc))
     else:
         driver_sha256 = _sha256_file(Path(__file__).resolve())
@@ -2797,14 +3837,25 @@ def main(argv=None) -> int:
     out.mkdir(parents=True, exist_ok=True)
     if project_revision_receipt is not None and project_revision_artifact is not None:
         try:
-            retained_project_revision = _retain_content_addressed_input(
-                out,
-                args.project_revision,
-                args.project_revision_sha256,
-                stem="project-revision",
-                filename=(
-                    f"{project_revision_receipt['revision_id']}.project-revision.json"
-                ),
+            revision_filename = (
+                f"{project_revision_receipt['revision_id']}.project-revision.json"
+            )
+            retained_project_revision = (
+                _retain_content_addressed_bytes(
+                    out,
+                    project_revision_payload,
+                    args.project_revision_sha256,
+                    stem="project-revision",
+                    filename=revision_filename,
+                )
+                if project_revision_payload is not None
+                else _retain_content_addressed_input(
+                    out,
+                    args.project_revision,
+                    args.project_revision_sha256,
+                    stem="project-revision",
+                    filename=revision_filename,
+                )
             )
         except (OSError, ValueError) as exc:
             ap.error(str(exc))
@@ -2828,8 +3879,50 @@ def main(argv=None) -> int:
     run_env = _runtime_env()
     api_specs = [s.strip() for s in args.api.split(",") if s.strip()]
     local_specs = [s.strip() for s in args.local.split(",") if s.strip()]
+    judge_names = [j.strip() for j in args.judges.split(",") if j.strip()]
+    local_judge_spec = (
+        args.judge_model
+        if (
+            not args.dry_run
+            and "llm" in judge_names
+            and args.judge_model.startswith(("vllm:", "ollama:"))
+        )
+        else None
+    )
+    local_config_specs = local_specs + (
+        [local_judge_spec] if local_judge_spec is not None else []
+    )
+    hosted_judge_selected = (
+        not args.dry_run
+        and "llm" in judge_names
+        and args.judge_model != "mock"
+        and local_judge_spec is None
+    )
+    paid_hosted_route = bool(api_specs) or hosted_judge_selected
+    if execution_purpose == "measured_run" and paid_hosted_route:
+        if args.limit <= 0:
+            ap.error(
+                "measured hosted target/judge routes require a positive --limit"
+            )
+        if not sample_seed_explicit:
+            ap.error(
+                "measured hosted target/judge routes require explicit --sample-seed"
+            )
+    transfers_to_hosted_judge = (
+        hosted_judge_selected and not args.preflight_only
+    )
+    if transfers_to_hosted_judge and not args.ack_hosted_judge_data_transfer:
+        ap.error(
+            "a live hosted LLM judge requires "
+            "--ack-hosted-judge-data-transfer"
+        )
+    if args.ack_hosted_judge_data_transfer and not transfers_to_hosted_judge:
+        ap.error(
+            "--ack-hosted-judge-data-transfer is valid only when a live hosted "
+            "LLM judge will receive grading context"
+        )
     from experiments.local_targets import detect_gpu_hardware  # noqa: PLC0415
-    gpu_hardware = detect_gpu_hardware() if local_specs else {
+    gpu_hardware = detect_gpu_hardware() if local_config_specs else {
         "available": False, "source": "not_requested", "gpu_count": 0,
         "aggregate_vram_gib": 0.0, "max_gpu_vram_gib": 0.0, "gpus": [],
     }
@@ -2842,6 +3935,14 @@ def main(argv=None) -> int:
             "one local target is allowed per process; cached vLLM/Ollama engines "
             "must not accumulate on the two-GPU rig"
         )
+    if len(set(local_config_specs)) != len(local_config_specs):
+        ap.error("the LLM judge must differ from every model under test")
+    if len(local_config_specs) > 1:
+        ap.error(
+            "a local target and a distinct local LLM judge cannot share one "
+            "process; run one local engine per process to avoid GPU engine "
+            "double-load conflicts"
+        )
     model_specs = ["mock"] if args.dry_run else (api_specs + local_specs)
     if len(set(model_specs)) != len(model_specs):
         ap.error("target specs must be unique across --api and --local")
@@ -2849,7 +3950,6 @@ def main(argv=None) -> int:
         ap.error("a real run requires at least one --api or --local target; use --dry-run for mock")
 
     attacker_names = [a.strip() for a in args.attackers.split(",") if a.strip()]
-    judge_names = [j.strip() for j in args.judges.split(",") if j.strip()]
     corpora = [c.strip() for c in args.corpora.split(",") if c.strip()]
     if not attacker_names:
         ap.error("--attackers must contain at least one adapter name")
@@ -2924,6 +4024,11 @@ def main(argv=None) -> int:
     request_target_keys = [
         _prematerialization_target_key(spec) for spec in model_specs
     ]
+    request_judge_model = (
+        _prematerialization_target_key(args.judge_model)
+        if "llm" in judge_names
+        else None
+    )
     if len(set(request_target_keys)) != len(request_target_keys):
         ap.error("target specs collapse to duplicate pre-materialization request keys")
     request_envelope = build_request_envelope(
@@ -2933,7 +4038,7 @@ def main(argv=None) -> int:
             "logical_source_arms": corpora,
             "selected_attackers": attacker_names,
             "judges": judge_names,
-            "judge_model": args.judge_model if "llm" in judge_names else None,
+            "judge_model": request_judge_model,
             "seeds": seeds,
             "sample_seed": args.sample_seed,
             "limit": args.limit,
@@ -2945,6 +4050,10 @@ def main(argv=None) -> int:
             "quantization": args.quantization,
             "dtype": args.dtype,
             "dry_run": bool(args.dry_run),
+            "approximate_common_metrics": bool(args.approximate_common_metrics),
+            "hosted_judge_data_transfer_acknowledged": bool(
+                args.ack_hosted_judge_data_transfer
+            ),
             "call_caps": {
                 "target": args.max_total_target_calls or None,
                 "judge": args.max_total_judge_calls or None,
@@ -2960,6 +4069,21 @@ def main(argv=None) -> int:
     request_envelope_artifact = request_envelope_descriptor(
         request_envelope_path, request_envelope
     )
+    try:
+        if args.model_acquisition_plan_only:
+            invocation_deadline_epoch = None
+            _invocation_deadline_path = None
+        else:
+            invocation_deadline_epoch, _invocation_deadline_path = (
+                _load_or_create_invocation_deadline(
+                    out,
+                    request_envelope_id=str(request_envelope["envelope_id"]),
+                    invocation_started_epoch=invocation_started_epoch,
+                    deadline_seconds=args.deadline_seconds,
+                )
+            )
+    except (OSError, TypeError, ValueError) as exc:
+        ap.error(f"cannot bind first-invocation deadline: {exc}")
     request_key_by_model_spec = dict(zip(model_specs, request_target_keys))
     source_instances: dict[str, dict[str, object]] = {}
 
@@ -2972,6 +4096,10 @@ def main(argv=None) -> int:
             args.local_config,
             args.source_config,
             args.source_conformance,
+            args.model_acquisition_plan_dir,
+            args.model_acquisition_plan,
+            args.model_acquisition_receipt,
+            args.model_acquisition_store,
             *args.live_attestation,
         ]
         configured_paths.extend(
@@ -2982,6 +4110,18 @@ def main(argv=None) -> int:
         media_roots = os.environ.get("URA_MEDIA_ROOTS", "")
         if media_roots:
             configured_paths.extend(media_roots.split(os.pathsep))
+        # Local checkpoint locators are runtime-only input, just like config
+        # file paths. Configuration errors often interpolate the selected spec
+        # before its content identity has been materialized, so scrub the model
+        # path (and its resolved form/ancestors) from retained request errors.
+        from ura.targets.local import _is_explicit_local_path  # noqa: PLC0415
+
+        for selected_spec in [*model_specs, args.judge_model]:
+            if not selected_spec.startswith("vllm:"):
+                continue
+            runtime_model = selected_spec.split(":", 1)[1]
+            if _is_explicit_local_path(runtime_model):
+                configured_paths.append(runtime_model)
         return _scrub_operator_paths(str(exc), configured_paths)
 
     def persist_request_error(
@@ -3028,24 +4168,31 @@ def main(argv=None) -> int:
     live_attestation_artifacts: list[dict[str, object]] = []
     try:
         attacker_configs, attacker_config_artifact = _load_attacker_config(
-            args.attacker_config, attacker_names
+            args.attacker_config,
+            attacker_names,
+            args.attacker_config_sha256,
         )
         portable_attacker_configs = _portable_attacker_configs(attacker_configs)
         configured_api_specs = list(api_specs)
         if (
             not args.dry_run
             and "llm" in judge_names
+            and local_judge_spec is None
             and args.judge_model not in configured_api_specs
         ):
             configured_api_specs.append(args.judge_model)
         api_configs, api_config_artifact = _load_api_config(
-            args.api_config, [] if args.dry_run else configured_api_specs
+            args.api_config,
+            [] if args.dry_run else configured_api_specs,
+            args.api_config_sha256,
         )
+        portable_api_configs = _portable_api_configs(api_configs)
         local_configs, local_config_artifact = _load_local_config(
             args.local_config,
-            [] if args.dry_run else local_specs,
+            [] if args.dry_run else local_config_specs,
             quantization=args.quantization,
             hardware=gpu_hardware,
+            expected_sha256=args.local_config_sha256,
         )
         resolved_quantizations = {
             spec: str(config["quantization"])
@@ -3053,11 +4200,28 @@ def main(argv=None) -> int:
             if spec.startswith("vllm:")
         }
         source_instances, source_config_artifact = _load_source_config(
-            args.source_config, corpora
+            args.source_config,
+            corpora,
+            args.source_config_sha256,
         )
         real_source_arms = [
-            arm for arm in corpora if source_instances[arm].get("synth") is not True
+            arm for arm in corpora if arm != "synth"
         ]
+        held_source_conformance = None
+        if os.environ.get(
+            "URA_PRIVATE_TRANSIENT_SOURCE_CONFORMANCE", ""
+        ).strip():
+            held_source_conformance = _read_optional_bound_config(
+                args.source_conformance,
+                args.source_conformance_sha256,
+                flag_name="--source-conformance",
+                transient_environment=(
+                    "URA_PRIVATE_TRANSIENT_SOURCE_CONFORMANCE"
+                ),
+                transient_directory=".private-source-conformance",
+                transient_prefix="source-conformance",
+                max_bytes=4 * 1024 * 1024,
+            )
         if real_source_arms:
             if bool(args.source_conformance) != bool(args.source_conformance_sha256):
                 raise ValueError(
@@ -3081,35 +4245,104 @@ def main(argv=None) -> int:
                 raise ValueError(
                     "source conformance requires an explicit --source-config file"
                 )
-            raw_conformance, source_conformance_artifact = (
-                _read_content_addressed_json(
-                    args.source_conformance,
-                    args.source_conformance_sha256,
-                    flag_name="--source-conformance",
-                    max_bytes=4 * 1024 * 1024,
+            source_conformance_payload: bytes | None = None
+            if held_source_conformance is not None:
+                (
+                    source_conformance_payload,
+                    conformance_path,
+                    conformance_size,
+                    conformance_sha256,
+                    _conformance_transient,
+                ) = held_source_conformance
+                raw_conformance = _json_loads_strict(
+                    source_conformance_payload.decode("utf-8")
                 )
-            )
+                source_conformance_artifact = {
+                    "file": conformance_path.name,
+                    "sha256": conformance_sha256,
+                    "bytes": conformance_size,
+                }
+            else:
+                raw_conformance, source_conformance_artifact = (
+                    _read_content_addressed_json(
+                        args.source_conformance,
+                        args.source_conformance_sha256,
+                        flag_name="--source-conformance",
+                        max_bytes=4 * 1024 * 1024,
+                    )
+                )
             source_conformance_manifest = validate_source_conformance_manifest(
                 raw_conformance
             )
-            retained = _retain_content_addressed_input(
-                out,
-                args.source_conformance,
-                args.source_conformance_sha256,
-                stem="source-conformance",
+            retained = (
+                _retain_content_addressed_bytes(
+                    out,
+                    source_conformance_payload,
+                    args.source_conformance_sha256,
+                    stem="source-conformance",
+                )
+                if source_conformance_payload is not None
+                else _retain_content_addressed_input(
+                    out,
+                    args.source_conformance,
+                    args.source_conformance_sha256,
+                    stem="source-conformance",
+                )
             )
             source_conformance_artifact["file"] = retained.name
-        for path_value, expected_digest in zip(
-            args.live_attestation, args.live_attestation_sha256
+        for attestation_index, (path_value, expected_digest) in enumerate(
+            zip(args.live_attestation, args.live_attestation_sha256),
+            start=1,
         ):
-            manifest, descriptor = load_live_attestation_file(
-                path_value, expected_digest
+            marker_name = (
+                f"URA_PRIVATE_TRANSIENT_LIVE_ATTESTATION_{attestation_index:02d}"
             )
-            retained = _retain_content_addressed_input(
-                out,
-                path_value,
-                expected_digest,
-                stem="live-attestation",
+            attestation_payload: bytes | None = None
+            if os.environ.get(marker_name, "").strip():
+                held_attestation = _read_optional_bound_config(
+                    path_value,
+                    expected_digest,
+                    flag_name="--live-attestation",
+                    transient_environment=marker_name,
+                    transient_directory=".private-live-attestations",
+                    transient_prefix=f"live-attestation-{attestation_index:02d}",
+                    max_bytes=4 * 1024 * 1024,
+                )
+                if held_attestation is None:  # pragma: no cover - path is present
+                    raise ValueError("private live attestation is missing")
+                (
+                    attestation_payload,
+                    attestation_path,
+                    attestation_size,
+                    attestation_sha256,
+                    _attestation_transient,
+                ) = held_attestation
+                manifest = validate_live_attestation_manifest(
+                    _json_loads_strict(attestation_payload.decode("utf-8"))
+                )
+                descriptor = {
+                    "file": attestation_path.name,
+                    "sha256": attestation_sha256,
+                    "bytes": attestation_size,
+                }
+            else:
+                manifest, descriptor = load_live_attestation_file(
+                    path_value, expected_digest
+                )
+            retained = (
+                _retain_content_addressed_bytes(
+                    out,
+                    attestation_payload,
+                    expected_digest,
+                    stem="live-attestation",
+                )
+                if attestation_payload is not None
+                else _retain_content_addressed_input(
+                    out,
+                    path_value,
+                    expected_digest,
+                    stem="live-attestation",
+                )
             )
             live_attestation_manifests.append(manifest)
             live_attestation_artifacts.append({
@@ -3141,6 +4374,13 @@ def main(argv=None) -> int:
         spec: _persisted_model_spec(spec, local_configs.get(spec))
         for spec in model_specs
     }
+    persisted_judge_model = (
+        _persisted_model_spec(
+            args.judge_model, local_configs.get(args.judge_model)
+        )
+        if "llm" in judge_names
+        else None
+    )
     # Preserve the sanitized request independently of the resolved target name.
     # Some target constructors replace the display identity below, while the
     # eligibility ledger must retain both sides of that mapping.
@@ -3259,6 +4499,194 @@ def main(argv=None) -> int:
             )
             ap.error(str(exc))
 
+    # Derive and admit the complete immutable Hugging Face selection before
+    # constructing any attacker, target, judge, or defense object. Normal and
+    # preflight runs have no network fallback: every Hub role needs the exact
+    # plan, receipt, and fully verified managed snapshot.
+    model_runtime: ManagedModelRuntime | None = None
+    acquisition_runtime_descriptor: dict[str, object] | None = None
+    acquisition_execution_descriptor: dict[str, object] | None = None
+    acquisition_selection: RuntimeSelection | None = None
+    try:
+        acquisition_requirements = collect_run_requirements(
+            target_specs=model_specs,
+            local_configs=local_configs,
+            judge_names=judge_names,
+            judge_model=args.judge_model,
+            attacker_names=attacker_names,
+            attacker_configs=attacker_configs,
+            guardrail_model=(
+                args.guardrail_model if scoring_guardrail_selected else None
+            ),
+            guardrail_revision=(
+                args.guardrail_revision if scoring_guardrail_selected else None
+            ),
+            defense_guardrail_model=(
+                args.defense_guardrail_model
+                if defense_guardrail_selected
+                else None
+            ),
+            defense_guardrail_revision=(
+                args.defense_guardrail_revision
+                if defense_guardrail_selected
+                else None
+            ),
+        )
+        if args.dry_run and acquisition_requirements.requirements:
+            raise ModelAcquisitionError(
+                "diagnostic --dry-run forbids Hub-backed attackers or judges; "
+                "NanoGCG requires an exact precomputed suffix replay"
+            )
+        acquisition_local_configs = {
+            _persisted_model_spec(spec, config): config
+            for spec, config in local_configs.items()
+        }
+        if len(acquisition_local_configs) != len(local_configs):
+            raise ModelAcquisitionError(
+                "local acquisition configs collapse to a duplicate content identity"
+            )
+        input_bindings = {
+            "api_configs_sha256": _sha256_json(portable_api_configs),
+            "attacker_configs_sha256": _sha256_json(portable_attacker_configs),
+            "local_configs_sha256": _sha256_json(acquisition_local_configs),
+            "project_revision_sha256": _sha256_json(project_revision_state),
+            "request_envelope_sha256": str(request_envelope_artifact["sha256"]),
+            "source_config_sha256": _sha256_json(
+                _selected_config_artifact_identity(source_config_artifact)
+            ),
+            "source_conformance_sha256": _sha256_json(
+                _content_artifact_identity(source_conformance_artifact)
+            ),
+            "source_instances_sha256": _sha256_json(source_instances),
+        }
+        has_hub_requirements = bool(acquisition_requirements.requirements)
+        supplied_runtime_values = bool(
+            args.model_acquisition_plan
+            or args.model_acquisition_plan_sha256
+            or args.model_acquisition_receipt
+            or args.model_acquisition_receipt_sha256
+            or args.model_acquisition_store
+        )
+        if has_hub_requirements:
+            acquisition_selection = build_runtime_selection(
+                acquisition_requirements,
+                input_bindings=input_bindings,
+            )
+            selection_descriptor = public_selection_descriptor(
+                acquisition_selection
+            )
+            if args.model_acquisition_plan_only:
+                plan = build_runtime_plan(acquisition_selection)
+                _plan_path, plan_digest = write_document_create_only(
+                    args.model_acquisition_plan_dir,
+                    plan,
+                    identifier=plan["plan_id"],
+                    suffix="plan.json",
+                )
+                print(json.dumps({
+                    "plan_id": plan["plan_id"],
+                    "plan_sha256": plan_digest,
+                    "selection": selection_descriptor,
+                }, sort_keys=True, separators=(",", ":")))
+                return 0
+            if not all(normal_acquisition_values):
+                raise ModelAcquisitionError(
+                    "normal and preflight Hub runs require exact acquisition "
+                    "plan, plan SHA-256, receipt, receipt SHA-256, and managed store"
+                )
+            os.environ.update(hf_offline_environment_overrides())
+            model_runtime, acquisition_runtime_descriptor = (
+                admit_managed_model_runtime(
+                    selection=acquisition_selection,
+                    plan_path=args.model_acquisition_plan,
+                    plan_sha256=args.model_acquisition_plan_sha256,
+                    receipt_path=args.model_acquisition_receipt,
+                    receipt_sha256=args.model_acquisition_receipt_sha256,
+                    managed_store=args.model_acquisition_store,
+                )
+            )
+            admitted_plan = load_plan(
+                args.model_acquisition_plan,
+                expected_sha256=args.model_acquisition_plan_sha256,
+            )
+            admitted_receipt = load_receipt(
+                args.model_acquisition_receipt,
+                expected_sha256=args.model_acquisition_receipt_sha256,
+                plan=admitted_plan,
+            )
+            evidence_directory = (out / "model-acquisition").resolve()
+            plan_copy, _plan_copy_sha = write_document_create_only(
+                evidence_directory,
+                admitted_plan,
+                identifier=admitted_plan["plan_id"],
+                suffix="plan.json",
+            )
+            receipt_copy, _receipt_copy_sha = write_document_create_only(
+                evidence_directory,
+                admitted_receipt,
+                identifier=admitted_receipt["receipt_id"],
+                suffix="receipt.json",
+            )
+            plan_artifact = _artifact_descriptor(plan_copy)
+            plan_artifact["file"] = plan_copy.relative_to(out.resolve()).as_posix()
+            receipt_artifact = _artifact_descriptor(receipt_copy)
+            receipt_artifact["file"] = (
+                receipt_copy.relative_to(out.resolve()).as_posix()
+            )
+            acquisition_runtime_descriptor = {
+                **acquisition_runtime_descriptor,
+                "evidence": {
+                    "plan": plan_artifact,
+                    "receipt": receipt_artifact,
+                },
+                "selection": selection_descriptor,
+            }
+        else:
+            acquisition_selection = build_runtime_selection(
+                acquisition_requirements,
+                input_bindings=input_bindings,
+            )
+            if args.model_acquisition_plan_only:
+                raise ModelAcquisitionError(
+                    "selected lane has no Hugging Face resources to acquire"
+                )
+            if supplied_runtime_values:
+                raise ModelAcquisitionError(
+                    "model-acquisition arguments are forbidden when no Hub "
+                    "resource is selected"
+                )
+            acquisition_runtime_descriptor = {
+                "selection": public_selection_descriptor(acquisition_selection),
+                "status": "not_required",
+            }
+        acquisition_runtime_descriptor = validate_model_acquisition_descriptor(
+            acquisition_runtime_descriptor,
+            evidence_root=(
+                out.resolve()
+                if acquisition_requirements.requirements
+                else None
+            ),
+        )
+        acquisition_execution_descriptor = model_acquisition_execution_descriptor(
+            acquisition_runtime_descriptor,
+            evidence_root=(
+                out.resolve()
+                if acquisition_requirements.requirements
+                else None
+            ),
+        )
+        acquisition_shared_projection = model_acquisition_shared_role_projection(
+            acquisition_execution_descriptor
+        )
+    except (KeyError, OSError, TypeError, ValueError) as exc:
+        persist_request_error(
+            phase="model_acquisition_admission",
+            category="model_acquisition_invalid",
+            exc=exc,
+        )
+        print(f"model acquisition admission failed: {exc}", file=sys.stderr)
+        return 1
+
     # Rehash declared acquisition inputs before conversion. Selected conformance
     # is checked again afterward, so a file changed during conversion fails
     # closed before any target/judge construction.
@@ -3366,9 +4794,99 @@ def main(argv=None) -> int:
             print(f"source conformance preflight failed: {exc}", file=sys.stderr)
             return 1
 
-    # One defense model is shared by every target in this process. Constructing
-    # a model-backed guard inside the target loop would retain one multi-GB copy
-    # per roster member and makes a broad defense grid needlessly unrunnable.
+    prebuilt_targets: dict[str, object] = {}
+    prebuilt_judge_target: object | None = None
+    base_target_identities: list[frozenset[tuple[str, ...]]] = []
+    target_execution_conditions: dict[str, str] = {}
+    base_resolved_targets: dict[str, str] = {}
+    route_kinds: dict[str, str] = {}
+    route_config_digests: dict[str, str] = {}
+    hosted_runtime_checks: list[dict[str, str]] = []
+    current_eligibility_path: Path | None = None
+    planned_attackers: dict[str, object] = {}
+    planned_input_contracts: dict[
+        tuple[str, str, str, int], AttackerInputContract
+    ] = {}
+    try:
+        contract_budget = AttackBudget(
+            max_queries=args.max_queries,
+            max_turns=args.max_turns,
+            seed=seeds[0],
+        )
+        for attacker_name in attacker_names:
+            attacker = get_attacker(
+                attacker_name,
+                **_attacker_constructor_kwargs(
+                    attacker_name,
+                    attacker_configs,
+                    model_runtime,
+                ),
+            )
+            if getattr(attacker, "runner_replay_eligible", True) is False:
+                raise ValueError(
+                    f"attacker {attacker_name!r} is a native-artifact integration "
+                    "and cannot be replayed through Runner"
+                )
+            _component_config(attacker)
+            planned_attackers[attacker_name] = attacker
+            for corpus_name, corpus in loaded_corpora.items():
+                attacker.validate_measured_run(corpus)
+                for datapoint in corpus:
+                    for seed in seeds:
+                        contract = attacker.plan_target_inputs(
+                            datapoint,
+                            AttackBudget(
+                                max_queries=contract_budget.max_queries,
+                                max_turns=contract_budget.max_turns,
+                                seed=seed,
+                            ),
+                        )
+                        if (
+                            contract.attacker != attacker.name
+                            or contract.datapoint_id != datapoint.id
+                        ):
+                            raise ValueError(
+                                "attacker input contract identity differs from its "
+                                "CLI planning cell"
+                            )
+                        key = (corpus_name, attacker_name, datapoint.id, seed)
+                        planned_input_contracts[key] = contract
+        attacker_input_plan_projection = {
+            "schema": "ura-grid-attacker-input-plan/1",
+            "entries": [
+                {
+                    "logical_source_arm": arm,
+                    "selected_attacker": attacker,
+                    "seed": seed,
+                    **contract.manifest_payload(),
+                }
+                for (arm, attacker, _datapoint_id, seed), contract
+                in sorted(planned_input_contracts.items())
+            ],
+        }
+        attacker_input_plan_projection["sha256"] = _sha256_json(
+            attacker_input_plan_projection
+        )
+    except Exception as exc:  # noqa: BLE001 - no-call contract boundary
+        persist_request_error(
+            phase="attacker_input_contract_preflight",
+            category="configuration_invalid",
+            exc=exc,
+        )
+        _write_json(out / "attacker-input-contract.error.json", {
+            "status": "error",
+            "phase": "attacker_input_contract_preflight",
+            "exception_type": type(exc).__name__,
+            "message": str(exc)[:2000],
+            "execution_started": False,
+        })
+        print(f"attacker input contract preflight failed: {exc}", file=sys.stderr)
+        return 1
+    (out / "attacker-input-contract.error.json").unlink(missing_ok=True)
+
+    # Construct model-backed defenses only after every selected attacker,
+    # datapoint, and seed has a valid prospective target-input contract.  This
+    # keeps contract rejection a true zero-engine-load boundary.
     shared_defense_guard: object | None = None
     if args.defense != "none":
         if defense_guardrail_selected:
@@ -3378,17 +4896,11 @@ def main(argv=None) -> int:
                 model=args.defense_guardrail_model,
                 revision=args.defense_guardrail_revision,
                 device=args.defense_guardrail_device,
+                model_runtime=model_runtime,
+                managed_model_role="defense_guardrail",
             )
         else:
             shared_defense_guard = RuleJudge()
-
-    prebuilt_targets: dict[str, object] = {}
-    base_target_identities: list[tuple[str, str]] = []
-    base_resolved_targets: dict[str, str] = {}
-    route_kinds: dict[str, str] = {}
-    route_config_digests: dict[str, str] = {}
-    hosted_runtime_checks: list[dict[str, str]] = []
-    current_eligibility_path: Path | None = None
 
     def persist_eligibility_plan(
         target_failures: dict[str, dict[str, str]] | None = None,
@@ -3432,7 +4944,7 @@ def main(argv=None) -> int:
             "source_config": _selected_config_artifact_identity(
                 source_config_artifact
             ),
-            "source_conformance": _selected_config_artifact_identity(
+            "source_conformance": _content_artifact_identity(
                 source_conformance_artifact
             ),
             "attacker_config": _selected_config_artifact_identity(
@@ -3449,7 +4961,7 @@ def main(argv=None) -> int:
             "defense": args.defense,
             "defense_guard": args.defense_guard,
             "judges": judge_names,
-            "judge_model": args.judge_model if "llm" in judge_names else None,
+            "judge_model": persisted_judge_model,
             "guardrail_model": (
                 args.guardrail_model if scoring_guardrail_selected else None
             ),
@@ -3484,7 +4996,11 @@ def main(argv=None) -> int:
             "quantization": args.quantization,
             "dtype": args.dtype,
             "dry_run": bool(args.dry_run),
+            "hosted_judge_data_transfer_acknowledged": bool(
+                args.ack_hosted_judge_data_transfer
+            ),
             "selected_config_identities": selected_artifact_identities,
+            "model_acquisition": acquisition_shared_projection,
             "live_attestation": live_attestation_projection,
         }
         experiment_conditions = {
@@ -3498,9 +5014,11 @@ def main(argv=None) -> int:
             targets=targets_by_request,
             corpora=loaded_corpora,
             attackers=attacker_names,
+            attacker_input_contracts=planned_input_contracts,
             target_failures=failures_by_request,
             global_failures=global_failures or (),
             dry_run=bool(args.dry_run),
+            approximate_common_metrics=bool(args.approximate_common_metrics),
             whole_request_preflight_complete=whole_request_preflight_complete,
             bindings={
                 "driver_source": driver_source,
@@ -3508,12 +5026,14 @@ def main(argv=None) -> int:
                 "request_envelope": request_envelope_artifact,
                 "source_instances_sha256": _sha256_json(source_instances),
                 "attacker_configs_sha256": _sha256_json(portable_attacker_configs),
+                "attacker_input_plan": attacker_input_plan_projection,
                 "api_configs_sha256": _sha256_json(api_configs),
                 "local_configs_sha256": _sha256_json({
-                    persisted_model_specs[spec]: config
-                    for spec, config in local_configs.items()
+                    persisted_model_specs[spec]: local_configs[spec]
+                    for spec in local_specs
                 }),
                 "selected_config_identities": selected_artifact_identities,
+                "model_acquisition": acquisition_execution_descriptor,
                 "experiment_conditions": experiment_conditions,
                 "selected_corpora": compact_corpus_bindings,
             },
@@ -3543,6 +5063,8 @@ def main(argv=None) -> int:
                 dtype=args.dtype,
                 local_identity=local_configs.get(spec),
                 api_config=api_configs.get(spec),
+                model_runtime=model_runtime,
+                managed_model_role="vllm_target",
             )
             if spec.startswith("vllm:"):
                 _require_local_hardware_fit(
@@ -3550,6 +5072,9 @@ def main(argv=None) -> int:
                 )
             base_target_identities.append(_precall_model_identity(target))
             requested_spec = requested_model_specs[spec]
+            target_execution_conditions[requested_spec] = (
+                _target_execution_condition_identity(target)
+            )
             base_resolved_targets[requested_spec] = str(getattr(target, "name"))
             route_kind = (
                 "local_runtime"
@@ -3614,7 +5139,11 @@ def main(argv=None) -> int:
                     ),
                 })
             print(
-                f"target '{spec}' preflight failed: {type(exc).__name__}: {exc}",
+                f"target '{persisted_model_specs[spec]}' preflight failed: "
+                f"{type(exc).__name__}: "
+                + _artifact_safe_model_error(
+                    exc, spec, persisted_model_specs[spec]
+                ),
                 file=sys.stderr,
             )
             failure_map: dict[str, dict[str, str]] = {}
@@ -3646,56 +5175,115 @@ def main(argv=None) -> int:
                     "message": str(eligibility_exc)[:2000],
                 })
             return 1
-    target_names = [str(getattr(target, "name", "")) for target in prebuilt_targets.values()]
-    if len(set(target_names)) != len(target_names):
+    seen_target_identity_keys: set[tuple[tuple[str, ...], str]] = set()
+    duplicate_target_identity = False
+    for spec, identity_keys in zip(model_specs, base_target_identities):
+        requested_spec = requested_model_specs[spec]
+        condition = target_execution_conditions[requested_spec]
+        condition_keys = {(identity, condition) for identity in identity_keys}
+        if seen_target_identity_keys & condition_keys:
+            duplicate_target_identity = True
+        seen_target_identity_keys.update(condition_keys)
+    if duplicate_target_identity:
         persist_eligibility_plan()
         ap.error("target specs resolve to duplicate runtime target identities")
+    configured_guard_identities = []
+    if scoring_guardrail_selected:
+        configured_guard_identities.append((
+            "scoring guardrail",
+            _pinned_hub_model_identity(
+                args.guardrail_model, args.guardrail_revision
+            ),
+        ))
+    if defense_guardrail_selected:
+        configured_guard_identities.append((
+            "defense guardrail",
+            _pinned_hub_model_identity(
+                args.defense_guardrail_model,
+                args.defense_guardrail_revision,
+            ),
+        ))
+    for role, guard_identity in configured_guard_identities:
+        if guard_identity and any(
+            guard_identity & target_identity
+            for target_identity in base_target_identities
+        ):
+            persist_eligibility_plan()
+            ap.error(
+                f"the {role} must differ from every model under test; "
+                "a target model cannot grade or guard itself"
+            )
     if "llm" in judge_names:
         try:
-            judge_target = build_api_target(
+            prebuilt_judge_target = build_target(
                 args.judge_model,
-                config=api_configs.get(args.judge_model),
+                quantization=args.quantization,
+                dtype=args.dtype,
+                local_identity=local_configs.get(args.judge_model),
+                api_config=api_configs.get(args.judge_model),
+                model_runtime=model_runtime,
+                managed_model_role="llm_judge",
             )
-            judge_identity = _precall_model_identity(judge_target)
-            if not args.dry_run and judge_identity in base_target_identities:
+            if local_judge_spec is not None:
+                _require_local_hardware_fit(
+                    prebuilt_judge_target,
+                    args.judge_model,
+                    local_configs[args.judge_model],
+                    gpu_hardware,
+                )
+            judge_identity = _precall_model_identity(prebuilt_judge_target)
+            if not args.dry_run and any(
+                judge_identity & target_identity
+                for target_identity in base_target_identities
+            ):
                 raise ValueError(
                     "the LLM judge must differ from every model under test; "
                     f"resolved identity {judge_identity!r} is self-certifying"
                 )
             if args.preflight_only:
-                readiness = preflight_api_target_runtime(judge_target)
+                readiness = preflight_api_target_runtime(prebuilt_judge_target)
                 if readiness is not None:
                     hosted_runtime_checks.append({
                         "role": "judge",
-                        "model_spec": args.judge_model,
+                        "model_spec": persisted_judge_model,
                         **readiness,
                     })
         except Exception as exc:  # noqa: BLE001 - fail no-call preflight
-            error_path = out / "judge-hosted-runtime-preflight.error.json"
+            error_path = out / "judge-runtime-preflight.error.json"
             _write_json(error_path, {
                 "status": "error",
-                "phase": "hosted_runtime_preflight",
+                "phase": "judge_runtime_preflight",
                 "preflight": True,
                 "role": "judge",
-                "model_spec": args.judge_model,
+                "model_spec": persisted_judge_model,
                 "exception_type": type(exc).__name__,
-                "message": str(exc)[:2000],
+                "message": _artifact_safe_model_error(
+                    exc, args.judge_model, persisted_judge_model or "unknown"
+                ),
             })
             print(
-                "judge hosted runtime preflight failed: "
-                f"{type(exc).__name__}: {exc}",
+                "judge runtime preflight failed: "
+                f"{type(exc).__name__}: "
+                + _artifact_safe_model_error(
+                    exc, args.judge_model, persisted_judge_model or "unknown"
+                ),
                 file=sys.stderr,
             )
             persist_eligibility_plan(global_failures=[{
-                "gate": "judge_hosted_runtime_preflight",
-                "reason": str(exc)[:2000],
+                "gate": "judge_runtime_preflight",
+                "reason": _artifact_safe_model_error(
+                    exc, args.judge_model, persisted_judge_model or "unknown"
+                ),
             }])
             return 1
+    (out / "judge-runtime-preflight.error.json").unlink(missing_ok=True)
+    # Remove the pre-generic artifact name after a successful retry.
     (out / "judge-hosted-runtime-preflight.error.json").unlink(missing_ok=True)
     eligibility_plan, eligibility_path = persist_eligibility_plan()
     try:
         modality_plan = plan_modality_coverage(
             list(prebuilt_targets.values()), loaded_corpora,
+            attacker_input_contracts=planned_input_contracts,
             enforce_available=not args.dry_run,
         )
     except (OSError, ValueError, ModalityCoverageError) as exc:
@@ -3721,45 +5309,20 @@ def main(argv=None) -> int:
             validator = getattr(target, "validate_research_identity", None)
             if callable(validator):
                 validator()
-        # vLLM documents that CUDA should be initialized before an unrelated
-        # Torch model in the same process. With one local target per process,
-        # preload that base engine first; scoring/defense guards follow below.
-        for target in prebuilt_targets.values():
-            base_preflight = getattr(target, "preflight_base", None)
-            if callable(base_preflight):
-                base_preflight()
-        if shared_defense_guard is not None:
-            preflight = getattr(shared_defense_guard, "preflight", None)
-            if callable(preflight):
-                preflight()
-        planned_attackers = {}
-        for attacker_name in attacker_names:
-            attacker = get_attacker(
-                attacker_name,
-                **attacker_configs.get(attacker_name.lower(), {}),
-            )
-            if getattr(attacker, "runner_replay_eligible", True) is False:
-                raise ValueError(
-                    f"attacker {attacker_name!r} is a native-artifact integration "
-                    "and cannot be replayed through Runner"
-                )
-            _component_config(attacker)
-            planned_attackers[attacker_name] = attacker
+        if prebuilt_judge_target is not None:
+            validator = getattr(prebuilt_judge_target, "validate_research_identity", None)
+            if callable(validator):
+                validator()
         planned_cascade = build_judges(
             judge_names,
             args.judge_model,
             judge_api_config=api_configs.get(args.judge_model),
+            judge_target=prebuilt_judge_target,
             guardrail_model=args.guardrail_model,
             guardrail_revision=args.guardrail_revision,
             guardrail_device=args.guardrail_device,
+            model_runtime=model_runtime,
         )
-        # Load local model-backed judges now, before the first paid target call.
-        # Reusing this cascade across cells also avoids repeatedly loading the
-        # same multi-gigabyte checkpoint.
-        for stage in planned_cascade.stages:
-            preflight = getattr(stage, "preflight", None)
-            if callable(preflight):
-                preflight()
         _component_config(planned_cascade)
         admission_failures: list[dict[str, str]] = []
         for spec, target in prebuilt_targets.items():
@@ -3776,6 +5339,12 @@ def main(argv=None) -> int:
                                 seed=seeds[0],
                             ),
                             seeds,
+                            approximate_common_metrics=bool(
+                                args.approximate_common_metrics
+                            ),
+                            approximate_evidence_class=(
+                                "synthetic" if args.dry_run else "measured"
+                            ),
                         ).plan_manifest(
                             corpus,
                             started_at=run_started,
@@ -3786,6 +5355,9 @@ def main(argv=None) -> int:
                                 "model_spec": persisted_model_specs[spec],
                                 "corpus": corpus_name,
                                 "attacker": attacker_name,
+                                "approximate_common_metrics": bool(
+                                    args.approximate_common_metrics
+                                ),
                             },
                         )
                     except Exception as exc:  # noqa: BLE001 - audit all cells
@@ -3830,6 +5402,7 @@ def main(argv=None) -> int:
             seeds=seeds,
             max_queries=args.max_queries,
             max_turns=args.max_turns,
+            approximate_common_metrics=bool(args.approximate_common_metrics),
         )
         _validate_planned_call_budget(
             call_projection,
@@ -3875,6 +5448,7 @@ def main(argv=None) -> int:
                 resolved_targets=base_resolved_targets,
                 route_config_sha256=route_config_digests,
                 route_kind=route_kinds,
+                target_condition_sha256=target_execution_conditions,
                 current_harness_source_sha256=str(harness_source["sha256"]),
                 current_driver_source_sha256=str(driver_source["sha256"]),
                 current_project_revision=project_revision_state,
@@ -3956,6 +5530,9 @@ def main(argv=None) -> int:
         "project_revision": project_revision_state,
         "request_envelope": request_envelope_artifact,
         "models": [persisted_model_specs[spec] for spec in model_specs],
+        "target_execution_conditions": dict(sorted(
+            target_execution_conditions.items()
+        )),
         "corpora": corpora,
         "source_instances": source_instances,
         "source_config_artifact": source_config_artifact,
@@ -3963,16 +5540,20 @@ def main(argv=None) -> int:
         "attackers": attacker_names,
         "attacker_configs": portable_attacker_configs,
         "attacker_config_artifact": attacker_config_artifact,
-        "api_configs": api_configs,
+        "api_configs": portable_api_configs,
         "api_config_artifact": api_config_artifact,
         "local_configs": {
-            persisted_model_specs[spec]: config
-            for spec, config in local_configs.items()
+            persisted_model_specs[spec]: local_configs[spec]
+            for spec in local_specs
         },
         "local_config_artifact": local_config_artifact,
         "judges": judge_names,
-        "judge_model": args.judge_model,
-        "judge_api_config": api_configs.get(args.judge_model),
+        "judge_model": persisted_judge_model,
+        "hosted_judge_data_transfer_acknowledged": bool(
+            args.ack_hosted_judge_data_transfer
+        ),
+        "judge_api_config": portable_api_configs.get(args.judge_model),
+        "judge_local_identity": local_configs.get(args.judge_model),
         "guardrail_model": (
             args.guardrail_model if scoring_guardrail_selected else None
         ),
@@ -4018,8 +5599,11 @@ def main(argv=None) -> int:
         "gpu_hardware": gpu_hardware,
         "dtype": args.dtype,
         "dry_run": bool(args.dry_run),
+        "approximate_common_metrics": bool(args.approximate_common_metrics),
         "attestation_probe": bool(args.attestation_probe),
         "live_attestation": live_attestation_projection,
+        "model_acquisition": acquisition_runtime_descriptor,
+        "model_acquisition_execution": acquisition_execution_descriptor,
         "driver_source": driver_source,
         "harness_source": harness_source,
         "eligibility_plan": {
@@ -4035,16 +5619,33 @@ def main(argv=None) -> int:
         "source_policy_cluster_counts": policy_strata,
         "call_projection": call_projection,
     }
+    try:
+        validate_model_acquisition_grid_binding(
+            acquisition_execution_descriptor,
+            grid_request,
+        )
+    except (TypeError, ValueError) as exc:
+        persist_request_error(
+            phase="model_acquisition_admission",
+            category="model_acquisition_invalid",
+            exc=exc,
+        )
+        print(f"model acquisition grid binding failed: {exc}", file=sys.stderr)
+        return 1
     # Keep complete reusable-registry provenance in the grid artifact while
     # excluding unselected roster entries from execution identity.  The
     # normalized selected configs above, plus these selected-subset digests,
     # still bind every requested execution condition exactly.
     grid_identity_request = {
         **grid_request,
+        # A receipt is a timestamped audit event. Scientific/grid identity is
+        # instead the validated immutable plan + manifest + complete tree seal,
+        # so reacquiring unchanged cached bytes cannot fragment resume/cohorts.
+        "model_acquisition": acquisition_execution_descriptor,
         "source_config_artifact": _selected_config_artifact_identity(
             source_config_artifact
         ),
-        "source_conformance_artifact": _selected_config_artifact_identity(
+        "source_conformance_artifact": _content_artifact_identity(
             source_conformance_artifact
         ),
         "attacker_config_artifact": _selected_config_artifact_identity(
@@ -4148,15 +5749,20 @@ def main(argv=None) -> int:
             existing_budget = _json_loads_strict(
                 budget_path.read_text(encoding="utf-8")
             )
-            deadline_epoch = (
+            budget_deadline = (
                 existing_budget.get("deadline_epoch")
                 if isinstance(existing_budget, dict) else None
             )
+            if budget_deadline is None:
+                deadline_epoch = invocation_deadline_epoch
+            elif invocation_deadline_epoch is None:
+                deadline_epoch = budget_deadline
+            else:
+                deadline_epoch = min(
+                    float(budget_deadline), invocation_deadline_epoch
+                )
         else:
-            deadline_epoch = (
-                time.time() + args.deadline_seconds
-                if args.deadline_seconds else None
-            )
+            deadline_epoch = invocation_deadline_epoch
         call_budget = GlobalCallBudget(
             max_target_calls=args.max_total_target_calls or None,
             max_judge_calls=args.max_total_judge_calls or None,
@@ -4168,6 +5774,42 @@ def main(argv=None) -> int:
         _validate_budget_recovery_high_water(
             out, call_budget.snapshot(), circuits=persisted_circuits,
         )
+        # Every zero-engine gate is now complete: exact whole-grid projection,
+        # call ceilings, live-attestation admission, durable ledger recovery,
+        # and the first-invocation deadline. Only now may a surrogate, local
+        # target, judge, or guard load already-receipted offline model weights.
+        call_budget.raise_if_deadline_reached()
+        for attacker in planned_attackers.values():
+            call_budget.raise_if_deadline_reached()
+            preflight = getattr(attacker, "preflight", None)
+            if callable(preflight):
+                preflight()
+            call_budget.raise_if_deadline_reached()
+        for target in prebuilt_targets.values():
+            call_budget.raise_if_deadline_reached()
+            base_preflight = getattr(target, "preflight_base", None)
+            if callable(base_preflight):
+                base_preflight()
+            call_budget.raise_if_deadline_reached()
+        if prebuilt_judge_target is not None:
+            call_budget.raise_if_deadline_reached()
+            base_preflight = getattr(prebuilt_judge_target, "preflight_base", None)
+            if callable(base_preflight):
+                base_preflight()
+            call_budget.raise_if_deadline_reached()
+        if shared_defense_guard is not None:
+            call_budget.raise_if_deadline_reached()
+            preflight = getattr(shared_defense_guard, "preflight", None)
+            if callable(preflight):
+                preflight()
+            call_budget.raise_if_deadline_reached()
+        # Reuse one loaded local model-backed judge cascade across cells.
+        for stage in planned_cascade.stages:
+            call_budget.raise_if_deadline_reached()
+            preflight = getattr(stage, "preflight", None)
+            if callable(preflight):
+                preflight()
+            call_budget.raise_if_deadline_reached()
         # Reset only after every durable failure/recovery artifact has been
         # validated against the ledger. Otherwise reset could erase the sole
         # high-water evidence for a paid failed call.
@@ -4176,7 +5818,7 @@ def main(argv=None) -> int:
             circuits = {}
         else:
             circuits = persisted_circuits
-    except (OSError, ValueError) as exc:
+    except Exception as exc:  # noqa: BLE001 - zero-call lifecycle boundary
         _release_artifact_lock(grid_lock, grid_lock_token)
         print(f"cannot initialize matrix lifecycle: {exc}", file=sys.stderr)
         return 1
@@ -4196,7 +5838,7 @@ def main(argv=None) -> int:
     n_skipped = 0
     n_errors = 0
     executed_modality_evidence: dict[
-        str, set[tuple[str, tuple[str, ...]]]
+        str, set[tuple[str, str, tuple[str, ...]]]
     ] = {
         str(getattr(target, "name")): set()
         for target in prebuilt_targets.values()
@@ -4310,10 +5952,16 @@ def main(argv=None) -> int:
                     })
                     continue
                 try:
-                    attacker_config = attacker_configs.get(
-                        attacker_name.lower(), {}
+                    attacker_config = _attacker_constructor_kwargs(
+                        attacker_name,
+                        attacker_configs,
+                        model_runtime,
                     )
-                    attacker = get_attacker(attacker_name, **attacker_config)
+                    attacker = (
+                        planned_attackers[attacker_name]
+                        if attacker_name.lower() == "nanogcg"
+                        else get_attacker(attacker_name, **attacker_config)
+                    )
                     if getattr(attacker, "runner_replay_eligible", True) is False:
                         raise ValueError(
                             f"attacker {attacker_name!r} is a native-artifact "
@@ -4333,6 +5981,12 @@ def main(argv=None) -> int:
                         expected_target_identity=attested_target_identities.get(
                             requested_model_specs[spec]
                         ),
+                        approximate_common_metrics=bool(
+                            args.approximate_common_metrics
+                        ),
+                        approximate_evidence_class=(
+                            "synthetic" if args.dry_run else "measured"
+                        ),
                     )
                     cell_config = {
                         "grid_id": grid_id,
@@ -4344,12 +5998,12 @@ def main(argv=None) -> int:
                         "sample_seed": args.sample_seed,
                         "sampling_audit": sampling_audit,
                         "source_conformance_artifact": (
-                            _selected_config_artifact_identity(
+                            _content_artifact_identity(
                                 source_conformance_artifact
                             )
                         ),
                         "model_spec": persisted_model_specs[spec],
-                        "api_config": api_configs.get(spec),
+                        "api_config": portable_api_configs.get(spec),
                         "api_config_artifact": _selected_config_artifact_identity(
                             api_config_artifact
                         ),
@@ -4359,8 +6013,12 @@ def main(argv=None) -> int:
                             attacker_name.lower(), {}
                         ),
                         "judge_names": judge_names,
-                        "judge_model": args.judge_model,
-                        "judge_api_config": api_configs.get(args.judge_model),
+                        "judge_model": persisted_judge_model,
+                        "hosted_judge_data_transfer_acknowledged": bool(
+                            args.ack_hosted_judge_data_transfer
+                        ),
+                        "judge_api_config": portable_api_configs.get(args.judge_model),
+                        "judge_local_identity": local_configs.get(args.judge_model),
                         "guardrail_model": (
                             args.guardrail_model
                             if scoring_guardrail_selected else None
@@ -4392,6 +6050,9 @@ def main(argv=None) -> int:
                         "resolved_quantization": resolved_quantizations.get(spec),
                         "dtype": args.dtype,
                         "dry_run": bool(args.dry_run),
+                        "approximate_common_metrics": bool(
+                            args.approximate_common_metrics
+                        ),
                         "attestation_probe": bool(args.attestation_probe),
                         "live_attestation": live_attestation_projection,
                         "expected_target_identity": (
@@ -4403,6 +6064,12 @@ def main(argv=None) -> int:
                         "global_call_budget": grid_request["global_call_budget"],
                         "modality_coverage_plan": modality_plan_payload,
                     }
+                    cell_config["model_acquisition"] = (
+                        model_acquisition_cell_role_projection(
+                            acquisition_execution_descriptor,
+                            cell_config,
+                        )
+                    )
                     planned = runner.plan_manifest(
                         corpus,
                         started_at=run_started,
@@ -4459,7 +6126,12 @@ def main(argv=None) -> int:
                         )
                     recheck_bound_project_revision()
                     if paths["complete"].is_file():
-                        _validate_completion_marker(paths, planned, required)
+                        _validate_completion_marker(
+                            paths,
+                            planned,
+                            required,
+                            acquisition_execution_descriptor,
+                        )
                         _record_executed_modality_evidence(
                             target.name,
                             [Attempt.model_validate(row) for row in _read_jsonl(
@@ -4563,7 +6235,10 @@ def main(argv=None) -> int:
                     validation_paths = {**paths, "complete": pending_complete}
                     try:
                         _validate_completion_marker(
-                            validation_paths, planned, required
+                            validation_paths,
+                            planned,
+                            required,
+                            acquisition_execution_descriptor,
                         )
                         recheck_bound_project_revision()
                     except Exception:
@@ -4704,10 +6379,11 @@ def main(argv=None) -> int:
             "executed_modality_evidence": {
                 key: [
                     {
+                        "attacker": attacker,
                         "datapoint_id": datapoint_id,
                         "combination": list(combination),
                     }
-                    for datapoint_id, combination in sorted(value)
+                    for attacker, datapoint_id, combination in sorted(value)
                 ]
                 for key, value in executed_modality_evidence.items()
             },

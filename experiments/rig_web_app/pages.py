@@ -6,11 +6,16 @@ import csv
 import html
 import io
 import json
+import math
 import os
 import shutil
 import time
+from datetime import datetime
 from pathlib import Path
+from typing import Mapping
 from urllib.parse import quote
+
+from ura.strict_json import strict_json_loads
 
 from .catalog import (
     _MAX_RENDER_BYTES,
@@ -32,6 +37,7 @@ from .campaigns import EngineeringCampaign
 
 _DASHBOARD_RECENT_FAILURE_LIMIT = 5
 _DASHBOARD_RECENT_PARTIAL_LIMIT = 5
+_JOBS_HISTORY_DISPLAY_LIMIT = 5000
 
 
 class PagesMixin:
@@ -42,6 +48,8 @@ class PagesMixin:
     @staticmethod
     def _job_work_label(job: Job) -> str:
         kind = run_kind(job.command, job.argv)
+        if kind == "acquisition_plan":
+            return "acquisition plan"
         if kind == "preflight":
             return "preflight"
         if kind == "dry_run":
@@ -52,6 +60,8 @@ class PagesMixin:
             return "diagnostic model run"
         if kind == "measured":
             return "model campaign"
+        if job.command == "model_acquire":
+            return "model acquisition"
         if job.command == "capture_t3mp3st":
             return "model capture"
         if job.command == "harmbench_capture":
@@ -61,7 +71,9 @@ class PagesMixin:
     @staticmethod
     def _job_execution_label(job: Job) -> str:
         kind = run_kind(job.command, job.argv)
-        if kind in {"preflight", "dry_run"}:
+        if kind in {"acquisition_plan", "preflight", "dry_run"}:
+            return "no model call"
+        if job.command == "model_acquire":
             return "no model call"
         if job.command == "harmbench_capture":
             methods = [
@@ -169,7 +181,7 @@ class PagesMixin:
         note = ""
         if reindexed:
             try:
-                summary = json.loads(reindexed)
+                summary = strict_json_loads(reindexed)
             except ValueError:
                 summary = {}
             if isinstance(summary, dict) and summary:
@@ -272,12 +284,47 @@ class PagesMixin:
             spend_value, spend_label = "unknown", "calculated spend (db unavailable)"
         else:
             billable = [r for r in cost_rows if r["billable"]]
-            if any(r["cost"] is None for r in billable):
+            if not billable:
+                spend_value = "N/A"
+                spend_label = "calculated spend (no recorded billable usage)"
+            elif any(r["cost"] is None for r in billable):
                 spend_value = "N/A"
                 spend_label = "calculated spend (price/tokens missing)"
             else:
-                spend_value = self._fmt_money(sum(r["cost"] for r in billable), "USD")
-                spend_label = "calculated spend (recorded usage x pricing)"
+                by_currency: dict[str, float] = {}
+                for row in billable:
+                    subtotals = row.get("by_currency")
+                    if isinstance(subtotals, Mapping) and subtotals:
+                        for currency, amount in subtotals.items():
+                            if isinstance(amount, (int, float)) and not isinstance(
+                                amount, bool
+                            ):
+                                code = str(currency).upper()
+                                by_currency[code] = by_currency.get(code, 0.0) + float(
+                                    amount
+                                )
+                    elif row.get("currency") and isinstance(
+                        row.get("cost"), (int, float)
+                    ):
+                        code = str(row["currency"]).upper()
+                        by_currency[code] = by_currency.get(code, 0.0) + float(
+                            row["cost"]
+                        )
+                if len(by_currency) == 1:
+                    currency, amount = next(iter(by_currency.items()))
+                    spend_value = self._fmt_money(amount, currency)
+                    spend_label = "calculated spend (recorded usage x pricing)"
+                elif len(by_currency) > 1:
+                    spend_value = " / ".join(
+                        self._fmt_money(amount, currency)
+                        for currency, amount in sorted(by_currency.items())
+                    )
+                    spend_label = (
+                        "calculated spend (mixed currencies; not summed)"
+                    )
+                else:
+                    spend_value = "N/A"
+                    spend_label = "calculated spend (currency unavailable)"
         stats = (
             "<div class='cols'>"
             "<div class='card'><div class='stat'>"
@@ -288,9 +335,9 @@ class PagesMixin:
             f"{len(running_jobs)}</span>"
             "<span class='label'>running (console-owned)</span></div></div>"
             "<div class='card'><div class='stat'>"
-            f"<span class='value'><span class='dot amber'></span>"
+            f"<span class='value'><span class='dot blue'></span>"
             f"{len(running_campaigns)}</span>"
-            "<span class='label'>reported running (external)</span></div></div>"
+            "<span class='label'>running (external task-log report)</span></div></div>"
             "<div class='card'><div class='stat'>"
             f"<span class='value'><span class='dot red'></span>"
             f"{len(failed_jobs) + len(failed_campaigns)}</span>"
@@ -319,34 +366,47 @@ class PagesMixin:
         )
         running_rows = []
         for job in running_jobs:
+            activity = (
+                " <span class='badge blue' title='Explicit job activity metadata'>"
+                "downloading</span>"
+                if getattr(job, "activity", None) == "model_download"
+                else ""
+            )
             running_rows.append(
                 (
                     job.started_at,
                     f"<tr><td><a href='/jobs/{html.escape(job.job_id)}'>"
                     f"{html.escape(job.job_id)}</a></td>"
-                    f"<td>{html.escape(job.command)}</td>"
+                    f"<td>{html.escape(job.command)}{activity}</td>"
                     f"<td>{_human_duration(job.runtime_seconds())}</td></tr>",
                 )
             )
         for campaign in running_campaigns:
             route_id = quote(campaign.route_id)
+            activity = (
+                " <span class='badge blue' title='Explicit task_kind model_download "
+                "in the retained task log'>downloading</span>"
+                if campaign.download_tasks
+                else ""
+            )
             running_rows.append(
                 (
                     campaign.started_at,
                     f"<tr><td><a href='/jobs/campaign/{route_id}'>"
                     f"{html.escape(campaign.campaign_id)}</a></td>"
                     "<td>engineering campaign "
-                    "<span class='badge gray'>external, "
-                    f"{html.escape(campaign.status_tag)}</span></td>"
+                    "<span class='badge gray'>external</span> "
+                    "<span class='badge blue'>running</span>"
+                    f"{activity}</td>"
                     f"<td>{_human_duration(campaign.runtime_seconds())}</td></tr>",
                 )
             )
         running_rows_html = "".join(row for _started, row in sorted(running_rows))
         running_html = (
-            "<div class='card'><h2>" + _icon("pulse") + "Running / reported running</h2>"
+            "<div class='card'><h2>" + _icon("pulse") + "Running</h2>"
             "<div class='scroll'><table><tr><th>Job</th><th>Command</th>"
             "<th>Runtime</th></tr>" + running_rows_html + "</table></div>"
-            "<p class='note'>External engineering campaign state is derived "
+            "<p class='note'>External running state is a task-log report; it is derived "
             "from retained task logs; this console does not own "
             "or stop its process.</p></div>"
             if running_rows_html
@@ -591,7 +651,7 @@ class PagesMixin:
         for candidate in (name, example):
             path = self.repo_root / "experiments" / candidate
             try:
-                data = json.loads(path.read_text(encoding="utf-8"))
+                data = strict_json_loads(path.read_text(encoding="utf-8"))
             except (OSError, ValueError):
                 continue
             if isinstance(data, dict):
@@ -619,6 +679,8 @@ class PagesMixin:
         sections = []
 
         def card(name: str) -> str:
+            if name == "run_matrix":
+                return ""
             if name not in {"capture_t3mp3st", "harmbench_capture"}:
                 return self._command_card(name)
             label = "T3MP3ST Capture" if name == "capture_t3mp3st" else "HarmBench Prepare"
@@ -641,7 +703,13 @@ class PagesMixin:
                 f"<h2>{html.escape(title)}</h2>"
                 f"<span class='ref'>{html.escape(ref)}</span></div>" + cards
             )
-        leftovers = "".join(card(name) for name in sorted(set(self.commands) - grouped))
+        # Internal controller commands have dedicated validated Build actions;
+        # exposing their raw generic form would bypass that controller contract.
+        internal_ui_commands = {"model_acquire", "ollama_pull", "run_matrix"}
+        leftovers = "".join(
+            card(name)
+            for name in sorted(set(self.commands) - grouped - internal_ui_commands)
+        )
         if leftovers:
             sections.append(
                 f"<div class='group-head'>{_icon('file', size=20)}<h2>Other</h2></div>" + leftovers
@@ -684,19 +752,70 @@ class PagesMixin:
         )
         return _page("Run a command", body, active="Run")
 
-    def _jobs_page(self) -> bytes:
+    @staticmethod
+    def _jobs_history_bound(
+        query: Mapping[str, str],
+        name: str,
+        default: float,
+    ) -> float:
+        raw_ms = query.get(f"{name}_ms", "")
+        if raw_ms:
+            try:
+                value = float(raw_ms) / 1000.0
+            except ValueError:
+                value = float("nan")
+            if math.isfinite(value):
+                return value
+        raw = query.get(name, "")
+        if raw:
+            try:
+                parsed = datetime.fromisoformat(raw).timestamp()
+            except (ValueError, OSError, OverflowError):
+                parsed = float("nan")
+            if math.isfinite(parsed):
+                if name == "to" and "." not in raw:
+                    parsed += 59.999 if len(raw) == 16 else 0.999
+                return parsed
+        return default
+
+    def _jobs_page(self, query: Mapping[str, str] | None = None) -> bytes:
         self._reconcile()
-        campaigns, campaign_scan_note = self._engineering_campaign_scan()
+        filters = dict(query or {})
+        now = time.time()
+        started_from = self._jobs_history_bound(
+            filters,
+            "from",
+            now - 7 * 86400,
+        )
+        started_to = self._jobs_history_bound(filters, "to", now)
+        history_note = ""
+        if started_from > started_to:
+            history_jobs = []
+            history_note = "From must not be after To."
+        else:
+            history_jobs, history_truncated = self._jobs_for_history_window(
+                started_from,
+                started_to,
+                limit=_JOBS_HISTORY_DISPLAY_LIMIT,
+            )
+            if history_truncated:
+                history_note = (
+                    f"Showing the newest {_JOBS_HISTORY_DISPLAY_LIMIT} console jobs "
+                    "in this date range. Narrow From/To to retrieve older rows."
+                )
+        campaigns, campaign_scan_note = self._engineering_campaign_scan(
+            started_from=started_from,
+            started_to=started_to,
+        )
         rows = []
         tallies: dict[str, int] = {}
-        for job_id in sorted(self.jobs, reverse=True):
-            job = self.jobs[job_id]
+        for job in history_jobs:
+            job_id = job.job_id
             state = job.state()
             state_tag = self._job_status_tag(state)
             tallies[state_tag] = tallies.get(state_tag, 0) + 1
             tone = {
                 "running": "blue",
-                "reported running": "amber",
                 "passed": "green",
                 "failed": "red",
                 "orphaned": "amber",
@@ -712,6 +831,12 @@ class PagesMixin:
                 else ""
             )
             hay = html.escape(f"{job_id} {job.command}".lower())
+            activity = (
+                "<span class='badge blue' title='Explicit job activity metadata'>"
+                "downloading</span>"
+                if state == "running" and getattr(job, "activity", None) == "model_download"
+                else "-"
+            )
             rows.append(
                 f"<tr data-state='{html.escape(state_tag)}' "
                 f"data-started='{started_ms}' data-hay='{hay}'>"
@@ -725,7 +850,7 @@ class PagesMixin:
                 f"<td><time class='job-started' data-epoch-ms='{started_ms}'>"
                 f"{started}</time></td>"
                 f"<td>{_human_duration(job.runtime_seconds())}</td>"
-                "<td>-</td>"
+                f"<td>{activity}</td>"
                 f"<td>{'' if job.exit_code() is None else job.exit_code()}"
                 f"</td><td>{stop}</td></tr>"
             )
@@ -783,7 +908,14 @@ class PagesMixin:
                 f"<td><time class='job-started' data-epoch-ms='{started_ms}'>"
                 f"{started}</time></td>"
                 f"<td>{_human_duration(campaign.runtime_seconds())}</td>"
-                f"<td>{html.escape(campaign.progress)} "
+                f"<td>"
+                + (
+                    "<span class='badge blue' title='Explicit task_kind "
+                    "model_download in retained task log'>downloading</span> "
+                    if campaign.download_tasks
+                    else ""
+                )
+                + f"{html.escape(campaign.progress)} "
                 f"<a href='/jobs/campaign/{route_id}'>logs</a></td>"
                 "<td>-</td><td></td></tr>"
             )
@@ -791,7 +923,7 @@ class PagesMixin:
             "<div class='chips'>"
             f"<button type='button' class='chip on' data-state=''>All "
             "(<span class='chip-count'>"
-            f"{len(self.jobs) + len(campaigns)}</span>)</button>"
+            f"{len(history_jobs) + len(campaigns)}</span>)</button>"
             + "".join(
                 f"<button type='button' class='chip' data-state='{state}'>"
                 f"{state.capitalize()} (<span class='chip-count'>{count}</span>)</button>"
@@ -800,7 +932,7 @@ class PagesMixin:
             + "</div>"
         )
         controls = (
-            chips + "<div class='targetfilters'><div class='fieldcell'>"
+            chips + "<div class='targetfilters job-date-filters'><div class='fieldcell'>"
             "<label class='fieldlabel' for='job-from'>From</label>"
             "<input id='job-from' type='datetime-local' step='1'>"
             "</div><div class='fieldcell'>"
@@ -826,6 +958,9 @@ class PagesMixin:
             "var fromBox=document.getElementById('job-from');"
             "var toBox=document.getElementById('job-to');"
             "var params=new URLSearchParams(window.location.search);"
+            "var explicitFrom=params.has('from');var explicitTo=params.has('to');"
+            "var needsServerWindow=(explicitFrom&&!params.has('from_ms'))||"
+            "(explicitTo&&!params.has('to_ms'));"
             "if(box&&params.has('q')){box.value=params.get('q');}"
             "state=params.get('state')||'';"
             "function pad(value){return String(value).padStart(2,'0');}"
@@ -835,8 +970,8 @@ class PagesMixin:
             "pad(date.getSeconds());}"
             "function localStamp(ms){return localValue(ms).replace('T',' ');}"
             "var now=Date.now();"
-            "fromBox.value=params.has('from')?params.get('from'):localValue(now-7*86400000);"
-            "toBox.value=params.has('to')?params.get('to'):localValue(now);"
+            "fromBox.value=explicitFrom?params.get('from'):localValue(now-7*86400000);"
+            "toBox.value=explicitTo?params.get('to'):localValue(now);"
             "document.querySelectorAll('time.job-started[data-epoch-ms]').forEach("
             "function(out){var ms=Number(out.getAttribute('data-epoch-ms'));"
             "if(Number.isFinite(ms)){out.textContent=localStamp(ms);}});"
@@ -847,8 +982,15 @@ class PagesMixin:
             "if(!box.value.includes('.')){value+=box.value.length===16?59999:999;}"
             "return value;}"
             "function syncFilters(){var url=new URL(window.location.href);"
+            "var fromMs=lowerBound(fromBox,NaN);var toMs=upperBound(toBox,NaN);"
+            "if(explicitFrom&&Number.isFinite(fromMs)){"
             "url.searchParams.set('from',fromBox.value);"
+            "url.searchParams.set('from_ms',String(fromMs));}else{"
+            "url.searchParams.delete('from');url.searchParams.delete('from_ms');}"
+            "if(explicitTo&&Number.isFinite(toMs)){"
             "url.searchParams.set('to',toBox.value);"
+            "url.searchParams.set('to_ms',String(toMs));}else{"
+            "url.searchParams.delete('to');url.searchParams.delete('to_ms');}"
             "url.searchParams.set('state',state);"
             "url.searchParams.set('q',box?box.value:'');"
             "history.replaceState(null,'',url.pathname+url.search);}"
@@ -884,14 +1026,16 @@ class PagesMixin:
             "if(!matchedState){state='';var all=document.querySelector("
             "'.chip[data-state=\"\"]');if(all){all.classList.add('on');}}"
             "if(box){box.addEventListener('input',function(){syncFilters();apply();});}"
-            "[fromBox,toBox].forEach(function(field){field.addEventListener('change',"
-            "function(){syncFilters();apply();});});"
-            "apply();"
+            "fromBox.addEventListener('change',function(){explicitFrom=true;"
+            "syncFilters();location.reload();});"
+            "toBox.addEventListener('change',function(){explicitTo=true;"
+            "syncFilters();location.reload();});"
+            "syncFilters();if(needsServerWindow){location.reload();return;}apply();"
             "})();</script>"
         )
         refresh = (
             "<script>setTimeout(function(){location.reload();}, 5000);</script>"
-            if tallies.get("running", 0) or tallies.get("reported running", 0)
+            if tallies.get("running", 0)
             else ""
         )
         return _page(
@@ -903,6 +1047,11 @@ class PagesMixin:
             + (
                 "<div class='notice amber'>" + html.escape(campaign_scan_note) + "</div>"
                 if campaign_scan_note
+                else ""
+            )
+            + (
+                "<div class='notice amber'>" + html.escape(history_note) + "</div>"
+                if history_note
                 else ""
             )
             + controls
@@ -917,7 +1066,6 @@ class PagesMixin:
     def _campaign_page(self, campaign: EngineeringCampaign) -> bytes:
         tone = {
             "running": "blue",
-            "reported running": "amber",
             "passed": "green",
             "partial": "amber",
             "blocked": "red",
@@ -966,7 +1114,14 @@ class PagesMixin:
         task_rows = "".join(
             "<tr><td><code>"
             + html.escape(task)
-            + "</code></td><td>"
+            + "</code>"
+            + (
+                " <span class='badge blue' title='Explicit task_kind "
+                "model_download in retained task log'>downloading</span>"
+                if task in campaign.download_tasks
+                else ""
+            )
+            + "</td><td>"
             + html.escape(role)
             + "</td><td>"
             + html.escape(status)
@@ -1031,7 +1186,13 @@ class PagesMixin:
             f"<span class='value'>{started}</span><span class='label'>started</span></div></div>"
             "</div>"
             "<div class='card'><h2>" + _icon("chart") + "Progress</h2>"
-            f"<p>{html.escape(campaign.progress)}</p></div>"
+            + (
+                "<p><span class='badge blue' title='Explicit task_kind "
+                "model_download in retained task log'>downloading</span></p>"
+                if campaign.download_tasks
+                else ""
+            )
+            + f"<p>{html.escape(campaign.progress)}</p></div>"
             + details
             + task_table
             + last_detail
@@ -1067,6 +1228,14 @@ class PagesMixin:
             if state == "failed"
             else ""
         )
+        activity = (
+            "<div class='notice blue'><strong>Model download in progress.</strong> "
+            "This indicator comes from explicit job activity metadata and is "
+            "shown only while the process is running.</div>"
+            if state == "running" and getattr(job, "activity", None) == "model_download"
+            else ""
+        )
+        model_acquisition_actions = self._model_acquisition_job_actions(job)
         builder = ""
         if job.builder_params:
             rows = "".join(
@@ -1082,9 +1251,10 @@ class PagesMixin:
                 + _icon("flask")
                 + "Builder parameters</h2><div class='scroll'><table>"
                 + rows
-                + "</table></div><p class='note'>The raw campaign-"
-                "builder selections this job was composed from (persisted "
-                "with the job).</p><form method='post' action='/build'>"
+                + "</table></div><p class='note'>The durable campaign-builder "
+                "selections retained with this job. Explicit workstation "
+                "checkpoint locators appear only as declared SHA-256 content "
+                "identities.</p><form method='post' action='/build'>"
                 + reopen
                 + "<button type='submit' class='ghost'>Review this exact "
                 "lane in the builder</button></form></div>"
@@ -1150,10 +1320,12 @@ class PagesMixin:
             f"<h1>{_icon('terminal', size=22)}Job {html.escape(job.job_id)}"
             "</h1>"
             + meta
+            + activity
+            + model_acquisition_actions
             + stop_failure
             + "<div class='card'><h2>"
             + _icon("file")
-            + "Command</h2>"
+            + "Durable command identity</h2>"
             + argv_chips
             + retained
             + stop_form
@@ -1224,7 +1396,7 @@ class PagesMixin:
         badges_html = ""
         if suffix == ".json":
             try:
-                document = json.loads(text)
+                document = strict_json_loads(text)
                 badges_html = _badges_html(evidence_badges(document))
                 text = json.dumps(document, indent=2, sort_keys=True)
             except ValueError:

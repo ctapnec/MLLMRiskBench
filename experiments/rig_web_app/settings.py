@@ -12,6 +12,8 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import quote
 
+from ura.strict_json import strict_json_loads
+
 from .catalog import _PROVIDER_BUDGETS, _EDITABLE_CONFIGS, _icon
 
 from .ui import _page
@@ -63,9 +65,12 @@ class SettingsMixin:
             "<th>Funds</th></tr>" + rows + "</table></div>"
             "<p class='note'>Prepaid budgets from the editable "
             "<a href='/config?file=budgets'>budgets</a> config (defaults "
-            "recorded in ledger 11.22). The Anthropic balance is the "
-            "constraint because the Haiku judge is metered on every judged "
-            "response, local lanes included. Canaries report only exact "
+            "recorded in ledger 11.22). The funded campaign defaults to a "
+            "metered Haiku judge, so its Anthropic balance is the recorded "
+            "constraint, including local-target lanes. A different selected "
+            "hosted judge shifts the provider and cost constraint; a local "
+            "judge avoids hosted API spend but cannot share a process with a "
+            "local target. Canaries report only exact "
             "observed tokens and spend; campaign <code>--limit</code> and call "
             "caps come from prepaid funds plus the prospective call upper "
             "bound. This card spends nothing.</p></div>"
@@ -76,7 +81,7 @@ class SettingsMixin:
         """Render the outcome of a provider-pricing fetch (escaped)."""
 
         try:
-            summary = json.loads(fetched)
+            summary = strict_json_loads(fetched)
         except ValueError:
             return ""
         if not isinstance(summary, dict) or not summary:
@@ -156,10 +161,20 @@ class SettingsMixin:
         ("GEMINI_API_KEY", "Google Gemini", True),
         ("DEEPSEEK_API_KEY", "DeepSeek", True),
         ("MOONSHOT_API_KEY", "Moonshot (Kimi)", True),
+        (
+            "HF_TOKEN",
+            "Hugging Face (write-only; sealed model acquisition only)",
+            False,
+        ),
         ("DASHSCOPE_API_KEY", "Alibaba DashScope (Qwen) - unfunded", False),
         ("ZHIPU_API_KEY", "Zhipu (GLM) - unfunded/unpayable", False),
     )
     _SECRET_NAMES = frozenset(name for name, _label, _funded in _SECRET_ENV_VARS)
+    # Acquisition credentials are deliberately process-scoped.  Unlike hosted
+    # provider keys they must never be written to the operator env file: the
+    # dedicated acquisition controller is the only child allowed to inherit
+    # one, and measured/preflight workers are credential-free and offline.
+    _EPHEMERAL_SECRET_NAMES = frozenset({"HF_TOKEN"})
 
     @staticmethod
     def _mask(value: str) -> str:
@@ -185,19 +200,27 @@ class SettingsMixin:
                     "label": label,
                     "funded": funded,
                     "present": bool(value.strip()),
-                    "hint": self._mask(value) if value.strip() else "not set",
+                    "hint": (
+                        "set"
+                        if name == "HF_TOKEN" and value.strip()
+                        else self._mask(value)
+                        if value.strip()
+                        else "not set"
+                    ),
                 }
             )
         return rows
 
     def set_secret(self, name: str, value: str) -> None:
-        """Write/replace an allowlisted provider key in the 600-mode env file.
+        """Set an allowlisted secret without ever rendering its value.
 
         Fail-closed: only allowlisted names, only a non-empty single-line
-        token.  The value is written to the operator secrets file (created
-        0600) and mirrored into os.environ so newly launched jobs pick it up;
-        it is never echoed to a page, written to the database, backed up to a
-        browsable directory, or logged.
+        token.  Hosted-provider keys are written to the operator secrets file
+        (created 0600) and mirrored into ``os.environ``.  Acquisition-only
+        credentials are held in this console process and scrubbed from any
+        legacy env-file entry, so only the dedicated acquisition child can
+        receive them.  No value is echoed, logged, backed up, or stored in the
+        database.
         """
 
         if name not in self._SECRET_NAMES:
@@ -232,6 +255,23 @@ class SettingsMixin:
         # appears in the message).
         with self._secret_lock:
             existing = self._read_env_lines()
+            if name in self._EPHEMERAL_SECRET_NAMES:
+                # Older releases treated every allowlisted secret uniformly.
+                # Remove any legacy durable acquisition credential before
+                # making the newly supplied token visible to this process.
+                # If the scrub cannot be committed, fail without setting it.
+                out_lines = [
+                    entry for entry in existing if not pattern.match(entry)
+                ]
+                if out_lines != existing:
+                    try:
+                        self._write_env_file("\n".join(out_lines) + "\n")
+                    except OSError as exc:
+                        raise ValueError(
+                            f"could not write the secrets file: {exc}"
+                        ) from exc
+                os.environ[name] = value
+                return
             replaced = False
             out_lines = []
             for entry in existing:
@@ -300,7 +340,7 @@ class SettingsMixin:
             pass
 
     def clear_secret(self, name: str) -> None:
-        """Remove an allowlisted provider key from the env file and process."""
+        """Remove an allowlisted secret from durable storage and the process."""
 
         if name not in self._SECRET_NAMES:
             raise ValueError(f"unknown secret {name!r}")
@@ -347,12 +387,20 @@ class SettingsMixin:
             )
         banner = ""
         if saved:
+            storage_note = (
+                "Held only in this console process and supplied only to the "
+                "dedicated acquisition worker; it is never written to the "
+                "operator secrets file."
+                if saved in self._EPHEMERAL_SECRET_NAMES
+                else "Written to the operator secrets file and applied to "
+                "this console's environment; new jobs use it immediately."
+            )
             banner = (
                 "<div class='notice blue'><strong>Key "
                 + html.escape(saved)
-                + " updated.</strong><p class='note'>Written to the "
-                "operator secrets file and applied to this console's "
-                "environment; new jobs use it immediately. The value is "
+                + " updated.</strong><p class='note'>"
+                + storage_note
+                + " The value is "
                 "never displayed.</p></div>"
             )
         if error:
@@ -369,11 +417,14 @@ class SettingsMixin:
             + "<p class='note'>Set or rotate the hosted-provider API keys the "
             "campaign uses. Keys are written to the operator secrets file "
             "(<code>~/.ura_env</code>, mode 600) and applied to this console's "
-            "environment. For your safety the console <strong>never displays a "
-            "stored key</strong> - only whether it is set and its last four "
-            "characters - and never writes a key to the database, a backup, or "
-            "a log. Secrets are still yours to manage; nothing here is shared "
-            "off this host.</p>"
+            "environment. <code>HF_TOKEN</code> is the exception: it is held "
+            "only in this console process and passed only to a dedicated model "
+            "acquisition worker; it is never written to that file. For your "
+            "safety the console <strong>never displays a stored key</strong> - "
+            "only whether it is set and, for hosted-provider keys, its last "
+            "four characters - and never writes a key to the database, a "
+            "backup, or a log. Secrets are still yours to manage; nothing "
+            "here is shared off this host.</p>"
             "<div class='card scroll'><table><tr><th>Env var</th>"
             "<th>Provider</th><th>Status</th><th>Set / rotate</th><th></th></tr>"
             + "".join(rows)
@@ -422,8 +473,8 @@ class SettingsMixin:
 
         path, _description = self._config_target(key)
         try:
-            parsed = json.loads(content)
-        except ValueError as exc:
+            parsed = strict_json_loads(content)
+        except (UnicodeError, ValueError, RecursionError) as exc:
             raise ValueError(f"content is not valid JSON: {exc}") from exc
         if not isinstance(parsed, dict):
             raise ValueError("config must be a JSON object")
@@ -437,11 +488,28 @@ class SettingsMixin:
                 # owned and never reverts it.  Compare under the lock against the
                 # current on-disk table.
                 try:
-                    on_disk = json.loads(path.read_text(encoding="utf-8"))
-                except (OSError, ValueError):
+                    on_disk_raw = path.read_text(encoding="utf-8")
+                except FileNotFoundError:
                     on_disk = {}
-                if isinstance(on_disk, dict):
-                    reconcile_pricing_ownership(parsed, on_disk)
+                except OSError as exc:
+                    raise ValueError(
+                        "existing pricing config is unreadable; refusing to "
+                        "overwrite operator data"
+                    ) from exc
+                else:
+                    try:
+                        on_disk = strict_json_loads(on_disk_raw)
+                    except (UnicodeError, ValueError, RecursionError) as exc:
+                        raise ValueError(
+                            "existing pricing config is not strict JSON; "
+                            "refusing to overwrite operator data"
+                        ) from exc
+                    if not isinstance(on_disk, dict):
+                        raise ValueError(
+                            "existing pricing config is not a JSON object; "
+                            "refusing to overwrite operator data"
+                        )
+                reconcile_pricing_ownership(parsed, on_disk)
             normalized = (
                 json.dumps(
                     parsed,

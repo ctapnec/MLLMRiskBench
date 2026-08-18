@@ -23,7 +23,9 @@ from collections.abc import Iterable
 from pathlib import Path
 from typing import Any
 
+from ..attacker_input_contract import AttackerInputContract, text_only_transfer_contract
 from ..data_models import Attempt, DataPoint
+from ..strict_json import strict_json_loads
 from ._engine_common import (
     ExternalEngineConformanceError,
     ExternalEngineOutputError,
@@ -122,6 +124,18 @@ class HarmBenchAttacker(BaseAttacker):
     """
 
     name = "harmbench"
+
+    def plan_target_inputs(
+        self, datapoint: DataPoint, budget: AttackBudget
+    ) -> AttackerInputContract:
+        cases_per_method = self._replay_cases_per_method or 1
+        planned_turns = len(self.methods) * cases_per_method
+        return text_only_transfer_contract(
+            self.name,
+            datapoint,
+            budget,
+            planned_turns=planned_turns,
+        )
 
     def __init__(
         self,
@@ -822,12 +836,7 @@ class HarmBenchAttacker(BaseAttacker):
     def _read_test_cases(path: Path, behavior_id: str) -> list[str]:
         try:
             _, _, raw = read_utf8_artifact(path, max_bytes=_MAX_FILE_BYTES)
-            data = json.loads(
-                raw,
-                parse_constant=lambda value: (_ for _ in ()).throw(
-                    ValueError(f"invalid JSON constant {value}")
-                ),
-            )
+            data = strict_json_loads(raw)
         except (OSError, UnicodeError, ValueError) as exc:
             raise ExternalEngineOutputError(
                 f"HarmBench merged output is missing or invalid: {path}"

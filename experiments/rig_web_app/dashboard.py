@@ -11,6 +11,8 @@ import time
 from typing import Any, Mapping
 from urllib.parse import quote
 
+from ura.strict_json import strict_json_loads
+
 from .catalog import _WARNINGS_FILE, _WARNINGS_MAX, _WARNING_TONES, _CAMPAIGN_POLICY, _icon
 
 from .ui import _page
@@ -41,7 +43,7 @@ class DashboardMixin:
 
         path = self.results_root / _WARNINGS_FILE
         try:
-            raw = json.loads(path.read_text(encoding="utf-8"))
+            raw = strict_json_loads(path.read_text(encoding="utf-8"))
         except (OSError, ValueError):
             return []
         entries = raw.get("warnings") if isinstance(raw, dict) else None
@@ -579,6 +581,11 @@ class DashboardMixin:
                 "report with no common estimate rows (native-only or empty)."
                 "</p></div>"
             )
+        contains_approximate = any(
+            isinstance(row, Mapping)
+            and row.get("metric_authority") == "supplementary_non_authoritative"
+            for row in estimates
+        )
         by_stratum: dict[tuple, list[Mapping[str, Any]]] = {}
         for row in estimates:
             if not isinstance(row, Mapping):
@@ -598,7 +605,8 @@ class DashboardMixin:
         for key in sorted(by_stratum):
             rows = by_stratum[key]
             fields = {
-                name: json.loads(value) for name, value in zip(self._LEVEL2_COMPAT_FIELDS, key)
+                name: strict_json_loads(value)
+                for name, value in zip(self._LEVEL2_COMPAT_FIELDS, key)
             }
             # The section label reflects THIS stratum's own compatibility
             # fields (they are identical for every row in the group), never a
@@ -666,6 +674,33 @@ class DashboardMixin:
                     if isinstance(value, (int, float)) and not isinstance(value, bool)
                     else "N/A"
                 )
+                if row.get("metric_authority") == "supplementary_non_authoritative":
+                    synthetic = row.get("evidence_class") == "synthetic"
+                    evidence = (
+                        "⚠ synthetic + approximate"
+                        if synthetic
+                        else "⚠ approximate"
+                    )
+                    reliability = row.get("reliability_score")
+                    reliability_text = (
+                        f"{float(reliability):.4f} heuristic (not probability)"
+                        if isinstance(reliability, (int, float))
+                        and not isinstance(reliability, bool)
+                        else "invalid/missing"
+                    )
+                else:
+                    evidence = "authoritative/source-native"
+                    reliability_text = "N/A"
+                query_count = row.get("approximate_model_query_count")
+                reference_count = row.get(
+                    "approximate_source_reference_use_count"
+                )
+                proxy_support = (
+                    f"{query_count}/{reference_count}"
+                    if isinstance(query_count, int)
+                    and isinstance(reference_count, int)
+                    else "N/A"
+                )
                 table_rows.append(
                     f"<tr><td><code>{html.escape(str(row.get('model_spec', '')))}"
                     "</code></td>"
@@ -676,27 +711,52 @@ class DashboardMixin:
                     f"<td>{ci}</td>"
                     f"<td>{html.escape(str(row.get('n_records', 'N/A')))}</td>"
                     f"<td>{html.escape(str(n_clusters) if n_clusters is not None else 'N/A')}</td>"
-                    f"<td>{coverage}</td></tr>"
+                    f"<td>{coverage}</td>"
+                    f"<td>{proxy_support}</td>"
+                    f"<td>{html.escape(evidence)}</td>"
+                    f"<td>{html.escape(reliability_text)}</td></tr>"
+                )
+            authority_badge = ""
+            authority_note = ""
+            if rows[0].get("metric_authority") == "supplementary_non_authoritative":
+                synthetic = rows[0].get("evidence_class") == "synthetic"
+                authority_badge = (
+                    " <span class='badge red'>⚠ synthetic + approximate</span>"
+                    if synthetic
+                    else " <span class='badge amber'>⚠ approximate</span>"
+                )
+                authority_note = (
+                    "<p class='note'>Supplementary, non-authoritative response "
+                    "proxy. Reliability is an uncalibrated heuristic, not a "
+                    "probability or accuracy estimate.</p>"
                 )
             sections.append(
-                f"<h3>{html.escape(str(fields['metric']))} "
+                f"<h3>{html.escape(str(fields['metric']))}{authority_badge} "
                 f"<span class='fieldhint'>({len(rows)} row(s))</span><br>"
                 + label_bits
                 + "</h3>"
+                + authority_note
                 + chart
                 + "<div class='scroll'><table><tr><th>model_spec</th>"
                 "<th>corpus_arm</th><th>attacker</th><th>defense</th>"
                 "<th>value</th><th>ci_low, ci_high</th><th>n_records</th>"
-                "<th>n_clusters</th><th>decided/completed</th></tr>"
+                "<th>n_clusters</th><th>decided/completed</th>"
+                "<th>model queries/reference uses</th><th>evidence</th>"
+                "<th>reliability</th></tr>"
                 + "".join(table_rows)
                 + "</table></div>"
             )
         return (
             "<div class='card'><h2>"
             + _icon("chart")
-            + f"{html.escape(rel)} <span class='badge blue'>measured</span>"
-            "</h2>"
-            "<p class='note'>Deterministic Level-2 export "
+            + f"{html.escape(rel)} <span class='badge blue'>measured artifact</span>"
+            + (
+                " <span class='badge amber'>contains supplementary proxies</span>"
+                if contains_approximate
+                else ""
+            )
+            + "</h2>"
+            + "<p class='note'>Deterministic Level-2 export "
             "(<code>common.estimates</code>). One chart per COMPATIBLE metric "
             "stratum (exact run/served target/source/policy/modality/population/"
             "attacker/defense/judge/sampling condition); distinct targets or "
@@ -733,6 +793,10 @@ class DashboardMixin:
             ("Planning strata", "planning_strata"),
             ("Execution units", "execution_units"),
             ("Judgment records", "judgment_records"),
+            (
+                "Supplementary approximate proxy judgment records",
+                "approximate_proxy_judgment_records",
+            ),
             ("Request-level errors", "request_level_errors"),
         ):
             block = counts.get(key)
@@ -789,7 +853,9 @@ class DashboardMixin:
             if report["kind"] not in {"level1", "level2"} or len(cards) >= 6:
                 continue
             try:
-                doc = json.loads((self.results_root / rel).read_text(encoding="utf-8"))
+                doc = strict_json_loads(
+                    (self.results_root / rel).read_text(encoding="utf-8")
+                )
             except (OSError, ValueError):
                 continue
             if not isinstance(doc, dict):

@@ -19,10 +19,11 @@ from ..judges.base import BaseJudge
 from ..judges.guardrail import GuardrailJudge
 from .base import BaseTarget
 
-_BLOCK_TEXT = (
+GUARDED_BLOCK_TEXT = (
     "I can't help with that. A safety guardrail flagged this request as "
     "potentially harmful, so it was blocked before completion."
 )
+GUARDED_BLOCK_TEMPLATE_ID = "guarded-target-block/v1"
 
 # A generic datapoint for the guard: the guardrail classifies content, not the
 # datapoint's declared category, so a placeholder is sufficient.
@@ -79,7 +80,7 @@ class GuardedTarget(BaseTarget):
         return Response(
             attempt_id="__guard__",
             target=self.name,
-            output_turns=[DialogTurn(role="assistant", content=_BLOCK_TEXT)],
+            output_turns=[DialogTurn(role="assistant", content=GUARDED_BLOCK_TEXT)],
             raw={
                 "defense": "blocked",
                 "stage": stage,
@@ -88,6 +89,7 @@ class GuardedTarget(BaseTarget):
                 "base_target_queried": stage != "input",
                 "requested_seed": seed,
                 "target_sampling_control": "not_queried",
+                "defense_block_template_id": GUARDED_BLOCK_TEMPLATE_ID,
             },
         )
 
@@ -189,4 +191,6 @@ class GuardedTarget(BaseTarget):
         return response
 
 
-__all__ = ["GuardedTarget"]
+__all__ = [
+    "GUARDED_BLOCK_TEMPLATE_ID", "GUARDED_BLOCK_TEXT", "GuardedTarget",
+]

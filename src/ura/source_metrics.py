@@ -173,13 +173,18 @@ def evaluate_source_response(
     }
 
 
-def validate_scored_source_metrics(corpus: list[DataPoint]) -> None:
+def validate_scored_source_metrics(
+    corpus: list[DataPoint], *, allow_approximate_common_proxy: bool = False
+) -> None:
     """Reject unscored source constructs before a Runner target call.
 
     Conversion support and native-artifact ingestion are intentionally broader
-    than executable scored-cell support.  Common-metric-ineligible rows can run
-    only when their exact source and required metric resolve to a substantive
-    evaluator registered in this module.
+    than executable source-scored-cell support.  By default, common-metric-
+    ineligible rows can run only when their exact source and required metric
+    resolve to a substantive evaluator registered in this module.  An explicit
+    ``allow_approximate_common_proxy`` opt-in admits target execution plus the
+    separately labelled, non-authoritative common proxy; it does not claim that
+    the missing source evaluator was implemented.
     """
 
     unavailable: list[tuple[str, str, str, str]] = []
@@ -195,7 +200,7 @@ def validate_scored_source_metrics(corpus: list[DataPoint]) -> None:
                 f"required_metric: {datapoint.id}"
             )
         key = (datapoint.source, required)
-        if key not in _IMPLEMENTED_SOURCE_EVALUATORS:
+        if key not in _IMPLEMENTED_SOURCE_EVALUATORS and not allow_approximate_common_proxy:
             runtime = datapoint.meta.get("source_metric_runtime")
             unavailable.append((
                 datapoint.id,

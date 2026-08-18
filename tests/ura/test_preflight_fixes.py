@@ -66,7 +66,7 @@ def test_attempt_ids_include_seed():
 
 
 def test_trails_carry_risk_category(tmp_path: Path):
-    corpus = synth_corpus(8)
+    corpus = [row for row in synth_corpus(8) if "tool" not in row.modalities]
     runner = Runner(ReplayAttacker(), MockTarget(), JudgeCascade([_MockAwareConfidentJudge()]),
                     AttackBudget(), seeds=[0])
     runner.run(corpus, started_at="t")
@@ -78,7 +78,7 @@ def test_trails_carry_risk_category(tmp_path: Path):
 
 
 def test_aggregate_emits_multiturn_robustness():
-    corpus = synth_corpus(8)
+    corpus = [row for row in synth_corpus(8) if "tool" not in row.modalities]
     runner = Runner(CrescendoAttacker(), MockTarget(), JudgeCascade([_MockAwareConfidentJudge()]),
                     AttackBudget(max_queries=4, max_turns=4), seeds=[0])
     judgments, _ = runner.run(corpus, started_at="t")

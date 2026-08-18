@@ -230,7 +230,7 @@ completed Judgment-record counts. Analysis-inclusion counts remain null and
 `not_supplied`; these quantities must not all be relabelled as "cells".
 
 `experiments.level1_evidence` implements this accounting by automatically
-discovering `ura-request-envelope/1` artifacts from supplied result roots and
+discovering `ura-request-envelope/2` artifacts from supplied result roots and
 eligibility siblings, then joining any materialized plans and final
 complete/partial grids. It emits `ura-level1-evidence/2` JSON and the existing
 deterministic planning-stratum CSV. It
@@ -292,11 +292,58 @@ figures. The synthetic path may exercise a mock full-shadow cascade without a
 human, but its decisions validate fixtures only. Source-native canaries stay in
 their upstream runtimes and out of canonical measured imports.
 
+## Supplementary approximate security metrics
+
+Common-security proxies for source-ineligible records are strictly opt-in. With
+the option disabled, they add no judge calls and leave source-native decisions,
+coverage, denominators, and metric names unchanged. When enabled, every proxy is
+reported under an `approximate_*` name with an explicit warning and separate
+proxy coverage/counts; it is never promoted into an authoritative or
+source-native result.
+
+Provenance distinguishes the selected cascade decision from any rubric decision.
+For each contribution it records whether a model was actually queried, the
+measured or synthetic evidence class, response-only versus source-reference
+coverage, judge kind, retained identity quality, and limitations. A provider
+refusal may supply only a refusal signal and receives no model identity credit.
+Mock targets and mock model responses remain synthetic even when a caller labels
+the surrounding run measured. Physical-media source-reference coverage is
+credited only when the selected judge declares and actually uses that context.
+Tool-conditioned source metrics remain fail-closed unless a typed executable
+target route is available.
+
+Approximate aggregation is not a self-authenticating judgment transform. It
+requires the authoritative retained `Response` for every supporting attempt and
+the exact supplementary-metric policy from the completed manifest. The complete
+typed selected and rubric stage projections must match their completion-hashed
+trail bindings at direct aggregation, Level-1, Level-2, and suite-summary
+boundaries. Caller bindings are exact-key and strict-type records: missing
+nullable fields and Boolean/integer substitutions fail closed.
+Raw judge-stage synthetic, query, provider-signal, mock, and reference-use
+markers likewise accept only actual Booleans when present. Direct
+`Runner.aggregate` additionally reprojects the Runner's retained in-memory
+trail and requires exact equality with every supporting proxy decision; a
+self-consistent rewrite of the nested and outer judgment fields is insufficient.
+
+For a static approximate metric, `EvalResult.n`,
+`provenance.n_result_units`, and the metric-specific supporting-decision count
+are identical. A response-conditioned trajectory metric may instead declare
+`result_count_unit=response_conditioned_trajectory`; its separately typed unit
+count is never inferred for a static metric or substituted for decision
+coverage.
+
+The displayed reliability score is an uncalibrated heuristic, not a probability,
+accuracy estimate, or model ranking. It reflects method, observed evidence
+coverage, decision confidence, and identity completeness/aliasing. It does not
+claim that one model is more capable or reputable than another. Model-specific
+reliability would require a separately versioned calibration artifact grounded
+in human-labelled outcomes.
+
 ## Broad-suite inventory and focal figures
 
 `experiments.suite_summary` accepts completion-validated runner cells,
 canonical re-imported `ura-native-import-envelope/2` evidence, and separately
-validated `ura-eligibility-plan/1` planning ledgers supplied through repeatable
+validated `ura-eligibility-plan/2` planning ledgers supplied through repeatable
 `--eligibility` arguments. Eligibility counts remain explicitly labelled as
 planning rather than execution evidence. Each native envelope is validated
 against its hashed relative config and authoritative raw artifacts before its

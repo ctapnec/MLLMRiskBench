@@ -61,7 +61,10 @@ def test_guarded_target_output_mode_suppresses():
 
 
 def test_modality_grouping_and_trails(tmp_path: Path):
-    corpus = synth_corpus(9)
+    # Tool-conditioned rows require a typed executable tool runtime and are
+    # covered by dedicated prospective no-call tests. This grouping smoke uses
+    # only rows executable by the common Runner.
+    corpus = [row for row in synth_corpus(9) if "tool" not in row.modalities]
     runner = Runner(
         ReplayAttacker(), MockTarget(),
         JudgeCascade([RuleJudge(), _StubGuard(False)]),
@@ -73,7 +76,8 @@ def test_modality_grouping_and_trails(tmp_path: Path):
     assert all("modality" in j.raw for j in judgments)
     results = runner.aggregate(judgments, group_keys=["model", "modality"])
     modalities = {r.group_by.get("modality") for r in results}
-    assert modalities & {"text", "image", "tool"}
+    assert modalities & {"text", "image"}
+    assert "tool" not in modalities
 
     # trail export writes one row per (attempt, stage) for kappa
     trail_path = tmp_path / "cell.trails.jsonl"

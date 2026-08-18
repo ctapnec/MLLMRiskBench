@@ -17,7 +17,8 @@ from .eligibility import canonical_json_sha256
 from .project_revision import validate_project_revision_binding
 
 
-REQUEST_ENVELOPE_SCHEMA = "ura-request-envelope/1"
+REQUEST_ENVELOPE_SCHEMA = "ura-request-envelope/2"
+_LEGACY_REQUEST_ENVELOPE_SCHEMA = "ura-request-envelope/1"
 REQUEST_ERROR_SCHEMA = "ura-request-error/1"
 _ENVELOPE_ID = re.compile(r"request-envelope-[0-9a-f]{24}")
 _ERROR_ID = re.compile(r"request-error-[0-9a-f]{24}")
@@ -29,11 +30,16 @@ _ENVELOPE_FIELDS = frozenset({
     "schema", "status", "envelope_id", "request", "bindings",
     "execution_units", "limitations",
 })
-_REQUEST_FIELDS = frozenset({
+_REQUEST_FIELDS_V1 = frozenset({
     "execution_purpose", "requested_target_keys", "logical_source_arms",
     "selected_attackers", "judges", "judge_model", "seeds", "sample_seed",
     "limit", "max_queries", "max_turns", "defense", "defense_guard",
     "group_keys", "quantization", "dtype", "dry_run", "call_caps",
+})
+_REQUEST_FIELDS = frozenset({
+    *_REQUEST_FIELDS_V1,
+    "approximate_common_metrics",
+    "hosted_judge_data_transfer_acknowledged",
 })
 _BINDING_FIELDS = frozenset({
     "project_revision", "harness_source", "driver_source",
@@ -63,13 +69,16 @@ _CALL_CAP_FIELDS = frozenset({
 })
 _ERROR_PHASES = frozenset({
     "configuration_preflight",
+    "model_acquisition_admission",
     "source_conformance_input_preflight",
     "corpus_preflight",
+    "attacker_input_contract_preflight",
     "diagnostic_canary_cluster_admission",
     "source_conformance_preflight",
 })
 _ERROR_CATEGORIES = frozenset({
     "configuration_invalid",
+    "model_acquisition_invalid",
     "source_input_unavailable",
     "source_integrity_failed",
     "conversion_failed",
@@ -186,6 +195,11 @@ def build_request_envelope(
     """Build the fixed whole-arm request universe before source materialization."""
 
     request_value = dict(request)
+    # Preserve the public builder API for callers authored before schema v2.
+    # Newly built artifacts still persist the explicit default-off policy;
+    # already-retained v1 artifacts are validated unchanged below.
+    request_value.setdefault("approximate_common_metrics", False)
+    request_value.setdefault("hosted_judge_data_transfer_acknowledged", False)
     _strict_object(request_value, _REQUEST_FIELDS, "request-envelope request")
     targets = _unique_strings(
         request_value["requested_target_keys"], "requested target keys"
@@ -231,10 +245,11 @@ def validate_request_envelope(value: object) -> dict[str, Any]:
     """Strictly validate and self-recompute one request envelope."""
 
     envelope = _strict_object(value, _ENVELOPE_FIELDS, "request envelope")
-    if (
-        envelope["schema"] != REQUEST_ENVELOPE_SCHEMA
-        or envelope["status"] != "fixed_before_source_materialization"
-    ):
+    schema = envelope["schema"]
+    if schema not in {
+        REQUEST_ENVELOPE_SCHEMA,
+        _LEGACY_REQUEST_ENVELOPE_SCHEMA,
+    } or envelope["status"] != "fixed_before_source_materialization":
         raise ValueError("unsupported or incomplete request envelope")
     envelope_id = envelope["envelope_id"]
     body = {key: item for key, item in envelope.items() if key != "envelope_id"}
@@ -245,8 +260,13 @@ def validate_request_envelope(value: object) -> dict[str, Any]:
     ):
         raise ValueError("request envelope ID/content mismatch")
 
+    request_fields = (
+        _REQUEST_FIELDS
+        if schema == REQUEST_ENVELOPE_SCHEMA
+        else _REQUEST_FIELDS_V1
+    )
     request = _strict_object(
-        envelope["request"], _REQUEST_FIELDS, "request-envelope request"
+        envelope["request"], request_fields, "request-envelope request"
     )
     targets = _unique_strings(request["requested_target_keys"], "requested target keys")
     arms = _unique_strings(request["logical_source_arms"], "logical source arms")
@@ -287,8 +307,19 @@ def validate_request_envelope(value: object) -> dict[str, Any]:
     _integer(request["limit"], "request limit")
     _integer(request["max_queries"], "request max_queries", minimum=1)
     _integer(request["max_turns"], "request max_turns", minimum=1)
-    if not isinstance(request["dry_run"], bool):
-        raise ValueError("request envelope dry_run must be boolean")
+    if not isinstance(request["dry_run"], bool) or (
+        schema == REQUEST_ENVELOPE_SCHEMA
+        and (
+            not isinstance(request["approximate_common_metrics"], bool)
+            or not isinstance(
+                request["hosted_judge_data_transfer_acknowledged"], bool
+            )
+        )
+    ):
+        raise ValueError(
+            "request envelope dry_run/approximate_common_metrics/hosted-judge "
+            "data-transfer acknowledgement must be boolean"
+        )
     caps = _strict_object(request["call_caps"], _CALL_CAP_FIELDS, "request call caps")
     for field, item in caps.items():
         if item is not None:

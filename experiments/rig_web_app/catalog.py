@@ -36,9 +36,8 @@ _CAMPAIGN_POLICY = (
     ),
     (
         "Judge budget",
-        "the hosted judge is metered on every judged response "
-        "regardless of target locality, so local full-corpus lanes score "
-        "rules-only with hosted LLM judging on the common subset only",
+        "the selected model judge consumes the judge-call ceiling on every "
+        "judged response; hosted judges additionally incur provider spend",
     ),
     (
         "Prepaid budgets",
@@ -82,7 +81,9 @@ _PARAM_HELP: dict[str, str] = {
     "Fable/Sol focal pair). Hosted lanes must carry --limit and "
     "--sample-seed.",
     "--local": "Comma list of backend:model specs for local GPU lanes. Local "
-    "lanes run the full corpus; only the judge is metered.",
+    "lanes run the full corpus. A selected hosted judge remains metered; a "
+    "local judge avoids hosted API spend but cannot share one process with a "
+    "local target.",
     "--corpora": "Comma list of source arm ids (from source-instances.json) or "
     "'synth'. Every selected real arm must be admitted in the "
     "source-conformance receipt.",
@@ -90,9 +91,16 @@ _PARAM_HELP: dict[str, str] = {
     "prompt as-is; 'crescendo' escalates over turns; the rest "
     "are external adapters.",
     "--judges": "Judge stages: 'rules' is the deterministic rule scorer "
-    "(free), 'llm' adds the hosted judge (metered per response).",
-    "--judge-model": "Target id used by the LLM judge. The campaign judge is "
-    "anthropic:claude-haiku-4-5-20251001; 'mock' for offline.",
+    "(free), 'llm' adds an explicitly selected hosted or local model judge.",
+    "--judge-model": "Configured hosted or local target id used by the LLM "
+    "judge; 'mock' is reserved for offline dry runs.",
+    "--ack-hosted-judge-data-transfer": "Explicit acknowledgement that a hosted "
+    "judge receives target output plus source/reference grading context under "
+    "the selected provider's retention and usage terms.",
+    "--approximate-common-metrics": "Explicit opt-in for separate supplementary "
+    "common-security response proxies on common-metric-ineligible source rows. "
+    "These are non-authoritative, never replace source-native metrics, and carry "
+    "an uncalibrated reliability indicator that is not probability or accuracy.",
     "--limit": "Cluster subsample size. REQUIRED on every hosted paid lane - "
     "it bounds spend. Omit only for local full-corpus lanes.",
     "--sample-seed": "Deterministic seed for the cluster subsample. Fix it and "
@@ -104,8 +112,8 @@ _PARAM_HELP: dict[str, str] = {
     "--max-turns": "Max conversation turns per trajectory.",
     "--max-total-target-calls": "Hard circuit-breaker: abort the lane after "
     "this many target calls. A budget guard.",
-    "--max-total-judge-calls": "Hard circuit-breaker on hosted judge calls - "
-    "the dominant Anthropic cost. A budget guard.",
+    "--max-total-judge-calls": "Hard circuit-breaker on model-backed judge "
+    "calls, hosted or local. A budget guard.",
     "--max-total-http-attempts": "Hard cap on total HTTP attempts across the "
     "lane (retries included).",
     "--deadline-seconds": "Wall-clock deadline for the lane; a runaway guard.",
@@ -113,6 +121,8 @@ _PARAM_HELP: dict[str, str] = {
     "source-instances.json). Bound automatically when the "
     "campaign env is exported.",
     "--api-config": "Path to the hosted-target registry (experiments/api-targets.json).",
+    "--api-config-sha256": "Exact byte SHA-256 for a read-once selected hosted config.",
+    "--local-config-sha256": "Exact byte SHA-256 for a read-once selected local config.",
     "--out": "Output directory under the rig results root for this run's artifacts.",
     "--expected-revision": "The exact 40-hex project commit this checkout must "
     "match for the revision receipt.",
@@ -187,7 +197,7 @@ _PROVIDER_BUDGETS: tuple[tuple[str, str, str], ...] = (
 #: pair a text channel with an image/audio/video channel, so they belong to
 #: BOTH modalities - a text+image arm is selected by the text chip and the
 #: image chip alike (no arm is forced into a single bucket).
-_MODALITIES = ("text", "image", "audio", "video")
+_MODALITIES = ("text", "image", "audio", "video", "tool")
 
 
 #: The complete maintained source-arm catalogue: (arm id, physical modalities,
@@ -200,16 +210,28 @@ _MODALITIES = ("text", "image", "audio", "video")
 #:     ``ura.source_metrics``, so run_matrix scores it as a source-metric lane
 #:     (restricted to the attacker(s) its converter declares).  RUNNABLE.
 #:   * non-empty reason - ``common_metrics_eligible: False`` and NO implemented
-#:     source evaluator, so run_matrix fails its scored preflight before any
-#:     target call.  Shown DISABLED with the honest reason.  This is NOT a
-#:     native_import target: native_import canonicalises the nine upstream
-#:     end-to-end engines (the native-only attackers), not these dataset arms.
+#:     source evaluator. Default admission fails before any target call; an
+#:     explicit approximate-common-metrics opt-in permits only separately
+#:     labelled, non-authoritative response proxies. This is NOT a native_import
+#:     target: native_import canonicalises the upstream end-to-end engines.
 def _ineligible(metric: str) -> str:
     return (
-        f"scored by the source-specific '{metric}' metric (its ground truth is "
-        "not common harmful-ASR), but that evaluator is not yet integrated, so "
-        "run_matrix fails its scored preflight before any target call. Converted "
-        "records remain available for offline analysis (not a native_import target)"
+        f"This source requires the source-specific '{metric}' metric (not common "
+        "harmful-ASR), but that evaluator is not integrated. Default scored "
+        "admission therefore remains closed. The explicit approximate-common-"
+        "metrics opt-in can add separate supplementary, non-authoritative "
+        "response-proxy metrics; it does not implement or replace this source "
+        "evaluator."
+    )
+
+
+def _tool_ineligible(metric: str) -> str:
+    return (
+        f"This source requires the source-specific {metric!r} metric and an "
+        "executable tool environment. No maintained Runner target currently "
+        "declares that capability, so both default scoring and the approximate "
+        "response-proxy route remain fail-closed. Use a validated native tool "
+        "runtime/import instead."
     )
 
 
@@ -257,8 +279,8 @@ _ARM_CATALOG: tuple[tuple[str, tuple[str, ...], str], ...] = (
     ("jalmbench_audio", ("text", "audio"), ""),
     ("videosafetybench_benign_query", ("text", "video"), ""),
     ("videosafetybench_harmful_query", ("text", "video"), ""),
-    ("agentharm_benign", ("text",), _ineligible("official_agentharm_tool_grading")),
-    ("agentharm_harmful", ("text",), _ineligible("official_agentharm_tool_grading")),
+    ("agentharm_benign", ("text", "tool"), _tool_ineligible("official_agentharm_tool_grading")),
+    ("agentharm_harmful", ("text", "tool"), _tool_ineligible("official_agentharm_tool_grading")),
     ("bipia_test_abstract", ("text",), _ineligible("indirect_injection_task_success")),
     ("bipia_test_code", ("text",), _ineligible("indirect_injection_task_success")),
     ("bipia_test_email", ("text",), _ineligible("indirect_injection_task_success")),
@@ -266,23 +288,23 @@ _ARM_CATALOG: tuple[tuple[str, tuple[str, ...], str], ...] = (
     ("bipia_test_table", ("text",), _ineligible("indirect_injection_task_success")),
     (
         "injecagent_direct_harm_base",
-        ("text",),
-        _ineligible("official_injecagent_tool_call_scoring"),
+        ("text", "tool"),
+        _tool_ineligible("official_injecagent_tool_call_scoring"),
     ),
     (
         "injecagent_direct_harm_enhanced",
-        ("text",),
-        _ineligible("official_injecagent_tool_call_scoring"),
+        ("text", "tool"),
+        _tool_ineligible("official_injecagent_tool_call_scoring"),
     ),
     (
         "injecagent_data_stealing_base",
-        ("text",),
-        _ineligible("official_injecagent_tool_call_scoring"),
+        ("text", "tool"),
+        _tool_ineligible("official_injecagent_tool_call_scoring"),
     ),
     (
         "injecagent_data_stealing_enhanced",
-        ("text",),
-        _ineligible("official_injecagent_tool_call_scoring"),
+        ("text", "tool"),
+        _tool_ineligible("official_injecagent_tool_call_scoring"),
     ),
     ("rjudge_release", ("text",), ""),
 )
@@ -502,6 +524,8 @@ _MATRIX_PARAMS = (
     CommandParam("--attackers", "str", suggest="attackers"),
     CommandParam("--judges", "str", suggest="judges"),
     CommandParam("--judge-model", "str", suggest="api"),
+    CommandParam("--ack-hosted-judge-data-transfer", "flag"),
+    CommandParam("--approximate-common-metrics", "flag"),
     CommandParam("--defense", "str", choices=("none", "input", "output", "both")),
     CommandParam("--defense-guard", "str", choices=("rules", "guardrail")),
     CommandParam("--guardrail-model", "str"),
@@ -512,10 +536,21 @@ _MATRIX_PARAMS = (
     CommandParam("--defense-guardrail-device", "str"),
     CommandParam("--group", "str", suggest="group"),
     CommandParam("--attacker-config", "path"),
+    CommandParam("--attacker-config-sha256", "str"),
     CommandParam("--reset-open-circuits", "flag"),
+    CommandParam("--model-acquisition-plan-only", "flag"),
+    CommandParam("--model-acquisition-plan-dir", "path"),
+    CommandParam("--model-acquisition-plan", "path"),
+    CommandParam("--model-acquisition-plan-sha256", "str"),
+    CommandParam("--model-acquisition-receipt", "path"),
+    CommandParam("--model-acquisition-receipt-sha256", "str"),
+    CommandParam("--model-acquisition-store", "path"),
     CommandParam("--source-config", "path"),
+    CommandParam("--source-config-sha256", "str"),
     CommandParam("--api-config", "path"),
+    CommandParam("--api-config-sha256", "str"),
     CommandParam("--local-config", "path"),
+    CommandParam("--local-config-sha256", "str"),
     CommandParam("--project-revision", "path"),
     CommandParam("--project-revision-sha256", "str"),
     CommandParam("--source-conformance", "path"),
@@ -830,6 +865,36 @@ def _commands() -> dict[str, Command]:
             ),
         ),
         Command(
+            "ollama_pull",
+            "experiments.ollama_pull",
+            "Pull one model through the fixed loopback Ollama daemon",
+            (
+                CommandParam("--model", "str", required=True),
+                CommandParam("--base-url", "str"),
+                CommandParam("--models-path", "path", required=True),
+                CommandParam("--owned-pid", "int", required=True),
+                CommandParam("--owned-process-identity", "str", required=True),
+                CommandParam("--timeout-seconds", "float"),
+            ),
+        ),
+        Command(
+            "model_acquire",
+            "experiments.model_acquire",
+            "Acquire one reviewed immutable Hugging Face model plan",
+            (
+                CommandParam("--plan", "path", required=True),
+                CommandParam("--plan-sha256", "str", required=True),
+                CommandParam("--store", "path", required=True),
+                CommandParam("--receipts-dir", "path", required=True),
+                CommandParam("--transport-cache", "path"),
+                CommandParam("--max-download-bytes", "int", required=True),
+                CommandParam("--min-free-bytes", "int", required=True),
+                CommandParam("--deadline-seconds", "float", required=True),
+                CommandParam("--activity-event", "path"),
+                CommandParam("--activity-job-id", "str"),
+            ),
+        ),
+        Command(
             "webui_selftest",
             "experiments.rig_web",
             "UI diagnostic only: sleep briefly and exit",
@@ -843,8 +908,9 @@ COMMANDS = _commands()
 
 
 #: Presentation-only grouping of the allowlisted commands by runbook stage.
-#: Every command appears in exactly one group (asserted by tests); grouping
-#: never changes what a command does or which arguments it accepts.
+#: Every generic-Run command appears in exactly one group (asserted by tests).
+#: Controller-only commands such as run_matrix, model_acquire, and ollama_pull are intentionally
+#: omitted because their validated Build workflows own launch authorization.
 COMMAND_GROUPS: tuple[tuple[str, str, str, tuple[str, ...]], ...] = (
     (
         "Receipts and conformance",
@@ -863,10 +929,15 @@ COMMAND_GROUPS: tuple[tuple[str, str, str, tuple[str, ...]], ...] = (
         "Preflight, probes and lanes",
         "play",
         "runbook sections 8-13",
-        ("rig_check", "run_matrix", "live_attestation", "lane_canary"),
+        ("rig_check", "live_attestation", "lane_canary"),
     ),
     ("Native and synthetic", "flask", "runbook sections 14, 16", ("native_import", "syn_compat")),
-    ("Targets and rosters", "coins", "runbook sections 5, 13", ("local_targets",)),
+    (
+        "Targets and rosters",
+        "coins",
+        "runbook sections 5, 13",
+        ("local_targets",),
+    ),
     (
         "Analysis and reporting",
         "chart",

@@ -10,14 +10,19 @@ from pathlib import Path
 from typing import Any
 
 
-from .artifacts import Job, run_kind, _argv_out_dir
+from .artifacts import (
+    Job,
+    assert_durable_job_state_path_free,
+    run_kind,
+    _argv_out_dir,
+)
 
 
 class ConsoleDB:
     """Durable operational database for the console.
 
-    Stdlib sqlite under the state directory: jobs (with their exact argv and
-    builder parameters), the campaign-run registry, recorded per-artifact
+    Stdlib sqlite under the state directory: jobs (with their durable argv
+    identities and builder parameters), the campaign-run registry, per-artifact
     token usage, and the report/artifact index.  Operational state only - the
     validated filesystem artifacts remain the scientific authority.
 
@@ -30,7 +35,7 @@ class ConsoleDB:
     unknown, shown as such) rather than a fabricated empty history.
     """
 
-    SCHEMA_VERSION = 3
+    SCHEMA_VERSION = 4
 
     def __init__(self, path: Path) -> None:
         self.path = path
@@ -82,6 +87,7 @@ class ConsoleDB:
                     ("out_dir", "TEXT"),
                     ("pin", "TEXT"),
                     ("failure", "TEXT"),
+                    ("activity", "TEXT"),
                 ):
                     if column not in existing:
                         self._conn.execute(f"ALTER TABLE jobs ADD COLUMN {column} {kind}")
@@ -93,7 +99,7 @@ class ConsoleDB:
                         directory TEXT, state TEXT, exit_code INTEGER,
                         started_at REAL, ended_at REAL, updated_at REAL,
                         builder_params TEXT, run_kind TEXT, out_dir TEXT,
-                        pin TEXT, failure TEXT
+                        pin TEXT, failure TEXT, activity TEXT
                     )
                     """
                 )
@@ -208,6 +214,9 @@ class ConsoleDB:
         # exits between two polls).
         resolved_state = state if state is not None else job.state()
         resolved_exit = exit_code if state is not None else job.exit_code()
+        # Lifecycle runs this exact boundary before Popen. Keep the redundant
+        # persistence check so a future alternate caller still fails closed.
+        assert_durable_job_state_path_free(job.argv, job.builder_params)
         return (
             job.job_id,
             job.command,
@@ -223,15 +232,17 @@ class ConsoleDB:
             _argv_out_dir(job.argv),
             job.pin,
             job.failure,
+            getattr(job, "activity", None),
         )
 
     _JOB_UPSERT = (
         "INSERT INTO jobs(job_id,command,argv,builder_params,directory,state,"
-        "exit_code,started_at,ended_at,updated_at,run_kind,out_dir,pin,failure)"
-        " VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?) "
+        "exit_code,started_at,ended_at,updated_at,run_kind,out_dir,pin,failure,activity)"
+        " VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) "
         "ON CONFLICT(job_id) DO UPDATE SET state=excluded.state,"
         "exit_code=excluded.exit_code,ended_at=excluded.ended_at,"
-        "updated_at=excluded.updated_at,failure=excluded.failure"
+        "updated_at=excluded.updated_at,failure=excluded.failure,"
+        "activity=excluded.activity"
     )
 
     def upsert_job(
@@ -374,6 +385,43 @@ class ConsoleDB:
 
     def load_jobs(self) -> list[sqlite3.Row] | None:
         return self._query("SELECT * FROM jobs ORDER BY started_at DESC LIMIT 500")
+
+    def load_jobs_between(
+        self,
+        started_from: float,
+        started_to: float,
+        *,
+        limit: int,
+    ) -> list[sqlite3.Row] | None:
+        """Return persisted jobs in an inclusive start-time window.
+
+        The caller requests one row beyond its display limit so it can disclose
+        truncation rather than silently pretending the in-memory restore cache
+        is the complete history.
+        """
+
+        if (
+            isinstance(started_from, bool)
+            or isinstance(started_to, bool)
+            or not isinstance(started_from, (int, float))
+            or not isinstance(started_to, (int, float))
+            or started_from > started_to
+            or isinstance(limit, bool)
+            or not isinstance(limit, int)
+            or limit <= 0
+        ):
+            raise ValueError("invalid Jobs history window")
+        return self._query(
+            "SELECT * FROM jobs WHERE started_at >= ? AND started_at <= ? "
+            "ORDER BY started_at DESC, job_id DESC LIMIT ?",
+            (float(started_from), float(started_to), limit),
+        )
+
+    def load_job(self, job_id: str) -> sqlite3.Row | None:
+        if not isinstance(job_id, str) or not job_id:
+            return None
+        rows = self._query("SELECT * FROM jobs WHERE job_id = ? LIMIT 1", (job_id,))
+        return rows[0] if rows else None
 
     def list_runs(self) -> list[sqlite3.Row] | None:
         return self._query("SELECT * FROM runs ORDER BY created_at DESC LIMIT 500")

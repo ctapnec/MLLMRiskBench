@@ -26,14 +26,26 @@ from typing import Any, Mapping
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
-from experiments.figure_results import _load_cells  # noqa: E402
-from experiments.level1_evidence import _decision_state  # noqa: E402
+from experiments.figure_results import (  # noqa: E402
+    _load_cells,
+    _reject_duplicate_realized_target_arms,
+)
+from experiments.level1_evidence import (  # noqa: E402
+    _approximate_decision_state,
+    _decision_state,
+)
 from experiments.native_import import load_native_run  # noqa: E402
 from experiments.suite_summary import (  # noqa: E402
     _metric_family,
     summarize_native_runs,
 )
 from ura.eligibility import canonical_json_sha256  # noqa: E402
+from ura.approximate_metrics import (  # noqa: E402
+    aggregate_approximate_provenance,
+    validate_approximate_completion_bindings,
+    validate_approximate_metric_provenance,
+)
+from ura.data_models import Judgment  # noqa: E402
 
 
 LEVEL2_SCHEMA = "ura-level2-report/1"
@@ -93,6 +105,14 @@ _CSV_FIELDS = (
     "semantic_family",
     "metric",
     "endpoint_status",
+    "metric_authority",
+    "warning_tag",
+    "evidence_class",
+    "reliability_score",
+    "reliability_kind",
+    "approximate_provenance",
+    "approximate_model_query_count",
+    "approximate_source_reference_use_count",
     "polarity",
     "value",
     "ci_low",
@@ -115,6 +135,8 @@ _CSV_FIELDS = (
 
 
 def _polarity(metric: str) -> str:
+    if metric.startswith("approximate_"):
+        metric = metric.removeprefix("approximate_")
     if metric.startswith("survival_"):
         return "higher_favorable"
     return _METRIC_POLARITY.get(metric, "source_defined")
@@ -144,25 +166,43 @@ def _judgment_bucket(cell: dict[str, Any], raw: Mapping[str, Any]) -> str:
 
 def _coverage_by_bucket(cell: dict[str, Any]) -> dict[str, dict[str, Any]]:
     coverage: dict[str, dict[str, Any]] = defaultdict(lambda: {
-        "judgments_completed": 0,
-        "judgments_evaluable": 0,
-        "judgments_decided": 0,
-        "judgments_abstained": 0,
-        "judgments_non_evaluable": 0,
+        "source_judgments_completed": 0,
+        "source_judgments_evaluable": 0,
+        "source_judgments_decided": 0,
+        "source_judgments_abstained": 0,
+        "source_judgments_non_evaluable": 0,
+        "approximate_judgments_completed": 0,
+        "approximate_judgments_evaluable": 0,
+        "approximate_judgments_decided": 0,
+        "approximate_judgments_abstained": 0,
         "execution_modes": set(),
         "policy_sha256": set(),
         "official_source_evaluator": set(),
     })
+    responses = cell.get("responses")
+    responses = responses if isinstance(responses, dict) else {}
+    supplementary_policy = cell["manifest"].get("config", {}).get(
+        "supplementary_metric_policy"
+    )
     for judgment in cell["judgments"]:
         raw = judgment.get("raw")
         if not isinstance(raw, dict):
             raise ValueError("completed judgment lacks raw provenance")
         record = coverage[_judgment_bucket(cell, raw)]
-        record["judgments_completed"] += 1
+        record["source_judgments_completed"] += 1
         state = _decision_state(judgment)
-        record[f"judgments_{state}"] += 1
+        record[f"source_judgments_{state}"] += 1
         if state != "non_evaluable":
-            record["judgments_evaluable"] += 1
+            record["source_judgments_evaluable"] += 1
+        approximate_state = _approximate_decision_state(
+            judgment,
+            response=responses.get(judgment.get("attempt_id")),
+            supplementary_policy=supplementary_policy,
+        )
+        if approximate_state is not None:
+            record["approximate_judgments_completed"] += 1
+            record["approximate_judgments_evaluable"] += 1
+            record[f"approximate_judgments_{approximate_state}"] += 1
         planning_execution_mode = raw.get("planning_execution_mode")
         if not isinstance(planning_execution_mode, str) or not planning_execution_mode:
             raise ValueError(
@@ -182,7 +222,42 @@ def _coverage_by_bucket(cell: dict[str, Any]) -> dict[str, dict[str, Any]]:
     return coverage
 
 
-def _endpoint_status(family: str, coverage: Mapping[str, Any]) -> str:
+def _validate_proxy_trail_bindings(cell: dict[str, Any]) -> None:
+    """Bind every proxy decision to the completion-hashed trail projection."""
+
+    validate_approximate_completion_bindings(
+        judgments=cell["judgments"],
+        responses=cell.get("responses"),
+        supplementary_policy=cell["manifest"].get("config", {}).get(
+            "supplementary_metric_policy"
+        ),
+        trails=cell.get("trails", []),
+    )
+
+
+def _metric_proxy_rows(
+    cell: dict[str, Any], group_by: Mapping[str, Any]
+) -> list[Judgment]:
+    rows: list[Judgment] = []
+    for value in cell["judgments"]:
+        judgment = Judgment.model_validate(value, strict=True)
+        if all(
+            str(
+                judgment.raw[key]
+                if key in judgment.raw and judgment.raw[key] is not None
+                else getattr(judgment, key, "unknown")
+            ) == expected
+            for key, expected in group_by.items()
+        ):
+            rows.append(judgment)
+    return rows
+
+
+def _endpoint_status(
+    family: str, coverage: Mapping[str, Any], provenance: Mapping[str, Any]
+) -> str:
+    if isinstance(provenance.get("approximate_security"), dict):
+        return "approximate_common_proxy"
     if family == "classification_quality":
         official = coverage["official_source_evaluator"]
         return (
@@ -196,6 +271,7 @@ def _endpoint_status(family: str, coverage: Mapping[str, Any]) -> str:
 
 
 def _estimate_rows(cell: dict[str, Any]) -> list[dict[str, Any]]:
+    _validate_proxy_trail_bindings(cell)
     run = cell["manifest"]["config"]["run"]
     manifest = cell["manifest"]
     coverage = _coverage_by_bucket(cell)
@@ -234,6 +310,80 @@ def _estimate_rows(cell: dict[str, Any]) -> list[dict[str, Any]]:
             )
         metric = str(result["metric"])
         family = _metric_family(metric)
+        approximate = provenance.get("approximate_security")
+        if metric.startswith("approximate_"):
+            if approximate is None:
+                raise ValueError(
+                    f"approximate result lacks strict proxy provenance: {metric}"
+                )
+            approximate = validate_approximate_metric_provenance(
+                metric, approximate
+            ).model_dump(mode="json")
+            if (
+                isinstance(result.get("n"), bool)
+                or not isinstance(result.get("n"), int)
+                or result["n"] != approximate["n_result_units"]
+            ):
+                raise ValueError(
+                    "approximate aggregate n does not match its typed "
+                    "metric-specific result-unit count"
+                )
+            metric_rows = _metric_proxy_rows(cell, group_by)
+            recomputed = aggregate_approximate_provenance(
+                metric_rows,
+                metric=metric.removeprefix("approximate_"),
+                responses=cell.get("responses"),
+                supplementary_policy=cell["manifest"].get("config", {}).get(
+                    "supplementary_metric_policy"
+                ),
+            )
+            if recomputed != approximate:
+                raise ValueError(
+                    "approximate aggregate provenance does not match its exact "
+                    "metric-specific completed proxy decisions"
+                )
+        elif approximate is not None:
+            raise ValueError(
+                f"source/common result carries approximate provenance: {metric}"
+            )
+        coverage_prefix = "approximate" if approximate is not None else "source"
+        selected_coverage = (
+            {
+                "judgments_completed": approximate["n_supporting_decisions"],
+                "judgments_evaluable": approximate["n_supporting_decisions"],
+                "judgments_decided": approximate["n_supporting_decisions"],
+                "judgments_abstained": 0,
+                "judgments_non_evaluable": 0,
+                "official_source_evaluator": bucket_coverage[
+                    "official_source_evaluator"
+                ],
+            }
+            if approximate is not None
+            else {
+                "judgments_completed": bucket_coverage[
+                    "source_judgments_completed"
+                ],
+                "judgments_evaluable": bucket_coverage[
+                    "source_judgments_evaluable"
+                ],
+                "judgments_decided": bucket_coverage[
+                    "source_judgments_decided"
+                ],
+                "judgments_abstained": bucket_coverage[
+                    "source_judgments_abstained"
+                ],
+                "judgments_non_evaluable": bucket_coverage[
+                    "source_judgments_non_evaluable"
+                ],
+                "official_source_evaluator": bucket_coverage[
+                    "official_source_evaluator"
+                ],
+            }
+        )
+        if selected_coverage["judgments_completed"] == 0:
+            raise ValueError(
+                f"aggregate result has no {coverage_prefix} decision coverage: {metric}"
+            )
         rows.append({
             "run_id": cell["run_id"],
             "corpus_arm": run["corpus"],
@@ -258,7 +408,37 @@ def _estimate_rows(cell: dict[str, Any]) -> list[dict[str, Any]]:
             ),
             "semantic_family": family,
             "metric": metric,
-            "endpoint_status": _endpoint_status(family, bucket_coverage),
+            "endpoint_status": _endpoint_status(
+                family, selected_coverage, provenance
+            ),
+            "metric_authority": (
+                "supplementary_non_authoritative"
+                if approximate is not None
+                else "authoritative_or_source_native"
+            ),
+            "warning_tag": (
+                approximate.get("warning_tag") if approximate is not None else None
+            ),
+            "evidence_class": (
+                approximate.get("evidence_class") if approximate is not None else None
+            ),
+            "reliability_score": (
+                approximate.get("reliability_score")
+                if approximate is not None else None
+            ),
+            "reliability_kind": (
+                approximate.get("reliability_kind")
+                if approximate is not None else None
+            ),
+            "approximate_provenance": approximate,
+            "approximate_model_query_count": (
+                approximate["n_model_queried_decisions"]
+                if approximate is not None else None
+            ),
+            "approximate_source_reference_use_count": (
+                approximate["n_source_reference_context_used"]
+                if approximate is not None else None
+            ),
             "polarity": _polarity(metric),
             "value": result["value"],
             "ci_low": result.get("ci_low"),
@@ -274,11 +454,11 @@ def _estimate_rows(cell: dict[str, Any]) -> list[dict[str, Any]]:
                 if refinements else ""
             ),
             "execution_modes": sorted(bucket_coverage["execution_modes"]),
-            "judgments_completed": bucket_coverage["judgments_completed"],
-            "judgments_evaluable": bucket_coverage["judgments_evaluable"],
-            "judgments_decided": bucket_coverage["judgments_decided"],
-            "judgments_abstained": bucket_coverage["judgments_abstained"],
-            "judgments_non_evaluable": bucket_coverage[
+            "judgments_completed": selected_coverage["judgments_completed"],
+            "judgments_evaluable": selected_coverage["judgments_evaluable"],
+            "judgments_decided": selected_coverage["judgments_decided"],
+            "judgments_abstained": selected_coverage["judgments_abstained"],
+            "judgments_non_evaluable": selected_coverage[
                 "judgments_non_evaluable"
             ],
             "cross_stratum_pooling_permitted": False,
@@ -290,6 +470,7 @@ def build_level2_report(
     cells: list[dict[str, Any]],
     native_runs: list[tuple[Any, str, str]],
 ) -> dict[str, Any]:
+    _reject_duplicate_realized_target_arms(cells)
     if not cells and not native_runs:
         raise ValueError("level-2 report requires runner cells and/or native runs")
     seen_run_ids: set[str] = set()
@@ -371,6 +552,10 @@ def _csv_text(estimates: list[dict[str, Any]]) -> str:
             value = row[field]
             if isinstance(value, list):
                 record[field] = "|".join(str(item) for item in value)
+            elif isinstance(value, dict):
+                record[field] = json.dumps(
+                    value, sort_keys=True, separators=(",", ":")
+                )
             elif value is None:
                 record[field] = ""
             else:
@@ -401,24 +586,44 @@ def _markdown_text(report: dict[str, Any]) -> str:
     by_family: dict[str, list[dict[str, Any]]] = defaultdict(list)
     for row in report["common"]["estimates"]:
         by_family[row["semantic_family"]].append(row)
+    if any(
+        row["metric_authority"] == "supplementary_non_authoritative"
+        for row in report["common"]["estimates"]
+    ):
+        lines.extend([
+            "> ⚠ Approximate rows are supplementary response proxies, not "
+            "authoritative or source-native results. Synthetic rows are plumbing "
+            "evidence only; reliability is an uncalibrated heuristic, not a "
+            "probability or accuracy estimate.",
+            "",
+        ])
     for family in sorted(by_family):
         lines.append(f"## {family}")
         lines.append("")
         lines.append(
-            "| source | metric | status | polarity | model | attacker | "
-            "defense | modality | population | value | 95% CI | n | clusters "
+            "| source | metric | status | authority | warning | evidence | reliability | "
+            "polarity | model | attacker | defense | modality | population | value | 95% CI | n | clusters "
             "| decided/abstained |"
         )
-        lines.append("|" + "---|" * 14)
+        lines.append("|" + "---|" * 18)
         for row in by_family[family]:
             interval = (
                 f"[{row['ci_low']}, {row['ci_high']}]"
                 if row["ci_low"] is not None
                 else "-"
             )
+            reliability = (
+                f"{row['reliability_score']} heuristic (not probability)"
+                if row["reliability_score"] is not None
+                else "-"
+            )
             lines.append(
                 f"| {_md_cell(row['source'])} | {_md_cell(row['metric'])} | "
                 f"{_md_cell(row['endpoint_status'])} | "
+                f"{_md_cell(row['metric_authority'])} | "
+                f"{_md_cell(row['warning_tag'] or '-')} | "
+                f"{_md_cell(row['evidence_class'] or '-')} | "
+                f"{_md_cell(reliability)} | "
                 f"{_md_cell(row['polarity'])} | "
                 f"{_md_cell(row['model_spec'])} | {_md_cell(row['attacker'])} "
                 f"| {_md_cell(row['defense'])} "

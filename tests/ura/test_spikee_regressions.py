@@ -60,6 +60,19 @@ def _fake_generator(rows: list[dict]):
     return run
 
 
+def _fake_raw_generator(raw: str):
+    def run(command, **kwargs):
+        assert command[1] == "generate"
+        out = Path(kwargs["cwd"]) / "datasets" / "generated.jsonl"
+        out.parent.mkdir(parents=True)
+        out.write_text(raw + "\n", encoding="utf-8")
+        return subprocess.CompletedProcess(
+            command, returncode=0, stdout="Spikee Version: 0.9.1\n", stderr=""
+        )
+
+    return run
+
+
 def test_spikee_preserves_exact_v091_rows_and_plugin_semantics(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -142,4 +155,27 @@ def test_spikee_rejects_legacy_guessed_prompt_fields() -> None:
     with pytest.raises(ExternalEngineOutputError, match="lacks fields"):
         SpikeeAttacker(plugins=[])._validate_entry(
             {"id": 1, "text": "old guessed field"}, 1
+        )
+
+
+def test_spikee_rejects_duplicate_generated_dataset_keys(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    row = _row(row_id=1, plugin=None, position="start")
+    encoded = json.dumps(row)
+    original = json.dumps(row["content"])
+    duplicate = f'"first value", "content": {original}'
+    ambiguous = encoded.replace(original, duplicate, 1)
+    monkeypatch.setattr(shutil, "which", lambda _name: "spikee")
+    monkeypatch.setattr(
+        spikee_module,
+        "run_engine_command",
+        _fake_raw_generator(ambiguous),
+    )
+
+    with pytest.raises(ExternalEngineOutputError, match="invalid JSON at line 1"):
+        list(
+            SpikeeAttacker(plugins=[], positions=["start"]).generate(
+                _datapoint(), AttackBudget(max_queries=1, max_turns=1, seed=0)
+            )
         )

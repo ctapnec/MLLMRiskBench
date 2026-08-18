@@ -1,8 +1,8 @@
 """Join planning, execution, and decision evidence without pooling their units.
 
 The Level-1 artifact is an accounting surface, not a safety score.  A prospective
-``ura-request-envelope/1`` fixes whole-arm request units before source loading;
-after selected corpora materialize, ``ura-eligibility-plan/1`` names their exact
+``ura-request-envelope/2`` fixes whole-arm request units before source loading;
+after selected corpora materialize, ``ura-eligibility-plan/2`` names their exact
 planning strata.  Bound early failures remain request-unit evidence only because
 their modality/source strata cannot be reconstructed honestly.
 """
@@ -26,6 +26,7 @@ from experiments.figure_results import (  # noqa: E402
     _integer,
     _nonblank,
     _read_object,
+    _reject_duplicate_realized_target_arms,
     _sha256_file,
     _string_list,
     _validate_cell,
@@ -38,6 +39,10 @@ from ura.eligibility import (  # noqa: E402
     planning_stratum_sha256,
     validate_eligibility_plan,
 )
+from ura.approximate_metrics import (  # noqa: E402
+    validate_approximate_completion_bindings,
+    validate_approximate_judgment,
+)
 from ura.live_attestation import (  # noqa: E402
     load_live_attestation_file,
     realized_identity_matches,
@@ -46,6 +51,14 @@ from ura.live_attestation import (  # noqa: E402
     route_config_sha256,
     stable_realized_target_identity,
     validate_required_live_attestations,
+)
+from ura.model_acquisition_runtime import (  # noqa: E402
+    model_acquisition_execution_descriptor,
+    model_acquisition_shared_role_projection,
+    validate_model_acquisition_execution_descriptor,
+    validate_model_acquisition_grid_binding,
+    validate_model_acquisition_role_projection,
+    validate_model_acquisition_role_projection_binding,
 )
 from ura.project_revision import validate_project_revision_binding  # noqa: E402
 from ura.request_envelope import (  # noqa: E402
@@ -93,7 +106,9 @@ _CONDITION_FIELDS = frozenset({
     "quantization",
     "dtype",
     "dry_run",
+    "hosted_judge_data_transfer_acknowledged",
     "selected_config_identities",
+    "model_acquisition",
     "live_attestation",
 })
 _CSV_FIELDS = (
@@ -305,8 +320,13 @@ def _condition_values(value: object) -> dict[str, Any]:
             not isinstance(item, int) or isinstance(item, bool) or item <= 0
         ):
             raise ValueError(f"experiment condition call cap {field} is invalid")
-    if not isinstance(value["dry_run"], bool):
-        raise ValueError("experiment condition dry_run must be boolean")
+    if not isinstance(value["dry_run"], bool) or not isinstance(
+        value["hosted_judge_data_transfer_acknowledged"], bool
+    ):
+        raise ValueError(
+            "experiment condition dry_run/data-transfer acknowledgement "
+            "must be boolean"
+        )
     if value["dry_run"] and value["execution_purpose"] not in {
         "diagnostic_dry_run", "diagnostic_canary"
     }:
@@ -325,6 +345,11 @@ def _condition_values(value: object) -> dict[str, Any]:
         raise ValueError("experiment condition selected-config identities are incomplete")
     for field in sorted(expected_selected):
         _selected_identity(selected[field], label=f"selected {field}")
+    acquisition = validate_model_acquisition_role_projection(
+        value["model_acquisition"]
+    )
+    if acquisition["scope"] != "shared":
+        raise ValueError("experiment condition acquisition projection is not shared")
     validate_project_revision_binding(
         value["project_revision"], allow_not_required=value["dry_run"]
     )
@@ -360,6 +385,16 @@ def _condition_from_plan(plan: dict[str, Any]) -> dict[str, Any]:
         "selected_config_identities"
     ]:
         raise ValueError("eligibility selected-config condition mismatch")
+    full_acquisition = validate_model_acquisition_execution_descriptor(
+        bindings.get("model_acquisition")
+    )
+    try:
+        validate_model_acquisition_role_projection_binding(
+            values["model_acquisition"],
+            full_acquisition,
+        )
+    except ValueError as exc:
+        raise ValueError("eligibility model-acquisition condition mismatch") from exc
     validate_request_envelope_descriptor(bindings.get("request_envelope"))
     for field in (
         "source_instances_sha256",
@@ -429,7 +464,13 @@ def _grid_condition(request: Mapping[str, Any]) -> dict[str, Any]:
         "quantization": request.get("quantization"),
         "dtype": request.get("dtype"),
         "dry_run": request.get("dry_run"),
+        "hosted_judge_data_transfer_acknowledged": request.get(
+            "hosted_judge_data_transfer_acknowledged"
+        ),
         "selected_config_identities": selected,
+        "model_acquisition": model_acquisition_shared_role_projection(
+            request.get("model_acquisition_execution")
+        ),
         "live_attestation": _live_attestation_projection(
             request.get("live_attestation")
         ),
@@ -457,6 +498,12 @@ def _validate_grid_plan_bindings(
         bindings.get("project_revision")
     ):
         raise ValueError("grid/eligibility project-revision binding mismatch")
+    if validate_model_acquisition_execution_descriptor(
+        request.get("model_acquisition_execution")
+    ) != validate_model_acquisition_execution_descriptor(
+        bindings.get("model_acquisition")
+    ):
+        raise ValueError("grid/eligibility model-acquisition binding mismatch")
     harness_source = request.get("harness_source")
     driver_source = request.get("driver_source")
     if (
@@ -686,12 +733,18 @@ def _bind_live_attestations(
                     raise ValueError(
                         "required live attestations disagree on target route identity"
                     )
+        target_conditions = request.get("target_execution_conditions")
+        if not isinstance(target_conditions, dict):
+            raise ValueError(
+                "measured grid lacks target execution-condition identities"
+            )
         matched = validate_required_live_attestations(
             [artifact["manifest"] for artifact in selected_artifacts],
             required_keys=required,
             resolved_targets=resolved_targets,
             route_config_sha256=route_config,
             route_kind=route_kinds,
+            target_condition_sha256=target_conditions,
             current_harness_source_sha256=_nonblank(
                 request.get("harness_source", {}).get("sha256")
                 if isinstance(request.get("harness_source"), dict)
@@ -860,7 +913,32 @@ def _grid_id(grid: dict[str, Any]) -> str:
         identity[field] = _selected_identity(
             request.get(field), label=field.replace("_", " ")
         )
+    identity["model_acquisition"] = (
+        validate_model_acquisition_execution_descriptor(
+            request.get("model_acquisition_execution")
+        )
+    )
     return "grid-" + _strict_json_sha256(identity)[:24]
+
+
+def _validate_grid_model_acquisition(
+    request: Mapping[str, Any],
+    *,
+    evidence_root: Path,
+) -> dict[str, Any]:
+    """Validate Level-1's full event evidence and grid-wide stable roster."""
+
+    full = model_acquisition_execution_descriptor(
+        request.get("model_acquisition"),
+        evidence_root=evidence_root,
+    )
+    stable = validate_model_acquisition_execution_descriptor(
+        request.get("model_acquisition_execution")
+    )
+    validate_model_acquisition_grid_binding(stable, request)
+    if full != stable:
+        raise ValueError("grid model-acquisition execution identity is stale")
+    return stable
 
 
 def _plan_descriptor_matches(
@@ -939,6 +1017,16 @@ def _load_results(
                 )
             if grid_id != _grid_id(grid) or grid_path.name != f"{grid_id}.grid.json":
                 raise ValueError(f"grid ID/content/filename mismatch: {grid_path}")
+            try:
+                _validate_grid_model_acquisition(
+                    request,
+                    evidence_root=grid_path.parent.resolve(),
+                )
+            except ValueError as exc:
+                raise ValueError(
+                    f"grid model-acquisition evidence is invalid: "
+                    f"{grid_path}: {exc}"
+                ) from exc
             if grid_id in seen_grid_ids:
                 raise ValueError(f"duplicate grid identity: {grid_id}")
             seen_grid_ids.add(grid_id)
@@ -1036,7 +1124,9 @@ def _load_results(
                     if marker_path in referenced_markers:
                         raise ValueError("completion marker referenced more than once")
                     referenced_markers.add(marker_path)
-                    ref = _GridReference(grid_id, grid_path, request, raw_status)
+                    ref = _GridReference(
+                        grid_id, grid_path, request, raw_status, plan
+                    )
                     cell = _validate_cell(
                         marker_path,
                         [ref],
@@ -1103,7 +1193,10 @@ def _load_results(
                 raise ValueError(f"grid lacks modality coverage result: {grid_path}")
             if modality_result.get("status") == "failed":
                 modality_errors = 1
-            elif modality_result.get("schema") == "ura-modality-coverage-result/1":
+            elif modality_result.get("schema") in {
+                "ura-modality-coverage-result/1",
+                "ura-modality-coverage-result/2",
+            }:
                 modality_errors = 0
             else:
                 raise ValueError(f"invalid modality coverage result: {grid_path}")
@@ -1147,6 +1240,12 @@ def _load_results(
             resolved = error_path.resolve(strict=True)
             if resolved not in referenced_errors:
                 request_errors.append(_error_record(resolved, root=root))
+    _reject_duplicate_realized_target_arms([
+        cell["validated_cell"]
+        for grid in grids_by_plan.values()
+        for cell in grid["cells"].values()
+        if isinstance(cell, dict) and "validated_cell" in cell
+    ])
     request_errors.sort(key=lambda item: (item["locator"], item["sha256"]))
     return grids_by_plan, request_errors
 
@@ -1233,6 +1332,12 @@ def _match_item(
 
 
 def _decision_state(judgment: dict[str, Any]) -> str:
+    """Return authoritative/common or source-native decision state only.
+
+    Supplementary approximate decisions deliberately do not affect this state;
+    callers that need proxy coverage use ``_approximate_decision_state``.
+    """
+
     raw = judgment["raw"]
     if raw.get("policy_evaluable_turn") is not True:
         return "non_evaluable"
@@ -1247,6 +1352,60 @@ def _decision_state(judgment: dict[str, Any]) -> str:
     return "decided" if decided else "abstained"
 
 
+def _approximate_decision_state(
+    judgment: dict[str, Any],
+    *,
+    response: Mapping[str, Any] | None = None,
+    supplementary_policy: Mapping[str, Any] | None = None,
+) -> str | None:
+    """Return supplementary proxy state, without relabeling source evidence."""
+
+    raw = judgment["raw"]
+    approximate = raw.get("approximate_security_decision")
+    if approximate is None:
+        return None
+    if (
+        raw.get("policy_evaluable_turn") is not True
+        or raw.get("common_metrics_eligible") is not False
+    ):
+        raise ValueError(
+            "approximate security decision must belong to a policy-evaluable, "
+            "common-metric-ineligible judgment"
+        )
+    if response is None or supplementary_policy is None:
+        raise ValueError(
+            "approximate decision validation requires its Response and manifest policy"
+        )
+    validate_approximate_judgment(
+        judgment,
+        response=response,
+        supplementary_policy=supplementary_policy,
+    )
+    decided = (
+        judgment.get("label") != "not_applicable"
+        and raw.get("cascade_confident") is True
+        and raw.get("parsed") is not False
+    )
+    return "decided" if decided else "abstained"
+
+
+def _validate_proxy_completion_bindings(cell: Mapping[str, Any]) -> None:
+    """Require Level-1 proxy rows to match completion-hashed typed stages."""
+
+    manifest = cell.get("manifest")
+    config = manifest.get("config") if isinstance(manifest, Mapping) else None
+    validate_approximate_completion_bindings(
+        judgments=cell.get("judgments", []),
+        responses=cell.get("responses"),
+        supplementary_policy=(
+            config.get("supplementary_metric_policy")
+            if isinstance(config, Mapping)
+            else None
+        ),
+        trails=cell.get("trails", []),
+    )
+
+
 def _item_support(
     items: list[dict[str, Any]],
     cell: dict[str, Any],
@@ -1259,6 +1418,9 @@ def _item_support(
             "decided_judgment_records": 0,
             "abstained_judgment_records": 0,
             "non_evaluable_judgment_records": 0,
+            "approximate_proxy_evaluable_judgment_records": 0,
+            "approximate_proxy_decided_judgment_records": 0,
+            "approximate_proxy_abstained_judgment_records": 0,
             "observed_datapoint_ids": set(),
         }
         for item in items
@@ -1289,6 +1451,13 @@ def _item_support(
     ):
         raise ValueError("completed cell/eligibility selected-ID audit mismatch")
     attempts = validated["attempts"]
+    responses = validated.get("responses")
+    if not isinstance(responses, dict):
+        raise ValueError("completed cell lacks validated Responses")
+    supplementary_policy = validated["manifest"].get("config", {}).get(
+        "supplementary_metric_policy"
+    )
+    _validate_proxy_completion_bindings(validated)
     for judgment in validated["judgments"]:
         attempt_id = judgment.get("attempt_id")
         attempt = attempts.get(attempt_id)
@@ -1302,6 +1471,16 @@ def _item_support(
         record[f"{state}_judgment_records"] += 1
         if state != "non_evaluable":
             record["evaluable_judgment_records"] += 1
+        approximate_state = _approximate_decision_state(
+            judgment,
+            response=responses.get(attempt_id),
+            supplementary_policy=supplementary_policy,
+        )
+        if approximate_state is not None:
+            record["approximate_proxy_evaluable_judgment_records"] += 1
+            record[
+                f"approximate_proxy_{approximate_state}_judgment_records"
+            ] += 1
     for item in items:
         record = support[item["cell_id"]]
         if item["status"] != "compatible_if_isolated":
@@ -1382,7 +1561,7 @@ def _bind_request_lifecycle(
         return [], [], {
             "status": "not_supplied",
             "counts": None,
-            "reason": "no ura-request-envelope/1 artifacts were supplied",
+            "reason": "no ura-request-envelope/2 artifacts were supplied",
         }
     envelopes: dict[str, dict[str, Any]] = {}
     descriptors: dict[str, dict[str, Any]] = {}
@@ -1541,6 +1720,13 @@ def build_level1_evidence(
     request_envelopes: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     """Build one deterministic, unit-qualified lifecycle inventory."""
+
+    _reject_duplicate_realized_target_arms([
+        cell["validated_cell"]
+        for grid in grids_by_plan.values()
+        for cell in grid.get("cells", {}).values()
+        if isinstance(cell, dict) and "validated_cell" in cell
+    ])
 
     if not plan_artifacts and not request_envelopes:
         raise ValueError(
@@ -1962,6 +2148,15 @@ def build_level1_evidence(
                     "non_evaluable_judgment_records": item_counts.get(
                         "non_evaluable_judgment_records", 0
                     ),
+                    "approximate_proxy_evaluable_judgment_records": item_counts.get(
+                        "approximate_proxy_evaluable_judgment_records", 0
+                    ),
+                    "approximate_proxy_decided_judgment_records": item_counts.get(
+                        "approximate_proxy_decided_judgment_records", 0
+                    ),
+                    "approximate_proxy_abstained_judgment_records": item_counts.get(
+                        "approximate_proxy_abstained_judgment_records", 0
+                    ),
                     "analysis_inclusion_status": "not_supplied",
                     "included_records": None,
                     "missing": execution_eligible and grid_cell is None,
@@ -2045,14 +2240,32 @@ def build_level1_evidence(
         + judgment_counts["non_evaluable"]
     ):
         raise ValueError("Level-1 judgment decision counts do not reconcile")
+    approximate_proxy_counts = {
+        "unit": "supplementary_approximate_judgment_record",
+        "evaluable": sum(
+            row["approximate_proxy_evaluable_judgment_records"] for row in rows
+        ),
+        "decided": sum(
+            row["approximate_proxy_decided_judgment_records"] for row in rows
+        ),
+        "abstained": sum(
+            row["approximate_proxy_abstained_judgment_records"] for row in rows
+        ),
+        "included": None,
+    }
+    if approximate_proxy_counts["evaluable"] != (
+        approximate_proxy_counts["decided"]
+        + approximate_proxy_counts["abstained"]
+    ):
+        raise ValueError("Level-1 approximate proxy decision counts do not reconcile")
     body: dict[str, Any] = {
         "schema_version": LEVEL1_SCHEMA,
         "status": "validated_unit_qualified_lifecycle_inventory",
         "scope": {
             "fixed_universe": (
                 "prospective whole-arm request units from supplied "
-                "ura-request-envelope/1 artifacts, plus exact materialized planning "
-                "strata from supplied ura-eligibility-plan/1 artifacts"
+                "ura-request-envelope/2 artifacts, plus exact materialized planning "
+                "strata from supplied ura-eligibility-plan/2 artifacts"
             ),
             "pre_materialization_failures": (
                 "bound to prospective request units only; exact source/modality "
@@ -2135,6 +2348,7 @@ def build_level1_evidence(
             "planning_strata": planning_counts,
             "execution_units": execution_counts,
             "judgment_records": judgment_counts,
+            "approximate_proxy_judgment_records": approximate_proxy_counts,
             "request_level_errors": {
                 "unit": "request_error_artifact",
                 "observed": len(request_level_errors),
@@ -2249,7 +2463,7 @@ def main(argv: list[str] | None = None) -> int:
         type=Path,
         action="append",
         default=[],
-        help="validated ura-eligibility-plan/1 JSON; repeat per request condition",
+        help="validated ura-eligibility-plan/2 JSON; repeat per request condition",
     )
     parser.add_argument(
         "--results",

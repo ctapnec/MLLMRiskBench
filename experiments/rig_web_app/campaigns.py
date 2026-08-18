@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 import heapq
 import math
 import os
@@ -13,6 +12,8 @@ from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 from typing import Any
+
+from ura.strict_json import strict_json_loads
 
 
 _CAMPAIGN_SCHEMA = "ura-engineering-campaign/1"
@@ -82,7 +83,7 @@ def _events(path: Path, *, required: bool = False) -> tuple[list[dict[str, Any]]
     malformed = False
     for line in lines:
         try:
-            value = json.loads(line)
+            value = strict_json_loads(line)
         except (ValueError, TypeError, RecursionError):
             malformed = True
             continue
@@ -197,7 +198,7 @@ def _compact_status_tag(
             else "passed"
         )
     if state == "running":
-        return "reported running"
+        return "running"
     if state in {"orphaned", "unknown"}:
         return state
     if raw in {"blocked", "cancelled", "canceled", "stopped"}:
@@ -224,6 +225,7 @@ class EngineeringCampaign:
     failed_tasks: int
     skipped_tasks: int
     active_tasks: tuple[str, ...]
+    download_tasks: tuple[str, ...]
     pending_tasks: int | None
     unplanned_tasks: tuple[str, ...]
     task_outcomes: tuple[tuple[str, str, str], ...]
@@ -258,7 +260,7 @@ def _load_campaign(directory: Path) -> EngineeringCampaign | None:
     if marker_bytes is None or marker_error is not None:
         return None
     try:
-        marker = json.loads(marker_bytes.decode("utf-8"))
+        marker = strict_json_loads(marker_bytes.decode("utf-8"))
     except (UnicodeError, ValueError, TypeError, RecursionError):
         return None
     if not isinstance(marker, dict) or marker.get("schema") != _CAMPAIGN_SCHEMA:
@@ -322,6 +324,7 @@ def _load_campaign(directory: Path) -> EngineeringCampaign | None:
         display_state = "orphaned"
 
     task_states: dict[str, str] = {}
+    task_kinds: dict[str, str] = {}
     for row in all_events:
         event = row.get("event")
         raw_task = row.get("task")
@@ -332,9 +335,16 @@ def _load_campaign(directory: Path) -> EngineeringCampaign | None:
             continue
         if event == "task_start":
             task_states[task] = "running"
+            # Activity is an explicit event contract. A task name containing
+            # "download" is deliberately insufficient evidence.
+            if row.get("task_kind") == "model_download":
+                task_kinds[task] = "model_download"
+            else:
+                task_kinds.pop(task, None)
         elif event in {"task_end", "task_skip"}:
             status = str(row.get("status") or "failed").strip().lower()[:32]
             task_states[task] = status
+            task_kinds.pop(task, None)
     interrupted_tasks: tuple[str, ...] = ()
     if state in {"complete", "failed", "orphaned"}:
         interrupted_tasks = tuple(
@@ -349,6 +359,9 @@ def _load_campaign(directory: Path) -> EngineeringCampaign | None:
         for status in task_states.values()
     )
     active_tasks = tuple(task for task, status in task_states.items() if status in _TASK_ACTIVE)
+    download_tasks = tuple(
+        task for task in active_tasks if task_kinds.get(task) == "model_download"
+    )
     completed_tasks = succeeded_tasks + failed_tasks + skipped_tasks
     planned_tasks = _planned_tasks(marker)
     pending_tasks = (
@@ -516,6 +529,8 @@ def _load_campaign(directory: Path) -> EngineeringCampaign | None:
         ]
         if active_tasks and state == "running":
             parts.append("active task: " + ", ".join(active_tasks))
+        if download_tasks and state == "running":
+            parts.append("model download in progress: " + ", ".join(download_tasks))
         if interrupted_tasks:
             parts.append(f"{len(interrupted_tasks)} interrupted without a terminal task event")
         if unplanned_tasks:
@@ -584,6 +599,7 @@ def _load_campaign(directory: Path) -> EngineeringCampaign | None:
         failed_tasks=failed_tasks,
         skipped_tasks=skipped_tasks,
         active_tasks=active_tasks,
+        download_tasks=download_tasks,
         pending_tasks=pending_tasks,
         unplanned_tasks=unplanned_tasks,
         task_outcomes=task_outcomes,
@@ -647,13 +663,34 @@ def load_engineering_campaign(
 
 def scan_engineering_campaigns(
     results_root: Path,
+    *,
+    started_from: float | None = None,
+    started_to: float | None = None,
 ) -> tuple[list[EngineeringCampaign], str]:
-    """Load a bounded recent-campaign index and return any omission notice."""
+    """Load a bounded campaign index and return any omission notice.
+
+    Jobs passes its inclusive date window so marker start times are filtered
+    before the 20-row display cap. Dashboard callers omit the window and retain
+    the bounded recent-directory behavior.
+    """
+
+    if (started_from is None) != (started_to is None):
+        raise ValueError("campaign date window requires both bounds")
+    if started_from is not None and (
+        isinstance(started_from, bool)
+        or isinstance(started_to, bool)
+        or not isinstance(started_from, (int, float))
+        or not isinstance(started_to, (int, float))
+        or not math.isfinite(float(started_from))
+        or not math.isfinite(float(started_to))
+        or float(started_from) > float(started_to)
+    ):
+        raise ValueError("invalid campaign date window")
 
     root = _engineering_root(results_root)
     if root is None:
         return [], ""
-    candidates: list[tuple[int, Path]] = []
+    candidates: list[tuple[float, int, Path]] = []
     truncated = False
     try:
         for index, candidate in enumerate(root.iterdir()):
@@ -667,14 +704,45 @@ def scan_engineering_campaigns(
             except OSError:
                 continue
             if stat.S_ISDIR(metadata.st_mode):
-                candidates.append((metadata.st_mtime_ns, candidate))
+                started_at = float(metadata.st_mtime)
+                if started_from is not None:
+                    marker_bytes, marker_error = _bounded_file(
+                        candidate / "ENGINEERING_ONLY.json",
+                        _MAX_MARKER_BYTES,
+                    )
+                    if marker_bytes is None or marker_error is not None:
+                        continue
+                    try:
+                        marker = strict_json_loads(marker_bytes.decode("utf-8"))
+                    except (UnicodeError, ValueError, TypeError, RecursionError):
+                        continue
+                    if (
+                        not isinstance(marker, dict)
+                        or marker.get("schema") != _CAMPAIGN_SCHEMA
+                        or marker.get("thesis_empirical_evidence") is not False
+                    ):
+                        continue
+                    marker_started = _timestamp(marker.get("started_at"))
+                    if marker_started is not None:
+                        started_at = marker_started
+                    if not float(started_from) <= started_at <= float(started_to):
+                        continue
+                candidates.append((started_at, metadata.st_mtime_ns, candidate))
     except OSError:
         return [], "External campaign directory could not be scanned."
 
-    newest = heapq.nlargest(_MAX_CAMPAIGNS, candidates, key=lambda item: item[0])
+    newest = heapq.nlargest(
+        _MAX_CAMPAIGNS,
+        candidates,
+        key=(
+            (lambda item: (item[0], item[1]))
+            if started_from is not None
+            else (lambda item: item[1])
+        ),
+    )
     campaigns = []
     seen_resolved: set[Path] = set()
-    for _mtime, candidate in newest:
+    for _started, _mtime, candidate in newest:
         try:
             resolved = candidate.resolve(strict=True)
         except OSError:
@@ -689,8 +757,9 @@ def scan_engineering_campaigns(
     omitted = max(0, len(candidates) - len(newest))
     if omitted:
         notices.append(
-            f"Showing the {_MAX_CAMPAIGNS} most recently created retained engineering "
-            f"campaigns; {omitted} additional scanned director"
+            f"Showing the {_MAX_CAMPAIGNS} newest retained engineering campaigns"
+            f"{' in the selected date range' if started_from is not None else ''}; "
+            f"{omitted} additional scanned director"
             f"{'y was' if omitted == 1 else 'ies were'} omitted."
         )
     if truncated:

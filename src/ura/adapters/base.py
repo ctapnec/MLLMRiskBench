@@ -12,6 +12,10 @@ from collections.abc import Iterable
 from dataclasses import dataclass
 from pathlib import Path
 
+from ..attacker_input_contract import (
+    AttackerInputContract,
+    AttackerInputContractError,
+)
 from ..data_models import Attempt, DataPoint, Response
 
 
@@ -64,6 +68,20 @@ class BaseAttacker(ABC):
     def generate(self, datapoint: DataPoint, budget: AttackBudget) -> Iterable[Attempt]:
         ...  # pragma: no cover - interface
 
+    def plan_target_inputs(
+        self, datapoint: DataPoint, budget: AttackBudget
+    ) -> AttackerInputContract:
+        """Declare every possible target-input shape before execution.
+
+        Runner-compatible adapters override this fail-closed boundary.  Native
+        integrations retain their own end-to-end artifact contract and are
+        already rejected from common Runner execution.
+        """
+
+        raise AttackerInputContractError(
+            f"attacker {self.name!r} has no prospective target-input contract"
+        )
+
     def validate_measured_run(self, corpus: Iterable[DataPoint] = ()) -> None:
         """Fail before a measured grid when generation has an unsafe side effect.
 
@@ -93,4 +111,9 @@ class BaseAttacker(ABC):
         return out
 
 
-__all__ = ["AttackBudget", "AttackSession", "BaseConverter", "BaseAttacker"]
+__all__ = [
+    "AttackBudget",
+    "AttackSession",
+    "BaseConverter",
+    "BaseAttacker",
+]

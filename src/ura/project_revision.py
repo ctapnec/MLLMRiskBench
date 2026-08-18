@@ -13,6 +13,7 @@ import os
 from pathlib import Path
 import re
 import shutil
+import stat
 import subprocess
 from typing import Any, Mapping
 
@@ -78,6 +79,71 @@ def _sha256_file(path: Path) -> str:
         for chunk in iter(lambda: handle.read(1024 * 1024), b""):
             digest.update(chunk)
     return digest.hexdigest()
+
+
+def _read_receipt_once(path: Path) -> tuple[bytes, os.stat_result]:
+    """Read one bounded receipt inode once through a no-follow descriptor."""
+
+    descriptor: int | None = None
+    try:
+        initial = path.lstat()
+        if (
+            path.is_symlink()
+            or path.is_junction()
+            or not stat.S_ISREG(initial.st_mode)
+            or initial.st_nlink != 1
+            or not 0 < initial.st_size <= _MAX_RECEIPT_BYTES
+        ):
+            raise ValueError(
+                "project-revision input must be one regular non-symlink file "
+                "within its size bound"
+            )
+        flags = (
+            os.O_RDONLY
+            | getattr(os, "O_BINARY", 0)
+            | getattr(os, "O_NOFOLLOW", 0)
+        )
+        descriptor = os.open(path, flags)
+        opened = os.fstat(descriptor)
+        identity = (initial.st_dev, initial.st_ino, initial.st_mode)
+        if (
+            not stat.S_ISREG(opened.st_mode)
+            or opened.st_nlink != 1
+            or opened.st_size != initial.st_size
+            or (opened.st_dev, opened.st_ino, opened.st_mode) != identity
+        ):
+            raise ValueError("project-revision input changed while it was opened")
+        with os.fdopen(descriptor, "rb", closefd=True) as stream:
+            descriptor = None
+            raw = stream.read(_MAX_RECEIPT_BYTES + 1)
+            after = os.fstat(stream.fileno())
+        if (
+            len(raw) != opened.st_size
+            or len(raw) > _MAX_RECEIPT_BYTES
+            or (after.st_dev, after.st_ino, after.st_mode)
+            != (opened.st_dev, opened.st_ino, opened.st_mode)
+            or after.st_nlink != 1
+            or after.st_size != opened.st_size
+            or after.st_mtime_ns != opened.st_mtime_ns
+        ):
+            raise ValueError("project-revision input changed while it was read")
+        final = path.lstat()
+        if (
+            path.is_symlink()
+            or path.is_junction()
+            or final.st_nlink != 1
+            or (final.st_dev, final.st_ino, final.st_mode)
+            != (opened.st_dev, opened.st_ino, opened.st_mode)
+            or final.st_size != opened.st_size
+            or final.st_mtime_ns != opened.st_mtime_ns
+        ):
+            raise ValueError("project-revision path changed while it was read")
+        return raw, opened
+    except OSError as exc:
+        raise ValueError("project-revision input cannot be read safely") from exc
+    finally:
+        if descriptor is not None:
+            os.close(descriptor)
 
 
 def _strict_json_object(raw: bytes, *, label: str) -> dict[str, Any]:
@@ -427,24 +493,20 @@ def load_project_revision_file(
 ) -> tuple[dict[str, Any], dict[str, Any]]:
     """Load a digest-approved receipt and optionally recheck the live checkout."""
 
-    candidate = Path(path)
-    if candidate.is_symlink() or not candidate.is_file():
-        raise ValueError("project-revision input must be a regular non-symlink file")
-    size = candidate.stat().st_size
-    if size < 1 or size > _MAX_RECEIPT_BYTES:
-        raise ValueError("project-revision input has an invalid byte size")
-    digest = _sha256_file(candidate)
     if expected_sha256 != expected_sha256.strip():
         raise ValueError("project-revision SHA-256 must not be padded")
     expected_digest = expected_sha256
     if _HEX64.fullmatch(expected_digest) is None:
         raise ValueError("project-revision SHA-256 must be exactly 64 lowercase hex characters")
+    candidate = Path(path)
+    raw, opened = _read_receipt_once(candidate)
+    digest = hashlib.sha256(raw).hexdigest()
     if digest != expected_digest:
         raise ValueError(
             f"project-revision sha256 mismatch: expected {expected_digest}, got {digest}"
         )
     receipt = validate_project_revision(
-        _strict_json_object(candidate.read_bytes(), label="project-revision input")
+        _strict_json_object(raw, label="project-revision input")
     )
     if recheck_checkout:
         recheck_project_revision(
@@ -453,7 +515,7 @@ def load_project_revision_file(
     return receipt, {
         "file": candidate.name,
         "sha256": digest,
-        "bytes": size,
+        "bytes": opened.st_size,
         "revision_id": receipt["revision_id"],
     }
 

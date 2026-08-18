@@ -108,6 +108,7 @@ def _match(
         resolved_targets={_SPEC: resolved_target},
         route_config_sha256={_SPEC: route_sha256},
         route_kind={_SPEC: "hosted_api"},
+        target_condition_sha256={_SPEC: "2" * 64},
         current_harness_source_sha256="f" * 64,
         current_driver_source_sha256="1" * 64,
         current_project_revision=_project_revision(),
@@ -159,16 +160,19 @@ def test_required_keys_preserve_exact_compatible_modality_strata() -> None:
             {
                 "requested_target_spec": _SPEC,
                 "exact_modality_combination": ["text"],
+                "target_call_modality_combinations": [["text"]],
                 "status": "compatible_if_isolated",
             },
             {
                 "requested_target_spec": _SPEC,
                 "exact_modality_combination": ["text", "image"],
+                "target_call_modality_combinations": [["text", "image"]],
                 "status": "N/A",
             },
             {
                 "requested_target_spec": "openai:unselected",
                 "exact_modality_combination": ["text"],
+                "target_call_modality_combinations": [["text"]],
                 "status": "compatible_if_isolated",
             },
         ],
@@ -252,6 +256,82 @@ def test_realized_identity_match_rejects_resolved_model_drift() -> None:
     assert not realized_identity_matches(
         expected,
         {**expected, "resolved_model": "fixture-model-2026-08-02"},
+    )
+    assert realized_identity_matches(
+        {**expected, "provider": "zhipu"},
+        {**expected, "provider": "glm"},
+    )
+
+
+def test_matcher_rejects_distinct_requested_targets_with_one_realized_identity() -> None:
+    first_spec = "zhipu:requested-a"
+    second_spec = "glm:requested-b"
+    first_target = "zhipu:requested-a"
+    second_target = "glm:requested-b"
+    first = _record(resolved_target=first_target)
+    first["requested_target_spec"] = first_spec
+    first["realized_target_identity"]["provider"] = "zhipu"
+    second = _record(
+        resolved_target=second_target,
+        route_sha256="b" * 64,
+    )
+    second["requested_target_spec"] = second_spec
+    second["realized_target_identity"]["provider"] = "glm"
+    # Optional extra provenance must not defeat the independent provider/model key.
+    second["realized_target_identity"]["model_revision"] = "c" * 40
+    manifest = build_live_attestation_manifest([first, second])
+
+    with pytest.raises(
+        ValueError,
+        match="distinct requested targets resolve to one stable realized model",
+    ):
+        validate_required_live_attestations(
+            [manifest],
+            required_keys={
+                (_SCOPE, first_spec, ("text",)),
+                (_SCOPE, second_spec, ("text",)),
+            },
+            resolved_targets={
+                first_spec: first_target,
+                second_spec: second_target,
+            },
+            route_config_sha256={
+                first_spec: _ROUTE_SHA256,
+                second_spec: "b" * 64,
+            },
+            route_kind={first_spec: "hosted_api", second_spec: "hosted_api"},
+            target_condition_sha256={
+                first_spec: "2" * 64,
+                second_spec: "2" * 64,
+            },
+            current_harness_source_sha256="f" * 64,
+            current_driver_source_sha256="1" * 64,
+            current_project_revision=_project_revision(),
+            reference_time=datetime(2026, 8, 12, 12, 0, tzinfo=timezone.utc),
+            max_age_hours=2,
+        )
+
+    validate_required_live_attestations(
+        [manifest],
+        required_keys={
+            (_SCOPE, first_spec, ("text",)),
+            (_SCOPE, second_spec, ("text",)),
+        },
+        resolved_targets={first_spec: first_target, second_spec: second_target},
+        route_config_sha256={
+            first_spec: _ROUTE_SHA256,
+            second_spec: "b" * 64,
+        },
+        route_kind={first_spec: "hosted_api", second_spec: "hosted_api"},
+        target_condition_sha256={
+            first_spec: "2" * 64,
+            second_spec: "3" * 64,
+        },
+        current_harness_source_sha256="f" * 64,
+        current_driver_source_sha256="1" * 64,
+        current_project_revision=_project_revision(),
+        reference_time=datetime(2026, 8, 12, 12, 0, tzinfo=timezone.utc),
+        max_age_hours=2,
     )
 
 

@@ -14,14 +14,24 @@ from __future__ import annotations
 import hashlib
 import json
 import math
+import os
 import re
 import time
 import urllib.error
 import urllib.request
 from pathlib import Path
-from typing import Any, Iterable, Optional
+from typing import Any, Callable, Iterable, Optional
 
 from ..data_models import DialogTurn, Response
+from ..ollama_security import (
+    DEFAULT_OLLAMA_URL,
+    NoRedirect,
+    OllamaProcessLock,
+    canonicalize_ollama_url,
+    open_with_deadline,
+    read_bounded_response,
+    remaining_seconds,
+)
 from .base import REGISTRY, BaseTarget
 
 _ROLE_MAP = {
@@ -35,8 +45,15 @@ _ROLE_MAP = {
 _IMMUTABLE_REVISION = re.compile(r"[0-9a-f]{40,64}")
 _SHA256 = re.compile(r"[0-9a-f]{64}")
 _MAX_OLLAMA_RESPONSE_BYTES = 4 * 1024 * 1024
+_MAX_OLLAMA_REQUEST_BYTES = 32 * 1024 * 1024
 _MAX_OLLAMA_JSON_NODES = 250_000
 _MAX_OLLAMA_JSON_DEPTH = 64
+_MAX_OLLAMA_MODELS = 512
+_OLLAMA_TAG = re.compile(
+    r"[A-Za-z0-9][A-Za-z0-9._-]*"
+    r"(?:/[A-Za-z0-9][A-Za-z0-9._-]*)*"
+    r"(?::[A-Za-z0-9][A-Za-z0-9._-]*)?\Z"
+)
 MAX_VLLM_MODEL_LEN = 1_000_000
 MAX_VLLM_GENERATION_TOKENS = 25_000
 OLLAMA_FORBIDDEN_LOCAL_CONFIG_FIELDS = frozenset({
@@ -54,6 +71,32 @@ _OLLAMA_RESERVED_CONSTRUCTOR_OPTIONS = (
     OLLAMA_FORBIDDEN_LOCAL_CONFIG_FIELDS
     | {"digest", "modalities", "multi_gpu_support_basis", "dtype"}
 )
+
+
+def canonical_local_model_identity(
+    model: object,
+    *,
+    revision: object = None,
+    model_digest: object = None,
+) -> tuple[str, ...] | None:
+    """Return the strongest immutable local-model identity available.
+
+    A byte digest intentionally outranks a daemon tag or checkpoint locator, so
+    two Ollama aliases (or two explicit-path aliases) cannot masquerade as two
+    scientific target models. Hub revisions remain qualified by the exact model
+    id because a commit-like revision is not globally unique across repositories.
+    """
+
+    if isinstance(model_digest, str):
+        digest = model_digest.strip().lower()
+        if _SHA256.fullmatch(digest):
+            return "sha256", digest
+    if isinstance(model, str) and isinstance(revision, str):
+        normalized_model = model.strip()
+        normalized_revision = revision.strip().lower()
+        if normalized_model and _IMMUTABLE_REVISION.fullmatch(normalized_revision):
+            return "model-revision", normalized_model, normalized_revision
+    return None
 
 
 def validate_vllm_max_model_len(value: object) -> int:
@@ -331,6 +374,8 @@ class VLLMTarget(BaseTarget):
         gpu_memory_utilization: float = 0.90,
         modality_support: Optional[tuple[str, ...]] = None,
         media_roots: Optional[Iterable[str | Path]] = None,
+        model_runtime: Any = None,
+        managed_model_role: str = "vllm_target",
         **engine_kwargs: Any,
     ) -> None:
         self.revision = revision.lower() if isinstance(revision, str) else revision
@@ -376,6 +421,13 @@ class VLLMTarget(BaseTarget):
         self.dtype = dtype
         self.gpu_memory_utilization = gpu_memory_utilization
         self.engine_kwargs = engine_kwargs
+        if managed_model_role not in {"vllm_target", "llm_judge"}:
+            raise ValueError("VLLMTarget managed model role is invalid")
+        # The managed snapshot locator lives only inside this private runtime
+        # object. Component serialization excludes underscore attributes, so
+        # neither it nor a workstation path can enter durable evidence.
+        self._model_runtime = model_runtime
+        self._managed_model_role = managed_model_role
         self._llm: Any = None
         self._identity_verified = False
 
@@ -411,6 +463,10 @@ class VLLMTarget(BaseTarget):
             if local_path.is_symlink():
                 raise ValueError("local vLLM checkpoint path must not be a symlink")
             resolved = local_path.resolve(strict=True)
+            if not resolved.is_dir():
+                raise ValueError(
+                    "local vLLM checkpoint must be a sealed snapshot directory"
+                )
             if _tree_sha256(resolved) != self.model_digest:
                 raise ValueError("local vLLM checkpoint digest does not match bytes")
         elif not isinstance(self.revision, str) or not _IMMUTABLE_REVISION.fullmatch(
@@ -425,31 +481,120 @@ class VLLMTarget(BaseTarget):
         """Lazily build and cache the vLLM engine."""
         self.validate_research_identity()
         if self._llm is None:
+            from ..model_acquisition_runtime import (
+                hf_offline_environment_overrides,
+                private_model_execution,
+            )
+
+            # vLLM/Transformers may cache Hub policy during import. Explicit
+            # local exceptions are offline too; their tokenizer must come from
+            # the same sealed directory.
+            os.environ.update(hf_offline_environment_overrides())
+            if self.revision is not None:
+                if self._model_runtime is None:
+                    raise RuntimeError(
+                        "Hub vLLM engines require an admitted managed-model runtime; "
+                        "implicit Hugging Face downloads are disabled"
+                    )
             try:
                 from vllm import LLM  # type: ignore
             except ImportError as exc:  # pragma: no cover - offline path
                 raise RuntimeError(
                     "vllm is required for VLLMTarget; pip install vllm"
                 ) from exc
-            identity_kwargs: dict[str, Any] = {}
-            if self.revision is not None:
-                identity_kwargs["revision"] = self.revision
-                # Pin the tokenizer/chat-template to the SAME immutable revision
-                # so it cannot drift independently of the model weights.
-                identity_kwargs["tokenizer_revision"] = self.revision
             context_kwargs: dict[str, Any] = {}
             if self.max_model_len is not None:
                 context_kwargs["max_model_len"] = self.max_model_len
-            self._llm = LLM(
-                model=self._runtime_model,
-                tensor_parallel_size=self.tensor_parallel_size,
-                quantization=self.quantization,
-                dtype=self.dtype,
-                gpu_memory_utilization=self.gpu_memory_utilization,
-                **identity_kwargs,
+            common_kwargs: dict[str, Any] = {
+                "tensor_parallel_size": self.tensor_parallel_size,
+                "quantization": self.quantization,
+                "dtype": self.dtype,
+                "gpu_memory_utilization": self.gpu_memory_utilization,
                 **context_kwargs,
                 **self.engine_kwargs,
-            )
+            }
+
+            def cleanup(engine: Any) -> None:
+                candidates = (
+                    engine,
+                    getattr(engine, "llm_engine", None),
+                    getattr(
+                        getattr(engine, "llm_engine", None),
+                        "model_executor",
+                        None,
+                    ),
+                )
+                for candidate in candidates:
+                    if candidate is None:
+                        continue
+                    for method_name in ("shutdown", "close"):
+                        method = getattr(candidate, method_name, None)
+                        if callable(method):
+                            try:
+                                method()
+                            except Exception:
+                                continue
+                            return
+
+            if self.revision is None:
+                # Explicit operator-local checkpoints are already sealed by
+                # their tree digest and never consult Hugging Face. Re-hash on
+                # both sides of construction: the earlier identity validation
+                # is not a lease over an operator-mutable directory.
+                checkpoint = Path(self._runtime_model).expanduser()
+                if checkpoint.is_symlink():
+                    raise ValueError("local vLLM checkpoint path must not be a symlink")
+                resolved = checkpoint.resolve(strict=True)
+                if _tree_sha256(resolved) != self.model_digest:
+                    raise ValueError(
+                        "local vLLM checkpoint digest changed before engine construction"
+                    )
+                loaded = private_model_execution(
+                    lambda: LLM(
+                        model=str(resolved),
+                        tokenizer=str(resolved),
+                        **common_kwargs,
+                    ),
+                    role=self._managed_model_role,
+                    private_values=(resolved,),
+                )
+                try:
+                    if (
+                        checkpoint.is_symlink()
+                        or checkpoint.resolve(strict=True) != resolved
+                        or _tree_sha256(resolved) != self.model_digest
+                    ):
+                        raise ValueError(
+                            "local vLLM checkpoint digest changed during engine "
+                            "construction"
+                        )
+                except Exception:
+                    cleanup(loaded)
+                    raise
+                self._llm = loaded
+            else:
+                from ..model_acquisition import vllm_requirement
+                from ..model_acquisition_runtime import (
+                    vllm_managed_snapshot_kwargs,
+                )
+
+                requirement = vllm_requirement(
+                    f"vllm:{self.model}",
+                    self.revision,
+                    role=self._managed_model_role,
+                )
+
+                def construct(snapshot: Path) -> Any:
+                    return LLM(
+                        **vllm_managed_snapshot_kwargs(snapshot),
+                        **common_kwargs,
+                    )
+
+                self._llm = self._model_runtime.construct(
+                    requirement,
+                    construct,
+                    cleanup=cleanup,
+                )
         return self._llm
 
     def preflight_base(self) -> None:
@@ -460,6 +605,8 @@ class VLLMTarget(BaseTarget):
     def generate(
         self, dialog: list[DialogTurn], *, seed: int | None = None
     ) -> Response:
+        # Engine admission establishes offline policy before any vLLM import.
+        llm = self._engine()
         try:
             from vllm import SamplingParams  # type: ignore
         except ImportError as exc:  # pragma: no cover - offline path
@@ -467,7 +614,6 @@ class VLLMTarget(BaseTarget):
                 "vllm is required for VLLMTarget; pip install vllm"
             ) from exc
 
-        llm = self._engine()
         messages = _dialog_to_messages(
             dialog,
             multimodal="image" in self.modality_support,
@@ -482,7 +628,19 @@ class VLLMTarget(BaseTarget):
         sampling = SamplingParams(**sampling_kwargs)
 
         t0 = time.perf_counter()
-        outputs = llm.chat(messages, sampling)  # type: ignore[attr-defined]
+        if self._model_runtime is not None:
+            outputs = self._model_runtime.private_execution(
+                self._managed_model_role,
+                lambda: llm.chat(messages, sampling),  # type: ignore[attr-defined]
+            )
+        else:
+            from ..model_acquisition_runtime import private_model_execution
+
+            outputs = private_model_execution(
+                lambda: llm.chat(messages, sampling),  # type: ignore[attr-defined]
+                role=self._managed_model_role,
+                private_values=(Path(self._runtime_model).expanduser(),),
+            )
         latency_ms = (time.perf_counter() - t0) * 1000.0
 
         text, tokens, finish_reason, stop_reason = self._extract(outputs)
@@ -577,7 +735,7 @@ class OllamaTarget(BaseTarget):
         model: str,
         *,
         model_digest: Optional[str] = None,
-        host: str = "http://localhost:11434",
+        host: str = DEFAULT_OLLAMA_URL,
         temperature: float = 0.0,
         num_predict: int = 512,
         timeout: float = 300.0,
@@ -585,16 +743,33 @@ class OllamaTarget(BaseTarget):
         media_roots: Optional[Iterable[str | Path]] = None,
         **options: Any,
     ) -> None:
-        self.model = model
+        if (
+            not isinstance(model, str)
+            or len(model.strip()) > 256
+            or _OLLAMA_TAG.fullmatch(model.strip()) is None
+        ):
+            raise ValueError("OllamaTarget model must be a bounded exact tag")
+        if not isinstance(timeout, (int, float)) or isinstance(timeout, bool):
+            raise ValueError("OllamaTarget timeout must be numeric")
+        timeout = float(timeout)
+        if not math.isfinite(timeout) or not 0.1 <= timeout <= 3600.0:
+            raise ValueError("OllamaTarget timeout must be in [0.1, 3600] seconds")
+        self.model = model.strip()
         self.model_digest = (
             model_digest.lower() if isinstance(model_digest, str) else model_digest
         )
         identity = f"sha256:{self.model_digest}" if self.model_digest else "unresolved"
         self.name = f"ollama:{model}@{identity}"
-        self.host = host.rstrip("/")
+        self.host = canonicalize_ollama_url(host)
         self.temperature = temperature
         self.num_predict = num_predict
         self.timeout = timeout
+        self._monotonic: Callable[[], float] = time.monotonic
+        self._sleep: Callable[[float], None] = time.sleep
+        self._open_request = urllib.request.build_opener(
+            urllib.request.ProxyHandler({}),
+            NoRedirect(),
+        ).open
         self.modality_support = tuple(modality_support)
         self.modality_combinations = tuple(
             [("text",)]
@@ -637,29 +812,84 @@ class OllamaTarget(BaseTarget):
         normalized = value.lower().removeprefix("sha256:")
         return normalized if _SHA256.fullmatch(normalized) else None
 
-    def _verify_daemon_identity(self) -> str:
-        self.validate_research_identity()
-        request = urllib.request.Request(f"{self.host}/api/tags", method="GET")
-        inventory = self._bounded_json_request(
-            request, purpose="model inventory"
-        )
-        if not isinstance(inventory, dict) or not isinstance(inventory.get("models"), list):
-            raise LocalTargetOutputError("Ollama returned an invalid model inventory")
-        matches = [
-            item for item in inventory["models"]
-            if isinstance(item, dict)
-            and (item.get("model") == self.model or item.get("name") == self.model)
-        ]
+    def _verified_inventory_digest(
+        self,
+        inventory: object,
+        *,
+        model: str,
+        purpose: str,
+    ) -> str:
+        """Require one exact, internally consistent model/digest inventory row."""
+
+        if not isinstance(inventory, dict):
+            raise LocalTargetOutputError(f"Ollama returned an invalid {purpose}")
+        rows = inventory.get("models")
+        if not isinstance(rows, list) or len(rows) > _MAX_OLLAMA_MODELS:
+            raise LocalTargetOutputError(f"Ollama returned an invalid {purpose}")
+        matches: list[str] = []
+        for index, item in enumerate(rows):
+            if not isinstance(item, dict):
+                raise LocalTargetOutputError(
+                    f"Ollama {purpose} row {index} is not an object"
+                )
+            name = item.get("name")
+            row_model = item.get("model")
+            if (
+                not isinstance(name, str)
+                or not isinstance(row_model, str)
+                or len(name) > 256
+                or len(row_model) > 256
+                or _OLLAMA_TAG.fullmatch(name) is None
+                or _OLLAMA_TAG.fullmatch(row_model) is None
+                or name != row_model
+            ):
+                raise LocalTargetOutputError(
+                    f"Ollama {purpose} row {index} has ambiguous model identity"
+                )
+            digest = self._normalized_digest(item.get("digest"))
+            if digest is None:
+                raise LocalTargetOutputError(
+                    f"Ollama {purpose} row {index} has an invalid digest"
+                )
+            if name == model:
+                matches.append(digest)
         if len(matches) != 1:
             raise LocalTargetOutputError(
-                f"Ollama inventory did not resolve exactly one {self.model!r} model"
+                f"Ollama {purpose} did not resolve exactly one {model!r} model"
             )
-        resolved = self._normalized_digest(matches[0].get("digest"))
-        if resolved != self.model_digest:
+        if matches[0] != self.model_digest:
             raise LocalTargetOutputError(
-                "Ollama daemon model digest does not match declared model_digest"
+                f"Ollama {purpose} digest does not match declared model_digest"
             )
-        return resolved
+        return matches[0]
+
+    def _verify_daemon_identity(self, *, deadline: float | None = None) -> str:
+        self.validate_research_identity()
+        deadline = deadline or (self._monotonic() + self.timeout)
+        request = urllib.request.Request(f"{self.host}/api/tags", method="GET")
+        inventory = self._bounded_json_request(
+            request,
+            purpose="model inventory",
+            deadline=deadline,
+        )
+        return self._verified_inventory_digest(
+            inventory,
+            model=self.model,
+            purpose="model inventory",
+        )
+
+    def _verify_loaded_identity(self, model: str, *, deadline: float) -> str:
+        request = urllib.request.Request(f"{self.host}/api/ps", method="GET")
+        inventory = self._bounded_json_request(
+            request,
+            purpose="loaded-model inventory",
+            deadline=deadline,
+        )
+        return self._verified_inventory_digest(
+            inventory,
+            model=model,
+            purpose="loaded-model inventory",
+        )
 
     def _sampling_options(self, seed: int | None = None) -> dict[str, Any]:
         opts: dict[str, Any] = {
@@ -674,41 +904,68 @@ class OllamaTarget(BaseTarget):
     def generate(
         self, dialog: list[DialogTurn], *, seed: int | None = None
     ) -> Response:
-        verified_digest = self._verify_daemon_identity()
-        messages = _dialog_to_ollama_messages(
-            dialog,
-            multimodal="image" in self.modality_support,
-            media_roots=self.media_roots,
-        )
-        t0 = time.perf_counter()
-        data = self._chat(messages, seed=seed)
-        latency_ms = (time.perf_counter() - t0) * 1000.0
+        self.validate_research_identity()
+        deadline = self._monotonic() + self.timeout
+        try:
+            lock = OllamaProcessLock(
+                base_url=self.host,
+                exclusive=False,
+                deadline=deadline,
+                monotonic=self._monotonic,
+                sleep=self._sleep,
+            )
+            with lock:
+                pre_digest = self._verify_daemon_identity(deadline=deadline)
+                messages = _dialog_to_ollama_messages(
+                    dialog,
+                    multimodal="image" in self.modality_support,
+                    media_roots=self.media_roots,
+                )
+                t0 = time.perf_counter()
+                data = self._chat(messages, seed=seed, deadline=deadline)
+                latency_ms = (time.perf_counter() - t0) * 1000.0
 
-        if not isinstance(data, dict):
-            raise LocalTargetOutputError("Ollama response is not an object")
-        if data.get("error"):
-            raise LocalTargetOutputError(f"Ollama returned an error: {data['error']}")
-        if data.get("done") is not True:
-            raise LocalTargetOutputError("Ollama response did not declare done=true")
-        done_reason = data.get("done_reason")
-        if done_reason != "stop":
-            raise LocalTargetOutputError(
-                f"Ollama response is truncated or incomplete: {done_reason!r}"
-            )
-        resolved_model = data.get("model")
-        if not isinstance(resolved_model, str) or resolved_model != self.model:
-            raise LocalTargetOutputError(
-                f"Ollama returned unexpected model identity {resolved_model!r}"
-            )
-        message = data.get("message")
-        if not isinstance(message, dict):
-            raise LocalTargetOutputError("Ollama response omitted its message object")
-        if message.get("role", "assistant") != "assistant":
-            raise LocalTargetOutputError("Ollama returned a non-assistant message")
-        text = message.get("content")
-        if not isinstance(text, str) or not text.strip():
-            raise LocalTargetOutputError("Ollama returned an empty completion")
-        tokens = self._token_counts(data)
+                if not isinstance(data, dict):
+                    raise LocalTargetOutputError("Ollama response is not an object")
+                if data.get("error"):
+                    raise LocalTargetOutputError(
+                        f"Ollama returned an error: {data['error']}"
+                    )
+                if data.get("done") is not True:
+                    raise LocalTargetOutputError(
+                        "Ollama response did not declare done=true"
+                    )
+                done_reason = data.get("done_reason")
+                if done_reason != "stop":
+                    raise LocalTargetOutputError(
+                        "Ollama response is truncated or incomplete: "
+                        f"{done_reason!r}"
+                    )
+                resolved_model = data.get("model")
+                if not isinstance(resolved_model, str) or resolved_model != self.model:
+                    raise LocalTargetOutputError(
+                        f"Ollama returned unexpected model identity {resolved_model!r}"
+                    )
+                message = data.get("message")
+                if not isinstance(message, dict):
+                    raise LocalTargetOutputError(
+                        "Ollama response omitted its message object"
+                    )
+                if message.get("role", "assistant") != "assistant":
+                    raise LocalTargetOutputError(
+                        "Ollama returned a non-assistant message"
+                    )
+                text = message.get("content")
+                if not isinstance(text, str) or not text.strip():
+                    raise LocalTargetOutputError("Ollama returned an empty completion")
+                tokens = self._token_counts(data)
+                post_digest = self._verify_daemon_identity(deadline=deadline)
+                loaded_digest = self._verify_loaded_identity(
+                    resolved_model,
+                    deadline=deadline,
+                )
+        except TimeoutError as exc:
+            raise LocalTargetOutputError(str(exc)) from exc
         from .api import _dialog_fingerprint
 
         return Response(
@@ -722,8 +979,11 @@ class OllamaTarget(BaseTarget):
                 "model": self.model,
                 "resolved_model": resolved_model,
                 "model_digest": self.model_digest,
-                "verified_model_digest": verified_digest,
+                "verified_model_digest": pre_digest,
+                "post_verified_model_digest": post_digest,
+                "loaded_verified_model_digest": loaded_digest,
                 "model_identity_verified": True,
+                "model_identity_transaction": "pre-tags/chat/post-tags/post-ps",
                 "done": True,
                 "done_reason": done_reason,
                 "requested_seed": seed,
@@ -739,13 +999,21 @@ class OllamaTarget(BaseTarget):
         )
 
     def _chat(
-        self, messages: list[dict[str, Any]], *, seed: int | None = None
+        self,
+        messages: list[dict[str, Any]],
+        *,
+        seed: int | None = None,
+        deadline: float | None = None,
     ) -> dict[str, Any]:
         """Send a timeout- and byte-bounded chat request."""
-        return self._chat_http(messages, seed=seed)
+        return self._chat_http(messages, seed=seed, deadline=deadline)
 
     def _chat_http(
-        self, messages: list[dict[str, Any]], *, seed: int | None = None
+        self,
+        messages: list[dict[str, Any]],
+        *,
+        seed: int | None = None,
+        deadline: float | None = None,
     ) -> dict[str, Any]:
         """Dependency-free fallback against Ollama's REST API."""
         payload = json.dumps(
@@ -756,48 +1024,70 @@ class OllamaTarget(BaseTarget):
                 "stream": False,
             }
         ).encode("utf-8")
+        if len(payload) > _MAX_OLLAMA_REQUEST_BYTES:
+            raise ValueError("Ollama chat request exceeds the 32 MiB limit")
         req = urllib.request.Request(
             f"{self.host}/api/chat",
             data=payload,
             headers={"Content-Type": "application/json"},
             method="POST",
         )
-        value = self._bounded_json_request(req, purpose="chat response")
+        value = self._bounded_json_request(
+            req,
+            purpose="chat response",
+            deadline=deadline or (self._monotonic() + self.timeout),
+        )
         if not isinstance(value, dict):
             raise LocalTargetOutputError("Ollama HTTP response is not a JSON object")
         return value
 
     def _bounded_json_request(
-        self, request: urllib.request.Request, *, purpose: str
+        self,
+        request: urllib.request.Request,
+        *,
+        purpose: str,
+        deadline: float,
     ) -> Any:
-        """Read one Ollama JSON body with a hard pre-parse byte ceiling."""
+        """Read strict JSON through the fixed opener under one hard deadline."""
 
         try:
-            with urllib.request.urlopen(request, timeout=self.timeout) as response:
-                declared = response.headers.get("Content-Length")
-                if declared is not None:
-                    try:
-                        declared_size = int(declared)
-                    except (TypeError, ValueError) as exc:
-                        raise LocalTargetOutputError(
-                            f"Ollama {purpose} has invalid Content-Length"
-                        ) from exc
-                    if declared_size < 0 or declared_size > _MAX_OLLAMA_RESPONSE_BYTES:
-                        raise LocalTargetOutputError(
-                            f"Ollama {purpose} exceeds the 4 MiB limit"
-                        )
-                body = response.read(_MAX_OLLAMA_RESPONSE_BYTES + 1)
+            timeout = min(
+                self.timeout,
+                remaining_seconds(
+                    deadline,
+                    self._monotonic,
+                    label=f"Ollama {purpose}",
+                ),
+            )
+            response = open_with_deadline(
+                self._open_request,
+                request,
+                deadline=deadline,
+                monotonic=self._monotonic,
+                maximum_timeout=timeout,
+                label=f"Ollama {purpose}",
+            )
+            with response:
+                body = read_bounded_response(
+                    response,
+                    maximum=_MAX_OLLAMA_RESPONSE_BYTES,
+                    deadline=deadline,
+                    monotonic=self._monotonic,
+                    label=f"Ollama {purpose}",
+                )
         except LocalTargetOutputError:
             raise
+        except ValueError as exc:
+            if "byte limit" in str(exc):
+                raise LocalTargetOutputError(
+                    f"Ollama {purpose} exceeds the 4 MiB limit"
+                ) from exc
+            raise LocalTargetOutputError(str(exc)) from exc
         except (TimeoutError, urllib.error.URLError, OSError) as exc:
             raise RuntimeError(
                 f"could not obtain Ollama {purpose} from {self.host} within "
-                f"the configured {self.timeout:g}s timeout"
+                f"the configured hard {self.timeout:g}s deadline"
             ) from exc
-        if len(body) > _MAX_OLLAMA_RESPONSE_BYTES:
-            raise LocalTargetOutputError(
-                f"Ollama {purpose} exceeds the 4 MiB limit"
-            )
         try:
             return _strict_bounded_json_bytes(body)
         except (UnicodeDecodeError, json.JSONDecodeError, RecursionError, ValueError) as exc:
@@ -876,6 +1166,7 @@ __all__ = [
     "OLLAMA_FORBIDDEN_LOCAL_CONFIG_FIELDS",
     "VLLMTarget",
     "OllamaTarget",
+    "canonical_local_model_identity",
     "make_vllm_target",
     "make_ollama_target",
     "validate_vllm_max_model_len",

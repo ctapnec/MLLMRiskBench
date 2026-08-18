@@ -103,9 +103,19 @@ incompatibility remains `N/A` rather than being counted as a failed experiment.
 
 Local startup uses `psutil`/platform probes for OS, CPU, physical/logical cores
 and RAM, and `nvidia-smi` for each GPU model, VRAM, PCI id, compute capability
-and driver. The dashboard and Build tab show this snapshot. Build filters hosted
-targets by provider (`All` by default) and presents separate Local vLLM and Local
-Ollama groups. Local vLLM filters combine an immediate
+and driver. The dashboard and Build tab show this snapshot. One large, accessible
+model-picker wizard serves both the target and LLM-judge controls: first choose
+hosted or local, then apply the relevant hosted-provider (`All` by default) or
+local filters. Target mode binds one or more hosted targets and at most one
+local target. Judge mode binds exactly one model, distinct from every target; a
+local target and a distinct local judge cannot share one process. Different
+local target models are scheduled as separate rig jobs/grids; one
+legal grid may still combine multiple hosted targets with its single local target.
+A judge-only
+warning marks the highest configured comparable input/output rate in each
+currency; it is a pricing warning, not a quality ranking. The local
+step presents separate Local vLLM and Local Ollama groups. Local vLLM filters
+combine an immediate
 case-insensitive name substring, a synchronized 10M-3T maximum-parameter
 slider/numeric input, and a separate `Automatic 16/8/4-bit fit` card (on by
 default). A separate `Include unknown fit` checkbox is off by default. Hardware
@@ -132,6 +142,13 @@ target/judge calls. On
 the actual two-24,564-MiB rig, FP8 does not fit a 70B profile, so it is rostered
 only as an in-flight 4-bit BitsAndBytes, tensor-parallel-2 candidate rather than
 an unquantized model.
+
+Two disabled precision profiles retain exact diagnostic reasons. LLaVA-v1.6 FP8
+loaded its weights under vLLM 0.27.1, then the multimodal encoder's scaled-matrix
+kernel attempted `.view()` on a non-contiguous tensor. GraySwan RR BitsAndBytes
+4-bit was rejected because its `LlavaNext` implementation exposes no
+`packed_modules_mapping`. Both are architecture/runtime incompatibilities, not
+VRAM-fit failures, and both stopped before target inference.
 The optional vLLM-only `max_model_len` field is an engine-context and KV-cache
 admission cap, not the response-generation `max_tokens` bound. Omission leaves
 the checkpoint's native context unchanged; an explicit integer in 1..1,000,000
@@ -140,14 +157,80 @@ Rig Web preserves the field in its selected local config, and the normalized
 value enters grid/run provenance. Each Build row labels either the explicit
 context cap or native model context.
 
-The Local Ollama group is an inventory of artifacts already pulled into a
-separately managed local daemon. An `ollama:<model-tag>` entry in
-`local-targets` must carry the exact 64-hex digest reported by `/api/tags` and
+Hub-backed local execution is a sealed three-stage workflow, never an implicit
+first-load download. It covers all five model roles: vLLM target, local vLLM
+LLM judge, scoring Guardrail judge, defense Guardrail, and NanoGCG surrogate.
+Every Hub selection requires its public repository ID and an exact 40-64
+lowercase-hex commit. `run_matrix --model-acquisition-plan-only` derives a
+path-free plan and stops before constructing an attacker, target, judge, guard,
+or surrogate. The dedicated `experiments.model_acquire` controller verifies or
+transfers the planned bytes and writes a sealed receipt. The subsequent
+preflight or measured process accepts only that exact plan, receipt, and private
+managed-store locator, rehashes every snapshot immediately around model
+construction, and forces Hugging Face/Transformers/vLLM local-only offline
+policy. Explicit digest-sealed workstation checkpoints are the path-local
+exception and receive the same pre/post-load content check.
+
+Rig Web presents those stages as `acquisition plan` (no model call), `model
+acquisition`, then the reviewed offline preflight/run. Its `model_download`
+activity appears only while the authenticated acquisition worker confirms that
+missing bytes are being transferred; a cache hit/import never gets the badge,
+and terminal or cancelled work clears it. `HF_TOKEN` is write-only and
+presence-only in Config, is held only in the console process (never its
+operator secrets file), reaches only the acquisition child, and is removed
+before normal model processes import third-party runtimes. Private tokens,
+plan/receipt/store locators, and resolved snapshot paths never enter durable
+argv, Jobs logs, reports, or UI artifacts. Result roots instead retain safe,
+path-free canonical plan and receipt copies plus a timestamp- and mtime-
+independent sealed execution descriptor. Grid provenance keeps that complete
+roster. Scientific conditions use a plan-free shared judge/guard/defense/
+surrogate role projection, while each Runner cell adds only its own local target
+seal. Thus adding an unrelated local target to a hosted grid cannot change the
+hosted cell's condition or run identity, while changed relevant bytes still do.
+Identical bytes remain one
+scientific condition while the exact receipt event and its admission-only stat
+inventory stay auditable.
+
+The Local Ollama group is a live inventory from the fixed loopback daemon
+(`http://127.0.0.1:11434` by default). Rig Web provides Status, Start, Stop,
+and Pull controls. It classifies a daemon already on that endpoint as external
+and never stops it; a listener whose ownership cannot be proved is explicitly
+ambiguous. Stop and clean shutdown address only the dedicated process group
+started by the current console process, and retain an error/owned state if
+descendant cleanup cannot be confirmed so Stop can retry. After a console
+crash/restart, a surviving daemon is external because the new process has no
+ownership handle. Cleanup sends no terminating signal unless the original live
+process-group leader still has the exact captured start identity; if that proof
+disappears, ownership stays in an explicit retryable error state. Pull runs as a normal console job with explicit
+`model_download` progress, but only for a current-console-owned daemon. Its
+worker re-proves the frozen PID/start identity and exact loopback listener while
+holding the cross-process mutation lock, uses the model-storage path bound at
+daemon start, and rejects external or replaced daemons. Before admission it
+requires five GiB of model-volume headroom; the worker rechecks that reserve
+plus each reported remaining download before continuing.
+
+Discovery combines bounded `/api/tags`, `/api/ps`, and `/api/show` requests. It
+accepts at most 64 installed rows within one five-second aggregate capability
+budget, verifies a second tag/digest snapshot to close mutable-tag races, and
+derives text/image modalities only from explicit show capabilities. Invalid or
+ambiguous rows are reported but never fabricated as selectable models. Exact
+bounded family evidence from tags/show details and
+`model_info.general.architecture` must be present and mutually compatible; the
+architecture participates in overlap matching. Exact normalized
+upstream/name/family overlaps with the vLLM roster are unavailable
+for Ollama execution. A stale/manual `local-targets` overlap remains visible
+with its exact reason, but cannot override this distinct-model requirement.
+Every `ollama:<model-tag>`
+entry must carry the exact lowercase 64-hex digest reported by `/api/tags` and
 an explicit unique modality list containing `text` and optionally `image`.
 Ollama entries reject vLLM-only revision, parameter, topology, memory, output,
 context, quantization, and unknown-fit fields; the pulled artifact fixes its
 precision, so the Build page shows no automatic fit or precision control for
-it. The Runner talks to the daemon over its HTTP
+it. Runner admission independently refreshes the live show-backed roster, so an
+opaque manual tag cannot hide an overlapping upstream family. Each inference
+holds the shared endpoint lock and binds pre-chat `/api/tags`, the returned
+model, post-chat `/api/tags`, and exact post-chat `/api/ps` tag/digest evidence
+in one hard-deadline transaction. The Runner talks to the daemon over its HTTP
 API using the Python standard library, so no Ollama Python SDK is required. A
 running daemon and the matching pulled tag remain live-run prerequisites.
 
@@ -160,7 +243,7 @@ unused orphaned `datasets 2.14.7` installation. This verifies the environment
 and UI/admission prerequisites, not model inference; no provider/model call was
 made.
 
-Runner 2.16 makes that prerequisite machine-checked. A bounded non-dry
+Runner 2.19 makes that prerequisite machine-checked. A bounded non-dry
 `--attestation-probe` grid is converted by `experiments.live_attestation` into a
 content-addressed `ura-live-attestation/2` receipt. An ordinary measured grid
 must supply the exact receipt bytes and digest, the same operator-declared
@@ -183,10 +266,6 @@ pair is the appropriate design for a defense effect. Fable thinking and Sol
 encrypted reasoning or assistant-output state are retained only as needed for
 provider-faithful stateless continuation and checkpoint resume.
 
-Mythos remains relevant frontier-security literature and a possible future
-replication target, but the researcher has no access. It is not an executable
-target, roster row, or measured effect in this study.
-
 ## Sources, modalities, and native engines
 
 The common runner exposes 19 converter families: AdvBench, AgentHarm, BIPIA,
@@ -208,17 +287,27 @@ not reduced to generated prompts and replayed as if that reproduced the native
 experiment.
 
 Before configuration loading or corpus conversion, `run_matrix` writes a strict,
-content-addressed `ura-request-envelope/1`. It fixes the operator-selected
+content-addressed `ura-request-envelope/2`. It fixes the operator-selected
 requested-target x logical-source-arm x attacker universe as prospective
 whole-arm request units; it does not invent source-policy or modality strata.
 Pre-materialization failures after that boundary use bound
 `ura-request-error/1` artifacts that explicitly deny execution and provider
 calls. Basic CLI/argument-shape failures rejected before the envelope boundary
 remain outside this accounting surface.
+The version-2 request also binds
+`hosted_judge_data_transfer_acknowledged`: it is true only for an explicitly
+acknowledged live hosted judge and false for dry, no-call, rules-only, or local-
+judge paths. This records an operator acknowledgement, not proof of privacy
+approval or a provider retention guarantee.
 
 For each source instance and model, the planner admits only the exact
-source-present modality combination declared by the target. Before calls,
-the content-addressed `ura-eligibility-plan/1` ledger retains each requested
+attacker-produced target-input combinations declared prospectively for every
+datapoint and seed. The path-free contract preserves repeated physical-media
+occurrences and binds IDEATOR's generated image bytes plus adversarial-text
+digest; Runner compares every realized turn before budget reservation or target
+invocation. Tool-conditioned rows remain fail-closed until a typed executable
+runtime and actual-use attestation exist. Before calls,
+the content-addressed `ura-eligibility-plan/2` ledger retains each requested
 selected-source stratum as `compatible_if_isolated` or `N/A`, together with its
 whole-arm execution-unit status and failed gate, and
 `modality_coverage_plan` verifies the admitted intersection; afterward,
@@ -238,6 +327,15 @@ materialized-planning-stratum CSV. Prospective whole-arm request units remain a
 separate, unit-labelled JSON collection rather than being mixed into that CSV.
 Bound early errors can mark applicable prospective units blocked, but never
 fabricate strata, attempts, or provider calls.
+
+Rows whose source evaluator is not integrated remain fail-closed by default.
+The explicit `--approximate-common-metrics` CLI/Build opt-in may add only
+separately named `approximate_*` proxy results. The Stats surface badges them
+`⚠ approximate`, or `⚠ synthetic + approximate` when any target or scoring
+contribution is synthetic, and keeps their coverage and denominators separate
+from source-native results. Their displayed reliability is an auditable,
+uncalibrated method/evidence/confidence/identity-completeness indicator—not a
+probability, accuracy estimate, model-quality ranking, or substitute evaluator.
 
 Repeatable typed live-attestation inputs are validated against every measured
 grid's content-bound receipt projection. Analysis inclusion is deliberately
@@ -403,7 +501,7 @@ Runner `RunManifest`; the URA revision that performed their import is retained
 in the return-package/importer context rather than relabelled as an upstream
 native field.
 
-Runner `ura-runner/2.16` writes unified schema `1.4`. Immutable planning/source
+Runner `ura-runner/2.19` writes unified schema `1.4`. Immutable planning/source
 stratum identity is stored separately from adaptive per-turn evaluation
 identity. Thus a Crescendo setup turn remains joined to its original planning
 stratum while receiving a typed `not_applicable` judgment and no judge call or
@@ -467,9 +565,11 @@ fail-closed admission - exact-modality compatibility of every target/attacker
 with each arm, agentic/native-only attackers shown disabled rather than as
 common lanes, and scoring-vs-defense guardrail separation - before any
 subprocess. Source arms lacking an integrated evaluator remain selectable so the
-programme stays visible, but carry one concise `no evaluator` badge with one
-custom hover/focus tooltip containing the exact reason; submitting one is
-rejected server-side before a subprocess and never presented as runnable.
+programme stays visible. They are rejected before a subprocess by default.
+Eligible non-tool rows instead show `⚠ approximate opt-in`; the explicit opt-in
+admits only separately named, supplementary `approximate_*` response proxies,
+not the missing source evaluator. Tool-conditioned rows show `tool runtime
+required` and remain fail-closed.
 Dry-run composition drops selected
 real API/local targets and their configs because `run_matrix --dry-run` always
 uses `MockTarget`. Local roster modalities are limited to Runner-supported text
@@ -485,10 +585,21 @@ root before invoking either producer and emits canonical absolute artifact paths
 for runtime use. The native artifact readers still reject paths containing a
 symlink component. `run_matrix` removes those host-only paths before persistence
 and retains only the verified content identity.
-Before a paid mode, it shows the exact argv and offers a no-call preflight
-whose lane-projection gives the
+Before a paid mode, it shows the durable argv identity and offers a no-call
+preflight whose lane-projection gives the
 required target/judge/HTTP call upper bounds; Start is blocked until the entered
-ceilings cover that projection (a call bound, not a price estimate). It also
+ceilings cover that projection (a call bound, not a price estimate). The reviewed
+selection is bound as an internal `ura-builder-selected-api-config/1` execution-
+config bundle and held behind a 30-minute, purpose-bound, one-shot confirmation
+ticket. Each selected route carries its canonical provider/model and a typed
+`endpoint_identity=https-base-url-sha256:<digest>`, never a raw URL. At launch,
+only the selected generic API/local rows are materialized into private digest-
+bound configs that Runner reads once and unlinks; HTML and durable job state use
+portable identities and digest placeholders. It also
+keeps an explicit workstation checkpoint locator only in the one-shot launch
+argv/private transient config; preview HTML, job state, `command.json`, and
+SQLite retain its declared `local-checkpoint@sha256` identity instead; the
+child verifies that digest before model calls. It also
 offers job monitoring with a verified whole-process-tree stop (an unconfirmed
 stop is surfaced, never reported as success), an allowlisted JSON editor for the
 operator-local registries, rendering of retained Level-1/Level-2 artifacts (one
@@ -511,11 +622,14 @@ and the console's own bookkeeping is reachable headlessly too (`rig_web
 The Jobs view renders each full start date and time in the browser's local time
 zone. State, text, From, and To filters combine; the default interval is the
 previous seven days through the current browser time, and both selected bounds
-are inclusive at the input precision. Tags are deliberately short: console
+are inclusive at the input precision. Date changes reload a date-bounded SQLite
+query rather than filtering only the recent in-memory cache; an explicit notice
+appears if the 5,000-row console-job or 20-row in-range campaign display cap is
+reached. Tags are deliberately short: console
 work uses `running`, `passed`, `failed`, or `orphaned`, while externally managed
-engineering campaigns can additionally use `reported running`, `partial`,
-`blocked`, `stopped`, or `unknown`. `Reported running` is an external marker
-state, not a console-owned process-liveness claim.
+engineering campaigns use the same blue `running` tag plus `partial`, `blocked`,
+`stopped`, or `unknown`. The surrounding detail identifies external `running` as
+a task-log report, not a console-owned process-liveness claim.
 
 External campaign task counts report task-process outcomes as succeeded,
 failed, skipped, active, or pending. They do not prove that a model was called.

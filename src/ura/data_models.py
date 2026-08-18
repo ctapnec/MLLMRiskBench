@@ -356,6 +356,13 @@ class EvalResult(BaseModel):
     def _result_ids_nonblank(cls, v: str, info) -> str:
         return _nonblank(v, f"EvalResult.{info.field_name}")
 
+    @field_validator("n", mode="before")
+    @classmethod
+    def _result_count_is_strict_integer(cls, value: object) -> object:
+        if isinstance(value, bool) or not isinstance(value, int):
+            raise ValueError("EvalResult.n must be a strict integer")
+        return value
+
     @field_validator("value", "ci_low", "ci_high")
     @classmethod
     def _finite(cls, v: Optional[float], info) -> Optional[float]:
@@ -382,6 +389,26 @@ class EvalResult(BaseModel):
                     "mmsafety_official_attack_rate requires executed official evaluator "
                     "and typed source-policy provenance"
                 )
+        approximate = self.provenance.get("approximate_security")
+        if self.metric.startswith("approximate_"):
+            # Keep the additive proxy contract inside provenance so historical
+            # schema-v1.4 result rows remain byte-shape compatible.  The nested
+            # object is nevertheless exact and versioned rather than a loose
+            # warning string.
+            from .approximate_metrics import validate_approximate_metric_provenance
+
+            parsed = validate_approximate_metric_provenance(
+                self.metric, approximate
+            )
+            if self.n != parsed.n_result_units:
+                raise ValueError(
+                    "approximate EvalResult.n must equal its typed metric-specific "
+                    "result-unit count"
+                )
+        elif approximate is not None:
+            raise ValueError(
+                "only approximate_* metrics may carry approximate-security provenance"
+            )
         return self
 
 

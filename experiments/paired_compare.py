@@ -734,12 +734,24 @@ def _build_units(
 def _validate_shared_metadata(
     left: dict[tuple[str, int], tuple[Any, ...]],
     right: dict[tuple[str, int], tuple[Any, ...]],
+    *,
+    allow_effective_modality_difference: bool = False,
 ) -> None:
     for key in sorted(set(left) & set(right)):
-        if left[key] != right[key]:
+        left_value = left[key]
+        right_value = right[key]
+        comparable_left = (
+            (*left_value[:5], *left_value[6:])
+            if allow_effective_modality_difference else left_value
+        )
+        comparable_right = (
+            (*right_value[:5], *right_value[6:])
+            if allow_effective_modality_difference else right_value
+        )
+        if comparable_left != comparable_right:
             raise ValueError(
                 f"shared unit {key!r} has construct/provenance mismatch: "
-                f"{left[key]!r} != {right[key]!r}"
+                f"{left_value!r} != {right_value!r}"
             )
 
 
@@ -1034,7 +1046,13 @@ def compare_cells(
                         else unit.metric),
             ) for key, unit in right_units.items()
         }
-    _validate_shared_metadata(left_constructs, right_constructs)
+    _validate_shared_metadata(
+        left_constructs,
+        right_constructs,
+        allow_effective_modality_difference=(
+            comparison_type == "within_target_defense_intervention"
+        ),
+    )
     metrics = (
         ["ASR", "over_refusal_rate"]
         if left_mode == "static" or adaptivity

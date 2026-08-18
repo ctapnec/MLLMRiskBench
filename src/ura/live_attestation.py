@@ -18,6 +18,11 @@ from pathlib import Path
 from typing import Any, Iterable, Mapping, Sequence
 
 from .modality_coverage import canonical_modality_combination
+from .model_identity import (
+    canonical_provider_name,
+    strong_realized_model_identity_keys,
+    validate_https_endpoint_identity,
+)
 from .project_revision import validate_project_revision_binding
 
 
@@ -61,6 +66,7 @@ _DESCRIPTOR_FIELDS = frozenset({"file", "sha256", "bytes"})
 _REALIZED_FIELDS = frozenset({
     "target",
     "provider",
+    "endpoint_identity",
     "resolved_model",
     "system_fingerprint",
     "model_revision",
@@ -68,6 +74,7 @@ _REALIZED_FIELDS = frozenset({
 })
 _STABLE_REALIZED_FIELDS = (
     "provider",
+    "endpoint_identity",
     "resolved_model",
     "model_revision",
     "model_digest",
@@ -215,11 +222,31 @@ def stable_realized_target_identity(value: Mapping[str, Any]) -> dict[str, str]:
     resolved model, revision, or digest does participate in equality.
     """
 
-    return {
+    stable = {
         field: str(value[field])
         for field in _STABLE_REALIZED_FIELDS
         if value.get(field) is not None
     }
+    if "provider" in stable:
+        stable["provider"] = canonical_provider_name(stable["provider"])
+    if "endpoint_identity" in stable:
+        stable["endpoint_identity"] = validate_https_endpoint_identity(
+            stable["endpoint_identity"]
+        )
+    for field in ("model_revision", "model_digest"):
+        if field in stable:
+            stable[field] = stable[field].lower()
+    return stable
+
+
+def stable_realized_target_identity_keys(
+    value: Mapping[str, Any],
+) -> set[tuple[str, ...]]:
+    """Independent strong keys for cross-arm and cross-role model equality."""
+
+    return strong_realized_model_identity_keys(
+        stable_realized_target_identity(value)
+    )
 
 
 def realized_identity_matches(
@@ -462,16 +489,25 @@ def required_attestation_keys(
     """Return exact transport prerequisites for compatible planning strata."""
 
     requested = set(requested_target_specs)
-    return {
-        (
-            execution_scope_id,
-            str(item["requested_target_spec"]),
-            tuple(str(value) for value in item["exact_modality_combination"]),
-        )
-        for item in eligibility_items
-        if item.get("requested_target_spec") in requested
-        and item.get("status") == "compatible_if_isolated"
-    }
+    required: set[tuple[str, str, tuple[str, ...]]] = set()
+    for item in eligibility_items:
+        if (
+            item.get("requested_target_spec") not in requested
+            or item.get("status") != "compatible_if_isolated"
+        ):
+            continue
+        combinations = item.get("target_call_modality_combinations")
+        if not isinstance(combinations, list) or not combinations:
+            raise ValueError(
+                "compatible eligibility item lacks attacker target combinations"
+            )
+        for combination in combinations:
+            required.add((
+                execution_scope_id,
+                str(item["requested_target_spec"]),
+                canonical_modality_combination(combination),
+            ))
+    return required
 
 
 def validate_required_live_attestations(
@@ -481,6 +517,7 @@ def validate_required_live_attestations(
     resolved_targets: Mapping[str, str],
     route_config_sha256: Mapping[str, str],
     route_kind: Mapping[str, str],
+    target_condition_sha256: Mapping[str, str],
     current_harness_source_sha256: str,
     current_driver_source_sha256: str,
     current_project_revision: Mapping[str, Any],
@@ -564,6 +601,25 @@ def validate_required_live_attestations(
                 "one target has conflicting stable identities across required "
                 f"modality attestations: {target_key!r}"
             )
+    identity_owners: dict[tuple[str, tuple[str, ...], str], str] = {}
+    for (scope, requested), identity in identities_by_target.items():
+        condition = _sha256(
+            target_condition_sha256.get(requested),
+            f"target execution condition for {requested}",
+        )
+        keys = stable_realized_target_identity_keys(identity)
+        if not keys:
+            raise ValueError(
+                f"live attestation lacks a strong target identity for {requested!r}"
+            )
+        for identity_key in keys:
+            owner_key = (scope, identity_key, condition)
+            prior_owner = identity_owners.setdefault(owner_key, requested)
+            if prior_owner != requested:
+                raise ValueError(
+                    "distinct requested targets resolve to one stable realized "
+                    "model identity"
+                )
     return index
 
 
@@ -577,6 +633,7 @@ __all__ = [
     "route_config_from_grid_request",
     "route_config_sha256",
     "stable_realized_target_identity",
+    "stable_realized_target_identity_keys",
     "validate_execution_scope_id",
     "validate_live_attestation_manifest",
     "validate_required_live_attestations",

@@ -22,9 +22,20 @@ from typing import Any, Iterable
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
-from experiments.figure_results import _load_cells  # noqa: E402
+from experiments.figure_results import (  # noqa: E402
+    _load_cells,
+    _reject_duplicate_realized_target_arms,
+)
 from experiments.native_import import load_native_run  # noqa: E402
+from ura.approximate_metrics import (  # noqa: E402
+    ApproximateSecurityDecision,
+    aggregate_approximate_provenance,
+    validate_approximate_completion_bindings,
+    validate_approximate_judgment,
+    validate_approximate_metric_provenance,
+)
 from ura.adapters._native_artifacts import NativeEngineRun  # noqa: E402
+from ura.data_models import Judgment  # noqa: E402
 from ura.eligibility import (  # noqa: E402
     summarize_eligibility_plans,
     validate_eligibility_plan,
@@ -82,31 +93,36 @@ _NATIVE_FAMILIES: dict[str, list[str]] = {
 
 
 def _metric_family(metric: str) -> str:
+    approximate = metric.startswith("approximate_")
+    if approximate:
+        metric = metric.removeprefix("approximate_")
     if metric in {"ASR", "refusal_rate"}:
-        return "unsafe_response_rate"
-    if metric == "ISR":
+        family = "unsafe_response_rate"
+    elif metric == "ISR":
         # Runner ISR is the harmful-response rate restricted to rows carrying
         # an indirect-injection risk tag.  It does not observe whether an
         # injected goal executed, so it must not inherit a source-native goal-
         # success interpretation.
-        return "unsafe_response_rate"
-    if metric in {"over_refusal_rate", "conversation_over_refusal_rate"}:
-        return "benign_refusal_rate"
-    if metric in {
+        family = "unsafe_response_rate"
+    elif metric in {"over_refusal_rate", "conversation_over_refusal_rate"}:
+        family = "benign_refusal_rate"
+    elif metric in {
         "conversation_ASR",
         "robust_refusal_rate",
         "median_turns_to_break",
         "restricted_mean_turns_to_break",
         "kaplan_meier_survival",
     } or metric.startswith("survival_"):
-        return "adaptive_compromise"
-    if metric in {"strongreject", "conversation_strongreject_max"}:
-        return "graded_risk"
-    if metric == "source_metric_implementation_coverage":
-        return "coverage_conformance"
-    if metric.startswith(("rjudge_", "gptgeochat_")):
-        return "classification_quality"
-    return "source_specific_or_specialized"
+        family = "adaptive_compromise"
+    elif metric in {"strongreject", "conversation_strongreject_max"}:
+        family = "graded_risk"
+    elif metric == "source_metric_implementation_coverage":
+        family = "coverage_conformance"
+    elif metric.startswith(("rjudge_", "gptgeochat_")):
+        family = "classification_quality"
+    else:
+        family = "source_specific_or_specialized"
+    return f"approximate_{family}" if approximate else family
 
 
 def _policy(raw: dict[str, Any]) -> dict[str, Any]:
@@ -157,11 +173,29 @@ def _stratum_identity(cell: dict[str, Any], row: dict[str, Any]) -> dict[str, An
 
 def _measurement_families(identity: dict[str, Any], rows: list[dict[str, Any]]) -> list[str]:
     if not identity["common_metrics_eligible"]:
-        return [
+        families = [
             "classification_quality"
             if identity["source_metric_family"] is not None
             else "coverage_conformance"
         ]
+        proxy = [
+            validate_approximate_judgment(row)[1]
+            for row in rows
+            if row["raw"].get("approximate_security_decision") is not None
+        ]
+        if proxy:
+            families.append(
+                "approximate_adaptive_compromise"
+                if identity["execution_mode"] == "live_response_conditioned"
+                else "approximate_unsafe_response_rate"
+                if identity["expected_behavior"] == "refuse"
+                else "approximate_benign_refusal_rate"
+            )
+            if any(
+                row["raw"].get("strongreject_evaluated") is True for row in rows
+            ):
+                families.append("approximate_graded_risk")
+        return sorted(set(families))
     if identity["execution_mode"] == "live_response_conditioned":
         families = ["adaptive_compromise"]
     elif identity["expected_behavior"] == "refuse":
@@ -181,19 +215,33 @@ def _descriptive_endpoint(
 ) -> dict[str, Any] | None:
     """Return an exact-stratum static rate, never a cross-stratum estimate."""
 
+    approximate = False
+    decisions: list[ApproximateSecurityDecision] = []
     if not identity["common_metrics_eligible"]:
-        return None
+        decisions = [
+            validate_approximate_judgment(row)[1]
+            for row in rows
+            if row["raw"].get("approximate_security_decision") is not None
+        ]
+        if not decisions:
+            return None
+        if len(decisions) != len(rows):
+            raise ValueError("partial approximate-decision coverage in runner stratum")
+        approximate = True
     if identity["execution_mode"] == "live_response_conditioned":
         endpoint = (
             "conversation_ASR"
             if identity["expected_behavior"] == "refuse"
             else "conversation_over_refusal_rate"
         )
-        return {
-            "endpoint": endpoint,
+        endpoint_row = {
+            "endpoint": f"approximate_{endpoint}" if approximate else endpoint,
             "value": None,
             "reason": "turn rows require trajectory-level aggregation; use aggregate_results",
         }
+        if approximate:
+            endpoint_row["metric_authority"] = "supplementary_non_authoritative"
+        return endpoint_row
     if identity["expected_behavior"] == "refuse":
         endpoint = "ASR"
         positive = "violation"
@@ -208,8 +256,8 @@ def _descriptive_endpoint(
     cluster_means = [
         sum(events) / len(events) for events in cluster_events.values()
     ]
-    return {
-        "endpoint": endpoint,
+    endpoint_row = {
+        "endpoint": f"approximate_{endpoint}" if approximate else endpoint,
         "n_event_records": sum(row["label"] == positive for row in rows),
         "n_records": len(rows),
         "n_source_clusters": len(cluster_means),
@@ -220,6 +268,61 @@ def _descriptive_endpoint(
             "descriptive exact-stratum equal-cluster rate; no cross-stratum pooling"
         ),
     }
+    if approximate:
+        evidence_classes = {item.selected_evidence_class for item in decisions}
+        if len(evidence_classes) != 1:
+            raise ValueError(
+                "runner stratum mixes selected-stage approximate evidence class"
+            )
+        evidence_class = next(iter(evidence_classes))
+        endpoint_row.update({
+            "metric_authority": "supplementary_non_authoritative",
+            "warning_tag": (
+                "warning_synthetic_approximate"
+                if evidence_class == "synthetic"
+                else "warning_approximate"
+            ),
+            "evidence_class": evidence_class,
+            "reliability_score": min(
+                item.reliability.score for item in decisions
+            ),
+            "reliability_kind": (
+                "uncalibrated_heuristic_indicator_not_probability"
+            ),
+        })
+    return endpoint_row
+
+
+def _metric_proxy_rows(
+    rows: list[dict[str, Any]], group_by: dict[str, Any]
+) -> list[Judgment]:
+    """Select the exact completed judgments behind one aggregate bucket."""
+
+    selected: list[Judgment] = []
+    for value in rows:
+        judgment = Judgment.model_validate(value, strict=True)
+        if all(
+            str(
+                judgment.raw[key]
+                if key in judgment.raw and judgment.raw[key] is not None
+                else getattr(judgment, key, "unknown")
+            )
+            == expected
+            for key, expected in group_by.items()
+        ):
+            selected.append(judgment)
+    return selected
+
+
+def _validate_proxy_cell_bindings(cell: dict[str, Any]) -> None:
+    validate_approximate_completion_bindings(
+        judgments=cell["judgments"],
+        responses=cell.get("responses"),
+        supplementary_policy=cell["manifest"].get("config", {}).get(
+            "supplementary_metric_policy"
+        ),
+        trails=cell.get("trails", []),
+    )
 
 
 def summarize_runner_cells(cells: list[dict[str, Any]]) -> dict[str, Any]:
@@ -231,6 +334,7 @@ def summarize_runner_cells(cells: list[dict[str, Any]]) -> dict[str, Any]:
         if cell["run_id"] in seen_run_ids:
             raise ValueError(f"duplicate completed runner run_id: {cell['run_id']}")
         seen_run_ids.add(cell["run_id"])
+        _validate_proxy_cell_bindings(cell)
         run = cell["manifest"]["config"]["run"]
         sources: set[str] = set()
         policies: dict[str, dict[str, Any]] = {}
@@ -250,24 +354,72 @@ def summarize_runner_cells(cells: list[dict[str, Any]]) -> dict[str, Any]:
             "effective_modalities": sorted(modalities),
         }
         for result in cell["aggregate_results"]:
-            aggregate_results.append({
+            provenance = result["provenance"]
+            metric = result["metric"]
+            approximate_value = provenance.get("approximate_security")
+            if isinstance(metric, str) and metric.startswith("approximate_"):
+                approximate = validate_approximate_metric_provenance(
+                    metric, approximate_value
+                )
+                if (
+                    isinstance(result.get("n"), bool)
+                    or not isinstance(result.get("n"), int)
+                    or result["n"] != approximate.n_result_units
+                ):
+                    raise ValueError(
+                        "suite approximate aggregate n does not match its typed "
+                        "metric-specific result-unit count"
+                    )
+                group_by = result.get("group_by")
+                if not isinstance(group_by, dict):
+                    raise ValueError(
+                        "approximate aggregate lacks exact grouping provenance"
+                    )
+                recomputed = aggregate_approximate_provenance(
+                    _metric_proxy_rows(cell["judgments"], group_by),
+                    metric=metric.removeprefix("approximate_"),
+                    responses=cell.get("responses"),
+                    supplementary_policy=cell["manifest"].get(
+                        "config", {}
+                    ).get("supplementary_metric_policy"),
+                )
+                if approximate.model_dump(mode="json") != recomputed:
+                    raise ValueError(
+                        "suite approximate aggregate does not match its exact "
+                        "metric-specific completed proxy decisions"
+                    )
+            elif approximate_value is not None:
+                raise ValueError(
+                    "source/common aggregate carries approximate provenance"
+                )
+            else:
+                approximate = None
+            aggregate_row = {
                 "run_id": cell["run_id"],
                 "model_spec": run["model_spec"],
                 "resolved_model": cell["model"],
                 "corpus_arm": run["corpus"],
                 "attacker": run["attacker"],
                 "defense": run["defense"],
-                "metric": result["metric"],
+                "metric": metric,
                 "semantic_family": _metric_family(result["metric"]),
                 "value": result["value"],
                 "ci_low": result.get("ci_low"),
                 "ci_high": result.get("ci_high"),
                 "n": result["n"],
                 "group_by": result["group_by"],
-                "provenance": result["provenance"],
+                "provenance": provenance,
                 "scope_inventory": scope,
                 "cross_cell_pooling_permitted": False,
-            })
+            }
+            if approximate is not None:
+                aggregate_row.update({
+                    "metric_authority": "supplementary_non_authoritative",
+                    "warning_tag": approximate.warning_tag,
+                    "reliability_score": approximate.reliability_score,
+                    "reliability_kind": approximate.reliability_kind,
+                })
+            aggregate_results.append(aggregate_row)
 
     strata: list[dict[str, Any]] = []
     for token in sorted(grouped):
@@ -276,14 +428,39 @@ def summarize_runner_cells(cells: list[dict[str, Any]]) -> dict[str, Any]:
             str(row["raw"].get("source_cluster_id") or row["raw"]["datapoint_id"])
             for row in rows
         }
+        approximate_rows = [
+            row
+            for row in rows
+            if row["raw"].get("approximate_security_decision") is not None
+        ]
+        if approximate_rows:
+            for row in approximate_rows:
+                validate_approximate_judgment(row)
+        source_or_common_label_counts = (
+            dict(sorted(Counter(row["label"] for row in rows).items()))
+            if identity["common_metrics_eligible"]
+            else {"not_applicable": len(rows)}
+        )
         strata.append({
             **identity,
             "measurement_families": _measurement_families(identity, rows),
             "n_completed_records": len(rows),
             "n_source_clusters": len(cluster_ids),
-            "label_counts": dict(sorted(Counter(row["label"] for row in rows).items())),
-            "n_strongreject_graded": sum(
-                row["raw"].get("strongreject_evaluated") is True for row in rows
+            "label_counts": source_or_common_label_counts,
+            "n_strongreject_graded": (
+                sum(
+                    row["raw"].get("strongreject_evaluated") is True
+                    for row in rows
+                )
+                if identity["common_metrics_eligible"]
+                else 0
+            ),
+            "approximate_proxy_label_counts": dict(sorted(Counter(
+                row["label"] for row in approximate_rows
+            ).items())),
+            "n_approximate_strongreject_graded": sum(
+                row["raw"].get("strongreject_evaluated") is True
+                for row in approximate_rows
             ),
             "descriptive_common_endpoint": _descriptive_endpoint(identity, rows),
         })
@@ -363,6 +540,7 @@ def build_suite_summary(
     expected_source_arms: dict[str, str] | None = None,
     source_inventory_artifact: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
+    _reject_duplicate_realized_target_arms(cells)
     eligibility_inputs = eligibility_plans or []
     if not cells and not native_runs and not eligibility_inputs:
         raise ValueError(
