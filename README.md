@@ -300,7 +300,7 @@ provider-faithful stateless continuation and checkpoint resume.
 
 ## Sources, modalities, and native engines
 
-The common runner exposes 20 converter families: AdvBench, AgentHarm, BIPIA,
+The common runner exposes 25 converter families: AdvBench, AgentHarm, BIPIA,
 CyberSecEval, FigStep, GPTGeoChat, HarmBench, InjecAgent, JailbreakBench,
 JailBreakV, JALMBench, MLLMGuard, MM-SafetyBench, MOSSBench, R-Judge,
 SALAD-Bench, SIUO, StrongREJECT, Video-SafetyBench, and VLSBench. A `--source-config` inventory can
@@ -308,7 +308,7 @@ bind multiple independently labelled source instances to those converters
 without persisting operator-specific absolute paths. Conversion is not an
 automatic claim of scored-run eligibility: a source-specific evaluator that is
 not implemented fails pre-call rather than being squeezed into common ASR.
-The current 40-arm disposition is 23 common-metric arms, two implemented
+The current 45-arm disposition is 28 common-metric arms, two implemented
 source-classification arms, and 15 conversion-only arms pending their exact
 source scorer or runtime.
 
@@ -384,7 +384,7 @@ The runbook is the canonical from-zero procedure:
    detached, create and validate one content-addressed
    `ura-project-revision/1` receipt from that clean checkout, export its path and
    SHA-256, and create the Python environment;
-2. download the selected releases from the 20-converter inventory, copy the
+2. download the selected releases from the 25-converter inventory, copy the
    checked-in source-instance example to the ignored operator-local registry,
    configure its independently labelled instances, bind ordered media roots,
    and validate one compact content-addressed `ura-source-conformance/1`

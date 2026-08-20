@@ -204,7 +204,7 @@ _MODALITIES = ("text", "image", "audio", "video", "tool")
 
 
 #: The complete maintained source-arm catalogue: (arm id, physical modalities,
-#: disabled reason).  All 43 registry arms are listed.  There are THREE kinds,
+#: disabled reason).  All 45 registry arms are listed.  There are THREE kinds,
 #: mirroring ``ura.eligibility`` and ``ura.source_metrics`` exactly:
 #:   * empty reason, NOT in _SOURCE_METRIC_ARMS - a common-runner SCORED lane
 #:     (``common_metrics_eligible: True``), scored by common harmful-ASR/FRR.
@@ -245,6 +245,7 @@ _ARM_CATALOG: tuple[tuple[str, tuple[str, ...], str], ...] = (
     ("jailbreakbench_benign", ("text",), ""),
     ("harmbench_text", ("text",), ""),
     ("saladbench_base", ("text",), ""),
+    ("decodingtrust_stereotype", ("text",), ""),
     ("airbench_full", ("text",), ""),
     ("xstest_full", ("text",), ""),
     ("simplesafetytests_full", ("text",), ""),
@@ -283,6 +284,7 @@ _ARM_CATALOG: tuple[tuple[str, tuple[str, ...], str], ...] = (
         _ineligible("mllmguard_hallucination_truthfulness"),
     ),
     ("gptgeochat_release", ("text", "image"), ""),
+    ("holisafe_full", ("text", "image"), ""),
     ("jalmbench_audio", ("text", "audio"), ""),
     ("videosafetybench_benign_query", ("text", "video"), ""),
     ("videosafetybench_harmful_query", ("text", "video"), ""),
@@ -344,6 +346,8 @@ _AGGREGATOR_ARMS: frozenset[str] = frozenset({
     "airbench_full",
     "xstest_full",
     "simplesafetytests_full",
+    "holisafe_full",
+    "decodingtrust_stereotype",
 })
 
 #: Attack frameworks (engines) offered in the builder, mirroring the harness

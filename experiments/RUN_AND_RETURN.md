@@ -1,8 +1,7 @@
 # Run and return: broad thesis experiment program
 
 This is the operator path from a clean Linux GPU machine to the evidence bundle
-for the thesis. It covers the broad hosted and local model roster, all twenty
-source converters, the runner-safe external attack bridges, and nine complete
+for the thesis. It covers the broad hosted and local model roster, all twenty-five source converters, the runner-safe external attack bridges, and nine complete
 source-native evaluators. Experiments and the human audit are still pending.
 Preflight, dry-run, diagnostic-canary, and bounded transport-probe artifacts are
 diagnostics, not thesis results.
@@ -90,7 +89,7 @@ two declared subparts; RQ5 is judge validity, not the adaptive lane:
 | --- | --- | --- |
 | RQ1 execution conformance | sections 7-14 | requested-cell eligibility/`N/A`, modality plan/result, complete content-bound cells |
 | RQ2 matched served-model conditions | focal grids and section 16 paired/figure commands | matched cluster support/effects plus exact realized identities |
-| RQ3 portfolio breadth/heterogeneity | 40 converter arms, nine native projects, section 16 suite summary | disposition-complete family inventory without false pooling |
+| RQ3 portfolio breadth/heterogeneity | 45 converter arms, nine native projects, section 16 suite summary | disposition-complete family inventory without false pooling |
 | RQ4a defense | section 13 guarded/unguarded same-base design | separate harmful and benign paired effects |
 | RQ4b adaptivity/native execution | section 12 Crescendo/transfer and section 14 native runtimes | fixed-horizon conversation, exact-transfer, or source task/oracle evidence |
 | RQ5 judge validity | sections 15-16 | eligible common-response human labels, adjudication, decision coverage and cluster-aware agreement/calibration |
@@ -226,7 +225,7 @@ data-use restriction, provider retention policy, and institutional approval befo
 acquisition or calls. Do not put secrets, harmful artifacts, or restricted corpora
 in Git.
 
-## 3. Acquire all twenty converter sources
+## 3. Acquire all twenty-five converter sources
 
 *Console equivalent: the section 3.2 export commands are also launchable as
 the `export_jalmbench` and `export_vlsbench` form(s) in the rig console
@@ -419,7 +418,7 @@ sha256sum runs/thesis/source-export-summaries/*-export-summary.json \
 
 ### 3.3 Source inventory and exact input locators
 
-The twenty converter names and the expected operator locators are:
+The twenty-five converter names and the expected operator locators are:
 
 | Converter | Official acquisition | Point the environment variable at | Runner status |
 | --- | --- | --- | --- |
@@ -658,7 +657,7 @@ digest are recorded in
 The receipt is a compact operator record, not a workflow database. It may be
 scoped to the real arms selected for this command, but every selected real arm
 must appear and be `admitted`. Optional entries may record `blocked` or
-`not_selected` operator decisions; the full 40-arm disposition table instead
+`not_selected` operator decisions; the full 45-arm disposition table instead
 joins the maintained registry/requested universe with receipts, eligibility, and
 results. An admitted arm includes the observed upstream revision, split,
 declared source-file hashes, license/access decision, reconciled raw-source counts, and a

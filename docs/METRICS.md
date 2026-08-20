@@ -58,8 +58,7 @@ strata, and native aggregates remain on their upstream per-run scales.
   official evaluator unless that evaluator ran.
 
 MM-SafetyBench ASR and MOSSBench false-refusal rate are examples of secondary
-URA proxies. Their source-policy identities remain visible. The 20-converter
-inventory includes sources whose exact substantive scorer is absent; those
+URA proxies. Their source-policy identities remain visible. The 25-converter inventory includes sources whose exact substantive scorer is absent; those
 rows fail scored preflight rather than borrowing a convenient common endpoint.
 Source-specific tracks use their implemented metric families and do not enter
 common endpoints merely because they share the schema.

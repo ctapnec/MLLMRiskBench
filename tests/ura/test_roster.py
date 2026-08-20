@@ -55,7 +55,7 @@ EXPECTED_CONVERTERS = {
     "bipia", "harmbench", "vlsbench", "mossbench", "siuo",
     "advbench", "jailbreakbench", "figstep", "cyberseceval", "injecagent", "mllmguard",
     "jalmbench", "videosafetybench", "saladbench",
-    "airbench", "xstest", "simplesafetytests",
+    "airbench", "xstest", "simplesafetytests", "holisafe", "decodingtrust",
 }
 
 

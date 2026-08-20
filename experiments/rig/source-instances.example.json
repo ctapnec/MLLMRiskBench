@@ -256,5 +256,17 @@
     "path_env": "URA_VLSBENCH_RELEASE_PATH",
     "source_label": "VLSBench leakage-free image safety",
     "split": "official-release"
+  },
+  "holisafe_full": {
+    "converter": "holisafe",
+    "path_env": "URA_HOLISAFE_PATH",
+    "source_label": "HoliSafe holistic multimodal safety (aggregator; image carries harm)",
+    "split": "bench"
+  },
+  "decodingtrust_stereotype": {
+    "converter": "decodingtrust",
+    "path_env": "URA_DECODINGTRUST_STEREOTYPE_PATH",
+    "source_label": "DecodingTrust stereotype-bias perspective (aggregator; endorsement metric not run)",
+    "split": "stereotype"
   }
 }

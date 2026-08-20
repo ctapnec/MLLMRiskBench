@@ -124,7 +124,7 @@ config. The hardened artifact reader still rejects symlink path components, and
 
 ## Source inventory
 
-The common runner has 20 converter families:
+The common runner has 25 converter families:
 
 ```text
 advbench, agentharm, bipia, cyberseceval, figstep, gptgeochat,
@@ -140,7 +140,7 @@ artifacts. Conversion support does not imply scored eligibility: currently
 implemented source-specific classification evaluators include R-Judge and
 GPTGeoChat; other source-specific requirements fail before a target call until
 their substantive evaluator exists.
-The 40 logical arms therefore comprise 23 common-metric arms, two implemented
+The 45 logical arms therefore comprise 28 common-metric arms, two implemented
 source-classification arms, and 15 conversion-only arms. MLLMGuard
 hallucination, position-swapping, and noise-injection are in the last group
 until their truthfulness scorers exist.

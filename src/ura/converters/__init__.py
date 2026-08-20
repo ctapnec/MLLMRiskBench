@@ -16,9 +16,11 @@ from .agentharm import AgentHarmConverter
 from .airbench import AirBenchConverter
 from .bipia import BIPIAConverter
 from .cyberseceval import CyberSecEvalConverter
+from .decodingtrust import DecodingTrustConverter
 from .figstep import FigStepConverter
 from .gptgeochat import GPTGeoChatConverter
 from .harmbench import HarmBenchConverter
+from .holisafe import HoliSafeConverter
 from .injecagent import InjecAgentConverter
 from .jailbreakbench import JailbreakBenchConverter
 from .jailbreakv import JailBreakVConverter
@@ -47,6 +49,7 @@ _CONVERTERS: dict[str, type[BaseConverter]] = {
         CyberSecEvalConverter, InjecAgentConverter, MLLMGuardConverter,
         JALMBenchConverter, VideoSafetyBenchConverter, SaladBenchConverter,
         AirBenchConverter, XSTestConverter, SimpleSafetyTestsConverter,
+        HoliSafeConverter, DecodingTrustConverter,
     )
 }
 
@@ -66,6 +69,7 @@ __all__ = [
     "CyberSecEvalConverter", "InjecAgentConverter", "MLLMGuardConverter",
     "JALMBenchConverter", "VideoSafetyBenchConverter", "SaladBenchConverter",
     "AirBenchConverter", "XSTestConverter", "SimpleSafetyTestsConverter",
+    "HoliSafeConverter", "DecodingTrustConverter",
     "get_converter", "synth_corpus",
     "ConverterError", "CorpusFormatError", "CorpusNotFoundError", "MediaAssetError",
     "CORPUS_RELEASE_SPECS",
