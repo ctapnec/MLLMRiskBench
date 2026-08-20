@@ -1099,15 +1099,29 @@ def test_attacker_registry_parity_and_full_inventory() -> None:
     from ura.adapters.engines import ATTACKER_NAMES
     from experiments.rig_web import (
         _ATTACKER_NAMES, _ARM_CATALOG, _INELIGIBLE_ARMS, _FRAMEWORKS,
+        _SOURCE_METRIC_ARMS,
     )
     assert _ATTACKER_NAMES == ATTACKER_NAMES
     assert len(_FRAMEWORKS) == 20
     assert len(_ARM_CATALOG) == 45  # all maintained source arms
+    # The 45 arms partition into 28 common-metric lanes + 2 source-metric lanes
+    # + 15 conversion-only arms (no default scored admission).
     # 15 common-metric-ineligible arms with NO implemented source evaluator
     # (shown disabled). rjudge/gptgeochat are NOT here: their exact source
     # evaluators ARE implemented, so run_matrix scores them as source-metric
     # lanes - they are runnable, not disabled.
     assert len(_INELIGIBLE_ARMS) == 15
+    assert len(_SOURCE_METRIC_ARMS) == 2
+    common_arms = [
+        arm
+        for arm, _mods, reason in _ARM_CATALOG
+        if not reason and arm not in _SOURCE_METRIC_ARMS
+    ]
+    assert len(common_arms) == 28
+    assert len(common_arms) + len(_SOURCE_METRIC_ARMS) + len(_INELIGIBLE_ARMS) == 45
+    # holisafe_full is a scored common image arm: its unsafe rows carry a
+    # composed judge reference and its benign SSS rows are response-only.
+    assert "holisafe_full" in common_arms
     assert {
         "cyberseceval_prompt_injection",
         "mllmguard_hallucination",
@@ -1120,7 +1134,6 @@ def test_attacker_registry_parity_and_full_inventory() -> None:
     # The source-metric arm set mirrors the implemented-evaluator registry
     # exactly, so the console never claims a scored lane the runtime does not
     # implement (nor disables one it does).
-    from experiments.rig_web import _SOURCE_METRIC_ARMS
     from ura.source_metrics import _IMPLEMENTED_SOURCE_EVALUATORS
     assert {metric for _a, (metric, _atk) in _SOURCE_METRIC_ARMS.items()} == {
         metric for _src, metric in _IMPLEMENTED_SOURCE_EVALUATORS

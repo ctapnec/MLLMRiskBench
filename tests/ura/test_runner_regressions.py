@@ -6045,3 +6045,177 @@ def test_group_values_with_separators_round_trip_through_aggregation_and_consume
         == "|".join(f"{key}={result.group_by[key]}" for key in plain_keys)
         for result in plain
     )
+
+
+@pytest.mark.parametrize(
+    ("ident", "source", "required_metric", "scope_meta"),
+    [
+        (
+            "mmsafety/11-Financial_Advice/23/SD",
+            "mmsafety",
+            "mmsafety_official_attack_rate",
+            {"judge_reference_text": "official key phrase withheld from the target"},
+        ),
+        (
+            "mossbench:139",
+            "mossbench",
+            "mossbench_refusal_rate",
+            {"automated_metric_scope": "response_only"},
+        ),
+    ],
+)
+def test_common_eligible_official_metric_completes_multi_stage_cascade(
+    tmp_path: Path,
+    ident: str,
+    source: str,
+    required_metric: str,
+    scope_meta: dict[str, object],
+) -> None:
+    # MM-SafetyBench and MOSSBench are scored common arms whose source also
+    # ships an official evaluator URA does not execute. Declaring that evaluator
+    # as provenance must not make the final Judgment claim it deferred to it:
+    # the trail postprocessor requires a null ``required_metric`` on an
+    # evaluated common row and then compares the authoritative retained row
+    # field-for-field against the final, so a stamped metric name failed every
+    # such cell after the paid target call.
+    payload = _PNG
+    media_root = tmp_path / "media"
+    media_root.mkdir()
+    media_path = media_root / "scene.png"
+    media_path.write_bytes(payload)
+    media = MediaRef(
+        modality="image",
+        path=str(media_path.resolve()),
+        sha256=hashlib.sha256(payload).hexdigest(),
+        mime="image/png",
+    )
+    point = _datapoint().model_copy(update={
+        "id": ident,
+        "source": source,
+        "modalities": ["text", "image"],
+        "dialog_history": [DialogTurn(
+            role="user",
+            content="ORIGINAL HARMFUL SOURCE DIALOGUE",
+            media=[media],
+        )],
+        "meta": {
+            "required_metric": required_metric,
+            "common_metrics_eligible": True,
+            "official_evaluator_executed": False,
+            **scope_meta,
+        },
+    })
+    target = MockTarget()
+    target.media_roots = (media_root.resolve(),)
+    runner = Runner(
+        ReplayAttacker(),
+        target,
+        JudgeCascade([RuleJudge(), LLMJudge(judge_target=MockTarget())]),
+        AttackBudget(max_queries=1, max_turns=1, seed=0),
+        [0],
+    )
+
+    judgments, _ = runner.run([point])
+
+    assert len(judgments) == 1
+    final = judgments[0]
+    trail = runner.trails[final.attempt_id]
+    assert [stage.judge for stage in trail] == ["rules", "llm-judge"]
+    assert {stage.raw["cascade_role"] for stage in trail} == {
+        "authoritative", "shadow"
+    }
+    authoritative = next(
+        stage for stage in trail if stage.raw["cascade_role"] == "authoritative"
+    )
+    # The official metric name stays available as immutable planning provenance
+    # for every row, eligible or not.
+    assert final.raw["planning_required_metric"] == required_metric
+    assert final.raw["planning_common_metrics_eligible"] is True
+    assert final.raw["common_metrics_eligible"] is True
+    # The scored common row itself never claims to defer to that metric.
+    assert final.raw["required_metric"] is None
+    assert authoritative.raw.get("required_metric") is None
+    assert runner_module.judgment_trail_projection(authoritative) == (
+        runner_module.judgment_trail_projection(final)
+    )
+
+    trail_path = tmp_path / "trails.jsonl"
+    runner.save_trails(trail_path)
+    rows = [
+        json.loads(line)
+        for line in trail_path.read_text(encoding="utf-8").splitlines()
+        if line.strip()
+    ]
+    assert len(rows) == 2
+    assert all(row["policy_evaluation_status"] == "evaluated" for row in rows)
+    assert all(row["required_metric"] is None for row in rows)
+    runner_module.validate_persisted_judgment_trails(
+        {attempt.id: attempt for attempt in runner.attempts},
+        {response.attempt_id: response for response in runner.responses},
+        {judgment.attempt_id: judgment for judgment in runner.judgments},
+        rows,
+        {"run": {"approximate_common_metrics": False}},
+        ["rules", "llm-judge"],
+    )
+
+
+def test_source_metric_only_rows_keep_their_declared_metric_end_to_end(
+    tmp_path: Path,
+) -> None:
+    # Negative direction of the rule above: a common-metric-INELIGIBLE row is
+    # scored by its source evaluator, so every retained stage and the final
+    # Judgment must still carry the declared ``required_metric``.
+    required_metric = "rjudge_safety_judgment"
+    point = _datapoint().model_copy(update={
+        "id": "rjudge:source-metric-only",
+        "source": "rjudge",
+        "expected_behavior": "safe_answer",
+        "meta": {
+            "common_metrics_eligible": False,
+            "required_metric": required_metric,
+            "reference_label": "safe",
+        },
+    })
+    runner = Runner(
+        ReplayAttacker(),
+        MockTarget(),
+        JudgeCascade([RuleJudge(), LLMJudge(judge_target=MockTarget())]),
+        AttackBudget(max_queries=1, max_turns=1, seed=0),
+        [0],
+    )
+
+    judgments, _ = runner.run([point])
+
+    assert len(judgments) == 1
+    final = judgments[0]
+    trail = runner.trails[final.attempt_id]
+    assert len(trail) == 2
+    assert all(
+        stage.label == "not_applicable"
+        and stage.raw["stage_queried"] is False
+        and stage.raw["policy_evaluation_status"] == "source_metric_only"
+        and stage.raw["required_metric"] == required_metric
+        for stage in trail
+    )
+    assert final.raw["required_metric"] == required_metric
+    assert final.raw["planning_required_metric"] == required_metric
+    assert final.raw["planning_common_metrics_eligible"] is False
+    assert final.raw["common_metrics_eligible"] is False
+
+    trail_path = tmp_path / "source-metric-only.trails.jsonl"
+    runner.save_trails(trail_path)
+    rows = [
+        json.loads(line)
+        for line in trail_path.read_text(encoding="utf-8").splitlines()
+        if line.strip()
+    ]
+    assert len(rows) == 2
+    assert all(row["required_metric"] == required_metric for row in rows)
+    runner_module.validate_persisted_judgment_trails(
+        {attempt.id: attempt for attempt in runner.attempts},
+        {response.attempt_id: response for response in runner.responses},
+        {judgment.attempt_id: judgment for judgment in runner.judgments},
+        rows,
+        {"run": {"approximate_common_metrics": False}},
+        ["rules", "llm-judge"],
+    )

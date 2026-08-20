@@ -955,20 +955,26 @@ def test_videosafety_benign_query_requires_harmful_intention_for_grading(
         VideoSafetyBenchConverter().parse(source)
 
 
+# The exact thirteen ``category`` strings emitted by the pinned release
+# (``harmful_data.json`` and ``benign_data.json`` both use these verbatim:
+# an ordinal prefix, underscores, and the upstream ``Specificial_Advice``
+# typo).  Earlier fixtures used an invented ``S1-Violent Crimes`` spelling
+# that appears nowhere in the release, so the suite stayed green while every
+# real row failed conversion.  Keep these byte-exact.
 @pytest.mark.parametrize(("category", "expected"), [
-    ("S1-Violent Crimes", RiskCategory.TOXICITY),
-    ("S2-Non-Violent Crimes", RiskCategory.LEGALITY),
-    ("S3-Sex-Related Crimes", RiskCategory.LEGALITY),
-    ("S4-Child Sexual Exploitation", RiskCategory.CATASTROPHIC),
-    ("S5-Defamation", RiskCategory.TOXICITY),
-    ("S6-Specialized Advice", RiskCategory.LEGALITY),
-    ("S7-Privacy", RiskCategory.PRIVACY),
-    ("S8-Intellectual Property", RiskCategory.LEGALITY),
-    ("S9-Indiscriminate Weapons", RiskCategory.CATASTROPHIC),
-    ("S10-Hate", RiskCategory.TOXICITY),
-    ("S11-Suicide&Self-Harm", RiskCategory.CATASTROPHIC),
-    ("S12-Sexual Content", RiskCategory.TOXICITY),
-    ("S13-Elections", RiskCategory.HALLUCINATION),
+    ("1_Violent_Crimes", RiskCategory.TOXICITY),
+    ("2_Non-Violent_Crimes", RiskCategory.LEGALITY),
+    ("3_Sex-Related_Crimes", RiskCategory.LEGALITY),
+    ("4_Child_Sexual_Exploitation", RiskCategory.CATASTROPHIC),
+    ("5_Defamation", RiskCategory.TOXICITY),
+    ("6_Specificial_Advice", RiskCategory.LEGALITY),
+    ("7_Privacy", RiskCategory.PRIVACY),
+    ("8_Intellectual_Property", RiskCategory.LEGALITY),
+    ("9_Indiscriminate_Weapons", RiskCategory.CATASTROPHIC),
+    ("10_Hate", RiskCategory.TOXICITY),
+    ("11_Suicide_Self-Harm", RiskCategory.CATASTROPHIC),
+    ("12_Sexual_Content", RiskCategory.TOXICITY),
+    ("13_Elections", RiskCategory.HALLUCINATION),
 ])
 def test_videosafety_released_parent_categories_map_exactly(
     tmp_path: Path,
@@ -991,11 +997,38 @@ def test_videosafety_released_parent_categories_map_exactly(
     assert VideoSafetyBenchConverter().parse(source)[0].risk_category is expected
 
 
+@pytest.mark.parametrize("category", [
+    "S1-Violent Crimes",     # MLCommons hazard spelling with a punctuated prefix
+    "S1 Violent Crimes",     # ... and with a whitespace-separated prefix
+    "Violent Crimes",        # ... and with no ordinal at all
+])
+def test_videosafety_accepts_alternate_parent_spellings(
+    tmp_path: Path, category: str
+) -> None:
+    # The released labels are the contract, but an upstream re-spelling must not
+    # silently drop rows: these forms keep resolving to the same parent risk.
+    video = tmp_path / "clip.mp4"
+    video.write_bytes(b"\x00\x00\x00\x18ftypmp42" + b"\x00" * 16)
+    source = tmp_path / "videosafety.json"
+    _write_json(source, [{
+        "question_id": "v1",
+        "question": "What should happen next?",
+        "harmful_intention": "The joint request is unsafe.",
+        "video_path": video.name,
+        "query_type": "harmful",
+        "category": category,
+        "subcategory": "",
+    }])
+
+    point = VideoSafetyBenchConverter().parse(source)[0]
+    assert point.risk_category is RiskCategory.TOXICITY
+
+
 @pytest.mark.parametrize(("category", "subcategory", "expected"), [
-    ("S1-Violent Crimes", "Child Abuse", RiskCategory.TOXICITY),
+    ("1_Violent_Crimes", "Child_Abuse", RiskCategory.TOXICITY),
     (
-        "S4-Child Sexual Exploitation",
-        "Sexual Abuse of Children",
+        "4_Child_Sexual_Exploitation",
+        "Child_Sexual_Abuse_Material",
         RiskCategory.CATASTROPHIC,
     ),
 ])

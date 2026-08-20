@@ -217,6 +217,13 @@ it affordable.
 | 1 [10.1] | static text, all common text arms incl. the six aggregator arms | Qwen3-VL-8B; LLaVA base; LLaVA RR; optionally rwkv via Ollama | replay | rules,guardrail | `runs/thesis/runner/local-<model>-text` |
 | 1 [10.2] | static image, all common image arms | Qwen3-VL-8B; LLaVA base; LLaVA RR | replay | rules,guardrail | `runs/thesis/runner/local-<model>-image` |
 | 1 [10.3] | audio/video | none (no local audio/video renderer) | - | - | structural `N/A` |
+
+Conversion cost, measured on the rig (21 August 2026): the audio arm converts its
+complete manifest before any sampling, so a bounded `--limit 2` JALMBench
+observation took 1,218 s (20.3 minutes) while it read all 220,240 rows and hashed
+the referenced audio. This is the price of binding the full-corpus digest and the
+complete cluster inventory into the sampling audit, not a stall; budget it once per
+JALMBench invocation. Every other arm observes in under 15 s.
 | 2 [11] | R-Judge and GPTGeoChat classification | same local roster | replay | rules (not queried; source parser authoritative) | `runs/thesis/runner/rjudge`, `.../gptgeochat` |
 | 3 [12.1] | live Crescendo (response-conditioned) | Qwen3-VL-8B | crescendo | rules,guardrail | `runs/thesis/runner/crescendo-<model>` |
 | 3 [12.2] | Runner-safe bridges | Qwen3-VL-8B | pyrit, deepteam, h4rm3l, spikee (sealed workers), nanogcg (verified precomputed suffixes only), purplellama (CyberSecEval arms), ideator (seed pairs) | rules,guardrail | `runs/thesis/runner/bridge-<attacker>` |

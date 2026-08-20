@@ -168,7 +168,7 @@ arms:
 | FigStep | `figstep_full` | text + image | harmful common metrics |
 | GPTGeoChat | `gptgeochat_release` | text + image | implemented source-specific binary moderation metrics, not common ASR/FRR |
 | HarmBench | `harmbench_text`, `harmbench_multimodal` | text; text + image | harmful common metrics |
-| HoliSafe | `holisafe_full` | text + image | harmful common metrics where the image carries the harm; the all-safe `SSS` combination is a benign-refusal population kept separate |
+| HoliSafe | `holisafe_full` | text + image | harmful common metrics where the image carries the harm; the all-safe `SSS` combination is a benign-refusal population kept separate and scored response-only, while the unsafe combinations bind a judge reference built deterministically from the released category, subcategory and safeness-combination labels (label-derived, not source-authored) |
 | InjecAgent | `injecagent_direct_harm_base`, `injecagent_direct_harm_enhanced`, `injecagent_data_stealing_base`, `injecagent_data_stealing_enhanced` | text + tool trace | converter/native analysis only; official tool-call scoring is not implemented |
 | JailbreakBench | `jailbreakbench_harmful`, `jailbreakbench_benign` | text | harmful-response and benign-refusal strata remain separate |
 | JailBreakV-28K | `jailbreakv_full` | text + image | harmful common metrics; image assets are mandatory |

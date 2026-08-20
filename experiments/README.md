@@ -152,7 +152,12 @@ their substantive evaluator exists.
 The 45 logical arms therefore comprise 28 common-metric arms, two implemented
 source-classification arms, and 15 conversion-only arms. MLLMGuard
 hallucination, position-swapping, and noise-injection are in the last group
-until their truthfulness scorers exist.
+until their truthfulness scorers exist. `holisafe_full` is a common image arm
+whose release ships no source-authored safety rationale: its benign all-safe
+(`SSS`) combination is scored response-only in the way MOSSBench's benign probes
+are, while the unsafe combinations bind a judge reference built deterministically
+from the released category, subcategory and safeness-combination labels and
+recorded as label-derived rather than source-authored.
 
 ## Target configuration and admission
 

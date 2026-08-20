@@ -230,6 +230,14 @@ unless the arm explicitly declares a response-only automated scope; realizing
 the `N/A`-plus-human-review path therefore requires that declaration or
 excluding the row, never a silently graded media-blind cell.
 
+HoliSafe is the release-shape case this rule has to accommodate: its file
+carries no source-authored safety rationale, so the benign all-safe (`SSS`)
+combination declares a response-only automated scope exactly as MOSSBench's
+benign probes do, while every unsafe combination binds a judge reference
+composed deterministically from the released category, subcategory and
+safeness-combination labels and recorded as label-derived rather than
+source-authored.
+
 Local media is digest-checked under ordered approved roots and persists as
 `@media-root/<index>/<relative-path>`. Provider-fetched remote media is not
 eligible for a scored common cell because the bytes cannot be verified.

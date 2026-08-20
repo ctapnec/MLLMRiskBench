@@ -308,6 +308,14 @@ refusal may supply only a refusal signal and receives no model identity credit.
 Mock targets and mock model responses remain synthetic even when a caller labels
 the surrounding run measured. Physical-media source-reference coverage is
 credited only when the selected judge declares and actually uses that context.
+That context comes from the release where the release authors one:
+MM-SafetyBench binds its key phrase, FigStep its harmful instruction, SIUO its
+safety warning and VLSBench its safety reason. HoliSafe carries no free text
+beyond the query, so its benign all-safe (`SSS`) combination is scored
+response-only and its unsafe combinations bind a reference composed
+deterministically from the released category, subcategory and
+safeness-combination labels; such a reference is recorded as label-derived
+rather than source-authored, and provenance keeps the two kinds distinct.
 Tool-conditioned source metrics remain fail-closed unless a typed executable
 target route is available.
 

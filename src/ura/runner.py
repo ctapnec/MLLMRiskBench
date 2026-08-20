@@ -1448,6 +1448,23 @@ class Runner:
             if target_input_delivered
             else "none"
         )
+        # A Judgment's ``required_metric`` states "this stage deferred to the
+        # named source metric", so it is null for an ordinary evaluated common
+        # row even when the source ships an official evaluator that URA does not
+        # execute (mmsafety, mossbench).  ``validate_persisted_judgment_trails``
+        # (see the policy branches at ~runner.py:4111-4153) enforces that split:
+        # a planning-eligible row must be "evaluated" with a null
+        # ``required_metric``, while a source-metric-only/approximate-proxy row
+        # must carry the declared metric, and the authoritative trail row is then
+        # compared field-for-field against ``judgment_trail_projection(final)``.
+        # Deriving the stamp from the same immutable Attempt state the validator
+        # reads keeps the final Judgment and its retained trail in agreement; the
+        # official metric name stays visible as ``planning_required_metric``.
+        required_metric = (
+            None
+            if attempt.params["planning_common_metrics_eligible"] is True
+            else datapoint.meta.get("required_metric")
+        )
         provenance = {
             "datapoint_id": datapoint.id,
             "source_cluster_id": str(
@@ -1480,7 +1497,7 @@ class Runner:
             "common_metrics_eligible": datapoint.meta.get(
                 "common_metrics_eligible", True
             ),
-            "required_metric": datapoint.meta.get("required_metric"),
+            "required_metric": required_metric,
             "source_construct": datapoint.meta.get("source_construct"),
             "source_evaluation": source_evaluation,
             "planning_source": attempt.params["planning_source"],
@@ -4123,6 +4140,12 @@ def validate_persisted_judgment_trails(
                     and required_metric_matches
                 )
         else:
+            # A planning-eligible row is scored by the common judges, so it
+            # never defers to a source metric -- even when the source ships an
+            # official evaluator URA does not run.  ``Runner._annotate`` stamps
+            # the final Judgment from this same Attempt state (see the comment
+            # above its ``required_metric`` derivation) so the authoritative
+            # trail row below still projects field-for-field onto the final.
             valid_state = (
                 queried is True
                 and status == "evaluated"

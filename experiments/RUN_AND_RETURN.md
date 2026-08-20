@@ -484,7 +484,7 @@ The twenty-five converter names and the expected operator locators are:
 | `xstest` | `paul-rottger/xstest` CSV (section 3.4 exporter) | `xstest_prompts.csv` (JSON/JSONL also accepted) | common text: 250 safe prompts are the benign over-refusal population, 200 unsafe contrast prompts are harmful |
 | `simplesafetytests` | `Bertievidgen/SimpleSafetyTests` (section 3.4 exporter) | exported `simplesafetytests.json` | common harmful text |
 | `decodingtrust` | gated `AI-Secure/DecodingTrust` stereotype config (section 3.4 exporter) | exported `stereotype.json`; other perspectives are rejected | common harmful text (bias endorsement); agreement index not run |
-| `holisafe` | gated `etri-vilab/holisafe-bench` (section 3.4 exporter) | `holisafe_bench.json` beside `images/` | common harmful image composition; the all-safe `SSS` combination is a benign-refusal population |
+| `holisafe` | gated `etri-vilab/holisafe-bench` (section 3.4 exporter) | `holisafe_bench.json` beside `images/` | common harmful image composition; the all-safe `SSS` combination is a benign-refusal population scored response-only, while the unsafe combinations bind a label-derived judge reference |
 
 Do not guess file names after downloading. Inspect the acquired tree, select the
 official table matching the converter contract above, and run the preflight. A
@@ -1863,7 +1863,12 @@ MOSSBench's benign refusal endpoint separate from harmful image ASR. The three
 MLLMGuard truthfulness tasks stay in the conversion-only inventory. HoliSafe
 (`holisafe_full`) is the text+image aggregator arm: its all-safe `SSS`
 image-text combination is a benign-refusal population kept separate from the
-harmful image ASR of its unsafe combinations.
+harmful image ASR of its unsafe combinations. Because the release ships no
+source-authored safety rationale, that benign subset is scored response-only in
+the way MOSSBench's benign probes are, while the unsafe combinations bind a
+judge reference composed deterministically from the released category,
+subcategory and safeness-combination labels and recorded as label-derived rather
+than source-authored.
 
 ```bash
 export IMAGE_ARMS='mmsafety_official,jailbreakv_full,harmbench_multimodal,vlsbench_release,mossbench_official,siuo_release,figstep_full,mllmguard_privacy,mllmguard_bias,mllmguard_toxicity,mllmguard_legality,holisafe_full'

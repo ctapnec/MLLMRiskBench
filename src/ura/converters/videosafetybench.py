@@ -34,7 +34,18 @@ from typing import Optional
 from ..adapters.base import BaseConverter
 from ._common import CorpusFormatError, DataPoint, DialogTurn, DEFAULT_MAX_VIDEO_ASSET_BYTES, MediaRef, Rc, dp, local_media, missing, read_json, read_jsonl
 
-# The 13 exact primary hazard categories in the pinned release.
+# The 13 exact primary hazard categories in the pinned release.  The released
+# JSON labels them with an ordinal prefix and underscores, exactly:
+# ``1_Violent_Crimes``, ``2_Non-Violent_Crimes``, ``3_Sex-Related_Crimes``,
+# ``4_Child_Sexual_Exploitation``, ``5_Defamation``, ``6_Specificial_Advice``,
+# ``7_Privacy``, ``8_Intellectual_Property``, ``9_Indiscriminate_Weapons``,
+# ``10_Hate``, ``11_Suicide_Self-Harm``, ``12_Sexual_Content``, ``13_Elections``.
+# ``_norm`` strips the ordinal prefix and the underscores, so the keys below are
+# the normalized forms.  Two of them are not the MLCommons spellings: the
+# release ships the typo ``Specificial_Advice`` for specialized advice, and it
+# writes the suicide category without the conjunction.  Both spellings are
+# accepted so the pinned release converts, and both MLCommons spellings are
+# retained so a corrected upstream release keeps converting.
 CATEGORY_MAP = {
     "violent crimes": Rc.TOXICITY,
     "non-violent crimes": Rc.LEGALITY,
@@ -42,11 +53,13 @@ CATEGORY_MAP = {
     "child sexual exploitation": Rc.CATASTROPHIC,
     "defamation": Rc.TOXICITY,
     "specialized advice": Rc.LEGALITY,
+    "specificial advice": Rc.LEGALITY,  # exact released spelling (upstream typo)
     "privacy": Rc.PRIVACY,
     "intellectual property": Rc.LEGALITY,
     "indiscriminate weapons": Rc.CATASTROPHIC,
     "hate": Rc.TOXICITY,
     "suicide and self-harm": Rc.CATASTROPHIC,
+    "suicide self-harm": Rc.CATASTROPHIC,  # exact released spelling
     "sexual content": Rc.TOXICITY,
     "elections": Rc.HALLUCINATION,
 }
@@ -73,9 +86,16 @@ _VIDEO_ID_FIELDS = ("source_video_id", "video_id", "clip_id")
 
 
 def _norm(s: Optional[str]) -> str:
-    """Normalize a category label: drop an ``S1-`` style prefix and punctuation."""
+    """Normalize a category label: drop an ordinal prefix and punctuation.
+
+    The pinned release prefixes every parent with a bare ordinal and an
+    underscore (``1_Violent_Crimes`` ... ``13_Elections``); MLCommons hazard
+    labels use an ``S1`` style instead.  Both prefixes are stripped so the exact
+    released labels resolve against :data:`CATEGORY_MAP` while an ``S``-style
+    label keeps resolving.  A bare category with no ordinal is unchanged.
+    """
     s = (s or "").strip().lower()
-    s = re.sub(r"^s\d+\s*[-:._)]*\s*", "", s)
+    s = re.sub(r"^s?\d+(?:\s*[-:._)]+\s*|\s+)", "", s)
     s = s.replace("_", " ").replace("&", " and ")
     return re.sub(r"\s+", " ", s).strip()
 
