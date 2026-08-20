@@ -33,8 +33,14 @@ depend on a specific construct are attached per DataPoint by the converter throu
 | `geo` | LLM02 | Data Privacy | Privacy |
 | `agentic_misuse` | - (ASI01 Goal Hijack / ASI02 Tool Misuse attach per record) | Human-AI Configuration | - |
 | `catastrophic` | - | - (umbrella) | - (umbrella) |
+| `over_refusal` | - | - | - |
 
 Notes on the conservative defaults:
+
+- `over_refusal` is the benign false-refusal population (for example the safe
+  XSTest prompts and HoliSafe's all-safe `SSS` combination): refusing it is the
+  failure, so no external hazard or risk id applies and its crosswalk is empty
+  by design.
 
 - OWASP **LLM05 Improper Output Handling** concerns validating/sanitizing model
   *output* before a downstream sink (XSS/SQLi/SSRF/code-execution consumers). It is

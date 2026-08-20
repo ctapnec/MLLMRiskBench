@@ -5051,6 +5051,7 @@ def test_every_ui_command_parses_with_its_real_module_parser() -> None:
             "--source": "runs/src", "--max-records": "10",
             "--max-total-bytes": "1000", "--out": "runs/out",
         }],
+        "export_aggregators": [{"--source": "all", "--out-root": "runs/corpora"}],
         "native_import": [
             {"--config": "runs/cfg.json", "--out": "runs/out"},
             {"--validate": "runs/native.json"},

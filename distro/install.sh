@@ -8,8 +8,18 @@
 # partition or the tracked tree.
 #
 # Secrets (provider API keys, HF_TOKEN) are NOT in this repo. Copy
-# distro/.env.example to ~/.ura_secrets, fill it in, and this script sources it
-# (~/.ura_env is honored too for rigs provisioned before this installer).
+# distro/.env.example to ~/.ura_env (mode 600), fill it in, and this script
+# sources it. ~/.ura_env is the canonical operator secrets file - it is the file
+# the rig console writes rotated keys into - so it is sourced LAST and wins.
+# ~/.ura_secrets is an optional legacy file (rigs provisioned by an earlier
+# installer) and is sourced first, i.e. overridden by ~/.ura_env.
+#
+# Python: the venv needs CPython >=3.12,<3.14 (the isolated framework runtimes
+# additionally need the venv's base interpreter to be exact CPython 3.12.13).
+# Set URA_PYTHON=/path/to/python3.12 to choose the interpreter explicitly;
+# otherwise python3.12, python3.13 and python3 are tried in that order. An
+# existing .venv is adopted (never rebuilt here); a URA_PYTHON that is not its
+# base interpreter is reported as ignored.
 #
 # Usage:
 #   distro/install.sh all                 # FULL setup: deps + every corpus +
@@ -18,13 +28,15 @@
 #   distro/install.sh clones hf archives  # run selected acquisition phases
 #   distro/install.sh aggregators         # (re)fetch SALAD/AIR-Bench/XSTest/SST/
 #                                         # DecodingTrust/HoliSafe only
-#   distro/install.sh ollama              # user-local ollama runtime
+#   distro/install.sh ollama              # user-local ollama runtime (pinned)
+#   distro/install.sh runtimes            # framework runtimes under the strict lock
 #   distro/install.sh locators            # (re)write the URA_*_PATH env bindings
 #   distro/install.sh console             # launch the rig console in tmux
 #   distro/install.sh summary             # per-step OK/FAIL report from the logs
 #
 # Env overrides: URA_DATA (default /data/ura-work), URA_ROOT (repo, autodetected),
-# URA_PY_EXTRAS (default "dev,analysis,api,guardrail,local-vllm").
+# URA_PYTHON (interpreter used to create the venv), URA_PY_EXTRAS (default
+# "dev,analysis,api,guardrail,local-vllm").
 set -uo pipefail
 
 # --------------------------------------------------------------------------- #
@@ -44,7 +56,13 @@ HF="$VENV/bin/hf"
 GDOWN="$VENV/bin/gdown"
 URA_PY_EXTRAS="${URA_PY_EXTRAS:-dev,analysis,api,guardrail,local-vllm}"
 CAMPAIGN_ENV="$HOME/.ura_campaign_env"
-SECRETS="$HOME/.ura_secrets"
+SECRETS_ENV="$HOME/.ura_env"            # canonical (the console writes rotated keys here)
+SECRETS_LEGACY="$HOME/.ura_secrets"     # optional legacy file, overridden by ~/.ura_env
+# Pinned user-local ollama release (verified against the release's published
+# sha256sum.txt at install time; the rig runs this exact version).
+OLLAMA_VERSION=0.32.13
+OLLAMA_ARCHIVE=ollama-linux-amd64.tar.zst
+OLLAMA_SHA256=0fd1dece38a1c6242e8013ce20b597345c5de072ae6b320160edb0e729ef1de1
 
 mkdir -p "$LOG" "$URA_CORPORA" "$URA_UPSTREAM" "$URA_NATIVE_ENVS" "$HF_HOME" || {
   echo "cannot create the data tree under $URA_DATA - check the mount and permissions" >&2
@@ -52,12 +70,13 @@ mkdir -p "$LOG" "$URA_CORPORA" "$URA_UPSTREAM" "$URA_NATIVE_ENVS" "$HF_HOME" || 
 }
 [ -w "$LOG" ] || { echo "$LOG is not writable - check the mount and permissions" >&2; exit 3; }
 # set -a exports everything the secrets files define (HF_TOKEN included), so
-# child processes ($HF, $PY exporters) actually see them. ~/.ura_env is the
-# legacy file and is sourced FIRST so ~/.ura_secrets (the documented primary)
-# wins on any key present in both - the same precedence the console launcher uses.
+# child processes ($HF, $PY exporters) actually see them. ~/.ura_secrets (legacy)
+# is sourced FIRST and ~/.ura_env (canonical; the console's Config page writes
+# rotated keys there) LAST, so ~/.ura_env wins on any key present in both - the
+# same precedence the console launcher below uses.
 set -a
-[ -f "$HOME/.ura_env" ] && source "$HOME/.ura_env"
-[ -f "$SECRETS" ] && source "$SECRETS"
+[ -f "$SECRETS_LEGACY" ] && source "$SECRETS_LEGACY"
+[ -f "$SECRETS_ENV" ] && source "$SECRETS_ENV"
 set +a
 export HF_TOKEN="${HF_TOKEN:-}"
 
@@ -159,15 +178,78 @@ clone_pin() { # url dir ref -- clone once, then repair-checkout with a fetch
 
 nonempty_dir() { [ -d "$1" ] && [ -n "$(ls -A "$1" 2>/dev/null)" ]; }
 
+python_ok() { # exe-or-name -- true when it is CPython >=3.12,<3.14
+  local exe
+  exe=$(command -v "$1" 2>/dev/null) || return 1
+  "$exe" -c 'import sys
+v = sys.version_info
+ok = sys.implementation.name == "cpython" and (3, 12) <= (v.major, v.minor) < (3, 14)
+raise SystemExit(0 if ok else 1)' >/dev/null 2>&1
+}
+
+same_interpreter() { # a b -- true when both name the same interpreter file
+  "$PY" - "$1" "$2" <<'PYEOF'
+import os, shutil, sys
+requested, base = sys.argv[1], sys.argv[2]
+found = shutil.which(requested) or requested
+raise SystemExit(0 if os.path.realpath(found) == os.path.realpath(base) else 1)
+PYEOF
+}
+
+resolve_python() { # prints the interpreter to build the venv with; fails closed (diagnostics on stderr)
+  local candidate
+  if [ -n "${URA_PYTHON:-}" ]; then
+    if python_ok "$URA_PYTHON"; then command -v "$URA_PYTHON"; return 0; fi
+    echo "  [FAIL] URA_PYTHON=$URA_PYTHON is not a CPython >=3.12,<3.14 interpreter" >&2
+    return 1
+  fi
+  for candidate in python3.12 python3.13 python3; do
+    python_ok "$candidate" || continue
+    command -v "$candidate"; return 0
+  done
+  echo "  [FAIL] no CPython >=3.12,<3.14 interpreter found (tried python3.12, python3.13, python3)" >&2
+  return 1
+}
+
 prereqs() {
-  local missing=0 tool
-  for tool in git curl tar python3 tmux; do
+  local missing=0 tool requested
+  for tool in git curl tar tmux; do
     command -v "$tool" >/dev/null 2>&1 || { echo "  [FAIL] missing prerequisite: $tool"; missing=1; }
   done
-  [ "$missing" -eq 0 ] || { echo "install prerequisites first (apt install git curl tar python3-venv tmux)"; exit 3; }
+  [ "$missing" -eq 0 ] || { echo "install prerequisites first (apt install git curl tar tmux zstd)"; exit 3; }
+  # The package declares requires-python >=3.12,<3.14 and the framework runtime
+  # lock binds exact CPython 3.12.13, so a system python3 (3.11 on Debian 12)
+  # must never silently become the venv base. Resolve the interpreter here,
+  # fail closed when none qualifies, and reuse it for the venv.
+  if [ -x "$PY" ]; then
+    if ! python_ok "$PY"; then
+      echo "  [FAIL] existing venv $VENV is not CPython >=3.12,<3.14 - remove it and re-run"
+      exit 3
+    fi
+    requested="${URA_PYTHON:-}"
+    URA_PYTHON=$("$PY" -c 'import sys; print(sys._base_executable)')
+    # The venv is adopted, never rebuilt here: an explicit URA_PYTHON that is
+    # not its base interpreter is reported as ignored rather than replaced
+    # silently (rebuild: remove $VENV and re-run deps).
+    if [ -n "$requested" ] && ! same_interpreter "$requested" "$URA_PYTHON"; then
+      echo "  [warn] URA_PYTHON=$requested ignored: existing $VENV (base $URA_PYTHON) is adopted"
+    fi
+    if [ -n "${URA_PYTHON:-}" ] && ! python_ok "$URA_PYTHON"; then
+      echo "  [FAIL] the base interpreter of $VENV ($URA_PYTHON) is not CPython >=3.12,<3.14"
+      exit 3
+    fi
+  else
+    URA_PYTHON=$(resolve_python) || {
+      echo "         set URA_PYTHON=/path/to/python3.12 (e.g. 'uv python install 3.12.13' ->"
+      echo "         ~/.local/share/uv/python/cpython-3.12.13-*/bin/python3.12) and re-run"
+      exit 3
+    }
+  fi
+  export URA_PYTHON
+  echo "  python: $URA_PYTHON ($("$URA_PYTHON" -c 'import platform; print(platform.python_version())'))"
   if [ -z "$HF_TOKEN" ]; then
     echo "  [warn] HF_TOKEN is empty - gated HF datasets (AgentHarm, DecodingTrust,"
-    echo "         HoliSafe) WILL fail. Copy distro/.env.example to ~/.ura_secrets and fill it."
+    echo "         HoliSafe) WILL fail. Copy distro/.env.example to ~/.ura_env and fill it."
   fi
 }
 
@@ -179,7 +261,7 @@ phase_deps() {
   # Everything downstream runs out of this venv, so a deps failure is fatal to
   # the run: record it in the ledger and report it, never continue silently.
   local failed=0
-  [ -d "$VENV" ] || python3 -m venv "$VENV" || failed=1
+  [ -d "$VENV" ] || "$URA_PYTHON" -m venv "$VENV" || failed=1
   if [ "$failed" -eq 0 ]; then
     "$PY" -m pip install --upgrade pip >/dev/null || failed=1
     "$PY" -m pip install -e "$URA_ROOT[$URA_PY_EXTRAS]" || failed=1
@@ -441,22 +523,39 @@ phase_aggregators() {
 }
 
 phase_ollama() {
-  echo "[ollama] user-local ollama runtime (console-owned daemon; no root needed)"
+  echo "[ollama] user-local ollama runtime v$OLLAMA_VERSION (console-owned daemon; no root needed)"
   guard_step ollama-install "already at $HOME/.local/ollama/bin/ollama" \
     test -x "$HOME/.local/ollama/bin/ollama" \
     || run_step ollama-install bash -c '
       set -u
-      # $1 is URA_UPSTREAM, passed as a parameter - never spliced into this
-      # script text, so a data root containing $ or " cannot be re-interpreted.
-      tgz="$1/ollama-linux-amd64.tgz"
-      # A truncated cache would otherwise brick every later run: validate, drop.
-      tar -tzf "$tgz" >/dev/null 2>&1 || rm -f "$tgz"
-      test -s "$tgz" || curl -fL --retry 3 -o "$tgz" https://ollama.com/download/ollama-linux-amd64.tgz \
-        || { rm -f "$tgz"; exit 1; }
-      tar -tzf "$tgz" >/dev/null 2>&1 || { rm -f "$tgz"; echo "downloaded archive is not a valid tarball"; exit 1; }
+      # $1 URA_UPSTREAM, $2 version, $3 archive name, $4 pinned sha256 - passed as
+      # parameters, never spliced into this script text, so a data root
+      # containing $ or " cannot be re-interpreted.
+      upstream="$1" version="$2" archive_name="$3" pinned="$4"
+      base="https://github.com/ollama/ollama/releases/download/v$version"
+      archive="$upstream/$archive_name"
+      sums="$upstream/ollama-v$version.sha256sum.txt"
+      command -v zstd >/dev/null 2>&1 || { echo "zstd is required to extract $archive_name (apt install zstd)"; exit 1; }
+      # The published checksum list of the SAME release must agree with the
+      # pinned digest: a re-published or substituted asset fails closed here.
+      curl -fL --retry 3 -o "$sums" "$base/sha256sum.txt" || { rm -f "$sums"; echo "cannot fetch $base/sha256sum.txt"; exit 1; }
+      published=$(awk -v name="./$archive_name" '"'"'$2 == name {print $1}'"'"' "$sums")
+      [ "$published" = "$pinned" ] || {
+        echo "published sha256 for $archive_name in v$version ($published) does not match the pinned $pinned"; exit 1; }
+      # A cached archive is reused only when it matches the pin (a truncated or
+      # foreign cache would otherwise brick every later run): verify, else drop.
+      if [ -s "$archive" ] && [ "$(sha256sum "$archive" | awk '"'"'{print $1}'"'"')" = "$pinned" ]; then
+        echo "reusing verified $archive"
+      else
+        rm -f "$archive"
+        curl -fL --retry 3 -o "$archive" "$base/$archive_name" || { rm -f "$archive"; exit 1; }
+        actual=$(sha256sum "$archive" | awk '"'"'{print $1}'"'"')
+        [ "$actual" = "$pinned" ] || { rm -f "$archive"; echo "downloaded $archive_name sha256 $actual != pinned $pinned"; exit 1; }
+      fi
+      echo "ollama v$version $archive_name sha256 $pinned verified"
       mkdir -p "$HOME/.local/ollama"
-      tar -xzf "$tgz" -C "$HOME/.local/ollama"
-      test -x "$HOME/.local/ollama/bin/ollama"' _ "$URA_UPSTREAM"
+      zstd -dc "$archive" | tar -x -C "$HOME/.local/ollama" || exit 1
+      test -x "$HOME/.local/ollama/bin/ollama"' _ "$URA_UPSTREAM" "$OLLAMA_VERSION" "$OLLAMA_ARCHIVE" "$OLLAMA_SHA256"
   if [ -x "$HOME/.local/ollama/bin/ollama" ]; then
     mkdir -p "$HOME/.local/bin"
     ln -sf "$HOME/.local/ollama/bin/ollama" "$HOME/.local/bin/ollama"
@@ -537,61 +636,189 @@ export PATH="\$HOME/.local/bin:\$PATH"
 # --- end URA source locators ---
 ENV
   fi
-  # Register the aggregator arms in the operator source registry (idempotent).
+  # The checkout and its interpreter, for the runbook's ura_native_session /
+  # ura_native_run wrapper ($URA_PY is the main venv interpreter, $URA_REPO the
+  # tracked checkout). Appended once; an existing different binding is reported.
+  ensure_env_line URA_REPO "$URA_ROOT"
+  ensure_env_line URA_PY "\$URA_REPO/.venv/bin/python"
+  # Operator source registry: seed it from the checked-in example when absent
+  # (section 4 of the runbook) and take the six aggregator entries - including
+  # their source_label strings, which source_conformance matches against the
+  # retained receipt - from that same example, never from literals here.
   ( cd "$URA_ROOT" && "$PY" - <<'PYEOF'
 import json, pathlib
+example_path = pathlib.Path("experiments/rig/source-instances.example.json")
+example = json.loads(example_path.read_text(encoding="utf-8"))
+AGGREGATORS = ("saladbench_base", "airbench_full", "xstest_full",
+               "simplesafetytests_full", "decodingtrust_stereotype", "holisafe_full")
+missing = [k for k in AGGREGATORS if k not in example]
+if missing:
+    raise SystemExit(f"{example_path} lacks aggregator entries {missing}")
 p = pathlib.Path("experiments/source-instances.json")
-d = json.loads(p.read_text()) if p.exists() else {}
-adds = {
-  "saladbench_base": {"converter":"saladbench","path_env":"URA_SALADBENCH_PATH","source_label":"SALAD-Bench base harmful set (aggregator)","split":"base_set"},
-  "airbench_full": {"converter":"airbench","path_env":"URA_AIRBENCH_PATH","source_label":"AIR-Bench 2024 (aggregator)","split":"default-test"},
-  "xstest_full": {"converter":"xstest","path_env":"URA_XSTEST_PATH","source_label":"XSTest exaggerated-safety (aggregator)","split":"prompts"},
-  "simplesafetytests_full": {"converter":"simplesafetytests","path_env":"URA_SIMPLESAFETYTESTS_PATH","source_label":"SimpleSafetyTests (aggregator)","split":"test"},
-  "decodingtrust_stereotype": {"converter":"decodingtrust","path_env":"URA_DECODINGTRUST_STEREOTYPE_PATH","source_label":"DecodingTrust stereotype-bias (aggregator)","split":"stereotype"},
-  "holisafe_full": {"converter":"holisafe","path_env":"URA_HOLISAFE_PATH","source_label":"HoliSafe multimodal (aggregator; image carries harm)","split":"bench"},
-}
-changed = False
-for k, v in adds.items():
+if p.exists():
+    d = json.loads(p.read_text(encoding="utf-8"))
+    if not isinstance(d, dict):
+        raise SystemExit(f"{p} is not a JSON object")
+    seeded = False
+else:
+    d = dict(example)
+    seeded = True
+changed = seeded
+for k in AGGREGATORS:
     if k not in d:
-        d[k] = v; changed = True
-if changed or not p.exists():
-    p.write_text(json.dumps(d, indent=2) + "\n")
-print("source-instances.json arms:", len(d))
+        d[k] = example[k]; changed = True
+        print(f"  added {k} from {example_path}")
+    elif d[k] != example[k]:
+        d[k] = example[k]; changed = True
+        print(f"  reconciled {k} to the {example_path} entry")
+if changed:
+    p.write_text(json.dumps(d, indent=2) + "\n", encoding="utf-8")
+print("source-instances.json arms:", len(d), "(seeded from the example)" if seeded else "")
 PYEOF
-  )
+  ) || { echo "  [FAIL] could not write experiments/source-instances.json"; echo "FAIL locators-registry" >> "$SESSION_LEDGER"; }
   echo "  wrote locators; existence report:"
   source "$CAMPAIGN_ENV" 2>/dev/null || true
-  local missing=0 var value line
+  local missing=0 var value line note
   while IFS= read -r line; do
     case "$line" in
       "export URA_"*PATH=*)
         var=${line#export }; var=${var%%=*}
         value=$(eval "printf '%s' \"\$$var\"")
-        if [ -e "$value" ]; then echo "  OK      $var"; else echo "  MISSING $var -> $value"; missing=$((missing+1)); fi ;;
+        note=""
+        [ "$var" = URA_BIPIA_TEST_QA_PATH ] && note=" (blocked: licensed NewsQA base; see the bipia phase)"
+        if [ -e "$value" ]; then echo "  OK      $var"; else echo "  MISSING $var -> $value$note"; missing=$((missing+1)); fi ;;
     esac
   done < "$CAMPAIGN_ENV"
   echo "  missing locators: $missing"
 }
 
+ensure_env_line() { # VAR value -- append 'export VAR="value"' to the campaign env once
+  local var=$1 value=$2 existing
+  if existing=$(grep -m1 "^export $var=" "$CAMPAIGN_ENV" 2>/dev/null); then
+    [ "$existing" = "export $var=\"$value\"" ] \
+      || echo "  [warn] $CAMPAIGN_ENV already binds $var ($existing); leaving it as is"
+    return 0
+  fi
+  printf 'export %s="%s"\n' "$var" "$value" >> "$CAMPAIGN_ENV"
+}
+
+runtimes_session() { # command lock env-root state-root python -- launch, then wait for the exit marker
+  # The installer runs inside its own named tmux/screen session and returns a
+  # session JSON immediately; this waits for the session's terminal exit marker
+  # exactly as the runbook's ura_wait_session does (168 h deadline, liveness
+  # probe) and returns the inner exit code, so run_step ledgers the real result.
+  local command=$1 lock=$2 env_root=$3 state_root=$4 python=$5 session_json
+  session_json=$( cd "$URA_ROOT" && "$PY" -m experiments.framework_runtime_installer "$command" \
+      --lock "$lock" --env-root "$env_root" --state-root "$state_root" --python "$python" ) || return 1
+  printf '%s\n' "$session_json"
+  "$PY" - "$session_json" "$state_root" <<'PYEOF'
+import hashlib, json, re, shutil, subprocess, sys, time
+from pathlib import Path
+
+row = json.loads(sys.argv[1])
+state_root = Path(sys.argv[2])
+required = {"schema", "launcher", "session_name", "attach_command", "log", "exit_marker", "status"}
+if not isinstance(row, dict) or set(row) != required or row["schema"] != "ura-framework-runtime-session/1":
+    raise SystemExit("installer returned an invalid session payload")
+name = row["session_name"]
+if not isinstance(name, str) or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]*", name):
+    raise SystemExit("installer returned an invalid session name")
+launcher = row["launcher"]
+if launcher not in ("tmux", "screen") or row["status"] != "running":
+    raise SystemExit("installer session is not a running tmux/screen session")
+if row["log"] != f"sessions/{name}.log" or row["exit_marker"] != f"sessions/{name}.exit":
+    raise SystemExit("installer session log/exit marker are not the expected paths")
+marker = state_root / row["exit_marker"]
+log = state_root / row["log"]
+socket = "ura-fw-" + hashlib.sha256(name.encode("ascii")).hexdigest()[:16]
+print(f"attach with: {row['attach_command']}")
+print(f"tail with: tail -f -- {log}")
+deadline = time.monotonic() + 168 * 60 * 60
+misses = 0
+while not marker.is_file():
+    if time.monotonic() > deadline:
+        raise SystemExit("framework runtime session exceeded the 168 h deadline")
+    alive = True
+    if launcher == "tmux" and shutil.which("tmux"):
+        alive = subprocess.run(["tmux", "-L", socket, "has-session", "-t", name],
+                               capture_output=True, check=False).returncode == 0
+    elif launcher == "screen" and shutil.which("screen"):
+        listing = subprocess.run(["screen", "-ls"], capture_output=True, text=True, check=False).stdout
+        alive = re.search(rf"(?m)^\s*\d+\.{re.escape(name)}\s+\((?:Attached|Detached|Multi(?:,\s*attached)?)\)", listing) is not None
+    if not alive:
+        misses += 1
+        time.sleep(1)
+        if misses >= 2 and not marker.is_file():
+            raise SystemExit(f"framework runtime session {name} ended without an exit marker")
+        continue
+    misses = 0
+    time.sleep(5)
+rc = marker.read_text(encoding="utf-8").strip()
+if not re.fullmatch(r"0|[1-9][0-9]{0,2}", rc) or int(rc) > 255:
+    raise SystemExit(f"framework runtime session {name} wrote an invalid exit marker {rc!r}")
+print(f"session {name} exit {rc}")
+if log.is_file():
+    tail = log.read_text(encoding="utf-8", errors="replace").splitlines()[-40:]
+    print("--- session log tail ---")
+    print("\n".join(tail))
+raise SystemExit(int(rc))
+PYEOF
+}
+
 phase_runtimes() {
   echo "[runtimes] isolated third-party framework environments (strict lock)"
-  ( cd "$URA_ROOT" && "$PY" -m experiments.framework_runtime_installer install \
-      --python "$(command -v python3.12 || echo python3)" ) || \
-      echo "  [warn] framework runtimes need an exact CPython 3.12.13 base; see the runbook"
+  # Same locators the runbook (12.2) and the console's Build -> Runtimes use:
+  # env-root $URA_WORK/framework-venvs, state-root
+  # $URA_WORK/runs/engineering/framework-runtime-<lock_id[:12]>, and the venv's
+  # base interpreter (exact CPython 3.12.13; the installer fails closed otherwise).
+  local lock="$URA_ROOT/experiments/framework_runtime_lock.json" lock_id base_python base_version
+  # The lock is read with the venv interpreter: without the venv the real
+  # cause is the missing deps phase, not an unreadable lock - say so.
+  [ -x "$PY" ] || { echo "  [FAIL] runtimes-plan (venv missing: $PY - run distro/install.sh deps first)"; echo "FAIL runtimes-plan" >> "$SESSION_LEDGER"; return 1; }
+  lock_id=$("$PY" - "$lock" <<'PYEOF'
+import json, re, sys
+lock_id = json.load(open(sys.argv[1], encoding="utf-8")).get("lock_id")
+if not isinstance(lock_id, str) or not re.fullmatch(r"[0-9a-f]{64}", lock_id):
+    raise SystemExit("framework_runtime_lock.json has no 64-hex lock_id")
+print(lock_id)
+PYEOF
+  ) || { echo "  [FAIL] runtimes-plan (cannot read $lock)"; echo "FAIL runtimes-plan" >> "$SESSION_LEDGER"; return 1; }
+  base_python=$("$PY" -c 'import sys; print(sys._base_executable)') \
+    || { echo "  [FAIL] runtimes-plan (cannot derive the venv base interpreter)"; echo "FAIL runtimes-plan" >> "$SESSION_LEDGER"; return 1; }
+  base_version=$("$base_python" -c 'import platform; print(platform.python_version())' 2>/dev/null || echo unknown)
+  [ "$base_version" = "3.12.13" ] \
+    || echo "  [warn] the lock binds exact CPython 3.12.13 but the venv base is $base_version; the installer will refuse it"
+  local env_root="$URA_DATA/framework-venvs" state_root="$URA_DATA/runs/engineering/framework-runtime-${lock_id:0:12}"
+  echo "  lock $lock_id"
+  echo "  env-root $env_root"
+  echo "  state-root $state_root"
+  echo "  python $base_python ($base_version)"
+  ( cd "$URA_ROOT" && "$PY" -m experiments.framework_runtime_installer plan \
+      --lock "$lock" --env-root "$env_root" --state-root "$state_root" ) >> "$LOG/runtimes-plan.log" 2>&1 \
+    || echo "  [warn] runtimes plan failed (see $LOG/runtimes-plan.log)"
+  run_step runtimes-install runtimes_session install "$lock" "$env_root" "$state_root" "$base_python"
+  if grep -q '^OK' "$LOG/runtimes-install.status" 2>/dev/null; then
+    run_step runtimes-verify runtimes_session verify "$lock" "$env_root" "$state_root" "$base_python"
+    grep -q '^OK' "$LOG/runtimes-verify.status" 2>/dev/null
+  else
+    echo "  runtimes-verify skipped (install did not succeed; a staged store is resumed from the console's Build -> Runtimes or the runbook 12.2)"
+    return 1
+  fi
 }
 
 phase_console() {
   echo "[console] launching the rig console in tmux session 'console' on :8642"
   # The launcher carries the FULL login environment (PATH incl ~/.local/bin for
   # ollama, CUDA/library paths, provider keys, campaign locators) - the same
-  # contract as the rig's proven start_console.sh.
+  # contract as the rig's proven start_console.sh. Secrets precedence is the
+  # installer's: legacy ~/.ura_secrets first, canonical ~/.ura_env last (wins).
   cat > "$URA_DATA/console-launch.sh" <<LAUNCH
 #!/bin/bash
 set -a
 [ -f /etc/profile ] && source /etc/profile 2>/dev/null
 [ -f "\$HOME/.profile" ] && source "\$HOME/.profile" 2>/dev/null
-[ -f "\$HOME/.ura_env" ] && source "\$HOME/.ura_env" 2>/dev/null
-[ -f "$SECRETS" ] && source "$SECRETS" 2>/dev/null
+[ -f "$SECRETS_LEGACY" ] && source "$SECRETS_LEGACY" 2>/dev/null
+[ -f "$SECRETS_ENV" ] && source "$SECRETS_ENV" 2>/dev/null
 [ -f "$CAMPAIGN_ENV" ] && source "$CAMPAIGN_ENV" 2>/dev/null
 set +a
 export PATH="\$HOME/.local/bin:\$PATH"
@@ -600,7 +827,9 @@ cd "$URA_ROOT"
 exec "$PY" -m experiments.rig_web --results-root runs --state-dir runs/rig-web
 LAUNCH
   chmod +x "$URA_DATA/console-launch.sh"
-  pkill -f 'experiments.rig_web' 2>/dev/null || true; sleep 1
+  # Anchored '-m experiments.rig_web' invocation only (pkill -f patterns are
+  # EREs; an unescaped '.' would also match experiments/rig_web_app/... paths).
+  pkill -f -- '-m experiments\.rig_web( |$)' 2>/dev/null || true; sleep 1
   tmux kill-session -t console 2>/dev/null || true
   tmux new-session -d -s console "$(printf '%q' "$URA_DATA/console-launch.sh")"
   sleep 3
@@ -658,8 +887,8 @@ for phase in "${PHASES[@]}"; do
   case "$phase" in
     all)          phase_deps || RC=1
                   phase_clones; phase_hf; phase_archives; phase_bipia
-                  phase_aggregators; phase_ollama; phase_runtimes; phase_locators
-                  phase_console; summary || RC=1 ;;
+                  phase_aggregators; phase_ollama; phase_runtimes || RC=1
+                  phase_locators; phase_console; summary || RC=1 ;;
     deps)         phase_deps || RC=1 ;;
     clones)       phase_clones ;;
     hf)           phase_hf ;;
@@ -668,7 +897,7 @@ for phase in "${PHASES[@]}"; do
     aggregators)  phase_aggregators ;;
     ollama)       phase_ollama ;;
     locators)     phase_locators ;;
-    runtimes)     phase_runtimes ;;
+    runtimes)     phase_runtimes || RC=1 ;;
     console)      phase_console ;;
     summary)      summary || RC=1 ;;
     *) echo "unknown phase: $phase" >&2; exit 2 ;;

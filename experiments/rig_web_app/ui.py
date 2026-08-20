@@ -823,7 +823,20 @@ var arms=checked('.armbox','data-arm');if(arms.length){parts.push('--corpora '+a
 var fw=checked('.fwbox','data-fw');if(fw.length){parts.push('--attackers '+fw.join(','));}
 var jg=checked('.judgebox','data-judge');if(jg.length){parts.push('--judges '+jg.join(','));}
 var lim=form.querySelector('input[name=limit]').value;
+var judgeModelValue=namedValue('judge_model','');
+var hostedJudge=jg.indexOf('llm')>=0&&Array.prototype.some.call(
+form.querySelectorAll(".modelbox[data-kind='api']"),
+function(b){return (b.getAttribute('data-model')||'')===judgeModelValue;});
+// a blank limit composes --limit 0 (the complete release) only where
+// validation admits it: a measured lane with no hosted target and no hosted
+// LLM judge; hosted paid lanes, probes, and canaries must type a value
+var localOnlyMeasured=mode==='measured'&&!api.length&&!hostedJudge;
 if(lim){parts.push('--limit '+lim);}
+else if(localOnlyMeasured){parts.push('--limit 0');}
+var grp=namedValue('group','');if(grp){parts.push('--group '+grp);}
+if(checkedName('exclude_tool_conditioned')){parts.push('--exclude-tool-conditioned');}
+if(checkedName('reset_open_circuits')&&mode==='measured'){parts.push('--reset-open-circuits');}
+var stale=namedValue('lock_stale_seconds','');if(stale){parts.push('--lock-stale-seconds '+stale);}
 var mods=checked('.modbox','data-mod');var targets=api.concat(loc);
 setBuildSummary('build-summary-composition',mode+'; modalities: '+
 selectionLabel(mods)+'; targets: '+selectionLabel(targets)+'; corpora: '+
@@ -847,10 +860,14 @@ pairState('project_revision','project_revision_sha')+'; source receipt: '+
 pairState('source_conformance','source_conformance_sha')+'; attestations: '+
 completeAtt+' complete'+(incompleteAtt?(', '+incompleteAtt+' incomplete'):'')+
 '; scope: '+namedValue('scope','not set')+'; max age: '+namedValue('max_age','not set'));
-setBuildSummary('build-summary-trajectory','limit: '+namedValue('limit','not set')+
+setBuildSummary('build-summary-trajectory','limit: '+namedValue('limit',
+localOnlyMeasured?'0 (complete release)':'not set')+
 '; sample seed: '+namedValue('sample_seed','not set')+'; seeds: '+
 namedValue('seeds','not set')+'; queries: '+namedValue('max_queries','not set')+
-'; turns: '+namedValue('max_turns','not set'));
+'; turns: '+namedValue('max_turns','not set')+'; group: '+namedValue('group','CLI default')+
+'; exclude tool-conditioned: '+(checkedName('exclude_tool_conditioned')?'on':'off')+
+'; reset open circuits: '+(checkedName('reset_open_circuits')?'on':'off')+
+'; lock stale seconds: '+namedValue('lock_stale_seconds','CLI default'));
 setBuildSummary('build-summary-budget','target / judge / HTTP: '+
 namedValue('cap_target','not set')+' / '+namedValue('cap_judge','not set')+
 ' / '+namedValue('cap_http','not set')+'; deadline: '+namedValue('deadline','not set'));
@@ -867,6 +884,15 @@ var prev=document.getElementById('buildpreview');
 if(prev){prev.textContent=parts.join(' ');}}
 form.addEventListener('change',refresh);
 form.addEventListener('input',refresh);
+// The tool-conditioned exclusion defaults ON for dry/synthetic lanes (the
+// synth corpus carries tool-conditioned rows no Runner attacker can execute)
+// and OFF otherwise; switching the mode re-applies that default, and the
+// operator may still toggle the box afterwards.
+function applyExclusionDefault(){var box=form.querySelector("input[name='exclude_tool_conditioned']");
+if(!box){return;}var m=(form.querySelector('input[name=mode]:checked')||{}).value||'measured';
+box.checked=(m==='dry_run')||(m==='diagnostic_canary'&&checkedName('canary_dry'));refresh();}
+form.querySelectorAll("input[name='mode'],input[name='canary_dry']").forEach(function(el){
+el.addEventListener('change',applyExclusionDefault);});
 // The two maximum-parameter controls are one filter, expressed in billions.
 var paramRange=document.getElementById('local-param-range');
 var paramNumber=document.getElementById('local-param-number');

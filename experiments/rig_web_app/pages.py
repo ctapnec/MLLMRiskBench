@@ -116,63 +116,42 @@ class PagesMixin:
                 "rig_check",
                 {
                     "--dry-run": "on",
-                    "--api": "$FABLE",
                     "--corpora": "synth",
                     "--exclude-tool-conditioned": "on",
+                    "--limit": "12",
                 },
             ),
-            (
-                "3",
-                "Attestation probe (paid)",
-                "run_matrix",
-                {"--attestation-probe": "on", "--api": "$FABLE", "--out": "runs/thesis/attest"},
-            ),
-            (
-                "4",
-                "Diagnostic canary (paid)",
-                "run_matrix",
-                {
-                    "--diagnostic-canary": "on",
-                    "--api": "$FABLE",
-                    "--corpora": "strongreject_official",
-                    "--sample-seed": "0",
-                    "--out": "runs/thesis/canary",
-                },
-            ),
-            (
-                "5",
-                "Measured lane (paid)",
-                "run_matrix",
-                {
-                    "--api": "$FABLE,$SOL",
-                    "--corpora": "strongreject_official",
-                    "--attackers": "replay,crescendo",
-                    "--judges": "rules,llm",
-                    "--judge-model": "anthropic:claude-haiku-4-5-20251001",
-                    "--limit": "&lt;set from canary&gt;",
-                    "--sample-seed": "0",
-                    "--out": "runs/thesis/measured",
-                },
-            ),
+            # run_matrix is Build-only (the generic Run form rejects it), so
+            # the paid steps open the validated Build workflow instead of a
+            # Run-page prefill; the operator composes the lane there.
+            ("3", "Attestation probe (paid)", "run_matrix", {}),
+            ("4", "Diagnostic canary (paid)", "run_matrix", {}),
+            ("5", "Measured lane (paid)", "run_matrix", {}),
         )
         rows = []
         for num, title, command, values in steps:
-            params = "&".join(
-                f"{quote(flag)}={quote(str(val).replace('&lt;', '<').replace('&gt;', '>'))}"
-                for flag, val in values.items()
-            )
+            if command == "run_matrix":
+                link = "<a href='/build'>open Build &rarr;</a>"
+            else:
+                params = "&".join(
+                    f"{quote(flag)}={quote(str(val))}" for flag, val in values.items()
+                )
+                link = (
+                    f"<a href='/commands?cmd={quote(command)}&{params}'>"
+                    "prefill &rarr;</a>"
+                )
             rows.append(
                 "<li><span class='step-n'>" + num + "</span>"
                 f"<strong>{html.escape(title)}</strong> "
-                f"<code>{html.escape(command)}</code> "
-                f"<a href='/commands?cmd={quote(command)}&{params}'>"
-                "prefill &rarr;</a></li>"
+                f"<code>{html.escape(command)}</code> " + link + "</li>"
             )
         return (
             "<div class='card'><h2>" + _icon("book") + "Campaign playbook</h2>"
             "<p class='note'>The runbook sequence in order. 'Prefill' opens the "
-            "Run page with that command's form filled - review every value "
-            "before starting. Steps 3+ spend real money.</p>"
+            "Run page with that command's form filled; 'open Build' opens the "
+            "validated Build workflow, the only console surface that launches "
+            "run_matrix - review every value before starting. Steps 3+ spend "
+            "real money.</p>"
             "<ol class='playbook'>" + "".join(rows) + "</ol></div>"
         )
 
@@ -636,6 +615,16 @@ class PagesMixin:
                 f"<option value='{html.escape(choice)}'>{html.escape(choice)}</option>"
                 for choice in param.choices
             )
+            if param.required:
+                # argparse has no default for a required choice and build_argv
+                # rejects a blank submission; the blank entry is only a
+                # non-selectable prompt so the form agrees with that contract.
+                return (
+                    f"<select name='{flag}' required>"
+                    "<option value='' disabled selected>(select)</option>"
+                    + options
+                    + "</select>"
+                )
             return (
                 f"<select name='{flag}'><option value=''>(default)</option>" + options + "</select>"
             )

@@ -31,7 +31,7 @@ from experiments.figure_results import load_postrun_results  # noqa: E402
 _ACCENT = "#2a78d6"
 _INK_2 = "#52514e"
 _CATEGORICAL = ["#2a78d6", "#eb6834", "#1baf7a", "#eda100", "#e87ba4", "#7a5cc8"]
-_WATERMARK = "ILLUSTRATIVE \u2014 NOT MEASURED"
+_WATERMARK = "ILLUSTRATIVE - NOT MEASURED"
 _PROVENANCE_NAME = "fig-v-provenance.json"
 _MEASURED_QUALIFICATION = (
     "Post-experiment, sample-conditional; paired source prompt/intent-cluster "
@@ -307,9 +307,12 @@ def fig_adaptivity(data: dict[str, Any], out: Path) -> None:
 
 def _write_provenance(data: dict[str, Any], out: Path) -> Path:
     destination = out / _PROVENANCE_NAME
+    # LF regardless of platform so the sidecar is byte-identical between a
+    # Windows workstation and the Debian rig (no CRLF churn in the thesis tree).
     destination.write_text(
         json.dumps(data, indent=2, ensure_ascii=False, allow_nan=False) + "\n",
         encoding="utf-8",
+        newline="\n",
     )
     return destination
 

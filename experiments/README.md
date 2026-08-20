@@ -112,7 +112,10 @@ target/arm mismatches remain rejected in UI parity.
 T3MP3ST and HarmBench use one simple two-step path. First, run the prepared
 attack capture from the Build page or CLI. T3MP3ST writes an exact
 `ura-t3mp3st-plan-bundle/1`; HarmBench writes an exact
-`ura-harmbench-transfer-replay/1` plus its attacker config. Second, select the
+`ura-harmbench-transfer-replay/1` plus its attacker config. New T3MP3ST
+capture is currently blocked-unpinned by the lock disposition and the runbook
+procedure rather than by a code gate: `capture_t3mp3st` and the Build capture
+panel remain operable, and only an already attributable bundle may be replayed. Second, select the
 attacker in Build or pass that config to `run_matrix`. Preparation may use a
 source model or GPU and is outside the Runner's target/judge ceilings. The
 measured run makes no attacker-generation call: it verifies the artifact hash
@@ -127,11 +130,17 @@ config. The hardened artifact reader still rejects symlink path components, and
 The common runner has 25 converter families:
 
 ```text
-advbench, agentharm, bipia, cyberseceval, figstep, gptgeochat,
-harmbench, injecagent, jailbreakbench, jailbreakv, jalmbench,
-mllmguard, mmsafety, mossbench, rjudge, saladbench, siuo,
-strongreject, videosafetybench, vlsbench
+advbench, agentharm, airbench, bipia, cyberseceval, decodingtrust,
+figstep, gptgeochat, harmbench, holisafe, injecagent, jailbreakbench,
+jailbreakv, jalmbench, mllmguard, mmsafety, mossbench, rjudge,
+saladbench, simplesafetytests, siuo, strongreject, videosafetybench,
+vlsbench, xstest
 ```
+
+The six aggregator arms (`saladbench_base`, `airbench_full`, `xstest_full`,
+`simplesafetytests_full`, `decodingtrust_stereotype`, `holisafe_full`) are
+acquired through `experiments.export_aggregators` (runbook section 3.4) and
+bound like every other arm through their `URA_*_PATH` locators.
 
 `--source-config` binds stable arm IDs to a converter, environment-variable path
 locator, and optional source label/split. This permits several releases or
@@ -312,8 +321,10 @@ response artifacts remain authoritative.
 - `--limit N` counts source prompt/intent clusters and retains every selected
   cluster row. For an unchanged real converted-corpus digest and sample seed,
   limits are deterministic nested prefixes: the one-cluster canary remains in a
-  later `N`-cluster selection. Complete planned lanes use `--limit 0` after
-  bounded diagnostics.
+  later `N`-cluster selection. Complete local-only planned lanes use
+  `--limit 0` after bounded diagnostics; every lane with a hosted target or a
+  hosted LLM judge uses its pre-registered positive cluster limit (runbook
+  section 5.2).
 - Persisted local media use `@media-root/<index>/<relative-path>` and rebind to
   the same ordered roots and relative layout on resume.
 - Missing media, unsupported modality, absent source evaluator, target/transport

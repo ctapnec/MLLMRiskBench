@@ -4,6 +4,7 @@ import hashlib
 import json
 import os
 import py_compile
+import re
 import shutil
 import subprocess
 import sys
@@ -930,6 +931,7 @@ def test_plan_only_selects_requested_framework(tmp_path: Path) -> None:
     ]
 
 
+@pytest.mark.skipif(not hasattr(os, "symlink"), reason="symlink unavailable")
 def test_new_lock_migrates_old_seal_receipt_to_new_store(tmp_path: Path) -> None:
     layout = installer.Layout(tmp_path / "envs", tmp_path / "state")
     layout.store_root.mkdir(parents=True)
@@ -955,7 +957,10 @@ def test_new_lock_migrates_old_seal_receipt_to_new_store(tmp_path: Path) -> None
         },
     )
     (old_store / installer.RECEIPT_NAME).write_bytes(installer._canonical_json(old_receipt))
-    installer._publish_alias(layout, entry["env_slug"], old_store)
+    try:
+        installer._publish_alias(layout, entry["env_slug"], old_store)
+    except OSError:
+        pytest.skip("symlink creation is unavailable")
 
     new_store = layout.store(entry["env_slug"], new_lock_id)
     assert new_store != old_store
@@ -971,3 +976,494 @@ def test_new_lock_migrates_old_seal_receipt_to_new_store(tmp_path: Path) -> None
     ]
     assert old_store.is_dir()
     assert not new_store.exists()
+
+
+# --------------------------------------------------------------------------- #
+# Fail-closed guards on the sealed runtime path (install_one / verify_one /
+# _verify_published / _publish_alias / CLI), each on a real temp Layout.
+# --------------------------------------------------------------------------- #
+
+_GUARD_ENTRY = {
+    "name": "pyrit",
+    "version": "0.14.0",
+    "env_slug": "pyrit-0.14.0-py312",
+    "runtime": "python",
+}
+_GUARD_LOCK = {"lock_id": "a" * 64}
+
+
+def _publish_or_skip(layout: installer.Layout, slug: str, store: Path) -> None:
+    try:
+        installer._publish_alias(layout, slug, store)
+    except OSError:
+        pytest.skip("symlink creation is unavailable")
+
+
+def test_install_refuses_unverified_existing_environment_and_plan_reports_blocked(
+    tmp_path: Path,
+) -> None:
+    layout = installer.Layout(tmp_path / "envs", tmp_path / "state")
+    layout.store_root.mkdir(parents=True)
+    final = layout.final(_GUARD_ENTRY["env_slug"])
+    (final / "bin").mkdir(parents=True)  # an unmanaged, hand-made environment
+    (final / "bin" / "python").write_text("#!/bin/sh\n", encoding="utf-8")
+    with pytest.raises(
+        installer.InstallerError, match="refusing to replace unverified existing environment"
+    ):
+        installer.install_one(_GUARD_ENTRY, _GUARD_LOCK, layout, resume=False)
+    with pytest.raises(
+        installer.InstallerError, match="refusing to replace unverified existing environment"
+    ):
+        installer.install_one(_GUARD_ENTRY, _GUARD_LOCK, layout, resume=True)
+    assert installer.plan(_GUARD_LOCK, layout, [_GUARD_ENTRY])["actions"] == [
+        {
+            "framework": "pyrit",
+            "env_slug": "pyrit-0.14.0-py312",
+            "action": "blocked-existing-unverified",
+        }
+    ]
+    assert (final / "bin" / "python").is_file()  # never touched
+    assert not layout.store(_GUARD_ENTRY["env_slug"], _GUARD_LOCK["lock_id"]).exists()
+
+
+def test_install_requires_resume_for_existing_staging_and_rejects_foreign_staging_lock(
+    tmp_path: Path,
+) -> None:
+    layout = installer.Layout(tmp_path / "envs", tmp_path / "state")
+    store = layout.store(_GUARD_ENTRY["env_slug"], _GUARD_LOCK["lock_id"])
+    store.mkdir(parents=True)
+    with pytest.raises(installer.InstallerError, match="staging exists for pyrit; use resume"):
+        installer.install_one(_GUARD_ENTRY, _GUARD_LOCK, layout, resume=False)
+    assert installer.plan(_GUARD_LOCK, layout, [_GUARD_ENTRY])["actions"][0]["action"] == "resume"
+    installer._write_state(store, {"lock_id": "b" * 64, "completed": []})
+    with pytest.raises(installer.InstallerError, match="staging lock mismatch for pyrit"):
+        installer.install_one(_GUARD_ENTRY, _GUARD_LOCK, layout, resume=True)
+    # the foreign staging state is left in place for inspection
+    assert installer._read_state(store)["lock_id"] == "b" * 64
+    assert not layout.final(_GUARD_ENTRY["env_slug"]).exists()
+
+
+@pytest.mark.skipif(not hasattr(os, "symlink"), reason="symlink unavailable")
+def test_verify_requires_published_alias_and_matching_receipt(tmp_path: Path) -> None:
+    layout = installer.Layout(tmp_path / "envs", tmp_path / "state")
+    store = layout.store(_GUARD_ENTRY["env_slug"], _GUARD_LOCK["lock_id"])
+    store.mkdir(parents=True)
+    with pytest.raises(installer.InstallerError, match="valid runtime alias not found for pyrit"):
+        installer.verify_one(_GUARD_ENTRY, _GUARD_LOCK, layout)
+    _publish_or_skip(layout, _GUARD_ENTRY["env_slug"], store)
+    with pytest.raises(installer.InstallerError, match="valid receipt not found for pyrit"):
+        installer.verify_one(_GUARD_ENTRY, _GUARD_LOCK, layout)
+    foreign = installer._receipt(
+        _GUARD_ENTRY,
+        {"lock_id": "b" * 64},
+        {"inventory_sha256": "c" * 64, "distribution_count": 1},
+        {
+            "schema": installer.CONTENT_SEAL_SCHEMA,
+            "sha256": "d" * 64,
+            "file_count": 0,
+            "byte_count": 0,
+        },
+    )
+    (store / installer.RECEIPT_NAME).write_bytes(installer._canonical_json(foreign))
+    with pytest.raises(installer.InstallerError, match="valid receipt not found for pyrit"):
+        installer.verify_one(_GUARD_ENTRY, _GUARD_LOCK, layout)
+    # a published alias whose store lacks the interpreter is not a usable runtime
+    with pytest.raises(installer.InstallerError, match="runtime interpreter is missing"):
+        installer.canonical_python_interpreter(_GUARD_ENTRY, _GUARD_LOCK, layout)
+
+
+def test_verify_published_rejects_inventory_drift_before_the_seal(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    layout = installer.Layout(tmp_path / "envs", tmp_path / "state")
+    final = layout.final(_GUARD_ENTRY["env_slug"])
+    final.mkdir(parents=True)
+    monkeypatch.setattr(
+        installer,
+        "_verify_runtime",
+        lambda _entry, _env_dir, _runner: {"inventory_sha256": "e" * 64, "distribution_count": 1},
+    )
+    monkeypatch.setattr(
+        installer,
+        "_verify_content_seal",
+        lambda *_args, **_kwargs: pytest.fail("seal must not be consulted after an inventory mismatch"),
+    )
+    receipt = {"inventory_sha256": "c" * 64}
+    with pytest.raises(installer.InstallerError, match="receipt inventory mismatch for pyrit"):
+        installer._verify_published(
+            _GUARD_ENTRY, _GUARD_LOCK, layout, final, receipt, log_prefix="verify-"
+        )
+
+
+@pytest.mark.skipif(not hasattr(os, "symlink"), reason="symlink unavailable")
+def test_publish_alias_refuses_foreign_alias_or_directory(tmp_path: Path) -> None:
+    layout = installer.Layout(tmp_path / "envs", tmp_path / "state")
+    store = layout.store(_GUARD_ENTRY["env_slug"], _GUARD_LOCK["lock_id"])
+    store.mkdir(parents=True)
+    foreign = tmp_path / "foreign"
+    foreign.mkdir()
+    final = layout.final(_GUARD_ENTRY["env_slug"])
+    try:
+        os.symlink(foreign, final, target_is_directory=True)
+    except OSError:
+        pytest.skip("symlink creation is unavailable")
+    with pytest.raises(
+        installer.InstallerError, match="refusing to replace existing runtime alias: pyrit"
+    ):
+        installer._publish_alias(layout, _GUARD_ENTRY["env_slug"], store)
+    assert final.resolve() == foreign.resolve()  # the foreign link is untouched
+    final.unlink()
+    final.mkdir()
+    with pytest.raises(
+        installer.InstallerError, match="refusing to replace existing runtime alias: pyrit"
+    ):
+        installer._publish_alias(layout, _GUARD_ENTRY["env_slug"], store)
+    assert final.is_dir() and not final.is_symlink()
+
+
+def test_cli_requires_python_for_python_runtimes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    monkeypatch.setenv("URA_FRAMEWORK_INSTALLER_TESTING", "1")
+    # main() only sets the process-wide interpreter when --python is given, so
+    # start from the pristine module state regardless of earlier tests.
+    monkeypatch.setattr(installer, "_ACTIVE_PYTHON", None)
+    result = installer.main(
+        [
+            "verify",
+            "--lock",
+            str(LOCK_PATH),
+            "--env-root",
+            str(tmp_path / "envs"),
+            "--state-root",
+            str(tmp_path / "state"),
+            "--only",
+            "pyrit",
+            "--session-policy",
+            "off",
+        ]
+    )
+    assert result == 2
+    failure = json.loads(capsys.readouterr().err.strip())
+    assert failure == {"status": "failed", "error": "--python is required for Python runtimes"}
+    events = [
+        json.loads(line)
+        for line in (tmp_path / "state" / "task-log.jsonl").read_text(encoding="utf-8").splitlines()
+    ]
+    assert events[-1]["event"] == "campaign_end" and events[-1]["status"] == "failed"
+
+
+# --------------------------------------------------------------------------- #
+# distro/install.sh wiring to this installer (bash; a stub venv python
+# intercepts the installer module and passes everything else through to the
+# real interpreter).
+# --------------------------------------------------------------------------- #
+
+DISTRO_INSTALL = Path(installer.__file__).resolve().parents[1] / "distro" / "install.sh"
+DISTRO_REPIN = Path(installer.__file__).resolve().parents[1] / "distro" / "repin.sh"
+EXAMPLE_REGISTRY = (
+    Path(installer.__file__).resolve().parents[1]
+    / "experiments"
+    / "rig"
+    / "source-instances.example.json"
+)
+
+_STUB_PYTHON = r"""#!/usr/bin/env bash
+# Stub venv python for distro/install.sh tests: intercept the framework
+# runtime installer module (record argv, emulate the session contract),
+# pass every other invocation through to the real interpreter.
+if [ "${1:-}" = "-m" ] && [ "${2:-}" = "experiments.framework_runtime_installer" ]; then
+  shift 2
+  { printf '%s\n' "$@"; printf -- '--END--\n'; } >> "__CALLS__"
+  command=$1
+  state_root=""
+  while [ $# -gt 0 ]; do
+    case "$1" in --state-root) state_root=$2; shift 2 ;; *) shift ;; esac
+  done
+  case "$command" in
+    plan)
+      echo '{"schema":"ura-framework-runtime-plan/1","lock_id":"stub","actions":[]}'
+      exit 0 ;;
+    install|verify)
+      name="ura-framework-$command-stub"
+      mkdir -p "$state_root/sessions"
+      printf '%s\n' "${URA_STUB_EXIT_RC:-0}" > "$state_root/sessions/$name.exit"
+      printf 'stub %s transcript\n' "$command" > "$state_root/sessions/$name.log"
+      printf '{"schema":"ura-framework-runtime-session/1","launcher":"tmux","session_name":"%s","attach_command":"tmux -L stub attach -t %s","log":"sessions/%s.log","exit_marker":"sessions/%s.exit","status":"running"}\n' "$name" "$name" "$name" "$name"
+      exit 0 ;;
+  esac
+  echo '{"status":"failed","error":"stub: unsupported command"}' >&2
+  exit 2
+fi
+exec "__REAL__" "$@"
+"""
+
+
+def _bash_or_skip() -> str:
+    bash = shutil.which("bash")
+    if bash is None:
+        pytest.skip("bash is unavailable")
+    probe = subprocess.run([bash, "-c", "printf ok"], capture_output=True, text=True, check=False)
+    if probe.returncode != 0 or probe.stdout != "ok":
+        pytest.skip("bash is not usable")
+    return bash
+
+
+class _DistroSandbox:
+    """Temp HOME / URA_DATA / URA_ROOT for driving distro/install.sh phases."""
+
+    def __init__(self, tmp_path: Path, *, with_venv: bool = True) -> None:
+        self.bash = _bash_or_skip()
+        self.home = tmp_path / "home"
+        self.data = tmp_path / "data"
+        self.root = tmp_path / "repo"
+        self.stub_bin = tmp_path / "stub-bin"
+        self.calls = tmp_path / "installer-calls.log"
+        for directory in (self.home, self.data, self.stub_bin, self.root / "experiments" / "rig"):
+            directory.mkdir(parents=True)
+        shutil.copy(LOCK_PATH, self.root / "experiments" / "framework_runtime_lock.json")
+        shutil.copy(EXAMPLE_REGISTRY, self.root / "experiments" / "rig" / "source-instances.example.json")
+        tmux = self.stub_bin / "tmux"
+        tmux.write_text("#!/usr/bin/env bash\nexit 0\n", encoding="utf-8")
+        tmux.chmod(0o755)
+        if with_venv:
+            python = self.root / ".venv" / "bin" / "python"
+            python.parent.mkdir(parents=True)
+            python.write_text(
+                _STUB_PYTHON.replace("__CALLS__", self.calls.as_posix()).replace(
+                    "__REAL__", Path(sys.executable).as_posix()
+                ),
+                encoding="utf-8",
+            )
+            python.chmod(0o755)
+
+    def run(self, *phases: str, **extra_env: str) -> subprocess.CompletedProcess[str]:
+        env = {
+            key: value
+            for key, value in os.environ.items()
+            if not key.startswith("URA_") and key not in {"HF_TOKEN", "HOME"}
+        }
+        env.update(
+            HOME=self.home.as_posix(),
+            URA_DATA=self.data.as_posix(),
+            URA_ROOT=self.root.as_posix(),
+            URA_PYTHON=Path(sys.executable).as_posix(),
+            PATH=str(self.stub_bin) + os.pathsep + os.environ.get("PATH", ""),
+        )
+        env.update(extra_env)
+        return subprocess.run(
+            [self.bash, str(DISTRO_INSTALL), *phases],
+            capture_output=True,
+            text=True,
+            env=env,
+            cwd=str(self.root),
+            timeout=180,
+            check=False,
+        )
+
+    def installer_calls(self) -> list[list[str]]:
+        if not self.calls.is_file():
+            return []
+        blocks = self.calls.read_text(encoding="utf-8").split("--END--\n")
+        return [block.splitlines() for block in blocks if block.strip()]
+
+
+def test_distro_runtimes_phase_passes_lock_roots_and_python_then_verifies(tmp_path: Path) -> None:
+    sandbox = _DistroSandbox(tmp_path)
+    result = sandbox.run("runtimes")
+    assert result.returncode == 0, result.stdout + result.stderr
+    lock_id = json.loads(LOCK_PATH.read_text(encoding="utf-8"))["lock_id"]
+    lock = (sandbox.root / "experiments" / "framework_runtime_lock.json").as_posix()
+    env_root = f"{sandbox.data.as_posix()}/framework-venvs"
+    state_root = f"{sandbox.data.as_posix()}/runs/engineering/framework-runtime-{lock_id[:12]}"
+    calls = sandbox.installer_calls()
+    assert [call[0] for call in calls] == ["plan", "install", "verify"]
+    assert calls[0] == ["plan", "--lock", lock, "--env-root", env_root, "--state-root", state_root]
+    for call in calls[1:]:
+        assert call[1:7] == ["--lock", lock, "--env-root", env_root, "--state-root", state_root]
+        assert call[7] == "--python" and len(call) == 9
+        assert Path(call[8]).name.startswith("python")
+        assert "--session-policy" not in call
+    logs = sandbox.data / "acquire-logs"
+    assert (logs / "runtimes-install.status").read_text(encoding="utf-8").strip() == "OK"
+    assert (logs / "runtimes-verify.status").read_text(encoding="utf-8").strip() == "OK"
+    assert (logs / "runtimes-install.done").exists() and (logs / "runtimes-verify.done").exists()
+    assert "[ok]   runtimes-install" in result.stdout
+    assert "[ok]   runtimes-verify" in result.stdout
+    install_log = (logs / "runtimes-install.log").read_text(encoding="utf-8")
+    assert "session ura-framework-install-stub exit 0" in install_log
+    assert "stub install transcript" in install_log
+    assert "[warn] framework runtimes need" not in result.stdout
+
+
+def test_distro_runtimes_phase_ledgers_a_failed_session_and_skips_verify(tmp_path: Path) -> None:
+    sandbox = _DistroSandbox(tmp_path)
+    result = sandbox.run("runtimes", URA_STUB_EXIT_RC="2")
+    assert result.returncode != 0
+    assert [call[0] for call in sandbox.installer_calls()] == ["plan", "install"]
+    logs = sandbox.data / "acquire-logs"
+    assert (logs / "runtimes-install.status").read_text(encoding="utf-8").strip() == "FAIL:2"
+    assert not (logs / "runtimes-install.done").exists()
+    assert not (logs / "runtimes-verify.status").exists()
+    assert "[FAIL] runtimes-install" in result.stdout
+    assert "runtimes-verify skipped" in result.stdout
+    assert "FAILED this run" in result.stdout
+
+
+def test_distro_prereqs_fail_closed_without_a_cpython_312_or_313_interpreter(tmp_path: Path) -> None:
+    sandbox = _DistroSandbox(tmp_path, with_venv=False)
+    bad = sandbox.stub_bin / "old-python"
+    bad.write_text("#!/usr/bin/env bash\nexit 1\n", encoding="utf-8")  # fails the version probe
+    bad.chmod(0o755)
+    result = sandbox.run("summary", URA_PYTHON=bad.as_posix())
+    assert result.returncode == 3, result.stdout + result.stderr
+    assert f"[FAIL] URA_PYTHON={bad.as_posix()} is not a CPython >=3.12,<3.14 interpreter" in result.stderr
+    assert "set URA_PYTHON=/path/to/python3.12" in result.stdout
+    assert "distro/install.sh: done" not in result.stdout  # no phase ran
+    assert not (sandbox.root / ".venv").exists()
+
+
+def test_distro_locators_seed_registry_from_example_and_bind_repo_interpreter(tmp_path: Path) -> None:
+    sandbox = _DistroSandbox(tmp_path)
+    example = json.loads(EXAMPLE_REGISTRY.read_text(encoding="utf-8"))
+    aggregator_keys = (
+        "saladbench_base", "airbench_full", "xstest_full",
+        "simplesafetytests_full", "decodingtrust_stereotype", "holisafe_full",
+    )
+    registry_path = sandbox.root / "experiments" / "source-instances.json"
+
+    first = sandbox.run("locators")
+    assert first.returncode == 0, first.stdout + first.stderr
+    assert json.loads(registry_path.read_text(encoding="utf-8")) == example
+    assert f"source-instances.json arms: {len(example)} (seeded from the example)" in first.stdout
+    campaign_env = (sandbox.home / ".ura_campaign_env").read_text(encoding="utf-8")
+    assert f'export URA_REPO="{sandbox.root.as_posix()}"\n' in campaign_env
+    assert 'export URA_PY="$URA_REPO/.venv/bin/python"\n' in campaign_env
+    assert "# --- URA source locators (distro/install.sh) ---" in campaign_env
+    assert f'export URA_CORPORA="{sandbox.data.as_posix()}/corpora"' in campaign_env
+    assert "MISSING URA_BIPIA_TEST_QA_PATH" in first.stdout
+    assert "(blocked: licensed NewsQA base" in first.stdout
+
+    # Drifted labels (the old hand-written literals) are reconciled to the
+    # example, a missing aggregator arm is added, and operator keys survive.
+    registry = json.loads(registry_path.read_text(encoding="utf-8"))
+    registry["xstest_full"]["source_label"] = "XSTest exaggerated-safety (aggregator)"
+    del registry["holisafe_full"]
+    registry["custom_arm"] = {"converter": "xstest", "path_env": "URA_CUSTOM_PATH",
+                              "source_label": "operator arm", "split": "x"}
+    registry_path.write_text(json.dumps(registry, indent=2) + "\n", encoding="utf-8")
+    second = sandbox.run("locators")
+    assert second.returncode == 0, second.stdout + second.stderr
+    assert "reconciled xstest_full" in second.stdout
+    assert "added holisafe_full" in second.stdout
+    merged = json.loads(registry_path.read_text(encoding="utf-8"))
+    assert {key: merged[key] for key in aggregator_keys} == {key: example[key] for key in aggregator_keys}
+    assert merged["custom_arm"] == registry["custom_arm"]
+    assert "(aggregator)" not in json.dumps(merged)
+    # the interpreter bindings and the locator block are appended exactly once
+    campaign_env = (sandbox.home / ".ura_campaign_env").read_text(encoding="utf-8")
+    assert campaign_env.count("export URA_REPO=") == 1
+    assert campaign_env.count("export URA_PY=") == 1
+    assert campaign_env.count("# --- URA source locators") == 1
+
+
+def test_distro_installer_sources_canonical_ura_env_last() -> None:
+    text = DISTRO_INSTALL.read_text(encoding="utf-8")
+    assert 'SECRETS_ENV="$HOME/.ura_env"' in text
+    assert 'SECRETS_LEGACY="$HOME/.ura_secrets"' in text
+    # top-level sourcing: legacy first, canonical last (wins)
+    top_legacy = text.index('[ -f "$SECRETS_LEGACY" ] && source "$SECRETS_LEGACY"')
+    top_env = text.index('[ -f "$SECRETS_ENV" ] && source "$SECRETS_ENV"')
+    assert top_legacy < top_env
+    # the generated console launcher keeps the same order
+    launcher = text[text.index('cat > "$URA_DATA/console-launch.sh"'):text.index("\nLAUNCH\n")]
+    assert launcher.index("$SECRETS_LEGACY") < launcher.index("$SECRETS_ENV")
+    assert '.ura_env" ] && source' not in text.replace("$SECRETS_ENV", "")
+    # prereqs never adopt the system python3 blindly and the venv is built with
+    # the resolved interpreter; the runtimes phase uses the venv's base
+    assert '"$URA_PYTHON" -m venv "$VENV"' in text
+    assert "python3 -m venv" not in text
+    assert "sys._base_executable" in text
+    assert '|| echo "  [warn] framework runtimes need' not in text
+    # ollama is pinned and checksum-verified against the release's own list
+    assert "OLLAMA_VERSION=0.32.13" in text
+    assert re.search(r"OLLAMA_SHA256=[0-9a-f]{64}", text)
+    assert "sha256sum.txt" in text and "ollama.com/download" not in text
+    # the console relaunch kills consoles by the anchored module invocation only
+    assert "pkill -f -- '-m experiments\\.rig_web( |$)'" in text
+    assert "pkill -f 'experiments.rig_web'" not in text
+    # the runtimes phase names the missing venv instead of an unreadable lock
+    assert "runtimes-plan (venv missing:" in text
+    assert text.index("runtimes-plan (venv missing:") < text.index("runtimes-plan (cannot read")
+
+
+def test_distro_runtimes_phase_fails_closed_without_the_venv(tmp_path: Path) -> None:
+    sandbox = _DistroSandbox(tmp_path, with_venv=False)
+    result = sandbox.run("runtimes")
+    assert result.returncode != 0, result.stdout + result.stderr
+    venv_python = (sandbox.root / ".venv" / "bin" / "python").as_posix()
+    assert f"[FAIL] runtimes-plan (venv missing: {venv_python} - run distro/install.sh deps first)" in result.stdout
+    assert "cannot read" not in result.stdout
+    assert "FAILED this run" in result.stdout
+    assert sandbox.installer_calls() == []
+    assert not (sandbox.data / "acquire-logs" / "runtimes-install.status").exists()
+
+
+def test_distro_prereqs_report_an_ignored_ura_python_when_the_venv_is_adopted(tmp_path: Path) -> None:
+    sandbox = _DistroSandbox(tmp_path)
+    # a second, valid CPython entry point that is NOT the venv's base interpreter
+    other = sandbox.stub_bin / "other-python"
+    other.write_text(
+        f'#!/usr/bin/env bash\nexec "{Path(sys.executable).as_posix()}" "$@"\n', encoding="utf-8"
+    )
+    other.chmod(0o755)
+    venv = (sandbox.root / ".venv").as_posix()
+
+    ignored = sandbox.run("summary", URA_PYTHON=other.as_posix())
+    assert f"[warn] URA_PYTHON={other.as_posix()} ignored: existing {venv} (base " in ignored.stdout
+    assert "is adopted" in ignored.stdout
+    assert "[FAIL]" not in ignored.stdout + ignored.stderr
+
+    base = getattr(sys, "_base_executable", sys.executable)
+    adopted = sandbox.run("summary", URA_PYTHON=Path(base).as_posix())
+    assert "ignored: existing" not in adopted.stdout
+    assert "[FAIL]" not in adopted.stdout + adopted.stderr
+
+
+def test_distro_repin_script_is_fail_closed_and_sources_canonical_ura_env_last() -> None:
+    bash = _bash_or_skip()
+    syntax = subprocess.run([bash, "-n", str(DISTRO_REPIN)], capture_output=True, text=True, check=False)
+    assert syntax.returncode == 0, syntax.stderr
+    text = DISTRO_REPIN.read_text(encoding="utf-8")
+    assert "set -euo pipefail" in text
+    # the expected commit is a full 40-hex id, checked before anything runs
+    assert '[[ "$REF_EXPECTED" =~ ^[0-9a-f]{40}$ ]] ||' in text
+    # hygiene (anchored module invocations) precedes the clean-env gate
+    run_matrix_kill = text.index("pkill -f -- '-m experiments\\.run_matrix( |$)'")
+    rig_web_kill = text.index("pkill -f -- '-m experiments\\.rig_web( |$)'")
+    gate = text.index("-m pytest -q -p no:cacheprovider")
+    assert run_matrix_kill < gate and rig_web_kill < gate
+    assert "pkill -f 'experiments." not in text
+    # the scrub unsets every URA_* name, digits included
+    assert "grep -oE '^URA_[A-Za-z0-9_]+'" in text
+    assert "^URA_[A-Z_]+" not in text
+    # secrets: legacy ~/.ura_secrets first, canonical ~/.ura_env last (wins),
+    # both in the top-level block and in the detached console child
+    child_start = text.index("setsid bash -c '")
+    top, child = text[:child_start], text[child_start:]
+    for block in (top, child):
+        legacy = block.index('[ -f "$HOME/.ura_secrets" ] && source "$HOME/.ura_secrets"')
+        canonical = block.index('[ -f "$HOME/.ura_env" ] && source "$HOME/.ura_env"')
+        assert legacy < canonical
+    # the console child carries the same login env as install.sh's launcher
+    profile = child.index("[ -f /etc/profile ] && source /etc/profile")
+    home_profile = child.index('[ -f "$HOME/.profile" ] && source "$HOME/.profile"')
+    assert profile < home_profile < child.index('[ -f "$HOME/.ura_secrets" ]')
+    # receipt validation and the source-receipt revalidation abort explicitly
+    # (a failure on the left of '&&' would not trip errexit)
+    assert '--validate "$MANIFEST" --sha256 "$SHA" >/dev/null \\\n  || { echo "revision receipt INVALID' in text
+    assert '>/dev/null && echo "revision receipt valid"' not in text
+    assert '|| { echo "source receipt: NOT VALID' in text and "exit 1; }" in text[text.index("source receipt: NOT VALID"):]
+    # the executing copy is compared with the deployed commit's distro/repin.sh
+    assert 'git cat-file -e "$REF:distro/repin.sh"' in text
+    assert 'git show "$REF:distro/repin.sh" | cmp -s - "$0"' in text

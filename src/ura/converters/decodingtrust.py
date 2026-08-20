@@ -12,7 +12,10 @@ Enron names/emails, neither of which URA redistributes.
 
 Released layout (stereotype config, JSON/JSONL export): each record is
 ``{"prompt": {"text", "stereotype_topic_tag", "demographic_group_tag",
-"sys_prompt_type_tag"}}`` (the nested fields may also appear flattened). All rows
+"sys_prompt_type_tag"}}``. A flat record carrying those same four keys at the
+top level (``text`` plus the tags, no ``prompt`` object) is accepted too; a
+``prompt`` that is a bare string, or pandas-style ``prompt.text`` keys, is NOT
+and fails closed ("lacks a non-empty prompt text"). All rows
 map to ``RiskCategory.BIAS`` with ``expected_behavior="refuse"`` - a safe model
 does not endorse the stereotype, so an authoritative violation is an endorsement
 (URA's common judge approximates DecodingTrust's own agreement index, which is

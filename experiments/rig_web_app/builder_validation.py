@@ -35,6 +35,8 @@ from .catalog import (
     _INELIGIBLE_REASONS,
     _ATTACKER_NAMES,
     _NATIVE_ONLY_ATTACKERS,
+    _CLI_ONLY_ATTACKERS,
+    _SOURCE_RESTRICTED_ATTACKERS,
     _FRAMEWORKS,
     _BUILD_MODES,
     _icon,
@@ -1315,6 +1317,27 @@ class BuilderValidationMixin:
         unknown_attackers = sorted(set(attackers) - set(_ATTACKER_NAMES))
         if unknown_attackers:
             errors["attackers"] = "unknown attack framework(s): " + ", ".join(unknown_attackers)
+        # Precomputed-only adapters without a builder input for their required
+        # prepared config: reject with the exact CLI reason before any
+        # subprocess, mirroring run_matrix's attacker-input-contract preflight.
+        for attacker in attackers:
+            reason = _CLI_ONLY_ATTACKERS.get(attacker)
+            if reason:
+                errors["attackers"] = reason
+                break
+        # Judge the corpora the lane will actually run: a dry canary is
+        # composed as --corpora synth regardless of the arm checkboxes (and
+        # needs none), so it can never carry a source-restricted adapter.
+        effective_corpora = ["synth"] if canary_dry else corpora
+        for attacker in attackers:
+            restriction = _SOURCE_RESTRICTED_ATTACKERS.get(attacker)
+            if restriction is None:
+                continue
+            prefix, reason = restriction
+            if not effective_corpora or any(
+                not arm.startswith(prefix) for arm in effective_corpora
+            ):
+                errors.setdefault("attackers", reason)
         for attacker, error_field in (
             ("t3mp3st", "t3_replay"),
             ("harmbench", "harm_replay"),
@@ -1660,6 +1683,40 @@ class BuilderValidationMixin:
         limit = require_int("limit")
         if limit is not None and limit < 0:
             errors["limit"] = "must be non-negative"
+        group_raw = params.get("group", "")
+        if group_raw:
+            from experiments.run_matrix import _ALLOWED_GROUP_KEYS  # noqa: PLC0415
+
+            group_keys = self._split_list(group_raw)
+            unknown_group_keys = sorted(set(group_keys) - set(_ALLOWED_GROUP_KEYS))
+            if not group_keys:
+                errors["group"] = "must name at least one aggregation group key"
+            elif len(set(group_keys)) != len(group_keys):
+                errors["group"] = "group keys must be unique"
+            elif unknown_group_keys:
+                errors["group"] = (
+                    "unsupported group key(s): "
+                    + ", ".join(unknown_group_keys)
+                    + "; allowed: "
+                    + ", ".join(sorted(_ALLOWED_GROUP_KEYS))
+                )
+        if params.get("exclude_tool_conditioned", "") not in {"", "on"}:
+            errors["exclude_tool_conditioned"] = (
+                "the tool-conditioned exclusion must be an explicit checkbox"
+            )
+        reset_open_circuits = params.get("reset_open_circuits", "")
+        if reset_open_circuits not in {"", "on"}:
+            errors["reset_open_circuits"] = (
+                "the open-circuit reset must be an explicit checkbox"
+            )
+        elif reset_open_circuits == "on" and mode != "measured":
+            errors["reset_open_circuits"] = (
+                "clearing open circuits is a measured-lane resume control "
+                "(rerun the identical measured command after correcting the "
+                "root cause); it is not available for dry runs, probes, or "
+                "canaries"
+            )
+        require_int("lock_stale_seconds", positive=True)
         sample_seed_value = require_int("sample_seed")
         max_queries_value = require_int("max_queries", positive=True)
         max_turns_value = require_int("max_turns", positive=True)

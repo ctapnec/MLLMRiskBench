@@ -1364,6 +1364,18 @@ class LifecycleMixin:
         "doubao": ("ARK_API_KEY",),
     }
     _MATRIX_OPTIONAL_ENV = frozenset({"URA_MEDIA_ROOTS"})
+    #: Non-secret receipt locators the CLI reads as argparse defaults
+    #: (run_matrix/rig_check --project-revision / --source-conformance and their
+    #: SHA-256 pairs).  Forwarded to a NON-dry matrix child when set in the
+    #: console process so a Run-page rig_check with blank receipt fields admits
+    #: exactly like the same command in the exported campaign shell; dry lanes
+    #: still launch with them scrubbed (``_DRY_SCRUB_ENV``).
+    _MATRIX_RECEIPT_ENV = frozenset({
+        "URA_PROJECT_REVISION_MANIFEST",
+        "URA_PROJECT_REVISION_SHA256",
+        "URA_SOURCE_CONFORMANCE_MANIFEST",
+        "URA_SOURCE_CONFORMANCE_SHA256",
+    })
 
     def _strict_config_document(
         self,
@@ -1538,8 +1550,12 @@ class LifecycleMixin:
     ) -> dict[str, str]:
         """Least-privilege environment for the measured Python driver."""
 
-        del scrub_receipt_env  # receipts are always explicit argv inputs in Web jobs
         allowed = set(self._MATRIX_BASE_ENV) | set(self._MATRIX_OPTIONAL_ENV)
+        if not scrub_receipt_env:
+            # Build folds these receipt locators into the argv; the generic
+            # rig_check Run form relies on the CLI's env defaults exactly as
+            # the documented campaign shell does.  A dry lane never sees them.
+            allowed.update(self._MATRIX_RECEIPT_ENV)
         allowed.update(self._selected_matrix_environment_names(values))
         # CUDA installations commonly expose a versioned CUDA_PATH_Vx_y key.
         allowed.update(
@@ -1601,7 +1617,17 @@ class LifecycleMixin:
                         r"[A-Za-z_][A-Za-z0-9_]*", path_env
                     ):
                         allowed.add(path_env)
-        return self._selected_child_environment(allowed)
+        child = self._selected_child_environment(allowed)
+        if command == "export_aggregators":
+            # The aggregator export is the second acquisition child: the gated
+            # DecodingTrust/HoliSafe sources read HF_TOKEN from their own
+            # environment exactly as the documented campaign shell exports it.
+            # Mirror the sealed model_acquire exception (process-memory token,
+            # forwarded only when set); no other generic command receives it.
+            token = os.environ.get("HF_TOKEN", "").strip()
+            if token:
+                child["HF_TOKEN"] = token
+        return child
 
     _PRIVATE_LOG_LOCATOR_FLAGS = frozenset({
         "--api-config",
@@ -1893,6 +1919,9 @@ class LifecycleMixin:
                 "--ack-hosted-judge-data-transfer",
                 "--execution-scope-id",
                 "--live-attestation-max-age-hours",
+                # A no-call projection must never clear durable circuit state;
+                # the reset belongs to the measured resume only.
+                "--reset-open-circuits",
             }
             and not flag.startswith("--live-attestation#")
             and not flag.startswith("--live-attestation-sha256#")
@@ -3603,7 +3632,16 @@ class LifecycleMixin:
                         "text/plain; charset=utf-8",
                         b"use the validated Build workflow for this command",
                     )
-                job = self.start_job(command, data)
+                # A dry preflight from the generic Run form launches with the
+                # campaign receipt env scrubbed exactly like a Build dry lane
+                # (an offline lane is never admitted or failed by an inherited
+                # receipt); a non-dry rig_check inherits the exported receipt
+                # locators the CLI reads as its argparse defaults.
+                job = self.start_job(
+                    command,
+                    data,
+                    scrub_receipt_env=(command == "rig_check" and "--dry-run" in data),
+                )
                 return 303, f"/jobs/{job.job_id}", b""
             if method == "GET" and path == "/jobs":
                 return 200, "text/html; charset=utf-8", self._jobs_page(query)

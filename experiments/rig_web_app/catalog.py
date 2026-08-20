@@ -104,8 +104,10 @@ _PARAM_HELP: dict[str, str] = {
     "common-security response proxies on common-metric-ineligible source rows. "
     "These are non-authoritative, never replace source-native metrics, and carry "
     "an uncalibrated reliability indicator that is not probability or accuracy.",
-    "--limit": "Cluster subsample size. REQUIRED on every hosted paid lane - "
-    "it bounds spend. Omit only for local full-corpus lanes.",
+    "--limit": "Maximum unique source clusters per corpus. Omitting it means "
+    "the CLI default of 50 clusters; 0 means the complete selected release. "
+    "REQUIRED and positive on every hosted paid lane - it bounds spend; local "
+    "full-corpus lanes pass 0 explicitly (Build always emits it on non-dry lanes).",
     "--sample-seed": "Deterministic seed for the cluster subsample. Fix it and "
     "record it so every hosted condition sees the identical "
     "subset (comparable, never pooled across tiers).",
@@ -142,22 +144,43 @@ _PARAM_HELP: dict[str, str] = {
     "--preflight-only": "Validate and project the complete grid without any "
     "model or judge call (what rig_check runs).",
     "--project-revision": "Path to the validated ura-project-revision/1 "
-    "receipt. Defaults from URA_PROJECT_REVISION_"
-    "MANIFEST; required for every non-dry invocation.",
+    "receipt; required for every non-dry invocation. The CLI defaults it from "
+    "URA_PROJECT_REVISION_MANIFEST; the console forwards that exported "
+    "variable (and URA_PROJECT_REVISION_SHA256) to a non-dry child when it is "
+    "set in the console process, and Build folds the value into the argv.",
     "--project-revision-sha256": "Exact byte SHA-256 paired with "
-    "--project-revision (defaults from the "
-    "campaign environment).",
+    "--project-revision. The CLI defaults it from URA_PROJECT_REVISION_SHA256, "
+    "which the console forwards to a non-dry child when set.",
     "--source-conformance": "Path to the validated ura-source-conformance/1 "
-    "receipt; required when any real source arm is "
-    "selected. Defaults from URA_SOURCE_CONFORMANCE_"
-    "MANIFEST.",
-    "--source-conformance-sha256": "Exact byte SHA-256 paired with --source-conformance.",
+    "receipt; required when any real source arm is selected. The CLI defaults "
+    "it from URA_SOURCE_CONFORMANCE_MANIFEST; the console forwards that "
+    "exported variable (and URA_SOURCE_CONFORMANCE_SHA256) to a non-dry child "
+    "when it is set in the console process, and Build folds the value into "
+    "the argv.",
+    "--source-conformance-sha256": "Exact byte SHA-256 paired with "
+    "--source-conformance. The CLI defaults it from "
+    "URA_SOURCE_CONFORMANCE_SHA256, which the console forwards to a non-dry "
+    "child when set.",
     "--quantization": "Default vLLM override (bitsandbytes, awq, gptq, fp8, "
     "none); per-model config wins; empty chooses the highest "
     "fitting 16-, 8-, or 4-bit precision.",
     "--dtype": "vLLM dtype for local models (auto, bfloat16, float16).",
     "--lock-stale-seconds": "Diagnostic stale-age metadata for cell locks; "
-    "locks are never removed automatically.",
+    "locks are never removed automatically. Optional positive integer "
+    "(CLI default 86400).",
+    "--reset-open-circuits": "Operator acknowledgement: clear the durable "
+    "provider/judge circuit after correcting its root cause, then rerun the "
+    "identical measured lane to resume (runbook section 17). Never a "
+    "default.",
+    "--group": "Comma list of aggregation group keys from the CLI's allowed "
+    "set (model, target, attacker, strategy, source, risk, risk_category, "
+    "risk_subtype, modality, effective_modality, is_multimodal, "
+    "expected_behavior, attack_family, seed, source_policy_id, "
+    "source_policy_version). The CLI default (and the runbook's measured "
+    "lanes, Build's default) is model,source,risk,effective_modality,"
+    "expected_behavior,attacker,source_policy_id,source_policy_version. "
+    "Level-2 export requires at least these eight keys; narrower groupings "
+    "are rejected at export; blank inherits the CLI default.",
     "--live-attestation": "Repeatable: one content-addressed "
     "ura-live-attestation/2 receipt per row, paired "
     "positionally with a --live-attestation-sha256 row.",
@@ -403,6 +426,67 @@ _NATIVE_ONLY_ATTACKERS: frozenset[str] = frozenset(
 #: Every registered adapter is visible in Build. T3MP3ST and HarmBench use the
 #: explicit prepare/capture controls rendered beside the normal lane builder.
 _BUILDER_OMITTED_ATTACKERS: frozenset[str] = frozenset()
+#: Precomputed-only adapters whose required prepared input has NO builder
+#: control yet.  They are shown disabled with the exact reason and rejected
+#: server-side, so the console never composes a lane that run_matrix's
+#: attacker-input-contract preflight would reject after launch.  Launch them
+#: from the CLI with a validated --attacker-config (runbook section 12).
+_CLI_ONLY_ATTACKERS: dict[str, str] = {
+    "ideator": (
+        "IDEATOR runs only from verified precomputed text-image seed_pairs "
+        "supplied through a CLI --attacker-config (framework lock status "
+        "precomputed-only; the live package path is disabled). The builder "
+        "has no seed-pairs input, so run_matrix would reject a console lane at "
+        "the attacker input contract preflight. Launch it from the CLI with "
+        "--attacker-config instead."
+    ),
+}
+#: Adapters that replay only rows of one upstream source family (the adapter
+#: raises for any other DataPoint.source).  Maps attacker -> (arm id prefix,
+#: reason); mirrored in builder validation so the lane is rejected before a
+#: subprocess exists.
+_SOURCE_RESTRICTED_ATTACKERS: dict[str, tuple[str, str]] = {
+    "purplellama": (
+        "cyberseceval_",
+        "purplellama replays only source-authentic CyberSecEval rows "
+        "(DataPoint.source == 'cyberseceval'); select only cyberseceval_* "
+        "arms with it (no synth)",
+    ),
+}
+#: Mirror of ``experiments.run_matrix._ALLOWED_GROUP_KEYS`` (a parity test
+#: asserts the two never drift); importing run_matrix at page-render time
+#: would pull in the whole harness just to list keys.
+_GROUP_KEYS: tuple[str, ...] = (
+    "model",
+    "target",
+    "attacker",
+    "strategy",
+    "source",
+    "risk",
+    "risk_category",
+    "risk_subtype",
+    "modality",
+    "effective_modality",
+    "is_multimodal",
+    "expected_behavior",
+    "attack_family",
+    "seed",
+    "source_policy_id",
+    "source_policy_version",
+)
+#: The run_matrix argparse default for --group.  experiments.level2_report
+#: refuses any aggregate whose group_by lacks these eight keys, so every
+#: documented measured/preflight lane (RUN_AND_RETURN sections 9-13) passes
+#: exactly this value and Build defaults to it; a parity test pins both the
+#: parser default and the level-2 requirement to this string.
+_CLI_DEFAULT_GROUP = (
+    "model,source,risk,effective_modality,expected_behavior,attacker,"
+    "source_policy_id,source_policy_version"
+)
+#: The runbook's measured/preflight --group value: the CLI default, written
+#: out explicitly so a console lane aggregates exactly like the documented
+#: CLI lane and its cells reach the Level-2 export.
+_RUNBOOK_GROUP = _CLI_DEFAULT_GROUP
 #: Every registered attacker (mirrors ura.adapters.engines.ATTACKER_NAMES, the
 #: shared registry - a parity test asserts the two match). replay/crescendo are
 #: modality-agnostic (they carry whatever the corpus datapoint holds); the
@@ -424,8 +508,8 @@ _FRAMEWORK_DESCRIPTIONS: dict[str, tuple[str, tuple[str, ...]]] = {
     "easyjailbreak": ("EasyJailbreak adapter", ("text",)),
     "h4rm3l": ("h4rm3l 0.2.4 in its own explicit venv", ("text",)),
     "spikee": ("Spikee 0.9.1 in its own explicit venv", ("text",)),
-    "ideator": ("IDEATOR adapter", ("text",)),
-    "purplellama": ("PurpleLlama adapter", ("text",)),
+    "ideator": ("IDEATOR precomputed seed-pair replay (CLI --attacker-config only)", ("text",)),
+    "purplellama": ("PurpleLlama source-identity replay (CyberSecEval arms only)", ("text",)),
     "asb": ("Agent Security Bench adapter", ("text",)),
     "harmbench": ("prepared HarmBench case-transfer replay", ("text",)),
 }
@@ -514,11 +598,15 @@ _SUGGEST_STATIC: dict[str, tuple[str, ...]] = {
         *(
             attacker
             for attacker in _ATTACKER_NAMES
-            if attacker not in _NATIVE_ONLY_ATTACKERS and attacker not in _BUILDER_OMITTED_ATTACKERS
+            if attacker not in _NATIVE_ONLY_ATTACKERS
+            and attacker not in _BUILDER_OMITTED_ATTACKERS
+            and attacker not in _CLI_ONLY_ATTACKERS
         ),
     ),
     "judges": ("rules,llm", "rules", "llm", "rules,guardrail", "guardrail"),
-    "group": ("model", "source", "model,source"),
+    # Only the full default grouping is offered: Level-2 export rejects any
+    # narrower grouping, and a blank field inherits the same CLI default.
+    "group": (_RUNBOOK_GROUP,),
     "seeds": ("0", "0,1", "0,1,2"),
 }
 
@@ -602,6 +690,14 @@ _MATRIX_PARAMS = (
 
 def _commands() -> dict[str, Command]:
     common_out = (CommandParam("--out", "path", help="output directory under the rig root"),)
+    # Same field where the module's argparse marks --out required; the Run
+    # page renders the required marker from this (a parity test derives the
+    # set from each module's real parser).
+    required_out = (
+        CommandParam(
+            "--out", "path", required=True, help="output directory under the rig root"
+        ),
+    )
     entries = [
         Command(
             "project_revision",
@@ -625,7 +721,7 @@ def _commands() -> dict[str, Command]:
                 CommandParam("--out", "path"),
                 CommandParam("--manifest", "path"),
                 CommandParam("--sha256", "str"),
-                CommandParam("--source-config", "path"),
+                CommandParam("--source-config", "path", required=True),
             ),
         ),
         Command(
@@ -639,11 +735,11 @@ def _commands() -> dict[str, Command]:
                 CommandParam("--limit", "int"),
                 CommandParam("--sample-seed", "int"),
                 CommandParam("--endpoint", "str"),
-                CommandParam("--upstream-revision", "str"),
-                CommandParam("--source-provider", "str"),
-                CommandParam("--source-model", "str"),
+                CommandParam("--upstream-revision", "str", required=True),
+                CommandParam("--source-provider", "str", required=True),
+                CommandParam("--source-model", "str", required=True),
                 CommandParam("--timeout-seconds", "float"),
-                CommandParam("--out", "path"),
+                CommandParam("--out", "path", required=True),
             ),
         ),
         Command(
@@ -651,17 +747,17 @@ def _commands() -> dict[str, Command]:
             "experiments.harmbench_capture",
             "Prepare a content-addressed HarmBench case bundle for measured replay",
             (
-                CommandParam("--repo", "path"),
-                CommandParam("--revision", "str"),
-                CommandParam("--source", "path"),
+                CommandParam("--repo", "path", required=True),
+                CommandParam("--revision", "str", required=True),
+                CommandParam("--source", "path", required=True),
                 CommandParam("--corpus-name", "str"),
-                CommandParam("--method", "str", repeat=True),
+                CommandParam("--method", "str", repeat=True, required=True),
                 CommandParam("--experiment", "str"),
                 CommandParam("--limit", "int"),
                 CommandParam("--sample-seed", "int"),
                 CommandParam("--cases-per-method", "int"),
-                CommandParam("--artifact-out", "path"),
-                CommandParam("--attacker-config-out", "path"),
+                CommandParam("--artifact-out", "path", required=True),
+                CommandParam("--attacker-config-out", "path", required=True),
                 CommandParam("--python", "path"),
                 CommandParam("--credential-env", "str", repeat=True),
                 CommandParam("--timeout-seconds", "float"),
@@ -696,8 +792,8 @@ def _commands() -> dict[str, Command]:
             "experiments.lane_canary",
             "Summarize one typed diagnostic canary completion",
             (
-                CommandParam("--results", "path"),
-                CommandParam("--eligibility", "path"),
+                CommandParam("--results", "path", required=True),
+                CommandParam("--eligibility", "path", required=True),
                 CommandParam("--out-dir", "path"),
             ),
         ),
@@ -710,8 +806,8 @@ def _commands() -> dict[str, Command]:
                 CommandParam("--results", "path", repeat=True),
                 CommandParam("--live-attestation", "path", repeat=True),
                 CommandParam("--live-attestation-sha256", "str", repeat=True),
-                CommandParam("--out-json", "path"),
-                CommandParam("--out-csv", "path"),
+                CommandParam("--out-json", "path", required=True),
+                CommandParam("--out-csv", "path", required=True),
             ),
         ),
         Command(
@@ -723,7 +819,7 @@ def _commands() -> dict[str, Command]:
                 CommandParam("--native", "path", repeat=True),
                 CommandParam("--eligibility", "path", repeat=True),
                 CommandParam("--source-config", "path"),
-                *common_out,
+                *required_out,
             ),
         ),
         Command(
@@ -733,9 +829,9 @@ def _commands() -> dict[str, Command]:
             (
                 CommandParam("--results", "path", repeat=True),
                 CommandParam("--native", "path", repeat=True),
-                CommandParam("--out-json", "path"),
-                CommandParam("--out-csv", "path"),
-                CommandParam("--out-md", "path"),
+                CommandParam("--out-json", "path", required=True),
+                CommandParam("--out-csv", "path", required=True),
+                CommandParam("--out-md", "path", required=True),
             ),
         ),
         Command(
@@ -743,7 +839,7 @@ def _commands() -> dict[str, Command]:
             "experiments.human_audit",
             "Prepare or analyse the human-audit frames",
             (
-                CommandParam("--results", "path"),
+                CommandParam("--results", "path", required=True),
                 CommandParam("--prepare", "int"),
                 CommandParam("--prepare-source-task", "int"),
                 CommandParam("--labels", "path"),
@@ -780,9 +876,9 @@ def _commands() -> dict[str, Command]:
             "experiments.paired_compare",
             "Paired cluster comparison between two exact conditions",
             (
-                CommandParam("--results", "path"),
-                CommandParam("--left-model", "str"),
-                CommandParam("--right-model", "str"),
+                CommandParam("--results", "path", required=True),
+                CommandParam("--left-model", "str", required=True),
+                CommandParam("--right-model", "str", required=True),
                 CommandParam("--left-defense", "str"),
                 CommandParam("--right-defense", "str"),
                 CommandParam("--attacker", "str"),
@@ -802,7 +898,7 @@ def _commands() -> dict[str, Command]:
             "experiments.judge_sensitivity",
             "Same-response judge-stage sensitivity analysis",
             (
-                CommandParam("--results", "path"),
+                CommandParam("--results", "path", required=True),
                 CommandParam("--attacker", "str"),
                 CommandParam("--corpus", "str"),
                 CommandParam("--output", "path"),
@@ -813,7 +909,7 @@ def _commands() -> dict[str, Command]:
             "experiments.kappa",
             "Pairwise judge-agreement diagnostics",
             (
-                CommandParam("--results", "path"),
+                CommandParam("--results", "path", required=True),
                 CommandParam("--attacker", "str"),
                 CommandParam("--corpus", "str"),
             ),
@@ -823,7 +919,7 @@ def _commands() -> dict[str, Command]:
             "experiments.transfer_matrix",
             "Support-qualified descriptive transfer analysis",
             (
-                CommandParam("--results", "path"),
+                CommandParam("--results", "path", required=True),
                 CommandParam("--attacker", "str"),
                 CommandParam("--corpus", "str"),
                 CommandParam("--minimum-unique-clusters", "int"),
@@ -837,10 +933,10 @@ def _commands() -> dict[str, Command]:
             "experiments.export_jalmbench",
             "Export the official JALMBench Parquet release for the converter",
             (
-                CommandParam("--source", "path"),
+                CommandParam("--source", "path", required=True),
                 CommandParam("--max-records", "int"),
                 CommandParam("--max-total-bytes", "int"),
-                *common_out,
+                *required_out,
             ),
         ),
         Command(
@@ -848,10 +944,39 @@ def _commands() -> dict[str, Command]:
             "experiments.export_vlsbench",
             "Export the official VLSBench Parquet release for the converter",
             (
-                CommandParam("--source", "path"),
+                CommandParam("--source", "path", required=True),
                 CommandParam("--max-records", "int"),
                 CommandParam("--max-total-bytes", "int"),
-                *common_out,
+                *required_out,
+            ),
+        ),
+        Command(
+            "export_aggregators",
+            "experiments.export_aggregators",
+            "Acquire one (or all) aggregator corpora into the converter layout",
+            (
+                CommandParam(
+                    "--source",
+                    "str",
+                    required=True,
+                    choices=(
+                        "saladbench",
+                        "airbench",
+                        "xstest",
+                        "simplesafetytests",
+                        "decodingtrust",
+                        "holisafe",
+                        "all",
+                    ),
+                    help="which aggregator corpus to prepare (or all six)",
+                ),
+                CommandParam(
+                    "--out-root",
+                    "path",
+                    required=True,
+                    help="corpora root (the exported URA_CORPORA); each source "
+                    "writes under its own subdir",
+                ),
             ),
         ),
         Command(
@@ -949,7 +1074,12 @@ COMMAND_GROUPS: tuple[tuple[str, str, str, tuple[str, ...]], ...] = (
         "capture first, replay in Build",
         ("capture_t3mp3st", "harmbench_capture"),
     ),
-    ("Acquisition exports", "box", "runbook section 3.2", ("export_jalmbench", "export_vlsbench")),
+    (
+        "Acquisition exports",
+        "box",
+        "runbook section 3",
+        ("export_jalmbench", "export_vlsbench", "export_aggregators"),
+    ),
     (
         "Preflight, probes and lanes",
         "play",

@@ -1016,3 +1016,10 @@ class BuilderModelsMixin:
     #: ceilings. RUN_AND_RETURN explicitly permits replacing those three
     #: planning values with the exact totals printed by the preflight.
     _PROJECTION_CAP_FIELDS = frozenset({"cap_target", "cap_judge", "cap_http"})
+    #: Operational resume/diagnostic controls that never change the planned
+    #: grid (no row, target, attacker, or judge selection), so a successful
+    #: no-call preflight stays valid when only they change.
+    _PROJECTION_OPERATIONAL_FIELDS = frozenset({
+        "reset_open_circuits",
+        "lock_stale_seconds",
+    })

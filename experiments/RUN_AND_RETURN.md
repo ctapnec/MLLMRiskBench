@@ -140,15 +140,25 @@ else
   exit 1
 fi
 
+# URA_WORK is the data/evidence root (corpora, upstream snapshots, framework
+# environments, engineering campaigns, model store). URA_REPO is the URA
+# checkout and URA_PY its interpreter: every wrapper below resolves the URA
+# interpreter through URA_PY, never through a path under URA_WORK.
+# distro/install.sh roots URA_WORK at /data/ura-work instead and writes the same
+# names into ~/.ura_campaign_env; persist them there on the rig so new shells
+# and the section 14.2 native wrappers see one layout.
 export URA_WORK="$HOME/ura-work"
 export URA_CORPORA="$URA_WORK/corpora"
 export URA_UPSTREAM="$URA_WORK/upstream"
 export URA_FRAMEWORK_ENVS="$URA_WORK/framework-venvs"
+export URA_REPO="$HOME/MLLMRiskBench"
+export URA_PY="$URA_REPO/.venv/bin/python"
 mkdir -p "$URA_CORPORA" "$URA_UPSTREAM" "$URA_FRAMEWORK_ENVS"
 
-cd "$URA_WORK"
-git clone https://github.com/ctapnec/MLLMRiskBench.git
-cd MLLMRiskBench
+git clone https://github.com/ctapnec/MLLMRiskBench.git "$URA_REPO"
+# A rig without GitHub access clones the verified source bundle instead:
+# git clone /path/to/ura-project-source.bundle "$URA_REPO"
+cd "$URA_REPO"
 # Use the full thesis-reviewed harness commit. Change it only through a recorded
 # protocol amendment made before inspecting outcomes. It must be commit
 # 6af9efaa5610d86d882211db24f4c679ff5700a0 or later: the section 4.1
@@ -227,15 +237,37 @@ in Git.
 
 ## 3. Acquire all twenty-five converter sources
 
-*Console equivalent: the section 3.2 export commands are also launchable as
-the `export_jalmbench` and `export_vlsbench` form(s) in the rig console
-(section 18); identical argument vectors, gates and artifacts.*
+*Console equivalent: the section 3.2 and 3.4 export commands are also
+launchable as the `export_jalmbench`, `export_vlsbench` and
+`export_aggregators` form(s) in the rig console (section 18); identical
+argument vectors, gates and artifacts.*
 
-*Scripted equivalent: `distro/install.sh` performs sections 2-4 end to end on a
-fresh rig - the same pinned `REF_*` snapshots, the same locator bindings, plus
-the aggregator corpora, the user-local ollama runtime and the console launch.
+*Scripted equivalent: `distro/install.sh` automates the acquisition and
+binding parts of sections 3-4 on a fresh rig: the same pinned `REF_*` snapshots
+and separately distributed archives (3.1-3.2), the JALMBench/VLSBench exports
+(3.2), the aggregator corpora (3.4), the section 4 `URA_*_PATH` locators plus
+`HF_HOME` and `URA_MEDIA_ROOTS` written into `~/.ura_campaign_env` together with
+`URA_WORK`, `URA_CORPORA`, `URA_REPO` and `URA_PY`, the six aggregator arms
+registered in `experiments/source-instances.json`, the user-local ollama
+runtime, the isolated framework runtimes, and the console launch.
 `distro/install.sh all` is the one-command path; the per-phase commands below
-remain the reference for what it does and for repairing a single source.*
+remain the reference for what it does and for repairing a single source. It
+does not perform the rest of sections 2-4: it roots `URA_WORK` at
+`/data/ura-work` (the rig's large storage) rather than `$HOME/ura-work`; it
+does not check out `REF_URA` or create/validate the section 2 project-revision
+receipt (`distro/repin.sh <commit>` deploys one tracked commit and does that);
+it seeds `experiments/source-instances.json` from the full example only when
+that file is absent and otherwise merges the six aggregator entries into the
+existing file without touching other arms, so an operator-edited registry is
+never overwritten; it does not copy the exporter summaries into
+`runs/thesis/source-export-summaries/` or export
+`URA_JALMBENCH_EXPORT_SUMMARY_PATH`/`URA_VLSBENCH_EXPORT_SUMMARY_PATH`; and it
+binds GPTGeoChat at `$URA_CORPORA/GPTGeoChat/gptgeochat/human/test` (its
+archive phase normalizes `human.zip` to that layout) where the manual path
+below uses `$URA_CORPORA/GPTGeoChat/human/test` - either split root is valid
+as long as it contains sibling `annotations/` and `images/`. The 4.1 bounded
+observation, receipt authoring and validation remain operator steps in every
+case.*
 
 The commands below use exact maintained snapshots verified on 12 August 2026.
 The operator must still review each repository, access condition, and license and
@@ -447,12 +479,51 @@ The twenty-five converter names and the expected operator locators are:
 | `mllmguard` | gated `Carol0110/MLLMGuard` | one per-dimension table beside `imgs/` | privacy/bias/toxicity/legality common; hallucination/position-swapping/noise-injection pending truthfulness scorers |
 | `jalmbench` | `AnonymousUser000/JALMBench` | exported `jalmbench.jsonl` | common harmful text+audio |
 | `videosafetybench` | `BAAI/Video-SafetyBench` | benign or harmful metadata JSON/JSONL beside videos | common harmful text+video |
-| `saladbench` | `OpenSafetyLab/Salad-Data` | exported `base_set` (or `attack_enhanced_set`) JSON/JSONL | common harmful text; MD-Judge source-native scorer not run |
+| `saladbench` | `OpenSafetyLab/Salad-Data` (section 3.4 exporter) | exported `base_set` (or `attack_enhanced_set`) JSON/JSONL | common harmful text; MD-Judge source-native scorer not run |
+| `airbench` | `stanford-crfm/air-bench-2024` (section 3.4 exporter) | exported `air_bench_default.json` | common harmful text; graded GPT-4o rubric not run |
+| `xstest` | `paul-rottger/xstest` CSV (section 3.4 exporter) | `xstest_prompts.csv` (JSON/JSONL also accepted) | common text: 250 safe prompts are the benign over-refusal population, 200 unsafe contrast prompts are harmful |
+| `simplesafetytests` | `Bertievidgen/SimpleSafetyTests` (section 3.4 exporter) | exported `simplesafetytests.json` | common harmful text |
+| `decodingtrust` | gated `AI-Secure/DecodingTrust` stereotype config (section 3.4 exporter) | exported `stereotype.json`; other perspectives are rejected | common harmful text (bias endorsement); agreement index not run |
+| `holisafe` | gated `etri-vilab/holisafe-bench` (section 3.4 exporter) | `holisafe_bench.json` beside `images/` | common harmful image composition; the all-safe `SSS` combination is a benign-refusal population |
 
 Do not guess file names after downloading. Inspect the acquired tree, select the
 official table matching the converter contract above, and run the preflight. A
 missing or structurally different release is an explicit blocked source, not a
 reason to edit the data until it passes.
+
+### 3.4 Aggregator corpora
+
+The six aggregator arms (`saladbench_base`, `airbench_full`, `xstest_full`,
+`simplesafetytests_full`, `decodingtrust_stereotype`, `holisafe_full`) are
+acquired through the bounded exporter bridge rather than a Git clone. It reads
+each source from its authoritative host (the Hugging Face datasets-server
+parquet/rows API for SALAD-Bench, AIR-Bench 2024, SimpleSafetyTests and
+DecodingTrust; the upstream GitHub CSV for XSTest; an `hf download` of the
+gated HoliSafe release) and writes exactly the file each converter reads under
+`$URA_CORPORA/<Source>/`. DecodingTrust and HoliSafe are gated: export
+`HF_TOKEN` from the secret manager after accepting each dataset's terms and
+record that decision in the source receipt. The bridge contacts no provider and
+scores nothing. It is the same per-source command that `distro/install.sh
+aggregators` runs, and it is also launchable as the `export_aggregators` form
+in the rig console (section 18) with the identical argument vector (the console
+forwards its process-held `HF_TOKEN` to that child, so the gated sources work
+from the form as well):
+
+```bash
+python -m experiments.export_aggregators --source all --out-root "$URA_CORPORA"
+# or one source at a time, for example:
+python -m experiments.export_aggregators --source holisafe --out-root "$URA_CORPORA"
+```
+
+The printed target paths are the exact section 4 locators:
+`$URA_CORPORA/SALAD-Data/base_set.json`,
+`$URA_CORPORA/AIR-Bench-2024/air_bench_default.json`,
+`$URA_CORPORA/XSTest/xstest_prompts.csv`,
+`$URA_CORPORA/SimpleSafetyTests/simplesafetytests.json`,
+`$URA_CORPORA/DecodingTrust/stereotype.json`, and
+`$URA_CORPORA/HoliSafe/holisafe_bench.json` beside its `images/` directory. The
+bridge pins no upstream revision: record the acquisition date and the exported
+file SHA-256 in the source receipt like every other declared source file.
 
 ## 4. Configure source arms and media
 
@@ -475,6 +546,7 @@ lane.
 export URA_ADVBENCH_HARMFUL_PATH="$URA_CORPORA/llm-attacks/data/advbench/harmful_behaviors.csv"
 export URA_AGENTHARM_HARMFUL_PATH='<official-AgentHarm-harmful-behaviors-json>'
 export URA_AGENTHARM_BENIGN_PATH='<official-AgentHarm-benign-behaviors-json>'
+export URA_AIRBENCH_PATH="$URA_CORPORA/AIR-Bench-2024/air_bench_default.json"
 export URA_BIPIA_TEST_EMAIL_PATH='<official-BIPIA-email-test-jsonl>'
 export URA_BIPIA_TEST_QA_PATH='<official-BIPIA-qa-test-jsonl>'
 export URA_BIPIA_TEST_ABSTRACT_PATH='<official-BIPIA-abstract-test-jsonl>'
@@ -484,10 +556,12 @@ export URA_CYBERSECEVAL_MITRE_PATH='<PurpleLlama-mitre-json>'
 export URA_CYBERSECEVAL_INTERPRETER_PATH='<PurpleLlama-interpreter-json>'
 export URA_CYBERSECEVAL_INSECURE_CODING_PATH='<PurpleLlama-insecure-coding-json>'
 export URA_CYBERSECEVAL_PROMPT_INJECTION_PATH='<PurpleLlama-prompt-injection-json>'
+export URA_DECODINGTRUST_STEREOTYPE_PATH="$URA_CORPORA/DecodingTrust/stereotype.json"
 export URA_FIGSTEP_FULL_PATH="$URA_CORPORA/FigStep/data/question/safebench.csv"
-export URA_GPTGEOCHAT_RELEASE_PATH="$URA_CORPORA/GPTGeoChat/human/test"
+export URA_GPTGEOCHAT_RELEASE_PATH="$URA_CORPORA/GPTGeoChat/human/test"  # distro/install.sh binds .../GPTGeoChat/gptgeochat/human/test
 export URA_HARMBENCH_TEXT_PATH="$URA_CORPORA/HarmBench/data/behavior_datasets/harmbench_behaviors_text_all.csv"
 export URA_HARMBENCH_MULTIMODAL_PATH='<official-HarmBench-multimodal-behavior-csv>'
+export URA_HOLISAFE_PATH="$URA_CORPORA/HoliSafe/holisafe_bench.json"
 export URA_INJECAGENT_DH_BASE_PATH="$URA_CORPORA/InjecAgent/data/test_cases_dh_base.json"
 export URA_INJECAGENT_DH_ENHANCED_PATH="$URA_CORPORA/InjecAgent/data/test_cases_dh_enhanced.json"
 export URA_INJECAGENT_DS_BASE_PATH="$URA_CORPORA/InjecAgent/data/test_cases_ds_base.json"
@@ -507,12 +581,15 @@ export URA_MLLMGUARD_NOISE_INJECTION_PATH='<MLLMGuard-noise-injection-table-besi
 export URA_MMSAFETY_OFFICIAL_PATH="$URA_CORPORA/MM-SafetyBench"
 export URA_MOSSBENCH_OFFICIAL_PATH="$URA_CORPORA/MOSSBench"
 export URA_RJUDGE_RELEASE_PATH="$URA_CORPORA/R-Judge/data"
+export URA_SALADBENCH_PATH="$URA_CORPORA/SALAD-Data/base_set.json"
+export URA_SIMPLESAFETYTESTS_PATH="$URA_CORPORA/SimpleSafetyTests/simplesafetytests.json"
 export URA_SIUO_RELEASE_PATH="$URA_CORPORA/SIUO/data/siuo_gen.json"
 export URA_STRONGREJECT_OFFICIAL_PATH="$URA_CORPORA/strongreject/strongreject_dataset/strongreject_dataset.csv"
 export URA_VIDEOSAFETYBENCH_BENIGN_QUERY_PATH="$URA_CORPORA/Video-SafetyBench/benign_data.json"
 export URA_VIDEOSAFETYBENCH_HARMFUL_QUERY_PATH="$URA_CORPORA/Video-SafetyBench/harmful_data.json"
 export URA_VLSBENCH_RELEASE_PATH="$URA_CORPORA/VLSBench-export/vlsbench.jsonl"
 export URA_VLSBENCH_EXPORT_SUMMARY_PATH="runs/thesis/source-export-summaries/vlsbench-export-summary.json"
+export URA_XSTEST_PATH="$URA_CORPORA/XSTest/xstest_prompts.csv"
 ```
 
 The BIPIA task files require their official attack companion files in the
@@ -549,7 +626,7 @@ selected arms. On POSIX the separator is `:`; on Windows it is `;`. Keep the
 order unchanged when resuming or relocating a run.
 
 ```bash
-export URA_MEDIA_ROOTS="$URA_CORPORA/MM-SafetyBench/data/imgs:$URA_CORPORA/MOSSBench:$URA_CORPORA/JailBreakV-28K:$URA_CORPORA/GPTGeoChat:$URA_CORPORA/HarmBench:$URA_CORPORA/VLSBench-export:$URA_CORPORA/SIUO/data:$URA_CORPORA/FigStep/data:$URA_CORPORA/MLLMGuard:$URA_CORPORA/JALMBench-export:$URA_CORPORA/Video-SafetyBench"
+export URA_MEDIA_ROOTS="$URA_CORPORA/MM-SafetyBench/data/imgs:$URA_CORPORA/MOSSBench:$URA_CORPORA/JailBreakV-28K:$URA_CORPORA/GPTGeoChat:$URA_CORPORA/HarmBench:$URA_CORPORA/VLSBench-export:$URA_CORPORA/SIUO/data:$URA_CORPORA/FigStep/data:$URA_CORPORA/MLLMGuard:$URA_CORPORA/JALMBench-export:$URA_CORPORA/Video-SafetyBench:$URA_CORPORA/HoliSafe"
 ```
 
 ### 4.1 Validate the compact source receipt
@@ -723,23 +800,35 @@ export FABLE='anthropic-fable:claude-fable-5;effort=high;max_tokens=25000'
 export SOL='openai-responses:gpt-5.6-sol;reasoning_mode=pro;reasoning_effort=medium;reasoning_context=all_turns'
 ```
 
-Start from the checked-in dated registry. It records the documentation-reviewed
-Anthropic, Gemini, DeepSeek, Kimi, and Qwen conditions plus the reusable Haiku
-4.5 judge condition; it does not establish that a route is visible to this rig.
+Start from the checked-in dated registry
+(`experiments/rig/api-targets.example.json`, described key by key in
+`experiments/rig/README.md`). It ships twenty rows: the two fixed focal
+conditions above as modalities-only rows (their sampling and reasoning
+controls live in the spec string, not in the JSON); the seven
+documentation-verified conditions of the 2026-08-11 snapshot (Claude Opus 5,
+Claude Sonnet 5, the reusable Haiku 4.5 judge condition, Gemini 3.6 Flash,
+DeepSeek V4 Pro, Kimi K3, Qwen 3.7 Max); and eleven candidate rows whose exact
+account route was not independently verified for that snapshot
+(`openai:gpt-5.6-terra`, `openai:gpt-5.6-luna`, `openai:gpt-5.5`,
+`openai:o3-mini`, `google:gemini-3.6-pro`, `google:gemini-3.6-flash-lite`,
+`google:gemini-2.5-pro`, `google:gemini-2.5-flash`,
+`google:gemini-2.5-flash-lite`, `kimi:kimi-k2`, `glm:glm-5.2`). A row is an
+execution condition plus a pricing key; it does not establish that a route is
+visible to this rig or that a candidate slug still resolves.
 
 ```bash
 cp experiments/rig/api-targets.example.json experiments/api-targets.json
 ```
 
-Any additional OpenAI, GLM, Doubao, regional, preview, or account-private route
-is an operator-attested condition. Add its exact spec to the local JSON with
-explicit `modalities`, `max_tokens`, and `temperature` only after reviewing the
-account documentation, then retain it only if the bounded live checks below
-return the expected served identity for every claimed modality. Examples such
-as `openai:gpt-5.6-terra`, `openai:gpt-5.6-luna`, or `glm:glm-5.2` become usable
-rows through that path: operator attestation of account visibility plus a
-probe-confirmed served identity; the document itself cannot see any account.
-Do not silently substitute another model.
+Every row, verified or candidate, becomes a usable lane only through one path:
+operator attestation of account visibility plus the bounded section 8 probe
+returning the expected served identity for every claimed modality; the
+document itself cannot see any account. A route that is not in the file
+(Doubao, a regional or preview endpoint, an account-private deployment) is an
+operator-attested condition: add its exact spec to the local JSON with explicit
+`modalities`, `max_tokens`, and `temperature` only after reviewing the account
+documentation, then retain it only if those same checks pass. Do not silently
+substitute another model.
 
 Generic Claude Opus 5 and Sonnet 5 conditions require all three fields shown:
 `temperature: null`, `thinking: "adaptive"`, and an explicit effort. The Haiku
@@ -750,13 +839,16 @@ Inject only the credentials for selected providers from a secret manager:
 
 ```bash
 # ANTHROPIC_API_KEY, OPENAI_API_KEY, GEMINI_API_KEY or GOOGLE_API_KEY,
-# DEEPSEEK_API_KEY, MOONSHOT_API_KEY, DASHSCOPE_API_KEY, ZHIPU_API_KEY
+# DEEPSEEK_API_KEY, MOONSHOT_API_KEY, DASHSCOPE_API_KEY, ZHIPU_API_KEY,
+# ARK_API_KEY (Doubao; only when an operator-attested doubao: row is added)
 ```
 
 If a compatible provider requires a different regional HTTPS base URL, use its
-documented `URA_<PROVIDER>_BASE_URL` environment variable or the credential-free
-`base_url` field accepted for compatible providers. Never embed credentials in a
-URL. Record the exact non-secret route.
+documented `URA_<PROVIDER>_BASE_URL` environment variable
+(`URA_DEEPSEEK_BASE_URL`, `URA_KIMI_BASE_URL`, `URA_QWEN_BASE_URL`,
+`URA_GLM_BASE_URL`, `URA_DOUBAO_BASE_URL`) or the credential-free `base_url`
+field accepted for compatible providers. Never embed credentials in a URL.
+Record the exact non-secret route.
 
 The generic LLM judge is loaded through the same `--api-config` path as generic
 targets. Its exact `JUDGE` key must therefore remain in the JSON even when it is
@@ -830,9 +922,10 @@ confirmed.
   only if the prepaid budget, conservative call projection, and the canary's
   exact observed token-derived spend support the operator decision.
 - OpenAI breadth: at most one additional row beyond Sol - a budget cap, not
-  an availability doubt. The operator attests GPT-5.6 Tera, GPT-5.6 Luna,
-  and GPT-5.5 are visible on the account; the section 8 probe records each
-  exact served route id before its config row is added. The prepaid budget,
+  an availability doubt. The operator attests GPT-5.6 Terra, GPT-5.6 Luna,
+  and GPT-5.5 are visible on the account; their candidate rows already ship
+  in the example registry, and the section 8 probe records each exact served
+  route id before any of them enters a lane. The prepaid budget,
   conservative call projection, and exact observed canary spend determine the
   operator's choice; one cluster is not multiplied into a campaign estimate.
 - Google: `google:gemini-3.6-flash`, the only funded rich-media hosted row.
@@ -880,11 +973,19 @@ campaign runs two pre-registered population tiers:
 - Judge budget: in the recorded funded plan, the selected hosted Haiku judge is
   metered on every judged response regardless of whether the target is local,
   so full-corpus local lanes cannot default to hosted LLM judging. Full local
-  corpora score through
-  the deterministic rules stage; the hosted LLM-judge stage runs on the
-  pre-registered common subset (identical to the hosted lanes) unless
-  post-canary projections show budget for more. Rules-only and cascade
-  evaluator modes are distinct compatibility keys and are never pooled.
+  corpora score through local stages only (the deterministic rules stage plus
+  the local scoring guardrail, `--judges rules,guardrail`, or a local LLM
+  judge); the hosted LLM-judge stage runs only on the pre-registered common
+  subset (identical to the hosted lanes) unless post-canary projections show
+  budget for more. A rules-only cascade (`--judges rules`) is not a
+  full-corpus scoring mode: it fails closed on any row the rules stage cannot
+  classify confidently. Evaluator modes with different judge stages are
+  distinct compatibility keys and are never pooled.
+- Enforcement: the CLI and the console's Build admission require a positive
+  pre-registered `--limit` (with an explicit `--sample-seed`) for any measured
+  lane with a paid hosted route - a hosted target or a hosted LLM judge - and
+  admit `--limit 0` only for lanes whose target and judge stages are all
+  local.
 - Exact per-lane limits and call caps are fixed after the section 9.1
   diagnostic canaries from the prepaid budgets, conservative call projection,
   and exact observed usage/spend, and are recorded before any
@@ -989,6 +1090,14 @@ python -m experiments.run_matrix "${EXACT_LANE_ARGS[@]}" \
   --model-acquisition-receipt-sha256 "$URA_MODEL_RECEIPT_SHA256" \
   --model-acquisition-store "$URA_MODEL_STORE"
 ```
+
+Each `--model-acquisition-*` flag defaults to the matching environment
+variable when the flag is omitted: `URA_MODEL_ACQUISITION_PLAN_DIR`,
+`URA_MODEL_ACQUISITION_PLAN`, `URA_MODEL_ACQUISITION_PLAN_SHA256`,
+`URA_MODEL_ACQUISITION_RECEIPT`, `URA_MODEL_ACQUISITION_RECEIPT_SHA256`, and
+`URA_MODEL_ACQUISITION_STORE`. A lane may export them once instead of
+repeating the flags; they are private controller locators like the variables
+above and must not be copied into returned logs, reports, or the run note.
 
 The controller revalidates cache hits but reports zero downloaded bytes and no
 `model_download` activity for them. Rig Web shows that badge only while an
@@ -1214,8 +1323,16 @@ checkpoint, engine version, serving configuration, or hardware profile.
 }
 ```
 
-Download each exact revision in advance. Local text and image runs for each model
-remain separate commands so vLLM releases its target weights between processes.
+Acquire each exact revision through the section 6.1 sealed workflow (plan-only,
+then `model_acquire`, then the offline run) before its lane; no separate
+`hf download` or shared Hub cache is consulted by the normal process. The
+controller imports already-present bytes only from the managed store's own
+transport cache (`$URA_MODEL_TRANSPORT`, one direct child of the store on the
+same filesystem): a legacy shared `hub/` cache is reused without re-download
+only if the operator relocates its contents into that transport cache before
+running plan-only and `model_acquire`; otherwise the sealed acquisition
+downloads the revisions again. Local text and image runs for each model remain
+separate commands so vLLM releases its target weights between processes.
 
 ## 8. Offline checks and bounded live modality attestations
 
@@ -1391,6 +1508,19 @@ confirm its exact `requested_target_spec`, `resolved_target`,
 artifact/harness/driver hashes before approval. A text+image record does not
 cover text alone. A harness or driver source change requires a new probe.
 
+Every probe in this section scores through the rules stage only, so its single
+cell completes only when the target's reply matches a confident rule template
+(a refusal template, the harmful-compliance heuristic on the synthetic harmful
+prompts, or a typed provider refusal). A reply the rules cannot classify
+confidently fails that cell with `JudgeCascadeDecisionError` (recorded as a
+`judge_call` failure that opens the judge circuit in that probe directory), and
+the receipt producer then finds no completed cell. This is a scoring
+abstention, not a route, transport, or receipt failure: rerun the identical
+probe under a new `--out` directory (outputs are create-only; do not reuse or
+reset the failed directory), record the failed attempt in the run note, and
+keep `--judges rules` - the probe contract is transport-only, and a `mock`
+judge is admitted only under `--dry-run`.
+
 The synthetic image has no image-safety semantics. Synthetic tool calls are
 inert and never executed. There is no synthetic audio or video fixture. These
 two paths are fully automated after credentials/configuration are present, but
@@ -1561,7 +1691,7 @@ python -m experiments.rig_check \
   --guardrail-device "$SCORE_GUARD_DEVICE" \
   --corpora "$CANARY_ARM" --source-config experiments/source-instances.json \
   --limit 1 --sample-seed 0 --seeds 0 --max-queries 1 --max-turns 1 \
-  --group model,risk,effective_modality,source_policy_id,source_policy_version \
+  --group model,source,risk,effective_modality,expected_behavior,attacker,source_policy_id,source_policy_version \
   --max-total-target-calls '<operator-planning-ceiling>' \
   --max-total-judge-calls '<operator-planning-ceiling>' \
   --max-total-http-attempts '<operator-planning-ceiling>' \
@@ -1582,7 +1712,7 @@ python -m experiments.run_matrix \
   --guardrail-device "$SCORE_GUARD_DEVICE" \
   --corpora "$CANARY_ARM" --source-config experiments/source-instances.json \
   --limit 1 --sample-seed 0 --seeds 0 --max-queries 1 --max-turns 1 \
-  --group model,risk,effective_modality,source_policy_id,source_policy_version \
+  --group model,source,risk,effective_modality,expected_behavior,attacker,source_policy_id,source_policy_version \
   --max-total-target-calls "$CANARY_TARGET_CAP" \
   --max-total-judge-calls "$CANARY_JUDGE_CAP" \
   --max-total-http-attempts "$CANARY_HTTP_CAP" \
@@ -1657,11 +1787,17 @@ Common arguments for the full cascade are shown here for reference:
 --judges rules,guardrail,llm --judge-model "$JUDGE"
 --guardrail-model "$SCORE_GUARD" --guardrail-revision "$SCORE_GUARD_REV"
 --guardrail-device "$SCORE_GUARD_DEVICE"
---group model,risk,effective_modality,source_policy_id,source_policy_version
+--group model,source,risk,effective_modality,expected_behavior,attacker,source_policy_id,source_policy_version
 ```
 
+`--group` is written out explicitly but equals the CLI default: the Level-2
+export (section 16) requires at least these eight keys and rejects any
+narrower grouping, so every preflight and measured lane below passes exactly
+this value (or omits `--group` to inherit it).
+
 Use whole source-cluster sampling. `--limit 0` means the complete selected
-release; `--limit N` retains every row in each of at most N selected clusters.
+release (admitted only for local-only lanes, section 5.2); `--limit N` retains
+every row in each of at most N selected clusters.
 For the same real converted-corpus digest and `--sample-seed`, limits are nested
 prefixes of one deterministic cluster ordering: the `--limit 1` canary cluster
 is contained in a later `--limit N` selection. This continuity is operational,
@@ -1676,19 +1812,24 @@ actually measured, rather than merely listed.
 
 ### 10.1 Text roster
 
-The text lane includes harmful and benign behavior sources, but the aggregator
-keeps their denominators separate.
+The text lane includes harmful and benign behavior sources (JailbreakBench
+benign and the 250 safe XSTest prompts are benign-refusal populations), but the
+aggregator keeps their denominators separate. The five text aggregator arms
+(`saladbench_base`, `airbench_full`, `xstest_full`, `simplesafetytests_full`,
+`decodingtrust_stereotype`) are ordinary common-metric text arms here; their
+source-native scorers (MD-Judge, the AIR-Bench rubric, the DecodingTrust
+agreement index) are recorded as not run.
 
 ```bash
-export TEXT_ARMS='strongreject_official,advbench_harmful,jailbreakbench_harmful,jailbreakbench_benign,harmbench_text,cyberseceval_mitre,cyberseceval_interpreter,cyberseceval_insecure_coding'
+export TEXT_ARMS='strongreject_official,advbench_harmful,jailbreakbench_harmful,jailbreakbench_benign,harmbench_text,cyberseceval_mitre,cyberseceval_interpreter,cyberseceval_insecure_coding,saladbench_base,airbench_full,xstest_full,simplesafetytests_full,decodingtrust_stereotype'
 
 python -m experiments.rig_check \
   --api "$TEXT_TARGETS" --api-config experiments/api-targets.json \
   --attackers replay --judges rules,guardrail,llm --judge-model "$JUDGE" \
   --guardrail-model "$SCORE_GUARD" --guardrail-revision "$SCORE_GUARD_REV" --guardrail-device "$SCORE_GUARD_DEVICE" \
   --corpora "$TEXT_ARMS" --source-config experiments/source-instances.json \
-  --limit 0 --sample-seed 0 --seeds 0,1 --max-queries 1 --max-turns 1 \
-  --group model,risk,effective_modality,source_policy_id,source_policy_version \
+  --limit '<pre-registered-cluster-limit (section 5.2)>' --sample-seed 0 --seeds 0,1 --max-queries 1 --max-turns 1 \
+  --group model,source,risk,effective_modality,expected_behavior,attacker,source_policy_id,source_policy_version \
   --max-total-target-calls '<planning-ceiling>' --max-total-judge-calls '<planning-ceiling>' \
   --max-total-http-attempts '<planning-ceiling>' --deadline-seconds 7776000 \
   --out runs/thesis/preflight/static-text
@@ -1700,25 +1841,32 @@ python -m experiments.run_matrix \
   --attackers replay --judges rules,guardrail,llm --judge-model "$JUDGE" \
   --guardrail-model "$SCORE_GUARD" --guardrail-revision "$SCORE_GUARD_REV" --guardrail-device "$SCORE_GUARD_DEVICE" \
   --corpora "$TEXT_ARMS" --source-config experiments/source-instances.json \
-  --limit 0 --sample-seed 0 --seeds 0,1 --max-queries 1 --max-turns 1 \
-  --group model,risk,effective_modality,source_policy_id,source_policy_version \
+  --limit '<pre-registered-cluster-limit (section 5.2)>' --sample-seed 0 --seeds 0,1 --max-queries 1 --max-turns 1 \
+  --group model,source,risk,effective_modality,expected_behavior,attacker,source_policy_id,source_policy_version \
   --max-total-target-calls '<projected-target-total>' --max-total-judge-calls '<projected-judge-total>' \
   --max-total-http-attempts '<projected-http-total>' --deadline-seconds 7776000 \
   --out runs/thesis/runner/static-text
 ```
 
 Replace the bracketed values with positive integers before invoking either
-command. The first command's values are operator capacity bounds; the second
-command's values come from the successful no-call projection.
+command: `<pre-registered-cluster-limit (section 5.2)>` is the lane's
+pre-registered positive cluster limit (identical in the preflight and the
+measured command, and required in every hosted-target or hosted-judge lane
+below, where the same placeholder appears), the first command's ceilings are
+operator capacity bounds, and the second command's ceilings come from the
+successful no-call projection.
 
 ### 10.2 Image roster
 
 Add the four common-eligible MLLMGuard safety dimensions as separate arms. Keep
 MOSSBench's benign refusal endpoint separate from harmful image ASR. The three
-MLLMGuard truthfulness tasks stay in the conversion-only inventory.
+MLLMGuard truthfulness tasks stay in the conversion-only inventory. HoliSafe
+(`holisafe_full`) is the text+image aggregator arm: its all-safe `SSS`
+image-text combination is a benign-refusal population kept separate from the
+harmful image ASR of its unsafe combinations.
 
 ```bash
-export IMAGE_ARMS='mmsafety_official,jailbreakv_full,harmbench_multimodal,vlsbench_release,mossbench_official,siuo_release,figstep_full,mllmguard_privacy,mllmguard_bias,mllmguard_toxicity,mllmguard_legality'
+export IMAGE_ARMS='mmsafety_official,jailbreakv_full,harmbench_multimodal,vlsbench_release,mossbench_official,siuo_release,figstep_full,mllmguard_privacy,mllmguard_bias,mllmguard_toxicity,mllmguard_legality,holisafe_full'
 
 # Run rig_check first, then run_matrix with the same arguments and exact printed ceilings.
 python -m experiments.rig_check \
@@ -1726,8 +1874,8 @@ python -m experiments.rig_check \
   --attackers replay --judges rules,guardrail,llm --judge-model "$JUDGE" \
   --guardrail-model "$SCORE_GUARD" --guardrail-revision "$SCORE_GUARD_REV" --guardrail-device "$SCORE_GUARD_DEVICE" \
   --corpora "$IMAGE_ARMS" --source-config experiments/source-instances.json \
-  --limit 0 --sample-seed 0 --seeds 0,1 --max-queries 1 --max-turns 1 \
-  --group model,risk,effective_modality,source_policy_id,source_policy_version \
+  --limit '<pre-registered-cluster-limit (section 5.2)>' --sample-seed 0 --seeds 0,1 --max-queries 1 --max-turns 1 \
+  --group model,source,risk,effective_modality,expected_behavior,attacker,source_policy_id,source_policy_version \
   --max-total-target-calls '<planning-ceiling>' --max-total-judge-calls '<planning-ceiling>' \
   --max-total-http-attempts '<planning-ceiling>' --deadline-seconds 7776000 \
   --out runs/thesis/preflight/static-image
@@ -1759,7 +1907,7 @@ python -m experiments.rig_check \
   --guardrail-model "$SCORE_GUARD" --guardrail-revision "$SCORE_GUARD_REV" --guardrail-device "$SCORE_GUARD_DEVICE" \
   --corpora jalmbench_audio --source-config experiments/source-instances.json \
   --limit "$AUDIO_SAMPLE_CLUSTERS" --sample-seed 0 --seeds 0 --max-queries 1 --max-turns 1 \
-  --group model,risk,effective_modality,source_policy_id,source_policy_version \
+  --group model,source,risk,effective_modality,expected_behavior,attacker,source_policy_id,source_policy_version \
   --max-total-target-calls '<planning-ceiling>' --max-total-judge-calls '<planning-ceiling>' \
   --max-total-http-attempts '<planning-ceiling>' --deadline-seconds 7776000 \
   --out runs/thesis/preflight/static-audio
@@ -1771,8 +1919,8 @@ python -m experiments.rig_check \
   --guardrail-model "$SCORE_GUARD" --guardrail-revision "$SCORE_GUARD_REV" --guardrail-device "$SCORE_GUARD_DEVICE" \
   --corpora videosafetybench_benign_query,videosafetybench_harmful_query \
   --source-config experiments/source-instances.json \
-  --limit 0 --sample-seed 0 --seeds 0,1 --max-queries 1 --max-turns 1 \
-  --group model,risk,effective_modality,source_policy_id,source_policy_version \
+  --limit '<pre-registered-cluster-limit (section 5.2)>' --sample-seed 0 --seeds 0,1 --max-queries 1 --max-turns 1 \
+  --group model,source,risk,effective_modality,expected_behavior,attacker,source_policy_id,source_policy_version \
   --max-total-target-calls '<planning-ceiling>' --max-total-judge-calls '<planning-ceiling>' \
   --max-total-http-attempts '<planning-ceiling>' --deadline-seconds 7776000 \
   --out runs/thesis/preflight/static-video
@@ -1820,8 +1968,9 @@ python -m experiments.rig_check \
   --api "$TEXT_TARGETS" --api-config experiments/api-targets.json \
   --attackers replay --judges rules \
   --corpora rjudge_release --source-config experiments/source-instances.json \
-  --limit 0 --sample-seed 0 --seeds 0,1 --max-queries 1 --max-turns 1 \
-  --group model,risk,effective_modality --max-total-target-calls '<planning-ceiling>' \
+  --limit '<pre-registered-cluster-limit (section 5.2)>' --sample-seed 0 --seeds 0,1 --max-queries 1 --max-turns 1 \
+  --group model,source,risk,effective_modality,expected_behavior,attacker,source_policy_id,source_policy_version \
+  --max-total-target-calls '<planning-ceiling>' \
   --max-total-http-attempts '<planning-ceiling>' \
   --deadline-seconds 7776000 --out runs/thesis/preflight/rjudge
 
@@ -1830,8 +1979,9 @@ python -m experiments.rig_check \
   --api "$IMAGE_TARGETS" --api-config experiments/api-targets.json \
   --attackers replay --judges rules \
   --corpora gptgeochat_release --source-config experiments/source-instances.json \
-  --limit 0 --sample-seed 0 --seeds 0,1 --max-queries 1 --max-turns 1 \
-  --group model,risk,effective_modality --max-total-target-calls '<planning-ceiling>' \
+  --limit '<pre-registered-cluster-limit (section 5.2)>' --sample-seed 0 --seeds 0,1 --max-queries 1 --max-turns 1 \
+  --group model,source,risk,effective_modality,expected_behavior,attacker,source_policy_id,source_policy_version \
+  --max-total-target-calls '<planning-ceiling>' \
   --max-total-http-attempts '<planning-ceiling>' \
   --deadline-seconds 7776000 --out runs/thesis/preflight/gptgeochat
 ```
@@ -1869,8 +2019,8 @@ python -m experiments.rig_check \
   --attackers crescendo --judges rules,guardrail,llm --judge-model "$JUDGE" \
   --guardrail-model "$SCORE_GUARD" --guardrail-revision "$SCORE_GUARD_REV" --guardrail-device "$SCORE_GUARD_DEVICE" \
   --corpora "$ADAPTIVE_ARMS" --source-config experiments/source-instances.json \
-  --limit 0 --sample-seed 0 --seeds 0,1 --max-queries 4 --max-turns 4 \
-  --group model,risk,effective_modality,source_policy_id,source_policy_version \
+  --limit '<pre-registered-cluster-limit (section 5.2)>' --sample-seed 0 --seeds 0,1 --max-queries 4 --max-turns 4 \
+  --group model,source,risk,effective_modality,expected_behavior,attacker,source_policy_id,source_policy_version \
   --max-total-target-calls '<planning-ceiling>' --max-total-judge-calls '<planning-ceiling>' \
   --max-total-http-attempts '<planning-ceiling>' --deadline-seconds 7776000 \
   --out runs/thesis/preflight/crescendo-text
@@ -2131,8 +2281,9 @@ python -m experiments.rig_check \
   --judges rules,guardrail,llm --judge-model "$JUDGE" \
   --guardrail-model "$SCORE_GUARD" --guardrail-revision "$SCORE_GUARD_REV" --guardrail-device "$SCORE_GUARD_DEVICE" \
   --corpora "$TRANSFER_ARMS" --source-config experiments/source-instances.json \
-  --limit 0 --sample-seed 0 --seeds 0,1 --max-queries 1 --max-turns 1 \
-  --group model,risk,effective_modality --max-total-target-calls '<planning-ceiling>' \
+  --limit '<pre-registered-cluster-limit (section 5.2)>' --sample-seed 0 --seeds 0,1 --max-queries 1 --max-turns 1 \
+  --group model,source,risk,effective_modality,expected_behavior,attacker,source_policy_id,source_policy_version \
+  --max-total-target-calls '<planning-ceiling>' \
   --max-total-judge-calls '<planning-ceiling>' --max-total-http-attempts '<planning-ceiling>' \
   --deadline-seconds 7776000 --out "runs/thesis/preflight/transfer-$ATTACKER"
 ```
@@ -2191,10 +2342,14 @@ ceilings.
 
 This preparation route is currently blocked: the repository has no exact
 executable Op-General source URL and revision, and the runtime lock records
-`t3mp3st` as `blocked-unpinned`. Do not improvise a checkout or service version.
-Only after a prospective lock/protocol amendment supplies and verifies both may
-an operator start that exact service on loopback and capture the same arm, limit,
-and sample seed that the measured run will use:
+`t3mp3st` as `blocked-unpinned`. The block is a lock disposition and a runbook
+prohibition, not a code gate: `capture_t3mp3st` and the Build capture panel
+remain operable and will compose a capture against an operator-supplied
+loopback endpoint with an operator-asserted revision, so the block depends on
+the operator following this procedure. Do not improvise a checkout or service
+version. Only after a prospective lock/protocol amendment supplies and verifies
+both may an operator start that exact service on loopback and capture the same
+arm, limit, and sample seed that the measured run will use:
 
 ```bash
 python -m experiments.capture_t3mp3st \
@@ -2315,8 +2470,9 @@ CUDA_VISIBLE_DEVICES=0,1 python -m experiments.rig_check \
   --api-config experiments/api-targets.json \
   --guardrail-model "$SCORE_GUARD" --guardrail-revision "$SCORE_GUARD_REV" --guardrail-device cuda:1 \
   --corpora "$TEXT_ARMS" --source-config experiments/source-instances.json \
-  --limit 0 --sample-seed 0 --seeds 0,1 --max-queries 1 --max-turns 1 \
-  --group model,risk,effective_modality --max-total-target-calls '<planning-ceiling>' \
+  --limit '<pre-registered-cluster-limit (section 5.2)>' --sample-seed 0 --seeds 0,1 --max-queries 1 --max-turns 1 \
+  --group model,source,risk,effective_modality,expected_behavior,attacker,source_policy_id,source_policy_version \
+  --max-total-target-calls '<planning-ceiling>' \
   --max-total-judge-calls '<planning-ceiling>' --max-total-http-attempts '<planning-ceiling>' \
   --deadline-seconds 7776000 --out runs/thesis/preflight/local-qwen3-vl-text
 ```
@@ -2327,6 +2483,18 @@ Repeat with `run_matrix`, `"${LIVE_ATTESTATION_ARGS[@]}"`,
 run the image lane. Repeat both for the LLaVA base and GraySwan RR checkpoint using their
 own exact local configs. Their paired comparison is meaningful only on identical
 source clusters, input bytes, inference settings, and judge condition.
+
+The command above is the pre-registered common-subset pass (hosted `$JUDGE`,
+positive `--limit`). For the full-corpus local pass of section 5.2, repeat the
+same `rig_check`/`run_matrix` pair with `--judges rules,guardrail` (local
+stages only), no `--judge-model`, no `--ack-hosted-judge-data-transfer`,
+`--limit 0`, the exact printed totals, and a separate output prefix (for
+example `runs/thesis/preflight/local-qwen3-vl-text-full` and
+`runs/thesis/runner/local-qwen3-vl-text-full`); its no-call projection must
+report zero model-judge calls. That evaluator mode differs from the
+hosted-judge cascade, so the two passes are never pooled, and a rules-only
+(`--judges rules`) full-corpus pass is not an option: it fails closed on any
+row the rules stage cannot classify confidently.
 
 The optional hosted text-only defense contrast uses a separate model identity
 and GPU for each guard. Put the 8B scoring guard on GPU 0 and the 1B defense
@@ -2344,8 +2512,9 @@ python -m experiments.rig_check \
   --defense-guardrail-revision "$DEFENSE_GUARD_REV" \
   --defense-guardrail-device cuda:1 \
   --corpora "$TEXT_ARMS" --source-config experiments/source-instances.json \
-  --limit 0 --sample-seed 0 --seeds 0,1 --max-queries 1 --max-turns 1 \
-  --group model,risk,effective_modality --max-total-target-calls '<planning-ceiling>' \
+  --limit '<pre-registered-cluster-limit (section 5.2)>' --sample-seed 0 --seeds 0,1 --max-queries 1 --max-turns 1 \
+  --group model,source,risk,effective_modality,expected_behavior,attacker,source_policy_id,source_policy_version \
+  --max-total-target-calls '<planning-ceiling>' \
   --max-total-judge-calls '<planning-ceiling>' --max-total-http-attempts '<planning-ceiling>' \
   --deadline-seconds 7776000 --out runs/thesis/preflight/defense-text
 ```
@@ -2486,6 +2655,12 @@ ura_native_session() {
   else
     return 2
   fi
+  logger_python="${URA_PY:-}"
+  timeout_bin="$(command -v timeout || true)"
+  [[ -n "$timeout_bin" && -x "$logger_python" && -x "$timeout_bin" ]] || {
+    printf 'ura_native_session: URA_PY=%q is not an executable URA interpreter or GNU timeout is missing; export URA_REPO and URA_PY as in section 2\n' "$logger_python" >&2
+    return 1
+  }
   root="$URA_WORK/runs/engineering"
   umask 077
   mkdir -p "$root" || return
@@ -2495,9 +2670,6 @@ ura_native_session() {
   log="$attempt_dir/$session.log"
   marker="$attempt_dir/$session.exit"
   script="$attempt_dir/$session.sh"
-  logger_python="$URA_WORK/MLLMRiskBench/.venv/bin/python"
-  timeout_bin="$(command -v timeout)" || return
-  [[ -x "$logger_python" && -x "$timeout_bin" ]] || return 1
   task="native-$label"
   started_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)" || return
   printf '{"campaign_id":"%s","evidence_class":"%s","hard_stop_hours":168,"hosted_calls_allowed":%s,"model_tasks":%s,"planned_tasks":["%s"],"schema":"ura-engineering-campaign/1","started_at":"%s"%s,"thesis_empirical_evidence":false}\n' \
@@ -2667,12 +2839,12 @@ ura_native_run autodan-standard "$URA_AUTODAN_ENV/bin/python" main.py || exit $?
 # Immediately write the mandatory URA provenance sidecar. Substitute the exact
 # output directory, role identities, dataset digest, variant, and upstream
 # iteration/request settings used above; do not import until this succeeds. Use
-# the main project interpreter, where URA was installed, rather than AutoDAN's
-# isolated upstream-only environment.
+# the main project interpreter ($URA_PY from section 2), where URA was
+# installed, rather than AutoDAN's isolated upstream-only environment.
 URA_AUTODAN_LOGS='<exact-AutoDAN-output-directory>' \
 URA_AUTODAN_RUN_ID='<recorded-run-id>' \
 URA_AUTODAN_DATASET_SHA256='<64-hex-dataset-sha256>' \
-"$URA_WORK/MLLMRiskBench/.venv/bin/python" - <<'PY' || exit $?
+"$URA_PY" - <<'PY' || exit $?
 import os
 from ura.adapters.autodan import AutoDANTurboAttacker
 
@@ -3053,7 +3225,11 @@ python -m experiments.level2_report \
   --out-md runs/thesis/level2-report.md
 ```
 
-Outputs are create-only and deterministic for identical inputs. The export is
+Outputs are create-only and deterministic for identical inputs. The exporter
+admits only aggregates grouped by at least the eight CLI-default keys
+(`model,source,risk,effective_modality,expected_behavior,attacker,source_policy_id,source_policy_version`);
+a lane aggregated with a narrower `--group` is rejected here, which is why
+every lane in sections 9-13 passes exactly that grouping. The export is
 descriptive: it defines no universal safety score, implies no ranking, and
 does not by itself establish empirical validity.
 
@@ -3269,6 +3445,26 @@ Dry mode removes any selected real API/local targets and target configs because
 only the text/image modalities supported by the Runner's vLLM path; audio
 target/arm combinations are rejected by the same UI/CLI parity checks.
 
+Build surface. Build composes every `run_matrix`/`rig_check` flag the lanes
+above use except the `--models` shorthand, which is CLI/`rig_check`-only: Build
+always emits the equivalent explicit `--api`/`--local` split. `ideator` is
+CLI-only (it needs verified precomputed `seed_pairs` supplied through
+`--attacker-config`, section 12) and is shown disabled with that reason and
+rejected server-side; `purplellama` admits only `cyberseceval_*` arms. Build
+also exposes the documented `--group` (default: the CLI default
+`model,source,risk,effective_modality,expected_behavior,attacker,source_policy_id,source_policy_version`,
+the value every lane above passes; narrower groupings are rejected at the
+Level-2 export), `--exclude-tool-conditioned` (on by default for dry lanes,
+off otherwise), the measured-only `--reset-open-circuits` (never a default),
+and the optional `--lock-stale-seconds`. Non-dry `run_matrix`/`rig_check`
+children inherit the console process's exported `URA_PROJECT_REVISION_*` /
+`URA_SOURCE_CONFORMANCE_*` receipt locators exactly as the campaign shell
+supplies them; dry lanes launch with them scrubbed. The Acquisition exports
+(`export_jalmbench`, `export_vlsbench`, `export_aggregators`) run as ordinary
+Run-page forms; `export_aggregators` additionally receives the console's
+process-held `HF_TOKEN` (the gated section 3.4 sources), the same exception
+as `model_acquire`.
+
 The console binds the operator-configured `--host` and `--port`, builds argument
 vectors exclusively from a typed allowlist (no shell), caps POST bodies, runs
 each job in its own process group, and keeps per-job argv/stdout/stderr under the
@@ -3395,7 +3591,8 @@ the Config section (`/config/secrets`); the console records only presence and a
 last-four hint, never the value, and writes keys write-only to the operator
 secrets file (mode 600). `HF_TOKEN` is stricter: it displays presence only (no
 suffix), remains process-memory only (legacy file entries are scrubbed), and is
-forwarded only to the dedicated sealed-acquisition child.
+forwarded only to the acquisition children (`model_acquire` and
+`export_aggregators`); no other child receives it.
 
 Console-form to runbook-section mapping (the console builds the identical
 argument vectors; nothing below is console-only):
@@ -3404,7 +3601,7 @@ argument vectors; nothing below is console-only):
 |---|---|
 | `project_revision` | 2, 17 |
 | `source_conformance` (scaffold and validate) | 4/4.1, 17 |
-| `export_jalmbench` / `export_vlsbench` | 3.2 |
+| `export_jalmbench` / `export_vlsbench` / `export_aggregators` | 3.2, 3.4 |
 | sealed model plan/acquire/offline run (Builder-only workflow) | 6.1, 7-13 |
 | `rig_check` | 8.1, 9-13 |
 | `run_matrix` (dry-run, probe, canary, measured) | 4.1, 8/8.1, 9/9.1, 10-13 |

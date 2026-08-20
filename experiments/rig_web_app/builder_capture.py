@@ -47,6 +47,10 @@ class BuilderCaptureMixin:
         "seeds",
         "max_queries",
         "max_turns",
+        "group",
+        "exclude_tool_conditioned",
+        "reset_open_circuits",
+        "lock_stale_seconds",
         "cap_target",
         "cap_judge",
         "cap_http",
@@ -133,6 +137,7 @@ class BuilderCaptureMixin:
             for key, value in params.items()
             if (
                 key not in self._PROJECTION_CAP_FIELDS
+                and key not in self._PROJECTION_OPERATIONAL_FIELDS
                 and not key.startswith(("t3cap_", "hcap_"))
                 and (key not in {"t3_artifact", "t3_artifact_sha"} or "t3mp3st" in attackers)
                 and (key != "harm_config" or "harmbench" in attackers)
@@ -570,6 +575,8 @@ class BuilderCaptureMixin:
             ("seeds", "--seeds"),
             ("max_queries", "--max-queries"),
             ("max_turns", "--max-turns"),
+            ("group", "--group"),
+            ("lock_stale_seconds", "--lock-stale-seconds"),
             ("cap_target", "--max-total-target-calls"),
             ("cap_judge", "--max-total-judge-calls"),
             ("cap_http", "--max-total-http-attempts"),
@@ -587,6 +594,22 @@ class BuilderCaptureMixin:
             raw = params.get(source, "")
             if raw:
                 values[flag] = raw
+        if params.get("exclude_tool_conditioned") == "on":
+            values["--exclude-tool-conditioned"] = "on"
+        if params.get("reset_open_circuits") == "on" and mode == "measured":
+            # A measured-lane resume control only (validation rejects it for
+            # dry runs, probes, and canaries); never composed by default.
+            values["--reset-open-circuits"] = "on"
+        if not dry and not values.get("--limit"):
+            # Every non-dry lane carries an explicit --limit: a blank field is
+            # never "full corpus" on the CLI (its argparse default is 50
+            # clusters).  Validation admits a blank limit only for a local-only
+            # measured lane, whose documented policy is the complete release
+            # (--limit 0); hosted paid lanes must type a positive value.  The
+            # retained params carry the same value so the review page, the
+            # ceilings card, and the preflight identity all agree.
+            values["--limit"] = "0"
+            params["limit"] = "0"
         for index in range(1, self._MAX_ATT_ROWS + 1):
             path = params.get(f"att_path{index}", "")
             sha = params.get(f"att_sha{index}", "")
@@ -649,7 +672,8 @@ class BuilderCaptureMixin:
         if mode == "diagnostic_canary" and params.get("canary_dry") == "on":
             values["--dry-run"] = "on"
             # The dry canary is offline-synthetic by definition; compose the
-            # synthetic corpus (the builder has no synth arm checkbox) and
+            # synthetic corpus regardless of the arm checkboxes (the builder's
+            # "Synthetic (offline)" synth arm is for the ordinary dry lane) and
             # drop any real target selection.
             values["--corpora"] = "synth"
             values.pop("--api", None)

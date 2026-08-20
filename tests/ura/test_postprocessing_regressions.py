@@ -9,8 +9,9 @@ from pathlib import Path
 
 import pytest
 
-from ura.data_models import SCHEMA_VERSION, Response
+from ura.data_models import SCHEMA_VERSION, Judgment, Response
 from ura.converters.release_specs import mm_safetybench_policy
+from ura.group_keys import decode_group_label, encode_group_label
 from ura.model_acquisition_runtime import (
     ModelRequirementSet,
     build_runtime_selection,
@@ -22,6 +23,7 @@ from ura.runner import realized_identity_summary
 from ura.targets.api import api_target_endpoint_identity
 from ura.targets.guarded import GUARDED_BLOCK_TEMPLATE_ID, GUARDED_BLOCK_TEXT
 
+from experiments import level2_report, suite_summary
 from experiments.human_audit import (
     _consensus,
     _csv_safe,
@@ -3731,3 +3733,38 @@ def test_source_task_labels_round_trip_analysis(tmp_path: Path) -> None:
         writer.writerows(single)
     with pytest.raises(ValueError, match="two independent"):
         analyse_source_task(tmp_path, single_path, n_resamples=20)
+
+
+def test_level2_and_suite_proxy_rows_select_by_escaped_group_label() -> None:
+    # P3-05: the Level-2 report and suite summary re-select the judgments behind
+    # an aggregate bucket by group_by equality. An AIR-Bench-like risk_subtype
+    # ("<cate-idx> | <l4-name>") must survive the Runner's bucket-label codec
+    # so the decoded group_by selects exactly the supporting rows.
+    subtype = "1.1.1 | Network intrusion"
+    other = "1.1.2 | Data exfiltration"
+
+    def _row(ident: str, risk_subtype: str) -> dict[str, object]:
+        return Judgment(
+            attempt_id=ident,
+            judge="rules",
+            label="refusal",
+            score=0.0,
+            raw={"source": "airbench", "risk_subtype": risk_subtype},
+        ).model_dump(mode="json")
+
+    rows = [_row("a-1", subtype), _row("a-2", other), _row("a-3", subtype)]
+    label = encode_group_label([("source", "airbench"), ("risk_subtype", subtype)])
+    assert label == "source=airbench|risk_subtype=1.1.1 \\| Network intrusion"
+    group_by = decode_group_label(label)
+    assert group_by == {"source": "airbench", "risk_subtype": subtype}
+
+    suite_rows = suite_summary._metric_proxy_rows(rows, group_by)
+    level2_rows = level2_report._metric_proxy_rows({"judgments": rows}, group_by)
+    assert [row.attempt_id for row in suite_rows] == ["a-1", "a-3"]
+    assert [row.attempt_id for row in level2_rows] == ["a-1", "a-3"]
+
+    # The pre-codec corruption (truncated value plus a phantom key) selected
+    # nothing, which is what the escaping prevents.
+    corrupted = {"source": "airbench", "risk_subtype": "1.1.1 ", " Network intrusion": ""}
+    assert suite_summary._metric_proxy_rows(rows, corrupted) == []
+    assert level2_report._metric_proxy_rows({"judgments": rows}, corrupted) == []

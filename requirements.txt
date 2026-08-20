@@ -1,33 +1,43 @@
 # URA-Bench dependencies.
-# The core project dependencies are pydantic and psutil; everything else below
-# is imported lazily and is required only when the corresponding feature is used.
+# pyproject.toml is the authoritative declaration; install with
+#   python -m pip install -e ".[dev,analysis,api,guardrail,local-vllm]"
+# This file mirrors those extras for operators who read or pin requirements by
+# hand. The core project dependencies are pydantic and psutil; everything else
+# below is imported lazily and is required only when the feature is used.
 
 # --- core (required) ---
 pydantic>=2.7,<3
 psutil>=7.2,<8
 
-# --- tests ---
+# --- tests / dev (pyproject extra: dev) ---
 pytest>=8,<9
 ruff>=0.15,<1
+PyYAML>=6,<7          # ASB adapter config files (src/ura/adapters/asb.py)
 
-# --- analysis / persistence (optional) ---
+# --- analysis / persistence (pyproject extra: analysis) ---
 pandas>=2.2,<3        # Parquet result store + dataframes
 pyarrow>=16,<24       # Parquet engine
 matplotlib>=3.8,<4    # Chapter V figures (python -m experiments.figures)
 
-# --- API targets (optional; one per provider you use) ---
+# --- API targets (pyproject extra: api; one per provider you use) ---
 anthropic>=0.108,<1   # Fable 5 effort + typed refusal/stop-details support
 openai>=2.45,<3       # Responses API reasoning.mode=pro / GPT-5.6 Sol types
 google-genai>=1,<2
 
-# --- local open-weight targets (optional) ---
-# vllm                # GPU inference (tensor-parallel across 2x RTX 4090)
-# ollama              # local model runner (or plain HTTP to :11434)
+# --- local open-weight targets (pyproject extra: local-vllm; GPU rig only) ---
+# The exact tested local stack; uncomment on the GPU rig or install the extra.
+# vllm==0.27.1         # GPU inference (tensor-parallel across 2x RTX 4090)
+# bitsandbytes==0.49.2 # in-flight 4-bit quantization for the vLLM path
+# ollama               # local model runner (plain HTTP to :11434; no SDK required)
 
-# --- guardrail judge (optional) ---
+# --- guardrail judge (pyproject extra: guardrail) ---
 # torch>=2.4,<3        # Llama Guard 3 inference
 # transformers>=4.44,<6
 # accelerate>=0.34,<2 # required by the default device_map="auto" path
+
+# --- synthetic corpus helpers (pyproject extra: synthetic) ---
+# numpy>=1.26,<3
+# scikit-learn>=1.4,<2
 
 # --- isolated framework runtimes (never install into this environment) ---
 # PyRIT, DeepTeam, h4rm3l, Spikee, NanoGCG, HarmBench preparation, FuzzyAI,
@@ -38,6 +48,3 @@ google-genai>=1,<2
 # no framework package is an optional dependency of the main URA environment.
 # T3MP3ST remains blocked until an exact executable Op-General source/revision
 # is locked. Ideator and PurpleLlama remain explicit precomputed/source replay.
-
-# --- geo-privacy oracle (optional) ---
-# haversine

@@ -19,8 +19,10 @@ from .catalog import (
     _SOURCE_METRIC_ARMS,
     _NATIVE_ONLY_ATTACKERS,
     _BUILDER_OMITTED_ATTACKERS,
+    _CLI_ONLY_ATTACKERS,
     _FRAMEWORKS,
     _BUILD_MODES,
+    _RUNBOOK_GROUP,
     _icon,
     _arm_head,
 )
@@ -471,6 +473,15 @@ class BuilderPageMixin:
             return html.escape(prefill.get(field, default))
 
         selected_mode = prefill.get("mode", "dry_run")
+        # The tool-conditioned exclusion defaults ON for a dry lane (the synth
+        # corpus carries rows no Runner attacker can execute) and OFF
+        # otherwise; a re-rendered submitted form keeps the operator's choice
+        # (an unchecked box is simply absent from the submission).
+        exclude_tool_conditioned_checked = (
+            prefill.get("exclude_tool_conditioned") == "on"
+            if "mode" in prefill
+            else selected_mode == "dry_run"
+        )
         # Mode radios.
         mode_html = "".join(
             "<label class='radio'>"
@@ -496,7 +507,7 @@ class BuilderPageMixin:
             self._registry_keys("source-instances.json", "rig/source-instances.example.json")
         )
 
-        # Group ALL 39 catalogue arms for a readable layout: common lanes first
+        # Group EVERY _ARM_CATALOG arm for a readable layout: common lanes first
         # (by modality signature), then the source-metric scored lanes, then the
         # common-metric-ineligible arms. A source-metric arm runs in run_matrix
         # with replay. An ineligible arm remains default-closed and becomes
@@ -1380,6 +1391,22 @@ class BuilderPageMixin:
                     "the <code>native_import</code> command.</span>"
                     "</span></span></label>"
                 )
+            cli_only_reason = _CLI_ONLY_ATTACKERS.get(fw)
+            if cli_only_reason:
+                return (
+                    "<label class='check fwrow disabled' "
+                    f"data-mods='{html.escape(','.join(mods))}'>"
+                    f"<input type='checkbox' class='fwbox' disabled "
+                    f"data-fw='{html.escape(fw)}'>"
+                    f"<span><strong>{html.escape(fw)}</strong> "
+                    "<span class='badge gray tip cli-only-framework-badge' "
+                    "tabindex='0' role='button' "
+                    "aria-label='CLI-only: why this framework is disabled'>"
+                    "CLI-only (precomputed input)"
+                    f"<span class='tiptext'>{html.escape(desc)} - "
+                    f"{html.escape(cli_only_reason)}</span>"
+                    "</span></span></label>"
+                )
             prepared_badge = ""
             prepared_control = ""
             if fw in {"t3mp3st", "harmbench", "nanogcg"}:
@@ -1430,8 +1457,19 @@ class BuilderPageMixin:
             for fw, desc, mods in _FRAMEWORKS
             if fw not in _BUILDER_OMITTED_ATTACKERS
         )
-        # Judge checkboxes.
-        judges_selected = set(self._split_list(prefill.get("judges", "rules")))
+        # Judge checkboxes.  A fresh page is a dry lane, whose documented
+        # default cascade is rules,llm with the offline mock judge (runbook
+        # section 8; compose forces --judge-model mock on every dry lane): a
+        # rules-only cascade fails closed on the first row the rules stage
+        # cannot classify confidently, so it is not a completing default.
+        judges_selected = set(
+            self._split_list(
+                prefill.get(
+                    "judges",
+                    "rules,llm" if selected_mode == "dry_run" else "rules",
+                )
+            )
+        )
         judge_boxes = (
             "<label class='check'><input type='checkbox' class='judgebox' "
             "data-judge='rules'"
@@ -2026,8 +2064,11 @@ class BuilderPageMixin:
             + text_field(
                 "limit",
                 "--limit",
-                "cluster subsample; required on paid hosted lanes; "
-                "probes need 1-2, canaries exactly 1",
+                "max source clusters per corpus; always composed on non-dry "
+                "lanes: 0 = complete release (local-only lanes; the default "
+                "when blank), hosted paid lanes need a positive value; probes "
+                "need 1-2, canaries exactly 1; blank on a dry lane means the "
+                "CLI default of 50",
                 kind="number",
             )
             + text_field(
@@ -2051,6 +2092,59 @@ class BuilderPageMixin:
                 kind="number",
             )
             + "</div></div>"
+            "<div class='card'><h2>"
+            + _icon("chart")
+            + "Aggregation, row admission &amp; resume</h2>"
+            "<p class='note'>The same --group, --exclude-tool-conditioned, "
+            "--reset-open-circuits, and --lock-stale-seconds the documented "
+            "CLI lanes pass (runbook sections 8-13, 17); the composed command "
+            "is identical to the CLI's.</p><div class='cols'>"
+            + text_field(
+                "group",
+                "--group",
+                "comma list of aggregation keys; the runbook's measured lanes "
+                "pass this CLI default explicitly. Level-2 export requires at "
+                "least these eight keys; narrower groupings are rejected at "
+                "export; blank inherits the CLI default",
+                default=_RUNBOOK_GROUP,
+            ).replace(
+                "name='group'",
+                "name='group' list='dl-build-group'",
+            )
+            + "<datalist id='dl-build-group'>"
+            + "".join(
+                f"<option value='{html.escape(value)}'></option>"
+                for value in (_RUNBOOK_GROUP,)
+            )
+            + "</datalist>"
+            + text_field(
+                "lock_stale_seconds",
+                "--lock-stale-seconds",
+                "optional positive integer; diagnostic stale-age metadata only "
+                "(locks are never removed automatically)",
+                kind="number",
+            )
+            + "</div>"
+            + err("exclude_tool_conditioned")
+            + "<label class='check'><input type='checkbox' "
+            "name='exclude_tool_conditioned'"
+            + (" checked" if exclude_tool_conditioned_checked else "")
+            + "><span><strong>Exclude tool-conditioned rows "
+            "(--exclude-tool-conditioned)</strong> "
+            "<span class='fieldhint'>drop source rows no Runner attacker can "
+            "execute with a recorded exclusion count instead of failing the "
+            "request; on by default for dry/synthetic lanes (the synth "
+            "corpus carries such rows), off otherwise</span></span></label>"
+            + err("reset_open_circuits")
+            + "<label class='check'><input type='checkbox' "
+            "name='reset_open_circuits'"
+            + (" checked" if prefill.get("reset_open_circuits") == "on" else "")
+            + "><span><strong>Reset open circuits (--reset-open-circuits)"
+            "</strong> <span class='fieldhint'>measured-lane resume only: "
+            "operator acknowledgement that the provider/judge fault behind an "
+            "open circuit was corrected before rerunning the identical lane "
+            "(runbook section 17); never a default</span></span></label>"
+            "</div>"
             "<div class='card'><h2>"
             + _icon("coins")
             + "Call ceilings &amp; deadline (budget guards)</h2>"

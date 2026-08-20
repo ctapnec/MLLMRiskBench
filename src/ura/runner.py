@@ -53,6 +53,7 @@ from .data_models import (
     SCHEMA_VERSION,
 )
 from .eligibility import datapoint_planning_stratum, planning_stratum_sha256
+from .group_keys import GROUP_LABEL_ALL, decode_group_label, encode_group_label
 from .judges.base import JudgeCascade
 from .model_identity import (
     canonical_https_endpoint_identity,
@@ -2474,7 +2475,10 @@ class Runner:
             raise ValueError("judgments do not belong to the Runner's most recent run")
 
         def _key(j: Judgment) -> str:
-            return "|".join(f"{k}={_group_value(j, k)}" for k in keys) or "all"
+            # Escape-aware composite label; values containing the separators
+            # (AIR-Bench risk_subtype "<idx> | <l4>") round-trip via
+            # _decode_group instead of being split into phantom keys.
+            return encode_group_label((k, _group_value(j, k)) for k in keys)
 
         buckets = metrics.group_by_key(judgments, _key)
         seed = self.budget.seed
@@ -5472,13 +5476,9 @@ def _equal_cluster_ci(
 
 def _decode_group(bucket_label: str, keys: list[str]) -> dict[str, str]:
     """Invert the composite bucket label back into a {key: value} mapping."""
-    if not keys or bucket_label == "all":
+    if not keys or bucket_label == GROUP_LABEL_ALL:
         return {}
-    out: dict[str, str] = {}
-    for part in bucket_label.split("|"):
-        name, _, value = part.partition("=")
-        out[name] = value
-    return out
+    return decode_group_label(bucket_label)
 
 
 def _result(

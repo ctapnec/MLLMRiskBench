@@ -1381,12 +1381,21 @@ def test_run_matrix_child_receives_only_selected_credentials_and_source_env(
         "ANTHROPIC_LOG": "debug",
         "HTTPS_PROXY": "http://unrelated-proxy.invalid:8080",
         "SSL_CERT_FILE": str(tmp_path / "unrelated-ca.pem"),
-        "URA_PROJECT_REVISION_MANIFEST": str(tmp_path / "unrelated-project.json"),
         "URA_OPENAI_BASE_URL": "https://hostile-openai.invalid/v1",
         "URA_ANTHROPIC_BASE_URL": "https://hostile-anthropic.invalid/v1",
         "URA_GLM_BASE_URL": "https://hostile-glm.invalid/v1",
     }
-    for name, value in {**selected, **excluded}.items():
+    # The non-secret receipt locators the CLI reads as argparse defaults are
+    # forwarded to a NON-dry matrix child (audit P1-04: a Run-page rig_check
+    # with blank receipt fields admits like the exported campaign shell); the
+    # allowlist still excludes every unrelated secret/base-URL above.
+    forwarded_receipts = {
+        "URA_PROJECT_REVISION_MANIFEST": str(tmp_path / "campaign-project.json"),
+        "URA_PROJECT_REVISION_SHA256": "a" * 64,
+        "URA_SOURCE_CONFORMANCE_MANIFEST": str(tmp_path / "campaign-source.json"),
+        "URA_SOURCE_CONFORMANCE_SHA256": "b" * 64,
+    }
+    for name, value in {**selected, **excluded, **forwarded_receipts}.items():
         monkeypatch.setenv(name, value)
     captured: dict[str, str] = {}
 
@@ -1419,6 +1428,24 @@ def test_run_matrix_child_receives_only_selected_credentials_and_source_env(
         for name, value in selected.items():
             assert captured.get(name) == value
         for name in excluded:
+            assert name not in captured
+        for name, value in forwarded_receipts.items():
+            assert captured.get(name) == value
+        # A dry lane never inherits them (offline lanes are neither admitted
+        # nor failed by an inherited receipt).
+        captured.clear()
+        app.start_job(
+            "run_matrix",
+            {
+                "--dry-run": "on",
+                "--corpora": "synth",
+                "--attackers": "replay",
+                "--judges": "rules",
+                "--out": "runs/env-contract-dry",
+            },
+            scrub_receipt_env=True,
+        )
+        for name in forwarded_receipts:
             assert name not in captured
     finally:
         app.close()

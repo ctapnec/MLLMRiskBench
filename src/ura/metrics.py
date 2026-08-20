@@ -429,7 +429,12 @@ def _cluster_means(
         raise ValueError("equal-cluster input must be non-empty")
     grouped: dict[Hashable, list[float]] = {}
     for cluster, value in zip(cluster_ids, values):
-        grouped.setdefault(cluster, []).append(float(value))
+        observation = float(value)
+        if not math.isfinite(observation):
+            # The point estimate and its bootstrap CI must agree on finiteness:
+            # both go through here, so both raise instead of one returning NaN.
+            raise ValueError("equal-cluster input must be finite")
+        grouped.setdefault(cluster, []).append(observation)
     return {cluster: sum(vs) / len(vs) for cluster, vs in grouped.items()}
 
 

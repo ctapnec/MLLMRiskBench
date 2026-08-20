@@ -526,6 +526,19 @@ Dry composition discards real API/local selections because the runner uses
 `MockTarget`, and local roster modality metadata is narrowed to its supported
 text/image path so audio mismatches fail UI/CLI parity.
 
+Build composes every `run_matrix`/`rig_check` flag the documented lanes use
+except the `--models` shorthand (CLI/`rig_check`-only; Build emits the explicit
+`--api`/`--local` split). `ideator` is CLI-only (precomputed `seed_pairs`
+through `--attacker-config`) and `purplellama` admits only `cyberseceval_*`
+arms; both are rejected server-side, not only in the page. Build also exposes
+`--group` (default: the CLI default
+`model,source,risk,effective_modality,expected_behavior,attacker,source_policy_id,source_policy_version`,
+the grouping the Level-2 export requires), `--exclude-tool-conditioned` (on by
+default for dry lanes), the measured-only `--reset-open-circuits`, and
+`--lock-stale-seconds`. Non-dry `run_matrix`/`rig_check` children inherit the
+console process's exported `URA_PROJECT_REVISION_*`/`URA_SOURCE_CONFORMANCE_*`
+receipt locators; dry lanes launch with them scrubbed.
+
 For a reviewed paid launch, Builder first derives exact selected API, local,
 source, source-conformance, and prepared-attacker snapshots, then binds their
 digests in the internal `ura-builder-selected-execution-config/1` bundle. The
@@ -657,8 +670,9 @@ write-only from the console's Config section (`/config/secrets`): presence and
 a masked last-four hint only, written to the operator secrets file (mode 600),
 never displayed, logged, or stored in the database. `HF_TOKEN` is the stricter
 exception: it exposes presence only without a suffix, remains process-memory
-only (legacy file entries are scrubbed), and is forwarded only to the dedicated
-acquisition child.
+only (legacy file entries are scrubbed), and is forwarded only to the
+acquisition children (`model_acquire` and the `export_aggregators` corpus
+export).
 
 ## Defense and judge separation
 

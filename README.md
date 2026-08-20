@@ -197,7 +197,8 @@ activity appears only while the authenticated acquisition worker confirms that
 missing bytes are being transferred; a cache hit/import never gets the badge,
 and terminal or cancelled work clears it. `HF_TOKEN` is write-only and
 presence-only in Config, is held only in the console process (never its
-operator secrets file), reaches only the acquisition child, and is removed
+operator secrets file), reaches only the acquisition children (the sealed
+model-acquisition worker and the `export_aggregators` corpus export), and is removed
 before normal model processes import third-party runtimes. Private tokens,
 plan/receipt/store locators, and resolved snapshot paths never enter durable
 argv, Jobs logs, reports, or UI artifacts. Result roots instead retain safe,
@@ -300,10 +301,15 @@ provider-faithful stateless continuation and checkpoint resume.
 
 ## Sources, modalities, and native engines
 
-The common runner exposes 25 converter families: AdvBench, AgentHarm, BIPIA,
-CyberSecEval, FigStep, GPTGeoChat, HarmBench, InjecAgent, JailbreakBench,
+The common runner exposes 25 converter families: AdvBench, AgentHarm,
+AIR-Bench 2024, BIPIA, CyberSecEval, DecodingTrust (stereotype perspective),
+FigStep, GPTGeoChat, HarmBench, HoliSafe, InjecAgent, JailbreakBench,
 JailBreakV, JALMBench, MLLMGuard, MM-SafetyBench, MOSSBench, R-Judge,
-SALAD-Bench, SIUO, StrongREJECT, Video-SafetyBench, and VLSBench. A `--source-config` inventory can
+SALAD-Bench, SimpleSafetyTests, SIUO, StrongREJECT, Video-SafetyBench,
+VLSBench, and XSTest. The six aggregator arms (SALAD-Bench, AIR-Bench 2024,
+XSTest, SimpleSafetyTests, DecodingTrust, HoliSafe) are acquired through
+`experiments.export_aggregators` and bound like every other arm. A
+`--source-config` inventory can
 bind multiple independently labelled source instances to those converters
 without persisting operator-specific absolute paths. Conversion is not an
 automatic claim of scored-run eligibility: a source-specific evaluator that is
@@ -503,8 +509,9 @@ The runbook is the canonical from-zero procedure:
 `--limit N` means at most N unique source prompt/intent clusters while retaining
 all rows in each selected cluster. For the same converted-corpus digest and
 sample seed, real-source limits are deterministic nested prefixes, so the
-one-cluster canary is contained in a later `N`-cluster sample. The complete
-thesis run uses `--limit 0`.
+one-cluster canary is contained in a later `N`-cluster sample. Full-corpus
+local lanes use `--limit 0`; every lane with a hosted target or a hosted LLM
+judge uses the pre-registered positive cluster limit of runbook section 5.2.
 
 ## Artifacts and recovery
 
@@ -608,11 +615,14 @@ Dry-run composition drops selected
 real API/local targets and their configs because `run_matrix --dry-run` always
 uses `MockTarget`. Local roster modalities are limited to Runner-supported text
 and image, so an audio arm/target mismatch is rejected by UI parity. The
-builder covers all 39 maintained source arms. T3MP3ST and HarmBench are
+builder covers all 45 maintained source arms. T3MP3ST and HarmBench are
 selectable attacker lanes after their prepared artifact is supplied. The same
 Build page exposes the separate preparation commands: T3MP3ST captures an exact
 planning bundle, while HarmBench captures generated text cases and writes the
-matching attacker config. These preparation jobs can use source-model or GPU
+matching attacker config. New T3MP3ST capture is currently blocked-unpinned by
+the lock disposition and the runbook procedure rather than by a code gate: the
+capture helper and the Build capture panel remain operable, so the block
+depends on the operator following the runbook. These preparation jobs can use source-model or GPU
 compute; the measured Runner only validates and replays their content-addressed
 outputs. The Build preparation workflow resolves a symlinked configured results
 root before invoking either producer and emits canonical absolute artifact paths

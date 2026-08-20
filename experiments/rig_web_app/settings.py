@@ -163,7 +163,8 @@ class SettingsMixin:
         ("MOONSHOT_API_KEY", "Moonshot (Kimi)", True),
         (
             "HF_TOKEN",
-            "Hugging Face (write-only; sealed model acquisition only)",
+            "Hugging Face (write-only; acquisition children only: sealed "
+            "model acquisition and the aggregator corpus export)",
             False,
         ),
         ("DASHSCOPE_API_KEY", "Alibaba DashScope (Qwen) - unfunded", False),
@@ -171,9 +172,10 @@ class SettingsMixin:
     )
     _SECRET_NAMES = frozenset(name for name, _label, _funded in _SECRET_ENV_VARS)
     # Acquisition credentials are deliberately process-scoped.  Unlike hosted
-    # provider keys they must never be written to the operator env file: the
-    # dedicated acquisition controller is the only child allowed to inherit
-    # one, and measured/preflight workers are credential-free and offline.
+    # provider keys they must never be written to the operator env file: only
+    # the acquisition children (the sealed model_acquire controller and the
+    # export_aggregators corpus export) may inherit one, and measured/preflight
+    # workers are credential-free and offline.
     _EPHEMERAL_SECRET_NAMES = frozenset({"HF_TOKEN"})
 
     @staticmethod
@@ -218,9 +220,9 @@ class SettingsMixin:
         token.  Hosted-provider keys are written to the operator secrets file
         (created 0600) and mirrored into ``os.environ``.  Acquisition-only
         credentials are held in this console process and scrubbed from any
-        legacy env-file entry, so only the dedicated acquisition child can
-        receive them.  No value is echoed, logged, backed up, or stored in the
-        database.
+        legacy env-file entry, so only the acquisition children (model_acquire
+        and export_aggregators) can receive them.  No value is echoed, logged,
+        backed up, or stored in the database.
         """
 
         if name not in self._SECRET_NAMES:
@@ -418,8 +420,10 @@ class SettingsMixin:
             "campaign uses. Keys are written to the operator secrets file "
             "(<code>~/.ura_env</code>, mode 600) and applied to this console's "
             "environment. <code>HF_TOKEN</code> is the exception: it is held "
-            "only in this console process and passed only to a dedicated model "
-            "acquisition worker; it is never written to that file. For your "
+            "only in this console process and forwarded only to the acquisition "
+            "children (the sealed model acquisition worker and the "
+            "export_aggregators corpus export); it is never written to that "
+            "file. For your "
             "safety the console <strong>never displays a stored key</strong> - "
             "only whether it is set and, for hosted-provider keys, its last "
             "four characters - and never writes a key to the database, a "

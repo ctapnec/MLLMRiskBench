@@ -53,6 +53,19 @@ def test_equal_cluster_mean_and_bootstrap_reweight_unequal_clusters() -> None:
         equal_cluster_mean([], [])
 
 
+def test_equal_cluster_point_and_ci_agree_on_non_finite_input() -> None:
+    # P3-06: the point estimate must not silently return NaN while its bootstrap
+    # CI raises; both reject non-finite observations with one message.
+    clusters = ["a", "b"]
+    for bad in (float("nan"), float("inf"), float("-inf")):
+        with pytest.raises(ValueError, match="equal-cluster input must be finite"):
+            equal_cluster_mean([bad, 1.0], clusters)
+        with pytest.raises(ValueError, match="equal-cluster input must be finite"):
+            equal_cluster_bootstrap_ci([bad, 1.0], clusters, seed=0)
+    # Finite input is unaffected.
+    assert equal_cluster_mean([1.0, 0.0], clusters) == pytest.approx(0.5)
+
+
 def test_permutation_test_reproducible_and_bounds_pvalue() -> None:
     strong = paired_cluster_permutation_test([0.4] * 12, n_permutations=2000, seed=1)
     assert strong["p_value"] < 0.01

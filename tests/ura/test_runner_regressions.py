@@ -10,7 +10,9 @@ from pathlib import Path
 
 import pytest
 
+import experiments.level2_report as level2_report
 import experiments.run_matrix as run_matrix
+import experiments.suite_summary as suite_summary
 import ura.cli as cli_module
 import ura.runner as runner_module
 import ura.targets.api as target_api_module
@@ -34,6 +36,7 @@ from ura.attacker_input_contract import (
 )
 from ura.converters.harmbench import HarmBenchConverter
 from ura.converters.synth import synth_corpus
+from ura.group_keys import decode_group_label, encode_group_label
 from ura.data_models import (
     SCHEMA_VERSION,
     Attempt,
@@ -5950,3 +5953,95 @@ def test_safe_path_components_are_bounded_valid_and_collision_resistant():
     assert len(forward) <= 60
     assert not any(char in forward for char in '<>:"/\\|?*')
     assert not reserved.lower().startswith("con--")
+
+
+def test_group_label_codec_escapes_separators_and_keeps_plain_labels_stable():
+    # P3-05: plain values encode exactly as the historical unescaped label so
+    # persisted buckets and result identities do not move ...
+    plain = [("source", "synth"), ("model", "vllm:m@sha256:abc"), ("risk", "bias")]
+    assert encode_group_label(plain) == "source=synth|model=vllm:m@sha256:abc|risk=bias"
+    assert decode_group_label(encode_group_label(plain)) == dict(plain)
+    assert encode_group_label([]) == "all"
+    assert decode_group_label("all") == {}
+    # ... while separator characters inside a key or value round-trip intact.
+    special = [
+        ("source", "airbench"),
+        ("risk_subtype", "1.1.1 | Network intrusion"),
+        ("note", "a=b\\c|d"),
+        ("k|ey", "v"),
+    ]
+    label = encode_group_label(special)
+    assert label == (
+        "source=airbench|risk_subtype=1.1.1 \\| Network intrusion"
+        "|note=a\\=b\\\\c\\|d|k\\|ey=v"
+    )
+    assert decode_group_label(label) == dict(special)
+    assert runner_module._decode_group(label, [key for key, _ in special]) == dict(
+        special
+    )
+    # Legacy unescaped labels decode exactly as the old split/partition logic did.
+    assert decode_group_label("source=airbench|k=a=b") == {"source": "airbench", "k": "a=b"}
+    with pytest.raises(ValueError, match="dangling escape"):
+        decode_group_label("source=airbench\\")
+
+
+def test_group_values_with_separators_round_trip_through_aggregation_and_consumers():
+    # P3-05: AIR-Bench sets risk_subtype to "<cate-idx> | <l4-name>". Grouping
+    # by it must carry the exact value in every EvalResult.group_by instead of a
+    # truncated value plus a phantom key, and the Level-2 / suite consumers that
+    # re-select the supporting judgments by group_by equality must find them.
+    subtype = "1.1.1 | Network intrusion"
+    corpus = [
+        datapoint.model_copy(update={"risk_subtype": subtype})
+        for datapoint in synth_corpus(12)
+        if "tool" not in datapoint.modalities
+    ]
+    runner = Runner(
+        ReplayAttacker(),
+        MockTarget(),
+        JudgeCascade([RuleJudge(), LLMJudge(judge_target=MockTarget())]),
+        AttackBudget(max_turns=1, seed=0),
+        [0],
+    )
+    judgments, _ = runner.run(corpus, started_at="2026-08-20T00:00:00Z")
+    assert judgments and all(j.raw.get("risk_subtype") == subtype for j in judgments)
+    keys = ["source", "effective_modality", "expected_behavior", "risk_subtype"]
+    results = runner.aggregate(judgments, group_keys=keys)
+    assert results
+    rows = [judgment.model_dump(mode="json") for judgment in judgments]
+    for result in results:
+        assert set(result.group_by) >= set(keys), result.group_by
+        assert result.group_by["risk_subtype"] == subtype, result.group_by
+        assert " Network intrusion" not in result.group_by
+        # The persisted human-readable bucket label inverts to the same mapping.
+        bucket = result.provenance["bucket"]
+        assert "\\|" in bucket
+        decoded = decode_group_label(bucket)
+        assert all(decoded[key] == result.group_by[key] for key in keys)
+        # Consumers select the exact supporting judgments by group_by equality.
+        projected = {key: result.group_by[key] for key in keys}
+        expected_support = [
+            judgment for judgment in judgments
+            if all(
+                runner_module._group_value(judgment, key) == value
+                for key, value in projected.items()
+            )
+        ]
+        assert expected_support
+        suite_rows = suite_summary._metric_proxy_rows(rows, projected)
+        level2_rows = level2_report._metric_proxy_rows({"judgments": rows}, projected)
+        assert [row.attempt_id for row in suite_rows] == [
+            judgment.attempt_id for judgment in expected_support
+        ]
+        assert [row.attempt_id for row in level2_rows] == [
+            judgment.attempt_id for judgment in expected_support
+        ]
+    # Plain group values keep the historical label and identities unchanged.
+    plain_keys = ["source", "effective_modality", "expected_behavior"]
+    plain = runner.aggregate(judgments, group_keys=plain_keys)
+    assert plain
+    assert all(
+        result.provenance["bucket"]
+        == "|".join(f"{key}={result.group_by[key]}" for key in plain_keys)
+        for result in plain
+    )

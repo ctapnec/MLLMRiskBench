@@ -11,7 +11,7 @@
     "revision": "2424fdd47412fccc66d91719126b420e9fbd7065",
     "modalities": ["text", "image"],
     "tensor_parallel_size": 1,
-    "gpu_memory_utilization": 0.90,
+    "gpu_memory_utilization": 0.85,
     "max_tokens": 4096
   },
   "vllm:GraySwanAI/llava-v1.6-mistral-7b-hf-RR": {

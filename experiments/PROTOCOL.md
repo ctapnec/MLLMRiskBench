@@ -112,9 +112,15 @@ are not treated as shared scales.
 ## Sources and eligibility
 
 The common-run registry contains 25 converter families: AdvBench, AgentHarm,
-BIPIA, CyberSecEval, FigStep, GPTGeoChat, HarmBench, InjecAgent, JailbreakBench,
+AIR-Bench 2024, BIPIA, CyberSecEval, DecodingTrust (stereotype perspective),
+FigStep, GPTGeoChat, HarmBench, HoliSafe, InjecAgent, JailbreakBench,
 JailBreakV, JALMBench, MLLMGuard, MM-SafetyBench, MOSSBench, R-Judge,
-SALAD-Bench, SIUO, StrongREJECT, Video-SafetyBench, and VLSBench.
+SALAD-Bench, SimpleSafetyTests, SIUO, StrongREJECT, Video-SafetyBench,
+VLSBench, and XSTest. The six aggregator arms (SALAD-Bench, AIR-Bench 2024,
+XSTest, SimpleSafetyTests, DecodingTrust, HoliSafe) reuse each aggregator's
+released corpus and exact source taxonomy under URA's own judge cascade; their
+source-native scorers and composite leaderboard numbers are recorded as not
+run, never reproduced.
 
 `--source-config` maps a stable corpus-arm ID to one converter plus an
 environment-indirected path and optional source label/split. The selected
@@ -165,6 +171,30 @@ cluster selection is a deterministic nested prefix. Thus the cluster selected
 by `--limit 1` remains in a later `--limit N` cohort, and every sibling row in a
 selected cluster is retained. This supports operational canary continuity; it
 does not make the canary statistically representative.
+
+Population tiers. The measured lanes run over two pre-registered population
+tiers (runbook section 5.2, fixed before any outcome inspection). Local lanes
+run the full converted corpora, because their target calls cost only local GPU
+time. Hosted API lanes run a bounded whole-cluster subsample of each corpus,
+fixed prospectively by `--limit` (the maximum number of unique source clusters;
+every row of a selected cluster is retained) and a recorded `--sample-seed`;
+the sampling audit in every manifest retains the full-corpus digest, the
+complete cluster inventory and the exact selected clusters, so the subsample is
+reproducible and reviewable. With an identical corpus, limit and seed, every
+hosted condition receives the identical cluster subset, and a local-versus-
+hosted contrast is restricted to the intersection of the two cluster sets,
+which is exactly that pre-registered subset. Rates are never pooled across the
+two tiers, whose denominators differ; the compatibility keys refuse such a
+pool. Because the hosted LLM judge is metered on every judged response
+regardless of the target, full-corpus local lanes score through local stages
+only (the deterministic rules stage plus the local scoring guardrail, or a
+local LLM judge), while the hosted LLM-judge stage runs only on the
+pre-registered common subset unless post-canary projections show budget for
+more. A rules-only cascade is not a full-corpus scoring mode: it fails closed
+on any row the rules stage cannot classify confidently. Evaluator modes with
+different judge stages are distinct compatibility keys and are never pooled.
+On a local model the subset estimate is compared with the full-corpus estimate
+as an internal check of the subsampling error.
 
 Conversion is necessary but insufficient for scored admission. A common harmful
 or benign endpoint requires compatible expected behavior and implemented judge
@@ -394,7 +424,9 @@ decision support, and role reachability. Completion artifacts also retain exact
 observed token usage, from which the console reports exact observed spend only
 when all required effective-dated prices exist. Neither is multiplied into a
 campaign estimate. Campaign caps use prepaid budgets, the conservative call
-projection, and an operator decision. No single-cluster throughput, storage,
+projection, and an operator decision; the hosted-lane `--limit`/`--sample-seed`
+subsample of the population tiers above is the prospective containment of paid
+calls, not a post-hoc cut. No single-cluster throughput, storage,
 safety, validity, or measured campaign-total extrapolation is permitted. Level-1,
 figures, suite summary, paired/transfer analysis, and human-audit preparation
 reject canary grids. Source-native one-case canaries remain in their independent

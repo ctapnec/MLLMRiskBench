@@ -1,25 +1,30 @@
 """Bounded, offline-friendly acquisition bridge for the aggregator corpora.
 
-Downloads the released aggregator sources (SALAD-Bench, AIR-Bench 2024, XSTest,
-SimpleSafetyTests) into the exact on-disk layout their converters read, so the
+Downloads the six released aggregator sources - SALAD-Bench, AIR-Bench 2024,
+XSTest, SimpleSafetyTests, DecodingTrust (stereotype perspective) and HoliSafe
+(gated multimodal) - into the exact on-disk layout their converters read, so the
 whole acquisition is reproducible from the repo (the distro installer calls
 this, and it mirrors the ``export_jalmbench``/``export_vlsbench`` pattern).
 
 Each source is fetched from its authoritative host - the Hugging Face
-datasets-server parquet/rows API or the upstream GitHub raw file - and written as
-a single UTF-8 file under ``<out-root>/<Source>/``. Nothing here scores a model
-or contacts a provider; it only prepares local corpus files. Usage::
+datasets-server parquet/rows API, the upstream GitHub raw file, or (HoliSafe) a
+full ``hf download`` of the gated dataset repo - and written under
+``<out-root>/<Source>/``. Nothing here scores a model or contacts a provider; it
+only prepares local corpus files. Usage::
 
     python -m experiments.export_aggregators --source all --out-root "$URA_CORPORA"
     python -m experiments.export_aggregators --source airbench --out-root /data/.../corpora
 
 The printed target paths are what ``URA_SALADBENCH_PATH`` / ``URA_AIRBENCH_PATH``
-/ ``URA_XSTEST_PATH`` / ``URA_SIMPLESAFETYTESTS_PATH`` must point at.
+/ ``URA_XSTEST_PATH`` / ``URA_SIMPLESAFETYTESTS_PATH`` /
+``URA_DECODINGTRUST_STEREOTYPE_PATH`` / ``URA_HOLISAFE_PATH`` must point at.
 """
 from __future__ import annotations
 
 import argparse
 import json
+import os
+import shutil
 import sys
 import urllib.request
 from pathlib import Path
@@ -152,6 +157,27 @@ def export_decodingtrust(out_root: Path) -> Path:
     return _write_json(out_root / "DecodingTrust" / "stereotype.json", rows)
 
 
+def _resolve_hf_cli(executable: str | None = None) -> str:
+    """Locate the ``hf`` CLI: next to the running interpreter first, then PATH.
+
+    The distro installer runs this module as ``<venv>/bin/python -m ...`` without
+    activating the venv, so a bare ``hf`` on PATH does not resolve on the rig;
+    the console-script sibling of ``sys.executable`` is the authoritative copy.
+    """
+    interpreter = Path(executable or sys.executable)
+    sibling = interpreter.parent / ("hf.exe" if os.name == "nt" else "hf")
+    if sibling.is_file():
+        return str(sibling)
+    on_path = shutil.which("hf")
+    if on_path:
+        return on_path
+    raise SystemExit(
+        f"hf CLI not found: neither {sibling} (next to {interpreter}) nor 'hf' on PATH; "
+        "install 'huggingface_hub[cli]' into this interpreter's environment "
+        "(distro/install.sh deps does) and re-run"
+    )
+
+
 def export_holisafe(out_root: Path) -> Path:
     # Gated multimodal dataset shipped as a metadata JSON plus an images/ folder;
     # a full `hf download` (needs HF_TOKEN + accepted terms) is the right tool,
@@ -160,7 +186,7 @@ def export_holisafe(out_root: Path) -> Path:
 
     target = out_root / "HoliSafe"
     subprocess.run(
-        ["hf", "download", "etri-vilab/holisafe-bench", "--repo-type", "dataset",
+        [_resolve_hf_cli(), "download", "etri-vilab/holisafe-bench", "--repo-type", "dataset",
          "--local-dir", str(target)],
         check=True,
     )

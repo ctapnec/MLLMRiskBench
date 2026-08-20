@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import json
+import os
+import sys
 from dataclasses import replace
 from pathlib import Path
 
@@ -476,3 +478,146 @@ def test_installer_campaign_is_visible_in_jobs_and_stats(tmp_path: Path) -> None
     assert b"engineering campaign" in jobs
     assert service.value.campaign_route_id.encode() in stats
     assert b"engineering / non-thesis" in stats
+
+
+# --------------------------------------------------------------------------- #
+# Integration: the REAL checked-in lock + the real installer plan() + a real
+# retained task-log.jsonl, on a temporary empty env-root/state-root (plan only;
+# nothing is installed).
+# --------------------------------------------------------------------------- #
+
+
+def _real_lock() -> tuple[Path, dict]:
+    from experiments.framework_runtime_installer import DEFAULT_LOCK, load_lock
+
+    return Path(__file__).resolve().parents[2], load_lock(DEFAULT_LOCK)
+
+
+def test_snapshot_plans_every_real_lock_entry_and_parses_the_retained_task_log(
+    tmp_path: Path,
+) -> None:
+    repo, lock = _real_lock()
+    lock_id = lock["lock_id"]
+    route = f"framework-runtime-{lock_id[:12]}"
+    results = tmp_path / "work" / "runs"
+    results.mkdir(parents=True)
+    state_root = results / "engineering" / route
+    state_root.mkdir(parents=True)
+    events = (
+        {"at": "2026-08-20T10:00:00Z", "event": "campaign_start", "task": "bootstrap", "status": "running", "detail": "framework-runtime-install"},
+        {"at": "2026-08-20T10:00:01Z", "event": "task_start", "task": "framework-runtime-pyrit", "status": "running", "detail": "install"},
+        {"at": "2026-08-20T10:05:00Z", "event": "task_end", "task": "framework-runtime-pyrit", "status": "passed", "detail": "installed"},
+        {"at": "2026-08-20T10:05:01Z", "event": "task_start", "task": "framework-runtime-garak", "status": "running", "detail": "install"},
+        {"at": "2026-08-20T10:06:00Z", "event": "task_end", "task": "framework-runtime-garak", "status": "failed", "detail": "InstallerError"},
+        {"at": "2026-08-20T10:06:01Z", "event": "task_start", "task": "framework-runtime-deepteam", "status": "running", "detail": "verify"},
+        # ignored: not an installer task, an unsafe framework token, a non-action detail
+        {"at": "2026-08-20T10:06:02Z", "event": "task_start", "task": "native-demo", "status": "running", "detail": "install"},
+        {"at": "2026-08-20T10:06:03Z", "event": "task_start", "task": "framework-runtime-../evil", "status": "running", "detail": "install"},
+        {"at": "2026-08-20T10:06:04Z", "event": "task_start", "task": "framework-runtime-spikee", "status": "running", "detail": "shell"},
+    )
+    partial = '{"at":"2026-08-20T10:07:00Z","event":"task_end","task":"framework-runtime-deepteam","status":"passed"'
+    (state_root / "task-log.jsonl").write_text(
+        "".join(json.dumps(row) + "\n" for row in events) + partial, encoding="utf-8"
+    )
+    service = FrameworkRuntimeService(
+        repo_root=repo, results_root=results, state_dir=tmp_path / "state"
+    )
+    snapshot = service.snapshot()
+    assert snapshot.available, snapshot.message
+    assert snapshot.lock_id == lock_id
+    assert snapshot.campaign_route_id == route
+    assert (snapshot.campaign_state, snapshot.campaign_status_tag) == ("idle", "not started")
+    assert [row.framework for row in snapshot.rows] == [entry["name"] for entry in lock["frameworks"]]
+    assert len(snapshot.rows) == 15
+    assert all(row.plan_action == "install" for row in snapshot.rows)
+    assert {row.runtime for row in snapshot.rows} == {"python", "node"}
+    latest = {row.framework: row.latest for row in snapshot.rows}
+    assert latest["pyrit"] == RuntimeAttempt("install", "passed", "2026-08-20T10:05:00Z", "installed")
+    assert latest["garak"] == RuntimeAttempt("install", "failed", "2026-08-20T10:06:00Z", "InstallerError")
+    # the partial trailing line is not a terminal event
+    assert latest["deepteam"] == RuntimeAttempt("verify", "running", "2026-08-20T10:06:01Z", "")
+    assert latest["spikee"] is None
+    assert all(latest[name] is None for name in ("h4rm3l", "promptfoo", "harmbench"))
+    assert str(tmp_path) not in json.dumps([row.__dict__ for row in snapshot.rows], default=str)
+
+    # the web gate rests on that real plan: a non-current action is refused ...
+    with pytest.raises(FrameworkRuntimeConflict, match="requires install, not verify"):
+        service.launch("pyrit", "verify")
+
+    # ... and the current one is dispatched with the real lock and derived roots
+    captured: dict[str, object] = {}
+
+    def dispatch(argv, environment, cwd):
+        captured.update(argv=list(argv), environment=dict(environment), cwd=cwd)
+        return DispatchResult(
+            0,
+            json.dumps({
+                "schema": "ura-framework-runtime-session/1",
+                "launcher": "tmux",
+                "session_name": "ura-framework-install-real",
+                "attach_command": "tmux -L x attach -t ura-framework-install-real",
+                "log": "sessions/ura-framework-install-real.log",
+                "exit_marker": "sessions/ura-framework-install-real.exit",
+                "status": "running",
+            }),
+            "",
+        )
+
+    dispatching = FrameworkRuntimeService(
+        repo_root=repo,
+        results_root=results,
+        state_dir=tmp_path / "state",
+        dispatcher=dispatch,
+        app_python=Path(sys.executable),
+        base_python=Path(sys.executable),
+    )
+    launched = dispatching.launch("promptfoo", "install")
+    assert launched == FrameworkRuntimeLaunch("tmux", "ura-framework-install-real", route)
+    argv = captured["argv"]
+    assert argv[4] == "install"
+    assert argv[argv.index("--lock") + 1] == str(
+        (repo / "experiments" / "framework_runtime_lock.json").resolve()
+    )
+    assert argv[argv.index("--env-root") + 1] == str(results.resolve().parent / "framework-venvs")
+    assert argv[argv.index("--state-root") + 1] == str(results.resolve() / "engineering" / route)
+    assert argv[argv.index("--only") + 1] == "promptfoo"
+    assert "--python" not in argv  # promptfoo is the Node runtime
+    assert captured["cwd"] == repo
+
+
+def test_snapshot_ignores_an_oversized_or_linked_task_log(tmp_path: Path) -> None:
+    repo, lock = _real_lock()
+    route = f"framework-runtime-{lock['lock_id'][:12]}"
+    results = tmp_path / "work" / "runs"
+    state_root = results / "engineering" / route
+    state_root.mkdir(parents=True)
+    event = json.dumps({
+        "at": "2026-08-20T10:00:01Z",
+        "event": "task_start",
+        "task": "framework-runtime-pyrit",
+        "status": "running",
+        "detail": "install",
+    }) + "\n"
+    log = state_root / "task-log.jsonl"
+    log.write_text(event * (512 * 1024 // len(event) + 2), encoding="utf-8")
+    assert log.stat().st_size > 512 * 1024
+    service = FrameworkRuntimeService(
+        repo_root=repo, results_root=results, state_dir=tmp_path / "state"
+    )
+    snapshot = service.snapshot()
+    assert snapshot.available
+    assert all(row.latest is None for row in snapshot.rows)
+    assert all(row.plan_action == "install" for row in snapshot.rows)
+
+    log.unlink()
+    external = tmp_path / "external.jsonl"
+    external.write_text(event, encoding="utf-8")
+    if not hasattr(os, "symlink"):
+        return
+    try:
+        log.symlink_to(external)
+    except OSError:
+        return
+    linked = service.snapshot()
+    assert linked.available
+    assert all(row.latest is None for row in linked.rows)
