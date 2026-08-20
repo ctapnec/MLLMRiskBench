@@ -29,17 +29,17 @@ depend on a specific construct are attached per DataPoint by the converter throu
 | `bias` | - | Harmful Bias or Homogenization | - |
 | `hallucination` | LLM09 Misinformation | Confabulation | - |
 | `legality` | - | - | Non-Violent Crimes |
-| `cybersec` | - | Information Security | - |
+| `information_security` | - | Information Security | - |
 | `geo` | LLM02 | Data Privacy | Privacy |
-| `agentic_misuse` | ASI01 Goal Hijack; ASI02 Tool Misuse | Human-AI Configuration | - |
+| `agentic_misuse` | - (ASI01 Goal Hijack / ASI02 Tool Misuse attach per record) | Human-AI Configuration | - |
 | `catastrophic` | - | - (umbrella) | - (umbrella) |
 
 Notes on the conservative defaults:
 
 - OWASP **LLM05 Improper Output Handling** concerns validating/sanitizing model
   *output* before a downstream sink (XSS/SQLi/SSRF/code-execution consumers). It is
-  not generic toxic content and not offensive-cyber capability, so `toxicity` and
-  `cybersec` carry no LLM05 default.
+  not generic toxic content and not offensive information-security capability, so
+  `toxicity` and `information_security` carry no LLM05 default.
 - OWASP **LLM01 Prompt Injection** already covers both direct and indirect
   injection, so `prompt_injection_indirect` needs no additional agentic id by
   default. **ASI05 Unexpected Code Execution** and **ASI06 Memory/Context
@@ -67,6 +67,7 @@ the probe delivered?” Relevant families include:
 - cross-modal/audio/video interaction;
 - represented agentic goal or tool misuse.
 
-These axes must not be collapsed. For example, a privacy probe and a cyber probe
-may both use indirect injection, while a single catastrophic objective may be
+These axes must not be collapsed. For example, a privacy probe and an
+information-security probe may both use indirect injection, while a single
+catastrophic objective may be
 tested by replay and by a response-conditioned conversation.

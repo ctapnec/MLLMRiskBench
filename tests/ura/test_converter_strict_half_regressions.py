@@ -141,6 +141,27 @@ def test_strongreject_requires_exact_six_category_inventory(tmp_path: Path):
         StrongRejectConverter(verify_manifest_hash=False).parse(source)
 
 
+def test_strongreject_violence_maps_to_toxicity_without_nonviolent_ref(
+    tmp_path: Path,
+) -> None:
+    # "Violence" maps to TOXICITY (dangerous/violent content), not LEGALITY, so a
+    # violent-crime row no longer inherits the factually wrong MLCommons
+    # "Non-Violent Crimes" crosswalk id.
+    source = tmp_path / "strongreject_dataset.csv"
+    _write_strongreject_csv(source, [{
+        "category": "Violence",
+        "source": "fixture",
+        "forbidden_prompt": "a violent-crime prompt",
+    }])
+
+    point = StrongRejectConverter(
+        require_complete_release=False, verify_manifest_hash=False
+    ).parse(source)[0]
+    assert point.risk_category is RiskCategory.TOXICITY
+    assert point.risk_subtype == "Violence"
+    assert "MLCOMMONS:Non-Violent Crimes" not in point.taxonomy_refs
+
+
 def test_strongreject_rejects_duplicate_prompts(tmp_path: Path):
     source = tmp_path / "strongreject_dataset.csv"
     rows = _strongreject_fixture_rows(2)

@@ -44,6 +44,21 @@ def test_untagged_only_set_is_single_model():
     assert "0.100" in card
 
 
+def test_synthetic_smoke_results_are_marked_not_authoritative():
+    # A synthetic (MockTarget/mock-judge) run must be visibly distinguished from a
+    # measured one, both per-metric and with a run-level banner.
+    card = risk_card([_r("ASR", 0.10, model="A", evidence_class="synthetic")], "A")
+    assert "synthetic (offline smoke, not measured)" in card
+    assert "synthetic offline-smoke results" in card
+    assert "authoritative/source-native" not in card
+
+
+def test_measured_results_stay_authoritative_source_native():
+    card = risk_card([_r("ASR", 0.10, model="A", evidence_class="measured")], "A")
+    assert "authoritative/source-native" in card
+    assert "synthetic (offline smoke" not in card
+
+
 def test_static_and_live_estimands_rendered_distinctly():
     results = [
         _r("ASR", 0.10, model="A", population="harmful_static"),

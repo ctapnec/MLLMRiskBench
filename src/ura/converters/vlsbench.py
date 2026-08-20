@@ -67,7 +67,7 @@ class VLSBenchConverter(BaseConverter):
                     f"category {cat!r}"
                 ) from exc
             if sub == "Cybercrime":
-                risk = Rc.CYBERSEC
+                risk = Rc.INFORMATION_SECURITY
             elif sub == "Weapon-Related Violence":
                 risk = Rc.CATASTROPHIC
             media = [image(image_path, root)]

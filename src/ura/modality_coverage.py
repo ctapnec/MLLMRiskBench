@@ -21,6 +21,7 @@ from typing import Iterable, Literal, Mapping, Sequence
 from .attacker_input_contract import AttackerInputContract
 from .converters._common import (
     DEFAULT_MAX_MEDIA_ASSET_BYTES,
+    DEFAULT_MAX_VIDEO_ASSET_BYTES,
     ConverterError,
     _read_bounded_bytes,
     media_signature_matches,
@@ -94,6 +95,15 @@ def datapoint_modality_combination(datapoint: DataPoint) -> tuple[str, ...]:
 
 
 def _validate_byte_backed_ref(datapoint_id: str, ref: MediaRef) -> None:
+    # Video carries a wider byte ceiling than image/audio, matching the converter,
+    # Runner scored-media, API target, and attacker-input-contract boundaries
+    # (Video-SafetyBench ships ~44 MiB MP4s); the generic 25 MiB cap would make
+    # those released videos unplannable here even though every sibling admits them.
+    max_bytes = (
+        DEFAULT_MAX_VIDEO_ASSET_BYTES
+        if ref.modality == "video"
+        else DEFAULT_MAX_MEDIA_ASSET_BYTES
+    )
     digest = ref.sha256
     if (
         not isinstance(digest, str)
@@ -113,7 +123,7 @@ def _validate_byte_backed_ref(datapoint_id: str, ref: MediaRef) -> None:
     if ref.path is not None:
         try:
             _, payload = _read_bounded_bytes(
-                Path(ref.path), max_bytes=DEFAULT_MAX_MEDIA_ASSET_BYTES
+                Path(ref.path), max_bytes=max_bytes
             )
         except ConverterError as exc:
             raise ModalityCoverageError(
@@ -130,7 +140,7 @@ def _validate_byte_backed_ref(datapoint_id: str, ref: MediaRef) -> None:
                 or len(header_parts) < 2
                 or header_parts[0] != ref.mime
                 or header_parts[-1].lower() != "base64"
-                or len(encoded) > (4 * ((DEFAULT_MAX_MEDIA_ASSET_BYTES + 2) // 3) + 4)
+                or len(encoded) > (4 * ((max_bytes + 2) // 3) + 4)
             ):
                 raise ValueError
             payload = base64.b64decode(encoded, validate=True)
@@ -138,7 +148,7 @@ def _validate_byte_backed_ref(datapoint_id: str, ref: MediaRef) -> None:
             raise ModalityCoverageError(
                 f"datapoint {datapoint_id!r} physical MediaRef is not bounded base64 data"
             ) from exc
-    if not payload or len(payload) > DEFAULT_MAX_MEDIA_ASSET_BYTES:
+    if not payload or len(payload) > max_bytes:
         raise ModalityCoverageError(
             f"datapoint {datapoint_id!r} physical MediaRef bytes are empty or oversized"
         )

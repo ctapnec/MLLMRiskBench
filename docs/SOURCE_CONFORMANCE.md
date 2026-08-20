@@ -17,7 +17,7 @@ cp experiments/rig/source-instances.example.json experiments/source-instances.js
 The receipt is written only after that exact registry and `URA_MEDIA_ROOTS` are
 final. It may contain only the real arms selected for one command, but every
 selected real arm must appear and be admitted. Optional `blocked` and
-`not_selected` entries can preserve operator decisions; the complete 39-arm
+`not_selected` entries can preserve operator decisions; the complete 40-arm
 account is built by joining the maintained registry/requested universe to the
 receipt, runtime eligibility, and result artifacts. An admitted real arm records:
 
@@ -124,7 +124,7 @@ This non-empirical shape example uses syntactically valid sentinel digests and
 example.invalid identifiers, not observations. Replace every value with reviewed
 evidence and include every selected real arm. The schema also permits optional
 blocked/not-selected entries containing only configuration fields, disposition,
-and reason; it does not require the receipt itself to enumerate all 39 arms.
+and reason; it does not require the receipt itself to enumerate all 40 arms.
 
 ```json
 {

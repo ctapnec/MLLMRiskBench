@@ -77,6 +77,9 @@ _PARAM_HELP: dict[str, str] = {
     "--attestation-probe": "One bounded real call per model to confirm the "
     "served identity and read token usage. First paid "
     "step; the per-model cost anchor comes from here.",
+    "--exclude-tool-conditioned": "Drop tool-conditioned source rows (no Runner "
+    "attacker can execute them yet) with a recorded exclusion count instead of "
+    "failing the whole request. Used by the offline smoke and this preflight.",
     "--api": "Comma list of hosted target ids from api-targets.json (e.g. the "
     "Fable/Sol focal pair). Hosted lanes must carry --limit and "
     "--sample-seed.",
@@ -201,7 +204,7 @@ _MODALITIES = ("text", "image", "audio", "video", "tool")
 
 
 #: The complete maintained source-arm catalogue: (arm id, physical modalities,
-#: disabled reason).  All 39 registry arms are listed.  There are THREE kinds,
+#: disabled reason).  All 40 registry arms are listed.  There are THREE kinds,
 #: mirroring ``ura.eligibility`` and ``ura.source_metrics`` exactly:
 #:   * empty reason, NOT in _SOURCE_METRIC_ARMS - a common-runner SCORED lane
 #:     (``common_metrics_eligible: True``), scored by common harmful-ASR/FRR.
@@ -241,6 +244,7 @@ _ARM_CATALOG: tuple[tuple[str, tuple[str, ...], str], ...] = (
     ("jailbreakbench_harmful", ("text",), ""),
     ("jailbreakbench_benign", ("text",), ""),
     ("harmbench_text", ("text",), ""),
+    ("saladbench_base", ("text",), ""),
     ("cyberseceval_mitre", ("text",), ""),
     ("cyberseceval_interpreter", ("text",), ""),
     ("cyberseceval_insecure_coding", ("text",), ""),
@@ -517,6 +521,7 @@ _MATRIX_PARAMS = (
     CommandParam("--preflight-only", "flag"),
     CommandParam("--diagnostic-canary", "flag"),
     CommandParam("--attestation-probe", "flag"),
+    CommandParam("--exclude-tool-conditioned", "flag"),
     CommandParam("--models", "str", suggest="api"),
     CommandParam("--api", "str", suggest="api"),
     CommandParam("--local", "str"),

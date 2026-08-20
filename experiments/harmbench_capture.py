@@ -20,8 +20,11 @@ from typing import Any
 
 ROOT = Path(__file__).resolve().parents[1]
 SRC = ROOT / "src"
-if str(SRC) not in sys.path:
-    sys.path.insert(0, str(SRC))
+# repo root first so `from experiments.run_matrix import ...` resolves when run
+# as a script (`python experiments/harmbench_capture.py ...`); src for `import ura`
+for _bootstrap in (str(ROOT), str(SRC)):
+    if _bootstrap not in sys.path:
+        sys.path.insert(0, _bootstrap)
 
 from ura.adapters.base import AttackBudget  # noqa: E402
 from ura.adapters.harmbench import (  # noqa: E402
@@ -36,7 +39,7 @@ from ura.adapters.harmbench import (  # noqa: E402
 from ura.adapters._native_artifacts import read_binary_artifact  # noqa: E402
 from ura.converters.harmbench import HarmBenchConverter  # noqa: E402
 
-from .run_matrix import _select_corpus  # noqa: E402
+from experiments.run_matrix import _select_corpus  # noqa: E402
 
 
 def build_parser() -> argparse.ArgumentParser:

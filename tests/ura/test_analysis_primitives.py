@@ -6,6 +6,8 @@ import pytest
 from ura.data_models import Judgment
 from ura.metrics import (
     cohen_kappa_ci,
+    equal_cluster_bootstrap_ci,
+    equal_cluster_mean,
     holm_bonferroni,
     kaplan_meier_curve,
     paired_cluster_permutation_test,
@@ -30,6 +32,25 @@ def _esc(*labels: str, horizon: int | None = None) -> list[Judgment]:
         )
         for i, label in enumerate(labels)
     ]
+
+
+def test_equal_cluster_mean_and_bootstrap_reweight_unequal_clusters() -> None:
+    # Attempt-weighted mean would be 3/5 = 0.6; equal source-cluster weighting is
+    # (3/4 + 0/1) / 2 = 0.375, giving the singleton cluster equal weight.
+    values = [1.0, 1.0, 1.0, 0.0, 0.0]
+    clusters = ["cA", "cA", "cA", "cA", "cB"]
+    assert equal_cluster_mean(values, clusters) == pytest.approx(0.375)
+
+    # Equal-size clusters coincide with the attempt-weighted mean.
+    assert equal_cluster_mean([1.0, 0.0, 1.0, 0.0], ["a", "a", "b", "b"]) == (
+        pytest.approx(0.5)
+    )
+
+    lo, hi = equal_cluster_bootstrap_ci(values, clusters, seed=0)
+    assert 0.0 <= lo <= 0.375 <= hi <= 1.0
+
+    with pytest.raises(ValueError):
+        equal_cluster_mean([], [])
 
 
 def test_permutation_test_reproducible_and_bounds_pvalue() -> None:

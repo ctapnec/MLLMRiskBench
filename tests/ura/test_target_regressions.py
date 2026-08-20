@@ -744,7 +744,7 @@ def test_fable_typed_refusal_is_preserved_without_fabricated_output() -> None:
             source="fixture",
             modalities=["text"],
             payload_text="request",
-            risk_category=RiskCategory.CYBERSEC,
+            risk_category=RiskCategory.INFORMATION_SECURITY,
             expected_behavior="refuse",
         ),
         response,

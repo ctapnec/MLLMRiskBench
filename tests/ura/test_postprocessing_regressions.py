@@ -351,7 +351,7 @@ def test_paired_compare_equal_weights_clusters_with_unequal_seed_counts() -> Non
             population="harmful_expected_refusal", metric="ASR", source="fixture",
             source_policy_id="unversioned", source_policy_version="unversioned",
             source_policy_sha256="unversioned",
-            risk_category="cybersec", modality="text", n_turns=1,
+            risk_category="information_security", modality="text", n_turns=1,
             attack_fingerprint=f"fp-{index}", transfer_key=f"tk-{index}",
             sampling_controls=(),
         )
@@ -455,7 +455,7 @@ def _write_completed_cell(
             "source_policy_id": source_policy_id,
             "source_policy_version": source_policy_version,
             "attacker": attacker,
-            "risk_category": "cybersec",
+            "risk_category": "information_security",
             "modality": "text",
             "expected_behavior": expected,
             "transferable": True,
@@ -551,7 +551,7 @@ def _write_completed_cell(
         "policy_evaluation_status": evaluation_status,
         "metric_authority": None,
         "required_metric": required_metric,
-        "risk_category": "cybersec",
+        "risk_category": "information_security",
         "modality": "text",
         "model": model,
         "datapoint_id": datapoint,
@@ -1755,7 +1755,7 @@ def test_live_setup_is_excluded_and_physical_challenge_defines_modality(
     metric = facet["metrics"]["conversation_ASR"]
     assert metric["effect_left_minus_right"] == 1.0
     image_metric = facet["category_metrics"][
-        "policy=unversioned@unversioned::cybersec::image"
+        "policy=unversioned@unversioned::information_security::image"
     ]
     assert image_metric["modality"] == "image"
     assert image_metric["effect_left_minus_right"] == 1.0
@@ -2088,8 +2088,8 @@ def _write_human_artifacts(root: Path, *, descriptor_marker: bool = True) -> str
         "model": model,
         "target": model,
         "datapoint_id": "dp-1",
-        "risk_category": "cybersec",
-        "risk": "cybersec",
+        "risk_category": "information_security",
+        "risk": "information_security",
         "modality": "text",
         "source_policy": None,
         "source_policy_id": "unversioned",
@@ -2150,7 +2150,7 @@ def _write_human_artifacts(root: Path, *, descriptor_marker: bool = True) -> str
         "policy_evaluation_status": "evaluated",
         "metric_authority": None,
         "required_metric": None,
-        "risk_category": "cybersec",
+        "risk_category": "information_security",
         "modality": "text",
         "model": model,
         "run_id": run_id,
@@ -2182,7 +2182,7 @@ def _write_human_artifacts(root: Path, *, descriptor_marker: bool = True) -> str
         "policy_evaluation_status": "evaluated",
         "metric_authority": None,
         "required_metric": None,
-        "risk_category": "cybersec",
+        "risk_category": "information_security",
         "modality": "text",
         "model": model,
         "run_id": run_id,
@@ -2974,7 +2974,7 @@ def test_human_labels_reject_inconsistent_sampling_metadata(tmp_path: Path) -> N
     labels = tmp_path / "labels.csv"
     labels.write_text(
         "sample_key,risk_category,rater_id,label,adjudicated_label\n"
-        "s,cybersec,r1,safe,\n"
+        "s,information_security,r1,safe,\n"
         "s,privacy,r2,safe,\n",
         encoding="utf-8",
     )
@@ -3016,7 +3016,7 @@ def test_replay_vs_crescendo_adaptivity_is_executable_and_clustered(
     assert facet["unit_mode"] == "static_vs_live_adaptivity"
     assert facet["metrics"]["ASR"]["n_clusters"] == 1
     assert (
-        "policy=unversioned@unversioned::cybersec::text"
+        "policy=unversioned@unversioned::information_security::text"
         in facet["category_metrics"]
     )
 
@@ -3147,7 +3147,7 @@ def test_common_parent_split_grids_cover_all_achieved_human_audit_arms(
     assert coverage["all_required_cells_covered"] is True
     assert coverage["all_required_cells_meet_minimum_support"] is True
     assert {item["risk_category"] for item in coverage["requirement_definitions"]} == {
-        None, "cybersec",
+        None, "information_security",
     }
     assert {item["modality"] for item in coverage["requirement_definitions"]} == {
         None, "text",

@@ -1102,7 +1102,7 @@ def test_attacker_registry_parity_and_full_inventory() -> None:
     )
     assert _ATTACKER_NAMES == ATTACKER_NAMES
     assert len(_FRAMEWORKS) == 20
-    assert len(_ARM_CATALOG) == 39  # all maintained source arms
+    assert len(_ARM_CATALOG) == 40  # all maintained source arms
     # 15 common-metric-ineligible arms with NO implemented source evaluator
     # (shown disabled). rjudge/gptgeochat are NOT here: their exact source
     # evaluators ARE implemented, so run_matrix scores them as source-metric

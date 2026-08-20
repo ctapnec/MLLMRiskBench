@@ -19,6 +19,13 @@ import matplotlib
 matplotlib.use("Agg")  # headless and deterministic
 import matplotlib.pyplot as plt  # noqa: E402
 
+# make `import experiments.*` and `import ura` work when run as a script
+# (`python experiments/figures.py ...`), not only as `python -m experiments.figures`
+_ROOT = Path(__file__).resolve().parents[1]
+for _bootstrap in (str(_ROOT), str(_ROOT / "src")):
+    if _bootstrap not in sys.path:
+        sys.path.insert(0, _bootstrap)
+
 from experiments.figure_results import load_postrun_results  # noqa: E402
 
 _ACCENT = "#2a78d6"

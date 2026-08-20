@@ -3,7 +3,7 @@
 ```mermaid
 flowchart LR
     O[Operator-selected targets,<br/>logical arms and attackers] --> E[Content-addressed<br/>request envelope]
-    E --> S[Verified source instances<br/>19 converter families]
+    E --> S[Verified source instances<br/>20 converter families]
     S --> C[Converters]
     C --> U[Unified schema]
     U --> P[Release, policy, metric and modality preflight]
@@ -86,7 +86,7 @@ record does not imply a unified estimand. Common ASR/FRR admission requires a
 substantive implemented evaluator for the exact source/metric pair; conversion
 alone is insufficient.
 
-The registry contains 19 converter families spanning harmful and benign text,
+The registry contains 20 converter families spanning harmful and benign text,
 image, audio, video, classification, prompt-injection and represented-agent
 sources. Release-pinned converters enforce their implemented official contracts
 before target calls. `--source-config` maps a stable corpus-arm identifier to a

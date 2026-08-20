@@ -5,12 +5,17 @@ property is that both the image and the text are individually benign, yet their
 *joint* interpretation elicits an unsafe output - the leakage-controlled
 complement to the older image-jailbreak corpora (thesis II.4.3 / V.1.3).
 
-Real released layout: ``data/siuo_gen.json`` (free-form generation) and
-``data/siuo_mcqa.json`` (multiple choice), each a JSON list of records with a
-``category``, a ``question`` (the benign text), and an ``image`` filename resolved
-against a sibling ``images/`` directory.  Although each channel is benign in
+Real released layout: ``data/siuo_gen.json`` (free-form generation), a JSON list
+of records with a ``category``, a ``question`` (the benign text), an ``image``
+filename resolved against a sibling ``images/`` directory, and a
+``safety_warning`` grading reference.  Although each channel is benign in
 isolation, the *joint request* is a harmful safety probe; it therefore belongs to
 the harmful ASR population rather than the benign false-refusal population.
+
+Only the generation layout is convertible.  The separate ``data/siuo_mcqa.json``
+multiple-choice track carries no ``safety_warning`` and its answer-choice
+construct is not modelled by the unified ASR/refusal schema, so pointing the
+converter at it fails closed with a clear error rather than mis-scoring the rows.
 """
 from __future__ import annotations
 
@@ -49,6 +54,19 @@ class SIUOConverter(BaseConverter):
             records = records.get("data", records.get("questions", []))
         if not isinstance(records, list):
             raise CorpusFormatError(f"SIUO source is not a record list: {path}")
+        # The multiple-choice release (siuo_mcqa.json) carries answer choices but
+        # no safety_warning grading reference; its choose-the-safe-option construct
+        # is not modelled by the ASR/refusal schema, so reject it up front with a
+        # precise message instead of the generic missing-safety_warning error.
+        first = records[0] if records and isinstance(records[0], dict) else {}
+        if ("mcqa" in path.stem.lower()) or (
+            ("options" in first or "correct_option" in first)
+            and "safety_warning" not in first
+        ):
+            raise CorpusFormatError(
+                f"SIUO multiple-choice layout is not supported ({path}); convert "
+                "the free-form generation release data/siuo_gen.json instead"
+            )
         out: list[DataPoint] = []
         for i, rec in enumerate(records):
             if not isinstance(rec, dict):
@@ -99,7 +117,7 @@ class SIUOConverter(BaseConverter):
                         or rec.get("reference")
                         or rec.get("safe_response")
                     ),
-                    "source_task": "mcqa" if "mcqa" in path.stem.lower() else "generation",
+                    "source_task": "generation",
                     "joint_input_harmful": True,
                     "single_channel_inputs_benign": True,
                     "reference_status": "source_provided_not_revalidated",

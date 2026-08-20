@@ -111,10 +111,10 @@ are not treated as shared scales.
 
 ## Sources and eligibility
 
-The common-run registry contains 19 converter families: AdvBench, AgentHarm,
+The common-run registry contains 20 converter families: AdvBench, AgentHarm,
 BIPIA, CyberSecEval, FigStep, GPTGeoChat, HarmBench, InjecAgent, JailbreakBench,
-JailBreakV, JALMBench, MLLMGuard, MM-SafetyBench, MOSSBench, R-Judge, SIUO,
-StrongREJECT, Video-SafetyBench, and VLSBench.
+JailBreakV, JALMBench, MLLMGuard, MM-SafetyBench, MOSSBench, R-Judge,
+SALAD-Bench, SIUO, StrongREJECT, Video-SafetyBench, and VLSBench.
 
 `--source-config` maps a stable corpus-arm ID to one converter plus an
 environment-indirected path and optional source label/split. The selected

@@ -1468,6 +1468,41 @@ def test_tool_conditioned_stratum_rejects_before_target_construction(
     assert not list(root.glob("*.grid.json"))
 
 
+def test_exclude_tool_conditioned_records_and_runs_the_executable_remainder(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str],
+) -> None:
+    # The opt-in flag drops the two tool-conditioned synth rows (synth-4,
+    # synth-10) with a recorded exclusion count and runs the remaining ten,
+    # unlike the fail-closed default asserted directly above.
+    root = tmp_path / "run"
+    assert run_matrix.main([
+        "--dry-run", "--corpora", "synth", "--limit", "12",
+        "--seeds", "0", "--attackers", "replay", "--judges", "rules,llm",
+        "--exclude-tool-conditioned",
+        "--max-queries", "1", "--max-turns", "1", "--out", str(root),
+    ]) == 0
+    stderr = capsys.readouterr().err
+    assert "excluded 2 tool-conditioned row(s) from 'synth'" in stderr
+    assert "synth-4" in stderr and "synth-10" in stderr
+
+    # the executed sample and its recorded exclusion reconcile across artifacts
+    eligibility = json.loads(
+        next(root.glob("eligibility-*.eligibility.json")).read_text(encoding="utf-8")
+    )
+    assert (
+        eligibility["bindings"]["selected_corpora"]["synth"]["selected_records"] == 10
+    )
+    manifest = json.loads(
+        next(root.glob("*.manifest.json")).read_text(encoding="utf-8")
+    )
+    audit = manifest["config"]["run"]["sampling_audit"]
+    assert audit["selected_records"] == 10
+    assert audit["excluded_tool_conditioned_count"] == 2
+    assert set(audit["excluded_tool_conditioned_ids"]) == {"synth-4", "synth-10"}
+    assert "synth-4" not in audit["selected_ids"]
+    assert list(root.glob("*.grid.json"))  # the pipeline actually ran
+
+
 def test_ideator_paths_are_absent_from_request_eligibility_and_grid_artifacts(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:

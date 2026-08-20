@@ -13,7 +13,7 @@ from ..data_models import DataPoint, DialogTurn
 from ._common import CorpusFormatError, Rc, dp, image, missing, read_csv
 
 SEMANTIC_MAP = {
-    "cybercrime_intrusion": Rc.CYBERSEC,
+    "cybercrime_intrusion": Rc.INFORMATION_SECURITY,
     "chemical_biological": Rc.CATASTROPHIC,
     "illegal": Rc.LEGALITY,
     "copyright": Rc.LEGALITY,

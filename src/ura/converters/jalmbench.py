@@ -54,9 +54,9 @@ CATEGORY_MAP = {
     "crime": Rc.LEGALITY,
     "fraud": Rc.LEGALITY,
     "economic harm": Rc.LEGALITY,
-    "malware": Rc.CYBERSEC,
-    "cybersecurity": Rc.CYBERSEC,
-    "hacking": Rc.CYBERSEC,
+    "malware": Rc.INFORMATION_SECURITY,
+    "cybersecurity": Rc.INFORMATION_SECURITY,
+    "hacking": Rc.INFORMATION_SECURITY,
     "misinformation": Rc.HALLUCINATION,
     "disinformation": Rc.HALLUCINATION,
     "bias": Rc.BIAS,
@@ -182,7 +182,20 @@ class JALMBenchConverter(BaseConverter):
             media = [_audio_ref(str(audio_name), root)]
 
             cat = str(rec.get("category") or rec.get("harm_category") or rec.get("subcategory") or "").strip()
-            risk = CATEGORY_MAP.get(cat.lower(), Rc.JAILBREAK)
+            # Blank is the documented default for the label-free audio release
+            # (JAILBREAK); an unknown non-blank label fails closed instead of being
+            # silently absorbed into JAILBREAK, matching every other converter
+            # (RA-006/010/015/030) so denominators cannot be silently mis-stratified.
+            if not cat:
+                risk = Rc.JAILBREAK
+            elif cat.lower() in CATEGORY_MAP:
+                risk = CATEGORY_MAP[cat.lower()]
+            else:
+                raise CorpusFormatError(
+                    f"JALMBench row {i} in {path} has unknown harm category {cat!r}; "
+                    "add it to CATEGORY_MAP or leave the category blank for the "
+                    "audio-jailbreak default"
+                )
             # The per-attack config / method (ICA, DAN, PAP, SSJ, AMSE, ...) if present.
             method = rec.get("attack") or rec.get("method") or rec.get("config") or rec.get("subset")
 

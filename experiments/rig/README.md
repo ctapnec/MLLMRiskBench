@@ -128,8 +128,8 @@ a separate upstream-accounting gap (VLSBench overlaps the mapping and accounting
 groups). Preserve it and follow the exact refresh list in
 [`docs/SOURCE_CONFORMANCE.md`](../../docs/SOURCE_CONFORMANCE.md#historical-receipt-boundary).
 
-The registry covers all 19 converters and keeps physically or semantically
-distinct source instances separate. Its 39 logical arms comprise 22 common-
+The registry covers all 20 converters and keeps physically or semantically
+distinct source instances separate. Its 40 logical arms comprise 23 common-
 metric arms, two implemented source-classification arms, and 15 conversion-only
 arms:
 

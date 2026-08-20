@@ -420,6 +420,64 @@ def clustered_bootstrap_ci(
     return _bootstrap_bounds(stats, n_resamples, alpha)
 
 
+def _cluster_means(
+    values: Sequence[float], cluster_ids: Sequence[Hashable]
+) -> dict[Hashable, float]:
+    if len(values) != len(cluster_ids):
+        raise ValueError("values and cluster_ids must have equal length")
+    if not values:
+        raise ValueError("equal-cluster input must be non-empty")
+    grouped: dict[Hashable, list[float]] = {}
+    for cluster, value in zip(cluster_ids, values):
+        grouped.setdefault(cluster, []).append(float(value))
+    return {cluster: sum(vs) / len(vs) for cluster, vs in grouped.items()}
+
+
+def equal_cluster_mean(
+    values: Sequence[float], cluster_ids: Sequence[Hashable]
+) -> float:
+    """Mean over source clusters of each cluster's within-cluster rate.
+
+    This is the equal source-cluster weighting the protocol fixes for every
+    binary event/classification rate (thesis V.6): a cluster with more surviving
+    seeds/turns/variants gets the same weight as a singleton, so informative
+    missingness cannot silently reweight the reported rate the way an
+    attempt-level proportion would.
+    """
+    means = _cluster_means(values, cluster_ids)
+    return sum(means.values()) / len(means)
+
+
+def equal_cluster_bootstrap_ci(
+    values: Sequence[float],
+    cluster_ids: Sequence[Hashable],
+    *,
+    n_resamples: int = 2000,
+    alpha: float = 0.05,
+    seed: int = 0,
+) -> tuple[float, float]:
+    """Cluster bootstrap CI for the equal source-cluster weighted rate.
+
+    Whole clusters are resampled with replacement and each replicate reports the
+    unweighted mean of the sampled clusters' within-cluster rates, matching the
+    point estimate in :func:`equal_cluster_mean`.
+    """
+    _validate_bootstrap(n_resamples, alpha)
+    means = _cluster_means(values, cluster_ids)
+    clusters = list(means)
+    rng = random.Random(seed)
+    stats: list[float] = []
+    for _ in range(n_resamples):
+        total = 0.0
+        for _ in clusters:
+            total += means[clusters[rng.randrange(len(clusters))]]
+        value = total / len(clusters)
+        if not math.isfinite(value):
+            raise ValueError("equal-cluster-bootstrap statistic must be finite")
+        stats.append(value)
+    return _bootstrap_bounds(stats, n_resamples, alpha)
+
+
 def paired_bootstrap_ci(
     values_a: Sequence[float],
     values_b: Sequence[float],
@@ -779,6 +837,7 @@ __all__ = [
     "transferability", "cohen_kappa", "judge_scores",
     "bootstrap_ci", "clustered_bootstrap_ci", "paired_bootstrap_ci",
     "paired_clustered_bootstrap_ci",
+    "equal_cluster_mean", "equal_cluster_bootstrap_ci",
     "asr_with_ci", "group_by_key",
     "paired_cluster_permutation_test", "holm_bonferroni",
     "paired_effect_manski_bounds", "kaplan_meier_curve",

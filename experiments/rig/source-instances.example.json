@@ -89,6 +89,12 @@
     "source_label": "HarmBench text behaviors",
     "split": "official-text"
   },
+  "saladbench_base": {
+    "converter": "saladbench",
+    "path_env": "URA_SALADBENCH_PATH",
+    "source_label": "SALAD-Bench base harmful set (aggregator corpus; MD-Judge not run)",
+    "split": "base_set"
+  },
   "harmbench_multimodal": {
     "converter": "harmbench",
     "path_env": "URA_HARMBENCH_MULTIMODAL_PATH",

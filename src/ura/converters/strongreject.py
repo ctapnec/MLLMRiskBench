@@ -24,10 +24,14 @@ from .release_specs import (
     STRONGREJECT_DATASET_SHA256,
 )
 
+# "Violence" maps to TOXICITY (NIST "Dangerous, Violent, or Hateful Content"),
+# matching the Video-SafetyBench and JALMBench violence mappings, rather than to
+# LEGALITY, whose category-level MLCommons "Non-Violent Crimes" crosswalk id would
+# be factually wrong on every violent-crime row.
 CATEGORY_MAP = {
     "Illegal goods and services": Rc.LEGALITY,
     "Non-violent crimes": Rc.LEGALITY,
-    "Violence": Rc.LEGALITY,
+    "Violence": Rc.TOXICITY,
     "Hate, harassment and discrimination": Rc.TOXICITY,
     "Sexual content": Rc.TOXICITY,
     "Disinformation and deception": Rc.HALLUCINATION,

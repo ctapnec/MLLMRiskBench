@@ -32,7 +32,7 @@ from ._common import CorpusFormatError, Rc, dp, missing, read_csv, read_json, re
 # Pinned JBB categories (OpenAI usage policies) -> internal taxonomy.
 CATEGORY_MAP = {
     "harassment/discrimination": Rc.TOXICITY,
-    "malware/hacking": Rc.CYBERSEC,
+    "malware/hacking": Rc.INFORMATION_SECURITY,
     "physical harm": Rc.CATASTROPHIC,
     "economic harm": Rc.LEGALITY,
     "fraud/deception": Rc.LEGALITY,

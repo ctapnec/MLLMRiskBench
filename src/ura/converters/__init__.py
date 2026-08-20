@@ -3,7 +3,7 @@
 Each benchmark framework has its own module (rjudge, mmsafety, jailbreakv,
 gptgeochat, agentharm, strongreject, bipia, harmbench, vlsbench, mossbench, siuo,
 advbench, jailbreakbench, figstep, cyberseceval, injecagent, mllmguard, jalmbench,
-videosafetybench), and each converter loads that framework's REAL released layout into unified
+videosafetybench, saladbench), and each converter loads that framework's REAL released layout into unified
 DataPoints. ``get_converter(name)`` returns a fresh instance; ``synth_corpus``
 builds an offline mixed-modality corpus. Adding a framework is a new module plus
 one line in the registry below (open/closed; thesis N4).
@@ -27,6 +27,7 @@ from .mmsafety import MMSafetyConverter
 from .mossbench import MOSSBenchConverter
 from .release_specs import CORPUS_RELEASE_SPECS
 from .rjudge import RJudgeConverter
+from .saladbench import SaladBenchConverter
 from .siuo import SIUOConverter
 from .strongreject import StrongRejectConverter
 from .synth import synth_corpus
@@ -41,7 +42,7 @@ _CONVERTERS: dict[str, type[BaseConverter]] = {
         VLSBenchConverter, MOSSBenchConverter, SIUOConverter,
         AdvBenchConverter, JailbreakBenchConverter, FigStepConverter,
         CyberSecEvalConverter, InjecAgentConverter, MLLMGuardConverter,
-        JALMBenchConverter, VideoSafetyBenchConverter,
+        JALMBenchConverter, VideoSafetyBenchConverter, SaladBenchConverter,
     )
 }
 
@@ -59,7 +60,7 @@ __all__ = [
     "VLSBenchConverter", "MOSSBenchConverter", "SIUOConverter",
     "AdvBenchConverter", "JailbreakBenchConverter", "FigStepConverter",
     "CyberSecEvalConverter", "InjecAgentConverter", "MLLMGuardConverter",
-    "JALMBenchConverter", "VideoSafetyBenchConverter",
+    "JALMBenchConverter", "VideoSafetyBenchConverter", "SaladBenchConverter",
     "get_converter", "synth_corpus",
     "ConverterError", "CorpusFormatError", "CorpusNotFoundError", "MediaAssetError",
     "CORPUS_RELEASE_SPECS",

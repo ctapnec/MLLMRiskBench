@@ -114,7 +114,12 @@ class PagesMixin:
                 "2",
                 "Preflight (no calls)",
                 "rig_check",
-                {"--dry-run": "on", "--api": "$FABLE", "--corpora": "synth"},
+                {
+                    "--dry-run": "on",
+                    "--api": "$FABLE",
+                    "--corpora": "synth",
+                    "--exclude-tool-conditioned": "on",
+                },
             ),
             (
                 "3",

@@ -20,7 +20,7 @@ offensive cyber operations, all released as plain JSON lists under
   original instruction and resist the injection.
 
 Point ``URA_CYBERSECEVAL_PATH`` at any of these JSON files (a JSONL export is also
-tolerated). Every record maps to ``Rc.CYBERSEC`` with
+tolerated). Every record maps to ``Rc.INFORMATION_SECURITY`` with
 ``attack_family="offensive_cyber"``. Missing inputs fail closed.
 This file parser covers the released JSON/JSONL prompt suites.  It is distinct
 from the official native runner and from the visual benchmark's directory
@@ -145,7 +145,7 @@ class CyberSecEvalConverter(BaseConverter):
                 id=f"cyberseceval:{dataset}:{rid}",
                 source="cyberseceval",
                 modalities=["text"],
-                risk=Rc.CYBERSEC,
+                risk=Rc.INFORMATION_SECURITY,
                 expected=EXPECTED_BY_DATASET.get(dataset, "refuse"),
                 dialog=dialog,
                 payload_text=payload or None,

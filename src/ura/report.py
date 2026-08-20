@@ -87,13 +87,19 @@ def _approximate_provenance(result: EvalResult) -> dict | None:
     return value if isinstance(value, dict) else None
 
 
+def _is_synthetic(result: EvalResult) -> bool:
+    return result.provenance.get("evidence_class") == "synthetic"
+
+
 def _evidence_tag(result: EvalResult) -> str:
     proxy = _approximate_provenance(result)
-    if proxy is None:
-        return "authoritative/source-native"
-    if proxy.get("warning_tag") == "warning_synthetic_approximate":
-        return "**⚠ synthetic + approximate**"
-    return "**⚠ approximate**"
+    if proxy is not None:
+        if proxy.get("warning_tag") == "warning_synthetic_approximate":
+            return "**⚠ synthetic + approximate**"
+        return "**⚠ approximate**"
+    if _is_synthetic(result):
+        return "**⚠ synthetic (offline smoke, not measured)**"
+    return "authoritative/source-native"
 
 
 def _reliability_label(result: EvalResult) -> str:
@@ -160,6 +166,14 @@ def risk_card(
         lines.append("> No evaluation results available for this model.")
         lines.append("")
         return "\n".join(lines)
+
+    if any(_is_synthetic(result) for result in scoped):
+        lines.append(
+            "> ⚠ This card includes synthetic offline-smoke results (MockTarget "
+            "and/or mock judge). They exercise the pipeline only and are NOT "
+            "measured evidence; do not read them as a model's real safety profile."
+        )
+        lines.append("")
 
     if any(_approximate_provenance(result) is not None for result in scoped):
         lines.append(

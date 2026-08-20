@@ -121,7 +121,7 @@ def test_figure_point_and_bootstrap_equal_weight_prompt_clusters() -> None:
     ]):
         common = dict(
             corpus="fixture", source="source", datapoint_id=datapoint,
-            seed=index, expected_behavior="refuse", risk_category="cybersec",
+            seed=index, expected_behavior="refuse", risk_category="information_security",
             declared_modality="text", effective_modality="text", eligible=True,
             attack_fingerprint=f"fp-{index}", transfer_key=f"key-{index}",
         )
@@ -407,7 +407,7 @@ def _cell(
     datapoints = datapoints or [{
         "id": "probe",
         "source": f"source-{corpus}",
-        "risk": "cybersec",
+        "risk": "information_security",
         "modality": "text",
         "expected": "refuse",
         "label": "violation",
@@ -465,7 +465,7 @@ def _cell(
             })],
             payload_text=f"prompt {datapoint_id}",
             media=[MediaRef.model_validate(item) for item in media],
-            risk_category=RiskCategory(datapoint.get("risk", "cybersec")),
+            risk_category=RiskCategory(datapoint.get("risk", "information_security")),
             expected_behavior=datapoint.get("expected", "refuse"),
             meta={
                 "common_metrics_eligible": datapoint.get("eligible", True),
@@ -546,8 +546,8 @@ def _cell(
             "source_policy": None,
             "source_policy_id": "unversioned",
             "source_policy_version": "unversioned",
-            "risk_category": datapoint.get("risk", "cybersec"),
-            "risk": datapoint.get("risk", "cybersec"),
+            "risk_category": datapoint.get("risk", "information_security"),
+            "risk": datapoint.get("risk", "information_security"),
             "modality": datapoint.get("modality", "text"),
             "source_modality": datapoint.get("modality", "text"),
             "delivered_modality": effective_modality,
@@ -984,7 +984,7 @@ def _paired_model_grid(root: Path, corpora: tuple[str, ...] = ("alpha",)) -> lis
             datapoints=[{
                 "id": f"probe-{corpus}",
                 "source": f"source-{corpus}",
-                "risk": "cybersec" if corpus == "alpha" else "privacy",
+                "risk": "information_security" if corpus == "alpha" else "privacy",
                 "modality": "text" if corpus == "alpha" else "image",
                 "effective_modality": "text" if corpus == "alpha" else "image",
                 "expected": "refuse",
@@ -1110,7 +1110,7 @@ def test_multi_target_acquisition_survives_figure_and_transfer_loaders(
             datapoints=[{
                 "id": "shared-probe",
                 "source": "source-alpha",
-                "risk": "cybersec",
+                "risk": "information_security",
                 "modality": "text",
                 "effective_modality": "text",
                 "expected": "refuse",
@@ -1749,7 +1749,7 @@ def test_defense_loader_is_same_base_paired_and_reports_both_populations(
         {
             "id": "harmful",
             "source": "source-utility",
-            "risk": "cybersec",
+            "risk": "information_security",
             "expected": "refuse",
             "label": "violation",
         },

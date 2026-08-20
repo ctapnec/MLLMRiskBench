@@ -55,9 +55,15 @@ Python 3.12 is the supported baseline.
 python -m pip install -e ".[dev,analysis]"
 python -m pytest
 env -u URA_PROJECT_REVISION_MANIFEST -u URA_PROJECT_REVISION_SHA256 \
-  python experiments/run_matrix.py --dry-run --attackers replay --judges rules,llm --corpora synth --limit 12 --out runs/dry
+  python experiments/run_matrix.py --dry-run --attackers replay --judges rules,llm \
+    --corpora synth --limit 12 --exclude-tool-conditioned --out runs/dry
 python -m experiments.figures --synth --out runs/_figcheck
 ```
+
+The `synth` fixture ships two tool-conditioned rows (`synth-4`, `synth-10`) that
+no Runner attacker can execute yet; `--exclude-tool-conditioned` drops them with
+a recorded exclusion count so the offline smoke completes. Without that flag the
+same command fails closed on the tool contract by design.
 
 The rig's local-vLLM environment is installed from the checked-in extra rather
 than from separate version variables:
@@ -294,15 +300,15 @@ provider-faithful stateless continuation and checkpoint resume.
 
 ## Sources, modalities, and native engines
 
-The common runner exposes 19 converter families: AdvBench, AgentHarm, BIPIA,
+The common runner exposes 20 converter families: AdvBench, AgentHarm, BIPIA,
 CyberSecEval, FigStep, GPTGeoChat, HarmBench, InjecAgent, JailbreakBench,
-JailBreakV, JALMBench, MLLMGuard, MM-SafetyBench, MOSSBench, R-Judge, SIUO,
-StrongREJECT, Video-SafetyBench, and VLSBench. A `--source-config` inventory can
+JailBreakV, JALMBench, MLLMGuard, MM-SafetyBench, MOSSBench, R-Judge,
+SALAD-Bench, SIUO, StrongREJECT, Video-SafetyBench, and VLSBench. A `--source-config` inventory can
 bind multiple independently labelled source instances to those converters
 without persisting operator-specific absolute paths. Conversion is not an
 automatic claim of scored-run eligibility: a source-specific evaluator that is
 not implemented fails pre-call rather than being squeezed into common ASR.
-The current 39-arm disposition is 22 common-metric arms, two implemented
+The current 40-arm disposition is 23 common-metric arms, two implemented
 source-classification arms, and 15 conversion-only arms pending their exact
 source scorer or runtime.
 
@@ -360,7 +366,7 @@ separately named `approximate_*` proxy results. The Stats surface badges them
 `⚠ approximate`, or `⚠ synthetic + approximate` when any target or scoring
 contribution is synthetic, and keeps their coverage and denominators separate
 from source-native results. Their displayed reliability is an auditable,
-uncalibrated method/evidence/confidence/identity-completeness indicator—not a
+uncalibrated method/evidence/confidence/identity-completeness indicator-not a
 probability, accuracy estimate, model-quality ranking, or substitute evaluator.
 
 Repeatable typed live-attestation inputs are validated against every measured
@@ -378,7 +384,7 @@ The runbook is the canonical from-zero procedure:
    detached, create and validate one content-addressed
    `ura-project-revision/1` receipt from that clean checkout, export its path and
    SHA-256, and create the Python environment;
-2. download the selected releases from the 19-converter inventory, copy the
+2. download the selected releases from the 20-converter inventory, copy the
    checked-in source-instance example to the ignored operator-local registry,
    configure its independently labelled instances, bind ordered media roots,
    and validate one compact content-addressed `ura-source-conformance/1`

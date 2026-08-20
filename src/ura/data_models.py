@@ -53,7 +53,7 @@ class RiskCategory(str, Enum):
     BIAS = "bias"
     HALLUCINATION = "hallucination"
     LEGALITY = "legality"
-    CYBERSEC = "cybersec"
+    INFORMATION_SECURITY = "information_security"
     GEO = "geo"
     AGENTIC_MISUSE = "agentic_misuse"
     CATASTROPHIC = "catastrophic"  # CBRN / weapons / self-harm / CSEM

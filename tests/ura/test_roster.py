@@ -54,7 +54,7 @@ EXPECTED_CONVERTERS = {
     "rjudge", "mmsafety", "jailbreakv", "gptgeochat", "agentharm", "strongreject",
     "bipia", "harmbench", "vlsbench", "mossbench", "siuo",
     "advbench", "jailbreakbench", "figstep", "cyberseceval", "injecagent", "mllmguard",
-    "jalmbench", "videosafetybench",
+    "jalmbench", "videosafetybench", "saladbench",
 }
 
 

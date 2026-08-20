@@ -33,6 +33,7 @@ from ura.data_models import (
 )
 from ura.modality_coverage import (
     ModalityCoverageError,
+    datapoint_modality_combination,
     declared_target_combinations,
     plan_modality_coverage,
     verify_executed_modality_coverage,
@@ -282,6 +283,54 @@ def test_converted_identity_is_independent_of_checkout_root(tmp_path: Path):
     ) == canonical_converted_corpus_sha256(
         converted_at(tmp_path / "checkout-b")
     )
+
+
+def test_video_between_image_and_video_caps_stays_plannable(tmp_path: Path):
+    # A ~26 MiB Video-SafetyBench-scale MP4 sits above the 25 MiB image/audio
+    # cap but below the 64 MiB video cap; the eligibility/coverage byte validator
+    # must admit it exactly like the converter, Runner and attacker-input paths,
+    # or the whole documented video arm becomes unplannable.
+    from ura.converters._common import DEFAULT_MAX_MEDIA_ASSET_BYTES
+
+    size = DEFAULT_MAX_MEDIA_ASSET_BYTES + 1_000_000
+    payload = b"\x00\x00\x00\x18ftypmp42" + b"\x00" * (size - 12)
+    clip = tmp_path / "clip.mp4"
+    clip.write_bytes(payload)
+    digest = hashlib.sha256(payload).hexdigest()
+
+    video_ref = MediaRef(
+        modality="video", path=str(clip), mime="video/mp4", sha256=digest,
+    )
+    video_point = DataPoint(
+        id="vid-1",
+        source="fixture",
+        modalities=["text", "video"],
+        dialog_history=[
+            DialogTurn(role="user", content="describe", media=[video_ref])
+        ],
+        media=[video_ref],
+        risk_category=RiskCategory.JAILBREAK,
+        expected_behavior="refuse",
+    )
+    assert datapoint_modality_combination(video_point) == ("text", "video")
+
+    # The same oversized bytes stay rejected under the tighter image/audio bound.
+    image_ref = MediaRef(
+        modality="image", path=str(clip), mime="image/png", sha256=digest,
+    )
+    image_point = DataPoint(
+        id="img-1",
+        source="fixture",
+        modalities=["text", "image"],
+        dialog_history=[
+            DialogTurn(role="user", content="describe", media=[image_ref])
+        ],
+        media=[image_ref],
+        risk_category=RiskCategory.JAILBREAK,
+        expected_behavior="refuse",
+    )
+    with pytest.raises(ModalityCoverageError):
+        datapoint_modality_combination(image_point)
 
 
 def test_modality_planner_scopes_coverage_to_the_selected_grid():

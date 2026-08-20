@@ -1177,6 +1177,18 @@ def _tool_evidence(datapoint: DataPoint) -> bool:
     )
 
 
+def is_tool_conditioned_source(datapoint: DataPoint) -> bool:
+    """Public predicate: does this DataPoint carry unexecutable tool evidence?
+
+    Callers that want to record and skip such rows explicitly (for example a
+    dry-run smoke that opts into ``--exclude-tool-conditioned``) share the exact
+    definition used by :func:`reject_unexecutable_tool_source`, so admission and
+    exclusion can never diverge.
+    """
+
+    return _tool_evidence(datapoint)
+
+
 def reject_unexecutable_tool_source(attacker: str, datapoint: DataPoint) -> None:
     """Reject tool-conditioned rows until Runner owns a typed tool runtime.
 

@@ -738,3 +738,71 @@ def test_private_acquisition_workflow_recovers_activity_and_run_after_restart(
         )
     finally:
         final_restart.close()
+
+
+def test_acquisition_route_enforces_purpose_bound_one_shot_ticket(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Route-level coverage of the sealed /build/model-acquisition/* gate: the
+    # purpose-bound one-shot ticket, extra-field rejection, and per-stage
+    # parameter check, none of which the internal-method tests exercise.
+    app = _app(tmp_path)
+    downloads: list[str] = []
+
+    def fake_download(plan_job_id: str) -> Job:
+        downloads.append(plan_job_id)
+        job = Job(
+            "job-acq",
+            "model_acquire",
+            ["python", "-m", "experiments.model_acquire"],
+            tmp_path / "state" / "job-acq",
+            process=None,
+            restored_state="running",
+        )
+        app.jobs[job.job_id] = job
+        return job
+
+    monkeypatch.setattr(app, "_start_model_acquisition_download", fake_download)
+    try:
+        # A correct-purpose ticket with exactly {plan_job_id} launches once.
+        ticket = app._new_launch_ticket(
+            {"plan_job_id": "job-plan"}, purpose="acquisition_download"
+        )
+        status, location, _ = app.handle(
+            "POST", "/build/model-acquisition/acquire", {"launch_ticket": ticket}
+        )
+        assert (status, location) == (303, "/jobs/job-acq")
+        assert downloads == ["job-plan"]
+
+        # The ticket is one-shot: replay is rejected without a second launch.
+        replay_status, _replay_location, replay_body = app.handle(
+            "POST", "/build/model-acquisition/acquire", {"launch_ticket": ticket}
+        )
+        assert replay_status == 200
+        assert b"sealed acquisition authorization expired" in replay_body
+        assert downloads == ["job-plan"]
+
+        # A ticket minted for a different stage purpose is refused on /acquire.
+        wrong_purpose = app._new_launch_ticket(
+            {"acquisition_job_id": "job-acq"}, purpose="acquisition_run"
+        )
+        wrong_status, _wl, _wb = app.handle(
+            "POST", "/build/model-acquisition/acquire",
+            {"launch_ticket": wrong_purpose},
+        )
+        assert wrong_status == 200
+        assert downloads == ["job-plan"]
+
+        # Any extra form field burns the authorization instead of launching.
+        extra_ticket = app._new_launch_ticket(
+            {"plan_job_id": "job-plan"}, purpose="acquisition_download"
+        )
+        extra_status, _el, _eb = app.handle(
+            "POST", "/build/model-acquisition/acquire",
+            {"launch_ticket": extra_ticket, "smuggled": "1"},
+        )
+        assert extra_status == 200
+        assert downloads == ["job-plan"]
+    finally:
+        app.close()

@@ -1,7 +1,7 @@
 # Run and return: broad thesis experiment program
 
 This is the operator path from a clean Linux GPU machine to the evidence bundle
-for the thesis. It covers the broad hosted and local model roster, all nineteen
+for the thesis. It covers the broad hosted and local model roster, all twenty
 source converters, the runner-safe external attack bridges, and nine complete
 source-native evaluators. Experiments and the human audit are still pending.
 Preflight, dry-run, diagnostic-canary, and bounded transport-probe artifacts are
@@ -90,7 +90,7 @@ two declared subparts; RQ5 is judge validity, not the adaptive lane:
 | --- | --- | --- |
 | RQ1 execution conformance | sections 7-14 | requested-cell eligibility/`N/A`, modality plan/result, complete content-bound cells |
 | RQ2 matched served-model conditions | focal grids and section 16 paired/figure commands | matched cluster support/effects plus exact realized identities |
-| RQ3 portfolio breadth/heterogeneity | 39 converter arms, nine native projects, section 16 suite summary | disposition-complete family inventory without false pooling |
+| RQ3 portfolio breadth/heterogeneity | 40 converter arms, nine native projects, section 16 suite summary | disposition-complete family inventory without false pooling |
 | RQ4a defense | section 13 guarded/unguarded same-base design | separate harmful and benign paired effects |
 | RQ4b adaptivity/native execution | section 12 Crescendo/transfer and section 14 native runtimes | fixed-horizon conversation, exact-transfer, or source task/oracle evidence |
 | RQ5 judge validity | sections 15-16 | eligible common-response human labels, adjudication, decision coverage and cluster-aware agreement/calibration |
@@ -226,7 +226,7 @@ data-use restriction, provider retention policy, and institutional approval befo
 acquisition or calls. Do not put secrets, harmful artifacts, or restricted corpora
 in Git.
 
-## 3. Acquire all nineteen converter sources
+## 3. Acquire all twenty converter sources
 
 *Console equivalent: the section 3.2 export commands are also launchable as
 the `export_jalmbench` and `export_vlsbench` form(s) in the rig console
@@ -305,7 +305,8 @@ and extract its thirteen scenario directories directly below
 `$URA_CORPORA/MM-SafetyBench/data/imgs`. SIUO likewise requires the authors'
 `SIUO-images.zip` linked from the
 [`sinwang/SIUO` dataset card](https://huggingface.co/datasets/sinwang/SIUO);
-place `images/` beside the selected `siuo_gen.json` or `siuo_mcqa.json`.
+place `images/` beside `siuo_gen.json` (the free-form generation release; the
+`siuo_mcqa.json` multiple-choice track is not convertible and is rejected).
 JailBreakV-28K needs the official dataset-with-images release, not only the code
 checkout. GPTGeoChat's Git repository contains evaluation code but not the 1.43
 GB human dataset; download `human.zip` from the official
@@ -418,7 +419,7 @@ sha256sum runs/thesis/source-export-summaries/*-export-summary.json \
 
 ### 3.3 Source inventory and exact input locators
 
-The nineteen converter names and the expected operator locators are:
+The twenty converter names and the expected operator locators are:
 
 | Converter | Official acquisition | Point the environment variable at | Runner status |
 | --- | --- | --- | --- |
@@ -432,7 +433,7 @@ The nineteen converter names and the expected operator locators are:
 | `harmbench` | `centerforaisafety/HarmBench` | one behavior CSV; image CSV requires `multimodal_behavior_images/` | common harmful text or image |
 | `vlsbench` | `Foreshhh/vlsbench` | exported `vlsbench.jsonl` beside `images/` | common harmful image |
 | `mossbench` | pinned `xirui-li/MOSSBench` | repository root | common benign image refusal |
-| `siuo` | `sinwang20/SIUO` + image ZIP | `data/siuo_gen.json` or `data/siuo_mcqa.json` beside `images/` | common harmful image composition |
+| `siuo` | `sinwang20/SIUO` + image ZIP | `data/siuo_gen.json` beside `images/` (mcqa track not convertible) | common harmful image composition |
 | `advbench` | `llm-attacks/llm-attacks` | `data/advbench/harmful_behaviors.csv` | common harmful text |
 | `jailbreakbench` | `JailbreakBench/JBB-Behaviors` | harmful and benign CSVs as separate arms | common harmful and benign text |
 | `figstep` | `CryptoAILab/FigStep` | `data/question/safebench.csv`; images in `data/images/SafeBench/` | common harmful image |
@@ -441,6 +442,7 @@ The nineteen converter names and the expected operator locators are:
 | `mllmguard` | gated `Carol0110/MLLMGuard` | one per-dimension table beside `imgs/` | privacy/bias/toxicity/legality common; hallucination/position-swapping/noise-injection pending truthfulness scorers |
 | `jalmbench` | `AnonymousUser000/JALMBench` | exported `jalmbench.jsonl` | common harmful text+audio |
 | `videosafetybench` | `BAAI/Video-SafetyBench` | benign or harmful metadata JSON/JSONL beside videos | common harmful text+video |
+| `saladbench` | `OpenSafetyLab/Salad-Data` | exported `base_set` (or `attack_enhanced_set`) JSON/JSONL | common harmful text; MD-Judge source-native scorer not run |
 
 Do not guess file names after downloading. Inspect the acquired tree, select the
 official table matching the converter contract above, and run the preflight. A
@@ -656,7 +658,7 @@ digest are recorded in
 The receipt is a compact operator record, not a workflow database. It may be
 scoped to the real arms selected for this command, but every selected real arm
 must appear and be `admitted`. Optional entries may record `blocked` or
-`not_selected` operator decisions; the full 39-arm disposition table instead
+`not_selected` operator decisions; the full 40-arm disposition table instead
 joins the maintained registry/requested universe with receipts, eligibility, and
 results. An admitted arm includes the observed upstream revision, split,
 declared source-file hashes, license/access decision, reconciled raw-source counts, and a
@@ -1223,10 +1225,15 @@ python -m compileall src experiments
 env -u URA_PROJECT_REVISION_MANIFEST -u URA_PROJECT_REVISION_SHA256 \
 python -m experiments.run_matrix --dry-run \
   --attackers replay,crescendo --judges rules,llm \
-  --corpora synth --limit 12 --seeds 0,1 \
+  --corpora synth --limit 12 --seeds 0,1 --exclude-tool-conditioned \
   --max-queries 4 --max-turns 4 --out runs/thesis/diagnostics/dry
 python -m experiments.figures --synth --out runs/thesis/diagnostics/figure-check
 ```
+
+`--exclude-tool-conditioned` drops the two tool-conditioned `synth` rows
+(`synth-4`, `synth-10`) with a recorded exclusion count so this diagnostic dry
+run completes; omitting it fails closed on the tool contract by design, since no
+Runner attacker can execute a tool-conditioned row yet.
 
 ### 8.1 Explicit zero-human synthetic paths
 

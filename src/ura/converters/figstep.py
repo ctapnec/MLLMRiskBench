@@ -25,12 +25,15 @@ from ..adapters.base import BaseConverter
 from ..data_models import DataPoint, DialogTurn
 from ._common import CorpusFormatError, Rc, dp, image, missing, read_csv, read_json, read_jsonl
 
-# Pinned SafeBench forbidden topics -> internal taxonomy.
+# Pinned SafeBench forbidden topics -> internal taxonomy. "physical harm" is the
+# OpenAI usage-policy category covering weapons, warfare and self-harm, so it maps
+# to CATASTROPHIC (the CBRN/weapons/self-harm umbrella), matching the identical
+# JailbreakBench OpenAI-policy category rather than TOXICITY.
 CATEGORY_MAP = {
     "illegal activity": Rc.LEGALITY,
     "hate speech": Rc.TOXICITY,
-    "malware generation": Rc.CYBERSEC,
-    "physical harm": Rc.TOXICITY,
+    "malware generation": Rc.INFORMATION_SECURITY,
+    "physical harm": Rc.CATASTROPHIC,
     "fraud": Rc.LEGALITY,
     "adult content": Rc.TOXICITY,
     "privacy violation": Rc.PRIVACY,

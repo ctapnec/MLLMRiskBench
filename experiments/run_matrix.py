@@ -17,8 +17,11 @@ keys and no GPU.
 
 Examples
 --------
-# offline smoke of the whole matrix (no keys, no GPU):
-python experiments/run_matrix.py --dry-run --limit 12 --out runs/dry
+# offline smoke of the whole matrix (no keys, no GPU). --exclude-tool-conditioned
+# drops the two tool-conditioned synth rows (which no attacker can execute yet)
+# with a recorded exclusion count; omit it to see the fail-closed tool contract:
+python experiments/run_matrix.py --dry-run --corpora synth --limit 12 \
+    --exclude-tool-conditioned --out runs/dry
 
 # one-local-target no-call preflight (replace receipt placeholders with the
 # content-addressed artifacts prepared by the runbook):
@@ -61,8 +64,11 @@ from datetime import datetime, timezone
 from importlib import metadata
 from pathlib import Path
 
-# make `import ura` work when run as a script from the repo root
-sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
+# make `import ura` and `import experiments.*` work when run as a script
+# (`python experiments/run_matrix.py ...`), not only as `python -m experiments.run_matrix`
+_REPO_ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(_REPO_ROOT / "src"))
+sys.path.insert(0, str(_REPO_ROOT))
 
 from ura.adapters.base import AttackBudget           # noqa: E402
 from ura.adapters._engine_runtime import (            # noqa: E402
@@ -80,6 +86,7 @@ from ura.attacker_input_contract import (              # noqa: E402
     AttackerInputContract,
     AttackerInputContractError,
     deserialize_attacker_input_plan,
+    is_tool_conditioned_source,
     media_input_identity,
     target_modality_support_from_component_config,
     validate_attempts_against_attacker_input_plan,
@@ -3331,14 +3338,48 @@ def load_corpus(name: str, limit: int, sample_seed: int = 0) -> list[DataPoint]:
     return selected
 
 
+def _partition_tool_conditioned(
+    selected: list[DataPoint],
+    indices: list[int],
+    cluster_ids_per_row: list[str],
+) -> tuple[list[DataPoint], list[int], list[str], list[str]]:
+    """Split a selected sample into executable rows and recorded tool exclusions.
+
+    The parallel ``indices`` and ``cluster_ids_per_row`` are filtered alongside
+    the rows so every downstream audit field stays mutually consistent (no row
+    re-enumeration that would shift cluster identity).
+    """
+    kept_rows: list[DataPoint] = []
+    kept_indices: list[int] = []
+    kept_cluster_ids: list[str] = []
+    excluded_ids: list[str] = []
+    for row, index, cluster_id in zip(selected, indices, cluster_ids_per_row):
+        if is_tool_conditioned_source(row):
+            excluded_ids.append(row.id)
+        else:
+            kept_rows.append(row)
+            kept_indices.append(index)
+            kept_cluster_ids.append(cluster_id)
+    return kept_rows, kept_indices, kept_cluster_ids, excluded_ids
+
+
 def load_corpus_with_audit(
     name: str,
     limit: int,
     sample_seed: int = 0,
     *,
     source_instance: dict[str, object] | None = None,
+    exclude_tool_conditioned: bool = False,
 ) -> tuple[list[DataPoint], dict[str, object]]:
-    """Load one source and retain enough information to audit the selected sample."""
+    """Load one source and retain enough information to audit the selected sample.
+
+    When ``exclude_tool_conditioned`` is set, tool-conditioned rows (which no
+    Runner attacker can execute yet) are dropped from the executed sample with a
+    recorded ``excluded_tool_conditioned_*`` count, while
+    ``full_converted_corpus_sha256`` and ``total_*`` still describe the complete
+    selection. This lets the offline smoke and console preflight run without
+    weakening the fail-closed default (which rejects the whole request).
+    """
     if limit < 0:
         raise ValueError("limit must be non-negative")
     instance = dict(source_instance or _default_source_instance(name))
@@ -3350,9 +3391,21 @@ def load_corpus_with_audit(
             raise ValueError(
                 f"source arm {name!r} has synth=true but converter={converter!r}"
             )
-        selected = synth_corpus(12 if limit == 0 else limit)
-        cluster_ids = [_cluster_key(index, row) for index, row in enumerate(selected)]
-        full_digest = canonical_converted_corpus_sha256(selected)
+        full_selected = synth_corpus(12 if limit == 0 else limit)
+        cluster_ids = [
+            _cluster_key(index, row) for index, row in enumerate(full_selected)
+        ]
+        full_digest = canonical_converted_corpus_sha256(full_selected)
+        selected = full_selected
+        selected_indices = list(range(len(full_selected)))
+        selected_cluster_ids = list(cluster_ids)
+        excluded_ids: list[str] = []
+        if exclude_tool_conditioned:
+            selected, selected_indices, selected_cluster_ids, excluded_ids = (
+                _partition_tool_conditioned(
+                    full_selected, list(range(len(full_selected))), cluster_ids
+                )
+            )
         return selected, {
             "corpus": name,
             "converter": converter,
@@ -3364,15 +3417,17 @@ def load_corpus_with_audit(
             "selected_converted_corpus_sha256": (
                 canonical_converted_corpus_sha256(selected)
             ),
-            "total_records": len(selected),
+            "total_records": len(full_selected),
             "selected_records": len(selected),
-            "selected_indices": list(range(len(selected))),
+            "selected_indices": selected_indices,
             "selected_ids": [datapoint.id for datapoint in selected],
             "limit_unit": "source_prompt_or_intent_clusters",
             "total_clusters": len(cluster_ids),
-            "selected_clusters": len(cluster_ids),
+            "selected_clusters": len(selected_cluster_ids),
             "total_cluster_ids": cluster_ids,
-            "selected_cluster_ids": cluster_ids,
+            "selected_cluster_ids": selected_cluster_ids,
+            "excluded_tool_conditioned_ids": excluded_ids,
+            "excluded_tool_conditioned_count": len(excluded_ids),
             "sample_seed": sample_seed,
             "limit": limit,
         }
@@ -3393,6 +3448,17 @@ def load_corpus_with_audit(
     full_observation = observed_arm_conformance(full)
     if full_observation["converted_corpus_sha256"] != full_digest:
         raise ValueError("full source observation/corpus digest mismatch")
+    excluded_ids = []
+    if exclude_tool_conditioned:
+        per_row_clusters = [
+            _cluster_key(index, row) for index, row in zip(indices, selected)
+        ]
+        selected, indices, kept_row_clusters, excluded_ids = (
+            _partition_tool_conditioned(selected, indices, per_row_clusters)
+        )
+        surviving = set(kept_row_clusters)
+        # preserve the selection order of distinct clusters that still run
+        selected_clusters = [key for key in selected_clusters if key in surviving]
     return selected, {
         "corpus": name,
         "converter": converter,
@@ -3414,6 +3480,8 @@ def load_corpus_with_audit(
         "selected_clusters": len(selected_clusters),
         "total_cluster_ids": total_clusters,
         "selected_cluster_ids": selected_clusters,
+        "excluded_tool_conditioned_ids": excluded_ids,
+        "excluded_tool_conditioned_count": len(excluded_ids),
         "sample_seed": sample_seed,
         "limit": limit,
         "selection_method": "seeded_nested_source_cluster_prefix_v1",
@@ -3557,6 +3625,15 @@ def build_parser() -> argparse.ArgumentParser:
             "execute exactly one target/source/attacker/seed and one whole source "
             "cluster as diagnostic evidence, never measured evidence; combine with "
             "--dry-run --corpora synth for a fully offline/no-human canary"
+        ),
+    )
+    ap.add_argument(
+        "--exclude-tool-conditioned",
+        action="store_true",
+        help=(
+            "drop tool-conditioned source rows (which no Runner attacker can "
+            "execute yet) with a recorded exclusion count instead of failing the "
+            "whole request; use for the offline smoke and console preflight"
         ),
     )
     ap.add_argument(
@@ -4981,9 +5058,24 @@ def _main(argv=None) -> int:
                 args.limit,
                 args.sample_seed,
                 source_instance=source_instances[corpus_name],
+                exclude_tool_conditioned=args.exclude_tool_conditioned,
             )
             if not corpus:
-                raise ValueError("requested corpus converted to zero datapoints")
+                raise ValueError(
+                    "requested corpus has no executable rows after excluding "
+                    "tool-conditioned sources"
+                    if args.exclude_tool_conditioned
+                    and sampling_audit.get("excluded_tool_conditioned_count")
+                    else "requested corpus converted to zero datapoints"
+                )
+            excluded_ids = sampling_audit.get("excluded_tool_conditioned_ids") or []
+            if excluded_ids:
+                print(
+                    f"excluded {len(excluded_ids)} tool-conditioned row(s) from "
+                    f"'{corpus_name}' (no Runner attacker can execute them yet): "
+                    f"{', '.join(excluded_ids)}",
+                    file=sys.stderr,
+                )
         except Exception as exc:  # noqa: BLE001 - fail pre-call preflight
             persist_request_error(
                 phase="corpus_preflight",

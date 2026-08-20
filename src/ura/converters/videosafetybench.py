@@ -61,9 +61,9 @@ KEYWORD_OVERRIDES = (
     ("biological", Rc.CATASTROPHIC),
     ("chemical", Rc.CATASTROPHIC),
     ("nuclear", Rc.CATASTROPHIC),
-    ("cyber", Rc.CYBERSEC),
-    ("hacking", Rc.CYBERSEC),
-    ("malware", Rc.CYBERSEC),
+    ("cyber", Rc.INFORMATION_SECURITY),
+    ("hacking", Rc.INFORMATION_SECURITY),
+    ("malware", Rc.INFORMATION_SECURITY),
     ("privacy", Rc.PRIVACY),
 )
 

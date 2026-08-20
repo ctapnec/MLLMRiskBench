@@ -2816,7 +2816,7 @@ class LifecycleMixin:
                 + html.escape(str(resource["repo_id"]))
                 + "@"
                 + html.escape(str(resource["revision"]))
-                + "</code> — "
+                + "</code> - "
                 + html.escape(", ".join(str(role) for role in resource["roles"]))
                 + "</li>"
                 for resource in plan["resources"]

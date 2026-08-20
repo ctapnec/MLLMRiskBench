@@ -12,8 +12,8 @@ DataPoint by the converter via ``dp(extra_refs=...)`` rather than forced onto
 the whole category. In particular:
 
 * OWASP LLM05 is Improper Output Handling (validating/sanitizing model *output*
-  before a downstream sink); it is not generic toxic content or cyber capability,
-  so TOXICITY and CYBERSEC carry no LLM05 default.
+  before a downstream sink); it is not generic toxic content or information-security
+  capability, so TOXICITY and INFORMATION_SECURITY carry no LLM05 default.
 * OWASP LLM01 Prompt Injection already covers both direct and indirect injection,
   so PROMPT_INJECTION_INDIRECT needs no additional agentic id by default. ASI05
   (Unexpected Code Execution) and ASI06 (Memory/Context Poisoning) are attached
@@ -47,7 +47,7 @@ TAXONOMY_MAP: dict[RiskCategory, dict[str, list[str]]] = {
         "OWASP_LLM": ["LLM09"], "NIST_GENAI": ["Confabulation"], "MLCOMMONS": []},
     RiskCategory.LEGALITY: {
         "OWASP_LLM": [], "MLCOMMONS": ["Non-Violent Crimes"]},
-    RiskCategory.CYBERSEC: {
+    RiskCategory.INFORMATION_SECURITY: {
         "OWASP_LLM": [],
         "NIST_GENAI": ["Information Security"], "MLCOMMONS": []},
     RiskCategory.GEO: {

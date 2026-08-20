@@ -12,8 +12,11 @@ A single ``ura`` entry point that wires the harness end-to-end:
 Only pydantic + the standard library are needed to import this module. Heavy
 judge/target backends (guardrail HF models, provider SDKs) are constructed
 lazily and only when the corresponding stage/target is actually requested, so
-the fully-offline path (``synth`` corpus + ``mock`` target + ``rules`` judge)
-runs with no third-party dependencies.
+the fully-offline path (``synth`` corpus + ``mock`` target + the default
+``rules,llm`` judges, both answered by the mock judge) runs with no third-party
+dependencies.  The ``synth`` fixture ships tool-conditioned rows to exercise the
+fail-closed gate; because no Runner attacker can execute them yet, this
+non-measured smoke drops them with a printed count instead of aborting.
 """
 from __future__ import annotations
 
@@ -24,6 +27,7 @@ from typing import Optional
 
 from .adapters.base import AttackBudget, BaseAttacker
 from .adapters.engines import get_attacker
+from .attacker_input_contract import is_tool_conditioned_source
 from .converters import get_converter, synth_corpus
 from .data_models import DataPoint, EvalResult
 from .judges.base import BaseJudge, JudgeCascade
@@ -182,6 +186,20 @@ def _cmd_run(args: argparse.Namespace) -> int:
             f"refusing to overwrite non-empty smoke output directory: {out_dir}"
         )
     corpus = _load_corpus(args.corpus, args.n)
+    # No Runner attacker can execute tool-conditioned rows yet; this non-measured
+    # smoke drops them with a printed count rather than aborting the whole run.
+    tool_rows = [dp.id for dp in corpus if is_tool_conditioned_source(dp)]
+    if tool_rows:
+        corpus = [dp for dp in corpus if not is_tool_conditioned_source(dp)]
+        print(
+            f"excluded {len(tool_rows)} tool-conditioned smoke row(s) "
+            f"(no executable tool runtime yet): {', '.join(tool_rows)}",
+            file=sys.stderr,
+        )
+    if not corpus:
+        raise ValueError(
+            "no executable datapoints remain after excluding tool-conditioned rows"
+        )
     attacker: BaseAttacker = get_attacker(args.attacker)
     target = REGISTRY.create(args.target)
     cascade = _build_cascade(args.judges.split(","), args.judge_model)
@@ -292,8 +310,12 @@ def build_parser() -> argparse.ArgumentParser:
     )
     p_run.add_argument(
         "--judges",
-        default="rules",
-        help="comma-separated smoke stages: rules[,llm] (guardrail is measured-only)",
+        default="rules,llm",
+        help=(
+            "comma-separated smoke stages: rules[,llm] (guardrail is measured-only). "
+            "The default rules,llm keeps the mock-judged smoke complete when the "
+            "rule stage abstains; rules-only completes only trivial cases"
+        ),
     )
     p_run.add_argument(
         "--judge-model",
@@ -336,7 +358,7 @@ def main(argv: Optional[list[str]] = None) -> int:
     args = parser.parse_args(argv)
     try:
         return int(args.func(args))
-    except (FileNotFoundError, KeyError, ValueError, RuntimeError) as exc:
+    except (FileNotFoundError, KeyError, ValueError, RuntimeError, OSError) as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 1
 
