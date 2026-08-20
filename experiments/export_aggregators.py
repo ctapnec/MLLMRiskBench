@@ -31,8 +31,10 @@ _ROWS = (
 )
 
 
-def _http_json(url: str) -> object:
-    with urllib.request.urlopen(url, timeout=120) as resp:
+def _http_json(url: str, headers: dict[str, str] | None = None) -> object:
+    with urllib.request.urlopen(
+        urllib.request.Request(url, headers=headers or {}), timeout=120
+    ) as resp:
         return json.load(resp)
 
 
@@ -41,11 +43,22 @@ def _http_bytes(url: str) -> bytes:
         return resp.read()
 
 
-def _parquet_records(dataset: str, config: str, split: str, columns: list[str]) -> list[dict]:
+def _auth_header() -> dict[str, str]:
+    """Bearer header from HF_TOKEN when present (needed for gated datasets)."""
+    token = __import__("os").environ.get("HF_TOKEN", "").strip()
+    return {"Authorization": f"Bearer {token}"} if token else {}
+
+
+def _parquet_records(
+    dataset: str, config: str, split: str, columns: list[str] | None = None
+) -> list[dict]:
     """Read one HF dataset config/split fully via its parquet shards."""
+    import io
+
     import pandas as pd  # local import: only needed for parquet sources
 
-    meta = _http_json(_PARQUET_META.format(ds=dataset.replace("/", "%2F")))
+    hdr = _auth_header()
+    meta = _http_json(_PARQUET_META.format(ds=dataset.replace("/", "%2F")), hdr)
     urls = [
         f["url"]
         for f in meta["parquet_files"]
@@ -53,11 +66,28 @@ def _parquet_records(dataset: str, config: str, split: str, columns: list[str]) 
     ]
     if not urls:
         raise SystemExit(f"no parquet shards for {dataset} {config}/{split}")
-    frame = pd.concat([pd.read_parquet(u) for u in urls], ignore_index=True)
-    missing = [c for c in columns if c not in frame.columns]
-    if missing:
-        raise SystemExit(f"{dataset} missing expected columns {missing}")
-    return frame[columns].to_dict(orient="records")
+    shards = []
+    for url in urls:
+        with urllib.request.urlopen(urllib.request.Request(url, headers=hdr), timeout=300) as resp:
+            shards.append(pd.read_parquet(io.BytesIO(resp.read())))
+    frame = pd.concat(shards, ignore_index=True)
+    if columns is not None:
+        missing = [c for c in columns if c not in frame.columns]
+        if missing:
+            raise SystemExit(f"{dataset} missing expected columns {missing}")
+        frame = frame[columns]
+
+    def _norm(value):
+        if hasattr(value, "item"):
+            try:
+                return value.item()
+            except Exception:  # noqa: BLE001 - best-effort scalar coercion
+                return value
+        if isinstance(value, dict):
+            return {k: _norm(v) for k, v in value.items()}
+        return value
+
+    return [{k: _norm(v) for k, v in row.items()} for row in frame.to_dict(orient="records")]
 
 
 def _rows_records(dataset: str, config: str, split: str) -> list[dict]:
@@ -115,11 +145,38 @@ def export_simplesafetytests(out_root: Path) -> Path:
     return _write_json(out_root / "SimpleSafetyTests" / "simplesafetytests.json", rows)
 
 
+def export_decodingtrust(out_root: Path) -> Path:
+    # Gated dataset: needs HF_TOKEN in the environment. Only the stereotype
+    # perspective is converted; the toxicity/privacy perspectives are excluded.
+    rows = _parquet_records("AI-Secure/DecodingTrust", "stereotype", "stereotype")
+    return _write_json(out_root / "DecodingTrust" / "stereotype.json", rows)
+
+
+def export_holisafe(out_root: Path) -> Path:
+    # Gated multimodal dataset shipped as a metadata JSON plus an images/ folder;
+    # a full `hf download` (needs HF_TOKEN + accepted terms) is the right tool,
+    # not the parquet bridge. Delegate to the hf CLI and return the metadata path.
+    import subprocess
+
+    target = out_root / "HoliSafe"
+    subprocess.run(
+        ["hf", "download", "etri-vilab/holisafe-bench", "--repo-type", "dataset",
+         "--local-dir", str(target)],
+        check=True,
+    )
+    meta = target / "holisafe_bench.json"
+    if not meta.is_file():
+        raise SystemExit(f"HoliSafe metadata not found at {meta}")
+    return meta
+
+
 _EXPORTERS = {
     "saladbench": export_saladbench,
     "airbench": export_airbench,
     "xstest": export_xstest,
     "simplesafetytests": export_simplesafetytests,
+    "decodingtrust": export_decodingtrust,
+    "holisafe": export_holisafe,
 }
 
 

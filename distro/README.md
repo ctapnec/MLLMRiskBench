@@ -25,7 +25,7 @@ distro/install.sh console                 # launch the console in tmux on :8642
 | `hf` | pinned Hugging Face dataset releases (AgentHarm, JBB, MLLMGuard, VLSBench, Video-SafetyBench, JALMBench, ...) |
 | `archives` | separately-distributed media (MM-SafetyBench images, GPTGeoChat, SIUO) + JALMBench/VLSBench parquet exports |
 | `bipia` | build the BIPIA qa/abstract sets from their external XSum/NewsQA bases |
-| `aggregators` | fetch the aggregator corpora - SALAD-Bench, AIR-Bench 2024, XSTest, SimpleSafetyTests - via `experiments.export_aggregators` |
+| `aggregators` | fetch the aggregator corpora - SALAD-Bench, AIR-Bench 2024, XSTest, SimpleSafetyTests, DecodingTrust (stereotype), HoliSafe (multimodal, gated) - via `experiments.export_aggregators` |
 | `locators` | write every `URA_*_PATH` binding into `~/.ura_campaign_env`, register the aggregator arms in `experiments/source-instances.json`, and print an existence report |
 | `runtimes` | install the isolated third-party framework runtimes under the strict lock |
 | `console` | (re)launch the rig console in a persistent tmux session on `127.0.0.1:8642` |

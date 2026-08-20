@@ -156,7 +156,7 @@ phase_bipia() {
 }
 
 phase_aggregators() {
-  echo "[aggregators] SALAD-Bench + AIR-Bench 2024 + XSTest + SimpleSafetyTests"
+  echo "[aggregators] SALAD-Bench + AIR-Bench + XSTest + SimpleSafetyTests + DecodingTrust + HoliSafe"
   ( cd "$URA_ROOT" && run_step export-aggregators "$PY" -m experiments.export_aggregators \
       --source all --out-root "$URA_CORPORA" )
 }
@@ -212,6 +212,8 @@ export URA_SALADBENCH_PATH=\$URA_CORPORA/SALAD-Data/base_set.json
 export URA_AIRBENCH_PATH=\$URA_CORPORA/AIR-Bench-2024/air_bench_default.json
 export URA_XSTEST_PATH=\$URA_CORPORA/XSTest/xstest_prompts.csv
 export URA_SIMPLESAFETYTESTS_PATH=\$URA_CORPORA/SimpleSafetyTests/simplesafetytests.json
+export URA_DECODINGTRUST_STEREOTYPE_PATH=\$URA_CORPORA/DecodingTrust/stereotype.json
+export URA_HOLISAFE_PATH=\$URA_CORPORA/HoliSafe/holisafe_bench.json
 export URA_MEDIA_ROOTS=\$URA_CORPORA/MM-SafetyBench/data/imgs:\$URA_CORPORA/MOSSBench:\$URA_CORPORA/JailBreakV-28K:\$URA_CORPORA/GPTGeoChat:\$URA_CORPORA/HarmBench:\$URA_CORPORA/VLSBench-export:\$URA_CORPORA/SIUO/data:\$URA_CORPORA/FigStep/data:\$URA_CORPORA/MLLMGuard:\$URA_CORPORA/JALMBench-export:\$URA_CORPORA/Video-SafetyBench
 # --- end URA source locators ---
 ENV
@@ -226,6 +228,8 @@ adds = {
   "airbench_full": {"converter":"airbench","path_env":"URA_AIRBENCH_PATH","source_label":"AIR-Bench 2024 (aggregator)","split":"default-test"},
   "xstest_full": {"converter":"xstest","path_env":"URA_XSTEST_PATH","source_label":"XSTest exaggerated-safety (aggregator)","split":"prompts"},
   "simplesafetytests_full": {"converter":"simplesafetytests","path_env":"URA_SIMPLESAFETYTESTS_PATH","source_label":"SimpleSafetyTests (aggregator)","split":"test"},
+  "decodingtrust_stereotype": {"converter":"decodingtrust","path_env":"URA_DECODINGTRUST_STEREOTYPE_PATH","source_label":"DecodingTrust stereotype-bias (aggregator)","split":"stereotype"},
+  "holisafe_full": {"converter":"holisafe","path_env":"URA_HOLISAFE_PATH","source_label":"HoliSafe multimodal (aggregator; image carries harm)","split":"bench"},
 }
 changed = False
 for k, v in adds.items():
