@@ -84,6 +84,64 @@ def _scaffold_consumed_input(path_env: str) -> tuple[dict[str, Any] | None, str]
     raise ValueError(f"scaffold input {path_env} is neither file nor directory")
 
 
+def _scaffold_components(
+    path_env: str, consumed: dict[str, Any] | None
+) -> tuple[list[dict[str, Any]], str]:
+    """Scaffold the exact-file components a directory-backed arm must declare.
+
+    A receipt whose consumed input is a directory is rejected unless it declares
+    at least one exact released file (``ArmReceipt._admission``). Emitting an
+    empty list therefore produced a scaffold that could never be completed into
+    a valid receipt without inventing the field, and failed with a message about
+    admission rather than about the missing scaffold value.
+
+    Any ``URA_*_COMPONENT_PATH`` variable that resolves to a real file inside the
+    arm's directory is hashed here, so the mechanical part is filled from the
+    environment exactly as the file case is; only the human ``role`` is left for
+    completion. When no such variable is configured, one placeholder component
+    is emitted so the requirement is visible and the sentinel check reports it.
+    """
+
+    if not consumed or consumed.get("kind") != "directory":
+        return [], ""
+    root = Path(os.environ[path_env]).expanduser().resolve(strict=True)
+    components: list[dict[str, Any]] = []
+    for name, value in sorted(os.environ.items()):
+        if not name.startswith("URA_") or not name.endswith("_COMPONENT_PATH"):
+            continue
+        if not value.strip():
+            continue
+        candidate = Path(value).expanduser()
+        if candidate.is_symlink() or not candidate.is_file():
+            continue
+        resolved = candidate.resolve(strict=True)
+        if not resolved.is_relative_to(root):
+            continue
+        payload = resolved.read_bytes()
+        components.append({
+            "role": f"{SCAFFOLD_SENTINEL}: what this exact released file backs",
+            "path_env": name,
+            "sha256": hashlib.sha256(payload).hexdigest(),
+            "bytes": len(payload),
+        })
+    if components:
+        return (
+            components,
+            f"{len(components)} component(s) hashed from environment; "
+            "describe each role",
+        )
+    return (
+        [{
+            "role": f"{SCAFFOLD_SENTINEL}: what this exact released file backs",
+            "path_env": f"URA_{SCAFFOLD_SENTINEL}_COMPONENT_PATH",
+            "sha256": SCAFFOLD_SENTINEL,
+            "bytes": 1,
+        }],
+        "directory input; set a URA_*_COMPONENT_PATH inside it and re-run, "
+        "or declare the exact-file release component(s) by hand",
+    )
+
+
 def _scaffold_semantic_review(
     arm_id: str, observation: Path | None,
 ) -> tuple[dict[str, Any], str]:
@@ -156,10 +214,15 @@ def _write_scaffold(
         review, review_note = _scaffold_semantic_review(
             arm_id, observations.get(arm_id)
         )
+        components, components_note = _scaffold_components(
+            str(instance["path_env"]), consumed
+        )
         prefill[arm_id] = {
             "consumed_input": consumed_note,
             "semantic_review": review_note,
         }
+        if components_note:
+            prefill[arm_id]["components"] = components_note
         scaffold_arms.append({
             "arm_id": arm_id,
             "converter": instance["converter"],
@@ -172,7 +235,7 @@ def _write_scaffold(
             "requested_revision": f"{SCAFFOLD_SENTINEL.lower()}0",
             "observed_revision": f"{SCAFFOLD_SENTINEL.lower()}0",
             "consumed_input": consumed,
-            "components": [],
+            "components": components,
             "operator_decision": {
                 "decision": "pending",
                 "access_status": "pending",

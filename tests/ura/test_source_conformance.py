@@ -625,6 +625,81 @@ def test_scaffold_prefills_mechanical_fields_and_is_not_admissible(
     ]) == 1
 
 
+def test_scaffold_declares_components_for_a_directory_backed_arm(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # A directory-backed admitted arm is rejected unless it declares at least
+    # one exact released file, so a scaffold that emitted an empty component
+    # list could never be completed into a valid receipt without inventing the
+    # field. Any URA_*_COMPONENT_PATH inside the arm's directory is hashed here
+    # exactly as the file case is; only the human role is left to complete.
+    release = tmp_path / "release"
+    (release / "data").mkdir(parents=True)
+    component = release / "data" / "scenario.json"
+    component.write_text('{"row": 1}', encoding="utf-8")
+    outside = tmp_path / "elsewhere.json"
+    outside.write_text('{"row": 2}', encoding="utf-8")
+    monkeypatch.setenv("URA_FIXTURE_SOURCE", str(release))
+    monkeypatch.setenv("URA_FIXTURE_COMPONENT_PATH", str(component))
+    monkeypatch.setenv("URA_OUTSIDE_COMPONENT_PATH", str(outside))
+    registry = tmp_path / "source-instances.json"
+    registry.write_text(json.dumps({"fixture_arm": {
+        "converter": "advbench",
+        "path_env": "URA_FIXTURE_SOURCE",
+        "source_label": "Fixture release directory",
+        "split": "test",
+    }}), encoding="utf-8")
+    out = tmp_path / "receipt.scaffold.json"
+
+    assert conformance_cli.main([
+        "--scaffold", "--arm", "fixture_arm",
+        "--source-config", str(registry),
+        "--out", str(out),
+    ]) == 0
+
+    arm = json.loads(out.read_text(encoding="utf-8"))["arms"][0]
+    assert arm["consumed_input"] == {"kind": "directory"}
+    # Exactly the component inside the arm's directory, hashed from the real
+    # bytes; the same-named variable pointing outside the release is ignored.
+    assert [item["path_env"] for item in arm["components"]] == [
+        "URA_FIXTURE_COMPONENT_PATH"
+    ]
+    declared = arm["components"][0]
+    assert declared["sha256"] == hashlib.sha256(component.read_bytes()).hexdigest()
+    assert declared["bytes"] == component.stat().st_size
+    assert conformance_cli.SCAFFOLD_SENTINEL in declared["role"]
+
+
+def test_scaffold_marks_a_directory_arm_with_no_component_variable(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    release = tmp_path / "release"
+    release.mkdir()
+    (release / "data.json").write_text('{"row": 1}', encoding="utf-8")
+    monkeypatch.setenv("URA_FIXTURE_SOURCE", str(release))
+    registry = tmp_path / "source-instances.json"
+    registry.write_text(json.dumps({"fixture_arm": {
+        "converter": "advbench",
+        "path_env": "URA_FIXTURE_SOURCE",
+        "source_label": "Fixture release directory",
+        "split": "test",
+    }}), encoding="utf-8")
+    out = tmp_path / "receipt.scaffold.json"
+
+    assert conformance_cli.main([
+        "--scaffold", "--arm", "fixture_arm",
+        "--source-config", str(registry),
+        "--out", str(out),
+    ]) == 0
+
+    arm = json.loads(out.read_text(encoding="utf-8"))["arms"][0]
+    # One visible placeholder rather than an empty list, so the requirement is
+    # reported as an outstanding scaffold value instead of failing later with
+    # an admission message.
+    assert len(arm["components"]) == 1
+    assert conformance_cli.SCAFFOLD_SENTINEL in arm["components"][0]["sha256"]
+
+
 def test_receipt_rejects_any_surviving_scaffold_placeholder(
     tmp_path: Path,
 ) -> None:

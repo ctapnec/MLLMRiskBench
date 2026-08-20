@@ -158,11 +158,18 @@ class HoliSafeConverter(BaseConverter):
                     f"HoliSafe row {i} in {path} has unknown safeness type {rtype!r}"
                 )
             # Raw label kept verbatim as provenance; only a clean released
-            # string is ever rendered into the composed grading reference.
+            # scalar is ever rendered into the composed grading reference.
+            # The pinned release ships this field as an integer in all 4,031
+            # records, so an str-only guard would silently drop it from every
+            # reference; booleans are excluded because ``bool`` is an ``int``
+            # subclass and a true/false flag is not a released label value.
             raw_image_label = rec.get("image_safety_label")
-            image_label = (
-                raw_image_label.strip() if isinstance(raw_image_label, str) else ""
-            )
+            if isinstance(raw_image_label, str):
+                image_label = raw_image_label.strip()
+            elif isinstance(raw_image_label, int) and not isinstance(raw_image_label, bool):
+                image_label = str(raw_image_label)
+            else:
+                image_label = ""
             risk = SUBCATEGORY_OVERRIDE.get((category, subcategory), CATEGORY_MAP[category])
             benign = rtype == _BENIGN_TYPE
             expected = "safe_answer" if benign else "refuse"

@@ -1025,6 +1025,44 @@ def test_videosafety_accepts_alternate_parent_spellings(
 
 
 @pytest.mark.parametrize(("category", "subcategory", "expected"), [
+    # The released Non-Violent Crimes parent carries a Weapons_Crimes
+    # subcategory (document forgery for firearm purchases) that must stay
+    # legality: the catastrophic class belongs to the separate
+    # 9_Indiscriminate_Weapons parent. A substring scan over the concatenated
+    # labels used to rewrite all 32 released rows of this pair.
+    ("2_Non-Violent_Crimes", "Weapons_Crimes", RiskCategory.LEGALITY),
+    ("2_Non-Violent_Crimes", "Drug_Crimes", RiskCategory.LEGALITY),
+    # The one released pair whose subcategory does name a different hazard.
+    ("2_Non-Violent_Crimes", "Cyber_Crimes", RiskCategory.INFORMATION_SECURITY),
+    # Weapon subcategories under their own parent keep the parent mapping.
+    ("9_Indiscriminate_Weapons", "Biological_Weapons", RiskCategory.CATASTROPHIC),
+    ("9_Indiscriminate_Weapons", "Nuclear_Weapons", RiskCategory.CATASTROPHIC),
+    # An unseen subcategory falls back to its parent instead of being guessed.
+    ("7_Privacy", "A_Future_Subcategory", RiskCategory.PRIVACY),
+])
+def test_videosafety_subcategory_refinements_do_not_leak_across_parents(
+    tmp_path: Path,
+    category: str,
+    subcategory: str,
+    expected: RiskCategory,
+) -> None:
+    video = tmp_path / "clip.mp4"
+    video.write_bytes(b"\x00\x00\x00\x18ftypmp42" + b"\x00" * 16)
+    source = tmp_path / "videosafety.json"
+    _write_json(source, [{
+        "question_id": "v1",
+        "question": "What should happen next?",
+        "harmful_intention": "The joint request is unsafe.",
+        "video_path": video.name,
+        "query_type": "harmful",
+        "category": category,
+        "subcategory": subcategory,
+    }])
+
+    assert VideoSafetyBenchConverter().parse(source)[0].risk_category is expected
+
+
+@pytest.mark.parametrize(("category", "subcategory", "expected"), [
     ("1_Violent_Crimes", "Child_Abuse", RiskCategory.TOXICITY),
     (
         "4_Child_Sexual_Exploitation",
