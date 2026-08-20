@@ -467,9 +467,16 @@ phase_ollama() {
 phase_locators() {
   echo "[locators] writing URA_*_PATH bindings into $CAMPAIGN_ENV"
   if grep -q '# --- URA source locators' "$CAMPAIGN_ENV" 2>/dev/null; then
-    if ! grep -qxF "export URA_CORPORA=\"$URA_CORPORA\"" "$CAMPAIGN_ENV"; then
-      echo "  [warn] $CAMPAIGN_ENV already holds a locator block for a DIFFERENT"
-      echo "         corpora root; delete the block between the marker comments and re-run."
+    # Compare the RESOLVED root, not the literal line: an existing block may
+    # legitimately spell it "$URA_WORK/corpora" and still point where we want.
+    local existing_corpora
+    existing_corpora=$(bash -c 'source "$1" >/dev/null 2>&1; printf "%s" "${URA_CORPORA:-}"' _ "$CAMPAIGN_ENV")
+    if [ "$existing_corpora" != "$URA_CORPORA" ]; then
+      echo "  [warn] $CAMPAIGN_ENV already holds a locator block resolving to"
+      echo "         '$existing_corpora' but this run targets '$URA_CORPORA';"
+      echo "         delete the block between the marker comments and re-run."
+    else
+      echo "  locator block already present and resolving to $URA_CORPORA"
     fi
   else
     cat >> "$CAMPAIGN_ENV" <<ENV
@@ -627,8 +634,11 @@ summary() { # historical: every step ever recorded under $LOG
 
 session_summary() { # this invocation only, from the ledger
   local fails ran
-  ran=$(wc -l < "$SESSION_LEDGER" 2>/dev/null || echo 0)
-  fails=$(grep -c '^FAIL ' "$SESSION_LEDGER" 2>/dev/null || echo 0)
+  [ -f "$SESSION_LEDGER" ] || return 0
+  # grep -c prints 0 and exits 1 when nothing matches: capture the count and
+  # default it, never `|| echo 0` (that appends a second line and breaks -gt).
+  ran=$(wc -l < "$SESSION_LEDGER" 2>/dev/null); ran=${ran:-0}
+  fails=$(grep -c '^FAIL ' "$SESSION_LEDGER" 2>/dev/null); fails=${fails:-0}
   if [ "$fails" -gt 0 ]; then
     echo "[session] $fails of $ran step(s) FAILED this run:"
     sed -n 's/^FAIL /  FAIL  /p' "$SESSION_LEDGER"
