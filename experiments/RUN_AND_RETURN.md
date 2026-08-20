@@ -231,6 +231,12 @@ in Git.
 the `export_jalmbench` and `export_vlsbench` form(s) in the rig console
 (section 18); identical argument vectors, gates and artifacts.*
 
+*Scripted equivalent: `distro/install.sh` performs sections 2-4 end to end on a
+fresh rig - the same pinned `REF_*` snapshots, the same locator bindings, plus
+the aggregator corpora, the user-local ollama runtime and the console launch.
+`distro/install.sh all` is the one-command path; the per-phase commands below
+remain the reference for what it does and for repairing a single source.*
+
 The commands below use exact maintained snapshots verified on 12 August 2026.
 The operator must still review each repository, access condition, and license and
 record the decision in the compact source receipt described in section 4.1;
