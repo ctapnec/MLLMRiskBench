@@ -89,6 +89,7 @@ from .rig_web_app.artifacts import (
 from .rig_web_app.catalog import (
     COMMAND_GROUPS,
     COMMANDS,
+    _AGGREGATOR_ARMS,
     _ALL_MODALITIES,
     _ARM_CATALOG,
     _ARM_MODALITIES,

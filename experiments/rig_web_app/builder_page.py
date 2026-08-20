@@ -15,6 +15,7 @@ from ura.targets.api import canonical_api_target_identity
 from .catalog import (
     _MODALITIES,
     _ARM_CATALOG,
+    _AGGREGATOR_ARMS,
     _SOURCE_METRIC_ARMS,
     _NATIVE_ONLY_ATTACKERS,
     _BUILDER_OMITTED_ATTACKERS,
@@ -575,12 +576,21 @@ class BuilderPageMixin:
                     )
                     continue
                 note = "" if known else " <span class='fieldhint'>(not in registry yet)</span>"
+                agg_badge = (
+                    "<span class='badge blue tip' tabindex='0'>aggregator"
+                    "<span class='tiptext'>Unified / multi-benchmark aggregator "
+                    "source: itself pools or spans many upstream safety corpora. "
+                    "URA reuses its corpus but drops any pooled composite.</span>"
+                    "</span>"
+                    if arm in _AGGREGATOR_ARMS
+                    else ""
+                )
                 boxes.append(
                     "<label class='check'>"
                     f"<input type='checkbox' class='armbox' "
                     f"data-mods='{html.escape(','.join(mods))}' "
                     f"data-arm='{html.escape(arm)}'>"
-                    f"<span>{_arm_head(html.escape(arm) + note, mods)}</span>"
+                    f"<span>{_arm_head(html.escape(arm) + note, mods)}{agg_badge}</span>"
                     "</label>"
                 )
             arm_groups.append(

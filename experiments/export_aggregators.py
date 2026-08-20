@@ -1,0 +1,147 @@
+"""Bounded, offline-friendly acquisition bridge for the aggregator corpora.
+
+Downloads the released aggregator sources (SALAD-Bench, AIR-Bench 2024, XSTest,
+SimpleSafetyTests) into the exact on-disk layout their converters read, so the
+whole acquisition is reproducible from the repo (the distro installer calls
+this, and it mirrors the ``export_jalmbench``/``export_vlsbench`` pattern).
+
+Each source is fetched from its authoritative host - the Hugging Face
+datasets-server parquet/rows API or the upstream GitHub raw file - and written as
+a single UTF-8 file under ``<out-root>/<Source>/``. Nothing here scores a model
+or contacts a provider; it only prepares local corpus files. Usage::
+
+    python -m experiments.export_aggregators --source all --out-root "$URA_CORPORA"
+    python -m experiments.export_aggregators --source airbench --out-root /data/.../corpora
+
+The printed target paths are what ``URA_SALADBENCH_PATH`` / ``URA_AIRBENCH_PATH``
+/ ``URA_XSTEST_PATH`` / ``URA_SIMPLESAFETYTESTS_PATH`` must point at.
+"""
+from __future__ import annotations
+
+import argparse
+import json
+import sys
+import urllib.request
+from pathlib import Path
+
+_PARQUET_META = "https://datasets-server.huggingface.co/parquet?dataset={ds}"
+_ROWS = (
+    "https://datasets-server.huggingface.co/rows"
+    "?dataset={ds}&config={cfg}&split={split}&offset={off}&length=100"
+)
+
+
+def _http_json(url: str) -> object:
+    with urllib.request.urlopen(url, timeout=120) as resp:
+        return json.load(resp)
+
+
+def _http_bytes(url: str) -> bytes:
+    with urllib.request.urlopen(url, timeout=120) as resp:
+        return resp.read()
+
+
+def _parquet_records(dataset: str, config: str, split: str, columns: list[str]) -> list[dict]:
+    """Read one HF dataset config/split fully via its parquet shards."""
+    import pandas as pd  # local import: only needed for parquet sources
+
+    meta = _http_json(_PARQUET_META.format(ds=dataset.replace("/", "%2F")))
+    urls = [
+        f["url"]
+        for f in meta["parquet_files"]
+        if f["config"] == config and f["split"] == split
+    ]
+    if not urls:
+        raise SystemExit(f"no parquet shards for {dataset} {config}/{split}")
+    frame = pd.concat([pd.read_parquet(u) for u in urls], ignore_index=True)
+    missing = [c for c in columns if c not in frame.columns]
+    if missing:
+        raise SystemExit(f"{dataset} missing expected columns {missing}")
+    return frame[columns].to_dict(orient="records")
+
+
+def _rows_records(dataset: str, config: str, split: str) -> list[dict]:
+    """Read a small HF dataset fully via the rows API (no parquet dependency)."""
+    out: list[dict] = []
+    offset = 0
+    while True:
+        page = _http_json(
+            _ROWS.format(ds=dataset.replace("/", "%2F"), cfg=config, split=split, off=offset)
+        )
+        batch = [r["row"] for r in page.get("rows", [])]
+        out.extend(batch)
+        if len(batch) < 100:
+            break
+        offset += 100
+    if not out:
+        raise SystemExit(f"no rows returned for {dataset} {config}/{split}")
+    return out
+
+
+def _write_json(path: Path, rows: list[dict]) -> Path:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(rows, ensure_ascii=False), encoding="utf-8")
+    return path
+
+
+def export_saladbench(out_root: Path) -> Path:
+    rows = _parquet_records(
+        "OpenSafetyLab/Salad-Data", "base_set", "train",
+        ["qid", "question", "source", "1-category", "2-category", "3-category"],
+    )
+    return _write_json(out_root / "SALAD-Data" / "base_set.json", rows)
+
+
+def export_airbench(out_root: Path) -> Path:
+    rows = _parquet_records(
+        "stanford-crfm/air-bench-2024", "default", "test",
+        ["cate-idx", "l2-name", "l3-name", "l4-name", "prompt"],
+    )
+    return _write_json(out_root / "AIR-Bench-2024" / "air_bench_default.json", rows)
+
+
+def export_xstest(out_root: Path) -> Path:
+    raw = _http_bytes(
+        "https://raw.githubusercontent.com/paul-rottger/xstest/main/xstest_prompts.csv"
+    )
+    target = out_root / "XSTest" / "xstest_prompts.csv"
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_bytes(raw)
+    return target
+
+
+def export_simplesafetytests(out_root: Path) -> Path:
+    rows = _rows_records("Bertievidgen/SimpleSafetyTests", "default", "test")
+    return _write_json(out_root / "SimpleSafetyTests" / "simplesafetytests.json", rows)
+
+
+_EXPORTERS = {
+    "saladbench": export_saladbench,
+    "airbench": export_airbench,
+    "xstest": export_xstest,
+    "simplesafetytests": export_simplesafetytests,
+}
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "--source", required=True, choices=[*_EXPORTERS, "all"],
+        help="which aggregator corpus to prepare",
+    )
+    parser.add_argument(
+        "--out-root", required=True, type=Path,
+        help="corpora root (e.g. $URA_CORPORA); each source writes under its own subdir",
+    )
+    args = parser.parse_args(argv)
+    out_root = args.out_root.expanduser()
+    names = list(_EXPORTERS) if args.source == "all" else [args.source]
+    for name in names:
+        target = _EXPORTERS[name](out_root)
+        size = target.stat().st_size
+        print(f"{name}: wrote {target} ({size} bytes)")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main(sys.argv[1:]))

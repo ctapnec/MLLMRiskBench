@@ -13,6 +13,7 @@ from __future__ import annotations
 from ..adapters.base import BaseConverter
 from .advbench import AdvBenchConverter
 from .agentharm import AgentHarmConverter
+from .airbench import AirBenchConverter
 from .bipia import BIPIAConverter
 from .cyberseceval import CyberSecEvalConverter
 from .figstep import FigStepConverter
@@ -28,8 +29,10 @@ from .mossbench import MOSSBenchConverter
 from .release_specs import CORPUS_RELEASE_SPECS
 from .rjudge import RJudgeConverter
 from .saladbench import SaladBenchConverter
+from .simplesafetytests import SimpleSafetyTestsConverter
 from .siuo import SIUOConverter
 from .strongreject import StrongRejectConverter
+from .xstest import XSTestConverter
 from .synth import synth_corpus
 from .videosafetybench import VideoSafetyBenchConverter
 from .vlsbench import VLSBenchConverter
@@ -43,6 +46,7 @@ _CONVERTERS: dict[str, type[BaseConverter]] = {
         AdvBenchConverter, JailbreakBenchConverter, FigStepConverter,
         CyberSecEvalConverter, InjecAgentConverter, MLLMGuardConverter,
         JALMBenchConverter, VideoSafetyBenchConverter, SaladBenchConverter,
+        AirBenchConverter, XSTestConverter, SimpleSafetyTestsConverter,
     )
 }
 
@@ -61,6 +65,7 @@ __all__ = [
     "AdvBenchConverter", "JailbreakBenchConverter", "FigStepConverter",
     "CyberSecEvalConverter", "InjecAgentConverter", "MLLMGuardConverter",
     "JALMBenchConverter", "VideoSafetyBenchConverter", "SaladBenchConverter",
+    "AirBenchConverter", "XSTestConverter", "SimpleSafetyTestsConverter",
     "get_converter", "synth_corpus",
     "ConverterError", "CorpusFormatError", "CorpusNotFoundError", "MediaAssetError",
     "CORPUS_RELEASE_SPECS",

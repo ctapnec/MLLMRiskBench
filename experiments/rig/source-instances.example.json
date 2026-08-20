@@ -95,6 +95,24 @@
     "source_label": "SALAD-Bench base harmful set (aggregator corpus; MD-Judge not run)",
     "split": "base_set"
   },
+  "airbench_full": {
+    "converter": "airbench",
+    "path_env": "URA_AIRBENCH_PATH",
+    "source_label": "AIR-Bench 2024 regulation-grounded harmful prompts (aggregator; graded rubric not run)",
+    "split": "default-test"
+  },
+  "xstest_full": {
+    "converter": "xstest",
+    "path_env": "URA_XSTEST_PATH",
+    "source_label": "XSTest exaggerated-safety contrast set (aggregator; 250 safe + 200 unsafe)",
+    "split": "prompts"
+  },
+  "simplesafetytests_full": {
+    "converter": "simplesafetytests",
+    "path_env": "URA_SIMPLESAFETYTESTS_PATH",
+    "source_label": "SimpleSafetyTests critical-harm probes (aggregator/HELM-Safety constituent)",
+    "split": "test"
+  },
   "harmbench_multimodal": {
     "converter": "harmbench",
     "path_env": "URA_HARMBENCH_MULTIMODAL_PATH",

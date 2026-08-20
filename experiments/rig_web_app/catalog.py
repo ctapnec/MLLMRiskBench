@@ -204,7 +204,7 @@ _MODALITIES = ("text", "image", "audio", "video", "tool")
 
 
 #: The complete maintained source-arm catalogue: (arm id, physical modalities,
-#: disabled reason).  All 40 registry arms are listed.  There are THREE kinds,
+#: disabled reason).  All 43 registry arms are listed.  There are THREE kinds,
 #: mirroring ``ura.eligibility`` and ``ura.source_metrics`` exactly:
 #:   * empty reason, NOT in _SOURCE_METRIC_ARMS - a common-runner SCORED lane
 #:     (``common_metrics_eligible: True``), scored by common harmful-ASR/FRR.
@@ -245,6 +245,9 @@ _ARM_CATALOG: tuple[tuple[str, tuple[str, ...], str], ...] = (
     ("jailbreakbench_benign", ("text",), ""),
     ("harmbench_text", ("text",), ""),
     ("saladbench_base", ("text",), ""),
+    ("airbench_full", ("text",), ""),
+    ("xstest_full", ("text",), ""),
+    ("simplesafetytests_full", ("text",), ""),
     ("cyberseceval_mitre", ("text",), ""),
     ("cyberseceval_interpreter", ("text",), ""),
     ("cyberseceval_insecure_coding", ("text",), ""),
@@ -331,6 +334,17 @@ _ARM_MODALITIES: tuple[tuple[str, tuple[str, ...]], ...] = tuple(
 #: disabled and rejected before a scored lane.  Excludes the source-metric arms.
 _INELIGIBLE_ARMS: frozenset[str] = frozenset(arm for arm, _mods, reason in _ARM_CATALOG if reason)
 _INELIGIBLE_REASONS: dict[str, str] = {arm: reason for arm, _mods, reason in _ARM_CATALOG if reason}
+
+#: Arms drawn from unified / multi-benchmark AGGREGATOR sources (each itself
+#: pools or spans many upstream safety corpora). Tagged with an "aggregator"
+#: badge in the builder so the operator can see the aggregator-class sources at a
+#: glance; this is display metadata only and does not change admission.
+_AGGREGATOR_ARMS: frozenset[str] = frozenset({
+    "saladbench_base",
+    "airbench_full",
+    "xstest_full",
+    "simplesafetytests_full",
+})
 
 #: Attack frameworks (engines) offered in the builder, mirroring the harness
 #: registry in src/ura/adapters/engines.py, with the modalities each can drive.
