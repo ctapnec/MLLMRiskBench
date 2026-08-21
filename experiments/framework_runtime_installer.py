@@ -2287,15 +2287,33 @@ def plan(lock: Mapping[str, Any], layout: Layout, entries: Sequence[Mapping[str,
     return summary
 
 
-def _runner(layout: Layout, entry: Mapping[str, Any], env_dir: Path, prefix: str = "") -> CommandRunner:
+def _runner(
+    layout: Layout,
+    entry: Mapping[str, Any],
+    env_dir: Path,
+    prefix: str = "",
+    *,
+    home: Path | None = None,
+) -> CommandRunner:
+    """A runner for one framework. ``home`` defaults to the environment itself.
+
+    During installation the environment is the natural home: the tool's cache
+    and state belong inside the artifact being built. Verification is different,
+    because the artifact is already sealed and a tool that writes its logs or a
+    database into its own home would change the very tree the seal covers.
+    """
+
     filename = f"{prefix}{entry['name']}.log"
+    process_home = home or env_dir
     redact_paths: list[Path | str] = [layout.env_root, layout.state_root, env_dir]
+    if home is not None:
+        redact_paths.append(home)
     if _ACTIVE_PYTHON is not None:
         redact_paths.append(_ACTIVE_PYTHON)
         redact_paths.append(_ACTIVE_PYTHON.parent)
     return CommandRunner(
         layout.state_root / "logs" / filename,
-        env_dir,
+        process_home,
         redact_paths=redact_paths,
     )
 
@@ -2328,8 +2346,16 @@ def _verify_published(
     # point at this store entry by the caller, so resolving it changes which
     # path is used and not which bytes are checked.
     managed = final.resolve(strict=True) if final.is_symlink() else final
-    runner = _runner(layout, entry, managed, log_prefix)
-    verification = _verify_runtime(entry, managed, runner)
+    # Verification must not modify what it is verifying. The environment is its
+    # own home during installation, so a tool that writes a log, a cache or a
+    # database into its home writes inside the sealed tree: npm leaves a
+    # timestamped debug log per invocation and the Promptfoo CLI creates its
+    # application directory, so every verification changed the content the seal
+    # covers and the next one failed against its own receipt. A scratch home
+    # outside the environment keeps the check read-only.
+    with tempfile.TemporaryDirectory(prefix="ura-runtime-verify-") as scratch:
+        runner = _runner(layout, entry, managed, log_prefix, home=Path(scratch))
+        verification = _verify_runtime(entry, managed, runner)
     if receipt.get("inventory_sha256") != verification["inventory_sha256"]:
         raise InstallerError(f"receipt inventory mismatch for {entry['name']}")
     _verify_content_seal(managed, receipt, entry["name"])
