@@ -111,16 +111,29 @@ def _project_revision() -> dict[str, object]:
     }
 
 
-def test_figure_point_and_bootstrap_equal_weight_prompt_clusters() -> None:
+def test_figure_point_and_bootstrap_equal_weight_source_clusters() -> None:
+    """Sibling rows of one source cluster carry DISTINCT datapoint ids.
+
+    MM-SafetyBench emits three variants per cluster as
+    ``{cluster_id}/SD``, ``/SD_TYPO`` and ``/TYPO``, and an AIR-Bench leaf
+    category holds a varying number of prompts under one cluster id. Keying the
+    resampling unit on the datapoint therefore split every such cluster, which
+    weighted a three-row cluster three times as heavily as a one-row cluster.
+    The earlier fixture repeated one datapoint id to stand in for a cluster,
+    which is a shape the converters never produce, so it could not show this.
+    """
+
     paired = {}
-    for index, (datapoint, left_value) in enumerate([
-        ("repeated", 1.0),
-        ("repeated", 1.0),
-        ("repeated", 1.0),
-        ("single", 0.0),
-    ]):
+    rows = [
+        ("cluster-a", "cluster-a/SD", 1.0),
+        ("cluster-a", "cluster-a/SD_TYPO", 1.0),
+        ("cluster-a", "cluster-a/TYPO", 1.0),
+        ("cluster-b", "cluster-b/SD", 0.0),
+    ]
+    for index, (cluster_id, datapoint, left_value) in enumerate(rows):
         common = dict(
             corpus="fixture", source="source", datapoint_id=datapoint,
+            source_cluster_id=cluster_id,
             seed=index, expected_behavior="refuse", risk_category="information_security",
             declared_modality="text", effective_modality="text", eligible=True,
             attack_fingerprint=f"fp-{index}", transfer_key=f"key-{index}",
@@ -131,8 +144,15 @@ def test_figure_point_and_bootstrap_equal_weight_prompt_clusters() -> None:
     left_value, right_value = figure_results._equal_cluster_arm_values(
         list(paired.values())
     )
+    # Two clusters, weighted equally: (1.0 + 0.0) / 2. Weighting by datapoint
+    # would give (1+1+1+0)/4 = 0.75.
+    assert left_value == 0.5, "clusters must be weighted equally, not by row count"
     assert left_value - right_value == 0.5
-    assert left_value == 0.5
+
+    # And the unit really is the cluster, so the four rows form two of them.
+    units = [left for left, _ in paired.values()]
+    assert len({unit.cluster for unit in units}) == 2
+    assert len({unit.datapoint_id for unit in units}) == 4
 
 
 def test_figure_loader_rejects_only_alias_arms_with_the_same_condition() -> None:

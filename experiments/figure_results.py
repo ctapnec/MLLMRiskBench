@@ -115,6 +115,7 @@ class _Unit:
     corpus: str
     source: str
     datapoint_id: str
+    source_cluster_id: str
     seed: int
     expected_behavior: str
     risk_category: str
@@ -131,7 +132,16 @@ class _Unit:
 
     @property
     def cluster(self) -> tuple[str, str, str]:
-        return (self.corpus, self.source, self.datapoint_id)
+        # The resampling and weighting unit is the SOURCE CLUSTER, not the
+        # datapoint. A cluster commonly holds several sibling rows: MM-SafetyBench
+        # emits three variants per cluster, and an AIR-Bench leaf category holds
+        # a varying number of prompts. Keying on the datapoint splits those
+        # clusters, which weights a large cluster more than a small one, shrinks
+        # the interval by treating siblings as independent, and lets a support
+        # gate that counts source clusters pass on datapoints instead. Every
+        # sibling analysis uses the source cluster, and the Runner records it on
+        # each judgment with the same fallback used here.
+        return (self.corpus, self.source, self.source_cluster_id)
 
 
 def _strict_loads(text: str) -> object:
@@ -1098,6 +1108,9 @@ def _units(cell: dict[str, Any]) -> dict[tuple[str, str, str, int], _Unit]:
             raise ValueError("benign unit uses harmful-only refusal label")
         source = _nonblank(raw.get("source"), "judgment source")
         datapoint_id = _nonblank(raw.get("datapoint_id"), "judgment datapoint_id")
+        # Same fallback the Runner applies when it stamps this field: a corpus
+        # whose rows are their own clusters records the datapoint id here.
+        cluster_id = str(raw.get("source_cluster_id") or "").strip() or datapoint_id
         seed = _integer(raw.get("requested_seed"), "judgment requested seed")
         fingerprint = _nonblank(raw.get("attack_fingerprint"), "attack fingerprint")
         transfer_key = _nonblank(raw.get("transfer_key"), "transfer key")
@@ -1105,6 +1118,7 @@ def _units(cell: dict[str, Any]) -> dict[tuple[str, str, str, int], _Unit]:
             corpus=run["corpus"],
             source=source,
             datapoint_id=datapoint_id,
+            source_cluster_id=cluster_id,
             seed=seed,
             expected_behavior=expected,
             risk_category=_nonblank(raw.get("risk_category"), "risk category"),
@@ -1358,7 +1372,7 @@ def _estimate(
             "corpus": corpus,
             "risk_category": risk_category,
             "effective_modality": modality,
-            "cluster": "corpus x source x datapoint_id",
+            "cluster": "corpus x source x source_cluster_id",
             "unit": "corpus x source x datapoint_id x requested_seed",
         },
         "population_sha256": _sha256_json(unit_keys),
@@ -1370,7 +1384,7 @@ def _estimate(
         "policy_label": policy_label,
         "multiplicity_family": multiplicity_family,
         "bootstrap": {
-            "method": "paired corpus/source/datapoint-cluster percentile bootstrap",
+            "method": "paired corpus/source/source-cluster percentile bootstrap",
             "confidence_level": 0.95,
             "n_resamples": n_resamples,
             "seed": seed,

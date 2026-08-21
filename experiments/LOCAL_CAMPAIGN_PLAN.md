@@ -265,8 +265,12 @@ export SCOPE="${URA_EXECUTION_SCOPE_ID:?bind it in ~/.ura_campaign_env first}"
 python -m experiments.run_matrix --attestation-probe --local "$LOCAL_SPEC" --local-config "$LOCAL_CONFIG" \
   --attackers replay --judges rules --corpora <one text arm> --source-config experiments/source-instances.json \
   --limit 1 --sample-seed 0 --seeds 0 --max-queries 1 --max-turns 1 --execution-scope-id "$SCOPE" ... --out runs/thesis/attestation/<target>-text
+# --out is the receipt FILE, opened create-only, not a directory: pointing
+# it at a directory fails with File exists, and pointing it at an existing
+# receipt fails too, so each derivation names a new path.
 python -m experiments.live_attestation --probe-root runs/thesis/attestation/<target>-text \
-  --execution-scope-id "$SCOPE" --out runs/thesis/attestation/   # derives and hashes the ura-live-attestation/2 receipt
+  --execution-scope-id "$SCOPE" \
+  --out runs/thesis/attestation/receipts/<target>-text.json   # ura-live-attestation/2
 ```
 
 Repeat with a text+image arm (for example `mossbench_official`) for the
