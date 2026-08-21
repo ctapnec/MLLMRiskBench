@@ -199,9 +199,11 @@ def _bound_artifact_identity(value: object, *, label: str) -> dict[str, object] 
     size = value.get("bytes")
     if not isinstance(digest, str) or _HEX64.fullmatch(digest) is None:
         raise ValueError(f"{label} lacks an exact SHA-256")
-    if not isinstance(size, int) or isinstance(size, bool) or size < 0:
+    if not isinstance(size, int) or isinstance(size, bool) or size <= 0:
         raise ValueError(f"{label} lacks an exact byte length")
-    return {"sha256": digest, "bytes": size}
+    # Same keys the Runner hashes for this field, so the recomputed grid
+    # identity matches the one in the filename.
+    return {"bytes": size, "sha256": digest}
 
 
 def _identity_validator(field: str):  # noqa: ANN202 - returns one of two callables
@@ -1055,9 +1057,15 @@ def _grid_id(grid: dict[str, Any], *, legacy_runtime_free: bool = False) -> str:
     else:
         config_fields.insert(3, "engine_runtime_config_artifact")
     for field in config_fields:
-        identity[field] = _selected_identity(
-            request.get(field), label=field.replace("_", " ")
-        )
+        # Dispatch per field, exactly as the Runner does when it derives this
+        # identity. A bound receipt is hashed by its byte identity; the reusable
+        # registries are hashed by their normalized selected subset. The stored
+        # artifact carries both digests, so reading the wrong one raised no
+        # error at all: it silently produced a different grid identity than the
+        # one in the filename, and every real run failed the match.
+        identity[field] = _identity_validator(
+            field.removesuffix("_artifact")
+        )(request.get(field), label=field.replace("_", " "))
     identity["model_acquisition"] = (
         validate_model_acquisition_execution_descriptor(
             request.get("model_acquisition_execution")

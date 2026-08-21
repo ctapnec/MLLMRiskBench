@@ -418,3 +418,42 @@ def test_bound_receipt_identity_is_accepted_as_recorded_by_the_runner() -> None:
     for bad in ({"bytes": 1}, {"sha256": "short"}, {"sha256": "81" + "f" * 62}):
         with pytest.raises(ValueError):
             _bound_artifact_identity(bad, label="source conformance")
+
+
+def test_grid_identity_hashes_each_field_the_way_the_runner_did() -> None:
+    """The recomputed grid identity must reproduce the one in the filename.
+
+    The identity is derived by normalizing each config artifact. The Runner
+    hashes a bound receipt by its byte identity and the reusable registries by
+    their normalized selected subset. The reader used the registry shape for
+    every field, and because a stored source-conformance artifact carries BOTH
+    digests, that raised nothing at all: it silently produced a different
+    identity than the filename, so every real run failed the match while every
+    run that bound no receipt passed.
+    """
+
+    from experiments.level1_evidence import _bound_artifact_identity, _identity_validator
+
+    assert _identity_validator("source_conformance") is _bound_artifact_identity
+
+    # The field arrives with the artifact suffix in the grid derivation.
+    assert _identity_validator("source_conformance_artifact".removesuffix("_artifact")) is (
+        _bound_artifact_identity
+    )
+
+    # The key set must match what the Runner hashes, or the digest differs even
+    # when both sides read the same underlying receipt.
+    stored = {
+        "bytes": 140560,
+        "file": "runs/thesis/source-conformance-2026-08-21.json",
+        "normalized_selected_sha256": "aa" * 32,
+        "observed_full_corpus_sha256": "bb" * 32,
+        "schema": "ura-source-conformance/1",
+        "selected_arms": ["xstest_full"],
+        "sha256": "cc" * 32,
+        "source_config_selected_sha256": "dd" * 32,
+    }
+    identity = _bound_artifact_identity(stored, label="source conformance")
+    assert identity == {"bytes": 140560, "sha256": "cc" * 32}, (
+        "a bound receipt is hashed by byte identity, not by its selected subset"
+    )
