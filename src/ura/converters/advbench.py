@@ -60,7 +60,15 @@ class AdvBenchConverter(BaseConverter):
                 dialog=[DialogTurn(role="user", content=goal)],
                 payload_text=goal,
                 risk_subtype="harmful_behavior",
-                attack_family="gcg_suffix",
+                # The released row is the bare harmful request, and that is what
+                # is delivered: the goal goes into the turn unmodified and no
+                # suffix is appended here. The GCG affirmative prefix is kept in
+                # meta for an attacker that replays the suffix search, so naming
+                # the row itself "gcg_suffix" recorded a mechanism that was not
+                # applied on every retained judgment. The sibling corpora of bare
+                # harmful prompts, AIR-Bench and JailbreakBench, use
+                # "direct_request" for exactly this.
+                attack_family="direct_request",
                 meta={"target": target, "citation": "advbench-gcg-2023"},
             ))
         if not out:
