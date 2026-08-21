@@ -482,6 +482,7 @@ class VLLMTarget(BaseTarget):
         self.validate_research_identity()
         if self._llm is None:
             from ..model_acquisition_runtime import (
+                ensure_interpreter_scripts_on_path,
                 hf_offline_environment_overrides,
                 private_model_execution,
             )
@@ -490,6 +491,10 @@ class VLLMTarget(BaseTarget):
             # local exceptions are offline too; their tokenizer must come from
             # the same sealed directory.
             os.environ.update(hf_offline_environment_overrides())
+            # The sampler JIT-builds a FlashInfer kernel on first use and shells
+            # out to ninja, which ships beside this interpreter but is not on
+            # PATH when the interpreter is invoked by absolute path.
+            ensure_interpreter_scripts_on_path()
             if self.revision is not None:
                 if self._model_runtime is None:
                     raise RuntimeError(

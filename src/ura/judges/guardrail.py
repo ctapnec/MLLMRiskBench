@@ -129,10 +129,16 @@ class GuardrailJudge(BaseJudge):
                 "Hub guardrail models require an admitted managed-model runtime; "
                 "implicit Hugging Face downloads are disabled"
             )
-        from ..model_acquisition_runtime import hf_offline_environment_overrides
+        from ..model_acquisition_runtime import (
+            ensure_interpreter_scripts_on_path,
+            hf_offline_environment_overrides,
+        )
 
         # Transformers reads offline policy during import in supported releases.
         os.environ.update(hf_offline_environment_overrides())
+        # Torch's C++ extension loader shells out to ninja for the same reason
+        # the vLLM sampler does; see the helper's own note.
+        ensure_interpreter_scripts_on_path()
         try:
             import torch  # noqa: F401
             from transformers import AutoModelForCausalLM, AutoTokenizer

@@ -1324,3 +1324,60 @@ def test_one_call_helper_admits_before_returning_runtime(tmp_path: Path) -> None
     )
     assert isinstance(admitted, ManagedModelRuntime)
     assert descriptor == admitted.public_descriptor()
+
+
+def test_interpreter_scripts_directory_is_prepended_to_path(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """A local engine must be able to find the build tools shipped beside it.
+
+    vLLM's sampler JIT-builds a FlashInfer kernel on first use and shells out to
+    ninja; Torch's C++ extension loader does the same. ninja is installed into
+    the running interpreter's own scripts directory, but invoking that
+    interpreter by absolute path - which is what the documented commands and the
+    console both do - leaves that directory off PATH, and the failure surfaces
+    only as an engine that would not initialize.
+    """
+
+    from ura import model_acquisition_runtime as runtime
+
+    scripts = tmp_path / "venv" / "bin"
+    scripts.mkdir(parents=True)
+    interpreter = scripts / "python"
+    interpreter.write_text("", encoding="utf-8")
+    monkeypatch.setattr(runtime.sys, "executable", str(interpreter))
+
+    existing = str(tmp_path / "usr" / "bin")
+    monkeypatch.setenv("PATH", existing)
+    runtime.ensure_interpreter_scripts_on_path()
+    entries = os.environ["PATH"].split(os.pathsep)
+    assert entries[0] == str(scripts), "the interpreter's own scripts directory must win"
+    assert existing in entries, "the operator's PATH must be preserved, not replaced"
+
+    # Idempotent: repeated engine construction must not grow PATH without bound.
+    runtime.ensure_interpreter_scripts_on_path()
+    runtime.ensure_interpreter_scripts_on_path()
+    assert os.environ["PATH"].split(os.pathsep).count(str(scripts)) == 1
+
+    # An empty PATH yields exactly the scripts directory, with no stray separator
+    # that would put the current working directory on PATH.
+    monkeypatch.setenv("PATH", "")
+    runtime.ensure_interpreter_scripts_on_path()
+    assert os.environ["PATH"] == str(scripts)
+
+
+def test_local_engines_put_their_scripts_directory_on_path() -> None:
+    """Both local engine construction paths must apply the fix, not just one."""
+
+    from pathlib import Path as _Path
+
+    for module in ("src/ura/targets/local.py", "src/ura/judges/guardrail.py"):
+        text = _Path(module).read_text(encoding="utf-8")
+        assert "ensure_interpreter_scripts_on_path" in text, module
+        # It must run before the engine/model is constructed, not after.
+        call = text.index("ensure_interpreter_scripts_on_path()")
+        construction = min(
+            (text.index(marker) for marker in ("from vllm import LLM", "def construct(") if marker in text),
+            default=len(text),
+        )
+        assert call < construction, f"{module}: PATH must be set before construction"

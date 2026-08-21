@@ -21,6 +21,7 @@ import logging
 import os
 import re
 import stat
+import sys
 import threading
 from collections.abc import Callable, Iterable, Mapping
 from contextlib import ExitStack, contextmanager, redirect_stderr, redirect_stdout
@@ -1750,6 +1751,31 @@ def hf_offline_environment_overrides() -> dict[str, str]:
     """Return the non-secret environment overrides for a measured child."""
 
     return dict(_HF_OFFLINE_ENVIRONMENT)
+
+
+def ensure_interpreter_scripts_on_path() -> None:
+    """Make console scripts installed beside this interpreter reachable.
+
+    A local engine can compile a kernel at first use and shell out to a build
+    tool: vLLM's sampler path JIT-builds a FlashInfer kernel and runs ``ninja``,
+    and Torch's C++ extension loader does the same. Those tools are installed as
+    ordinary dependencies, into the scripts directory of the very interpreter
+    that is running, but invoking an interpreter by absolute path does not put
+    that directory on PATH the way activating its environment would, and the
+    documented commands and the console both invoke it by absolute path. The
+    build then fails with ``FileNotFoundError: 'ninja'`` inside a worker
+    subprocess, and the engine reports only that initialization failed.
+
+    Prepending the interpreter's own scripts directory is deterministic and
+    exposes nothing that was not already installed alongside the interpreter.
+    """
+
+    scripts = Path(sys.executable).resolve().parent
+    current = os.environ.get("PATH", "")
+    entries = [entry for entry in current.split(os.pathsep) if entry] if current else []
+    if str(scripts) in entries:
+        return
+    os.environ["PATH"] = os.pathsep.join([str(scripts), *entries])
 
 
 def transformers_local_only_kwargs() -> dict[str, bool]:
