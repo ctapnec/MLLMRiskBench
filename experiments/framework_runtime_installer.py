@@ -1943,6 +1943,32 @@ def _npm_optional_peer(env_dir: Path, requirer: str, name: str) -> bool:
     return isinstance(entry, Mapping) and entry.get("optional") is True
 
 
+def _npm_json_document(output: str, entry: Mapping[str, Any]) -> str:
+    """Isolate the one JSON document npm printed among its diagnostics.
+
+    The command runner merges stderr into stdout deliberately, so that every
+    byte a child writes goes through one redacted logging path. npm writes its
+    ELSPROBLEMS diagnostics to stderr and the ``--json`` tree to stdout, so the
+    captured stream interleaves them and the tree has to be isolated before it
+    can be parsed. Anchoring on a brace at the start of a line matches npm's
+    pretty-printed output and cannot be confused by a brace inside a diagnostic
+    line; the decoder then reports where the document ends, so trailing
+    diagnostics are dropped without guessing.
+    """
+
+    match = re.search(r"^\{", output, re.MULTILINE)
+    if match is None:
+        raise InstallerError(f"npm ls printed no JSON tree for {entry['name']}")
+    start = match.start()
+    try:
+        _, length = json.JSONDecoder().raw_decode(output[start:])
+    except ValueError as exc:
+        raise InstallerError(
+            f"npm ls returned invalid JSON for {entry['name']}"
+        ) from exc
+    return output[start : start + length]
+
+
 def _validate_npm_ls_output(
     output: str, entry: Mapping[str, Any], env_dir: Path, *, returncode: int = 0
 ) -> list[str]:
@@ -1956,7 +1982,7 @@ def _validate_npm_ls_output(
     """
 
     try:
-        tree = _strict_json_loads(output)
+        tree = _strict_json_loads(_npm_json_document(output, entry))
     except (UnicodeError, ValueError, TypeError) as exc:
         raise InstallerError(f"npm ls returned invalid JSON for {entry['name']}") from exc
     if not isinstance(tree, Mapping):

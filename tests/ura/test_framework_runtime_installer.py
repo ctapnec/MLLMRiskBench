@@ -1682,8 +1682,17 @@ def test_npm_verification_tolerates_only_an_unsatisfied_optional_peer(
     relative = "node_modules/mongoose/node_modules/mongodb"
     invalid = f'"^7.0.1" from {relative}'
     _write_requirer(tmp_path, relative, optional=True)
+    # The runner merges stderr into stdout, so the captured stream really is
+    # npm's diagnostics wrapped around the tree, not bare JSON. A fixture that
+    # passed bare JSON here modelled a stream the installer never sees.
+    captured = (
+        "npm error code ELSPROBLEMS\n"
+        "npm error invalid: gcp-metadata@8.1.4 /store/node_modules/gcp-metadata\n"
+        + json.dumps(_npm_tree_with_optional_peer(invalid), indent=2)
+        + "\nnpm error A complete log of this run can be found in: /store/x.log\n"
+    )
     tolerated = installer._validate_npm_ls_output(
-        json.dumps(_npm_tree_with_optional_peer(invalid)),
+        captured,
         {"name": "promptfoo"},
         tmp_path,
         # npm reports ELSPROBLEMS and exits 1 for this tree; a fixture that
