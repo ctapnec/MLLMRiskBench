@@ -1805,7 +1805,70 @@ def _node_installed_inventory(env_dir: Path) -> tuple[list[str], str]:
     return rows, _sha256_bytes("".join(f"{row}\n" for row in rows).encode())
 
 
-def _validate_npm_ls_output(output: str, entry: Mapping[str, Any]) -> None:
+#: ``npm ls`` states an invalid resolution as ``"<range>" from <requirer path>``.
+_NPM_INVALID_SOURCE = re.compile(r'^"(?P<range>[^"]*)" from (?P<path>.+)$')
+
+
+def _npm_invalid_nodes(tree: Mapping[str, Any]) -> list[tuple[str, str, str]]:
+    """Every resolved node npm marked invalid, as (name, range, requirer path)."""
+
+    found: list[tuple[str, str, str]] = []
+
+    def walk(node: Mapping[str, Any]) -> None:
+        dependencies = node.get("dependencies")
+        if not isinstance(dependencies, Mapping):
+            return
+        for name, meta in dependencies.items():
+            if not isinstance(meta, Mapping):
+                continue
+            invalid = meta.get("invalid")
+            if isinstance(invalid, str) and invalid:
+                match = _NPM_INVALID_SOURCE.match(invalid)
+                if match is None:
+                    found.append((str(name), invalid, ""))
+                else:
+                    found.append(
+                        (str(name), match.group("range"), match.group("path"))
+                    )
+            walk(meta)
+
+    walk(tree)
+    return found
+
+
+def _npm_optional_peer(env_dir: Path, requirer: str, name: str) -> bool:
+    """True when ``requirer`` declares ``name`` as an OPTIONAL peer dependency.
+
+    An optional peer is allowed to be absent or unsatisfied - that is exactly
+    what ``peerDependenciesMeta.<name>.optional`` means - so npm marking the
+    hoisted copy invalid for such a requirer is an upstream graph fact, not a
+    defect in this installation. Every other invalid resolution stays fatal.
+    """
+
+    if not requirer:
+        return False
+    manifest = env_dir / requirer / "package.json"
+    try:
+        package = _strict_json_loads(manifest.read_bytes())
+    except (OSError, UnicodeError, ValueError, TypeError):
+        return False
+    if not isinstance(package, Mapping):
+        return False
+    peers = package.get("peerDependencies")
+    meta = package.get("peerDependenciesMeta")
+    if not isinstance(peers, Mapping) or name not in peers:
+        return False
+    if not isinstance(meta, Mapping):
+        return False
+    entry = meta.get(name)
+    return isinstance(entry, Mapping) and entry.get("optional") is True
+
+
+def _validate_npm_ls_output(
+    output: str, entry: Mapping[str, Any], env_dir: Path
+) -> list[str]:
+    """Validate the installed npm tree, returning tolerated optional-peer notes."""
+
     try:
         tree = _strict_json_loads(output)
     except (UnicodeError, ValueError, TypeError) as exc:
@@ -1813,8 +1876,35 @@ def _validate_npm_ls_output(output: str, entry: Mapping[str, Any]) -> None:
     if not isinstance(tree, Mapping):
         raise InstallerError(f"npm ls returned a non-object for {entry['name']}")
     problems = tree.get("problems", [])
+    tolerated: list[str] = []
     if problems not in (None, []):
-        raise InstallerError(f"npm ls reported dependency problems for {entry['name']}")
+        # Only an invalid resolution can be excused, and only when every
+        # requirer that rejects it declared it as an optional peer. A missing,
+        # extraneous or otherwise reported problem stays fatal. Counts are not
+        # compared: ``npm ls --all`` repeats a deduplicated node at each path it
+        # is reachable from, so one problem can surface as several tree nodes.
+        if not all(
+            isinstance(problem, str) and problem.startswith("invalid:")
+            for problem in problems
+        ):
+            raise InstallerError(
+                f"npm ls reported dependency problems for {entry['name']}"
+            )
+        invalid = set(_npm_invalid_nodes(tree))
+        if not invalid:
+            raise InstallerError(
+                f"npm ls reported dependency problems for {entry['name']}"
+            )
+        for name, wanted, requirer in sorted(invalid):
+            if not _npm_optional_peer(env_dir, requirer, name):
+                raise InstallerError(
+                    f"npm ls reported dependency problems for {entry['name']}"
+                )
+            tolerated.append(f"{name} {wanted} optional peer of {requirer}")
+    dependencies = tree.get("dependencies")
+    if not isinstance(dependencies, Mapping) or "promptfoo" not in dependencies:
+        raise InstallerError(f"npm ls did not report promptfoo for {entry['name']}")
+    return sorted(tolerated)
     dependencies = tree.get("dependencies")
     if not isinstance(dependencies, Mapping) or "promptfoo" not in dependencies:
         raise InstallerError(f"npm ls did not report promptfoo for {entry['name']}")
@@ -1892,7 +1982,7 @@ def _verify_node(entry: Mapping[str, Any], env_dir: Path, runner: CommandRunner)
         capture=True,
         timeout=300,
     )
-    _validate_npm_ls_output(npm_tree.stdout, entry)
+    tolerated_peers = _validate_npm_ls_output(npm_tree.stdout, entry, env_dir)
     guard = env_dir / ".ura" / "node-network-guard.cjs"
     guard.parent.mkdir(parents=True, exist_ok=True)
     _node_network_guard(guard)
@@ -1919,7 +2009,14 @@ def _verify_node(entry: Mapping[str, Any], env_dir: Path, runner: CommandRunner)
         or digest != expected["sha256"]
     ):
         raise InstallerError(f"installed Node inventory differs from lock for {entry['name']}")
-    return {"inventory_sha256": digest, "distribution_count": count}
+    return {
+        "inventory_sha256": digest,
+        "distribution_count": count,
+        # Recorded rather than hidden: an unsatisfied OPTIONAL peer is a
+        # fact about the upstream dependency graph, so the receipt names
+        # each one instead of the verification silently passing.
+        "tolerated_optional_peers": tolerated_peers,
+    }
 
 
 def _install_node(

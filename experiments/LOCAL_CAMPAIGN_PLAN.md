@@ -81,9 +81,16 @@ python -m experiments.framework_runtime_installer install --lock "$URA_FRAMEWORK
 python -m experiments.framework_runtime_installer verify  --lock "$URA_FRAMEWORK_LOCK" --env-root "$URA_FRAMEWORK_ENVS" --state-root "$URA_FRAMEWORK_STATE" --python "$URA_FRAMEWORK_PYTHON"
 ```
 
-Run it once without `--only` (all 15) or in two batches (the four Runner bridges
-pyrit, deepteam, h4rm3l, spikee plus nanogcg and harmbench first; the nine native
-engines second). The console equivalent is Build -> Runtimes (Install / Resume /
+Run one installer session per framework with `--only <name>`, tolerating a
+failure and continuing, rather than a single session for all fifteen. The
+installer is fail-closed and sequential, so one framework that cannot build
+stops the whole session and hides every later defect: on 20 August a single
+failing smoke blocked the twelve frameworks queued behind it, and a second,
+unrelated build defect only became visible once the installs were driven one at
+a time. Observed per-framework times on the rig range from about a minute
+(deepteam, spikee) to roughly half an hour (h4rm3l, nanogcg); the pip cache
+under `~/.cache/pip` is persistent, so a later reinstall after a lock change is
+substantially faster than the first pass. The console equivalent is Build -> Runtimes (Install / Resume /
 Verify per row); use it for at least one batch so that the CLI and UI paths are
 both exercised. Disk: about 65 GiB under `$URA_FRAMEWORK_ENVS`. The Node 24.16.0
 runtime for Promptfoo is downloaded and signature-verified by the installer.

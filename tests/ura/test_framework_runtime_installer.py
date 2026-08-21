@@ -134,6 +134,94 @@ def test_every_python_dependency_is_exact_and_hashed() -> None:
         assert all("--hash=sha256:" in row for row in rows)
 
 
+# "pip wheel --no-build-isolation" forbids pip from fetching a PEP 518 build
+# backend, so every backend the locked sources declare -- and everything that
+# backend itself imports -- has to sit inside the framework's own hashed
+# requirement set. These tables are the offline, network-free record of what
+# each pinned pyproject.toml (or bare setup.py) declares; the versions are
+# never restated here, they are read back out of the lock.
+_BACKEND_DISTRIBUTIONS = {
+    "flit_core.buildapi": "flit-core",
+    "hatchling.build": "hatchling",
+    "pdm.backend": "pdm-backend",
+    "poetry.core.masonry.api": "poetry-core",
+    "setuptools.build_meta": "setuptools",
+    "setuptools.build_meta:__legacy__": "setuptools",
+}
+
+# Distributions each build backend imports while building a wheel.
+_BACKEND_IMPORTS = {
+    "flit-core": (),
+    "hatch-vcs": ("hatchling", "setuptools-scm"),
+    "hatchling": ("packaging", "pathspec", "pluggy", "tomlkit", "trove-classifiers"),
+    "packaging": (),
+    "pathspec": (),
+    "pluggy": (),
+    "poetry-core": (),
+    "setuptools": (),
+    "setuptools-scm": ("packaging", "setuptools", "vcs-versioning"),
+    "tomlkit": (),
+    "trove-classifiers": (),
+    "vcs-versioning": ("packaging",),
+    "wheel": ("packaging",),
+}
+
+# Framework -> (build-backend declared at the pinned commit, other build
+# requires that pyproject.toml lists). easyjailbreak ships a bare setup.py at
+# its pinned commit, so pip falls back to the legacy setuptools backend.
+_SOURCE_BUILD_BACKENDS = {
+    "agentdojo": ("hatchling.build", ()),
+    "easyjailbreak": ("setuptools.build_meta:__legacy__", ()),
+    "fuzzyai": ("poetry.core.masonry.api", ("setuptools", "wheel")),
+    "garak": ("flit_core.buildapi", ()),
+    "petri": ("hatchling.build", ("hatch-vcs",)),
+}
+
+
+def _pinned_distributions(entry: dict[str, Any]) -> dict[str, str]:
+    pinned: dict[str, str] = {}
+    for row in installer._logical_requirements(entry["dependencies"]["requirements"]):
+        match = re.match(r"^([A-Za-z0-9][A-Za-z0-9._-]*)==(\S+)", row)
+        if match:
+            pinned[installer._canonical_name(match.group(1))] = match.group(2)
+    return pinned
+
+
+def test_no_build_isolation_frameworks_pin_their_declared_build_backend() -> None:
+    lock = installer.load_lock(LOCK_PATH)
+    unisolated = {
+        entry["name"]
+        for entry in lock["frameworks"]
+        if any("--no-build-isolation" in command for command in entry["install"]["commands"])
+    }
+    # a newly source-built framework must register its backend here, offline
+    assert unisolated == set(_SOURCE_BUILD_BACKENDS)
+    for entry in lock["frameworks"]:
+        if entry["name"] not in unisolated:
+            continue
+        backend, extra_requires = _SOURCE_BUILD_BACKENDS[entry["name"]]
+        assert backend in _BACKEND_DISTRIBUTIONS, backend
+        pinned = _pinned_distributions(entry)
+        inventory = set(entry["expected_inventory"]["distributions"])
+        pending = [_BACKEND_DISTRIBUTIONS[backend], *extra_requires]
+        checked: set[str] = set()
+        while pending:
+            distribution = pending.pop()
+            if distribution in checked:
+                continue
+            checked.add(distribution)
+            assert distribution in pinned, (
+                f"{entry['name']} builds with --no-build-isolation but its hashed "
+                f"requirements lack {distribution!r}, needed for build backend {backend!r}"
+            )
+            assert f"{distribution}=={pinned[distribution]}" in inventory, (
+                f"{entry['name']} expected inventory omits the pinned {distribution}"
+            )
+            imports = _BACKEND_IMPORTS.get(distribution)
+            assert imports is not None, f"unknown build dependency {distribution!r}"
+            pending.extend(imports)
+
+
 def test_promptfoo_lock_has_integrity_for_every_resolved_registry_package() -> None:
     lock = installer.load_lock(LOCK_PATH)
     promptfoo = next(entry for entry in lock["frameworks"] if entry["name"] == "promptfoo")
@@ -1467,3 +1555,99 @@ def test_distro_repin_script_is_fail_closed_and_sources_canonical_ura_env_last()
     # the executing copy is compared with the deployed commit's distro/repin.sh
     assert 'git cat-file -e "$REF:distro/repin.sh"' in text
     assert 'git show "$REF:distro/repin.sh" | cmp -s - "$0"' in text
+
+
+def _npm_tree_with_optional_peer(invalid: str) -> dict:
+    return {
+        "problems": ["invalid: gcp-metadata@8.1.4 /store/node_modules/gcp-metadata"],
+        "dependencies": {
+            "promptfoo": {
+                "version": "0.121.15",
+                "dependencies": {
+                    # npm ls --all repeats a deduplicated node at every path it
+                    # is reachable from, so one problem surfaces twice here.
+                    "natural": {"dependencies": {
+                        "gcp-metadata": {"version": "8.1.4", "invalid": invalid},
+                    }},
+                    "googleapis-common": {"dependencies": {
+                        "gcp-metadata": {"version": "8.1.4", "invalid": invalid},
+                    }},
+                },
+            },
+        },
+    }
+
+
+def _write_requirer(env_dir: Path, relative: str, *, optional: bool) -> None:
+    package = env_dir / relative
+    package.mkdir(parents=True, exist_ok=True)
+    manifest = {
+        "name": "mongodb",
+        "version": "7.5.0",
+        "peerDependencies": {"gcp-metadata": "^7.0.1"},
+    }
+    if optional:
+        manifest["peerDependenciesMeta"] = {"gcp-metadata": {"optional": True}}
+    (package / "package.json").write_text(json.dumps(manifest), encoding="utf-8")
+
+
+def test_npm_verification_tolerates_only_an_unsatisfied_optional_peer(
+    tmp_path: Path,
+) -> None:
+    # promptfoo's real tree: mongodb declares gcp-metadata as an OPTIONAL peer
+    # (peerDependenciesMeta.optional), npm therefore does not nest a 7.x copy,
+    # the hoisted 8.1.4 does not satisfy ^7.0.1, and npm ls exits 1. An optional
+    # peer is allowed to be unsatisfied, so this must verify - and be recorded,
+    # not hidden.
+    relative = "node_modules/mongoose/node_modules/mongodb"
+    invalid = f'"^7.0.1" from {relative}'
+    _write_requirer(tmp_path, relative, optional=True)
+    tolerated = installer._validate_npm_ls_output(
+        json.dumps(_npm_tree_with_optional_peer(invalid)),
+        {"name": "promptfoo"},
+        tmp_path,
+    )
+    assert tolerated == [f"gcp-metadata ^7.0.1 optional peer of {relative}"]
+
+
+def test_npm_verification_still_fails_on_a_required_peer_or_other_problem(
+    tmp_path: Path,
+) -> None:
+    relative = "node_modules/mongoose/node_modules/mongodb"
+    invalid = f'"^7.0.1" from {relative}'
+    tree = _npm_tree_with_optional_peer(invalid)
+
+    # The same shape with a REQUIRED peer must stay fatal.
+    _write_requirer(tmp_path, relative, optional=False)
+    with pytest.raises(installer.InstallerError, match="dependency problems"):
+        installer._validate_npm_ls_output(
+            json.dumps(tree), {"name": "promptfoo"}, tmp_path
+        )
+
+    # So must a requirer whose manifest cannot be read at all.
+    shutil.rmtree(tmp_path / "node_modules")
+    with pytest.raises(installer.InstallerError, match="dependency problems"):
+        installer._validate_npm_ls_output(
+            json.dumps(tree), {"name": "promptfoo"}, tmp_path
+        )
+
+    # And any problem that is not an invalid resolution, even mixed with one
+    # that would otherwise be tolerated.
+    _write_requirer(tmp_path, relative, optional=True)
+    mixed = _npm_tree_with_optional_peer(invalid)
+    mixed["problems"] = mixed["problems"] + [
+        "extraneous: junk@1.0.0 /store/node_modules/junk"
+    ]
+    with pytest.raises(installer.InstallerError, match="dependency problems"):
+        installer._validate_npm_ls_output(
+            json.dumps(mixed), {"name": "promptfoo"}, tmp_path
+        )
+
+    missing = {
+        "problems": ["missing: left-pad@1.0.0, required by promptfoo"],
+        "dependencies": {"promptfoo": {"version": "0.121.15"}},
+    }
+    with pytest.raises(installer.InstallerError, match="dependency problems"):
+        installer._validate_npm_ls_output(
+            json.dumps(missing), {"name": "promptfoo"}, tmp_path
+        )
