@@ -190,6 +190,21 @@ shows the three vLLM rows as compatible with an exact revision/digest; the
 console Build model picker shows the same rows under Local vLLM and the Ollama
 rows under Local Ollama.
 
+Status, 21 August 2026: **met for the three targets.** Each was sealed with
+`downloaded_bytes: 0`, because the rig already held all three snapshots at
+exactly the pinned commits in a legacy Hugging Face hub, which was staged as
+the controller's transport cache by hard link. That costs no disk, leaves the
+legacy hub intact and is not a manual copy into the managed store: promotion is
+gated on `seal_snapshot`, which proves the complete official sibling set and
+every Git/LFS content identity against the upstream manifest for the exact
+commit before anything is promoted. The three receipts bind 16, 17 and 26 files
+respectively, matching the sibling counts verified upstream before acquisition.
+The store and each receipt with its digest are bound in `~/.ura_campaign_env`
+as `URA_MODEL_STORE` and `URA_ACQ_RECEIPT_*`. Both Llama Guard sizes are gated
+and are not in the legacy hub, so they are genuine downloads; their pinned
+commits are `7327bd9f6efbbe6101dc6cc4736302b3cbb6e425` (3-8B) and
+`acf7aafa60f0410f8f42b1fa35e077d705892029` (3-1B).
+
 ## 5. Phase 4: local transport attestations (about 1 hour)
 
 For every local target x modality combination that a lane will use, run the
