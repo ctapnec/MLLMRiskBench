@@ -1363,7 +1363,17 @@ class LifecycleMixin:
         "qwen": ("DASHSCOPE_API_KEY",),
         "doubao": ("ARK_API_KEY",),
     }
-    _MATRIX_OPTIONAL_ENV = frozenset({"URA_MEDIA_ROOTS"})
+    #: Non-secret operator bounds the CLI reads from its own environment.
+    #: ``URA_ENGINE_TIMEOUT_SECONDS`` is the only bound on an isolated-runtime
+    #: bridge call: run_matrix exposes no flag for it, every bridge and both
+    #: engine seals resolve it from the environment, and it is range-validated
+    #: on read. Dropping it silently pinned every console bridge lane to the
+    #: 300 s default while the same lane honoured the operator's bound from the
+    #: CLI, so the two surfaces ran different lanes under one name.
+    _MATRIX_OPTIONAL_ENV = frozenset({
+        "URA_MEDIA_ROOTS",
+        "URA_ENGINE_TIMEOUT_SECONDS",
+    })
     #: Non-secret receipt locators the CLI reads as argparse defaults
     #: (run_matrix/rig_check --project-revision / --source-conformance and their
     #: SHA-256 pairs).  Forwarded to a NON-dry matrix child when set in the
@@ -1591,6 +1601,9 @@ class LifecycleMixin:
 
         allowed = set(self._MATRIX_BASE_ENV)
         if command == "harmbench_capture":
+            # The capture drives the same isolated runtime and resolves the
+            # same environment bound when no --timeout-seconds is given.
+            allowed.add("URA_ENGINE_TIMEOUT_SECONDS")
             for key, value in values.items():
                 if not re.fullmatch(r"--credential-env(?:#\d+)?", str(key)):
                     continue
@@ -1604,6 +1617,16 @@ class LifecycleMixin:
                 document = self._strict_config_document(source_path)
                 if command == "capture_t3mp3st":
                     selected = {str(values.get("--corpus", "")).strip()}
+                elif str(values.get("--manifest", "")).strip():
+                    # A receipt VALIDATION names no --arm: it verifies every
+                    # admitted arm in the receipt, so it needs every arm's
+                    # locator. Forwarding only the arms named on the command
+                    # line left validation able to see none of them, so the
+                    # console could only ever refuse a receipt the CLI
+                    # validates, naming a variable its own parent process
+                    # holds. The set is bounded by the operator's own
+                    # source-config document.
+                    selected = {str(arm) for arm in document}
                 else:
                     selected = {
                         str(value).strip()

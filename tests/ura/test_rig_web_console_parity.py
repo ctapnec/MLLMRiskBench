@@ -837,3 +837,88 @@ def test_preview_limit_zero_only_for_local_only_measured_lanes() -> None:
     assert "jg.indexOf('llm')>=0" in hosted_judge
     assert ".modelbox[data-kind='api']" in hosted_judge and "judgeModelValue" in hosted_judge
 
+
+
+def test_console_forwards_the_only_bound_on_isolated_engine_calls(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The engine timeout must reach a console lane as it reaches a CLI lane.
+
+    run_matrix exposes no flag for it: every isolated-runtime bridge and both
+    engine seals resolve the bound from the environment. Dropping it pinned
+    every console bridge lane to the 300 s default while the identical lane
+    honoured the operator's bound from the CLI, so one named lane meant two
+    different runs.
+    """
+
+    monkeypatch.setenv("URA_ENGINE_TIMEOUT_SECONDS", "1800")
+    app = _app(tmp_path)
+
+    live = app._run_matrix_child_environment({}, scrub_receipt_env=False)
+    assert live["URA_ENGINE_TIMEOUT_SECONDS"] == "1800"
+    # A dry lane scrubs receipts but is still the same execution bound.
+    dry = app._run_matrix_child_environment({}, scrub_receipt_env=True)
+    assert dry["URA_ENGINE_TIMEOUT_SECONDS"] == "1800"
+    # The HarmBench capture drives the same isolated runtime.
+    capture = app._generic_child_environment("harmbench_capture", {})
+    assert capture["URA_ENGINE_TIMEOUT_SECONDS"] == "1800"
+    # It stays a least-privilege environment for unrelated commands.
+    assert "URA_ENGINE_TIMEOUT_SECONDS" not in app._generic_child_environment("figures", {})
+
+    # The value the child receives is exactly what the CLI would resolve.
+    from ura.adapters._engine_common import _resolve_timeout
+
+    monkeypatch.setenv("URA_ENGINE_TIMEOUT_SECONDS", live["URA_ENGINE_TIMEOUT_SECONDS"])
+    assert _resolve_timeout(None) == 1800.0
+
+
+def test_console_receipt_validation_sees_every_arm_locator(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A console receipt validation must be able to reach every admitted arm.
+
+    ``verify_manifest_components`` with no selected arms checks EVERY admitted
+    arm and requires each one's locator to be set, but a validation names no
+    --arm, so forwarding only the arms named on the command line left the child
+    able to see none of them. The console could then only ever refuse a receipt
+    the CLI validates, naming a variable its own parent process holds.
+    """
+
+    import json as _json
+
+    repo = tmp_path / "repo"
+    (repo / "experiments").mkdir(parents=True, exist_ok=True)
+    source_config = repo / "experiments" / "source-instances.json"
+    source_config.write_text(
+        _json.dumps(
+            {
+                "arm_one": {"path_env": "URA_ARM_ONE_PATH"},
+                "arm_two": {"path_env": "URA_ARM_TWO_PATH"},
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("URA_ARM_ONE_PATH", str(tmp_path / "one.csv"))
+    monkeypatch.setenv("URA_ARM_TWO_PATH", str(tmp_path / "two.csv"))
+
+    results = tmp_path / "runs"
+    results.mkdir(exist_ok=True)
+    app = RigWebApp(results_root=results, state_dir=tmp_path / "state")
+    app.repo_root = repo
+
+    validation = app._generic_child_environment(
+        "source_conformance",
+        {"--source-config": str(source_config), "--manifest": str(tmp_path / "r.json"),
+         "--sha256": "c" * 64},
+    )
+    assert validation["URA_ARM_ONE_PATH"] == str(tmp_path / "one.csv")
+    assert validation["URA_ARM_TWO_PATH"] == str(tmp_path / "two.csv")
+
+    # A scaffold still gets only the arms it names: it hashes those arms alone.
+    scaffold = app._generic_child_environment(
+        "source_conformance",
+        {"--source-config": str(source_config), "--scaffold": "on", "--arm": "arm_one",
+         "--out": str(tmp_path / "out.json")},
+    )
+    assert scaffold["URA_ARM_ONE_PATH"] == str(tmp_path / "one.csv")
+    assert "URA_ARM_TWO_PATH" not in scaffold
