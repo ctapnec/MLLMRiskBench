@@ -318,17 +318,33 @@ Gate 5: projections and canaries retained under `runs/thesis/preflight` and
 
 ## 7. Phase 6: measured local lanes (GPU days; sized by the canaries)
 
-Row inventory (from the 26-arm receipt plus the aggregator exports): common
-text arms about 35,900 rows (SALAD-Bench base 21,318; AIR-Bench 5,694;
-DecodingTrust 3,456; CyberSecEval 3,416; AdvBench 520; XSTest 450; HarmBench
-400; StrongREJECT 313; JailbreakBench 200; SimpleSafetyTests 100), common image
-arms about 9,900 rows (HoliSafe 4,031; VLSBench 2,240; MM-SafetyBench 1,680;
-MLLMGuard safety dimensions 548; FigStep 500; JailBreakV image-backed 360;
+**Source-record inventory, which is NOT the row count.** The figures below are
+released source records and equal the receipt's `raw_records.accepted`, which is
+also the cluster count for an arm that emits one row per record. Several
+converters fan out, so their emitted rows are a multiple of these, and reading
+these as rows understates the campaign: MM-SafetyBench emits three variants per
+question, 1,680 records giving 5,040 rows, which
+`converters/release_specs.py` pins directly, and GPTGeoChat emits one row per
+assistant turn per moderation level, 500 conversations giving 9,820 rows over
+500 clusters, measured by converting the pinned release on the rig. Both are
+correct as clusters and wrong as rows. Do not size a lane from this paragraph:
+the no-call projection in Phase 5 reports the exact per-arm cell count for the
+selection actually requested, and it is the only figure that should set a cap.
+
+Source records: common text arms about 35,900 (SALAD-Bench base 21,318;
+AIR-Bench 5,694; DecodingTrust 3,456; CyberSecEval 3,416; AdvBench 520; XSTest
+450; HarmBench 400; StrongREJECT 313; JailbreakBench 200; SimpleSafetyTests
+100), common image arms about 9,900 (HoliSafe 4,031; VLSBench 2,240;
+MM-SafetyBench 1,680 records = 5,040 rows; MLLMGuard safety dimensions 548;
+FigStep 500; JailBreakV image-backed 360 rows over 190 intent clusters;
 MOSSBench 300; SIUO 167; HarmBench multimodal 110), classification arms 1,071
-rows (R-Judge 571; GPTGeoChat 500). With one seed this is roughly 47k target
-calls per local model; the canaries (not this paragraph) determine the
-throughput, so run seed 0 first and add seed 1 only if the observed rate makes
-it affordable.
+records (R-Judge 571; GPTGeoChat 500 conversations = 9,820 rows). The remaining
+arms have not been recounted against their converters, so treat every figure
+here as a source-record count until Phase 5 replaces it. The earlier "roughly
+47k target calls per local model" followed from reading these as rows and is
+therefore a floor, not an estimate; the canaries and the projection determine
+the throughput, so run seed 0 first and add seed 1 only if the observed rate
+makes it affordable.
 
 | Tier | Lane | Targets | Attackers | Judges | Output root |
 |---|---|---|---|---|---|
@@ -408,7 +424,7 @@ defaults on the Run page.
 | 3 models | 1-3 h | 0.5 h |
 | 4 attestations | 1 h | 0.5 h |
 | 5 projections/canaries | 2-4 h | 2 h |
-| 6 measured lanes | several GPU days (seed 0; ~47k calls per model plus guard calls) | periodic |
+| 6 measured lanes | several GPU days (seed 0; the Phase 5 projection sets the call count, which exceeds the 47k source-record floor) | periodic |
 | 7 analysis | 2-4 h | 2 h |
 | 8 human audit | rater-dependent | rater-dependent |
 
