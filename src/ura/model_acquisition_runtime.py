@@ -22,6 +22,7 @@ import os
 import re
 import stat
 import sys
+import sysconfig
 import threading
 from collections.abc import Callable, Iterable, Mapping
 from contextlib import ExitStack, contextmanager, redirect_stderr, redirect_stdout
@@ -1770,12 +1771,26 @@ def ensure_interpreter_scripts_on_path() -> None:
     exposes nothing that was not already installed alongside the interpreter.
     """
 
-    scripts = Path(sys.executable).resolve().parent
+    # Deliberately NOT resolved: a virtual environment's interpreter is a link
+    # to the base interpreter, so resolving it yields the base installation's
+    # scripts directory, which is exactly where the environment's own tools are
+    # not. sysconfig reports the running environment's scripts directory and is
+    # the authority; the interpreter's own directory is kept as a fallback for
+    # layouts where the two differ.
+    candidates: list[str] = []
+    try:
+        configured = sysconfig.get_path("scripts")
+    except (KeyError, OSError):  # pragma: no cover - exotic sysconfig scheme
+        configured = ""
+    for candidate in (configured, str(Path(sys.executable).parent)):
+        if candidate and candidate not in candidates:
+            candidates.append(candidate)
     current = os.environ.get("PATH", "")
     entries = [entry for entry in current.split(os.pathsep) if entry] if current else []
-    if str(scripts) in entries:
+    missing = [candidate for candidate in candidates if candidate not in entries]
+    if not missing:
         return
-    os.environ["PATH"] = os.pathsep.join([str(scripts), *entries])
+    os.environ["PATH"] = os.pathsep.join([*missing, *entries])
 
 
 def transformers_local_only_kwargs() -> dict[str, bool]:

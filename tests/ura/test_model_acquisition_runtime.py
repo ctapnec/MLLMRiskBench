@@ -1341,18 +1341,35 @@ def test_interpreter_scripts_directory_is_prepended_to_path(
 
     from ura import model_acquisition_runtime as runtime
 
+    # A virtual environment's interpreter is a LINK to a base interpreter that
+    # lives somewhere else entirely. Resolving it lands in the base
+    # installation's scripts directory, which is precisely where the
+    # environment's own tools are not; the venv's own bin is what must win.
     scripts = tmp_path / "venv" / "bin"
     scripts.mkdir(parents=True)
+    base = tmp_path / "base" / "bin"
+    base.mkdir(parents=True)
+    (base / "python").write_text("", encoding="utf-8")
     interpreter = scripts / "python"
-    interpreter.write_text("", encoding="utf-8")
+    try:
+        interpreter.symlink_to(base / "python")
+    except (OSError, NotImplementedError):  # pragma: no cover - unprivileged Windows
+        interpreter.write_text("", encoding="utf-8")
     monkeypatch.setattr(runtime.sys, "executable", str(interpreter))
+    monkeypatch.setattr(
+        runtime.sysconfig, "get_path", lambda name: str(scripts) if name == "scripts" else ""
+    )
 
     existing = str(tmp_path / "usr" / "bin")
     monkeypatch.setenv("PATH", existing)
     runtime.ensure_interpreter_scripts_on_path()
     entries = os.environ["PATH"].split(os.pathsep)
-    assert entries[0] == str(scripts), "the interpreter's own scripts directory must win"
+    assert entries[0] == str(scripts), "the environment's own scripts directory must win"
     assert existing in entries, "the operator's PATH must be preserved, not replaced"
+    assert str(base) not in entries, (
+        "resolving the interpreter link would add the base installation's bin, "
+        "which does not contain the environment's tools"
+    )
 
     # Idempotent: repeated engine construction must not grow PATH without bound.
     runtime.ensure_interpreter_scripts_on_path()
