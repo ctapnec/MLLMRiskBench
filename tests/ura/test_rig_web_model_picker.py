@@ -2354,3 +2354,121 @@ def test_jobs_date_controls_and_external_running_presentation_match_ui(
     assert "External running state is a task-log report" in dashboard
     assert "reported running" not in (jobs + dashboard).lower()
     app.close()
+
+
+def _write_roster(repo_root: Path, specs: dict[str, list[str]]) -> None:
+    (repo_root / "experiments").mkdir(parents=True, exist_ok=True)
+    (repo_root / "experiments" / "vllm-roster.json").write_text(
+        json.dumps(
+            {
+                "vllm_version": "0.27.1",
+                "models": {
+                    spec: {"modalities": mods} for spec, mods in specs.items()
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+
+
+def test_cli_local_target_listing_matches_what_the_console_offers(
+    tmp_path: Path,
+) -> None:
+    """The CLI listing and the Build picker must name the same local targets.
+
+    vLLM's supported-models documentation lists one example model per
+    architecture, so the roster legitimately misses a sibling size or a
+    fine-tune of a listed base. Those are configured in the operator registry,
+    which the console has always merged in; the CLI listed only the roster, so
+    the same rig reported different local targets depending on which surface
+    was asked, and a campaign target configured with its pinned revision was
+    invisible from the command line.
+    """
+
+    from experiments import local_targets
+
+    repo_root = tmp_path
+    base = "vllm:llava-hf/llava-v1.6-mistral-7b-hf"
+    finetune = "vllm:GraySwanAI/llava-v1.6-mistral-7b-hf-RR"
+    sibling = "vllm:Qwen/Qwen3-VL-8B-Instruct"
+    # The documentation lists the base and a different size of the Qwen family.
+    _write_roster(
+        repo_root,
+        {base: ["text", "image"], "vllm:Qwen/Qwen3-VL-4B-Instruct": ["text", "image"]},
+    )
+    registry = {
+        sibling: {
+            "revision": "60595ebc30ec8e3b1d3b9e65d4943ca011c0006a",
+            "modalities": ["text", "image"],
+            "tensor_parallel_size": 1,
+        },
+        finetune: {
+            "revision": "d11b3d7ae2fb21e984f197a83c15bbb0deb66b7e",
+            "modalities": ["text", "image"],
+            "tensor_parallel_size": 1,
+        },
+        base: {
+            "revision": "2424fdd47412fccc66d91719126b420e9fbd7065",
+            "modalities": ["text", "image"],
+            "tensor_parallel_size": 1,
+        },
+    }
+    (repo_root / "experiments" / "local-targets.json").write_text(
+        json.dumps(registry), encoding="utf-8"
+    )
+    hardware = {
+        "available": True,
+        "gpu_count": 2,
+        "aggregate_vram_gib": 47.98,
+        "max_gpu_vram_gib": 23.99,
+        "gpus": [{"index": 0, "vram_gib": 23.99}, {"index": 1, "vram_gib": 23.99}],
+    }
+
+    # The roster alone, which is what the CLI used to print, cannot name them:
+    # neither the fine-tune nor the 8B sibling is a documented example model.
+    roster_only = {
+        str(model["spec"])
+        for model in local_targets.roster_models(repo_root, hardware, include_unfit=True)
+    }
+    assert finetune not in roster_only and sibling not in roster_only
+
+    listed = local_targets.local_target_models(repo_root, hardware, include_unfit=True)
+    by_spec = {str(model["spec"]): model for model in listed}
+
+    # Every configured campaign target is listed, each with its pinned revision.
+    for spec in (sibling, finetune, base):
+        assert spec in by_spec, f"{spec} is configured but the CLI does not list it"
+        assert by_spec[spec]["source"] == "registry"
+        assert by_spec[spec]["revision"] == registry[spec]["revision"]
+
+    # The roster still contributes what the registry does not configure, and
+    # says so, so an operator can tell a pinned target from a documented example.
+    assert by_spec["vllm:Qwen/Qwen3-VL-4B-Instruct"]["source"] == "vllm_docs"
+    assert "revision" not in by_spec["vllm:Qwen/Qwen3-VL-4B-Instruct"]
+
+    # A registry entry wins over the roster row of the same spec: only the
+    # registry carries the revision the campaign must pin.
+    assert sum(1 for model in listed if str(model["spec"]) == base) == 1
+
+    # And the console's picker offers exactly the same vLLM specs.
+    from experiments.rig_web_app.builder_models import BuilderModelsMixin
+
+    class _NoOllama:
+        @staticmethod
+        def roster(_vllm: dict, *, force: bool = False) -> dict[str, object]:
+            # No Ollama daemon in this check; the comparison is vLLM specs only.
+            return {"models": []}
+
+    class _Probe(BuilderModelsMixin):
+        def __init__(self, root: Path) -> None:
+            self.repo_root = root
+            self.gpu_hardware = hardware
+            self.ollama = _NoOllama()
+
+    probe = _Probe(repo_root)
+    offered = {
+        spec
+        for spec, _label, _mods, kind in probe._model_options()
+        if kind == "local" and spec.startswith("vllm:")
+    }
+    assert offered == set(by_spec)

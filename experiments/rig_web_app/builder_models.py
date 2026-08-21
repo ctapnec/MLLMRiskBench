@@ -18,6 +18,13 @@ class BuilderModelsMixin:
     def _load_registry(self, name: str, example: str) -> dict[str, Any]:
         """Parse an operator-local registry, falling back to its example."""
 
+        if name == "local-targets.json":
+            # One resolution order for the local registry, shared with the CLI
+            # listing, so the two surfaces cannot come to offer different
+            # local targets for the same rig.
+            from experiments.local_targets import load_local_registry  # noqa: PLC0415
+
+            return dict(load_local_registry(self.repo_root))
         for candidate in (name, example):
             path = self.repo_root / "experiments" / candidate
             try:

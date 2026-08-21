@@ -639,6 +639,89 @@ def roster_models(
     return out
 
 
+LOCAL_REGISTRY = "local-targets.json"
+LOCAL_REGISTRY_EXAMPLE = "rig/local-targets.example.json"
+
+
+def load_local_registry(repo_root: Path = _REPO_ROOT) -> dict[str, object]:
+    """Parse the operator-local vLLM target registry, falling back to its example.
+
+    Same resolution order as the console's Build picker, so the two surfaces
+    cannot read different files.
+    """
+
+    for candidate in (LOCAL_REGISTRY, LOCAL_REGISTRY_EXAMPLE):
+        path = repo_root / "experiments" / candidate
+        try:
+            data = strict_json_loads(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            continue
+        if isinstance(data, dict):
+            return data
+    return {}
+
+
+def local_target_models(
+    repo_root: Path = _REPO_ROOT,
+    hardware: dict[str, object] | None = None,
+    *,
+    include_unfit: bool = False,
+) -> list[dict[str, object]]:
+    """Every selectable vLLM local target: the operator registry, then the roster.
+
+    The roster is derived from vLLM's supported-models documentation, which
+    lists one example model per architecture. A model the rig can genuinely
+    serve is therefore often absent from it: a sibling size of a listed family,
+    or a fine-tune of a listed base, such as the defense-tuned counterpart of a
+    listed model. The operator registry is where those are configured, with the
+    exact revision each run must pin, and the console's Build picker has always
+    offered registry and roster together. Listing only the roster here made the
+    same rig report a different set of local targets depending on which surface
+    was asked, so both now read this one function.
+
+    A registry entry wins over a roster row of the same spec, because it is the
+    one carrying the operator's pinned revision and serving settings, and it is
+    listed even when it does not fit: an explicitly configured target that is
+    silently dropped reads as "not configured" rather than "will not run here".
+    """
+
+    detected = hardware if hardware is not None else detect_gpu_hardware()
+    registry = load_local_registry(repo_root)
+    out: list[dict[str, object]] = []
+    seen: set[str] = set()
+
+    def _modalities(entry: object) -> list[str]:
+        if isinstance(entry, dict) and isinstance(entry.get("modalities"), list):
+            mods = [str(m) for m in entry["modalities"] if isinstance(m, str)]
+            if mods:
+                return mods
+        return ["text"]
+
+    for spec, entry in registry.items():
+        spec = str(spec)
+        if not spec.startswith("vllm:") or spec in seen:
+            continue
+        seen.add(spec)
+        config = entry if isinstance(entry, dict) else {}
+        model: dict[str, object] = {
+            "spec": spec,
+            "modalities": _modalities(entry),
+            "source": "registry",
+            **model_hardware_profile(spec, config, detected),
+        }
+        revision = config.get("revision")
+        if isinstance(revision, str) and revision.strip():
+            model["revision"] = revision.strip()
+        out.append(model)
+
+    for model in roster_models(repo_root, detected, include_unfit=include_unfit):
+        if str(model["spec"]) in seen:
+            continue
+        seen.add(str(model["spec"]))
+        out.append({**model, "source": "vllm_docs"})
+    return out
+
+
 def _fetch(url: str, *, timeout: int = 20, max_bytes: int = 8_000_000) -> str:
     import urllib.request  # noqa: PLC0415 - stdlib, imported only on refresh
 
@@ -731,9 +814,10 @@ def refresh_roster(
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         description=(
-            "The vLLM local-target roster shared by the CLI and rig console. "
-            "Lists the roster, or refreshes it from vLLM's supported-models "
-            "documentation for the installed vLLM version (read-only HTTPS)"
+            "The vLLM local targets shared by the CLI and rig console: the "
+            "operator registry plus the roster derived from vLLM's "
+            "supported-models documentation. Lists them, or refreshes the "
+            "roster for the installed vLLM version (read-only HTTPS)"
         )
     )
     parser.add_argument(
@@ -765,7 +849,9 @@ def main(argv: list[str] | None = None) -> int:
     print(json.dumps({
         "vllm_version": roster_version(repo_root),
         "hardware": hardware,
-        "models": roster_models(repo_root, hardware),
+        # The registry and the roster together, exactly as the console's Build
+        # picker offers them; each row names which of the two it came from.
+        "models": local_target_models(repo_root, hardware),
     }, indent=2))
     return 0
 
