@@ -179,6 +179,37 @@ def _selected_identity(value: object, *, label: str) -> dict[str, str] | None:
     return {"normalized_selected_sha256": digest}
 
 
+def _bound_artifact_identity(value: object, *, label: str) -> dict[str, object] | None:
+    """Identity of an artifact that is bound whole rather than selected from.
+
+    A reusable registry may hold entries for other lanes, so only the normalized
+    selected subset may define execution identity there. A source-conformance
+    receipt is not like that: it is bound in its entirety, so its byte identity
+    IS its execution identity, and that is what the Runner records for it.
+    Demanding the registry shape here rejected every grid that actually bound a
+    receipt, which is every real campaign run; it passed unnoticed because a run
+    with no receipt bound records null and is accepted.
+    """
+
+    if value is None:
+        return None
+    if not isinstance(value, dict):
+        raise ValueError(f"{label} must be null or an artifact object")
+    digest = value.get("sha256")
+    size = value.get("bytes")
+    if not isinstance(digest, str) or _HEX64.fullmatch(digest) is None:
+        raise ValueError(f"{label} lacks an exact SHA-256")
+    if not isinstance(size, int) or isinstance(size, bool) or size < 0:
+        raise ValueError(f"{label} lacks an exact byte length")
+    return {"sha256": digest, "bytes": size}
+
+
+def _identity_validator(field: str):  # noqa: ANN202 - returns one of two callables
+    """The identity shape each selected-config field is recorded in."""
+
+    return _bound_artifact_identity if field == "source_conformance" else _selected_identity
+
+
 def _engine_runtime_selection_identity(
     value: object,
     *,
@@ -364,7 +395,7 @@ def _condition_values(value: object) -> dict[str, Any]:
     if not isinstance(selected, dict) or set(selected) != expected_selected:
         raise ValueError("experiment condition selected-config identities are incomplete")
     for field in sorted(expected_selected):
-        _selected_identity(selected[field], label=f"selected {field}")
+        _identity_validator(field)(selected[field], label=f"selected {field}")
     _engine_runtime_selection_identity(
         value["engine_runtimes"], label="experiment condition engine runtimes"
     )
@@ -500,7 +531,7 @@ def _grid_condition(
         "source_config": _selected_identity(
             request.get("source_config_artifact"), label="source config"
         ),
-        "source_conformance": _selected_identity(
+        "source_conformance": _bound_artifact_identity(
             request.get("source_conformance_artifact"), label="source conformance"
         ),
         "attacker_config": _selected_identity(

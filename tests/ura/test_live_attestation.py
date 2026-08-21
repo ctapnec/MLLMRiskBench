@@ -381,3 +381,40 @@ def test_content_addressed_loader_rejects_digest_tamper_and_symlink(
         pytest.skip("symlink creation is unavailable on this platform")
     with pytest.raises(ValueError, match="must not be a symlink"):
         load_live_attestation_file(link, digest)
+
+
+def test_bound_receipt_identity_is_accepted_as_recorded_by_the_runner() -> None:
+    """A receipt is bound whole, so its byte identity is its execution identity.
+
+    Five of the six selected-config fields name reusable registries, where only
+    the normalized selected subset may define execution identity, because an
+    edit to an unselected entry must not invalidate the grid. A
+    source-conformance receipt is not a registry: the Runner records its exact
+    byte identity, and demanding the registry shape rejected every grid that
+    actually bound a receipt. It went unnoticed because a run with no receipt
+    records null, which is accepted, and the offline smokes bind none.
+    """
+
+    from experiments.level1_evidence import (
+        _bound_artifact_identity,
+        _identity_validator,
+        _selected_identity,
+    )
+
+    recorded = {"bytes": 140560, "sha256": "81" + "f" * 62}
+    assert _bound_artifact_identity(recorded, label="source conformance") == {
+        "sha256": recorded["sha256"],
+        "bytes": 140560,
+    }
+    assert _bound_artifact_identity(None, label="source conformance") is None
+
+    # The field dispatches to the shape the Runner writes for it, and the other
+    # five keep the registry shape.
+    assert _identity_validator("source_conformance") is _bound_artifact_identity
+    for field in ("source_config", "attacker_config", "api_config", "local_config"):
+        assert _identity_validator(field) is _selected_identity
+
+    # Still strict: a receipt identity must carry an exact digest and length.
+    for bad in ({"bytes": 1}, {"sha256": "short"}, {"sha256": "81" + "f" * 62}):
+        with pytest.raises(ValueError):
+            _bound_artifact_identity(bad, label="source conformance")
