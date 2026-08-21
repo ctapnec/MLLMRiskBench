@@ -1865,9 +1865,16 @@ def _npm_optional_peer(env_dir: Path, requirer: str, name: str) -> bool:
 
 
 def _validate_npm_ls_output(
-    output: str, entry: Mapping[str, Any], env_dir: Path
+    output: str, entry: Mapping[str, Any], env_dir: Path, *, returncode: int = 0
 ) -> list[str]:
-    """Validate the installed npm tree, returning tolerated optional-peer notes."""
+    """Validate the installed npm tree, returning tolerated optional-peer notes.
+
+    ``npm ls`` exits non-zero whenever it reports any problem at all, so the
+    exit code alone cannot distinguish a broken tree from an unsatisfied
+    optional peer. The reported tree is therefore the authority and the exit
+    code is cross-checked against it: the two signals must agree, or the
+    verification fails closed.
+    """
 
     try:
         tree = _strict_json_loads(output)
@@ -1904,10 +1911,15 @@ def _validate_npm_ls_output(
     dependencies = tree.get("dependencies")
     if not isinstance(dependencies, Mapping) or "promptfoo" not in dependencies:
         raise InstallerError(f"npm ls did not report promptfoo for {entry['name']}")
+    if returncode and not tolerated:
+        raise InstallerError(
+            f"npm ls exited {returncode} for {entry['name']} with no tolerable cause"
+        )
+    if tolerated and not returncode:
+        raise InstallerError(
+            f"npm ls reported problems for {entry['name']} but exited zero"
+        )
     return sorted(tolerated)
-    dependencies = tree.get("dependencies")
-    if not isinstance(dependencies, Mapping) or "promptfoo" not in dependencies:
-        raise InstallerError(f"npm ls did not report promptfoo for {entry['name']}")
 
 
 def _node_network_guard(path: Path) -> None:
@@ -1981,8 +1993,15 @@ def _verify_node(entry: Mapping[str, Any], env_dir: Path, runner: CommandRunner)
         extra_env={"PATH": f"{node.parent}:/usr/bin:/bin"},
         capture=True,
         timeout=300,
+        # npm exits 1 for ELSPROBLEMS whatever the problem is, including an
+        # unsatisfied optional peer, which is allowed to be unsatisfied. The
+        # printed tree is classified instead, and it fails closed on anything
+        # else; an exit that the tree does not explain is itself an error.
+        allowed_returncodes=(0, 1),
     )
-    tolerated_peers = _validate_npm_ls_output(npm_tree.stdout, entry, env_dir)
+    tolerated_peers = _validate_npm_ls_output(
+        npm_tree.stdout, entry, env_dir, returncode=npm_tree.returncode
+    )
     guard = env_dir / ".ura" / "node-network-guard.cjs"
     guard.parent.mkdir(parents=True, exist_ok=True)
     _node_network_guard(guard)

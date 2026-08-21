@@ -1606,6 +1606,9 @@ def test_npm_verification_tolerates_only_an_unsatisfied_optional_peer(
         json.dumps(_npm_tree_with_optional_peer(invalid)),
         {"name": "promptfoo"},
         tmp_path,
+        # npm reports ELSPROBLEMS and exits 1 for this tree; a fixture that
+        # passed zero here would model a shape npm never produces.
+        returncode=1,
     )
     assert tolerated == [f"gcp-metadata ^7.0.1 optional peer of {relative}"]
 
@@ -1621,14 +1624,14 @@ def test_npm_verification_still_fails_on_a_required_peer_or_other_problem(
     _write_requirer(tmp_path, relative, optional=False)
     with pytest.raises(installer.InstallerError, match="dependency problems"):
         installer._validate_npm_ls_output(
-            json.dumps(tree), {"name": "promptfoo"}, tmp_path
+            json.dumps(tree), {"name": "promptfoo"}, tmp_path, returncode=1
         )
 
     # So must a requirer whose manifest cannot be read at all.
     shutil.rmtree(tmp_path / "node_modules")
     with pytest.raises(installer.InstallerError, match="dependency problems"):
         installer._validate_npm_ls_output(
-            json.dumps(tree), {"name": "promptfoo"}, tmp_path
+            json.dumps(tree), {"name": "promptfoo"}, tmp_path, returncode=1
         )
 
     # And any problem that is not an invalid resolution, even mixed with one
@@ -1640,7 +1643,7 @@ def test_npm_verification_still_fails_on_a_required_peer_or_other_problem(
     ]
     with pytest.raises(installer.InstallerError, match="dependency problems"):
         installer._validate_npm_ls_output(
-            json.dumps(mixed), {"name": "promptfoo"}, tmp_path
+            json.dumps(mixed), {"name": "promptfoo"}, tmp_path, returncode=1
         )
 
     missing = {
@@ -1649,5 +1652,115 @@ def test_npm_verification_still_fails_on_a_required_peer_or_other_problem(
     }
     with pytest.raises(installer.InstallerError, match="dependency problems"):
         installer._validate_npm_ls_output(
-            json.dumps(missing), {"name": "promptfoo"}, tmp_path
+            json.dumps(missing), {"name": "promptfoo"}, tmp_path, returncode=1
         )
+
+
+def test_npm_verification_requires_the_exit_code_to_agree_with_the_tree(
+    tmp_path: Path,
+) -> None:
+    # The exit code alone cannot distinguish a broken tree from an unsatisfied
+    # optional peer, so the tree is the authority - but the two signals must
+    # still agree, or something is being reported that the tree does not show.
+    relative = "node_modules/mongoose/node_modules/mongodb"
+    invalid = f'"^7.0.1" from {relative}'
+    _write_requirer(tmp_path, relative, optional=True)
+
+    clean = {"dependencies": {"promptfoo": {"version": "0.121.15"}}}
+    with pytest.raises(installer.InstallerError, match="no tolerable cause"):
+        installer._validate_npm_ls_output(
+            json.dumps(clean), {"name": "promptfoo"}, tmp_path, returncode=1
+        )
+
+    with pytest.raises(installer.InstallerError, match="exited zero"):
+        installer._validate_npm_ls_output(
+            json.dumps(_npm_tree_with_optional_peer(invalid)),
+            {"name": "promptfoo"},
+            tmp_path,
+            returncode=0,
+        )
+
+    # A clean tree with a zero exit remains the ordinary passing case.
+    assert (
+        installer._validate_npm_ls_output(
+            json.dumps(clean), {"name": "promptfoo"}, tmp_path, returncode=0
+        )
+        == []
+    )
+
+
+class _RecordingRunner:
+    """A CommandRunner stand-in that replays canned results for _verify_node."""
+
+    def __init__(self, npm_returncode: int, tree: dict) -> None:
+        self.npm_returncode = npm_returncode
+        self.tree = tree
+        self.calls: list[dict[str, Any]] = []
+
+    def run(self, argv, **kwargs):  # noqa: ANN001, ANN003 - test double
+        command = [str(item) for item in argv]
+        self.calls.append({"argv": command, "kwargs": kwargs})
+        if len(command) == 2 and command[-1] == "--version":
+            # the node probe is [node, --version]; the CLI smoke is [node, cli, --version]
+            return subprocess.CompletedProcess(command, 0, stdout="v24.16.0", stderr="")
+        if "ls" in command:
+            allowed = kwargs.get("allowed_returncodes", (0,))
+            if self.npm_returncode not in allowed:
+                # exactly what the real runner does, and what made the
+                # tolerated-peer classification unreachable in the campaign.
+                raise installer.InstallerError(
+                    f"npm command failed with exit code {self.npm_returncode}"
+                )
+            return subprocess.CompletedProcess(
+                command, self.npm_returncode, stdout=json.dumps(self.tree), stderr=""
+            )
+        return subprocess.CompletedProcess(command, 0, stdout="0.121.15", stderr="")
+
+
+def test_verify_node_completes_when_npm_ls_exits_on_a_tolerated_optional_peer(
+    tmp_path: Path,
+) -> None:
+    # Regression for the campaign failure: the classification of a tolerable
+    # optional peer was correct but unreachable, because npm ls exits 1 for any
+    # reported problem and the command gate rejected that exit code first. This
+    # drives the whole node verification, so the gate is covered too.
+    relative = "node_modules/mongoose/node_modules/mongodb"
+    invalid = f'"^7.0.1" from {relative}'
+    _write_requirer(tmp_path, relative, optional=True)
+    package = tmp_path / "node_modules" / "promptfoo"
+    package.mkdir(parents=True, exist_ok=True)
+    (package / "package.json").write_text(
+        json.dumps({"name": "promptfoo", "version": "0.121.15"}), encoding="utf-8"
+    )
+    rows, digest = installer._node_installed_inventory(tmp_path)
+    entry = {
+        "name": "promptfoo",
+        "install": {"node_runtime_dir": "node-v24.16.0", "node_version": "24.16.0"},
+        "smoke": {
+            "relative_cli": "node_modules/promptfoo/dist/src/main.js",
+            "args": ["--version"],
+            "expected_version": "0.121.15",
+        },
+        "expected_inventory": {
+            "packages": rows,
+            "package_count": len(rows),
+            "sha256": digest,
+        },
+    }
+    runner = _RecordingRunner(1, _npm_tree_with_optional_peer(invalid))
+    receipt = installer._verify_node(entry, tmp_path, runner)
+    assert receipt["tolerated_optional_peers"] == [
+        f"gcp-metadata ^7.0.1 optional peer of {relative}"
+    ]
+    assert receipt["distribution_count"] == len(rows)
+
+    # The gate really is what permits it: with the default allowance the same
+    # tree fails exactly as it did on the rig.
+    ls_call = next(call for call in runner.calls if "ls" in call["argv"])
+    assert 1 in ls_call["kwargs"]["allowed_returncodes"]
+    strict = _RecordingRunner(1, _npm_tree_with_optional_peer(invalid))
+    strict.run = lambda argv, **kwargs: _RecordingRunner.run(  # type: ignore[method-assign]
+        strict, argv, **{**kwargs, "allowed_returncodes": (0,)}
+    )
+    with pytest.raises(installer.InstallerError, match="exit code 1"):
+        installer._verify_node(entry, tmp_path, strict)
