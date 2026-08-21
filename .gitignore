@@ -209,6 +209,10 @@ cython_debug/
 /experiments/source-instances.json
 /experiments/api-targets.json
 /experiments/local-targets.json
+# Per-model local target configs the runbook has the operator write beside
+# the roster (local-qwen3-vl.json, local-llava-base.json, local-llava-rr.json
+# and any sibling): operator-local like the registries above.
+/experiments/local-*.json
 /experiments/budgets.json
 /experiments/pricing.json
 /experiments/pricing.json.bak
