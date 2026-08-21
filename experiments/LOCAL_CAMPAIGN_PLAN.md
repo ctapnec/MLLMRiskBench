@@ -163,6 +163,28 @@ Local fit: one local target per process; GPU 0 target, GPU 1 scoring guard; the
 two-card 70B profile (4-bit, TP 2) is admitted by the fit calculator but is not
 part of this plan.
 
+The CLI chain, verified on the rig, is plan then acquire. Two details are easy
+to get wrong and both fail closed with an exact message:
+
+```bash
+# 1. Derive the plan. Pair --model-acquisition-plan-only with --preflight-only:
+#    plan derivation constructs no target, so it is not measured execution and
+#    has no live attestation to consume, but without the pairing the parser
+#    applies the measured-execution admission and asks for one. The plan
+#    directory must also be an already-resolved absolute path: ~/MLLMRiskBench/runs
+#    is a symlink into $URA_WORK, so pass the $URA_WORK path itself.
+PLAN_DIR="$URA_WORK/runs/thesis/acquisition/<target-label>"
+python -m experiments.run_matrix --model-acquisition-plan-only --preflight-only   --model-acquisition-plan-dir "$PLAN_DIR"   --local "$LOCAL_SPEC" --local-config "$LOCAL_CONFIG"   --attackers replay --judges rules --corpora xstest_full   --source-config experiments/source-instances.json   --limit 1 --sample-seed 0 --seeds 0 --max-queries 1 --max-turns 1   --out "$URA_WORK/runs/thesis/acquisition/<target-label>-run"
+# stdout carries plan_id and plan_sha256; the plan file lands in $PLAN_DIR.
+
+# 2. Acquire against that exact plan, bounded by size, free space and a deadline.
+python -m experiments.model_acquire --plan "$PLAN_DIR/<plan_id>.plan.json"   --plan-sha256 "$PLAN_SHA256" --store "$URA_MODEL_STORE"   --receipts-dir "$URA_WORK/runs/thesis/acquisition/receipts"   --min-free-bytes $((200 * 1024 ** 3)) --deadline-seconds 14400
+```
+
+A gated identity (both Llama Guard sizes) needs `HF_TOKEN` in the environment
+for the acquisition step only; source `~/.ura_env` for that call and never log
+it.
+
 Gate 3: acquisition receipts present and bound; `python -m experiments.local_targets`
 shows the three vLLM rows as compatible with an exact revision/digest; the
 console Build model picker shows the same rows under Local vLLM and the Ollama
@@ -171,9 +193,16 @@ rows under Local Ollama.
 ## 5. Phase 4: local transport attestations (about 1 hour)
 
 For every local target x modality combination that a lane will use, run the
-bounded attestation probe and produce its receipt [8]:
+bounded attestation probe and produce its receipt [8]. The execution scope is
+one non-secret label, declared once and reused verbatim by every probe, receipt
+and measured grid of this campaign, because admission matches the probe's scope
+against the grid's. It is bound in `~/.ura_campaign_env` beside the other
+locators so no phase can drift from it:
 
 ```bash
+export SCOPE="${URA_EXECUTION_SCOPE_ID:?bind it in ~/.ura_campaign_env first}"
+# bigrigsys-local-vllm: this rig, on-rig vLLM, no provider account involved.
+
 python -m experiments.run_matrix --attestation-probe --local "$LOCAL_SPEC" --local-config "$LOCAL_CONFIG" \
   --attackers replay --judges rules --corpora <one text arm> --source-config experiments/source-instances.json \
   --limit 1 --sample-seed 0 --seeds 0 --max-queries 1 --max-turns 1 --execution-scope-id "$SCOPE" ... --out runs/thesis/attestation/<target>-text
