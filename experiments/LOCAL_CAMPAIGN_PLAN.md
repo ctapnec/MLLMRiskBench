@@ -147,15 +147,24 @@ CLI plan -> acquire -> run chain, for:
 
 | Role | Identity | Size | Placement |
 |---|---|---|---|
-| target | `vllm:Qwen/Qwen3-VL-8B-Instruct` @ exact revision (text+image) | ~17 GB | GPU 0, BF16, TP 1, max_model_len 12288 |
-| target | `vllm:llava-hf/llava-v1.6-mistral-7b-hf` @ exact revision (text+image) | ~15 GB | GPU 0 |
-| target | `vllm:GraySwanAI/llava-v1.6-mistral-7b-hf-RR` @ exact revision (same-base defense pair) | ~28 GB | GPU 0 |
-| scoring guard | `meta-llama/Llama-Guard-3-8B` (gated; HF_TOKEN) | ~16 GB | GPU 1 (`--guardrail-device cuda:1`) |
+| target | `vllm:Qwen/Qwen3-VL-8B-Instruct` @ exact revision (text+image) | 16.34 GiB | GPU 0, BF16, TP 1, max_model_len 12288 |
+| target | `vllm:llava-hf/llava-v1.6-mistral-7b-hf` @ exact revision (text+image) | 14.10 GiB | GPU 0 |
+| target | `vllm:GraySwanAI/llava-v1.6-mistral-7b-hf-RR` @ exact revision (same-base defense pair) | 27.59 GiB | GPU 0 |
+| scoring guard | `meta-llama/Llama-Guard-3-8B` (gated; HF_TOKEN) | 29.93 GiB | GPU 1 (`--guardrail-device cuda:1`) |
 | defense guard (optional, hosted lanes only in the runbook; here used for the local text-only defense contrast if VRAM permits) | `meta-llama/Llama-Guard-3-1B` | ~3 GB | GPU 1 |
 
 The legacy hub bytes under `/mnt/stor/data/ura/hf/post-release-.../hub` may be
 reused as the transport cache only through the sealed controller; no manual
-copies into the store. Ollama rows (the three rwkv-7 models, plus any further
+copies into the store.
+
+**These are complete-sibling-set sizes, not weight sizes.** The seal proves the
+complete official sibling set for the exact commit, so acquisition fetches every
+file in the revision, not only the ones the server loads. That is why the two
+Llama Guard entries are roughly twice their servable weights: both Meta repos
+ship an `original/` PyTorch checkpoint that vLLM never reads, 14.96 GiB of the
+3-8B total and 2.79 GiB of the 3-1B total. Budget acquisition time and disk
+against the figures above; the earlier "~16 GB" for the 3-8B was the weight size
+and understated the transfer by nearly half. Ollama rows (the three rwkv-7 models, plus any further
 `ollama pull` made from the console) become selectable once the live roster
 shows them with exact digests.
 
