@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import gc
 import hashlib
+import io
 import json
 import logging
 import os
@@ -2024,8 +2025,15 @@ class _BoundedPrivateOutput:
     encoding = "utf-8"
     errors = "replace"
 
-    def __init__(self, *, maximum: int = 256 * 1024) -> None:
+    def __init__(self, *, maximum: int = 256 * 1024, descriptor: int | None = None) -> None:
         self._maximum = maximum
+        # The real descriptor this buffer stands in for. Third-party model code
+        # does not treat stdout/stderr as a bare writer: it asks for the
+        # underlying descriptor so it can hand it to a child process or to
+        # native code. Returning the descriptor that ``_capture_file_descriptor``
+        # has already redirected keeps that working AND keeps the output
+        # captured, because that descriptor is the capture pipe.
+        self._descriptor = descriptor
         self._parts: list[str] = []
         self._length = 0
         self._truncated = False
@@ -2056,6 +2064,29 @@ class _BoundedPrivateOutput:
         return None
 
     def isatty(self) -> bool:
+        return False
+
+    def fileno(self) -> int:
+        """The captured descriptor, so third-party code can pass it onward.
+
+        Without this, replacing ``sys.stdout``/``sys.stderr`` with this buffer
+        breaks any loader that asks for a descriptor. vLLM does, while starting
+        its engine, and the failure surfaced only as a generic "engine core
+        initialization failed" because the exception died inside the engine's
+        own subprocess. No sealed local model could load.
+        """
+
+        if self._descriptor is None:
+            raise io.UnsupportedOperation("managed-model capture has no descriptor")
+        return self._descriptor
+
+    def readable(self) -> bool:
+        return False
+
+    def writable(self) -> bool:
+        return True
+
+    def seekable(self) -> bool:
         return False
 
     def text(self) -> str:
@@ -2193,8 +2224,8 @@ def private_model_execution(
     if not callable(callback):
         raise ModelAcquisitionError("private model callback must be callable")
     checked_values = tuple(Path(value) for value in private_values)
-    stdout_capture = _BoundedPrivateOutput()
-    stderr_capture = _BoundedPrivateOutput()
+    stdout_capture = _BoundedPrivateOutput(descriptor=1)
+    stderr_capture = _BoundedPrivateOutput(descriptor=2)
     original_stdout = os.sys.stdout
     original_stderr = os.sys.stderr
     error: BaseException | None = None

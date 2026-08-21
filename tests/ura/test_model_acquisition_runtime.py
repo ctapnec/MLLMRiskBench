@@ -1398,3 +1398,52 @@ def test_local_engines_put_their_scripts_directory_on_path() -> None:
             default=len(text),
         )
         assert call < construction, f"{module}: PATH must be set before construction"
+
+
+def test_private_capture_supports_the_file_protocol_loaders_actually_use() -> None:
+    """Third-party model code asks the stream for its descriptor.
+
+    The sealed wrapper replaces sys.stdout/sys.stderr with a bounded capture so
+    that private model locators cannot reach a log. But a loader does not treat
+    those streams as bare writers: it asks for the underlying descriptor to hand
+    to a child process or to native code. Without fileno() the capture raised
+    AttributeError inside vLLM's engine-core subprocess, where the exception
+    died, so the only symptom was a generic "Engine core initialization failed"
+    and no sealed local model could load at all.
+    """
+
+    import io as _io
+
+    from ura import model_acquisition_runtime as runtime
+
+    capture = runtime._BoundedPrivateOutput(descriptor=2)
+    # The descriptor is the one _capture_file_descriptor has already redirected,
+    # so handing it onward still lands in this capture rather than the console.
+    assert capture.fileno() == 2
+    assert capture.writable() is True
+    assert capture.readable() is False
+    assert capture.seekable() is False
+    assert capture.isatty() is False
+    capture.flush()
+
+    # Still a capture: writing through the object is retained and bounded.
+    capture.write("sealed output\n")
+    assert "sealed output" in capture.text()
+
+    # With no descriptor it must raise the io-protocol error, which well-behaved
+    # callers handle, rather than AttributeError, which they do not.
+    detached = runtime._BoundedPrivateOutput()
+    with pytest.raises(_io.UnsupportedOperation):
+        detached.fileno()
+
+
+def test_sealed_execution_gives_its_captures_real_descriptors() -> None:
+    """The wrapper must wire the descriptors, not just support them."""
+
+    import inspect
+
+    from ura import model_acquisition_runtime as runtime
+
+    source = inspect.getsource(runtime.private_model_execution)
+    assert "_BoundedPrivateOutput(descriptor=1)" in source
+    assert "_BoundedPrivateOutput(descriptor=2)" in source
