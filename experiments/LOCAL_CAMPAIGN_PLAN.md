@@ -185,6 +185,23 @@ A gated identity (both Llama Guard sizes) needs `HF_TOKEN` in the environment
 for the acquisition step only; source `~/.ura_env` for that call and never log
 it.
 
+**The acquisition plan binds the request envelope, not just the model set.** A
+plan derived for one set of run arguments will not admit a run with different
+ones: changing `--limit`, or adding call caps or a deadline, changes the bound
+envelope and admission fails with `acquisition plan resources or immutable
+selection bindings differ`. So this is not one acquisition serving every lane.
+The working procedure, verified on the rig, is per lane:
+
+1. derive the plan with **the exact arguments that lane will run with**,
+2. acquire against that plan, which is a no-op import once the store holds the
+   snapshot, and reports `downloaded_bytes: 0`,
+3. run the lane with those same arguments plus the plan, receipt and store.
+
+Keeping the lane's arguments in one shell array and reusing it for all three
+steps is the reliable way to do this. The cost of the extra plan and receipt per
+lane is negligible, because acquisition re-imports nothing; the benefit is that
+each receipt states exactly which models that exact request needed.
+
 Gate 3: acquisition receipts present and bound; `python -m experiments.local_targets`
 shows the three vLLM rows as compatible with an exact revision/digest; the
 console Build model picker shows the same rows under Local vLLM and the Ollama
