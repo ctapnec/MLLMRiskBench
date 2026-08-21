@@ -1853,3 +1853,45 @@ def test_verify_node_completes_when_npm_ls_exits_on_a_tolerated_optional_peer(
     )
     with pytest.raises(installer.InstallerError, match="exit code 1"):
         installer._verify_node(entry, tmp_path, strict)
+
+
+@pytest.mark.skipif(os.name == "nt", reason="runtime aliases target Linux")
+def test_published_runtime_is_verified_through_the_managed_directory(
+    tmp_path: Path,
+) -> None:
+    """A published environment is named by a symlink, so verify must resolve it.
+
+    The store is content-addressed behind stable aliases, so the published path
+    is a symlink by design. A verification that writes inside the environment
+    refuses a symlinked parent, and the Node network guard does exactly that, so
+    a published Node runtime could never be re-verified through its own alias
+    however correctly it had been installed. It installed, published its alias,
+    and then failed its own re-verification.
+    """
+
+    layout = installer.Layout(tmp_path / "envs", tmp_path / "state")
+    layout.store_root.mkdir(parents=True)
+    store = layout.store("demo", "b" * 64)
+    (store / ".ura").mkdir(parents=True)
+    installer._publish_alias(layout, "demo", store)
+
+    alias = layout.final("demo")
+    assert alias.is_symlink(), "the published name is a symlink by design"
+
+    guard_via_alias = alias / ".ura" / "node-network-guard.cjs"
+    with pytest.raises(installer.InstallerError, match="unsafe managed parent"):
+        installer._safe_managed_parent(guard_via_alias)
+
+    # Resolving the alias yields the managed directory, where the same write is
+    # accepted. This is the path verification must use.
+    managed = alias.resolve(strict=True)
+    assert managed == store.resolve(strict=True)
+    installer._safe_managed_parent(managed / ".ura" / "node-network-guard.cjs")
+
+    # And the verification helper resolves it rather than using the alias.
+    import inspect
+
+    source = inspect.getsource(installer._verify_published)
+    assert "final.resolve(strict=True) if final.is_symlink() else final" in source
+    assert "_verify_runtime(entry, managed, runner)" in source
+    assert "_verify_content_seal(managed" in source

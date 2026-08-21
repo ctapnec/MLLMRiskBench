@@ -2319,11 +2319,20 @@ def _verify_published(
     *,
     log_prefix: str,
 ) -> dict[str, Any]:
-    runner = _runner(layout, entry, final, log_prefix)
-    verification = _verify_runtime(entry, final, runner)
+    # Verify the managed directory, not the alias that names it. The store is
+    # content-addressed behind stable aliases, so `final` is a symlink by
+    # design, and a verification that writes inside the environment refuses a
+    # symlinked parent: the Node network guard did exactly that, so a published
+    # Node runtime could never be re-verified through its own alias, however
+    # correctly it had been installed. The alias has already been proved to
+    # point at this store entry by the caller, so resolving it changes which
+    # path is used and not which bytes are checked.
+    managed = final.resolve(strict=True) if final.is_symlink() else final
+    runner = _runner(layout, entry, managed, log_prefix)
+    verification = _verify_runtime(entry, managed, runner)
     if receipt.get("inventory_sha256") != verification["inventory_sha256"]:
         raise InstallerError(f"receipt inventory mismatch for {entry['name']}")
-    _verify_content_seal(final, receipt, entry["name"])
+    _verify_content_seal(managed, receipt, entry["name"])
     return verification
 
 
