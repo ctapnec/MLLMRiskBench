@@ -176,12 +176,13 @@ The CLI chain, verified on the rig, is plan then acquire. Two details are easy
 to get wrong and both fail closed with an exact message:
 
 ```bash
-# 1. Derive the plan. Pair --model-acquisition-plan-only with --preflight-only:
-#    plan derivation constructs no target, so it is not measured execution and
-#    has no live attestation to consume, but without the pairing the parser
-#    applies the measured-execution admission and asks for one. The plan
-#    directory must also be an already-resolved absolute path: ~/MLLMRiskBench/runs
-#    is a symlink into $URA_WORK, so pass the $URA_WORK path itself.
+# 1. Derive this preflight request's plan. --preflight-only is present because
+#    the later consumer is a preflight, not because plan-only requires it.
+#    A canary plan instead includes --diagnostic-canary and its exact live-
+#    attestation arguments. A measured plan includes neither purpose flag and
+#    includes its exact live-attestation arguments. The plan directory must be
+#    an already-resolved absolute path: ~/MLLMRiskBench/runs is a symlink into
+#    $URA_WORK, so pass the $URA_WORK path itself.
 PLAN_DIR="$URA_WORK/runs/thesis/acquisition/<target-label>"
 python -m experiments.run_matrix --model-acquisition-plan-only --preflight-only   --model-acquisition-plan-dir "$PLAN_DIR"   --local "$LOCAL_SPEC" --local-config "$LOCAL_CONFIG"   --attackers replay --judges rules --corpora xstest_full   --source-config experiments/source-instances.json   --limit 1 --sample-seed 0 --seeds 0 --max-queries 1 --max-turns 1   --out "$URA_WORK/runs/thesis/acquisition/<target-label>-run"
 # stdout carries plan_id and plan_sha256; the plan file lands in $PLAN_DIR.
@@ -196,18 +197,24 @@ it.
 
 **The acquisition plan binds the request envelope, not just the model set.** A
 plan derived for one set of run arguments will not admit a run with different
-ones: changing `--limit`, or adding call caps or a deadline, changes the bound
-envelope and admission fails with `acquisition plan resources or immutable
-selection bindings differ`. So this is not one acquisition serving every lane.
-The working procedure, verified on the rig, is per lane:
+ones: changing `--limit`, adding call caps or a deadline, or changing the
+execution purpose changes the bound envelope and admission fails with
+`acquisition plan resources or immutable selection bindings differ`. A
+preflight plan therefore cannot admit a diagnostic canary or measured run, and
+a canary plan cannot admit the measured run. The working procedure, verified
+on the rig, is per exact purpose-specific request:
 
 1. derive the plan with **the exact arguments that lane will run with**,
 2. acquire against that plan, which is a no-op import once the store holds the
    snapshot, and reports `downloaded_bytes: 0`,
 3. run the lane with those same arguments plus the plan, receipt and store.
 
-Put **every** run argument in one shell array and reuse it verbatim for all
-three steps. That specifically includes `--max-total-target-calls`,
+Put **every** run argument for that one request in one shell array and reuse it
+verbatim for all three steps. Use separate arrays and separate plans for the
+preflight projection, diagnostic canary and measured run. The preflight array
+contains `--preflight-only`; the canary array contains `--diagnostic-canary`
+without `--preflight-only`; the measured array contains neither flag. This
+specifically includes `--max-total-target-calls`,
 `--max-total-judge-calls` and `--deadline-seconds`: they look like execution
 bounds rather than selection, but they are part of the bound envelope, and
 adding them at run time after deriving the plan without them fails admission.
@@ -215,14 +222,16 @@ This exact mistake was made once while executing this plan, so it is worth
 stating plainly rather than leaving to care.
 
 ```bash
-LANE=(--local "$LOCAL_SPEC" --local-config "$LOCAL_CONFIG"
+PREFLIGHT_LANE=(--preflight-only
+      --local "$LOCAL_SPEC" --local-config "$LOCAL_CONFIG"
       --attackers replay --judges rules --corpora "$ARM"
       --source-config experiments/source-instances.json
       --limit 1 --sample-seed 0 --seeds 0 --max-queries 1 --max-turns 1
       --max-total-target-calls 2 --max-total-judge-calls 2 --deadline-seconds 3600
       --out "$OUT_ROOT")
-# derive with "${LANE[@]}", acquire, then run with "${LANE[@]}" plus the
-# plan/receipt/store locators. Never add an argument to only one of the steps.
+# Derive with "${PREFLIGHT_LANE[@]}", acquire, then preflight with that same
+# array plus the plan/receipt/store locators. Build a separate exact array for
+# each canary or measured request. Never add an argument to only one step.
 ```
 
 The cost of the extra plan and receipt per lane is negligible, because
@@ -294,12 +303,14 @@ plan, plan SHA-256, receipt, receipt SHA-256 and managed store it refuses with
 request-error artifact and stops. So each projection needs the per-lane
 plan-acquire sequence of Phase 3, derived with that lane's exact arguments, for
 the same envelope-binding reason: the caps a projection reports are only
-meaningful for the request they were derived from. Build the lane argument array
-once and reuse it for the plan derivation, the acquisition, the projection, the
-canary and the measured run. Record approved call/time/storage caps from the projection
-before any measured lane. Judges for local-target lanes are `rules,guardrail`
-(no hosted LLM judge; a local LLM judge cannot share a process with a local
-target).
+meaningful for the request they were derived from. Build one exact argument
+array per purpose, then reuse that array only for its own plan derivation,
+acquisition and execution. The projection, diagnostic canary and measured run
+have distinct purpose-bound plans and receipts even when their model resources
+are already present and acquisition downloads zero bytes. Record approved
+call/time/storage caps from the projection before any measured lane. Judges for
+local-target lanes are `rules,guardrail` (no hosted LLM judge; a local LLM judge
+cannot share a process with a local target).
 
 **What this cascade can and cannot measure.** The guardrail is a content-safety
 classifier: its label space is violation/safe, and it cannot express

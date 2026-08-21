@@ -3929,6 +3929,44 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 _ACTIVE_ENGINE_RUNTIME_SELECTION: EngineRuntimeSelection | None = None
+_ACTIVE_MODEL_COMPONENTS: list[object] = []
+
+
+def _track_model_component(component: object) -> object:
+    """Register one process-owned model component for unconditional teardown."""
+
+    if not any(existing is component for existing in _ACTIVE_MODEL_COMPONENTS):
+        _ACTIVE_MODEL_COMPONENTS.append(component)
+    return component
+
+
+def _close_model_components() -> tuple[list[str], BaseException | None]:
+    """Close every tracked component once, newest first, without leaking errors."""
+
+    components = list(reversed(_ACTIVE_MODEL_COMPONENTS))
+    _ACTIVE_MODEL_COMPONENTS.clear()
+    failures: list[str] = []
+    deferred_interrupt: BaseException | None = None
+    seen: set[int] = set()
+    for component in components:
+        identity = id(component)
+        if identity in seen:
+            continue
+        seen.add(identity)
+        try:
+            close = getattr(component, "close", None)
+            if callable(close):
+                close()
+        except BaseException as exc:  # finish every independent GPU owner
+            if isinstance(exc, Exception):
+                component_type = type(component)
+                failures.append(
+                    f"{component_type.__module__}.{component_type.__qualname__}: "
+                    f"{type(exc).__name__}"
+                )
+            elif deferred_interrupt is None:
+                deferred_interrupt = exc
+    return failures, deferred_interrupt
 
 
 class _EngineRuntimeTermination(BaseException):
@@ -5295,6 +5333,7 @@ def _main(argv=None) -> int:
             )
         else:
             shared_defense_guard = RuleJudge()
+        _track_model_component(shared_defense_guard)
 
     def persist_eligibility_plan(
         target_failures: dict[str, dict[str, str]] | None = None,
@@ -5465,6 +5504,7 @@ def _main(argv=None) -> int:
                 model_runtime=model_runtime,
                 managed_model_role="vllm_target",
             )
+            _track_model_component(target)
             if spec.startswith("vllm:"):
                 _require_local_hardware_fit(
                     target, spec, local_configs[spec], gpu_hardware
@@ -5623,6 +5663,7 @@ def _main(argv=None) -> int:
                 model_runtime=model_runtime,
                 managed_model_role="llm_judge",
             )
+            _track_model_component(prebuilt_judge_target)
             if local_judge_spec is not None:
                 _require_local_hardware_fit(
                     prebuilt_judge_target,
@@ -5722,6 +5763,8 @@ def _main(argv=None) -> int:
             guardrail_device=args.guardrail_device,
             model_runtime=model_runtime,
         )
+        for stage in planned_cascade.stages:
+            _track_model_component(stage)
         _component_config(planned_cascade)
         admission_failures: list[dict[str, str]] = []
         for spec, target in prebuilt_targets.items():
@@ -7003,19 +7046,32 @@ def _main(argv=None) -> int:
 
 
 def main(argv=None) -> int:
-    """Run one matrix and always tear down any admitted engine sessions."""
+    """Run one matrix and tear down every admitted runtime/model owner."""
 
     global _ACTIVE_ENGINE_RUNTIME_SELECTION
     if _ACTIVE_ENGINE_RUNTIME_SELECTION is not None:
         raise RuntimeError("an isolated engine runtime selection is already active")
+    if _ACTIVE_MODEL_COMPONENTS:
+        raise RuntimeError("a model component lifecycle is already active")
     prior_sigterm: object | None = None
     installed_sigterm = False
+    cleanup_failures: list[str] = []
+    deferred_cleanup_interrupt: BaseException | None = None
+    pending_sigterm: int | None = None
+    execution_active = False
+    result: int | None = None
     if os.name == "posix":
         try:
             prior_sigterm = signal.getsignal(signal.SIGTERM)
 
             def terminate(signum: int, _frame: object) -> None:
-                raise _EngineRuntimeTermination(signum)
+                nonlocal execution_active, pending_sigterm
+                pending_sigterm = signum
+                if execution_active:
+                    # Mark execution inactive before unwinding. A later SIGTERM
+                    # is then recorded without interrupting bounded teardown.
+                    execution_active = False
+                    raise _EngineRuntimeTermination(signum)
 
             signal.signal(signal.SIGTERM, terminate)
             installed_sigterm = True
@@ -7025,18 +7081,51 @@ def main(argv=None) -> int:
             pass
     try:
         try:
-            return _main(argv)
-        except _EngineRuntimeTermination as exc:
-            return 128 + exc.signum
-    finally:
-        selection = _ACTIVE_ENGINE_RUNTIME_SELECTION
-        _ACTIVE_ENGINE_RUNTIME_SELECTION = None
-        try:
-            if selection is not None:
-                selection.abort()
+            execution_active = True
+            if pending_sigterm is not None:
+                raise _EngineRuntimeTermination(pending_sigterm)
+            try:
+                result = _main(argv)
+            except _EngineRuntimeTermination as exc:
+                pending_sigterm = exc.signum
+                result = 128 + exc.signum
+            finally:
+                execution_active = False
         finally:
-            if installed_sigterm:
-                signal.signal(signal.SIGTERM, prior_sigterm)
+            try:
+                (
+                    cleanup_failures,
+                    deferred_cleanup_interrupt,
+                ) = _close_model_components()
+                for failure in cleanup_failures:
+                    print(
+                        f"model component cleanup failed: {failure}",
+                        file=sys.stderr,
+                    )
+            finally:
+                selection = _ACTIVE_ENGINE_RUNTIME_SELECTION
+                _ACTIVE_ENGINE_RUNTIME_SELECTION = None
+                try:
+                    if selection is not None:
+                        selection.abort()
+                finally:
+                    if installed_sigterm:
+                        signal.signal(signal.SIGTERM, prior_sigterm)
+            if deferred_cleanup_interrupt is not None:
+                raise deferred_cleanup_interrupt
+    except _EngineRuntimeTermination as exc:
+        # A signal can land while execution is transitioning into its outer
+        # finally. Teardown has completed by the time it reaches this handler.
+        pending_sigterm = exc.signum
+        result = 128 + exc.signum
+    if result is None:  # pragma: no cover - defensive lifecycle invariant
+        raise RuntimeError("matrix lifecycle returned no process status")
+    if pending_sigterm is not None:
+        return 128 + pending_sigterm
+    # A teardown failure cannot retroactively replace an already-persisted
+    # partial/error result. A nominally successful process does fail closed so
+    # an operator never mistakes leaked GPU/process state for a clean exit.
+    return 1 if cleanup_failures and result == 0 else result
 
 
 if __name__ == "__main__":

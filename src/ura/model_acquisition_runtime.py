@@ -2383,8 +2383,14 @@ class ManagedModelRuntime:
                     )
             except Exception:
                 if loaded is not None:
-                    self._discard_loaded(loaded, cleanup=cleanup)
+                    loaded_holder = [loaded]
                     loaded = None
+                    self._discard_loaded(
+                        loaded_holder,
+                        cleanup=cleanup,
+                        role=requirement.role,
+                        private_values=private_values,
+                    )
                 raise
         if constructor_error is not None and isinstance(constructor_error, Exception):
             raise ManagedModelLoadError(
@@ -2416,24 +2422,35 @@ class ManagedModelRuntime:
 
     @staticmethod
     def _discard_loaded(
-        loaded: _T,
+        loaded_holder: list[_T],
         *,
         cleanup: Callable[[_T], None] | None,
+        role: str,
+        private_values: tuple[Path, ...],
     ) -> None:
-        try:
-            if cleanup is not None:
-                cleanup(loaded)
-            else:
-                close = getattr(loaded, "close", None)
-                if callable(close):
-                    close()
-        except Exception:
-            # Integrity failure remains authoritative; cleanup diagnostics must
-            # not mask it or accidentally publish a private loader locator.
-            pass
-        finally:
-            del loaded
-            gc.collect()
+        def discard() -> None:
+            loaded = loaded_holder[0]
+            try:
+                if cleanup is not None:
+                    cleanup(loaded)
+                else:
+                    close = getattr(loaded, "close", None)
+                    if callable(close):
+                        close()
+            except Exception:
+                # Integrity failure remains authoritative; cleanup diagnostics
+                # must not mask it or publish a private loader locator.
+                pass
+            finally:
+                loaded = None
+                loaded_holder.clear()
+                gc.collect()
+
+        private_model_execution(
+            discard,
+            role=role,
+            private_values=private_values,
+        )
 
     def public_descriptor(self, *, receipt_id: str | None = None) -> dict[str, Any]:
         """Return path/token-free acquisition provenance suitable for artifacts."""

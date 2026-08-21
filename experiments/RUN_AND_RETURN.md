@@ -1041,8 +1041,15 @@ only and is never written to the operator secrets file), or in the console's
 secret-manager environment before starting Rig Web. Only the acquisition child
 receives it.
 
-For a direct CLI lane, keep one exact argument vector in a shell array and use
-it for both planning and execution. The template below deliberately uses
+For a direct CLI request, keep one exact argument vector in a shell array and
+use it for both planning and execution. Purpose is part of that vector and of
+the immutable request binding. Include `--preflight-only` only when the later
+consumer is that exact preflight. Include `--diagnostic-canary` without
+`--preflight-only` when the later consumer is that exact canary. Include neither
+flag for a measured run. Plan-only stops before constructors; it does not
+change the intended execution purpose. Preflight, canary and measured requests
+therefore need separate exact arrays, plans and receipts even when acquisition
+finds every model byte already sealed. The template below deliberately uses
 placeholders for the content-addressed filenames printed by each preceding
 stage; do not choose or edit those values by hand.
 
@@ -1054,9 +1061,10 @@ export URA_MODEL_RECEIPTS="$URA_STATE/model-acquisition/receipts"
 export URA_MODEL_TRANSPORT="$URA_MODEL_STORE/.transport-cache"
 mkdir -p "$URA_MODEL_STORE" "$URA_MODEL_PLANS" "$URA_MODEL_RECEIPTS" "$URA_MODEL_TRANSPORT"
 
-# EXACT_LANE_ARGS contains the complete intended run_matrix selection and
-# immutable source/config/project/request inputs. Plan-only stops before every
-# attacker, target, judge, guard, surrogate, or engine constructor.
+# EXACT_LANE_ARGS contains the complete intended run_matrix selection,
+# execution-purpose flag, and immutable source/config/project/request inputs.
+# Plan-only stops before every attacker, target, judge, guard, surrogate, or
+# engine constructor without changing that purpose.
 python -m experiments.run_matrix "${EXACT_LANE_ARGS[@]}" \
   --model-acquisition-plan-only \
   --model-acquisition-plan-dir "$URA_MODEL_PLANS" \
@@ -1673,8 +1681,18 @@ hosted judge. The canary must therefore actually reach every intended hosted
 judge route, or report it as `not_exercised`. Use the intended lane's complete
 target, source, attacker/config, defense, judge/guard, grouping, and query/turn
 configuration; reduce only the target inventory to one exact target, the seed
-inventory to one seed, and the deterministic cluster limit to one. The static
-full-cascade pattern is:
+inventory to one seed, and the deterministic cluster limit to one.
+
+The no-call rehearsal and live canary are separate purpose-bound requests.
+Follow section 6.1 once with the rehearsal's exact array containing
+`--preflight-only`, and again with the canary's exact array containing
+`--diagnostic-canary` and its canary-specific live-attestation arguments. Point
+the model-acquisition environment variables at the matching plan and receipt
+before each command. Never reuse the rehearsal plan for the canary or append
+`--diagnostic-canary` only after plan derivation; exact admission rejects that
+purpose mismatch before any model call.
+
+The static full-cascade pattern is:
 
 ```bash
 export CANARY_TARGET='<one-exact-target-from-the-lane>'

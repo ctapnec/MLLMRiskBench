@@ -11,6 +11,7 @@ Factories are registered in the shared ``REGISTRY`` under ``"vllm"`` and
 """
 from __future__ import annotations
 
+import gc
 import hashlib
 import json
 import math
@@ -431,6 +432,133 @@ class VLLMTarget(BaseTarget):
         self._llm: Any = None
         self._identity_verified = False
 
+    @staticmethod
+    def _shutdown_engine(engine: Any) -> None:
+        """Invoke the owning vLLM shutdown hook exactly once.
+
+        vLLM 0.27's offline ``LLM`` facade does not expose ``shutdown``. Its
+        multiprocessing owner is ``LLM.llm_engine.engine_core``. Relying on
+        interpreter finalization leaves that owner alive until ZeroMQ and its
+        file descriptors are already being dismantled, which can turn an
+        otherwise honest matrix exit into SIGABRT. Older vLLM releases expose
+        the hook on the facade, engine, or model executor, so retain those
+        bounded compatibility fallbacks.
+        """
+
+        candidates: list[Any] = [engine]
+        llm_engine: Any = None
+        nested: Any = None
+        lookup_failed = False
+        try:
+            llm_engine = getattr(engine, "llm_engine", None)
+        except Exception:
+            lookup_failed = True
+        if llm_engine is not None:
+            candidates.append(llm_engine)
+            for attribute in ("engine_core", "model_executor"):
+                try:
+                    nested = getattr(llm_engine, attribute, None)
+                except Exception:
+                    lookup_failed = True
+                    continue
+                if nested is not None:
+                    candidates.append(nested)
+        saw_hook = False
+        hook_failed = False
+        candidate: Any = None
+        method: Any = None
+        for candidate in candidates:
+            for method_name in ("shutdown", "close"):
+                try:
+                    method = getattr(candidate, method_name, None)
+                except Exception:
+                    lookup_failed = True
+                    continue
+                if not callable(method):
+                    continue
+                saw_hook = True
+                try:
+                    method()
+                except Exception:  # try the next version-specific hook
+                    hook_failed = True
+                    continue
+                return
+        # Do not retain a candidate, bound method, or third-party exception in
+        # the traceback that crosses the private execution boundary.
+        candidates.clear()
+        candidate = None
+        method = None
+        llm_engine = None
+        nested = None
+        engine = None
+        if hook_failed or lookup_failed:
+            raise RuntimeError("vLLM engine shutdown failed") from None
+        if not saw_hook:
+            raise RuntimeError("vLLM engine exposes no supported shutdown hook") from None
+
+    def close(self) -> None:
+        """Synchronously release the engine and its multiprocessing resources.
+
+        Detach first so repeated cleanup and error paths are idempotent. The
+        shutdown itself stays inside the managed-model private-output boundary;
+        neither loader locators nor third-party exception text can enter matrix
+        diagnostics.
+        """
+
+        engine_holder = [self._llm]
+        self._llm = None
+        if engine_holder[0] is None:
+            return
+
+        def shutdown_and_release() -> None:
+            shutdown_failed = False
+            try:
+                self._shutdown_engine(engine_holder[0])
+            except Exception as exc:
+                shutdown_failed = True
+                # Tracebacks retain frame locals, including engine candidates.
+                # Strip the complete exception graph before releasing the last
+                # engine reference so its finalizer runs inside redaction.
+                pending: list[BaseException] = [exc]
+                seen: set[int] = set()
+                while pending:
+                    current = pending.pop()
+                    if id(current) in seen:
+                        continue
+                    seen.add(id(current))
+                    for linked in (current.__cause__, current.__context__):
+                        if linked is not None:
+                            pending.append(linked)
+                    current.__traceback__ = None
+                    current.__cause__ = None
+                    current.__context__ = None
+                pending.clear()
+                seen.clear()
+                current = None
+                linked = None
+            finally:
+                # The engine object's destructor/finalizer is third-party code.
+                # Drop its last lifecycle-owned reference and collect it while
+                # stdout, stderr, logs, and errors are still path-redacted.
+                engine_holder.clear()
+                gc.collect()
+            if shutdown_failed:
+                raise RuntimeError("vLLM engine shutdown failed") from None
+
+        if self._model_runtime is not None:
+            self._model_runtime.private_execution(
+                self._managed_model_role,
+                shutdown_and_release,
+            )
+        else:
+            from ..model_acquisition_runtime import private_model_execution
+
+            private_model_execution(
+                shutdown_and_release,
+                role=self._managed_model_role,
+                private_values=(Path(self._runtime_model).expanduser(),),
+            )
+
     def validate_research_identity(self) -> None:
         if self._identity_verified:
             return
@@ -520,26 +648,13 @@ class VLLMTarget(BaseTarget):
             }
 
             def cleanup(engine: Any) -> None:
-                candidates = (
-                    engine,
-                    getattr(engine, "llm_engine", None),
-                    getattr(
-                        getattr(engine, "llm_engine", None),
-                        "model_executor",
-                        None,
-                    ),
-                )
-                for candidate in candidates:
-                    if candidate is None:
-                        continue
-                    for method_name in ("shutdown", "close"):
-                        method = getattr(candidate, method_name, None)
-                        if callable(method):
-                            try:
-                                method()
-                            except Exception:
-                                continue
-                            return
+                try:
+                    self._shutdown_engine(engine)
+                except Exception:
+                    # A post-construction integrity failure is authoritative.
+                    # ManagedModelRuntime also drops the rejected object and
+                    # collects cycles after this best-effort shutdown.
+                    pass
 
             if self.revision is None:
                 # Explicit operator-local checkpoints are already sealed by
@@ -574,7 +689,21 @@ class VLLMTarget(BaseTarget):
                             "construction"
                         )
                 except Exception:
-                    cleanup(loaded)
+                    loaded_holder = [loaded]
+                    loaded = None
+
+                    def discard() -> None:
+                        try:
+                            cleanup(loaded_holder[0])
+                        finally:
+                            loaded_holder.clear()
+                            gc.collect()
+
+                    private_model_execution(
+                        discard,
+                        role=self._managed_model_role,
+                        private_values=(resolved,),
+                    )
                     raise
                 self._llm = loaded
             else:

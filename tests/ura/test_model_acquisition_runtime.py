@@ -989,7 +989,10 @@ def test_every_consumer_constructs_only_after_preverify_and_postverify(
     }
 
 
-def test_post_load_tamper_discards_engine_and_never_returns_it(tmp_path: Path) -> None:
+def test_post_load_tamper_discards_engine_and_never_returns_it(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
     selection = build_runtime_selection(
         collect_run_requirements(
             target_specs=["vllm:Org/Target"],
@@ -1003,13 +1006,14 @@ def test_post_load_tamper_discards_engine_and_never_returns_it(tmp_path: Path) -
         ),
         input_bindings=BINDINGS,
     )
-    runtime, _plan, _receipt, _store, _plan_path, _receipt_path = (
+    runtime, _plan, _receipt, store, _plan_path, _receipt_path = (
         _sealed_runtime_fixture(tmp_path, selection=selection)
     )
     calls: list[str] = []
 
     class Engine:
-        pass
+        def __del__(self) -> None:
+            print(f"rejected-engine-finalizer:{store}")
 
     def construct(path: Path) -> Engine:
         calls.append("constructed")
@@ -1020,11 +1024,16 @@ def test_post_load_tamper_discards_engine_and_never_returns_it(tmp_path: Path) -
 
     def cleanup(_engine: Engine) -> None:
         calls.append("cleaned")
+        print(f"rejected-engine-cleanup:{store}", file=sys.stderr)
 
     with pytest.raises(ModelAcquisitionError, match="changed after acquisition"):
         runtime.construct(selection.requirements[0], construct, cleanup=cleanup)
+    captured = capsys.readouterr()
+    rendered = captured.out + captured.err
     assert calls == ["constructed", "cleaned"]
     assert "inference" not in calls
+    assert str(store) not in rendered
+    assert rendered.count("[managed-model-private]") >= 2
 
 
 def test_runtime_shared_lock_blocks_controller_exclusive_lock_during_load(

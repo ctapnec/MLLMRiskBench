@@ -9,8 +9,12 @@ import sys
 import pytest
 
 from experiments import run_matrix
+from ura.model_acquisition import ModelAcquisitionError, hub_requirement
 from ura.model_acquisition_runtime import (
+    ModelRequirementSet,
+    build_runtime_selection,
     validate_model_acquisition_role_projection,
+    validate_runtime_plan,
 )
 
 
@@ -225,6 +229,119 @@ def test_receipt_admission_failure_has_zero_component_constructors(
     assert errors
     payload = json.loads(errors[-1].read_text(encoding="utf-8"))
     assert payload["failure"]["phase"] == "model_acquisition_admission"
+
+
+def test_plan_only_preserves_canary_purpose_and_rejects_preflight_plan(
+    tmp_path: Path,
+    project_revision_args: list[str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls = _forbid_component_constructors(monkeypatch)
+    common = [
+        *project_revision_args,
+        "--api",
+        "mock",
+        "--attackers",
+        "replay",
+        "--judges",
+        "guardrail",
+        "--guardrail-model",
+        "Org/Guardrail",
+        "--guardrail-revision",
+        REVISION,
+        "--corpora",
+        "synth",
+        "--limit",
+        "1",
+        "--sample-seed",
+        "0",
+        "--seeds",
+        "0",
+        "--max-queries",
+        "1",
+        "--max-turns",
+        "1",
+        "--max-total-target-calls",
+        "1",
+        "--max-total-judge-calls",
+        "1",
+        "--max-total-http-attempts",
+        "1",
+        "--deadline-seconds",
+        "60",
+    ]
+
+    def derive(name: str, purpose_args: list[str]) -> tuple[dict, dict, Path]:
+        private_plans = (tmp_path / f"{name}-plans").resolve()
+        private_plans.mkdir()
+        out = (tmp_path / f"{name}-run").resolve()
+        assert run_matrix.main([
+            *purpose_args,
+            *common,
+            "--model-acquisition-plan-only",
+            "--model-acquisition-plan-dir",
+            str(private_plans),
+            "--out",
+            str(out),
+        ]) == 0
+        plan_path = next(private_plans.glob("*.plan.json"))
+        envelope_path = next(out.glob("*.request-envelope.json"))
+        plan = json.loads(plan_path.read_text(encoding="utf-8"))
+        envelope = json.loads(envelope_path.read_text(encoding="utf-8"))
+        assert plan["bindings"]["request_envelope_sha256"] == hashlib.sha256(
+            envelope_path.read_bytes()
+        ).hexdigest()
+        return plan, envelope, plan_path
+
+    canary_plan, canary_envelope, _canary_path = derive(
+        "canary",
+        [
+            "--diagnostic-canary",
+            "--execution-scope-id",
+            "test-scope",
+            "--live-attestation-max-age-hours",
+            "1",
+        ],
+    )
+    preflight_plan, preflight_envelope, _preflight_path = derive(
+        "preflight",
+        ["--preflight-only"],
+    )
+
+    assert calls == []
+    assert canary_envelope["request"]["execution_purpose"] == "diagnostic_canary"
+    assert preflight_envelope["request"]["execution_purpose"] == "preflight_only"
+    assert (
+        canary_plan["bindings"]["request_envelope_sha256"]
+        != preflight_plan["bindings"]["request_envelope_sha256"]
+    )
+    assert canary_plan["plan_id"] != preflight_plan["plan_id"]
+
+    canary_selection = build_runtime_selection(
+        ModelRequirementSet(
+            tuple(
+                hub_requirement(role, resource["repo_id"], resource["revision"])
+                for resource in canary_plan["resources"]
+                for role in resource["roles"]
+            ),
+            (),
+        ),
+        input_bindings={
+            key: value
+            for key, value in canary_plan["bindings"].items()
+            if key != "selection_sha256"
+        },
+    )
+    assert (
+        canary_selection.selection_sha256
+        == canary_plan["bindings"]["selection_sha256"]
+    )
+    assert validate_runtime_plan(canary_plan, selection=canary_selection) == canary_plan
+    with pytest.raises(
+        ModelAcquisitionError,
+        match="resources or immutable selection bindings differ",
+    ):
+        validate_runtime_plan(preflight_plan, selection=canary_selection)
 
 
 def test_dry_run_rejects_live_nanogcg_before_plan_or_constructor(

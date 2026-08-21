@@ -10,6 +10,10 @@ import pytest
 from ura.adapters.nanogcg import LIVE_NANOGCG_DISABLED_MESSAGE, NanoGCGAttacker
 from ura.judges.guardrail import GuardrailJudge
 from ura.model_acquisition import ModelAcquisitionError
+from ura.model_acquisition_runtime import (
+    ManagedModelLoadError,
+    private_model_execution,
+)
 from ura.targets.local import VLLMTarget, _tree_sha256
 
 
@@ -31,6 +35,7 @@ class _RejectAfterConstruction:
 def test_explicit_local_vllm_mutation_cleans_engine_and_exposes_no_object(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
 ) -> None:
     snapshot = (tmp_path / "checkpoint").resolve()
     snapshot.mkdir()
@@ -48,6 +53,10 @@ def test_explicit_local_vllm_mutation_cleans_engine_and_exposes_no_object(
 
         def shutdown(self) -> None:
             events.append("shutdown")
+            print(f"shutdown-snapshot:{snapshot}")
+
+        def __del__(self) -> None:
+            print(f"rejected-engine-finalizer:{snapshot}")
 
         def chat(self, *_args):
             events.append("inference")
@@ -65,7 +74,10 @@ def test_explicit_local_vllm_mutation_cleans_engine_and_exposes_no_object(
     )
     with pytest.raises(ValueError, match="changed during engine construction"):
         target.preflight_base()
+    output = capsys.readouterr().out
     assert events == ["shutdown"]
+    assert str(snapshot) not in output
+    assert output.count("[managed-model-private]") >= 2
     assert target._llm is None
 
 
@@ -97,6 +109,111 @@ def test_vllm_postverify_failure_shutdowns_engine(
         target.preflight_base()
     assert runtime.constructor_calls == 1
     assert events == ["shutdown"]
+    assert target._llm is None
+
+
+def test_vllm_close_reaches_v027_engine_core_and_is_idempotent() -> None:
+    events: list[str] = []
+
+    class Runtime:
+        def private_execution(self, role, callback):
+            events.append(f"private:{role}")
+            return callback()
+
+    class Core:
+        def shutdown(self) -> None:
+            events.append("engine-core-shutdown")
+
+    target = VLLMTarget(
+        "Org/Target",
+        revision="a" * 40,
+        modality_support=("text",),
+        model_runtime=Runtime(),
+    )
+    target._llm = SimpleNamespace(
+        llm_engine=SimpleNamespace(engine_core=Core())
+    )
+
+    target.close()
+    target.close()
+
+    assert events == ["private:vllm_target", "engine-core-shutdown"]
+    assert target._llm is None
+
+
+def test_vllm_close_collects_destructor_inside_private_output(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    private_locator = (tmp_path / "operator-private" / "vllm-snapshot").resolve()
+
+    class Runtime:
+        def private_execution(self, role, callback):
+            return private_model_execution(
+                callback,
+                role=role,
+                private_values=(private_locator,),
+            )
+
+    class Engine:
+        def shutdown(self) -> None:
+            pass
+
+        def __del__(self) -> None:
+            print(f"engine-finalizer:{private_locator}")
+
+    target = VLLMTarget(
+        "Org/Target",
+        revision="a" * 40,
+        modality_support=("text",),
+        model_runtime=Runtime(),
+    )
+    target._llm = Engine()
+
+    target.close()
+
+    output = capsys.readouterr().out
+    assert str(private_locator) not in output
+    assert "engine-finalizer:[managed-model-private]" in output
+
+
+def test_vllm_close_failure_drops_traceback_refs_inside_private_output(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    private_locator = (tmp_path / "operator-private" / "failed-vllm").resolve()
+
+    class Runtime:
+        def private_execution(self, role, callback):
+            return private_model_execution(
+                callback,
+                role=role,
+                private_values=(private_locator,),
+            )
+
+    class Engine:
+        def shutdown(self) -> None:
+            raise RuntimeError(f"third-party-shutdown-detail:{private_locator}")
+
+        def __del__(self) -> None:
+            print(f"failed-engine-finalizer:{private_locator}")
+
+    target = VLLMTarget(
+        "Org/Target",
+        revision="a" * 40,
+        modality_support=("text",),
+        model_runtime=Runtime(),
+    )
+    target._llm = Engine()
+
+    with pytest.raises(ManagedModelLoadError) as caught:
+        target.close()
+
+    output = capsys.readouterr().out
+    assert str(private_locator) not in output
+    assert "failed-engine-finalizer:[managed-model-private]" in output
+    assert str(private_locator) not in str(caught.value)
+    assert "third-party-shutdown-detail" not in str(caught.value)
     assert target._llm is None
 
 
@@ -168,6 +285,146 @@ def test_guardrail_postverify_failure_releases_every_loaded_object(
         "cuda-empty",
     ]
     assert guard._model is None and guard._tokenizer is None
+
+
+def test_guardrail_close_releases_loaded_state_once(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    events: list[str] = []
+
+    class Runtime:
+        def private_execution(self, role, callback):
+            events.append(f"private:{role}")
+            return callback()
+
+    class Tokenizer:
+        def close(self) -> None:
+            events.append("tokenizer-close")
+
+    class Model:
+        def close(self) -> None:
+            events.append("model-close")
+
+        def to(self, device: str):
+            events.append(f"model-to-{device}")
+            return self
+
+    fake_cuda = SimpleNamespace(
+        is_available=lambda: True,
+        empty_cache=lambda: events.append("cuda-empty"),
+    )
+    monkeypatch.setitem(sys.modules, "torch", SimpleNamespace(cuda=fake_cuda))
+    guard = GuardrailJudge(
+        revision="b" * 40,
+        device="cuda:1",
+        model_runtime=Runtime(),
+    )
+    guard._tokenizer = Tokenizer()
+    guard._model = Model()
+
+    guard.close()
+    guard.close()
+
+    assert events == [
+        "private:guardrail_judge",
+        "tokenizer-close",
+        "model-close",
+        "model-to-cpu",
+        "cuda-empty",
+    ]
+    assert guard._model is None and guard._tokenizer is None
+
+
+def test_guardrail_close_collects_destructors_inside_private_output(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    private_locator = (tmp_path / "operator-private" / "guard-snapshot").resolve()
+
+    class Runtime:
+        def private_execution(self, role, callback):
+            return private_model_execution(
+                callback,
+                role=role,
+                private_values=(private_locator,),
+            )
+
+    class LeakyObject:
+        def __init__(self, kind: str) -> None:
+            self.kind = kind
+
+        def __del__(self) -> None:
+            print(f"{self.kind}-finalizer:{private_locator}")
+
+    fake_cuda = SimpleNamespace(
+        is_available=lambda: False,
+        empty_cache=lambda: pytest.fail("CUDA cache must not be reached"),
+    )
+    monkeypatch.setitem(sys.modules, "torch", SimpleNamespace(cuda=fake_cuda))
+    guard = GuardrailJudge(
+        revision="b" * 40,
+        model_runtime=Runtime(),
+    )
+    guard._tokenizer = LeakyObject("tokenizer")
+    guard._model = LeakyObject("model")
+
+    guard.close()
+
+    output = capsys.readouterr().out
+    assert str(private_locator) not in output
+    assert "tokenizer-finalizer:[managed-model-private]" in output
+    assert "model-finalizer:[managed-model-private]" in output
+
+
+def test_guardrail_close_contains_exceptional_lookup_and_finalizer_output(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    private_locator = (tmp_path / "operator-private" / "failed-guard").resolve()
+
+    class Runtime:
+        def private_execution(self, role, callback):
+            return private_model_execution(
+                callback,
+                role=role,
+                private_values=(private_locator,),
+            )
+
+    class ExceptionalObject:
+        def __init__(self, kind: str) -> None:
+            self.kind = kind
+
+        def __getattribute__(self, name: str):
+            if name in {"close", "to"}:
+                raise RuntimeError(
+                    f"third-party-lookup-detail:{private_locator}"
+                )
+            return object.__getattribute__(self, name)
+
+        def __del__(self) -> None:
+            print(f"{self.kind}-exceptional-finalizer:{private_locator}")
+
+    fake_cuda = SimpleNamespace(
+        is_available=lambda: False,
+        empty_cache=lambda: pytest.fail("CUDA cache must not be reached"),
+    )
+    monkeypatch.setitem(sys.modules, "torch", SimpleNamespace(cuda=fake_cuda))
+    guard = GuardrailJudge(
+        revision="b" * 40,
+        model_runtime=Runtime(),
+    )
+    guard._tokenizer = ExceptionalObject("tokenizer")
+    guard._model = ExceptionalObject("model")
+
+    guard.close()
+
+    output = capsys.readouterr().out
+    assert str(private_locator) not in output
+    assert "third-party-lookup-detail" not in output
+    assert "tokenizer-exceptional-finalizer:[managed-model-private]" in output
+    assert "model-exceptional-finalizer:[managed-model-private]" in output
 
 
 def test_nanogcg_live_fails_before_snapshot_or_framework_construction() -> None:

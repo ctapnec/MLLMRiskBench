@@ -183,13 +183,17 @@ LLM judge, scoring Guardrail judge, defense Guardrail, and NanoGCG surrogate.
 Every Hub selection requires its public repository ID and an exact 40-64
 lowercase-hex commit. `run_matrix --model-acquisition-plan-only` derives a
 path-free plan and stops before constructing an attacker, target, judge, guard,
-or surrogate. The dedicated `experiments.model_acquire` controller verifies or
-transfers the planned bytes and writes a sealed receipt. The subsequent
-preflight or measured process accepts only that exact plan, receipt, and private
-managed-store locator, rehashes every snapshot immediately around model
-construction, and forces Hugging Face/Transformers/vLLM local-only offline
-policy. Explicit digest-sealed workstation checkpoints are the path-local
-exception and receive the same pre/post-load content check.
+or surrogate without changing the intended execution purpose. A preflight plan
+includes `--preflight-only`; a diagnostic-canary plan includes
+`--diagnostic-canary` without `--preflight-only`; a measured plan includes
+neither. Those purpose-specific request envelopes require separate plans. The
+dedicated `experiments.model_acquire` controller verifies or transfers the
+planned bytes and writes a sealed receipt. The subsequent preflight, canary or
+measured process accepts only that exact plan, receipt, and private managed-store
+locator, rehashes every snapshot immediately around model construction,
+and forces Hugging Face/Transformers/vLLM local-only offline policy. Explicit
+digest-sealed workstation checkpoints are the path-local exception and receive
+the same pre/post-load content check.
 
 Rig Web presents those stages as `acquisition plan` (no model call), `model
 acquisition`, then the reviewed offline preflight/run. Its `model_download`

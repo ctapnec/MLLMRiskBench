@@ -23,6 +23,7 @@ the pinned model, or on the first direct library call if preflight was skipped.
 """
 from __future__ import annotations
 
+import gc
 import hashlib
 import os
 import re
@@ -117,6 +118,80 @@ class GuardrailJudge(BaseJudge):
         self._tokenizer: Any = None
         self._model: Any = None
 
+    @staticmethod
+    def _release_loaded(tokenizer: Any, model: Any) -> None:
+        """Best-effort release of every guardrail-owned heavyweight object."""
+
+        for owner in (tokenizer, model):
+            try:
+                operation = getattr(owner, "close", None)
+            except Exception:
+                continue
+            if callable(operation):
+                try:
+                    operation()
+                except Exception:
+                    # Continue through every release mechanism. Object
+                    # detachment plus collection below remains the fallback.
+                    pass
+            operation = None
+        try:
+            to_cpu = getattr(model, "to", None)
+        except Exception:
+            to_cpu = None
+        if callable(to_cpu):
+            try:
+                to_cpu("cpu")
+            except Exception:
+                pass
+        to_cpu = None
+
+    @classmethod
+    def _release_holder(cls, loaded: list[Any]) -> None:
+        """Release and collect holder-owned state before leaving redaction."""
+
+        try:
+            cls._release_loaded(loaded[0], loaded[1])
+        finally:
+            # Bound close methods and the model-to-CPU closure are gone when
+            # _release_loaded returns. Clearing this holder therefore drops the
+            # final lifecycle-owned references inside the private boundary.
+            loaded.clear()
+            gc.collect()
+            try:
+                import torch
+
+                if torch.cuda.is_available():
+                    torch.cuda.empty_cache()
+            except Exception:
+                pass
+
+    def close(self) -> None:
+        """Detach and release loaded tokenizer/model state idempotently."""
+
+        loaded = [self._tokenizer, self._model]
+        self._tokenizer = None
+        self._model = None
+        if loaded == [None, None]:
+            return
+
+        def release() -> None:
+            self._release_holder(loaded)
+
+        if self._model_runtime is not None:
+            self._model_runtime.private_execution(
+                self._managed_model_role,
+                release,
+            )
+        else:  # Defensive direct-library cleanup after a partial load.
+            from ..model_acquisition_runtime import private_model_execution
+
+            private_model_execution(
+                release,
+                role=self._managed_model_role,
+                private_values=(),
+            )
+
     # ------------------------------------------------------------------ #
     # Model loading (lazy, done once)
     # ------------------------------------------------------------------ #
@@ -179,27 +254,7 @@ class GuardrailJudge(BaseJudge):
             return tokenizer, model
 
         def cleanup(loaded: tuple[Any, Any]) -> None:
-            tokenizer, model = loaded
-            operations = (
-                getattr(tokenizer, "close", None),
-                getattr(model, "close", None),
-                (
-                    (lambda: model.to("cpu"))
-                    if callable(getattr(model, "to", None))
-                    else None
-                ),
-                (
-                    torch.cuda.empty_cache
-                    if torch.cuda.is_available()
-                    else None
-                ),
-            )
-            for operation in operations:
-                if callable(operation):
-                    try:
-                        operation()
-                    except Exception:
-                        pass
+            self._release_holder(list(loaded))
 
         tokenizer, model = self._model_runtime.construct(
             requirement,
