@@ -412,8 +412,9 @@ def test_interrupted_wheel_is_cleanly_rebuilt(tmp_path: Path) -> None:
             (wheel_dir / "fresh.whl").write_bytes(b"fresh")
             return subprocess.CompletedProcess([], 0, "", "")
 
+    # The source directory has no pyproject.toml, so no version is declared.
     wheel = installer._build_source_wheel(
-        Path("python"), tmp_path / "source", wheel_dir, _Runner(), "demo"  # type: ignore[arg-type]
+        Path("python"), tmp_path / "source", wheel_dir, _Runner(), "demo", {}  # type: ignore[arg-type]
     )
     assert wheel.name == "fresh.whl"
 
@@ -1555,6 +1556,85 @@ def test_distro_repin_script_is_fail_closed_and_sources_canonical_ura_env_last()
     # the executing copy is compared with the deployed commit's distro/repin.sh
     assert 'git cat-file -e "$REF:distro/repin.sh"' in text
     assert 'git show "$REF:distro/repin.sh" | cmp -s - "$0"' in text
+
+
+# Petri's released pyproject.toml, reduced to the fields that decide the
+# version: the project name, a dynamic version, and the hatch-vcs backend that
+# reads it from tags the pinned depth-1 checkout does not have.
+_PETRI_PYPROJECT = """
+[project]
+name = "inspect_petri"
+dynamic = ["version"]
+requires-python = ">=3.12"
+
+[build-system]
+requires = ["hatchling", "hatch-vcs"]
+build-backend = "hatchling.build"
+
+[tool.hatch.version]
+source = "vcs"
+
+[tool.hatch.version.raw-options]
+local_scheme = "no-local-version"
+"""
+
+
+def _petri_entry(distributions: list[str]) -> dict:
+    return {
+        "name": "petri",
+        "expected_inventory": {"distributions": distributions, "sha256": "x" * 64},
+    }
+
+
+def test_vcs_versioned_source_build_declares_the_locked_version(tmp_path: Path) -> None:
+    # git describe at the pinned commit yields 3.0.11-14-g1f41e29, which
+    # setuptools-scm renders as 3.0.12.dev14 under this project's schemes. The
+    # depth-1 checkout carries no tags at all, so the backend would silently
+    # fall back to a placeholder and the install would disagree with the lock.
+    (tmp_path / "pyproject.toml").write_text(_PETRI_PYPROJECT, encoding="utf-8")
+    entry = _petri_entry(["inspect-petri==3.0.12.dev14", "anyio==4.13.0"])
+    assert installer._vcs_pretend_version(tmp_path, entry, "petri") == {
+        "SETUPTOOLS_SCM_PRETEND_VERSION": "3.0.12.dev14",
+        "SETUPTOOLS_SCM_PRETEND_VERSION_FOR_INSPECT_PETRI": "3.0.12.dev14",
+    }
+
+
+def test_vcs_version_pinning_only_applies_where_it_is_needed(tmp_path: Path) -> None:
+    entry = _petri_entry(["inspect-petri==3.0.12.dev14"])
+
+    # No pyproject at all, e.g. a plain setup.py source.
+    assert installer._vcs_pretend_version(tmp_path, entry, "petri") == {}
+
+    # A static version needs no help even with hatch-vcs present.
+    static = _PETRI_PYPROJECT.replace('dynamic = ["version"]', 'version = "1.2.3"')
+    (tmp_path / "pyproject.toml").write_text(static, encoding="utf-8")
+    assert installer._vcs_pretend_version(tmp_path, entry, "petri") == {}
+
+    # A dynamic version from a NON-VCS backend is read from the source itself,
+    # so the checkout can compute it and nothing is declared.
+    other = _PETRI_PYPROJECT.replace(
+        'requires = ["hatchling", "hatch-vcs"]', 'requires = ["hatchling"]'
+    )
+    (tmp_path / "pyproject.toml").write_text(other, encoding="utf-8")
+    assert installer._vcs_pretend_version(tmp_path, entry, "petri") == {}
+
+    # setuptools-scm is recognised the same way, including a pinned requirement.
+    scm = _PETRI_PYPROJECT.replace(
+        'requires = ["hatchling", "hatch-vcs"]', 'requires = ["setuptools", "setuptools_scm>=8"]'
+    )
+    (tmp_path / "pyproject.toml").write_text(scm, encoding="utf-8")
+    assert installer._vcs_pretend_version(tmp_path, entry, "petri") == {
+        "SETUPTOOLS_SCM_PRETEND_VERSION": "3.0.12.dev14",
+        "SETUPTOOLS_SCM_PRETEND_VERSION_FOR_INSPECT_PETRI": "3.0.12.dev14",
+    }
+
+
+def test_vcs_version_pinning_fails_closed_without_a_locked_version(tmp_path: Path) -> None:
+    # Guessing here would install a distribution the lock never described.
+    (tmp_path / "pyproject.toml").write_text(_PETRI_PYPROJECT, encoding="utf-8")
+    entry = _petri_entry(["anyio==4.13.0"])
+    with pytest.raises(installer.InstallerError, match="lock records no version"):
+        installer._vcs_pretend_version(tmp_path, entry, "petri")
 
 
 def _npm_tree_with_optional_peer(invalid: str) -> dict:

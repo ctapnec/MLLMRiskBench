@@ -24,6 +24,7 @@ import sys
 import tarfile
 import tempfile
 import threading
+import tomllib
 import time
 import urllib.parse
 import urllib.request
@@ -1634,12 +1635,89 @@ def _verify_python(
     return {"inventory_sha256": digest, "distribution_count": len(rows)}
 
 
+def _canonical_distribution(name: str) -> str:
+    return re.sub(r"[-_.]+", "-", name).strip().lower()
+
+
+def _vcs_pretend_version(
+    source_dir: Path, entry: Mapping[str, Any], framework: str
+) -> dict[str, str]:
+    """Declare a VCS-derived version that the pinned checkout cannot compute.
+
+    A framework versioned by setuptools-scm or hatch-vcs reads its version from
+    the tags reachable from HEAD. The source is acquired as a depth-1 fetch of
+    one pinned commit, so no tag and no history are present, and the backend
+    silently falls back to a placeholder such as ``0.1.dev1`` instead of
+    failing; the installed distribution then disagrees with the lock. Deepening
+    the fetch would not fix this so much as move the problem: the version would
+    become a function of upstream tags, which are mutable and are not part of
+    the lock, so a retag upstream would change a supposedly pinned build.
+
+    The version the lock already records for the framework's own distribution
+    is therefore declared to the build. This does not weaken the seal on what
+    is installed: the code identity is fixed independently by the pinned
+    commit, the pinned tree and the git archive digest, all three of which are
+    compared before the build runs. What it removes is only the independent
+    rederivation of a metadata string that the acquisition method cannot
+    produce at all.
+    """
+
+    pyproject = source_dir / "pyproject.toml"
+    if not pyproject.is_file():
+        return {}
+    try:
+        config = tomllib.loads(pyproject.read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, tomllib.TOMLDecodeError) as exc:
+        raise InstallerError(f"unreadable pyproject.toml for {framework}") from exc
+    project = config.get("project")
+    if not isinstance(project, Mapping):
+        return {}
+    dynamic = project.get("dynamic")
+    if not isinstance(dynamic, list) or "version" not in dynamic:
+        return {}
+    build_system = config.get("build-system")
+    requires = build_system.get("requires", []) if isinstance(build_system, Mapping) else []
+    backends = {
+        _canonical_distribution(re.split(r"[<>=!~\[; ]", str(item))[0])
+        for item in requires
+        if isinstance(item, str) and item.strip()
+    }
+    if not backends & {"hatch-vcs", "setuptools-scm"}:
+        return {}
+    name = project.get("name")
+    if not isinstance(name, str) or not name.strip():
+        raise InstallerError(f"source project declares no name for {framework}")
+    canonical = _canonical_distribution(name)
+    expected = entry.get("expected_inventory", {}).get("distributions", [])
+    versions = {
+        row.split("==", 1)[0]: row.split("==", 1)[1]
+        for row in expected
+        if isinstance(row, str) and "==" in row
+    }
+    version = versions.get(canonical)
+    if not version:
+        raise InstallerError(
+            f"lock records no version for the VCS-versioned distribution "
+            f"{canonical} of {framework}"
+        )
+    # Both spellings carry the same value: the targeted variable wins wherever
+    # the backend resolves a distribution name, and the plain one covers the
+    # backends that do not. The build produces exactly one wheel, which is
+    # asserted below, so neither can reach an unrelated project.
+    variable = re.sub(r"[-_.]+", "_", canonical).upper()
+    return {
+        "SETUPTOOLS_SCM_PRETEND_VERSION": version,
+        f"SETUPTOOLS_SCM_PRETEND_VERSION_FOR_{variable}": version,
+    }
+
+
 def _build_source_wheel(
     python: Path,
     source_dir: Path,
     wheel_dir: Path,
     runner: CommandRunner,
     framework: str,
+    entry: Mapping[str, Any],
 ) -> Path:
     wheel_dir.mkdir(parents=True, exist_ok=True)
     for old_wheel in wheel_dir.glob("*.whl"):
@@ -1655,7 +1733,8 @@ def _build_source_wheel(
             "--wheel-dir",
             str(wheel_dir),
             str(source_dir),
-        ]
+        ],
+        extra_env=_vcs_pretend_version(source_dir, entry, framework) or None,
     )
     wheels = sorted(wheel_dir.glob("*.whl"))
     if len(wheels) != 1:
@@ -1722,7 +1801,7 @@ def _install_python(
         if source_dir is not None and mode == "wheel":
             wheel_dir = stage / ".ura" / "built"
             wheel = _build_source_wheel(
-                python, source_dir, wheel_dir, runner, entry["name"]
+                python, source_dir, wheel_dir, runner, entry["name"], entry
             )
             runner.run([str(python), "-m", "pip", "install", "--no-deps", str(wheel)])
         _complete_phase(stage, state, "source")
