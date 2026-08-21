@@ -8,6 +8,8 @@ third-party modules are imported only inside a fixed operation handler.
 from __future__ import annotations
 
 import argparse
+import contextlib
+import errno
 import asyncio
 import hashlib
 import importlib
@@ -801,8 +803,27 @@ def _write_response(path: Path, value: dict) -> None:
 
 
 def _write_signal(path: Path) -> None:
+    """Publish one handshake marker atomically.
+
+    The parent treats the marker's existence as readiness and then requires it
+    to be exactly one byte. Creating it in place made it visible at size zero
+    for the microseconds between create and write, and a poll landing in that
+    window failed the size check outright instead of waiting: the marker exists,
+    so the parent stops polling, and a bounded-file error is raised for a file
+    that was about to be correct. It is rare per signal but there are three per
+    session, and on the closing marker it discards a correct closing seal and
+    with it the run's pending isolated-engine evidence.
+
+    The marker is therefore written to a private temporary name and linked into
+    place, so it becomes visible only at its final size. ``os.link`` also keeps
+    the exclusivity the original ``O_EXCL`` provided: it fails if the marker
+    already exists, so a stale marker from an earlier session is still refused.
+    """
+
+    directory = path.parent
+    temporary = directory / f".{path.name}.{os.getpid()}.partial"
     descriptor = os.open(
-        path,
+        temporary,
         os.O_WRONLY
         | os.O_CREAT
         | os.O_EXCL
@@ -810,10 +831,27 @@ def _write_signal(path: Path) -> None:
         | getattr(os, "O_NOFOLLOW", 0),
         0o600,
     )
-    with os.fdopen(descriptor, "wb") as handle:
-        handle.write(b"1")
-        handle.flush()
-        os.fsync(handle.fileno())
+    try:
+        with os.fdopen(descriptor, "wb") as handle:
+            handle.write(b"1")
+            handle.flush()
+            os.fsync(handle.fileno())
+        try:
+            os.link(temporary, path)
+        except (AttributeError, NotImplementedError, OSError) as exc:
+            # Hard links are unavailable on some filesystems. os.replace is
+            # still atomic; the existence check restores the exclusivity that
+            # link gives for free, and loses only the race against another
+            # writer, which cannot occur because one worker owns this directory.
+            if isinstance(exc, OSError) and exc.errno == errno.EEXIST:
+                raise
+            if path.exists():
+                raise FileExistsError(str(path)) from exc
+            os.replace(temporary, path)
+            return
+    finally:
+        with contextlib.suppress(OSError):
+            os.unlink(temporary)
 
 
 def _session_response(

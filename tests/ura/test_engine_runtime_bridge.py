@@ -1407,3 +1407,55 @@ def test_abrupt_running_runtime_cell_state_is_discarded_before_resume(
         for name, path in paths.items()
         if name not in {"complete", "error"}
     )
+
+
+def test_handshake_marker_is_never_visible_before_it_is_complete(tmp_path) -> None:
+    """The parent stops polling the moment a marker exists, then demands a byte.
+
+    Creating the marker in place made it visible at size zero for the window
+    between create and write, so a poll landing there raised a bounded-file
+    error for a file that was about to be correct. There are three such markers
+    per session, and on the closing one the failure discards a correctly
+    computed closing seal and with it the run's pending isolated-engine
+    evidence. Measured against the previous in-place publish, a tight reader saw
+    the zero-byte state on well over half of all publishes.
+    """
+
+    import threading
+
+    from ura.adapters._engine_worker import _write_signal
+
+    sightings: list[int] = []
+
+    def probe(target, stop):
+        while not stop.is_set():
+            try:
+                if target.exists() and target.stat().st_size == 0:
+                    sightings.append(1)
+            except OSError:
+                pass
+
+    for index in range(50):
+        target = tmp_path / f"marker-{index}.done"
+        stop = threading.Event()
+        reader = threading.Thread(target=probe, args=(target, stop), daemon=True)
+        reader.start()
+        try:
+            _write_signal(target)
+        finally:
+            stop.set()
+            reader.join(timeout=5)
+        assert target.read_bytes() == b"1"
+
+    assert not sightings, (
+        "the marker must become visible only at its final size; a reader saw it "
+        f"empty {len(sightings)} time(s)"
+    )
+
+    # No partial file is left behind for the parent to trip over.
+    assert not list(tmp_path.glob(".*partial"))
+
+    # Exclusivity is preserved: a stale marker from an earlier session is still
+    # refused rather than silently overwritten.
+    with pytest.raises(FileExistsError):
+        _write_signal(tmp_path / "marker-0.done")
