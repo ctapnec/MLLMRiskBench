@@ -285,7 +285,18 @@ Gate 4: one valid receipt per (target, modality combination) that Phase 6 uses.
 For each planned measured lane: `rig_check` with the exact lane arguments
 (projection, policy-stratum counts, guard load) [9], then one
 `run_matrix --diagnostic-canary` with `--limit 1` on one arm [9.1], then
-`lane_canary`. Record approved call/time/storage caps from the projection
+`lane_canary`.
+
+`rig_check` is subject to the same sealed-model admission as a measured run,
+verified here rather than discovered mid-phase: without an exact acquisition
+plan, plan SHA-256, receipt, receipt SHA-256 and managed store it refuses with
+`normal and preflight Hub runs require exact acquisition plan, ...`, persists a
+request-error artifact and stops. So each projection needs the per-lane
+plan-acquire sequence of Phase 3, derived with that lane's exact arguments, for
+the same envelope-binding reason: the caps a projection reports are only
+meaningful for the request they were derived from. Build the lane argument array
+once and reuse it for the plan derivation, the acquisition, the projection, the
+canary and the measured run. Record approved call/time/storage caps from the projection
 before any measured lane. Judges for local-target lanes are `rules,guardrail`
 (no hosted LLM judge; a local LLM judge cannot share a process with a local
 target).
