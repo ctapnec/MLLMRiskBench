@@ -481,3 +481,33 @@ def test_suite_metric_ontology_does_not_overclaim_injection_goal_success() -> No
     assert _metric_family("ISR") == "unsafe_response_rate"
     assert _metric_family("conversation_strongreject_max") == "graded_risk"
     assert _metric_family("kaplan_meier_survival") == "adaptive_compromise"
+
+
+def test_expected_converter_families_tracks_the_converter_registry() -> None:
+    """The completeness universe must not be a second place families are listed.
+
+    It was a hand-maintained frozenset and it drifted: nineteen names against a
+    registry that had grown to twenty-five. The six newest families could
+    therefore never appear in missing_converter_families, and every campaign
+    published a stale nineteen-name expected set contradicting the documented
+    twenty-five, inside a retained artifact.
+    """
+
+    from experiments.suite_summary import _expected_converter_families
+    from ura.converters import _CONVERTERS
+
+    expected = _expected_converter_families()
+    assert expected == frozenset(_CONVERTERS), (
+        "the completeness universe must be derived from the converter registry"
+    )
+    # The exact families the stale constant could never flag.
+    assert {
+        "airbench",
+        "decodingtrust",
+        "holisafe",
+        "saladbench",
+        "simplesafetytests",
+        "xstest",
+    } <= expected
+    # Adding a converter must not require a second edit here.
+    assert len(expected) == len(_CONVERTERS)

@@ -56,27 +56,21 @@ _EXPECTED_NATIVE_PROJECTS = frozenset({
     "petri",
     "promptfoo",
 })
-_EXPECTED_CONVERTER_FAMILIES = frozenset({
-    "advbench",
-    "agentharm",
-    "bipia",
-    "cyberseceval",
-    "figstep",
-    "gptgeochat",
-    "harmbench",
-    "injecagent",
-    "jailbreakbench",
-    "jailbreakv",
-    "jalmbench",
-    "mllmguard",
-    "mmsafety",
-    "mossbench",
-    "rjudge",
-    "siuo",
-    "strongreject",
-    "videosafetybench",
-    "vlsbench",
-})
+def _expected_converter_families() -> frozenset[str]:
+    """The converter families the project actually ships.
+
+    This was a hand-maintained list, and it drifted: it held nineteen names
+    while the registry had grown to twenty-five, so the six newest families
+    (airbench, decodingtrust, holisafe, saladbench, simplesafetytests, xstest)
+    could never be reported missing, and every campaign published a stale
+    nineteen-name expected set that contradicted the documented twenty-five.
+    Deriving it from the registry that defines the families removes the second
+    place a family has to be listed, so the same drift cannot recur.
+    """
+
+    from ura.converters import _CONVERTERS  # noqa: PLC0415 - avoids an import cycle
+
+    return frozenset(_CONVERTERS)
 
 _NATIVE_FAMILIES: dict[str, list[str]] = {
     "agentdojo": ["attack_or_injection_goal_success", "task_utility"],
@@ -565,7 +559,7 @@ def build_suite_summary(
         _EXPECTED_NATIVE_PROJECTS - observed_native_projects
     )
     missing_converter_families = sorted(
-        _EXPECTED_CONVERTER_FAMILIES - configured_converter_families
+        _expected_converter_families() - configured_converter_families
     )
     presence_complete = bool(source_inventory_supplied) and not (
         missing_source_arms or missing_native_projects or missing_converter_families
@@ -597,7 +591,7 @@ def build_suite_summary(
             "unexpected_source_arms": sorted(observed_source_arms - expected_arms)
             if source_inventory_supplied
             else [],
-            "expected_converter_families": sorted(_EXPECTED_CONVERTER_FAMILIES),
+            "expected_converter_families": sorted(_expected_converter_families()),
             "configured_converter_families": sorted(configured_converter_families),
             "missing_converter_families": missing_converter_families,
             "expected_native_projects": sorted(_EXPECTED_NATIVE_PROJECTS),
