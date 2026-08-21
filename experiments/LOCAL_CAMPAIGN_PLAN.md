@@ -197,10 +197,28 @@ The working procedure, verified on the rig, is per lane:
    snapshot, and reports `downloaded_bytes: 0`,
 3. run the lane with those same arguments plus the plan, receipt and store.
 
-Keeping the lane's arguments in one shell array and reusing it for all three
-steps is the reliable way to do this. The cost of the extra plan and receipt per
-lane is negligible, because acquisition re-imports nothing; the benefit is that
-each receipt states exactly which models that exact request needed.
+Put **every** run argument in one shell array and reuse it verbatim for all
+three steps. That specifically includes `--max-total-target-calls`,
+`--max-total-judge-calls` and `--deadline-seconds`: they look like execution
+bounds rather than selection, but they are part of the bound envelope, and
+adding them at run time after deriving the plan without them fails admission.
+This exact mistake was made once while executing this plan, so it is worth
+stating plainly rather than leaving to care.
+
+```bash
+LANE=(--local "$LOCAL_SPEC" --local-config "$LOCAL_CONFIG"
+      --attackers replay --judges rules --corpora "$ARM"
+      --source-config experiments/source-instances.json
+      --limit 1 --sample-seed 0 --seeds 0 --max-queries 1 --max-turns 1
+      --max-total-target-calls 2 --max-total-judge-calls 2 --deadline-seconds 3600
+      --out "$OUT_ROOT")
+# derive with "${LANE[@]}", acquire, then run with "${LANE[@]}" plus the
+# plan/receipt/store locators. Never add an argument to only one of the steps.
+```
+
+The cost of the extra plan and receipt per lane is negligible, because
+acquisition re-imports nothing; the benefit is that each receipt states exactly
+which models that exact request needed.
 
 Gate 3: acquisition receipts present and bound; `python -m experiments.local_targets`
 shows the three vLLM rows as compatible with an exact revision/digest; the
