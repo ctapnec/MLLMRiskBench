@@ -5482,19 +5482,34 @@ def _cluster_ids(observations: list[Judgment]) -> list[str]:
     ]
 
 
+#: A cluster bootstrap estimates between-cluster variability by resampling
+#: whole clusters, so it needs at least two of them. With one, every replicate
+#: is that cluster and the percentile bounds collapse onto the point estimate,
+#: producing a zero-width interval that is published and rendered as a 95% CI
+#: while claiming a coverage it does not have. The peer estimators already
+#: refuse this case: the human-audit rate returns no interval below two
+#: clusters, the figure path marks the cell not estimable, and the transfer
+#: matrix records an explicit support gate.
+MIN_CI_CLUSTERS = 2
+
+
 def _clustered_ci(
     values: list[float], observations: list[Judgment], *, seed: int
-) -> tuple[float, float]:
-    return metrics.clustered_bootstrap_ci(values, _cluster_ids(observations), seed=seed)
+) -> Optional[tuple[float, float]]:
+    cluster_ids = _cluster_ids(observations)
+    if len(set(cluster_ids)) < MIN_CI_CLUSTERS:
+        return None
+    return metrics.clustered_bootstrap_ci(values, cluster_ids, seed=seed)
 
 
 def _equal_cluster_ci(
     values: list[float], observations: list[Judgment], *, seed: int
-) -> tuple[float, float]:
+) -> Optional[tuple[float, float]]:
     """Cluster bootstrap CI for the equal source-cluster weighted rate (V.6)."""
-    return metrics.equal_cluster_bootstrap_ci(
-        values, _cluster_ids(observations), seed=seed
-    )
+    cluster_ids = _cluster_ids(observations)
+    if len(set(cluster_ids)) < MIN_CI_CLUSTERS:
+        return None
+    return metrics.equal_cluster_bootstrap_ci(values, cluster_ids, seed=seed)
 
 
 def _decode_group(bucket_label: str, keys: list[str]) -> dict[str, str]:
@@ -5537,6 +5552,14 @@ def _result(
         "cluster_unit": cluster_unit,
         "ci_method": ci_method if ci is not None else None,
     }
+    if ci is None and items and len(clusters) < MIN_CI_CLUSTERS:
+        # A bare null interval is indistinguishable from one that was never
+        # requested, so the support failure is named.
+        provenance["ci_not_estimable"] = "insufficient_source_cluster_support"
+    elif ci is not None and ci[0] == ci[1]:
+        # Legitimate for a set of clusters that all agree, but a zero-width
+        # interval should not be read as precision, so it is flagged.
+        provenance["ci_degenerate_zero_width"] = True
     if weighting is not None:
         provenance["weighting"] = weighting
     return EvalResult(
