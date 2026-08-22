@@ -14,6 +14,7 @@ run manifest, console job, or command receipt.
 
 from __future__ import annotations
 
+import errno
 import gc
 import hashlib
 import io
@@ -31,6 +32,11 @@ from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 from types import MappingProxyType
 from typing import Any, TypeVar
+
+try:
+    import fcntl as _fcntl
+except ImportError:  # pragma: no cover - Windows has no fcntl
+    _fcntl = None  # type: ignore[assignment]
 
 from .model_acquisition import (
     MAX_DOCUMENT_BYTES,
@@ -57,6 +63,8 @@ SELECTION_SCHEMA = "ura-model-acquisition-selection/1"
 RUNTIME_DESCRIPTOR_SCHEMA = "ura-model-acquisition-runtime/1"
 EXECUTION_DESCRIPTOR_SCHEMA = "ura-model-acquisition-execution/1"
 ROLE_PROJECTION_SCHEMA = "ura-model-acquisition-role-projection/1"
+
+_PRIVATE_CAPTURE_BACKUP_FD_MINIMUM = 256
 
 # Keep this equal to NanoGCGAttacker's public constructor default.  The core
 # projection helper intentionally accepts an explicit model_id, so integration
@@ -2098,6 +2106,45 @@ class _BoundedPrivateOutput:
         return value
 
 
+def _duplicate_capture_descriptor(descriptor: int) -> int:
+    """Keep the restore handle outside third-party low-fd finalizer traffic."""
+
+    if _fcntl is None:
+        return os.dup(descriptor)
+    command = getattr(_fcntl, "F_DUPFD_CLOEXEC", None)
+    if command is None:  # pragma: no cover - supported Python POSIX platforms
+        command = _fcntl.F_DUPFD
+    saved = int(
+        _fcntl.fcntl(descriptor, command, _PRIVATE_CAPTURE_BACKUP_FD_MINIMUM)
+    )
+    if command == _fcntl.F_DUPFD:
+        os.set_inheritable(saved, False)
+    return saved
+
+
+def _restore_capture_descriptor(saved: int, descriptor: int) -> None:
+    """Restore one stream and release its protected backup fail-closed."""
+
+    restore_error: BaseException | None = None
+    restored = False
+    try:
+        os.dup2(saved, descriptor)
+        restored = True
+    except BaseException as exc:
+        restore_error = exc
+    try:
+        os.close(saved)
+    except OSError as exc:
+        # Third-party background teardown can close a stale low descriptor
+        # after dup2 has restored the stream. The protected high backup keeps
+        # that race away from normal operation, but an already-closed backup
+        # after successful restoration has no remaining cleanup obligation.
+        if not (restored and exc.errno == errno.EBADF) and restore_error is None:
+            restore_error = exc
+    if restore_error is not None:
+        raise restore_error
+
+
 @contextmanager
 def _capture_file_descriptor(
     descriptor: int,
@@ -2105,8 +2152,15 @@ def _capture_file_descriptor(
 ):  # noqa: ANN202
     """Drain one process fd while a third-party callback owns model locators."""
 
-    saved = os.dup(descriptor)
-    read_descriptor, write_descriptor = os.pipe()
+    saved = _duplicate_capture_descriptor(descriptor)
+    try:
+        read_descriptor, write_descriptor = os.pipe()
+    except BaseException:
+        try:
+            os.close(saved)
+        except OSError:
+            pass
+        raise
     reader_error: list[BaseException] = []
 
     def drain() -> None:
@@ -2126,21 +2180,34 @@ def _capture_file_descriptor(
         name=f"ura-private-fd-{descriptor}",
         daemon=True,
     )
+    reader_started = False
     try:
         os.dup2(write_descriptor, descriptor)
         os.close(write_descriptor)
         write_descriptor = -1
         reader.start()
+        reader_started = True
         yield
     finally:
+        restore_error: BaseException | None = None
         try:
-            os.dup2(saved, descriptor)
-        finally:
-            os.close(saved)
+            _restore_capture_descriptor(saved, descriptor)
+        except BaseException as exc:
+            restore_error = exc
+        try:
             if write_descriptor >= 0:
                 os.close(write_descriptor)
-        reader.join(timeout=5)
-        if reader.is_alive():
+        except OSError as exc:
+            if exc.errno != errno.EBADF and restore_error is None:
+                restore_error = exc
+        if reader_started:
+            reader.join(timeout=5)
+        else:
+            try:
+                os.close(read_descriptor)
+            except OSError:
+                pass
+        if reader_started and reader.is_alive():
             try:
                 os.close(read_descriptor)
             except OSError:
@@ -2149,6 +2216,8 @@ def _capture_file_descriptor(
         # A closed read side during bounded teardown is expected. Other reader
         # errors cannot be rendered because doing so could itself expose data.
         del reader_error[:]
+        if restore_error is not None:
+            raise restore_error
 
 
 @contextmanager

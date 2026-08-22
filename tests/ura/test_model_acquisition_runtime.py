@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import errno
 import hashlib
 import json
 import logging
@@ -1456,3 +1457,113 @@ def test_sealed_execution_gives_its_captures_real_descriptors() -> None:
     source = inspect.getsource(runtime.private_model_execution)
     assert "_BoundedPrivateOutput(descriptor=1)" in source
     assert "_BoundedPrivateOutput(descriptor=2)" in source
+
+
+def test_private_capture_reserves_a_high_cloexec_restore_descriptor(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A delayed third-party close must not collide with a low backup fd."""
+
+    from ura import model_acquisition_runtime as runtime
+
+    calls: list[tuple[int, int, int]] = []
+
+    class FakeFcntl:
+        F_DUPFD = 0
+        F_DUPFD_CLOEXEC = 1030
+
+        @staticmethod
+        def fcntl(descriptor: int, command: int, minimum: int) -> int:
+            calls.append((descriptor, command, minimum))
+            return 777
+
+    class FailOnFallbackOS:
+        @staticmethod
+        def dup(_descriptor: int) -> int:
+            pytest.fail("POSIX capture fell back to a low fd")
+
+        @staticmethod
+        def set_inheritable(*_args: object) -> None:
+            pytest.fail("F_DUPFD_CLOEXEC needs no follow-up mutation")
+
+    monkeypatch.setattr(runtime, "_fcntl", FakeFcntl)
+    monkeypatch.setattr(runtime, "os", FailOnFallbackOS)
+
+    assert runtime._duplicate_capture_descriptor(2) == 777
+    assert calls == [(2, FakeFcntl.F_DUPFD_CLOEXEC, 256)]
+
+
+def test_private_capture_accepts_only_post_restore_backup_ebadf(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capfd: pytest.CaptureFixture[str],
+) -> None:
+    """Reproduce vLLM closing each owned backup just after successful dup2."""
+
+    from ura import model_acquisition_runtime as runtime
+
+    private = (tmp_path / "sealed-model-private").resolve()
+    real_duplicate = runtime._duplicate_capture_descriptor
+    real_dup2 = os.dup2
+    real_close = os.close
+    backups: set[int] = set()
+
+    def duplicate(descriptor: int) -> int:
+        saved = real_duplicate(descriptor)
+        backups.add(saved)
+        return saved
+
+    def duplicate_then_race_close(source: int, target: int) -> int:
+        result = real_dup2(source, target)
+        if source in backups:
+            backups.remove(source)
+            real_close(source)
+        return result
+
+    monkeypatch.setattr(runtime, "_duplicate_capture_descriptor", duplicate)
+
+    def callback() -> str:
+        print(f"python private={private}")
+        os.write(2, f"native private={private}\n".encode())
+        return "complete"
+
+    with monkeypatch.context() as race_patch:
+        race_patch.setattr(os, "dup2", duplicate_then_race_close)
+        assert runtime.private_model_execution(
+            callback,
+            role="vllm_target",
+            private_values=(private,),
+        ) == "complete"
+    assert backups == set()
+    captured = capfd.readouterr()
+    rendered = captured.out + captured.err
+    assert rendered.count("[managed-model-private]") >= 2
+    assert str(private) not in rendered
+    assert not any(
+        thread.name.startswith("ura-private-fd-") and thread.is_alive()
+        for thread in runtime.threading.enumerate()
+    )
+
+
+def test_private_capture_does_not_suppress_ebadf_from_restore_dup2(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Only a close after successful restoration is idempotent."""
+
+    from ura import model_acquisition_runtime as runtime
+
+    closed: list[int] = []
+
+    def fail_restore(_source: int, _target: int) -> None:
+        raise OSError(errno.EBADF, "fixture restore failure")
+
+    class RestoreFailureOS:
+        dup2 = staticmethod(fail_restore)
+        close = staticmethod(closed.append)
+
+    monkeypatch.setattr(runtime, "os", RestoreFailureOS)
+
+    with pytest.raises(OSError) as caught:
+        runtime._restore_capture_descriptor(91, 2)
+    assert caught.value.errno == errno.EBADF
+    assert closed == [91]
