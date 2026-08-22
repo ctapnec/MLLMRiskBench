@@ -141,6 +141,87 @@ def test_vllm_close_reaches_v027_engine_core_and_is_idempotent() -> None:
     assert target._llm is None
 
 
+def test_vllm_close_joins_v027_output_thread_before_engine_release() -> None:
+    events: list[object] = []
+
+    class Runtime:
+        def private_execution(self, role, callback):
+            events.append(f"private:{role}")
+            return callback()
+
+    class OutputThread:
+        alive = True
+
+        def join(self, *, timeout: float) -> None:
+            events.append(("output-thread-join", timeout))
+            self.alive = False
+
+        def is_alive(self) -> bool:
+            events.append("output-thread-is-alive")
+            return self.alive
+
+    class Core:
+        def __init__(self) -> None:
+            self.output_queue_thread = OutputThread()
+
+        def shutdown(self) -> None:
+            events.append("engine-core-shutdown")
+
+        def __del__(self) -> None:
+            events.append("engine-core-release")
+
+    target = VLLMTarget(
+        "Org/Target",
+        revision="a" * 40,
+        modality_support=("text",),
+        model_runtime=Runtime(),
+    )
+    target._llm = SimpleNamespace(llm_engine=SimpleNamespace(engine_core=Core()))
+
+    target.close()
+
+    assert events == [
+        "private:vllm_target",
+        "engine-core-shutdown",
+        ("output-thread-join", 30.0),
+        "output-thread-is-alive",
+        "engine-core-release",
+    ]
+    assert target._llm is None
+
+
+def test_vllm_close_fails_closed_when_output_thread_remains_alive() -> None:
+    class Runtime:
+        def private_execution(self, _role, callback):
+            return callback()
+
+    class OutputThread:
+        def join(self, *, timeout: float) -> None:
+            assert timeout == 30.0
+
+        def is_alive(self) -> bool:
+            return True
+
+    class Core:
+        output_queue_thread = OutputThread()
+
+        def shutdown(self) -> None:
+            pass
+
+    target = VLLMTarget(
+        "Org/Target",
+        revision="a" * 40,
+        modality_support=("text",),
+        model_runtime=Runtime(),
+    )
+    target._llm = SimpleNamespace(llm_engine=SimpleNamespace(engine_core=Core()))
+
+    with pytest.raises(RuntimeError, match="vLLM engine shutdown failed"):
+        target.close()
+
+    assert target._llm is None
+
+
 def test_vllm_close_collects_destructor_inside_private_output(
     tmp_path: Path,
     capsys: pytest.CaptureFixture[str],

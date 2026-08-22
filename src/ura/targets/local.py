@@ -57,6 +57,7 @@ _OLLAMA_TAG = re.compile(
 )
 MAX_VLLM_MODEL_LEN = 1_000_000
 MAX_VLLM_GENERATION_TOKENS = 25_000
+_VLLM_OUTPUT_THREAD_JOIN_SECONDS = 30.0
 OLLAMA_FORBIDDEN_LOCAL_CONFIG_FIELDS = frozenset({
     "revision",
     "tensor_parallel_size",
@@ -440,9 +441,12 @@ class VLLMTarget(BaseTarget):
         multiprocessing owner is ``LLM.llm_engine.engine_core``. Relying on
         interpreter finalization leaves that owner alive until ZeroMQ and its
         file descriptors are already being dismantled, which can turn an
-        otherwise honest matrix exit into SIGABRT. Older vLLM releases expose
-        the hook on the facade, engine, or model executor, so retain those
-        bounded compatibility fallbacks.
+        otherwise honest matrix exit into SIGABRT. vLLM 0.27's synchronous
+        client also returns from ``shutdown`` immediately after signalling its
+        ZeroMQ output thread. The owning context must remain alive until that
+        thread has closed its sockets, so join it before releasing the engine.
+        Older vLLM releases expose the hook on the facade, engine, or model
+        executor, so retain those bounded compatibility fallbacks.
         """
 
         candidates: list[Any] = [engine]
@@ -482,6 +486,24 @@ class VLLMTarget(BaseTarget):
                 except Exception:  # try the next version-specific hook
                     hook_failed = True
                     continue
+                try:
+                    output_thread = getattr(candidate, "output_queue_thread", None)
+                except Exception:
+                    raise RuntimeError("vLLM output-thread lookup failed") from None
+                if output_thread is not None:
+                    join = getattr(output_thread, "join", None)
+                    is_alive = getattr(output_thread, "is_alive", None)
+                    if not callable(join) or not callable(is_alive):
+                        raise RuntimeError(
+                            "vLLM output thread exposes no supported join contract"
+                        ) from None
+                    try:
+                        join(timeout=_VLLM_OUTPUT_THREAD_JOIN_SECONDS)
+                        still_alive = is_alive()
+                    except Exception:
+                        raise RuntimeError("vLLM output thread failed to quiesce") from None
+                    if still_alive is not False:
+                        raise RuntimeError("vLLM output thread failed to quiesce") from None
                 return
         # Do not retain a candidate, bound method, or third-party exception in
         # the traceback that crosses the private execution boundary.
