@@ -294,7 +294,7 @@ python -m experiments.local_campaign.generate \
 ```
 
 Transfer that provisional `controller-set-<new7>.tar` to the exact remote
-filename `~/.controller-set-<new7>.tar` together with its generated installer.
+filename `~/controller-set-<new7>.tar` together with its generated installer.
 Install and verify the immutable generation through the active pointer, then
 invoke only the Phase 3 producer. It creates and returns its own tmux session:
 
@@ -369,7 +369,7 @@ python -m experiments.local_campaign.generate \
 ```
 
 Transfer the newly packaged final `controller-set-<new7>.tar` to the exact
-remote filename `~/.controller-set-<new7>.tar` together with
+remote filename `~/controller-set-<new7>.tar` together with
 `install_controller_set_<new7>.sh`, then run:
 
 ```bash

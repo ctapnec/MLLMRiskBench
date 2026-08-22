@@ -86,7 +86,7 @@ def _build_package(base: Path, commit: str, slot: str) -> _Package:
     assert isinstance(archive, dict)
     archive_sha256 = str(archive["sha256"])
     archive_name = str(archive["name"])
-    shutil.copyfile(output / archive_name, base / f".controller-set-{short}.tar")
+    shutil.copyfile(output / archive_name, base / archive_name)
     return _Package(
         output=output,
         installer=output / f"install_controller_set_{short}.sh",
@@ -291,6 +291,8 @@ def test_templates_use_one_atomic_active_generation() -> None:
     assert "bash ~/.ura-controller-active/verify_controllers_<new7>.sh" in runbook
     assert "bash ~/.ura-controller-active/launch_chain_<new7>.sh" in runbook
     assert "opened Linux script descriptor" in runbook
+    assert runbook.count("`~/controller-set-<new7>.tar`") == 2
+    assert "`~/.controller-set-<new7>.tar`" not in runbook
     vulnerable = (
         "phase3_guard1b_acquire_fit.sh.in",
         "launch_chain.sh.in",
@@ -333,7 +335,7 @@ def test_packaged_controllers_bind_internal_launches_to_the_pinned_generation(
     )
     assert '$URA_CONTROLLER_GENERATION_ROOT/phase5_core_projections.sh' in phase5
     installer = package.installer.read_text(encoding="utf-8")
-    assert 'readonly ARCHIVE="$INSTALL_BASE/.controller-set-1111111.tar"' in installer
+    assert 'readonly ARCHIVE="$INSTALL_BASE/controller-set-1111111.tar"' in installer
     assert active in installer
 
 
