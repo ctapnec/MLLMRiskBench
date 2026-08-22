@@ -1,0 +1,244 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+umask 077
+
+usage() {
+  printf '%s\n' \
+    'Prepare an exact, create-only Phase 7 input manifest:' \
+    '  phase7_analysis.sh --prepare-input-manifest ABSOLUTE_PATH \' \
+    '    --gate5-manifest ABSOLUTE_PATH --gate5-runnote ABSOLUTE_PATH \' \
+    '    --gate5-promotion-receipt ABSOLUTE_PATH \' \
+    '    --phase6-core-completion ABSOLUTE_PATH \' \
+    '    --phase6-extended-completion ABSOLUTE_PATH \' \
+    '    --phase6-native-completion ABSOLUTE_PATH' \
+    '' \
+    'Launch only the exact operator-authorized input manifest:' \
+    '  phase7_analysis.sh --input-manifest ABSOLUTE_PATH \' \
+    '    --authorize-input-manifest-sha256 HEX' \
+    '' \
+    'Run static upstream-receipt mutation checks:' \
+    '  phase7_analysis.sh --contract-self-test' >&2
+  exit 2
+}
+
+SOURCE_PATH="${BASH_SOURCE[0]}"
+SCRIPT_DIR="$(cd -- "$(dirname -- "$SOURCE_PATH")" && pwd -P)"
+PAYLOAD_SOURCE="$SCRIPT_DIR/phase7_analysis.py"
+
+source ~/.ura_campaign_env
+cd ~/MLLMRiskBench
+export HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1 HF_DATASETS_OFFLINE=1
+unset HF_TOKEN HUGGING_FACE_HUB_TOKEN OPENAI_API_KEY ANTHROPIC_API_KEY \
+  GOOGLE_API_KEY GEMINI_API_KEY MISTRAL_API_KEY TOGETHER_API_KEY \
+  DEEPSEEK_API_KEY XAI_API_KEY
+unset URA_MODEL_ACQUISITION_PLAN_DIR URA_MODEL_ACQUISITION_PLAN \
+  URA_MODEL_ACQUISITION_PLAN_SHA256 URA_MODEL_ACQUISITION_RECEIPT \
+  URA_MODEL_ACQUISITION_RECEIPT_SHA256 URA_MODEL_ACQUISITION_STORE
+
+PY="$PWD/.venv/bin/python"
+test -x "$PY"
+test -f "$PAYLOAD_SOURCE" && test ! -L "$PAYLOAD_SOURCE"
+test "$(git status --porcelain)" = ''
+
+mode=''
+prepare_out=''
+gate5_manifest=''
+gate5_runnote=''
+gate5_promotion=''
+core_completion=''
+extended_completion=''
+native_completion=''
+input_manifest=''
+authorized_sha=''
+
+while (( $# )); do
+  case "$1" in
+    --contract-self-test)
+      [[ $# -eq 1 && -z "$mode" ]] || usage
+      mode='self-test'
+      shift
+      ;;
+    --prepare-input-manifest)
+      [[ $# -ge 2 && -z "$mode" ]] || usage
+      mode='prepare'
+      prepare_out="$2"
+      shift 2
+      ;;
+    --gate5-manifest)
+      [[ $# -ge 2 ]] || usage
+      gate5_manifest="$2"
+      shift 2
+      ;;
+    --gate5-runnote)
+      [[ $# -ge 2 ]] || usage
+      gate5_runnote="$2"
+      shift 2
+      ;;
+    --gate5-promotion-receipt)
+      [[ $# -ge 2 ]] || usage
+      gate5_promotion="$2"
+      shift 2
+      ;;
+    --phase6-core-completion)
+      [[ $# -ge 2 ]] || usage
+      core_completion="$2"
+      shift 2
+      ;;
+    --phase6-extended-completion)
+      [[ $# -ge 2 ]] || usage
+      extended_completion="$2"
+      shift 2
+      ;;
+    --phase6-native-completion)
+      [[ $# -ge 2 ]] || usage
+      native_completion="$2"
+      shift 2
+      ;;
+    --input-manifest)
+      [[ $# -ge 2 && -z "$mode" ]] || usage
+      mode='launch'
+      input_manifest="$2"
+      shift 2
+      ;;
+    --authorize-input-manifest-sha256)
+      [[ $# -ge 2 ]] || usage
+      authorized_sha="$2"
+      shift 2
+      ;;
+    *) usage ;;
+  esac
+done
+
+if [[ "$mode" == 'self-test' ]]; then
+  [[ -z "$prepare_out" && -z "$gate5_manifest" && -z "$gate5_runnote" && -z "$gate5_promotion" ]] || usage
+  [[ -z "$core_completion" && -z "$extended_completion" && -z "$native_completion" ]] || usage
+  [[ -z "$input_manifest" && -z "$authorized_sha" ]] || usage
+  exec "$PY" "$PAYLOAD_SOURCE" contract-self-test
+fi
+
+if [[ "$mode" == 'prepare' ]]; then
+  [[ -n "$prepare_out" && -n "$gate5_manifest" && -n "$gate5_runnote" && -n "$gate5_promotion" ]] || usage
+  [[ -n "$core_completion" && -n "$extended_completion" && -n "$native_completion" ]] || usage
+  [[ -z "$input_manifest" && -z "$authorized_sha" ]] || usage
+  exec "$PY" "$PAYLOAD_SOURCE" prepare \
+    --out "$prepare_out" \
+    --gate5-manifest "$gate5_manifest" \
+    --gate5-runnote "$gate5_runnote" \
+    --gate5-promotion-receipt "$gate5_promotion" \
+    --phase6-core-completion "$core_completion" \
+    --phase6-extended-completion "$extended_completion" \
+    --phase6-native-completion "$native_completion"
+fi
+
+[[ "$mode" == 'launch' && -n "$input_manifest" && -n "$authorized_sha" ]] || usage
+[[ -z "$prepare_out" && -z "$gate5_manifest" && -z "$gate5_runnote" && -z "$gate5_promotion" ]] || usage
+[[ -z "$core_completion" && -z "$extended_completion" && -z "$native_completion" ]] || usage
+[[ "$authorized_sha" =~ ^[0-9a-f]{64}$ ]] || usage
+
+INPUT_MANIFEST="$($PY - "$input_manifest" "$authorized_sha" "$PAYLOAD_SOURCE" <<'PY'
+from pathlib import Path
+import hashlib
+import sys
+from ura.strict_json import strict_json_loads
+
+path = Path(sys.argv[1]).expanduser()
+if not path.is_absolute() or path.is_symlink() or not path.is_file():
+    raise SystemExit("Phase 7 input manifest must be one absolute regular non-symlink file")
+path = path.resolve(strict=True)
+payload = path.read_bytes()
+if hashlib.sha256(payload).hexdigest() != sys.argv[2]:
+    raise SystemExit("Phase 7 authorization does not match the exact input manifest bytes")
+value = strict_json_loads(payload)
+if not isinstance(value, dict):
+    raise SystemExit("Phase 7 input manifest is not one strict JSON object")
+payload_source = Path(sys.argv[3])
+payload_descriptor = value.get("controller_payload")
+if (
+    not isinstance(payload_descriptor, dict)
+    or set(payload_descriptor) != {"path", "sha256", "bytes"}
+    or payload_source.is_symlink()
+    or not payload_source.is_file()
+    or payload_source.resolve(strict=True) != Path(payload_descriptor.get("path", "")).resolve(strict=True)
+):
+    raise SystemExit("Phase 7 input does not bind this controller payload path")
+controller_bytes = payload_source.read_bytes()
+if (
+    len(controller_bytes) != payload_descriptor.get("bytes")
+    or hashlib.sha256(controller_bytes).hexdigest() != payload_descriptor.get("sha256")
+):
+    raise SystemExit("Phase 7 controller payload changed after input authorization")
+print(path)
+PY
+)"
+
+TAG="$(date -u +%Y%m%dT%H%M%SZ)-$$"
+CONTROL_ROOT="$URA_WORK/runs/engineering/phase7-analysis-$TAG"
+ANALYSIS_ROOT="$URA_WORK/runs/thesis/analysis/phase7-$TAG"
+test ! -e "$CONTROL_ROOT"
+test ! -e "$ANALYSIS_ROOT"
+mkdir -m 700 "$CONTROL_ROOT"
+
+"$PY" - "$CONTROL_ROOT" "$ANALYSIS_ROOT" "$INPUT_MANIFEST" "$authorized_sha" "$PAYLOAD_SOURCE" <<'PY'
+from pathlib import Path
+import hashlib
+import json
+import os
+import shutil
+import sys
+
+control = Path(sys.argv[1]).resolve(strict=True)
+analysis = Path(sys.argv[2])
+source_manifest = Path(sys.argv[3]).resolve(strict=True)
+authorized = sys.argv[4]
+source_payload = Path(sys.argv[5]).resolve(strict=True)
+
+def write_new(path: Path, payload: bytes, mode: int) -> None:
+    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, mode)
+    with os.fdopen(fd, "wb") as handle:
+        handle.write(payload)
+        handle.flush()
+        os.fsync(handle.fileno())
+
+def desc(path: Path) -> dict[str, object]:
+    payload = path.read_bytes()
+    return {
+        "path": str(path),
+        "sha256": hashlib.sha256(payload).hexdigest(),
+        "bytes": len(payload),
+    }
+
+manifest_copy = control / "phase7-inputs.json"
+payload_copy = control / "payload.py"
+write_new(manifest_copy, source_manifest.read_bytes(), 0o600)
+write_new(payload_copy, source_payload.read_bytes(), 0o700)
+if desc(manifest_copy)["sha256"] != authorized:
+    raise SystemExit("copied Phase 7 input manifest differs from authorization")
+
+launch = {
+    "schema": "ura-phase7-analysis-launch/1",
+    "authorized_input_manifest_sha256": authorized,
+    "input_manifest": desc(manifest_copy),
+    "payload": desc(payload_copy),
+    "control_root": str(control),
+    "analysis_root": str(analysis),
+}
+launch_payload = (
+    json.dumps(launch, sort_keys=True, separators=(",", ":"), allow_nan=False)
+    + "\n"
+).encode("ascii")
+write_new(control / "launch.json", launch_payload, 0o600)
+PY
+
+SESSION="ura-phase7-$TAG"
+SOCKET="ura-phase7-$TAG"
+tmux -L "$SOCKET" new-session -d -s "$SESSION" \
+  "exec env CONTROL_ROOT=$(printf '%q' "$CONTROL_ROOT") ANALYSIS_ROOT=$(printf '%q' "$ANALYSIS_ROOT") $PY $(printf '%q' "$CONTROL_ROOT/payload.py") execute --launch $(printf '%q' "$CONTROL_ROOT/launch.json")"
+
+printf 'SESSION=%s\n' "$SESSION"
+printf 'SOCKET=%s\n' "$SOCKET"
+printf 'ATTACH=tmux -L %s attach -t %s\n' "$SOCKET" "$SESSION"
+printf 'CONTROL_ROOT=%s\n' "$CONTROL_ROOT"
+printf 'ANALYSIS_ROOT=%s\n' "$ANALYSIS_ROOT"
+printf 'LOG=%s/controller.log\n' "$CONTROL_ROOT"
+printf 'EXIT_MARKER=%s/.exit\n' "$CONTROL_ROOT"
+printf 'COMPLETION=%s/completion.json\n' "$CONTROL_ROOT"

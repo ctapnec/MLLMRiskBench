@@ -1,0 +1,337 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+umask 077
+
+readonly EXPECTED_COMMIT='@@EXPECTED_COMMIT@@'
+readonly EXPECTED_FRAMEWORK_LOCK='@@FRAMEWORK_LOCK_SHA256@@'
+readonly EXPECTED_FRAMEWORK_MANIFEST='@@PROJECT_ROOT@@/experiments/framework_runtime_lock.json'
+readonly EXPECTED_PROJECT_RECEIPT='@@PROJECT_RECEIPT_PATH@@'
+readonly EXPECTED_PROJECT_SHA='@@PROJECT_RECEIPT_SHA256@@'
+readonly EXPECTED_SOURCE_RECEIPT='@@SOURCE_RECEIPT_PATH@@'
+readonly EXPECTED_SOURCE_SHA='@@SOURCE_RECEIPT_SHA256@@'
+readonly EXPECTED_WORK='@@WORK_ROOT@@'
+readonly PROJECT='@@PROJECT_ROOT@@'
+readonly PROJECT_PY='@@PROJECT_ROOT@@/.venv/bin/python'
+readonly ACTIVE_ROOT='@@CONTROLLER_INSTALL_ROOT@@'
+readonly INSTALL_BASE="${ACTIVE_ROOT%/*}"
+readonly GENERATIONS="$INSTALL_BASE/.ura-controller-generations"
+readonly INSTALL_LOCK="$GENERATIONS/.install.lock"
+readonly MARKER_NAME='.ura-controller-generation.tsv'
+readonly INVENTORY_NAME='@@INVENTORY_NAME@@'
+readonly VERIFIER_NAME='verify_controllers_@@COMMIT_SHORT@@.sh'
+readonly INVENTORY_SHA256='@@INVENTORY_SHA256@@'
+readonly INVENTORY_BYTES='@@INVENTORY_BYTES@@'
+
+fail() {
+  printf 'CONTROLLER_SET_VERIFICATION_ERROR=%s\n' "$*" >&2
+  exit 1
+}
+
+digest() {
+  sha256sum -- "$1" | awk '{print $1}'
+}
+
+require_regular_hash() {
+  local path="$1" expected="$2" label="$3"
+  [[ -f "$path" && ! -L "$path" ]] || \
+    fail "$label is not one regular non-symlink file: $path"
+  [[ "$(digest "$path")" == "$expected" ]] || \
+    fail "$label SHA-256 differs: $path"
+}
+
+[[ -r "$HOME/.ura_campaign_env" ]] || \
+  fail "campaign environment is unreadable: $HOME/.ura_campaign_env"
+# shellcheck disable=SC1091
+source "$HOME/.ura_campaign_env"
+
+[[ "$ACTIVE_ROOT" == "$INSTALL_BASE/.ura-controller-active" ]] || \
+  fail 'bound controller root does not name .ura-controller-active'
+[[ -d "$INSTALL_BASE" && ! -L "$INSTALL_BASE" ]] || \
+  fail "controller install base is not one non-symlink directory: $INSTALL_BASE"
+[[ -d "$GENERATIONS" && ! -L "$GENERATIONS" ]] || \
+  fail "controller generations root is not one non-symlink directory: $GENERATIONS"
+[[ -f "$INSTALL_LOCK" && ! -L "$INSTALL_LOCK" ]] || \
+  fail "controller install lock is not one regular non-symlink file: $INSTALL_LOCK"
+exec 9<> "$INSTALL_LOCK"
+flock -s 9
+
+[[ -L "$ACTIVE_ROOT" ]] || fail "active controller path is not a symlink: $ACTIVE_ROOT"
+readonly ACTIVE_TARGET="$(readlink -- "$ACTIVE_ROOT")"
+[[ "$ACTIVE_TARGET" =~ ^\.ura-controller-generations/@@COMMIT_SHORT@@-[0-9a-f]{64}$ ]] || \
+  fail "active controller target is not this commit's managed generation: $ACTIVE_TARGET"
+readonly CONTROLLER_ROOT="$INSTALL_BASE/$ACTIVE_TARGET"
+readonly INVENTORY="$CONTROLLER_ROOT/$INVENTORY_NAME"
+readonly MARKER="$CONTROLLER_ROOT/$MARKER_NAME"
+readonly ACTIVE_ARCHIVE_SHA256="${ACTIVE_TARGET##*-}"
+[[ -d "$CONTROLLER_ROOT" && ! -L "$CONTROLLER_ROOT" ]] || \
+  fail "active controller generation is not one non-symlink directory: $CONTROLLER_ROOT"
+[[ "$(readlink -f -- "$ACTIVE_ROOT")" == "$(readlink -f -- "$CONTROLLER_ROOT")" ]] || \
+  fail 'active controller pointer does not resolve to its named generation'
+[[ -f "$MARKER" && ! -L "$MARKER" ]] || \
+  fail "controller generation marker is not one regular non-symlink file: $MARKER"
+
+mapfile -t marker_rows < "$MARKER"
+[[ "${#marker_rows[@]}" == '9' ]] || fail 'controller generation marker row count differs'
+[[ "${marker_rows[0]}" == $'schema\tura-controller-generation/1' ]] || \
+  fail 'controller generation marker schema differs'
+[[ "${marker_rows[1]}" == $'expected_commit\t'"$EXPECTED_COMMIT" ]] || \
+  fail 'controller generation marker commit differs'
+[[ "${marker_rows[2]}" == $'archive_sha256\t'"$ACTIVE_ARCHIVE_SHA256" ]] || \
+  fail 'controller generation marker archive SHA-256 differs'
+[[ "${marker_rows[3]}" =~ ^archive_bytes$'\t'[1-9][0-9]*$ ]] || \
+  fail 'controller generation marker archive byte count is invalid'
+[[ "${marker_rows[4]}" == $'inventory_name\t'"$INVENTORY_NAME" ]] || \
+  fail 'controller generation marker inventory name differs'
+[[ "${marker_rows[5]}" == $'inventory_sha256\t'"$INVENTORY_SHA256" ]] || \
+  fail 'controller generation marker inventory SHA-256 differs'
+[[ "${marker_rows[6]}" == $'inventory_bytes\t'"$INVENTORY_BYTES" ]] || \
+  fail 'controller generation marker inventory byte count differs'
+[[ "${marker_rows[7]}" == $'verifier_name\t'"$VERIFIER_NAME" ]] || \
+  fail 'controller generation marker verifier name differs'
+[[ "${marker_rows[8]}" =~ ^verifier_sha256$'\t'[0-9a-f]{64}$ ]] || \
+  fail 'controller generation marker verifier SHA-256 is invalid'
+readonly GENERATION_VERIFIER_SHA256="${marker_rows[8]#*$'\t'}"
+require_regular_hash "$CONTROLLER_ROOT/$VERIFIER_NAME" \
+  "$GENERATION_VERIFIER_SHA256" 'controller verifier'
+
+require_regular_hash "$INVENTORY" "$INVENTORY_SHA256" 'controller inventory'
+[[ "$(stat -c %s -- "$INVENTORY")" == "$INVENTORY_BYTES" ]] || \
+  fail 'controller inventory byte count differs'
+
+controller_hash_count=0
+declare -A controller_names=()
+while IFS=$'\t' read -r name bytes sha256 self_test; do
+  [[ -n "$name" && "$bytes" =~ ^[1-9][0-9]*$ && \
+     "$sha256" =~ ^[0-9a-f]{64}$ && -n "$self_test" ]] || \
+    fail 'controller inventory contains a malformed row'
+  case "$name" in
+    */*|*\\*|''|.|..) fail "controller inventory contains an unsafe name: $name" ;;
+  esac
+  [[ -z "${controller_names[$name]+present}" ]] || \
+    fail "controller inventory contains a duplicate name: $name"
+  controller_names[$name]=1
+  path="$CONTROLLER_ROOT/$name"
+  [[ -f "$path" && ! -L "$path" ]] || \
+    fail "controller is not one regular non-symlink file: $path"
+  [[ "$(stat -c %s -- "$path")" == "$bytes" ]] || \
+    fail "controller byte count differs: $path"
+  [[ "$(digest "$path")" == "$sha256" ]] || \
+    fail "controller SHA-256 differs: $path"
+  controller_hash_count=$((controller_hash_count + 1))
+done < "$INVENTORY"
+[[ "$controller_hash_count" == '24' ]] || fail 'controller inventory count differs'
+[[ -z "$(find -P "$CONTROLLER_ROOT" -mindepth 1 -maxdepth 1 ! -type f -print -quit)" ]] || \
+  fail 'active controller generation contains a non-regular entry'
+[[ "$(find -P "$CONTROLLER_ROOT" -mindepth 1 -maxdepth 1 -type f -printf . | wc -c)" == '27' ]] || \
+  fail 'active controller generation file count differs'
+
+[[ -d "$PROJECT" && ! -L "$PROJECT" ]] || \
+  fail "project checkout is not one non-symlink directory: $PROJECT"
+[[ -x "$PROJECT_PY" ]] || fail "project interpreter is not executable: $PROJECT_PY"
+[[ "$(git -C "$PROJECT" rev-parse HEAD)" == "$EXPECTED_COMMIT" ]] || \
+  fail 'project commit differs'
+[[ -z "$(git -C "$PROJECT" status --porcelain)" ]] || \
+  fail 'project checkout is not clean'
+
+[[ "${URA_PROJECT_REVISION_MANIFEST-}" == "$EXPECTED_PROJECT_RECEIPT" ]] || \
+  fail 'project-revision manifest binding differs'
+[[ "${URA_PROJECT_REVISION_SHA256-}" == "$EXPECTED_PROJECT_SHA" ]] || \
+  fail 'project-revision SHA-256 binding differs'
+require_regular_hash "$EXPECTED_PROJECT_RECEIPT" "$EXPECTED_PROJECT_SHA" \
+  'project-revision receipt'
+
+[[ "${URA_SOURCE_CONFORMANCE_MANIFEST-}" == "$EXPECTED_SOURCE_RECEIPT" ]] || \
+  fail 'source-conformance manifest binding differs'
+[[ "${URA_SOURCE_CONFORMANCE_SHA256-}" == "$EXPECTED_SOURCE_SHA" ]] || \
+  fail 'source-conformance SHA-256 binding differs'
+require_regular_hash "$EXPECTED_SOURCE_RECEIPT" "$EXPECTED_SOURCE_SHA" \
+  'source-conformance receipt'
+
+[[ "${URA_FRAMEWORK_LOCK-}" == "$EXPECTED_FRAMEWORK_MANIFEST" ]] || \
+  fail 'framework manifest binding differs'
+[[ "${URA_FRAMEWORK_LOCK_ID-}" == "$EXPECTED_FRAMEWORK_LOCK" ]] || \
+  fail 'framework lock binding differs'
+[[ -n "${URA_WORK-}" ]] || fail 'URA_WORK is unset'
+[[ "$(readlink -f -- "$URA_WORK")" == "$EXPECTED_WORK" ]] || \
+  fail 'canonical URA_WORK binding differs'
+readonly EXPECTED_FRAMEWORK_STATE="$EXPECTED_WORK/runs/engineering/framework-runtime-${EXPECTED_FRAMEWORK_LOCK:0:12}"
+readonly EXPECTED_FRAMEWORK_ENVS="$EXPECTED_WORK/framework-venvs"
+[[ "${URA_FRAMEWORK_STATE-}" == "$EXPECTED_FRAMEWORK_STATE" ]] || \
+  fail 'framework state-root binding differs'
+[[ "${URA_FRAMEWORK_ENVS-}" == "$EXPECTED_FRAMEWORK_ENVS" ]] || \
+  fail 'framework environment-root binding differs'
+[[ -d "$EXPECTED_FRAMEWORK_STATE" && ! -L "$EXPECTED_FRAMEWORK_STATE" ]] || \
+  fail "framework state root is not one non-symlink directory: $EXPECTED_FRAMEWORK_STATE"
+[[ -d "$EXPECTED_FRAMEWORK_ENVS" && ! -L "$EXPECTED_FRAMEWORK_ENVS" ]] || \
+  fail "framework environment root is not one non-symlink directory: $EXPECTED_FRAMEWORK_ENVS"
+[[ -f "$EXPECTED_FRAMEWORK_MANIFEST" && ! -L "$EXPECTED_FRAMEWORK_MANIFEST" ]] || \
+  fail "framework manifest is not one regular non-symlink file: $EXPECTED_FRAMEWORK_MANIFEST"
+
+cd "$PROJECT"
+"$PROJECT_PY" - "$EXPECTED_FRAMEWORK_MANIFEST" "$EXPECTED_FRAMEWORK_LOCK" <<'PY'
+from pathlib import Path
+import sys
+
+from experiments.framework_runtime_installer import load_lock
+
+path = Path(sys.argv[1])
+expected_lock_id = sys.argv[2]
+lock = load_lock(path)
+if lock.get("lock_id") != expected_lock_id:
+    raise SystemExit("framework manifest lock_id differs")
+PY
+
+require_regular_hash "$INVENTORY" "$INVENTORY_SHA256" 'controller inventory'
+[[ "$(stat -c %s -- "$INVENTORY")" == "$INVENTORY_BYTES" ]] || \
+  fail 'controller inventory byte count differs'
+
+"$PROJECT_PY" - "$INVENTORY" <<'PY'
+from pathlib import Path
+import re
+import sys
+
+path = Path(sys.argv[1])
+raw = path.read_bytes()
+if not raw or not raw.endswith(b"\n") or b"\r" in raw or b"\0" in raw:
+    raise SystemExit("controller inventory is not canonical LF-delimited text")
+try:
+    raw.decode("ascii")
+except UnicodeDecodeError as exc:
+    raise SystemExit("controller inventory is not ASCII") from exc
+
+expected = (
+    ("phase3_guard1b_acquire_fit.sh", "phase3-guard-fit"),
+    ("phase5_core_projections.sh", "none"),
+    ("phase5_core_attest_canary.sh", "none"),
+    ("phase5_bridge_projections.sh", "none"),
+    ("phase5_bridge_attest_canary.sh", "none"),
+    ("phase5_ollama_workflow.sh", "none"),
+    ("phase5_sequence_after_core.sh", "none"),
+    ("phase5_finalize_gate5.sh", "gate5-inventory"),
+    ("phase5_promote_gate5.sh", "gate5-promotion"),
+    ("gate5_after_phase5_sequence.sh", "none"),
+    ("launch_phase5_sequence.sh", "none"),
+    ("launch_gate5_sequence.sh", "none"),
+    ("phase6_core_measured.sh", "none"),
+    ("phase6_extended_measured.sh", "none"),
+    ("phase6_native_diagnostics.sh", "none"),
+    ("phase6_sequence.sh", "none"),
+    ("launch_phase6_sequence.sh", "none"),
+    ("phase7_analysis.py", "phase7-contract"),
+    ("phase7_analysis.sh", "none"),
+    ("phase7_after_phase6_sequence.sh", "none"),
+    ("launch_phase7_watcher.sh", "none"),
+    ("phase8_human_audit.py", "phase8-self-test"),
+    ("phase8_human_audit.sh", "none"),
+    ("launch_chain_@@COMMIT_SHORT@@.sh", "none"),
+)
+
+rows = []
+for index, line in enumerate(raw[:-1].split(b"\n"), start=1):
+    fields = line.decode("ascii").split("\t")
+    if len(fields) != 4:
+        raise SystemExit(f"controller inventory row {index} does not have four fields")
+    name, size, sha256, self_test = fields
+    if name in {"", ".", ".."} or "/" in name or "\\" in name:
+        raise SystemExit(f"controller inventory row {index} has an unsafe name")
+    if not (name.endswith(".sh") or name.endswith(".py")):
+        raise SystemExit(f"controller inventory row {index} has an unsupported suffix")
+    if not re.fullmatch(r"[1-9][0-9]*", size):
+        raise SystemExit(f"controller inventory row {index} has a non-canonical byte count")
+    if not re.fullmatch(r"[0-9a-f]{64}", sha256):
+        raise SystemExit(f"controller inventory row {index} has an invalid SHA-256")
+    rows.append((name, self_test))
+
+if tuple(rows) != expected:
+    raise SystemExit("controller inventory names, order, or self-test assignments differ")
+if len({name for name, _ in rows}) != len(rows):
+    raise SystemExit("controller inventory contains a duplicate name")
+if "verify_controllers_@@COMMIT_SHORT@@.sh" in {name for name, _ in rows}:
+    raise SystemExit("controller verifier must not inventory itself")
+PY
+
+export PYTHONDONTWRITEBYTECODE=1
+controller_count=0
+cd "$CONTROLLER_ROOT"
+while IFS=$'\t' read -r name bytes sha256 self_test; do
+  path="$CONTROLLER_ROOT/$name"
+  [[ -f "$path" && ! -L "$path" ]] || \
+    fail "controller is not one regular non-symlink file: $path"
+  [[ "$(stat -c %s -- "$path")" == "$bytes" ]] || \
+    fail "controller byte count differs: $path"
+  [[ "$(digest "$path")" == "$sha256" ]] || \
+    fail "controller SHA-256 differs: $path"
+  case "$name" in
+    *.sh)
+      bash -n "$path" || fail "controller shell syntax failed: $path"
+      "$PROJECT_PY" - "$path" <<'PY'
+from pathlib import Path
+import re
+import sys
+
+path = Path(sys.argv[1])
+text = path.read_text(encoding="ascii")
+for index, block in enumerate(
+    re.findall(r"<<'PY'\n(.*?)\nPY(?:\n|$)", text, re.DOTALL),
+    start=1,
+):
+    compile(block, f"{path}:embedded-python-{index}", "exec")
+PY
+      ;;
+    *.py)
+      "$PROJECT_PY" - "$path" <<'PY'
+from pathlib import Path
+import sys
+
+path = Path(sys.argv[1])
+compile(path.read_bytes(), str(path), "exec")
+PY
+      ;;
+    *)
+      fail "unexpected controller suffix: $name"
+      ;;
+  esac
+  controller_count=$((controller_count + 1))
+done < "$INVENTORY"
+
+[[ "$controller_count" == '24' ]] || fail 'verified controller count differs'
+
+self_test_count=0
+cd "$PROJECT"
+while IFS=$'\t' read -r name bytes sha256 self_test; do
+  path="$CONTROLLER_ROOT/$name"
+  case "$self_test" in
+    none)
+      continue
+      ;;
+    gate5-inventory)
+      bash "$path" --inventory-contract-self-test >/dev/null
+      ;;
+    gate5-promotion)
+      bash "$path" --promotion-self-test >/dev/null
+      ;;
+    phase7-contract)
+      "$PROJECT_PY" "$path" contract-self-test >/dev/null
+      ;;
+    phase8-self-test)
+      "$PROJECT_PY" "$path" --self-test >/dev/null
+      ;;
+    phase3-guard-fit)
+      PYTHON="$PROJECT_PY" bash "$path" --self-test >/dev/null
+      ;;
+    *)
+      fail "unexpected controller self-test assignment: $name: $self_test"
+      ;;
+  esac
+  self_test_count=$((self_test_count + 1))
+  printf 'CONTROLLER_SELF_TEST_PASSED=%s\n' "$name"
+done < "$INVENTORY"
+
+[[ "$self_test_count" == '5' ]] || fail 'executed controller self-test count differs'
+[[ -L "$ACTIVE_ROOT" && "$(readlink -- "$ACTIVE_ROOT")" == "$ACTIVE_TARGET" ]] || \
+  fail 'active controller generation changed during verification'
+printf 'CONTROLLER_SET_VERIFIED=%s\n' "$EXPECTED_COMMIT"
+printf 'CONTROLLER_GENERATION_VERIFIED=%s\n' "${ACTIVE_TARGET##*/}"
+printf 'CONTROLLER_INVENTORY_SHA256=%s\n' "$INVENTORY_SHA256"
+printf 'CONTROLLER_COUNT=%s\n' "$controller_count"
+printf 'CONTROLLER_SELF_TEST_COUNT=%s\n' "$self_test_count"

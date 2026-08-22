@@ -9,6 +9,7 @@ from pathlib import Path
 
 import pytest
 
+from experiments.native_import import validate_native_run
 from ura.adapters._engine_common import (
     ExternalEngineConformanceError,
     ExternalEngineOutputError,
@@ -672,6 +673,62 @@ def test_agentdojo_imports_complete_native_suite_results_without_user_turn_reduc
     }
     assert attacked.native_details["messages"] == _dojo_messages()
     assert attacked.native_details["injection_appended_as_user_turn"] is False
+
+
+def test_agentdojo_assigns_unique_source_artifact_roles_per_trace(
+    tmp_path: Path,
+) -> None:
+    suite_root = _dojo_result(tmp_path)
+    attacked = (
+        suite_root
+        / "user_task_1"
+        / "important_instructions"
+        / "injection_task_1.json"
+    )
+    attacked.parent.mkdir(parents=True)
+    attacked.write_text(
+        json.dumps(
+            _dojo_trace(
+                user_task="user_task_1",
+                attack_type="important_instructions",
+                injection_task="injection_task_1",
+                utility=False,
+                security=True,
+            )
+        ),
+        encoding="utf-8",
+    )
+    baseline = suite_root / "injection_task_1" / "none" / "none.json"
+    baseline.parent.mkdir(parents=True)
+    baseline.write_text(
+        json.dumps(
+            _dojo_trace(
+                user_task="injection_task_1",
+                attack_type=None,
+                injection_task=None,
+                utility=False,
+                security=True,
+            )
+        ),
+        encoding="utf-8",
+    )
+
+    imported = AgentDojoAttacker().import_run(suite_root)
+    assert validate_native_run(imported) is imported
+
+    artifacts_by_role = {
+        artifact.role: artifact for artifact in imported.source_artifacts
+    }
+    assert len(artifacts_by_role) == len(imported.source_artifacts) == 4
+    assert sum(role.startswith("attacked_task_trace:") for role in artifacts_by_role) == 2
+    assert sum(
+        role.startswith("injection_task_utility_trace:")
+        for role in artifacts_by_role
+    ) == 2
+    for case in imported.cases:
+        artifact = artifacts_by_role[case.source_artifact_role]
+        relative = Path(artifact.path).relative_to(suite_root).as_posix()
+        assert case.source_record == relative
 
 
 def test_agentdojo_fails_closed_on_incomplete_or_unpinned_traces(

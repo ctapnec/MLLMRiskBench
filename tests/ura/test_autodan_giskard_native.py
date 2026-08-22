@@ -9,7 +9,13 @@ from types import SimpleNamespace
 
 import pytest
 
+import experiments.native_import as native_import_module
 import ura.adapters.giskard as giskard_module
+from experiments.native_import import (
+    CONFIG_SCHEMA,
+    canonical_native_engine_ids,
+    import_from_config,
+)
 from ura.adapters._engine_common import (
     ExternalEngineConformanceError,
     ExternalEngineOutputError,
@@ -227,6 +233,62 @@ def test_giskard_scan_import_preserves_native_report_without_asr(
     assert imported.cases[0].native_outcome == "reported_issue:major"
     assert imported.cases[0].target_outputs == []
     assert imported.native_aggregates["reported_issue_counts"]["major"] == 1
+
+
+def test_giskard_importer_key_resolves_to_its_canonical_native_engine_ids(
+    tmp_path: Path,
+) -> None:
+    _scan_result_dir(tmp_path / "scan")
+    config = tmp_path / "giskard-import.json"
+    _write_json(
+        config,
+        {
+            "schema_version": CONFIG_SCHEMA,
+            "engine": "giskard",
+            "adapter": {"target_model": "target/model"},
+            "import": {"results_dir": "scan"},
+        },
+    )
+
+    imported = import_from_config(config)
+
+    assert canonical_native_engine_ids("giskard") == frozenset(
+        {"giskard_v2_scan", "giskard_v2_raget"}
+    )
+    assert imported.engine == "giskard_v2_scan"
+
+
+def test_native_import_rejects_engine_id_outside_importer_key_contract(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    valid = GiskardAttacker(target_model="target/model").import_run(
+        _scan_result_dir(tmp_path / "scan")
+    )
+    wrong_engine = valid.model_copy(update={"engine": "easyjailbreak"})
+
+    class WrongGiskardImporter:
+        def import_run(self):
+            return wrong_engine
+
+    monkeypatch.setattr(
+        native_import_module,
+        "_engine_factory",
+        lambda _engine: (WrongGiskardImporter, "import_run"),
+    )
+    config = tmp_path / "wrong-giskard-import.json"
+    _write_json(
+        config,
+        {
+            "schema_version": CONFIG_SCHEMA,
+            "engine": "giskard",
+            "adapter": {},
+            "import": {},
+        },
+    )
+
+    with pytest.raises(ValueError, match="returned canonical engine ID"):
+        import_from_config(config)
 
 
 def test_giskard_scan_empty_report_is_retained_but_not_certified(

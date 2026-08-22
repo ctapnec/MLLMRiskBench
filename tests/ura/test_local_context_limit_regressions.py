@@ -85,8 +85,10 @@ def test_qwen_context_cap_survives_loader_target_and_portable_identity(
     assert loaded[SPEC]["max_tokens"] == 4096
     assert target.max_model_len == 12288
     assert target.max_tokens == 4096
+    assert target.engine_core_execution_mode == "in_process"
     assert target_config["max_model_len"] == 12288
     assert target_config["max_tokens"] == 4096
+    assert target_config["engine_core_execution_mode"] == "in_process"
     assert str(path.resolve()) not in json.dumps(target_config, sort_keys=True)
 
 
@@ -217,11 +219,13 @@ def test_vllm_engine_receives_only_explicit_context_cap(
     class FakeLLM:
         def __init__(self, **kwargs: object) -> None:
             assert os.environ["HF_HUB_OFFLINE"] == "1"
+            assert os.environ["VLLM_ENABLE_V1_MULTIPROCESSING"] == "0"
             assert kwargs["model"] == str(snapshot.resolve())
             assert kwargs["tokenizer"] == str(snapshot.resolve())
             assert "revision" not in kwargs
             assert "tokenizer_revision" not in kwargs
             engine_kwargs.append(kwargs)
+            self.llm_engine = SimpleNamespace(engine_core=InprocClient())
 
         def chat(self, _messages: object, _sampling: object) -> list[object]:
             completion = SimpleNamespace(
@@ -231,6 +235,17 @@ def test_vllm_engine_receives_only_explicit_context_cap(
                 token_ids=[2, 3],
             )
             return [SimpleNamespace(outputs=[completion], prompt_token_ids=[1])]
+
+    class EngineCore:
+        def shutdown(self) -> None:
+            pass
+
+    class InprocClient:
+        def __init__(self) -> None:
+            self.engine_core = EngineCore()
+
+        def shutdown(self) -> None:
+            self.engine_core.shutdown()
 
     class FakeSamplingParams:
         def __init__(self, **kwargs: object) -> None:
@@ -243,11 +258,19 @@ def test_vllm_engine_receives_only_explicit_context_cap(
     )
     real_import = builtins.__import__
 
-    def offline_import(name: str, *args: object, **kwargs: object):
+    def offline_import(
+        name: str,
+        globals_: object = None,
+        locals_: object = None,
+        fromlist: tuple[str, ...] = (),
+        level: int = 0,
+    ):
         if name == "vllm":
             assert os.environ["HF_HUB_OFFLINE"] == "1"
             assert os.environ["TRANSFORMERS_OFFLINE"] == "1"
-        return real_import(name, *args, **kwargs)
+            if "SamplingParams" not in fromlist:
+                assert os.environ["VLLM_ENABLE_V1_MULTIPROCESSING"] == "0"
+        return real_import(name, globals_, locals_, fromlist, level)
 
     monkeypatch.setattr(builtins, "__import__", offline_import)
     for name in (
@@ -257,6 +280,7 @@ def test_vllm_engine_receives_only_explicit_context_cap(
         "TRANSFORMERS_OFFLINE",
     ):
         monkeypatch.delenv(name, raising=False)
+    monkeypatch.setenv("VLLM_ENABLE_V1_MULTIPROCESSING", "operator-value")
     capped = VLLMTarget(
         SPEC.split(":", 1)[1],
         revision=REVISION,
@@ -267,12 +291,14 @@ def test_vllm_engine_receives_only_explicit_context_cap(
     )
     response = capped.generate([DialogTurn(role="user", content="probe")], seed=7)
     repeated = capped.generate([DialogTurn(role="user", content="probe")], seed=7)
+    assert os.environ["VLLM_ENABLE_V1_MULTIPROCESSING"] == "operator-value"
 
     assert engine_kwargs[0]["max_model_len"] == 15360
     assert "max_tokens" not in engine_kwargs[0]
     assert sampling_kwargs[0]["max_tokens"] == 4096
     assert "max_model_len" not in sampling_kwargs[0]
     assert response.raw["max_model_len"] == 15360
+    assert response.raw["engine_core_execution_mode"] == "in_process"
     assert response.raw["generation"]["max_tokens"] == 4096
     assert response.attempt_id == repeated.attempt_id
     assert response.attempt_id.strip()
@@ -308,6 +334,7 @@ def test_vllm_engine_receives_only_explicit_context_cap(
         model_runtime=FakeRuntime(),
     )
     native_response = native.generate([DialogTurn(role="user", content="probe")])
+    assert os.environ["VLLM_ENABLE_V1_MULTIPROCESSING"] == "operator-value"
     assert "max_model_len" not in engine_kwargs[1]
     assert "max_model_len" not in native_response.raw
 
@@ -322,6 +349,12 @@ def test_ollama_uses_the_same_nonblank_deterministic_attempt_placeholder(
     )
     monkeypatch.setattr(
         target, "_verify_loaded_identity", lambda _model, *, deadline: digest
+    )
+    prestates = iter(("empty", "selected"))
+    monkeypatch.setattr(
+        target,
+        "_verify_pre_generation_residency",
+        lambda *, deadline: next(prestates),
     )
     monkeypatch.setattr(
         target,
@@ -339,6 +372,14 @@ def test_ollama_uses_the_same_nonblank_deterministic_attempt_placeholder(
 
     first = target.generate(dialog, seed=7)
     second = target.generate(dialog, seed=7)
+
+    def release(*, deadline: float) -> str:
+        del deadline
+        target._residency_owned = False
+        return "unload"
+
+    monkeypatch.setattr(target, "_release_owned_residency", release)
+    target.close()
 
     assert first.attempt_id == second.attempt_id
     assert first.attempt_id.strip()

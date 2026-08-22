@@ -796,12 +796,16 @@ PYEOF
   ( cd "$URA_ROOT" && "$PY" -m experiments.framework_runtime_installer plan \
       --lock "$lock" --env-root "$env_root" --state-root "$state_root" ) >> "$LOG/runtimes-plan.log" 2>&1 \
     || echo "  [warn] runtimes plan failed (see $LOG/runtimes-plan.log)"
-  run_step runtimes-install runtimes_session install "$lock" "$env_root" "$state_root" "$base_python"
+  # `resume` is the safe universal entry point: it builds an absent store, repairs
+  # an interrupted stage phase-by-phase, and re-verifies an already published
+  # runtime. Fresh-only `install` would strand a staged store after an SSH or
+  # host interruption even though the plan above correctly reports `resume`.
+  run_step runtimes-install runtimes_session resume "$lock" "$env_root" "$state_root" "$base_python"
   if grep -q '^OK' "$LOG/runtimes-install.status" 2>/dev/null; then
     run_step runtimes-verify runtimes_session verify "$lock" "$env_root" "$state_root" "$base_python"
     grep -q '^OK' "$LOG/runtimes-verify.status" 2>/dev/null
   else
-    echo "  runtimes-verify skipped (install did not succeed; a staged store is resumed from the console's Build -> Runtimes or the runbook 12.2)"
+    echo "  runtimes-verify skipped (install/resume did not succeed; inspect the named-session log, then re-run this phase)"
     return 1
   fi
 }

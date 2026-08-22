@@ -1137,6 +1137,9 @@ def test_response_only_llm_judge_withholds_physical_source_context() -> None:
     decision = ApproximateSecurityDecision.model_validate(
         judgments[0].raw["approximate_security_decision"]
     )
+    assert decision.selected_judge == "llm-judge"
+    assert decision.judge_model == judge_target.name
+    assert decision.judge_model_queried is True
     assert decision.selected_evidence_scope == "response_only"
     assert decision.selected_source_reference_context_used is False
     rendered = "\n".join(turn.content or "" for turn in judge_target.dialog)

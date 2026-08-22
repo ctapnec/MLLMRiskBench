@@ -1,0 +1,45 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+pin_controller_generation() {
+  local script_fd="/proc/$$/fd/255" script_path root generations marker archive_sha
+  test -e "$script_fd" || { printf 'controller script descriptor is unavailable\n' >&2; return 1; }
+  script_path="$(readlink -f -- "$script_fd")"
+  test -f "$script_path" && test ! -L "$script_path"
+  root="${script_path%/*}"
+  generations="${root%/*}"
+  test "${generations##*/}" = '.ura-controller-generations'
+  test -d "$root" && test ! -L "$root"
+  marker="$root/.ura-controller-generation.tsv"
+  test -f "$marker" && test ! -L "$marker"
+  test "$(grep -Fxc -- $'schema\tura-controller-generation/1' "$marker")" = '1'
+  test "$(grep -Fxc -- $'expected_commit\t@@EXPECTED_COMMIT@@' "$marker")" = '1'
+  archive_sha="${root##*-}"
+  [[ "$archive_sha" =~ ^[0-9a-f]{64}$ ]]
+  test "${root##*/}" = "@@COMMIT_SHORT@@-$archive_sha"
+  test "$(grep -Fxc -- $'archive_sha256\t'"$archive_sha" "$marker")" = '1'
+  if [[ -n "${URA_CONTROLLER_GENERATION_ROOT-}" ]]; then
+    test "$URA_CONTROLLER_GENERATION_ROOT" = "$root"
+  fi
+  URA_CONTROLLER_GENERATION_ROOT="$root"
+  export URA_CONTROLLER_GENERATION_ROOT
+}
+pin_controller_generation
+readonly URA_CONTROLLER_GENERATION_ROOT
+PAYLOAD="$URA_CONTROLLER_GENERATION_ROOT/phase8_human_audit.py"
+
+if [[ "${1:-}" != "--self-test" ]]; then
+  # Non-secret campaign locators only. Never source ~/.ura_env here.
+  source "$HOME/.ura_campaign_env"
+fi
+
+if [[ -x "$PWD/.venv/bin/python" ]]; then
+  PY="$PWD/.venv/bin/python"
+elif [[ -x "$PWD/.venv/Scripts/python.exe" ]]; then
+  PY="$PWD/.venv/Scripts/python.exe"
+else
+  printf 'Phase 8 requires the deployed project virtualenv\n' >&2
+  exit 1
+fi
+
+exec "$PY" "$PAYLOAD" "$@"

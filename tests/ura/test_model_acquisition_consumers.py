@@ -14,6 +14,7 @@ from ura.model_acquisition_runtime import (
     ManagedModelLoadError,
     private_model_execution,
 )
+from ura.runner import _component_config
 from ura.targets.local import VLLMTarget, _tree_sha256
 
 
@@ -44,16 +45,25 @@ def test_explicit_local_vllm_mutation_cleans_engine_and_exposes_no_object(
     digest = _tree_sha256(snapshot)
     events: list[str] = []
 
+    class EngineCore:
+        def shutdown(self) -> None:
+            events.append("shutdown")
+            print(f"shutdown-snapshot:{snapshot}")
+
+    class InprocClient:
+        def __init__(self) -> None:
+            self.engine_core = EngineCore()
+
+        def shutdown(self) -> None:
+            self.engine_core.shutdown()
+
     class Engine:
         def __init__(self, **kwargs):
             assert kwargs["model"] == str(snapshot)
             assert kwargs["tokenizer"] == str(snapshot)
             assert os.environ["HF_HUB_OFFLINE"] == "1"
             weights.write_bytes(b"drift!")
-
-        def shutdown(self) -> None:
-            events.append("shutdown")
-            print(f"shutdown-snapshot:{snapshot}")
+            self.llm_engine = SimpleNamespace(engine_core=InprocClient())
 
         def __del__(self) -> None:
             print(f"rejected-engine-finalizer:{snapshot}")
@@ -89,13 +99,22 @@ def test_vllm_postverify_failure_shutdowns_engine(
     snapshot.mkdir()
     events: list[str] = []
 
+    class EngineCore:
+        def shutdown(self) -> None:
+            events.append("shutdown")
+
+    class InprocClient:
+        def __init__(self) -> None:
+            self.engine_core = EngineCore()
+
+        def shutdown(self) -> None:
+            self.engine_core.shutdown()
+
     class Engine:
         def __init__(self, **kwargs):
             assert kwargs["model"] == str(snapshot)
             assert kwargs["tokenizer"] == str(snapshot)
-
-        def shutdown(self) -> None:
-            events.append("shutdown")
+            self.llm_engine = SimpleNamespace(engine_core=InprocClient())
 
     monkeypatch.setitem(sys.modules, "vllm", SimpleNamespace(LLM=Engine))
     runtime = _RejectAfterConstruction(snapshot)
@@ -110,6 +129,145 @@ def test_vllm_postverify_failure_shutdowns_engine(
     assert runtime.constructor_calls == 1
     assert events == ["shutdown"]
     assert target._llm is None
+
+
+def test_vllm_construction_forces_in_process_mode_restores_env_and_keeps_tp2(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    snapshot = (tmp_path / "snapshot").resolve()
+    snapshot.mkdir()
+    events: list[object] = []
+
+    class Runtime:
+        def construct(self, _requirement, constructor, *, cleanup=None):
+            assert cleanup is not None
+            return constructor(snapshot)
+
+        @staticmethod
+        def private_execution(_role, callback):
+            return callback()
+
+    class EngineCore:
+        def shutdown(self) -> None:
+            events.append("engine-core-shutdown")
+
+    class InprocClient:
+        def __init__(self) -> None:
+            self.engine_core = EngineCore()
+
+        def shutdown(self) -> None:
+            self.engine_core.shutdown()
+
+    class LLM:
+        def __init__(self, **kwargs: object) -> None:
+            events.append(
+                (
+                    "construct",
+                    os.environ.get("VLLM_ENABLE_V1_MULTIPROCESSING"),
+                    kwargs["tensor_parallel_size"],
+                )
+            )
+            self.llm_engine = SimpleNamespace(engine_core=InprocClient())
+
+    monkeypatch.setitem(sys.modules, "vllm", SimpleNamespace(LLM=LLM))
+    monkeypatch.setenv("VLLM_ENABLE_V1_MULTIPROCESSING", "1")
+    target = VLLMTarget(
+        "Org/Target",
+        revision="a" * 40,
+        modality_support=("text", "image"),
+        tensor_parallel_size=2,
+        model_runtime=Runtime(),
+    )
+
+    target.preflight_base()
+
+    assert events == [("construct", "0", 2)]
+    assert os.environ["VLLM_ENABLE_V1_MULTIPROCESSING"] == "1"
+    assert _component_config(target)["engine_core_execution_mode"] == "in_process"
+    target.close()
+    assert events[-1] == "engine-core-shutdown"
+
+
+def test_vllm_construction_rejects_sync_mp_client_and_restores_env(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    snapshot = (tmp_path / "snapshot").resolve()
+    snapshot.mkdir()
+    events: list[str] = []
+
+    class Runtime:
+        def construct(self, _requirement, constructor, *, cleanup=None):
+            assert cleanup is not None
+            return constructor(snapshot)
+
+        @staticmethod
+        def private_execution(_role, callback):
+            return callback()
+
+    class SyncMPClient:
+        output_queue_thread = object()
+        engine_core = SimpleNamespace(shutdown=lambda: None)
+
+        def shutdown(self) -> None:
+            events.append("sync-mp-shutdown")
+
+    class LLM:
+        def __init__(self, **_kwargs: object) -> None:
+            assert os.environ["VLLM_ENABLE_V1_MULTIPROCESSING"] == "0"
+            self.llm_engine = SimpleNamespace(engine_core=SyncMPClient())
+
+    monkeypatch.setitem(sys.modules, "vllm", SimpleNamespace(LLM=LLM))
+    monkeypatch.delenv("VLLM_ENABLE_V1_MULTIPROCESSING", raising=False)
+    target = VLLMTarget(
+        "Org/Target",
+        revision="a" * 40,
+        modality_support=("text", "image"),
+        model_runtime=Runtime(),
+    )
+
+    with pytest.raises(RuntimeError, match="execution-mode admission"):
+        target.preflight_base()
+
+    assert events == ["sync-mp-shutdown"]
+    assert "VLLM_ENABLE_V1_MULTIPROCESSING" not in os.environ
+    assert target._llm is None
+
+
+def test_vllm_rejects_configured_multiprocess_engine_core_mode() -> None:
+    with pytest.raises(ValueError, match="supports only.*in_process"):
+        VLLMTarget(
+            "Org/Target",
+            revision="a" * 40,
+            modality_support=("text",),
+            engine_core_execution_mode="multiprocess",
+        )
+
+
+def test_vllm_cached_engine_is_readmitted_before_reuse() -> None:
+    class SyncMPClient:
+        output_queue_thread = object()
+        engine_core = SimpleNamespace(shutdown=lambda: None)
+
+        @staticmethod
+        def shutdown() -> None:
+            pass
+
+    target = VLLMTarget(
+        "Org/Target",
+        revision="a" * 40,
+        modality_support=("text",),
+        model_runtime=object(),
+    )
+    target._llm = SimpleNamespace(
+        llm_engine=SimpleNamespace(engine_core=SyncMPClient())
+    )
+
+    with pytest.raises(RuntimeError, match="required in-process EngineCore"):
+        target._engine()
+
+    target._llm = None
 
 
 def test_vllm_close_reaches_v027_engine_core_and_is_idempotent() -> None:
@@ -141,8 +299,8 @@ def test_vllm_close_reaches_v027_engine_core_and_is_idempotent() -> None:
     assert target._llm is None
 
 
-def test_vllm_close_joins_v027_output_thread_before_engine_release() -> None:
-    events: list[object] = []
+def test_vllm_close_does_not_manually_join_or_destroy_third_party_zmq() -> None:
+    events: list[str] = []
 
     class Runtime:
         def private_execution(self, role, callback):
@@ -150,79 +308,24 @@ def test_vllm_close_joins_v027_output_thread_before_engine_release() -> None:
             return callback()
 
     class OutputThread:
-        alive = True
-
         def join(self, *, timeout: float) -> None:
-            events.append(("output-thread-join", timeout))
-            self.alive = False
+            del timeout
+            raise AssertionError("adapter must not join vLLM-owned threads")
 
         def is_alive(self) -> bool:
-            events.append("output-thread-is-alive")
-            return self.alive
-
-    class Core:
-        def __init__(self) -> None:
-            self.output_queue_thread = OutputThread()
-
-        def shutdown(self) -> None:
-            events.append("engine-core-shutdown")
-
-        def __del__(self) -> None:
-            events.append("engine-core-release")
-
-    target = VLLMTarget(
-        "Org/Target",
-        revision="a" * 40,
-        modality_support=("text",),
-        model_runtime=Runtime(),
-    )
-    target._llm = SimpleNamespace(llm_engine=SimpleNamespace(engine_core=Core()))
-
-    target.close()
-
-    assert events == [
-        "private:vllm_target",
-        "engine-core-shutdown",
-        ("output-thread-join", 30.0),
-        "output-thread-is-alive",
-        "engine-core-release",
-    ]
-    assert target._llm is None
-
-
-def test_vllm_close_destroys_v027_zmq_context_after_output_thread_join() -> None:
-    events: list[object] = []
-
-    class Runtime:
-        def private_execution(self, role, callback):
-            events.append(f"private:{role}")
-            return callback()
-
-    class OutputThread:
-        alive = True
-
-        def join(self, *, timeout: float) -> None:
-            events.append(("output-thread-join", timeout))
-            self.alive = False
-
-        def is_alive(self) -> bool:
-            events.append("output-thread-is-alive")
-            return self.alive
+            raise AssertionError("adapter must not inspect vLLM-owned threads")
 
     class Context:
         def destroy(self, *, linger: int) -> None:
-            events.append(("zmq-context-destroy", linger))
+            del linger
+            raise AssertionError("adapter must not destroy vLLM-owned contexts")
 
-    class Core:
-        def __init__(self) -> None:
-            self.output_queue_thread = OutputThread()
-            self.ctx = Context()
+    class InprocClient:
+        output_queue_thread = OutputThread()
+        ctx = Context()
 
         def shutdown(self) -> None:
-            events.append("engine-core-shutdown")
-
-        def __del__(self) -> None:
-            events.append("engine-core-release")
+            events.append("official-inproc-shutdown")
 
     target = VLLMTarget(
         "Org/Target",
@@ -230,60 +333,13 @@ def test_vllm_close_destroys_v027_zmq_context_after_output_thread_join() -> None
         modality_support=("text", "image"),
         model_runtime=Runtime(),
     )
-    target._llm = SimpleNamespace(llm_engine=SimpleNamespace(engine_core=Core()))
+    target._llm = SimpleNamespace(
+        llm_engine=SimpleNamespace(engine_core=InprocClient())
+    )
 
     target.close()
 
-    assert events == [
-        "private:vllm_target",
-        "engine-core-shutdown",
-        ("output-thread-join", 30.0),
-        "output-thread-is-alive",
-        ("zmq-context-destroy", 0),
-        "engine-core-release",
-    ]
-    assert target._llm is None
-
-
-def test_vllm_close_fails_closed_when_output_thread_remains_alive() -> None:
-    context_destroyed = False
-
-    class Runtime:
-        def private_execution(self, _role, callback):
-            return callback()
-
-    class OutputThread:
-        def join(self, *, timeout: float) -> None:
-            assert timeout == 30.0
-
-        def is_alive(self) -> bool:
-            return True
-
-    class Context:
-        def destroy(self, *, linger: int) -> None:
-            nonlocal context_destroyed
-            assert linger == 0
-            context_destroyed = True
-
-    class Core:
-        output_queue_thread = OutputThread()
-        ctx = Context()
-
-        def shutdown(self) -> None:
-            pass
-
-    target = VLLMTarget(
-        "Org/Target",
-        revision="a" * 40,
-        modality_support=("text",),
-        model_runtime=Runtime(),
-    )
-    target._llm = SimpleNamespace(llm_engine=SimpleNamespace(engine_core=Core()))
-
-    with pytest.raises(RuntimeError, match="vLLM engine shutdown failed"):
-        target.close()
-
-    assert context_destroyed is False
+    assert events == ["private:vllm_target", "official-inproc-shutdown"]
     assert target._llm is None
 
 

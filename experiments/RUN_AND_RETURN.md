@@ -235,6 +235,188 @@ data-use restriction, provider retention policy, and institutional approval befo
 acquisition or calls. Do not put secrets, harmful artifacts, or restricted corpora
 in Git.
 
+### 2.1 Versioned local-campaign controllers
+
+Phase 3-8 controller logic is tracked under
+`experiments/local_campaign/templates/`. Do not repair a substantive controller
+only in the workspace or on the rig. For this controller workflow, the sibling
+`.campaign` directory holds disposable renders, one explicit binding JSON,
+inventories, packages, and transfer files; none of those files or any run
+evidence is committed.
+
+A tracked template cannot contain the hash of the commit that will contain it.
+The generator accepts exactly the reviewed external placeholder inventory and
+applies semantic validators before substitution: hashes, safe basenames,
+canonical absolute POSIX paths, real UTC datetimes, and canonical byte counts
+cannot become shell or Python fragments.
+
+After repin has deployed the new commit and created its project-revision receipt,
+derive a create-only provisional binding from the last validated binding. The
+one-time migration from the exact legacy a05 key inventory requires every new
+or changed binding below as an explicit `--set`; it rejects any other prior
+subset or extra key. Use validated prior Phase 3 values for the provisional
+artifact fields, but bind the new project receipt's exact byte count. Render the set and
+run only the generated `phase3_guard1b_acquire_fit.sh` at this stage:
+
+```bash
+python -m experiments.local_campaign.rebind \
+  --base ../../.campaign/controller_bindings_<old7>.json \
+  --out ../../.campaign/controller_bindings_<new7>-phase3.json \
+  --expected-commit <new-40-hex> \
+  --project-receipt-path <absolute-new-project-receipt> \
+  --project-receipt-sha256 <new-project-receipt-sha256> \
+  --phase3-guard-tag <fresh-UTC-tag> \
+  --set CONTROLLER_INSTALL_ROOT=/home/ura/.ura-controller-active \
+  --set PROJECT_RECEIPT_BYTES=<positive-wc-c> \
+  --set PHASE3_REQUEST_BYTES=<prior-positive-wc-c> \
+  --set PHASE3_ACQUISITION_BYTES=<prior-positive-wc-c> \
+  --set PHASE3_FIT_LOG_BYTES=<prior-positive-wc-c> \
+  --set PHASE3_GPU_BEFORE_SHA256=<prior-pre-fit-sha256> \
+  --set PHASE3_GPU_BEFORE_BYTES=<prior-positive-wc-c> \
+  --set PHASE3_GPU_AFTER_SHA256=<prior-post-fit-sha256> \
+  --set PHASE3_GPU_AFTER_BYTES=<prior-positive-wc-c> \
+  --set PHASE3_PLAN_BYTES=<prior-positive-wc-c> \
+  --set PHASE3_ACQUISITION_RECEIPT_BYTES=<prior-positive-wc-c> \
+  --set PHASE3_FIT_RESULT_BYTES=<prior-positive-wc-c> \
+  --set PHASE3_ENVELOPE_BYTES=<prior-positive-wc-c> \
+  --set PHASE3_PROJECTION_BYTES=<prior-positive-wc-c> \
+  --set PHASE3_ELIGIBILITY_BYTES=<prior-positive-wc-c> \
+  --set PHASE3_DOWNLOADED_BYTES=<prior-canonical-0-to-8589934592>
+python -m experiments.local_campaign.generate \
+  --bindings ../../.campaign/controller_bindings_<new7>-phase3.json \
+  --output-dir ../../.campaign
+python -m experiments.local_campaign.generate \
+  --bindings ../../.campaign/controller_bindings_<new7>-phase3.json \
+  --output-dir ../../.campaign --check
+python -m experiments.local_campaign.generate \
+  --bindings ../../.campaign/controller_bindings_<new7>-phase3.json \
+  --output-dir ../../.campaign --package
+```
+
+Transfer that provisional `controller-set-<new7>.tar` to the exact remote
+filename `~/.controller-set-<new7>.tar` together with its generated installer.
+Install and verify the immutable generation through the active pointer, then
+invoke only the Phase 3 producer. It creates and returns its own tmux session:
+
+```bash
+bash ~/install_controller_set_<new7>.sh
+bash ~/.ura-controller-active/verify_controllers_<new7>.sh
+bash ~/.ura-controller-active/phase3_guard1b_acquire_fit.sh
+```
+
+Do not invoke the provisional launch chain. Its Phase 3 evidence identities are
+the prior validated values used only to make the migration binding complete.
+
+The generated controller uses the exact `--phase3-guard-tag` binding for its
+tmux identity and all engineering, acquisition, and fit roots. It does not
+derive a timestamp when launched. Those roots are create-only, so choose the
+tag once, render once, and do not change it in the final binding.
+
+After that Phase 3 controller succeeds, derive the final create-only binding
+from the provisional file. Replace every fresh Phase 3 file's SHA-256 and
+positive byte count, both independent GPU snapshots, generated names, the
+canonical argv digest, the actual nonnegative downloaded-byte count, and the
+four sequence tags. `PHASE3_DOWNLOADED_BYTES` must be canonical and no greater
+than the 8589934592-byte acquisition cap. Then render, check for workspace
+drift, and build the deterministic verifier/archive/installer set:
+
+```bash
+python -m experiments.local_campaign.rebind \
+  --base ../../.campaign/controller_bindings_<new7>-phase3.json \
+  --out ../../.campaign/controller_bindings_<new7>.json \
+  --phase5-sequence-tag <fresh-UTC-tag> \
+  --gate5-sequence-tag <fresh-UTC-tag> \
+  --phase6-sequence-tag <fresh-UTC-tag> \
+  --phase7-watcher-tag <fresh-UTC-tag> \
+  --set PHASE3_REQUEST_SHA256=<sha256> \
+  --set PHASE3_REQUEST_BYTES=<positive-wc-c> \
+  --set PHASE3_ACQUISITION_SHA256=<sha256> \
+  --set PHASE3_ACQUISITION_BYTES=<positive-wc-c> \
+  --set PHASE3_FIT_LOG_SHA256=<sha256> \
+  --set PHASE3_FIT_LOG_BYTES=<positive-wc-c> \
+  --set PHASE3_GPU_BEFORE_SHA256=<sha256> \
+  --set PHASE3_GPU_BEFORE_BYTES=<positive-wc-c> \
+  --set PHASE3_GPU_AFTER_SHA256=<sha256> \
+  --set PHASE3_GPU_AFTER_BYTES=<positive-wc-c> \
+  --set PHASE3_PLAN_NAME=<name> \
+  --set PHASE3_PLAN_SHA256=<sha256> \
+  --set PHASE3_PLAN_BYTES=<positive-wc-c> \
+  --set PHASE3_ACQUISITION_RECEIPT_NAME=<name> \
+  --set PHASE3_ACQUISITION_RECEIPT_SHA256=<sha256> \
+  --set PHASE3_ACQUISITION_RECEIPT_BYTES=<positive-wc-c> \
+  --set PHASE3_FIT_RESULT_SHA256=<sha256> \
+  --set PHASE3_FIT_RESULT_BYTES=<positive-wc-c> \
+  --set PHASE3_ENVELOPE_NAME=<name> \
+  --set PHASE3_ENVELOPE_SHA256=<sha256> \
+  --set PHASE3_ENVELOPE_BYTES=<positive-wc-c> \
+  --set PHASE3_PROJECTION_NAME=<name> \
+  --set PHASE3_PROJECTION_SHA256=<sha256> \
+  --set PHASE3_PROJECTION_BYTES=<positive-wc-c> \
+  --set PHASE3_ELIGIBILITY_NAME=<name> \
+  --set PHASE3_ELIGIBILITY_SHA256=<sha256> \
+  --set PHASE3_ELIGIBILITY_BYTES=<positive-wc-c> \
+  --set PHASE3_CANONICAL_ARGV_SHA256=<sha256> \
+  --set PHASE3_DOWNLOADED_BYTES=<canonical-0-to-8589934592>
+python -m experiments.local_campaign.generate \
+  --bindings ../../.campaign/controller_bindings_<new7>.json \
+  --output-dir ../../.campaign
+python -m experiments.local_campaign.generate \
+  --bindings ../../.campaign/controller_bindings_<new7>.json \
+  --output-dir ../../.campaign --check
+python -m experiments.local_campaign.generate \
+  --bindings ../../.campaign/controller_bindings_<new7>.json \
+  --output-dir ../../.campaign --package
+```
+
+Transfer the newly packaged final `controller-set-<new7>.tar` to the exact
+remote filename `~/.controller-set-<new7>.tar` together with
+`install_controller_set_<new7>.sh`, then run:
+
+```bash
+bash ~/install_controller_set_<new7>.sh
+bash ~/.ura-controller-active/verify_controllers_<new7>.sh
+bash ~/.ura-controller-active/launch_chain_<new7>.sh
+```
+
+The final archive has a different digest from the provisional archive even
+though both names use the same commit short. The second installer run publishes
+and activates that final immutable generation before the launch chain starts.
+
+The installer validates every archive, inventory, verifier, and controller
+byte before publishing one immutable
+`~/.ura-controller-generations/<commit7>-<archive-sha256>` directory. Its only
+live-set change is an atomic rename of the `.ura-controller-active` symlink.
+Re-run the exact installer after an interruption: an unpublished stage cannot
+become active, a complete matching generation is reused, and a foreign existing
+generation or active target is rejected. Always invoke the verifier and launch
+chain through the active pointer; old direct controller files under `~/` are
+stale and are not launch paths. One-case native framework executions remain
+engineering diagnostics outside `runs/thesis` and run only through the active
+generation's `phase6_native_diagnostics.sh`; they are not Runner or
+common-metric measured evidence.
+
+Each launch-chain root pins the physical immutable generation from its already
+opened Linux script descriptor before it hashes or opens any sibling. That
+exact root is inherited and revalidated by descendants, and every deferred
+tmux launch, hash check, and Phase 6/7 seal reads from it. Do not rewrite
+`URA_CONTROLLER_GENERATION_ROOT` in an operator environment. Switching
+`.ura-controller-active` while an older chain is running changes only the next
+chain; the running chain stays entirely on its pinned generation.
+
+The rendered Gate 5-8 chain enforces the exact 46-row profile: 26 runnable and
+20 typed-terminal rows, or 25/21 only for the exact `defense-local` conditional
+N/A. GPTGeoChat x each of the three RWKV Ollama targets is a typed unavailable
+row because the retained GPTGeoChat source requires images while the exact
+Ollama transport is text-only; those rows never enter projection, canary, or
+measured loops. Phase 7's authoritative lifecycle registry covers complete,
+partial, failed-after-request, and genuine pre-Runner-no-request states. Each
+lane binds its controller failure, optional exact measured argv, and retained
+grid, request-envelope, eligibility, and error artifacts. `level1_evidence`
+receives all retained Runner/request artifacts it can represent; a pre-Runner
+failure without a request artifact remains registry-only instead of being
+fabricated as Level 1 input. Suite metrics and Level 2 use a separate
+success-only Runner view.
+
 ## 3. Acquire all twenty-five converter sources
 
 *Console equivalent: the section 3.2 and 3.4 export commands are also
@@ -2172,7 +2354,7 @@ python -m experiments.framework_runtime_installer plan \
   --lock "$URA_FRAMEWORK_LOCK" --env-root "$URA_FRAMEWORK_ENVS" \
   --state-root "$URA_FRAMEWORK_STATE"
 URA_FRAMEWORK_SESSION_JSON="$(
-  python -m experiments.framework_runtime_installer install \
+  python -m experiments.framework_runtime_installer resume \
     --lock "$URA_FRAMEWORK_LOCK" --env-root "$URA_FRAMEWORK_ENVS" \
     --state-root "$URA_FRAMEWORK_STATE" --python "$URA_FRAMEWORK_PYTHON"
 )" || exit $?
@@ -2189,7 +2371,9 @@ printf '%s\n' "$URA_FRAMEWORK_SESSION_JSON"
 ura_wait_session "$URA_FRAMEWORK_SESSION_JSON" || exit $?
 ```
 
-The repository has one strict `ura-framework-runtime-lock/1` manifest. It binds
+The repository has one strict `ura-framework-runtime-lock/1` manifest for 15
+managed runtimes: 14 separate CPython virtual environments and Promptfoo's
+separate Node environment. It binds
 CPython 3.12.13, the official Promptfoo Node runtime, every package/source
 version and artifact/source SHA-256, fully hashed transitive dependency locks,
 the observed installed inventory, and the explicit 20-attacker coverage
@@ -2201,8 +2385,10 @@ repair and AutoDAN's resolver-compatible repair are data in that same lock.
 `install`, `resume`, and `verify` automatically dispatch into a deterministic
 named tmux session (screen only when tmux is unavailable), with a credential-free
 environment and retained bounded log/exit marker under the engineering campaign.
-Wait for the exit marker before the next action. If an admitted install was
-interrupted, rerun the same command as `resume`; after a successful install, run
+Wait for the exit marker before the next action. The default block above and
+`distro/install.sh runtimes` use `resume` because it safely creates an absent
+store and resumes an admitted, phase-checked staged store. Fresh-only `install`
+intentionally refuses an existing stage. After a successful install/resume, run
 the same argv as `verify`. Add repeated `--only NAME` (or a comma-separated
 value) for a bounded subset. An existing receipt never skips verification:
 `pip check` or npm inventory, offline import/CLI startup, exact installed
@@ -2422,7 +2608,7 @@ pins the tested vLLM, BitsAndBytes, FastChat, Ray, Accelerate, spaCy,
 
 ```bash
 URA_FRAMEWORK_SESSION_JSON="$(
-  python -m experiments.framework_runtime_installer install \
+  python -m experiments.framework_runtime_installer resume \
     --lock "$URA_FRAMEWORK_LOCK" --env-root "$URA_FRAMEWORK_ENVS" \
     --state-root "$URA_FRAMEWORK_STATE" --python "$URA_FRAMEWORK_PYTHON" \
     --only harmbench
@@ -2569,7 +2755,7 @@ python -m experiments.framework_runtime_installer plan \
   --lock "$URA_FRAMEWORK_LOCK" --env-root "$URA_FRAMEWORK_ENVS" \
   --state-root "$URA_FRAMEWORK_STATE" --only "$URA_NATIVE_SELECTION"
 URA_FRAMEWORK_SESSION_JSON="$(
-  python -m experiments.framework_runtime_installer install \
+  python -m experiments.framework_runtime_installer resume \
     --lock "$URA_FRAMEWORK_LOCK" --env-root "$URA_FRAMEWORK_ENVS" \
     --state-root "$URA_FRAMEWORK_STATE" --python "$URA_FRAMEWORK_PYTHON" \
     --only "$URA_NATIVE_SELECTION"
@@ -2607,8 +2793,8 @@ export URA_EASYJAILBREAK_ENV URA_AUTODAN_ENV URA_GISKARD_ENV
 export URA_ASB_ENV URA_AGENTDOJO_ENV
 ```
 
-Wait for the named-session exit marker, use `resume` after an interruption, and
-then run `verify` with the identical flags. The lock installs Promptfoo in its
+Wait for the named-session exit marker, re-run the same `resume` command after
+an interruption, and then run `verify` with the identical flags. The lock installs Promptfoo in its
 own exact official Node runtime and all Python projects in separate exact
 CPython 3.12.13 venvs. Each published alias below points at a stable
 content-addressed store, while source checkouts are retained under that same

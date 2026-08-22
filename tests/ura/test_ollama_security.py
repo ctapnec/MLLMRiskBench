@@ -60,10 +60,15 @@ class _Response:
         self.closed = True
 
 
-def _inventory(digest: str = _DIGEST_A, *, count: int = 1) -> dict[str, object]:
+def _inventory(
+    digest: str = _DIGEST_A,
+    *,
+    count: int = 1,
+    model: str = "fixture:latest",
+) -> dict[str, object]:
     return {
         "models": [
-            {"name": "fixture:latest", "model": "fixture:latest", "digest": digest}
+            {"name": model, "model": model, "digest": digest}
             for _index in range(count)
         ]
     }
@@ -80,12 +85,20 @@ def _chat(*, model: str = "fixture:latest") -> dict[str, object]:
     }
 
 
+def _unload(*, model: str = "fixture:latest") -> dict[str, object]:
+    return {
+        "done": True,
+        "done_reason": "unload",
+        "model": model,
+    }
+
+
 def _target_with_sequence(
     monkeypatch: pytest.MonkeyPatch, documents: list[object]
 ) -> tuple[OllamaTarget, list[str]]:
     target = OllamaTarget("fixture:latest", model_digest=_DIGEST_A, timeout=2.0)
     calls: list[str] = []
-    remaining = list(documents)
+    remaining = documents
 
     def opener(request, *, timeout):
         assert 0 < timeout <= 2.0
@@ -96,19 +109,366 @@ def _target_with_sequence(
     return target, calls
 
 
+def test_target_transaction_exclusively_controls_and_releases_residency(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    events: list[str] = []
+
+    class _LifetimeLock:
+        def __init__(
+            self, *, exclusive: bool, namespace: str, **_kwargs: object
+        ) -> None:
+            events.append(f"{namespace}-{'exclusive' if exclusive else 'shared'}")
+            self.namespace = namespace
+
+        def __enter__(self) -> None:
+            events.append(f"{self.namespace}-enter")
+
+        def __exit__(self, *_args: object) -> None:
+            events.append(f"{self.namespace}-exit")
+
+    monkeypatch.setattr("ura.targets.local.OllamaProcessLock", _LifetimeLock)
+    target = OllamaTarget("fixture:latest", model_digest=_DIGEST_A, timeout=2.0)
+    calls: list[str] = []
+    remaining = [
+        _inventory(),
+        {"models": []},
+        _chat(),
+        _inventory(),
+        _inventory(),
+        _inventory(),
+        _inventory(),
+        _unload(),
+        {"models": []},
+    ]
+
+    def opener(request, *, timeout):
+        assert 0 < timeout <= 2.0
+        endpoint = request.full_url.rsplit("/", 1)[-1]
+        calls.append(endpoint)
+        if endpoint == "generate":
+            payload = json.loads(request.data)
+            assert payload == {
+                "keep_alive": 0,
+                "model": "fixture:latest",
+                "stream": False,
+            }
+        document = remaining.pop(0)
+        return _Response(document)
+
+    monkeypatch.setattr(target, "_open_request", opener)
+
+    response = target.generate([DialogTurn(role="user", content="probe")], seed=7)
+    assert calls == ["tags", "ps", "chat", "tags", "ps"]
+    assert events == [
+        "inference-exclusive",
+        "inference-enter",
+    ]
+    target.close()
+    target.close()
+
+    assert events == [
+        "inference-exclusive",
+        "inference-enter",
+        "inference-exit",
+    ]
+    assert calls == [
+        "tags", "ps", "chat", "tags", "ps",
+        "tags", "ps", "generate", "ps",
+    ]
+    assert response.raw["model_residency_transaction"] == (
+        "empty-pre/exact-selected-post/process-cleanup-registered"
+    )
+    assert remaining == []
+
+
+def test_target_lifetime_lease_blocks_mutation_but_admits_status_readers(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    host = "http://127.0.0.1:18434"
+    target = OllamaTarget(
+        "fixture:latest",
+        model_digest=_DIGEST_A,
+        host=host,
+        timeout=2.0,
+    )
+    remaining = [
+        _inventory(),
+        {"models": []},
+        _chat(),
+        _inventory(),
+        _inventory(),
+        _inventory(),
+        _inventory(),
+        _unload(),
+        {"models": []},
+    ]
+
+    def opener(_request, *, timeout):
+        assert 0 < timeout <= 2.0
+        return _Response(remaining.pop(0))
+
+    monkeypatch.setattr(target, "_open_request", opener)
+    target.generate([DialogTurn(role="user", content="probe")])
+
+    with OllamaProcessLock(
+        base_url=host,
+        exclusive=False,
+        namespace="endpoint",
+        deadline=time.monotonic() + 1.0,
+    ):
+        pass
+    with pytest.raises(TimeoutError, match="lock acquisition"):
+        with OllamaProcessLock(
+            base_url=host,
+            exclusive=True,
+            namespace="endpoint",
+            deadline=time.monotonic() + 0.05,
+        ):
+            raise AssertionError("endpoint mutation entered an active target lease")
+    with pytest.raises(TimeoutError, match="lock acquisition"):
+        with OllamaProcessLock(
+            base_url=host,
+            exclusive=True,
+            namespace="inference",
+            deadline=time.monotonic() + 0.05,
+        ):
+            raise AssertionError("second inference owner entered an active lease")
+
+    target.close()
+    with OllamaProcessLock(
+        base_url=host,
+        exclusive=True,
+        namespace="endpoint",
+        deadline=time.monotonic() + 1.0,
+    ):
+        pass
+    with OllamaProcessLock(
+        base_url=host,
+        exclusive=True,
+        namespace="inference",
+        deadline=time.monotonic() + 1.0,
+    ):
+        pass
+    assert remaining == []
+
+
 def test_target_transaction_binds_pre_chat_post_and_loaded_identity(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     target, calls = _target_with_sequence(
         monkeypatch,
-        [_inventory(), _chat(), _inventory(), _inventory()],
+        [
+            _inventory(),
+            {"models": []},
+            _chat(),
+            _inventory(),
+            _inventory(),
+            _inventory(),
+            _inventory(),
+            _unload(),
+            {"models": []},
+        ],
     )
     response = target.generate([DialogTurn(role="user", content="probe")], seed=7)
-    assert calls == ["tags", "chat", "tags", "ps"]
+    target.close()
+    assert calls == [
+        "tags", "ps", "chat", "tags", "ps",
+        "tags", "ps", "generate", "ps",
+    ]
     assert response.raw["model_identity_transaction"] == (
         "pre-tags/chat/post-tags/post-ps"
     )
     assert response.raw["loaded_verified_model_digest"] == _DIGEST_A
+
+
+def test_target_reuses_only_the_selected_residency_until_one_final_cleanup(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    target, calls = _target_with_sequence(
+        monkeypatch,
+        [
+            _inventory(),
+            {"models": []},
+            _chat(),
+            _inventory(),
+            _inventory(),
+            _inventory(),
+            _inventory(),
+            _chat(),
+            _inventory(),
+            _inventory(),
+            _inventory(),
+            _inventory(),
+            _unload(),
+            {"models": []},
+        ],
+    )
+
+    first = target.generate([DialogTurn(role="user", content="first")])
+    second = target.generate([DialogTurn(role="user", content="second")])
+    target.close()
+
+    assert first.raw["model_residency_transaction"].startswith("empty-pre/")
+    assert second.raw["model_residency_transaction"].startswith("selected-pre/")
+    assert calls == [
+        "tags", "ps", "chat", "tags", "ps",
+        "tags", "ps", "chat", "tags", "ps",
+        "tags", "ps", "generate", "ps",
+    ]
+
+
+def test_target_rejects_foreign_preloaded_model_without_mutating_it(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    target, calls = _target_with_sequence(
+        monkeypatch,
+        [_inventory(), _inventory(model="foreign:latest")],
+    )
+
+    with pytest.raises(LocalTargetOutputError, match="exactly one"):
+        target.generate([DialogTurn(role="user", content="probe")])
+    target.close()
+
+    assert calls == ["tags", "ps"]
+
+
+def test_target_refuses_to_adopt_selected_model_preloaded_by_another_owner(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    target, calls = _target_with_sequence(
+        monkeypatch,
+        [_inventory(), _inventory()],
+    )
+
+    with pytest.raises(LocalTargetOutputError, match="outside this target lifecycle"):
+        target.generate([DialogTurn(role="user", content="probe")])
+    target.close()
+
+    assert calls == ["tags", "ps"]
+
+
+def test_invalid_chat_is_unloaded_before_the_original_error_is_raised(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    target, calls = _target_with_sequence(
+        monkeypatch,
+        [
+            _inventory(),
+            {"models": []},
+            {**_chat(), "done": False},
+            _inventory(),
+            _inventory(),
+            _unload(),
+            {"models": []},
+        ],
+    )
+
+    with pytest.raises(LocalTargetOutputError, match="done=true"):
+        target.generate([DialogTurn(role="user", content="probe")])
+    target.close()
+
+    assert calls == [
+        "tags", "ps", "chat", "tags", "ps", "generate", "ps"
+    ]
+
+
+def test_cleanup_rejects_a_generate_response_that_did_not_confirm_unload(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    documents = [
+        _inventory(),
+        {"models": []},
+        _chat(),
+        _inventory(),
+        _inventory(),
+        _inventory(),
+        _inventory(),
+        {**_unload(), "done_reason": "stop"},
+    ]
+    target, calls = _target_with_sequence(monkeypatch, documents)
+
+    target.generate([DialogTurn(role="user", content="probe")])
+    with pytest.raises(LocalTargetOutputError, match="done_reason='unload'"):
+        target.close()
+
+    assert calls == [
+        "tags", "ps", "chat", "tags", "ps",
+        "tags", "ps", "generate",
+    ]
+    documents.extend([_inventory(), _inventory(), _unload(), {"models": []}])
+    target.close()
+
+
+def test_cleanup_polls_only_the_selected_model_until_residency_is_empty(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    target, calls = _target_with_sequence(
+        monkeypatch,
+        [
+            _inventory(),
+            {"models": []},
+            _chat(),
+            _inventory(),
+            _inventory(),
+            _inventory(),
+            _inventory(),
+            _unload(),
+            _inventory(),
+            _inventory(),
+            {"models": []},
+        ],
+    )
+    sleeps: list[float] = []
+    target._sleep = sleeps.append
+
+    target.generate([DialogTurn(role="user", content="probe")])
+    target.close()
+
+    assert calls == [
+        "tags", "ps", "chat", "tags", "ps",
+        "tags", "ps", "generate", "ps", "ps", "ps",
+    ]
+    assert sleeps == [0.05, 0.05]
+
+
+@pytest.mark.parametrize(
+    ("failed_cleanup", "message"),
+    (
+        ([_inventory(_DIGEST_B)], "does not match declared"),
+        (
+            [_inventory(), _inventory(model="foreign:latest")],
+            "did not resolve exactly one",
+        ),
+    ),
+)
+def test_cleanup_revalidates_without_posting_on_drift_or_foreign_residency(
+    monkeypatch: pytest.MonkeyPatch,
+    failed_cleanup: list[object],
+    message: str,
+) -> None:
+    documents = [
+        _inventory(),
+        {"models": []},
+        _chat(),
+        _inventory(),
+        _inventory(),
+        *failed_cleanup,
+        _inventory(),
+        _inventory(),
+        _unload(),
+        {"models": []},
+    ]
+    target, calls = _target_with_sequence(monkeypatch, documents)
+    target.generate([DialogTurn(role="user", content="probe")])
+
+    before = len(calls)
+    with pytest.raises(LocalTargetOutputError, match=message):
+        target.close()
+    assert "generate" not in calls[before:]
+
+    target.close()
+    assert documents == []
 
 
 @pytest.mark.parametrize(
@@ -116,19 +476,56 @@ def test_target_transaction_binds_pre_chat_post_and_loaded_identity(
     (
         ([_inventory(count=2)], "exactly one"),
         (
-            [_inventory(), _chat(), _inventory(_DIGEST_B)],
+            [
+                _inventory(),
+                {"models": []},
+                _chat(),
+                _inventory(_DIGEST_B),
+                _inventory(),
+                _inventory(),
+                _unload(),
+                {"models": []},
+            ],
             "does not match declared",
         ),
         (
-            [_inventory(), _chat(), _inventory(), {"models": []}],
+            [
+                _inventory(),
+                {"models": []},
+                _chat(),
+                _inventory(),
+                {"models": []},
+                _inventory(),
+                {"models": []},
+            ],
             "exactly one",
         ),
         (
-            [_inventory(), _chat(), _inventory(), _inventory(count=2)],
-            "exactly one",
+            [
+                _inventory(),
+                {"models": []},
+                _chat(),
+                _inventory(),
+                _inventory(count=2),
+                _inventory(),
+                _inventory(count=2),
+                _inventory(),
+                _inventory(),
+                _unload(),
+                {"models": []},
+            ],
+            "co-resident",
         ),
         (
-            [_inventory(), _chat(model="other:latest")],
+            [
+                _inventory(),
+                {"models": []},
+                _chat(model="other:latest"),
+                _inventory(),
+                _inventory(),
+                _unload(),
+                {"models": []},
+            ],
             "unexpected model identity",
         ),
     ),
@@ -141,6 +538,7 @@ def test_target_transaction_rejects_duplicate_drift_missing_and_aliases(
     target, _calls = _target_with_sequence(monkeypatch, documents)
     with pytest.raises(LocalTargetOutputError, match=message):
         target.generate([DialogTurn(role="user", content="probe")])
+    target.close()
 
 
 def test_target_default_transport_has_no_proxy_or_redirect_and_fixed_origin() -> None:

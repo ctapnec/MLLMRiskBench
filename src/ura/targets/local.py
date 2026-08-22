@@ -17,11 +17,13 @@ import json
 import math
 import os
 import re
+import threading
 import time
 import urllib.error
 import urllib.request
+from contextlib import contextmanager
 from pathlib import Path
-from typing import Any, Callable, Iterable, Optional
+from typing import Any, Callable, Iterable, Iterator, Optional
 
 from ..data_models import DialogTurn, Response
 from ..ollama_security import (
@@ -57,7 +59,9 @@ _OLLAMA_TAG = re.compile(
 )
 MAX_VLLM_MODEL_LEN = 1_000_000
 MAX_VLLM_GENERATION_TOKENS = 25_000
-_VLLM_OUTPUT_THREAD_JOIN_SECONDS = 30.0
+VLLM_IN_PROCESS_EXECUTION_MODE = "in_process"
+_VLLM_MULTIPROCESSING_ENV = "VLLM_ENABLE_V1_MULTIPROCESSING"
+_VLLM_ENVIRONMENT_LOCK = threading.RLock()
 OLLAMA_FORBIDDEN_LOCAL_CONFIG_FIELDS = frozenset({
     "revision",
     "tensor_parallel_size",
@@ -73,6 +77,28 @@ _OLLAMA_RESERVED_CONSTRUCTOR_OPTIONS = (
     OLLAMA_FORBIDDEN_LOCAL_CONFIG_FIELDS
     | {"digest", "modalities", "multi_gpu_support_basis", "dtype"}
 )
+
+
+@contextmanager
+def _vllm_in_process_environment() -> Iterator[None]:
+    """Select vLLM's in-process EngineCore only while importing/building it.
+
+    vLLM reads this process-global setting while importing and constructing
+    ``LLM``. The harness admits only one local target per process, but the lock
+    also makes nested or concurrent adapter construction restore the operator's
+    prior environment deterministically.
+    """
+
+    with _VLLM_ENVIRONMENT_LOCK:
+        previous = os.environ.get(_VLLM_MULTIPROCESSING_ENV)
+        os.environ[_VLLM_MULTIPROCESSING_ENV] = "0"
+        try:
+            yield
+        finally:
+            if previous is None:
+                os.environ.pop(_VLLM_MULTIPROCESSING_ENV, None)
+            else:
+                os.environ[_VLLM_MULTIPROCESSING_ENV] = previous
 
 
 def canonical_local_model_identity(
@@ -355,7 +381,8 @@ class VLLMTarget(BaseTarget):
     The :class:`vllm.LLM` engine is heavyweight, so it is constructed lazily and
     cached for the lifetime of the target. Measured orchestration supplies an
     explicit one- or two-GPU tensor-parallel condition and admits only one local
-    target per process.
+    target per process. The EngineCore client itself is always ``InprocClient``;
+    tensor-parallel workers remain an independent vLLM executor concern.
     """
 
     name = "vllm"
@@ -378,6 +405,7 @@ class VLLMTarget(BaseTarget):
         media_roots: Optional[Iterable[str | Path]] = None,
         model_runtime: Any = None,
         managed_model_role: str = "vllm_target",
+        engine_core_execution_mode: str = VLLM_IN_PROCESS_EXECUTION_MODE,
         **engine_kwargs: Any,
     ) -> None:
         self.revision = revision.lower() if isinstance(revision, str) else revision
@@ -422,6 +450,13 @@ class VLLMTarget(BaseTarget):
         self.temperature = temperature
         self.dtype = dtype
         self.gpu_memory_utilization = gpu_memory_utilization
+        if engine_core_execution_mode != VLLM_IN_PROCESS_EXECUTION_MODE:
+            raise ValueError(
+                "VLLMTarget supports only the fail-closed in_process EngineCore mode"
+            )
+        # Public so Runner's component config binds every run to the selected
+        # vLLM process topology before the first model call.
+        self.engine_core_execution_mode = engine_core_execution_mode
         self.engine_kwargs = engine_kwargs
         if managed_model_role not in {"vllm_target", "llm_judge"}:
             raise ValueError("VLLMTarget managed model role is invalid")
@@ -434,18 +469,46 @@ class VLLMTarget(BaseTarget):
         self._identity_verified = False
 
     @staticmethod
+    def _verify_engine_core_execution_mode(engine: Any) -> None:
+        """Fail closed unless vLLM realized its synchronous in-process client.
+
+        In vLLM 0.27, ``LLM.llm_engine.engine_core`` is ``InprocClient`` only
+        when V1 EngineCore multiprocessing is disabled. ``SyncMPClient`` owns a
+        ZeroMQ output thread whose teardown can abort the Runner after otherwise
+        successful image generation, so absence of an error during construction
+        is not sufficient admission evidence.
+        """
+
+        try:
+            llm_engine = getattr(engine, "llm_engine")
+            core_client = getattr(llm_engine, "engine_core")
+            client_type = type(core_client).__name__
+            has_output_thread = hasattr(core_client, "output_queue_thread")
+            in_process_core = getattr(core_client, "engine_core")
+            shutdown = getattr(core_client, "shutdown", None)
+        except Exception:
+            raise RuntimeError(
+                "vLLM did not expose a verifiable in-process EngineCore client"
+            ) from None
+        if (
+            client_type != "InprocClient"
+            or has_output_thread
+            or in_process_core is None
+            or not callable(shutdown)
+        ):
+            raise RuntimeError(
+                "vLLM did not realize the required in-process EngineCore client"
+            ) from None
+
+    @staticmethod
     def _shutdown_engine(engine: Any) -> None:
         """Invoke the owning vLLM shutdown hook exactly once.
 
         vLLM 0.27's offline ``LLM`` facade does not expose ``shutdown``. Its
-        multiprocessing owner is ``LLM.llm_engine.engine_core``. Relying on
-        interpreter finalization leaves that owner alive until ZeroMQ and its
-        file descriptors are already being dismantled, which can turn an
-        otherwise honest matrix exit into SIGABRT. vLLM 0.27's synchronous
-        client also returns from ``shutdown`` immediately after signalling its
-        ZeroMQ output thread. Its completion log therefore precedes the thread
-        and context teardown. Join the thread before destroying its dedicated
-        context, then release the engine only after both have quiesced.
+        owning client is ``LLM.llm_engine.engine_core``. Accepted engines use
+        ``InprocClient``, whose official ``shutdown`` hook releases EngineCore
+        without a SyncMPClient output thread or a Runner-owned ZeroMQ context.
+        Do not reach into third-party thread or context internals during cleanup.
         Older vLLM releases expose the hook on the facade, engine, or model
         executor, so retain those bounded compatibility fallbacks.
         """
@@ -487,40 +550,6 @@ class VLLMTarget(BaseTarget):
                 except Exception:  # try the next version-specific hook
                     hook_failed = True
                     continue
-                try:
-                    output_thread = getattr(candidate, "output_queue_thread", None)
-                except Exception:
-                    raise RuntimeError("vLLM output-thread lookup failed") from None
-                if output_thread is not None:
-                    join = getattr(output_thread, "join", None)
-                    is_alive = getattr(output_thread, "is_alive", None)
-                    if not callable(join) or not callable(is_alive):
-                        raise RuntimeError(
-                            "vLLM output thread exposes no supported join contract"
-                        ) from None
-                    try:
-                        join(timeout=_VLLM_OUTPUT_THREAD_JOIN_SECONDS)
-                        still_alive = is_alive()
-                    except Exception:
-                        raise RuntimeError("vLLM output thread failed to quiesce") from None
-                    if still_alive is not False:
-                        raise RuntimeError("vLLM output thread failed to quiesce") from None
-                    try:
-                        context = getattr(candidate, "ctx", None)
-                    except Exception:
-                        raise RuntimeError("vLLM ZeroMQ context lookup failed") from None
-                    if context is not None:
-                        destroy = getattr(context, "destroy", None)
-                        if not callable(destroy):
-                            raise RuntimeError(
-                                "vLLM ZeroMQ context exposes no supported destroy contract"
-                            ) from None
-                        try:
-                            destroy(linger=0)
-                        except Exception:
-                            raise RuntimeError(
-                                "vLLM ZeroMQ context failed to terminate"
-                            ) from None
                 return
         # Do not retain a candidate, bound method, or third-party exception in
         # the traceback that crosses the private execution boundary.
@@ -536,7 +565,7 @@ class VLLMTarget(BaseTarget):
             raise RuntimeError("vLLM engine exposes no supported shutdown hook") from None
 
     def close(self) -> None:
-        """Synchronously release the engine and its multiprocessing resources.
+        """Synchronously release the admitted in-process vLLM engine.
 
         Detach first so repeated cleanup and error paths are idempotent. The
         shutdown itself stays inside the managed-model private-output boundary;
@@ -647,27 +676,33 @@ class VLLMTarget(BaseTarget):
     def _engine(self) -> Any:
         """Lazily build and cache the vLLM engine."""
         self.validate_research_identity()
-        if self._llm is None:
-            from ..model_acquisition_runtime import (
-                ensure_interpreter_scripts_on_path,
-                hf_offline_environment_overrides,
-                private_model_execution,
+        if self._llm is not None:
+            self._verify_engine_core_execution_mode(self._llm)
+            return self._llm
+
+        from ..model_acquisition_runtime import (
+            ensure_interpreter_scripts_on_path,
+            hf_offline_environment_overrides,
+            private_model_execution,
+        )
+
+        # vLLM/Transformers may cache Hub policy during import. Explicit local
+        # exceptions are offline too; their tokenizer comes from the same seal.
+        os.environ.update(hf_offline_environment_overrides())
+        # The sampler JIT-builds a FlashInfer kernel on first use and shells out
+        # to ninja, which ships beside this interpreter but is not on PATH when
+        # the interpreter is invoked by absolute path.
+        ensure_interpreter_scripts_on_path()
+        if self.revision is not None and self._model_runtime is None:
+            raise RuntimeError(
+                "Hub vLLM engines require an admitted managed-model runtime; "
+                "implicit Hugging Face downloads are disabled"
             )
 
-            # vLLM/Transformers may cache Hub policy during import. Explicit
-            # local exceptions are offline too; their tokenizer must come from
-            # the same sealed directory.
-            os.environ.update(hf_offline_environment_overrides())
-            # The sampler JIT-builds a FlashInfer kernel on first use and shells
-            # out to ninja, which ships beside this interpreter but is not on
-            # PATH when the interpreter is invoked by absolute path.
-            ensure_interpreter_scripts_on_path()
-            if self.revision is not None:
-                if self._model_runtime is None:
-                    raise RuntimeError(
-                        "Hub vLLM engines require an admitted managed-model runtime; "
-                        "implicit Hugging Face downloads are disabled"
-                    )
+        # vLLM 0.27 reads this setting both while importing its engine modules
+        # and while LLMEngine selects its EngineCore client. Keep the override
+        # active through construction, then restore the exact operator value.
+        with _vllm_in_process_environment():
             try:
                 from vllm import LLM  # type: ignore
             except ImportError as exc:  # pragma: no cover - offline path
@@ -695,6 +730,21 @@ class VLLMTarget(BaseTarget):
                     # collects cycles after this best-effort shutdown.
                     pass
 
+            def construct_checked(**kwargs: Any) -> Any:
+                loaded_holder = [LLM(**kwargs)]
+                try:
+                    self._verify_engine_core_execution_mode(loaded_holder[0])
+                except Exception:
+                    try:
+                        cleanup(loaded_holder[0])
+                    finally:
+                        loaded_holder.clear()
+                        gc.collect()
+                    raise RuntimeError(
+                        "vLLM engine failed in-process execution-mode admission"
+                    ) from None
+                return loaded_holder.pop()
+
             if self.revision is None:
                 # Explicit operator-local checkpoints are already sealed by
                 # their tree digest and never consult Hugging Face. Re-hash on
@@ -709,7 +759,7 @@ class VLLMTarget(BaseTarget):
                         "local vLLM checkpoint digest changed before engine construction"
                     )
                 loaded = private_model_execution(
-                    lambda: LLM(
+                    lambda: construct_checked(
                         model=str(resolved),
                         tokenizer=str(resolved),
                         **common_kwargs,
@@ -758,7 +808,7 @@ class VLLMTarget(BaseTarget):
                 )
 
                 def construct(snapshot: Path) -> Any:
-                    return LLM(
+                    return construct_checked(
                         **vllm_managed_snapshot_kwargs(snapshot),
                         **common_kwargs,
                     )
@@ -832,6 +882,7 @@ class VLLMTarget(BaseTarget):
                 "model_revision": self.revision,
                 "model_digest": self.model_digest,
                 "quantization": self.quantization or "none",
+                "engine_core_execution_mode": self.engine_core_execution_mode,
                 **(
                     {"max_model_len": self.max_model_len}
                     if self.max_model_len is not None
@@ -939,6 +990,9 @@ class OllamaTarget(BaseTarget):
         self.timeout = timeout
         self._monotonic: Callable[[], float] = time.monotonic
         self._sleep: Callable[[float], None] = time.sleep
+        self._residency_owned = False
+        self._transaction_lock = threading.Lock()
+        self._lifetime_lease: OllamaProcessLock | None = None
         self._open_request = urllib.request.build_opener(
             urllib.request.ProxyHandler({}),
             NoRedirect(),
@@ -977,6 +1031,45 @@ class OllamaTarget(BaseTarget):
             raise ValueError(
                 "OllamaTarget modality_support must be a unique text[/image] declaration"
             )
+
+    def _acquire_transaction_lock(self, *, deadline: float) -> None:
+        remaining = remaining_seconds(
+            deadline,
+            self._monotonic,
+            label="Ollama in-process transaction lock acquisition",
+        )
+        if not self._transaction_lock.acquire(timeout=remaining):
+            raise TimeoutError(
+                "Ollama in-process transaction lock acquisition exceeded its "
+                "hard wall-clock deadline"
+            )
+
+    def _acquire_lifetime_leases(self, *, deadline: float) -> None:
+        """Exclude another inference owner and every endpoint mutation.
+
+        The inference namespace is also the admission gate automatically taken
+        by every exclusive endpoint mutation. Status and roster readers use
+        only the endpoint namespace, so they remain available during a run.
+        """
+
+        if self._lifetime_lease is not None:
+            return
+        lifetime_lease = OllamaProcessLock(
+            base_url=self.host,
+            exclusive=True,
+            deadline=deadline,
+            namespace="inference",
+            monotonic=self._monotonic,
+            sleep=self._sleep,
+        )
+        lifetime_lease.__enter__()
+        self._lifetime_lease = lifetime_lease
+
+    def _release_lifetime_leases(self) -> None:
+        lifetime_lease = self._lifetime_lease
+        self._lifetime_lease = None
+        if lifetime_lease is not None:
+            lifetime_lease.__exit__(None, None, None)
 
     @staticmethod
     def _normalized_digest(value: object) -> Optional[str]:
@@ -1051,18 +1144,207 @@ class OllamaTarget(BaseTarget):
             purpose="model inventory",
         )
 
-    def _verify_loaded_identity(self, model: str, *, deadline: float) -> str:
+    def _loaded_inventory(self, *, deadline: float) -> object:
         request = urllib.request.Request(f"{self.host}/api/ps", method="GET")
-        inventory = self._bounded_json_request(
+        return self._bounded_json_request(
             request,
             purpose="loaded-model inventory",
             deadline=deadline,
         )
+
+    def _verify_empty_loaded_inventory(self, *, deadline: float) -> None:
+        inventory = self._loaded_inventory(deadline=deadline)
+        if not isinstance(inventory, dict):
+            raise LocalTargetOutputError(
+                "Ollama returned an invalid loaded-model inventory"
+            )
+        rows = inventory.get("models")
+        if not isinstance(rows, list) or len(rows) > _MAX_OLLAMA_MODELS:
+            raise LocalTargetOutputError(
+                "Ollama returned an invalid loaded-model inventory"
+            )
+        if rows:
+            raise LocalTargetOutputError(
+                "Ollama measured generation requires an empty loaded-model inventory"
+            )
+
+    def _wait_for_empty_loaded_inventory(self, *, deadline: float) -> None:
+        """Wait for an acknowledged asynchronous unload to leave no residency."""
+
+        while True:
+            inventory = self._loaded_inventory(deadline=deadline)
+            rows = inventory.get("models") if isinstance(inventory, dict) else None
+            if not isinstance(rows, list) or len(rows) > _MAX_OLLAMA_MODELS:
+                raise LocalTargetOutputError(
+                    "Ollama returned an invalid loaded-model inventory"
+                )
+            if not rows:
+                return
+            if len(rows) != 1:
+                raise LocalTargetOutputError(
+                    "Ollama unload observed an unexpected co-resident model"
+                )
+            self._verified_inventory_digest(
+                inventory,
+                model=self.model,
+                purpose="loaded-model inventory during unload",
+            )
+            remaining = remaining_seconds(
+                deadline,
+                self._monotonic,
+                label="Ollama model residency cleanup",
+            )
+            self._sleep(min(0.05, remaining))
+
+    def _verify_pre_generation_residency(self, *, deadline: float) -> str:
+        inventory = self._loaded_inventory(deadline=deadline)
+        if not isinstance(inventory, dict):
+            raise LocalTargetOutputError(
+                "Ollama returned an invalid loaded-model inventory"
+            )
+        rows = inventory.get("models")
+        if not isinstance(rows, list) or len(rows) > _MAX_OLLAMA_MODELS:
+            raise LocalTargetOutputError(
+                "Ollama returned an invalid loaded-model inventory"
+            )
+        if not rows:
+            return "empty"
+        if len(rows) != 1:
+            raise LocalTargetOutputError(
+                "Ollama measured generation requires empty residency or exactly "
+                "the selected model"
+            )
+        self._verified_inventory_digest(
+            inventory,
+            model=self.model,
+            purpose="loaded-model inventory",
+        )
+        if not self._residency_owned:
+            raise LocalTargetOutputError(
+                "Ollama selected model was preloaded outside this target lifecycle"
+            )
+        return "selected"
+
+    def _verify_loaded_identity(self, model: str, *, deadline: float) -> str:
+        inventory = self._loaded_inventory(deadline=deadline)
+        rows = inventory.get("models") if isinstance(inventory, dict) else None
+        if not isinstance(rows, list) or len(rows) != 1:
+            raise LocalTargetOutputError(
+                "Ollama loaded-model inventory did not resolve exactly one "
+                "exclusively loaded model"
+            )
         return self._verified_inventory_digest(
             inventory,
             model=model,
             purpose="loaded-model inventory",
         )
+
+    def _unload_model(self, *, deadline: float) -> str:
+        payload = json.dumps(
+            {
+                "keep_alive": 0,
+                "model": self.model,
+                "stream": False,
+            }
+        ).encode("utf-8")
+        request = urllib.request.Request(
+            f"{self.host}/api/generate",
+            data=payload,
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        value = self._bounded_json_request(
+            request,
+            purpose="model unload response",
+            deadline=deadline,
+        )
+        if not isinstance(value, dict) or value.get("done") is not True:
+            raise LocalTargetOutputError(
+                "Ollama model unload did not declare done=true"
+            )
+        if value.get("error"):
+            raise LocalTargetOutputError(
+                f"Ollama model unload returned an error: {value['error']}"
+            )
+        resolved_model = value.get("model")
+        if resolved_model is not None and resolved_model != self.model:
+            raise LocalTargetOutputError(
+                f"Ollama model unload returned unexpected identity {resolved_model!r}"
+            )
+        done_reason = value.get("done_reason")
+        if done_reason != "unload":
+            raise LocalTargetOutputError(
+                "Ollama model unload did not declare done_reason='unload'"
+            )
+        return done_reason
+
+    def _verify_owned_residency_before_unload(self, *, deadline: float) -> str:
+        """Return empty/selected without mutating drifted or foreign state."""
+
+        self._verify_daemon_identity(deadline=deadline)
+        inventory = self._loaded_inventory(deadline=deadline)
+        if not isinstance(inventory, dict):
+            raise LocalTargetOutputError(
+                "Ollama returned an invalid loaded-model inventory before unload"
+            )
+        rows = inventory.get("models")
+        if not isinstance(rows, list) or len(rows) > _MAX_OLLAMA_MODELS:
+            raise LocalTargetOutputError(
+                "Ollama returned an invalid loaded-model inventory before unload"
+            )
+        if not rows:
+            return "empty"
+        if len(rows) != 1:
+            raise LocalTargetOutputError(
+                "Ollama cleanup refused unexpected co-resident models before unload"
+            )
+        self._verified_inventory_digest(
+            inventory,
+            model=self.model,
+            purpose="loaded-model inventory before unload",
+        )
+        return "selected"
+
+    def _release_owned_residency(self, *, deadline: float) -> str:
+        prestate = self._verify_owned_residency_before_unload(deadline=deadline)
+        if prestate == "empty":
+            self._residency_owned = False
+            return "already-empty"
+        done_reason = self._unload_model(deadline=deadline)
+        self._wait_for_empty_loaded_inventory(deadline=deadline)
+        self._residency_owned = False
+        return done_reason
+
+    def close(self) -> None:
+        """Release model residency retained for this Runner process.
+
+        Runner tracks every constructed target and invokes ``close`` in its
+        unconditional process teardown. Keeping the selected model resident
+        between calls avoids reloading it for every corpus row. The lifetime
+        inference/mutation gate admits read-only status while preventing
+        another target or daemon mutation until verified cleanup.
+        """
+
+        deadline = self._monotonic() + self.timeout
+        acquired = False
+        try:
+            self._acquire_transaction_lock(deadline=deadline)
+            acquired = True
+            if self._residency_owned:
+                if self._lifetime_lease is None:
+                    raise RuntimeError(
+                        "Ollama residency ownership lacks its lifetime lease"
+                    )
+                self._release_owned_residency(deadline=deadline)
+        except TimeoutError as exc:
+            raise LocalTargetOutputError(str(exc)) from exc
+        finally:
+            try:
+                if not self._residency_owned:
+                    self._release_lifetime_leases()
+            finally:
+                if acquired:
+                    self._transaction_lock.release()
 
     def _sampling_options(self, seed: int | None = None) -> dict[str, Any]:
         opts: dict[str, Any] = {
@@ -1079,27 +1361,33 @@ class OllamaTarget(BaseTarget):
     ) -> Response:
         self.validate_research_identity()
         deadline = self._monotonic() + self.timeout
+        acquired = False
         try:
-            lock = OllamaProcessLock(
-                base_url=self.host,
-                exclusive=False,
-                deadline=deadline,
-                monotonic=self._monotonic,
-                sleep=self._sleep,
+            self._acquire_transaction_lock(deadline=deadline)
+            acquired = True
+            self._acquire_lifetime_leases(deadline=deadline)
+            pre_digest = self._verify_daemon_identity(deadline=deadline)
+            residency_prestate = self._verify_pre_generation_residency(
+                deadline=deadline
             )
-            with lock:
-                pre_digest = self._verify_daemon_identity(deadline=deadline)
-                messages = _dialog_to_ollama_messages(
-                    dialog,
-                    multimodal="image" in self.modality_support,
-                    media_roots=self.media_roots,
-                )
+            messages = _dialog_to_ollama_messages(
+                dialog,
+                multimodal="image" in self.modality_support,
+                media_roots=self.media_roots,
+            )
+            # Once the chat is submitted the daemon may own residency even
+            # if the response later fails validation. Mark it before the
+            # request so Runner's outer teardown can retry a failed cleanup.
+            self._residency_owned = True
+            try:
                 t0 = time.perf_counter()
                 data = self._chat(messages, seed=seed, deadline=deadline)
                 latency_ms = (time.perf_counter() - t0) * 1000.0
 
                 if not isinstance(data, dict):
-                    raise LocalTargetOutputError("Ollama response is not an object")
+                    raise LocalTargetOutputError(
+                        "Ollama response is not an object"
+                    )
                 if data.get("error"):
                     raise LocalTargetOutputError(
                         f"Ollama returned an error: {data['error']}"
@@ -1115,9 +1403,13 @@ class OllamaTarget(BaseTarget):
                         f"{done_reason!r}"
                     )
                 resolved_model = data.get("model")
-                if not isinstance(resolved_model, str) or resolved_model != self.model:
+                if (
+                    not isinstance(resolved_model, str)
+                    or resolved_model != self.model
+                ):
                     raise LocalTargetOutputError(
-                        f"Ollama returned unexpected model identity {resolved_model!r}"
+                        "Ollama returned unexpected model identity "
+                        f"{resolved_model!r}"
                     )
                 message = data.get("message")
                 if not isinstance(message, dict):
@@ -1130,15 +1422,36 @@ class OllamaTarget(BaseTarget):
                     )
                 text = message.get("content")
                 if not isinstance(text, str) or not text.strip():
-                    raise LocalTargetOutputError("Ollama returned an empty completion")
+                    raise LocalTargetOutputError(
+                        "Ollama returned an empty completion"
+                    )
                 tokens = self._token_counts(data)
                 post_digest = self._verify_daemon_identity(deadline=deadline)
                 loaded_digest = self._verify_loaded_identity(
                     resolved_model,
                     deadline=deadline,
                 )
+            except Exception as primary:
+                cleanup_deadline = self._monotonic() + self.timeout
+                try:
+                    self._release_owned_residency(deadline=cleanup_deadline)
+                except Exception as cleanup:
+                    if hasattr(cleanup, "add_note"):
+                        cleanup.add_note(
+                            "cleanup followed an Ollama generation failure: "
+                            f"{type(primary).__name__}"
+                        )
+                    raise cleanup from primary
+                raise
         except TimeoutError as exc:
             raise LocalTargetOutputError(str(exc)) from exc
+        finally:
+            try:
+                if not self._residency_owned:
+                    self._release_lifetime_leases()
+            finally:
+                if acquired:
+                    self._transaction_lock.release()
         from .api import _dialog_fingerprint
 
         return Response(
@@ -1157,6 +1470,10 @@ class OllamaTarget(BaseTarget):
                 "loaded_verified_model_digest": loaded_digest,
                 "model_identity_verified": True,
                 "model_identity_transaction": "pre-tags/chat/post-tags/post-ps",
+                "model_residency_transaction": (
+                    f"{residency_prestate}-pre/exact-selected-post/"
+                    "process-cleanup-registered"
+                ),
                 "done": True,
                 "done_reason": done_reason,
                 "requested_seed": seed,

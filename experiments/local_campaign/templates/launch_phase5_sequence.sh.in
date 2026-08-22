@@ -1,0 +1,38 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+umask 077
+
+source ~/.ura_campaign_env
+
+pin_controller_generation() {
+  local script_fd="/proc/$$/fd/255" script_path root generations marker archive_sha
+  test -e "$script_fd" || { printf 'controller script descriptor is unavailable\n' >&2; return 1; }
+  script_path="$(readlink -f -- "$script_fd")"
+  test -f "$script_path" && test ! -L "$script_path"
+  root="${script_path%/*}"
+  generations="${root%/*}"
+  test "${generations##*/}" = '.ura-controller-generations'
+  test -d "$root" && test ! -L "$root"
+  marker="$root/.ura-controller-generation.tsv"
+  test -f "$marker" && test ! -L "$marker"
+  test "$(grep -Fxc -- $'schema\tura-controller-generation/1' "$marker")" = '1'
+  test "$(grep -Fxc -- $'expected_commit\t@@EXPECTED_COMMIT@@' "$marker")" = '1'
+  archive_sha="${root##*-}"
+  [[ "$archive_sha" =~ ^[0-9a-f]{64}$ ]]
+  test "${root##*/}" = "@@COMMIT_SHORT@@-$archive_sha"
+  test "$(grep -Fxc -- $'archive_sha256\t'"$archive_sha" "$marker")" = '1'
+  if [[ -n "${URA_CONTROLLER_GENERATION_ROOT-}" ]]; then
+    test "$URA_CONTROLLER_GENERATION_ROOT" = "$root"
+  fi
+  URA_CONTROLLER_GENERATION_ROOT="$root"
+  export URA_CONTROLLER_GENERATION_ROOT
+}
+pin_controller_generation
+readonly URA_CONTROLLER_GENERATION_ROOT
+
+SCRIPT="$URA_CONTROLLER_GENERATION_ROOT/phase5_sequence_after_core.sh"
+EXPECTED_SHA256='@@SHA:phase5_sequence_after_core.sh@@'
+test -f "$SCRIPT" && test ! -L "$SCRIPT"
+test "$(sha256sum -- "$SCRIPT" | awk '{print $1}')" = "$EXPECTED_SHA256"
+export PHASE5_SEQUENCE_TAG='@@PHASE5_SEQUENCE_TAG@@'
+exec bash "$SCRIPT"

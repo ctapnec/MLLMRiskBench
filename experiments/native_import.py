@@ -47,6 +47,26 @@ _PATH_ARGUMENTS = frozenset({
     "results_json",
     "trace_root",
 })
+_CANONICAL_ENGINE_IDS_BY_IMPORTER = {
+    "agentdojo": frozenset({"agentdojo"}),
+    "asb": frozenset({"asb"}),
+    "autodan_turbo": frozenset({"autodan_turbo"}),
+    "easyjailbreak": frozenset({"easyjailbreak"}),
+    "fuzzyai": frozenset({"fuzzyai"}),
+    "garak": frozenset({"garak"}),
+    "giskard": frozenset({"giskard_v2_scan", "giskard_v2_raget"}),
+    "petri": frozenset({"petri"}),
+    "promptfoo": frozenset({"promptfoo"}),
+}
+
+
+def canonical_native_engine_ids(importer_key: str) -> frozenset[str]:
+    """Return canonical run IDs admitted for one import-config dispatcher key."""
+
+    try:
+        return _CANONICAL_ENGINE_IDS_BY_IMPORTER[importer_key]
+    except KeyError as exc:
+        raise ValueError(f"unsupported native importer key: {importer_key!r}") from exc
 
 
 def _engine_factory(engine: str) -> tuple[type[Any], str]:
@@ -264,6 +284,12 @@ def import_from_config(path: Path) -> NativeEngineRun:
     run = importer(**import_kwargs)
     if not isinstance(run, NativeEngineRun):
         raise TypeError(f"{engine} importer did not return NativeEngineRun")
+    expected_engine_ids = canonical_native_engine_ids(engine)
+    if run.engine not in expected_engine_ids:
+        raise ValueError(
+            f"native importer {engine!r} returned canonical engine ID "
+            f"{run.engine!r}; expected one of {sorted(expected_engine_ids)!r}"
+        )
     return validate_native_run(run)
 
 

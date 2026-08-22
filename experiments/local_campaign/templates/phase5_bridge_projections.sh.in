@@ -1,0 +1,458 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+
+source ~/.ura_campaign_env
+cd ~/MLLMRiskBench
+
+EXPECTED_COMMIT='@@EXPECTED_COMMIT@@'
+EXPECTED_FRAMEWORK_LOCK='@@FRAMEWORK_LOCK_SHA256@@'
+EXPECTED_PROJECT_RECEIPT='@@PROJECT_RECEIPT_PATH@@'
+EXPECTED_PROJECT_RECEIPT_SHA256='@@PROJECT_RECEIPT_SHA256@@'
+EXPECTED_SOURCE_RECEIPT='@@SOURCE_RECEIPT_PATH@@'
+EXPECTED_SOURCE_RECEIPT_SHA256='@@SOURCE_RECEIPT_SHA256@@'
+PY="$PWD/.venv/bin/python"
+TAG="$(date -u +%Y%m%dT%H%M%SZ)"
+SESSION="ura-phase5-bridges-${TAG}"
+SOCKET="ura-phase5-bridges-${TAG}"
+CONTROL_ROOT="$URA_WORK/runs/engineering/phase5-bridge-projections-${TAG}"
+
+test "$(git rev-parse HEAD)" = "$EXPECTED_COMMIT"
+test -z "$(git status --porcelain)"
+test "$URA_FRAMEWORK_LOCK_ID" = "$EXPECTED_FRAMEWORK_LOCK"
+test "$URA_FRAMEWORK_STATE" = "$URA_WORK/runs/engineering/framework-runtime-${EXPECTED_FRAMEWORK_LOCK:0:12}"
+test "$URA_PROJECT_REVISION_MANIFEST" = "$EXPECTED_PROJECT_RECEIPT"
+test "$URA_PROJECT_REVISION_SHA256" = "$EXPECTED_PROJECT_RECEIPT_SHA256"
+test "$URA_SOURCE_CONFORMANCE_MANIFEST" = "$EXPECTED_SOURCE_RECEIPT"
+test "$URA_SOURCE_CONFORMANCE_SHA256" = "$EXPECTED_SOURCE_RECEIPT_SHA256"
+test -x "$PY"
+test ! -e "$CONTROL_ROOT"
+mkdir -p "$CONTROL_ROOT"
+chmod 700 "$CONTROL_ROOT"
+
+export TAG CONTROL_ROOT EXPECTED_COMMIT EXPECTED_FRAMEWORK_LOCK \
+  EXPECTED_PROJECT_RECEIPT EXPECTED_PROJECT_RECEIPT_SHA256 \
+  EXPECTED_SOURCE_RECEIPT EXPECTED_SOURCE_RECEIPT_SHA256
+
+PAYLOAD="$(cat <<'INNER'
+set -Eeuo pipefail
+umask 077
+source ~/.ura_campaign_env
+cd ~/MLLMRiskBench
+
+PY="$PWD/.venv/bin/python"
+LOG="$CONTROL_ROOT/phase5-bridges.log"
+STATUS="$CONTROL_ROOT/status.tsv"
+DISPOSITIONS="$CONTROL_ROOT/unavailable.tsv"
+EXIT_TMP="$CONTROL_ROOT/.exit.tmp"
+EXIT_MARKER="$CONTROL_ROOT/.exit"
+
+exec > >(tee "$LOG") 2>&1
+
+finish() {
+  rc=$?
+  trap - EXIT
+  printf '%s\n' "$rc" > "$EXIT_TMP"
+  mv -f -- "$EXIT_TMP" "$EXIT_MARKER"
+  printf 'PHASE5_BRIDGES_EXIT=%s\n' "$rc"
+  exit "$rc"
+}
+trap finish EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
+trap 'exit 129' HUP
+
+test "$(git rev-parse HEAD)" = "$EXPECTED_COMMIT"
+test -z "$(git status --porcelain)"
+test "$URA_FRAMEWORK_LOCK_ID" = "$EXPECTED_FRAMEWORK_LOCK"
+test "$URA_FRAMEWORK_STATE" = "$URA_WORK/runs/engineering/framework-runtime-${EXPECTED_FRAMEWORK_LOCK:0:12}"
+test "$URA_PROJECT_REVISION_MANIFEST" = "$EXPECTED_PROJECT_RECEIPT"
+test "$URA_PROJECT_REVISION_SHA256" = "$EXPECTED_PROJECT_RECEIPT_SHA256"
+test "$URA_SOURCE_CONFORMANCE_MANIFEST" = "$EXPECTED_SOURCE_RECEIPT"
+test "$URA_SOURCE_CONFORMANCE_SHA256" = "$EXPECTED_SOURCE_RECEIPT_SHA256"
+test -x "$PY"
+
+export HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1 HF_DATASETS_OFFLINE=1
+unset HF_TOKEN HUGGING_FACE_HUB_TOKEN OPENAI_API_KEY ANTHROPIC_API_KEY \
+  GOOGLE_API_KEY GEMINI_API_KEY MISTRAL_API_KEY TOGETHER_API_KEY \
+  DEEPSEEK_API_KEY XAI_API_KEY
+
+unset URA_MODEL_ACQUISITION_PLAN_DIR \
+  URA_MODEL_ACQUISITION_PLAN \
+  URA_MODEL_ACQUISITION_PLAN_SHA256 \
+  URA_MODEL_ACQUISITION_RECEIPT \
+  URA_MODEL_ACQUISITION_RECEIPT_SHA256 \
+  URA_MODEL_ACQUISITION_STORE
+
+SOURCE_CONFIG="$PWD/experiments/source-instances.json"
+SOURCE_CONFIG_SHA256="$(sha256sum -- "$SOURCE_CONFIG" | awk '{print $1}')"
+PROJECT_RECEIPT="$URA_PROJECT_REVISION_MANIFEST"
+PROJECT_SHA256="$URA_PROJECT_REVISION_SHA256"
+SOURCE_RECEIPT="$URA_SOURCE_CONFORMANCE_MANIFEST"
+SOURCE_RECEIPT_SHA256="$URA_SOURCE_CONFORMANCE_SHA256"
+MODEL_STORE="$URA_MODEL_STORE"
+TRANSPORT_CACHE="$MODEL_STORE/.transport-cache"
+RECEIPTS_ROOT="$URA_WORK/runs/thesis/acquisition/phase5-bridges-${TAG}/receipts"
+PREFLIGHT_ROOT="$URA_WORK/runs/thesis/preflight"
+PRIVATE_ROOT="$URA_WORK/state/bridge-configs/${TAG}"
+PREPARED_ROOT="$URA_WORK/runs/thesis/prepared/${TAG}"
+FRAMEWORK_LOCK="${URA_FRAMEWORK_LOCK:-$PWD/experiments/framework_runtime_lock.json}"
+
+QWEN='vllm:Qwen/Qwen3-VL-8B-Instruct'
+QWEN_CFG="$PWD/experiments/local-qwen3-vl.json"
+QWEN_CFG_SHA="$(sha256sum -- "$QWEN_CFG" | awk '{print $1}')"
+SCORE_GUARD='meta-llama/Llama-Guard-3-8B'
+SCORE_GUARD_REV='7327bd9f6efbbe6101dc6cc4736302b3cbb6e425'
+GROUP='model,source,risk,effective_modality,expected_behavior,attacker,source_policy_id,source_policy_version'
+TRANSFER_ARMS='strongreject_official,advbench_harmful,jailbreakbench_harmful'
+PURPLE_ARMS='cyberseceval_mitre,cyberseceval_interpreter,cyberseceval_insecure_coding,cyberseceval_prompt_injection'
+
+mkdir -p "$RECEIPTS_ROOT" "$TRANSPORT_CACHE" "$PRIVATE_ROOT" "$PREPARED_ROOT"
+chmod 700 "$PRIVATE_ROOT" "$PREPARED_ROOT"
+test -f "$FRAMEWORK_LOCK" && test ! -L "$FRAMEWORK_LOCK"
+printf 'lane\tprojection_id\ttarget_calls\tjudge_calls\tlocal_guardrail_evaluations\thttp_attempts\tselected_clusters\tselected_records\n' > "$STATUS"
+printf 'lane\tdisposition\treason\n' > "$DISPOSITIONS"
+
+json_fields() {
+  "$PY" - "$1" "$2" <<'PY'
+import json
+import sys
+
+path, kind = sys.argv[1:]
+lines = open(path, encoding="utf-8").read().splitlines()
+for line in reversed(lines):
+    try:
+        row = json.loads(line)
+    except json.JSONDecodeError:
+        continue
+    if kind == "plan" and {"plan_id", "plan_sha256"} <= row.keys():
+        print(row["plan_id"], row["plan_sha256"])
+        raise SystemExit(0)
+    if kind == "receipt" and {"receipt_id", "receipt_sha256", "downloaded_bytes"} <= row.keys():
+        print(row["receipt_id"], row["receipt_sha256"], row["downloaded_bytes"])
+        raise SystemExit(0)
+raise SystemExit(f"no {kind} result JSON in {path}")
+PY
+}
+
+summarize_projection() {
+  "$PY" - "$1" "$2" <<'PY'
+import json
+import pathlib
+import sys
+
+lane = sys.argv[1]
+root = pathlib.Path(sys.argv[2])
+paths = sorted(root.glob("lane-projection-*.lane-projection.json"))
+if len(paths) != 1:
+    raise SystemExit(f"{lane}: expected one lane projection, found {len(paths)}")
+row = json.loads(paths[0].read_text(encoding="utf-8"))
+if row.get("schema") != "ura-lane-projection/1" or row.get("status") != "complete":
+    raise SystemExit(f"{lane}: projection is not complete")
+calls = row["call_projection"]
+totals = row["selection"]["totals"]
+if calls["judge_calls"] != 0 or calls["http_attempts"] != 0:
+    raise SystemExit(f"{lane}: local bridge projection exposed judge/HTTP calls")
+if lane == "bridge-purplellama":
+    expected_arms = {
+        "cyberseceval_mitre",
+        "cyberseceval_interpreter",
+        "cyberseceval_insecure_coding",
+        "cyberseceval_prompt_injection",
+    }
+    selected_arms = row.get("selection", {}).get("arms")
+    observed_arms = {
+        item.get("logical_source_arm")
+        for item in selected_arms
+        if isinstance(item, dict)
+    } if isinstance(selected_arms, list) else set()
+    if observed_arms != expected_arms or len(selected_arms or []) != len(expected_arms):
+        raise SystemExit("bridge-purplellama: exact four-arm projection changed")
+    eligibility_paths = sorted(root.glob("eligibility-*.eligibility.json"))
+    if len(eligibility_paths) != 1:
+        raise SystemExit("bridge-purplellama: expected one eligibility plan")
+    eligibility = json.loads(eligibility_paths[0].read_text(encoding="utf-8"))
+    proxy_items = [
+        item for item in eligibility.get("items", [])
+        if isinstance(item, dict)
+        and item.get("common_metrics_eligible") is False
+        and item.get("source_evaluator_implemented") is False
+    ]
+    if not proxy_items or {
+        item.get("logical_source_arm") for item in proxy_items
+    } != {"cyberseceval_prompt_injection"} or any(
+        item.get("required_metric")
+        != "cyberseceval_prompt_injection_judge_question"
+        or item.get("attacker") != "purplellama"
+        or item.get("status") == "N/A"
+        for item in proxy_items
+    ):
+        raise SystemExit(
+            "bridge-purplellama: prompt-injection approximate-proxy stratum is absent"
+        )
+print("\t".join(map(str, (
+    lane, row["projection_id"], calls["target_calls"], calls["judge_calls"],
+    calls["local_guardrail_evaluations"], calls["http_attempts"],
+    totals["selected_clusters"], totals["selected_records"],
+))))
+PY
+}
+
+write_attacker_configs() {
+  "$PY" - "$PRIVATE_ROOT" <<'PY'
+import json
+import os
+import pathlib
+import sys
+
+root = pathlib.Path(sys.argv[1])
+expected = {
+    "pyrit": {"converters": ["Base64Converter"], "upstream_version": "0.14.0"},
+    "deepteam": {"attack": "Base64", "upstream_version": "1.0.7"},
+    "h4rm3l": {"engine_version": "0.2.4", "syntax_version": 2},
+    "spikee": {
+        "plugins": ["base64", "1337"],
+        "positions": ["start", "middle", "end"],
+        "engine_version": "0.9.1",
+    },
+}
+for name, value in expected.items():
+    path = root / f"attacker-{name}.json"
+    payload = (json.dumps({name: value}, sort_keys=True, separators=(",", ":")) + "\n").encode()
+    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    with os.fdopen(fd, "wb") as handle:
+        handle.write(payload)
+PY
+}
+
+lock_field() {
+  "$PY" - "$FRAMEWORK_LOCK" "$EXPECTED_FRAMEWORK_LOCK" "$1" "$2" <<'PY'
+import pathlib
+import sys
+
+from experiments.framework_runtime_installer import load_lock
+
+path, expected_lock_id, name, field = sys.argv[1:]
+lock = load_lock(pathlib.Path(path))
+if lock.get("lock_id") != expected_lock_id:
+    raise SystemExit("framework lock identity drift")
+matches = [row for row in lock["frameworks"] if row.get("name") == name]
+if len(matches) != 1:
+    raise SystemExit(f"expected one framework lock row for {name}, found {len(matches)}")
+row = matches[0]
+if field == "env_slug":
+    value = row.get("env_slug")
+elif field == "source_commit":
+    value = (row.get("source") or {}).get("commit")
+else:
+    raise SystemExit(f"unsupported framework lock field {field}")
+if not isinstance(value, str) or not value:
+    raise SystemExit(f"framework lock field {name}.{field} is missing")
+print(value)
+PY
+}
+
+runtime_store() {
+  local name="$1" slug alias store
+  slug="$(lock_field "$name" env_slug)"
+  alias="$URA_FRAMEWORK_ENVS/$slug"
+  test -L "$alias"
+  store="$(readlink -f -- "$alias")"
+  case "$store" in
+    "$URA_FRAMEWORK_ENVS"/.store/*-"${EXPECTED_FRAMEWORK_LOCK:0:16}") ;;
+    *) printf 'unexpected runtime store for %s: %s\n' "$name" "$store" >&2; return 1 ;;
+  esac
+  test -x "$store/bin/python"
+  printf '%s\n' "$store"
+}
+
+make_runtime_config() {
+  local engine="$1" store path log
+  store="$(runtime_store "$engine")"
+  path="$PRIVATE_ROOT/engine-runtime-${engine}.json"
+  log="$CONTROL_ROOT/engine-runtime-${engine}.log"
+  export URA_LANE_ENGINE_PYTHON="$store/bin/python"
+  "$PY" -m experiments.engine_runtime_config \
+    --runtime "${engine}=URA_LANE_ENGINE_PYTHON" \
+    --out "$path" > "$log" 2>&1
+  test -f "$path" && test ! -L "$path"
+  LAST_RUNTIME_CONFIG="$path"
+  LAST_RUNTIME_SHA="$(sha256sum -- "$path" | awk '{print $1}')"
+}
+
+prepare_harmbench() {
+  local store python repo revision source
+  store="$(runtime_store harmbench)"
+  python="$store/bin/python"
+  repo="$store/source/harmbench"
+  revision="$(lock_field harmbench source_commit)"
+  source="$URA_HARMBENCH_TEXT_PATH"
+  test -d "$repo" && test -f "$source"
+
+  HB_CANARY_ARTIFACT="$PREPARED_ROOT/harmbench-direct-canary.json"
+  HB_CANARY_CONFIG="$PREPARED_ROOT/harmbench-direct-canary-config.json"
+  HB_FULL_ARTIFACT="$PREPARED_ROOT/harmbench-direct-full.json"
+  HB_FULL_CONFIG="$PREPARED_ROOT/harmbench-direct-full-config.json"
+
+  PYTHONDONTWRITEBYTECODE=1 "$python" -m experiments.harmbench_capture \
+    --repo "$repo" --revision "$revision" --source "$source" \
+    --corpus-name harmbench_text --method DirectRequest --experiment llama2_7b \
+    --limit 1 --sample-seed 0 --cases-per-method 1 \
+    --artifact-out "$HB_CANARY_ARTIFACT" \
+    --attacker-config-out "$HB_CANARY_CONFIG" \
+    --python "$python" --timeout-seconds 28800 \
+    > "$CONTROL_ROOT/harmbench-canary-capture.log" 2>&1
+
+  PYTHONDONTWRITEBYTECODE=1 "$python" -m experiments.harmbench_capture \
+    --repo "$repo" --revision "$revision" --source "$source" \
+    --corpus-name harmbench_text --method DirectRequest --experiment llama2_7b \
+    --limit 0 --sample-seed 0 --cases-per-method 1 \
+    --artifact-out "$HB_FULL_ARTIFACT" \
+    --attacker-config-out "$HB_FULL_CONFIG" \
+    --python "$python" --timeout-seconds 28800 \
+    > "$CONTROL_ROOT/harmbench-full-capture.log" 2>&1
+
+  for path in "$HB_CANARY_ARTIFACT" "$HB_CANARY_CONFIG" "$HB_FULL_ARTIFACT" "$HB_FULL_CONFIG"; do
+    test -f "$path" && test ! -L "$path"
+  done
+}
+
+run_preflight() {
+  local lane="$1" attacker="$2" arms="$3" max_queries="$4" max_turns="$5"
+  shift 5
+  local plan_root run_root plan_log acquire_log run_log plan_id plan_sha plan_path
+  local receipt_id receipt_sha receipt_path downloaded
+  plan_root="$PREFLIGHT_ROOT/${lane}-prelim-${TAG}/plan"
+  run_root="$PREFLIGHT_ROOT/${lane}-prelim-${TAG}/run"
+  test ! -e "${plan_root%/plan}"
+  mkdir -p "$plan_root"
+  plan_log="$CONTROL_ROOT/${lane}.plan.log"
+  acquire_log="$CONTROL_ROOT/${lane}.acquire.log"
+  run_log="$CONTROL_ROOT/${lane}.preflight.log"
+
+  local -a args=(
+    --project-revision "$PROJECT_RECEIPT"
+    --project-revision-sha256 "$PROJECT_SHA256"
+    --local "$QWEN"
+    --local-config "$QWEN_CFG"
+    --local-config-sha256 "$QWEN_CFG_SHA"
+    --attackers "$attacker"
+    --judges rules,guardrail
+    --approximate-common-metrics
+    --guardrail-model "$SCORE_GUARD"
+    --guardrail-revision "$SCORE_GUARD_REV"
+    --guardrail-device cuda:1
+    --corpora "$arms"
+    --source-config "$SOURCE_CONFIG"
+    --source-config-sha256 "$SOURCE_CONFIG_SHA256"
+    --source-conformance "$SOURCE_RECEIPT"
+    --source-conformance-sha256 "$SOURCE_RECEIPT_SHA256"
+    --limit 0
+    --sample-seed 0
+    --seeds 0
+    --max-queries "$max_queries"
+    --max-turns "$max_turns"
+    --group "$GROUP"
+    --max-total-target-calls 400000
+    --max-total-judge-calls 0
+    --max-total-http-attempts 0
+    --deadline-seconds 7776000
+    --out "$run_root"
+    "$@"
+  )
+
+  printf 'LANE_START=%s TIME=%s\n' "$lane" "$(date -Is)"
+  "$PY" -m experiments.run_matrix "${args[@]}" \
+    --preflight-only \
+    --model-acquisition-plan-only \
+    --model-acquisition-plan-dir "$plan_root" > "$plan_log" 2>&1
+  read -r plan_id plan_sha < <(json_fields "$plan_log" plan)
+  plan_path="$plan_root/${plan_id}.plan.json"
+  test -f "$plan_path" && test ! -L "$plan_path"
+  test "$(sha256sum -- "$plan_path" | awk '{print $1}')" = "$plan_sha"
+
+  "$PY" -m experiments.model_acquire \
+    --plan "$plan_path" --plan-sha256 "$plan_sha" \
+    --store "$MODEL_STORE" --receipts-dir "$RECEIPTS_ROOT" \
+    --transport-cache "$TRANSPORT_CACHE" \
+    --max-download-bytes 0 --min-free-bytes 1099511627776 \
+    --deadline-seconds 86400 > "$acquire_log" 2>&1
+  read -r receipt_id receipt_sha downloaded < <(json_fields "$acquire_log" receipt)
+  test "$downloaded" = 0
+  receipt_path="$RECEIPTS_ROOT/${receipt_id}.receipt.json"
+  test -f "$receipt_path" && test ! -L "$receipt_path"
+  test "$(sha256sum -- "$receipt_path" | awk '{print $1}')" = "$receipt_sha"
+
+  CUDA_VISIBLE_DEVICES=0,1 "$PY" -m experiments.rig_check "${args[@]}" \
+    --model-acquisition-plan "$plan_path" \
+    --model-acquisition-plan-sha256 "$plan_sha" \
+    --model-acquisition-receipt "$receipt_path" \
+    --model-acquisition-receipt-sha256 "$receipt_sha" \
+    --model-acquisition-store "$MODEL_STORE" > "$run_log" 2>&1
+  summarize_projection "$lane" "$run_root" | tee -a "$STATUS"
+  printf 'LANE_END=%s TIME=%s\n' "$lane" "$(date -Is)"
+}
+
+write_attacker_configs
+for engine in pyrit deepteam h4rm3l spikee; do
+  make_runtime_config "$engine"
+  eval "${engine^^}_RUNTIME_CONFIG=\$LAST_RUNTIME_CONFIG"
+  eval "${engine^^}_RUNTIME_SHA=\$LAST_RUNTIME_SHA"
+done
+prepare_harmbench
+
+run_preflight bridge-pyrit pyrit "$TRANSFER_ARMS" 1 1 \
+  --attacker-config "$PRIVATE_ROOT/attacker-pyrit.json" \
+  --attacker-config-sha256 "$(sha256sum "$PRIVATE_ROOT/attacker-pyrit.json" | awk '{print $1}')" \
+  --engine-runtime-config "$PYRIT_RUNTIME_CONFIG" \
+  --engine-runtime-config-sha256 "$PYRIT_RUNTIME_SHA"
+
+run_preflight bridge-deepteam deepteam "$TRANSFER_ARMS" 1 1 \
+  --attacker-config "$PRIVATE_ROOT/attacker-deepteam.json" \
+  --attacker-config-sha256 "$(sha256sum "$PRIVATE_ROOT/attacker-deepteam.json" | awk '{print $1}')" \
+  --engine-runtime-config "$DEEPTEAM_RUNTIME_CONFIG" \
+  --engine-runtime-config-sha256 "$DEEPTEAM_RUNTIME_SHA"
+
+run_preflight bridge-h4rm3l h4rm3l "$TRANSFER_ARMS" 4 4 \
+  --attacker-config "$PRIVATE_ROOT/attacker-h4rm3l.json" \
+  --attacker-config-sha256 "$(sha256sum "$PRIVATE_ROOT/attacker-h4rm3l.json" | awk '{print $1}')" \
+  --engine-runtime-config "$H4RM3L_RUNTIME_CONFIG" \
+  --engine-runtime-config-sha256 "$H4RM3L_RUNTIME_SHA"
+
+run_preflight bridge-spikee spikee "$TRANSFER_ARMS" 4 4 \
+  --attacker-config "$PRIVATE_ROOT/attacker-spikee.json" \
+  --attacker-config-sha256 "$(sha256sum "$PRIVATE_ROOT/attacker-spikee.json" | awk '{print $1}')" \
+  --engine-runtime-config "$SPIKEE_RUNTIME_CONFIG" \
+  --engine-runtime-config-sha256 "$SPIKEE_RUNTIME_SHA"
+
+run_preflight bridge-purplellama purplellama "$PURPLE_ARMS" 1 1
+
+run_preflight harmbench-replay harmbench harmbench_text 1 1 \
+  --attacker-config "$HB_FULL_CONFIG" \
+  --attacker-config-sha256 "$(sha256sum "$HB_FULL_CONFIG" | awk '{print $1}')"
+
+printf 'bridge-nanogcg\tunavailable\tno attributable precomputed suffix artifact exists; live optimization remains disabled\n' >> "$DISPOSITIONS"
+printf 'bridge-ideator\tunavailable\tno attributable seed-pair artifact or defensible source-pair mapping exists\n' >> "$DISPOSITIONS"
+printf 't3mp3st\tblocked-unpinned\tno exact executable source URL and revision is documented\n' >> "$DISPOSITIONS"
+
+printf 'PHASE5_BRIDGES_COMPLETE=%s\n' "$(date -Is)"
+INNER
+)"
+
+PAYLOAD_PATH="$CONTROL_ROOT/payload.sh"
+test ! -e "$PAYLOAD_PATH"
+(
+  set -o noclobber
+  umask 077
+  printf '%s\n' "$PAYLOAD" > "$PAYLOAD_PATH"
+)
+chmod 700 "$PAYLOAD_PATH"
+test -f "$PAYLOAD_PATH" && test ! -L "$PAYLOAD_PATH"
+tmux -L "$SOCKET" new-session -d -s "$SESSION" \
+  "exec bash $(printf '%q' "$PAYLOAD_PATH")"
+
+printf 'SESSION=%s\n' "$SESSION"
+printf 'SOCKET=%s\n' "$SOCKET"
+printf 'ATTACH=tmux -L %s attach -t %s\n' "$SOCKET" "$SESSION"
+printf 'CONTROL_ROOT=%s\n' "$CONTROL_ROOT"
+printf 'LOG=%s/phase5-bridges.log\n' "$CONTROL_ROOT"
+printf 'EXIT_MARKER=%s/.exit\n' "$CONTROL_ROOT"

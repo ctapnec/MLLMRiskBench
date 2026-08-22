@@ -1,0 +1,2943 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+umask 077
+
+# This controller never launches a model, framework, acquisition, or Runner job.
+# First invocation validates evidence and writes one create-only promotion plan.
+# Second invocation requires the exact plan SHA-256 and publishes only its bound
+# canonical bytes.
+
+if [[ ! -r "$HOME/.ura_campaign_env" ]]; then
+  printf 'missing campaign environment: %s/.ura_campaign_env\n' "$HOME" >&2
+  exit 2
+fi
+# shellcheck disable=SC1091
+source "$HOME/.ura_campaign_env"
+
+PROJECT_ROOT="${URA_PROJECT_ROOT:-$HOME/MLLMRiskBench}"
+if [[ ! -d "$PROJECT_ROOT" ]]; then
+  printf 'missing project checkout: %s\n' "$PROJECT_ROOT" >&2
+  exit 2
+fi
+cd "$PROJECT_ROOT"
+
+PY="$PROJECT_ROOT/.venv/bin/python"
+if [[ ! -x "$PY" ]]; then
+  printf 'missing project interpreter: %s\n' "$PY" >&2
+  exit 2
+fi
+
+export PYTHONDONTWRITEBYTECODE=1
+exec "$PY" - "$@" <<'PY'
+from __future__ import annotations
+
+import argparse
+import copy
+import ctypes
+from datetime import datetime, timezone
+import hashlib
+import json
+import math
+import os
+from pathlib import Path
+import re
+import stat
+import subprocess
+import sys
+from typing import Any, Mapping, Sequence
+
+from ura.approximate_metrics import (
+    validate_approximate_decision,
+    validate_approximate_metric_provenance,
+)
+from ura.eligibility import validate_eligibility_plan
+from ura.lane_projection import (
+    load_lane_projection_file,
+    validate_lane_projection_binding,
+)
+from ura.live_attestation import load_live_attestation_file
+from ura.model_acquisition import load_plan, load_receipt
+from ura.project_revision import load_project_revision_file
+from ura.request_envelope import load_request_envelope_file
+from ura.source_conformance import validate_source_conformance_manifest
+from ura.strict_json import strict_json_loads
+
+
+EXPECTED_COMMIT = "@@EXPECTED_COMMIT@@"
+EXPECTED_FRAMEWORK_LOCK = (
+    "@@FRAMEWORK_LOCK_SHA256@@"
+)
+EXPECTED_PROJECT_RECEIPT = "@@PROJECT_RECEIPT_PATH@@"
+EXPECTED_PROJECT_RECEIPT_SHA256 = "@@PROJECT_RECEIPT_SHA256@@"
+EXPECTED_SOURCE_RECEIPT = "@@SOURCE_RECEIPT_PATH@@"
+EXPECTED_SOURCE_RECEIPT_SHA256 = "@@SOURCE_RECEIPT_SHA256@@"
+EXPECTED_SOURCE_ARM_COUNT = 45
+EXPECTED_SOURCE_DISPOSITIONS = {"admitted": 44, "blocked": 1}
+EXPECTED_BLOCKED_SOURCE_ARM = "bipia_test_qa"
+COVERED_SCHEMA = "ura-gate5-covered-manifest/1"
+CANDIDATE_SCHEMA = "ura-gate5-runnote-candidate/1"
+CANONICAL_SCHEMA = "ura-gate5-runnote/1"
+FINALIZATION_SCHEMA = "ura-gate5-finalization-receipt/1"
+PLAN_SCHEMA = "ura-gate5-runnote-promotion-plan/1"
+PROMOTION_SCHEMA = "ura-gate5-runnote-promotion/1"
+PLACEHOLDER_BYTES = b"# URA thesis run note\n"
+PLACEHOLDER_SHA256 = "7ec84df8ea241fd09e6403de30a06fc18c10c8ff449b99834821b567dace17cf"
+MAX_JSON_BYTES = 64 * 1024 * 1024
+MAX_MARKDOWN_BYTES = 256 * 1024 * 1024
+CALL_START_DEADLINE_SECONDS = 7_776_000
+ACQUISITION_DEADLINE_SECONDS = 86_400
+FREE_SPACE_FLOOR_BYTES = 1_099_511_627_776
+EXTERNAL_RETAINED_OUTPUT_POLICY_BYTES = 53_687_091_200
+HEX64 = re.compile(r"[0-9a-f]{64}")
+LANE_RE = re.compile(r"[a-z0-9][a-z0-9._-]{0,127}")
+LOCAL_ONLY_CONTRACT = {
+    "hosted_provider_calls": 0,
+    "hosted_judge_calls": 0,
+    "http_attempts": 0,
+    "paid_provider_calls": 0,
+    "model_downloads": 0,
+    "offline_environment": True,
+    "final_preflights_revalidated": True,
+}
+PROMPT_PROXY_ARM = "cyberseceval_prompt_injection"
+PROMPT_PROXY_METRIC = "cyberseceval_prompt_injection_judge_question"
+EXPECTED_SCORE_GUARD = "meta-llama/Llama-Guard-3-8B"
+EXPECTED_SCORE_GUARD_REVISION = "7327bd9f6efbbe6101dc6cc4736302b3cbb6e425"
+EXPECTED_DEFENSE_GUARD = "meta-llama/Llama-Guard-3-1B"
+EXPECTED_DEFENSE_GUARD_REVISION = "acf7aafa60f0410f8f42b1fa35e077d705892029"
+DEFENSE_NA_SCHEMA = "ura-phase5-defense-canary-na/1"
+DEFENSE_NA_DISPOSITION = "conditional_na"
+DEFENSE_NA_REASON_CODE = "co_resident_cuda_oom_before_calls"
+DEFENSE_NA_REASON = (
+    "The defense-local live canary could not preload the co-resident Qwen3-VL "
+    "target, Llama Guard 1B defense, and Llama Guard 8B scoring cascade because "
+    "CUDA reported out of memory before any call reservation."
+)
+DEFENSE_NA_CLASSIFICATION = {
+    "category": "co_resident_cuda_oom",
+    "runner_lifecycle_phase": "model_preload_before_grid_start",
+    "positive_evidence": "run_matrix_lifecycle_error_cuda_out_of_memory",
+    "returncode": 1,
+}
+DEFENSE_NA_CALL_ACCOUNTING = {
+    "accounting_semantics": "durable_pre_call_logical_reservation_v1",
+    "target_calls": 0,
+    "model_judge_calls": 0,
+    "local_guardrail_evaluations": 0,
+    "hosted_target_calls": 0,
+    "hosted_judge_calls": 0,
+    "http_attempts": 0,
+}
+DEFENSE_NA_RUNNER_OUTPUTS = {
+    "grid_artifacts": 0,
+    "response_streams": 0,
+    "completion_artifacts": 0,
+    "error_artifacts": 0,
+}
+
+
+def exact_typed_int_contract(
+    raw: object, expected: Mapping[str, Any], int_fields: Sequence[str]
+) -> bool:
+    return (
+        isinstance(raw, Mapping)
+        and dict(raw) == dict(expected)
+        and all(type(raw.get(field)) is int for field in int_fields)
+    )
+
+
+DEFENSE_NA_TYPED_VALUE = {"status": "N/A", "value": None}
+DEFENSE_NA_ARTIFACT_KEYS = frozenset({
+    "runner_log", "budget_ledger", "invocation_deadline", "request_envelope",
+    "eligibility_plan", "lane_projection", "acquisition_plan",
+    "acquisition_receipt", "acquisition_result_log", "live_attestation",
+    "local_config", "project_revision", "source_config", "source_conformance",
+})
+EXPECTED_GROUP_KEYS = [
+    "model", "source", "risk", "effective_modality", "expected_behavior",
+    "attacker", "source_policy_id", "source_policy_version",
+]
+
+CORE = frozenset({
+    "local-qwen3-vl-text-full", "local-qwen3-vl-image-full",
+    "local-llava-base-text-full", "local-llava-base-image-full",
+    "local-llava-rr-text-full", "local-llava-rr-image-full",
+    "rjudge-qwen3-vl", "rjudge-llava-base", "rjudge-llava-rr",
+    "gptgeochat-qwen3-vl", "gptgeochat-llava-base", "gptgeochat-llava-rr",
+    "crescendo-qwen3-vl",
+    "defense-local",
+})
+BRIDGE = frozenset({
+    "bridge-pyrit", "bridge-deepteam", "bridge-h4rm3l", "bridge-spikee",
+    "bridge-purplellama", "harmbench-replay",
+})
+OLLAMA = frozenset({
+    "ollama-rwkv-g1d-0p4b-text-full", "ollama-rwkv-g1f-2p9b-text-full",
+    "ollama-rwkv-g1g-1p5b-text-full", "rjudge-ollama-rwkv-g1d-0p4b",
+    "rjudge-ollama-rwkv-g1f-2p9b", "rjudge-ollama-rwkv-g1g-1p5b",
+})
+RUNNABLE_FAMILIES = {
+    **{lane: "core" for lane in CORE},
+    **{lane: "bridge" for lane in BRIDGE},
+    **{lane: "ollama" for lane in OLLAMA},
+}
+
+TERMINAL_IDENTITIES: tuple[dict[str, str], ...] = (
+    {
+        "lane_id": "bridge-nanogcg", "family": "bridge",
+        "disposition": "unavailable", "reason_code": "unavailable",
+        "reason": "no attributable precomputed suffix artifact exists; live optimization remains disabled",
+    },
+    {
+        "lane_id": "bridge-ideator", "family": "bridge",
+        "disposition": "unavailable", "reason_code": "unavailable",
+        "reason": "no attributable seed-pair artifact or defensible source-pair mapping exists",
+    },
+    {
+        "lane_id": "t3mp3st", "family": "bridge",
+        "disposition": "unavailable", "reason_code": "blocked_unpinned",
+        "reason": "no exact executable source URL and revision is documented",
+    },
+    *tuple({
+        "lane_id": f"gptgeochat-ollama-{model}", "family": "ollama",
+        "disposition": "unavailable",
+        "reason_code": "target_transport_text_only_for_image_source",
+        "reason": (
+            "GPTGeoChat requires image-bearing source inputs, while the exact "
+            "RWKV Ollama target transport is text-only."
+        ),
+    } for model in ("rwkv-g1d-0p4b", "rwkv-g1f-2p9b", "rwkv-g1g-1p5b")),
+    {
+        "lane_id": "structural-hosted-fable-sol-rq2", "family": "portfolio_boundary",
+        "disposition": "structural_na", "reason_code": "hosted_only_outside_local_campaign",
+        "reason": "The focal Fable/Sol pair is hosted-only and is outside the all-local campaign.",
+    },
+    {
+        "lane_id": "structural-local-audio", "family": "portfolio_boundary",
+        "disposition": "structural_na", "reason_code": "no_local_audio_renderer",
+        "reason": "The admitted local vLLM/Ollama targets have no audio renderer.",
+    },
+    {
+        "lane_id": "structural-local-video", "family": "portfolio_boundary",
+        "disposition": "structural_na", "reason_code": "no_local_video_renderer",
+        "reason": "The admitted local vLLM/Ollama targets have no video renderer.",
+    },
+    {
+        "lane_id": "structural-hosted-llm-judge", "family": "portfolio_boundary",
+        "disposition": "structural_na", "reason_code": "hosted_judge_forbidden_in_local_campaign",
+        "reason": "The hosted LLM-judge stage is structurally excluded from this local-only campaign.",
+    },
+    {
+        "lane_id": "unavailable-bipia-test-qa", "family": "source_boundary",
+        "disposition": "unavailable", "reason_code": "licensed_newsqa_source_unavailable",
+        "reason": "The NewsQA-backed bipia_test_qa source is not available under the retained source receipt.",
+    },
+    *tuple({
+        "lane_id": f"structural-native-{engine}", "family": "native_protocol",
+        "disposition": "structural_na", "reason_code": "separate_native_engine_protocol",
+        "reason": "Native-engine evidence uses its sealed one-case native protocol and is not a Runner Gate-5 lane.",
+    } for engine in (
+        "garak", "promptfoo", "fuzzyai", "petri", "agentdojo", "asb",
+        "autodan-turbo", "easyjailbreak", "giskard",
+    )),
+)
+
+
+class PromotionError(RuntimeError):
+    pass
+
+
+def utc_now() -> str:
+    return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+
+
+def canonical_bytes(value: Any) -> bytes:
+    return (json.dumps(
+        value, ensure_ascii=False, sort_keys=True, separators=(",", ":"),
+        allow_nan=False,
+    ) + "\n").encode("utf-8")
+
+
+def sha256_bytes(payload: bytes) -> str:
+    return hashlib.sha256(payload).hexdigest()
+
+
+def checked_file(value: str | Path, *, max_bytes: int) -> Path:
+    path = Path(value).expanduser()
+    try:
+        before = path.lstat()
+        resolved = path.resolve(strict=True)
+        after = resolved.lstat()
+    except OSError as exc:
+        raise PromotionError(f"cannot resolve regular file {path}: {exc}") from exc
+    if path.is_symlink() or not stat.S_ISREG(before.st_mode) or not stat.S_ISREG(after.st_mode):
+        raise PromotionError(f"file is not regular and symlink-free: {path}")
+    if after.st_size > max_bytes:
+        raise PromotionError(f"file exceeds {max_bytes} bytes: {resolved}")
+    return resolved
+
+
+def checked_dir(value: str | Path) -> Path:
+    path = Path(value).expanduser()
+    try:
+        before = path.lstat()
+        resolved = path.resolve(strict=True)
+    except OSError as exc:
+        raise PromotionError(f"cannot resolve directory {path}: {exc}") from exc
+    if path.is_symlink() or not stat.S_ISDIR(before.st_mode) or not resolved.is_dir():
+        raise PromotionError(f"directory is not symlink-free: {path}")
+    return resolved
+
+
+def checked_project_python(project: Path) -> Path:
+    """Validate but do not resolve the standard project-venv Python entry."""
+
+    venv = checked_dir(project / ".venv")
+    bin_root = checked_dir(venv / "bin")
+    checked_file(venv / "pyvenv.cfg", max_bytes=1024 * 1024)
+    interpreter = bin_root / "python"
+    try:
+        entry = interpreter.lstat()
+        target = interpreter.resolve(strict=True)
+        target_entry = target.lstat()
+    except OSError as exc:
+        raise PromotionError(f"cannot resolve project virtual-environment interpreter: {exc}") from exc
+    if (
+        not (stat.S_ISREG(entry.st_mode) or stat.S_ISLNK(entry.st_mode))
+        or not stat.S_ISREG(target_entry.st_mode)
+        or not os.access(interpreter, os.X_OK)
+        or not os.access(target, os.X_OK)
+    ):
+        raise PromotionError("project virtual-environment interpreter is not an executable regular target")
+    return interpreter
+
+
+def file_bytes(path: Path, *, max_bytes: int) -> bytes:
+    regular = checked_file(path, max_bytes=max_bytes)
+    before = regular.stat()
+    payload = regular.read_bytes()
+    after = regular.stat()
+    if (
+        len(payload) != before.st_size
+        or before.st_dev != after.st_dev
+        or before.st_ino != after.st_ino
+        or before.st_size != after.st_size
+        or before.st_mtime_ns != after.st_mtime_ns
+    ):
+        raise PromotionError(f"file changed while reading: {regular}")
+    return payload
+
+
+def artifact(path: Path, *, max_bytes: int) -> dict[str, Any]:
+    regular = checked_file(path, max_bytes=max_bytes)
+    payload = file_bytes(regular, max_bytes=max_bytes)
+    return {"path": str(regular), "sha256": sha256_bytes(payload), "bytes": len(payload)}
+
+
+def descriptor_path(value: object, label: str, *, max_bytes: int = MAX_JSON_BYTES) -> Path:
+    if not isinstance(value, dict):
+        raise PromotionError(f"{label} descriptor is absent")
+    path_value = value.get("path")
+    digest = value.get("sha256")
+    size = value.get("bytes")
+    if (
+        not isinstance(path_value, str)
+        or not isinstance(digest, str)
+        or HEX64.fullmatch(digest) is None
+        or isinstance(size, bool)
+        or not isinstance(size, int)
+        or size <= 0
+    ):
+        raise PromotionError(f"{label} descriptor is invalid")
+    path = checked_file(path_value, max_bytes=max_bytes)
+    observed = artifact(path, max_bytes=max_bytes)
+    if {key: value.get(key) for key in observed} != observed:
+        raise PromotionError(f"{label} descriptor bytes changed")
+    return path
+
+
+def strict_json(path: Path, *, max_bytes: int = MAX_JSON_BYTES) -> dict[str, Any]:
+    payload = file_bytes(path, max_bytes=max_bytes)
+    try:
+        value = strict_json_loads(payload.decode("utf-8"))
+    except (UnicodeError, TypeError, ValueError) as exc:
+        raise PromotionError(f"strict JSON failed for {path}: {exc}") from exc
+    if not isinstance(value, dict):
+        raise PromotionError(f"JSON artifact is not an object: {path}")
+    return value
+
+
+def strict_fields(value: object, fields: set[str], label: str) -> dict[str, Any]:
+    if not isinstance(value, dict) or set(value) != fields:
+        raise PromotionError(f"{label} has an invalid field inventory")
+    return value
+
+
+def write_create_only(path: Path, payload: bytes, *, mode: int = 0o600) -> dict[str, Any]:
+    if path.exists() or path.is_symlink():
+        raise PromotionError(f"create-only destination already exists: {path}")
+    parent = checked_dir(path.parent)
+    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, mode)
+    try:
+        with os.fdopen(fd, "wb", closefd=True) as handle:
+            fd = -1
+            handle.write(payload)
+            handle.flush()
+            os.fsync(handle.fileno())
+    finally:
+        if fd >= 0:
+            os.close(fd)
+    os.chmod(path, mode)
+    fsync_dir(parent)
+    return artifact(path, max_bytes=max(len(payload), 1))
+
+
+def fsync_dir(path: Path) -> None:
+    fd = os.open(path, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0))
+    try:
+        os.fsync(fd)
+    finally:
+        os.close(fd)
+
+
+def fsync_file(path: Path) -> None:
+    fd = os.open(path, os.O_RDONLY)
+    try:
+        os.fsync(fd)
+    finally:
+        os.close(fd)
+
+
+def typed_terminal(raw: Mapping[str, str]) -> dict[str, Any]:
+    disposition = raw["disposition"]
+    status = "N/A" if disposition == "structural_na" else disposition.upper()
+    unavailable = {"status": status, "value": None}
+    return {
+        **dict(raw),
+        "projection": dict(unavailable),
+        "canary": dict(unavailable),
+        "final_preflight": dict(unavailable),
+        "approved_caps": dict(unavailable),
+    }
+
+
+def validate_defense_conditional_na_row(raw: Mapping[str, Any]) -> None:
+    strict_fields(raw, {
+        "lane_id", "family", "disposition", "reason_code", "reason",
+        "projection", "canary", "final_preflight", "approved_caps",
+    }, "defense-local conditional N/A row")
+    if (
+        raw.get("lane_id") != "defense-local"
+        or raw.get("family") != "core"
+        or raw.get("disposition") != DEFENSE_NA_DISPOSITION
+        or raw.get("reason_code") != DEFENSE_NA_REASON_CODE
+        or raw.get("reason") != DEFENSE_NA_REASON
+        or raw.get("projection") != DEFENSE_NA_TYPED_VALUE
+        or raw.get("final_preflight") != DEFENSE_NA_TYPED_VALUE
+        or raw.get("approved_caps") != DEFENSE_NA_TYPED_VALUE
+    ):
+        raise PromotionError("defense-local conditional N/A row changed")
+    canary = strict_fields(raw.get("canary"), {
+        "status", "value", "conditional_na_artifact", "call_accounting",
+    }, "defense-local conditional N/A canary")
+    if (
+        {"status": canary.get("status"), "value": canary.get("value")}
+        != DEFENSE_NA_TYPED_VALUE
+        or not exact_typed_int_contract(
+            canary.get("call_accounting"),
+            DEFENSE_NA_CALL_ACCOUNTING,
+            (
+                "target_calls", "model_judge_calls", "local_guardrail_evaluations",
+                "hosted_target_calls", "hosted_judge_calls", "http_attempts",
+            ),
+        )
+    ):
+        raise PromotionError("defense-local conditional N/A canary accounting changed")
+    descriptor = canary.get("conditional_na_artifact")
+    if not isinstance(descriptor, dict) or set(descriptor) != {"path", "sha256", "bytes"}:
+        raise PromotionError("defense-local conditional N/A descriptor fields changed")
+    if (
+        not isinstance(descriptor.get("path"), str)
+        or not Path(descriptor["path"]).is_absolute()
+        or Path(descriptor["path"]).name != "defense-local.conditional-na.json"
+        or not isinstance(descriptor.get("sha256"), str)
+        or HEX64.fullmatch(descriptor["sha256"]) is None
+        or isinstance(descriptor.get("bytes"), bool)
+        or not isinstance(descriptor.get("bytes"), int)
+        or descriptor["bytes"] <= 0
+    ):
+        raise PromotionError("defense-local conditional N/A descriptor values changed")
+
+
+def expected_terminals() -> dict[str, dict[str, Any]]:
+    result = {row["lane_id"]: typed_terminal(row) for row in TERMINAL_IDENTITIES}
+    if len(result) != 20:
+        raise PromotionError("internal terminal contract does not contain 20 unique rows")
+    return result
+
+
+def validate_inventory(rows: object, *, completed: bool) -> dict[str, dict[str, Any]]:
+    if not isinstance(rows, list):
+        raise PromotionError("Gate-5 lane inventory is not an array")
+    by_id: dict[str, dict[str, Any]] = {}
+    for row in rows:
+        if not isinstance(row, dict):
+            raise PromotionError("Gate-5 lane row is not an object")
+        lane = row.get("lane_id")
+        if not isinstance(lane, str) or LANE_RE.fullmatch(lane) is None or lane in by_id:
+            raise PromotionError(f"Gate-5 lane identity is invalid or duplicated: {lane!r}")
+        by_id[lane] = row
+    terminals = expected_terminals()
+    expected_ids = set(RUNNABLE_FAMILIES) | set(terminals)
+    if set(by_id) != expected_ids or len(rows) != 46:
+        raise PromotionError(
+            "Gate-5 inventory is not the exact 46 rows: "
+            f"missing={sorted(expected_ids-set(by_id))}, extra={sorted(set(by_id)-expected_ids)}"
+        )
+    for lane, family in RUNNABLE_FAMILIES.items():
+        row = by_id[lane]
+        if lane == "defense-local" and row.get("disposition") == DEFENSE_NA_DISPOSITION:
+            validate_defense_conditional_na_row(row)
+            continue
+        if (
+            row.get("family") != family
+            or row.get("disposition") != "runnable"
+            or row.get("reason") is not None
+            or row.get("reason_code") is not None
+        ):
+            raise PromotionError(f"{lane}: reviewed runnable identity changed")
+        expected_final_status = "complete" if completed else "pending_execution"
+        final = row.get("final_preflight")
+        if not isinstance(final, dict) or final.get("status") != expected_final_status:
+            raise PromotionError(f"{lane}: Gate-5 final-preflight lifecycle state changed")
+    for lane, expected in terminals.items():
+        if by_id[lane] != expected:
+            raise PromotionError(f"{lane}: reviewed terminal disposition/reason/N/A row changed")
+    return by_id
+
+
+def inventory_counts(rows: Mapping[str, Mapping[str, Any]]) -> dict[str, Any]:
+    conditional = sorted(
+        lane for lane, row in rows.items()
+        if row.get("disposition") == DEFENSE_NA_DISPOSITION
+    )
+    runnable = sum(row.get("disposition") == "runnable" for row in rows.values())
+    counts = {
+        "total": 46,
+        "runnable": runnable,
+        "typed_terminal": 46 - runnable,
+        "conditional_na_lanes": conditional,
+        "bridge_terminal": 3,
+        "ollama_transport_terminal": 3,
+        "portfolio_terminal": 5,
+        "native_terminal": 9,
+    }
+    if counts not in (
+        {
+            "total": 46, "runnable": 26, "typed_terminal": 20,
+            "conditional_na_lanes": [], "bridge_terminal": 3,
+            "ollama_transport_terminal": 3,
+            "portfolio_terminal": 5, "native_terminal": 9,
+        },
+        {
+            "total": 46, "runnable": 25, "typed_terminal": 21,
+            "conditional_na_lanes": ["defense-local"], "bridge_terminal": 3,
+            "ollama_transport_terminal": 3,
+            "portfolio_terminal": 5, "native_terminal": 9,
+        },
+    ):
+        raise PromotionError(f"Gate-5 conditional inventory profile changed: {counts}")
+    return counts
+
+
+def validate_zero_download_result_rows(
+    rows: Sequence[Mapping[str, Any]], *, receipt_id: str, receipt_sha256: str
+) -> None:
+    if (
+        len(rows) != 1
+        or not isinstance(rows[0], Mapping)
+        or set(rows[0]) != {"receipt_id", "receipt_sha256", "downloaded_bytes"}
+        or rows[0].get("receipt_id") != receipt_id
+        or rows[0].get("receipt_sha256") != receipt_sha256
+        or type(rows[0].get("downloaded_bytes")) is not int
+        or rows[0].get("downloaded_bytes") != 0
+    ):
+        raise PromotionError("defense-local acquisition result is not exact zero-download evidence")
+
+
+def validate_defense_na_artifact_inventory_shape(raw: object) -> dict[str, dict[str, Any]]:
+    if not isinstance(raw, dict) or set(raw) != DEFENSE_NA_ARTIFACT_KEYS:
+        raise PromotionError("defense-local conditional N/A artifact inventory changed")
+    for name, item in raw.items():
+        if not isinstance(item, dict) or set(item) != {"path", "sha256", "bytes"}:
+            raise PromotionError(f"defense-local conditional N/A {name} descriptor changed")
+        if (
+            not isinstance(item.get("path"), str)
+            or not Path(item["path"]).is_absolute()
+            or not isinstance(item.get("sha256"), str)
+            or HEX64.fullmatch(item["sha256"]) is None
+            or isinstance(item.get("bytes"), bool)
+            or not isinstance(item.get("bytes"), int)
+            or item["bytes"] <= 0
+        ):
+            raise PromotionError(f"defense-local conditional N/A {name} descriptor is invalid")
+    return raw
+
+
+def validate_defense_na_live_binding_shape(
+    raw: object, *, attestation: Mapping[str, Any], filename: str
+) -> list[dict[str, Any]]:
+    artifacts = raw.get("artifacts") if isinstance(raw, dict) else None
+    if (
+        not isinstance(raw, dict)
+        or set(raw) != {"mode", "execution_scope_id", "max_age_hours", "artifacts"}
+        or raw.get("mode") != "measured"
+        or not isinstance(raw.get("execution_scope_id"), str)
+        or not raw["execution_scope_id"].strip()
+        or type(raw.get("max_age_hours")) is not float
+        or raw.get("max_age_hours") != 24.0
+        or not isinstance(artifacts, list)
+        or len(artifacts) != 1
+        or not isinstance(artifacts[0], dict)
+        or set(artifacts[0]) != {"file", "sha256", "bytes", "attestation_id"}
+        or artifacts[0].get("file") != filename
+        or artifacts[0].get("sha256") != attestation.get("sha256")
+        or artifacts[0].get("bytes") != attestation.get("bytes")
+        or re.fullmatch(
+            r"live-attestation-[0-9a-f]{24}",
+            str(artifacts[0].get("attestation_id", "")),
+        ) is None
+    ):
+        raise PromotionError(
+            "defense-local conditional N/A live-attestation binding changed"
+        )
+    return artifacts
+
+
+def validate_defense_conditional_na_artifact(
+    row: Mapping[str, Any], *, project: Path, work: Path
+) -> dict[str, Any]:
+    """Open and fully revalidate the sole resource-conditional terminal."""
+
+    validate_defense_conditional_na_row(row)
+    row_descriptor = row["canary"]["conditional_na_artifact"]
+    artifact_path = descriptor_path(
+        row_descriptor, "defense-local conditional N/A", max_bytes=MAX_JSON_BYTES
+    )
+    value = strict_json(artifact_path)
+    strict_fields(value, {
+        "schema", "status", "lane_id", "disposition", "reason_code", "reason",
+        "classified_at_utc", "classification", "bindings", "call_accounting",
+        "runner_outputs", "artifacts", "resource_identities",
+    }, "defense-local conditional N/A artifact")
+    if (
+        value.get("schema") != DEFENSE_NA_SCHEMA
+        or value.get("status") != "N/A"
+        or value.get("lane_id") != "defense-local"
+        or value.get("disposition") != DEFENSE_NA_DISPOSITION
+        or value.get("reason_code") != DEFENSE_NA_REASON_CODE
+        or value.get("reason") != DEFENSE_NA_REASON
+        or not exact_typed_int_contract(
+            value.get("classification"), DEFENSE_NA_CLASSIFICATION, ("returncode",)
+        )
+        or not exact_typed_int_contract(
+            value.get("call_accounting"),
+            DEFENSE_NA_CALL_ACCOUNTING,
+            (
+                "target_calls", "model_judge_calls", "local_guardrail_evaluations",
+                "hosted_target_calls", "hosted_judge_calls", "http_attempts",
+            ),
+        )
+        or not exact_typed_int_contract(
+            value.get("runner_outputs"),
+            DEFENSE_NA_RUNNER_OUTPUTS,
+            ("grid_artifacts", "response_streams", "completion_artifacts", "error_artifacts"),
+        )
+    ):
+        raise PromotionError("defense-local conditional N/A classification changed")
+    classified = value.get("classified_at_utc")
+    try:
+        classified_at = datetime.strptime(str(classified), "%Y-%m-%dT%H:%M:%SZ").replace(
+            tzinfo=timezone.utc
+        )
+    except ValueError as exc:
+        raise PromotionError("defense-local conditional N/A UTC time changed") from exc
+    if not isinstance(classified, str) or classified_at > datetime.now(timezone.utc):
+        raise PromotionError("defense-local conditional N/A time is invalid")
+
+    raw_artifacts = validate_defense_na_artifact_inventory_shape(value.get("artifacts"))
+    resolved: dict[str, Path] = {}
+    for name, descriptor in raw_artifacts.items():
+        if not isinstance(descriptor, dict) or set(descriptor) != {"path", "sha256", "bytes"}:
+            raise PromotionError(f"defense-local conditional N/A {name} descriptor changed")
+        resolved[name] = descriptor_path(
+            descriptor,
+            f"defense-local conditional N/A {name}",
+            max_bytes=(
+                MAX_MARKDOWN_BYTES
+                if name in {"runner_log", "acquisition_result_log"}
+                else MAX_JSON_BYTES
+            ),
+        )
+    if (
+        resolved["runner_log"].parent != artifact_path.parent
+        or resolved["runner_log"].name != "defense-local.canary.log"
+        or resolved["acquisition_result_log"].parent != artifact_path.parent
+        or resolved["acquisition_result_log"].name != "defense-local-canary.acquire.log"
+    ):
+        raise PromotionError("defense-local conditional N/A control-log locations changed")
+    log_text = file_bytes(
+        resolved["runner_log"], max_bytes=MAX_MARKDOWN_BYTES
+    ).decode("utf-8", errors="replace")
+    if len(re.findall(
+        r"^cannot initialize matrix lifecycle: [^\r\n]*CUDA out of memory[^\r\n]*$",
+        log_text,
+        flags=re.IGNORECASE | re.MULTILINE,
+    )) != 1:
+        raise PromotionError("defense-local conditional N/A lacks one positive CUDA OOM")
+
+    run_root = checked_dir(resolved["budget_ledger"].parent)
+    if not run_root.is_relative_to(work):
+        raise PromotionError("defense-local conditional N/A root is outside URA_WORK")
+    root_local = {
+        "budget_ledger", "invocation_deadline", "request_envelope",
+        "eligibility_plan", "lane_projection",
+    }
+    if any(resolved[name].parent != run_root for name in root_local):
+        raise PromotionError("defense-local conditional N/A Runner artifacts span roots")
+    if (
+        list(run_root.glob("grid-*.grid.json"))
+        or list(run_root.rglob("*.responses.jsonl"))
+        or list(run_root.rglob("*.complete.json"))
+        or list(run_root.rglob("*.error.json"))
+    ):
+        raise PromotionError("defense-local conditional N/A has post-preload output")
+    for name, pattern in {
+        "budget_ledger": "grid-*.budget.json",
+        "invocation_deadline": "request-envelope-*.deadline.json",
+        "request_envelope": "request-envelope-*.request-envelope.json",
+        "eligibility_plan": "eligibility-*.eligibility.json",
+        "lane_projection": "lane-projection-*.lane-projection.json",
+    }.items():
+        matches = sorted(
+            candidate.resolve() for candidate in run_root.glob(pattern)
+            if candidate.is_file() and not candidate.is_symlink()
+        )
+        if matches != [resolved[name]]:
+            raise PromotionError(f"defense-local conditional N/A {name} is not unique")
+
+    envelope, _ = load_request_envelope_file(resolved["request_envelope"])
+    expected_request = {
+        "execution_purpose": "diagnostic_canary",
+        "requested_target_keys": ["vllm:Qwen/Qwen3-VL-8B-Instruct"],
+        "logical_source_arms": ["jailbreakbench_benign"],
+        "selected_attackers": ["replay"],
+        "judges": ["rules", "guardrail"],
+        "judge_model": None,
+        "seeds": [0],
+        "sample_seed": 0,
+        "limit": 1,
+        "max_queries": 1,
+        "max_turns": 1,
+        "defense": "both",
+        "defense_guard": "guardrail",
+        "group_keys": EXPECTED_GROUP_KEYS,
+        "quantization": "",
+        "dtype": "auto",
+        "dry_run": False,
+        "approximate_common_metrics": True,
+        "hosted_judge_data_transfer_acknowledged": False,
+        "call_caps": {
+            "target": 1, "judge": None, "http_attempts": None,
+            "deadline_seconds": 3600,
+        },
+    }
+    if envelope.get("request") != expected_request:
+        raise PromotionError("defense-local conditional N/A request envelope changed")
+    project_binding = envelope.get("bindings", {}).get("project_revision")
+    if (
+        not isinstance(project_binding, dict)
+        or project_binding.get("mode") != "verified"
+        or project_binding.get("expected_commit") != EXPECTED_COMMIT
+        or project_binding.get("observed_commit") != EXPECTED_COMMIT
+        or project_binding.get("sha256") != EXPECTED_PROJECT_RECEIPT_SHA256
+    ):
+        raise PromotionError("defense-local conditional N/A project binding changed")
+
+    eligibility_path = resolved["eligibility_plan"]
+    eligibility = validate_eligibility_plan(strict_json(eligibility_path))
+    execution = eligibility.get("execution", {})
+    conditions = eligibility.get("bindings", {}).get("experiment_conditions", {}).get("values")
+    if (
+        execution.get("whole_request_preflight_complete") is not True
+        or execution.get("request_status") != "whole_request_compatible"
+        or execution.get("units_blocked") != 0
+        or not isinstance(conditions, dict)
+    ):
+        raise PromotionError("defense-local conditional N/A eligibility changed")
+    expected_conditions = {
+        "execution_purpose": "diagnostic_canary",
+        "judges": ["rules", "guardrail"],
+        "seeds": [0], "sample_seed": 0, "limit": 1,
+        "max_queries": 1, "max_turns": 1,
+        "group_keys": EXPECTED_GROUP_KEYS,
+        "defense": "both", "defense_guard": "guardrail",
+        "quantization": "", "dtype": "auto", "dry_run": False,
+        "guardrail_model": EXPECTED_SCORE_GUARD,
+        "guardrail_revision": EXPECTED_SCORE_GUARD_REVISION,
+        "guardrail_device": "cuda:1",
+        "defense_guardrail_model": EXPECTED_DEFENSE_GUARD,
+        "defense_guardrail_revision": EXPECTED_DEFENSE_GUARD_REVISION,
+        "defense_guardrail_device": "cuda:1",
+    }
+    if any(conditions.get(field) != expected for field, expected in expected_conditions.items()):
+        raise PromotionError("defense-local conditional N/A conditions changed")
+
+    projection_sha = raw_artifacts["lane_projection"]["sha256"]
+    projection, _ = load_lane_projection_file(resolved["lane_projection"], projection_sha)
+    validate_lane_projection_binding(
+        projection,
+        eligibility_plan=eligibility,
+        eligibility_artifact={
+            "file": eligibility_path.name,
+            "sha256": raw_artifacts["eligibility_plan"]["sha256"],
+            "bytes": raw_artifacts["eligibility_plan"]["bytes"],
+            "records": 1,
+        },
+    )
+    calls = projection.get("call_projection")
+    expected_calls = {
+        "trajectories": 1, "target_calls": 1, "judge_calls": 0,
+        "local_guardrail_evaluations": 3, "http_attempts": 0,
+    }
+    arms = projection.get("selection", {}).get("arms")
+    if (
+        not isinstance(calls, dict)
+        or calls.get("semantics") != "conservative_complete_grid_upper_bound_v1"
+        or any(type(calls.get(field)) is not int for field in expected_calls)
+        or any(calls.get(field) != expected for field, expected in expected_calls.items())
+        or calls.get("by_attacker") != {"replay": expected_calls}
+        or not isinstance(arms, list)
+        or len(arms) != 1
+        or arms[0].get("logical_source_arm") != "jailbreakbench_benign"
+        or arms[0].get("sample_seed") != 0
+    ):
+        raise PromotionError("defense-local conditional N/A projection changed")
+
+    budget_path = resolved["budget_ledger"]
+    budget = strict_json(budget_path)
+    budget_id = budget_path.name.removesuffix(".budget.json")
+    deadline_epoch = budget.get("deadline_epoch")
+    if (
+        budget != {
+            "budget_id": budget_id,
+            "max_target_calls": 1,
+            "max_judge_calls": None,
+            "max_http_attempts": None,
+            "deadline_epoch": deadline_epoch,
+            "target_calls": 0,
+            "judge_calls": 0,
+            "http_attempts": 0,
+            "accounting_semantics": "durable_pre_call_logical_reservation_v1",
+        }
+        or re.fullmatch(r"grid-[0-9a-f]{24}", budget_id) is None
+        or any(
+            type(budget.get(field)) is not int
+            for field in ("target_calls", "judge_calls", "http_attempts")
+        )
+        or isinstance(deadline_epoch, bool)
+        or not isinstance(deadline_epoch, (int, float))
+        or not math.isfinite(float(deadline_epoch))
+    ):
+        raise PromotionError("defense-local conditional N/A zero-call ledger changed")
+    deadline = strict_json(resolved["invocation_deadline"])
+    if deadline != {
+        "schema": "ura-invocation-deadline/1",
+        "request_envelope_id": envelope.get("envelope_id"),
+        "deadline_seconds": 3600,
+        "deadline_epoch": deadline_epoch,
+    }:
+        raise PromotionError("defense-local conditional N/A deadline changed")
+
+    if (
+        resolved["project_revision"] != Path(EXPECTED_PROJECT_RECEIPT).resolve()
+        or raw_artifacts["project_revision"]["sha256"]
+        != EXPECTED_PROJECT_RECEIPT_SHA256
+        or resolved["source_conformance"] != Path(EXPECTED_SOURCE_RECEIPT).resolve()
+        or raw_artifacts["source_conformance"]["sha256"]
+        != EXPECTED_SOURCE_RECEIPT_SHA256
+        or resolved["source_config"]
+        != (project / "experiments/source-instances.json").resolve()
+    ):
+        raise PromotionError("defense-local conditional N/A current artifacts changed")
+    target_spec = "vllm:Qwen/Qwen3-VL-8B-Instruct"
+    local_config = strict_json(resolved["local_config"])
+    if set(local_config) != {target_spec} or not isinstance(local_config[target_spec], dict):
+        raise PromotionError("defense-local conditional N/A local config changed")
+    target_revision = local_config[target_spec].get("revision")
+    if not isinstance(target_revision, str) or re.fullmatch(r"[0-9a-f]{40}", target_revision) is None:
+        raise PromotionError("defense-local conditional N/A target revision changed")
+    selected = conditions.get("selected_config_identities")
+    if (
+        not isinstance(selected, dict)
+        or set(selected) != {
+            "source_config", "source_conformance", "attacker_config",
+            "engine_runtime_config", "api_config", "local_config",
+        }
+        or not isinstance(selected.get("source_config"), dict)
+        or set(selected["source_config"]) != {"normalized_selected_sha256"}
+        or HEX64.fullmatch(str(selected["source_config"].get("normalized_selected_sha256", ""))) is None
+        or selected.get("source_conformance") != {
+            "sha256": raw_artifacts["source_conformance"]["sha256"],
+            "bytes": raw_artifacts["source_conformance"]["bytes"],
+        }
+        or selected.get("attacker_config") is not None
+        or selected.get("engine_runtime_config") is not None
+        or selected.get("api_config") is not None
+        or not isinstance(selected.get("local_config"), dict)
+        or set(selected["local_config"]) != {"normalized_selected_sha256"}
+        or HEX64.fullmatch(str(selected["local_config"].get("normalized_selected_sha256", ""))) is None
+    ):
+        raise PromotionError("defense-local conditional N/A selected configs changed")
+    live_artifacts = validate_defense_na_live_binding_shape(
+        conditions.get("live_attestation"),
+        attestation=raw_artifacts["live_attestation"],
+        filename=resolved["live_attestation"].name,
+    )
+    try:
+        attestation_manifest, attestation_observed = load_live_attestation_file(
+            resolved["live_attestation"], raw_artifacts["live_attestation"]["sha256"]
+        )
+    except (OSError, TypeError, ValueError) as exc:
+        raise PromotionError(
+            "defense-local conditional N/A live-attestation artifact is invalid"
+        ) from exc
+    if (
+        attestation_observed != {
+            "file": resolved["live_attestation"].name,
+            "sha256": raw_artifacts["live_attestation"]["sha256"],
+            "bytes": raw_artifacts["live_attestation"]["bytes"],
+        }
+        or attestation_manifest.get("attestation_id")
+        != live_artifacts[0].get("attestation_id")
+    ):
+        raise PromotionError("defense-local conditional N/A live-attestation ID changed")
+
+    expected_bindings = {
+        "expected_commit": EXPECTED_COMMIT,
+        "framework_lock_id": EXPECTED_FRAMEWORK_LOCK,
+        "project_revision_sha256": EXPECTED_PROJECT_RECEIPT_SHA256,
+        "source_conformance_sha256": EXPECTED_SOURCE_RECEIPT_SHA256,
+        "source_config_sha256": raw_artifacts["source_config"]["sha256"],
+        "cuda_visible_devices": "0,1",
+        "target": {
+            "spec": target_spec, "revision": target_revision,
+            "config_sha256": raw_artifacts["local_config"]["sha256"],
+        },
+        "scoring_guard": {
+            "model": EXPECTED_SCORE_GUARD,
+            "revision": EXPECTED_SCORE_GUARD_REVISION,
+            "device": "cuda:1",
+        },
+        "defense_guard": {
+            "model": EXPECTED_DEFENSE_GUARD,
+            "revision": EXPECTED_DEFENSE_GUARD_REVISION,
+            "device": "cuda:1",
+        },
+    }
+    if value.get("bindings") != expected_bindings:
+        raise PromotionError("defense-local conditional N/A immutable bindings changed")
+
+    plan = load_plan(
+        resolved["acquisition_plan"],
+        expected_sha256=raw_artifacts["acquisition_plan"]["sha256"],
+    )
+    receipt = load_receipt(
+        resolved["acquisition_receipt"],
+        expected_sha256=raw_artifacts["acquisition_receipt"]["sha256"],
+        plan=plan,
+    )
+    acquisition_rows: list[dict[str, Any]] = []
+    for raw_line in file_bytes(
+        resolved["acquisition_result_log"], max_bytes=MAX_MARKDOWN_BYTES
+    ).decode("utf-8", errors="strict").splitlines():
+        try:
+            item = strict_json_loads(raw_line)
+        except (TypeError, ValueError):
+            continue
+        if isinstance(item, dict) and set(item) == {
+            "receipt_id", "receipt_sha256", "downloaded_bytes"
+        }:
+            acquisition_rows.append(item)
+    validate_zero_download_result_rows(
+        acquisition_rows,
+        receipt_id=receipt["receipt_id"],
+        receipt_sha256=raw_artifacts["acquisition_receipt"]["sha256"],
+    )
+    resources = receipt.get("resources")
+    expected_roles = {
+        ("Qwen/Qwen3-VL-8B-Instruct", target_revision, "vllm_target"),
+        (EXPECTED_SCORE_GUARD, EXPECTED_SCORE_GUARD_REVISION, "guardrail_judge"),
+        (EXPECTED_DEFENSE_GUARD, EXPECTED_DEFENSE_GUARD_REVISION, "defense_guardrail"),
+    }
+    if not isinstance(resources, list) or len(resources) != 3:
+        raise PromotionError("defense-local conditional N/A resource count changed")
+    observed_roles: set[tuple[object, object, object]] = set()
+    identities: list[dict[str, Any]] = []
+    for resource in resources:
+        if (
+            not isinstance(resource, dict)
+            or not isinstance(resource.get("roles"), list)
+            or len(resource["roles"]) != 1
+        ):
+            raise PromotionError("defense-local conditional N/A resource changed")
+        observed_roles.add((resource.get("repo_id"), resource.get("revision"), resource["roles"][0]))
+        identities.append({
+            "resource_id": resource.get("resource_id"),
+            "repo_id": resource.get("repo_id"),
+            "revision": resource.get("revision"),
+            "roles": resource.get("roles"),
+        })
+    identities.sort(key=lambda item: (str(item["repo_id"]), str(item["revision"])))
+    if observed_roles != expected_roles or value.get("resource_identities") != identities:
+        raise PromotionError("defense-local conditional N/A model roles changed")
+    return {"artifact": dict(row_descriptor), "value": value}
+
+
+def validate_prompt_proxy_summary(value: object, *, label: str) -> dict[str, Any]:
+    expected_fields = {
+        "status", "arm", "required_metric", "authority", "method", "metrics",
+        "decisions", "aggregate_results", "guardrail_trail_queries",
+        "selected_judges", "selected_guardrail_decisions",
+        "selected_guardrail_aggregate_results", "guardrail_model",
+        "guardrail_revision",
+    }
+    if not isinstance(value, dict) or set(value) != expected_fields:
+        raise PromotionError(f"{label}: approximate-proxy summary shape changed")
+    if (
+        value.get("status") != "validated"
+        or value.get("arm") != PROMPT_PROXY_ARM
+        or value.get("required_metric") != PROMPT_PROXY_METRIC
+        or value.get("authority") != "supplementary_non_authoritative"
+        or value.get("method") != "common_judge_cascade_response_proxy"
+        or value.get("metrics") != ["approximate_over_refusal_rate"]
+        or any(
+            isinstance(value.get(field), bool)
+            or not isinstance(value.get(field), int)
+            or value[field] <= 0
+            for field in (
+                "decisions", "aggregate_results", "guardrail_trail_queries",
+            )
+        )
+        or not isinstance(value.get("selected_judges"), list)
+        or not value["selected_judges"]
+        or set(value["selected_judges"]) - {"rules", "guardrail"}
+        or any(
+            isinstance(value.get(field), bool)
+            or not isinstance(value.get(field), int)
+            or value[field] < 0
+            for field in (
+                "selected_guardrail_decisions",
+                "selected_guardrail_aggregate_results",
+            )
+        )
+        or value.get("guardrail_model") != EXPECTED_SCORE_GUARD
+        or value.get("guardrail_revision") != EXPECTED_SCORE_GUARD_REVISION
+    ):
+        raise PromotionError(f"{label}: approximate-proxy summary is not exact")
+    return value
+
+
+def inventory_self_test() -> dict[str, Any]:
+    rows = [{
+        "lane_id": lane, "family": family, "disposition": "runnable",
+        "reason": None, "reason_code": None,
+        "final_preflight": {"status": "pending_execution", "value": None},
+    } for lane, family in sorted(RUNNABLE_FAMILIES.items())]
+    rows += [copy.deepcopy(row) for row in expected_terminals().values()]
+    success_rows = validate_inventory(rows, completed=False)
+    inventory_counts(success_rows)
+    conditional = copy.deepcopy(rows)
+    defense_index = next(
+        index for index, row in enumerate(conditional)
+        if row["lane_id"] == "defense-local"
+    )
+    conditional[defense_index] = {
+        "lane_id": "defense-local",
+        "family": "core",
+        "disposition": DEFENSE_NA_DISPOSITION,
+        "reason_code": DEFENSE_NA_REASON_CODE,
+        "reason": DEFENSE_NA_REASON,
+        "projection": dict(DEFENSE_NA_TYPED_VALUE),
+        "canary": {
+            **DEFENSE_NA_TYPED_VALUE,
+            "conditional_na_artifact": {
+                "path": str(Path.cwd().resolve() / "defense-local.conditional-na.json"),
+                "sha256": "0" * 64,
+                "bytes": 1,
+            },
+            "call_accounting": dict(DEFENSE_NA_CALL_ACCOUNTING),
+        },
+        "final_preflight": dict(DEFENSE_NA_TYPED_VALUE),
+        "approved_caps": dict(DEFENSE_NA_TYPED_VALUE),
+    }
+    conditional_rows = validate_inventory(conditional, completed=False)
+    inventory_counts(conditional_rows)
+    tests: list[tuple[str, list[dict[str, Any]]]] = []
+    tests.append(("missing", copy.deepcopy(rows[:-1])))
+    extra = copy.deepcopy(rows)
+    extra.append({
+        "lane_id": "forged", "family": "core", "disposition": "runnable",
+        "reason": None, "reason_code": None,
+        "final_preflight": {"status": "pending_execution", "value": None},
+    })
+    tests.append(("extra", extra))
+    duplicate = copy.deepcopy(rows)
+    duplicate.append(copy.deepcopy(duplicate[0]))
+    tests.append(("duplicate", duplicate))
+    wrong_family = copy.deepcopy(rows)
+    next(row for row in wrong_family if row["lane_id"] == "local-qwen3-vl-text-full")["family"] = "bridge"
+    tests.append(("family", wrong_family))
+    wrong_terminal = copy.deepcopy(rows)
+    next(row for row in wrong_terminal if row["lane_id"] == "bridge-nanogcg")["reason"] += " forged"
+    tests.append(("terminal_reason", wrong_terminal))
+    for label, mutate in (
+        (
+            "conditional_reason",
+            lambda row: row.__setitem__("reason", DEFENSE_NA_REASON + " forged"),
+        ),
+        (
+            "conditional_reason_code",
+            lambda row: row.__setitem__("reason_code", "forged"),
+        ),
+        (
+            "conditional_typed_projection",
+            lambda row: row.__setitem__("projection", {"status": "N/A", "value": 0}),
+        ),
+        (
+            "conditional_call_accounting",
+            lambda row: row["canary"]["call_accounting"].__setitem__("target_calls", 1),
+        ),
+        (
+            "conditional_boolean_call_accounting",
+            lambda row: row["canary"]["call_accounting"].__setitem__(
+                "target_calls", False
+            ),
+        ),
+        (
+            "conditional_artifact",
+            lambda row: row["canary"]["conditional_na_artifact"].__setitem__(
+                "sha256", "x" * 64
+            ),
+        ),
+    ):
+        mutation = copy.deepcopy(conditional)
+        mutate(next(row for row in mutation if row["lane_id"] == "defense-local"))
+        tests.append((label, mutation))
+    wrong_lane = copy.deepcopy(rows)
+    index = next(
+        index for index, row in enumerate(wrong_lane)
+        if row["lane_id"] == "local-qwen3-vl-text-full"
+    )
+    wrong_lane[index] = copy.deepcopy(conditional[defense_index])
+    wrong_lane[index]["lane_id"] = "local-qwen3-vl-text-full"
+    tests.append(("conditional_wrong_lane", wrong_lane))
+    rejected: list[str] = []
+    for label, mutation in tests:
+        try:
+            validate_inventory(mutation, completed=False)
+        except PromotionError:
+            rejected.append(label)
+        else:
+            raise PromotionError(f"inventory mutation did not fail closed: {label}")
+    if sha256_bytes(PLACEHOLDER_BYTES) != PLACEHOLDER_SHA256 or len(PLACEHOLDER_BYTES) != 22:
+        raise PromotionError("placeholder byte contract self-test failed")
+    plan = {
+        "schema": PLAN_SCHEMA, "status": "candidate_only",
+        "code_identity": {
+            "expected_commit": EXPECTED_COMMIT, "framework_lock_id": EXPECTED_FRAMEWORK_LOCK,
+        },
+        "inputs": {},
+        "inventory_counts": {
+            "total": 46, "runnable": 26, "typed_terminal": 20,
+            "conditional_na_lanes": [], "bridge_terminal": 3,
+            "ollama_transport_terminal": 3,
+            "portfolio_terminal": 5, "native_terminal": 9,
+        },
+        "local_only": dict(LOCAL_ONLY_CONTRACT),
+        "canonical_runnote": {
+            "destination": "/fixture/RUNNOTE.md", "proposed_sha256": "a" * 64,
+            "proposed_bytes": 123, "schema": CANONICAL_SCHEMA, "candidate_only": False,
+        },
+        "prior_canonical": {
+            "state": "exact_placeholder",
+            "artifact": {
+                "path": "/fixture/RUNNOTE.md", "sha256": PLACEHOLDER_SHA256,
+                "bytes": 22,
+            },
+        },
+        "placeholder_archive_destination": "/fixture/archive.md",
+        "promotion_receipt_destination": "/fixture/receipt.json",
+        "authorization": {
+            "kind": "exact_promotion_plan_sha256", "required": True,
+            "launches_models_or_jobs": False,
+        },
+    }
+    validate_plan_fields(plan)
+    conditional_plan = copy.deepcopy(plan)
+    conditional_plan["inventory_counts"] = {
+        "total": 46, "runnable": 25, "typed_terminal": 21,
+        "conditional_na_lanes": ["defense-local"], "bridge_terminal": 3,
+        "ollama_transport_terminal": 3,
+        "portfolio_terminal": 5, "native_terminal": 9,
+    }
+    validate_plan_fields(conditional_plan)
+    plan_mutations: list[tuple[str, dict[str, Any]]] = []
+    wrong_count = copy.deepcopy(plan)
+    wrong_count["inventory_counts"]["total"] = 42
+    plan_mutations.append(("plan_inventory_count", wrong_count))
+    mismatched_conditional = copy.deepcopy(plan)
+    mismatched_conditional["inventory_counts"]["conditional_na_lanes"] = ["defense-local"]
+    plan_mutations.append(("plan_conditional_count_mismatch", mismatched_conditional))
+    wrong_local = copy.deepcopy(plan)
+    wrong_local["local_only"]["model_downloads"] = 1
+    plan_mutations.append(("plan_download", wrong_local))
+    wrong_placeholder = copy.deepcopy(plan)
+    wrong_placeholder["prior_canonical"]["artifact"]["sha256"] = "b" * 64
+    plan_mutations.append(("plan_placeholder", wrong_placeholder))
+    wrong_authorization = copy.deepcopy(plan)
+    wrong_authorization["authorization"]["required"] = False
+    plan_mutations.append(("plan_authorization", wrong_authorization))
+    rejected_plan: list[str] = []
+    for label, mutation in plan_mutations:
+        try:
+            validate_plan_fields(mutation)
+        except PromotionError:
+            rejected_plan.append(label)
+        else:
+            raise PromotionError(f"promotion-plan mutation did not fail closed: {label}")
+    receipt_id = "acquisition-receipt-" + "a" * 32
+    receipt_sha = "b" * 64
+    acquisition = [{
+        "receipt_id": receipt_id,
+        "receipt_sha256": receipt_sha,
+        "downloaded_bytes": 0,
+    }]
+    validate_zero_download_result_rows(
+        acquisition, receipt_id=receipt_id, receipt_sha256=receipt_sha
+    )
+    acquisition_mutations: list[tuple[str, list[dict[str, Any]]]] = [
+        ("missing", []),
+        ("duplicate", copy.deepcopy(acquisition) * 2),
+        ("wrong_receipt_id", [{**acquisition[0], "receipt_id": "forged"}]),
+        ("wrong_receipt_sha", [{**acquisition[0], "receipt_sha256": "c" * 64}]),
+        ("bool_download_zero", [{**acquisition[0], "downloaded_bytes": False}]),
+        ("nonzero_download", [{**acquisition[0], "downloaded_bytes": 1}]),
+        ("extra_field", [{**acquisition[0], "status": "complete"}]),
+    ]
+    rejected_acquisition: list[str] = []
+    for label, mutation in acquisition_mutations:
+        try:
+            validate_zero_download_result_rows(
+                mutation, receipt_id=receipt_id, receipt_sha256=receipt_sha
+            )
+        except PromotionError:
+            rejected_acquisition.append(label)
+        else:
+            raise PromotionError(
+                f"acquisition-result mutation did not fail closed: {label}"
+            )
+    descriptor_fixture = {
+        name: {
+            "path": str(Path.cwd().resolve() / f"{name}.fixture"),
+            "sha256": "d" * 64,
+            "bytes": 1,
+        }
+        for name in DEFENSE_NA_ARTIFACT_KEYS
+    }
+    validate_defense_na_artifact_inventory_shape(descriptor_fixture)
+    descriptor_mutations = []
+    missing_acquisition_log = copy.deepcopy(descriptor_fixture)
+    missing_acquisition_log.pop("acquisition_result_log")
+    descriptor_mutations.append(("missing_acquisition_result_log", missing_acquisition_log))
+    extra_descriptor = copy.deepcopy(descriptor_fixture)
+    extra_descriptor["forged"] = copy.deepcopy(next(iter(extra_descriptor.values())))
+    descriptor_mutations.append(("extra_descriptor", extra_descriptor))
+    bool_bytes = copy.deepcopy(descriptor_fixture)
+    bool_bytes["acquisition_result_log"]["bytes"] = True
+    descriptor_mutations.append(("acquisition_result_bool_bytes", bool_bytes))
+    rejected_descriptors: list[str] = []
+    for label, mutation in descriptor_mutations:
+        try:
+            validate_defense_na_artifact_inventory_shape(mutation)
+        except PromotionError:
+            rejected_descriptors.append(label)
+        else:
+            raise PromotionError(
+                f"conditional artifact descriptor mutation did not fail closed: {label}"
+            )
+    live_descriptor = {"sha256": "e" * 64, "bytes": 123}
+    live_fixture = {
+        "mode": "measured",
+        "execution_scope_id": "phase5-self-test",
+        "max_age_hours": 24.0,
+        "artifacts": [{
+            "file": "live-attestation.fixture.json",
+            "sha256": live_descriptor["sha256"],
+            "bytes": live_descriptor["bytes"],
+            "attestation_id": "live-attestation-" + "f" * 24,
+        }],
+    }
+    validate_defense_na_live_binding_shape(
+        live_fixture,
+        attestation=live_descriptor,
+        filename="live-attestation.fixture.json",
+    )
+    live_mutations: list[tuple[str, dict[str, Any]]] = []
+    integer_age = copy.deepcopy(live_fixture)
+    integer_age["max_age_hours"] = 24
+    live_mutations.append(("integer_age", integer_age))
+    wrong_id = copy.deepcopy(live_fixture)
+    wrong_id["artifacts"][0]["attestation_id"] = "live-attestation-forged"
+    live_mutations.append(("invalid_attestation_id", wrong_id))
+    wrong_bytes = copy.deepcopy(live_fixture)
+    wrong_bytes["artifacts"][0]["bytes"] = 124
+    live_mutations.append(("descriptor_bytes", wrong_bytes))
+    rejected_live: list[str] = []
+    for label, mutation in live_mutations:
+        try:
+            validate_defense_na_live_binding_shape(
+                mutation,
+                attestation=live_descriptor,
+                filename="live-attestation.fixture.json",
+            )
+        except PromotionError:
+            rejected_live.append(label)
+        else:
+            raise PromotionError(
+                f"conditional live-attestation mutation did not fail closed: {label}"
+            )
+    numeric_contract_mutations = {
+        "boolean_returncode": {**DEFENSE_NA_CLASSIFICATION, "returncode": True},
+        "boolean_runner_output": {**DEFENSE_NA_RUNNER_OUTPUTS, "grid_artifacts": False},
+    }
+    rejected_numeric: list[str] = []
+    for label, mutation in numeric_contract_mutations.items():
+        if label == "boolean_returncode":
+            accepted_numeric = exact_typed_int_contract(
+                mutation, DEFENSE_NA_CLASSIFICATION, ("returncode",)
+            )
+        else:
+            accepted_numeric = exact_typed_int_contract(
+                mutation,
+                DEFENSE_NA_RUNNER_OUTPUTS,
+                ("grid_artifacts", "response_streams", "completion_artifacts", "error_artifacts"),
+            )
+        if accepted_numeric:
+            raise PromotionError(
+                f"conditional numeric-type mutation did not fail closed: {label}"
+            )
+        rejected_numeric.append(label)
+    proxy = {
+        "status": "validated", "arm": PROMPT_PROXY_ARM,
+        "required_metric": PROMPT_PROXY_METRIC,
+        "authority": "supplementary_non_authoritative",
+        "method": "common_judge_cascade_response_proxy",
+        "metrics": ["approximate_over_refusal_rate"], "decisions": 1,
+        "aggregate_results": 1, "guardrail_trail_queries": 1,
+        "selected_judges": ["rules"], "selected_guardrail_decisions": 0,
+        "selected_guardrail_aggregate_results": 0,
+        "guardrail_model": EXPECTED_SCORE_GUARD,
+        "guardrail_revision": EXPECTED_SCORE_GUARD_REVISION,
+    }
+    validate_prompt_proxy_summary(proxy, label="self-test")
+    rejected_proxy: list[str] = []
+    for label, field, replacement in (
+        ("proxy-arm", "arm", "cyberseceval_mitre"),
+        ("proxy-metric", "metrics", ["over_refusal_rate"]),
+        ("proxy-query", "guardrail_trail_queries", 0),
+        ("proxy-guard", "guardrail_revision", "main"),
+    ):
+        mutation = dict(proxy)
+        mutation[field] = replacement
+        try:
+            validate_prompt_proxy_summary(mutation, label="self-test")
+        except PromotionError:
+            rejected_proxy.append(label)
+        else:
+            raise PromotionError(f"proxy mutation did not fail closed: {label}")
+    return {
+        "schema": "ura-gate5-promotion-self-test/1", "status": "passed",
+        "expected_rows": 46, "expected_runnable": [25, 26],
+        "expected_terminal": [20, 21],
+        "expected_conditional_na_lanes": [[], ["defense-local"]],
+        "placeholder_bytes": 22, "placeholder_sha256": PLACEHOLDER_SHA256,
+        "rejected_mutations": rejected,
+        "rejected_plan_mutations": rejected_plan,
+        "rejected_acquisition_result_mutations": rejected_acquisition,
+        "rejected_conditional_artifact_descriptor_mutations": rejected_descriptors,
+        "rejected_conditional_live_attestation_mutations": rejected_live,
+        "rejected_conditional_numeric_type_mutations": rejected_numeric,
+        "rejected_proxy_mutations": rejected_proxy,
+    }
+
+
+def run_capture(argv: Sequence[str], *, cwd: Path) -> str:
+    result = subprocess.run(
+        list(argv), cwd=cwd, check=False, stdin=subprocess.DEVNULL,
+        stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, timeout=30,
+    )
+    if result.returncode != 0:
+        raise PromotionError(
+            f"read-only command failed ({result.returncode}): "
+            f"{(result.stderr.strip() or result.stdout.strip())[:2000]}"
+        )
+    return result.stdout.strip()
+
+
+def required_env(name: str) -> str:
+    value = os.environ.get(name, "").strip()
+    if not value:
+        raise PromotionError(f"required environment is empty: {name}")
+    return value
+
+
+def current_identities(project: Path, work: Path) -> dict[str, Any]:
+    commit = run_capture(["git", "rev-parse", "HEAD"], cwd=project)
+    if commit != EXPECTED_COMMIT or run_capture(["git", "status", "--porcelain"], cwd=project):
+        raise PromotionError("project checkout is dirty or not at the Gate-5 commit")
+    expected_state = work / "runs" / "engineering" / (
+        "framework-runtime-" + EXPECTED_FRAMEWORK_LOCK[:12]
+    )
+    if (
+        os.environ.get("URA_FRAMEWORK_LOCK_ID") != EXPECTED_FRAMEWORK_LOCK
+        or Path(required_env("URA_FRAMEWORK_STATE")).expanduser().resolve(strict=True)
+        != expected_state.resolve(strict=True)
+    ):
+        raise PromotionError("framework lock/current state identity changed")
+
+    project_env = required_env("URA_PROJECT_REVISION_MANIFEST")
+    if project_env != EXPECTED_PROJECT_RECEIPT:
+        raise PromotionError("current project receipt path is not the recascaded path")
+    project_path = checked_file(project_env, max_bytes=MAX_JSON_BYTES)
+    project_sha = required_env("URA_PROJECT_REVISION_SHA256").lower()
+    if project_sha != EXPECTED_PROJECT_RECEIPT_SHA256:
+        raise PromotionError("current project receipt SHA-256 is not the recascaded digest")
+    project_receipt, binding = load_project_revision_file(
+        project_path, project_sha, project / "experiments" / "run_matrix.py",
+        recheck_checkout=True,
+    )
+    source_env = required_env("URA_SOURCE_CONFORMANCE_MANIFEST")
+    if source_env != EXPECTED_SOURCE_RECEIPT:
+        raise PromotionError("current source receipt path is not the 45-arm receipt")
+    source_path = checked_file(source_env, max_bytes=MAX_JSON_BYTES)
+    source_sha = required_env("URA_SOURCE_CONFORMANCE_SHA256").lower()
+    source_desc = artifact(source_path, max_bytes=MAX_JSON_BYTES)
+    if source_sha != EXPECTED_SOURCE_RECEIPT_SHA256 or source_desc["sha256"] != source_sha:
+        raise PromotionError("current source receipt SHA-256 changed")
+    source_value = validate_source_conformance_manifest(strict_json(source_path))
+    source_dispositions: dict[str, int] = {}
+    for arm in source_value["arms"]:
+        disposition = arm["disposition"]
+        source_dispositions[disposition] = source_dispositions.get(disposition, 0) + 1
+    blocked_ids = {
+        arm["arm_id"]
+        for arm in source_value["arms"]
+        if arm["disposition"] == "blocked"
+    }
+    if (
+        len(source_value["arms"]) != EXPECTED_SOURCE_ARM_COUNT
+        or source_dispositions != EXPECTED_SOURCE_DISPOSITIONS
+        or blocked_ids != {EXPECTED_BLOCKED_SOURCE_ARM}
+    ):
+        raise PromotionError(
+            "source receipt is not exactly 45 arms: "
+            "44 admitted and bipia_test_qa blocked"
+        )
+    return {
+        "checkout": {
+            "commit": commit, "clean": True,
+            "framework_lock_id": EXPECTED_FRAMEWORK_LOCK,
+            "framework_state": str(expected_state.resolve()),
+        },
+        "project_revision": {
+            "artifact": artifact(project_path, max_bytes=MAX_JSON_BYTES),
+            "revision_id": project_receipt["revision_id"], "binding": binding,
+        },
+        "source_conformance_artifact": source_desc,
+    }
+
+
+def markdown_json(path: Path) -> dict[str, Any]:
+    raw = file_bytes(path, max_bytes=MAX_MARKDOWN_BYTES)
+    try:
+        text = raw.decode("utf-8")
+    except UnicodeError as exc:
+        raise PromotionError("RUNNOTE candidate is not UTF-8") from exc
+    matches = re.findall(r"(?ms)^```json\n(.*?)^```\s*$", text)
+    if len(matches) != 1:
+        raise PromotionError("RUNNOTE candidate must contain exactly one JSON block")
+    try:
+        value = strict_json_loads(matches[0])
+    except (TypeError, ValueError) as exc:
+        raise PromotionError(f"RUNNOTE candidate JSON block is invalid: {exc}") from exc
+    if not isinstance(value, dict):
+        raise PromotionError("RUNNOTE candidate JSON block is not an object")
+    return value
+
+
+def option_values(argv: object, flag: str) -> list[str]:
+    if not isinstance(argv, list) or any(not isinstance(item, str) or not item for item in argv):
+        raise PromotionError("retained argv is not a non-empty string array")
+    result: list[str] = []
+    index = 0
+    while index < len(argv):
+        token = argv[index]
+        if token == flag:
+            if index + 1 >= len(argv):
+                raise PromotionError(f"retained argv flag {flag} lacks a value")
+            result.append(argv[index + 1])
+            index += 2
+            continue
+        if token.startswith(flag + "="):
+            result.append(token.split("=", 1)[1])
+        index += 1
+    return result
+
+
+def one_option(argv: object, flag: str) -> str:
+    values = option_values(argv, flag)
+    if len(values) != 1 or not values[0]:
+        raise PromotionError(f"retained argv must contain exactly one {flag}")
+    return values[0]
+
+
+def _proxy_artifact_rows(
+    root: Path, marker: Mapping[str, Any], kind: str, *, label: str,
+) -> list[dict[str, Any]]:
+    artifacts = marker.get("artifacts")
+    retained = artifacts.get(kind) if isinstance(artifacts, dict) else None
+    if not isinstance(retained, dict) or set(retained) != {
+        "file", "sha256", "bytes", "records"
+    }:
+        raise PromotionError(f"{label}: {kind} descriptor changed")
+    name = retained.get("file")
+    if not isinstance(name, str) or Path(name).name != name:
+        raise PromotionError(f"{label}: {kind} filename is unsafe")
+    path = checked_file(root / name, max_bytes=MAX_JSON_BYTES)
+    payload = file_bytes(path, max_bytes=MAX_JSON_BYTES)
+    if (
+        path.parent != root
+        or sha256_bytes(payload) != retained.get("sha256")
+        or len(payload) != retained.get("bytes")
+    ):
+        raise PromotionError(f"{label}: {kind} artifact identity changed")
+    rows: list[dict[str, Any]] = []
+    for line in payload.decode("utf-8").splitlines():
+        if not line.strip():
+            continue
+        try:
+            value = strict_json_loads(line)
+        except (TypeError, ValueError) as exc:
+            raise PromotionError(f"{label}: invalid {kind} JSONL: {exc}") from exc
+        if not isinstance(value, dict):
+            raise PromotionError(f"{label}: {kind} contains a non-object row")
+        rows.append(value)
+    if len(rows) != retained.get("records"):
+        raise PromotionError(f"{label}: {kind} record count changed")
+    return rows
+
+
+def validate_promoted_proxy_canary(
+    lane: str, manifest_row: Mapping[str, Any]
+) -> None:
+    canary = manifest_row.get("canary")
+    if not isinstance(canary, dict):
+        raise PromotionError(f"{lane}: canary evidence is absent")
+    proxy = canary.get("approximate_proxy")
+    defense = canary.get("defense_judge_audit")
+    default_defense = {
+        "status": "N/A", "value": None,
+        "reason": "lane does not use the model-backed local defense",
+    }
+    if lane == "defense-local":
+        if defense != {"responses": 1, "queried_defense_stages": 2}:
+            raise PromotionError("defense-local: retained defense-audit summary changed")
+        base = manifest_row.get("base_argv")
+        if (
+            one_option(base, "--local") != "vllm:Qwen/Qwen3-VL-8B-Instruct"
+            or one_option(base, "--defense") != "both"
+            or one_option(base, "--defense-guard") != "guardrail"
+            or one_option(base, "--defense-guardrail-model")
+            != EXPECTED_DEFENSE_GUARD
+            or one_option(base, "--defense-guardrail-revision")
+            != EXPECTED_DEFENSE_GUARD_REVISION
+            or one_option(base, "--defense-guardrail-device") != "cuda:1"
+        ):
+            raise PromotionError("defense-local: exact defense argv changed")
+        root = checked_dir(canary.get("results_root", ""))
+        marker_paths = sorted(root.glob("*.complete.json"))
+        if len(marker_paths) != 1:
+            raise PromotionError("defense-local: expected one completed canary cell")
+        responses = _proxy_artifact_rows(
+            root, strict_json(marker_paths[0]), "responses", label=lane
+        )
+        if len(responses) != 1:
+            raise PromotionError("defense-local: expected one retained response")
+        response_raw = responses[0].get("raw")
+        audit = (
+            response_raw.get("defense_judge_audit")
+            if isinstance(response_raw, dict) else None
+        )
+        exact_fields = {
+            "schema", "stage", "judge", "label", "model", "model_revision",
+            "model_identity", "device", "guardrail_queried", "parsed",
+        }
+        if (
+            not isinstance(audit, list)
+            or len(audit) != 2
+            or [item.get("stage") for item in audit if isinstance(item, dict)]
+            != ["input", "output"]
+            or response_raw.get("base_target_queried") is not True
+            or response_raw.get("defense_stages_evaluated") != ["input", "output"]
+        ):
+            raise PromotionError("defense-local: defense execution facts changed")
+        for item in audit:
+            if (
+                not isinstance(item, dict)
+                or set(item) != exact_fields
+                or item.get("schema") != "ura-defense-judge-audit/1"
+                or item.get("judge") != "guardrail"
+                or item.get("label") not in {"safe", "violation"}
+                or item.get("model") != EXPECTED_DEFENSE_GUARD
+                or item.get("model_revision") != EXPECTED_DEFENSE_GUARD_REVISION
+                or item.get("model_identity")
+                != f"{EXPECTED_DEFENSE_GUARD}@{EXPECTED_DEFENSE_GUARD_REVISION}"
+                or item.get("device") != "cuda:1"
+                or item.get("guardrail_queried") is not True
+                or item.get("parsed") is not True
+            ):
+                raise PromotionError("defense-local: exact 1B audit facts changed")
+        if audit[0].get("label") != "safe":
+            raise PromotionError("defense-local: input defense blocked its benign canary")
+    elif defense != default_defense:
+        raise PromotionError(f"{lane}: unexpected model-backed defense claim")
+    if lane != "bridge-purplellama":
+        if proxy != {
+            "status": "N/A", "value": None,
+            "reason": "lane has no admitted common-metric-ineligible proxy stratum",
+        }:
+            raise PromotionError(f"{lane}: unexpected approximate-proxy canary claim")
+        return
+
+    validate_prompt_proxy_summary(proxy, label=f"{lane} promoted canary")
+    expected_arms = {
+        "cyberseceval_mitre", "cyberseceval_interpreter",
+        "cyberseceval_insecure_coding", PROMPT_PROXY_ARM,
+    }
+    corpora = one_option(manifest_row.get("base_argv"), "--corpora").split(",")
+    if set(corpora) != expected_arms or len(corpora) != len(expected_arms):
+        raise PromotionError(f"{lane}: exact four-arm source inventory changed")
+    root = checked_dir(canary.get("results_root", ""))
+    canary_artifact = descriptor_path(
+        canary.get("artifact"), f"{lane} canary artifact"
+    )
+    if canary_artifact.parent != root:
+        raise PromotionError(f"{lane}: canary artifact detached from results root")
+    marker_paths = sorted(root.glob("*.complete.json"))
+    if len(marker_paths) != 1:
+        raise PromotionError(f"{lane}: prompt proxy requires one completed canary cell")
+    marker = strict_json(marker_paths[0])
+    judgments = _proxy_artifact_rows(root, marker, "judgments", label=lane)
+    trails = _proxy_artifact_rows(root, marker, "trails", label=lane)
+    results = _proxy_artifact_rows(root, marker, "results", label=lane)
+    if not judgments or len(judgments) != proxy["decisions"]:
+        raise PromotionError(f"{lane}: prompt-proxy decision count changed")
+
+    attempt_ids: set[str] = set()
+    selected_guardrail_decisions = 0
+    selected_judges: set[str] = set()
+    for judgment in judgments:
+        raw = judgment.get("raw")
+        attempt_id = judgment.get("attempt_id")
+        if (
+            not isinstance(raw, dict)
+            or not isinstance(attempt_id, str)
+            or raw.get("common_metrics_eligible") is not False
+            or raw.get("policy_evaluable_turn") is not True
+            or raw.get("required_metric") != PROMPT_PROXY_METRIC
+        ):
+            raise PromotionError(f"{lane}: prompt-proxy judgment construct changed")
+        try:
+            decision = validate_approximate_decision(
+                raw.get("approximate_security_decision")
+            )
+        except (TypeError, ValueError) as exc:
+            raise PromotionError(f"{lane}: invalid approximate decision: {exc}") from exc
+        guard_stages = [
+            stage for stage in decision.retained_trail
+            if stage.stage == 1 and stage.judge == "guardrail"
+        ]
+        if (
+            decision.source_required_metric != PROMPT_PROXY_METRIC
+            or decision.source_evaluator_implemented is not False
+            or decision.authority != "supplementary_non_authoritative"
+            or decision.method != "common_judge_cascade_response_proxy"
+            or decision.selected_judge not in {"rules", "guardrail"}
+            or len(guard_stages) != 1
+            or guard_stages[0].judge_model != EXPECTED_SCORE_GUARD
+            or guard_stages[0].judge_model_identity != EXPECTED_SCORE_GUARD_REVISION
+            or guard_stages[0].judge_model_identity_type != "revision"
+            or guard_stages[0].judge_model_identity_kind != "exact"
+            or guard_stages[0].judge_model_queried is not True
+        ):
+            raise PromotionError(f"{lane}: approximate decision provenance changed")
+        if decision.selected_judge == "guardrail":
+            selected_guardrail_decisions += 1
+            if (
+                decision.judge_model != EXPECTED_SCORE_GUARD
+                or decision.judge_model_identity != EXPECTED_SCORE_GUARD_REVISION
+                or decision.judge_model_identity_type != "revision"
+                or decision.judge_model_identity_kind != "exact"
+                or decision.judge_model_queried is not True
+            ):
+                raise PromotionError(f"{lane}: selected Guard identity/query changed")
+        selected_judges.add(decision.selected_judge)
+        attempt_ids.add(attempt_id)
+    if (
+        selected_guardrail_decisions != proxy["selected_guardrail_decisions"]
+        or sorted(selected_judges) != proxy["selected_judges"]
+    ):
+        raise PromotionError(f"{lane}: selected-judge proxy summary changed")
+
+    by_attempt: dict[object, list[dict[str, Any]]] = {}
+    for row in trails:
+        by_attempt.setdefault(row.get("attempt_id"), []).append(row)
+    if set(by_attempt) != attempt_ids:
+        raise PromotionError(f"{lane}: prompt-proxy trail inventory changed")
+    for rows in by_attempt.values():
+        if {(row.get("stage"), row.get("judge")) for row in rows} != {
+            (0, "rules"), (1, "guardrail")
+        } or any(
+            row.get("stage_queried") is not True
+            or row.get("policy_evaluation_status")
+            != "approximate_common_security_proxy"
+            or row.get("metric_authority") != "supplementary_non_authoritative"
+            or row.get("required_metric") != PROMPT_PROXY_METRIC
+            for row in rows
+        ):
+            raise PromotionError(f"{lane}: prompt-proxy trail policy changed")
+        guard = next(row for row in rows if row.get("judge") == "guardrail")
+        if (
+            guard.get("guardrail_queried") is not True
+            or guard.get("judge_model") != EXPECTED_SCORE_GUARD
+            or guard.get("judge_model_revision") != EXPECTED_SCORE_GUARD_REVISION
+            or guard.get("judge_model_identity")
+            != f"{EXPECTED_SCORE_GUARD}@{EXPECTED_SCORE_GUARD_REVISION}"
+        ):
+            raise PromotionError(f"{lane}: exact retained Guard query changed")
+    if len(by_attempt) != proxy["guardrail_trail_queries"]:
+        raise PromotionError(f"{lane}: Guard query summary changed")
+
+    approximate_results = [
+        row for row in results
+        if str(row.get("metric", "")).startswith("approximate_")
+    ]
+    if (
+        len(approximate_results) != proxy["aggregate_results"]
+        or {row.get("metric") for row in approximate_results}
+        != {"approximate_over_refusal_rate"}
+    ):
+        raise PromotionError(f"{lane}: approximate over-refusal result changed")
+    selected_guardrail_results = 0
+    for result in approximate_results:
+        nested = result.get("provenance")
+        try:
+            provenance = validate_approximate_metric_provenance(
+                result["metric"],
+                nested.get("approximate_security") if isinstance(nested, dict) else None,
+            )
+        except (TypeError, ValueError) as exc:
+            raise PromotionError(f"{lane}: invalid aggregate proxy: {exc}") from exc
+        if (
+            provenance.source_required_metric != PROMPT_PROXY_METRIC
+            or provenance.source_evaluator_implemented is not False
+            or provenance.authority != "supplementary_non_authoritative"
+            or provenance.method != "common_judge_cascade_response_proxy"
+            or not provenance.selected_judges
+            or set(provenance.selected_judges) - {"rules", "guardrail"}
+        ):
+            raise PromotionError(f"{lane}: aggregate proxy provenance changed")
+        if "guardrail" in provenance.selected_judges:
+            selected_guardrail_results += 1
+            if (
+                provenance.judge_models != [EXPECTED_SCORE_GUARD]
+                or provenance.judge_model_identities != [EXPECTED_SCORE_GUARD_REVISION]
+                or provenance.judge_model_identity_types != ["revision"]
+                or "exact" not in provenance.judge_identity_kinds
+                or provenance.n_model_queried_decisions <= 0
+            ):
+                raise PromotionError(f"{lane}: selected aggregate Guard changed")
+        elif (
+            provenance.n_model_queried_decisions != 0
+            or provenance.judge_models
+            or provenance.judge_model_identities
+            or provenance.judge_model_identity_types
+        ):
+            raise PromotionError(f"{lane}: rules-selected aggregate credits a model")
+    if selected_guardrail_results != proxy["selected_guardrail_aggregate_results"]:
+        raise PromotionError(f"{lane}: aggregate selected-Guard summary changed")
+
+
+def validate_final_lane(
+    lane: str,
+    manifest_row: Mapping[str, Any],
+    note_row: Mapping[str, Any],
+    *,
+    finalization_root: Path,
+    identities: Mapping[str, Any],
+    policy: Mapping[str, Any],
+    project: Path,
+    model_store: Path,
+) -> dict[str, dict[str, Any]]:
+    lane_root = checked_dir(finalization_root / "lanes" / lane)
+    plan_root = checked_dir(lane_root / "plan")
+    run_root = checked_dir(lane_root / "preflight")
+    receipts_root = checked_dir(finalization_root / "receipts")
+    python = checked_project_python(project)
+    expected_note = dict(manifest_row)
+    expected_note["final_preflight"] = note_row.get("final_preflight")
+    expected_note["execution"] = note_row.get("execution")
+    if note_row != expected_note:
+        raise PromotionError(f"{lane}: RUNNOTE differs from manifest outside execution/final preflight")
+    validate_promoted_proxy_canary(lane, manifest_row)
+    execution = note_row.get("execution")
+    final = note_row.get("final_preflight")
+    if (
+        not isinstance(execution, dict)
+        or set(execution) != {
+            "lane_id", "argv_artifact", "acquisition", "preflight_controller_log",
+            "final_preflight",
+        }
+        or execution.get("lane_id") != lane
+        or execution.get("final_preflight") != final
+        or not isinstance(final, dict)
+        or set(final) != {
+            "status", "projection_id", "projection_artifact", "eligibility_plan_id",
+            "eligibility_artifact", "request_envelope_id", "request_envelope_artifact",
+            "deadline_artifact", "selection_parity", "complete_call_projection_parity",
+            "exact_cap_binding", "call_start_deadline_semantics",
+        }
+        or final.get("status") != "complete"
+        or any(final.get(field) is not True for field in (
+            "selection_parity", "complete_call_projection_parity", "exact_cap_binding",
+        ))
+    ):
+        raise PromotionError(f"{lane}: final preflight/execution equality is incomplete")
+    preflight_log = descriptor_path(
+        execution["preflight_controller_log"], f"{lane} preflight controller log",
+        max_bytes=MAX_MARKDOWN_BYTES,
+    )
+    if preflight_log != lane_root / "preflight.controller.log":
+        raise PromotionError(f"{lane}: preflight controller log path convention changed")
+    try:
+        preflight_log.relative_to(finalization_root)
+    except ValueError as exc:
+        raise PromotionError(f"{lane}: preflight controller log is outside finalization root") from exc
+
+    final_paths = {
+        field: descriptor_path(final[field], f"{lane} final {field}")
+        for field in (
+            "projection_artifact", "eligibility_artifact", "request_envelope_artifact",
+            "deadline_artifact",
+        )
+    }
+    for path in final_paths.values():
+        try:
+            path.relative_to(finalization_root)
+        except ValueError as exc:
+            raise PromotionError(f"{lane}: final artifact is outside the finalization root") from exc
+        try:
+            path.relative_to(run_root)
+        except ValueError as exc:
+            raise PromotionError(f"{lane}: final artifact is outside its exact preflight root") from exc
+    projection, _ = load_lane_projection_file(
+        final_paths["projection_artifact"], final["projection_artifact"]["sha256"]
+    )
+    eligibility = validate_eligibility_plan(strict_json(final_paths["eligibility_artifact"]))
+    envelope, _ = load_request_envelope_file(final_paths["request_envelope_artifact"])
+    validate_lane_projection_binding(
+        projection,
+        eligibility_plan=eligibility,
+        eligibility_artifact={
+            "file": final_paths["eligibility_artifact"].name,
+            "sha256": final["eligibility_artifact"]["sha256"],
+            "bytes": final["eligibility_artifact"]["bytes"], "records": 1,
+        },
+    )
+    if (
+        projection["projection_id"] != final["projection_id"]
+        or eligibility["plan_id"] != final["eligibility_plan_id"]
+        or envelope["envelope_id"] != final["request_envelope_id"]
+        or projection["selection"] != manifest_row["preliminary"]["selection"]
+    ):
+        raise PromotionError(f"{lane}: final artifact IDs or selection changed")
+    preliminary_projection_path = descriptor_path(
+        manifest_row["preliminary"]["projection_artifact"], f"{lane} preliminary projection"
+    )
+    preliminary_eligibility_path = descriptor_path(
+        manifest_row["preliminary"]["eligibility_artifact"], f"{lane} preliminary eligibility"
+    )
+    preliminary_envelope_path = descriptor_path(
+        manifest_row["preliminary"]["request_envelope_artifact"],
+        f"{lane} preliminary request envelope",
+    )
+    preliminary_projection, _ = load_lane_projection_file(
+        preliminary_projection_path,
+        manifest_row["preliminary"]["projection_artifact"]["sha256"],
+    )
+    preliminary_eligibility = validate_eligibility_plan(strict_json(preliminary_eligibility_path))
+    preliminary_envelope, _ = load_request_envelope_file(preliminary_envelope_path)
+    validate_lane_projection_binding(
+        preliminary_projection,
+        eligibility_plan=preliminary_eligibility,
+        eligibility_artifact={
+            "file": preliminary_eligibility_path.name,
+            "sha256": manifest_row["preliminary"]["eligibility_artifact"]["sha256"],
+            "bytes": manifest_row["preliminary"]["eligibility_artifact"]["bytes"],
+            "records": 1,
+        },
+    )
+    if (
+        preliminary_projection["projection_id"]
+        != manifest_row["preliminary"]["projection_id"]
+        or preliminary_eligibility["plan_id"]
+        != manifest_row["preliminary"]["eligibility_plan_id"]
+        or preliminary_envelope["envelope_id"]
+        != manifest_row["preliminary"]["request_envelope_id"]
+        or preliminary_projection["selection"]
+        != manifest_row["preliminary"]["selection"]
+    ):
+        raise PromotionError(f"{lane}: preliminary artifact identity/selection changed")
+    if projection["call_projection"] != preliminary_projection["call_projection"]:
+        raise PromotionError(f"{lane}: complete final/preliminary call projection differs")
+
+    request = envelope["request"]
+    preliminary_request = preliminary_envelope["request"]
+    caps = manifest_row["approved_caps"]
+    projected_calls = manifest_row["preliminary"]["projected_calls"]
+    if caps != {
+        "status": "approved",
+        "target_calls": projected_calls["target_calls"],
+        "model_judge_calls": 0,
+        "http_attempts": 0,
+        "local_guardrail_evaluations": {
+            "status": "projected_workload_not_a_runner_call_cap",
+            "value": projected_calls["local_guardrail_evaluations"],
+        },
+        "call_start_deadline_seconds": CALL_START_DEADLINE_SECONDS,
+        "retained_output_policy_bytes": EXTERNAL_RETAINED_OUTPUT_POLICY_BYTES,
+        "retained_output_policy_semantics": (
+            "external_operator_policy_only_not_runner_enforced"
+        ),
+    }:
+        raise PromotionError(f"{lane}: approved cap contract changed")
+    if (
+        request.get("execution_purpose") != "preflight_only"
+        or request.get("dry_run") is not False
+        or request.get("hosted_judge_data_transfer_acknowledged") is not False
+        or request.get("call_caps") != {
+            "target": caps["target_calls"], "judge": None, "http_attempts": None,
+            "deadline_seconds": caps["call_start_deadline_seconds"],
+        }
+        or request.get("judges") not in (["rules", "guardrail"], ["rules"])
+        or "llm" in request.get("judges", [])
+        or len(request.get("requested_target_keys", [])) != 1
+        or not request["requested_target_keys"][0].startswith(("vllm:", "ollama:"))
+    ):
+        raise PromotionError(f"{lane}: final request is not the exact local-only preflight")
+    expected_approximate = request["judges"] == ["rules", "guardrail"]
+    if request.get("approximate_common_metrics") is not expected_approximate:
+        raise PromotionError(f"{lane}: approximate-common-metrics/judge policy changed")
+    if envelope["bindings"]["project_revision"] != identities["project_revision"]["binding"]:
+        raise PromotionError(f"{lane}: final envelope project identity is stale")
+    if (
+        {key: value for key, value in request.items() if key != "call_caps"}
+        != {key: value for key, value in preliminary_request.items() if key != "call_caps"}
+        or envelope["bindings"] != preliminary_envelope["bindings"]
+    ):
+        raise PromotionError(f"{lane}: final/preliminary semantic request bindings differ")
+    selected = eligibility["bindings"]["experiment_conditions"]["values"][
+        "selected_config_identities"
+    ]
+    current_source = identities["source_conformance_artifact"]
+    if selected.get("source_conformance") != {
+        "sha256": current_source["sha256"], "bytes": current_source["bytes"],
+    }:
+        raise PromotionError(f"{lane}: final source-conformance identity is stale")
+    if projection["call_projection"]["judge_calls"] != 0 or projection["call_projection"]["http_attempts"] != 0:
+        raise PromotionError(f"{lane}: final projection contains hosted call exposure")
+    deadline = strict_json(final_paths["deadline_artifact"], max_bytes=1024 * 1024)
+    if (
+        deadline.get("schema") != "ura-invocation-deadline/1"
+        or deadline.get("request_envelope_id") != envelope["envelope_id"]
+        or deadline.get("deadline_seconds") != caps["call_start_deadline_seconds"]
+        or isinstance(deadline.get("deadline_epoch"), bool)
+        or not isinstance(deadline.get("deadline_epoch"), (int, float))
+        or not math.isfinite(float(deadline["deadline_epoch"]))
+    ):
+        raise PromotionError(f"{lane}: final invocation-deadline evidence changed")
+
+    argv_path = descriptor_path(execution.get("argv_artifact"), f"{lane} exact argv")
+    try:
+        argv_path.relative_to(finalization_root)
+    except ValueError as exc:
+        raise PromotionError(f"{lane}: exact argv artifact is outside finalization root") from exc
+    if argv_path != lane_root / "exact-argv.json":
+        raise PromotionError(f"{lane}: exact argv artifact path convention changed")
+    argv_record = strict_json(argv_path)
+    if set(argv_record) != {"schema", "base_argv", "plan_argv", "acquire_argv", "preflight_argv"} or argv_record.get("schema") != "ura-gate5-exact-argv/1":
+        raise PromotionError(f"{lane}: exact argv artifact schema changed")
+    if argv_record["base_argv"] != manifest_row["base_argv"]:
+        raise PromotionError(f"{lane}: exact argv artifact base differs from manifest")
+    preflight_argv = argv_record["preflight_argv"]
+    if (
+        "--preflight-only" not in preflight_argv
+        or "--diagnostic-canary" in preflight_argv
+        or "--dry-run" in preflight_argv
+        or one_option(preflight_argv, "--max-total-target-calls") != str(caps["target_calls"])
+        or one_option(preflight_argv, "--max-total-judge-calls") != "0"
+        or one_option(preflight_argv, "--max-total-http-attempts") != "0"
+    ):
+        raise PromotionError(f"{lane}: exact final-preflight argv is not zero-hosted/capped")
+
+    acquisition = execution.get("acquisition")
+    expected_commands: dict[str, dict[str, Any]] = {}
+    executable = [str(python), "-m", "experiments.run_matrix"]
+    final_args = [
+        *manifest_row["base_argv"],
+        "--max-total-target-calls", str(caps["target_calls"]),
+        "--max-total-judge-calls", "0",
+        "--max-total-http-attempts", "0",
+        "--deadline-seconds", str(CALL_START_DEADLINE_SECONDS),
+        "--out", str(run_root),
+        "--preflight-only",
+    ]
+    if manifest_row["acquisition_mode"] == "required_zero_download":
+        if (
+            not isinstance(acquisition, dict)
+            or set(acquisition) != {
+                "status", "downloaded_bytes", "maximum_download_bytes", "plan_id", "plan",
+                "receipt_id", "receipt", "plan_controller_log", "acquisition_controller_log",
+            }
+            or acquisition.get("status") != "complete"
+            or acquisition.get("downloaded_bytes") != 0
+            or acquisition.get("maximum_download_bytes") != 0
+        ):
+            raise PromotionError(f"{lane}: zero-download acquisition evidence changed")
+        plan_path = descriptor_path(acquisition.get("plan"), f"{lane} acquisition plan")
+        receipt_path = descriptor_path(acquisition.get("receipt"), f"{lane} acquisition receipt")
+        for retained_path in (plan_path, receipt_path):
+            try:
+                retained_path.relative_to(finalization_root)
+            except ValueError as exc:
+                raise PromotionError(f"{lane}: acquisition artifact is outside finalization root") from exc
+        for field in ("plan_controller_log", "acquisition_controller_log"):
+            log_path = descriptor_path(
+                acquisition.get(field), f"{lane} {field}", max_bytes=MAX_MARKDOWN_BYTES,
+            )
+            try:
+                log_path.relative_to(finalization_root)
+            except ValueError as exc:
+                raise PromotionError(f"{lane}: acquisition log is outside finalization root") from exc
+        plan_log = descriptor_path(
+            acquisition.get("plan_controller_log"), f"{lane} plan controller log",
+            max_bytes=MAX_MARKDOWN_BYTES,
+        )
+        acquisition_log = descriptor_path(
+            acquisition.get("acquisition_controller_log"),
+            f"{lane} acquisition controller log", max_bytes=MAX_MARKDOWN_BYTES,
+        )
+        if (
+            plan_path.parent != plan_root
+            or receipt_path.parent != receipts_root
+            or plan_log != lane_root / "plan.controller.log"
+            or acquisition_log != lane_root / "acquire.controller.log"
+        ):
+            raise PromotionError(f"{lane}: acquisition artifact path convention changed")
+        plan = load_plan(plan_path, expected_sha256=acquisition["plan"]["sha256"])
+        receipt = load_receipt(
+            receipt_path, expected_sha256=acquisition["receipt"]["sha256"], plan=plan,
+        )
+        if plan["plan_id"] != acquisition.get("plan_id") or receipt["receipt_id"] != acquisition.get("receipt_id"):
+            raise PromotionError(f"{lane}: acquisition identity summary changed")
+        acquire_argv = argv_record["acquire_argv"]
+        if not isinstance(acquire_argv, list) or one_option(acquire_argv, "--max-download-bytes") != "0":
+            raise PromotionError(f"{lane}: acquisition argv permits a download")
+        expected_plan_argv = [
+            *executable, *final_args,
+            "--model-acquisition-plan-only",
+            "--model-acquisition-plan-dir", str(plan_root),
+        ]
+        expected_acquire_argv = [
+            str(python), "-m", "experiments.model_acquire",
+            "--plan", str(plan_path),
+            "--plan-sha256", acquisition["plan"]["sha256"],
+            "--store", str(model_store),
+            "--receipts-dir", str(receipts_root),
+            "--transport-cache", str(model_store / ".transport-cache"),
+            "--max-download-bytes", "0",
+            "--min-free-bytes", str(FREE_SPACE_FLOOR_BYTES),
+            "--deadline-seconds", str(ACQUISITION_DEADLINE_SECONDS),
+        ]
+        expected_preflight_argv = [
+            *executable, *final_args,
+            "--model-acquisition-plan", str(plan_path),
+            "--model-acquisition-plan-sha256", acquisition["plan"]["sha256"],
+            "--model-acquisition-receipt", str(receipt_path),
+            "--model-acquisition-receipt-sha256", acquisition["receipt"]["sha256"],
+            "--model-acquisition-store", str(model_store),
+        ]
+        if (
+            argv_record["plan_argv"] != expected_plan_argv
+            or argv_record["acquire_argv"] != expected_acquire_argv
+            or argv_record["preflight_argv"] != expected_preflight_argv
+        ):
+            raise PromotionError(f"{lane}: exact purpose-bound acquisition/preflight argv changed")
+        expected_commands = {
+            "exact_cap_plan": {"argv": expected_plan_argv, "log": acquisition["plan_controller_log"]},
+            "zero_download_acquire": {
+                "argv": expected_acquire_argv, "log": acquisition["acquisition_controller_log"],
+            },
+            "exact_cap_preflight": {
+                "argv": expected_preflight_argv, "log": execution["preflight_controller_log"],
+            },
+        }
+    elif manifest_row["acquisition_mode"] == "not_applicable_no_managed_hub_resource":
+        if (
+            not isinstance(acquisition, dict)
+            or set(acquisition) != {
+                "status", "value", "reason", "downloaded_bytes", "maximum_download_bytes",
+            }
+            or acquisition.get("status") != "N/A"
+            or acquisition.get("value") is not None
+            or acquisition.get("reason")
+            != "selected Ollama target/rules lane has no managed Hugging Face resource"
+            or acquisition.get("downloaded_bytes") != {"status": "N/A", "value": None}
+            or acquisition.get("maximum_download_bytes") != 0
+            or argv_record["plan_argv"] != {"status": "N/A", "value": None}
+            or argv_record["acquire_argv"] != {"status": "N/A", "value": None}
+        ):
+            raise PromotionError(f"{lane}: acquisition N/A evidence changed")
+        expected_preflight_argv = [*executable, *final_args]
+        if argv_record["preflight_argv"] != expected_preflight_argv:
+            raise PromotionError(f"{lane}: exact no-acquisition preflight argv changed")
+        expected_commands = {
+            "exact_cap_preflight": {
+                "argv": expected_preflight_argv, "log": execution["preflight_controller_log"],
+            },
+        }
+    else:
+        raise PromotionError(f"{lane}: unsupported acquisition mode")
+    return expected_commands
+
+
+def validate_artifact_index(root: Path, receipt: Mapping[str, Any]) -> None:
+    observed: list[dict[str, Any]] = []
+    excluded = {root / "finalization-receipt.json", root / ".exit"}
+    for path in sorted(root.rglob("*")):
+        if path in excluded:
+            continue
+        if path.is_symlink():
+            raise PromotionError(f"finalization tree contains a non-regular artifact: {path}")
+        if path.is_dir():
+            continue
+        if not path.is_file():
+            raise PromotionError(f"finalization tree contains a non-regular artifact: {path}")
+        desc = artifact(path, max_bytes=MAX_MARKDOWN_BYTES)
+        observed.append({
+            "file": str(path.relative_to(root)), "sha256": desc["sha256"],
+            "bytes": desc["bytes"],
+        })
+    if receipt.get("artifact_index_excludes_this_receipt_and_exit_marker") != observed:
+        raise PromotionError("finalization artifact index does not match current bytes")
+
+
+def validate_evidence(
+    manifest_path: Path, candidate_path: Path, receipt_path: Path,
+    *, project: Path, work: Path,
+) -> dict[str, Any]:
+    identities = current_identities(project, work)
+    model_store = checked_dir(required_env("URA_MODEL_STORE"))
+    manifest = strict_json(manifest_path)
+    strict_fields(manifest, {
+        "schema", "inventory_scope", "inventory_complete", "code_identity",
+        "input_evidence_binding", "failed_attempts", "policy", "lanes",
+    }, "covered manifest")
+    if (
+        manifest["schema"] != COVERED_SCHEMA
+        or manifest["inventory_complete"] is not True
+        or manifest["code_identity"] != {
+            "expected_commit": EXPECTED_COMMIT,
+            "framework_lock_id": EXPECTED_FRAMEWORK_LOCK,
+        }
+    ):
+        raise PromotionError("covered manifest identity/completeness changed")
+    manifest_rows = validate_inventory(manifest["lanes"], completed=False)
+    counts = inventory_counts(manifest_rows)
+    if counts["conditional_na_lanes"]:
+        validate_defense_conditional_na_artifact(
+            manifest_rows["defense-local"], project=project, work=work
+        )
+    policy = manifest["policy"]
+    if policy != {
+        "target_and_transport_caps": "exact_preliminary_call_projection_totals",
+        "model_judge_calls_required": 0,
+        "http_attempts_required": 0,
+        "downloads_required_bytes": 0,
+        "call_start_deadline_seconds": CALL_START_DEADLINE_SECONDS,
+        "call_start_deadline_semantics": (
+            "admission_window_from_first_invocation_not_completion_timeout"
+        ),
+        "free_space_floor_bytes": FREE_SPACE_FLOOR_BYTES,
+        "retained_output_policy_bytes": EXTERNAL_RETAINED_OUTPUT_POLICY_BYTES,
+        "retained_output_policy_semantics": (
+            "external_operator_policy_only_not_runner_enforced"
+        ),
+        "provider_quota": {"status": "N/A", "reason": "all_routes_are_local"},
+        "expected_full_lane_storage": {"status": "CANNOT-VERIFY", "value": None},
+        "tokens_cost_and_throughput": {"status": "CANNOT-VERIFY", "value": None},
+    }:
+        raise PromotionError("covered manifest is not zero-hosted/zero-download")
+
+    receipt = strict_json(receipt_path)
+    strict_fields(receipt, {
+        "schema", "status", "completed_at_utc", "covered_manifest_sha256",
+        "approval", "manifest", "approval_artifact", "storage_observations",
+        "runnote_candidate", "runnable_lanes", "typed_terminal_lanes",
+        "conditional_na_lanes",
+        "downloads_observed_bytes", "commands",
+        "artifact_index_excludes_this_receipt_and_exit_marker",
+    }, "finalization receipt")
+    manifest_desc = artifact(manifest_path, max_bytes=MAX_JSON_BYTES)
+    candidate_desc = artifact(candidate_path, max_bytes=MAX_MARKDOWN_BYTES)
+    if (
+        receipt["schema"] != FINALIZATION_SCHEMA
+        or receipt["status"] != "complete"
+        or receipt["covered_manifest_sha256"] != manifest_desc["sha256"]
+        or receipt["manifest"] != manifest_desc
+        or receipt["runnote_candidate"] != candidate_desc
+        or receipt["runnable_lanes"] != counts["runnable"]
+        or receipt["typed_terminal_lanes"] != counts["typed_terminal"]
+        or receipt["conditional_na_lanes"] != counts["conditional_na_lanes"]
+        or receipt["downloads_observed_bytes"] != 0
+    ):
+        raise PromotionError("finalization receipt does not bind the exact complete evidence")
+    root = receipt_path.parent
+    if receipt_path != root / "finalization-receipt.json":
+        raise PromotionError("finalization receipt path convention changed")
+    exit_path = checked_file(root / ".exit", max_bytes=128)
+    if file_bytes(exit_path, max_bytes=128) != b"0\n":
+        raise PromotionError("Gate-5 finalizer did not retain exact exit 0")
+    if (root / "failure.json").exists() or (root / "failure.json").is_symlink():
+        raise PromotionError("complete finalization root also contains failure evidence")
+    validate_artifact_index(root, receipt)
+
+    note = markdown_json(candidate_path)
+    strict_fields(note, {
+        "schema", "status", "created_at_utc", "candidate_only",
+        "canonical_runnote_untouched", "approval", "covered_manifest",
+        "input_evidence", "failed_attempts", "policy", "storage_observations",
+        "checkout", "project_revision", "source_conformance", "system", "routes",
+        "execution_accounting", "future_measured_run", "lanes",
+    }, "RUNNOTE candidate")
+    if (
+        note["schema"] != CANDIDATE_SCHEMA
+        or note["status"] != "candidate_complete"
+        or note["candidate_only"] is not True
+        or note["canonical_runnote_untouched"] != str(work / "runs" / "thesis" / "RUNNOTE.md")
+        or note["approval"].get("covered_manifest_sha256") != manifest_desc["sha256"]
+        or note["covered_manifest"] != manifest_desc
+        or note["failed_attempts"] != manifest["failed_attempts"]
+        or note["policy"] != policy
+        or note["checkout"] != identities["checkout"]
+        or note["project_revision"] != identities["project_revision"]
+        or note["source_conformance"].get("artifact") != identities["source_conformance_artifact"]
+        or note["storage_observations"] != receipt["storage_observations"]
+    ):
+        raise PromotionError("RUNNOTE candidate identity/current bindings changed")
+    approval_path = descriptor_path(receipt["approval_artifact"], "finalization approval artifact")
+    storage_path = descriptor_path(receipt["storage_observations"], "finalization storage observations")
+    input_evidence_path = descriptor_path(note["input_evidence"], "finalization input evidence")
+    for retained_path in (approval_path, storage_path, input_evidence_path):
+        try:
+            retained_path.relative_to(root)
+        except ValueError as exc:
+            raise PromotionError("finalization receipt points outside its artifact root") from exc
+    if (
+        approval_path != root / "operator-approval.json"
+        or storage_path != root / "storage-observations.json"
+        or input_evidence_path != root / "input-evidence.json"
+    ):
+        raise PromotionError("finalization top-level artifact path convention changed")
+    approval = strict_fields(receipt["approval"], {
+        "kind", "approver", "authentication", "covered_manifest_sha256", "scope",
+        "asserted_at_utc",
+    }, "Gate-5 operator approval")
+    if (
+        approval["kind"] != "operator_assertion"
+        or approval["approver"] != "project operator"
+        or approval["authentication"] != "operator_asserted"
+        or approval["covered_manifest_sha256"] != manifest_desc["sha256"]
+        or approval["scope"]
+        != "exact frozen Gate-5 lane inventory, caps, deadline semantics, and external storage policy"
+    ):
+        raise PromotionError("operator approval scope/identity changed")
+    if strict_json(approval_path) != approval or approval != note["approval"]:
+        raise PromotionError("operator approval artifact/receipt/RUNNOTE differ")
+    input_evidence_desc = artifact(input_evidence_path, max_bytes=MAX_JSON_BYTES)
+    input_evidence = strict_json(input_evidence_path)
+    if (
+        note["input_evidence"] != input_evidence_desc
+        or manifest["input_evidence_binding"] != {
+            "sha256": input_evidence_desc["sha256"], "bytes": input_evidence_desc["bytes"],
+        }
+        or input_evidence.get("failed_attempts") != manifest["failed_attempts"]
+    ):
+        raise PromotionError("covered manifest/candidate input-evidence binding changed")
+    storage = strict_json(storage_path)
+    if storage.get("schema") != "ura-gate5-storage-observation/1" or storage.get("admission_passed") is not True:
+        raise PromotionError("Gate-5 storage admission evidence is incomplete")
+    routes = note["routes"]
+    if (
+        not isinstance(routes, dict)
+        or routes.get("target") != "local_only"
+        or routes.get("hosted_target_calls") != 0
+        or routes.get("hosted_judge_calls") != 0
+        or routes.get("http_attempts") != 0
+        or routes.get("provider_quota") != {"status": "N/A", "reason": "all_routes_are_local"}
+    ):
+        raise PromotionError("RUNNOTE candidate route accounting is not all-local")
+    if note["future_measured_run"] != {
+        "authorized": False,
+        "requires_distinct_measured_purpose_plan_and_receipt": True,
+        "diagnostic_canaries_are_empirical_benchmark_evidence": False,
+    }:
+        raise PromotionError("RUNNOTE candidate improperly authorizes measured work")
+    note_rows = validate_inventory(note["lanes"], completed=True)
+    if inventory_counts(note_rows) != counts:
+        raise PromotionError("covered manifest and RUNNOTE conditional inventory differ")
+    for lane, manifest_row in manifest_rows.items():
+        if manifest_row["disposition"] != "runnable" and note_rows[lane] != manifest_row:
+            raise PromotionError(f"{lane}: terminal manifest/RUNNOTE row differs")
+    runnable_lanes = sorted(
+        lane for lane, row in manifest_rows.items()
+        if row["disposition"] == "runnable"
+    )
+    expected_lane_commands: dict[str, dict[str, dict[str, Any]]] = {}
+    for lane in runnable_lanes:
+        expected_lane_commands[lane] = validate_final_lane(
+            lane, manifest_rows[lane], note_rows[lane],
+            finalization_root=root, identities=identities, policy=policy,
+            project=project, model_store=model_store,
+        )
+
+    commands = receipt["commands"]
+    if not isinstance(commands, list):
+        raise PromotionError("finalization command inventory is not an array")
+    by_lane: dict[str, list[dict[str, Any]]] = {lane: [] for lane in runnable_lanes}
+    environment_rows: list[dict[str, Any]] = []
+    for command in commands:
+        strict_fields(command, {
+            "lane_id", "stage", "argv", "started_at_utc", "finished_at_utc",
+            "controller_elapsed_seconds", "returncode", "log",
+        }, "finalization command row")
+        lane = command.get("lane_id")
+        if lane in by_lane:
+            if command.get("returncode") != 0:
+                raise PromotionError(f"{lane}: finalization command did not exit 0")
+            by_lane[lane].append(command)
+        elif lane == "_environment":
+            environment_rows.append(command)
+        else:
+            raise PromotionError(f"finalization command has an unknown lane identity: {lane!r}")
+    for lane, rows in by_lane.items():
+        expected = expected_lane_commands[lane]
+        if {row.get("stage") for row in rows} != set(expected) or len(rows) != len(expected):
+            raise PromotionError(f"{lane}: exact finalization command stages changed")
+        for row in rows:
+            contract = expected[row["stage"]]
+            if row["argv"] != contract["argv"] or row["log"] != contract["log"]:
+                raise PromotionError(f"{lane}: finalization command argv/log evidence changed")
+    if (
+        {row.get("stage") for row in environment_rows} != {"uname", "gpu", "packages"}
+        or len(environment_rows) != 3
+    ):
+        raise PromotionError("finalization environment command inventory changed")
+
+    return {
+        "manifest": manifest, "note": note, "receipt": receipt,
+        "identities": identities,
+        "inventory_counts": counts,
+        "inputs": {
+            "covered_manifest": manifest_desc,
+            "runnote_candidate": candidate_desc,
+            "finalization_receipt": artifact(receipt_path, max_bytes=MAX_JSON_BYTES),
+            "finalizer_exit": artifact(exit_path, max_bytes=128),
+            "project_revision": identities["project_revision"]["artifact"],
+            "source_conformance": identities["source_conformance_artifact"],
+        },
+    }
+
+
+def canonical_note(candidate: Mapping[str, Any], inputs: Mapping[str, Any], destination: Path) -> dict[str, Any]:
+    note = copy.deepcopy(dict(candidate))
+    note["schema"] = CANONICAL_SCHEMA
+    note["status"] = "complete"
+    note["candidate_only"] = False
+    note.pop("canonical_runnote_untouched", None)
+    note["canonical_runnote"] = str(destination)
+    note["promotion_basis"] = {
+        "covered_manifest": inputs["covered_manifest"],
+        "runnote_candidate": inputs["runnote_candidate"],
+        "finalization_receipt": inputs["finalization_receipt"],
+        "finalizer_exit": inputs["finalizer_exit"],
+        "current_project_revision": inputs["project_revision"],
+        "current_source_conformance": inputs["source_conformance"],
+        "all_final_preflights_revalidated": True,
+        "local_only_zero_download_revalidated": True,
+        "measured_run_launched": False,
+    }
+    return note
+
+
+def canonical_markdown(note: Mapping[str, Any]) -> bytes:
+    rows = note["lanes"]
+    runnable = sum(row["disposition"] == "runnable" for row in rows)
+    terminal = len(rows) - runnable
+    conditional = sorted(
+        row["lane_id"] for row in rows
+        if row["disposition"] == DEFENSE_NA_DISPOSITION
+    )
+    conditional_text = ",".join(conditional) if conditional else "none"
+    lines = [
+        "# URA thesis run note - Gate 5", "",
+        "> Canonical Gate-5 authorization record. No measured run was launched by promotion.",
+        "", f"- Schema: `{note['schema']}`",
+        f"- Covered manifest SHA-256: `{note['approval']['covered_manifest_sha256']}`",
+        "- Routes: local targets, rules and selected local Guardrail judges only.",
+        f"- Final preflights: {runnable} complete; typed terminal lanes: {terminal}; "
+        f"conditional N/A lanes: {conditional_text}.", "",
+        "## Lane inventory", "",
+        "| Lane | Disposition | Final preflight |", "|---|---|---|",
+    ]
+    for row in rows:
+        final = row["final_preflight"]
+        final_value = final.get("projection_id", final.get("status"))
+        lines.append(f"| {row['lane_id']} | {row['disposition']} | {final_value} |")
+    lines.extend([
+        "", "## Truth boundary", "",
+        "Diagnostic canaries establish one-cluster reachability only. This Gate-5 record approves exact caps and retained preflight evidence; it is not measured benchmark evidence and does not authorize a measured run.",
+        "", "## Machine-readable record", "", "```json",
+        json.dumps(note, ensure_ascii=False, indent=2, sort_keys=True, allow_nan=False),
+        "```", "",
+    ])
+    return "\n".join(lines).encode("utf-8")
+
+
+def classify_existing(destination: Path, proposed: bytes) -> dict[str, Any]:
+    if destination.is_symlink() or not destination.exists():
+        raise PromotionError(
+            "canonical RUNNOTE must be the exact 22-byte placeholder or the identical valid canonical document"
+        )
+    info = destination.lstat()
+    if not stat.S_ISREG(info.st_mode):
+        raise PromotionError("canonical RUNNOTE is not a regular file")
+    payload = file_bytes(destination, max_bytes=MAX_MARKDOWN_BYTES)
+    desc = artifact(destination, max_bytes=MAX_MARKDOWN_BYTES)
+    if payload == PLACEHOLDER_BYTES and desc["sha256"] == PLACEHOLDER_SHA256:
+        return {"state": "exact_placeholder", "artifact": desc}
+    if payload == proposed:
+        value = markdown_json(destination)
+        if (
+            value.get("schema") != CANONICAL_SCHEMA
+            or value.get("status") != "complete"
+            or value.get("candidate_only") is not False
+        ):
+            raise PromotionError("identical canonical bytes do not contain a valid canonical record")
+        return {"state": "identical_canonical", "artifact": desc}
+    raise PromotionError(
+        "canonical RUNNOTE is neither the exact retained placeholder nor the identical proposed document"
+    )
+
+
+def proposed_plan(
+    evidence: Mapping[str, Any], *, destination: Path, plan_path: Path,
+) -> tuple[dict[str, Any], bytes]:
+    note = canonical_note(evidence["note"], evidence["inputs"], destination)
+    proposed = canonical_markdown(note)
+    output_sha = sha256_bytes(proposed)
+    prior = classify_existing(destination, proposed)
+    archive = destination.parent / (
+        "RUNNOTE.pre-gate5-placeholder-" + PLACEHOLDER_SHA256[:16] + ".md"
+    )
+    receipt_path = destination.parent / (
+        "RUNNOTE.gate5-promotion-" + output_sha[:16] + ".receipt.json"
+    )
+    plan = {
+        "schema": PLAN_SCHEMA,
+        "status": "candidate_only",
+        "code_identity": {
+            "expected_commit": EXPECTED_COMMIT,
+            "framework_lock_id": EXPECTED_FRAMEWORK_LOCK,
+        },
+        "inputs": evidence["inputs"],
+        "inventory_counts": dict(evidence["inventory_counts"]),
+        "local_only": dict(LOCAL_ONLY_CONTRACT),
+        "canonical_runnote": {
+            "destination": str(destination), "proposed_sha256": output_sha,
+            "proposed_bytes": len(proposed), "schema": CANONICAL_SCHEMA,
+            "candidate_only": False,
+        },
+        "prior_canonical": prior,
+        "placeholder_archive_destination": str(archive),
+        "promotion_receipt_destination": str(receipt_path),
+        "authorization": {
+            "kind": "exact_promotion_plan_sha256", "required": True,
+            "launches_models_or_jobs": False,
+        },
+    }
+    del plan_path  # The plan never self-binds its own locator.
+    return plan, proposed
+
+
+def validate_plan_fields(plan: object) -> dict[str, Any]:
+    value = strict_fields(plan, {
+        "schema", "status", "code_identity", "inputs", "inventory_counts",
+        "local_only", "canonical_runnote", "prior_canonical",
+        "placeholder_archive_destination", "promotion_receipt_destination",
+        "authorization",
+    }, "promotion plan")
+    if (
+        value["schema"] != PLAN_SCHEMA
+        or value["status"] != "candidate_only"
+        or value["code_identity"] != {
+            "expected_commit": EXPECTED_COMMIT,
+            "framework_lock_id": EXPECTED_FRAMEWORK_LOCK,
+        }
+        or value["inventory_counts"] not in (
+            {
+                "total": 46, "runnable": 26, "typed_terminal": 20,
+                "conditional_na_lanes": [], "bridge_terminal": 3,
+                "ollama_transport_terminal": 3,
+                "portfolio_terminal": 5, "native_terminal": 9,
+            },
+            {
+                "total": 46, "runnable": 25, "typed_terminal": 21,
+                "conditional_na_lanes": ["defense-local"], "bridge_terminal": 3,
+                "ollama_transport_terminal": 3,
+                "portfolio_terminal": 5, "native_terminal": 9,
+            },
+        )
+        or value["authorization"] != {
+            "kind": "exact_promotion_plan_sha256", "required": True,
+            "launches_models_or_jobs": False,
+        }
+        or value["local_only"] != LOCAL_ONLY_CONTRACT
+    ):
+        raise PromotionError("promotion plan contract changed")
+    canonical = strict_fields(value["canonical_runnote"], {
+        "destination", "proposed_sha256", "proposed_bytes", "schema", "candidate_only",
+    }, "promotion plan canonical output")
+    if (
+        not isinstance(canonical["destination"], str)
+        or HEX64.fullmatch(str(canonical["proposed_sha256"])) is None
+        or isinstance(canonical["proposed_bytes"], bool)
+        or not isinstance(canonical["proposed_bytes"], int)
+        or canonical["proposed_bytes"] <= 0
+        or canonical["schema"] != CANONICAL_SCHEMA
+        or canonical["candidate_only"] is not False
+    ):
+        raise PromotionError("promotion plan canonical-output descriptor is invalid")
+    prior = strict_fields(value["prior_canonical"], {"state", "artifact"}, "promotion plan prior canonical")
+    if prior["state"] not in {"exact_placeholder", "identical_canonical"}:
+        raise PromotionError("promotion plan prior canonical state is invalid")
+    prior_artifact = prior["artifact"]
+    if not isinstance(prior_artifact, dict):
+        raise PromotionError("promotion plan prior canonical descriptor is invalid")
+    if prior["state"] == "exact_placeholder" and (
+        prior_artifact.get("sha256") != PLACEHOLDER_SHA256
+        or prior_artifact.get("bytes") != len(PLACEHOLDER_BYTES)
+    ):
+        raise PromotionError("promotion plan does not bind the exact placeholder")
+    if prior["state"] == "identical_canonical" and (
+        prior_artifact.get("sha256") != canonical["proposed_sha256"]
+        or prior_artifact.get("bytes") != canonical["proposed_bytes"]
+    ):
+        raise PromotionError("promotion plan prior canonical bytes differ from proposed output")
+    return value
+
+
+def ensure_private_single_link(path: Path) -> None:
+    info = path.lstat()
+    if (
+        path.is_symlink()
+        or not stat.S_ISREG(info.st_mode)
+        or stat.S_IMODE(info.st_mode) != 0o600
+        or info.st_nlink != 1
+    ):
+        raise PromotionError(
+            f"published canonical artifact must be mode 0600, regular, and link-count 1: {path}"
+        )
+
+
+def same_inode(first: Path, second: Path) -> bool:
+    a, b = first.stat(), second.stat()
+    return a.st_dev == b.st_dev and a.st_ino == b.st_ino
+
+
+def atomic_exchange(first: Path, second: Path) -> None:
+    """Linux renameat2(RENAME_EXCHANGE), with no non-atomic fallback."""
+
+    library = ctypes.CDLL(None, use_errno=True)
+    renameat2 = getattr(library, "renameat2", None)
+    if renameat2 is None:
+        raise PromotionError("atomic rename exchange is unavailable on this host")
+    renameat2.argtypes = [
+        ctypes.c_int, ctypes.c_char_p, ctypes.c_int, ctypes.c_char_p,
+        ctypes.c_uint,
+    ]
+    renameat2.restype = ctypes.c_int
+    result = renameat2(
+        -100, os.fsencode(first), -100, os.fsencode(second), 2,
+    )
+    if result != 0:
+        error = ctypes.get_errno()
+        raise PromotionError(
+            f"atomic RUNNOTE exchange failed with errno {error}: {os.strerror(error)}"
+        )
+
+
+def publish(
+    *, destination: Path, proposed: bytes, plan: Mapping[str, Any], plan_desc: Mapping[str, Any],
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    parent = checked_dir(destination.parent)
+    archive = Path(plan["placeholder_archive_destination"])
+    staging = parent / (".RUNNOTE.gate5-" + plan_desc["sha256"][:16] + ".staging")
+    authorized_prior = plan["prior_canonical"]
+    authorized_prior_state = authorized_prior["state"]
+
+    if destination.exists() and not destination.is_symlink():
+        current = file_bytes(destination, max_bytes=MAX_MARKDOWN_BYTES)
+        if current == proposed:
+            if staging.exists() and not staging.is_symlink():
+                if same_inode(staging, destination):
+                    staging.unlink()
+                elif (
+                    archive.exists()
+                    and not archive.is_symlink()
+                    and same_inode(staging, archive)
+                    and file_bytes(staging, max_bytes=128) == PLACEHOLDER_BYTES
+                ):
+                    staging.unlink()
+                else:
+                    raise PromotionError("promotion staging residue has an unexpected identity")
+                fsync_dir(parent)
+            if authorized_prior_state == "exact_placeholder":
+                if (
+                    not archive.exists()
+                    or archive.is_symlink()
+                    or file_bytes(archive, max_bytes=128) != PLACEHOLDER_BYTES
+                ):
+                    raise PromotionError(
+                        "authorized placeholder promotion lacks its recoverable exact archive"
+                    )
+                os.chmod(archive, 0o600)
+                fsync_file(archive)
+                ensure_private_single_link(archive)
+                prior = {
+                    "state": "placeholder_archived_and_replaced",
+                    "artifact": artifact(archive, max_bytes=128),
+                    "archive": artifact(archive, max_bytes=128),
+                }
+            elif authorized_prior_state == "identical_canonical":
+                prior = {
+                    "state": "already_identical",
+                    "artifact": artifact(destination, max_bytes=MAX_MARKDOWN_BYTES),
+                    "archive": (
+                        artifact(archive, max_bytes=128)
+                        if archive.exists() and not archive.is_symlink()
+                        else {"status": "N/A", "value": None}
+                    ),
+                }
+            else:
+                raise PromotionError("authorized prior-canonical state changed")
+            os.chmod(destination, 0o600)
+            fsync_file(destination)
+            ensure_private_single_link(destination)
+            return artifact(destination, max_bytes=MAX_MARKDOWN_BYTES), prior
+        if current != PLACEHOLDER_BYTES or sha256_bytes(current) != PLACEHOLDER_SHA256:
+            raise PromotionError("authorized publish found an unexpected canonical RUNNOTE")
+        if authorized_prior_state != "exact_placeholder":
+            raise PromotionError(
+                "authorized plan bound an identical canonical document but found the placeholder"
+            )
+        if destination.stat().st_nlink not in {1, 2}:
+            raise PromotionError("placeholder link count is unsafe")
+    elif not destination.exists() and archive.exists() and not archive.is_symlink():
+        if authorized_prior_state != "exact_placeholder":
+            raise PromotionError("missing-destination resume is not authorized by the plan")
+        if file_bytes(archive, max_bytes=128) != PLACEHOLDER_BYTES:
+            raise PromotionError("resume archive is not the exact placeholder")
+    else:
+        raise PromotionError("authorized publish found neither placeholder nor safe archived resume state")
+
+    if not archive.exists():
+        if not destination.exists():
+            raise PromotionError("cannot create placeholder archive after destination disappeared")
+        os.link(destination, archive)
+        fsync_dir(parent)
+    elif archive.is_symlink() or file_bytes(archive, max_bytes=128) != PLACEHOLDER_BYTES:
+        raise PromotionError("placeholder archive destination is occupied by different bytes")
+    os.chmod(archive, 0o600)
+    fsync_file(archive)
+    archive_desc = artifact(archive, max_bytes=128)
+
+    if not staging.exists():
+        write_create_only(staging, proposed)
+    elif staging.is_symlink() or file_bytes(staging, max_bytes=MAX_MARKDOWN_BYTES) != proposed:
+        raise PromotionError("promotion staging path is occupied by different bytes")
+
+    exchanged = False
+    try:
+        if destination.exists():
+            if file_bytes(destination, max_bytes=128) != PLACEHOLDER_BYTES:
+                raise PromotionError("placeholder changed immediately before publication")
+            if not same_inode(destination, archive):
+                raise PromotionError("placeholder archive is not the exact destination inode")
+            atomic_exchange(staging, destination)
+            exchanged = True
+            fsync_dir(parent)
+        else:
+            # Resume only: the exact placeholder archive proves the prior
+            # authorized attempt safely retained the displaced bytes.
+            os.link(staging, destination)
+            fsync_dir(parent)
+        staging.unlink()
+        fsync_dir(parent)
+        os.chmod(destination, 0o600)
+        fsync_file(destination)
+        if file_bytes(destination, max_bytes=MAX_MARKDOWN_BYTES) != proposed:
+            raise PromotionError("published canonical RUNNOTE bytes changed")
+        ensure_private_single_link(destination)
+        os.chmod(archive, 0o600)
+        fsync_file(archive)
+        ensure_private_single_link(archive)
+        archive_desc = artifact(archive, max_bytes=128)
+    except BaseException:
+        if not exchanged and not destination.exists() and archive.exists():
+            try:
+                os.link(archive, destination)
+                fsync_dir(parent)
+            except OSError:
+                pass
+        raise
+    return artifact(destination, max_bytes=MAX_MARKDOWN_BYTES), {
+        "state": "placeholder_archived_and_replaced",
+        "artifact": archive_desc,
+        "archive": archive_desc,
+    }
+
+
+def parser() -> argparse.ArgumentParser:
+    ap = argparse.ArgumentParser(description="Validate and safely promote the exact Gate-5 RUNNOTE candidate.")
+    ap.add_argument("--covered-manifest")
+    ap.add_argument("--runnote-candidate")
+    ap.add_argument("--finalization-receipt")
+    ap.add_argument("--plan-out")
+    ap.add_argument("--promotion-plan")
+    ap.add_argument("--authorize-plan-sha256", default="")
+    ap.add_argument("--promotion-self-test", action="store_true", help=argparse.SUPPRESS)
+    return ap
+
+
+def main(argv: Sequence[str]) -> int:
+    args = parser().parse_args(list(argv))
+    self_test = inventory_self_test()
+    if args.promotion_self_test:
+        print(json.dumps(self_test, sort_keys=True, separators=(",", ":")))
+        return 0
+
+    project = Path.cwd().resolve(strict=True)
+    work = checked_dir(required_env("URA_WORK"))
+    destination = work / "runs" / "thesis" / "RUNNOTE.md"
+    if destination.parent.resolve(strict=True) != (work / "runs" / "thesis").resolve(strict=True):
+        raise PromotionError("canonical RUNNOTE destination is outside the canonical thesis-runs root")
+
+    authorizing = bool(args.promotion_plan or args.authorize_plan_sha256)
+    proposing = bool(args.covered_manifest or args.runnote_candidate or args.finalization_receipt)
+    if authorizing and proposing:
+        raise PromotionError("choose proposal evidence arguments or authorized promotion, not both")
+    if not authorizing:
+        if not all((args.covered_manifest, args.runnote_candidate, args.finalization_receipt)):
+            raise PromotionError(
+                "proposal mode requires --covered-manifest, --runnote-candidate, and --finalization-receipt"
+            )
+        evidence = validate_evidence(
+            checked_file(args.covered_manifest, max_bytes=MAX_JSON_BYTES),
+            checked_file(args.runnote_candidate, max_bytes=MAX_MARKDOWN_BYTES),
+            checked_file(args.finalization_receipt, max_bytes=MAX_JSON_BYTES),
+            project=project, work=work,
+        )
+        provisional_note = canonical_note(evidence["note"], evidence["inputs"], destination)
+        provisional_output = canonical_markdown(provisional_note)
+        output_sha = sha256_bytes(provisional_output)
+        default_plan = destination.parent / (
+            "RUNNOTE.gate5-promotion-" + output_sha[:16] + ".plan.json"
+        )
+        plan_path = Path(args.plan_out).expanduser() if args.plan_out else default_plan
+        if plan_path.parent.resolve(strict=True) != destination.parent.resolve(strict=True):
+            raise PromotionError("promotion plan must be a direct child of the canonical thesis-runs root")
+        plan, proposed = proposed_plan(
+            evidence, destination=destination, plan_path=plan_path,
+        )
+        if proposed != provisional_output:
+            raise PromotionError("canonical proposal changed during deterministic construction")
+        plan_desc = write_create_only(plan_path, canonical_bytes(plan))
+        print(json.dumps({
+            "schema": PLAN_SCHEMA, "status": "validated_candidate_only",
+            "promotion_plan": plan_desc,
+            "promotion_plan_sha256": plan_desc["sha256"],
+            "proposed_canonical_runnote": plan["canonical_runnote"],
+            "canonical_runnote_modified": False,
+            "next_step": (
+                f"{Path(sys.argv[0]).name} --promotion-plan {plan_desc['path']} "
+                f"--authorize-plan-sha256 {plan_desc['sha256']}"
+            ),
+        }, sort_keys=True, separators=(",", ":")))
+        return 0
+
+    if not args.promotion_plan or HEX64.fullmatch(args.authorize_plan_sha256.lower()) is None:
+        raise PromotionError("authorized mode requires --promotion-plan and one exact plan SHA-256")
+    plan_path = checked_file(args.promotion_plan, max_bytes=MAX_JSON_BYTES)
+    plan_desc = artifact(plan_path, max_bytes=MAX_JSON_BYTES)
+    if plan_desc["sha256"] != args.authorize_plan_sha256.lower():
+        raise PromotionError("authorization does not match the exact promotion plan bytes")
+    plan = validate_plan_fields(strict_json(plan_path))
+    inputs = plan.get("inputs")
+    if not isinstance(inputs, dict) or set(inputs) != {
+        "covered_manifest", "runnote_candidate", "finalization_receipt", "finalizer_exit",
+        "project_revision", "source_conformance",
+    }:
+        raise PromotionError("promotion plan input inventory changed")
+    input_paths = {
+        key: descriptor_path(value, f"promotion input {key}", max_bytes=(
+            MAX_MARKDOWN_BYTES if key == "runnote_candidate" else MAX_JSON_BYTES
+        ))
+        for key, value in inputs.items() if key != "finalizer_exit"
+    }
+    exit_path = descriptor_path(inputs["finalizer_exit"], "promotion input finalizer_exit", max_bytes=128)
+    if file_bytes(exit_path, max_bytes=128) != b"0\n":
+        raise PromotionError("promotion plan finalizer exit input is no longer exact exit 0")
+    evidence = validate_evidence(
+        input_paths["covered_manifest"], input_paths["runnote_candidate"],
+        input_paths["finalization_receipt"], project=project, work=work,
+    )
+    if evidence["inputs"] != inputs:
+        raise PromotionError("revalidated promotion inputs differ from the authorized plan")
+    rebuilt_note = canonical_note(evidence["note"], evidence["inputs"], destination)
+    proposed = canonical_markdown(rebuilt_note)
+    canonical_contract = plan["canonical_runnote"]
+    if canonical_contract != {
+        "destination": str(destination), "proposed_sha256": sha256_bytes(proposed),
+        "proposed_bytes": len(proposed), "schema": CANONICAL_SCHEMA,
+        "candidate_only": False,
+    }:
+        raise PromotionError("authorized plan proposed-output binding changed")
+    if plan["prior_canonical"]["artifact"].get("path") != str(destination):
+        raise PromotionError("authorized plan prior-canonical path changed")
+    expected_receipt_path = destination.parent / (
+        "RUNNOTE.gate5-promotion-" + sha256_bytes(proposed)[:16] + ".receipt.json"
+    )
+    if Path(plan["promotion_receipt_destination"]) != expected_receipt_path:
+        raise PromotionError("authorized plan promotion-receipt destination changed")
+    expected_archive = destination.parent / (
+        "RUNNOTE.pre-gate5-placeholder-" + PLACEHOLDER_SHA256[:16] + ".md"
+    )
+    if Path(plan["placeholder_archive_destination"]) != expected_archive:
+        raise PromotionError("authorized plan placeholder archive destination changed")
+
+    canonical_desc, prior = publish(
+        destination=destination, proposed=proposed, plan=plan, plan_desc=plan_desc,
+    )
+    receipt_value = {
+        "schema": PROMOTION_SCHEMA,
+        "status": "complete",
+        "completed_at_utc": utc_now(),
+        "promotion_plan": plan_desc,
+        "authorization": {
+            "kind": "exact_promotion_plan_sha256",
+            "authorized_plan_sha256": plan_desc["sha256"],
+        },
+        "inputs": inputs,
+        "canonical_runnote": canonical_desc,
+        "prior_canonical": prior,
+        "inventory_counts": plan["inventory_counts"],
+        "local_only": plan["local_only"],
+        "downloads_observed_bytes": 0,
+        "measured_run_launched": False,
+    }
+    if expected_receipt_path.exists() or expected_receipt_path.is_symlink():
+        existing = strict_json(expected_receipt_path)
+        strict_fields(existing, set(receipt_value), "existing promotion receipt")
+        stable_fields = set(receipt_value) - {"completed_at_utc"}
+        if any(existing[field] != receipt_value[field] for field in stable_fields):
+            raise PromotionError("existing promotion receipt differs from this exact authorization")
+        timestamp = existing.get("completed_at_utc")
+        try:
+            parsed_timestamp = datetime.fromisoformat(str(timestamp).replace("Z", "+00:00"))
+        except ValueError as exc:
+            raise PromotionError("existing promotion receipt timestamp is invalid") from exc
+        if (
+            not isinstance(timestamp, str)
+            or not timestamp.endswith("Z")
+            or parsed_timestamp.utcoffset() != timezone.utc.utcoffset(parsed_timestamp)
+        ):
+            raise PromotionError("existing promotion receipt timestamp is not UTC")
+        existing_prior = existing.get("prior_canonical")
+        if (
+            not isinstance(existing_prior, dict)
+            or existing_prior.get("state") not in {
+                "placeholder_archived_and_replaced", "already_identical",
+            }
+            or not isinstance(existing_prior.get("artifact"), dict)
+        ):
+            raise PromotionError("existing promotion receipt prior-canonical evidence is invalid")
+        if existing_prior["state"] == "placeholder_archived_and_replaced" and (
+            existing_prior["artifact"].get("sha256") != PLACEHOLDER_SHA256
+            or existing_prior["artifact"].get("bytes") != len(PLACEHOLDER_BYTES)
+        ):
+            raise PromotionError("existing promotion receipt does not bind the exact placeholder")
+        receipt_desc = artifact(expected_receipt_path, max_bytes=MAX_JSON_BYTES)
+    else:
+        receipt_desc = write_create_only(expected_receipt_path, canonical_bytes(receipt_value))
+    ensure_private_single_link(destination)
+    ensure_private_single_link(expected_receipt_path)
+    fsync_dir(destination.parent)
+    print(json.dumps({
+        "schema": PROMOTION_SCHEMA, "status": "complete",
+        "promotion_plan_sha256": plan_desc["sha256"],
+        "canonical_runnote": canonical_desc,
+        "promotion_receipt": receipt_desc,
+        "canonical_runnote_mode": "0600", "canonical_runnote_link_count": 1,
+        "model_or_job_launched": False,
+    }, sort_keys=True, separators=(",", ":")))
+    return 0
+
+
+try:
+    raise SystemExit(main(sys.argv[1:]))
+except PromotionError as exc:
+    print(f"Gate-5 RUNNOTE promotion refused: {exc}", file=sys.stderr)
+    raise SystemExit(2)
+PY

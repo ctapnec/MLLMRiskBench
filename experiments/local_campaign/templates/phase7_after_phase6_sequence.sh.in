@@ -1,0 +1,916 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+umask 077
+
+source ~/.ura_campaign_env
+cd ~/MLLMRiskBench
+
+pin_controller_generation() {
+  local script_fd="/proc/$$/fd/255" script_path root generations marker archive_sha
+  test -e "$script_fd" || { printf 'controller script descriptor is unavailable\n' >&2; return 1; }
+  script_path="$(readlink -f -- "$script_fd")"
+  test -f "$script_path" && test ! -L "$script_path"
+  root="${script_path%/*}"
+  generations="${root%/*}"
+  test "${generations##*/}" = '.ura-controller-generations'
+  test -d "$root" && test ! -L "$root"
+  marker="$root/.ura-controller-generation.tsv"
+  test -f "$marker" && test ! -L "$marker"
+  test "$(grep -Fxc -- $'schema\tura-controller-generation/1' "$marker")" = '1'
+  test "$(grep -Fxc -- $'expected_commit\t@@EXPECTED_COMMIT@@' "$marker")" = '1'
+  archive_sha="${root##*-}"
+  [[ "$archive_sha" =~ ^[0-9a-f]{64}$ ]]
+  test "${root##*/}" = "@@COMMIT_SHORT@@-$archive_sha"
+  test "$(grep -Fxc -- $'archive_sha256\t'"$archive_sha" "$marker")" = '1'
+  if [[ -n "${URA_CONTROLLER_GENERATION_ROOT-}" ]]; then
+    test "$URA_CONTROLLER_GENERATION_ROOT" = "$root"
+  fi
+  URA_CONTROLLER_GENERATION_ROOT="$root"
+  export URA_CONTROLLER_GENERATION_ROOT
+}
+
+EXPECTED_COMMIT='@@EXPECTED_COMMIT@@'
+EXPECTED_FRAMEWORK_LOCK='@@FRAMEWORK_LOCK_SHA256@@'
+PHASE6_SESSION='ura-phase6-sequence-@@COMMIT_SHORT@@'
+PHASE6_SOCKET='ura-phase6-sequence-@@COMMIT_SHORT@@'
+PHASE6_ROOT='@@WORK_ROOT@@/runs/engineering/phase6-sequence-@@PHASE6_SEQUENCE_TAG@@'
+WRAPPER_SHA256='@@SHA:phase7_analysis.sh@@'
+WRAPPER_BYTES='@@BYTES:phase7_analysis.sh@@'
+PAYLOAD_SHA256='@@SHA:phase7_analysis.py@@'
+PAYLOAD_BYTES='@@BYTES:phase7_analysis.py@@'
+PY="$PWD/.venv/bin/python"
+
+test "$(git rev-parse HEAD)" = "$EXPECTED_COMMIT"
+test -z "$(git status --porcelain)"
+test "$URA_FRAMEWORK_LOCK_ID" = "$EXPECTED_FRAMEWORK_LOCK"
+test -x "$PY"
+
+if [ "${PHASE7_WATCHER_SEALED:-0}" != '1' ]; then
+  pin_controller_generation
+  readonly URA_CONTROLLER_GENERATION_ROOT
+  SOURCE_WRAPPER="$URA_CONTROLLER_GENERATION_ROOT/phase7_analysis.sh"
+  SOURCE_PAYLOAD="$URA_CONTROLLER_GENERATION_ROOT/phase7_analysis.py"
+  SOURCE_WATCHER="$(readlink -e -- "${BASH_SOURCE[0]}")"
+  AUTHORIZED_WATCHER_SHA256="${AUTHORIZED_WATCHER_SHA256:-}"
+  test "$(printf '%s' "$AUTHORIZED_WATCHER_SHA256" | wc -c)" -eq 64
+  case "$AUTHORIZED_WATCHER_SHA256" in
+    *[!0-9a-f]*) printf 'invalid Phase 7 watcher authorization\n' >&2; exit 1 ;;
+  esac
+  test -f "$SOURCE_WATCHER" && test ! -L "$SOURCE_WATCHER"
+  test "$(sha256sum -- "$SOURCE_WATCHER" | awk '{print $1}')" = \
+    "$AUTHORIZED_WATCHER_SHA256"
+  TAG="${PHASE7_WATCHER_TAG:-$(date -u +%Y%m%dT%H%M%SZ)}"
+  case "$TAG" in
+    20[0-9][0-9][01][0-9][0-3][0-9]T[0-2][0-9][0-5][0-9][0-5][0-9]Z) ;;
+    *) printf 'invalid Phase 7 watcher tag\n' >&2; exit 1 ;;
+  esac
+  CONTROL_ROOT="$URA_WORK/runs/engineering/phase7-after-phase6-$TAG"
+  test ! -e "$CONTROL_ROOT" && test ! -L "$CONTROL_ROOT"
+  mkdir -m 700 "$CONTROL_ROOT"
+  mkdir -m 700 "$CONTROL_ROOT/sealed"
+  "$PY" - \
+    "$SOURCE_WATCHER" "$CONTROL_ROOT/sealed/phase7_after_phase6_sequence.sh" \
+      "$AUTHORIZED_WATCHER_SHA256" - 500 \
+    "$SOURCE_WRAPPER" "$CONTROL_ROOT/sealed/phase7_analysis.sh" \
+      "$WRAPPER_SHA256" "$WRAPPER_BYTES" 500 \
+    "$SOURCE_PAYLOAD" "$CONTROL_ROOT/sealed/phase7_analysis.py" \
+      "$PAYLOAD_SHA256" "$PAYLOAD_BYTES" 400 <<'PY'
+import hashlib
+import os
+from pathlib import Path
+import stat
+import sys
+
+items = sys.argv[1:]
+if len(items) % 5:
+    raise SystemExit("invalid Phase 7 seal inventory")
+for offset in range(0, len(items), 5):
+    source = Path(items[offset])
+    target = Path(items[offset + 1])
+    expected_sha = items[offset + 2]
+    expected_size = items[offset + 3]
+    mode = int(items[offset + 4], 8)
+    if not source.is_absolute() or source.is_symlink() or not source.is_file():
+        raise SystemExit(f"unsafe Phase 7 seal source: {source}")
+    source_fd = os.open(source, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
+    try:
+        before = os.fstat(source_fd)
+        if not stat.S_ISREG(before.st_mode):
+            raise SystemExit(f"non-regular Phase 7 seal source: {source}")
+        chunks = []
+        while True:
+            chunk = os.read(source_fd, 1024 * 1024)
+            if not chunk:
+                break
+            chunks.append(chunk)
+        payload = b"".join(chunks)
+        after = os.fstat(source_fd)
+        stable = ("st_dev", "st_ino", "st_mode", "st_size", "st_mtime_ns", "st_ctime_ns")
+        if any(getattr(before, field) != getattr(after, field) for field in stable):
+            raise SystemExit(f"Phase 7 seal source changed while read: {source}")
+    finally:
+        os.close(source_fd)
+    digest = hashlib.sha256(payload).hexdigest()
+    if digest != expected_sha:
+        raise SystemExit(
+            f"Phase 7 seal digest changed: {source}; "
+            f"expected={expected_sha}; observed={digest}; bytes={len(payload)}"
+        )
+    if expected_size != "-" and len(payload) != int(expected_size):
+        raise SystemExit(f"Phase 7 seal size changed: {source}")
+    target_fd = os.open(
+        target,
+        os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0),
+        mode,
+    )
+    try:
+        view = memoryview(payload)
+        while view:
+            written = os.write(target_fd, view)
+            view = view[written:]
+        os.fsync(target_fd)
+    finally:
+        os.close(target_fd)
+    if hashlib.sha256(target.read_bytes()).hexdigest() != expected_sha:
+        raise SystemExit(f"Phase 7 sealed target differs: {target}")
+PY
+  exec env \
+    PHASE7_WATCHER_SEALED=1 \
+    PHASE7_WATCHER_CONTROL_ROOT="$CONTROL_ROOT" \
+    AUTHORIZED_WATCHER_SHA256="$AUTHORIZED_WATCHER_SHA256" \
+    bash "$CONTROL_ROOT/sealed/phase7_after_phase6_sequence.sh"
+fi
+
+CONTROL_ROOT="${PHASE7_WATCHER_CONTROL_ROOT:?missing Phase 7 watcher root}"
+case "$CONTROL_ROOT" in
+  "$URA_WORK"/runs/engineering/phase7-after-phase6-*) ;;
+  *) printf 'unsafe Phase 7 watcher root\n' >&2; exit 1 ;;
+esac
+test -d "$CONTROL_ROOT" && test ! -L "$CONTROL_ROOT"
+test "$(readlink -e -- "$CONTROL_ROOT")" = "$CONTROL_ROOT"
+
+WATCHER="$CONTROL_ROOT/sealed/phase7_after_phase6_sequence.sh"
+WRAPPER="$CONTROL_ROOT/sealed/phase7_analysis.sh"
+PAYLOAD="$CONTROL_ROOT/sealed/phase7_analysis.py"
+AUTHORIZED_WATCHER_SHA256="${AUTHORIZED_WATCHER_SHA256:?missing watcher authorization}"
+LOG="$CONTROL_ROOT/watcher.log"
+LAUNCH_META="$CONTROL_ROOT/watcher-launch.json"
+INPUT_MANIFEST="$CONTROL_ROOT/phase7-inputs.json"
+PREPARE_RESULT="$CONTROL_ROOT/prepare-result.json"
+PHASE7_LAUNCH_OUTPUT="$CONTROL_ROOT/phase7-launch.txt"
+COMPLETION="$CONTROL_ROOT/completion.json"
+EXIT_TMP="$CONTROL_ROOT/.exit.tmp"
+EXIT_MARKER="$CONTROL_ROOT/.exit"
+
+verify_regular() {
+  local path="$1" expected_sha="$2" expected_bytes="$3"
+  test -f "$path" && test ! -L "$path"
+  test "$(readlink -e -- "$path")" = "$path"
+  test "$(sha256sum -- "$path" | awk '{print $1}')" = "$expected_sha"
+  if [ "$expected_bytes" != '-' ]; then
+    test "$(stat -c %s -- "$path")" = "$expected_bytes"
+  fi
+}
+
+verify_regular "$WATCHER" "$AUTHORIZED_WATCHER_SHA256" -
+verify_regular "$WRAPPER" "$WRAPPER_SHA256" "$WRAPPER_BYTES"
+verify_regular "$PAYLOAD" "$PAYLOAD_SHA256" "$PAYLOAD_BYTES"
+bash -n "$WATCHER"
+bash -n "$WRAPPER"
+PYTHONDONTWRITEBYTECODE=1 "$PY" - "$PAYLOAD" <<'PY'
+from pathlib import Path
+import sys
+
+compile(Path(sys.argv[1]).read_bytes(), sys.argv[1], "exec")
+PY
+
+export HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1 HF_DATASETS_OFFLINE=1
+export PYTHONDONTWRITEBYTECODE=1
+unset HF_TOKEN HUGGING_FACE_HUB_TOKEN OPENAI_API_KEY ANTHROPIC_API_KEY \
+  GOOGLE_API_KEY GEMINI_API_KEY MISTRAL_API_KEY TOGETHER_API_KEY \
+  DEEPSEEK_API_KEY XAI_API_KEY
+
+test ! -e "$LOG" && test ! -L "$LOG"
+exec > >(tee "$LOG") 2>&1
+
+finish() {
+  rc=$?
+  trap - EXIT
+  printf '%s\n' "$rc" > "$EXIT_TMP"
+  test ! -e "$EXIT_MARKER" && test ! -L "$EXIT_MARKER"
+  mv -- "$EXIT_TMP" "$EXIT_MARKER"
+  printf 'PHASE7_WATCHER_EXIT=%s\n' "$rc"
+  exit "$rc"
+}
+trap finish EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
+trap 'exit 129' HUP
+
+"$PY" - "$LAUNCH_META" "$CONTROL_ROOT" "$WATCHER" "$WRAPPER" \
+  "$PAYLOAD" "$EXPECTED_COMMIT" "$EXPECTED_FRAMEWORK_LOCK" \
+  "$AUTHORIZED_WATCHER_SHA256" "$PHASE6_ROOT" "$PHASE6_SESSION" \
+  "$PHASE6_SOCKET" <<'PY'
+from datetime import datetime, timezone
+import hashlib
+import json
+import os
+from pathlib import Path
+import sys
+
+(
+    out_value,
+    root_value,
+    watcher_value,
+    wrapper_value,
+    payload_value,
+    commit,
+    lock,
+    authorization,
+    phase6_root,
+    phase6_session,
+    phase6_socket,
+) = sys.argv[1:]
+
+def descriptor(raw: str) -> dict[str, object]:
+    path = Path(raw)
+    if (
+        not path.is_absolute()
+        or path.is_symlink()
+        or not path.is_file()
+        or path.resolve(strict=True) != path
+    ):
+        raise SystemExit(f"unsafe Phase 7 watcher launch artifact: {path}")
+    data = path.read_bytes()
+    return {
+        "path": str(path),
+        "sha256": hashlib.sha256(data).hexdigest(),
+        "bytes": len(data),
+    }
+
+watcher = descriptor(watcher_value)
+if watcher["sha256"] != authorization:
+    raise SystemExit("Phase 7 watcher authorization differs")
+value = {
+    "schema": "ura-phase7-after-phase6-launch/1",
+    "status": "waiting_for_phase6",
+    "started_at_utc": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+    "expected_commit": commit,
+    "framework_lock_id": lock,
+    "control_root": root_value,
+    "authorized_watcher_sha256": authorization,
+    "watcher": watcher,
+    "phase7_wrapper": descriptor(wrapper_value),
+    "phase7_payload": descriptor(payload_value),
+    "phase6_wait": {
+        "control_root": phase6_root,
+        "session": phase6_session,
+        "socket": phase6_socket,
+    },
+    "target_calls_permitted": 0,
+    "judge_calls_permitted": 0,
+    "provider_http_attempts_permitted": 0,
+}
+payload = (
+    json.dumps(value, sort_keys=True, separators=(",", ":"), allow_nan=False)
+    + "\n"
+).encode("ascii")
+fd = os.open(out_value, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+with os.fdopen(fd, "wb") as handle:
+    handle.write(payload)
+    handle.flush()
+    os.fsync(handle.fileno())
+PY
+
+printf 'PHASE7_WATCHER_CONTROL_ROOT=%s\n' "$CONTROL_ROOT"
+printf 'PHASE7_WATCHER_WAITING_FOR_PHASE6=%s\n' "$PHASE6_ROOT"
+while tmux -L "$PHASE6_SOCKET" has-session -t "$PHASE6_SESSION" 2>/dev/null; do
+  sleep 30
+done
+
+mapfile -d '' -t phase6_values < <(
+  "$PY" - "$PHASE6_ROOT/completion.json" "$PHASE6_ROOT/.exit" \
+    "$PHASE6_ROOT" "$EXPECTED_COMMIT" "$EXPECTED_FRAMEWORK_LOCK" <<'PY'
+import hashlib
+from pathlib import Path
+import sys
+from ura.strict_json import strict_json_loads
+
+completion_value, exit_value, root_value, commit, lock = sys.argv[1:]
+
+def checked_file(raw: str, label: str) -> Path:
+    path = Path(raw)
+    if (
+        not path.is_absolute()
+        or path.is_symlink()
+        or not path.is_file()
+        or path.resolve(strict=True) != path
+    ):
+        raise SystemExit(f"unsafe {label}: {path}")
+    return path
+
+def descriptor(path: Path) -> dict[str, object]:
+    path = checked_file(str(path), "descriptor input")
+    data = path.read_bytes()
+    return {
+        "path": str(path),
+        "sha256": hashlib.sha256(data).hexdigest(),
+        "bytes": len(data),
+    }
+
+def descriptor_file(raw: object, label: str) -> Path:
+    if not isinstance(raw, dict) or set(raw) != {"path", "sha256", "bytes"}:
+        raise SystemExit(f"{label} descriptor fields changed")
+    path = checked_file(str(raw.get("path", "")), label)
+    if (
+        type(raw.get("bytes")) is not int
+        or raw["bytes"] != path.stat().st_size
+        or raw.get("sha256") != hashlib.sha256(path.read_bytes()).hexdigest()
+    ):
+        raise SystemExit(f"{label} descriptor bytes changed")
+    return path
+
+root = Path(root_value)
+if (
+    not root.is_absolute()
+    or root.is_symlink()
+    or not root.is_dir()
+    or root.resolve(strict=True) != root
+):
+    raise SystemExit("unsafe Phase 6 sequence root")
+exit_path = checked_file(exit_value, "Phase 6 sequence exit")
+if exit_path != root / ".exit" or exit_path.read_bytes() not in {b"0\n", b"1\n"}:
+    raise SystemExit("Phase 6 sequence exit is not an exact typed terminal")
+for failure_name in ("failure.json", "controller-failure.json"):
+    failure = root / failure_name
+    if failure.exists() or failure.is_symlink():
+        raise SystemExit("Phase 6 sequence completion coexists with failure")
+completion_path = checked_file(completion_value, "Phase 6 sequence completion")
+if completion_path != root / "completion.json":
+    raise SystemExit("Phase 6 sequence completion path changed")
+value = strict_json_loads(completion_path.read_bytes())
+expected_fields = {
+    "schema",
+    "status",
+    "completed_at_utc",
+    "expected_commit",
+    "framework_lock_id",
+    "control_root",
+    "controller_order",
+    "all_controllers_attempted",
+    "terminal_states",
+    "terminal_inventories",
+    "successful_controller_evidence",
+    "failed_controller_terminals",
+    "failed_controller_receipts_are_evidence",
+    "children",
+    "sequence_launch",
+    "sequence_script",
+    "phase7_validator",
+    "phase7_contract_self_test",
+    "controller_wrappers",
+    "steps",
+    "gate5",
+    "native_plan",
+    "native_plan_result",
+    "hosted_target_calls",
+    "hosted_judge_calls",
+    "provider_http_attempts",
+    "downloads_observed_bytes",
+}
+if (
+    not isinstance(value, dict)
+    or set(value) != expected_fields
+    or value.get("schema") != "ura-phase6-sequence-completion/2"
+    or value.get("status") not in {"complete", "complete_with_failures"}
+    or value.get("expected_commit") != commit
+    or value.get("framework_lock_id") != lock
+    or value.get("control_root") != str(root)
+    or value.get("controller_order") != ["core", "extended", "native"]
+    or value.get("all_controllers_attempted") is not True
+    or value.get("failed_controller_receipts_are_evidence") is not False
+):
+    raise SystemExit("Phase 6 sequence completion contract changed")
+expected_exit = b"0\n" if value["status"] == "complete" else b"1\n"
+if exit_path.read_bytes() != expected_exit:
+    raise SystemExit("Phase 6 sequence status and exit differ")
+for field in (
+    "hosted_target_calls",
+    "hosted_judge_calls",
+    "provider_http_attempts",
+    "downloads_observed_bytes",
+):
+    if type(value.get(field)) is not int or value[field] != 0:
+        raise SystemExit(f"Phase 6 sequence nonzero or inexact {field}")
+for field in (
+    "sequence_launch",
+    "sequence_script",
+    "phase7_validator",
+    "phase7_contract_self_test",
+    "steps",
+    "native_plan",
+    "native_plan_result",
+):
+    descriptor_file(value.get(field), f"Phase 6 {field}")
+wrappers = value.get("controller_wrappers")
+children = value.get("children")
+states = value.get("terminal_states")
+inventories = value.get("terminal_inventories")
+successful = value.get("successful_controller_evidence")
+failed = value.get("failed_controller_terminals")
+keys = {"core", "extended", "native"}
+if (
+    not isinstance(wrappers, dict)
+    or set(wrappers) != keys
+    or not isinstance(children, dict)
+    or set(children) != keys
+    or not isinstance(states, dict)
+    or set(states) != keys
+    or not isinstance(inventories, dict)
+    or set(inventories) != keys
+    or not isinstance(successful, dict)
+    or not isinstance(failed, dict)
+    or set(successful) & set(failed)
+    or set(successful) | set(failed) != keys
+):
+    raise SystemExit("Phase 6 controller inventory or partition changed")
+for kind in ("core", "extended", "native"):
+    descriptor_file(wrappers[kind], f"Phase 6 {kind} wrapper")
+    child = children[kind]
+    if not isinstance(child, dict):
+        raise SystemExit(f"Phase 6 {kind} child is not an object")
+    child_status = child.get("status")
+    expected_code = 0 if child_status == "complete" else 1
+    if (
+        child_status not in {"complete", "complete_with_failures"}
+        or states[kind] != child_status
+        or type(child.get("exit_code")) is not int
+        or child.get("exit_code") != expected_code
+        or not isinstance(inventories[kind], dict)
+        or not inventories[kind]
+    ):
+        raise SystemExit(f"Phase 6 {kind} terminal state changed")
+    for field in (
+        "completion",
+        "exit_marker",
+        "launch_output",
+        "initial_validation",
+        "final_validation",
+        "wrapper",
+    ):
+        descriptor_file(child.get(field), f"Phase 6 {kind} {field}")
+    partition = successful if child_status == "complete" else failed
+    if partition.get(kind) != child["completion"]:
+        raise SystemExit(f"Phase 6 {kind} evidence partition changed")
+gate5 = value.get("gate5")
+if not isinstance(gate5, dict) or set(gate5) != {
+    "sequence_completion",
+    "sequence_exit",
+    "initial_validation",
+    "final_validation",
+    "covered_manifest",
+    "canonical_runnote",
+    "promotion_receipt",
+}:
+    raise SystemExit("Phase 6 Gate 5 binding changed")
+resolved_gate5 = {
+    field: descriptor_file(gate5[field], f"Phase 6 Gate 5 {field}")
+    for field in gate5
+}
+if resolved_gate5["sequence_exit"].read_bytes() != b"0\n":
+    raise SystemExit("Phase 6 Gate 5 input did not exit zero")
+for item in (
+    resolved_gate5["covered_manifest"],
+    resolved_gate5["canonical_runnote"],
+    resolved_gate5["promotion_receipt"],
+    descriptor_file(children["core"]["completion"], "Phase 6 core completion"),
+    descriptor_file(children["extended"]["completion"], "Phase 6 extended completion"),
+    descriptor_file(children["native"]["completion"], "Phase 6 native completion"),
+):
+    print(item, end="\0")
+PY
+)
+test "${#phase6_values[@]}" -eq 6
+GATE5_MANIFEST="${phase6_values[0]}"
+GATE5_RUNNOTE="${phase6_values[1]}"
+GATE5_PROMOTION="${phase6_values[2]}"
+CORE_COMPLETION="${phase6_values[3]}"
+EXTENDED_COMPLETION="${phase6_values[4]}"
+NATIVE_COMPLETION="${phase6_values[5]}"
+
+test ! -e "$INPUT_MANIFEST" && test ! -L "$INPUT_MANIFEST"
+test ! -e "$PREPARE_RESULT" && test ! -L "$PREPARE_RESULT"
+verify_regular "$WRAPPER" "$WRAPPER_SHA256" "$WRAPPER_BYTES"
+verify_regular "$PAYLOAD" "$PAYLOAD_SHA256" "$PAYLOAD_BYTES"
+bash "$WRAPPER" --prepare-input-manifest "$INPUT_MANIFEST" \
+  --gate5-manifest "$GATE5_MANIFEST" \
+  --gate5-runnote "$GATE5_RUNNOTE" \
+  --gate5-promotion-receipt "$GATE5_PROMOTION" \
+  --phase6-core-completion "$CORE_COMPLETION" \
+  --phase6-extended-completion "$EXTENDED_COMPLETION" \
+  --phase6-native-completion "$NATIVE_COMPLETION" > "$PREPARE_RESULT"
+
+INPUT_SHA="$(
+  "$PY" - "$PREPARE_RESULT" "$INPUT_MANIFEST" "$PAYLOAD" <<'PY'
+import hashlib
+from pathlib import Path
+import re
+import sys
+from ura.strict_json import strict_json_loads
+
+result_path = Path(sys.argv[1]).resolve(strict=True)
+input_path = Path(sys.argv[2]).resolve(strict=True)
+payload_path = Path(sys.argv[3]).resolve(strict=True)
+if result_path.is_symlink() or input_path.is_symlink() or payload_path.is_symlink():
+    raise SystemExit("unsafe Phase 7 preparation artifact")
+result = strict_json_loads(result_path.read_bytes())
+expected_fields = {
+    "status",
+    "schema",
+    "output",
+    "sha256",
+    "bytes",
+    "bound_artifacts",
+    "runner_lanes",
+    "native_outcomes",
+    "authorization_required_before_launch",
+}
+payload = input_path.read_bytes()
+digest = hashlib.sha256(payload).hexdigest()
+if (
+    not isinstance(result, dict)
+    or set(result) != expected_fields
+    or result.get("status") != "prepared"
+    or result.get("schema") != "ura-phase7-analysis-inputs/1"
+    or result.get("output") != str(input_path)
+    or result.get("sha256") != digest
+    or type(result.get("bytes")) is not int
+    or result.get("bytes") != len(payload)
+    or type(result.get("bound_artifacts")) is not int
+    or result.get("bound_artifacts", 0) <= 0
+    or type(result.get("runner_lanes")) is not int
+    or result.get("runner_lanes") != 26
+    or not isinstance(result.get("native_outcomes"), dict)
+    or result.get("authorization_required_before_launch") is not True
+    or re.fullmatch(r"[0-9a-f]{64}", digest) is None
+):
+    raise SystemExit("Phase 7 preparation result changed")
+manifest = strict_json_loads(payload)
+controller = manifest.get("controller_payload") if isinstance(manifest, dict) else None
+payload_bytes = payload_path.read_bytes()
+expected_controller = {
+    "path": str(payload_path),
+    "sha256": hashlib.sha256(payload_bytes).hexdigest(),
+    "bytes": len(payload_bytes),
+}
+if (
+    manifest.get("schema") != "ura-phase7-analysis-inputs/1"
+    or manifest.get("inventory_complete") is not True
+    or manifest.get("code_identity")
+    != {
+        "expected_commit": "@@EXPECTED_COMMIT@@",
+        "framework_lock_id": "@@FRAMEWORK_LOCK_SHA256@@",
+    }
+    or controller != expected_controller
+):
+    raise SystemExit("Phase 7 input manifest identity changed")
+print(digest)
+PY
+)"
+
+test ! -e "$PHASE7_LAUNCH_OUTPUT" && test ! -L "$PHASE7_LAUNCH_OUTPUT"
+bash "$WRAPPER" --input-manifest "$INPUT_MANIFEST" \
+  --authorize-input-manifest-sha256 "$INPUT_SHA" > "$PHASE7_LAUNCH_OUTPUT"
+
+mapfile -d '' -t launch_values < <(
+  "$PY" - "$PHASE7_LAUNCH_OUTPUT" "$URA_WORK" <<'PY'
+from pathlib import Path
+import re
+import sys
+
+path = Path(sys.argv[1])
+work = Path(sys.argv[2]).resolve(strict=True)
+if path.is_symlink() or not path.is_file() or path.resolve(strict=True) != path:
+    raise SystemExit("unsafe Phase 7 launch output")
+payload = path.read_bytes()
+if b"\r" in payload or not payload.endswith(b"\n"):
+    raise SystemExit("Phase 7 launch output is not canonical LF text")
+lines = payload.decode("ascii").splitlines()
+values = {}
+for line in lines:
+    key, separator, value = line.partition("=")
+    if not separator or key in values:
+        raise SystemExit("invalid Phase 7 launch row")
+    values[key] = value
+expected = {
+    "SESSION",
+    "SOCKET",
+    "ATTACH",
+    "CONTROL_ROOT",
+    "ANALYSIS_ROOT",
+    "LOG",
+    "EXIT_MARKER",
+    "COMPLETION",
+}
+if set(values) != expected or any(not item for item in values.values()):
+    raise SystemExit("Phase 7 launch field inventory changed")
+control = Path(values["CONTROL_ROOT"])
+analysis = Path(values["ANALYSIS_ROOT"])
+if (
+    not control.is_absolute()
+    or control.is_symlink()
+    or not control.is_dir()
+    or control.resolve(strict=True) != control
+    or control.parent != work / "runs" / "engineering"
+    or not control.name.startswith("phase7-analysis-")
+    or not analysis.is_absolute()
+    or analysis.parent != work / "runs" / "thesis" / "analysis"
+    or not analysis.name.startswith("phase7-")
+):
+    raise SystemExit("unsafe Phase 7 launch roots")
+suffix = control.name.removeprefix("phase7-analysis-")
+session = values["SESSION"]
+socket = values["SOCKET"]
+if (
+    session != f"ura-phase7-{suffix}"
+    or socket != session
+    or values["ATTACH"] != f"tmux -L {socket} attach -t {session}"
+    or Path(values["LOG"]) != control / "controller.log"
+    or Path(values["EXIT_MARKER"]) != control / ".exit"
+    or Path(values["COMPLETION"]) != control / "completion.json"
+):
+    raise SystemExit("Phase 7 launch paths are not cross-bound")
+for item in (
+    session,
+    socket,
+    str(control),
+    str(analysis),
+    values["LOG"],
+    values["EXIT_MARKER"],
+    values["COMPLETION"],
+):
+    print(item, end="\0")
+PY
+)
+test "${#launch_values[@]}" -eq 7
+PHASE7_SESSION="${launch_values[0]}"
+PHASE7_SOCKET="${launch_values[1]}"
+PHASE7_CONTROL="${launch_values[2]}"
+ANALYSIS_ROOT="${launch_values[3]}"
+PHASE7_LOG="${launch_values[4]}"
+PHASE7_EXIT="${launch_values[5]}"
+PHASE7_COMPLETION="${launch_values[6]}"
+
+printf 'PHASE7_ANALYSIS_WAITING=%s CONTROL_ROOT=%s LOG=%s\n' \
+  "$PHASE7_SESSION" "$PHASE7_CONTROL" "$PHASE7_LOG"
+while tmux -L "$PHASE7_SOCKET" has-session -t "$PHASE7_SESSION" 2>/dev/null; do
+  sleep 30
+done
+
+verify_regular "$WATCHER" "$AUTHORIZED_WATCHER_SHA256" -
+verify_regular "$WRAPPER" "$WRAPPER_SHA256" "$WRAPPER_BYTES"
+verify_regular "$PAYLOAD" "$PAYLOAD_SHA256" "$PAYLOAD_BYTES"
+
+"$PY" - "$COMPLETION" "$LAUNCH_META" "$PHASE6_ROOT/completion.json" \
+  "$PHASE6_ROOT/.exit" "$PREPARE_RESULT" "$INPUT_MANIFEST" "$INPUT_SHA" \
+  "$PHASE7_LAUNCH_OUTPUT" "$PHASE7_CONTROL" "$ANALYSIS_ROOT" \
+  "$PHASE7_COMPLETION" "$PHASE7_EXIT" "$WATCHER" "$WRAPPER" "$PAYLOAD" \
+  "$EXPECTED_COMMIT" "$EXPECTED_FRAMEWORK_LOCK" <<'PY'
+from datetime import datetime, timezone
+import hashlib
+import json
+import os
+from pathlib import Path
+import sys
+from ura.strict_json import strict_json_loads
+
+(
+    out_value,
+    watcher_launch_value,
+    phase6_completion_value,
+    phase6_exit_value,
+    prepare_result_value,
+    input_value,
+    input_sha,
+    phase7_launch_output_value,
+    control_value,
+    analysis_value,
+    completion_value,
+    exit_value,
+    watcher_value,
+    wrapper_value,
+    payload_value,
+    commit,
+    lock,
+) = sys.argv[1:]
+
+def checked_file(raw: str, label: str) -> Path:
+    path = Path(raw)
+    if (
+        not path.is_absolute()
+        or path.is_symlink()
+        or not path.is_file()
+        or path.resolve(strict=True) != path
+    ):
+        raise SystemExit(f"unsafe {label}: {path}")
+    return path
+
+def descriptor(raw: str | Path) -> dict[str, object]:
+    path = checked_file(str(raw), "descriptor input")
+    data = path.read_bytes()
+    return {
+        "path": str(path),
+        "sha256": hashlib.sha256(data).hexdigest(),
+        "bytes": len(data),
+    }
+
+def descriptor_file(raw: object, label: str) -> Path:
+    if not isinstance(raw, dict) or set(raw) != {"path", "sha256", "bytes"}:
+        raise SystemExit(f"{label} descriptor fields changed")
+    path = checked_file(str(raw.get("path", "")), label)
+    if raw != descriptor(path):
+        raise SystemExit(f"{label} descriptor bytes changed")
+    return path
+
+control = Path(control_value)
+analysis = Path(analysis_value)
+completion_path = checked_file(completion_value, "Phase 7 completion")
+exit_path = checked_file(exit_value, "Phase 7 exit")
+if (
+    completion_path != control / "completion.json"
+    or exit_path != control / ".exit"
+    or exit_path.read_bytes() != b"0\n"
+):
+    raise SystemExit("Phase 7 did not reach exact successful terminal bytes")
+failure = control / "failure.json"
+if failure.exists() or failure.is_symlink():
+    raise SystemExit("Phase 7 completion coexists with failure")
+completion = strict_json_loads(completion_path.read_bytes())
+expected_fields = {
+    "schema",
+    "status",
+    "started_at_utc",
+    "completed_at_utc",
+    "inventory_complete",
+    "input_manifest",
+    "authorized_input_manifest_sha256",
+    "payload",
+    "analysis_root",
+    "artifact_inventory",
+    "runner_input_view",
+    "analysis_statuses",
+    "explicit_limitations",
+    "phase6_terminal_states",
+    "target_calls",
+    "judge_calls",
+    "provider_http_attempts",
+    "downloads_observed_bytes",
+    "human_labels_consumed",
+    "human_validity_claimed",
+    "universal_safety_score_defined",
+    "native_scales_pooled",
+    "evaluator_modes_pooled",
+}
+if (
+    not isinstance(completion, dict)
+    or set(completion) != expected_fields
+    or completion.get("schema") != "ura-phase7-analysis-completion/1"
+    or completion.get("status")
+    not in {"complete", "complete_with_explicit_limitations"}
+    or completion.get("inventory_complete") is not True
+    or completion.get("authorized_input_manifest_sha256") != input_sha
+    or completion.get("analysis_root") != str(analysis)
+):
+    raise SystemExit("Phase 7 completion contract changed")
+for field in (
+    "target_calls",
+    "judge_calls",
+    "provider_http_attempts",
+    "downloads_observed_bytes",
+):
+    if type(completion.get(field)) is not int or completion[field] != 0:
+        raise SystemExit(f"Phase 7 nonzero or inexact {field}")
+for field in (
+    "human_labels_consumed",
+    "human_validity_claimed",
+    "universal_safety_score_defined",
+    "native_scales_pooled",
+    "evaluator_modes_pooled",
+):
+    if completion.get(field) is not False:
+        raise SystemExit(f"Phase 7 boundary changed: {field}")
+input_path = descriptor_file(completion.get("input_manifest"), "Phase 7 input")
+payload_path = descriptor_file(completion.get("payload"), "Phase 7 payload")
+inventory_path = descriptor_file(
+    completion.get("artifact_inventory"), "Phase 7 artifact inventory"
+)
+runner_view_path = descriptor_file(
+    completion.get("runner_input_view"), "Phase 7 runner input view"
+)
+if (
+    hashlib.sha256(input_path.read_bytes()).hexdigest() != input_sha
+    or completion["payload"]["sha256"]
+    != "4ef7105dcc92cbaa2c3f3fe67b03ca631894c87afd1cce80ca4d1c57fbc2c57e"
+):
+    raise SystemExit("Phase 7 authorized input or payload changed")
+inventory = strict_json_loads(inventory_path.read_bytes())
+inventory_fields = {
+    "schema",
+    "status",
+    "analysis_root",
+    "artifacts",
+    "artifact_count",
+    "status_inventory",
+    "input_manifest_sha256",
+    "payload_sha256",
+    "runner_input_view",
+    "target_calls",
+    "judge_calls",
+    "provider_http_attempts",
+    "human_labels_consumed",
+}
+artifacts = inventory.get("artifacts") if isinstance(inventory, dict) else None
+if (
+    not isinstance(inventory, dict)
+    or set(inventory) != inventory_fields
+    or inventory.get("schema") != "ura-phase7-analysis-artifact-inventory/1"
+    or inventory.get("status") != "complete"
+    or inventory.get("analysis_root") != str(analysis)
+    or not isinstance(artifacts, list)
+    or type(inventory.get("artifact_count")) is not int
+    or inventory.get("artifact_count") != len(artifacts)
+    or inventory.get("status_inventory") != completion.get("analysis_statuses")
+    or inventory.get("input_manifest_sha256") != input_sha
+    or inventory.get("payload_sha256") != completion["payload"]["sha256"]
+    or inventory.get("runner_input_view") != descriptor(runner_view_path)
+    or inventory.get("target_calls") != 0
+    or inventory.get("judge_calls") != 0
+    or inventory.get("provider_http_attempts") != 0
+    or inventory.get("human_labels_consumed") is not False
+):
+    raise SystemExit("Phase 7 artifact inventory changed")
+for index, artifact in enumerate(artifacts):
+    descriptor_file(artifact, f"Phase 7 analysis artifact {index}")
+statuses = completion.get("analysis_statuses")
+limitations = completion.get("explicit_limitations")
+if not isinstance(statuses, dict) or not statuses:
+    raise SystemExit("Phase 7 status inventory is empty")
+expected_limitations = {
+    name: status for name, status in statuses.items() if status != "complete"
+}
+if limitations != expected_limitations:
+    raise SystemExit("Phase 7 explicit limitations differ from statuses")
+expected_status = "complete" if not limitations else "complete_with_explicit_limitations"
+if completion["status"] != expected_status:
+    raise SystemExit("Phase 7 completion status differs from limitations")
+input_manifest = strict_json_loads(input_path.read_bytes())
+expected_phase6_states = {
+    "core": input_manifest["phase6"]["core"]["lane_terminal_states"],
+    "extended": input_manifest["phase6"]["extended"]["lane_terminal_states"],
+    "native": input_manifest["native_outcomes"]["states"],
+}
+if completion.get("phase6_terminal_states") != expected_phase6_states:
+    raise SystemExit("Phase 7 copied Phase 6 terminal states differ")
+
+value = {
+    "schema": "ura-phase7-after-phase6-completion/1",
+    "status": completion["status"],
+    "completed_at_utc": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+    "expected_commit": commit,
+    "framework_lock_id": lock,
+    "watcher_launch": descriptor(watcher_launch_value),
+    "watcher": descriptor(watcher_value),
+    "phase7_wrapper": descriptor(wrapper_value),
+    "phase7_payload": descriptor(payload_value),
+    "phase6_sequence_completion": descriptor(phase6_completion_value),
+    "phase6_sequence_exit": descriptor(phase6_exit_value),
+    "prepare_result": descriptor(prepare_result_value),
+    "authorized_input_manifest": descriptor(input_value),
+    "authorized_input_manifest_sha256": input_sha,
+    "phase7_launch_output": descriptor(phase7_launch_output_value),
+    "phase7_control_root": str(control),
+    "analysis_root": str(analysis),
+    "phase7_completion": descriptor(completion_path),
+    "phase7_exit": descriptor(exit_path),
+    "artifact_inventory": descriptor(inventory_path),
+    "runner_input_view": descriptor(runner_view_path),
+    "analysis_statuses": statuses,
+    "explicit_limitations": limitations,
+    "target_calls": 0,
+    "judge_calls": 0,
+    "provider_http_attempts": 0,
+    "downloads_observed_bytes": 0,
+    "human_labels_consumed": False,
+}
+payload = (
+    json.dumps(value, sort_keys=True, separators=(",", ":"), allow_nan=False)
+    + "\n"
+).encode("ascii")
+fd = os.open(out_value, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+with os.fdopen(fd, "wb") as handle:
+    handle.write(payload)
+    handle.flush()
+    os.fsync(handle.fileno())
+PY
+
+printf 'PHASE7_WATCHER_COMPLETE=%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)"

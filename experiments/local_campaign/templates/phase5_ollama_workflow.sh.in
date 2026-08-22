@@ -1,0 +1,1326 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+
+source ~/.ura_campaign_env
+cd ~/MLLMRiskBench
+
+EXPECTED_COMMIT='@@EXPECTED_COMMIT@@'
+EXPECTED_FRAMEWORK_LOCK='@@FRAMEWORK_LOCK_SHA256@@'
+EXPECTED_PROJECT_RECEIPT='@@PROJECT_RECEIPT_PATH@@'
+EXPECTED_PROJECT_RECEIPT_SHA256='@@PROJECT_RECEIPT_SHA256@@'
+EXPECTED_SOURCE_RECEIPT='@@SOURCE_RECEIPT_PATH@@'
+EXPECTED_SOURCE_RECEIPT_SHA256='@@SOURCE_RECEIPT_SHA256@@'
+PY="$PWD/.venv/bin/python"
+TAG="$(date -u +%Y%m%dT%H%M%SZ)"
+SESSION="ura-phase5-ollama-${TAG}"
+SOCKET="ura-phase5-ollama-${TAG}"
+CONTROL_ROOT="$URA_WORK/runs/engineering/phase5-ollama-${TAG}"
+
+test "$(git rev-parse HEAD)" = "$EXPECTED_COMMIT"
+test -z "$(git status --porcelain)"
+test "$URA_FRAMEWORK_LOCK_ID" = "$EXPECTED_FRAMEWORK_LOCK"
+test "$URA_FRAMEWORK_STATE" = "$URA_WORK/runs/engineering/framework-runtime-${EXPECTED_FRAMEWORK_LOCK:0:12}"
+test "$URA_PROJECT_REVISION_MANIFEST" = "$EXPECTED_PROJECT_RECEIPT"
+test "$URA_PROJECT_REVISION_SHA256" = "$EXPECTED_PROJECT_RECEIPT_SHA256"
+test "$URA_SOURCE_CONFORMANCE_MANIFEST" = "$EXPECTED_SOURCE_RECEIPT"
+test "$URA_SOURCE_CONFORMANCE_SHA256" = "$EXPECTED_SOURCE_RECEIPT_SHA256"
+test -x "$PY"
+test ! -e "$CONTROL_ROOT"
+mkdir -p "$CONTROL_ROOT"
+chmod 700 "$CONTROL_ROOT"
+
+export TAG CONTROL_ROOT EXPECTED_COMMIT EXPECTED_FRAMEWORK_LOCK \
+  EXPECTED_PROJECT_RECEIPT EXPECTED_PROJECT_RECEIPT_SHA256 \
+  EXPECTED_SOURCE_RECEIPT EXPECTED_SOURCE_RECEIPT_SHA256
+
+PAYLOAD_PATH="$CONTROL_ROOT/payload.sh"
+"$PY" -c '
+import os
+import sys
+
+path = sys.argv[1]
+data = sys.stdin.buffer.read()
+flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL
+if hasattr(os, "O_NOFOLLOW"):
+    flags |= os.O_NOFOLLOW
+fd = os.open(path, flags, 0o700)
+try:
+    os.fchmod(fd, 0o700)
+    with os.fdopen(fd, "wb", closefd=False) as handle:
+        handle.write(data)
+        handle.flush()
+        os.fsync(handle.fileno())
+finally:
+    os.close(fd)
+' "$PAYLOAD_PATH" <<'INNER'
+#!/usr/bin/env bash
+set -Eeuo pipefail
+umask 077
+source ~/.ura_campaign_env
+cd ~/MLLMRiskBench
+
+# This workflow never selects a hosted route and all selected model resources
+# must already be sealed locally.
+export HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1 HF_DATASETS_OFFLINE=1
+unset HF_TOKEN HUGGING_FACE_HUB_TOKEN OPENAI_API_KEY ANTHROPIC_API_KEY \
+  GOOGLE_API_KEY GEMINI_API_KEY MISTRAL_API_KEY TOGETHER_API_KEY \
+  DEEPSEEK_API_KEY XAI_API_KEY
+
+PY="$PWD/.venv/bin/python"
+LOG="$CONTROL_ROOT/phase5-ollama.log"
+DISPOSITIONS="$CONTROL_ROOT/dispositions.tsv"
+PROJECTION_STATUS="$CONTROL_ROOT/projections.tsv"
+ATTEST_STATUS="$CONTROL_ROOT/attestations.tsv"
+CANARY_STATUS="$CONTROL_ROOT/canaries.tsv"
+SUCCESS_ROOT="$CONTROL_ROOT/success"
+CONFIG_ROOT="$CONTROL_ROOT/local-configs"
+EXIT_TMP="$CONTROL_ROOT/.exit.tmp"
+EXIT_MARKER="$CONTROL_ROOT/.exit"
+
+exec > >(tee "$LOG") 2>&1
+
+finish() {
+  rc=$?
+  trap - EXIT
+  printf '%s\n' "$rc" > "$EXIT_TMP"
+  test ! -e "$EXIT_MARKER"
+  mv -- "$EXIT_TMP" "$EXIT_MARKER"
+  printf 'PHASE5_OLLAMA_EXIT=%s\n' "$rc"
+  exit "$rc"
+}
+trap finish EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
+trap 'exit 129' HUP
+
+test "$(git rev-parse HEAD)" = "$EXPECTED_COMMIT"
+test -z "$(git status --porcelain)"
+test "$URA_FRAMEWORK_LOCK_ID" = "$EXPECTED_FRAMEWORK_LOCK"
+test "$URA_FRAMEWORK_STATE" = "$URA_WORK/runs/engineering/framework-runtime-${EXPECTED_FRAMEWORK_LOCK:0:12}"
+test "$URA_PROJECT_REVISION_MANIFEST" = "$EXPECTED_PROJECT_RECEIPT"
+test "$URA_PROJECT_REVISION_SHA256" = "$EXPECTED_PROJECT_RECEIPT_SHA256"
+test "$URA_SOURCE_CONFORMANCE_MANIFEST" = "$EXPECTED_SOURCE_RECEIPT"
+test "$URA_SOURCE_CONFORMANCE_SHA256" = "$EXPECTED_SOURCE_RECEIPT_SHA256"
+test -x "$PY"
+
+SOURCE_CONFIG="$PWD/experiments/source-instances.json"
+SOURCE_CONFIG_SHA256="$(sha256sum -- "$SOURCE_CONFIG" | awk '{print $1}')"
+PROJECT_RECEIPT="$URA_PROJECT_REVISION_MANIFEST"
+PROJECT_SHA256="$URA_PROJECT_REVISION_SHA256"
+SOURCE_RECEIPT="$URA_SOURCE_CONFORMANCE_MANIFEST"
+SOURCE_RECEIPT_SHA256="$URA_SOURCE_CONFORMANCE_SHA256"
+MODEL_STORE="$URA_MODEL_STORE"
+TRANSPORT_CACHE="$MODEL_STORE/.transport-cache"
+RECEIPTS_ROOT="$URA_WORK/runs/thesis/acquisition/phase5-ollama-${TAG}/receipts"
+PREFLIGHT_ROOT="$URA_WORK/runs/thesis/preflight/ollama-phase5"
+DIAGNOSTIC_ROOT="$URA_WORK/runs/thesis/diagnostics/canary-live/ollama-phase5"
+ATTEST_ROOT="$URA_WORK/runs/thesis/attestation/ollama-phase5"
+ATTEST_RECEIPTS="$URA_WORK/runs/thesis/attestation/receipts/ollama-phase5"
+
+SCORE_GUARD='meta-llama/Llama-Guard-3-8B'
+SCORE_GUARD_REV='7327bd9f6efbbe6101dc6cc4736302b3cbb6e425'
+GROUP='model,source,risk,effective_modality,expected_behavior,attacker,source_policy_id,source_policy_version'
+SCOPE="$URA_EXECUTION_SCOPE_ID"
+MAX_ATTESTATION_AGE_HOURS='24'
+TEXT_ARMS='strongreject_official,advbench_harmful,jailbreakbench_harmful,jailbreakbench_benign,harmbench_text,cyberseceval_mitre,cyberseceval_interpreter,cyberseceval_insecure_coding,saladbench_base,airbench_full,xstest_full,simplesafetytests_full,decodingtrust_stereotype'
+
+declare -a MODEL_LABELS=(
+  'rwkv-g1d-0p4b'
+  'rwkv-g1f-2p9b'
+  'rwkv-g1g-1p5b'
+)
+declare -A MODEL_SPECS=(
+  [rwkv-g1d-0p4b]='ollama:mollysama/rwkv-7-g1d:0.4b'
+  [rwkv-g1f-2p9b]='ollama:mollysama/rwkv-7-g1f:2.9b'
+  [rwkv-g1g-1p5b]='ollama:mollysama/rwkv-7-g1g:1.5b'
+)
+declare -A MODEL_DIGESTS=(
+  [rwkv-g1d-0p4b]='78e699bd71f0cef7ed8fb38a469088310af0ab07d678661980c6b8c7f130a7f8'
+  [rwkv-g1f-2p9b]='7813f2283a135ef1264b8cec647b339d92fa7ecffafefeac61a2670b572f03f7'
+  [rwkv-g1g-1p5b]='8ff95f43952c361048310b50a5c4b16f98d8f0642a87b536452e627224a0dddc'
+)
+GPTGEOCHAT_TERMINAL_REASON_CODE='target_transport_text_only_for_image_source'
+GPTGEOCHAT_TERMINAL_REASON='GPTGeoChat requires image-bearing source inputs, while the exact RWKV Ollama target transport is text-only.'
+declare -a GPTGEOCHAT_OLLAMA_TERMINALS=(
+  'gptgeochat-ollama-rwkv-g1d-0p4b'
+  'gptgeochat-ollama-rwkv-g1f-2p9b'
+  'gptgeochat-ollama-rwkv-g1g-1p5b'
+)
+declare -A MODEL_CONFIGS=()
+declare -A ATTESTATION_FILES=()
+declare -A ATTESTATION_SHAS=()
+declare -a FAILED_UNITS=()
+
+unset URA_MODEL_ACQUISITION_PLAN_DIR \
+  URA_MODEL_ACQUISITION_PLAN \
+  URA_MODEL_ACQUISITION_PLAN_SHA256 \
+  URA_MODEL_ACQUISITION_RECEIPT \
+  URA_MODEL_ACQUISITION_RECEIPT_SHA256 \
+  URA_MODEL_ACQUISITION_STORE
+
+mkdir -p "$SUCCESS_ROOT" "$CONFIG_ROOT" "$RECEIPTS_ROOT" \
+  "$TRANSPORT_CACHE" "$ATTEST_RECEIPTS"
+
+printf 'phase\tunit\tdisposition\treason\n' > "$DISPOSITIONS"
+printf 'lane\tmodel_label\trequested_spec\tdigest\tmetric_mode\tpreliminary_projection_id\tfinal_projection_id\ttarget_cap\tjudge_cap\tlocal_guardrail_evaluations\thttp_cap\tselected_clusters\tselected_records\tpreliminary_root\tfinal_root\n' > "$PROJECTION_STATUS"
+printf 'model_label\trequested_spec\tdigest\tattestation_id\treceipt\tsha256\tprobe_root\n' > "$ATTEST_STATUS"
+printf 'lane\tmodel_label\trequested_spec\tdigest\tmetric_mode\trehearsal_projection_id\ttarget_cap\tjudge_cap\tlocal_guardrail_evaluations\thttp_cap\tcanary_id\tall_configured_stages_represented\ttarget_status\tattacker_status\tsource_evaluator_status\tdecided\tdecision_coverage\tdiagnostic_root\n' > "$CANARY_STATUS"
+
+"$PY" - "$GPTGEOCHAT_TERMINAL_REASON_CODE" "$GPTGEOCHAT_TERMINAL_REASON" \
+  "${MODEL_LABELS[@]}" <<'PY'
+import sys
+
+reason_code, reason, *labels = sys.argv[1:]
+expected_labels = ["rwkv-g1d-0p4b", "rwkv-g1f-2p9b", "rwkv-g1g-1p5b"]
+if labels != expected_labels:
+    raise SystemExit("exact RWKV Ollama label inventory changed")
+terminals = {
+    f"gptgeochat-ollama-{label}": {
+        "family": "ollama",
+        "disposition": "unavailable",
+        "reason_code": reason_code,
+        "reason": reason,
+    }
+    for label in labels
+}
+expected_terminals = {f"gptgeochat-ollama-{label}" for label in expected_labels}
+runnable = {
+    lane
+    for label in labels
+    for lane in (f"ollama-{label}-text-full", f"rjudge-ollama-{label}")
+}
+if (
+    set(terminals) != expected_terminals
+    or any(row["family"] != "ollama" for row in terminals.values())
+    or any(row["disposition"] != "unavailable" for row in terminals.values())
+    or reason_code != "target_transport_text_only_for_image_source"
+    or reason
+    != "GPTGeoChat requires image-bearing source inputs, while the exact RWKV Ollama target transport is text-only."
+    or runnable & expected_terminals
+    or len(runnable) != 6
+):
+    raise SystemExit("GPTGeoChat x RWKV typed-terminal contract changed")
+PY
+
+assert_ollama_runnable_lane() {
+  local lane="$1"
+  case "$lane" in
+    ollama-rwkv-g1d-0p4b-text-full|ollama-rwkv-g1f-2p9b-text-full|ollama-rwkv-g1g-1p5b-text-full|rjudge-ollama-rwkv-g1d-0p4b|rjudge-ollama-rwkv-g1f-2p9b|rjudge-ollama-rwkv-g1g-1p5b) ;;
+    *) printf 'non-runnable Ollama lane rejected: %s\n' "$lane" >&2; return 1 ;;
+  esac
+  local terminal
+  for terminal in "${GPTGEOCHAT_OLLAMA_TERMINALS[@]}"; do
+    [[ "$lane" != "$terminal" ]] || return 1
+  done
+}
+
+safe_marker() {
+  local name="$1"
+  local tmp="$SUCCESS_ROOT/.${name}.tmp" final="$SUCCESS_ROOT/${name}"
+  test ! -e "$tmp" && test ! -e "$final"
+  printf 'complete\n' > "$tmp"
+  mv -- "$tmp" "$final"
+}
+
+run_isolated() {
+  local phase="$1" unit="$2"
+  shift 2
+  local rc
+  set +e
+  (
+    set -Eeuo pipefail
+    "$@"
+  )
+  rc=$?
+  set -e
+  if (( rc == 0 )); then
+    printf '%s\t%s\tcompleted\tvalidated\n' "$phase" "$unit" | tee -a "$DISPOSITIONS"
+  else
+    printf '%s\t%s\tfailed\texit_%s_see_control_logs\n' "$phase" "$unit" "$rc" | tee -a "$DISPOSITIONS"
+    FAILED_UNITS+=("${phase}/${unit}:exit_${rc}")
+  fi
+  return 0
+}
+
+record_blocked() {
+  local phase="$1" unit="$2" reason="$3"
+  printf '%s\t%s\tblocked\t%s\n' "$phase" "$unit" "$reason" | tee -a "$DISPOSITIONS"
+  FAILED_UNITS+=("${phase}/${unit}:${reason}")
+}
+
+write_local_config() {
+  local path="$1" spec="$2" digest="$3"
+  "$PY" - "$path" "$spec" "$digest" <<'PY'
+import json
+import os
+import pathlib
+import re
+import sys
+
+path = pathlib.Path(sys.argv[1])
+spec, digest = sys.argv[2:]
+if not spec.startswith("ollama:") or re.fullmatch(r"[0-9a-f]{64}", digest) is None:
+    raise SystemExit("invalid exact Ollama identity")
+payload = (json.dumps(
+    {spec: {"digest": digest, "modalities": ["text"]}},
+    indent=2,
+    sort_keys=True,
+) + "\n").encode("utf-8")
+flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL
+if hasattr(os, "O_NOFOLLOW"):
+    flags |= os.O_NOFOLLOW
+fd = os.open(path, flags, 0o600)
+try:
+    os.write(fd, payload)
+    os.fsync(fd)
+finally:
+    os.close(fd)
+PY
+  test -f "$path" && test ! -L "$path"
+}
+
+for label in "${MODEL_LABELS[@]}"; do
+  config="$CONFIG_ROOT/${label}.json"
+  write_local_config "$config" "${MODEL_SPECS[$label]}" "${MODEL_DIGESTS[$label]}"
+  MODEL_CONFIGS[$label]="$config"
+done
+
+verify_live_roster() {
+  local output="$1"
+  shift
+  test ! -e "$output"
+  "$PY" - "$@" > "$output" <<'PY'
+import json
+import pathlib
+import sys
+
+from experiments.local_targets import _models_map, load_roster
+from experiments.rig_web_app.ollama_service import OllamaService
+
+items = sys.argv[1:]
+if not items or len(items) % 2:
+    raise SystemExit("expected spec/digest pairs")
+expected = dict(zip(items[0::2], items[1::2], strict=True))
+vllm = {
+    str(spec): dict(config)
+    for spec, config in _models_map(load_roster()).items()
+    if str(spec).startswith("vllm:") and isinstance(config, dict)
+}
+roster = OllamaService(pathlib.Path.cwd()).roster(vllm, force=True)
+if roster.get("available") is not True:
+    raise SystemExit("Ollama live roster unavailable: " + str(roster.get("error")))
+if roster.get("issues"):
+    raise SystemExit("Ollama live roster has discovery issues: " + repr(roster["issues"]))
+candidates = {
+    row.get("spec"): row
+    for row in roster.get("models", [])
+    if isinstance(row, dict) and isinstance(row.get("spec"), str)
+}
+excluded = {
+    row.get("spec"): row
+    for row in roster.get("excluded", [])
+    if isinstance(row, dict) and isinstance(row.get("spec"), str)
+}
+selected = []
+for spec, digest in expected.items():
+    if spec in excluded:
+        raise SystemExit(f"selected Ollama identity is excluded: {spec}")
+    row = candidates.get(spec)
+    if row is None:
+        raise SystemExit(f"selected Ollama identity is absent: {spec}")
+    if row.get("digest") != digest:
+        raise SystemExit(f"selected Ollama digest changed: {spec}")
+    if row.get("modalities") != ["text"]:
+        raise SystemExit(f"selected Ollama modality changed: {spec}")
+    capabilities = row.get("capabilities")
+    if not isinstance(capabilities, list) or "completion" not in capabilities:
+        raise SystemExit(f"selected Ollama target lost completion capability: {spec}")
+    if row.get("overlap_with"):
+        raise SystemExit(f"selected Ollama target overlaps vLLM identity: {spec}")
+    selected.append({
+        "spec": spec,
+        "digest": digest,
+        "modalities": ["text"],
+        "capabilities": capabilities,
+    })
+print(json.dumps({
+    "available": True,
+    "selected": selected,
+    "unselected_candidate_count": len(candidates) - len(selected),
+}, indent=2, sort_keys=True))
+PY
+  test -s "$output" && test ! -L "$output"
+}
+
+roster_args=()
+for label in "${MODEL_LABELS[@]}"; do
+  roster_args+=("${MODEL_SPECS[$label]}" "${MODEL_DIGESTS[$label]}")
+done
+verify_live_roster "$CONTROL_ROOT/roster-start.json" "${roster_args[@]}"
+
+json_fields() {
+  "$PY" - "$1" "$2" <<'PY'
+import json
+import sys
+
+path, kind = sys.argv[1:]
+for line in reversed(open(path, encoding="utf-8").read().splitlines()):
+    try:
+        row = json.loads(line)
+    except json.JSONDecodeError:
+        continue
+    if kind == "plan" and {"plan_id", "plan_sha256"} <= row.keys():
+        print(row["plan_id"], row["plan_sha256"])
+        raise SystemExit(0)
+    if kind == "receipt" and {"receipt_id", "receipt_sha256", "downloaded_bytes"} <= row.keys():
+        print(row["receipt_id"], row["receipt_sha256"], row["downloaded_bytes"])
+        raise SystemExit(0)
+raise SystemExit(f"no {kind} result JSON in {path}")
+PY
+}
+
+validate_guard_acquisition() {
+  "$PY" - "$1" "$2" "$SCORE_GUARD" "$SCORE_GUARD_REV" <<'PY'
+import json
+import sys
+
+plan_path, receipt_path, model, revision = sys.argv[1:]
+plan = json.load(open(plan_path, encoding="utf-8"))
+receipt = json.load(open(receipt_path, encoding="utf-8"))
+resources = plan.get("resources")
+if not isinstance(resources, list) or len(resources) != 1:
+    raise SystemExit("Ollama guard plan must contain exactly one Hub resource")
+resource = resources[0]
+if (
+    resource.get("repo_id") != model
+    or resource.get("revision") != revision
+    or resource.get("roles") != ["guardrail_judge"]
+):
+    raise SystemExit("Ollama guard plan acquired an unexpected resource/role")
+sealed = receipt.get("resources")
+if not isinstance(sealed, list) or len(sealed) != 1:
+    raise SystemExit("Ollama guard receipt must seal exactly one Hub resource")
+for field in ("repo_id", "resource_id", "revision", "roles"):
+    if sealed[0].get(field) != resource.get(field):
+        raise SystemExit("Ollama guard receipt differs from its plan")
+if sealed[0].get("storage") != "managed_store":
+    raise SystemExit("Ollama guard receipt did not use the managed store")
+PY
+}
+
+guard_plan_acquire() {
+  local label="$1" plan_root="$2"
+  shift 2
+  local plan_log="$CONTROL_ROOT/${label}.plan.log"
+  local acquire_log="$CONTROL_ROOT/${label}.acquire.log"
+  local plan_id plan_sha receipt_id receipt_sha downloaded
+
+  test ! -e "$plan_root"
+  mkdir -p "$plan_root"
+  "$PY" -m experiments.run_matrix "$@" \
+    --model-acquisition-plan-only \
+    --model-acquisition-plan-dir "$plan_root" > "$plan_log" 2>&1
+  read -r plan_id plan_sha < <(json_fields "$plan_log" plan)
+  ACQ_PLAN_PATH="$plan_root/${plan_id}.plan.json"
+  ACQ_PLAN_SHA="$plan_sha"
+  test -f "$ACQ_PLAN_PATH" && test ! -L "$ACQ_PLAN_PATH"
+  test "$(sha256sum -- "$ACQ_PLAN_PATH" | awk '{print $1}')" = "$ACQ_PLAN_SHA"
+
+  "$PY" -m experiments.model_acquire \
+    --plan "$ACQ_PLAN_PATH" \
+    --plan-sha256 "$ACQ_PLAN_SHA" \
+    --store "$MODEL_STORE" \
+    --receipts-dir "$RECEIPTS_ROOT" \
+    --transport-cache "$TRANSPORT_CACHE" \
+    --max-download-bytes 0 \
+    --min-free-bytes 1099511627776 \
+    --deadline-seconds 86400 > "$acquire_log" 2>&1
+  read -r receipt_id receipt_sha downloaded < <(json_fields "$acquire_log" receipt)
+  test "$downloaded" = 0
+  ACQ_RECEIPT_PATH="$RECEIPTS_ROOT/${receipt_id}.receipt.json"
+  ACQ_RECEIPT_SHA="$receipt_sha"
+  test -f "$ACQ_RECEIPT_PATH" && test ! -L "$ACQ_RECEIPT_PATH"
+  test "$(sha256sum -- "$ACQ_RECEIPT_PATH" | awk '{print $1}')" = "$ACQ_RECEIPT_SHA"
+  validate_guard_acquisition "$ACQ_PLAN_PATH" "$ACQ_RECEIPT_PATH"
+}
+
+acquisition_args() {
+  printf '%s\0' \
+    --model-acquisition-plan "$ACQ_PLAN_PATH" \
+    --model-acquisition-plan-sha256 "$ACQ_PLAN_SHA" \
+    --model-acquisition-receipt "$ACQ_RECEIPT_PATH" \
+    --model-acquisition-receipt-sha256 "$ACQ_RECEIPT_SHA" \
+    --model-acquisition-store "$MODEL_STORE"
+}
+
+projection_fields() {
+  "$PY" - "$1" "$2" "$3" "$4" "$5" "$SCORE_GUARD" "$SCORE_GUARD_REV" <<'PY'
+import json
+import pathlib
+import sys
+
+root = pathlib.Path(sys.argv[1])
+mode, expected_spec, expected_arms_csv = sys.argv[2:5]
+expected_cap = int(sys.argv[5])
+guard_model, guard_revision = sys.argv[6:]
+projections = sorted(root.glob("lane-projection-*.lane-projection.json"))
+eligibilities = sorted(root.glob("eligibility-*.eligibility.json"))
+if len(projections) != 1 or len(eligibilities) != 1:
+    raise SystemExit("expected one projection and one eligibility artifact")
+projection = json.loads(projections[0].read_text(encoding="utf-8"))
+eligibility = json.loads(eligibilities[0].read_text(encoding="utf-8"))
+if projection.get("schema") != "ura-lane-projection/1" or projection.get("status") != "complete":
+    raise SystemExit("projection is not complete")
+if eligibility.get("schema") != "ura-eligibility-plan/3" or eligibility.get("status") != "complete":
+    raise SystemExit("eligibility plan is not complete")
+execution = eligibility.get("execution", {})
+if execution.get("request_status") != "whole_request_compatible" or execution.get("whole_request_preflight_complete") is not True:
+    raise SystemExit("projection eligibility is not wholly compatible")
+request = eligibility.get("request", {})
+if request.get("requested_target_specs") != [expected_spec] or request.get("selected_attackers") != ["replay"]:
+    raise SystemExit("projection target/attacker selection drifted")
+expected_arms = sorted(expected_arms_csv.split(","))
+actual_arms = [row.get("logical_source_arm") for row in projection["selection"]["arms"]]
+if actual_arms != expected_arms or request.get("logical_source_arms") != expected_arms:
+    raise SystemExit("projection source-arm inventory drifted")
+calls = projection["call_projection"]
+totals = projection["selection"]["totals"]
+if calls.get("target_calls", 0) <= 0 or calls.get("target_calls") != calls.get("trajectories"):
+    raise SystemExit("replay projection target/trajectory counts are invalid")
+if calls.get("target_calls") != totals.get("selected_records"):
+    raise SystemExit("one-seed replay projection does not match selected rows")
+if calls.get("judge_calls") != 0 or calls.get("http_attempts") != 0:
+    raise SystemExit("local Ollama projection exposed model-judge/hosted HTTP calls")
+bindings = eligibility.get("bindings", {})
+conditions = bindings.get("experiment_conditions", {}).get("values", {})
+if conditions.get("execution_purpose") != "preflight_only":
+    raise SystemExit("projection purpose is not preflight_only")
+caps = conditions.get("call_caps", {})
+if caps.get("target") != expected_cap or caps.get("judge") is not None or caps.get("http_attempts") is not None:
+    raise SystemExit("projection call-cap envelope differs from the exact request")
+if conditions.get("deadline_seconds") is not None:
+    raise SystemExit("unexpected top-level deadline field")
+if caps.get("deadline_seconds") not in {3600, 7776000}:
+    raise SystemExit("projection deadline is outside the declared workflow")
+acquisition = bindings.get("model_acquisition", {})
+role_acquisition = conditions.get("model_acquisition", {})
+role_resources = role_acquisition.get("resources")
+role_exceptions = role_acquisition.get("exceptions")
+if mode == "static":
+    if conditions.get("judges") != ["rules", "guardrail"]:
+        raise SystemExit("static projection judge selection drifted")
+    if conditions.get("guardrail_model") != guard_model or conditions.get("guardrail_revision") != guard_revision or conditions.get("guardrail_device") != "cuda:1":
+        raise SystemExit("static projection did not bind the selected local scoring guard")
+    if calls.get("local_guardrail_evaluations") != calls.get("target_calls"):
+        raise SystemExit("static projection guardrail coverage is incomplete")
+    if bindings.get("supplementary_metric_policy") != {
+        "approximate_common_metrics": True,
+        "authority": "supplementary_non_authoritative",
+        "metric_prefix": "approximate_",
+    }:
+        raise SystemExit("static projection lacks the approximate-metrics opt-in")
+    resources = acquisition.get("resources")
+    if acquisition.get("status") != "verified" or not isinstance(resources, list) or len(resources) != 1:
+        raise SystemExit("static Ollama projection must bind only the scoring guard resource")
+    resource = resources[0]
+    if resource.get("repo_id") != guard_model or resource.get("revision") != guard_revision or resource.get("roles") != ["guardrail_judge"]:
+        raise SystemExit("static Ollama projection acquired an unexpected Hub role")
+    if not isinstance(role_resources, list) or len(role_resources) != 1 or role_resources[0].get("repo_id") != guard_model or role_resources[0].get("revision") != guard_revision or role_resources[0].get("roles") != ["guardrail_judge"]:
+        raise SystemExit("static Ollama shared-role projection differs from the scoring guard")
+    if role_exceptions != []:
+        raise SystemExit("static Ollama shared-role projection has an unexpected exception")
+elif mode == "rjudge":
+    if conditions.get("judges") != ["rules"] or conditions.get("guardrail_model") is not None:
+        raise SystemExit("R-Judge projection must remain source-evaluator/rules-only")
+    if calls.get("local_guardrail_evaluations") != 0:
+        raise SystemExit("R-Judge projection unexpectedly selected a guardrail")
+    if "supplementary_metric_policy" in bindings:
+        raise SystemExit("R-Judge projection must not use approximate common metrics")
+    selection = acquisition.get("selection", {})
+    if acquisition.get("status") != "not_required" or selection.get("resources") != [] or selection.get("exceptions") != []:
+        raise SystemExit("R-Judge Ollama projection unexpectedly requires Hub acquisition")
+    if role_resources != [] or role_exceptions != []:
+        raise SystemExit("R-Judge Ollama shared-role projection unexpectedly requires acquisition")
+else:
+    raise SystemExit("unknown projection mode")
+print(
+    projection["projection_id"],
+    calls["target_calls"],
+    calls["judge_calls"],
+    calls["local_guardrail_evaluations"],
+    calls["http_attempts"],
+    totals["selected_clusters"],
+    totals["selected_records"],
+)
+PY
+}
+
+compare_projections() {
+  "$PY" - "$1" "$2" <<'PY'
+import json
+import pathlib
+import sys
+
+def load(root):
+    paths = sorted(pathlib.Path(root).glob("lane-projection-*.lane-projection.json"))
+    if len(paths) != 1:
+        raise SystemExit("expected exactly one lane projection")
+    return json.loads(paths[0].read_text(encoding="utf-8"))
+
+preliminary = load(sys.argv[1])
+final = load(sys.argv[2])
+if preliminary["selection"] != final["selection"]:
+    raise SystemExit("exact-cap projection changed the selected cohort")
+if preliminary["call_projection"] != final["call_projection"]:
+    raise SystemExit("exact-cap projection changed call exposure")
+PY
+}
+
+run_rig_projection() {
+  local label="$1" mode="$2" plan_root="$3" run_log="$4"
+  shift 4
+  local -a args=("$@")
+  local -a acq=()
+  if [[ "$mode" == 'static' ]]; then
+    guard_plan_acquire "$label" "$plan_root" "${args[@]}" --preflight-only
+    while IFS= read -r -d '' item; do acq+=("$item"); done < <(acquisition_args)
+  elif [[ "$mode" != 'rjudge' ]]; then
+    return 2
+  fi
+  CUDA_VISIBLE_DEVICES=0,1 "$PY" -m experiments.rig_check \
+    "${args[@]}" "${acq[@]}" > "$run_log" 2>&1
+}
+
+run_full_projection_lane() {
+  local lane="$1" label="$2" mode="$3" arms="$4"
+  local spec="${MODEL_SPECS[$label]}" digest="${MODEL_DIGESTS[$label]}"
+  local config="${MODEL_CONFIGS[$label]}" config_sha
+  local preliminary_base preliminary_plan preliminary_run final_base final_plan final_run
+  local preliminary_id target_cap judge_cap guard_evals http_cap clusters records
+  local final_id final_target final_judge final_guard final_http final_clusters final_records
+  config_sha="$(sha256sum -- "$config" | awk '{print $1}')"
+  preliminary_base="$PREFLIGHT_ROOT/${lane}-preliminary-${TAG}"
+  preliminary_plan="$preliminary_base/plan"
+  preliminary_run="$preliminary_base/run"
+  final_base="$PREFLIGHT_ROOT/${lane}-final-${TAG}"
+  final_plan="$final_base/plan"
+  final_run="$final_base/run"
+  test ! -e "$preliminary_base" && mkdir -p "$preliminary_base"
+  test ! -e "$final_base" && mkdir -p "$final_base"
+
+  local judges='rules'
+  [[ "$mode" == 'static' ]] && judges='rules,guardrail'
+  local -a common=(
+    --project-revision "$PROJECT_RECEIPT"
+    --project-revision-sha256 "$PROJECT_SHA256"
+    --local "$spec"
+    --local-config "$config"
+    --local-config-sha256 "$config_sha"
+    --attackers replay
+    --judges "$judges"
+    --corpora "$arms"
+    --source-config "$SOURCE_CONFIG"
+    --source-config-sha256 "$SOURCE_CONFIG_SHA256"
+    --source-conformance "$SOURCE_RECEIPT"
+    --source-conformance-sha256 "$SOURCE_RECEIPT_SHA256"
+    --limit 0
+    --sample-seed 0
+    --seeds 0
+    --max-queries 1
+    --max-turns 1
+    --group "$GROUP"
+  )
+  if [[ "$mode" == 'static' ]]; then
+    common+=(
+      --guardrail-model "$SCORE_GUARD"
+      --guardrail-revision "$SCORE_GUARD_REV"
+      --guardrail-device cuda:1
+      --approximate-common-metrics
+    )
+  fi
+
+  local -a preliminary_args=(
+    "${common[@]}"
+    --max-total-target-calls 400000
+    --max-total-judge-calls 0
+    --max-total-http-attempts 0
+    --deadline-seconds 7776000
+    --out "$preliminary_run"
+  )
+  printf 'PROJECTION_PRELIMINARY_START=%s TIME=%s\n' "$lane" "$(date -Is)"
+  run_rig_projection "${lane}-preliminary" "$mode" "$preliminary_plan" \
+    "$CONTROL_ROOT/${lane}.preliminary.log" "${preliminary_args[@]}"
+  read -r preliminary_id target_cap judge_cap guard_evals http_cap clusters records < <(
+    projection_fields "$preliminary_run" "$mode" "$spec" "$arms" 400000
+  )
+
+  local -a final_args=(
+    "${common[@]}"
+    --max-total-target-calls "$target_cap"
+    --max-total-judge-calls "$judge_cap"
+    --max-total-http-attempts "$http_cap"
+    --deadline-seconds 7776000
+    --out "$final_run"
+  )
+  run_rig_projection "${lane}-final" "$mode" "$final_plan" \
+    "$CONTROL_ROOT/${lane}.final.log" "${final_args[@]}"
+  read -r final_id final_target final_judge final_guard final_http final_clusters final_records < <(
+    projection_fields "$final_run" "$mode" "$spec" "$arms" "$target_cap"
+  )
+  test "$final_target" = "$target_cap"
+  test "$final_judge" = "$judge_cap"
+  test "$final_guard" = "$guard_evals"
+  test "$final_http" = "$http_cap"
+  test "$final_clusters" = "$clusters"
+  test "$final_records" = "$records"
+  compare_projections "$preliminary_run" "$final_run"
+
+  printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
+    "$lane" "$label" "$spec" "$digest" "$mode" "$preliminary_id" "$final_id" \
+    "$target_cap" "$judge_cap" "$guard_evals" "$http_cap" "$clusters" "$records" \
+    "$preliminary_run" "$final_run" | tee -a "$PROJECTION_STATUS"
+  safe_marker "${lane}.projection"
+  printf 'PROJECTION_FINAL_END=%s TIME=%s\n' "$lane" "$(date -Is)"
+}
+
+validate_attestation_receipt() {
+  "$PY" - "$1" "$2" "$3" "$4" "$5" "$SCOPE" <<'PY'
+import json
+import sys
+
+from ura.live_attestation import route_config_sha256
+
+receipt_path, config_path, spec, digest, expected_kind, scope = sys.argv[1:]
+receipt = json.load(open(receipt_path, encoding="utf-8"))
+config = json.load(open(config_path, encoding="utf-8"))
+if receipt.get("schema") != "ura-live-attestation/2" or receipt.get("status") != "complete":
+    raise SystemExit("live attestation is not complete")
+records = receipt.get("records")
+if not isinstance(records, list) or len(records) != 1:
+    raise SystemExit("text attestation must contain exactly one record")
+record = records[0]
+if record.get("execution_scope_id") != scope or record.get("requested_target_spec") != spec:
+    raise SystemExit("attestation scope/target differs from the selected route")
+if record.get("route_kind") != "local_runtime" or record.get("exact_input_modalities") != ["text"]:
+    raise SystemExit("attestation route/modality differs from local text")
+identity = record.get("realized_target_identity", {})
+if identity.get("model_digest") != digest or identity.get("resolved_model") != spec.removeprefix("ollama:"):
+    raise SystemExit("attestation realized Ollama identity differs from the exact tag/digest")
+if record.get("probe", {}).get("evidence_kind") != expected_kind:
+    raise SystemExit("attestation probe evidence kind drifted")
+expected_route = route_config_sha256(
+    route_kind="local_runtime",
+    requested_target_spec=spec,
+    resolved_target=record["resolved_target"],
+    route_config=config[spec],
+)
+if record.get("route_config_sha256") != expected_route:
+    raise SystemExit("attestation route-config digest differs from exact local config")
+print(receipt["attestation_id"])
+PY
+}
+
+probe_ollama_text() {
+  local label="$1"
+  local spec="${MODEL_SPECS[$label]}" digest="${MODEL_DIGESTS[$label]}"
+  local config="${MODEL_CONFIGS[$label]}" config_sha base run_root receipt_file receipt_sha attestation_id
+  config_sha="$(sha256sum -- "$config" | awk '{print $1}')"
+  base="$ATTEST_ROOT/${label}-text-${TAG}"
+  run_root="$base/run"
+  receipt_file="$ATTEST_RECEIPTS/${label}-text-${TAG}.live-attestation.json"
+  test ! -e "$base" && mkdir -p "$base"
+  test ! -e "$receipt_file"
+
+  local -a args=(
+    --attestation-probe
+    --execution-scope-id "$SCOPE"
+    --project-revision "$PROJECT_RECEIPT"
+    --project-revision-sha256 "$PROJECT_SHA256"
+    --local "$spec"
+    --local-config "$config"
+    --local-config-sha256 "$config_sha"
+    --attackers replay
+    --judges rules
+    --corpora synth
+    --limit 1
+    --sample-seed 0
+    --seeds 0
+    --max-queries 1
+    --max-turns 1
+    --group "$GROUP"
+    --max-total-target-calls 1
+    --max-total-judge-calls 0
+    --max-total-http-attempts 0
+    --deadline-seconds 900
+    --out "$run_root"
+  )
+
+  printf 'ATTESTATION_START=%s TIME=%s\n' "$label" "$(date -Is)"
+  # Ollama and deterministic rules contain no Hub resource. Acquisition-plan
+  # arguments are forbidden for this exact request and are intentionally absent.
+  CUDA_VISIBLE_DEVICES=0,1 "$PY" -m experiments.run_matrix \
+    "${args[@]}" > "$CONTROL_ROOT/${label}.attestation-run.log" 2>&1
+  "$PY" -m experiments.live_attestation \
+    --probe-root "$run_root" \
+    --execution-scope-id "$SCOPE" \
+    --out "$receipt_file" > "$CONTROL_ROOT/${label}.attestation-derive.log" 2>&1
+  test -f "$receipt_file" && test ! -L "$receipt_file"
+  receipt_sha="$(sha256sum -- "$receipt_file" | awk '{print $1}')"
+  "$PY" -m experiments.live_attestation \
+    --validate "$receipt_file" --sha256 "$receipt_sha" \
+    >> "$CONTROL_ROOT/${label}.attestation-derive.log" 2>&1
+  attestation_id="$(validate_attestation_receipt \
+    "$receipt_file" "$config" "$spec" "$digest" synthetic_live_transport_probe)"
+  printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
+    "$label" "$spec" "$digest" "$attestation_id" "$receipt_file" "$receipt_sha" \
+    "$run_root" | tee -a "$ATTEST_STATUS"
+  safe_marker "${label}.attestation"
+  printf 'ATTESTATION_END=%s TIME=%s\n' "$label" "$(date -Is)"
+}
+
+canary_fields() {
+  "$PY" - "$1" "$2" "$3" "$4" "$5" "$6" "$7" "$8" \
+    "$SCORE_GUARD" "$SCORE_GUARD_REV" "$EXPECTED_COMMIT" \
+    "$PROJECT_SHA256" "$SOURCE_CONFIG_SHA256" "$SOURCE_RECEIPT_SHA256" \
+    "$GROUP" <<'PY'
+import hashlib
+import json
+import pathlib
+import sys
+
+from ura.eligibility import validate_eligibility_plan
+from ura.lane_canary import validate_lane_canary_summary
+from ura.lane_projection import validate_lane_projection
+from ura.request_envelope import load_request_envelope_file
+
+(
+    root_text,
+    mode,
+    expected_spec,
+    digest,
+    expected_arm,
+    target_cap_text,
+    config_text,
+    expected_config_sha,
+    guard_model,
+    guard_revision,
+    expected_commit,
+    expected_project_sha,
+    expected_source_config_sha,
+    expected_source_receipt_sha,
+    group_csv,
+) = sys.argv[1:]
+root = pathlib.Path(root_text)
+target_cap = int(target_cap_text)
+config_path = pathlib.Path(config_text)
+group = group_csv.split(",")
+expected_runtime = expected_spec + "@sha256:" + digest
+
+def sha256_file(path: pathlib.Path) -> str:
+    return hashlib.sha256(path.read_bytes()).hexdigest()
+
+def one(paths: list[pathlib.Path], label: str) -> pathlib.Path:
+    if len(paths) != 1:
+        raise SystemExit(f"expected one {label}, found {len(paths)}")
+    path = paths[0]
+    if not path.is_file() or path.is_symlink():
+        raise SystemExit(f"{label} is not a regular non-symlink file")
+    return path
+
+summary_path = one(sorted(root.glob("lane-canary-*.lane-canary.json")), "canary summary")
+grid_path = one(sorted(root.rglob("*.grid.json")), "canary grid")
+envelope_path = one(
+    sorted(root.glob("request-envelope-*.request-envelope.json")),
+    "request envelope",
+)
+eligibility_path = one(
+    sorted(root.glob("eligibility-*.eligibility.json")), "eligibility plan"
+)
+projection_path = one(
+    sorted(root.glob("lane-projection-*.lane-projection.json")), "lane projection"
+)
+one(sorted(root.rglob("*.complete.json")), "completion marker")
+if not config_path.is_file() or config_path.is_symlink():
+    raise SystemExit("Ollama config is not a regular non-symlink file")
+if sha256_file(config_path) != expected_config_sha:
+    raise SystemExit("Ollama config digest drifted")
+local_config = json.loads(config_path.read_text(encoding="utf-8"))
+if local_config != {expected_spec: {"digest": digest, "modalities": ["text"]}}:
+    raise SystemExit("Ollama config differs from the exact selected tag/digest")
+
+summary = validate_lane_canary_summary(
+    json.loads(summary_path.read_text(encoding="utf-8"))
+)
+if summary.get("status") != "complete" or summary.get("evidence_class") != "live_diagnostic":
+    raise SystemExit("canary summary is not complete live diagnostic evidence")
+grid = json.loads(grid_path.read_text(encoding="utf-8"))
+request = grid.get("request")
+if not isinstance(request, dict):
+    raise SystemExit("canary grid lacks its request")
+envelope, envelope_descriptor = load_request_envelope_file(envelope_path)
+if request.get("request_envelope") != envelope_descriptor:
+    raise SystemExit("grid is not bound to the exact retained request envelope")
+eligibility = validate_eligibility_plan(
+    json.loads(eligibility_path.read_text(encoding="utf-8"))
+)
+projection = validate_lane_projection(
+    json.loads(projection_path.read_text(encoding="utf-8"))
+)
+if projection.get("status") != "complete":
+    raise SystemExit("canary projection is not complete")
+
+project_binding = request.get("project_revision")
+if not isinstance(project_binding, dict) or (
+    project_binding.get("mode") != "verified"
+    or project_binding.get("expected_commit") != expected_commit
+    or project_binding.get("observed_commit") != expected_commit
+    or project_binding.get("sha256") != expected_project_sha
+):
+    raise SystemExit("canary project-revision binding drifted")
+if envelope["bindings"].get("project_revision") != project_binding:
+    raise SystemExit("request-envelope/grid project-revision bindings differ")
+
+expected_judges = ["rules", "guardrail"] if mode == "static" else ["rules"]
+expected_approximate = mode == "static"
+expected_envelope = {
+    "execution_purpose": "diagnostic_canary",
+    "requested_target_keys": [expected_spec],
+    "logical_source_arms": [expected_arm],
+    "selected_attackers": ["replay"],
+    "judges": expected_judges,
+    "judge_model": None,
+    "seeds": [0],
+    "sample_seed": 0,
+    "limit": 1,
+    "max_queries": 1,
+    "max_turns": 1,
+    "defense": "none",
+    "defense_guard": "rules",
+    "group_keys": group,
+    "quantization": "",
+    "dtype": "auto",
+    "dry_run": False,
+    "approximate_common_metrics": expected_approximate,
+    "hosted_judge_data_transfer_acknowledged": False,
+    "call_caps": {
+        "target": target_cap,
+        "judge": None,
+        "http_attempts": None,
+        "deadline_seconds": 3600,
+    },
+}
+if envelope.get("request") != expected_envelope:
+    raise SystemExit("canary request envelope differs from the exact admitted request")
+
+expected_grid = {
+    "execution_purpose": "diagnostic_canary",
+    "models": [expected_spec],
+    "corpora": [expected_arm],
+    "attackers": ["replay"],
+    "judges": expected_judges,
+    "judge_model": None,
+    "seeds": [0],
+    "sample_seed": 0,
+    "limit": 1,
+    "max_queries": 1,
+    "max_turns": 1,
+    "group_keys": group,
+    "defense": "none",
+    "defense_guard": "rules",
+    "quantization": "",
+    "dtype": "auto",
+    "dry_run": False,
+    "approximate_common_metrics": expected_approximate,
+    "attestation_probe": False,
+}
+for field, expected in expected_grid.items():
+    if request.get(field) != expected:
+        raise SystemExit(f"canary grid field {field} drifted")
+if request.get("local_configs") != local_config:
+    raise SystemExit("canary grid Ollama configuration drifted")
+for field, expected_sha in (
+    ("local_config_artifact", expected_config_sha),
+    ("source_config_artifact", expected_source_config_sha),
+    ("source_conformance_artifact", expected_source_receipt_sha),
+):
+    descriptor = request.get(field)
+    if not isinstance(descriptor, dict) or descriptor.get("sha256") != expected_sha:
+        raise SystemExit(f"canary grid {field} digest drifted")
+
+conditions = eligibility.get("bindings", {}).get("experiment_conditions", {}).get("values")
+if not isinstance(conditions, dict):
+    raise SystemExit("eligibility plan lacks experiment conditions")
+for field, expected in (
+    ("execution_purpose", "diagnostic_canary"),
+    ("judges", expected_judges),
+    ("seeds", [0]),
+    ("sample_seed", 0),
+    ("limit", 1),
+    ("max_queries", 1),
+    ("max_turns", 1),
+    ("group_keys", group),
+    ("quantization", ""),
+    ("dtype", "auto"),
+    ("dry_run", False),
+):
+    if conditions.get(field) != expected:
+        raise SystemExit(f"eligibility condition {field} drifted")
+
+condition = summary["condition"]
+if (
+    condition.get("execution_purpose") != "diagnostic_canary"
+    or condition.get("dry_run") is not False
+    or condition.get("requested_model_spec") != expected_spec
+    or condition.get("resolved_target") != expected_runtime
+    or condition.get("logical_source_arm") != expected_arm
+    or condition.get("attacker") != "replay"
+    or condition.get("defense") != "none"
+    or condition.get("judges") != expected_judges
+    or condition.get("seeds") != [0]
+):
+    raise SystemExit("canary target/source condition drifted")
+target_identity = condition.get("realized_identities", {}).get("target", {})
+target_snapshot = target_identity.get("snapshot", {})
+if (
+    target_identity.get("observations", 0) <= 0
+    or target_snapshot.get("target") != expected_runtime
+    or target_snapshot.get("model_digest") != digest
+    or target_snapshot.get("resolved_model") != expected_spec.removeprefix("ollama:")
+):
+    raise SystemExit("canary does not retain the exact realized Ollama digest")
+workload = summary["workload"]
+if workload.get("selected_clusters") != 1 or workload.get("completed_responses", 0) <= 0:
+    raise SystemExit("canary did not complete one selected cluster")
+calls = summary["call_accounting"]["reserved"]
+if calls.get("target_logical_calls") != target_cap or calls.get("judge_model_calls") != 0 or calls.get("http_attempt_exposure") != 0:
+    raise SystemExit("canary durable call reservation differs from exact rehearsal caps")
+roles = summary["role_reachability"]
+execution = roles["execution_roles"]
+if execution["target"]["status"] != "exercised" or execution["attacker"]["status"] != "exercised":
+    raise SystemExit("canary target/attacker was not exercised")
+stage_rows = roles.get("stages", [])
+if mode == "static":
+    if (
+        request.get("guardrail_model") != guard_model
+        or request.get("guardrail_revision") != guard_revision
+        or request.get("guardrail_device") != "cuda:1"
+        or conditions.get("guardrail_model") != guard_model
+        or conditions.get("guardrail_revision") != guard_revision
+        or conditions.get("guardrail_device") != "cuda:1"
+    ):
+        raise SystemExit("static canary did not bind the selected scoring guard")
+    observed_stage_keys = []
+    for stage_row in stage_rows:
+        key = (stage_row.get("stage"), stage_row.get("judge"))
+        if not observed_stage_keys or observed_stage_keys[-1] != key:
+            observed_stage_keys.append(key)
+    if observed_stage_keys != [(0, "rules"), (1, "guardrail")] or any(
+        row.get("reached") is not True
+        or not isinstance(row.get("queried_records"), int)
+        or row["queried_records"] <= 0
+        or row.get("not_queried_records") != 0
+        for row in stage_rows
+    ):
+        raise SystemExit("static canary did not actually query rules and the selected guard")
+    completed = summary["workload"]["completed_judgments"]
+    if (
+        sum(row["trail_records"] for row in stage_rows if row["role"] == "authoritative")
+        != completed
+        or sum(row["trail_records"] for row in stage_rows if row["role"] == "shadow")
+        != completed
+    ):
+        raise SystemExit("static canary does not retain one authority and one shadow per judgment")
+    judges = condition.get("realized_identities", {}).get("judges")
+    if not isinstance(judges, list) or len(judges) != 2:
+        raise SystemExit("static canary lacks the exact realized judge inventory")
+    guard_identity = judges[1]
+    guard_snapshot = guard_identity.get("snapshot", {})
+    if (
+        judges[0].get("stage") != 0
+        or judges[0].get("judge") != "rules"
+        or judges[0].get("observations", 0) <= 0
+        or guard_identity.get("stage") != 1
+        or guard_identity.get("judge") != "guardrail"
+        or guard_identity.get("observations", 0) <= 0
+        or guard_snapshot.get("requested_model") != guard_model
+        or guard_snapshot.get("model_revision") != guard_revision
+        or guard_snapshot.get("model_identity") != f"{guard_model}@{guard_revision}"
+    ):
+        raise SystemExit("static canary realized scoring-guard identity drifted")
+    if roles.get("all_configured_stages_represented") is not True:
+        raise SystemExit("static canary lacks complete stage representation")
+    if execution["source_evaluator"]["status"] != "not_applicable":
+        raise SystemExit("static canary unexpectedly used a source evaluator")
+elif mode == "rjudge":
+    if any(request.get(field) is not None for field in (
+        "guardrail_model", "guardrail_revision", "guardrail_device"
+    )):
+        raise SystemExit("R-Judge canary unexpectedly configured a scoring guard")
+    if (
+        len(stage_rows) != 1
+        or stage_rows[0].get("stage") != 0
+        or stage_rows[0].get("judge") != "rules"
+        or stage_rows[0].get("role") != "authoritative"
+        or stage_rows[0].get("reached") is not False
+        or stage_rows[0].get("queried_records") != 0
+        or not isinstance(stage_rows[0].get("not_queried_records"), int)
+        or stage_rows[0]["not_queried_records"] <= 0
+    ):
+        raise SystemExit("R-Judge rules placeholder was unexpectedly queried")
+    source = execution["source_evaluator"]
+    if source.get("status") != "exercised" or source.get("valid_records", 0) <= 0:
+        raise SystemExit("R-Judge source evaluator lacks valid observed support")
+else:
+    raise SystemExit("unknown canary mode")
+support = summary["decision_support"]
+if support.get("decided", 0) <= 0 or not isinstance(support.get("decision_coverage"), (int, float)):
+    raise SystemExit("canary lacks decided support")
+print(
+    summary["canary_id"],
+    str(roles["all_configured_stages_represented"]).lower(),
+    execution["target"]["status"],
+    execution["attacker"]["status"],
+    execution["source_evaluator"]["status"],
+    support["decided"],
+    support["decision_coverage"],
+)
+PY
+}
+
+run_canary_lane() {
+  local lane="$1" label="$2" mode="$3" arm="$4"
+  local spec="${MODEL_SPECS[$label]}" digest="${MODEL_DIGESTS[$label]}"
+  local config="${MODEL_CONFIGS[$label]}" config_sha
+  local attestation_file="${ATTESTATION_FILES[$label]}" attestation_sha="${ATTESTATION_SHAS[$label]}"
+  local rehearsal_base rehearsal_plan rehearsal_run diagnostic_base diagnostic_plan diagnostic_run
+  local projection_id target_cap judge_cap guard_evals http_cap clusters records eligibility
+  local canary_id stages target_status attacker_status source_status decided coverage
+  config_sha="$(sha256sum -- "$config" | awk '{print $1}')"
+  rehearsal_base="$PREFLIGHT_ROOT/${lane}-rehearsal-${TAG}"
+  rehearsal_plan="$rehearsal_base/plan"
+  rehearsal_run="$rehearsal_base/run"
+  diagnostic_base="$DIAGNOSTIC_ROOT/${lane}-${TAG}"
+  diagnostic_plan="$diagnostic_base/plan"
+  diagnostic_run="$diagnostic_base/run"
+  test ! -e "$rehearsal_base" && mkdir -p "$rehearsal_base"
+  test ! -e "$diagnostic_base" && mkdir -p "$diagnostic_base"
+
+  local judges='rules'
+  [[ "$mode" == 'static' ]] && judges='rules,guardrail'
+  local -a common=(
+    --project-revision "$PROJECT_RECEIPT"
+    --project-revision-sha256 "$PROJECT_SHA256"
+    --local "$spec"
+    --local-config "$config"
+    --local-config-sha256 "$config_sha"
+    --attackers replay
+    --judges "$judges"
+    --corpora "$arm"
+    --source-config "$SOURCE_CONFIG"
+    --source-config-sha256 "$SOURCE_CONFIG_SHA256"
+    --source-conformance "$SOURCE_RECEIPT"
+    --source-conformance-sha256 "$SOURCE_RECEIPT_SHA256"
+    --limit 1
+    --sample-seed 0
+    --seeds 0
+    --max-queries 1
+    --max-turns 1
+    --group "$GROUP"
+  )
+  if [[ "$mode" == 'static' ]]; then
+    common+=(
+      --guardrail-model "$SCORE_GUARD"
+      --guardrail-revision "$SCORE_GUARD_REV"
+      --guardrail-device cuda:1
+      --approximate-common-metrics
+    )
+  fi
+
+  local -a rehearsal_args=(
+    "${common[@]}"
+    --max-total-target-calls 1000
+    --max-total-judge-calls 0
+    --max-total-http-attempts 0
+    --deadline-seconds 3600
+    --out "$rehearsal_run"
+  )
+  printf 'CANARY_REHEARSAL_START=%s TIME=%s\n' "$lane" "$(date -Is)"
+  run_rig_projection "${lane}-rehearsal" "$mode" "$rehearsal_plan" \
+    "$CONTROL_ROOT/${lane}.rehearsal.log" "${rehearsal_args[@]}"
+  read -r projection_id target_cap judge_cap guard_evals http_cap clusters records < <(
+    projection_fields "$rehearsal_run" "$mode" "$spec" "$arm" 1000
+  )
+  test "$clusters" = 1
+
+  test -f "$attestation_file" && test ! -L "$attestation_file"
+  test "$(sha256sum -- "$attestation_file" | awk '{print $1}')" = "$attestation_sha"
+  "$PY" -m experiments.live_attestation \
+    --validate "$attestation_file" --sha256 "$attestation_sha" \
+    > "$CONTROL_ROOT/${lane}.attestation-validate.log" 2>&1
+
+  local -a canary_args=(
+    "${common[@]}"
+    --diagnostic-canary
+    --execution-scope-id "$SCOPE"
+    --live-attestation "$attestation_file"
+    --live-attestation-sha256 "$attestation_sha"
+    --live-attestation-max-age-hours "$MAX_ATTESTATION_AGE_HOURS"
+    --max-total-target-calls "$target_cap"
+    --max-total-judge-calls "$judge_cap"
+    --max-total-http-attempts "$http_cap"
+    --deadline-seconds 3600
+    --out "$diagnostic_run"
+  )
+  local -a acq=()
+  if [[ "$mode" == 'static' ]]; then
+    guard_plan_acquire "${lane}-canary" "$diagnostic_plan" "${canary_args[@]}"
+    while IFS= read -r -d '' item; do acq+=("$item"); done < <(acquisition_args)
+  fi
+  # R-Judge with an Ollama target has no Hub resources. Supplying an empty
+  # acquisition plan would itself violate Runner admission, so it is omitted.
+  CUDA_VISIBLE_DEVICES=0,1 "$PY" -m experiments.run_matrix \
+    "${canary_args[@]}" "${acq[@]}" > "$CONTROL_ROOT/${lane}.canary.log" 2>&1
+
+  mapfile -t eligibility_files < <(find "$diagnostic_run" -maxdepth 1 -type f \
+    -name 'eligibility-*.eligibility.json' -print | sort)
+  test "${#eligibility_files[@]}" -eq 1
+  eligibility="${eligibility_files[0]}"
+  "$PY" -m experiments.lane_canary \
+    --results "$diagnostic_run" \
+    --eligibility "$eligibility" \
+    --out-dir "$diagnostic_run" > "$CONTROL_ROOT/${lane}.lane-canary.log" 2>&1
+  read -r canary_id stages target_status attacker_status source_status decided coverage < <(
+    canary_fields "$diagnostic_run" "$mode" "$spec" "$digest" "$arm" \
+      "$target_cap" "$config" "$config_sha"
+  )
+  printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
+    "$lane" "$label" "$spec" "$digest" "$mode" "$projection_id" "$target_cap" \
+    "$judge_cap" "$guard_evals" "$http_cap" "$canary_id" "$stages" \
+    "$target_status" "$attacker_status" "$source_status" "$decided" "$coverage" \
+    "$diagnostic_run" | tee -a "$CANARY_STATUS"
+  safe_marker "${lane}.canary"
+  printf 'CANARY_END=%s TIME=%s\n' "$lane" "$(date -Is)"
+}
+
+# Phase 5 full no-call projections. Each lane gets a preliminary ceiling and a
+# second, independently bound final preflight whose target cap equals the exact
+# retained projection. Failures are isolated so every other runnable lane is
+# still attempted before this tmux session reports its final status.
+for label in "${MODEL_LABELS[@]}"; do
+  static_lane="ollama-${label}-text-full"
+  rjudge_lane="rjudge-ollama-${label}"
+  assert_ollama_runnable_lane "$static_lane"
+  assert_ollama_runnable_lane "$rjudge_lane"
+  run_isolated projection "$static_lane" \
+    run_full_projection_lane "$static_lane" "$label" static "$TEXT_ARMS"
+  run_isolated projection "$rjudge_lane" \
+    run_full_projection_lane "$rjudge_lane" "$label" rjudge rjudge_release
+done
+
+# Derive the expiring receipts only after full projections, immediately before
+# the canaries that consume them.
+for label in "${MODEL_LABELS[@]}"; do
+  run_isolated attestation "$label" probe_ollama_text "$label"
+  receipt_file="$ATTEST_RECEIPTS/${label}-text-${TAG}.live-attestation.json"
+  if [[ -f "$receipt_file" && ! -L "$receipt_file" ]]; then
+    ATTESTATION_FILES[$label]="$receipt_file"
+    ATTESTATION_SHAS[$label]="$(sha256sum -- "$receipt_file" | awk '{print $1}')"
+  fi
+done
+
+# One real selected cluster for every static and R-Judge lane. A lane whose
+# exact projection or target attestation failed is explicitly blocked; it is
+# never silently replaced by another model, arm, judge, or stale receipt.
+for label in "${MODEL_LABELS[@]}"; do
+  static_lane="ollama-${label}-text-full"
+  rjudge_lane="rjudge-ollama-${label}"
+  assert_ollama_runnable_lane "$static_lane"
+  assert_ollama_runnable_lane "$rjudge_lane"
+  if [[ ! -e "$SUCCESS_ROOT/${label}.attestation" ]]; then
+    record_blocked canary "$static_lane" missing_fresh_exact_text_attestation
+    record_blocked canary "$rjudge_lane" missing_fresh_exact_text_attestation
+    continue
+  fi
+  if [[ -e "$SUCCESS_ROOT/${static_lane}.projection" ]]; then
+    run_isolated canary "$static_lane" \
+      run_canary_lane "$static_lane" "$label" static airbench_full
+  else
+    record_blocked canary "$static_lane" missing_exact_cap_projection
+  fi
+  if [[ -e "$SUCCESS_ROOT/${rjudge_lane}.projection" ]]; then
+    run_isolated canary "$rjudge_lane" \
+      run_canary_lane "$rjudge_lane" "$label" rjudge rjudge_release
+  else
+    record_blocked canary "$rjudge_lane" missing_exact_cap_projection
+  fi
+done
+
+run_isolated integrity roster-final \
+  verify_live_roster "$CONTROL_ROOT/roster-final.json" "${roster_args[@]}"
+
+if (( ${#FAILED_UNITS[@]} == 0 )); then
+  "$PY" - "$PROJECTION_STATUS" "$ATTEST_STATUS" "$CANARY_STATUS" "$DISPOSITIONS" <<'PY'
+import csv
+import sys
+
+def rows(path):
+    with open(path, encoding="utf-8", newline="") as handle:
+        return list(csv.DictReader(handle, delimiter="\t"))
+
+projections, attestations, canaries, dispositions = map(rows, sys.argv[1:])
+labels = ["rwkv-g1d-0p4b", "rwkv-g1f-2p9b", "rwkv-g1g-1p5b"]
+expected_runnable = {
+    lane
+    for label in labels
+    for lane in (f"ollama-{label}-text-full", f"rjudge-ollama-{label}")
+}
+typed_terminals = {f"gptgeochat-ollama-{label}" for label in labels}
+if len(projections) != 6:
+    raise SystemExit(f"expected 6 Ollama projection rows, found {len(projections)}")
+if len(attestations) != 3:
+    raise SystemExit(f"expected 3 Ollama attestation rows, found {len(attestations)}")
+if len(canaries) != 6:
+    raise SystemExit(f"expected 6 Ollama canary rows, found {len(canaries)}")
+if any(row["disposition"] != "completed" for row in dispositions):
+    raise SystemExit("a supposedly clean workflow contains a non-complete disposition")
+if {row["metric_mode"] for row in projections} != {"static", "rjudge"}:
+    raise SystemExit("Ollama projection metric inventory is incomplete")
+if (
+    {row["lane"] for row in projections} != expected_runnable
+    or {row["lane"] for row in canaries} != expected_runnable
+    or ({row["lane"] for row in projections + canaries} & typed_terminals)
+):
+    raise SystemExit("typed GPTGeoChat x RWKV terminal entered a runnable loop")
+for row in projections:
+    if int(row["target_cap"]) <= 0 or int(row["judge_cap"]) != 0 or int(row["http_cap"]) != 0:
+        raise SystemExit(f"invalid exact cap row: {row['lane']}")
+for row in canaries:
+    if row["target_status"] != "exercised" or row["attacker_status"] != "exercised":
+        raise SystemExit(f"canary roles not exercised: {row['lane']}")
+    if row["metric_mode"] == "static" and row["all_configured_stages_represented"] != "true":
+        raise SystemExit(f"static scoring stages not represented: {row['lane']}")
+    if row["metric_mode"] == "rjudge" and row["source_evaluator_status"] != "exercised":
+        raise SystemExit(f"R-Judge evaluator not exercised: {row['lane']}")
+PY
+  printf 'PHASE5_OLLAMA_COMPLETE=%s\n' "$(date -Is)"
+else
+  printf 'PHASE5_OLLAMA_ATTEMPTED_ALL_WITH_FAILURES=%s\n' "$(date -Is)"
+  printf 'FAILED_UNIT=%s\n' "${FAILED_UNITS[@]}"
+  exit 1
+fi
+INNER
+test -f "$PAYLOAD_PATH"
+test ! -L "$PAYLOAD_PATH"
+test "$(stat -c '%a' -- "$PAYLOAD_PATH")" = '700'
+
+PAYLOAD_Q="$(printf '%q' "$PAYLOAD_PATH")"
+tmux -L "$SOCKET" new-session -d -s "$SESSION" "exec bash $PAYLOAD_Q"
+
+printf 'SESSION=%s\n' "$SESSION"
+printf 'SOCKET=%s\n' "$SOCKET"
+printf 'ATTACH=tmux -L %s attach -t %s\n' "$SOCKET" "$SESSION"
+printf 'CONTROL_ROOT=%s\n' "$CONTROL_ROOT"
+printf 'LOG=%s/phase5-ollama.log\n' "$CONTROL_ROOT"
+printf 'DISPOSITIONS=%s/dispositions.tsv\n' "$CONTROL_ROOT"
+printf 'PAYLOAD=%s\n' "$PAYLOAD_PATH"
+printf 'EXIT_MARKER=%s/.exit\n' "$CONTROL_ROOT"

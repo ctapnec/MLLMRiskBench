@@ -405,10 +405,16 @@ def ollama_overlap_specs(
     return tuple(sorted(overlaps))
 
 
-def ollama_lock_path(base_url: str = DEFAULT_OLLAMA_URL) -> Path:
+def ollama_lock_path(
+    base_url: str = DEFAULT_OLLAMA_URL,
+    *,
+    namespace: str = "endpoint",
+) -> Path:
     """Return one per-endpoint, per-user cross-process lock path."""
 
     canonical = canonicalize_ollama_url(base_url)
+    if namespace not in {"endpoint", "inference"}:
+        raise ValueError("Ollama lock namespace must be endpoint or inference")
     # POSIX gives every uid its own directory.  Windows has no getuid, and a
     # shared literal would put every account on ONE directory created with
     # mode 0o700 - which Windows honours as a DACL carrying no user ACE, so
@@ -431,11 +437,17 @@ def ollama_lock_path(base_url: str = DEFAULT_OLLAMA_URL) -> Path:
     except OSError:
         pass
     digest = hashlib.sha256(canonical.encode("ascii")).hexdigest()[:24]
-    return directory / f"{digest}.lock"
+    suffix = "" if namespace == "endpoint" else ".inference"
+    return directory / f"{digest}{suffix}.lock"
 
 
 class OllamaProcessLock:
-    """Bounded cross-process lock shared by inference and daemon mutations."""
+    """Bounded endpoint lock with a separate inference/mutation gate.
+
+    An exclusive endpoint operation first takes the inference gate. A target
+    can therefore retain that gate across its loaded-model lifetime, blocking
+    pull/start/stop while endpoint readers remain independently available.
+    """
 
     def __init__(
         self,
@@ -443,17 +455,39 @@ class OllamaProcessLock:
         base_url: str = DEFAULT_OLLAMA_URL,
         exclusive: bool,
         deadline: float,
+        namespace: str = "endpoint",
         monotonic: Callable[[], float] = time.monotonic,
         sleep: Callable[[float], None] = time.sleep,
     ) -> None:
-        self.path = ollama_lock_path(base_url)
+        self.base_url = base_url
+        self.namespace = namespace
+        self.path = ollama_lock_path(base_url, namespace=namespace)
         self.exclusive = exclusive
         self.deadline = deadline
         self.monotonic = monotonic
         self.sleep = sleep
         self._fd: int | None = None
+        self._inference_gate: OllamaProcessLock | None = None
 
     def __enter__(self) -> "OllamaProcessLock":
+        if self.namespace == "endpoint" and self.exclusive:
+            inference_gate = OllamaProcessLock(
+                base_url=self.base_url,
+                exclusive=True,
+                deadline=self.deadline,
+                namespace="inference",
+                monotonic=self.monotonic,
+                sleep=self.sleep,
+            )
+            inference_gate.__enter__()
+            self._inference_gate = inference_gate
+        try:
+            return self._enter_own_lock()
+        except BaseException:
+            self._release_inference_gate()
+            raise
+
+    def _enter_own_lock(self) -> "OllamaProcessLock":
         flags = os.O_RDWR | os.O_CREAT
         flags |= getattr(os, "O_NOFOLLOW", 0)
         fd = os.open(self.path, flags, 0o600)
@@ -497,6 +531,12 @@ class OllamaProcessLock:
             os.close(self._fd)
             self._fd = None
 
+    def _release_inference_gate(self) -> None:
+        inference_gate = self._inference_gate
+        self._inference_gate = None
+        if inference_gate is not None:
+            inference_gate.__exit__(None, None, None)
+
     def __exit__(
         self,
         exc_type: type[BaseException] | None,
@@ -505,20 +545,22 @@ class OllamaProcessLock:
     ) -> None:
         del exc_type, exc, traceback
         fd = self._fd
-        if fd is None:
-            return
         try:
-            if os.name == "nt":
-                import msvcrt  # noqa: PLC0415
+            if fd is not None:
+                if os.name == "nt":
+                    import msvcrt  # noqa: PLC0415
 
-                os.lseek(fd, 0, os.SEEK_SET)
-                msvcrt.locking(fd, msvcrt.LK_UNLCK, 1)
-            else:
-                import fcntl  # noqa: PLC0415
+                    os.lseek(fd, 0, os.SEEK_SET)
+                    msvcrt.locking(fd, msvcrt.LK_UNLCK, 1)
+                else:
+                    import fcntl  # noqa: PLC0415
 
-                fcntl.flock(fd, fcntl.LOCK_UN)
+                    fcntl.flock(fd, fcntl.LOCK_UN)
         finally:
-            self._close_fd()
+            try:
+                self._close_fd()
+            finally:
+                self._release_inference_gate()
 
 
 __all__ = [

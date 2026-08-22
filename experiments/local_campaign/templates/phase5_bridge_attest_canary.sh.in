@@ -1,0 +1,896 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+
+source ~/.ura_campaign_env
+cd ~/MLLMRiskBench
+
+EXPECTED_COMMIT='@@EXPECTED_COMMIT@@'
+EXPECTED_FRAMEWORK_LOCK='@@FRAMEWORK_LOCK_SHA256@@'
+EXPECTED_PROJECT_RECEIPT='@@PROJECT_RECEIPT_PATH@@'
+EXPECTED_PROJECT_RECEIPT_SHA256='@@PROJECT_RECEIPT_SHA256@@'
+EXPECTED_SOURCE_RECEIPT='@@SOURCE_RECEIPT_PATH@@'
+EXPECTED_SOURCE_RECEIPT_SHA256='@@SOURCE_RECEIPT_SHA256@@'
+PY="$PWD/.venv/bin/python"
+TAG="$(date -u +%Y%m%dT%H%M%SZ)"
+SESSION="ura-phase5-bridge-canaries-${TAG}"
+SOCKET="ura-phase5-bridge-canaries-${TAG}"
+CONTROL_ROOT="$URA_WORK/runs/engineering/phase5-bridge-canaries-${TAG}"
+
+test "$(git rev-parse HEAD)" = "$EXPECTED_COMMIT"
+test -z "$(git status --porcelain)"
+test "$URA_FRAMEWORK_LOCK_ID" = "$EXPECTED_FRAMEWORK_LOCK"
+test "$URA_FRAMEWORK_STATE" = "$URA_WORK/runs/engineering/framework-runtime-${EXPECTED_FRAMEWORK_LOCK:0:12}"
+test "$URA_PROJECT_REVISION_MANIFEST" = "$EXPECTED_PROJECT_RECEIPT"
+test "$URA_PROJECT_REVISION_SHA256" = "$EXPECTED_PROJECT_RECEIPT_SHA256"
+test "$URA_SOURCE_CONFORMANCE_MANIFEST" = "$EXPECTED_SOURCE_RECEIPT"
+test "$URA_SOURCE_CONFORMANCE_SHA256" = "$EXPECTED_SOURCE_RECEIPT_SHA256"
+test -x "$PY"
+test ! -e "$CONTROL_ROOT"
+mkdir -p "$CONTROL_ROOT"
+chmod 700 "$CONTROL_ROOT"
+
+export TAG CONTROL_ROOT EXPECTED_COMMIT EXPECTED_FRAMEWORK_LOCK \
+  EXPECTED_PROJECT_RECEIPT EXPECTED_PROJECT_RECEIPT_SHA256 \
+  EXPECTED_SOURCE_RECEIPT EXPECTED_SOURCE_RECEIPT_SHA256
+
+PAYLOAD="$(cat <<'INNER'
+set -Eeuo pipefail
+umask 077
+source ~/.ura_campaign_env
+cd ~/MLLMRiskBench
+
+PY="$PWD/.venv/bin/python"
+LOG="$CONTROL_ROOT/phase5-bridge-canaries.log"
+STATUS="$CONTROL_ROOT/status.tsv"
+ATTEST_STATUS="$CONTROL_ROOT/attestations.tsv"
+DISPOSITIONS="$CONTROL_ROOT/unavailable.tsv"
+FAILURES="$CONTROL_ROOT/failures.tsv"
+EXIT_TMP="$CONTROL_ROOT/.exit.tmp"
+EXIT_MARKER="$CONTROL_ROOT/.exit"
+
+exec > >(tee "$LOG") 2>&1
+
+finish() {
+  rc=$?
+  trap - EXIT
+  printf '%s\n' "$rc" > "$EXIT_TMP"
+  mv -f -- "$EXIT_TMP" "$EXIT_MARKER"
+  printf 'PHASE5_BRIDGE_CANARY_EXIT=%s\n' "$rc"
+  exit "$rc"
+}
+trap finish EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
+trap 'exit 129' HUP
+
+test "$(git rev-parse HEAD)" = "$EXPECTED_COMMIT"
+test -z "$(git status --porcelain)"
+test "$URA_FRAMEWORK_LOCK_ID" = "$EXPECTED_FRAMEWORK_LOCK"
+test "$URA_FRAMEWORK_STATE" = "$URA_WORK/runs/engineering/framework-runtime-${EXPECTED_FRAMEWORK_LOCK:0:12}"
+test "$URA_PROJECT_REVISION_MANIFEST" = "$EXPECTED_PROJECT_RECEIPT"
+test "$URA_PROJECT_REVISION_SHA256" = "$EXPECTED_PROJECT_RECEIPT_SHA256"
+test "$URA_SOURCE_CONFORMANCE_MANIFEST" = "$EXPECTED_SOURCE_RECEIPT"
+test "$URA_SOURCE_CONFORMANCE_SHA256" = "$EXPECTED_SOURCE_RECEIPT_SHA256"
+test -x "$PY"
+
+export HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1 HF_DATASETS_OFFLINE=1
+unset HF_TOKEN HUGGING_FACE_HUB_TOKEN OPENAI_API_KEY ANTHROPIC_API_KEY \
+  GOOGLE_API_KEY GEMINI_API_KEY MISTRAL_API_KEY TOGETHER_API_KEY \
+  DEEPSEEK_API_KEY XAI_API_KEY
+
+unset URA_MODEL_ACQUISITION_PLAN_DIR \
+  URA_MODEL_ACQUISITION_PLAN \
+  URA_MODEL_ACQUISITION_PLAN_SHA256 \
+  URA_MODEL_ACQUISITION_RECEIPT \
+  URA_MODEL_ACQUISITION_RECEIPT_SHA256 \
+  URA_MODEL_ACQUISITION_STORE
+
+SOURCE_CONFIG="$PWD/experiments/source-instances.json"
+SOURCE_CONFIG_SHA256="$(sha256sum -- "$SOURCE_CONFIG" | awk '{print $1}')"
+PROJECT_RECEIPT="$URA_PROJECT_REVISION_MANIFEST"
+PROJECT_SHA256="$URA_PROJECT_REVISION_SHA256"
+SOURCE_RECEIPT="$URA_SOURCE_CONFORMANCE_MANIFEST"
+SOURCE_RECEIPT_SHA256="$URA_SOURCE_CONFORMANCE_SHA256"
+MODEL_STORE="$URA_MODEL_STORE"
+TRANSPORT_CACHE="$MODEL_STORE/.transport-cache"
+RECEIPTS_BASE="$URA_WORK/runs/thesis/acquisition/phase5-bridge-canaries-${TAG}"
+RECEIPTS_ROOT="$RECEIPTS_BASE/receipts"
+ATTEST_ROOT="$URA_WORK/runs/thesis/attestation"
+ATTEST_RECEIPTS="$ATTEST_ROOT/receipts"
+PREFLIGHT_ROOT="$URA_WORK/runs/thesis/preflight/bridge-canary"
+DIAGNOSTIC_ROOT="$URA_WORK/runs/thesis/diagnostics/bridge-canary"
+PRIVATE_ROOT="$URA_WORK/state/bridge-canary-configs/${TAG}"
+PREPARED_ROOT="$URA_WORK/runs/thesis/prepared/bridge-canary-${TAG}"
+FRAMEWORK_LOCK="${URA_FRAMEWORK_LOCK:-$PWD/experiments/framework_runtime_lock.json}"
+
+QWEN='vllm:Qwen/Qwen3-VL-8B-Instruct'
+QWEN_CFG="$PWD/experiments/local-qwen3-vl.json"
+SCORE_GUARD='meta-llama/Llama-Guard-3-8B'
+SCORE_GUARD_REV='7327bd9f6efbbe6101dc6cc4736302b3cbb6e425'
+GROUP='model,source,risk,effective_modality,expected_behavior,attacker,source_policy_id,source_policy_version'
+SCOPE="$URA_EXECUTION_SCOPE_ID"
+MAX_ATTESTATION_AGE_HOURS='24'
+
+test -f "$SOURCE_CONFIG" && test ! -L "$SOURCE_CONFIG"
+test -f "$PROJECT_RECEIPT" && test ! -L "$PROJECT_RECEIPT"
+test -f "$SOURCE_RECEIPT" && test ! -L "$SOURCE_RECEIPT"
+test -f "$QWEN_CFG" && test ! -L "$QWEN_CFG"
+test -f "$FRAMEWORK_LOCK" && test ! -L "$FRAMEWORK_LOCK"
+test ! -e "$RECEIPTS_BASE"
+test ! -e "$PRIVATE_ROOT"
+test ! -e "$PREPARED_ROOT"
+mkdir -p "$RECEIPTS_ROOT" "$TRANSPORT_CACHE" "$ATTEST_RECEIPTS" \
+  "$PRIVATE_ROOT" "$PREPARED_ROOT"
+chmod 700 "$RECEIPTS_BASE" "$PRIVATE_ROOT" "$PREPARED_ROOT"
+printf 'target\tmodality\treceipt\tsha256\n' > "$ATTEST_STATUS"
+printf 'lane\trehearsal_projection_id\ttarget_cap\tlocal_guardrail_evaluations\tcanary_id\trequest_envelope_id\tall_configured_stages_represented\ttarget_status\tattacker_status\n' > "$STATUS"
+printf 'lane\tdisposition\treason\n' > "$DISPOSITIONS"
+printf 'lane\texit_code\treason\n' > "$FAILURES"
+
+json_fields() {
+  "$PY" - "$1" "$2" <<'PY'
+import json
+import sys
+
+path, kind = sys.argv[1:]
+lines = open(path, encoding="utf-8").read().splitlines()
+for line in reversed(lines):
+    try:
+        row = json.loads(line)
+    except json.JSONDecodeError:
+        continue
+    if kind == "plan" and {"plan_id", "plan_sha256"} <= row.keys():
+        print(row["plan_id"], row["plan_sha256"])
+        raise SystemExit(0)
+    if kind == "receipt" and {"receipt_id", "receipt_sha256", "downloaded_bytes"} <= row.keys():
+        print(row["receipt_id"], row["receipt_sha256"], row["downloaded_bytes"])
+        raise SystemExit(0)
+raise SystemExit(f"no {kind} result JSON in {path}")
+PY
+}
+
+plan_acquire() {
+  local label="$1" plan_root="$2"
+  shift 2
+  local plan_log="$CONTROL_ROOT/${label}.plan.log"
+  local acquire_log="$CONTROL_ROOT/${label}.acquire.log"
+  local plan_id plan_sha receipt_id receipt_sha downloaded
+
+  test ! -e "$plan_root"
+  mkdir -p "$plan_root"
+  "$PY" -m experiments.run_matrix "$@" \
+    --model-acquisition-plan-only \
+    --model-acquisition-plan-dir "$plan_root" > "$plan_log" 2>&1
+  read -r plan_id plan_sha < <(json_fields "$plan_log" plan)
+  ACQ_PLAN_PATH="$plan_root/${plan_id}.plan.json"
+  ACQ_PLAN_SHA="$plan_sha"
+  test -f "$ACQ_PLAN_PATH" && test ! -L "$ACQ_PLAN_PATH"
+  test "$(sha256sum -- "$ACQ_PLAN_PATH" | awk '{print $1}')" = "$ACQ_PLAN_SHA"
+
+  "$PY" -m experiments.model_acquire \
+    --plan "$ACQ_PLAN_PATH" \
+    --plan-sha256 "$ACQ_PLAN_SHA" \
+    --store "$MODEL_STORE" \
+    --receipts-dir "$RECEIPTS_ROOT" \
+    --transport-cache "$TRANSPORT_CACHE" \
+    --max-download-bytes 0 \
+    --min-free-bytes 1099511627776 \
+    --deadline-seconds 86400 > "$acquire_log" 2>&1
+  read -r receipt_id receipt_sha downloaded < <(json_fields "$acquire_log" receipt)
+  test "$downloaded" = 0
+  ACQ_RECEIPT_PATH="$RECEIPTS_ROOT/${receipt_id}.receipt.json"
+  ACQ_RECEIPT_SHA="$receipt_sha"
+  test -f "$ACQ_RECEIPT_PATH" && test ! -L "$ACQ_RECEIPT_PATH"
+  test "$(sha256sum -- "$ACQ_RECEIPT_PATH" | awk '{print $1}')" = "$ACQ_RECEIPT_SHA"
+}
+
+acquisition_args() {
+  printf '%s\0' \
+    --model-acquisition-plan "$ACQ_PLAN_PATH" \
+    --model-acquisition-plan-sha256 "$ACQ_PLAN_SHA" \
+    --model-acquisition-receipt "$ACQ_RECEIPT_PATH" \
+    --model-acquisition-receipt-sha256 "$ACQ_RECEIPT_SHA" \
+    --model-acquisition-store "$MODEL_STORE"
+}
+
+lock_field() {
+  "$PY" - "$FRAMEWORK_LOCK" "$EXPECTED_FRAMEWORK_LOCK" "$1" "$2" <<'PY'
+import pathlib
+import sys
+
+from experiments.framework_runtime_installer import load_lock
+
+path, expected_lock_id, name, field = sys.argv[1:]
+lock = load_lock(pathlib.Path(path))
+if lock.get("lock_id") != expected_lock_id:
+    raise SystemExit("framework lock identity drift")
+matches = [row for row in lock["frameworks"] if row.get("name") == name]
+if len(matches) != 1:
+    raise SystemExit(f"expected one framework lock row for {name}, found {len(matches)}")
+row = matches[0]
+if field == "env_slug":
+    value = row.get("env_slug")
+elif field == "source_commit":
+    value = (row.get("source") or {}).get("commit")
+else:
+    raise SystemExit(f"unsupported framework lock field {field}")
+if not isinstance(value, str) or not value:
+    raise SystemExit(f"framework lock field {name}.{field} is missing")
+print(value)
+PY
+}
+
+runtime_store() {
+  local name="$1" slug alias store
+  slug="$(lock_field "$name" env_slug)"
+  alias="$URA_FRAMEWORK_ENVS/$slug"
+  test -L "$alias"
+  store="$(readlink -f -- "$alias")"
+  case "$store" in
+    "$URA_FRAMEWORK_ENVS"/.store/*-"${EXPECTED_FRAMEWORK_LOCK:0:16}") ;;
+    *) printf 'unexpected runtime store for %s: %s\n' "$name" "$store" >&2; return 1 ;;
+  esac
+  test -x "$store/bin/python"
+  printf '%s\n' "$store"
+}
+
+write_attacker_configs() {
+  "$PY" - "$PRIVATE_ROOT" <<'PY'
+import json
+import os
+import pathlib
+import sys
+
+root = pathlib.Path(sys.argv[1])
+expected = {
+    "pyrit": {"converters": ["Base64Converter"], "upstream_version": "0.14.0"},
+    "deepteam": {"attack": "Base64", "upstream_version": "1.0.7"},
+    "h4rm3l": {"engine_version": "0.2.4", "syntax_version": 2},
+    "spikee": {
+        "plugins": ["base64", "1337"],
+        "positions": ["start", "middle", "end"],
+        "engine_version": "0.9.1",
+    },
+}
+for name, value in expected.items():
+    path = root / f"attacker-{name}.json"
+    payload = (json.dumps({name: value}, sort_keys=True, separators=(",", ":")) + "\n").encode()
+    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    with os.fdopen(fd, "wb") as handle:
+        handle.write(payload)
+PY
+}
+
+make_runtime_config() {
+  local engine="$1" store path log
+  store="$(runtime_store "$engine")"
+  path="$PRIVATE_ROOT/engine-runtime-${engine}.json"
+  log="$CONTROL_ROOT/engine-runtime-${engine}.log"
+  export URA_LANE_ENGINE_PYTHON="$store/bin/python"
+  "$PY" -m experiments.engine_runtime_config \
+    --runtime "${engine}=URA_LANE_ENGINE_PYTHON" \
+    --out "$path" > "$log" 2>&1
+  test -f "$path" && test ! -L "$path"
+  LAST_RUNTIME_CONFIG="$path"
+  LAST_RUNTIME_SHA="$(sha256sum -- "$path" | awk '{print $1}')"
+}
+
+prepare_harmbench_canary() {
+  local store python repo revision source
+  store="$(runtime_store harmbench)"
+  python="$store/bin/python"
+  repo="$store/source/harmbench"
+  revision="$(lock_field harmbench source_commit)"
+  source="$URA_HARMBENCH_TEXT_PATH"
+  test -d "$repo" && test ! -L "$repo"
+  test -f "$source" && test ! -L "$source"
+  test "$(git -C "$repo" rev-parse HEAD)" = "$revision"
+  test -z "$(git -C "$repo" status --porcelain)"
+
+  HB_CANARY_ARTIFACT="$PREPARED_ROOT/harmbench-direct-canary.json"
+  HB_CANARY_CONFIG="$PREPARED_ROOT/harmbench-direct-canary-config.json"
+  test ! -e "$HB_CANARY_ARTIFACT"
+  test ! -e "$HB_CANARY_CONFIG"
+  PYTHONDONTWRITEBYTECODE=1 "$python" -m experiments.harmbench_capture \
+    --repo "$repo" --revision "$revision" --source "$source" \
+    --corpus-name harmbench_text --method DirectRequest --experiment llama2_7b \
+    --limit 1 --sample-seed 0 --cases-per-method 1 \
+    --artifact-out "$HB_CANARY_ARTIFACT" \
+    --attacker-config-out "$HB_CANARY_CONFIG" \
+    --python "$python" --timeout-seconds 28800 \
+    > "$CONTROL_ROOT/harmbench-canary-capture.log" 2>&1
+  test -f "$HB_CANARY_ARTIFACT" && test ! -L "$HB_CANARY_ARTIFACT"
+  test -f "$HB_CANARY_CONFIG" && test ! -L "$HB_CANARY_CONFIG"
+}
+
+probe_qwen_text() {
+  local config_sha plan_base plan_root run_root receipt_file receipt_sha
+  config_sha="$(sha256sum -- "$QWEN_CFG" | awk '{print $1}')"
+  plan_base="$ATTEST_ROOT/qwen3-vl-text-bridge-${TAG}"
+  plan_root="$plan_base/plan"
+  run_root="$plan_base/run"
+  receipt_file="$ATTEST_RECEIPTS/qwen3-vl-text-bridge-${TAG}.live-attestation.json"
+  test ! -e "$plan_base"
+  test ! -e "$receipt_file"
+  mkdir -p "$plan_base"
+
+  local -a args=(
+    --attestation-probe
+    --execution-scope-id "$SCOPE"
+    --project-revision "$PROJECT_RECEIPT"
+    --project-revision-sha256 "$PROJECT_SHA256"
+    --local "$QWEN"
+    --local-config "$QWEN_CFG"
+    --local-config-sha256 "$config_sha"
+    --attackers replay
+    --judges rules
+    --corpora strongreject_official
+    --source-config "$SOURCE_CONFIG"
+    --source-config-sha256 "$SOURCE_CONFIG_SHA256"
+    --source-conformance "$SOURCE_RECEIPT"
+    --source-conformance-sha256 "$SOURCE_RECEIPT_SHA256"
+    --limit 1
+    --sample-seed 0
+    --seeds 0
+    --max-queries 1
+    --max-turns 1
+    --group "$GROUP"
+    --max-total-target-calls 1
+    --max-total-judge-calls 0
+    --max-total-http-attempts 0
+    --deadline-seconds 3600
+    --out "$run_root"
+  )
+
+  printf 'ATTEST_START=qwen3-vl/text TIME=%s\n' "$(date -Is)"
+  plan_acquire attest-qwen3-vl-text "$plan_root" "${args[@]}"
+  local -a acq=()
+  while IFS= read -r -d '' item; do acq+=("$item"); done < <(acquisition_args)
+  CUDA_VISIBLE_DEVICES=0,1 "$PY" -m experiments.run_matrix \
+    "${args[@]}" "${acq[@]}" > "$CONTROL_ROOT/attest-qwen3-vl-text.run.log" 2>&1
+  "$PY" -m experiments.live_attestation \
+    --probe-root "$run_root" \
+    --execution-scope-id "$SCOPE" \
+    --out "$receipt_file" > "$CONTROL_ROOT/attest-qwen3-vl-text.derive.log" 2>&1
+  test -f "$receipt_file" && test ! -L "$receipt_file"
+  receipt_sha="$(sha256sum -- "$receipt_file" | awk '{print $1}')"
+  "$PY" -m experiments.live_attestation \
+    --validate "$receipt_file" --sha256 "$receipt_sha" \
+    >> "$CONTROL_ROOT/attest-qwen3-vl-text.derive.log" 2>&1
+  printf 'qwen3-vl\ttext\t%s\t%s\n' "$receipt_file" "$receipt_sha" | tee -a "$ATTEST_STATUS"
+  QWEN_TEXT_ATTEST="$receipt_file"
+  QWEN_TEXT_ATTEST_SHA="$receipt_sha"
+  printf 'ATTEST_END=qwen3-vl/text TIME=%s\n' "$(date -Is)"
+}
+
+projection_fields() {
+  "$PY" - "$1" <<'PY'
+import json
+import pathlib
+import sys
+
+from ura.lane_projection import validate_lane_projection
+
+root = pathlib.Path(sys.argv[1])
+paths = sorted(root.glob("lane-projection-*.lane-projection.json"))
+if len(paths) != 1:
+    raise SystemExit(f"expected one projection, found {len(paths)}")
+row = validate_lane_projection(json.loads(paths[0].read_text(encoding="utf-8")))
+if row.get("status") != "complete":
+    raise SystemExit("projection is not complete")
+calls = row["call_projection"]
+totals = row["selection"]["totals"]
+if calls["judge_calls"] != 0 or calls["http_attempts"] != 0:
+    raise SystemExit("local bridge rehearsal exposed model-judge or HTTP calls")
+if not 1 <= calls["target_calls"] <= 1000:
+    raise SystemExit("one-cluster target projection is outside the rehearsal cap")
+if calls["local_guardrail_evaluations"] <= 0:
+    raise SystemExit("one-cluster rehearsal does not project local Guard evaluation")
+if totals["logical_source_arms"] != 1 or totals["selected_clusters"] != 1:
+    raise SystemExit("rehearsal did not bind exactly one arm and one cluster")
+if row["limitations"]["provider_or_model_generation_invoked_by_projection"] is not False:
+    raise SystemExit("rehearsal projection does not retain its no-generation limitation")
+print(row["projection_id"], calls["target_calls"], calls["local_guardrail_evaluations"])
+PY
+}
+
+canary_fields() {
+  "$PY" - "$1" "$2" "$3" "$SCORE_GUARD" "$SCORE_GUARD_REV" <<'PY'
+import json
+import hashlib
+import pathlib
+import sys
+
+from ura.approximate_metrics import (
+    validate_approximate_decision,
+    validate_approximate_metric_provenance,
+)
+from ura.lane_canary import validate_lane_canary_summary
+from ura.request_envelope import load_request_envelope_file
+from ura.strict_json import strict_json_loads
+
+root = pathlib.Path(sys.argv[1])
+expected_attacker, expected_arm, expected_guard, expected_revision = sys.argv[2:]
+summary_paths = sorted(root.glob("lane-canary-*.lane-canary.json"))
+grid_paths = sorted(root.rglob("*.grid.json"))
+envelope_paths = sorted(root.glob("request-envelope-*.request-envelope.json"))
+eligibility_paths = sorted(root.glob("eligibility-*.eligibility.json"))
+complete_paths = sorted(root.rglob("*.complete.json"))
+counts = {
+    "canary summary": len(summary_paths),
+    "grid": len(grid_paths),
+    "request envelope": len(envelope_paths),
+    "eligibility plan": len(eligibility_paths),
+    "completion marker": len(complete_paths),
+}
+for label, count in counts.items():
+    if count != 1:
+        raise SystemExit(f"expected one {label}, found {count}")
+for path in (*summary_paths, *grid_paths, *envelope_paths, *eligibility_paths, *complete_paths):
+    if not path.is_file() or path.is_symlink():
+        raise SystemExit(f"artifact is not a regular non-symlink file: {path}")
+
+summary = validate_lane_canary_summary(
+    json.loads(summary_paths[0].read_text(encoding="utf-8"))
+)
+if summary.get("status") != "complete" or summary.get("evidence_class") != "live_diagnostic":
+    raise SystemExit("canary summary is not complete live diagnostic evidence")
+grid = json.loads(grid_paths[0].read_text(encoding="utf-8"))
+request = grid.get("request")
+if not isinstance(request, dict):
+    raise SystemExit("grid lacks its request")
+envelope, descriptor = load_request_envelope_file(envelope_paths[0])
+if request.get("request_envelope") != descriptor:
+    raise SystemExit("grid request is not bound to the exact retained request envelope")
+envelope_request = envelope["request"]
+if envelope_request.get("execution_purpose") != "diagnostic_canary":
+    raise SystemExit("request envelope is not purpose-bound to diagnostic canary")
+if envelope_request.get("logical_source_arms") != [expected_arm]:
+    raise SystemExit("request envelope arm identity drift")
+if envelope_request.get("selected_attackers") != [expected_attacker]:
+    raise SystemExit("request envelope attacker identity drift")
+if envelope_request.get("judges") != ["rules", "guardrail"]:
+    raise SystemExit("request envelope judge identity drift")
+if envelope_request.get("approximate_common_metrics") is not True:
+    raise SystemExit("request envelope lacks approximate common-metrics opt-in")
+if envelope_request.get("limit") != 1 or envelope_request.get("sample_seed") != 0:
+    raise SystemExit("request envelope is not the admitted one-cluster selection")
+
+expected_grid = {
+    "execution_purpose": "diagnostic_canary",
+    "corpora": [expected_arm],
+    "attackers": [expected_attacker],
+    "judges": ["rules", "guardrail"],
+    "guardrail_model": expected_guard,
+    "guardrail_revision": expected_revision,
+    "guardrail_device": "cuda:1",
+    "limit": 1,
+    "sample_seed": 0,
+    "seeds": [0],
+    "dry_run": False,
+    "approximate_common_metrics": True,
+    "attestation_probe": False,
+}
+for field, expected in expected_grid.items():
+    if request.get(field) != expected:
+        raise SystemExit(f"grid request field {field} drift: {request.get(field)!r} != {expected!r}")
+
+if expected_arm == "cyberseceval_prompt_injection":
+    required_metric = "cyberseceval_prompt_injection_judge_question"
+    marker = strict_json_loads(complete_paths[0].read_bytes())
+    if not isinstance(marker, dict):
+        raise SystemExit("prompt-injection completion marker is not an object")
+
+    def artifact_rows(kind):
+        artifacts = marker.get("artifacts")
+        descriptor = artifacts.get(kind) if isinstance(artifacts, dict) else None
+        if not isinstance(descriptor, dict) or set(descriptor) != {
+            "file", "sha256", "bytes", "records"
+        }:
+            raise SystemExit(f"prompt-injection {kind} descriptor is invalid")
+        name = descriptor.get("file")
+        if not isinstance(name, str) or pathlib.Path(name).name != name:
+            raise SystemExit(f"prompt-injection {kind} filename is unsafe")
+        path = root / name
+        if not path.is_file() or path.is_symlink():
+            raise SystemExit(f"prompt-injection {kind} artifact is unsafe")
+        payload = path.read_bytes()
+        if (
+            len(payload) != descriptor.get("bytes")
+            or hashlib.sha256(payload).hexdigest() != descriptor.get("sha256")
+        ):
+            raise SystemExit(f"prompt-injection {kind} artifact identity changed")
+        rows = [
+            strict_json_loads(line)
+            for line in payload.decode("utf-8").splitlines()
+            if line.strip()
+        ]
+        if len(rows) != descriptor.get("records") or any(
+            not isinstance(row, dict) for row in rows
+        ):
+            raise SystemExit(f"prompt-injection {kind} record inventory changed")
+        return rows
+
+    judgments = artifact_rows("judgments")
+    trails = artifact_rows("trails")
+    results = artifact_rows("results")
+    if not judgments:
+        raise SystemExit("prompt-injection canary retained no judgments")
+    attempt_ids = set()
+    for judgment in judgments:
+        attempt_id = judgment.get("attempt_id")
+        raw = judgment.get("raw")
+        if not isinstance(attempt_id, str) or not isinstance(raw, dict):
+            raise SystemExit("prompt-injection judgment lineage is invalid")
+        if (
+            raw.get("common_metrics_eligible") is not False
+            or raw.get("policy_evaluable_turn") is not True
+            or raw.get("required_metric") != required_metric
+        ):
+            raise SystemExit("prompt-injection judgment lost its proxy-only construct")
+        decision = validate_approximate_decision(
+            raw.get("approximate_security_decision")
+        )
+        if (
+            decision.source_required_metric != required_metric
+            or decision.source_evaluator_implemented is not False
+            or decision.authority != "supplementary_non_authoritative"
+            or decision.method != "common_judge_cascade_response_proxy"
+            or decision.construct_mismatch is not True
+        ):
+            raise SystemExit("prompt-injection approximate decision provenance changed")
+        guard_stages = [
+            stage for stage in decision.retained_trail
+            if stage.stage == 1 and stage.judge == "guardrail"
+        ]
+        if len(guard_stages) != 1 or (
+            guard_stages[0].judge_model != expected_guard
+            or guard_stages[0].judge_model_identity != expected_revision
+            or guard_stages[0].judge_model_identity_type != "revision"
+            or guard_stages[0].judge_model_identity_kind != "exact"
+            or guard_stages[0].judge_model_queried is not True
+        ):
+            raise SystemExit("prompt-injection decision lacks the queried exact Guard trail")
+        if decision.selected_judge == "guardrail" and (
+            decision.selected_judge_kind != "guardrail"
+            or decision.judge_model != expected_guard
+            or decision.judge_model_identity != expected_revision
+            or decision.judge_model_identity_type != "revision"
+            or decision.judge_model_identity_kind != "exact"
+            or decision.judge_model_queried is not True
+        ):
+            raise SystemExit("selected prompt-injection Guard identity is not exact")
+        if decision.selected_judge not in {"rules", "guardrail"}:
+            raise SystemExit("prompt-injection selected an unexpected judge")
+        attempt_ids.add(attempt_id)
+
+    by_attempt = {}
+    for trail in trails:
+        by_attempt.setdefault(trail.get("attempt_id"), []).append(trail)
+    if set(by_attempt) != attempt_ids:
+        raise SystemExit("prompt-injection proxy/trail attempt inventory differs")
+    for attempt_id, rows in by_attempt.items():
+        if {(row.get("stage"), row.get("judge")) for row in rows} != {
+            (0, "rules"), (1, "guardrail")
+        } or any(
+            row.get("stage_queried") is not True
+            or row.get("policy_evaluation_status")
+            != "approximate_common_security_proxy"
+            or row.get("metric_authority") != "supplementary_non_authoritative"
+            or row.get("required_metric") != required_metric
+            for row in rows
+        ):
+            raise SystemExit(f"prompt-injection proxy trail changed: {attempt_id}")
+        guard = next(row for row in rows if row.get("judge") == "guardrail")
+        if (
+            guard.get("guardrail_queried") is not True
+            or guard.get("judge_model") != expected_guard
+            or guard.get("judge_model_revision") != expected_revision
+            or guard.get("judge_model_identity")
+            != f"{expected_guard}@{expected_revision}"
+        ):
+            raise SystemExit("prompt-injection trail lacks the queried exact Guard")
+
+    approximate_results = [
+        row for row in results
+        if str(row.get("metric", "")).startswith("approximate_")
+    ]
+    if not approximate_results or {
+        row.get("metric") for row in approximate_results
+    } != {"approximate_over_refusal_rate"}:
+        raise SystemExit("prompt-injection canary lacks approximate over-refusal")
+    for result in approximate_results:
+        provenance = validate_approximate_metric_provenance(
+            result["metric"], result.get("provenance", {}).get("approximate_security")
+        )
+        if (
+            provenance.source_required_metric != required_metric
+            or provenance.source_evaluator_implemented is not False
+            or provenance.authority != "supplementary_non_authoritative"
+            or provenance.method != "common_judge_cascade_response_proxy"
+            or not provenance.selected_judges
+            or set(provenance.selected_judges) - {"rules", "guardrail"}
+        ):
+            raise SystemExit("prompt-injection aggregate proxy provenance changed")
+        if "guardrail" in provenance.selected_judges:
+            if (
+                provenance.judge_models != [expected_guard]
+                or provenance.judge_model_identities != [expected_revision]
+                or provenance.judge_model_identity_types != ["revision"]
+                or "exact" not in provenance.judge_identity_kinds
+                or provenance.n_model_queried_decisions <= 0
+            ):
+                raise SystemExit("selected aggregate Guard provenance is not exact")
+        elif (
+            provenance.n_model_queried_decisions != 0
+            or provenance.judge_models
+            or provenance.judge_model_identities
+            or provenance.judge_model_identity_types
+        ):
+            raise SystemExit("rules-selected aggregate improperly credits Guard")
+
+roles = summary["role_reachability"]
+execution = roles["execution_roles"]
+if execution["target"]["status"] != "exercised":
+    raise SystemExit("target was not actually exercised")
+if execution["attacker"]["status"] != "exercised":
+    raise SystemExit("attacker was not actually exercised")
+if execution["attacker"]["identity"] != expected_attacker:
+    raise SystemExit("exercised attacker identity drift")
+if execution["source_evaluator"]["status"] != "not_applicable":
+    raise SystemExit("approximate common-metrics canary unexpectedly used a source evaluator")
+if roles["all_configured_stages_represented"] is not True:
+    raise SystemExit("not all configured judge stages are represented")
+stages = roles["stages"]
+if {(row["stage"], row["judge"]) for row in stages} != {
+    (0, "rules"), (1, "guardrail")
+}:
+    raise SystemExit("observed stage inventory is not the exact rules plus Guard cascade")
+for stage, judge in ((0, "rules"), (1, "guardrail")):
+    rows = [row for row in stages if row["stage"] == stage and row["judge"] == judge]
+    if not rows or sum(row["queried_records"] for row in rows) <= 0:
+        raise SystemExit(f"configured {judge} stage was not actually reached")
+    if any(row["reached"] is not True for row in rows):
+        raise SystemExit(f"configured {judge} stage has an unreached role row")
+if summary["call_accounting"]["reserved"]["target_logical_calls"] <= 0:
+    raise SystemExit("canary retained no target-call reservation")
+print(
+    summary["canary_id"],
+    descriptor["envelope_id"],
+    str(roles["all_configured_stages_represented"]).lower(),
+    execution["target"]["status"],
+    execution["attacker"]["status"],
+)
+PY
+}
+
+run_canary() {
+  local lane="$1" attacker="$2" arm="$3" max_queries="$4" max_turns="$5"
+  local attestation_file="$6" attestation_sha="$7"
+  shift 7
+  local config_sha rehearsal_base rehearsal_plan rehearsal_run
+  local diagnostic_base diagnostic_plan diagnostic_run projection_id target_cap
+  local guard_evals eligibility canary_id request_id stages target_status attacker_status
+  config_sha="$(sha256sum -- "$QWEN_CFG" | awk '{print $1}')"
+  rehearsal_base="$PREFLIGHT_ROOT/${lane}-${TAG}"
+  rehearsal_plan="$rehearsal_base/plan"
+  rehearsal_run="$rehearsal_base/run"
+  diagnostic_base="$DIAGNOSTIC_ROOT/${lane}-${TAG}"
+  diagnostic_plan="$diagnostic_base/plan"
+  diagnostic_run="$diagnostic_base/run"
+  test ! -e "$rehearsal_base"
+  test ! -e "$diagnostic_base"
+  mkdir -p "$rehearsal_base" "$diagnostic_base"
+
+  local -a common=(
+    --project-revision "$PROJECT_RECEIPT"
+    --project-revision-sha256 "$PROJECT_SHA256"
+    --local "$QWEN"
+    --local-config "$QWEN_CFG"
+    --local-config-sha256 "$config_sha"
+    --attackers "$attacker"
+    --judges rules,guardrail
+    --approximate-common-metrics
+    --guardrail-model "$SCORE_GUARD"
+    --guardrail-revision "$SCORE_GUARD_REV"
+    --guardrail-device cuda:1
+    --corpora "$arm"
+    --source-config "$SOURCE_CONFIG"
+    --source-config-sha256 "$SOURCE_CONFIG_SHA256"
+    --source-conformance "$SOURCE_RECEIPT"
+    --source-conformance-sha256 "$SOURCE_RECEIPT_SHA256"
+    --limit 1
+    --sample-seed 0
+    --seeds 0
+    --max-queries "$max_queries"
+    --max-turns "$max_turns"
+    --group "$GROUP"
+    "$@"
+  )
+  local -a rehearsal_args=(
+    "${common[@]}"
+    --max-total-target-calls 1000
+    --max-total-judge-calls 0
+    --max-total-http-attempts 0
+    --deadline-seconds 3600
+    --out "$rehearsal_run"
+  )
+
+  printf 'CANARY_REHEARSAL_START=%s TIME=%s\n' "$lane" "$(date -Is)"
+  plan_acquire "${lane}-rehearsal" "$rehearsal_plan" \
+    "${rehearsal_args[@]}" --preflight-only
+  local -a acq=()
+  while IFS= read -r -d '' item; do acq+=("$item"); done < <(acquisition_args)
+  CUDA_VISIBLE_DEVICES=0,1 "$PY" -m experiments.rig_check \
+    "${rehearsal_args[@]}" "${acq[@]}" \
+    > "$CONTROL_ROOT/${lane}.rehearsal.log" 2>&1
+  read -r projection_id target_cap guard_evals < <(projection_fields "$rehearsal_run")
+
+  test -f "$attestation_file" && test ! -L "$attestation_file"
+  test "$(sha256sum -- "$attestation_file" | awk '{print $1}')" = "$attestation_sha"
+  "$PY" -m experiments.live_attestation \
+    --validate "$attestation_file" --sha256 "$attestation_sha" \
+    > "$CONTROL_ROOT/${lane}.attestation-validate.log" 2>&1
+
+  local -a canary_args=(
+    "${common[@]}"
+    --diagnostic-canary
+    --execution-scope-id "$SCOPE"
+    --live-attestation "$attestation_file"
+    --live-attestation-sha256 "$attestation_sha"
+    --live-attestation-max-age-hours "$MAX_ATTESTATION_AGE_HOURS"
+    --max-total-target-calls "$target_cap"
+    --max-total-judge-calls 0
+    --max-total-http-attempts 0
+    --deadline-seconds 3600
+    --out "$diagnostic_run"
+  )
+  plan_acquire "${lane}-canary" "$diagnostic_plan" "${canary_args[@]}"
+  acq=()
+  while IFS= read -r -d '' item; do acq+=("$item"); done < <(acquisition_args)
+  CUDA_VISIBLE_DEVICES=0,1 "$PY" -m experiments.run_matrix \
+    "${canary_args[@]}" "${acq[@]}" > "$CONTROL_ROOT/${lane}.canary.log" 2>&1
+
+  mapfile -t eligibility_files < <(find "$diagnostic_run" -maxdepth 1 -type f \
+    -name 'eligibility-*.eligibility.json' -print | sort)
+  test "${#eligibility_files[@]}" -eq 1
+  eligibility="${eligibility_files[0]}"
+  "$PY" -m experiments.lane_canary \
+    --results "$diagnostic_run" \
+    --eligibility "$eligibility" \
+    --out-dir "$diagnostic_run" > "$CONTROL_ROOT/${lane}.lane-canary.log" 2>&1
+  read -r canary_id request_id stages target_status attacker_status < <(
+    canary_fields "$diagnostic_run" "$attacker" "$arm"
+  )
+  printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
+    "$lane" "$projection_id" "$target_cap" "$guard_evals" "$canary_id" \
+    "$request_id" "$stages" "$target_status" "$attacker_status" | tee -a "$STATUS"
+  printf 'CANARY_END=%s TIME=%s\n' "$lane" "$(date -Is)"
+}
+
+run_isolated() {
+  local lane="$1"
+  shift
+  local rc
+  set +e
+  (set -Eeuo pipefail; "$@")
+  rc=$?
+  set -e
+  if (( rc != 0 )); then
+    printf '%s\t%s\tcanary_command_failed\n' "$lane" "$rc" \
+      | tee -a "$FAILURES"
+  fi
+  return 0
+}
+
+write_attacker_configs
+
+make_runtime_config pyrit
+PYRIT_RUNTIME_CONFIG="$LAST_RUNTIME_CONFIG"
+PYRIT_RUNTIME_SHA="$LAST_RUNTIME_SHA"
+make_runtime_config deepteam
+DEEPTEAM_RUNTIME_CONFIG="$LAST_RUNTIME_CONFIG"
+DEEPTEAM_RUNTIME_SHA="$LAST_RUNTIME_SHA"
+make_runtime_config h4rm3l
+H4RM3L_RUNTIME_CONFIG="$LAST_RUNTIME_CONFIG"
+H4RM3L_RUNTIME_SHA="$LAST_RUNTIME_SHA"
+make_runtime_config spikee
+SPIKEE_RUNTIME_CONFIG="$LAST_RUNTIME_CONFIG"
+SPIKEE_RUNTIME_SHA="$LAST_RUNTIME_SHA"
+
+prepare_harmbench_canary
+probe_qwen_text
+
+run_isolated bridge-pyrit run_canary bridge-pyrit pyrit strongreject_official 1 1 \
+  "$QWEN_TEXT_ATTEST" "$QWEN_TEXT_ATTEST_SHA" \
+  --attacker-config "$PRIVATE_ROOT/attacker-pyrit.json" \
+  --attacker-config-sha256 "$(sha256sum -- "$PRIVATE_ROOT/attacker-pyrit.json" | awk '{print $1}')" \
+  --engine-runtime-config "$PYRIT_RUNTIME_CONFIG" \
+  --engine-runtime-config-sha256 "$PYRIT_RUNTIME_SHA"
+
+run_isolated bridge-deepteam run_canary bridge-deepteam deepteam strongreject_official 1 1 \
+  "$QWEN_TEXT_ATTEST" "$QWEN_TEXT_ATTEST_SHA" \
+  --attacker-config "$PRIVATE_ROOT/attacker-deepteam.json" \
+  --attacker-config-sha256 "$(sha256sum -- "$PRIVATE_ROOT/attacker-deepteam.json" | awk '{print $1}')" \
+  --engine-runtime-config "$DEEPTEAM_RUNTIME_CONFIG" \
+  --engine-runtime-config-sha256 "$DEEPTEAM_RUNTIME_SHA"
+
+run_isolated bridge-h4rm3l run_canary bridge-h4rm3l h4rm3l strongreject_official 4 4 \
+  "$QWEN_TEXT_ATTEST" "$QWEN_TEXT_ATTEST_SHA" \
+  --attacker-config "$PRIVATE_ROOT/attacker-h4rm3l.json" \
+  --attacker-config-sha256 "$(sha256sum -- "$PRIVATE_ROOT/attacker-h4rm3l.json" | awk '{print $1}')" \
+  --engine-runtime-config "$H4RM3L_RUNTIME_CONFIG" \
+  --engine-runtime-config-sha256 "$H4RM3L_RUNTIME_SHA"
+
+run_isolated bridge-spikee run_canary bridge-spikee spikee strongreject_official 4 4 \
+  "$QWEN_TEXT_ATTEST" "$QWEN_TEXT_ATTEST_SHA" \
+  --attacker-config "$PRIVATE_ROOT/attacker-spikee.json" \
+  --attacker-config-sha256 "$(sha256sum -- "$PRIVATE_ROOT/attacker-spikee.json" | awk '{print $1}')" \
+  --engine-runtime-config "$SPIKEE_RUNTIME_CONFIG" \
+  --engine-runtime-config-sha256 "$SPIKEE_RUNTIME_SHA"
+
+run_isolated bridge-purplellama run_canary bridge-purplellama purplellama cyberseceval_prompt_injection 1 1 \
+  "$QWEN_TEXT_ATTEST" "$QWEN_TEXT_ATTEST_SHA"
+
+run_isolated harmbench-replay run_canary harmbench-replay harmbench harmbench_text 1 1 \
+  "$QWEN_TEXT_ATTEST" "$QWEN_TEXT_ATTEST_SHA" \
+  --attacker-config "$HB_CANARY_CONFIG" \
+  --attacker-config-sha256 "$(sha256sum -- "$HB_CANARY_CONFIG" | awk '{print $1}')"
+
+printf 'bridge-nanogcg\tunavailable\tno attributable precomputed suffix artifact exists; live optimization remains disabled\n' >> "$DISPOSITIONS"
+printf 'bridge-ideator\tunavailable\tno attributable seed-pair artifact or defensible source-pair mapping exists\n' >> "$DISPOSITIONS"
+printf 't3mp3st\tblocked-unpinned\tno exact executable source URL and immutable revision is documented\n' >> "$DISPOSITIONS"
+
+"$PY" - "$STATUS" "$DISPOSITIONS" <<'PY'
+import csv
+import sys
+
+with open(sys.argv[1], encoding="utf-8", newline="") as handle:
+    rows = list(csv.DictReader(handle, delimiter="\t"))
+if len(rows) != 6:
+    raise SystemExit(f"expected six runnable bridge canaries, found {len(rows)}")
+expected = {
+    "bridge-pyrit", "bridge-deepteam", "bridge-h4rm3l", "bridge-spikee",
+    "bridge-purplellama", "harmbench-replay",
+}
+if {row["lane"] for row in rows} != expected:
+    raise SystemExit("completed bridge canary lane inventory drift")
+for row in rows:
+    if row["all_configured_stages_represented"] != "true":
+        raise SystemExit(f"{row['lane']}: incomplete scoring-stage reachability")
+    if row["target_status"] != "exercised" or row["attacker_status"] != "exercised":
+        raise SystemExit(f"{row['lane']}: target or attacker was not exercised")
+
+with open(sys.argv[2], encoding="utf-8", newline="") as handle:
+    dispositions = list(csv.DictReader(handle, delimiter="\t"))
+expected_dispositions = {
+    "bridge-nanogcg": "unavailable",
+    "bridge-ideator": "unavailable",
+    "t3mp3st": "blocked-unpinned",
+}
+if {row["lane"]: row["disposition"] for row in dispositions} != expected_dispositions:
+    raise SystemExit("typed unavailable-lane disposition inventory drift")
+PY
+
+printf 'PHASE5_BRIDGE_CANARIES_COMPLETE=%s\n' "$(date -Is)"
+INNER
+)"
+
+PAYLOAD_PATH="$CONTROL_ROOT/payload.sh"
+test ! -e "$PAYLOAD_PATH"
+(
+  set -o noclobber
+  umask 077
+  printf '%s\n' "$PAYLOAD" > "$PAYLOAD_PATH"
+)
+chmod 700 "$PAYLOAD_PATH"
+test -f "$PAYLOAD_PATH" && test ! -L "$PAYLOAD_PATH"
+tmux -L "$SOCKET" new-session -d -s "$SESSION" \
+  "exec bash $(printf '%q' "$PAYLOAD_PATH")"
+
+printf 'SESSION=%s\n' "$SESSION"
+printf 'SOCKET=%s\n' "$SOCKET"
+printf 'ATTACH=tmux -L %s attach -t %s\n' "$SOCKET" "$SESSION"
+printf 'CONTROL_ROOT=%s\n' "$CONTROL_ROOT"
+printf 'LOG=%s/phase5-bridge-canaries.log\n' "$CONTROL_ROOT"
+printf 'EXIT_MARKER=%s/.exit\n' "$CONTROL_ROOT"

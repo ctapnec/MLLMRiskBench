@@ -1,0 +1,138 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+umask 077
+
+source ~/.ura_campaign_env
+
+pin_controller_generation() {
+  local script_fd="/proc/$$/fd/255" script_path root generations marker archive_sha
+  test -e "$script_fd" || { printf 'controller script descriptor is unavailable\n' >&2; return 1; }
+  script_path="$(readlink -f -- "$script_fd")"
+  test -f "$script_path" && test ! -L "$script_path"
+  root="${script_path%/*}"
+  generations="${root%/*}"
+  test "${generations##*/}" = '.ura-controller-generations'
+  test -d "$root" && test ! -L "$root"
+  marker="$root/.ura-controller-generation.tsv"
+  test -f "$marker" && test ! -L "$marker"
+  test "$(grep -Fxc -- $'schema\tura-controller-generation/1' "$marker")" = '1'
+  test "$(grep -Fxc -- $'expected_commit\t@@EXPECTED_COMMIT@@' "$marker")" = '1'
+  archive_sha="${root##*-}"
+  [[ "$archive_sha" =~ ^[0-9a-f]{64}$ ]]
+  test "${root##*/}" = "@@COMMIT_SHORT@@-$archive_sha"
+  test "$(grep -Fxc -- $'archive_sha256\t'"$archive_sha" "$marker")" = '1'
+  if [[ -n "${URA_CONTROLLER_GENERATION_ROOT-}" ]]; then
+    test "$URA_CONTROLLER_GENERATION_ROOT" = "$root"
+  fi
+  URA_CONTROLLER_GENERATION_ROOT="$root"
+  export URA_CONTROLLER_GENERATION_ROOT
+}
+pin_controller_generation
+readonly URA_CONTROLLER_GENERATION_ROOT
+
+cd ~/MLLMRiskBench
+
+EXPECTED_COMMIT='@@EXPECTED_COMMIT@@'
+EXPECTED_PROJECT_RECEIPT='@@PROJECT_RECEIPT_PATH@@'
+EXPECTED_PROJECT_RECEIPT_SHA256='@@PROJECT_RECEIPT_SHA256@@'
+EXPECTED_SOURCE_RECEIPT='@@SOURCE_RECEIPT_PATH@@'
+EXPECTED_SOURCE_RECEIPT_SHA256='@@SOURCE_RECEIPT_SHA256@@'
+TAG="${PHASE5_SEQUENCE_TAG:-$(date -u +%Y%m%dT%H%M%SZ)}"
+case "$TAG" in
+  20[0-9][0-9][01][0-9][0-3][0-9]T[0-2][0-9][0-5][0-9][0-5][0-9]Z) ;;
+  *) printf 'invalid Phase 5 sequence tag\n' >&2; exit 1 ;;
+esac
+CONTROL_ROOT="$URA_WORK/runs/engineering/phase5-sequence-$TAG"
+LOG="$CONTROL_ROOT/sequence.log"
+STEPS="$CONTROL_ROOT/steps.tsv"
+EXIT_TMP="$CONTROL_ROOT/.exit.tmp"
+EXIT_MARKER="$CONTROL_ROOT/.exit"
+
+declare -A SCRIPT_HASHES=(
+  ["$URA_CONTROLLER_GENERATION_ROOT/phase5_core_projections.sh"]='@@SHA:phase5_core_projections.sh@@'
+  ["$URA_CONTROLLER_GENERATION_ROOT/phase5_core_attest_canary.sh"]='@@SHA:phase5_core_attest_canary.sh@@'
+  ["$URA_CONTROLLER_GENERATION_ROOT/phase5_bridge_projections.sh"]='@@SHA:phase5_bridge_projections.sh@@'
+  ["$URA_CONTROLLER_GENERATION_ROOT/phase5_bridge_attest_canary.sh"]='@@SHA:phase5_bridge_attest_canary.sh@@'
+  ["$URA_CONTROLLER_GENERATION_ROOT/phase5_ollama_workflow.sh"]='@@SHA:phase5_ollama_workflow.sh@@'
+)
+
+test "$(git rev-parse HEAD)" = "$EXPECTED_COMMIT"
+test -z "$(git status --porcelain)"
+test "$URA_PROJECT_REVISION_MANIFEST" = "$EXPECTED_PROJECT_RECEIPT"
+test "$URA_PROJECT_REVISION_SHA256" = "$EXPECTED_PROJECT_RECEIPT_SHA256"
+test "$URA_SOURCE_CONFORMANCE_MANIFEST" = "$EXPECTED_SOURCE_RECEIPT"
+test "$URA_SOURCE_CONFORMANCE_SHA256" = "$EXPECTED_SOURCE_RECEIPT_SHA256"
+for script in "${!SCRIPT_HASHES[@]}"; do
+  test -f "$script" && test ! -L "$script"
+  test "$(sha256sum -- "$script" | awk '{print $1}')" = "${SCRIPT_HASHES[$script]}"
+  bash -n "$script"
+done
+
+test ! -e "$CONTROL_ROOT"
+mkdir -m 700 "$CONTROL_ROOT"
+exec > >(tee "$LOG") 2>&1
+printf 'step\ttime_utc\tstatus\tsession\tsocket\tcontrol_root\texit_marker\n' > "$STEPS"
+chmod 600 "$STEPS"
+
+finish() {
+  rc=$?
+  trap - EXIT
+  printf '%s\n' "$rc" > "$EXIT_TMP"
+  test ! -e "$EXIT_MARKER"
+  mv -- "$EXIT_TMP" "$EXIT_MARKER"
+  printf 'PHASE5_SEQUENCE_EXIT=%s\n' "$rc"
+  exit "$rc"
+}
+trap finish EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
+trap 'exit 129' HUP
+
+record() {
+  printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
+    "$1" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$2" "$3" "$4" "$5" "$6" >> "$STEPS"
+}
+
+wait_owned() {
+  local step="$1" session="$2" socket="$3" root="$4" marker="$5"
+  case "$root" in
+    "$URA_WORK"/runs/engineering/phase5-*) ;;
+    *) printf '%s: unsafe controller root: %s\n' "$step" "$root" >&2; return 1 ;;
+  esac
+  case "$marker" in
+    "$root"/.exit) ;;
+    *) printf '%s: exit marker escaped controller root\n' "$step" >&2; return 1 ;;
+  esac
+  record "$step" waiting "$session" "$socket" "$root" "$marker"
+  while tmux -L "$socket" has-session -t "$session" 2>/dev/null; do
+    sleep 30
+  done
+  test -f "$marker" && test ! -L "$marker"
+  test "$(tr -d '\r\n' < "$marker")" = '0'
+  record "$step" complete "$session" "$socket" "$root" "$marker"
+}
+
+launch_and_wait() {
+  local step="$1" script="$2" launch_log="$CONTROL_ROOT/$1.launch.txt"
+  local session='' socket='' root='' marker=''
+  test ! -e "$launch_log"
+  bash "$script" > "$launch_log"
+  while IFS='=' read -r key value; do
+    case "$key" in
+      SESSION) session="$value" ;;
+      SOCKET) socket="$value" ;;
+      CONTROL_ROOT) root="$value" ;;
+      EXIT_MARKER) marker="$value" ;;
+    esac
+  done < "$launch_log"
+  test -n "$session" && test -n "$socket" && test -n "$root" && test -n "$marker"
+  wait_owned "$step" "$session" "$socket" "$root" "$marker"
+}
+
+launch_and_wait core-projections "$URA_CONTROLLER_GENERATION_ROOT/phase5_core_projections.sh"
+launch_and_wait core-canaries "$URA_CONTROLLER_GENERATION_ROOT/phase5_core_attest_canary.sh"
+launch_and_wait bridge-projections "$URA_CONTROLLER_GENERATION_ROOT/phase5_bridge_projections.sh"
+launch_and_wait bridge-canaries "$URA_CONTROLLER_GENERATION_ROOT/phase5_bridge_attest_canary.sh"
+launch_and_wait ollama "$URA_CONTROLLER_GENERATION_ROOT/phase5_ollama_workflow.sh"
+
+printf 'PHASE5_SEQUENCE_COMPLETE=%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)"

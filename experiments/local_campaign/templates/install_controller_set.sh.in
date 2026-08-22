@@ -1,0 +1,223 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+umask 077
+
+# shellcheck disable=SC1091
+source "$HOME/.ura_campaign_env"
+
+readonly ACTIVE='@@CONTROLLER_INSTALL_ROOT@@'
+readonly EXPECTED_COMMIT='@@EXPECTED_COMMIT@@'
+readonly COMMIT_SHORT='@@COMMIT_SHORT@@'
+readonly ARCHIVE_SHA256='@@ARCHIVE_SHA256@@'
+readonly ARCHIVE_BYTES='@@ARCHIVE_BYTES@@'
+readonly INVENTORY_NAME='@@INVENTORY_NAME@@'
+readonly INVENTORY_SHA256='@@INVENTORY_SHA256@@'
+readonly INVENTORY_BYTES='@@INVENTORY_BYTES@@'
+readonly VERIFIER_NAME='verify_controllers_@@COMMIT_SHORT@@.sh'
+readonly VERIFIER_SHA256='@@VERIFIER_SHA256@@'
+readonly INSTALL_BASE="${ACTIVE%/*}"
+readonly ARCHIVE="$INSTALL_BASE/.controller-set-@@COMMIT_SHORT@@.tar"
+readonly GENERATIONS="$INSTALL_BASE/.ura-controller-generations"
+readonly GENERATION_NAME="$COMMIT_SHORT-$ARCHIVE_SHA256"
+readonly GENERATION="$GENERATIONS/$GENERATION_NAME"
+readonly ACTIVE_TARGET=".ura-controller-generations/$GENERATION_NAME"
+readonly LOCK="$GENERATIONS/.install.lock"
+readonly MARKER_NAME='.ura-controller-generation.tsv'
+
+stage=''
+active_next=''
+
+fail() {
+  printf 'CONTROLLER_SET_INSTALL_ERROR=%s\n' "$*" >&2
+  exit 1
+}
+
+digest() {
+  sha256sum -- "$1" | awk '{print $1}'
+}
+
+cleanup() {
+  if [[ -n "$active_next" && -L "$active_next" ]]; then
+    rm -f -- "$active_next"
+  fi
+  if [[ -n "$stage" && "$stage" == "$GENERATIONS/.stage-$GENERATION_NAME."* && \
+        -d "$stage" && ! -L "$stage" ]]; then
+    chmod u+rwx -- "$stage" 2>/dev/null || true
+    rm -rf -- "$stage"
+  fi
+}
+trap cleanup EXIT HUP INT TERM
+
+write_marker() {
+  local destination="$1"
+  printf '%s\t%s\n' \
+    schema ura-controller-generation/1 \
+    expected_commit "$EXPECTED_COMMIT" \
+    archive_sha256 "$ARCHIVE_SHA256" \
+    archive_bytes "$ARCHIVE_BYTES" \
+    inventory_name "$INVENTORY_NAME" \
+    inventory_sha256 "$INVENTORY_SHA256" \
+    inventory_bytes "$INVENTORY_BYTES" \
+    verifier_name "$VERIFIER_NAME" \
+    verifier_sha256 "$VERIFIER_SHA256" > "$destination"
+}
+
+marker_matches() {
+  local marker="$1"
+  [[ -f "$marker" && ! -L "$marker" ]] || return 1
+  cmp -s -- "$marker" <(
+    printf '%s\t%s\n' \
+      schema ura-controller-generation/1 \
+      expected_commit "$EXPECTED_COMMIT" \
+      archive_sha256 "$ARCHIVE_SHA256" \
+      archive_bytes "$ARCHIVE_BYTES" \
+      inventory_name "$INVENTORY_NAME" \
+      inventory_sha256 "$INVENTORY_SHA256" \
+      inventory_bytes "$INVENTORY_BYTES" \
+      verifier_name "$VERIFIER_NAME" \
+      verifier_sha256 "$VERIFIER_SHA256"
+  )
+}
+
+validate_payload() {
+  local directory="$1"
+  local expected_file_count="$2"
+  local inventory="$directory/$INVENTORY_NAME"
+  local verifier="$directory/$VERIFIER_NAME"
+  local name bytes expected_sha self_test path
+  local count=0
+  declare -A seen=()
+
+  [[ -d "$directory" && ! -L "$directory" ]] || \
+    fail "controller generation is not one non-symlink directory: $directory"
+  [[ -f "$inventory" && ! -L "$inventory" ]] || \
+    fail "controller inventory is not one regular non-symlink file: $inventory"
+  [[ "$(stat -c %s -- "$inventory")" == "$INVENTORY_BYTES" ]] || \
+    fail "controller inventory byte count differs: $inventory"
+  [[ "$(digest "$inventory")" == "$INVENTORY_SHA256" ]] || \
+    fail "controller inventory SHA-256 differs: $inventory"
+  [[ -f "$verifier" && ! -L "$verifier" ]] || \
+    fail "controller verifier is not one regular non-symlink file: $verifier"
+  [[ "$(digest "$verifier")" == "$VERIFIER_SHA256" ]] || \
+    fail "controller verifier SHA-256 differs: $verifier"
+
+  while IFS=$'\t' read -r name bytes expected_sha self_test; do
+    [[ -n "$name" && "$bytes" =~ ^[1-9][0-9]*$ && \
+       "$expected_sha" =~ ^[0-9a-f]{64}$ && -n "$self_test" ]] || \
+      fail 'controller inventory contains a malformed row'
+    case "$name" in
+      */*|*\\*|''|.|..) fail "controller inventory contains an unsafe name: $name" ;;
+    esac
+    [[ -z "${seen[$name]+present}" ]] || \
+      fail "controller inventory contains a duplicate name: $name"
+    seen[$name]=1
+    path="$directory/$name"
+    [[ -f "$path" && ! -L "$path" ]] || \
+      fail "controller is not one regular non-symlink file: $path"
+    [[ "$(stat -c %s -- "$path")" == "$bytes" ]] || \
+      fail "controller byte count differs: $path"
+    [[ "$(digest "$path")" == "$expected_sha" ]] || \
+      fail "controller SHA-256 differs: $path"
+    count=$((count + 1))
+  done < "$inventory"
+  [[ "$count" == '24' ]] || fail 'controller inventory count differs'
+  [[ -z "$(find -P "$directory" -mindepth 1 -maxdepth 1 ! -type f -print -quit)" ]] || \
+    fail "controller generation contains a non-regular entry: $directory"
+  [[ "$(find -P "$directory" -mindepth 1 -maxdepth 1 -type f -printf . | wc -c)" == "$expected_file_count" ]] || \
+    fail "controller generation payload count differs: $directory"
+}
+
+validate_generation() {
+  local directory="$1"
+  validate_payload "$directory" 27
+  marker_matches "$directory/$MARKER_NAME" || \
+    fail "controller generation marker differs: $directory/$MARKER_NAME"
+}
+
+validate_existing_active() {
+  local target old_generation marker_archive
+  if [[ ! -e "$ACTIVE" && ! -L "$ACTIVE" ]]; then
+    return 0
+  fi
+  [[ -L "$ACTIVE" ]] || fail "active controller path is not a symlink: $ACTIVE"
+  target="$(readlink -- "$ACTIVE")"
+  [[ "$target" =~ ^\.ura-controller-generations/[0-9a-f]{7}-[0-9a-f]{64}$ ]] || \
+    fail "active controller symlink has a foreign target: $target"
+  old_generation="$INSTALL_BASE/$target"
+  [[ -d "$old_generation" && ! -L "$old_generation" ]] || \
+    fail "active controller generation is missing or is a symlink: $old_generation"
+  [[ -f "$old_generation/$MARKER_NAME" && ! -L "$old_generation/$MARKER_NAME" ]] || \
+    fail "active controller generation marker is missing: $old_generation/$MARKER_NAME"
+  marker_archive="$(awk -F '\t' '$1 == "archive_sha256" { print $2 }' "$old_generation/$MARKER_NAME")"
+  [[ "${target##*-}" == "$marker_archive" ]] || \
+    fail 'active controller target and generation marker differ'
+}
+
+[[ "$ACTIVE" == "$INSTALL_BASE/.ura-controller-active" ]] || \
+  fail 'CONTROLLER_INSTALL_ROOT must name .ura-controller-active'
+[[ -d "$INSTALL_BASE" && ! -L "$INSTALL_BASE" ]] || \
+  fail "controller install base is not one non-symlink directory: $INSTALL_BASE"
+[[ -f "$ARCHIVE" && ! -L "$ARCHIVE" ]] || \
+  fail "controller archive is not one regular non-symlink file: $ARCHIVE"
+[[ "$(stat -c %s -- "$ARCHIVE")" == "$ARCHIVE_BYTES" ]] || \
+  fail 'controller archive byte count differs'
+[[ "$(digest "$ARCHIVE")" == "$ARCHIVE_SHA256" ]] || \
+  fail 'controller archive SHA-256 differs'
+
+if [[ ! -e "$GENERATIONS" && ! -L "$GENERATIONS" ]]; then
+  mkdir -m 700 -- "$GENERATIONS"
+fi
+[[ -d "$GENERATIONS" && ! -L "$GENERATIONS" ]] || \
+  fail "controller generations root is not one non-symlink directory: $GENERATIONS"
+if [[ -e "$LOCK" || -L "$LOCK" ]]; then
+  [[ -f "$LOCK" && ! -L "$LOCK" ]] || fail "controller install lock is not regular: $LOCK"
+fi
+: >> "$LOCK"
+chmod 600 -- "$LOCK"
+exec 9<> "$LOCK"
+flock -x 9
+
+validate_existing_active
+
+if [[ -e "$GENERATION" || -L "$GENERATION" ]]; then
+  [[ -d "$GENERATION" && ! -L "$GENERATION" ]] || \
+    fail "content-addressed generation path is foreign: $GENERATION"
+  validate_generation "$GENERATION"
+else
+  stage="$(mktemp -d -- "$GENERATIONS/.stage-$GENERATION_NAME.XXXXXXXX")"
+  [[ -d "$stage" && ! -L "$stage" ]] || fail 'could not create a safe controller stage'
+  tar --no-same-owner --no-same-permissions -xf "$ARCHIVE" -C "$stage"
+  validate_payload "$stage" 26
+  write_marker "$stage/$MARKER_NAME"
+  while IFS=$'\t' read -r name bytes expected_sha self_test; do
+    chmod 500 -- "$stage/$name"
+  done < "$stage/$INVENTORY_NAME"
+  chmod 400 -- "$stage/$INVENTORY_NAME" "$stage/$MARKER_NAME"
+  chmod 500 -- "$stage/$VERIFIER_NAME"
+  validate_generation "$stage"
+  chmod 500 -- "$stage"
+  mv -T -- "$stage" "$GENERATION"
+  stage=''
+  validate_generation "$GENERATION"
+fi
+
+if [[ -L "$ACTIVE" && "$(readlink -- "$ACTIVE")" == "$ACTIVE_TARGET" ]]; then
+  validate_generation "$GENERATION"
+else
+  active_next="$INSTALL_BASE/.ura-controller-active.next.$$.${RANDOM}"
+  [[ ! -e "$active_next" && ! -L "$active_next" ]] || \
+    fail "temporary active-pointer path already exists: $active_next"
+  ln -s -- "$ACTIVE_TARGET" "$active_next"
+  [[ -L "$active_next" && "$(readlink -- "$active_next")" == "$ACTIVE_TARGET" ]] || \
+    fail 'temporary active pointer differs'
+  mv -Tf -- "$active_next" "$ACTIVE"
+  active_next=''
+fi
+
+[[ -L "$ACTIVE" && "$(readlink -- "$ACTIVE")" == "$ACTIVE_TARGET" ]] || \
+  fail 'active controller pointer differs after activation'
+validate_generation "$GENERATION"
+
+printf 'CONTROLLER_GENERATION_INSTALLED=%s\n' "$GENERATION_NAME"
+printf 'CONTROLLER_ACTIVE=%s\n' "$ACTIVE"
+printf 'CONTROLLER_COUNT=24\n'

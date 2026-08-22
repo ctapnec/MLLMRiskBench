@@ -1,0 +1,619 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+umask 077
+
+source ~/.ura_campaign_env
+
+pin_controller_generation() {
+  local script_fd="/proc/$$/fd/255" script_path root generations marker archive_sha
+  test -e "$script_fd" || { printf 'controller script descriptor is unavailable\n' >&2; return 1; }
+  script_path="$(readlink -f -- "$script_fd")"
+  test -f "$script_path" && test ! -L "$script_path"
+  root="${script_path%/*}"
+  generations="${root%/*}"
+  test "${generations##*/}" = '.ura-controller-generations'
+  test -d "$root" && test ! -L "$root"
+  marker="$root/.ura-controller-generation.tsv"
+  test -f "$marker" && test ! -L "$marker"
+  test "$(grep -Fxc -- $'schema\tura-controller-generation/1' "$marker")" = '1'
+  test "$(grep -Fxc -- $'expected_commit\t@@EXPECTED_COMMIT@@' "$marker")" = '1'
+  archive_sha="${root##*-}"
+  [[ "$archive_sha" =~ ^[0-9a-f]{64}$ ]]
+  test "${root##*/}" = "@@COMMIT_SHORT@@-$archive_sha"
+  test "$(grep -Fxc -- $'archive_sha256\t'"$archive_sha" "$marker")" = '1'
+  if [[ -n "${URA_CONTROLLER_GENERATION_ROOT-}" ]]; then
+    test "$URA_CONTROLLER_GENERATION_ROOT" = "$root"
+  fi
+  URA_CONTROLLER_GENERATION_ROOT="$root"
+  export URA_CONTROLLER_GENERATION_ROOT
+}
+pin_controller_generation
+readonly URA_CONTROLLER_GENERATION_ROOT
+
+EXPECTED_COMMIT='@@EXPECTED_COMMIT@@'
+EXPECTED_FRAMEWORK_LOCK='@@FRAMEWORK_LOCK_SHA256@@'
+EXPECTED_PROJECT_RECEIPT='@@PROJECT_RECEIPT_PATH@@'
+EXPECTED_PROJECT_SHA='@@PROJECT_RECEIPT_SHA256@@'
+EXPECTED_PROJECT_BYTES='@@PROJECT_RECEIPT_BYTES@@'
+EXPECTED_SOURCE_RECEIPT='@@SOURCE_RECEIPT_PATH@@'
+EXPECTED_SOURCE_SHA='@@SOURCE_RECEIPT_SHA256@@'
+PROMPT_SUMMARY='@@WORK_ROOT@@/runs/thesis/source-review-observation-proxy-@@PROMPT_OBSERVATION_TAG@@/observation-summary.json'
+PROMPT_SUMMARY_SHA='@@PROMPT_SUMMARY_SHA256@@'
+HISTORICAL_PROMPT_PROJECT_FILE='@@HISTORICAL_PROMPT_PROJECT_NAME@@'
+HISTORICAL_PROMPT_PROJECT_SHA='@@HISTORICAL_PROMPT_PROJECT_SHA256@@'
+GUARD_ROOT='@@WORK_ROOT@@/runs/engineering/phase3-guard1b-acquire-fit-@@PHASE3_GUARD_TAG@@'
+
+test "$(git -C @@PROJECT_ROOT@@ rev-parse HEAD)" = "$EXPECTED_COMMIT"
+test -z "$(git -C @@PROJECT_ROOT@@ status --porcelain)"
+test "$URA_FRAMEWORK_LOCK_ID" = "$EXPECTED_FRAMEWORK_LOCK"
+test "$URA_PROJECT_REVISION_MANIFEST" = "$EXPECTED_PROJECT_RECEIPT"
+test "$URA_PROJECT_REVISION_SHA256" = "$EXPECTED_PROJECT_SHA"
+test "$URA_SOURCE_CONFORMANCE_MANIFEST" = "$EXPECTED_SOURCE_RECEIPT"
+test "$URA_SOURCE_CONFORMANCE_SHA256" = "$EXPECTED_SOURCE_SHA"
+test "$(readlink -f -- "$URA_WORK")" = '@@WORK_ROOT@@'
+test "$(sha256sum -- "$EXPECTED_PROJECT_RECEIPT" | awk '{print $1}')" = "$EXPECTED_PROJECT_SHA"
+test "$(wc -c < "$EXPECTED_PROJECT_RECEIPT" | tr -d '[:space:]')" = "$EXPECTED_PROJECT_BYTES"
+test "$(sha256sum -- "$EXPECTED_SOURCE_RECEIPT" | awk '{print $1}')" = "$EXPECTED_SOURCE_SHA"
+test -f "$PROMPT_SUMMARY" && test ! -L "$PROMPT_SUMMARY"
+test "$(sha256sum -- "$PROMPT_SUMMARY" | awk '{print $1}')" = "$PROMPT_SUMMARY_SHA"
+test -d "$GUARD_ROOT" && test ! -L "$GUARD_ROOT"
+test -f "$GUARD_ROOT/.exit" && test ! -L "$GUARD_ROOT/.exit"
+test "$(tr -d '\r\n' < "$GUARD_ROOT/.exit")" = '0'
+test -f "$GUARD_ROOT/.stage" && test ! -L "$GUARD_ROOT/.stage"
+test "$(tr -d '\r\n' < "$GUARD_ROOT/.stage")" = 'complete'
+for evidence in \
+  "$GUARD_ROOT/acquisition-evidence.json" \
+  "$GUARD_ROOT/fit-result.json" \
+  "$GUARD_ROOT/request-argv.json" \
+  "$GUARD_ROOT/fit.log" \
+  "$GUARD_ROOT/gpus-before-fit.csv" \
+  "$GUARD_ROOT/gpus-after-fit.csv"; do
+  test -f "$evidence" && test ! -L "$evidence"
+done
+
+@@PROJECT_ROOT@@/.venv/bin/python - "$PROMPT_SUMMARY" "$GUARD_ROOT" \
+  "$EXPECTED_COMMIT" "$EXPECTED_PROJECT_SHA" "$EXPECTED_SOURCE_SHA" \
+  "$HISTORICAL_PROMPT_PROJECT_FILE" "$HISTORICAL_PROMPT_PROJECT_SHA" \
+  "$URA_MODEL_STORE" <<'PY'
+from __future__ import annotations
+
+import hashlib
+import json
+import os
+from pathlib import Path
+import sys
+
+from ura.eligibility import validate_eligibility_plan
+from ura.lane_projection import validate_lane_projection_binding
+from ura.model_acquisition import load_plan, load_receipt, verify_receipt_snapshots
+from ura.model_acquisition_runtime import (
+    validate_model_acquisition_execution_descriptor,
+    validate_model_acquisition_role_projection_binding,
+)
+from ura.request_envelope import validate_request_envelope
+
+summary_path = Path(sys.argv[1])
+guard_root = Path(sys.argv[2])
+commit, project_sha, source_sha = sys.argv[3:6]
+historical_project_file, historical_project_sha, raw_store = sys.argv[6:9]
+
+
+def exact_int(value: object) -> bool:
+    return type(value) is int
+
+
+def checked_bytes(
+    path: Path, *, sha256: str, size: int, label: str, resolved: bool = True
+) -> bytes:
+    if not path.is_absolute() or not path.is_file() or path.is_symlink():
+        raise SystemExit(f"{label} is not one absolute regular non-symlink file")
+    if resolved and path.resolve(strict=True) != path:
+        raise SystemExit(f"{label} path is not canonical")
+    payload = path.read_bytes()
+    if len(payload) != size or hashlib.sha256(payload).hexdigest() != sha256:
+        raise SystemExit(f"{label} content identity differs")
+    return payload
+
+
+def checked_json(
+    path: Path, *, sha256: str, size: int, label: str, resolved: bool = True
+) -> dict[str, object]:
+    value = json.loads(
+        checked_bytes(
+            path, sha256=sha256, size=size, label=label, resolved=resolved
+        )
+    )
+    if not isinstance(value, dict):
+        raise SystemExit(f"{label} is not one JSON object")
+    return value
+
+
+def descriptor(
+    *, path: str, sha256: str, size: int, label: str
+) -> dict[str, object]:
+    expected = {"bytes": size, "path": path, "sha256": sha256}
+    checked_bytes(Path(path), sha256=sha256, size=size, label=label)
+    return expected
+
+
+# This summary is immutable historical Phase 2 evidence. Its project receipt is
+# deliberately older than the current deployment, while its source receipt is current.
+summary = checked_json(
+    summary_path,
+    sha256="@@PROMPT_SUMMARY_SHA256@@",
+    size=13765,
+    label="historical prompt-proxy summary",
+)
+expected_summary_fields = {
+    "artifact_origin", "candidate_arm", "candidate_full_converted_corpus_sha256",
+    "captures", "controls", "hosted_judge_calls", "http_attempts",
+    "model_judge_calls", "model_target_calls", "project_receipt", "schema",
+    "source_receipt", "status",
+}
+if (
+    set(summary) != expected_summary_fields
+    or summary["schema"] != "ura-phase2-prompt-proxy-recapture/1"
+    or summary["status"] != "complete"
+    or summary["artifact_origin"] != "new_runner_outputs_in_create_only_root"
+    or summary["candidate_arm"] != "cyberseceval_prompt_injection"
+    or summary["candidate_full_converted_corpus_sha256"]
+    != "1b31c8a510c91b2255830095cc73917720645486260e715b3557d523cf513a26"
+    or summary["project_receipt"]
+    != {"file": historical_project_file, "sha256": historical_project_sha}
+    or summary["source_receipt"]
+    != {
+        "arms": 45,
+        "file": "@@SOURCE_RECEIPT_NAME@@",
+        "sha256": source_sha,
+    }
+    or summary["controls"]
+    != {
+        "cyberseceval_mitre": {
+            "matches_receipt": True,
+            "sha256": "3620dc0cfa1a259c9440bc1b195250684cc07e99668a7928f42b85959cc9d017",
+        },
+        "strongreject_official": {
+            "matches_receipt": True,
+            "sha256": "48748fa62a7d1cdcb407dfb400cc39c7cbe272579e55c07d1c8b6c737801e7a4",
+        },
+    }
+):
+    raise SystemExit("historical prompt-proxy summary identity differs")
+for counter in (
+    "model_target_calls", "model_judge_calls", "hosted_judge_calls", "http_attempts"
+):
+    if not exact_int(summary[counter]) or summary[counter] != 0:
+        raise SystemExit("historical prompt-proxy call accounting differs")
+captures = summary["captures"]
+expected_captures = {
+    "cyberseceval_prompt_injection-full",
+    "cyberseceval_prompt_injection-bounded-review",
+    "cyberseceval_mitre-full",
+    "strongreject_official-full",
+}
+if not isinstance(captures, dict) or set(captures) != expected_captures:
+    raise SystemExit("historical prompt-proxy capture inventory differs")
+for capture_name, capture in captures.items():
+    if not isinstance(capture, dict) or set(capture) != {
+        "files", "files_sha256", "manifest", "manifest_sha256", "mock_responses"
+    }:
+        raise SystemExit(f"{capture_name}: historical capture shape differs")
+    files = capture["files"]
+    if not isinstance(files, list):
+        raise SystemExit(f"{capture_name}: historical file inventory is invalid")
+    projects = [row for row in files if row.get("name") == historical_project_file]
+    sources = [
+        row for row in files
+        if row.get("name") == "@@SOURCE_RECEIPT_RETAINED_NAME@@"
+    ]
+    if projects != [{"bytes": 1344, "name": historical_project_file, "sha256": historical_project_sha}]:
+        raise SystemExit(f"{capture_name}: historical project binding differs")
+    if sources != [{"bytes": 194630, "name": "@@SOURCE_RECEIPT_RETAINED_NAME@@", "sha256": source_sha}]:
+        raise SystemExit(f"{capture_name}: current source binding differs")
+
+
+request_path = guard_root / "request-argv.json"
+acquisition_path = guard_root / "acquisition-evidence.json"
+fit_path = guard_root / "fit-result.json"
+fit_log_path = guard_root / "fit.log"
+gpu_before_path = guard_root / "gpus-before-fit.csv"
+gpu_after_path = guard_root / "gpus-after-fit.csv"
+plan_path = Path(
+    "@@WORK_ROOT@@/runs/thesis/acquisition/phase3-guard1b-@@PHASE3_GUARD_TAG@@/"
+    "plan/@@PHASE3_PLAN_NAME@@"
+)
+receipt_path = Path(
+    "@@WORK_ROOT@@/runs/thesis/acquisition/phase3-guard1b-@@PHASE3_GUARD_TAG@@/"
+    "receipts/@@PHASE3_ACQUISITION_RECEIPT_NAME@@"
+)
+preflight_root = Path(
+    "@@WORK_ROOT@@/runs/thesis/preflight/guard1b-fit-@@PHASE3_GUARD_TAG@@"
+)
+envelope_path = preflight_root / "@@PHASE3_ENVELOPE_NAME@@"
+projection_path = preflight_root / "@@PHASE3_PROJECTION_NAME@@"
+eligibility_path = preflight_root / "@@PHASE3_ELIGIBILITY_NAME@@"
+
+request_descriptor = descriptor(
+    path=str(request_path),
+    sha256="@@PHASE3_REQUEST_SHA256@@",
+    size=@@PHASE3_REQUEST_BYTES@@,
+    label="Phase 3 request contract",
+)
+acquisition_descriptor = descriptor(
+    path=str(acquisition_path),
+    sha256="@@PHASE3_ACQUISITION_SHA256@@",
+    size=@@PHASE3_ACQUISITION_BYTES@@,
+    label="Phase 3 acquisition evidence",
+)
+fit_log_descriptor = descriptor(
+    path=str(fit_log_path),
+    sha256="@@PHASE3_FIT_LOG_SHA256@@",
+    size=@@PHASE3_FIT_LOG_BYTES@@,
+    label="Phase 3 fit log",
+)
+gpu_before_descriptor = descriptor(
+    path=str(gpu_before_path),
+    sha256="@@PHASE3_GPU_BEFORE_SHA256@@",
+    size=@@PHASE3_GPU_BEFORE_BYTES@@,
+    label="Phase 3 pre-fit GPU inventory",
+)
+gpu_after_descriptor = descriptor(
+    path=str(gpu_after_path),
+    sha256="@@PHASE3_GPU_AFTER_SHA256@@",
+    size=@@PHASE3_GPU_AFTER_BYTES@@,
+    label="Phase 3 post-fit GPU inventory",
+)
+plan_descriptor = descriptor(
+    path=str(plan_path),
+    sha256="@@PHASE3_PLAN_SHA256@@",
+    size=@@PHASE3_PLAN_BYTES@@,
+    label="Phase 3 acquisition plan",
+)
+receipt_descriptor = descriptor(
+    path=str(receipt_path),
+    sha256="@@PHASE3_ACQUISITION_RECEIPT_SHA256@@",
+    size=@@PHASE3_ACQUISITION_RECEIPT_BYTES@@,
+    label="Phase 3 acquisition receipt",
+)
+checked_bytes(
+    fit_path,
+    sha256="@@PHASE3_FIT_RESULT_SHA256@@",
+    size=@@PHASE3_FIT_RESULT_BYTES@@,
+    label="Phase 3 fit result",
+)
+checked_bytes(
+    envelope_path,
+    sha256="@@PHASE3_ENVELOPE_SHA256@@",
+    size=@@PHASE3_ENVELOPE_BYTES@@,
+    label="Phase 3 request envelope",
+)
+checked_bytes(
+    projection_path,
+    sha256="@@PHASE3_PROJECTION_SHA256@@",
+    size=@@PHASE3_PROJECTION_BYTES@@,
+    label="Phase 3 lane projection",
+)
+checked_bytes(
+    eligibility_path,
+    sha256="@@PHASE3_ELIGIBILITY_SHA256@@",
+    size=@@PHASE3_ELIGIBILITY_BYTES@@,
+    label="Phase 3 eligibility plan",
+)
+
+group_keys = [
+    "model", "source", "risk", "effective_modality", "expected_behavior",
+    "attacker", "source_policy_id", "source_policy_version",
+]
+expected_argv = [
+    "--project-revision", "@@PROJECT_RECEIPT_PATH@@",
+    "--project-revision-sha256", project_sha,
+    "--local", "vllm:Qwen/Qwen3-VL-8B-Instruct",
+    "--local-config", "@@PROJECT_ROOT@@/experiments/local-qwen3-vl.json",
+    "--local-config-sha256", "@@QWEN_CONFIG_SHA256@@",
+    "--attackers", "replay", "--judges", "rules,guardrail",
+    "--corpora", "jailbreakbench_benign",
+    "--source-config", "@@PROJECT_ROOT@@/experiments/source-instances.json",
+    "--source-config-sha256", "@@SOURCE_CONFIG_SHA256@@",
+    "--source-conformance", "@@SOURCE_RECEIPT_PATH@@",
+    "--source-conformance-sha256", source_sha,
+    "--limit", "1", "--sample-seed", "0", "--seeds", "0",
+    "--max-queries", "1", "--max-turns", "1",
+    "--group", ",".join(group_keys),
+    "--guardrail-model", "meta-llama/Llama-Guard-3-8B",
+    "--guardrail-revision", "7327bd9f6efbbe6101dc6cc4736302b3cbb6e425",
+    "--guardrail-device", "cuda:1",
+    "--defense", "both", "--defense-guard", "guardrail",
+    "--defense-guardrail-model", "meta-llama/Llama-Guard-3-1B",
+    "--defense-guardrail-revision", "acf7aafa60f0410f8f42b1fa35e077d705892029",
+    "--defense-guardrail-device", "cuda:1", "--approximate-common-metrics",
+    "--max-total-target-calls", "1", "--max-total-judge-calls", "0",
+    "--max-total-http-attempts", "0", "--deadline-seconds", "3600",
+    "--out", str(preflight_root),
+]
+canonical_argv_sha = hashlib.sha256(
+    json.dumps(expected_argv, ensure_ascii=True, separators=(",", ":")).encode()
+).hexdigest()
+if canonical_argv_sha != "@@PHASE3_CANONICAL_ARGV_SHA256@@":
+    raise SystemExit("internal Phase 3 argv expectation is invalid")
+request = json.loads(request_path.read_bytes())
+expected_request = {
+    "base_request_argv": expected_argv,
+    "base_request_argv_sha256": canonical_argv_sha,
+    "expected_commit": commit,
+    "max_download_bytes": 8589934592,
+    "project_receipt_sha256": project_sha,
+    "schema": "ura-phase3-guard1b-request/1",
+    "secret_values_recorded": False,
+    "source_arm_count": 45,
+    "source_receipt_sha256": source_sha,
+    "status": "prospective",
+}
+if request != expected_request or request["base_request_argv"].count("--approximate-common-metrics") != 1:
+    raise SystemExit("Phase 3 request contract differs from the exact authorized argv")
+
+acquisition = json.loads(acquisition_path.read_bytes())
+if set(acquisition) != {
+    "downloaded_bytes", "max_download_bytes", "plan", "receipt", "resources",
+    "schema", "secret_values_recorded", "status",
+}:
+    raise SystemExit("Phase 3 acquisition evidence fields differ")
+if (
+    acquisition["schema"] != "ura-phase3-guard1b-acquisition/1"
+    or acquisition["status"] != "sealed"
+    or acquisition["secret_values_recorded"] is not False
+    or not exact_int(acquisition["max_download_bytes"])
+    or acquisition["max_download_bytes"] != 8589934592
+    or not exact_int(acquisition["downloaded_bytes"])
+    or acquisition["downloaded_bytes"] != @@PHASE3_DOWNLOADED_BYTES@@
+    or acquisition["plan"] != plan_descriptor
+    or acquisition["receipt"] != receipt_descriptor
+):
+    raise SystemExit("Phase 3 sealed acquisition evidence differs")
+
+plan = load_plan(plan_path, expected_sha256=plan_descriptor["sha256"])
+receipt = load_receipt(
+    receipt_path, expected_sha256=receipt_descriptor["sha256"], plan=plan
+)
+if acquisition["resources"] != receipt["resources"]:
+    raise SystemExit("Phase 3 acquisition evidence differs from its sealed receipt")
+expected_resource_roles = {
+    "hf-834c9996eac0a4f8bac76b5865b89b8a": (
+        "Qwen/Qwen3-VL-8B-Instruct", "60595ebc30ec8e3b1d3b9e65d4943ca011c0006a",
+        ["vllm_target"],
+    ),
+    "hf-9b4236b3538b2613f05907dcbbd75f52": (
+        "meta-llama/Llama-Guard-3-1B", "acf7aafa60f0410f8f42b1fa35e077d705892029",
+        ["defense_guardrail"],
+    ),
+    "hf-855b1b85bafe6a02e52ff70213bb76d5": (
+        "meta-llama/Llama-Guard-3-8B", "7327bd9f6efbbe6101dc6cc4736302b3cbb6e425",
+        ["guardrail_judge"],
+    ),
+}
+observed_resource_roles = {
+    row["resource_id"]: (row["repo_id"], row["revision"], row["roles"])
+    for row in receipt["resources"]
+}
+if observed_resource_roles != expected_resource_roles or any(
+    row["storage"] != "managed_store" for row in receipt["resources"]
+):
+    raise SystemExit("Phase 3 sealed resource roster differs")
+if plan["bindings"]["request_envelope_sha256"] != "@@PHASE3_ENVELOPE_SHA256@@":
+    raise SystemExit("Phase 3 acquisition plan binds another request envelope")
+store = Path(raw_store).resolve(strict=True)
+if not store.is_dir() or store.is_symlink():
+    raise SystemExit("managed model store is not one canonical directory")
+resolved_snapshots = verify_receipt_snapshots(plan, receipt, managed_store=store)
+if set(resolved_snapshots) != set(expected_resource_roles):
+    raise SystemExit("Phase 3 verified snapshot inventory differs")
+
+envelope = validate_request_envelope(json.loads(envelope_path.read_bytes()))
+expected_envelope_request = {
+    "approximate_common_metrics": True,
+    "call_caps": {"deadline_seconds": 3600, "http_attempts": None, "judge": None, "target": 1},
+    "defense": "both", "defense_guard": "guardrail", "dry_run": False,
+    "dtype": "auto", "execution_purpose": "preflight_only", "group_keys": group_keys,
+    "hosted_judge_data_transfer_acknowledged": False, "judge_model": None,
+    "judges": ["rules", "guardrail"], "limit": 1,
+    "logical_source_arms": ["jailbreakbench_benign"], "max_queries": 1,
+    "max_turns": 1, "quantization": "",
+    "requested_target_keys": ["vllm:Qwen/Qwen3-VL-8B-Instruct"],
+    "sample_seed": 0, "seeds": [0], "selected_attackers": ["replay"],
+}
+project_binding = envelope["bindings"]["project_revision"]
+if (
+    envelope["schema"] != "ura-request-envelope/2"
+    or envelope["request"] != expected_envelope_request
+    or project_binding["expected_commit"] != commit
+    or project_binding["observed_commit"] != commit
+    or project_binding["sha256"] != project_sha
+    or envelope["execution_units"]
+    != [{
+        "attacker": "replay", "logical_source_arm": "jailbreakbench_benign",
+        "request_unit_id": "request-unit-24fbe7a9a707344afdccb7df",
+        "requested_target_key": "vllm:Qwen/Qwen3-VL-8B-Instruct",
+    }]
+):
+    raise SystemExit("Phase 3 request envelope differs")
+
+eligibility = validate_eligibility_plan(json.loads(eligibility_path.read_bytes()))
+eligibility_descriptor = {
+    "bytes": @@PHASE3_ELIGIBILITY_BYTES@@,
+    "file": eligibility_path.name,
+    "records": 442,
+    "sha256": "@@PHASE3_ELIGIBILITY_SHA256@@",
+}
+projection = validate_lane_projection_binding(
+    json.loads(projection_path.read_bytes()),
+    eligibility_plan=eligibility,
+    eligibility_artifact=eligibility_descriptor,
+)
+conditions = eligibility["bindings"]["experiment_conditions"]["values"]
+acquisition_execution = validate_model_acquisition_execution_descriptor(
+    eligibility["bindings"]["model_acquisition"]
+)
+validate_model_acquisition_role_projection_binding(
+    conditions["model_acquisition"], acquisition_execution
+)
+expected_execution_resources = [
+    {key: value for key, value in row.items() if key != "inventory_sha256"}
+    for row in receipt["resources"]
+]
+if (
+    conditions["defense"] != "both"
+    or conditions["defense_guard"] != "guardrail"
+    or conditions["defense_guardrail_model"] != "meta-llama/Llama-Guard-3-1B"
+    or conditions["defense_guardrail_revision"] != "acf7aafa60f0410f8f42b1fa35e077d705892029"
+    or conditions["defense_guardrail_device"] != "cuda:1"
+    or conditions["guardrail_model"] != "meta-llama/Llama-Guard-3-8B"
+    or conditions["guardrail_revision"] != "7327bd9f6efbbe6101dc6cc4736302b3cbb6e425"
+    or conditions["guardrail_device"] != "cuda:1"
+    or conditions["judges"] != ["rules", "guardrail"]
+    or conditions["execution_purpose"] != "preflight_only"
+    or conditions["call_caps"] != expected_envelope_request["call_caps"]
+    or conditions["project_revision"]["sha256"] != project_sha
+    or conditions["selected_config_identities"]["source_conformance"]
+    != {"bytes": 194630, "sha256": source_sha}
+    or eligibility["bindings"]["supplementary_metric_policy"]
+    != {
+        "approximate_common_metrics": True,
+        "authority": "supplementary_non_authoritative",
+        "metric_prefix": "approximate_",
+    }
+    or acquisition_execution["resources"] != expected_execution_resources
+    or eligibility["execution"]["request_status"] != "whole_request_compatible"
+    or eligibility["execution"]["whole_request_preflight_complete"] is not True
+    or eligibility["counts"]
+    != {
+        "by_disposition": {"compatible_common_proxy_if_isolated": 1},
+        "cells_total": 1, "compatible_if_isolated": 1, "not_applicable": 0,
+    }
+    or len(eligibility["items"]) != 1
+    or eligibility["items"][0]["resolved_target"]
+    != "vllm:Qwen/Qwen3-VL-8B-Instruct@60595ebc30ec8e3b1d3b9e65d4943ca011c0006a+guard"
+):
+    raise SystemExit("Phase 3 eligibility or selected judge/defense identity differs")
+expected_projection_calls = {
+    "by_attacker": {
+        "replay": {
+            "http_attempts": 0, "judge_calls": 0, "local_guardrail_evaluations": 3,
+            "target_calls": 1, "trajectories": 1,
+        }
+    },
+    "http_attempts": 0, "judge_calls": 0, "local_guardrail_evaluations": 3,
+    "semantics": "conservative_complete_grid_upper_bound_v1",
+    "target_calls": 1, "trajectories": 1,
+}
+if (
+    projection["call_projection"] != expected_projection_calls
+    or projection["limitations"]["provider_or_model_generation_invoked_by_projection"] is not False
+    or projection["limitations"]["scientific_result_established"] is not False
+):
+    raise SystemExit("Phase 3 zero-call lane projection differs")
+
+retained_expected = {
+    "@@PHASE3_ELIGIBILITY_NAME@@",
+    "@@PHASE3_PROJECTION_NAME@@",
+    "@@PROJECT_RECEIPT_NAME@@",
+    "@@PHASE3_ENVELOPE_NAME@@",
+    "@@SOURCE_RECEIPT_RETAINED_NAME@@",
+}
+retained_actual = {entry.name for entry in preflight_root.iterdir()}
+if retained_actual != retained_expected:
+    raise SystemExit("Phase 3 retained preflight artifact inventory differs")
+checked_bytes(
+    preflight_root / "@@PROJECT_RECEIPT_NAME@@",
+    sha256=project_sha,
+    size=@@PROJECT_RECEIPT_BYTES@@,
+    label="Phase 3 retained project receipt",
+)
+checked_bytes(
+    preflight_root / "@@SOURCE_RECEIPT_RETAINED_NAME@@",
+    sha256=source_sha, size=194630, label="Phase 3 retained source receipt",
+)
+
+fit = json.loads(fit_path.read_bytes())
+if set(fit) != {
+    "classification_is_final_na", "failure_category", "fit_log", "fit_returncode",
+    "hosted_calls_made", "inputs", "judge_calls_made", "projection_artifacts",
+    "request_error_artifacts", "schema", "secret_values_recorded", "status",
+    "target_calls_made",
+}:
+    raise SystemExit("Phase 3 fit result fields differ")
+for counter in ("fit_returncode", "hosted_calls_made", "judge_calls_made", "target_calls_made"):
+    if not exact_int(fit[counter]) or fit[counter] != 0:
+        raise SystemExit("Phase 3 fit result counter differs")
+expected_projection_descriptor = {
+    "bytes": @@PHASE3_PROJECTION_BYTES@@,
+    "path": str(projection_path),
+    "sha256": "@@PHASE3_PROJECTION_SHA256@@",
+}
+if (
+    fit["schema"] != "ura-phase3-guard1b-fit/1"
+    or fit["status"] != "feasible_zero_call_preflight"
+    or fit["failure_category"] is not None
+    or fit["classification_is_final_na"] is not False
+    or fit["secret_values_recorded"] is not False
+    or fit["fit_log"] != fit_log_descriptor
+    or fit["inputs"]
+    != [request_descriptor, acquisition_descriptor, gpu_before_descriptor, gpu_after_descriptor]
+    or fit["projection_artifacts"] != [expected_projection_descriptor]
+    or fit["request_error_artifacts"] != []
+):
+    raise SystemExit("Phase 3 zero-call fit result differs")
+
+print("Phase 3 static zero-call admission/projection evidence validated")
+PY
+
+declare -A LAUNCHER_HASHES=(
+  ["$URA_CONTROLLER_GENERATION_ROOT/launch_phase5_sequence.sh"]='@@SHA:launch_phase5_sequence.sh@@'
+  ["$URA_CONTROLLER_GENERATION_ROOT/launch_gate5_sequence.sh"]='@@SHA:launch_gate5_sequence.sh@@'
+  ["$URA_CONTROLLER_GENERATION_ROOT/launch_phase6_sequence.sh"]='@@SHA:launch_phase6_sequence.sh@@'
+  ["$URA_CONTROLLER_GENERATION_ROOT/launch_phase7_watcher.sh"]='@@SHA:launch_phase7_watcher.sh@@'
+)
+
+for launcher in "${!LAUNCHER_HASHES[@]}"; do
+  test -f "$launcher" && test ! -L "$launcher"
+  test "$(sha256sum -- "$launcher" | awk '{print $1}')" = \
+    "${LAUNCHER_HASHES[$launcher]}"
+  bash -n "$launcher"
+done
+
+P5_SESSION='ura-phase5-sequence-@@COMMIT_SHORT@@'
+G5_SESSION='ura-gate5-after-phase5-@@COMMIT_SHORT@@'
+P6_SESSION='ura-phase6-sequence-@@COMMIT_SHORT@@'
+P7_SESSION='ura-phase7-after-phase6-@@COMMIT_SHORT@@'
+
+for session in "$P5_SESSION" "$G5_SESSION" "$P6_SESSION" "$P7_SESSION"; do
+  if tmux -L "$session" has-session -t "$session" 2>/dev/null; then
+    printf 'session already exists: %s\n' "$session" >&2
+    exit 1
+  fi
+done
+
+for root in \
+  "$URA_WORK/runs/engineering/phase5-sequence-@@PHASE5_SEQUENCE_TAG@@" \
+  "$URA_WORK/runs/engineering/gate5-after-phase5-@@GATE5_SEQUENCE_TAG@@" \
+  "$URA_WORK/runs/engineering/phase6-sequence-@@PHASE6_SEQUENCE_TAG@@" \
+  "$URA_WORK/runs/engineering/phase7-after-phase6-@@PHASE7_WATCHER_TAG@@"; do
+  test ! -e "$root" && test ! -L "$root"
+done
+
+if [[ "${URA_LAUNCH_CHAIN_VALIDATE_ONLY:-0}" == '1' ]]; then
+  printf 'campaign launch chain validation passed; no sessions launched\n'
+  exit 0
+fi
+
+tmux -L "$P5_SESSION" new-session -d -s "$P5_SESSION" \
+  "bash $URA_CONTROLLER_GENERATION_ROOT/launch_phase5_sequence.sh"
+tmux -L "$G5_SESSION" new-session -d -s "$G5_SESSION" \
+  "bash $URA_CONTROLLER_GENERATION_ROOT/launch_gate5_sequence.sh"
+tmux -L "$P6_SESSION" new-session -d -s "$P6_SESSION" \
+  "bash $URA_CONTROLLER_GENERATION_ROOT/launch_phase6_sequence.sh"
+tmux -L "$P7_SESSION" new-session -d -s "$P7_SESSION" \
+  "bash $URA_CONTROLLER_GENERATION_ROOT/launch_phase7_watcher.sh"
+
+for session in "$P5_SESSION" "$G5_SESSION" "$P6_SESSION" "$P7_SESSION"; do
+  tmux -L "$session" has-session -t "$session"
+  printf 'SESSION=%s\n' "$session"
+done

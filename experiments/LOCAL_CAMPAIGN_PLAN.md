@@ -28,6 +28,18 @@ and video lanes (the local vLLM/Ollama renderers are text and image only), the
 hosted LLM-judge stage, and any native engine that cannot be pointed at a local
 endpoint.
 
+Controller source and binding boundary. Reusable Phase 3-8 controller logic is
+versioned under `experiments/local_campaign/templates/`, with its renderer,
+verifier and package installer under `experiments/local_campaign/`. A controller
+instance cannot be stored as authoritative source because it binds the commit
+that contains the templates, deployed-revision receipt hashes, source receipt
+hashes, run tags and rig paths. The renderer therefore writes those disposable,
+commit-bound instances to the workstation `.campaign` control directory before
+they are verified and transferred to the rig. `.campaign` is neither a Git
+worktree nor an alternative source authority. Any reusable logic change goes to
+the tracked templates first and is tested there; generated instances are never
+edited as the implementation.
+
 ## 0. Readiness snapshot (20 August 2026) and blockers
 
 | Surface | State found | Consequence |
@@ -335,8 +347,18 @@ model resident on the pair of cards. Every lane uses the Level-2-compatible grou
 narrower groupings) and `--limit 0` (full corpus; admitted only because every
 target and judge is local; the Build field now emits it explicitly).
 
+The Gate 5 inventory also records structurally impossible target-source pairs
+as typed terminals. In particular, GPTGeoChat carries image-bearing source
+records, while all three local RWKV Ollama targets are text-only. Those three
+pairs are `unavailable` with reason
+`target_transport_text_only_for_image_source`; they never enter projection,
+canary or measured loops. With all planned local rows present, Gate 5 contains
+46 rows: 26 runnable and 20 typed terminal rows. If the optional local defense
+lane is unavailable, the profile is 25 runnable and 21 terminal rows.
+
 Gate 5: projections and canaries retained under `runs/thesis/preflight` and
-`runs/thesis/diagnostics`; caps recorded in `runs/thesis/RUNNOTE.md`.
+`runs/thesis/diagnostics`; caps recorded in `runs/thesis/RUNNOTE.md`; all 46
+planned rows represented exactly once as runnable or typed terminal.
 
 ## 7. Phase 6: measured local lanes (GPU days; sized by the canaries)
 
@@ -370,7 +392,7 @@ makes it affordable.
 
 | Tier | Lane | Targets | Attackers | Judges | Output root |
 |---|---|---|---|---|---|
-| 1 [10.1] | static text, all common text arms incl. the six aggregator arms | Qwen3-VL-8B; LLaVA base; LLaVA RR; optionally rwkv via Ollama | replay | rules,guardrail | `runs/thesis/runner/local-<model>-text` |
+| 1 [10.1] | static text, all common text arms incl. the six aggregator arms | Qwen3-VL-8B; LLaVA base; LLaVA RR; rwkv via Ollama after transport admission | replay | rules,guardrail | `runs/thesis/runner/local-<model>-text` |
 | 1 [10.2] | static image, all common image arms | Qwen3-VL-8B; LLaVA base; LLaVA RR | replay | rules,guardrail | `runs/thesis/runner/local-<model>-image` |
 | 1 [10.3] | audio/video | none (no local audio/video renderer) | - | - | structural `N/A` |
 
@@ -380,7 +402,7 @@ observation took 1,218 s (20.3 minutes) while it read all 220,240 rows and hashe
 the referenced audio. This is the price of binding the full-corpus digest and the
 complete cluster inventory into the sampling audit, not a stall; budget it once per
 JALMBench invocation. Every other arm observes in under 15 s.
-| 2 [11] | R-Judge and GPTGeoChat classification | same local roster | replay | rules (not queried; source parser authoritative) | `runs/thesis/runner/rjudge`, `.../gptgeochat` |
+| 2 [11] | R-Judge and GPTGeoChat classification | vLLM roster for both; text-only Ollama targets for R-Judge only, with GPTGeoChat pairs typed unavailable | replay | rules (not queried; source parser authoritative) | `runs/thesis/runner/rjudge`, `.../gptgeochat` |
 | 3 [12.1] | live Crescendo (response-conditioned) | Qwen3-VL-8B | crescendo | rules,guardrail | `runs/thesis/runner/crescendo-<model>` |
 | 3 [12.2] | Runner-safe bridges | Qwen3-VL-8B | pyrit, deepteam, h4rm3l, spikee (sealed workers), nanogcg (verified precomputed suffixes only), purplellama (CyberSecEval arms), ideator (seed pairs) | rules,guardrail | `runs/thesis/runner/bridge-<attacker>` |
 | 3 [12.2] | prepared attacks | Qwen3-VL-8B | harmbench prepare (local source model) + replay; t3mp3st stays blocked-unpinned | rules,guardrail | `runs/thesis/runner/harmbench-replay` |
@@ -404,19 +426,29 @@ through `ura_native_run` with `URA_NATIVE_TARGET_CALL_CAP` set):
 | Giskard | Python callable around the local endpoint | runs |
 
 Import every complete native artifact family with `experiments.native_import`
-[14.3]; record run/failed/unavailable/not-selected for all nine.
+[14.3]; record run/failed/unavailable/not-selected for all nine. These bounded
+one-case runs remain engineering diagnostics under `$URA_WORK/runs/engineering`.
+They exercise the native bridge and importer but are not measured Runner lanes
+and are not promoted into thesis metrics.
 
-Gate 6: every measured lane completes or records an explicit error/partial
-state; no lane runs outside `runs/thesis/runner`; caps never raised mid-lane.
+Gate 6: every measured Runner lane completes or records an explicit
+error/partial state under `runs/thesis/runner`; native engineering diagnostics
+retain their separate typed dispositions under `runs/engineering`; caps never
+raised mid-lane.
 
 ## 8. Phase 7: read-only analysis (hours)
 
-`level1_evidence` over `runs/thesis/runner` (every final eligibility plan),
-`suite_summary`, `level2_report`, `judge_sensitivity`, `kappa`,
+`level1_evidence` over `runs/thesis/runner` authorizes the complete measured
+lifecycle, including complete, partial and failed Runner artifacts and their
+final eligibility or request-error records. The metric grid is deliberately
+narrower: `suite_summary`, `level2_report`, `judge_sensitivity`, `kappa`,
 `transfer_matrix --attacker replay`, and the two free paired comparisons
 [16]: LLaVA base vs RR on `mmsafety_official` (and each image arm), and
 replay vs Crescendo within Qwen3-VL-8B. The Level-2 export keeps rules-only
 and cascade (rules+guardrail) evaluator modes as separate compatibility keys.
+Only successful measured lanes enter those metric and Level-2 views; failed and
+partial lanes remain visible in Level-1 lifecycle evidence rather than being
+silently dropped or replaced by Gate 5 preflight eligibility.
 
 ## 9. Phase 8: human audit (free in money, requires raters and an ethics determination)
 

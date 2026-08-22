@@ -1,0 +1,429 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+umask 077
+
+source ~/.ura_campaign_env
+
+pin_controller_generation() {
+  local script_fd="/proc/$$/fd/255" script_path root generations marker archive_sha
+  test -e "$script_fd" || { printf 'controller script descriptor is unavailable\n' >&2; return 1; }
+  script_path="$(readlink -f -- "$script_fd")"
+  test -f "$script_path" && test ! -L "$script_path"
+  root="${script_path%/*}"
+  generations="${root%/*}"
+  test "${generations##*/}" = '.ura-controller-generations'
+  test -d "$root" && test ! -L "$root"
+  marker="$root/.ura-controller-generation.tsv"
+  test -f "$marker" && test ! -L "$marker"
+  test "$(grep -Fxc -- $'schema\tura-controller-generation/1' "$marker")" = '1'
+  test "$(grep -Fxc -- $'expected_commit\t@@EXPECTED_COMMIT@@' "$marker")" = '1'
+  archive_sha="${root##*-}"
+  [[ "$archive_sha" =~ ^[0-9a-f]{64}$ ]]
+  test "${root##*/}" = "@@COMMIT_SHORT@@-$archive_sha"
+  test "$(grep -Fxc -- $'archive_sha256\t'"$archive_sha" "$marker")" = '1'
+  if [[ -n "${URA_CONTROLLER_GENERATION_ROOT-}" ]]; then
+    test "$URA_CONTROLLER_GENERATION_ROOT" = "$root"
+  fi
+  URA_CONTROLLER_GENERATION_ROOT="$root"
+  export URA_CONTROLLER_GENERATION_ROOT
+}
+pin_controller_generation
+readonly URA_CONTROLLER_GENERATION_ROOT
+
+cd ~/MLLMRiskBench
+
+EXPECTED_COMMIT='@@EXPECTED_COMMIT@@'
+EXPECTED_PROJECT_RECEIPT='@@PROJECT_RECEIPT_PATH@@'
+EXPECTED_PROJECT_RECEIPT_SHA256='@@PROJECT_RECEIPT_SHA256@@'
+EXPECTED_SOURCE_RECEIPT='@@SOURCE_RECEIPT_PATH@@'
+EXPECTED_SOURCE_RECEIPT_SHA256='@@SOURCE_RECEIPT_SHA256@@'
+PHASE5_SEQUENCE_SESSION='ura-phase5-sequence-@@COMMIT_SHORT@@'
+PHASE5_SEQUENCE_SOCKET='ura-phase5-sequence-@@COMMIT_SHORT@@'
+PHASE5_SEQUENCE_ROOT='@@WORK_ROOT@@/runs/engineering/phase5-sequence-@@PHASE5_SEQUENCE_TAG@@'
+FINALIZER="$URA_CONTROLLER_GENERATION_ROOT/phase5_finalize_gate5.sh"
+FINALIZER_SHA256='@@SHA:phase5_finalize_gate5.sh@@'
+PROMOTER="$URA_CONTROLLER_GENERATION_ROOT/phase5_promote_gate5.sh"
+PROMOTER_SHA256='@@SHA:phase5_promote_gate5.sh@@'
+TAG="${GATE5_SEQUENCE_TAG:-$(date -u +%Y%m%dT%H%M%SZ)}"
+case "$TAG" in
+  20[0-9][0-9][01][0-9][0-3][0-9]T[0-2][0-9][0-5][0-9][0-5][0-9]Z) ;;
+  *) printf 'invalid Gate 5 sequence tag\n' >&2; exit 1 ;;
+esac
+CONTROL_ROOT="$URA_WORK/runs/engineering/gate5-after-phase5-$TAG"
+LOG="$CONTROL_ROOT/controller.log"
+EXIT_TMP="$CONTROL_ROOT/.exit.tmp"
+EXIT_MARKER="$CONTROL_ROOT/.exit"
+COMPLETION="$CONTROL_ROOT/completion.json"
+
+test "$(git rev-parse HEAD)" = "$EXPECTED_COMMIT"
+test -z "$(git status --porcelain)"
+test "$URA_PROJECT_REVISION_MANIFEST" = "$EXPECTED_PROJECT_RECEIPT"
+test "$URA_PROJECT_REVISION_SHA256" = "$EXPECTED_PROJECT_RECEIPT_SHA256"
+test "$URA_SOURCE_CONFORMANCE_MANIFEST" = "$EXPECTED_SOURCE_RECEIPT"
+test "$URA_SOURCE_CONFORMANCE_SHA256" = "$EXPECTED_SOURCE_RECEIPT_SHA256"
+test -f "$FINALIZER" && test ! -L "$FINALIZER"
+test -f "$PROMOTER" && test ! -L "$PROMOTER"
+test "$(sha256sum -- "$FINALIZER" | awk '{print $1}')" = "$FINALIZER_SHA256"
+test "$(sha256sum -- "$PROMOTER" | awk '{print $1}')" = "$PROMOTER_SHA256"
+bash -n "$FINALIZER"
+bash -n "$PROMOTER"
+
+export HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1 HF_DATASETS_OFFLINE=1
+unset HF_TOKEN HUGGING_FACE_HUB_TOKEN OPENAI_API_KEY ANTHROPIC_API_KEY \
+  GOOGLE_API_KEY GEMINI_API_KEY MISTRAL_API_KEY TOGETHER_API_KEY \
+  DEEPSEEK_API_KEY XAI_API_KEY
+
+test ! -e "$CONTROL_ROOT"
+mkdir -m 700 "$CONTROL_ROOT"
+exec > >(tee "$LOG") 2>&1
+
+finish() {
+  rc=$?
+  trap - EXIT
+  printf '%s\n' "$rc" > "$EXIT_TMP"
+  test ! -e "$EXIT_MARKER"
+  mv -- "$EXIT_TMP" "$EXIT_MARKER"
+  printf 'GATE5_SEQUENCE_EXIT=%s\n' "$rc"
+  exit "$rc"
+}
+trap finish EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
+trap 'exit 129' HUP
+
+while tmux -L "$PHASE5_SEQUENCE_SOCKET" has-session -t "$PHASE5_SEQUENCE_SESSION" 2>/dev/null; do
+  sleep 30
+done
+test -f "$PHASE5_SEQUENCE_ROOT/.exit" && test ! -L "$PHASE5_SEQUENCE_ROOT/.exit"
+test "$(tr -d '\r\n' < "$PHASE5_SEQUENCE_ROOT/.exit")" = '0'
+
+step_root() {
+  local step="$1"
+  "$PWD/.venv/bin/python" - "$PHASE5_SEQUENCE_ROOT/steps.tsv" "$step" <<'PY'
+import csv
+from pathlib import Path
+import sys
+
+path, step = Path(sys.argv[1]), sys.argv[2]
+with path.open(encoding="utf-8", newline="") as handle:
+    rows = [
+        row for row in csv.DictReader(handle, delimiter="\t")
+        if row.get("step") == step and row.get("status") == "complete"
+    ]
+if len(rows) != 1:
+    raise SystemExit(f"{step}: expected one completed sequence row, found {len(rows)}")
+root = Path(rows[0]["control_root"])
+if not root.is_absolute() or root.is_symlink() or not root.is_dir():
+    raise SystemExit(f"{step}: unsafe controller root")
+print(root)
+PY
+}
+
+CORE_PROJECTIONS_ROOT="$(step_root core-projections)"
+CORE_CANARIES_ROOT="$(step_root core-canaries)"
+BRIDGE_PROJECTIONS_ROOT="$(step_root bridge-projections)"
+BRIDGE_CANARIES_ROOT="$(step_root bridge-canaries)"
+OLLAMA_ROOT="$(step_root ollama)"
+
+for root in \
+  "$CORE_PROJECTIONS_ROOT" "$CORE_CANARIES_ROOT" "$BRIDGE_PROJECTIONS_ROOT" \
+  "$BRIDGE_CANARIES_ROOT" "$OLLAMA_ROOT"; do
+  test -d "$root" && test ! -L "$root"
+  test -f "$root/.exit" && test ! -L "$root/.exit"
+  test "$(tr -d '\r\n' < "$root/.exit")" = '0'
+done
+
+FAILED_ONE="$URA_WORK/runs/engineering/phase5-core-canaries-@@FAILED_CANARY_ONE_TAG@@"
+FAILED_TWO="$URA_WORK/runs/engineering/phase5-core-canaries-@@FAILED_CANARY_TWO_TAG@@"
+FAILED_THREE="$URA_WORK/runs/engineering/phase5-core-canaries-@@FAILED_CANARY_THREE_TAG@@"
+for root in "$FAILED_ONE" "$FAILED_TWO" "$FAILED_THREE"; do
+  test -d "$root" && test ! -L "$root"
+done
+
+EVIDENCE_ARGS=(
+  --core-projections-root "$CORE_PROJECTIONS_ROOT"
+  --core-canaries-root "$CORE_CANARIES_ROOT"
+  --bridge-projections-root "$BRIDGE_PROJECTIONS_ROOT"
+  --bridge-canaries-root "$BRIDGE_CANARIES_ROOT"
+  --ollama-projections-root "$OLLAMA_ROOT"
+  --ollama-canaries-root "$OLLAMA_ROOT"
+  --failed-attempt-root "$FAILED_ONE"
+  --failed-attempt-root "$FAILED_TWO"
+  --failed-attempt-root "$FAILED_THREE"
+)
+
+VALIDATION="$CONTROL_ROOT/finalizer-validation.json"
+test ! -e "$VALIDATION"
+bash "$FINALIZER" "${EVIDENCE_ARGS[@]}" > "$VALIDATION"
+mapfile -d '' -t VALIDATION_VALUES < <(
+"$PWD/.venv/bin/python" - "$VALIDATION" <<'PY'
+import json
+from pathlib import Path
+import re
+import sys
+from ura.strict_json import strict_json_loads
+
+def exact_profile(runnable, terminal, conditional):
+    return (runnable, terminal, conditional) in (
+        (26, 20, []),
+        (25, 21, ["defense-local"]),
+    )
+
+if (
+    not exact_profile(26, 20, [])
+    or not exact_profile(25, 21, ["defense-local"])
+    or any(exact_profile(*row) for row in (
+        (26, 20, ["defense-local"]),
+        (25, 21, []),
+        (25, 21, ["forged"]),
+        (24, 22, ["defense-local"]),
+    ))
+):
+    raise SystemExit("Gate 5 profile mutation self-test failed")
+
+value = strict_json_loads(Path(sys.argv[1]).read_bytes())
+if (
+    not isinstance(value, dict)
+    or value.get("status") != "validated_not_launched"
+    or value.get("schema") != "ura-gate5-covered-manifest/1"
+    or not exact_profile(
+        value.get("runnable_lanes"), value.get("typed_terminal_lanes"),
+        value.get("conditional_na_lanes"),
+    )
+    or re.fullmatch(r"[0-9a-f]{64}", str(value.get("covered_manifest_sha256"))) is None
+):
+    raise SystemExit("Gate 5 validation-only result changed")
+print(value["covered_manifest_sha256"], end="\0")
+print(value["runnable_lanes"], end="\0")
+print(value["typed_terminal_lanes"], end="\0")
+print(json.dumps(value["conditional_na_lanes"], separators=(",", ":")), end="\0")
+PY
+)
+test "${#VALIDATION_VALUES[@]}" -eq 4
+MANIFEST_SHA="${VALIDATION_VALUES[0]}"
+RUNNABLE_LANES="${VALIDATION_VALUES[1]}"
+TYPED_TERMINAL_LANES="${VALIDATION_VALUES[2]}"
+CONDITIONAL_NA_LANES_JSON="${VALIDATION_VALUES[3]}"
+
+LAUNCH_RESULT="$CONTROL_ROOT/finalizer-launch.json"
+test ! -e "$LAUNCH_RESULT"
+bash "$FINALIZER" "${EVIDENCE_ARGS[@]}" --launch \
+  --authorize-manifest-sha256 "$MANIFEST_SHA" > "$LAUNCH_RESULT"
+mapfile -d '' -t FINALIZER_VALUES < <(
+  "$PWD/.venv/bin/python" - "$LAUNCH_RESULT" "$MANIFEST_SHA" <<'PY'
+from pathlib import Path
+import sys
+from ura.strict_json import strict_json_loads
+
+value = strict_json_loads(Path(sys.argv[1]).read_bytes())
+if (
+    not isinstance(value, dict)
+    or value.get("status") != "launched_in_tmux"
+    or value.get("covered_manifest_sha256") != sys.argv[2]
+):
+    raise SystemExit("Gate 5 finalizer launch record changed")
+for key in (
+    "session", "socket", "control_root", "exit_marker",
+    "finalization_output_root", "runnote_candidate",
+):
+    item = value.get(key)
+    if not isinstance(item, str) or not item:
+        raise SystemExit(f"Gate 5 launch omitted {key}")
+    print(item, end="\0")
+PY
+)
+test "${#FINALIZER_VALUES[@]}" -eq 6
+FINALIZER_SESSION="${FINALIZER_VALUES[0]}"
+FINALIZER_SOCKET="${FINALIZER_VALUES[1]}"
+FINALIZER_CONTROL="${FINALIZER_VALUES[2]}"
+FINALIZER_EXIT="${FINALIZER_VALUES[3]}"
+FINALIZATION_ROOT="${FINALIZER_VALUES[4]}"
+RUNNOTE_CANDIDATE="${FINALIZER_VALUES[5]}"
+
+while tmux -L "$FINALIZER_SOCKET" has-session -t "$FINALIZER_SESSION" 2>/dev/null; do
+  sleep 30
+done
+test -f "$FINALIZER_EXIT" && test ! -L "$FINALIZER_EXIT"
+test "$(tr -d '\r\n' < "$FINALIZER_EXIT")" = '0'
+test -f "$FINALIZATION_ROOT/.exit" && test ! -L "$FINALIZATION_ROOT/.exit"
+test "$(tr -d '\r\n' < "$FINALIZATION_ROOT/.exit")" = '0'
+
+COVERED_MANIFEST="$FINALIZATION_ROOT/covered-manifest.json"
+FINALIZATION_RECEIPT="$FINALIZATION_ROOT/finalization-receipt.json"
+PROMOTION_PROPOSAL="$CONTROL_ROOT/promotion-proposal.json"
+test -f "$COVERED_MANIFEST" && test ! -L "$COVERED_MANIFEST"
+test -f "$RUNNOTE_CANDIDATE" && test ! -L "$RUNNOTE_CANDIDATE"
+test -f "$FINALIZATION_RECEIPT" && test ! -L "$FINALIZATION_RECEIPT"
+test ! -e "$PROMOTION_PROPOSAL"
+bash "$PROMOTER" \
+  --covered-manifest "$COVERED_MANIFEST" \
+  --runnote-candidate "$RUNNOTE_CANDIDATE" \
+  --finalization-receipt "$FINALIZATION_RECEIPT" > "$PROMOTION_PROPOSAL"
+
+mapfile -d '' -t PROMOTION_VALUES < <(
+  "$PWD/.venv/bin/python" - "$PROMOTION_PROPOSAL" <<'PY'
+from pathlib import Path
+import re
+import sys
+from ura.strict_json import strict_json_loads
+
+value = strict_json_loads(Path(sys.argv[1]).read_bytes())
+plan = value.get("promotion_plan") if isinstance(value, dict) else None
+if (
+    value.get("schema") != "ura-gate5-runnote-promotion-plan/1"
+    or value.get("status") != "validated_candidate_only"
+    or value.get("canonical_runnote_modified") is not False
+    or not isinstance(plan, dict)
+    or set(plan) != {"path", "sha256", "bytes"}
+    or value.get("promotion_plan_sha256") != plan.get("sha256")
+    or re.fullmatch(r"[0-9a-f]{64}", str(plan.get("sha256"))) is None
+):
+    raise SystemExit("Gate 5 promotion proposal changed")
+print(plan["path"], end="\0")
+print(plan["sha256"], end="\0")
+PY
+)
+test "${#PROMOTION_VALUES[@]}" -eq 2
+PROMOTION_PLAN="${PROMOTION_VALUES[0]}"
+PROMOTION_SHA="${PROMOTION_VALUES[1]}"
+
+PROMOTION_RESULT="$CONTROL_ROOT/promotion-result.json"
+test ! -e "$PROMOTION_RESULT"
+bash "$PROMOTER" --promotion-plan "$PROMOTION_PLAN" \
+  --authorize-plan-sha256 "$PROMOTION_SHA" > "$PROMOTION_RESULT"
+
+"$PWD/.venv/bin/python" - "$COMPLETION" "$VALIDATION" "$LAUNCH_RESULT" \
+  "$FINALIZER_CONTROL" "$FINALIZATION_ROOT" "$RUNNOTE_CANDIDATE" \
+  "$PROMOTION_PROPOSAL" "$PROMOTION_RESULT" "$PROMOTION_PLAN" \
+  "$MANIFEST_SHA" "$PROMOTION_SHA" "$RUNNABLE_LANES" \
+  "$TYPED_TERMINAL_LANES" "$CONDITIONAL_NA_LANES_JSON" <<'PY'
+from datetime import datetime, timezone
+import hashlib
+import json
+import os
+from pathlib import Path
+import sys
+from ura.strict_json import strict_json_loads
+
+(
+    out_value, validation_value, launch_value, finalizer_control_value,
+    finalization_value, candidate_value, proposal_value, result_value,
+    plan_value, manifest_sha, promotion_sha, runnable_text, terminal_text,
+    conditional_json,
+) = sys.argv[1:]
+runnable = int(runnable_text)
+typed_terminal = int(terminal_text)
+conditional_na_lanes = strict_json_loads(conditional_json)
+def exact_profile(runnable_value, terminal_value, conditional_value):
+    return (runnable_value, terminal_value, conditional_value) in (
+        (26, 20, []),
+        (25, 21, ["defense-local"]),
+    )
+
+if (
+    not exact_profile(26, 20, [])
+    or not exact_profile(25, 21, ["defense-local"])
+    or any(exact_profile(*row) for row in (
+        (26, 20, ["defense-local"]),
+        (25, 21, []),
+        (25, 21, ["forged"]),
+        (24, 22, ["defense-local"]),
+    ))
+):
+    raise SystemExit("Gate 5 completion profile mutation self-test failed")
+if not exact_profile(runnable, typed_terminal, conditional_na_lanes):
+    raise SystemExit("Gate 5 completion inventory profile changed")
+
+def descriptor(path: Path) -> dict[str, object]:
+    if path.is_symlink() or not path.is_file():
+        raise SystemExit(f"unsafe Gate 5 sequence artifact: {path}")
+    payload = path.read_bytes()
+    return {"path": str(path.resolve(strict=True)), "sha256": hashlib.sha256(payload).hexdigest(), "bytes": len(payload)}
+
+result_path = Path(result_value)
+result = strict_json_loads(result_path.read_bytes())
+if (
+    not isinstance(result, dict)
+    or result.get("schema") != "ura-gate5-runnote-promotion/1"
+    or result.get("status") != "complete"
+    or result.get("promotion_plan_sha256") != promotion_sha
+    or result.get("canonical_runnote_mode") != "0600"
+    or result.get("canonical_runnote_link_count") != 1
+    or result.get("model_or_job_launched") is not False
+):
+    raise SystemExit("Gate 5 promotion result changed")
+canonical = result.get("canonical_runnote")
+receipt = result.get("promotion_receipt")
+for label, value in (("canonical", canonical), ("receipt", receipt)):
+    if not isinstance(value, dict) or set(value) != {"path", "sha256", "bytes"}:
+        raise SystemExit(f"Gate 5 {label} descriptor changed")
+    if descriptor(Path(value["path"])) != value:
+        raise SystemExit(f"Gate 5 {label} bytes changed")
+
+finalization = Path(finalization_value)
+finalizer_control = Path(finalizer_control_value)
+validation = strict_json_loads(Path(validation_value).read_bytes())
+finalization_receipt = strict_json_loads(
+    (finalization / "finalization-receipt.json").read_bytes()
+)
+promotion_plan = strict_json_loads(Path(plan_value).read_bytes())
+promotion_receipt = strict_json_loads(Path(receipt["path"]).read_bytes())
+expected_counts = {
+    "total": 46,
+    "runnable": runnable,
+    "typed_terminal": typed_terminal,
+    "conditional_na_lanes": conditional_na_lanes,
+    "bridge_terminal": 3,
+    "ollama_transport_terminal": 3,
+    "portfolio_terminal": 5,
+    "native_terminal": 9,
+}
+if (
+    validation.get("runnable_lanes") != runnable
+    or validation.get("typed_terminal_lanes") != typed_terminal
+    or validation.get("conditional_na_lanes") != conditional_na_lanes
+    or finalization_receipt.get("runnable_lanes") != runnable
+    or finalization_receipt.get("typed_terminal_lanes") != typed_terminal
+    or finalization_receipt.get("conditional_na_lanes") != conditional_na_lanes
+    or promotion_plan.get("inventory_counts") != expected_counts
+    or promotion_receipt.get("inventory_counts") != expected_counts
+):
+    raise SystemExit("Gate 5 validation/finalization/promotion inventory profiles differ")
+value = {
+    "schema": "ura-phase5-gate5-sequence-completion/1",
+    "status": "complete",
+    "completed_at_utc": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+    "covered_manifest_sha256": manifest_sha,
+    "authorized_promotion_plan_sha256": promotion_sha,
+    "validation_result": descriptor(Path(validation_value)),
+    "launch_result": descriptor(Path(launch_value)),
+    "finalizer_launch": descriptor(finalizer_control / "launch.json"),
+    "finalizer_exit": descriptor(finalizer_control / ".exit"),
+    "covered_manifest": descriptor(finalization / "covered-manifest.json"),
+    "finalization_receipt": descriptor(finalization / "finalization-receipt.json"),
+    "finalization_exit": descriptor(finalization / ".exit"),
+    "runnote_candidate": descriptor(Path(candidate_value)),
+    "promotion_proposal": descriptor(Path(proposal_value)),
+    "promotion_plan": descriptor(Path(plan_value)),
+    "promotion_result": descriptor(result_path),
+    "canonical_runnote": canonical,
+    "promotion_receipt": receipt,
+    "runnable_lanes": runnable,
+    "typed_terminal_lanes": typed_terminal,
+    "conditional_na_lanes": conditional_na_lanes,
+    "downloads_observed_bytes": 0,
+    "measured_run_launched": False,
+}
+payload = (json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=True, allow_nan=False) + "\n").encode("ascii")
+out = Path(out_value)
+if out.exists() or out.is_symlink():
+    raise SystemExit("Gate 5 sequence completion is not create-only")
+fd = os.open(out, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+with os.fdopen(fd, "wb") as handle:
+    handle.write(payload)
+    handle.flush()
+    os.fsync(handle.fileno())
+print(json.dumps({"status": "complete", "sha256": hashlib.sha256(payload).hexdigest()}, sort_keys=True))
+PY
+
+printf 'GATE5_SEQUENCE_COMPLETE=%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)"

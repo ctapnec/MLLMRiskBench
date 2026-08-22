@@ -1,3 +1,4 @@
 experiments/evaluation-policy.json text eol=lf
 distro/*.sh text eol=lf
 distro/.env.example text eol=lf
+experiments/local_campaign/templates/*.in text eol=lf

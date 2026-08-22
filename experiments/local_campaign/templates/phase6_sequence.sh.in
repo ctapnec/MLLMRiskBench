@@ -1,0 +1,1436 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+umask 077
+
+source ~/.ura_campaign_env
+cd ~/MLLMRiskBench
+
+pin_controller_generation() {
+  local script_fd="/proc/$$/fd/255" script_path root generations marker archive_sha
+  test -e "$script_fd" || { printf 'controller script descriptor is unavailable\n' >&2; return 1; }
+  script_path="$(readlink -f -- "$script_fd")"
+  test -f "$script_path" && test ! -L "$script_path"
+  root="${script_path%/*}"
+  generations="${root%/*}"
+  test "${generations##*/}" = '.ura-controller-generations'
+  test -d "$root" && test ! -L "$root"
+  marker="$root/.ura-controller-generation.tsv"
+  test -f "$marker" && test ! -L "$marker"
+  test "$(grep -Fxc -- $'schema\tura-controller-generation/1' "$marker")" = '1'
+  test "$(grep -Fxc -- $'expected_commit\t@@EXPECTED_COMMIT@@' "$marker")" = '1'
+  archive_sha="${root##*-}"
+  [[ "$archive_sha" =~ ^[0-9a-f]{64}$ ]]
+  test "${root##*/}" = "@@COMMIT_SHORT@@-$archive_sha"
+  test "$(grep -Fxc -- $'archive_sha256\t'"$archive_sha" "$marker")" = '1'
+  if [[ -n "${URA_CONTROLLER_GENERATION_ROOT-}" ]]; then
+    test "$URA_CONTROLLER_GENERATION_ROOT" = "$root"
+  fi
+  URA_CONTROLLER_GENERATION_ROOT="$root"
+  export URA_CONTROLLER_GENERATION_ROOT
+}
+
+EXPECTED_COMMIT='@@EXPECTED_COMMIT@@'
+EXPECTED_FRAMEWORK_LOCK='@@FRAMEWORK_LOCK_SHA256@@'
+GATE5_SESSION='ura-gate5-after-phase5-@@COMMIT_SHORT@@'
+GATE5_SOCKET='ura-gate5-after-phase5-@@COMMIT_SHORT@@'
+GATE5_ROOT='@@WORK_ROOT@@/runs/engineering/gate5-after-phase5-@@GATE5_SEQUENCE_TAG@@'
+CORE_SHA256='@@SHA:phase6_core_measured.sh@@'
+CORE_BYTES='@@BYTES:phase6_core_measured.sh@@'
+EXTENDED_SHA256='@@SHA:phase6_extended_measured.sh@@'
+EXTENDED_BYTES='@@BYTES:phase6_extended_measured.sh@@'
+NATIVE_SHA256='@@SHA:phase6_native_diagnostics.sh@@'
+NATIVE_BYTES='@@BYTES:phase6_native_diagnostics.sh@@'
+PHASE7_SHA256='@@SHA:phase7_analysis.py@@'
+PHASE7_BYTES='@@BYTES:phase7_analysis.py@@'
+PY="$PWD/.venv/bin/python"
+
+test "$(git rev-parse HEAD)" = "$EXPECTED_COMMIT"
+test -z "$(git status --porcelain)"
+test "$URA_FRAMEWORK_LOCK_ID" = "$EXPECTED_FRAMEWORK_LOCK"
+test -x "$PY"
+
+# The mutable /home copies are used only to create a private, content-addressed
+# execution set. The long-running sequence then re-execs its sealed copy.
+if [ "${PHASE6_SEQUENCE_SEALED:-0}" != '1' ]; then
+  pin_controller_generation
+  readonly URA_CONTROLLER_GENERATION_ROOT
+  SOURCE_CORE="$URA_CONTROLLER_GENERATION_ROOT/phase6_core_measured.sh"
+  SOURCE_EXTENDED="$URA_CONTROLLER_GENERATION_ROOT/phase6_extended_measured.sh"
+  SOURCE_NATIVE="$URA_CONTROLLER_GENERATION_ROOT/phase6_native_diagnostics.sh"
+  SOURCE_PHASE7="$URA_CONTROLLER_GENERATION_ROOT/phase7_analysis.py"
+  SOURCE_SEQUENCE="$(readlink -e -- "${BASH_SOURCE[0]}")"
+  AUTHORIZED_SEQUENCE_SHA256="${AUTHORIZED_SEQUENCE_SHA256:-}"
+  test "$(printf '%s' "$AUTHORIZED_SEQUENCE_SHA256" | wc -c)" -eq 64
+  case "$AUTHORIZED_SEQUENCE_SHA256" in
+    *[!0-9a-f]*) printf 'invalid sequence authorization\n' >&2; exit 1 ;;
+  esac
+  test -f "$SOURCE_SEQUENCE" && test ! -L "$SOURCE_SEQUENCE"
+  test "$(sha256sum -- "$SOURCE_SEQUENCE" | awk '{print $1}')" = \
+    "$AUTHORIZED_SEQUENCE_SHA256"
+
+  TAG="${PHASE6_SEQUENCE_TAG:-$(date -u +%Y%m%dT%H%M%SZ)}"
+  case "$TAG" in
+    20[0-9][0-9][01][0-9][0-3][0-9]T[0-2][0-9][0-5][0-9][0-5][0-9]Z) ;;
+    *) printf 'invalid Phase 6 sequence tag\n' >&2; exit 1 ;;
+  esac
+  CONTROL_ROOT="$URA_WORK/runs/engineering/phase6-sequence-$TAG"
+  test ! -e "$CONTROL_ROOT" && test ! -L "$CONTROL_ROOT"
+  mkdir -m 700 "$CONTROL_ROOT"
+  mkdir -m 700 "$CONTROL_ROOT/sealed"
+
+  "$PY" - \
+    "$SOURCE_SEQUENCE" "$CONTROL_ROOT/sealed/phase6_sequence.sh" \
+      "$AUTHORIZED_SEQUENCE_SHA256" - 500 \
+    "$SOURCE_CORE" "$CONTROL_ROOT/sealed/phase6_core_measured.sh" \
+      "$CORE_SHA256" "$CORE_BYTES" 500 \
+    "$SOURCE_EXTENDED" "$CONTROL_ROOT/sealed/phase6_extended_measured.sh" \
+      "$EXTENDED_SHA256" "$EXTENDED_BYTES" 500 \
+    "$SOURCE_NATIVE" "$CONTROL_ROOT/sealed/phase6_native_diagnostics.sh" \
+      "$NATIVE_SHA256" "$NATIVE_BYTES" 500 \
+    "$SOURCE_PHASE7" "$CONTROL_ROOT/sealed/phase7_analysis.py" \
+      "$PHASE7_SHA256" "$PHASE7_BYTES" 400 <<'PY'
+import hashlib
+import os
+from pathlib import Path
+import stat
+import sys
+
+items = sys.argv[1:]
+if len(items) % 5:
+    raise SystemExit("invalid seal inventory")
+for offset in range(0, len(items), 5):
+    source = Path(items[offset])
+    target = Path(items[offset + 1])
+    expected_sha = items[offset + 2]
+    expected_size = items[offset + 3]
+    mode = int(items[offset + 4], 8)
+    if not source.is_absolute() or source.is_symlink() or not source.is_file():
+        raise SystemExit(f"unsafe seal source: {source}")
+    flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
+    source_fd = os.open(source, flags)
+    try:
+        metadata = os.fstat(source_fd)
+        if not stat.S_ISREG(metadata.st_mode):
+            raise SystemExit(f"non-regular seal source: {source}")
+        chunks = []
+        while True:
+            chunk = os.read(source_fd, 1024 * 1024)
+            if not chunk:
+                break
+            chunks.append(chunk)
+        payload = b"".join(chunks)
+        final_metadata = os.fstat(source_fd)
+        stable_fields = ("st_dev", "st_ino", "st_mode", "st_size", "st_mtime_ns", "st_ctime_ns")
+        if any(
+            getattr(final_metadata, field) != getattr(metadata, field)
+            for field in stable_fields
+        ):
+            raise SystemExit(f"seal source changed while read: {source}")
+    finally:
+        os.close(source_fd)
+    observed_sha = hashlib.sha256(payload).hexdigest()
+    if observed_sha != expected_sha:
+        raise SystemExit(
+            f"seal source digest changed: {source}; "
+            f"expected={expected_sha}; observed={observed_sha}; bytes={len(payload)}"
+        )
+    if expected_size != "-" and len(payload) != int(expected_size):
+        raise SystemExit(f"seal source size changed: {source}")
+    if target.exists() or target.is_symlink():
+        raise SystemExit(f"seal target is not create-only: {target}")
+    target_fd = os.open(
+        target,
+        os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0),
+        mode,
+    )
+    try:
+        view = memoryview(payload)
+        while view:
+            written = os.write(target_fd, view)
+            view = view[written:]
+        os.fsync(target_fd)
+    finally:
+        os.close(target_fd)
+    if hashlib.sha256(target.read_bytes()).hexdigest() != expected_sha:
+        raise SystemExit(f"sealed target digest differs: {target}")
+PY
+
+  exec env \
+    PHASE6_SEQUENCE_SEALED=1 \
+    PHASE6_SEQUENCE_CONTROL_ROOT="$CONTROL_ROOT" \
+    AUTHORIZED_SEQUENCE_SHA256="$AUTHORIZED_SEQUENCE_SHA256" \
+    bash "$CONTROL_ROOT/sealed/phase6_sequence.sh"
+fi
+
+CONTROL_ROOT="${PHASE6_SEQUENCE_CONTROL_ROOT:?missing sealed control root}"
+case "$CONTROL_ROOT" in
+  "$URA_WORK"/runs/engineering/phase6-sequence-*) ;;
+  *) printf 'unsafe Phase 6 sequence root\n' >&2; exit 1 ;;
+esac
+test -d "$CONTROL_ROOT" && test ! -L "$CONTROL_ROOT"
+test "$(readlink -e -- "$CONTROL_ROOT")" = "$CONTROL_ROOT"
+
+SEQUENCE="$CONTROL_ROOT/sealed/phase6_sequence.sh"
+CORE="$CONTROL_ROOT/sealed/phase6_core_measured.sh"
+EXTENDED="$CONTROL_ROOT/sealed/phase6_extended_measured.sh"
+NATIVE="$CONTROL_ROOT/sealed/phase6_native_diagnostics.sh"
+PHASE7="$CONTROL_ROOT/sealed/phase7_analysis.py"
+AUTHORIZED_SEQUENCE_SHA256="${AUTHORIZED_SEQUENCE_SHA256:?missing sequence authorization}"
+LOG="$CONTROL_ROOT/sequence.log"
+STEPS="$CONTROL_ROOT/steps.tsv"
+SEQUENCE_LAUNCH="$CONTROL_ROOT/sequence-launch.json"
+SELF_TEST="$CONTROL_ROOT/phase7-contract-self-test.json"
+COMPLETION="$CONTROL_ROOT/completion.json"
+EXIT_TMP="$CONTROL_ROOT/.exit.tmp"
+EXIT_MARKER="$CONTROL_ROOT/.exit"
+
+verify_regular() {
+  local path="$1" expected_sha="$2" expected_bytes="$3"
+  test -f "$path" && test ! -L "$path"
+  test "$(readlink -e -- "$path")" = "$path"
+  test "$(sha256sum -- "$path" | awk '{print $1}')" = "$expected_sha"
+  if [ "$expected_bytes" != '-' ]; then
+    test "$(stat -c %s -- "$path")" = "$expected_bytes"
+  fi
+}
+
+verify_regular "$SEQUENCE" "$AUTHORIZED_SEQUENCE_SHA256" -
+verify_regular "$CORE" "$CORE_SHA256" "$CORE_BYTES"
+verify_regular "$EXTENDED" "$EXTENDED_SHA256" "$EXTENDED_BYTES"
+verify_regular "$NATIVE" "$NATIVE_SHA256" "$NATIVE_BYTES"
+verify_regular "$PHASE7" "$PHASE7_SHA256" "$PHASE7_BYTES"
+bash -n "$SEQUENCE"
+bash -n "$CORE"
+bash -n "$EXTENDED"
+bash -n "$NATIVE"
+PYTHONDONTWRITEBYTECODE=1 "$PY" - "$PHASE7" <<'PY'
+from pathlib import Path
+import sys
+
+compile(Path(sys.argv[1]).read_bytes(), sys.argv[1], "exec")
+PY
+
+export HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1 HF_DATASETS_OFFLINE=1
+export PYTHONDONTWRITEBYTECODE=1
+unset HF_TOKEN HUGGING_FACE_HUB_TOKEN OPENAI_API_KEY ANTHROPIC_API_KEY \
+  GOOGLE_API_KEY GEMINI_API_KEY MISTRAL_API_KEY TOGETHER_API_KEY \
+  DEEPSEEK_API_KEY XAI_API_KEY
+
+test ! -e "$LOG" && test ! -L "$LOG"
+exec > >(tee "$LOG") 2>&1
+printf 'step\tstatus\tsession\tsocket\tcontrol_root\tattempt_root\texit_code\tcompletion\texit_marker\tlaunch_output\tvalidation\n' > "$STEPS"
+chmod 600 "$STEPS"
+
+finish() {
+  rc=$?
+  trap - EXIT
+  printf '%s\n' "$rc" > "$EXIT_TMP"
+  test ! -e "$EXIT_MARKER" && test ! -L "$EXIT_MARKER"
+  mv -- "$EXIT_TMP" "$EXIT_MARKER"
+  printf 'PHASE6_SEQUENCE_EXIT=%s\n' "$rc"
+  exit "$rc"
+}
+trap finish EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
+trap 'exit 129' HUP
+
+test ! -e "$SELF_TEST" && test ! -L "$SELF_TEST"
+"$PY" "$PHASE7" contract-self-test > "$SELF_TEST"
+"$PY" - "$SELF_TEST" <<'PY'
+from pathlib import Path
+import sys
+from ura.strict_json import strict_json_loads
+
+value = strict_json_loads(Path(sys.argv[1]).read_bytes())
+if (
+    not isinstance(value, dict)
+    or value.get("schema") != "ura-phase7-contract-self-test/1"
+    or value.get("status") != "passed"
+    or type(value.get("mutations_rejected")) is not int
+    or value["mutations_rejected"] < 319
+):
+    raise SystemExit("Phase 7 contract self-test changed")
+PY
+
+"$PY" - "$SEQUENCE_LAUNCH" "$CONTROL_ROOT" "$SEQUENCE" "$PHASE7" \
+  "$CORE" "$EXTENDED" "$NATIVE" "$SELF_TEST" "$EXPECTED_COMMIT" \
+  "$EXPECTED_FRAMEWORK_LOCK" "$AUTHORIZED_SEQUENCE_SHA256" \
+  "$GATE5_ROOT" "$GATE5_SESSION" "$GATE5_SOCKET" <<'PY'
+from datetime import datetime, timezone
+import hashlib
+import json
+import os
+from pathlib import Path
+import sys
+
+(
+    out_value,
+    root_value,
+    sequence_value,
+    phase7_value,
+    core_value,
+    extended_value,
+    native_value,
+    self_test_value,
+    commit,
+    lock,
+    authorized_sequence_sha,
+    gate5_root,
+    gate5_session,
+    gate5_socket,
+) = sys.argv[1:]
+
+def descriptor(raw: str) -> dict[str, object]:
+    path = Path(raw)
+    if (
+        not path.is_absolute()
+        or path.is_symlink()
+        or not path.is_file()
+        or path.resolve(strict=True) != path
+    ):
+        raise SystemExit(f"unsafe launch artifact: {path}")
+    payload = path.read_bytes()
+    return {
+        "path": str(path),
+        "sha256": hashlib.sha256(payload).hexdigest(),
+        "bytes": len(payload),
+    }
+
+sequence = descriptor(sequence_value)
+if sequence["sha256"] != authorized_sequence_sha:
+    raise SystemExit("sequence authorization differs from sealed bytes")
+value = {
+    "schema": "ura-phase6-sequence-launch/1",
+    "status": "running",
+    "started_at_utc": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+    "expected_commit": commit,
+    "framework_lock_id": lock,
+    "control_root": root_value,
+    "authorized_sequence_sha256": authorized_sequence_sha,
+    "sequence_script": sequence,
+    "phase7_validator": descriptor(phase7_value),
+    "phase7_contract_self_test": descriptor(self_test_value),
+    "controller_wrappers": {
+        "core": descriptor(core_value),
+        "extended": descriptor(extended_value),
+        "native": descriptor(native_value),
+    },
+    "gate5_wait": {
+        "control_root": gate5_root,
+        "session": gate5_session,
+        "socket": gate5_socket,
+    },
+    "controller_order": ["core", "extended", "native"],
+    "long_running_children_use_tmux": True,
+    "local_only": True,
+}
+payload = (
+    json.dumps(
+        value,
+        sort_keys=True,
+        separators=(",", ":"),
+        ensure_ascii=True,
+        allow_nan=False,
+    )
+    + "\n"
+).encode("ascii")
+out = Path(out_value)
+fd = os.open(out, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+with os.fdopen(fd, "wb") as handle:
+    handle.write(payload)
+    handle.flush()
+    os.fsync(handle.fileno())
+PY
+
+printf 'PHASE6_SEQUENCE_CONTROL_ROOT=%s\n' "$CONTROL_ROOT"
+printf 'PHASE6_SEQUENCE_WAITING_FOR_GATE5=%s\n' "$GATE5_ROOT"
+while tmux -L "$GATE5_SOCKET" has-session -t "$GATE5_SESSION" 2>/dev/null; do
+  sleep 30
+done
+
+validate_gate5_now() {
+  local receipt="$1"
+  "$PY" - "$PHASE7" "$GATE5_ROOT/completion.json" "$GATE5_ROOT/.exit" \
+    "$receipt" "$GATE5_ROOT" "$PWD" "$URA_WORK" <<'PY'
+import hashlib
+import importlib.util
+import json
+import os
+from pathlib import Path
+import re
+import sys
+
+validator_value, completion_value, exit_value, out_value, root_value, project_value, work_value = sys.argv[1:]
+validator = Path(validator_value)
+spec = importlib.util.spec_from_file_location("ura_frozen_phase7", validator)
+if spec is None or spec.loader is None:
+    raise SystemExit("cannot load frozen Phase 7 validator")
+phase7 = importlib.util.module_from_spec(spec)
+sys.modules[spec.name] = phase7
+spec.loader.exec_module(phase7)
+
+def checked_file(raw: str, label: str) -> Path:
+    path = Path(raw)
+    if (
+        not path.is_absolute()
+        or path.is_symlink()
+        or not path.is_file()
+        or path.resolve(strict=True) != path
+    ):
+        raise SystemExit(f"unsafe {label}: {path}")
+    return path
+
+def descriptor(path: Path) -> dict[str, object]:
+    path = checked_file(str(path), "descriptor input")
+    payload = path.read_bytes()
+    return {
+        "path": str(path),
+        "sha256": hashlib.sha256(payload).hexdigest(),
+        "bytes": len(payload),
+    }
+
+def require_gate5_inventory_profile(value: object, *, label: str) -> tuple[int, int, list[str]]:
+    if not isinstance(value, dict):
+        raise SystemExit(f"{label} is not an object")
+    runnable = value.get("runnable_lanes")
+    terminal = value.get("typed_terminal_lanes")
+    conditional = value.get("conditional_na_lanes")
+    observed = (runnable, terminal, conditional)
+    allowed = (
+        (26, 20, []),
+        (25, 21, ["defense-local"]),
+    )
+    if (
+        type(runnable) is not int
+        or type(terminal) is not int
+        or not isinstance(conditional, list)
+        or observed not in allowed
+    ):
+        raise SystemExit(f"{label} Gate 5 inventory profile changed")
+    return runnable, terminal, list(conditional)
+
+def inventory_profile_self_test() -> None:
+    fixtures = (
+        {"runnable_lanes": 26, "typed_terminal_lanes": 20, "conditional_na_lanes": []},
+        {
+            "runnable_lanes": 25,
+            "typed_terminal_lanes": 21,
+            "conditional_na_lanes": ["defense-local"],
+        },
+    )
+    for fixture in fixtures:
+        require_gate5_inventory_profile(fixture, label="self-test")
+    mutations = (
+        {"runnable_lanes": 25, "typed_terminal_lanes": 20, "conditional_na_lanes": []},
+        {
+            "runnable_lanes": 26,
+            "typed_terminal_lanes": 20,
+            "conditional_na_lanes": ["defense-local"],
+        },
+        {"runnable_lanes": 25, "typed_terminal_lanes": 21, "conditional_na_lanes": []},
+        {
+            "runnable_lanes": 25,
+            "typed_terminal_lanes": 21,
+            "conditional_na_lanes": ["another-lane"],
+        },
+        {"runnable_lanes": True, "typed_terminal_lanes": 20, "conditional_na_lanes": []},
+    )
+    for index, mutation in enumerate(mutations, 1):
+        try:
+            require_gate5_inventory_profile(mutation, label=f"mutation-{index}")
+        except SystemExit:
+            continue
+        raise SystemExit(f"Gate 5 inventory-profile mutation {index} was accepted")
+
+inventory_profile_self_test()
+
+root = Path(root_value)
+if (
+    not root.is_absolute()
+    or root.is_symlink()
+    or not root.is_dir()
+    or root.resolve(strict=True) != root
+):
+    raise SystemExit("unsafe Gate 5 control root")
+exit_path = checked_file(exit_value, "Gate 5 sequence exit")
+if exit_path != root / ".exit" or exit_path.read_bytes() != b"0\n":
+    raise SystemExit("Gate 5 sequence did not exit with exact success bytes")
+for failure_name in ("failure.json", "controller-failure.json"):
+    failure = root / failure_name
+    if failure.exists() or failure.is_symlink():
+        raise SystemExit("Gate 5 completion coexists with a failure marker")
+completion_path = checked_file(completion_value, "Gate 5 sequence completion")
+if completion_path != root / "completion.json":
+    raise SystemExit("Gate 5 completion path changed")
+completion = phase7.strict_object(completion_path)
+expected_fields = {
+    "schema",
+    "status",
+    "completed_at_utc",
+    "covered_manifest_sha256",
+    "authorized_promotion_plan_sha256",
+    "validation_result",
+    "launch_result",
+    "finalizer_launch",
+    "finalizer_exit",
+    "covered_manifest",
+    "finalization_receipt",
+    "finalization_exit",
+    "runnote_candidate",
+    "promotion_proposal",
+    "promotion_plan",
+    "promotion_result",
+    "canonical_runnote",
+    "promotion_receipt",
+    "runnable_lanes",
+    "typed_terminal_lanes",
+    "conditional_na_lanes",
+    "downloads_observed_bytes",
+    "measured_run_launched",
+}
+if (
+    set(completion) != expected_fields
+    or completion.get("schema") != "ura-phase5-gate5-sequence-completion/1"
+    or completion.get("status") != "complete"
+    or type(completion.get("downloads_observed_bytes")) is not int
+    or completion.get("downloads_observed_bytes") != 0
+    or completion.get("measured_run_launched") is not False
+    or re.fullmatch(r"[0-9a-f]{64}", str(completion.get("covered_manifest_sha256"))) is None
+    or re.fullmatch(r"[0-9a-f]{64}", str(completion.get("authorized_promotion_plan_sha256"))) is None
+):
+    raise SystemExit("Gate 5 exact sequence completion contract changed")
+runnable_lanes, typed_terminal_lanes, conditional_na_lanes = (
+    require_gate5_inventory_profile(completion, label="Gate 5 sequence completion")
+)
+phase7.require_utc_timestamp(
+    completion.get("completed_at_utc"), label="Gate 5 sequence timestamp"
+)
+descriptor_fields = expected_fields - {
+    "schema",
+    "status",
+    "completed_at_utc",
+    "covered_manifest_sha256",
+    "authorized_promotion_plan_sha256",
+    "runnable_lanes",
+    "typed_terminal_lanes",
+    "conditional_na_lanes",
+    "downloads_observed_bytes",
+    "measured_run_launched",
+}
+resolved = {}
+for field in sorted(descriptor_fields):
+    artifact = phase7.descriptor_file(
+        completion.get(field), label=f"Gate 5 sequence {field}"
+    )
+    if completion[field] != descriptor(artifact):
+        raise SystemExit(f"Gate 5 sequence {field} descriptor changed")
+    resolved[field] = artifact
+if completion["covered_manifest_sha256"] != completion["covered_manifest"]["sha256"]:
+    raise SystemExit("Gate 5 manifest authorization differs")
+manifest = resolved["covered_manifest"]
+runnote = resolved["canonical_runnote"]
+promotion = resolved["promotion_receipt"]
+validated_manifest, _, _, code_identity = phase7.validate_gate5(
+    manifest,
+    runnote,
+    promotion,
+    Path(project_value).resolve(strict=True),
+    Path(work_value).resolve(strict=True),
+)
+gate5_profile = phase7.gate5_inventory_profile(
+    validated_manifest.get("lanes"), label="Phase 6 sequence Gate 5 manifest"
+)
+inventory_counts = gate5_profile["inventory_counts"]
+if (
+    inventory_counts.get("runnable") != runnable_lanes
+    or inventory_counts.get("typed_terminal") != typed_terminal_lanes
+    or inventory_counts.get("conditional_na_lanes") != conditional_na_lanes
+):
+    raise SystemExit("Gate 5 sequence completion and manifest profiles differ")
+value = {
+    "schema": "ura-phase6-sequence-gate5-validation/1",
+    "status": "validated",
+    "code_identity": code_identity,
+    "sequence_completion": descriptor(completion_path),
+    "sequence_exit": descriptor(exit_path),
+    "covered_manifest": descriptor(manifest),
+    "canonical_runnote": descriptor(runnote),
+    "promotion_receipt": descriptor(promotion),
+    "runnable_lanes": runnable_lanes,
+    "typed_terminal_lanes": typed_terminal_lanes,
+    "conditional_na_lanes": conditional_na_lanes,
+    "downloads_observed_bytes": 0,
+    "measured_run_launched": False,
+}
+payload = (
+    json.dumps(
+        value,
+        sort_keys=True,
+        separators=(",", ":"),
+        ensure_ascii=True,
+        allow_nan=False,
+    )
+    + "\n"
+).encode("ascii")
+out = Path(out_value)
+fd = os.open(out, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+with os.fdopen(fd, "wb") as handle:
+    handle.write(payload)
+    handle.flush()
+    os.fsync(handle.fileno())
+for item in (manifest, runnote, promotion, completion["covered_manifest_sha256"]):
+    print(item, end="\0")
+PY
+}
+
+GATE5_VALIDATION="$CONTROL_ROOT/gate5.validation.json"
+mapfile -d '' -t gate5_values < <(validate_gate5_now "$GATE5_VALIDATION")
+test "${#gate5_values[@]}" -eq 4
+GATE5_MANIFEST="${gate5_values[0]}"
+GATE5_RUNNOTE="${gate5_values[1]}"
+GATE5_PROMOTION="${gate5_values[2]}"
+GATE5_MANIFEST_SHA="${gate5_values[3]}"
+
+record_step() {
+  printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
+    "$1" "$2" "$3" "$4" "$5" "$6" "$7" "$8" "$9" \
+    "${10}" "${11}" >> "$STEPS"
+}
+
+parse_launch() {
+  local kind="$1" launch_output="$2"
+  "$PY" - "$kind" "$launch_output" "$URA_WORK" <<'PY'
+from pathlib import Path
+import re
+import sys
+
+kind, launch_value, work_value = sys.argv[1:]
+launch = Path(launch_value)
+if launch.is_symlink() or not launch.is_file() or launch.resolve(strict=True) != launch:
+    raise SystemExit(f"{kind}: unsafe launch output")
+payload = launch.read_bytes()
+if b"\r" in payload or not payload.endswith(b"\n"):
+    raise SystemExit(f"{kind}: launch output is not canonical LF text")
+try:
+    lines = payload.decode("ascii").splitlines()
+except UnicodeDecodeError as exc:
+    raise SystemExit(f"{kind}: launch output is not ASCII") from exc
+expected_keys = {
+    "SESSION",
+    "SOCKET",
+    "ATTACH",
+    "CONTROL_ROOT",
+    "ATTEMPT_ROOT",
+    "LOG",
+    "COMPLETION",
+    "EXIT_MARKER",
+}
+values = {}
+for line in lines:
+    key, separator, value = line.partition("=")
+    if not separator or key in values:
+        raise SystemExit(f"{kind}: invalid launch output row")
+    values[key] = value
+if set(values) != expected_keys or any(not value for value in values.values()):
+    raise SystemExit(f"{kind}: launch output field inventory changed")
+prefixes = {
+    "core": "phase6-core-measured-",
+    "extended": "phase6-extended-measured-",
+    "native": "phase6-native-canaries-",
+}
+root = Path(values["CONTROL_ROOT"])
+work = Path(work_value).resolve(strict=True)
+if (
+    not root.is_absolute()
+    or root.is_symlink()
+    or not root.is_dir()
+    or root.resolve(strict=True) != root
+    or root.parent != work / "runs" / "engineering"
+    or not root.name.startswith(prefixes[kind])
+):
+    raise SystemExit(f"{kind}: unsafe controller root")
+attempt = Path(values["ATTEMPT_ROOT"])
+if (
+    not attempt.is_absolute()
+    or attempt.parent != root / "attempts"
+    or not re.fullmatch(r"20[0-9]{6}T[0-9]{6}Z-[0-9]+", attempt.name)
+):
+    raise SystemExit(f"{kind}: attempt root is not bound beneath the control root")
+session = values["SESSION"]
+socket = values["SOCKET"]
+expected_session = f"ura-phase6-{kind}-{attempt.name}"
+if session != expected_session or socket != expected_session:
+    raise SystemExit(f"{kind}: tmux identity differs from the attempt")
+if values["ATTACH"] != f"tmux -L {socket} attach -t {session}":
+    raise SystemExit(f"{kind}: attach command differs")
+completion = Path(values["COMPLETION"])
+marker = Path(values["EXIT_MARKER"])
+controller_log = Path(values["LOG"])
+if (
+    completion != attempt / "completion.json"
+    or marker != attempt / ".exit"
+    or controller_log != attempt / "controller.log"
+):
+    raise SystemExit(f"{kind}: launch artifact paths are not cross-bound")
+for item in (
+    session,
+    socket,
+    str(root),
+    str(attempt),
+    str(completion),
+    str(marker),
+    str(controller_log),
+):
+    print(item, end="\0")
+PY
+}
+
+validate_child_now() {
+  local kind="$1" wrapper="$2" expected_sha="$3" expected_bytes="$4"
+  local launch_output="$5" root="$6" attempt="$7" completion="$8"
+  local marker="$9" receipt="${10}"
+  "$PY" - "$PHASE7" "$kind" "$wrapper" "$expected_sha" \
+    "$expected_bytes" "$launch_output" "$root" "$attempt" "$completion" \
+    "$marker" "$receipt" "$GATE5_MANIFEST" "$GATE5_RUNNOTE" \
+    "$GATE5_PROMOTION" "$EXPECTED_COMMIT" "$EXPECTED_FRAMEWORK_LOCK" \
+    "$URA_WORK" <<'PY'
+import hashlib
+import importlib.util
+import json
+import os
+from pathlib import Path
+import sys
+
+(
+    validator_value,
+    kind,
+    wrapper_value,
+    expected_sha,
+    expected_bytes,
+    launch_value,
+    root_value,
+    attempt_value,
+    completion_value,
+    marker_value,
+    out_value,
+    manifest_value,
+    runnote_value,
+    promotion_value,
+    commit,
+    lock,
+    work_value,
+) = sys.argv[1:]
+
+validator = Path(validator_value)
+spec = importlib.util.spec_from_file_location("ura_frozen_phase7", validator)
+if spec is None or spec.loader is None:
+    raise SystemExit("cannot load frozen Phase 7 validator")
+phase7 = importlib.util.module_from_spec(spec)
+sys.modules[spec.name] = phase7
+spec.loader.exec_module(phase7)
+
+def checked_file(raw: str, label: str) -> Path:
+    path = Path(raw)
+    if (
+        not path.is_absolute()
+        or path.is_symlink()
+        or not path.is_file()
+        or path.resolve(strict=True) != path
+    ):
+        raise SystemExit(f"{kind}: unsafe {label}")
+    return path
+
+def descriptor(path: Path) -> dict[str, object]:
+    path = checked_file(str(path), "descriptor input")
+    payload = path.read_bytes()
+    return {
+        "path": str(path),
+        "sha256": hashlib.sha256(payload).hexdigest(),
+        "bytes": len(payload),
+    }
+
+wrapper = checked_file(wrapper_value, "sealed wrapper")
+wrapper_desc = descriptor(wrapper)
+if wrapper_desc["sha256"] != expected_sha or wrapper_desc["bytes"] != int(expected_bytes):
+    raise SystemExit(f"{kind}: sealed wrapper identity changed")
+root = Path(root_value)
+attempt = Path(attempt_value)
+completion = Path(completion_value)
+marker = Path(marker_value)
+if (
+    not root.is_absolute()
+    or root.is_symlink()
+    or not root.is_dir()
+    or root.resolve(strict=True) != root
+    or not attempt.is_absolute()
+    or attempt.is_symlink()
+    or not attempt.is_dir()
+    or attempt.resolve(strict=True) != attempt
+    or attempt.parent != root / "attempts"
+    or completion != attempt / "completion.json"
+    or marker != attempt / ".exit"
+):
+    raise SystemExit(f"{kind}: terminal paths are not cross-bound")
+checked_file(str(completion), "completion")
+checked_file(str(marker), "exit marker")
+failure_names = {
+    "core": ("failure.json",),
+    "extended": ("controller-failure.json",),
+    "native": ("controller-failure.json",),
+}
+for failure_name in failure_names[kind]:
+    failure = attempt / failure_name
+    if failure.exists() or failure.is_symlink():
+        raise SystemExit(f"{kind}: typed completion coexists with a failure marker")
+code_identity = {"expected_commit": commit, "framework_lock_id": lock}
+kwargs = {
+    "completion_path": completion,
+    "gate5_manifest": Path(manifest_value),
+    "gate5_runnote": Path(runnote_value),
+    "gate5_promotion": Path(promotion_value),
+    "code_identity": code_identity,
+}
+if kind in {"core", "extended"}:
+    kwargs["runner_root"] = Path(work_value).resolve(strict=True) / "runs" / "thesis" / "runner"
+validators = {
+    "core": phase7.validate_core_controller,
+    "extended": phase7.validate_extended_controller,
+    "native": phase7.validate_native_controller,
+}
+validated = validators[kind](**kwargs)
+if (
+    validated.get("control_root") != str(root)
+    or validated.get("attempt_root") != str(attempt)
+    or validated.get("completion") != descriptor(completion)
+    or validated.get("exit_marker") != descriptor(marker)
+    or validated.get("status") not in {"complete", "complete_with_failures"}
+):
+    raise SystemExit(f"{kind}: Phase 7 validation result is not cross-bound")
+exit_code = 0 if validated["status"] == "complete" else 1
+expected_exit = b"0\n" if exit_code == 0 else b"1\n"
+if marker.read_bytes() != expected_exit:
+    raise SystemExit(f"{kind}: exit marker bytes differ from terminal inventory")
+value = {
+    "schema": "ura-phase6-sequence-child-validation/1",
+    "kind": kind,
+    "status": validated["status"],
+    "exit_code": exit_code,
+    "control_root": str(root),
+    "attempt_root": str(attempt),
+    "wrapper": wrapper_desc,
+    "launch_output": descriptor(Path(launch_value)),
+    "controller_validation": validated,
+}
+payload = (
+    json.dumps(
+        value,
+        sort_keys=True,
+        separators=(",", ":"),
+        ensure_ascii=True,
+        allow_nan=False,
+    )
+    + "\n"
+).encode("ascii")
+out = Path(out_value)
+fd = os.open(out, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+with os.fdopen(fd, "wb") as handle:
+    handle.write(payload)
+    handle.flush()
+    os.fsync(handle.fileno())
+print(exit_code, end="\0")
+print(validated["status"], end="\0")
+PY
+}
+
+declare -A CHILD_SESSION CHILD_SOCKET CHILD_ROOT CHILD_ATTEMPT CHILD_COMPLETION
+declare -A CHILD_MARKER CHILD_LAUNCH CHILD_VALIDATION CHILD_RC CHILD_STATUS
+
+wait_for_child() {
+  local kind="$1" wrapper="$2" expected_sha="$3" expected_bytes="$4"
+  local launch_output="$5"
+  local -a values=()
+  mapfile -d '' -t values < <(parse_launch "$kind" "$launch_output")
+  test "${#values[@]}" -eq 7
+  local session="${values[0]}" socket="${values[1]}" root="${values[2]}"
+  local attempt="${values[3]}" completion="${values[4]}" marker="${values[5]}"
+  local controller_log="${values[6]}"
+  record_step "$kind" waiting "$session" "$socket" "$root" "$attempt" '' \
+    "$completion" "$marker" "$launch_output" ''
+  printf 'PHASE6_CONTROLLER_WAITING=%s SESSION=%s ROOT=%s LOG=%s\n' \
+    "$kind" "$session" "$root" "$controller_log"
+  while tmux -L "$socket" has-session -t "$session" 2>/dev/null; do
+    sleep 30
+  done
+  local validation="$CONTROL_ROOT/$kind.validation.json"
+  local -a terminal=()
+  mapfile -d '' -t terminal < <(
+    validate_child_now "$kind" "$wrapper" "$expected_sha" "$expected_bytes" \
+      "$launch_output" "$root" "$attempt" "$completion" "$marker" \
+      "$validation"
+  )
+  test "${#terminal[@]}" -eq 2
+  local rc="${terminal[0]}" status="${terminal[1]}"
+  test "$rc" = '0' || test "$rc" = '1'
+  record_step "$kind" terminal "$session" "$socket" "$root" "$attempt" \
+    "$rc" "$completion" "$marker" "$launch_output" "$validation"
+  CHILD_SESSION[$kind]="$session"
+  CHILD_SOCKET[$kind]="$socket"
+  CHILD_ROOT[$kind]="$root"
+  CHILD_ATTEMPT[$kind]="$attempt"
+  CHILD_COMPLETION[$kind]="$completion"
+  CHILD_MARKER[$kind]="$marker"
+  CHILD_LAUNCH[$kind]="$launch_output"
+  CHILD_VALIDATION[$kind]="$validation"
+  CHILD_RC[$kind]="$rc"
+  CHILD_STATUS[$kind]="$status"
+  verify_regular "$wrapper" "$expected_sha" "$expected_bytes"
+  verify_regular "$PHASE7" "$PHASE7_SHA256" "$PHASE7_BYTES"
+  printf 'PHASE6_CONTROLLER_TERMINAL=%s STATUS=%s EXIT=%s\n' \
+    "$kind" "$status" "$rc"
+}
+
+CORE_LAUNCH="$CONTROL_ROOT/core.launch.txt"
+test ! -e "$CORE_LAUNCH" && test ! -L "$CORE_LAUNCH"
+verify_regular "$CORE" "$CORE_SHA256" "$CORE_BYTES"
+bash "$CORE" \
+  --gate5-manifest "$GATE5_MANIFEST" \
+  --gate5-runnote "$GATE5_RUNNOTE" \
+  --gate5-promotion-receipt "$GATE5_PROMOTION" \
+  --authorize-manifest-sha256 "$GATE5_MANIFEST_SHA" > "$CORE_LAUNCH"
+wait_for_child core "$CORE" "$CORE_SHA256" "$CORE_BYTES" "$CORE_LAUNCH"
+
+EXTENDED_LAUNCH="$CONTROL_ROOT/extended.launch.txt"
+test ! -e "$EXTENDED_LAUNCH" && test ! -L "$EXTENDED_LAUNCH"
+verify_regular "$EXTENDED" "$EXTENDED_SHA256" "$EXTENDED_BYTES"
+bash "$EXTENDED" \
+  --gate5-manifest "$GATE5_MANIFEST" \
+  --gate5-runnote "$GATE5_RUNNOTE" \
+  --gate5-promotion-receipt "$GATE5_PROMOTION" \
+  --authorize-manifest-sha256 "$GATE5_MANIFEST_SHA" > "$EXTENDED_LAUNCH"
+wait_for_child extended "$EXTENDED" "$EXTENDED_SHA256" \
+  "$EXTENDED_BYTES" "$EXTENDED_LAUNCH"
+
+NATIVE_PLAN="$CONTROL_ROOT/native-plan.json"
+NATIVE_PLAN_RESULT="$CONTROL_ROOT/native-plan-result.json"
+test ! -e "$NATIVE_PLAN" && test ! -L "$NATIVE_PLAN"
+test ! -e "$NATIVE_PLAN_RESULT" && test ! -L "$NATIVE_PLAN_RESULT"
+verify_regular "$NATIVE" "$NATIVE_SHA256" "$NATIVE_BYTES"
+bash "$NATIVE" --plan-only \
+  --expected-commit "$EXPECTED_COMMIT" \
+  --out "$NATIVE_PLAN" \
+  --gate5-manifest "$GATE5_MANIFEST" \
+  --gate5-runnote "$GATE5_RUNNOTE" \
+  --gate5-promotion-receipt "$GATE5_PROMOTION" \
+  --authorize-gate5-manifest-sha256 "$GATE5_MANIFEST_SHA" > "$NATIVE_PLAN_RESULT"
+test -f "$NATIVE_PLAN" && test ! -L "$NATIVE_PLAN"
+NATIVE_PLAN_SHA="$(sha256sum -- "$NATIVE_PLAN" | awk '{print $1}')"
+
+NATIVE_LAUNCH="$CONTROL_ROOT/native.launch.txt"
+test ! -e "$NATIVE_LAUNCH" && test ! -L "$NATIVE_LAUNCH"
+bash "$NATIVE" --plan "$NATIVE_PLAN" \
+  --authorize-plan-sha256 "$NATIVE_PLAN_SHA" > "$NATIVE_LAUNCH"
+wait_for_child native "$NATIVE" "$NATIVE_SHA256" "$NATIVE_BYTES" \
+  "$NATIVE_LAUNCH"
+
+# Re-run the exact Gate 5 and Phase 6 validators after the last controller.
+GATE5_FINAL_VALIDATION="$CONTROL_ROOT/gate5.final-validation.json"
+mapfile -d '' -t gate5_final < <(
+  validate_gate5_now "$GATE5_FINAL_VALIDATION"
+)
+test "${#gate5_final[@]}" -eq 4
+test "${gate5_final[0]}" = "$GATE5_MANIFEST"
+test "${gate5_final[1]}" = "$GATE5_RUNNOTE"
+test "${gate5_final[2]}" = "$GATE5_PROMOTION"
+test "${gate5_final[3]}" = "$GATE5_MANIFEST_SHA"
+
+for kind in core extended native; do
+  case "$kind" in
+    core)
+      wrapper="$CORE"; wrapper_sha="$CORE_SHA256"; wrapper_bytes="$CORE_BYTES" ;;
+    extended)
+      wrapper="$EXTENDED"; wrapper_sha="$EXTENDED_SHA256"; wrapper_bytes="$EXTENDED_BYTES" ;;
+    native)
+      wrapper="$NATIVE"; wrapper_sha="$NATIVE_SHA256"; wrapper_bytes="$NATIVE_BYTES" ;;
+  esac
+  final_validation="$CONTROL_ROOT/$kind.final-validation.json"
+  mapfile -d '' -t final_terminal < <(
+    validate_child_now "$kind" "$wrapper" "$wrapper_sha" "$wrapper_bytes" \
+      "${CHILD_LAUNCH[$kind]}" "${CHILD_ROOT[$kind]}" \
+      "${CHILD_ATTEMPT[$kind]}" "${CHILD_COMPLETION[$kind]}" \
+      "${CHILD_MARKER[$kind]}" "$final_validation"
+  )
+  test "${#final_terminal[@]}" -eq 2
+  test "${final_terminal[0]}" = "${CHILD_RC[$kind]}"
+  test "${final_terminal[1]}" = "${CHILD_STATUS[$kind]}"
+done
+
+verify_regular "$SEQUENCE" "$AUTHORIZED_SEQUENCE_SHA256" -
+verify_regular "$CORE" "$CORE_SHA256" "$CORE_BYTES"
+verify_regular "$EXTENDED" "$EXTENDED_SHA256" "$EXTENDED_BYTES"
+verify_regular "$NATIVE" "$NATIVE_SHA256" "$NATIVE_BYTES"
+verify_regular "$PHASE7" "$PHASE7_SHA256" "$PHASE7_BYTES"
+
+SEQUENCE_RC="$(
+  "$PY" - "$COMPLETION" "$CONTROL_ROOT" "$STEPS" "$SEQUENCE_LAUNCH" \
+    "$GATE5_ROOT/completion.json" "$GATE5_ROOT/.exit" \
+    "$GATE5_VALIDATION" "$GATE5_FINAL_VALIDATION" \
+    "$NATIVE_PLAN" "$NATIVE_PLAN_RESULT" "$SEQUENCE" "$PHASE7" \
+    "$CORE" "$EXTENDED" "$NATIVE" "$SELF_TEST" \
+    "$EXPECTED_COMMIT" "$EXPECTED_FRAMEWORK_LOCK" \
+    "$AUTHORIZED_SEQUENCE_SHA256" <<'PY'
+from datetime import datetime, timezone
+import csv
+import hashlib
+import json
+import os
+from pathlib import Path
+import sys
+
+(
+    out_value,
+    control_value,
+    steps_value,
+    launch_value,
+    gate5_completion_value,
+    gate5_exit_value,
+    gate5_validation_value,
+    gate5_final_validation_value,
+    native_plan_value,
+    native_plan_result_value,
+    sequence_value,
+    phase7_value,
+    core_wrapper_value,
+    extended_wrapper_value,
+    native_wrapper_value,
+    self_test_value,
+    commit,
+    lock,
+    authorized_sequence_sha,
+) = sys.argv[1:]
+
+control = Path(control_value)
+if (
+    not control.is_absolute()
+    or control.is_symlink()
+    or not control.is_dir()
+    or control.resolve(strict=True) != control
+):
+    raise SystemExit("unsafe Phase 6 sequence control root")
+
+def checked_file(raw: str, label: str) -> Path:
+    path = Path(raw)
+    if (
+        not path.is_absolute()
+        or path.is_symlink()
+        or not path.is_file()
+        or path.resolve(strict=True) != path
+    ):
+        raise SystemExit(f"unsafe {label}: {path}")
+    return path
+
+def descriptor(raw: str | Path) -> dict[str, object]:
+    path = checked_file(str(raw), "descriptor input")
+    payload = path.read_bytes()
+    return {
+        "path": str(path),
+        "sha256": hashlib.sha256(payload).hexdigest(),
+        "bytes": len(payload),
+    }
+
+def strict_json(raw: str, label: str) -> dict:
+    from ura.strict_json import strict_json_loads
+
+    value = strict_json_loads(checked_file(raw, label).read_bytes())
+    if not isinstance(value, dict):
+        raise SystemExit(f"{label} is not an object")
+    return value
+
+def require_gate5_inventory_profile(value: object, *, label: str) -> tuple[int, int, list[str]]:
+    if not isinstance(value, dict):
+        raise SystemExit(f"{label} is not an object")
+    runnable = value.get("runnable_lanes")
+    terminal = value.get("typed_terminal_lanes")
+    conditional = value.get("conditional_na_lanes")
+    if (
+        type(runnable) is not int
+        or type(terminal) is not int
+        or not isinstance(conditional, list)
+        or (runnable, terminal, conditional)
+        not in ((26, 20, []), (25, 21, ["defense-local"]))
+    ):
+        raise SystemExit(f"{label} Gate 5 inventory profile changed")
+    return runnable, terminal, list(conditional)
+
+CORE_CANDIDATE_ORDER = [
+    "local-qwen3-vl-text-full", "local-qwen3-vl-image-full",
+    "local-llava-base-text-full", "local-llava-base-image-full",
+    "local-llava-rr-text-full", "local-llava-rr-image-full",
+    "rjudge-qwen3-vl", "rjudge-llava-base", "rjudge-llava-rr",
+    "gptgeochat-qwen3-vl", "gptgeochat-llava-base", "gptgeochat-llava-rr",
+    "crescendo-qwen3-vl", "defense-local",
+]
+
+def require_exact_core_inventory(
+    states: object, *, core_conditional: object, gate_conditional: list[str], label: str
+) -> list[str]:
+    if gate_conditional not in ([], ["defense-local"]):
+        raise SystemExit(f"{label} Gate 5 conditional inventory changed")
+    expected = [
+        lane for lane in CORE_CANDIDATE_ORDER if lane not in gate_conditional
+    ]
+    if (
+        not isinstance(states, dict)
+        or list(states) != expected
+        or core_conditional != gate_conditional
+    ):
+        raise SystemExit(f"{label} core inventory differs from Gate 5")
+    return expected
+
+def core_inventory_self_test() -> None:
+    success_states = {lane: "measured_complete" for lane in CORE_CANDIDATE_ORDER}
+    conditional_order = [
+        lane for lane in CORE_CANDIDATE_ORDER if lane != "defense-local"
+    ]
+    conditional_states = {lane: "measured_complete" for lane in conditional_order}
+    require_exact_core_inventory(
+        success_states, core_conditional=[], gate_conditional=[], label="self-test"
+    )
+    require_exact_core_inventory(
+        conditional_states,
+        core_conditional=["defense-local"],
+        gate_conditional=["defense-local"],
+        label="self-test",
+    )
+    mutations = (
+        (conditional_states, [], ["defense-local"]),
+        (success_states, ["defense-local"], ["defense-local"]),
+        (conditional_states, ["defense-local"], []),
+        (
+            dict(reversed(list(conditional_states.items()))),
+            ["defense-local"],
+            ["defense-local"],
+        ),
+    )
+    for index, (states, core_conditional, gate_conditional) in enumerate(mutations, 1):
+        try:
+            require_exact_core_inventory(
+                states,
+                core_conditional=core_conditional,
+                gate_conditional=gate_conditional,
+                label=f"mutation-{index}",
+            )
+        except SystemExit:
+            continue
+        raise SystemExit(f"Phase 6 core-inventory mutation {index} was accepted")
+
+core_inventory_self_test()
+
+steps = checked_file(steps_value, "Phase 6 sequence steps")
+with steps.open(encoding="ascii", newline="") as handle:
+    reader = csv.DictReader(handle, delimiter="\t")
+    expected_fields = [
+        "step",
+        "status",
+        "session",
+        "socket",
+        "control_root",
+        "attempt_root",
+        "exit_code",
+        "completion",
+        "exit_marker",
+        "launch_output",
+        "validation",
+    ]
+    if reader.fieldnames != expected_fields:
+        raise SystemExit("Phase 6 sequence steps header changed")
+    rows = list(reader)
+expected_order = [
+    ("core", "waiting"),
+    ("core", "terminal"),
+    ("extended", "waiting"),
+    ("extended", "terminal"),
+    ("native", "waiting"),
+    ("native", "terminal"),
+]
+if [(row["step"], row["status"]) for row in rows] != expected_order:
+    raise SystemExit("Phase 6 sequence step order or completeness changed")
+
+wrappers = {
+    "core": descriptor(core_wrapper_value),
+    "extended": descriptor(extended_wrapper_value),
+    "native": descriptor(native_wrapper_value),
+}
+children = {}
+terminal_states = {}
+successful = {}
+failed = {}
+terminal_inventories = {}
+controller_validations = {}
+for index, kind in enumerate(("core", "extended", "native")):
+    waiting = rows[index * 2]
+    terminal = rows[index * 2 + 1]
+    for field in (
+        "step",
+        "session",
+        "socket",
+        "control_root",
+        "attempt_root",
+        "completion",
+        "exit_marker",
+        "launch_output",
+    ):
+        if waiting[field] != terminal[field]:
+            raise SystemExit(f"{kind}: waiting and terminal rows differ")
+    if waiting["exit_code"] or waiting["validation"]:
+        raise SystemExit(f"{kind}: waiting row contains terminal evidence")
+    if terminal["exit_code"] not in {"0", "1"}:
+        raise SystemExit(f"{kind}: non-exact child exit code")
+    root = Path(terminal["control_root"])
+    attempt = Path(terminal["attempt_root"])
+    completion = Path(terminal["completion"])
+    exit_marker = Path(terminal["exit_marker"])
+    if (
+        not root.is_absolute()
+        or root.is_symlink()
+        or not root.is_dir()
+        or root.resolve(strict=True) != root
+        or not attempt.is_absolute()
+        or attempt.is_symlink()
+        or not attempt.is_dir()
+        or attempt.resolve(strict=True) != attempt
+        or attempt.parent != root / "attempts"
+        or completion != attempt / "completion.json"
+        or exit_marker != attempt / ".exit"
+        or terminal["session"] != f"ura-phase6-{kind}-{attempt.name}"
+        or terminal["socket"] != terminal["session"]
+        or terminal["launch_output"] != str(control / f"{kind}.launch.txt")
+        or terminal["validation"] != str(control / f"{kind}.validation.json")
+    ):
+        raise SystemExit(f"{kind}: sequence row paths are not cross-bound")
+    initial_validation = strict_json(terminal["validation"], f"{kind} validation")
+    final_path = control / f"{kind}.final-validation.json"
+    final_validation = strict_json(str(final_path), f"{kind} final validation")
+    expected_validation_fields = {
+        "schema",
+        "kind",
+        "status",
+        "exit_code",
+        "control_root",
+        "attempt_root",
+        "wrapper",
+        "launch_output",
+        "controller_validation",
+    }
+    if (
+        set(initial_validation) != expected_validation_fields
+        or initial_validation != final_validation
+        or initial_validation.get("schema")
+        != "ura-phase6-sequence-child-validation/1"
+        or initial_validation.get("kind") != kind
+        or initial_validation.get("control_root") != str(root)
+        or initial_validation.get("attempt_root") != str(attempt)
+        or initial_validation.get("wrapper") != wrappers[kind]
+        or initial_validation.get("launch_output")
+        != descriptor(terminal["launch_output"])
+        or type(initial_validation.get("exit_code")) is not int
+        or str(initial_validation.get("exit_code")) != terminal["exit_code"]
+    ):
+        raise SystemExit(f"{kind}: initial/final validation receipts differ")
+    status = initial_validation.get("status")
+    expected_status = "complete" if terminal["exit_code"] == "0" else "complete_with_failures"
+    validated = initial_validation.get("controller_validation")
+    if (
+        status != expected_status
+        or not isinstance(validated, dict)
+        or validated.get("status") != status
+        or validated.get("control_root") != str(root)
+        or validated.get("attempt_root") != str(attempt)
+        or validated.get("completion") != descriptor(completion)
+        or validated.get("exit_marker") != descriptor(exit_marker)
+    ):
+        raise SystemExit(f"{kind}: terminal validation is not cross-bound")
+    state_key = "terminal_states" if kind == "native" else "lane_terminal_states"
+    states = validated.get(state_key)
+    if not isinstance(states, dict) or not states:
+        raise SystemExit(f"{kind}: exact terminal inventory is absent")
+    terminal_states[kind] = status
+    terminal_inventories[kind] = states
+    controller_validations[kind] = validated
+    completion_desc = descriptor(completion)
+    if status == "complete":
+        successful[kind] = completion_desc
+    else:
+        failed[kind] = completion_desc
+    children[kind] = {
+        "status": status,
+        "exit_code": int(terminal["exit_code"]),
+        "session": terminal["session"],
+        "socket": terminal["socket"],
+        "control_root": str(root),
+        "attempt_root": str(attempt),
+        "completion": completion_desc,
+        "exit_marker": descriptor(exit_marker),
+        "launch_output": descriptor(terminal["launch_output"]),
+        "initial_validation": descriptor(terminal["validation"]),
+        "final_validation": descriptor(final_path),
+        "wrapper": wrappers[kind],
+    }
+
+gate5_initial = strict_json(gate5_validation_value, "initial Gate 5 validation")
+gate5_final = strict_json(gate5_final_validation_value, "final Gate 5 validation")
+if gate5_initial != gate5_final:
+    raise SystemExit("initial and final Gate 5 validations differ")
+expected_gate5_fields = {
+    "schema",
+    "status",
+    "code_identity",
+    "sequence_completion",
+    "sequence_exit",
+    "covered_manifest",
+    "canonical_runnote",
+    "promotion_receipt",
+    "runnable_lanes",
+    "typed_terminal_lanes",
+    "conditional_na_lanes",
+    "downloads_observed_bytes",
+    "measured_run_launched",
+}
+if (
+    set(gate5_initial) != expected_gate5_fields
+    or gate5_initial.get("schema") != "ura-phase6-sequence-gate5-validation/1"
+    or gate5_initial.get("status") != "validated"
+    or gate5_initial.get("code_identity")
+    != {"expected_commit": commit, "framework_lock_id": lock}
+    or gate5_initial.get("sequence_completion") != descriptor(gate5_completion_value)
+    or gate5_initial.get("sequence_exit") != descriptor(gate5_exit_value)
+    or gate5_initial.get("downloads_observed_bytes") != 0
+    or gate5_initial.get("measured_run_launched") is not False
+):
+    raise SystemExit("Gate 5 validation receipt contract changed")
+runnable_lanes, typed_terminal_lanes, conditional_na_lanes = (
+    require_gate5_inventory_profile(gate5_initial, label="Gate 5 validation receipt")
+)
+require_exact_core_inventory(
+    terminal_inventories.get("core"),
+    core_conditional=controller_validations.get("core", {}).get(
+        "conditional_na_lanes"
+    ),
+    gate_conditional=conditional_na_lanes,
+    label="Phase 6 sequence",
+)
+
+launch = strict_json(launch_value, "Phase 6 sequence launch")
+expected_launch_fields = {
+    "schema",
+    "status",
+    "started_at_utc",
+    "expected_commit",
+    "framework_lock_id",
+    "control_root",
+    "authorized_sequence_sha256",
+    "sequence_script",
+    "phase7_validator",
+    "phase7_contract_self_test",
+    "controller_wrappers",
+    "gate5_wait",
+    "controller_order",
+    "long_running_children_use_tmux",
+    "local_only",
+}
+sequence_desc = descriptor(sequence_value)
+phase7_desc = descriptor(phase7_value)
+started_at = launch.get("started_at_utc")
+if (
+    set(launch) != expected_launch_fields
+    or launch.get("schema") != "ura-phase6-sequence-launch/1"
+    or launch.get("status") != "running"
+    or launch.get("expected_commit") != commit
+    or launch.get("framework_lock_id") != lock
+    or launch.get("control_root") != str(control)
+    or not isinstance(started_at, str)
+    or re.fullmatch(r"20[0-9]{2}-[01][0-9]-[0-3][0-9]T[0-2][0-9]:[0-5][0-9]:[0-5][0-9]Z", started_at) is None
+    or launch.get("authorized_sequence_sha256") != authorized_sequence_sha
+    or sequence_desc.get("sha256") != authorized_sequence_sha
+    or launch.get("sequence_script") != sequence_desc
+    or launch.get("phase7_validator") != phase7_desc
+    or launch.get("phase7_contract_self_test") != descriptor(self_test_value)
+    or launch.get("controller_wrappers") != wrappers
+    or launch.get("gate5_wait")
+    != {
+        "control_root": str(Path(gate5_completion_value).parent),
+        "session": "ura-gate5-after-phase5-a0ce1f9",
+        "socket": "ura-gate5-after-phase5-a0ce1f9",
+    }
+    or launch.get("controller_order") != ["core", "extended", "native"]
+    or launch.get("long_running_children_use_tmux") is not True
+    or launch.get("local_only") is not True
+):
+    raise SystemExit("Phase 6 sequence launch identity changed")
+
+status = "complete" if not failed else "complete_with_failures"
+value = {
+    "schema": "ura-phase6-sequence-completion/2",
+    "status": status,
+    "completed_at_utc": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+    "expected_commit": commit,
+    "framework_lock_id": lock,
+    "control_root": str(control),
+    "controller_order": ["core", "extended", "native"],
+    "all_controllers_attempted": True,
+    "terminal_states": terminal_states,
+    "terminal_inventories": terminal_inventories,
+    "successful_controller_evidence": successful,
+    "failed_controller_terminals": failed,
+    "failed_controller_receipts_are_evidence": False,
+    "conditional_na_lanes": conditional_na_lanes,
+    "children": children,
+    "sequence_launch": descriptor(launch_value),
+    "sequence_script": sequence_desc,
+    "phase7_validator": phase7_desc,
+    "phase7_contract_self_test": descriptor(self_test_value),
+    "controller_wrappers": wrappers,
+    "steps": descriptor(steps),
+    "gate5": {
+        "sequence_completion": descriptor(gate5_completion_value),
+        "sequence_exit": descriptor(gate5_exit_value),
+        "initial_validation": descriptor(gate5_validation_value),
+        "final_validation": descriptor(gate5_final_validation_value),
+        "covered_manifest": gate5_initial["covered_manifest"],
+        "canonical_runnote": gate5_initial["canonical_runnote"],
+        "promotion_receipt": gate5_initial["promotion_receipt"],
+        "runnable_lanes": runnable_lanes,
+        "typed_terminal_lanes": typed_terminal_lanes,
+        "conditional_na_lanes": conditional_na_lanes,
+    },
+    "native_plan": descriptor(native_plan_value),
+    "native_plan_result": descriptor(native_plan_result_value),
+    "hosted_target_calls": 0,
+    "hosted_judge_calls": 0,
+    "provider_http_attempts": 0,
+    "downloads_observed_bytes": 0,
+}
+payload = (
+    json.dumps(
+        value,
+        sort_keys=True,
+        separators=(",", ":"),
+        ensure_ascii=True,
+        allow_nan=False,
+    )
+    + "\n"
+).encode("ascii")
+out = Path(out_value)
+fd = os.open(out, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+with os.fdopen(fd, "wb") as handle:
+    handle.write(payload)
+    handle.flush()
+    os.fsync(handle.fileno())
+print(0 if status == "complete" else 1)
+PY
+)"
+test "$SEQUENCE_RC" = '0' || test "$SEQUENCE_RC" = '1'
+printf 'PHASE6_SEQUENCE_COMPLETE=%s STATUS=%s\n' \
+  "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+  "${CHILD_STATUS[core]},${CHILD_STATUS[extended]},${CHILD_STATUS[native]}"
+exit "$SEQUENCE_RC"

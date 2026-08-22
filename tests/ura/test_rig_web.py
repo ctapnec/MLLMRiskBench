@@ -960,6 +960,10 @@ def test_console_covers_runbook_clis_except_private_typed_controllers() -> None:
     private_typed_controllers = {
         "engine_runtime_config",
         "framework_runtime_installer",
+        # Workstation-only commit/receipt binding and deterministic release
+        # rendering. Generated controllers run on the rig, but this source
+        # packaging operation must not be exposed as a Rig Web command.
+        "local_campaign",
     }
     assert not (private_typed_controllers & allowlisted)
     missing = sorted(used - allowlisted - private_typed_controllers)

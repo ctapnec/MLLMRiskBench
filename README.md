@@ -51,6 +51,24 @@ See [metrics](docs/METRICS.md), [schema](docs/SCHEMA.md),
 
 Python 3.12 is the supported baseline.
 
+For a complete Linux rig installation, use the repository-wide installer:
+
+```bash
+export URA_PYTHON=$(uv python find 3.12.13)
+distro/install.sh all
+```
+
+That single entry point installs the main URA environment, corpora and pinned
+Ollama runtime, resumes or creates and then verifies all 15 locked third-party
+framework runtimes in separate content-addressed stores (14 private Python
+virtual environments and Promptfoo's private Node runtime) from
+`experiments/framework_runtime_lock.json`, writes the campaign locators, and
+starts the console in tmux. A runtime failure makes `all` exit nonzero; re-running
+the same command safely resumes an interrupted staged install. The phase-by-phase
+form and recovery rules are in
+[`distro/README.md`](distro/README.md) and use the same roots and lock as the
+[operator runbook](experiments/RUN_AND_RETURN.md).
+
 ```bash
 python -m pip install -e ".[dev,analysis]"
 python -m pytest
@@ -82,14 +100,14 @@ operator runbook; they are not main-environment extras.
 ### Isolated framework runtimes
 
 [`experiments/framework_runtime_lock.json`](experiments/framework_runtime_lock.json)
-is the sole dependency/source/runtime manifest for every managed attack,
-preparation, and native framework. Use
+is the sole dependency/source/runtime manifest for all 15 managed attack,
+preparation, and native-framework runtimes. Use
 `python -m experiments.framework_runtime_installer plan|install|resume|verify`
 with an exact CPython 3.12.13 base interpreter; never install those packages in
 the main URA venv. Each long mutating/verification action automatically runs in
 a credential-free named tmux session (screen is the only fallback), publishes
 one stable alias to a content-addressed store, and writes only path-free
-receipts/summaries plus a non-thesis engineering campaign. Build → Runtimes
+receipts/summaries plus a non-thesis engineering campaign. Build -> Runtimes
 exposes the same fixed per-row actions, while Jobs/Stats shows their bounded
 campaign events. The full CLI, state-root convention, canonical `.store`
 runtime-config handoff, and 20-attacker coverage dispositions are in the

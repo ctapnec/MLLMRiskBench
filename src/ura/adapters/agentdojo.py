@@ -601,7 +601,15 @@ class AgentDojoAttacker(BaseAttacker):
         artifacts: list[NativeArtifactFile] = []
         for trace in ordered:
             is_attacked = trace["attack_type"] is not None
-            role = "attacked_task_trace" if is_attacked else "injection_task_utility_trace"
+            role_family = (
+                "attacked_task_trace"
+                if is_attacked
+                else "injection_task_utility_trace"
+            )
+            role = (
+                f"{role_family}:"
+                f"{json_sha256({'source_record': trace['_relative']})}"
+            )
             artifacts.append(
                 NativeArtifactFile(
                     role=role,

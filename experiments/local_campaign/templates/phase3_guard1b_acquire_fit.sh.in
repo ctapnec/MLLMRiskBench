@@ -1,0 +1,917 @@
+#!/usr/bin/env bash
+set +x
+set -Eeuo pipefail
+
+# Phase 3 conditional-lane controller for the exact local guard-defense model.
+# The default mode launches a detached custom-socket tmux session. The payload
+# derives one immutable request, acquires only its sealed resources, and reuses
+# the exact request for a call-free rig_check that proves or disproves fit.
+
+readonly EXPECTED_COMMIT='@@EXPECTED_COMMIT@@'
+readonly EXPECTED_FRAMEWORK_LOCK='@@FRAMEWORK_LOCK_SHA256@@'
+readonly EXPECTED_PROJECT_RECEIPT_SHA='@@PROJECT_RECEIPT_SHA256@@'
+readonly EXPECTED_PROJECT_RECEIPT_NAME='@@PROJECT_RECEIPT_NAME@@'
+readonly EXPECTED_SOURCE_RECEIPT_SHA='@@SOURCE_RECEIPT_SHA256@@'
+readonly EXPECTED_SOURCE_RECEIPT_NAME='@@SOURCE_RECEIPT_NAME@@'
+readonly EXPECTED_SOURCE_ARMS='45'
+readonly EXPECTED_SOURCE_CONFIG_SHA='@@SOURCE_CONFIG_SHA256@@'
+readonly EXPECTED_QWEN_CONFIG_SHA='@@QWEN_CONFIG_SHA256@@'
+readonly BOUND_TAG='@@PHASE3_GUARD_TAG@@'
+
+readonly QWEN_SPEC='vllm:Qwen/Qwen3-VL-8B-Instruct'
+readonly QWEN_REPO='Qwen/Qwen3-VL-8B-Instruct'
+readonly QWEN_REVISION='60595ebc30ec8e3b1d3b9e65d4943ca011c0006a'
+readonly SCORE_GUARD='meta-llama/Llama-Guard-3-8B'
+readonly SCORE_GUARD_REVISION='7327bd9f6efbbe6101dc6cc4736302b3cbb6e425'
+readonly DEFENSE_GUARD='meta-llama/Llama-Guard-3-1B'
+readonly DEFENSE_GUARD_REVISION='acf7aafa60f0410f8f42b1fa35e077d705892029'
+readonly GROUP_KEYS='model,source,risk,effective_modality,expected_behavior,attacker,source_policy_id,source_policy_version'
+
+readonly MAX_DOWNLOAD_BYTES='8589934592'
+readonly MIN_FREE_BYTES='1099511627776'
+readonly ACQUISITION_DEADLINE_SECONDS='86400'
+readonly REQUEST_DEADLINE_SECONDS='3600'
+
+REQUEST_ARGS=()
+
+fail() {
+  printf 'phase3 guard1b: %s\n' "$*" >&2
+  return 1
+}
+
+opened_controller_script() {
+  local script_fd="/proc/$$/fd/255" script root generations marker archive_sha
+  [[ -e "$script_fd" ]] || { fail 'controller script descriptor is unavailable'; return 1; }
+  script="$(readlink -f -- "$script_fd")"
+  [[ -f "$script" && ! -L "$script" ]] || { fail 'opened controller is not regular'; return 1; }
+  root="${script%/*}"
+  generations="${root%/*}"
+  [[ "${generations##*/}" == '.ura-controller-generations' ]] || {
+    fail 'opened controller is not in a managed generation'; return 1;
+  }
+  [[ -d "$root" && ! -L "$root" ]] || { fail 'controller generation is unsafe'; return 1; }
+  marker="$root/.ura-controller-generation.tsv"
+  [[ -f "$marker" && ! -L "$marker" ]] || { fail 'controller generation marker is missing'; return 1; }
+  [[ "$(grep -Fxc -- $'schema\tura-controller-generation/1' "$marker")" == '1' ]] || {
+    fail 'controller generation marker schema differs'; return 1;
+  }
+  [[ "$(grep -Fxc -- $'expected_commit\t@@EXPECTED_COMMIT@@' "$marker")" == '1' ]] || {
+    fail 'controller generation marker commit differs'; return 1;
+  }
+  archive_sha="${root##*-}"
+  [[ "$archive_sha" =~ ^[0-9a-f]{64}$ && "${root##*/}" == "@@COMMIT_SHORT@@-$archive_sha" ]] || {
+    fail 'controller generation name differs'; return 1;
+  }
+  [[ "$(grep -Fxc -- $'archive_sha256\t'"$archive_sha" "$marker")" == '1' ]] || {
+    fail 'controller generation archive identity differs'; return 1;
+  }
+  printf '%s\n' "$script"
+}
+
+option_value() {
+  local wanted="$1"
+  shift
+  local found=0 value='' index
+  for ((index = 1; index <= $#; index++)); do
+    if [[ "${!index}" == "$wanted" ]]; then
+      if (( index == $# )); then
+        fail "$wanted lacks a value"
+        return 1
+      fi
+      found=$((found + 1))
+      local next=$((index + 1))
+      value="${!next}"
+    fi
+  done
+  if (( found != 1 )); then
+    fail "$wanted occurs $found times"
+    return 1
+  fi
+  printf '%s\n' "$value"
+}
+
+flag_count() {
+  local wanted="$1"
+  shift
+  local found=0 item
+  for item in "$@"; do
+    [[ "$item" == "$wanted" ]] && found=$((found + 1))
+  done
+  printf '%s\n' "$found"
+}
+
+require_option() {
+  local option="$1" expected="$2"
+  shift 2
+  local observed
+  observed="$(option_value "$option" "$@")" || return 1
+  [[ "$observed" == "$expected" ]] || fail "$option differs from its sealed value"
+}
+
+build_request_args() {
+  REQUEST_ARGS=(
+    --project-revision "$PROJECT_RECEIPT"
+    --project-revision-sha256 "$PROJECT_RECEIPT_SHA"
+    --local "$QWEN_SPEC"
+    --local-config "$QWEN_CONFIG"
+    --local-config-sha256 "$QWEN_CONFIG_SHA"
+    --attackers replay
+    --judges rules,guardrail
+    --corpora jailbreakbench_benign
+    --source-config "$SOURCE_CONFIG"
+    --source-config-sha256 "$SOURCE_CONFIG_SHA"
+    --source-conformance "$SOURCE_RECEIPT"
+    --source-conformance-sha256 "$SOURCE_RECEIPT_SHA"
+    --limit 1
+    --sample-seed 0
+    --seeds 0
+    --max-queries 1
+    --max-turns 1
+    --group "$GROUP_KEYS"
+    --guardrail-model "$SCORE_GUARD"
+    --guardrail-revision "$SCORE_GUARD_REVISION"
+    --guardrail-device cuda:1
+    --defense both
+    --defense-guard guardrail
+    --defense-guardrail-model "$DEFENSE_GUARD"
+    --defense-guardrail-revision "$DEFENSE_GUARD_REVISION"
+    --defense-guardrail-device cuda:1
+    --approximate-common-metrics
+    --max-total-target-calls 1
+    --max-total-judge-calls 0
+    --max-total-http-attempts 0
+    --deadline-seconds "$REQUEST_DEADLINE_SECONDS"
+    --out "$RUN_ROOT"
+  )
+}
+
+validate_request_args() {
+  require_option --project-revision "$PROJECT_RECEIPT" "${REQUEST_ARGS[@]}" || return 1
+  require_option --project-revision-sha256 "$EXPECTED_PROJECT_RECEIPT_SHA" "${REQUEST_ARGS[@]}" || return 1
+  require_option --local "$QWEN_SPEC" "${REQUEST_ARGS[@]}" || return 1
+  require_option --local-config "$QWEN_CONFIG" "${REQUEST_ARGS[@]}" || return 1
+  require_option --local-config-sha256 "$EXPECTED_QWEN_CONFIG_SHA" "${REQUEST_ARGS[@]}" || return 1
+  require_option --attackers replay "${REQUEST_ARGS[@]}" || return 1
+  require_option --judges rules,guardrail "${REQUEST_ARGS[@]}" || return 1
+  require_option --corpora jailbreakbench_benign "${REQUEST_ARGS[@]}" || return 1
+  require_option --source-config "$SOURCE_CONFIG" "${REQUEST_ARGS[@]}" || return 1
+  require_option --source-config-sha256 "$EXPECTED_SOURCE_CONFIG_SHA" "${REQUEST_ARGS[@]}" || return 1
+  require_option --source-conformance "$SOURCE_RECEIPT" "${REQUEST_ARGS[@]}" || return 1
+  require_option --source-conformance-sha256 "$EXPECTED_SOURCE_RECEIPT_SHA" "${REQUEST_ARGS[@]}" || return 1
+  require_option --limit 1 "${REQUEST_ARGS[@]}" || return 1
+  require_option --sample-seed 0 "${REQUEST_ARGS[@]}" || return 1
+  require_option --seeds 0 "${REQUEST_ARGS[@]}" || return 1
+  require_option --max-queries 1 "${REQUEST_ARGS[@]}" || return 1
+  require_option --max-turns 1 "${REQUEST_ARGS[@]}" || return 1
+  require_option --group "$GROUP_KEYS" "${REQUEST_ARGS[@]}" || return 1
+  require_option --guardrail-model "$SCORE_GUARD" "${REQUEST_ARGS[@]}" || return 1
+  require_option --guardrail-revision "$SCORE_GUARD_REVISION" "${REQUEST_ARGS[@]}" || return 1
+  require_option --guardrail-device cuda:1 "${REQUEST_ARGS[@]}" || return 1
+  require_option --defense both "${REQUEST_ARGS[@]}" || return 1
+  require_option --defense-guard guardrail "${REQUEST_ARGS[@]}" || return 1
+  require_option --defense-guardrail-model "$DEFENSE_GUARD" "${REQUEST_ARGS[@]}" || return 1
+  require_option --defense-guardrail-revision "$DEFENSE_GUARD_REVISION" "${REQUEST_ARGS[@]}" || return 1
+  require_option --defense-guardrail-device cuda:1 "${REQUEST_ARGS[@]}" || return 1
+  require_option --max-total-target-calls 1 "${REQUEST_ARGS[@]}" || return 1
+  require_option --max-total-judge-calls 0 "${REQUEST_ARGS[@]}" || return 1
+  require_option --max-total-http-attempts 0 "${REQUEST_ARGS[@]}" || return 1
+  require_option --deadline-seconds "$REQUEST_DEADLINE_SECONDS" "${REQUEST_ARGS[@]}" || return 1
+  require_option --out "$RUN_ROOT" "${REQUEST_ARGS[@]}" || return 1
+  [[ "$(flag_count --approximate-common-metrics "${REQUEST_ARGS[@]}")" == '1' ]] \
+    || fail '--approximate-common-metrics must occur exactly once' || return 1
+  local forbidden
+  for forbidden in \
+    --dry-run --preflight-only --diagnostic-canary --attestation-probe \
+    --model-acquisition-plan-only --model-acquisition-plan \
+    --model-acquisition-receipt --live-attestation --judge-model; do
+    [[ "$(flag_count "$forbidden" "${REQUEST_ARGS[@]}")" == '0' ]] \
+      || fail "$forbidden must not enter the immutable base request" || return 1
+  done
+}
+
+validate_limits() {
+  [[ "$1" == '8589934592' ]] || return 1
+  [[ "$2" == '1099511627776' ]] || return 1
+  [[ "$3" == '86400' ]] || return 1
+}
+
+validate_bound_tag() {
+  [[ "$1" == "$BOUND_TAG" ]] || return 1
+  [[ "$1" =~ ^20[0-9]{6}T[0-9]{6}Z$ ]] || return 1
+}
+
+mutate_option() {
+  local wanted="$1" replacement="$2" index
+  for ((index = 0; index < ${#REQUEST_ARGS[@]}; index++)); do
+    if [[ "${REQUEST_ARGS[$index]}" == "$wanted" ]]; then
+      REQUEST_ARGS[$((index + 1))]="$replacement"
+      return 0
+    fi
+  done
+  return 1
+}
+
+self_test() {
+  PROJECT_RECEIPT='/abs/project.json'
+  PROJECT_RECEIPT_SHA="$EXPECTED_PROJECT_RECEIPT_SHA"
+  QWEN_CONFIG='/abs/local-qwen3-vl.json'
+  QWEN_CONFIG_SHA="$EXPECTED_QWEN_CONFIG_SHA"
+  SOURCE_CONFIG='/abs/source-instances.json'
+  SOURCE_CONFIG_SHA="$EXPECTED_SOURCE_CONFIG_SHA"
+  SOURCE_RECEIPT='/abs/@@SOURCE_RECEIPT_NAME@@'
+  SOURCE_RECEIPT_SHA="$EXPECTED_SOURCE_RECEIPT_SHA"
+  RUN_ROOT='/abs/preflight/guard1b-fit'
+
+  [[ "$EXPECTED_SOURCE_ARMS" == '45' ]]
+  validate_bound_tag "$BOUND_TAG"
+  validate_limits "$MAX_DOWNLOAD_BYTES" "$MIN_FREE_BYTES" "$ACQUISITION_DEADLINE_SECONDS"
+  build_request_args
+  validate_request_args
+  local -a baseline=("${REQUEST_ARGS[@]}")
+
+  mutate_option --defense none
+  if validate_request_args >/dev/null 2>&1; then
+    fail 'defense mutation did not fail closed'
+    return 1
+  fi
+  REQUEST_ARGS=("${baseline[@]}")
+  mutate_option --defense-guardrail-revision "${DEFENSE_GUARD_REVISION%?}0"
+  if validate_request_args >/dev/null 2>&1; then
+    fail 'defense revision mutation did not fail closed'
+    return 1
+  fi
+  REQUEST_ARGS=("${baseline[@]}" --approximate-common-metrics)
+  if validate_request_args >/dev/null 2>&1; then
+    fail 'duplicate approximate-metrics mutation did not fail closed'
+    return 1
+  fi
+  if validate_limits 1 "$MIN_FREE_BYTES" "$ACQUISITION_DEADLINE_SECONDS"; then
+    fail 'download-cap mutation did not fail closed'
+    return 1
+  fi
+  if validate_bound_tag "${BOUND_TAG%?}0"; then
+    fail 'Phase 3 tag mutation did not fail closed'
+    return 1
+  fi
+  if validate_bound_tag '20260822-120000Z'; then
+    fail 'malformed Phase 3 tag mutation did not fail closed'
+    return 1
+  fi
+
+  PY="${PYTHON:-python3}"
+  local source_test_root source_test_file source_test_sha
+  source_test_root="$(mktemp -d)"
+  source_test_file="$source_test_root/source-conformance-fixture.json"
+  printf '{"fixture":true}\n' > "$source_test_file"
+  source_test_sha="$(sha256sum -- "$source_test_file" | awk '{print $1}')"
+  if ! validate_retained_source_binding "$source_test_root" "$source_test_sha"; then
+    rm -rf -- "$source_test_root"
+    fail 'retained source binding rejected an exact artifact'
+    return 1
+  fi
+  if validate_retained_source_binding "$source_test_root" "${source_test_sha%?}0" \
+      >/dev/null 2>&1; then
+    rm -rf -- "$source_test_root"
+    fail 'retained source digest mutation did not fail closed'
+    return 1
+  fi
+  rm -rf -- "$source_test_root"
+  printf 'phase3_guard1b_acquire_fit self-test passed\n'
+}
+
+launch_controller() {
+  source "$HOME/.ura_campaign_env"
+  local tag session socket work_root control_root script
+  tag="$BOUND_TAG"
+  validate_bound_tag "$tag" || fail 'bound Phase 3 tag is invalid'
+  session="ura-phase3-guard1b-${tag}"
+  socket="$session"
+  work_root="$(readlink -f -- "${URA_WORK:?URA_WORK is required}")"
+  [[ -d "$work_root" && ! -L "$work_root" ]] || fail 'URA_WORK must resolve to a real directory'
+  control_root="$work_root/runs/engineering/phase3-guard1b-acquire-fit-${tag}"
+  [[ ! -e "$control_root" && ! -L "$control_root" ]] || fail 'control root already exists'
+  mkdir -p -- "$work_root/runs/engineering"
+  mkdir -- "$control_root"
+  chmod 700 -- "$control_root"
+  script="$(opened_controller_script)"
+  [[ -f "$script" && ! -L "$script" ]] || fail 'controller must be one regular non-symlink file'
+  command -v tmux >/dev/null 2>&1 || fail 'tmux is required'
+  tmux -L "$socket" new-session -d -s "$session" \
+    "exec bash $(printf '%q' "$script") --payload $(printf '%q' "$control_root") $(printf '%q' "$tag")"
+  printf 'SESSION=%s\n' "$session"
+  printf 'SOCKET=%s\n' "$socket"
+  printf 'ATTACH=tmux -L %s attach -t %s\n' "$socket" "$session"
+  printf 'CONTROL_ROOT=%s\n' "$control_root"
+}
+
+json_fields() {
+  "$PY" - "$1" "$2" <<'PY'
+import json
+import sys
+
+path, kind = sys.argv[1:]
+for line in reversed(open(path, encoding="utf-8").read().splitlines()):
+    try:
+        row = json.loads(line)
+    except json.JSONDecodeError:
+        continue
+    if kind == "plan" and {"plan_id", "plan_sha256"} <= row.keys():
+        print(row["plan_id"], row["plan_sha256"])
+        raise SystemExit(0)
+    if kind == "receipt" and {
+        "receipt_id", "receipt_sha256", "downloaded_bytes"
+    } <= row.keys():
+        print(row["receipt_id"], row["receipt_sha256"], row["downloaded_bytes"])
+        raise SystemExit(0)
+raise SystemExit(f"no {kind} result JSON in {path}")
+PY
+}
+
+descriptor_json() {
+  "$PY" - "$1" <<'PY'
+import hashlib
+import json
+from pathlib import Path
+import sys
+
+path = Path(sys.argv[1]).resolve(strict=True)
+payload = path.read_bytes()
+print(json.dumps({
+    "bytes": len(payload),
+    "path": str(path),
+    "sha256": hashlib.sha256(payload).hexdigest(),
+}, sort_keys=True, separators=(",", ":")))
+PY
+}
+
+write_request_contract() {
+  "$PY" - "$REQUEST_CONTRACT" "$EXPECTED_COMMIT" \
+    "$EXPECTED_PROJECT_RECEIPT_SHA" "$EXPECTED_SOURCE_RECEIPT_SHA" \
+    "$EXPECTED_SOURCE_ARMS" "$MAX_DOWNLOAD_BYTES" "${REQUEST_ARGS[@]}" <<'PY'
+import hashlib
+import json
+import os
+from pathlib import Path
+import sys
+
+out = Path(sys.argv[1])
+commit, project_sha, source_sha = sys.argv[2:5]
+source_arms = int(sys.argv[5])
+download_cap = int(sys.argv[6])
+argv = sys.argv[7:]
+canonical_argv = json.dumps(argv, ensure_ascii=True, separators=(",", ":")).encode()
+value = {
+    "schema": "ura-phase3-guard1b-request/1",
+    "status": "prospective",
+    "expected_commit": commit,
+    "project_receipt_sha256": project_sha,
+    "source_receipt_sha256": source_sha,
+    "source_arm_count": source_arms,
+    "max_download_bytes": download_cap,
+    "base_request_argv": argv,
+    "base_request_argv_sha256": hashlib.sha256(canonical_argv).hexdigest(),
+    "secret_values_recorded": False,
+}
+payload = json.dumps(value, sort_keys=True, ensure_ascii=True, separators=(",", ":")).encode() + b"\n"
+fd = os.open(out, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+with os.fdopen(fd, "wb") as stream:
+    stream.write(payload)
+    stream.flush()
+    os.fsync(stream.fileno())
+PY
+}
+
+validate_deployed_inputs() {
+  [[ "$(git rev-parse HEAD)" == "$EXPECTED_COMMIT" ]] || fail 'deployed commit differs'
+  [[ -z "$(git status --porcelain)" ]] || fail 'deployed checkout is dirty'
+  [[ "$URA_FRAMEWORK_LOCK_ID" == "$EXPECTED_FRAMEWORK_LOCK" ]] || fail 'framework lock differs'
+  [[ -x "$PY" ]] || fail 'project Python is unavailable'
+
+  local item
+  for item in "$PROJECT_RECEIPT" "$SOURCE_RECEIPT" "$SOURCE_CONFIG" "$QWEN_CONFIG"; do
+    [[ -f "$item" && ! -L "$item" ]] || fail "required input is not a regular file: $item"
+  done
+  [[ "$(basename -- "$PROJECT_RECEIPT")" == "$EXPECTED_PROJECT_RECEIPT_NAME" ]] \
+    || fail 'project receipt name differs from the deployed binding'
+  [[ "$(basename -- "$SOURCE_RECEIPT")" == "$EXPECTED_SOURCE_RECEIPT_NAME" ]] \
+    || fail 'source receipt name differs from the 45-arm binding'
+  [[ "$(sha256sum -- "$PROJECT_RECEIPT" | awk '{print $1}')" == "$EXPECTED_PROJECT_RECEIPT_SHA" ]] \
+    || fail 'project receipt digest differs'
+  [[ "$(sha256sum -- "$SOURCE_RECEIPT" | awk '{print $1}')" == "$EXPECTED_SOURCE_RECEIPT_SHA" ]] \
+    || fail 'source receipt digest differs'
+  [[ "$(sha256sum -- "$SOURCE_CONFIG" | awk '{print $1}')" == "$EXPECTED_SOURCE_CONFIG_SHA" ]] \
+    || fail 'source config digest differs'
+  [[ "$(sha256sum -- "$QWEN_CONFIG" | awk '{print $1}')" == "$EXPECTED_QWEN_CONFIG_SHA" ]] \
+    || fail 'Qwen config digest differs'
+
+  "$PY" -m experiments.project_revision \
+    --validate "$PROJECT_RECEIPT" --sha256 "$EXPECTED_PROJECT_RECEIPT_SHA" \
+    > "$CONTROL_ROOT/project-receipt.validate.log" 2>&1
+  "$PY" -m experiments.source_conformance \
+    --manifest "$SOURCE_RECEIPT" --sha256 "$EXPECTED_SOURCE_RECEIPT_SHA" \
+    --source-config "$SOURCE_CONFIG" \
+    > "$CONTROL_ROOT/source-receipt.validate.log" 2>&1
+  "$PY" - "$SOURCE_RECEIPT" "$EXPECTED_SOURCE_ARMS" <<'PY'
+import json
+from pathlib import Path
+import sys
+
+value = json.loads(Path(sys.argv[1]).read_bytes())
+arms = value.get("arms")
+expected = int(sys.argv[2])
+if not isinstance(arms, list) or len(arms) != expected:
+    raise SystemExit(f"source receipt must contain exactly {expected} arms")
+ids = [row.get("arm_id") for row in arms if isinstance(row, dict)]
+if len(ids) != expected or any(not isinstance(item, str) or not item for item in ids):
+    raise SystemExit("source receipt arm identities are invalid")
+if len(set(ids)) != expected:
+    raise SystemExit("source receipt arm identities are not unique")
+for required in ("jailbreakbench_benign", "cyberseceval_prompt_injection"):
+    if required not in ids:
+        raise SystemExit(f"source receipt lacks required arm {required}")
+PY
+}
+
+validate_qwen_config() {
+  "$PY" - "$QWEN_CONFIG" "$QWEN_SPEC" "$QWEN_REVISION" <<'PY'
+import json
+from pathlib import Path
+import sys
+
+path, spec, revision = sys.argv[1:]
+value = json.loads(Path(path).read_bytes())
+expected = {
+    "revision": revision,
+    "modalities": ["text", "image"],
+    "tensor_parallel_size": 1,
+    "gpu_memory_utilization": 0.90,
+    "max_model_len": 12288,
+    "max_tokens": 4096,
+}
+if value != {spec: expected}:
+    raise SystemExit("deployed Qwen configuration differs from the sealed fit condition")
+PY
+}
+
+validate_plan_resources() {
+  "$PY" - "$PLAN_PATH" "$PLAN_SHA" "$QWEN_REPO" "$QWEN_REVISION" \
+    "$SCORE_GUARD" "$SCORE_GUARD_REVISION" \
+    "$DEFENSE_GUARD" "$DEFENSE_GUARD_REVISION" <<'PY'
+from pathlib import Path
+import sys
+
+from ura.model_acquisition import load_plan
+
+path, sha, qwen, qwen_rev, score, score_rev, defense, defense_rev = sys.argv[1:]
+plan = load_plan(Path(path), expected_sha256=sha)
+actual = {
+    (row["repo_id"], row["revision"]): tuple(row["roles"])
+    for row in plan["resources"]
+}
+expected = {
+    (qwen, qwen_rev): ("vllm_target",),
+    (score, score_rev): ("guardrail_judge",),
+    (defense, defense_rev): ("defense_guardrail",),
+}
+if actual != expected:
+    raise SystemExit(f"acquisition plan resource inventory differs: {actual!r}")
+PY
+}
+
+validate_receipt_and_write_evidence() {
+  "$PY" - "$PLAN_PATH" "$PLAN_SHA" "$RECEIPT_PATH" "$RECEIPT_SHA" \
+    "$DOWNLOADED_BYTES" "$MAX_DOWNLOAD_BYTES" "$ACQUISITION_EVIDENCE" <<'PY'
+import hashlib
+import json
+import os
+from pathlib import Path
+import sys
+
+from ura.model_acquisition import load_plan, load_receipt
+
+plan_path, plan_sha, receipt_path, receipt_sha, downloaded, cap, out = sys.argv[1:]
+plan_path = Path(plan_path)
+receipt_path = Path(receipt_path)
+plan = load_plan(plan_path, expected_sha256=plan_sha)
+receipt = load_receipt(receipt_path, expected_sha256=receipt_sha, plan=plan)
+downloaded_bytes = int(downloaded)
+max_download_bytes = int(cap)
+if not 0 <= downloaded_bytes <= max_download_bytes:
+    raise SystemExit("reported downloaded bytes exceed the prospective cap")
+for resource in receipt["resources"]:
+    if resource.get("storage") != "managed_store":
+        raise SystemExit("receipt contains a resource outside the managed store")
+
+def descriptor(path: Path) -> dict:
+    payload = path.read_bytes()
+    return {
+        "bytes": len(payload),
+        "path": str(path.resolve(strict=True)),
+        "sha256": hashlib.sha256(payload).hexdigest(),
+    }
+
+value = {
+    "schema": "ura-phase3-guard1b-acquisition/1",
+    "status": "sealed",
+    "plan": descriptor(plan_path),
+    "receipt": descriptor(receipt_path),
+    "downloaded_bytes": downloaded_bytes,
+    "max_download_bytes": max_download_bytes,
+    "resources": receipt["resources"],
+    "secret_values_recorded": False,
+}
+payload = json.dumps(value, sort_keys=True, ensure_ascii=True, separators=(",", ":")).encode() + b"\n"
+fd = os.open(out, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+with os.fdopen(fd, "wb") as stream:
+    stream.write(payload)
+    stream.flush()
+    os.fsync(stream.fileno())
+PY
+}
+
+capture_gpu_inventory() {
+  local label="$1"
+  nvidia-smi \
+    --query-gpu=index,uuid,name,memory.total,memory.free \
+    --format=csv,noheader,nounits > "$CONTROL_ROOT/gpus-${label}.csv"
+  nvidia-smi \
+    --query-compute-apps=pid,process_name,gpu_uuid,used_gpu_memory \
+    --format=csv,noheader,nounits > "$CONTROL_ROOT/gpu-processes-${label}.csv" 2> "$CONTROL_ROOT/gpu-processes-${label}.stderr"
+}
+
+validate_idle_big_rig() {
+  "$PY" - "$CONTROL_ROOT/gpus-before-fit.csv" "$CONTROL_ROOT/gpu-processes-before-fit.csv" <<'PY'
+import csv
+from pathlib import Path
+import sys
+
+gpu_path, process_path = map(Path, sys.argv[1:])
+rows = list(csv.reader(gpu_path.read_text(encoding="utf-8").splitlines()))
+if len(rows) != 2:
+    raise SystemExit("fit check requires exactly two visible GPUs")
+for expected_index, row in enumerate(rows):
+    if len(row) != 5:
+        raise SystemExit("GPU inventory row shape differs")
+    index, _uuid, name, total, free = [item.strip() for item in row]
+    if index != str(expected_index) or name != "NVIDIA GeForce RTX 4090":
+        raise SystemExit("fit check is not running on the registered two-card rig")
+    if int(total) != 24564 or int(free) < 23000:
+        raise SystemExit("GPU is not sufficiently idle for an interpretable fit check")
+if process_path.read_text(encoding="utf-8").strip():
+    raise SystemExit("GPU compute processes are present; fit check was not started")
+PY
+}
+
+validate_post_fit_cleanup() {
+  "$PY" - "$CONTROL_ROOT/gpus-after-fit.csv" "$CONTROL_ROOT/gpu-processes-after-fit.csv" <<'PY'
+import csv
+from pathlib import Path
+import sys
+
+gpu_path, process_path = map(Path, sys.argv[1:])
+rows = list(csv.reader(gpu_path.read_text(encoding="utf-8").splitlines()))
+if len(rows) != 2 or any(len(row) != 5 for row in rows):
+    raise SystemExit("post-fit GPU inventory is incomplete")
+if process_path.read_text(encoding="utf-8").strip():
+    raise SystemExit("successful fit left a GPU compute process behind")
+for row in rows:
+    if int(row[4].strip()) < 23000:
+        raise SystemExit("successful fit did not release the registered GPU allocation")
+PY
+}
+
+write_fit_result() {
+  local fit_rc="$1"
+  "$PY" - "$FIT_RESULT" "$fit_rc" "$FIT_LOG" "$RUN_ROOT" \
+    "$REQUEST_CONTRACT" "$ACQUISITION_EVIDENCE" \
+    "$CONTROL_ROOT/gpus-before-fit.csv" "$CONTROL_ROOT/gpus-after-fit.csv" <<'PY'
+import hashlib
+import json
+import os
+from pathlib import Path
+import re
+import sys
+
+out = Path(sys.argv[1])
+fit_rc = int(sys.argv[2])
+fit_log = Path(sys.argv[3])
+run_root = Path(sys.argv[4])
+paths = [Path(item) for item in sys.argv[5:]]
+
+def descriptor(path: Path) -> dict:
+    payload = path.read_bytes()
+    return {
+        "bytes": len(payload),
+        "path": str(path.resolve(strict=True)),
+        "sha256": hashlib.sha256(payload).hexdigest(),
+    }
+
+projection_paths = sorted(run_root.glob("lane-projection-*.lane-projection.json")) if run_root.exists() else []
+error_paths = sorted(run_root.glob("request-error-*.request.error.json")) if run_root.exists() else []
+log_text = fit_log.read_text(encoding="utf-8", errors="replace")
+oom = re.search(
+    r"cuda out of memory|OutOfMemoryError|CUBLAS_STATUS_ALLOC_FAILED",
+    log_text,
+    flags=re.IGNORECASE,
+) is not None
+status = "feasible_zero_call_preflight" if fit_rc == 0 else "preflight_failed"
+failure_category = None
+if fit_rc != 0:
+    failure_category = (
+        "co_resident_cuda_oom_observed"
+        if oom
+        else "preflight_failed_non_vram_or_unclassified"
+    )
+value = {
+    "schema": "ura-phase3-guard1b-fit/1",
+    "status": status,
+    "fit_returncode": fit_rc,
+    "failure_category": failure_category,
+    "classification_is_final_na": False,
+    "target_calls_made": 0,
+    "judge_calls_made": 0,
+    "hosted_calls_made": 0,
+    "inputs": [descriptor(path) for path in paths],
+    "fit_log": descriptor(fit_log),
+    "projection_artifacts": [descriptor(path) for path in projection_paths],
+    "request_error_artifacts": [descriptor(path) for path in error_paths],
+    "secret_values_recorded": False,
+}
+payload = json.dumps(value, sort_keys=True, ensure_ascii=True, separators=(",", ":")).encode() + b"\n"
+fd = os.open(out, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+with os.fdopen(fd, "wb") as stream:
+    stream.write(payload)
+    stream.flush()
+    os.fsync(stream.fileno())
+PY
+}
+
+validate_retained_source_binding() {
+  "$PY" - "$1" "$2" <<'PY'
+import hashlib
+from pathlib import Path
+import sys
+
+root = Path(sys.argv[1]).resolve(strict=True)
+expected_sha = sys.argv[2]
+sources = sorted(root.glob("source-conformance-*.json"))
+if len(sources) != 1:
+    raise SystemExit("successful fit did not retain exactly one source receipt")
+source = sources[0]
+if not source.is_file() or source.is_symlink():
+    raise SystemExit("retained source receipt is not one regular non-symlink file")
+if hashlib.sha256(source.read_bytes()).hexdigest() != expected_sha:
+    raise SystemExit("retained source receipt digest differs")
+PY
+}
+
+validate_successful_fit() {
+  validate_retained_source_binding "$RUN_ROOT" "$EXPECTED_SOURCE_RECEIPT_SHA"
+  "$PY" - "$RUN_ROOT" "$EXPECTED_PROJECT_RECEIPT_SHA" "$EXPECTED_COMMIT" <<'PY'
+import json
+from pathlib import Path
+import sys
+
+from ura.lane_projection import validate_lane_projection
+
+root = Path(sys.argv[1]).resolve(strict=True)
+project_sha, commit = sys.argv[2:]
+projections = sorted(root.glob("lane-projection-*.lane-projection.json"))
+eligibility = sorted(root.glob("eligibility-*.eligibility.json"))
+envelopes = sorted(root.glob("request-envelope-*.request-envelope.json"))
+if len(projections) != 1 or len(eligibility) != 1 or len(envelopes) != 1:
+    raise SystemExit("successful fit did not retain one complete evidence set")
+projection = validate_lane_projection(json.loads(projections[0].read_bytes()))
+if projection.get("status") != "complete":
+    raise SystemExit("fit projection is incomplete")
+if projection.get("call_projection") != {
+    "by_attacker": {
+        "replay": {
+            "http_attempts": 0,
+            "judge_calls": 0,
+            "local_guardrail_evaluations": 3,
+            "target_calls": 1,
+            "trajectories": 1,
+        }
+    },
+    "http_attempts": 0,
+    "judge_calls": 0,
+    "local_guardrail_evaluations": 3,
+    "semantics": "conservative_complete_grid_upper_bound_v1",
+    "target_calls": 1,
+    "trajectories": 1,
+}:
+    raise SystemExit("fit projection does not represent one target and three local guard evaluations")
+envelope = json.loads(envelopes[0].read_bytes())
+project = envelope.get("bindings", {}).get("project_revision", {})
+request = envelope.get("request", {})
+if (
+    project.get("sha256") != project_sha
+    or project.get("expected_commit") != commit
+    or project.get("observed_commit") != commit
+):
+    raise SystemExit("fit request envelope lost the deployed project binding")
+if (
+    request.get("defense") != "both"
+    or request.get("defense_guard") != "guardrail"
+    or request.get("approximate_common_metrics") is not True
+    or request.get("judges") != ["rules", "guardrail"]
+):
+    raise SystemExit("fit request envelope lost the model-backed two-stage defense")
+PY
+}
+
+run_payload() {
+  [[ $# == 2 ]] || fail '--payload requires control-root and tag'
+  CONTROL_ROOT="$1"
+  local tag="$2"
+  validate_bound_tag "$tag" || fail 'payload tag differs from the bound Phase 3 tag'
+  umask 077
+  source "$HOME/.ura_campaign_env"
+
+  local work_root expected_control
+  work_root="$(readlink -f -- "${URA_WORK:?URA_WORK is required}")"
+  expected_control="$work_root/runs/engineering/phase3-guard1b-acquire-fit-${tag}"
+  [[ "$(readlink -f -- "$CONTROL_ROOT")" == "$expected_control" ]] \
+    || fail 'payload control root is outside its exact campaign location'
+  [[ -d "$CONTROL_ROOT" && ! -L "$CONTROL_ROOT" ]] || fail 'payload control root is invalid'
+
+  STAGE='startup'
+  finish() {
+    local rc=$?
+    trap - EXIT
+    set +e
+    printf '%s\n' "$STAGE" > "$CONTROL_ROOT/.stage.tmp"
+    mv -T -- "$CONTROL_ROOT/.stage.tmp" "$CONTROL_ROOT/.stage"
+    printf '%s\n' "$rc" > "$CONTROL_ROOT/.exit.tmp"
+    mv -T -- "$CONTROL_ROOT/.exit.tmp" "$CONTROL_ROOT/.exit"
+    printf 'PHASE3_GUARD1B_EXIT=%s STAGE=%s\n' "$rc" "$STAGE"
+    exit "$rc"
+  }
+  trap finish EXIT
+  trap 'exit 130' INT
+  trap 'exit 143' TERM
+  trap 'exit 129' HUP
+
+  exec > >(tee -a "$CONTROL_ROOT/controller.log") 2>&1
+  printf 'PHASE3_GUARD1B_START=%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+
+  cd "$HOME/MLLMRiskBench"
+  PY="$PWD/.venv/bin/python"
+  PROJECT_RECEIPT="$URA_PROJECT_REVISION_MANIFEST"
+  PROJECT_RECEIPT_SHA="$URA_PROJECT_REVISION_SHA256"
+  SOURCE_RECEIPT="$URA_SOURCE_CONFORMANCE_MANIFEST"
+  SOURCE_RECEIPT_SHA="$URA_SOURCE_CONFORMANCE_SHA256"
+  SOURCE_CONFIG="$PWD/experiments/source-instances.json"
+  SOURCE_CONFIG_SHA="$(sha256sum -- "$SOURCE_CONFIG" | awk '{print $1}')"
+  QWEN_CONFIG="$PWD/experiments/local-qwen3-vl.json"
+  QWEN_CONFIG_SHA="$(sha256sum -- "$QWEN_CONFIG" | awk '{print $1}')"
+  MODEL_STORE="$(readlink -f -- "$URA_MODEL_STORE")"
+  TRANSPORT_CACHE="$MODEL_STORE/.transport-cache"
+  local phase_root plan_root receipts_root
+  phase_root="$work_root/runs/thesis/acquisition/phase3-guard1b-${tag}"
+  plan_root="$phase_root/plan"
+  receipts_root="$phase_root/receipts"
+  RUN_ROOT="$work_root/runs/thesis/preflight/guard1b-fit-${tag}"
+  REQUEST_CONTRACT="$CONTROL_ROOT/request-argv.json"
+  ACQUISITION_EVIDENCE="$CONTROL_ROOT/acquisition-evidence.json"
+  FIT_RESULT="$CONTROL_ROOT/fit-result.json"
+  FIT_LOG="$CONTROL_ROOT/fit.log"
+  local plan_log acquire_log
+  plan_log="$CONTROL_ROOT/plan.log"
+  acquire_log="$CONTROL_ROOT/acquire.log"
+
+  export HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1 HF_DATASETS_OFFLINE=1
+  export HF_HUB_DISABLE_XET=1 HF_HUB_DISABLE_TELEMETRY=1
+  unset HF_TOKEN HUGGING_FACE_HUB_TOKEN OPENAI_API_KEY ANTHROPIC_API_KEY \
+    GOOGLE_API_KEY GEMINI_API_KEY MISTRAL_API_KEY TOGETHER_API_KEY \
+    DEEPSEEK_API_KEY XAI_API_KEY
+  unset URA_MODEL_ACQUISITION_PLAN_DIR URA_MODEL_ACQUISITION_PLAN \
+    URA_MODEL_ACQUISITION_PLAN_SHA256 URA_MODEL_ACQUISITION_RECEIPT \
+    URA_MODEL_ACQUISITION_RECEIPT_SHA256 URA_MODEL_ACQUISITION_STORE
+
+  STAGE='validate-deployed-inputs'
+  [[ "$PROJECT_RECEIPT_SHA" == "$EXPECTED_PROJECT_RECEIPT_SHA" ]] || fail 'campaign project receipt binding differs'
+  [[ "$SOURCE_RECEIPT_SHA" == "$EXPECTED_SOURCE_RECEIPT_SHA" ]] || fail 'campaign source receipt binding differs'
+  [[ "$SOURCE_CONFIG_SHA" == "$EXPECTED_SOURCE_CONFIG_SHA" ]] || fail 'source config digest differs'
+  [[ "$QWEN_CONFIG_SHA" == "$EXPECTED_QWEN_CONFIG_SHA" ]] || fail 'Qwen config digest differs'
+  [[ -d "$MODEL_STORE" && ! -L "$MODEL_STORE" ]] || fail 'managed model store is invalid'
+  [[ -f "$HOME/.ura_env" && ! -L "$HOME/.ura_env" ]] || fail 'secret environment is not a regular file'
+  [[ "$(stat -c '%a' -- "$HOME/.ura_env")" == '600' ]] || fail 'secret environment must be mode 600'
+  [[ "$(stat -c '%u' -- "$HOME/.ura_env")" == "$(id -u)" ]] || fail 'secret environment has the wrong owner'
+  validate_deployed_inputs
+  validate_qwen_config
+  validate_limits "$MAX_DOWNLOAD_BYTES" "$MIN_FREE_BYTES" "$ACQUISITION_DEADLINE_SECONDS"
+
+  [[ ! -e "$phase_root" && ! -L "$phase_root" ]] || fail 'phase acquisition root already exists'
+  [[ ! -e "$RUN_ROOT" && ! -L "$RUN_ROOT" ]] || fail 'fit output root already exists'
+  mkdir -- "$phase_root"
+  mkdir -- "$plan_root" "$receipts_root"
+  mkdir -p -- "$TRANSPORT_CACHE"
+
+  STAGE='derive-plan'
+  build_request_args
+  validate_request_args
+  write_request_contract
+  "$PY" -m experiments.run_matrix "${REQUEST_ARGS[@]}" \
+    --preflight-only \
+    --model-acquisition-plan-only \
+    --model-acquisition-plan-dir "$plan_root" > "$plan_log" 2>&1
+  local plan_id
+  read -r plan_id PLAN_SHA < <(json_fields "$plan_log" plan)
+  PLAN_PATH="$plan_root/${plan_id}.plan.json"
+  [[ -f "$PLAN_PATH" && ! -L "$PLAN_PATH" ]] || fail 'plan output is not a regular file'
+  [[ "$(sha256sum -- "$PLAN_PATH" | awk '{print $1}')" == "$PLAN_SHA" ]] || fail 'plan digest differs'
+  validate_plan_resources
+
+  STAGE='sealed-acquisition'
+  printf 'ACQUISITION_LOG=%s\n' "$acquire_log"
+  set +e
+  (
+    set +x
+    source "$HOME/.ura_env"
+    set +x
+    [[ -n "${HF_TOKEN:-}" ]] || { printf 'HF_TOKEN is unavailable to the acquisition subprocess\n' >&2; exit 64; }
+    unset HUGGING_FACE_HUB_TOKEN OPENAI_API_KEY ANTHROPIC_API_KEY \
+      GOOGLE_API_KEY GEMINI_API_KEY MISTRAL_API_KEY TOGETHER_API_KEY \
+      DEEPSEEK_API_KEY XAI_API_KEY
+    unset HF_HUB_OFFLINE TRANSFORMERS_OFFLINE HF_DATASETS_OFFLINE
+    export HF_HUB_DISABLE_XET=1 HF_HUB_DISABLE_TELEMETRY=1
+    "$PY" -m experiments.model_acquire \
+      --plan "$PLAN_PATH" \
+      --plan-sha256 "$PLAN_SHA" \
+      --store "$MODEL_STORE" \
+      --receipts-dir "$receipts_root" \
+      --transport-cache "$TRANSPORT_CACHE" \
+      --max-download-bytes "$MAX_DOWNLOAD_BYTES" \
+      --min-free-bytes "$MIN_FREE_BYTES" \
+      --deadline-seconds "$ACQUISITION_DEADLINE_SECONDS"
+  ) > "$acquire_log" 2>&1
+  local acquire_rc=$?
+  set -e
+  if (( acquire_rc != 0 )); then
+    printf 'SEALED_ACQUISITION_FAILED=%s LOG=%s\n' "$acquire_rc" "$acquire_log" >&2
+    exit "$acquire_rc"
+  fi
+  local receipt_id
+  read -r receipt_id RECEIPT_SHA DOWNLOADED_BYTES < <(json_fields "$acquire_log" receipt)
+  RECEIPT_PATH="$receipts_root/${receipt_id}.receipt.json"
+  [[ -f "$RECEIPT_PATH" && ! -L "$RECEIPT_PATH" ]] || fail 'receipt output is not a regular file'
+  [[ "$(sha256sum -- "$RECEIPT_PATH" | awk '{print $1}')" == "$RECEIPT_SHA" ]] || fail 'receipt digest differs'
+  (( DOWNLOADED_BYTES >= 0 && DOWNLOADED_BYTES <= MAX_DOWNLOAD_BYTES )) || fail 'downloaded bytes exceed the 8 GiB cap'
+  validate_receipt_and_write_evidence
+
+  STAGE='idle-gpu-admission'
+  capture_gpu_inventory before-fit
+  validate_idle_big_rig
+
+  STAGE='zero-call-fit-preflight'
+  local -a acquisition_args=(
+    --model-acquisition-plan "$PLAN_PATH"
+    --model-acquisition-plan-sha256 "$PLAN_SHA"
+    --model-acquisition-receipt "$RECEIPT_PATH"
+    --model-acquisition-receipt-sha256 "$RECEIPT_SHA"
+    --model-acquisition-store "$MODEL_STORE"
+  )
+  set +e
+  CUDA_DEVICE_ORDER=PCI_BUS_ID CUDA_VISIBLE_DEVICES=0,1 \
+    "$PY" -m experiments.rig_check \
+    "${REQUEST_ARGS[@]}" "${acquisition_args[@]}" > "$FIT_LOG" 2>&1
+  local fit_rc=$?
+  set -e
+  capture_gpu_inventory after-fit
+  if (( fit_rc != 0 )); then
+    write_fit_result "$fit_rc"
+    printf 'ZERO_CALL_FIT_PREFLIGHT_FAILED=%s RESULT=%s\n' "$fit_rc" "$FIT_RESULT" >&2
+    exit "$fit_rc"
+  fi
+
+  STAGE='validate-fit-evidence'
+  validate_successful_fit
+  validate_post_fit_cleanup
+  write_fit_result "$fit_rc"
+  STAGE='complete'
+  printf 'PHASE3_GUARD1B_COMPLETE=1\n'
+  printf 'PLAN=%s\n' "$(descriptor_json "$PLAN_PATH")"
+  printf 'RECEIPT=%s\n' "$(descriptor_json "$RECEIPT_PATH")"
+  printf 'ACQUISITION=%s\n' "$(descriptor_json "$ACQUISITION_EVIDENCE")"
+  printf 'FIT=%s\n' "$(descriptor_json "$FIT_RESULT")"
+}
+
+case "${1:-}" in
+  --self-test)
+    [[ $# == 1 ]] || { fail '--self-test takes no additional arguments'; exit 2; }
+    self_test
+    ;;
+  --payload)
+    shift
+    run_payload "$@"
+    ;;
+  '')
+    launch_controller
+    ;;
+  *)
+    printf 'usage: %s [--self-test | --payload CONTROL_ROOT TAG]\n' "$0" >&2
+    exit 2
+    ;;
+esac

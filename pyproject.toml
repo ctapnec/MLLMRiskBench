@@ -64,7 +64,7 @@ where = ["src"]
 include = ["ura*"]
 
 [tool.pytest.ini_options]
-testpaths = ["tests/ura"]
+testpaths = ["tests/ura", "tests/experiments"]
 addopts = "-ra"
 
 [tool.ruff]

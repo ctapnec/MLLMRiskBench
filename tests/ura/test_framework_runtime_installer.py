@@ -45,6 +45,14 @@ def test_repository_lock_is_strict_and_covers_all_registered_attackers() -> None
         "pyrit",
         "spikee",
     }
+    python_runtimes = [
+        entry for entry in lock["frameworks"] if entry["runtime"] == "python"
+    ]
+    node_runtimes = [
+        entry for entry in lock["frameworks"] if entry["runtime"] == "node"
+    ]
+    assert len(python_runtimes) == 14
+    assert [entry["name"] for entry in node_runtimes] == ["promptfoo"]
     assert len(lock["coverage"]) == 20
     assert {row["attacker"] for row in lock["coverage"]} == {
         "agentdojo",
@@ -68,6 +76,46 @@ def test_repository_lock_is_strict_and_covers_all_registered_attackers() -> None
         "spikee",
         "t3mp3st",
     }
+
+
+def test_global_installer_docs_match_the_resumable_fifteen_runtime_lock() -> None:
+    lock = installer.load_lock(LOCK_PATH)
+    root = LOCK_PATH.parents[1]
+    documents = {
+        name: (root / name).read_text(encoding="utf-8")
+        for name in ("README.md", "distro/README.md", "experiments/RUN_AND_RETURN.md")
+    }
+
+    assert len(lock["frameworks"]) == 15
+    normalized = {name: " ".join(text.split()) for name, text in documents.items()}
+    assert "all 15 locked third-party framework runtimes" in normalized["README.md"]
+    assert (
+        "14 private Python virtual environments and Promptfoo's private Node runtime"
+        in normalized["README.md"]
+    )
+    assert "all 15 isolated third-party framework runtimes" in normalized[
+        "distro/README.md"
+    ]
+    assert "14 private Python venvs plus Promptfoo's private Node runtime" in normalized[
+        "distro/README.md"
+    ]
+    assert "manifest for 15 managed runtimes" in normalized[
+        "experiments/RUN_AND_RETURN.md"
+    ]
+    assert (
+        "14 separate CPython virtual environments and Promptfoo's separate Node environment"
+        in normalized["experiments/RUN_AND_RETURN.md"]
+    )
+    install_script = (root / "distro/install.sh").read_text(encoding="utf-8")
+    assert "runtimes_session resume" in install_script
+    all_dispatch = install_script[
+        install_script.index("    all)") : install_script.index("    deps)")
+    ]
+    assert "phase_runtimes || RC=1" in all_dispatch
+    assert "session_summary || RC=1" in install_script
+    assert "framework_runtime_installer resume" in documents[
+        "experiments/RUN_AND_RETURN.md"
+    ]
 
 
 def test_lock_rejects_duplicate_json_keys(tmp_path: Path) -> None:
@@ -1132,6 +1180,110 @@ def test_install_requires_resume_for_existing_staging_and_rejects_foreign_stagin
     assert not layout.final(_GUARD_ENTRY["env_slug"]).exists()
 
 
+@pytest.mark.parametrize("staged", [False, True], ids=["absent-store", "staged-store"])
+def test_resume_builds_an_absent_store_and_repairs_an_interrupted_stage(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    staged: bool,
+) -> None:
+    empty_sha = hashlib.sha256(b"").hexdigest()
+    entry = {
+        **_GUARD_ENTRY,
+        "artifacts": [],
+        "source": None,
+        "dependencies": {
+            "fully_hashed": True,
+            "requirements": "",
+            "sha256": empty_sha,
+            "package_count": 0,
+        },
+        "install": {
+            "source_mode": "none",
+            "timeout_seconds": 60,
+            "commands": [],
+            "constraints": [],
+            "repair": "fixture",
+        },
+        "smoke": {
+            "mode": "import",
+            "network": "denied",
+            "module": "fixture",
+            "environment": {},
+            "timeout_seconds": 60,
+        },
+        "expected_inventory": {"distributions": [], "sha256": empty_sha},
+    }
+    lock = {
+        **_GUARD_LOCK,
+        "runtimes": {"git_lfs": {"required": False}},
+    }
+    layout = installer.Layout(tmp_path / "envs", tmp_path / "state")
+    store = layout.store(entry["env_slug"], lock["lock_id"])
+    if staged:
+        store.mkdir(parents=True)
+        installer._write_state(
+            store,
+            {
+                "lock_id": lock["lock_id"],
+                "framework": entry["name"],
+                "env_slug": entry["env_slug"],
+                "completed": ["venv"],
+            },
+        )
+        (store / "interrupted-partial-file").write_text("partial", encoding="utf-8")
+        assert installer.plan(lock, layout, [entry])["actions"][0][
+            "action"
+        ] == "resume"
+    else:
+        assert not store.exists()
+        assert installer.plan(lock, layout, [entry])["actions"][0][
+            "action"
+        ] == "install"
+
+    class _ResumeRunner:
+        def run(self, argv, **_kwargs):  # noqa: ANN001, ANN003 - command test double
+            command = [str(item) for item in argv]
+            if "venv" in command:
+                (store / "bin").mkdir(parents=True, exist_ok=True)
+                (store / "bin" / "python").write_bytes(b"fixture-python")
+                (store / "pyvenv.cfg").write_text(
+                    "include-system-site-packages = false\n", encoding="utf-8"
+                )
+            stdout = "[]" if any("import importlib.metadata" in item for item in command) else ""
+            return subprocess.CompletedProcess(command, 0, stdout=stdout, stderr="")
+
+    runner = _ResumeRunner()
+    published: list[Path] = []
+    verified: list[Path] = []
+    monkeypatch.setattr(installer, "runner_python", lambda _lock: sys.executable)
+    monkeypatch.setattr(installer, "_runner", lambda *_args, **_kwargs: runner)
+    monkeypatch.setattr(
+        installer,
+        "_publish_alias",
+        lambda _layout, _slug, target: published.append(target),
+    )
+    monkeypatch.setattr(
+        installer,
+        "_verify_published",
+        lambda _entry, _lock, _layout, final, _receipt, **_kwargs: verified.append(final),
+    )
+
+    result = installer.install_one(entry, lock, layout, resume=True)
+
+    assert result["status"] == "installed"
+    assert store.is_dir()
+    assert not (store / "interrupted-partial-file").exists()
+    assert installer._read_state(store)["completed"] == [
+        "venv",
+        "dependencies",
+        "artifacts",
+        "source",
+    ]
+    assert (store / installer.RECEIPT_NAME).is_file()
+    assert published == [store]
+    assert verified == [layout.final(entry["env_slug"])]
+
+
 @pytest.mark.skipif(not hasattr(os, "symlink"), reason="symlink unavailable")
 def test_verify_requires_published_alias_and_matching_receipt(tmp_path: Path) -> None:
     layout = installer.Layout(tmp_path / "envs", tmp_path / "state")
@@ -1273,10 +1425,14 @@ if [ "${1:-}" = "-m" ] && [ "${2:-}" = "experiments.framework_runtime_installer"
     plan)
       echo '{"schema":"ura-framework-runtime-plan/1","lock_id":"stub","actions":[]}'
       exit 0 ;;
-    install|verify)
+    install|resume|verify)
       name="ura-framework-$command-stub"
       mkdir -p "$state_root/sessions"
-      printf '%s\n' "${URA_STUB_EXIT_RC:-0}" > "$state_root/sessions/$name.exit"
+      exit_rc="${URA_STUB_EXIT_RC:-0}"
+      if [ "$command" = verify ]; then
+        exit_rc="${URA_STUB_VERIFY_EXIT_RC:-$exit_rc}"
+      fi
+      printf '%s\n' "$exit_rc" > "$state_root/sessions/$name.exit"
       printf 'stub %s transcript\n' "$command" > "$state_root/sessions/$name.log"
       printf '{"schema":"ura-framework-runtime-session/1","launcher":"tmux","session_name":"%s","attach_command":"tmux -L stub attach -t %s","log":"sessions/%s.log","exit_marker":"sessions/%s.exit","status":"running"}\n' "$name" "$name" "$name" "$name"
       exit 0 ;;
@@ -1292,9 +1448,24 @@ def _bash_or_skip() -> str:
     bash = shutil.which("bash")
     if bash is None:
         pytest.skip("bash is unavailable")
-    probe = subprocess.run([bash, "-c", "printf ok"], capture_output=True, text=True, check=False)
+    # Windows may resolve ``bash`` to WSL. That binary can execute ``printf``
+    # while being unable to resolve the Windows paths passed by this fixture,
+    # which turns every distro assertion into a misleading path failure. Prove
+    # the selected shell can read the actual script before admitting it.
+    probe = subprocess.run(
+        [
+            bash,
+            "-c",
+            'test -r "$1" && printf ok',
+            "ura-bash-probe",
+            DISTRO_INSTALL.as_posix(),
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
     if probe.returncode != 0 or probe.stdout != "ok":
-        pytest.skip("bash is not usable")
+        pytest.skip("bash cannot resolve this checkout")
     return bash
 
 
@@ -1357,7 +1528,9 @@ class _DistroSandbox:
         return [block.splitlines() for block in blocks if block.strip()]
 
 
-def test_distro_runtimes_phase_passes_lock_roots_and_python_then_verifies(tmp_path: Path) -> None:
+def test_distro_runtimes_phase_resumes_fresh_or_staged_store_then_verifies(
+    tmp_path: Path,
+) -> None:
     sandbox = _DistroSandbox(tmp_path)
     result = sandbox.run("runtimes")
     assert result.returncode == 0, result.stdout + result.stderr
@@ -1366,7 +1539,10 @@ def test_distro_runtimes_phase_passes_lock_roots_and_python_then_verifies(tmp_pa
     env_root = f"{sandbox.data.as_posix()}/framework-venvs"
     state_root = f"{sandbox.data.as_posix()}/runs/engineering/framework-runtime-{lock_id[:12]}"
     calls = sandbox.installer_calls()
-    assert [call[0] for call in calls] == ["plan", "install", "verify"]
+    # `resume` is deliberately used even for a fresh store: it handles both a
+    # missing store and a stage left by an interrupted earlier invocation. The
+    # fresh-only `install` command rejects the latter and broke global recovery.
+    assert [call[0] for call in calls] == ["plan", "resume", "verify"]
     assert calls[0] == ["plan", "--lock", lock, "--env-root", env_root, "--state-root", state_root]
     for call in calls[1:]:
         assert call[1:7] == ["--lock", lock, "--env-root", env_root, "--state-root", state_root]
@@ -1380,8 +1556,8 @@ def test_distro_runtimes_phase_passes_lock_roots_and_python_then_verifies(tmp_pa
     assert "[ok]   runtimes-install" in result.stdout
     assert "[ok]   runtimes-verify" in result.stdout
     install_log = (logs / "runtimes-install.log").read_text(encoding="utf-8")
-    assert "session ura-framework-install-stub exit 0" in install_log
-    assert "stub install transcript" in install_log
+    assert "session ura-framework-resume-stub exit 0" in install_log
+    assert "stub resume transcript" in install_log
     assert "[warn] framework runtimes need" not in result.stdout
 
 
@@ -1389,13 +1565,31 @@ def test_distro_runtimes_phase_ledgers_a_failed_session_and_skips_verify(tmp_pat
     sandbox = _DistroSandbox(tmp_path)
     result = sandbox.run("runtimes", URA_STUB_EXIT_RC="2")
     assert result.returncode != 0
-    assert [call[0] for call in sandbox.installer_calls()] == ["plan", "install"]
+    assert [call[0] for call in sandbox.installer_calls()] == ["plan", "resume"]
     logs = sandbox.data / "acquire-logs"
     assert (logs / "runtimes-install.status").read_text(encoding="utf-8").strip() == "FAIL:2"
     assert not (logs / "runtimes-install.done").exists()
     assert not (logs / "runtimes-verify.status").exists()
     assert "[FAIL] runtimes-install" in result.stdout
     assert "runtimes-verify skipped" in result.stdout
+    assert "FAILED this run" in result.stdout
+
+
+def test_distro_runtimes_phase_propagates_a_verify_failure(tmp_path: Path) -> None:
+    sandbox = _DistroSandbox(tmp_path)
+    result = sandbox.run("runtimes", URA_STUB_VERIFY_EXIT_RC="7")
+
+    assert result.returncode != 0
+    assert [call[0] for call in sandbox.installer_calls()] == [
+        "plan",
+        "resume",
+        "verify",
+    ]
+    logs = sandbox.data / "acquire-logs"
+    assert (logs / "runtimes-install.status").read_text(encoding="utf-8").strip() == "OK"
+    assert (logs / "runtimes-verify.status").read_text(encoding="utf-8").strip() == "FAIL:7"
+    assert not (logs / "runtimes-verify.done").exists()
+    assert "[FAIL] runtimes-verify" in result.stdout
     assert "FAILED this run" in result.stdout
 
 

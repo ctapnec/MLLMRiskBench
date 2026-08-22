@@ -12,6 +12,25 @@ from pathlib import Path
 import pytest
 
 
+def test_default_pytest_suite_includes_campaign_controller_regressions() -> None:
+    project_root = Path(__file__).resolve().parents[2]
+    document = tomllib.loads((project_root / "pyproject.toml").read_text(encoding="utf-8"))
+    assert document["tool"]["pytest"]["ini_options"]["testpaths"] == [
+        "tests/ura",
+        "tests/experiments",
+    ]
+    assert {
+        path.name
+        for path in (project_root / "tests" / "experiments").glob("test_*.py")
+    } >= {
+        "test_local_campaign_atomic_install.py",
+        "test_local_campaign_binding_security.py",
+        "test_local_campaign_controllers.py",
+        "test_local_campaign_lifecycle_semantics.py",
+        "test_local_campaign_phase8_lifecycle_semantics.py",
+    }
+
+
 def test_framework_packages_are_not_main_environment_extras() -> None:
     project_root = Path(__file__).resolve().parents[2]
     document = tomllib.loads((project_root / "pyproject.toml").read_text(encoding="utf-8"))

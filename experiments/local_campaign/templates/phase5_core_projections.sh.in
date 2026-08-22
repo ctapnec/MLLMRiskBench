@@ -1,0 +1,298 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+
+source ~/.ura_campaign_env
+cd ~/MLLMRiskBench
+
+EXPECTED_COMMIT='@@EXPECTED_COMMIT@@'
+EXPECTED_FRAMEWORK_LOCK='@@FRAMEWORK_LOCK_SHA256@@'
+EXPECTED_PROJECT_RECEIPT='@@PROJECT_RECEIPT_PATH@@'
+EXPECTED_PROJECT_RECEIPT_SHA256='@@PROJECT_RECEIPT_SHA256@@'
+EXPECTED_SOURCE_RECEIPT='@@SOURCE_RECEIPT_PATH@@'
+EXPECTED_SOURCE_RECEIPT_SHA256='@@SOURCE_RECEIPT_SHA256@@'
+PY="$PWD/.venv/bin/python"
+TAG="$(date -u +%Y%m%dT%H%M%SZ)"
+SESSION="ura-phase5-core-${TAG}"
+SOCKET="ura-phase5-core-${TAG}"
+CONTROL_ROOT="$URA_WORK/runs/engineering/phase5-core-projections-${TAG}"
+
+test "$(git rev-parse HEAD)" = "$EXPECTED_COMMIT"
+test -z "$(git status --porcelain)"
+test "$URA_FRAMEWORK_LOCK_ID" = "$EXPECTED_FRAMEWORK_LOCK"
+test "$URA_FRAMEWORK_STATE" = "$URA_WORK/runs/engineering/framework-runtime-${EXPECTED_FRAMEWORK_LOCK:0:12}"
+test "$URA_PROJECT_REVISION_MANIFEST" = "$EXPECTED_PROJECT_RECEIPT"
+test "$URA_PROJECT_REVISION_SHA256" = "$EXPECTED_PROJECT_RECEIPT_SHA256"
+test "$URA_SOURCE_CONFORMANCE_MANIFEST" = "$EXPECTED_SOURCE_RECEIPT"
+test "$URA_SOURCE_CONFORMANCE_SHA256" = "$EXPECTED_SOURCE_RECEIPT_SHA256"
+test -x "$PY"
+
+export HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1 HF_DATASETS_OFFLINE=1
+unset HF_TOKEN HUGGING_FACE_HUB_TOKEN OPENAI_API_KEY ANTHROPIC_API_KEY \
+  GOOGLE_API_KEY GEMINI_API_KEY MISTRAL_API_KEY TOGETHER_API_KEY \
+  DEEPSEEK_API_KEY XAI_API_KEY
+unset URA_MODEL_ACQUISITION_PLAN_DIR URA_MODEL_ACQUISITION_PLAN \
+  URA_MODEL_ACQUISITION_PLAN_SHA256 URA_MODEL_ACQUISITION_RECEIPT \
+  URA_MODEL_ACQUISITION_RECEIPT_SHA256 URA_MODEL_ACQUISITION_STORE
+test ! -e "$CONTROL_ROOT"
+mkdir -p "$CONTROL_ROOT"
+chmod 700 "$CONTROL_ROOT"
+
+export TAG CONTROL_ROOT EXPECTED_COMMIT EXPECTED_FRAMEWORK_LOCK \
+  EXPECTED_PROJECT_RECEIPT EXPECTED_PROJECT_RECEIPT_SHA256 \
+  EXPECTED_SOURCE_RECEIPT EXPECTED_SOURCE_RECEIPT_SHA256
+
+PAYLOAD="$(cat <<'INNER'
+set -Eeuo pipefail
+umask 077
+source ~/.ura_campaign_env
+cd ~/MLLMRiskBench
+
+PY="$PWD/.venv/bin/python"
+LOG="$CONTROL_ROOT/phase5-core.log"
+STATUS="$CONTROL_ROOT/status.tsv"
+EXIT_TMP="$CONTROL_ROOT/.exit.tmp"
+EXIT_MARKER="$CONTROL_ROOT/.exit"
+
+exec > >(tee "$LOG") 2>&1
+
+finish() {
+  rc=$?
+  trap - EXIT
+  printf '%s\n' "$rc" > "$EXIT_TMP"
+  mv -f -- "$EXIT_TMP" "$EXIT_MARKER"
+  printf 'PHASE5_CORE_EXIT=%s\n' "$rc"
+  exit "$rc"
+}
+trap finish EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
+trap 'exit 129' HUP
+
+test "$(git rev-parse HEAD)" = "$EXPECTED_COMMIT"
+test -z "$(git status --porcelain)"
+test "$URA_FRAMEWORK_LOCK_ID" = "$EXPECTED_FRAMEWORK_LOCK"
+test "$URA_FRAMEWORK_STATE" = "$URA_WORK/runs/engineering/framework-runtime-${EXPECTED_FRAMEWORK_LOCK:0:12}"
+test "$URA_PROJECT_REVISION_MANIFEST" = "$EXPECTED_PROJECT_RECEIPT"
+test "$URA_PROJECT_REVISION_SHA256" = "$EXPECTED_PROJECT_RECEIPT_SHA256"
+test "$URA_SOURCE_CONFORMANCE_MANIFEST" = "$EXPECTED_SOURCE_RECEIPT"
+test "$URA_SOURCE_CONFORMANCE_SHA256" = "$EXPECTED_SOURCE_RECEIPT_SHA256"
+test -x "$PY"
+
+export HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1 HF_DATASETS_OFFLINE=1
+unset HF_TOKEN HUGGING_FACE_HUB_TOKEN OPENAI_API_KEY ANTHROPIC_API_KEY \
+  GOOGLE_API_KEY GEMINI_API_KEY MISTRAL_API_KEY TOGETHER_API_KEY \
+  DEEPSEEK_API_KEY XAI_API_KEY
+unset URA_MODEL_ACQUISITION_PLAN_DIR URA_MODEL_ACQUISITION_PLAN \
+  URA_MODEL_ACQUISITION_PLAN_SHA256 URA_MODEL_ACQUISITION_RECEIPT \
+  URA_MODEL_ACQUISITION_RECEIPT_SHA256 URA_MODEL_ACQUISITION_STORE
+
+SOURCE_CONFIG="$PWD/experiments/source-instances.json"
+SOURCE_CONFIG_SHA256="$(sha256sum -- "$SOURCE_CONFIG" | awk '{print $1}')"
+PROJECT_RECEIPT="$URA_PROJECT_REVISION_MANIFEST"
+PROJECT_SHA256="$URA_PROJECT_REVISION_SHA256"
+SOURCE_RECEIPT="$URA_SOURCE_CONFORMANCE_MANIFEST"
+SOURCE_RECEIPT_SHA256="$URA_SOURCE_CONFORMANCE_SHA256"
+MODEL_STORE="$URA_MODEL_STORE"
+TRANSPORT_CACHE="$MODEL_STORE/.transport-cache"
+RECEIPTS_ROOT="$URA_WORK/runs/thesis/acquisition/phase5-core-${TAG}/receipts"
+PREFLIGHT_ROOT="$URA_WORK/runs/thesis/preflight"
+
+SCORE_GUARD='meta-llama/Llama-Guard-3-8B'
+SCORE_GUARD_REV='7327bd9f6efbbe6101dc6cc4736302b3cbb6e425'
+DEFENSE_GUARD='meta-llama/Llama-Guard-3-1B'
+DEFENSE_GUARD_REV='acf7aafa60f0410f8f42b1fa35e077d705892029'
+GROUP='model,source,risk,effective_modality,expected_behavior,attacker,source_policy_id,source_policy_version'
+
+TEXT_ARMS='strongreject_official,advbench_harmful,jailbreakbench_harmful,jailbreakbench_benign,harmbench_text,cyberseceval_mitre,cyberseceval_interpreter,cyberseceval_insecure_coding,saladbench_base,airbench_full,xstest_full,simplesafetytests_full,decodingtrust_stereotype'
+IMAGE_ARMS='mmsafety_official,jailbreakv_full,harmbench_multimodal,vlsbench_release,mossbench_official,siuo_release,figstep_full,mllmguard_privacy,mllmguard_bias,mllmguard_toxicity,mllmguard_legality,holisafe_full'
+ADAPTIVE_ARMS='strongreject_official,advbench_harmful,jailbreakbench_harmful,harmbench_text,cyberseceval_mitre,cyberseceval_interpreter,cyberseceval_insecure_coding'
+
+mkdir -p "$RECEIPTS_ROOT" "$TRANSPORT_CACHE"
+printf 'lane\tprojection_id\ttarget_calls\tjudge_calls\tlocal_guardrail_evaluations\thttp_attempts\tselected_clusters\tselected_records\n' > "$STATUS"
+
+json_fields() {
+  "$PY" - "$1" "$2" <<'PY'
+import json
+import sys
+
+path, kind = sys.argv[1:]
+lines = open(path, encoding="utf-8").read().splitlines()
+for line in reversed(lines):
+    try:
+        row = json.loads(line)
+    except json.JSONDecodeError:
+        continue
+    if kind == "plan" and {"plan_id", "plan_sha256"} <= row.keys():
+        print(row["plan_id"], row["plan_sha256"])
+        raise SystemExit(0)
+    if kind == "receipt" and {"receipt_id", "receipt_sha256", "downloaded_bytes"} <= row.keys():
+        print(row["receipt_id"], row["receipt_sha256"], row["downloaded_bytes"])
+        raise SystemExit(0)
+raise SystemExit(f"no {kind} result JSON in {path}")
+PY
+}
+
+summarize_projection() {
+  "$PY" - "$1" "$2" <<'PY'
+import json
+import pathlib
+import sys
+
+lane = sys.argv[1]
+root = pathlib.Path(sys.argv[2])
+paths = sorted(root.glob("lane-projection-*.lane-projection.json"))
+if len(paths) != 1:
+    raise SystemExit(f"{lane}: expected one lane projection, found {len(paths)}")
+row = json.loads(paths[0].read_text(encoding="utf-8"))
+if row.get("schema") != "ura-lane-projection/1" or row.get("status") != "complete":
+    raise SystemExit(f"{lane}: projection is not complete")
+calls = row["call_projection"]
+totals = row["selection"]["totals"]
+if calls["judge_calls"] != 0 or calls["http_attempts"] != 0:
+    raise SystemExit(f"{lane}: local projection unexpectedly exposes judge/HTTP calls")
+print("\t".join(map(str, (
+    lane,
+    row["projection_id"],
+    calls["target_calls"],
+    calls["judge_calls"],
+    calls["local_guardrail_evaluations"],
+    calls["http_attempts"],
+    totals["selected_clusters"],
+    totals["selected_records"],
+))))
+PY
+}
+
+run_preflight() {
+  local lane="$1" spec="$2" config="$3" attackers="$4" arms="$5"
+  local judges="$6" max_queries="$7" max_turns="$8" approximate="$9"
+  local config_sha plan_root run_root plan_log acquire_log run_log
+  local plan_id plan_sha receipt_id receipt_sha downloaded plan_path receipt_path
+  shift 9
+
+  config_sha="$(sha256sum -- "$config" | awk '{print $1}')"
+  plan_root="$PREFLIGHT_ROOT/${lane}-prelim-${TAG}/plan"
+  run_root="$PREFLIGHT_ROOT/${lane}-prelim-${TAG}/run"
+  test ! -e "${plan_root%/plan}"
+  mkdir -p "$plan_root"
+  plan_log="$CONTROL_ROOT/${lane}.plan.log"
+  acquire_log="$CONTROL_ROOT/${lane}.acquire.log"
+  run_log="$CONTROL_ROOT/${lane}.preflight.log"
+
+  local -a args=(
+    --project-revision "$PROJECT_RECEIPT"
+    --project-revision-sha256 "$PROJECT_SHA256"
+    --local "$spec"
+    --local-config "$config"
+    --local-config-sha256 "$config_sha"
+    --attackers "$attackers"
+    --judges "$judges"
+    --corpora "$arms"
+    --source-config "$SOURCE_CONFIG"
+    --source-config-sha256 "$SOURCE_CONFIG_SHA256"
+    --source-conformance "$SOURCE_RECEIPT"
+    --source-conformance-sha256 "$SOURCE_RECEIPT_SHA256"
+    --limit 0
+    --sample-seed 0
+    --seeds 0
+    --max-queries "$max_queries"
+    --max-turns "$max_turns"
+    --group "$GROUP"
+    --max-total-target-calls 400000
+    --max-total-http-attempts 0
+    --deadline-seconds 7776000
+    --out "$run_root"
+  )
+
+  if [[ "$judges" == 'rules,guardrail' ]]; then
+    args+=(
+      --guardrail-model "$SCORE_GUARD"
+      --guardrail-revision "$SCORE_GUARD_REV"
+      --guardrail-device cuda:1
+      --max-total-judge-calls 0
+    )
+  fi
+  if [[ "$approximate" == 'yes' ]]; then
+    args+=(--approximate-common-metrics)
+  fi
+  if (( "$#" )); then
+    args+=("$@")
+  fi
+
+  printf 'LANE_START=%s TIME=%s\n' "$lane" "$(date -Is)"
+  "$PY" -m experiments.run_matrix "${args[@]}" \
+    --preflight-only \
+    --model-acquisition-plan-only \
+    --model-acquisition-plan-dir "$plan_root" > "$plan_log" 2>&1
+  read -r plan_id plan_sha < <(json_fields "$plan_log" plan)
+  plan_path="$plan_root/${plan_id}.plan.json"
+  test -f "$plan_path" && test ! -L "$plan_path"
+  test "$(sha256sum -- "$plan_path" | awk '{print $1}')" = "$plan_sha"
+
+  "$PY" -m experiments.model_acquire \
+    --plan "$plan_path" \
+    --plan-sha256 "$plan_sha" \
+    --store "$MODEL_STORE" \
+    --receipts-dir "$RECEIPTS_ROOT" \
+    --transport-cache "$TRANSPORT_CACHE" \
+    --max-download-bytes 0 \
+    --min-free-bytes 1099511627776 \
+    --deadline-seconds 86400 > "$acquire_log" 2>&1
+  read -r receipt_id receipt_sha downloaded < <(json_fields "$acquire_log" receipt)
+  test "$downloaded" = 0
+  receipt_path="$RECEIPTS_ROOT/${receipt_id}.receipt.json"
+  test -f "$receipt_path" && test ! -L "$receipt_path"
+  test "$(sha256sum -- "$receipt_path" | awk '{print $1}')" = "$receipt_sha"
+
+  CUDA_VISIBLE_DEVICES=0,1 "$PY" -m experiments.rig_check "${args[@]}" \
+    --model-acquisition-plan "$plan_path" \
+    --model-acquisition-plan-sha256 "$plan_sha" \
+    --model-acquisition-receipt "$receipt_path" \
+    --model-acquisition-receipt-sha256 "$receipt_sha" \
+    --model-acquisition-store "$MODEL_STORE" > "$run_log" 2>&1
+
+  summarize_projection "$lane" "$run_root" | tee -a "$STATUS"
+  printf 'LANE_END=%s TIME=%s\n' "$lane" "$(date -Is)"
+}
+
+QWEN='vllm:Qwen/Qwen3-VL-8B-Instruct'
+QWEN_CFG="$PWD/experiments/local-qwen3-vl.json"
+BASE='vllm:llava-hf/llava-v1.6-mistral-7b-hf'
+BASE_CFG="$PWD/experiments/local-llava-base.json"
+RR='vllm:GraySwanAI/llava-v1.6-mistral-7b-hf-RR'
+RR_CFG="$PWD/experiments/local-llava-rr.json"
+
+run_preflight local-qwen3-vl-text-full "$QWEN" "$QWEN_CFG" replay "$TEXT_ARMS" rules,guardrail 1 1 yes
+run_preflight local-qwen3-vl-image-full "$QWEN" "$QWEN_CFG" replay "$IMAGE_ARMS" rules,guardrail 1 1 yes
+run_preflight local-llava-base-text-full "$BASE" "$BASE_CFG" replay "$TEXT_ARMS" rules,guardrail 1 1 yes
+run_preflight local-llava-base-image-full "$BASE" "$BASE_CFG" replay "$IMAGE_ARMS" rules,guardrail 1 1 yes
+run_preflight local-llava-rr-text-full "$RR" "$RR_CFG" replay "$TEXT_ARMS" rules,guardrail 1 1 yes
+run_preflight local-llava-rr-image-full "$RR" "$RR_CFG" replay "$IMAGE_ARMS" rules,guardrail 1 1 yes
+
+run_preflight rjudge-qwen3-vl "$QWEN" "$QWEN_CFG" replay rjudge_release rules 1 1 no
+run_preflight rjudge-llava-base "$BASE" "$BASE_CFG" replay rjudge_release rules 1 1 no
+run_preflight rjudge-llava-rr "$RR" "$RR_CFG" replay rjudge_release rules 1 1 no
+run_preflight gptgeochat-qwen3-vl "$QWEN" "$QWEN_CFG" replay gptgeochat_release rules 1 1 no
+run_preflight gptgeochat-llava-base "$BASE" "$BASE_CFG" replay gptgeochat_release rules 1 1 no
+run_preflight gptgeochat-llava-rr "$RR" "$RR_CFG" replay gptgeochat_release rules 1 1 no
+
+run_preflight crescendo-qwen3-vl "$QWEN" "$QWEN_CFG" crescendo "$ADAPTIVE_ARMS" rules,guardrail 4 4 yes
+run_preflight defense-local "$QWEN" "$QWEN_CFG" replay "$TEXT_ARMS" rules,guardrail 1 1 yes \
+  --defense both \
+  --defense-guard guardrail \
+  --defense-guardrail-model "$DEFENSE_GUARD" \
+  --defense-guardrail-revision "$DEFENSE_GUARD_REV" \
+  --defense-guardrail-device cuda:1
+
+printf 'PHASE5_CORE_COMPLETE=%s\n' "$(date -Is)"
+INNER
+)"
+
+tmux -L "$SOCKET" new-session -d -s "$SESSION" "bash -lc $(printf '%q' "$PAYLOAD")"
+
+printf 'SESSION=%s\n' "$SESSION"
+printf 'SOCKET=%s\n' "$SOCKET"
+printf 'ATTACH=tmux -L %s attach -t %s\n' "$SOCKET" "$SESSION"
+printf 'CONTROL_ROOT=%s\n' "$CONTROL_ROOT"
+printf 'LOG=%s/phase5-core.log\n' "$CONTROL_ROOT"
+printf 'EXIT_MARKER=%s/.exit\n' "$CONTROL_ROOT"
