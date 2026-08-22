@@ -746,8 +746,10 @@ def test_token_bearing_worker_environment_drops_unrelated_secrets_and_pythonpath
     monkeypatch.setenv("PYTHONPATH", "C:/attacker-controlled")
     monkeypatch.setenv("HF_ENDPOINT", "https://attacker.example")
     monkeypatch.setenv("HTTPS_PROXY", "https://user:secret@proxy.example")
+    monkeypatch.setenv("HF_HUB_DISABLE_XET", "1")
     environment = _safe_worker_environment()
     assert environment["HF_TOKEN"] == "hf_fixture"
+    assert environment["HF_HUB_DISABLE_XET"] == "1"
     assert "ANTHROPIC_API_KEY" not in environment
     assert "OPENAI_API_KEY" not in environment
     assert "PYTHONPATH" not in environment

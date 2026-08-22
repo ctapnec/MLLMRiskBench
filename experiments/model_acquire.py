@@ -810,10 +810,11 @@ def acquire(
 
 
 def _safe_worker_environment() -> dict[str, str]:
-    """Pass only runtime essentials and the two accepted Hub token names."""
+    """Pass runtime essentials, Hub tokens and the bounded transport policy."""
 
     allowed = {
         "HF_TOKEN",
+        "HF_HUB_DISABLE_XET",
         "HUGGING_FACE_HUB_TOKEN",
         "LANG",
         "LC_ALL",

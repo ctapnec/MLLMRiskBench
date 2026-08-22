@@ -2,10 +2,11 @@
 # pyproject.toml is the authoritative declaration; install with
 #   python -m pip install -e ".[dev,analysis,api,guardrail,local-vllm]"
 # This file mirrors those extras for operators who read or pin requirements by
-# hand. The core project dependencies are pydantic and psutil; everything else
-# below is imported lazily and is required only when the feature is used.
+# hand. The core project dependencies are NLTK, pydantic, and psutil; everything
+# else below is imported lazily and is required only when the feature is used.
 
 # --- core (required) ---
+nltk==3.9.1           # exact pinned BIPIA Punkt middle-insertion semantics
 pydantic>=2.7,<3
 psutil>=7.2,<8
 

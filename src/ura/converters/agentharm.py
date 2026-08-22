@@ -68,6 +68,18 @@ class AgentHarmConverter(BaseConverter):
                 grading_function = rec.get("grading_function")
                 benign = benign_file or bool(rec.get("benign", False))
                 row_id = rec.get("id", row_index)
+                original_id = rec.get("id_original")
+                if (
+                    isinstance(original_id, bool)
+                    or not isinstance(original_id, (str, int))
+                    or not str(original_id).strip()
+                ):
+                    raise CorpusFormatError(
+                        f"AgentHarm row {row_index} in {source_file} lacks id_original"
+                    )
+                source_cluster_id = (
+                    f"agentharm:{source_file.stem}:id_original:{original_id}"
+                )
                 out.append(dp(
                     id=f"agentharm:{source_file.stem}:{row_id}",
                     source="agentharm",
@@ -89,7 +101,9 @@ class AgentHarmConverter(BaseConverter):
                         "grading_function": grading_function,
                         "name": rec.get("name"),
                         "benign": benign,
-                        "id_original": rec.get("id_original"),
+                        "id_original": original_id,
+                        "source_cluster_id": source_cluster_id,
+                        "source_record_index": row_index,
                         "detailed_prompt": rec.get("detailed_prompt"),
                         "hint_included": rec.get("hint_included"),
                         "canary_guid": canary_guid,

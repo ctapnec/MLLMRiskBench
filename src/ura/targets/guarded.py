@@ -12,9 +12,16 @@ Pure-python when the guard is a :class:`~ura.judges.rules.RuleJudge`; with a
 """
 from __future__ import annotations
 
-from typing import Literal
+from typing import Literal, TypedDict
 
-from ..data_models import DataPoint, DialogTurn, Judgment, Response, RiskCategory
+from ..data_models import (
+    DataPoint,
+    DialogTurn,
+    JudgeLabel,
+    Judgment,
+    Response,
+    RiskCategory,
+)
 from ..judges.base import BaseJudge
 from ..judges.guardrail import GuardrailJudge
 from .base import BaseTarget
@@ -31,6 +38,23 @@ _GUARD_DP = DataPoint(
     id="__guard__", source="guard", modalities=["text"],
     risk_category=RiskCategory.JAILBREAK, expected_behavior="refuse",
 )
+
+_DefenseStage = Literal["input", "output"]
+
+
+class _DefenseJudgeAudit(TypedDict):
+    """Stable, bounded defense-verdict evidence persisted with a response."""
+
+    schema: Literal["ura-defense-judge-audit/1"]
+    stage: _DefenseStage
+    judge: str
+    label: JudgeLabel
+    model: str | None
+    model_revision: str | None
+    model_identity: str | None
+    device: str | None
+    guardrail_queried: bool | None
+    parsed: bool | None
 
 
 class GuardedTarget(BaseTarget):
@@ -75,7 +99,12 @@ class GuardedTarget(BaseTarget):
             preflight()
 
     def _blocked(
-        self, target: str, stage: str, *, seed: int | None = None
+        self,
+        target: str,
+        stage: _DefenseStage,
+        *,
+        seed: int | None = None,
+        defense_judge_audit: list[_DefenseJudgeAudit] | None = None,
     ) -> Response:
         return Response(
             attempt_id="__guard__",
@@ -90,8 +119,41 @@ class GuardedTarget(BaseTarget):
                 "requested_seed": seed,
                 "target_sampling_control": "not_queried",
                 "defense_block_template_id": GUARDED_BLOCK_TEMPLATE_ID,
+                "defense_judge_audit": list(defense_judge_audit or []),
             },
         )
+
+    def _judgment_audit(
+        self, verdict: Judgment, *, stage: _DefenseStage
+    ) -> _DefenseJudgeAudit:
+        """Retain bounded proof that the configured defense stage was queried.
+
+        A defense judgment is operational evidence, but its raw model output and
+        rationale can contain sensitive content. Persist only the exact local
+        model identity and a small set of typed execution facts. Rule and custom
+        guards use the same shape with null model fields.
+        """
+
+        raw = verdict.raw
+
+        def optional_text(value: object) -> str | None:
+            return value if isinstance(value, str) and value else None
+
+        queried = raw.get("guardrail_queried")
+        parsed = raw.get("parsed")
+        device = getattr(self.guard, "device", None)
+        return {
+            "schema": "ura-defense-judge-audit/1",
+            "stage": stage,
+            "judge": verdict.judge,
+            "label": verdict.label,
+            "model": optional_text(raw.get("model")),
+            "model_revision": optional_text(raw.get("model_revision")),
+            "model_identity": optional_text(raw.get("model_identity")),
+            "device": optional_text(device),
+            "guardrail_queried": queried if isinstance(queried, bool) else None,
+            "parsed": parsed if isinstance(parsed, bool) else None,
+        }
 
     @staticmethod
     def _require_valid_guard_verdict(verdict: Judgment) -> None:
@@ -111,6 +173,7 @@ class GuardedTarget(BaseTarget):
         self, dialog: list[DialogTurn], *, seed: int | None = None
     ) -> Response:
         evaluated_stages: list[str] = []
+        defense_judge_audit: list[_DefenseJudgeAudit] = []
         # Llama Guard 3 is a text classifier. A hash sentinel is useful when it
         # participates as a non-multimodal judge, but it cannot defend a request
         # whose safety semantics are carried by physical media. Reject the cell
@@ -143,8 +206,16 @@ class GuardedTarget(BaseTarget):
                 )
                 verdict = self.guard.judge(_GUARD_DP, probe)
             self._require_valid_guard_verdict(verdict)
+            defense_judge_audit.append(
+                self._judgment_audit(verdict, stage="input")
+            )
             if verdict.label == "violation":
-                return self._blocked(self.base.name, "input", seed=seed)
+                return self._blocked(
+                    self.base.name,
+                    "input",
+                    seed=seed,
+                    defense_judge_audit=defense_judge_audit,
+                )
             evaluated_stages.append("input")
 
         # 2) query the wrapped target; attribute the result to the guarded config
@@ -156,8 +227,16 @@ class GuardedTarget(BaseTarget):
         if self.mode in ("output", "both"):
             verdict = self.guard.judge(_GUARD_DP, response)
             self._require_valid_guard_verdict(verdict)
+            defense_judge_audit.append(
+                self._judgment_audit(verdict, stage="output")
+            )
             if verdict.label == "violation":
-                blocked = self._blocked(self.base.name, "output", seed=seed)
+                blocked = self._blocked(
+                    self.base.name,
+                    "output",
+                    seed=seed,
+                    defense_judge_audit=defense_judge_audit,
+                )
                 # The base target was queried and billed even though the guard
                 # suppresses its text. Preserve its sanitized identity,
                 # generation and transport audit so durable accounting and
@@ -185,6 +264,7 @@ class GuardedTarget(BaseTarget):
                     **response.raw,
                     "defense": "passed",
                     "defense_stages_evaluated": evaluated_stages,
+                    "defense_judge_audit": defense_judge_audit,
                     "base_target_queried": True,
                 }
             })

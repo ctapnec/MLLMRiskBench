@@ -399,6 +399,18 @@ def test_rule_guard_moderates_input_as_input() -> None:
     assert blocked.raw["defense"] == "blocked"
     assert blocked.raw["stage"] == "input"
     assert blocked.raw["target_sampling_control"] == "not_queried"
+    assert blocked.raw["defense_judge_audit"] == [{
+        "schema": "ura-defense-judge-audit/1",
+        "stage": "input",
+        "judge": "rules",
+        "label": "violation",
+        "model": None,
+        "model_revision": None,
+        "model_identity": None,
+        "device": None,
+        "guardrail_queried": None,
+        "parsed": None,
+    }]
 
     allowed = guarded.generate(
         [DialogTurn(role="user", content="Explain how a bicycle pump works")],
@@ -407,6 +419,18 @@ def test_rule_guard_moderates_input_as_input() -> None:
     assert allowed.raw["defense"] == "passed"
     assert allowed.raw["defense_stages_evaluated"] == ["input"]
     assert allowed.raw["target_sampling_control"] == "deterministic_mock"
+    assert allowed.raw["defense_judge_audit"] == [{
+        "schema": "ura-defense-judge-audit/1",
+        "stage": "input",
+        "judge": "rules",
+        "label": "safe",
+        "model": None,
+        "model_revision": None,
+        "model_identity": None,
+        "device": None,
+        "guardrail_queried": None,
+        "parsed": None,
+    }]
 
 
 def test_guarded_target_preserves_component_identity_preflight() -> None:
@@ -500,6 +524,151 @@ def test_guarded_target_rejects_unparsed_guard_verdict() -> None:
         GuardedTarget(MockTarget(), UnparsedGuard(), mode="output").generate(
             [DialogTurn(role="user", content="hello")]
         )
+
+
+@pytest.mark.parametrize(
+    (
+        "mode",
+        "input_label",
+        "output_label",
+        "expected_defense",
+        "expected_stages",
+    ),
+    [
+        ("input", "safe", "safe", "passed", [("input", "safe")]),
+        ("input", "violation", "safe", "blocked", [("input", "violation")]),
+        ("output", "safe", "safe", "passed", [("output", "safe")]),
+        ("output", "safe", "violation", "blocked", [("output", "violation")]),
+        ("both", "violation", "safe", "blocked", [("input", "violation")]),
+        (
+            "both",
+            "safe",
+            "violation",
+            "blocked",
+            [("input", "safe"), ("output", "violation")],
+        ),
+        (
+            "both",
+            "safe",
+            "safe",
+            "passed",
+            [("input", "safe"), ("output", "safe")],
+        ),
+    ],
+)
+def test_guarded_target_retains_sanitized_exact_model_query_audit(
+    mode: str,
+    input_label: str,
+    output_label: str,
+    expected_defense: str,
+    expected_stages: list[tuple[str, str]],
+) -> None:
+    revision = "d" * 40
+
+    class AuditedModelGuard:
+        name = "guardrail"
+        device = "cuda:1"
+
+        @staticmethod
+        def _verdict(stage: str, label: str) -> Judgment:
+            return Judgment(
+                attempt_id="guard",
+                judge="guardrail",
+                label=label,
+                score=1.0 if label == "violation" else 0.0,
+                rationale=f"secret rationale for {stage}",
+                raw={
+                    "confidence": 0.9,
+                    "parsed": True,
+                    "guardrail_queried": True,
+                    "model": "meta-llama/Llama-Guard-3-1B",
+                    "model_revision": revision,
+                    "model_identity": (
+                        f"meta-llama/Llama-Guard-3-1B@{revision}"
+                    ),
+                    "moderation_subject": stage,
+                    "output": f"secret raw classifier output for {stage}",
+                },
+            )
+
+        def judge_input(self, _dialog):
+            return self._verdict("user_input", input_label)
+
+        def judge(self, _datapoint, _response):
+            return self._verdict("assistant_response", output_label)
+
+    response = GuardedTarget(
+        MockTarget(), AuditedModelGuard(), mode=mode
+    ).generate([DialogTurn(role="user", content="Hello")], seed=7)
+
+    assert response.raw["defense"] == expected_defense
+    assert response.raw["defense_judge_audit"] == [
+        {
+            "schema": "ura-defense-judge-audit/1",
+            "stage": stage,
+            "judge": "guardrail",
+            "label": label,
+            "model": "meta-llama/Llama-Guard-3-1B",
+            "model_revision": revision,
+            "model_identity": f"meta-llama/Llama-Guard-3-1B@{revision}",
+            "device": "cuda:1",
+            "guardrail_queried": True,
+            "parsed": True,
+        }
+        for stage, label in expected_stages
+    ]
+    serialized = repr(response.raw)
+    assert "secret rationale" not in serialized
+    assert "secret raw classifier output" not in serialized
+
+
+def test_guarded_target_audit_preserves_explicit_guardrail_short_circuit() -> None:
+    revision = "e" * 40
+
+    class ShortCircuitedModelGuard:
+        name = "guardrail"
+        device = "cuda:1"
+
+        @staticmethod
+        def judge(_datapoint, _response):
+            return Judgment(
+                attempt_id="guard",
+                judge="guardrail",
+                label="refusal",
+                score=0.0,
+                rationale="secret provider-refusal rationale",
+                raw={
+                    "parsed": True,
+                    "guardrail_queried": False,
+                    "model": "meta-llama/Llama-Guard-3-1B",
+                    "model_revision": revision,
+                    "model_identity": (
+                        f"meta-llama/Llama-Guard-3-1B@{revision}"
+                    ),
+                    "output": "secret output must not survive",
+                },
+            )
+
+    response = GuardedTarget(
+        MockTarget(), ShortCircuitedModelGuard(), mode="output"
+    ).generate([DialogTurn(role="user", content="Hello")])
+
+    assert response.raw["defense"] == "passed"
+    assert response.raw["defense_judge_audit"] == [{
+        "schema": "ura-defense-judge-audit/1",
+        "stage": "output",
+        "judge": "guardrail",
+        "label": "refusal",
+        "model": "meta-llama/Llama-Guard-3-1B",
+        "model_revision": revision,
+        "model_identity": f"meta-llama/Llama-Guard-3-1B@{revision}",
+        "device": "cuda:1",
+        "guardrail_queried": False,
+        "parsed": True,
+    }]
+    serialized = repr(response.raw)
+    assert "secret provider-refusal rationale" not in serialized
+    assert "secret output must not survive" not in serialized
 
 
 _SOL_PRO_SPEC = (
