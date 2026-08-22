@@ -818,26 +818,96 @@ ENV
   ensure_env_line URA_REPO "$URA_ROOT"
   ensure_env_line URA_PY "\$URA_REPO/.venv/bin/python"
   # Operator source registry: seed it from the checked-in example when absent
-  # (section 4 of the runbook) and take the six aggregator entries - including
-  # their source_label strings, which source_conformance matches against the
-  # retained receipt - from that same example, never from literals here.
+  # (section 4 of the runbook), and add any missing aggregator entries from that
+  # example. Never rewrite an existing entry: source_conformance binds its
+  # converter, path_env, source_label, and split to the retained review receipt.
   ( cd "$URA_ROOT" && "$PY" - <<'PYEOF'
-import json, pathlib
+import json, os, pathlib, stat, tempfile
+
+def reject_duplicate_keys(pairs):
+    value = {}
+    for key, item in pairs:
+        if key in value:
+            raise ValueError(f"duplicate JSON key {key!r}")
+        value[key] = item
+    return value
+
+def reject_nonfinite(value):
+    raise ValueError(f"non-finite JSON number {value!r}")
+
+def load_object(path, raw=None):
+    try:
+        text = path.read_text(encoding="utf-8") if raw is None else raw
+        value = json.loads(
+            text,
+            object_pairs_hook=reject_duplicate_keys,
+            parse_constant=reject_nonfinite,
+        )
+    except (OSError, UnicodeError, ValueError) as exc:
+        raise SystemExit(f"{path} is not strict UTF-8 JSON: {exc}") from exc
+    if not isinstance(value, dict):
+        raise SystemExit(f"{path} is not a JSON object")
+    return value
+
+def atomic_write(path, value, mode):
+    payload = json.dumps(value, indent=2) + "\n"
+    descriptor, temp_name = tempfile.mkstemp(
+        dir=path.parent, prefix=f".{path.name}.", suffix=".tmp"
+    )
+    temp_path = pathlib.Path(temp_name)
+    try:
+        with os.fdopen(descriptor, "w", encoding="utf-8", newline="\n") as handle:
+            descriptor = -1
+            handle.write(payload)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.chmod(temp_path, mode)
+        os.replace(temp_path, path)
+        temp_path = None
+    finally:
+        if descriptor >= 0:
+            os.close(descriptor)
+        if temp_path is not None:
+            temp_path.unlink(missing_ok=True)
+
 example_path = pathlib.Path("experiments/rig/source-instances.example.json")
-example = json.loads(example_path.read_text(encoding="utf-8"))
+example = load_object(example_path)
 AGGREGATORS = ("saladbench_base", "airbench_full", "xstest_full",
                "simplesafetytests_full", "decodingtrust_stereotype", "holisafe_full")
 missing = [k for k in AGGREGATORS if k not in example]
 if missing:
     raise SystemExit(f"{example_path} lacks aggregator entries {missing}")
 p = pathlib.Path("experiments/source-instances.json")
-if p.exists():
-    d = json.loads(p.read_text(encoding="utf-8"))
-    if not isinstance(d, dict):
-        raise SystemExit(f"{p} is not a JSON object")
+try:
+    existing_stat = p.lstat()
+except FileNotFoundError:
+    existing_stat = None
+if existing_stat is not None:
+    if p.is_symlink() or not stat.S_ISREG(existing_stat.st_mode):
+        raise SystemExit(f"{p} must be a regular non-symlink file")
+    with p.open("r", encoding="utf-8") as handle:
+        opened_stat = os.fstat(handle.fileno())
+        if (
+            not stat.S_ISREG(opened_stat.st_mode)
+            or (opened_stat.st_dev, opened_stat.st_ino)
+            != (existing_stat.st_dev, existing_stat.st_ino)
+        ):
+            raise SystemExit(f"{p} changed while it was opened")
+        existing_text = handle.read()
+    final_stat = p.lstat()
+    if (
+        p.is_symlink()
+        or not stat.S_ISREG(final_stat.st_mode)
+        or (final_stat.st_dev, final_stat.st_ino)
+        != (opened_stat.st_dev, opened_stat.st_ino)
+    ):
+        raise SystemExit(f"{p} changed while it was read")
+    d = load_object(p, existing_text)
+    write_mode = stat.S_IMODE(opened_stat.st_mode)
     seeded = False
 else:
     d = dict(example)
+    write_mode = stat.S_IMODE(example_path.stat().st_mode)
     seeded = True
 changed = seeded
 for k in AGGREGATORS:
@@ -845,10 +915,12 @@ for k in AGGREGATORS:
         d[k] = example[k]; changed = True
         print(f"  added {k} from {example_path}")
     elif d[k] != example[k]:
-        d[k] = example[k]; changed = True
-        print(f"  reconciled {k} to the {example_path} entry")
+        print(
+            f"  preserved existing {k}; it differs from {example_path} "
+            "and may be receipt-bound"
+        )
 if changed:
-    p.write_text(json.dumps(d, indent=2) + "\n", encoding="utf-8")
+    atomic_write(p, d, write_mode)
 print("source-instances.json arms:", len(d), "(seeded from the example)" if seeded else "")
 PYEOF
   ) || { echo "  [FAIL] could not write experiments/source-instances.json"; echo "FAIL locators-registry" >> "$SESSION_LEDGER"; }

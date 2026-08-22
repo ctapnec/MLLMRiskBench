@@ -460,9 +460,10 @@ does not perform the rest of sections 2-4: it roots `URA_WORK` at
 does not check out `REF_URA` or create/validate the section 2 project-revision
 receipt (`distro/repin.sh <commit>` deploys one tracked commit and does that);
 it seeds `experiments/source-instances.json` from the full example only when
-that file is absent and otherwise merges the six aggregator entries into the
-existing file without touching other arms, so an operator-edited registry is
-never overwritten; it does not copy the exporter summaries into
+that file is absent and otherwise adds only missing aggregator entries. It
+never rewrites an existing operator-reviewed entry because the source receipt
+binds its converter, path, label, and split; it does not copy the exporter
+summaries into
 `runs/thesis/source-export-summaries/` or export
 `URA_JALMBENCH_EXPORT_SUMMARY_PATH`/`URA_VLSBENCH_EXPORT_SUMMARY_PATH`; and it
 binds GPTGeoChat at `$URA_CORPORA/GPTGeoChat/gptgeochat/human/test` (its

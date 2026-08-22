@@ -6,6 +6,7 @@ import os
 import py_compile
 import re
 import shutil
+import stat
 import subprocess
 import sys
 import time
@@ -1486,6 +1487,37 @@ EXAMPLE_REGISTRY = (
     / "source-instances.example.json"
 )
 
+
+def _distro_locator_merge_script() -> str:
+    text = DISTRO_INSTALL.read_text(encoding="utf-8")
+    section = text[
+        text.index("# Operator source registry") : text.index(
+            ') || { echo "  [FAIL] could not write experiments/source-instances.json"'
+        )
+    ]
+    return section.split("<<'PYEOF'\n", 1)[1].rsplit("\nPYEOF", 1)[0]
+
+
+def _prepare_locator_merge_repo(root: Path) -> tuple[dict[str, object], Path]:
+    example_path = root / "experiments" / "rig" / "source-instances.example.json"
+    example_path.parent.mkdir(parents=True)
+    shutil.copy(EXAMPLE_REGISTRY, example_path)
+    example = json.loads(example_path.read_text(encoding="utf-8"))
+    return example, root / "experiments" / "source-instances.json"
+
+
+def _run_distro_locator_merge(
+    root: Path, *, env: dict[str, str] | None = None
+) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        [sys.executable, "-c", _distro_locator_merge_script()],
+        cwd=root,
+        capture_output=True,
+        text=True,
+        env=env,
+        check=False,
+    )
+
 _STUB_PYTHON = r"""#!/usr/bin/env bash
 # Stub venv python for distro/install.sh tests: intercept the framework
 # runtime installer module (record argv, emulate the session contract),
@@ -1738,27 +1770,198 @@ def test_distro_locators_seed_registry_from_example_and_bind_repo_interpreter(tm
     assert "MISSING URA_BIPIA_TEST_QA_PATH" in first.stdout
     assert "(blocked: licensed NewsQA base" in first.stdout
 
-    # Drifted labels (the old hand-written literals) are reconciled to the
-    # example, a missing aggregator arm is added, and operator keys survive.
+    # Every established field may be bound to a retained source receipt, so the
+    # complete entry is preserved. A missing aggregator arm is seeded and
+    # operator keys survive.
     registry = json.loads(registry_path.read_text(encoding="utf-8"))
-    registry["xstest_full"]["source_label"] = "XSTest exaggerated-safety (aggregator)"
+    registry["xstest_full"] = {
+        "converter": "receipt-converter",
+        "path_env": "URA_RECEIPT_BOUND_PATH",
+        "source_label": "receipt-bound operator label",
+        "split": "receipt-reviewed-split",
+    }
     del registry["holisafe_full"]
     registry["custom_arm"] = {"converter": "xstest", "path_env": "URA_CUSTOM_PATH",
                               "source_label": "operator arm", "split": "x"}
     registry_path.write_text(json.dumps(registry, indent=2) + "\n", encoding="utf-8")
     second = sandbox.run("locators")
     assert second.returncode == 0, second.stdout + second.stderr
-    assert "reconciled xstest_full" in second.stdout
+    assert "preserved existing xstest_full" in second.stdout
     assert "added holisafe_full" in second.stdout
     merged = json.loads(registry_path.read_text(encoding="utf-8"))
-    assert {key: merged[key] for key in aggregator_keys} == {key: example[key] for key in aggregator_keys}
+    assert merged["xstest_full"] == registry["xstest_full"]
+    for key in aggregator_keys:
+        if key != "xstest_full":
+            assert merged[key] == example[key]
     assert merged["custom_arm"] == registry["custom_arm"]
-    assert "(aggregator)" not in json.dumps(merged)
     # the interpreter bindings and the locator block are appended exactly once
     campaign_env = (sandbox.home / ".ura_campaign_env").read_text(encoding="utf-8")
     assert campaign_env.count("export URA_REPO=") == 1
     assert campaign_env.count("export URA_PY=") == 1
     assert campaign_env.count("# --- URA source locators") == 1
+
+
+def test_distro_locator_merge_preserves_receipt_bound_existing_entries(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "repo"
+    example, registry_path = _prepare_locator_merge_repo(root)
+    registry = dict(example)
+    registry["xstest_full"] = {
+        "converter": "receipt-converter",
+        "path_env": "URA_RECEIPT_BOUND_PATH",
+        "source_label": "receipt-bound operator label",
+        "split": "receipt-reviewed-split",
+    }
+    del registry["holisafe_full"]
+    registry["custom_arm"] = {
+        "converter": "xstest",
+        "path_env": "URA_CUSTOM_PATH",
+        "source_label": "operator arm",
+        "split": "x",
+    }
+    registry_path.write_text(json.dumps(registry, indent=2) + "\n", encoding="utf-8")
+    if os.name != "nt":
+        registry_path.chmod(0o640)
+        original_mode = stat.S_IMODE(registry_path.stat().st_mode)
+
+    result = _run_distro_locator_merge(root)
+    assert result.returncode == 0, result.stdout + result.stderr
+    merged = json.loads(registry_path.read_text(encoding="utf-8"))
+    assert merged["xstest_full"] == registry["xstest_full"]
+    assert merged["holisafe_full"] == example["holisafe_full"]
+    assert merged["custom_arm"] == registry["custom_arm"]
+    assert "preserved existing xstest_full" in result.stdout
+    assert not list(registry_path.parent.glob(".source-instances.json.*.tmp"))
+    if os.name != "nt":
+        assert stat.S_IMODE(registry_path.stat().st_mode) == original_mode
+
+
+def test_distro_locator_merge_atomically_seeds_absent_registry(tmp_path: Path) -> None:
+    root = tmp_path / "repo"
+    example, registry_path = _prepare_locator_merge_repo(root)
+    example_path = root / "experiments" / "rig" / "source-instances.example.json"
+
+    result = _run_distro_locator_merge(root)
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert json.loads(registry_path.read_text(encoding="utf-8")) == example
+    assert "(seeded from the example)" in result.stdout
+    assert not list(registry_path.parent.glob(".source-instances.json.*.tmp"))
+    if os.name != "nt":
+        assert stat.S_IMODE(registry_path.stat().st_mode) == stat.S_IMODE(
+            example_path.stat().st_mode
+        )
+
+
+def test_distro_locator_merge_does_not_rewrite_complete_registry(tmp_path: Path) -> None:
+    root = tmp_path / "repo"
+    example, registry_path = _prepare_locator_merge_repo(root)
+    registry = dict(example)
+    registry["xstest_full"] = {
+        "converter": "receipt-converter",
+        "path_env": "URA_RECEIPT_BOUND_PATH",
+        "source_label": "receipt-bound operator label",
+        "split": "receipt-reviewed-split",
+    }
+    original = (json.dumps(registry, separators=(",", ":")) + "\n").encode()
+    registry_path.write_bytes(original)
+    before = registry_path.stat()
+
+    result = _run_distro_locator_merge(root)
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    after = registry_path.stat()
+    assert registry_path.read_bytes() == original
+    assert (after.st_dev, after.st_ino, after.st_mtime_ns) == (
+        before.st_dev,
+        before.st_ino,
+        before.st_mtime_ns,
+    )
+    assert "preserved existing xstest_full" in result.stdout
+    assert not list(registry_path.parent.glob(".source-instances.json.*.tmp"))
+
+
+def test_distro_locator_merge_rejects_duplicate_registry_keys_without_rewrite(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "repo"
+    example, registry_path = _prepare_locator_merge_repo(root)
+    without_holisafe = dict(example)
+    del without_holisafe["holisafe_full"]
+    base = json.dumps(without_holisafe, indent=2)
+    duplicate = json.dumps(example["xstest_full"], indent=2)
+    original = (
+        base[:-2] + ',\n  "xstest_full": ' + duplicate + "\n}\n"
+    ).encode()
+    registry_path.write_bytes(original)
+
+    result = _run_distro_locator_merge(root)
+
+    assert result.returncode != 0
+    assert "duplicate JSON key 'xstest_full'" in result.stderr
+    assert registry_path.read_bytes() == original
+    assert not list(registry_path.parent.glob(".source-instances.json.*.tmp"))
+
+
+def test_distro_locator_merge_rejects_non_regular_registry(tmp_path: Path) -> None:
+    root = tmp_path / "repo"
+    _example, registry_path = _prepare_locator_merge_repo(root)
+    registry_path.mkdir()
+
+    result = _run_distro_locator_merge(root)
+
+    assert result.returncode != 0
+    assert "must be a regular non-symlink file" in result.stderr
+
+
+def test_distro_locator_merge_rejects_symlink_registry(tmp_path: Path) -> None:
+    root = tmp_path / "repo"
+    example, registry_path = _prepare_locator_merge_repo(root)
+    target = root / "operator-registry.json"
+    original = (json.dumps(example, indent=2) + "\n").encode()
+    target.write_bytes(original)
+    try:
+        registry_path.symlink_to(target)
+    except (NotImplementedError, OSError) as exc:
+        pytest.skip(f"file symlinks are unavailable: {exc}")
+
+    result = _run_distro_locator_merge(root)
+
+    assert result.returncode != 0
+    assert "must be a regular non-symlink file" in result.stderr
+    assert registry_path.is_symlink()
+    assert target.read_bytes() == original
+
+
+def test_distro_locator_merge_keeps_original_when_atomic_replace_fails(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "repo"
+    example, registry_path = _prepare_locator_merge_repo(root)
+    registry = dict(example)
+    del registry["holisafe_full"]
+    original = (json.dumps(registry, indent=2) + "\n").encode()
+    registry_path.write_bytes(original)
+    hook = tmp_path / "replace-hook"
+    hook.mkdir()
+    (hook / "sitecustomize.py").write_text(
+        "import os\n"
+        "def fail_replace(source, destination):\n"
+        "    raise OSError('injected atomic replace failure')\n"
+        "os.replace = fail_replace\n",
+        encoding="utf-8",
+    )
+    env = os.environ.copy()
+    env["PYTHONPATH"] = str(hook)
+    env["PYTHONDONTWRITEBYTECODE"] = "1"
+
+    result = _run_distro_locator_merge(root, env=env)
+
+    assert result.returncode != 0
+    assert "injected atomic replace failure" in result.stderr
+    assert registry_path.read_bytes() == original
+    assert not list(registry_path.parent.glob(".source-instances.json.*.tmp"))
 
 
 def test_distro_installer_scopes_secrets_and_keeps_canonical_precedence() -> None:

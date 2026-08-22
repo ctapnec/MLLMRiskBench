@@ -65,9 +65,11 @@ content-addressed stores (14 private Python virtual environments and Promptfoo's
 private Node runtime) from `experiments/framework_runtime_lock.json`. Each of
 the 15 runtimes gets its own sequential `--only` named session, so one failure
 is recorded without hiding later runtime results; the aggregate phase still
-fails honestly. The installer writes the campaign locators and starts the
-console in tmux, or screen when tmux is unavailable. Re-running the same command
-safely resumes interrupted staged installs. The phase-by-phase form and recovery rules are in
+fails honestly. The installer writes the campaign locators, seeds only missing
+aggregator source-registry entries, and never rewrites receipt-bound operator
+choices. It starts the console in tmux, or screen when tmux is unavailable.
+Re-running the same command safely resumes interrupted staged installs. The
+phase-by-phase form and recovery rules are in
 [`distro/README.md`](distro/README.md) and use the same roots and lock as the
 [operator runbook](experiments/RUN_AND_RETURN.md).
 
