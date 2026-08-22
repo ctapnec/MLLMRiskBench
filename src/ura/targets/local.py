@@ -443,8 +443,9 @@ class VLLMTarget(BaseTarget):
         file descriptors are already being dismantled, which can turn an
         otherwise honest matrix exit into SIGABRT. vLLM 0.27's synchronous
         client also returns from ``shutdown`` immediately after signalling its
-        ZeroMQ output thread. The owning context must remain alive until that
-        thread has closed its sockets, so join it before releasing the engine.
+        ZeroMQ output thread. Its completion log therefore precedes the thread
+        and context teardown. Join the thread before destroying its dedicated
+        context, then release the engine only after both have quiesced.
         Older vLLM releases expose the hook on the facade, engine, or model
         executor, so retain those bounded compatibility fallbacks.
         """
@@ -504,6 +505,22 @@ class VLLMTarget(BaseTarget):
                         raise RuntimeError("vLLM output thread failed to quiesce") from None
                     if still_alive is not False:
                         raise RuntimeError("vLLM output thread failed to quiesce") from None
+                    try:
+                        context = getattr(candidate, "ctx", None)
+                    except Exception:
+                        raise RuntimeError("vLLM ZeroMQ context lookup failed") from None
+                    if context is not None:
+                        destroy = getattr(context, "destroy", None)
+                        if not callable(destroy):
+                            raise RuntimeError(
+                                "vLLM ZeroMQ context exposes no supported destroy contract"
+                            ) from None
+                        try:
+                            destroy(linger=0)
+                        except Exception:
+                            raise RuntimeError(
+                                "vLLM ZeroMQ context failed to terminate"
+                            ) from None
                 return
         # Do not retain a candidate, bound method, or third-party exception in
         # the traceback that crosses the private execution boundary.

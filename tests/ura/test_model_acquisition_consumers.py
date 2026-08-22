@@ -190,7 +190,64 @@ def test_vllm_close_joins_v027_output_thread_before_engine_release() -> None:
     assert target._llm is None
 
 
+def test_vllm_close_destroys_v027_zmq_context_after_output_thread_join() -> None:
+    events: list[object] = []
+
+    class Runtime:
+        def private_execution(self, role, callback):
+            events.append(f"private:{role}")
+            return callback()
+
+    class OutputThread:
+        alive = True
+
+        def join(self, *, timeout: float) -> None:
+            events.append(("output-thread-join", timeout))
+            self.alive = False
+
+        def is_alive(self) -> bool:
+            events.append("output-thread-is-alive")
+            return self.alive
+
+    class Context:
+        def destroy(self, *, linger: int) -> None:
+            events.append(("zmq-context-destroy", linger))
+
+    class Core:
+        def __init__(self) -> None:
+            self.output_queue_thread = OutputThread()
+            self.ctx = Context()
+
+        def shutdown(self) -> None:
+            events.append("engine-core-shutdown")
+
+        def __del__(self) -> None:
+            events.append("engine-core-release")
+
+    target = VLLMTarget(
+        "Org/Target",
+        revision="a" * 40,
+        modality_support=("text", "image"),
+        model_runtime=Runtime(),
+    )
+    target._llm = SimpleNamespace(llm_engine=SimpleNamespace(engine_core=Core()))
+
+    target.close()
+
+    assert events == [
+        "private:vllm_target",
+        "engine-core-shutdown",
+        ("output-thread-join", 30.0),
+        "output-thread-is-alive",
+        ("zmq-context-destroy", 0),
+        "engine-core-release",
+    ]
+    assert target._llm is None
+
+
 def test_vllm_close_fails_closed_when_output_thread_remains_alive() -> None:
+    context_destroyed = False
+
     class Runtime:
         def private_execution(self, _role, callback):
             return callback()
@@ -202,8 +259,15 @@ def test_vllm_close_fails_closed_when_output_thread_remains_alive() -> None:
         def is_alive(self) -> bool:
             return True
 
+    class Context:
+        def destroy(self, *, linger: int) -> None:
+            nonlocal context_destroyed
+            assert linger == 0
+            context_destroyed = True
+
     class Core:
         output_queue_thread = OutputThread()
+        ctx = Context()
 
         def shutdown(self) -> None:
             pass
@@ -219,6 +283,7 @@ def test_vllm_close_fails_closed_when_output_thread_remains_alive() -> None:
     with pytest.raises(RuntimeError, match="vLLM engine shutdown failed"):
         target.close()
 
+    assert context_destroyed is False
     assert target._llm is None
 
 
