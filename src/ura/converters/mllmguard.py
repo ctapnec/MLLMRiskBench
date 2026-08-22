@@ -161,8 +161,6 @@ class MLLMGuardConverter(BaseConverter):
                 "category_2": cat2,
                 "dimension": dim or None,
                 "source_cluster_id": cluster,
-                "source_record_index": i,
-                "source_dataset_revision": _PINNED_DATASET_REVISION,
             }
             for field, value in (
                 ("answer", answer),
@@ -176,6 +174,8 @@ class MLLMGuardConverter(BaseConverter):
                 required_metric, _, source_metric_semantics = truthfulness_config
                 pair_provenance = _PAIR_PROVENANCE[attack_family]
                 base_meta.update({
+                    "source_record_index": i,
+                    "source_dataset_revision": _PINNED_DATASET_REVISION,
                     "common_metrics_eligible": False,
                     "required_metric": required_metric,
                     "source_metric_semantics": source_metric_semantics,
