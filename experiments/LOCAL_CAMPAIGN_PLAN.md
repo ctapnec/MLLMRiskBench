@@ -71,9 +71,12 @@ audit; any future paid call (none planned here).
    refreshes the vLLM roster, writes and validates the project-revision receipt,
    rebinds `~/.ura_campaign_env`, revalidates the bound source receipt and
    restarts the console on `127.0.0.1:8642`.
-2. Main-venv isolation: `~/MLLMRiskBench/.venv/bin/python -m pip uninstall -y
-   pyrit spikee datasets jsonlines` (they were one-time build tools), then
-   `pip check` and the clean-env suite again. No other package changes.
+2. Main-venv isolation: `distro/install.sh deps` removes only legacy duplicate
+   `pyrit`, `spikee`, `datasets`, and `jsonlines` top-level installs, then runs
+   `pip check`. PyRIT and Spikee remain in their locked framework stores; BIPIA's
+   `datasets==2.14.7` builder lives in its own fully hashed, no-system-site-
+   packages environment under `$URA_WORK/support-venvs`. No framework is
+   discarded because of a main-environment conflict.
 3. Confirm the console dashboard shows the new pin, and that Build -> Runtimes
    lists the 15 lock entries with their current status.
 
@@ -87,10 +90,12 @@ and state-root conventions (`URA_FRAMEWORK_ENVS=$URA_WORK/framework-venvs`,
 `URA_FRAMEWORK_PYTHON` = the uv CPython 3.12.13 base interpreter):
 
 ```bash
-python -m experiments.framework_runtime_installer plan    --lock "$URA_FRAMEWORK_LOCK" --env-root "$URA_FRAMEWORK_ENVS" --state-root "$URA_FRAMEWORK_STATE"
-python -m experiments.framework_runtime_installer install --lock "$URA_FRAMEWORK_LOCK" --env-root "$URA_FRAMEWORK_ENVS" --state-root "$URA_FRAMEWORK_STATE" --python "$URA_FRAMEWORK_PYTHON"
-# wait for the named tmux session (ura_wait_session), resume after any interruption, then:
-python -m experiments.framework_runtime_installer verify  --lock "$URA_FRAMEWORK_LOCK" --env-root "$URA_FRAMEWORK_ENVS" --state-root "$URA_FRAMEWORK_STATE" --python "$URA_FRAMEWORK_PYTHON"
+distro/install.sh runtimes
+
+# The equivalent manual unit for one lock-derived name is:
+python -m experiments.framework_runtime_installer resume --only pyrit --lock "$URA_FRAMEWORK_LOCK" --env-root "$URA_FRAMEWORK_ENVS" --state-root "$URA_FRAMEWORK_STATE" --python "$URA_FRAMEWORK_PYTHON"
+# wait for its named tmux/screen session, then use the identical selection:
+python -m experiments.framework_runtime_installer verify --only pyrit --lock "$URA_FRAMEWORK_LOCK" --env-root "$URA_FRAMEWORK_ENVS" --state-root "$URA_FRAMEWORK_STATE" --python "$URA_FRAMEWORK_PYTHON"
 ```
 
 Run one installer session per framework with `--only <name>`, tolerating a
@@ -101,8 +106,12 @@ failing smoke blocked the twelve frameworks queued behind it, and a second,
 unrelated build defect only became visible once the installs were driven one at
 a time. Observed per-framework times on the rig range from about a minute
 (deepteam, spikee) to roughly half an hour (h4rm3l, nanogcg); the pip cache
-under `~/.cache/pip` is persistent, so a later reinstall after a lock change is
-substantially faster than the first pass. The console equivalent is Build -> Runtimes (Install / Resume /
+under `$URA_FRAMEWORK_ENVS/.cache/pip` and the npm cache under
+`$URA_FRAMEWORK_ENVS/.cache/npm` are explicitly bound outside every sealed
+store and persist despite each runtime's clean HOME. They affect transfer time,
+not admission. The distro phase derives all 15 names from the validated lock,
+continues after an isolated row failure, and returns an honest nonzero aggregate
+after attempting the complete inventory. The console equivalent is Build -> Runtimes (Install / Resume /
 Verify per row); use it for at least one batch so that the CLI and UI paths are
 both exercised. Disk: about 65 GiB under `$URA_FRAMEWORK_ENVS`. The Node 24.16.0
 runtime for Promptfoo is downloaded and signature-verified by the installer.
@@ -347,17 +356,35 @@ model resident on the pair of cards. Every lane uses the Level-2-compatible grou
 narrower groupings) and `--limit 0` (full corpus; admitted only because every
 target and judge is local; the Build field now emits it explicitly).
 
-The Gate 5 inventory also records structurally impossible target-source pairs
-as typed terminals. In particular, GPTGeoChat carries image-bearing source
-records, while all three local RWKV Ollama targets are text-only. Those three
-pairs are `unavailable` with reason
-`target_transport_text_only_for_image_source`; they never enter projection,
-canary or measured loops. With all planned local rows present, Gate 5 contains
-46 rows: 26 runnable and 20 typed terminal rows. If the optional local defense
-lane is unavailable, the profile is 25 runnable and 21 terminal rows.
+The Gate 5 inventory also records target-source pairs that cannot enter measured
+execution as typed terminals. GPTGeoChat carries image-bearing source records,
+while all three local RWKV Ollama targets are text-only. Those three pairs are
+`unavailable` with reason `target_transport_text_only_for_image_source`; they
+never enter projection, canary or measured loops.
+
+Four further rows retain completed no-call projections but are unavailable for
+canary and measured admission because the exact GraySwan RR checkpoint did not
+produce one complete response. Text and physical-image vLLM probes reached the
+declared 4,096-token generation cap with no stop, and a sealed Transformers
+control reproduced the checkpoint's two-token repetition while the exact LLaVA
+base emitted EOS. The shared create-only
+`ura-phase5-target-runtime-terminal/1` artifact binds the exact checkpoint,
+local config, acquisition identity, all four diagnostic roots and complete call
+accounting. Its reason code is
+`target_baseline_nontermination_at_generation_cap`; the affected rows are
+`local-llava-rr-text-full`, `local-llava-rr-image-full`,
+`rjudge-llava-rr` and `gptgeochat-llava-rr`. The sealed checkpoint remains
+installed. No truncated prefix, synthetic stop, altered decoding configuration,
+or replacement model is admitted as a response.
+
+With all planned local rows present, Gate 5 therefore contains 46 rows: 22
+runnable and 24 typed terminal rows. If the optional local defense lane is
+unavailable, the profile is 21 runnable and 25 terminal rows.
 
 Gate 5: projections and canaries retained under `runs/thesis/preflight` and
-`runs/thesis/diagnostics`; caps recorded in `runs/thesis/RUNNOTE.md`; all 46
+`runs/thesis/diagnostics`; the non-evidence GraySwan RR target-runtime terminal
+retained in its sealed Phase 5 engineering control root and bound from the Gate
+5 manifest and run note; caps recorded in `runs/thesis/RUNNOTE.md`; all 46
 planned rows represented exactly once as runnable or typed terminal.
 
 ## 7. Phase 6: measured local lanes (GPU days; sized by the canaries)
@@ -392,8 +419,8 @@ makes it affordable.
 
 | Tier | Lane | Targets | Attackers | Judges | Output root |
 |---|---|---|---|---|---|
-| 1 [10.1] | static text, all common text arms incl. the six aggregator arms | Qwen3-VL-8B; LLaVA base; LLaVA RR; rwkv via Ollama after transport admission | replay | rules,guardrail | `runs/thesis/runner/local-<model>-text` |
-| 1 [10.2] | static image, all common image arms | Qwen3-VL-8B; LLaVA base; LLaVA RR | replay | rules,guardrail | `runs/thesis/runner/local-<model>-image` |
+| 1 [10.1] | static text, all common text arms incl. the six aggregator arms | Qwen3-VL-8B; LLaVA base; rwkv via Ollama after transport admission; LLaVA RR retained as a typed target-runtime terminal | replay | rules,guardrail | `runs/thesis/runner/local-<model>-text` |
+| 1 [10.2] | static image, all common image arms | Qwen3-VL-8B; LLaVA base; LLaVA RR retained as a typed target-runtime terminal | replay | rules,guardrail | `runs/thesis/runner/local-<model>-image` |
 | 1 [10.3] | audio/video | none (no local audio/video renderer) | - | - | structural `N/A` |
 
 Conversion cost, measured on the rig (21 August 2026): the audio arm converts its
@@ -406,7 +433,7 @@ JALMBench invocation. Every other arm observes in under 15 s.
 | 3 [12.1] | live Crescendo (response-conditioned) | Qwen3-VL-8B | crescendo | rules,guardrail | `runs/thesis/runner/crescendo-<model>` |
 | 3 [12.2] | Runner-safe bridges | Qwen3-VL-8B | pyrit, deepteam, h4rm3l, spikee (sealed workers), nanogcg (verified precomputed suffixes only), purplellama (CyberSecEval arms), ideator (seed pairs) | rules,guardrail | `runs/thesis/runner/bridge-<attacker>` |
 | 3 [12.2] | prepared attacks | Qwen3-VL-8B | harmbench prepare (local source model) + replay; t3mp3st stays blocked-unpinned | rules,guardrail | `runs/thesis/runner/harmbench-replay` |
-| 4 [13] | same-base defense contrast | LLaVA base vs LLaVA RR (identical clusters, bytes, settings, judges) | replay | rules,guardrail | `runs/thesis/runner/local-llava-{base,rr}-*` |
+| 4 [13] | same-base defense contrast | non-estimable: LLaVA base runs, while the exact LLaVA RR target is a Gate 5 runtime terminal and makes no Phase 6 call | replay | rules,guardrail | typed Phase 7 unavailable artifacts, not a paired estimate |
 | 4 [13] | guard defense (text-only) | Qwen3-VL-8B with `--defense both --defense-guard guardrail` (1B guard on GPU 1 alongside the 8B scoring guard only if VRAM allows; otherwise N/A) | replay | rules,guardrail | `runs/thesis/runner/defense-local` |
 | 5 [14] | nine native engines | local OpenAI-compatible endpoint (`vllm serve` of Qwen3-VL-8B or the Ollama API) where the engine supports it | engine-native | engine-native | `$URA_WORK/runs/engineering/ura-native-*`, then `native_import` |
 
@@ -442,9 +469,12 @@ raised mid-lane.
 lifecycle, including complete, partial and failed Runner artifacts and their
 final eligibility or request-error records. The metric grid is deliberately
 narrower: `suite_summary`, `level2_report`, `judge_sensitivity`, `kappa`,
-`transfer_matrix --attacker replay`, and the two free paired comparisons
-[16]: LLaVA base vs RR on `mmsafety_official` (and each image arm), and
-replay vs Crescendo within Qwen3-VL-8B. The Level-2 export keeps rules-only
+`transfer_matrix --attacker replay`, and the free replay-vs-Crescendo paired
+comparison within Qwen3-VL-8B [16]. The planned LLaVA base-vs-RR comparison is
+represented instead by one strict `ura-phase7-non-estimable-contrast/1`
+artifact for each of the twelve planned image facets. Each binds the shared
+Gate 5 runtime-terminal descriptor and carries no estimate; no RR metric input
+or `paired_compare` invocation is constructed. The Level-2 export keeps rules-only
 and cascade (rules+guardrail) evaluator modes as separate compatibility keys.
 Only successful measured lanes enter those metric and Level-2 views; failed and
 partial lanes remain visible in Level-1 lifecycle evidence rather than being

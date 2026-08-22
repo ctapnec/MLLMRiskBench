@@ -1,0 +1,10 @@
+# BIPIA's retained upstream builder requires the legacy datasets loader.
+# Keep this support stack out of the URA Runner environment.
+datasets==2.14.7
+jsonlines==4.0.0
+# These three ABI-bearing packages reproduce the rig combination that built
+# the retained abstract corpus successfully.  Letting a future resolver choose
+# their newest releases would make this legacy loader an untested environment.
+numpy==2.3.5
+pandas==3.0.1
+pyarrow==23.0.1

@@ -20,6 +20,7 @@ import os
 from pathlib import Path
 import re
 import signal
+import stat
 import subprocess
 import sys
 import tempfile
@@ -94,6 +95,36 @@ CORE_LANES = (
     "gptgeochat-llava-rr",
     "crescendo-qwen3-vl",
     "defense-local",
+)
+RR_RUNTIME_TERMINAL_LANES = (
+    "local-llava-rr-text-full",
+    "local-llava-rr-image-full",
+    "rjudge-llava-rr",
+    "gptgeochat-llava-rr",
+)
+RR_RUNTIME_TERMINAL_LANE_SET = set(RR_RUNTIME_TERMINAL_LANES)
+RR_RUNTIME_TERMINAL_SCHEMA = "ura-phase5-target-runtime-terminal/1"
+RR_RUNTIME_TERMINAL_REASON_CODE = (
+    "target_baseline_nontermination_at_generation_cap"
+)
+RR_RUNTIME_TERMINAL_REASON = (
+    "The exact GraySwan RR checkpoint failed mandatory local-target admission: "
+    "text and physical-image vLLM probes reached the configured generation cap "
+    "without a stop, and an independent Transformers control reproduced the "
+    "non-terminating repetition while the same-base checkpoint emitted EOS."
+)
+RR_TARGET_SPEC = "vllm:GraySwanAI/llava-v1.6-mistral-7b-hf-RR"
+RR_TARGET_MODEL = "GraySwanAI/llava-v1.6-mistral-7b-hf-RR"
+RR_NON_ESTIMABLE_CONTRAST_SCHEMA = "ura-phase7-non-estimable-contrast/1"
+RR_OBSERVED_PROJECT_COMMIT = "5719a4ff4ba4a711fee433d1f9990c1d3cf2f8a3"
+RR_LOCAL_CONFIG_SHA256 = (
+    "3a53ab82405636116e9c95850dae1e0c1e394021317707c978bc35b4178ca334"
+)
+RR_LOCAL_CONFIG_BYTES = 246
+RR_TARGET_IDENTITY_MARKERS = (
+    RR_TARGET_MODEL,
+    "d11b3d7ae2fb21e984f197a83c15bbb0deb66b7e",
+    "hf-400da4b35ea290e28fcce5f33f8d4090",
 )
 DEFENSE_LOCAL_LANE = "defense-local"
 DEFENSE_LOCAL_CONDITIONAL_SCHEMA = "ura-phase5-defense-canary-na/1"
@@ -188,13 +219,18 @@ GATE5_NATIVE_TERMINALS = {
     },
 }
 EXPECTED_GATE5_TERMINALS = {
+    **{lane: "unavailable" for lane in RR_RUNTIME_TERMINAL_LANES},
     **BRIDGE_TERMINALS,
     **OLLAMA_TRANSPORT_TERMINALS,
     **BUILTIN_TERMINALS,
     **GATE5_NATIVE_TERMINALS,
 }
 EXPECTED_RUNNABLE_FAMILIES = {
-    **{lane: "core" for lane in CORE_LANES},
+    **{
+        lane: "core"
+        for lane in CORE_LANES
+        if lane not in RR_RUNTIME_TERMINAL_LANE_SET
+    },
     **{
         lane: "bridge"
         for lane in EXTENDED_LANES
@@ -203,6 +239,10 @@ EXPECTED_RUNNABLE_FAMILIES = {
     **{lane: "ollama" for lane in EXTENDED_LANES if "ollama" in lane},
 }
 EXPECTED_TERMINAL_FAMILIES = {
+    **{
+        lane: ("core", "unavailable")
+        for lane in RR_RUNTIME_TERMINAL_LANES
+    },
     "bridge-nanogcg": ("bridge", "unavailable"),
     "bridge-ideator": ("bridge", "unavailable"),
     "t3mp3st": ("bridge", "unavailable"),
@@ -360,18 +400,19 @@ EXPECTED_TERMINAL_ROWS = {
 }
 GATE5_SUCCESS_INVENTORY_COUNTS = {
     "total": 46,
-    "runnable": 26,
-    "typed_terminal": 20,
+    "runnable": 22,
+    "typed_terminal": 24,
     "conditional_na_lanes": [],
     "bridge_terminal": 3,
     "ollama_transport_terminal": 3,
     "portfolio_terminal": 5,
     "native_terminal": 9,
+    "target_runtime_terminal": 4,
 }
 GATE5_CONDITIONAL_INVENTORY_COUNTS = {
     **GATE5_SUCCESS_INVENTORY_COUNTS,
-    "runnable": 25,
-    "typed_terminal": 21,
+    "runnable": 21,
+    "typed_terminal": 25,
     "conditional_na_lanes": [DEFENSE_LOCAL_LANE],
 }
 GATE5_LOCAL_ONLY = {
@@ -747,25 +788,103 @@ def sha256_bytes(payload: bytes) -> str:
 
 
 def sha256_file(path: Path) -> str:
-    digest = hashlib.sha256()
-    with path.open("rb") as handle:
-        for block in iter(lambda: handle.read(1024 * 1024), b""):
-            digest.update(block)
-    return digest.hexdigest()
+    _, payload = _stable_regular_bytes(
+        path, label=f"SHA-256 input {path}", max_bytes=512 * 1024 * 1024
+    )
+    return hashlib.sha256(payload).hexdigest()
 
 
-def strict_object(path: Path) -> dict[str, Any]:
+def _stable_regular_bytes(
+    value: str | Path, *, label: str, max_bytes: int
+) -> tuple[Path, bytes]:
+    unresolved = Path(value).expanduser()
+    if not unresolved.is_absolute():
+        raise Phase7Error(f"{label} must be one absolute regular file")
+    try:
+        unresolved_entry = unresolved.lstat()
+        if stat.S_ISLNK(unresolved_entry.st_mode):
+            raise Phase7Error(f"{label} must not be a symlink")
+        path = unresolved.resolve(strict=True)
+        before = path.lstat()
+        flags = os.O_RDONLY | getattr(os, "O_BINARY", 0)
+        flags |= getattr(os, "O_NOFOLLOW", 0)
+        fd = os.open(path, flags)
+    except Phase7Error:
+        raise
+    except OSError as exc:
+        raise Phase7Error(f"{label} cannot be opened safely") from exc
+    try:
+        opened = os.fstat(fd)
+        if (
+            not stat.S_ISREG(unresolved_entry.st_mode)
+            or (unresolved_entry.st_dev, unresolved_entry.st_ino)
+            != (before.st_dev, before.st_ino)
+            or unresolved_entry.st_size != before.st_size
+            or unresolved_entry.st_mtime_ns != before.st_mtime_ns
+            or not stat.S_ISREG(before.st_mode)
+            or not stat.S_ISREG(opened.st_mode)
+            or before.st_size < 0
+            or before.st_size > max_bytes
+            or (before.st_dev, before.st_ino)
+            != (opened.st_dev, opened.st_ino)
+        ):
+            raise Phase7Error(f"{label} is not one bounded regular file")
+        chunks: list[bytes] = []
+        remaining = before.st_size
+        while remaining:
+            chunk = os.read(fd, min(1024 * 1024, remaining))
+            if not chunk:
+                break
+            chunks.append(chunk)
+            remaining -= len(chunk)
+        payload = b"".join(chunks)
+        after_fd = os.fstat(fd)
+    except Phase7Error:
+        raise
+    except OSError as exc:
+        raise Phase7Error(f"{label} changed while being read") from exc
+    finally:
+        os.close(fd)
+    try:
+        after_path = path.lstat()
+    except OSError as exc:
+        raise Phase7Error(f"{label} changed while being read") from exc
+    identity = lambda item: (  # noqa: E731 - compact stat identity projection
+        item.st_mode,
+        item.st_dev,
+        item.st_ino,
+        item.st_size,
+        item.st_mtime_ns,
+    )
+    if (
+        len(payload) != before.st_size
+        or not stat.S_ISREG(after_fd.st_mode)
+        or not stat.S_ISREG(after_path.st_mode)
+        or identity(before) != identity(opened)
+        or identity(opened) != identity(after_fd)
+        or identity(after_fd) != identity(after_path)
+    ):
+        raise Phase7Error(f"{label} changed while being read")
+    return path, payload
+
+
+def _strict_object_bytes(payload: bytes, *, label: str) -> dict[str, Any]:
     try:
         from ura.strict_json import strict_json_loads
 
-        value = strict_json_loads(path.read_bytes())
-    except Exception as exc:  # noqa: BLE001 - convert every strict parse failure
-        raise Phase7Error(
-            f"invalid strict JSON object at {path}: {type(exc).__name__}"
-        ) from exc
+        value = strict_json_loads(payload)
+    except Exception as exc:  # noqa: BLE001 - normalize strict parse failures
+        raise Phase7Error(f"invalid strict JSON object for {label}") from exc
     if not isinstance(value, dict):
-        raise Phase7Error(f"expected one JSON object at {path}")
+        raise Phase7Error(f"expected one JSON object for {label}")
     return value
+
+
+def strict_object(path: Path) -> dict[str, Any]:
+    _, payload = _stable_regular_bytes(
+        path, label=f"strict JSON object at {path}", max_bytes=512 * 1024 * 1024
+    )
+    return _strict_object_bytes(payload, label=str(path))
 
 
 def checked_file(
@@ -794,24 +913,95 @@ def checked_dir(value: str | Path, *, label: str) -> Path:
 
 
 def descriptor(path: Path, *, max_bytes: int = 512 * 1024 * 1024) -> dict[str, Any]:
-    path = checked_file(path, label="artifact", max_bytes=max_bytes)
-    size = path.stat().st_size
-    return {"path": str(path), "sha256": sha256_file(path), "bytes": size}
+    path, payload = _stable_regular_bytes(
+        path, label="artifact", max_bytes=max_bytes
+    )
+    return _descriptor_from_bytes(path, payload)
+
+
+def _descriptor_from_bytes(path: Path, payload: bytes) -> dict[str, Any]:
+    return {
+        "path": str(path),
+        "sha256": hashlib.sha256(payload).hexdigest(),
+        "bytes": len(payload),
+    }
 
 
 def descriptor_file(value: object, *, label: str) -> Path:
+    return descriptor_bytes(value, label=label)[0]
+
+
+def descriptor_bytes(value: object, *, label: str) -> tuple[Path, bytes]:
     if not isinstance(value, dict) or set(value) != {"path", "sha256", "bytes"}:
         raise Phase7Error(f"{label} has an invalid artifact descriptor")
-    path = checked_file(str(value.get("path", "")), label=label)
     expected_sha = value.get("sha256")
     expected_bytes = value.get("bytes")
     if HEX64.fullmatch(str(expected_sha)) is None:
         raise Phase7Error(f"{label} descriptor has an invalid SHA-256")
     if isinstance(expected_bytes, bool) or not isinstance(expected_bytes, int):
         raise Phase7Error(f"{label} descriptor has an invalid byte count")
-    if path.stat().st_size != expected_bytes or sha256_file(path) != expected_sha:
+    path, payload = _stable_regular_bytes(
+        str(value.get("path", "")), label=label, max_bytes=512 * 1024 * 1024
+    )
+    if len(payload) != expected_bytes or hashlib.sha256(payload).hexdigest() != expected_sha:
         raise Phase7Error(f"{label} descriptor no longer matches its bytes")
-    return path
+    return path, payload
+
+
+def descriptor_object(
+    value: object, *, label: str
+) -> tuple[Path, dict[str, Any]]:
+    path, payload = descriptor_bytes(value, label=label)
+    return path, _strict_object_bytes(payload, label=label)
+
+
+def _lane_projection_from_bytes(
+    path: Path, payload: bytes, *, expected_sha256: str, label: str
+) -> tuple[dict[str, Any], dict[str, object]]:
+    try:
+        from ura.lane_projection import lane_projection_bytes, validate_lane_projection
+    except Exception as exc:  # noqa: BLE001 - deployed projection boundary
+        raise Phase7Error("cannot import lane-projection validators") from exc
+    if (
+        not payload
+        or len(payload) > 4 * 1024 * 1024
+        or hashlib.sha256(payload).hexdigest() != expected_sha256
+    ):
+        raise Phase7Error(f"{label} byte identity changed")
+    projection = validate_lane_projection(_strict_object_bytes(payload, label=label))
+    if (
+        payload != lane_projection_bytes(projection)
+        or path.name != f"{projection['projection_id']}.lane-projection.json"
+    ):
+        raise Phase7Error(f"{label} canonical content identity changed")
+    return projection, {
+        "file": path.name,
+        "sha256": expected_sha256,
+        "bytes": len(payload),
+    }
+
+
+def _request_envelope_from_bytes(
+    path: Path, payload: bytes, *, label: str
+) -> tuple[dict[str, Any], dict[str, object]]:
+    try:
+        from ura.request_envelope import request_envelope_bytes, validate_request_envelope
+    except Exception as exc:  # noqa: BLE001 - deployed request-envelope boundary
+        raise Phase7Error("cannot import request-envelope validators") from exc
+    if not payload or len(payload) > 4 * 1024 * 1024:
+        raise Phase7Error(f"{label} is empty or exceeds its size limit")
+    envelope = validate_request_envelope(_strict_object_bytes(payload, label=label))
+    if (
+        payload != request_envelope_bytes(envelope)
+        or path.name != f"{envelope['envelope_id']}.request-envelope.json"
+    ):
+        raise Phase7Error(f"{label} canonical content identity changed")
+    return envelope, {
+        "envelope_id": envelope["envelope_id"],
+        "file": path.name,
+        "sha256": hashlib.sha256(payload).hexdigest(),
+        "bytes": len(payload),
+    }
 
 
 def descriptor_identity(value: object, *, label: str) -> tuple[str, int]:
@@ -925,6 +1115,744 @@ def require_exact_artifact_identities(
             raise Phase7Error(f"{label} {key} identity changed")
 
 
+def _runtime_terminal_descriptor_shape(value: object, *, label: str) -> None:
+    if (
+        not isinstance(value, dict)
+        or set(value) != {"path", "sha256", "bytes"}
+        or not isinstance(value.get("path"), str)
+        or not Path(value["path"]).is_absolute()
+        or HEX64.fullmatch(str(value.get("sha256", ""))) is None
+        or type(value.get("bytes")) is not int
+        or value["bytes"] <= 0
+    ):
+        raise Phase7Error(f"{label} descriptor changed")
+
+
+def _rr_projection_artifact_shapes(
+    projection_value: Mapping[str, Any], *, label: str
+) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any]]:
+    projection = projection_value.get("projection_artifact")
+    eligibility = projection_value.get("eligibility_artifact")
+    envelope = projection_value.get("request_envelope_artifact")
+    if (
+        not isinstance(projection, dict)
+        or set(projection) != {"path", "file", "sha256", "bytes"}
+        or not isinstance(projection.get("file"), str)
+        or projection.get("file") != Path(str(projection.get("path", ""))).name
+        or not isinstance(eligibility, dict)
+        or set(eligibility) != {"path", "sha256", "bytes"}
+        or not isinstance(envelope, dict)
+        or set(envelope)
+        != {"path", "envelope_id", "file", "sha256", "bytes"}
+        or not isinstance(envelope.get("file"), str)
+        or envelope.get("file") != Path(str(envelope.get("path", ""))).name
+        or envelope.get("envelope_id")
+        != projection_value.get("request_envelope_id")
+    ):
+        raise Phase7Error(f"{label} RR projection artifact descriptor changed")
+    _runtime_terminal_descriptor_shape(
+        {key: projection[key] for key in ("path", "sha256", "bytes")},
+        label=f"{label} RR projection artifact",
+    )
+    _runtime_terminal_descriptor_shape(
+        eligibility, label=f"{label} RR eligibility artifact"
+    )
+    _runtime_terminal_descriptor_shape(
+        {key: envelope[key] for key in ("path", "sha256", "bytes")},
+        label=f"{label} RR request-envelope artifact",
+    )
+    return projection, eligibility, envelope
+
+
+def _validate_rr_projection_artifact_binding(
+    projection_value: Mapping[str, Any], *, label: str
+) -> None:
+    projection_descriptor, eligibility_descriptor, envelope_descriptor = (
+        _rr_projection_artifact_shapes(projection_value, label=label)
+    )
+    try:
+        from ura.eligibility import validate_eligibility_plan
+        from ura.lane_projection import validate_lane_projection_binding
+
+        projection_path, projection_payload = descriptor_bytes(
+            {
+                key: projection_descriptor[key]
+                for key in ("path", "sha256", "bytes")
+            },
+            label=f"{label} RR projection artifact",
+        )
+        projection, observed_projection = _lane_projection_from_bytes(
+            projection_path,
+            projection_payload,
+            expected_sha256=projection_descriptor["sha256"],
+            label=f"{label} RR projection artifact",
+        )
+        if (
+            projection_descriptor
+            != {"path": str(projection_path), **observed_projection}
+            or projection.get("projection_id")
+            != projection_value.get("projection_id")
+            or projection.get("selection") != projection_value.get("selection")
+        ):
+            raise Phase7Error(f"{label} RR projection content identity changed")
+
+        eligibility_path, eligibility_payload = descriptor_bytes(
+            eligibility_descriptor, label=f"{label} RR eligibility artifact"
+        )
+        if eligibility_descriptor["path"] != str(eligibility_path):
+            raise Phase7Error(f"{label} RR eligibility path is not canonical")
+        eligibility = validate_eligibility_plan(
+            _strict_object_bytes(
+                eligibility_payload, label=f"{label} RR eligibility artifact"
+            )
+        )
+        eligibility_records = sum(
+            1
+            for line in eligibility_payload.decode("utf-8").splitlines()
+            if line.strip()
+        )
+        validate_lane_projection_binding(
+            projection,
+            eligibility_plan=eligibility,
+            eligibility_artifact={
+                "file": eligibility_path.name,
+                "sha256": eligibility_descriptor["sha256"],
+                "bytes": eligibility_descriptor["bytes"],
+                "records": eligibility_records,
+            },
+        )
+        if eligibility.get("plan_id") != projection_value.get("eligibility_plan_id"):
+            raise Phase7Error(f"{label} RR eligibility identity changed")
+
+        envelope_path, envelope_payload = descriptor_bytes(
+            {
+                key: envelope_descriptor[key]
+                for key in ("path", "sha256", "bytes")
+            },
+            label=f"{label} RR request-envelope artifact",
+        )
+        envelope, observed_envelope = _request_envelope_from_bytes(
+            envelope_path,
+            envelope_payload,
+            label=f"{label} RR request-envelope artifact",
+        )
+        if (
+            envelope_descriptor != {"path": str(envelope_path), **observed_envelope}
+            or envelope.get("envelope_id")
+            != projection_value.get("request_envelope_id")
+            or eligibility.get("bindings", {}).get("request_envelope_sha256")
+            != envelope_descriptor["sha256"]
+        ):
+            raise Phase7Error(f"{label} RR request-envelope identity changed")
+
+        calls = projection.get("call_projection", {})
+        if projection_value.get("projected_calls") != {
+            "trajectories": calls.get("trajectories"),
+            "target_calls": calls.get("target_calls"),
+            "model_judge_calls": calls.get("judge_calls"),
+            "local_guardrail_evaluations": calls.get(
+                "local_guardrail_evaluations"
+            ),
+            "http_attempts": calls.get("http_attempts"),
+        }:
+            raise Phase7Error(f"{label} RR projected-call artifact binding changed")
+    except Phase7Error:
+        raise
+    except Exception as exc:  # noqa: BLE001 - normalize strict artifact failures
+        raise Phase7Error(f"{label} RR projection artifact validation failed") from exc
+
+
+def validate_rr_runtime_project_continuity(
+    terminal_descriptor: Mapping[str, Any],
+    *,
+    project_root: Path,
+    label: str,
+) -> None:
+    _artifact_path, artifact_payload = descriptor_bytes(
+        terminal_descriptor,
+        label=f"{label} shared RR runtime terminal artifact",
+    )
+    artifact = _strict_object_bytes(
+        artifact_payload, label=f"{label} shared RR runtime terminal artifact"
+    )
+    target = artifact.get("target")
+    local_config = target.get("local_config") if isinstance(target, dict) else None
+    _runtime_terminal_descriptor_shape(
+        local_config, label=f"{label} RR local config"
+    )
+    local_config_path, local_config_payload = descriptor_bytes(
+        local_config, label=f"{label} RR local config"
+    )
+    expected_config_path = (
+        project_root / "experiments" / "local-llava-rr.json"
+    ).resolve(strict=True)
+    if (
+        local_config_path != expected_config_path
+        or local_config.get("sha256") != RR_LOCAL_CONFIG_SHA256
+        or local_config.get("bytes") != RR_LOCAL_CONFIG_BYTES
+    ):
+        raise Phase7Error(f"{label} RR local config identity changed")
+    document = _strict_object_bytes(
+        local_config_payload, label=f"{label} RR local config"
+    )
+    source = document.get(RR_TARGET_SPEC)
+    expected_source = {
+        "revision": "d11b3d7ae2fb21e984f197a83c15bbb0deb66b7e",
+        "modalities": ["text", "image"],
+        "max_tokens": 4096,
+        "gpu_memory_utilization": 0.85,
+        "tensor_parallel_size": 1,
+    }
+    if (
+        set(document) != {RR_TARGET_SPEC}
+        or source != expected_source
+        or not isinstance(source, dict)
+        or type(source.get("max_tokens")) is not int
+        or type(source.get("gpu_memory_utilization")) is not float
+        or type(source.get("tensor_parallel_size")) is not int
+    ):
+        raise Phase7Error(f"{label} RR local config content changed")
+    continuity = artifact.get("bindings", {}).get("semantic_source_continuity")
+    if (
+        not isinstance(continuity, dict)
+        or continuity.get("observed_project_commit")
+        != RR_OBSERVED_PROJECT_COMMIT
+        or git_output(
+            project_root,
+            "diff",
+            "--name-only",
+            RR_OBSERVED_PROJECT_COMMIT,
+            EXPECTED_COMMIT,
+            "--",
+            "src/ura/targets/local.py",
+            "experiments/run_matrix.py",
+        )
+    ):
+        raise Phase7Error(f"{label} RR semantic-source continuity is stale")
+
+
+def _validate_runtime_terminal_tree(value: object, *, label: str) -> None:
+    if (
+        not isinstance(value, dict)
+        or set(value) != {"path", "sha256", "bytes", "files"}
+        or not isinstance(value.get("path"), str)
+        or not Path(value["path"]).is_absolute()
+        or HEX64.fullmatch(str(value.get("sha256", ""))) is None
+        or type(value.get("bytes")) is not int
+        or value["bytes"] < 0
+        or type(value.get("files")) is not int
+        or value["files"] <= 0
+    ):
+        raise Phase7Error(f"{label} evidence-root descriptor changed")
+    root = checked_dir(value["path"], label=label)
+    if root != Path(value["path"]):
+        raise Phase7Error(f"{label} evidence-root path is not canonical")
+    root_before = root.lstat()
+    files: list[tuple[str, Path]] = []
+    members_before: dict[str, tuple[int, int, int, int, int]] = {}
+    for candidate in root.rglob("*"):
+        try:
+            entry = candidate.lstat()
+        except OSError as exc:
+            raise Phase7Error(f"{label} evidence member cannot be inspected") from exc
+        if stat.S_ISLNK(entry.st_mode):
+            raise Phase7Error(f"{label} evidence root contains a symlink")
+        if candidate.resolve(strict=True) != candidate:
+            raise Phase7Error(f"{label} evidence member is not canonical")
+        relative = candidate.relative_to(root).as_posix()
+        members_before[relative] = (
+            entry.st_mode,
+            entry.st_dev,
+            entry.st_ino,
+            entry.st_size,
+            entry.st_mtime_ns,
+        )
+        if stat.S_ISDIR(entry.st_mode):
+            continue
+        if not stat.S_ISREG(entry.st_mode):
+            raise Phase7Error(f"{label} evidence root contains a non-file")
+        files.append((relative, candidate))
+    files.sort(key=lambda item: item[0])
+    digest = hashlib.sha256()
+    total = 0
+    for relative, path in files:
+        observed_path, payload = _stable_regular_bytes(
+            path,
+            label=f"{label} evidence member {relative}",
+            max_bytes=max(value["bytes"], 1),
+        )
+        if observed_path != path:
+            raise Phase7Error(f"{label} evidence member changed while reading")
+        size = len(payload)
+        file_sha = hashlib.sha256(payload).hexdigest()
+        digest.update(relative.encode("utf-8"))
+        digest.update(b"\0")
+        digest.update(str(size).encode("ascii"))
+        digest.update(b"\0")
+        digest.update(file_sha.encode("ascii"))
+        digest.update(b"\n")
+        total += size
+    members_after: dict[str, tuple[int, int, int, int, int]] = {}
+    for candidate in root.rglob("*"):
+        try:
+            entry = candidate.lstat()
+        except OSError as exc:
+            raise Phase7Error(f"{label} evidence member cannot be reinspected") from exc
+        if stat.S_ISLNK(entry.st_mode):
+            raise Phase7Error(f"{label} evidence root contains a symlink")
+        if (
+            not stat.S_ISDIR(entry.st_mode)
+            and not stat.S_ISREG(entry.st_mode)
+        ):
+            raise Phase7Error(f"{label} evidence root contains a non-file")
+        if candidate.resolve(strict=True) != candidate:
+            raise Phase7Error(f"{label} evidence member is not canonical")
+        members_after[candidate.relative_to(root).as_posix()] = (
+            entry.st_mode,
+            entry.st_dev,
+            entry.st_ino,
+            entry.st_size,
+            entry.st_mtime_ns,
+        )
+    root_after = root.lstat()
+    if (
+        members_after != members_before
+        or not stat.S_ISDIR(root_after.st_mode)
+        or (root_before.st_dev, root_before.st_ino, root_before.st_mtime_ns)
+        != (root_after.st_dev, root_after.st_ino, root_after.st_mtime_ns)
+    ):
+        raise Phase7Error(f"{label} evidence root changed while reading")
+    if (
+        value["files"] != len(files)
+        or value["bytes"] != total
+        or value["sha256"] != digest.hexdigest()
+    ):
+        raise Phase7Error(f"{label} evidence-root tree identity changed")
+
+
+def validate_rr_runtime_terminal_rows(
+    by_lane: Mapping[str, Mapping[str, Any]],
+    *,
+    label: str,
+    validate_artifact: bool = True,
+) -> dict[str, Any]:
+    marker = {"status": "UNAVAILABLE", "value": None}
+    row_fields = {
+        "lane_id",
+        "family",
+        "disposition",
+        "reason_code",
+        "reason",
+        "projection",
+        "canary",
+        "final_preflight",
+        "approved_caps",
+    }
+    shared: dict[str, Any] | None = None
+    projections: list[dict[str, Any]] = []
+    for lane in RR_RUNTIME_TERMINAL_LANES:
+        row = by_lane.get(lane)
+        canary = row.get("canary") if isinstance(row, Mapping) else None
+        projection = row.get("projection") if isinstance(row, Mapping) else None
+        projection_value = (
+            projection.get("value") if isinstance(projection, Mapping) else None
+        )
+        if (
+            not isinstance(row, dict)
+            or set(row) != row_fields
+            or row.get("lane_id") != lane
+            or row.get("family") != "core"
+            or row.get("disposition") != "unavailable"
+            or row.get("reason_code") != RR_RUNTIME_TERMINAL_REASON_CODE
+            or row.get("reason") != RR_RUNTIME_TERMINAL_REASON
+            or not isinstance(projection, dict)
+            or set(projection) != {"status", "value"}
+            or projection.get("status") != "passed"
+            or not isinstance(projection_value, dict)
+            or set(projection_value)
+            != {
+                "projection_id",
+                "projection_artifact",
+                "eligibility_plan_id",
+                "eligibility_artifact",
+                "request_envelope_id",
+                "request_envelope_artifact",
+                "selection",
+                "projected_calls",
+            }
+            or row.get("final_preflight") != marker
+            or row.get("approved_caps") != marker
+            or not isinstance(canary, dict)
+            or set(canary)
+            != {"status", "value", "target_runtime_terminal_artifact"}
+            or canary.get("status") != "UNAVAILABLE"
+            or canary.get("value") is not None
+        ):
+            raise Phase7Error(f"{label} RR runtime terminal row changed: {lane}")
+        for field in (
+            "projection_id",
+            "eligibility_plan_id",
+            "request_envelope_id",
+        ):
+            if (
+                not isinstance(projection_value.get(field), str)
+                or not projection_value[field].strip()
+            ):
+                raise Phase7Error(
+                    f"{label} RR projection identity changed: {lane}/{field}"
+                )
+        _rr_projection_artifact_shapes(
+            projection_value, label=f"{label} RR projection {lane}"
+        )
+        projected_calls = projection_value.get("projected_calls")
+        if (
+            not isinstance(projection_value.get("selection"), dict)
+            or not projection_value["selection"]
+            or not isinstance(projected_calls, dict)
+            or set(projected_calls)
+            != {
+                "trajectories",
+                "target_calls",
+                "model_judge_calls",
+                "local_guardrail_evaluations",
+                "http_attempts",
+            }
+            or any(
+                type(projected_calls.get(field)) is not int
+                or projected_calls[field] < 0
+                for field in projected_calls
+            )
+            or projected_calls["trajectories"] <= 0
+            or projected_calls["target_calls"] <= 0
+            or projected_calls["model_judge_calls"] != 0
+            or projected_calls["http_attempts"] != 0
+        ):
+            raise Phase7Error(f"{label} RR projection accounting changed: {lane}")
+        if validate_artifact:
+            _validate_rr_projection_artifact_binding(
+                projection_value, label=f"{label} RR projection {lane}"
+            )
+        projections.append(dict(projection_value))
+        raw = canary.get("target_runtime_terminal_artifact")
+        _runtime_terminal_descriptor_shape(
+            raw, label=f"{label} RR runtime terminal {lane}"
+        )
+        if shared is None:
+            shared = dict(raw)
+        elif raw != shared:
+            raise Phase7Error(
+                f"{label} RR runtime terminals do not share one evidence artifact"
+            )
+    if shared is None:
+        raise Phase7Error(f"{label} RR runtime terminal evidence is absent")
+    if any(
+        projections[left] == projections[right]
+        for left in range(len(projections))
+        for right in range(left + 1, len(projections))
+    ):
+        raise Phase7Error(f"{label} RR projections are not lane-specific")
+    if not validate_artifact:
+        return shared
+
+    artifact_path, artifact_payload = descriptor_bytes(
+        shared, label=f"{label} shared RR runtime terminal artifact"
+    )
+    artifact = _strict_object_bytes(
+        artifact_payload, label=f"{label} shared RR runtime terminal artifact"
+    )
+    if set(artifact) != {
+        "schema",
+        "status",
+        "disposition",
+        "reason_code",
+        "reason",
+        "classified_at_utc",
+        "target",
+        "bindings",
+        "observations",
+        "call_accounting",
+        "applies_to_lanes",
+        "evidence_eligible",
+    }:
+        raise Phase7Error(f"{label} RR runtime terminal artifact fields changed")
+    if (
+        artifact.get("schema") != RR_RUNTIME_TERMINAL_SCHEMA
+        or artifact.get("status") != "unavailable"
+        or artifact.get("disposition") != "unavailable"
+        or artifact.get("reason_code") != RR_RUNTIME_TERMINAL_REASON_CODE
+        or artifact.get("reason") != RR_RUNTIME_TERMINAL_REASON
+        or re.fullmatch(
+            r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z",
+            str(artifact.get("classified_at_utc", "")),
+        )
+        is None
+        or artifact.get("applies_to_lanes") != list(RR_RUNTIME_TERMINAL_LANES)
+        or artifact.get("evidence_eligible") is not False
+    ):
+        raise Phase7Error(f"{label} RR runtime terminal classification changed")
+
+    target = artifact.get("target")
+    if (
+        not isinstance(target, dict)
+        or set(target)
+        != {
+            "spec",
+            "model",
+            "revision",
+            "resource_id",
+            "runtime",
+            "runtime_version",
+            "modalities",
+            "configured_max_tokens",
+            "local_config",
+        }
+        or target.get("spec") != RR_TARGET_SPEC
+        or target.get("model") != RR_TARGET_MODEL
+        or target.get("revision") != "d11b3d7ae2fb21e984f197a83c15bbb0deb66b7e"
+        or target.get("resource_id") != "hf-400da4b35ea290e28fcce5f33f8d4090"
+        or target.get("runtime") != "vllm"
+        or target.get("runtime_version") != "0.27.1"
+        or target.get("modalities") != ["text", "image"]
+        or type(target.get("configured_max_tokens")) is not int
+        or target.get("configured_max_tokens") != 4096
+    ):
+        raise Phase7Error(f"{label} RR runtime terminal target changed")
+    _runtime_terminal_descriptor_shape(
+        target.get("local_config"), label=f"{label} RR local config"
+    )
+    descriptor_file(target["local_config"], label=f"{label} RR local config")
+
+    bindings = artifact.get("bindings")
+    if (
+        not isinstance(bindings, dict)
+        or set(bindings)
+        != {
+            "classification_project_commit",
+            "framework_lock_sha256",
+            "project_revision",
+            "semantic_source_continuity",
+            "evidence_roots",
+        }
+        or bindings.get("classification_project_commit") != EXPECTED_COMMIT
+        or bindings.get("framework_lock_sha256") != EXPECTED_FRAMEWORK_LOCK
+    ):
+        raise Phase7Error(f"{label} RR runtime terminal bindings changed")
+    _runtime_terminal_descriptor_shape(
+        bindings.get("project_revision"), label=f"{label} project revision"
+    )
+    descriptor_file(
+        bindings["project_revision"], label=f"{label} project revision"
+    )
+    continuity = bindings.get("semantic_source_continuity")
+    if (
+        not isinstance(continuity, dict)
+        or set(continuity)
+        != {"observed_project_commit", "unchanged_paths", "git_diff_empty"}
+        or continuity.get("observed_project_commit")
+        != RR_OBSERVED_PROJECT_COMMIT
+        or continuity.get("unchanged_paths")
+        != ["src/ura/targets/local.py", "experiments/run_matrix.py"]
+        or continuity.get("git_diff_empty") is not True
+    ):
+        raise Phase7Error(f"{label} RR semantic-source continuity changed")
+    evidence_roots = bindings.get("evidence_roots")
+    evidence_keys = {
+        "text_vllm_4096",
+        "image_vllm_4096",
+        "vllm_token_tail_512",
+        "transformers_reference_512",
+    }
+    if not isinstance(evidence_roots, dict) or set(evidence_roots) != evidence_keys:
+        raise Phase7Error(f"{label} RR evidence-root inventory changed")
+    for name, value in evidence_roots.items():
+        _validate_runtime_terminal_tree(value, label=f"{label} RR {name}")
+
+    observations = artifact.get("observations")
+    if not isinstance(observations, dict) or set(observations) != evidence_keys:
+        raise Phase7Error(f"{label} RR observation inventory changed")
+    text_probe = observations["text_vllm_4096"]
+    image_probe = observations["image_vllm_4096"]
+    tail = observations["vllm_token_tail_512"]
+    reference = observations["transformers_reference_512"]
+    if not isinstance(text_probe, dict) or set(text_probe) != {
+        "modality", "corpus", "sample_seeds", "max_tokens",
+        "finish_reasons", "stop_reasons", "successful_responses",
+        "error_artifacts",
+    }:
+        raise Phase7Error(f"{label} RR text observation fields changed")
+    if (
+        text_probe.get("modality") != "text"
+        or text_probe.get("corpus") != "strongreject_official"
+        or text_probe.get("sample_seeds") != [0, 1, 8]
+        or type(text_probe.get("max_tokens")) is not int
+        or text_probe.get("max_tokens") != 4096
+        or text_probe.get("finish_reasons") != ["length", "length", "length"]
+        or text_probe.get("stop_reasons") != [None, None, None]
+        or text_probe.get("successful_responses") != 0
+        or not isinstance(text_probe.get("error_artifacts"), list)
+        or len(text_probe["error_artifacts"]) != 3
+    ):
+        raise Phase7Error(f"{label} RR text observation changed")
+    for index, raw in enumerate(text_probe["error_artifacts"]):
+        _runtime_terminal_descriptor_shape(
+            raw, label=f"{label} RR text error {index}"
+        )
+        error_path = descriptor_file(raw, label=f"{label} RR text error {index}")
+        if not is_beneath(error_path, Path(evidence_roots["text_vllm_4096"]["path"])):
+            raise Phase7Error(f"{label} RR text error escaped its evidence root")
+    if not isinstance(image_probe, dict) or set(image_probe) != {
+        "modality", "corpus", "sample_seed", "max_tokens", "finish_reason",
+        "stop_reason", "successful_responses", "error_artifact",
+    }:
+        raise Phase7Error(f"{label} RR image observation fields changed")
+    if (
+        image_probe.get("modality") != "image"
+        or image_probe.get("corpus") != "harmbench_multimodal"
+        or type(image_probe.get("sample_seed")) is not int
+        or image_probe.get("sample_seed") != 1
+        or type(image_probe.get("max_tokens")) is not int
+        or image_probe.get("max_tokens") != 4096
+        or image_probe.get("finish_reason") != "length"
+        or image_probe.get("stop_reason") is not None
+        or image_probe.get("successful_responses") != 0
+    ):
+        raise Phase7Error(f"{label} RR image observation changed")
+    _runtime_terminal_descriptor_shape(
+        image_probe.get("error_artifact"), label=f"{label} RR image error"
+    )
+    image_error_path = descriptor_file(
+        image_probe["error_artifact"], label=f"{label} RR image error"
+    )
+    if not is_beneath(
+        image_error_path, Path(evidence_roots["image_vllm_4096"]["path"])
+    ):
+        raise Phase7Error(f"{label} RR image error escaped its evidence root")
+
+    if not isinstance(tail, dict) or set(tail) != {
+        "probe_schema", "max_tokens", "prompt_tokens", "completion_tokens",
+        "finish_reason", "stop_reason", "unique_completion_tokens",
+        "most_common_token_counts", "special_token_ids", "special_token_counts",
+        "text_sha256", "probe_log",
+    }:
+        raise Phase7Error(f"{label} RR token-tail fields changed")
+    if (
+        tail.get("probe_schema") != "ura-engineering-token-tail-probe/1"
+        or tail.get("max_tokens") != 512
+        or tail.get("prompt_tokens") != 21
+        or tail.get("completion_tokens") != 512
+        or tail.get("finish_reason") != "length"
+        or tail.get("stop_reason") is not None
+        or tail.get("unique_completion_tokens") != 2
+        or tail.get("most_common_token_counts") != [[644, 501], [22627, 11]]
+        or tail.get("special_token_ids")
+        != {"bos": 1, "eos": 2, "pad": 32001, "unk": 0}
+        or tail.get("special_token_counts")
+        != {"bos": 0, "eos": 0, "pad": 0, "unk": 0}
+        or tail.get("text_sha256")
+        != "277aada87524bc3de88d8b7286ea6653a7b36a94ba08d2ab7211411f9cb6ebdb"
+    ):
+        raise Phase7Error(f"{label} RR token-tail evidence changed")
+    _runtime_terminal_descriptor_shape(
+        tail.get("probe_log"), label=f"{label} RR token-tail log"
+    )
+    tail_log_path = descriptor_file(
+        tail["probe_log"], label=f"{label} RR token-tail log"
+    )
+    if (
+        tail_log_path.name != "probe.log"
+        or tail_log_path.parent
+        != Path(evidence_roots["vllm_token_tail_512"]["path"])
+    ):
+        raise Phase7Error(f"{label} RR token-tail log location changed")
+
+    if not isinstance(reference, dict) or set(reference) != {
+        "probe_schema", "generation", "base", "rr", "probe_log",
+    }:
+        raise Phase7Error(f"{label} RR Transformers reference fields changed")
+    if (
+        reference.get("probe_schema")
+        != "ura-engineering-transformers-termination-probe/1"
+        or reference.get("generation")
+        != {"backend": "transformers", "do_sample": False, "max_new_tokens": 512, "seed": 0}
+        or reference.get("base")
+        != {
+            "label": "base",
+            "resource_id": "hf-d9e60d9f6c16de2e8fb9d9e08389c44a",
+            "prompt_tokens": 20,
+            "completion_tokens": 226,
+            "last_token_is_eos": True,
+            "eos_token_id": 2,
+            "eos_token_count": 1,
+            "text_sha256": "7d966860772f8185567a9c1742536f823a49facfadaae6847a97069ddc011499",
+        }
+        or reference.get("rr")
+        != {
+            "label": "rr",
+            "resource_id": "hf-400da4b35ea290e28fcce5f33f8d4090",
+            "prompt_tokens": 20,
+            "completion_tokens": 512,
+            "last_token_is_eos": False,
+            "eos_token_id": 2,
+            "eos_token_count": 0,
+            "unique_completion_tokens": 2,
+            "most_common_token_counts": [[644, 503], [22627, 9]],
+            "text_sha256": "1f8e655ab40cbcd5a5ef23839d6845bd7aaa24ce7d693cfb29b077af590d1bbf",
+        }
+    ):
+        raise Phase7Error(f"{label} RR Transformers control evidence changed")
+    _runtime_terminal_descriptor_shape(
+        reference.get("probe_log"), label=f"{label} RR Transformers log"
+    )
+    reference_log_path = descriptor_file(
+        reference["probe_log"], label=f"{label} RR Transformers log"
+    )
+    if (
+        reference_log_path.name != "probe.log"
+        or reference_log_path.parent
+        != Path(evidence_roots["transformers_reference_512"]["path"])
+    ):
+        raise Phase7Error(f"{label} RR Transformers log location changed")
+
+    accounting = artifact.get("call_accounting")
+    if (
+        not isinstance(accounting, dict)
+        or set(accounting)
+        != {
+            "accounting_semantics",
+            "runner_target_call_reservations",
+            "vllm_diagnostic_generations",
+            "transformers_reference_generations",
+            "successful_rr_responses",
+            "hosted_target_calls",
+            "model_judge_calls",
+            "local_guardrail_evaluations",
+            "hosted_judge_calls",
+            "http_attempts",
+        }
+        or type(accounting.get("runner_target_call_reservations")) is not int
+        or accounting.get("runner_target_call_reservations") != 4
+        or type(accounting.get("vllm_diagnostic_generations")) is not int
+        or accounting.get("vllm_diagnostic_generations") != 1
+        or type(accounting.get("transformers_reference_generations")) is not int
+        or accounting.get("transformers_reference_generations") != 2
+        or any(
+            type(accounting.get(field)) is not int or accounting[field] != 0
+            for field in (
+                "successful_rr_responses",
+                "hosted_target_calls",
+                "model_judge_calls",
+                "local_guardrail_evaluations",
+                "hosted_judge_calls",
+                "http_attempts",
+            )
+        )
+        or accounting.get("accounting_semantics")
+        != "durable_pre_call_logical_reservation_v1"
+    ):
+        raise Phase7Error(f"{label} RR runtime terminal accounting changed")
+    return shared
+
+
 def validate_conditional_defense_row(
     row: object, *, label: str, validate_artifact: bool = True
 ) -> None:
@@ -976,10 +1904,9 @@ def validate_conditional_defense_row(
         raise Phase7Error(f"{label} conditional defense artifact descriptor changed")
     if not validate_artifact:
         return
-    artifact_path = descriptor_file(
+    artifact_path, artifact = descriptor_object(
         artifact_descriptor, label=f"{label} conditional defense artifact"
     )
-    artifact = strict_object(artifact_path)
     if set(artifact) != {
         "schema",
         "status",
@@ -1114,7 +2041,13 @@ def validate_conditional_defense_row(
     if not isinstance(artifacts, dict) or set(artifacts) != expected_artifact_keys:
         raise Phase7Error(f"{label} conditional defense artifact inventory changed")
     for name, raw in artifacts.items():
-        descriptor_file(raw, label=f"{label} conditional defense {name}")
+        if name not in {
+            "eligibility_plan",
+            "live_attestation",
+            "acquisition_receipt",
+            "acquisition_result_log",
+        }:
+            descriptor_file(raw, label=f"{label} conditional defense {name}")
     if (
         artifacts["project_revision"]["sha256"]
         != bindings["project_revision_sha256"]
@@ -1124,11 +2057,9 @@ def validate_conditional_defense_row(
         or artifacts["local_config"]["sha256"] != target["config_sha256"]
     ):
         raise Phase7Error(f"{label} conditional defense artifact bindings differ")
-    eligibility = strict_object(
-        descriptor_file(
-            artifacts["eligibility_plan"],
-            label=f"{label} conditional defense eligibility plan",
-        )
+    _, eligibility = descriptor_object(
+        artifacts["eligibility_plan"],
+        label=f"{label} conditional defense eligibility plan",
     )
     experiment_conditions = eligibility.get("experiment_conditions")
     condition_values = (
@@ -1152,11 +2083,9 @@ def validate_conditional_defense_row(
         "sha256": live_descriptor["sha256"],
         "bytes": live_descriptor["bytes"],
     }
-    live_attestation = strict_object(
-        descriptor_file(
-            live_descriptor,
-            label=f"{label} conditional defense live attestation",
-        )
+    _, live_attestation = descriptor_object(
+        live_descriptor,
+        label=f"{label} conditional defense live attestation",
     )
     if (
         not isinstance(retained_attestation, dict)
@@ -1188,11 +2117,9 @@ def validate_conditional_defense_row(
         raise Phase7Error(
             f"{label} conditional defense measured live-attestation eligibility changed"
         )
-    acquisition_receipt = strict_object(
-        checked_file(
-            artifacts["acquisition_receipt"]["path"],
-            label=f"{label} conditional defense acquisition receipt",
-        )
+    _, acquisition_receipt = descriptor_object(
+        artifacts["acquisition_receipt"],
+        label=f"{label} conditional defense acquisition receipt",
     )
     receipt_id = acquisition_receipt.get("receipt_id")
     if not isinstance(receipt_id, str) or not receipt_id:
@@ -1200,12 +2127,13 @@ def validate_conditional_defense_row(
     try:
         from ura.strict_json import strict_json_loads
 
+        _, activity_payload = descriptor_bytes(
+            artifacts["acquisition_result_log"],
+            label=f"{label} conditional defense acquisition result log",
+        )
         activity_rows = [
             strict_json_loads(line)
-            for line in checked_file(
-                artifacts["acquisition_result_log"]["path"],
-                label=f"{label} conditional defense acquisition result log",
-            ).read_bytes().splitlines()
+            for line in activity_payload.splitlines()
             if line.strip()
         ]
     except Exception as exc:  # noqa: BLE001 - exact retained log boundary
@@ -1324,12 +2252,12 @@ def gate5_inventory_profile(
     scheduled_runner_lanes = tuple(
         lane
         for lane in RUNNER_LANES
-        if not conditional or lane != DEFENSE_LOCAL_LANE
+        if by_lane[lane].get("disposition") == "runnable"
     )
     scheduled_core_lanes = tuple(
         lane
         for lane in CORE_LANES
-        if not conditional or lane != DEFENSE_LOCAL_LANE
+        if by_lane[lane].get("disposition") == "runnable"
     )
     for lane, family in EXPECTED_RUNNABLE_FAMILIES.items():
         if conditional and lane == DEFENSE_LOCAL_LANE:
@@ -1344,6 +2272,8 @@ def gate5_inventory_profile(
             raise Phase7Error(f"{label} runnable disposition changed: {lane}")
     for lane, (family, disposition) in EXPECTED_TERMINAL_FAMILIES.items():
         row = by_lane[lane]
+        if lane in RR_RUNTIME_TERMINAL_LANE_SET:
+            continue
         if (
             row.get("family") != family
             or row.get("disposition") != disposition
@@ -1367,6 +2297,10 @@ def gate5_inventory_profile(
         "scheduled_runner_lanes": scheduled_runner_lanes,
         "runnable_lane_count": len(scheduled_runner_lanes),
         "terminal_lane_count": len(terminal_inventory),
+        "target_runtime_terminal": len(RR_RUNTIME_TERMINAL_LANES),
+        "target_runtime_terminal_artifact": validate_rr_runtime_terminal_rows(
+            by_lane, label=label, validate_artifact=validate_artifact
+        ),
         "terminal_inventory": terminal_inventory,
         "inventory_counts": (
             GATE5_CONDITIONAL_INVENTORY_COUNTS
@@ -1382,12 +2316,16 @@ def require_exact_gate5_terminal_inventory(
     if not isinstance(value, dict):
         raise Phase7Error(f"{label} exact Gate 5 terminal inventory changed")
     expected_ids = set(EXPECTED_TERMINAL_ROWS)
+    expected_ids.update(RR_RUNTIME_TERMINAL_LANES)
     if DEFENSE_LOCAL_LANE in value:
         expected_ids.add(DEFENSE_LOCAL_LANE)
     if set(value) != expected_ids or any(
         value[lane] != row for lane, row in EXPECTED_TERMINAL_ROWS.items()
     ):
         raise Phase7Error(f"{label} exact Gate 5 terminal inventory changed")
+    validate_rr_runtime_terminal_rows(
+        value, label=label, validate_artifact=validate_artifact
+    )
     if DEFENSE_LOCAL_LANE in value:
         validate_conditional_defense_row(
             value[DEFENSE_LOCAL_LANE],
@@ -1443,8 +2381,15 @@ def git_output(project: Path, *args: str) -> str:
     return result.stdout.strip()
 
 
-def read_runnote(path: Path) -> dict[str, Any]:
-    text = path.read_text(encoding="utf-8")
+def read_runnote(path: Path, *, payload: bytes | None = None) -> dict[str, Any]:
+    if payload is None:
+        _, payload = _stable_regular_bytes(
+            path, label="canonical Gate 5 RUNNOTE", max_bytes=64 * 1024 * 1024
+        )
+    try:
+        text = payload.decode("utf-8")
+    except UnicodeDecodeError as exc:
+        raise Phase7Error("canonical Gate 5 RUNNOTE is not UTF-8") from exc
     blocks = re.findall(r"```json\s*\n(.*?)\n```", text, flags=re.DOTALL)
     if len(blocks) != 1:
         raise Phase7Error(
@@ -1481,14 +2426,18 @@ def status_rows(path: Path, *, attempt: str) -> list[dict[str, str]]:
 
 
 def validate_zero_download_log(
-    log_path: Path, receipt_descriptor: Mapping[str, Any], *, label: str
+    log_path: Path,
+    log_payload: bytes,
+    receipt_descriptor: Mapping[str, Any],
+    *,
+    label: str,
 ) -> None:
     try:
         from ura.strict_json import strict_json_loads
     except Exception as exc:  # noqa: BLE001 - deployed strict parser boundary
         raise Phase7Error("cannot import the strict JSON parser") from exc
     matches: list[dict[str, Any]] = []
-    for line in log_path.read_bytes().splitlines():
+    for line in log_payload.splitlines():
         try:
             value = strict_json_loads(line)
         except Exception:  # noqa: BLE001 - controller logs may contain non-JSON lines
@@ -1508,10 +2457,9 @@ def validate_zero_download_log(
             or value.get("receipt_sha256") != receipt_descriptor.get("sha256")
         ):
             raise Phase7Error(f"{label} does not prove exact zero-download acquisition")
-    receipt_path = descriptor_file(
+    _, receipt = descriptor_object(
         receipt_descriptor, label=f"{label} acquisition receipt"
     )
-    receipt = strict_object(receipt_path)
     if any(value.get("receipt_id") != receipt.get("receipt_id") for value in matches):
         raise Phase7Error(f"{label} result and receipt identifiers differ")
 
@@ -1534,12 +2482,12 @@ def validate_defense_response_audit(root: Path, *, label: str) -> dict[str, int]
     response_count = 0
     two_stage_count = 0
     for response_path in response_paths:
-        checked_file(
+        response_path, response_payload = _stable_regular_bytes(
             response_path,
             label=f"{label} response stream",
             max_bytes=256 * 1024 * 1024,
         )
-        for line in response_path.read_bytes().splitlines():
+        for line in response_payload.splitlines():
             if not line.strip():
                 continue
             try:
@@ -1599,11 +2547,11 @@ def validate_defense_response_audit(root: Path, *, label: str) -> dict[str, int]
 def assert_native_exit(attempt: Path, *, completion_status: str) -> dict[str, Any]:
     """Accept the native controller's documented honest partial-success exit."""
 
-    exit_path = checked_file(
+    exit_path, exit_payload = _stable_regular_bytes(
         attempt / ".exit", label="Phase 6 native exit marker", max_bytes=32
     )
     expected = "0\n" if completion_status == "complete" else "1\n"
-    if exit_path.read_text(encoding="ascii") != expected:
+    if exit_payload.decode("ascii", errors="strict") != expected:
         raise Phase7Error(
             "Phase 6 native exit marker differs from its completion status"
         )
@@ -1611,7 +2559,7 @@ def assert_native_exit(attempt: Path, *, completion_status: str) -> dict[str, An
         raise Phase7Error(
             "Phase 6 native completion coexists with a controller failure"
         )
-    return descriptor(exit_path, max_bytes=32)
+    return _descriptor_from_bytes(exit_path, exit_payload)
 
 
 def assert_extended_exit(
@@ -1622,10 +2570,10 @@ def assert_extended_exit(
         raise Phase7Error(
             "Phase 6 extended exit code differs from its completion status"
         )
-    exit_path = checked_file(
+    exit_path, exit_payload = _stable_regular_bytes(
         attempt / ".exit", label="Phase 6 extended exit marker", max_bytes=32
     )
-    if exit_path.read_text(encoding="ascii") != f"{expected_code}\n":
+    if exit_payload.decode("ascii", errors="strict") != f"{expected_code}\n":
         raise Phase7Error(
             "Phase 6 extended exit marker differs from its completion status"
         )
@@ -1633,7 +2581,7 @@ def assert_extended_exit(
         raise Phase7Error(
             "Phase 6 extended completion coexists with a controller failure"
         )
-    return descriptor(exit_path, max_bytes=32)
+    return _descriptor_from_bytes(exit_path, exit_payload)
 
 
 def assert_core_exit(
@@ -1642,25 +2590,24 @@ def assert_core_exit(
     expected_code = 0 if completion_status == "complete" else 1
     if controller_exit_code != expected_code:
         raise Phase7Error("Phase 6 core exit code differs from its completion status")
-    exit_path = checked_file(
+    exit_path, exit_payload = _stable_regular_bytes(
         attempt / ".exit", label="Phase 6 core exit marker", max_bytes=32
     )
-    if exit_path.read_text(encoding="ascii") != f"{expected_code}\n":
+    if exit_payload.decode("ascii", errors="strict") != f"{expected_code}\n":
         raise Phase7Error("Phase 6 core exit marker differs from its completion status")
     if (attempt / "failure.json").exists():
         raise Phase7Error("Phase 6 core completion coexists with a controller failure")
-    return descriptor(exit_path, max_bytes=32)
+    return _descriptor_from_bytes(exit_path, exit_payload)
 
 
 def parse_state_result_root(
-    state_path: Path,
+    state: Mapping[str, Any],
     *,
     lane: str,
     runner_root: Path,
     spec_descriptor: Mapping[str, Any],
     expected_schema: str,
 ) -> tuple[dict[str, Any], Path]:
-    state = strict_object(state_path)
     if state.get("schema") != expected_schema:
         raise Phase7Error(f"{lane}: measured argv state schema changed")
     state_spec = state.get("lane_spec")
@@ -1685,8 +2632,20 @@ def validate_gate5(
     promotion_path: Path,
     project: Path,
     work: Path,
+    *,
+    manifest_payload: bytes | None = None,
+    runnote_payload: bytes | None = None,
+    promotion_payload: bytes | None = None,
 ) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any], dict[str, Any]]:
-    manifest = strict_object(manifest_path)
+    if manifest_payload is None:
+        manifest_path, manifest_payload = _stable_regular_bytes(
+            manifest_path,
+            label="Gate 5 covered manifest",
+            max_bytes=512 * 1024 * 1024,
+        )
+    manifest = _strict_object_bytes(
+        manifest_payload, label="Gate 5 covered manifest"
+    )
     require_exact_fields(
         manifest,
         expected={
@@ -1756,9 +2715,20 @@ def validate_gate5(
 
     rows = manifest.get("lanes")
     profile = gate5_inventory_profile(rows, label="covered manifest")
+    validate_rr_runtime_project_continuity(
+        profile["target_runtime_terminal_artifact"],
+        project_root=project,
+        label="covered manifest",
+    )
     by_lane = {str(row.get("lane_id")): row for row in rows}
     expected_inventory_counts = profile["inventory_counts"]
-    note = read_runnote(runnote_path)
+    if runnote_payload is None:
+        runnote_path, runnote_payload = _stable_regular_bytes(
+            runnote_path,
+            label="canonical Gate 5 RUNNOTE",
+            max_bytes=64 * 1024 * 1024,
+        )
+    note = read_runnote(runnote_path, payload=runnote_payload)
     require_exact_fields(note, expected=GATE5_NOTE_FIELDS, label="canonical RUNNOTE")
     if (
         set(note) != GATE5_NOTE_FIELDS
@@ -1774,7 +2744,11 @@ def validate_gate5(
     ):
         raise Phase7Error("canonical Gate 5 RUNNOTE locator changed")
 
-    manifest_desc = descriptor(manifest_path)
+    manifest_desc = {
+        "path": str(manifest_path),
+        "sha256": hashlib.sha256(manifest_payload).hexdigest(),
+        "bytes": len(manifest_payload),
+    }
     approval = note.get("approval")
     routes = note.get("routes")
     if (
@@ -1838,28 +2812,33 @@ def validate_gate5(
         or covered.get("bytes") != manifest_desc["bytes"]
     ):
         raise Phase7Error("Gate 5 RUNNOTE covered-manifest digest differs")
-    if (
-        descriptor_file(covered, label="Gate 5 RUNNOTE covered manifest").read_bytes()
-        != manifest_path.read_bytes()
-    ):
+    _, covered_payload = descriptor_bytes(
+        covered, label="Gate 5 RUNNOTE covered manifest"
+    )
+    if covered_payload != manifest_payload:
         raise Phase7Error("Gate 5 RUNNOTE covered-manifest bytes differ")
-    input_evidence = descriptor_file(
+    _, input_evidence_payload = descriptor_bytes(
         note.get("input_evidence"), label="Gate 5 input evidence"
     )
     input_binding = manifest.get("input_evidence_binding")
     if input_binding != {
-        "sha256": sha256_file(input_evidence),
-        "bytes": input_evidence.stat().st_size,
+        "sha256": hashlib.sha256(input_evidence_payload).hexdigest(),
+        "bytes": len(input_evidence_payload),
     }:
         raise Phase7Error("Gate 5 input-evidence binding differs")
     descriptor_file(note.get("storage_observations"), label="Gate 5 storage evidence")
     if note.get("failed_attempts") != manifest.get("failed_attempts"):
         raise Phase7Error("Gate 5 failed-attempt accounting differs")
 
-    promotion_file = checked_file(
-        promotion_path, label="Gate 5 promotion receipt", max_bytes=64 * 1024 * 1024
+    if promotion_payload is None:
+        promotion_path, promotion_payload = _stable_regular_bytes(
+            promotion_path,
+            label="Gate 5 promotion receipt",
+            max_bytes=64 * 1024 * 1024,
+        )
+    promotion = _strict_object_bytes(
+        promotion_payload, label="Gate 5 promotion receipt"
     )
-    promotion = strict_object(promotion_file)
     require_exact_fields(
         promotion, expected=GATE5_PROMOTION_FIELDS, label="Gate 5 promotion receipt"
     )
@@ -1882,6 +2861,7 @@ def validate_gate5(
             "bridge_terminal",
             "portfolio_terminal",
             "native_terminal",
+            "target_runtime_terminal",
         )
     ):
         raise Phase7Error("Gate 5 promotion inventory counts are not exact integers")
@@ -1914,7 +2894,7 @@ def validate_gate5(
         canonical_desc, label="promoted canonical RUNNOTE"
     ) != runnote_path or canonical_desc != descriptor(runnote_path):
         raise Phase7Error("Gate 5 promotion does not bind this canonical RUNNOTE")
-    plan_path = descriptor_file(
+    plan_path, plan = descriptor_object(
         promotion.get("promotion_plan"), label="Gate 5 promotion plan"
     )
     authorization = promotion.get("authorization")
@@ -1935,12 +2915,11 @@ def validate_gate5(
     if not isinstance(inputs, dict) or set(inputs) != expected_input_keys:
         raise Phase7Error("Gate 5 promotion input inventory changed")
     for key, raw in inputs.items():
-        descriptor_file(raw, label=f"Gate 5 promotion input {key}")
-    finalization = strict_object(
-        descriptor_file(
-            inputs["finalization_receipt"],
-            label="Gate 5 finalization receipt",
-        )
+        if key not in {"covered_manifest", "finalization_receipt", "finalizer_exit"}:
+            descriptor_file(raw, label=f"Gate 5 promotion input {key}")
+    _, finalization = descriptor_object(
+        inputs["finalization_receipt"],
+        label="Gate 5 finalization receipt",
     )
     if (
         set(finalization)
@@ -1980,22 +2959,24 @@ def validate_gate5(
         finalization.get("completed_at_utc"),
         label="Gate 5 finalization receipt timestamp",
     )
+    promoted_manifest_path, promoted_manifest_payload = descriptor_bytes(
+        inputs["covered_manifest"], label="promoted covered manifest"
+    )
+    current_manifest_path, current_manifest_payload = _stable_regular_bytes(
+        manifest_path,
+        label="current covered manifest",
+        max_bytes=512 * 1024 * 1024,
+    )
     if (
         inputs["covered_manifest"] != manifest_desc
-        or checked_file(
-            inputs["covered_manifest"]["path"], label="promoted covered manifest"
-        ).read_bytes()
-        != manifest_path.read_bytes()
+        or promoted_manifest_path != current_manifest_path
+        or promoted_manifest_payload != current_manifest_payload
     ):
         raise Phase7Error("Gate 5 promotion covered-manifest binding differs")
-    if (
-        checked_file(
-            inputs["finalizer_exit"]["path"],
-            label="Gate 5 finalizer exit",
-            max_bytes=128,
-        ).read_bytes()
-        != b"0\n"
-    ):
+    _, finalizer_exit_payload = descriptor_bytes(
+        inputs["finalizer_exit"], label="Gate 5 finalizer exit"
+    )
+    if len(finalizer_exit_payload) > 128 or finalizer_exit_payload != b"0\n":
         raise Phase7Error("Gate 5 finalizer did not exit zero")
 
     basis = note.get("promotion_basis")
@@ -2024,7 +3005,6 @@ def validate_gate5(
     }:
         raise Phase7Error("canonical Gate 5 promotion basis differs from receipt")
 
-    plan = strict_object(plan_path)
     if (
         set(plan)
         != {
@@ -2052,7 +3032,7 @@ def validate_gate5(
             "required": True,
             "launches_models_or_jobs": False,
         }
-        or plan.get("promotion_receipt_destination") != str(promotion_file)
+        or plan.get("promotion_receipt_destination") != str(promotion_path)
     ):
         raise Phase7Error("Gate 5 promotion plan contract differs")
     if any(
@@ -2064,6 +3044,7 @@ def validate_gate5(
             "bridge_terminal",
             "portfolio_terminal",
             "native_terminal",
+            "target_runtime_terminal",
         )
     ):
         raise Phase7Error("Gate 5 promotion-plan counts are not exact integers")
@@ -2377,11 +3358,13 @@ def _validate_launch_gate5(
     manifest_desc = launch.get("manifest")
     runnote_desc = launch.get("runnote")
     promotion_desc = launch.get("promotion_receipt")
-    manifest_copy = descriptor_file(
+    manifest_copy, manifest_copy_payload = descriptor_bytes(
         manifest_desc, label="Phase 6 copied Gate 5 manifest"
     )
-    runnote_copy = descriptor_file(runnote_desc, label="Phase 6 copied Gate 5 RUNNOTE")
-    promotion_copy = descriptor_file(
+    runnote_copy, runnote_copy_payload = descriptor_bytes(
+        runnote_desc, label="Phase 6 copied Gate 5 RUNNOTE"
+    )
+    promotion_copy, promotion_copy_payload = descriptor_bytes(
         promotion_desc, label="Phase 6 copied Gate 5 promotion receipt"
     )
     if manifest_copy != control / "inputs" / "covered-manifest.json":
@@ -2390,11 +3373,26 @@ def _validate_launch_gate5(
         raise Phase7Error("Phase 6 copied Gate 5 RUNNOTE path changed")
     if promotion_copy != control / "inputs" / "RUNNOTE.gate5-promotion.receipt.json":
         raise Phase7Error("Phase 6 copied Gate 5 promotion path changed")
-    if manifest_copy.read_bytes() != gate5_manifest.read_bytes():
+    _, gate5_manifest_payload = _stable_regular_bytes(
+        gate5_manifest,
+        label="authoritative Gate 5 manifest",
+        max_bytes=512 * 1024 * 1024,
+    )
+    _, gate5_runnote_payload = _stable_regular_bytes(
+        gate5_runnote,
+        label="authoritative Gate 5 RUNNOTE",
+        max_bytes=512 * 1024 * 1024,
+    )
+    _, gate5_promotion_payload = _stable_regular_bytes(
+        gate5_promotion,
+        label="authoritative Gate 5 promotion receipt",
+        max_bytes=512 * 1024 * 1024,
+    )
+    if manifest_copy_payload != gate5_manifest_payload:
         raise Phase7Error("Phase 6 copied a different Gate 5 manifest")
-    if runnote_copy.read_bytes() != gate5_runnote.read_bytes():
+    if runnote_copy_payload != gate5_runnote_payload:
         raise Phase7Error("Phase 6 copied a different Gate 5 RUNNOTE")
-    if promotion_copy.read_bytes() != gate5_promotion.read_bytes():
+    if promotion_copy_payload != gate5_promotion_payload:
         raise Phase7Error("Phase 6 copied a different Gate 5 promotion receipt")
     if launch.get("manifest_sha256") != sha256_file(gate5_manifest):
         raise Phase7Error("Phase 6 launch Gate 5 SHA differs")
@@ -2505,16 +3503,22 @@ def validate_core_controller(
         ("canonical_runnote", gate5_runnote),
         ("promotion_receipt", gate5_promotion),
     ):
-        copied = descriptor_file(
+        copied, copied_payload = descriptor_bytes(
             gate5_inputs[field], label=f"Phase 6 core Gate 5 {field}"
         )
-        if copied.read_bytes() != authoritative.read_bytes():
+        authoritative_path, authoritative_payload = _stable_regular_bytes(
+            authoritative,
+            label=f"authoritative Gate 5 {field}",
+            max_bytes=512 * 1024 * 1024,
+        )
+        if copied != authoritative_path or copied_payload != authoritative_payload:
             raise Phase7Error(f"Phase 6 core used different Gate 5 {field} bytes")
 
-    launch_path = descriptor_file(completion.get("launch"), label="Phase 6 core launch")
+    launch_path, launch = descriptor_object(
+        completion.get("launch"), label="Phase 6 core launch"
+    )
     if launch_path != control / "launch.json":
         raise Phase7Error("Phase 6 core launch is outside its control root")
-    launch = strict_object(launch_path)
     _validate_launch_gate5(
         launch,
         schema="ura-phase6-core-controller-launch/1",
@@ -2543,10 +3547,10 @@ def validate_core_controller(
     ):
         raise Phase7Error("Phase 6 core payload path changed")
 
-    summary_path = descriptor_file(
+    summary_path, summary = descriptor_object(
         completion.get("summary"), label="Phase 6 core summary"
     )
-    contract_test_path = descriptor_file(
+    contract_test_path, contract_test = descriptor_object(
         completion.get("contract_self_test"),
         label="Phase 6 core attempt contract self-test",
     )
@@ -2554,7 +3558,6 @@ def validate_core_controller(
         raise Phase7Error("Phase 6 core summary path changed")
     if contract_test_path != attempt / "contract-self-test.json":
         raise Phase7Error("Phase 6 core contract self-test path changed")
-    summary = strict_object(summary_path)
     if (
         set(summary) != CORE_SUMMARY_FIELDS
         or summary.get("schema") != "ura-phase6-core-controller-summary/1"
@@ -2590,7 +3593,6 @@ def validate_core_controller(
         ),
         label="Phase 6 core summary",
     )
-    contract_test = strict_object(contract_test_path)
     if (
         set(contract_test) != CORE_ATTEMPT_SELF_TEST_FIELDS
         or contract_test.get("schema") != "ura-phase6-core-attempt-contract-self-test/1"
@@ -2657,7 +3659,7 @@ def validate_core_controller(
 
     if conditional_na_lanes:
         forbidden_defense_paths = (
-            control / "lane-specs" / "14-defense-local.json",
+            control / "lane-specs" / "10-defense-local.json",
             control / "lanes" / DEFENSE_LOCAL_LANE,
             attempt / f"{DEFENSE_LOCAL_LANE}.result.json",
             attempt / f"{DEFENSE_LOCAL_LANE}.failure.json",
@@ -2667,6 +3669,23 @@ def validate_core_controller(
             raise Phase7Error(
                 "conditional defense N/A retains Phase 6 lane spec, state, result, "
                 "failure, grid, or evidence"
+            )
+
+    rr_execution_roots = (
+        control / "lane-specs",
+        control / "lanes",
+        attempt,
+        runner_root,
+    )
+    for execution_root in rr_execution_roots:
+        if execution_root.exists() and any(
+            lane in entry.name
+            for entry in execution_root.rglob("*")
+            for lane in RR_RUNTIME_TERMINAL_LANES
+        ):
+            raise Phase7Error(
+                "RR runtime-terminal lane retained a Phase 6 spec, state, result, "
+                "failure, grid, or measured evidence"
             )
 
     specs: dict[str, tuple[Path, dict[str, Any]]] = {}
@@ -2679,12 +3698,11 @@ def validate_core_controller(
     for lane_index, lane in enumerate(scheduled_lanes, start=1):
         expected_spec_path = control / "lane-specs" / f"{lane_index:02d}-{lane}.json"
         if terminal_states[lane] == "failed":
-            failure_path = descriptor_file(
+            failure_path, failure = descriptor_object(
                 lane_failures[lane], label=f"{lane} Phase 6 core typed failure"
             )
             if failure_path != attempt / f"{lane}.failure.json":
                 raise Phase7Error(f"{lane}: Phase 6 core failure path changed")
-            failure = strict_object(failure_path)
             terminal = {
                 "status": event_by_lane[lane]["status"],
                 "detail": event_by_lane[lane]["detail"],
@@ -2727,11 +3745,10 @@ def validate_core_controller(
                 ),
                 label=f"{lane} Phase 6 core failure",
             )
-            spec_path = descriptor_file(
+            spec_path, spec = descriptor_object(
                 failure.get("lane_spec"),
                 label=f"{lane} Phase 6 core failure lane spec",
             )
-            spec = strict_object(spec_path)
             if (
                 spec_path != expected_spec_path
                 or spec.get("schema") != "ura-phase6-core-lane-spec/1"
@@ -2760,12 +3777,11 @@ def validate_core_controller(
                     )
             failure_descriptors[lane] = descriptor(failure_path)
             continue
-        result_path = descriptor_file(
+        result_path, row = descriptor_object(
             lane_results[lane], label=f"{lane} Phase 6 core lane result"
         )
         if result_path != attempt / f"{lane}.result.json":
             raise Phase7Error(f"{lane}: Phase 6 core lane-result path changed")
-        row = strict_object(result_path)
         require_exact_fields(
             row,
             expected=CORE_COMPLETION_LANE_FIELDS,
@@ -2787,10 +3803,9 @@ def validate_core_controller(
             }
         ):
             raise Phase7Error(f"Phase 6 core terminal event differs: {lane}")
-        spec_path = descriptor_file(
+        spec_path, spec = descriptor_object(
             row.get("lane_spec"), label=f"{lane} Phase 6 core lane spec"
         )
-        spec = strict_object(spec_path)
         if (
             spec_path != expected_spec_path
             or spec.get("schema") != "ura-phase6-core-lane-spec/1"
@@ -2801,11 +3816,11 @@ def validate_core_controller(
             raise Phase7Error(f"duplicate Phase 6 core lane spec: {lane}")
         specs[lane] = (spec_path, spec)
         spec_artifacts.append(descriptor(spec_path))
-        state_path = descriptor_file(
+        state_path, state_value = descriptor_object(
             row.get("exact_measured_argv"), label=f"{lane} exact measured argv"
         )
         state, result_root = parse_state_result_root(
-            state_path,
+            state_value,
             lane=lane,
             runner_root=runner_root,
             spec_descriptor=descriptor(spec_path),
@@ -2845,7 +3860,7 @@ def validate_core_controller(
             row.get("attestation_acquisition_receipt"),
             label=f"{lane} attestation acquisition receipt",
         )
-        attestation_log = descriptor_file(
+        attestation_log, attestation_log_payload = descriptor_bytes(
             row.get("attestation_acquisition_log"),
             label=f"{lane} attestation acquisition log",
         )
@@ -2857,7 +3872,7 @@ def validate_core_controller(
             row.get("model_acquisition_receipt"),
             label=f"{lane} model-acquisition receipt",
         )
-        acquisition_log = descriptor_file(
+        acquisition_log, acquisition_log_payload = descriptor_bytes(
             row.get("model_acquisition_log"),
             label=f"{lane} model-acquisition log",
         )
@@ -2877,11 +3892,13 @@ def validate_core_controller(
             raise Phase7Error(f"{lane}: canonical attestation probe root changed")
         validate_zero_download_log(
             attestation_log,
+            attestation_log_payload,
             row["attestation_acquisition_receipt"],
             label=f"{lane} attestation acquisition",
         )
         validate_zero_download_log(
             acquisition_log,
+            acquisition_log_payload,
             row["model_acquisition_receipt"],
             label=f"{lane} measured acquisition",
         )
@@ -2948,10 +3965,9 @@ def validate_core_controller(
             )
         ):
             raise Phase7Error(f"{lane}: sealed measured-resource binding changed")
-        level1_path = descriptor_file(
+        level1_path, level1 = descriptor_object(
             row.get("level1_evidence"), label=f"{lane} Level 1 evidence"
         )
-        level1 = strict_object(level1_path)
         if (
             level1.get("schema_version") != "ura-level1-evidence/3"
             or level1.get("status") != "validated_unit_qualified_lifecycle_inventory"
@@ -2966,15 +3982,20 @@ def validate_core_controller(
             "call_budget": "*.budget.json",
         }
         for field, pattern in expected_patterns.items():
+            if field == "grid":
+                continue
             artifact_path = descriptor_file(
                 row.get(field), label=f"{lane} {field} evidence"
             )
             matches = sorted(result_root.glob(pattern))
             if len(matches) != 1 or artifact_path != matches[0]:
                 raise Phase7Error(f"{lane}: Phase 6 core {field} inventory changed")
-        grid = strict_object(
-            descriptor_file(row.get("grid"), label=f"{lane} completion grid")
+        grid_path, grid = descriptor_object(
+            row.get("grid"), label=f"{lane} completion grid"
         )
+        matches = sorted(result_root.glob(expected_patterns["grid"]))
+        if len(matches) != 1 or grid_path != matches[0]:
+            raise Phase7Error(f"{lane}: Phase 6 core grid inventory changed")
         if grid.get("status") != "complete" or grid.get("n_errors") != 0:
             raise Phase7Error(f"{lane}: Phase 6 core grid is incomplete")
         if lane == "defense-local":
@@ -3156,17 +4177,21 @@ def validate_extended_controller(
         ("canonical_runnote", gate5_runnote),
         ("promotion_receipt", gate5_promotion),
     ):
-        copied = descriptor_file(
+        copied, copied_payload = descriptor_bytes(
             gate5_inputs[field], label=f"Phase 6 extended Gate 5 {field}"
         )
-        if copied.read_bytes() != authoritative.read_bytes():
+        authoritative_path, authoritative_payload = _stable_regular_bytes(
+            authoritative,
+            label=f"authoritative Gate 5 {field}",
+            max_bytes=512 * 1024 * 1024,
+        )
+        if copied != authoritative_path or copied_payload != authoritative_payload:
             raise Phase7Error(f"Phase 6 extended used different Gate 5 {field} bytes")
-    summary_path = descriptor_file(
+    summary_path, summary = descriptor_object(
         completion.get("summary"), label="Phase 6 extended summary"
     )
     if summary_path != attempt / "summary.json":
         raise Phase7Error("Phase 6 extended summary is outside its attempt root")
-    summary = strict_object(summary_path)
     if (
         set(summary) != EXTENDED_SUMMARY_FIELDS
         or summary.get("schema") != "ura-phase6-extended-controller-summary/1"
@@ -3215,12 +4240,11 @@ def validate_extended_controller(
         completion_status=str(completion["status"]),
         controller_exit_code=expected_exit_code,
     )
-    launch_path = descriptor_file(
+    launch_path, launch = descriptor_object(
         completion.get("launch"), label="Phase 6 extended launch"
     )
     if launch_path != control / "launch.json":
         raise Phase7Error("Phase 6 extended launch is outside its control root")
-    launch = strict_object(launch_path)
     _validate_launch_gate5(
         launch,
         schema="ura-phase6-extended-controller-launch/1",
@@ -3248,13 +4272,12 @@ def validate_extended_controller(
         != control / "payload.py"
     ):
         raise Phase7Error("Phase 6 extended payload path changed")
-    dispositions_path = descriptor_file(
+    dispositions_path, dispositions = descriptor_object(
         completion.get("typed_dispositions"),
         label="Phase 6 extended typed dispositions",
     )
     if dispositions_path != control / "typed-dispositions.json":
         raise Phase7Error("Phase 6 extended dispositions are outside the control root")
-    dispositions = strict_object(dispositions_path)
     if (
         set(dispositions) != {"schema", "status", "rows"}
         or dispositions.get("schema") != "ura-phase6-extended-dispositions/1"
@@ -3317,12 +4340,11 @@ def validate_extended_controller(
     for lane in EXTENDED_LANES:
         spec_path, _spec = specs[lane]
         if terminal_states[lane] == "failed":
-            failure_path = descriptor_file(
+            failure_path, failure = descriptor_object(
                 lane_failures[lane], label=f"{lane} controller lane failure"
             )
             if failure_path != attempt / f"{lane}.failure.json":
                 raise Phase7Error(f"{lane}: lane-failure path changed")
-            failure = strict_object(failure_path)
             if (
                 set(failure) != EXTENDED_LANE_FAILURE_FIELDS
                 or failure.get("schema") != "ura-phase6-extended-lane-failure/1"
@@ -3347,8 +4369,9 @@ def validate_extended_controller(
             control / "lanes" / lane / "exact-measured-argv.json",
             label=f"{lane} exact measured argv",
         )
+        state = strict_object(state_path)
         state, result_root = parse_state_result_root(
-            state_path,
+            state,
             lane=lane,
             runner_root=runner_root,
             spec_descriptor=descriptor(spec_path),
@@ -3421,12 +4444,11 @@ def validate_extended_controller(
             "downloaded_bytes": None,
         }:
             raise Phase7Error(f"{lane}: no-resource acquisition boundary changed")
-        marker = descriptor_file(
+        marker, marker_value = descriptor_object(
             lane_results[lane], label=f"{lane} controller completion"
         )
         if marker != attempt / f"{lane}.complete.json":
             raise Phase7Error(f"{lane}: controller completion path changed")
-        marker_value = strict_object(marker)
         guard_queries = marker_value.get("guard_queries_observed")
         classification_lane = lane.startswith("rjudge-")
         retained_bytes = marker_value.get("retained_bytes")
@@ -3507,12 +4529,12 @@ def validate_extended_controller(
         row["lane_id"]: row for row in strict_object(gate5_manifest)["lanes"]
     }
     for lane in EXTENDED_TERMINALS:
-        terminal_path = descriptor_file(
+        terminal_path, terminal_value = descriptor_object(
             terminal_results[lane], label=f"{lane} typed terminal result"
         )
         if terminal_path != attempt / f"{lane}.terminal.json":
             raise Phase7Error(f"{lane}: typed terminal result path changed")
-        if strict_object(terminal_path) != {
+        if terminal_value != {
             "schema": "ura-phase6-extended-terminal-result/1",
             "status": "typed_terminal",
             "lane_id": lane,
@@ -3633,15 +4655,22 @@ def validate_native_controller(
         ("canonical_runnote", gate5_runnote),
         ("promotion_receipt", gate5_promotion),
     ):
-        copied = descriptor_file(
+        copied, copied_payload = descriptor_bytes(
             gate5_inputs[field], label=f"Phase 6 native Gate 5 {field}"
         )
-        if copied.read_bytes() != authoritative.read_bytes():
+        authoritative_path, authoritative_payload = _stable_regular_bytes(
+            authoritative,
+            label=f"authoritative Gate 5 {field}",
+            max_bytes=512 * 1024 * 1024,
+        )
+        if copied != authoritative_path or copied_payload != authoritative_payload:
             raise Phase7Error(f"Phase 6 native used different Gate 5 {field} bytes")
-    plan_path = descriptor_file(completion.get("plan"), label="Phase 6 native plan")
+    plan_path, plan = descriptor_object(
+        completion.get("plan"), label="Phase 6 native plan"
+    )
     if (
         plan_path != control / "inputs" / "native-plan.json"
-        or sha256_file(plan_path) != plan_sha
+        or completion["plan"].get("sha256") != plan_sha
     ):
         raise Phase7Error("Phase 6 native plan authorization differs")
     payload_path = descriptor_file(
@@ -3654,10 +4683,10 @@ def validate_native_controller(
     )
     if payload_path != control / "payload.py":
         raise Phase7Error("Phase 6 native payload path changed")
-    launch_path = descriptor_file(
+    launch_path, launch = descriptor_object(
         completion.get("launch"), label="Phase 6 native launch"
     )
-    summary_path = descriptor_file(
+    summary_path, summary = descriptor_object(
         completion.get("summary"), label="Phase 6 native summary"
     )
     if summary_path != attempt / "summary.json":
@@ -3665,7 +4694,6 @@ def validate_native_controller(
 
     if launch_path != control / "launch.json":
         raise Phase7Error("Phase 6 native launch is outside its control root")
-    launch = strict_object(launch_path)
     expected_launch_fields = {
         "schema",
         "control_root",
@@ -3701,7 +4729,6 @@ def validate_native_controller(
         ):
             raise Phase7Error(f"Phase 6 native copied Gate 5 {key} path changed")
 
-    plan = strict_object(plan_path)
     expected_plan_fields = {
         "schema",
         "created_at_utc",
@@ -3878,12 +4905,11 @@ def validate_native_controller(
         raise Phase7Error("Phase 6 native engine-reservation inventory changed")
     reservation_descs: dict[str, dict[str, Any]] = {}
     for engine in runnable_engines:
-        reservation_path = descriptor_file(
+        reservation_path, reservation = descriptor_object(
             reservations[engine], label=f"Phase 6 native reservation {engine}"
         )
         if reservation_path != control / "engine-reservations" / f"{engine}.json":
             raise Phase7Error(f"Phase 6 native reservation path changed: {engine}")
-        reservation = strict_object(reservation_path)
         if (
             set(reservation)
             != {
@@ -3948,12 +4974,11 @@ def validate_native_controller(
         "native_log",
     }
     for engine in NATIVE_ENGINES:
-        terminal_path = descriptor_file(
+        terminal_path, terminal = descriptor_object(
             terminal_artifacts[engine], label=f"Phase 6 native terminal {engine}"
         )
         if terminal_path != control / "terminals" / f"{engine}.json":
             raise Phase7Error(f"Phase 6 native terminal path changed: {engine}")
-        terminal = strict_object(terminal_path)
         require_exact_fields(
             terminal,
             expected=NATIVE_TERMINAL_FIELDS,
@@ -4037,18 +5062,15 @@ def validate_native_controller(
                 "engine_result",
                 "canonical_native_envelope",
                 "import_config",
-                "local_call_summary",
                 "exit_marker",
                 "native_log",
             ):
                 descriptor_file(
                     evidence[field], label=f"Phase 6 native {engine} {field}"
                 )
-            call_summary = strict_object(
-                descriptor_file(
-                    evidence["local_call_summary"],
-                    label=f"Phase 6 native {engine} local call summary",
-                )
+            _, call_summary = descriptor_object(
+                evidence["local_call_summary"],
+                label=f"Phase 6 native {engine} local call summary",
             )
             if (
                 isinstance(call_summary.get("model_calls"), bool)
@@ -4066,11 +5088,10 @@ def validate_native_controller(
                 raise Phase7Error(
                     f"Phase 6 native run terminal envelope differs: {engine}"
                 )
-            envelope_path = descriptor_file(
+            envelope_path, envelope = descriptor_object(
                 evidence["canonical_native_envelope"],
                 label=f"Phase 6 native canonical envelope {engine}",
             )
-            envelope = strict_object(envelope_path)
             native_run = envelope.get("run")
             config_reference = envelope.get("import_config")
             import_config_path = descriptor_file(
@@ -4101,10 +5122,10 @@ def validate_native_controller(
                 raise Phase7Error(
                     f"Phase 6 native envelope config reference differs: {engine}"
                 )
-            exit_marker = descriptor_file(
+            _, exit_payload = descriptor_bytes(
                 evidence["exit_marker"], label=f"Phase 6 native engine exit {engine}"
             )
-            if exit_marker.read_text(encoding="ascii") != "0\n":
+            if exit_payload != b"0\n":
                 raise Phase7Error(
                     f"Phase 6 native run has a nonzero engine exit: {engine}"
                 )
@@ -4175,11 +5196,9 @@ def validate_native_controller(
                         evidence[field], label=f"Phase 6 native {engine} {field}"
                     )
                 if evidence.get("local_call_summary") is not None:
-                    partial_summary = strict_object(
-                        descriptor_file(
-                            evidence["local_call_summary"],
-                            label=f"Phase 6 native {engine} partial local call summary",
-                        )
+                    _, partial_summary = descriptor_object(
+                        evidence["local_call_summary"],
+                        label=f"Phase 6 native {engine} partial local call summary",
                     )
                     if (
                         isinstance(partial_summary.get("model_calls"), bool)
@@ -4216,7 +5235,6 @@ def validate_native_controller(
             raise Phase7Error(f"canonical native envelope identity differs: {engine}")
         canonical_descs[engine] = descriptor(envelope_path)
 
-    summary = strict_object(summary_path)
     expected_summary_fields = {
         "schema",
         "status",
@@ -4296,13 +5314,12 @@ def validate_native_controller(
     )
     if framework_verification_path != attempt / "framework-verification.json":
         raise Phase7Error("Phase 6 native framework-verification path changed")
-    self_test_path = descriptor_file(
+    self_test_path, self_test = descriptor_object(
         completion.get("contract_self_test"),
         label="Phase 6 native contract self-test",
     )
     if self_test_path != attempt / "contract-self-test.json":
         raise Phase7Error("Phase 6 native contract self-test path changed")
-    self_test = strict_object(self_test_path)
     if (
         set(self_test)
         != {
@@ -4413,8 +5430,7 @@ def _retained_descriptor(
 def _lane_specs_by_id(controller: Mapping[str, Any]) -> dict[str, dict[str, Any]]:
     result: dict[str, dict[str, Any]] = {}
     for raw in controller.get("lane_specs", []):
-        path = descriptor_file(raw, label="Phase 6 lane spec")
-        spec = strict_object(path)
+        path, spec = descriptor_object(raw, label="Phase 6 lane spec")
         lane = spec.get("lane_id")
         if not isinstance(lane, str) or lane in result:
             raise Phase7Error("Phase 6 lane-spec inventory is invalid")
@@ -4564,17 +5580,24 @@ def validate_measured_request_envelope_artifact(
     """Validate a retained measured envelope against its sealed Gate 5 request."""
 
     try:
-        from ura.request_envelope import load_request_envelope_file
-
-        envelope, envelope_descriptor = load_request_envelope_file(path)
+        path, envelope_payload = _stable_regular_bytes(
+            path,
+            label=f"{lane} measured request envelope",
+            max_bytes=4 * 1024 * 1024,
+        )
+        envelope, envelope_descriptor = _request_envelope_from_bytes(
+            path, envelope_payload, label=f"{lane} measured request envelope"
+        )
         gate5 = spec.get("gate5")
         gate5_descriptor = (
             gate5.get("final_request_envelope") if isinstance(gate5, dict) else None
         )
-        gate5_path = descriptor_file(
+        gate5_path, gate5_payload = descriptor_bytes(
             gate5_descriptor, label=f"{lane} Gate 5 request envelope"
         )
-        gate5_envelope, gate5_loaded_descriptor = load_request_envelope_file(gate5_path)
+        gate5_envelope, gate5_loaded_descriptor = _request_envelope_from_bytes(
+            gate5_path, gate5_payload, label=f"{lane} Gate 5 request envelope"
+        )
     except Exception as exc:  # noqa: BLE001 - exact retained-request boundary
         raise Phase7Error(
             f"{lane}: measured request-envelope validation failed: {type(exc).__name__}"
@@ -4922,18 +5945,17 @@ def validate_runner_inventory(
                 root, raw, label=f"{lane} live attestation {index + 1}"
             )
             existing = attestation_by_sha.get(retained["sha256"])
-            if (
-                existing is not None
-                and checked_file(
+            if existing is not None:
+                _, existing_payload = _stable_regular_bytes(
                     existing["path"], label="duplicate attestation"
-                ).read_bytes()
-                != checked_file(
-                    retained["path"], label="duplicate attestation"
-                ).read_bytes()
-            ):
-                raise Phase7Error(
-                    "same live-attestation digest resolves to different bytes"
                 )
+                _, retained_payload = _stable_regular_bytes(
+                    retained["path"], label="duplicate attestation"
+                )
+                if existing_payload != retained_payload:
+                    raise Phase7Error(
+                        "same live-attestation digest resolves to different bytes"
+                    )
             attestation_by_sha.setdefault(retained["sha256"], retained)
 
         marker_names: set[str] = set()
@@ -5042,14 +6064,17 @@ def validate_runner_inventory(
                     root, raw, label=f"{lane} failed-grid live attestation {index + 1}"
                 )
                 existing = lifecycle_attestation_by_sha.get(retained["sha256"])
-                if (
-                    existing is not None
-                    and checked_file(existing["path"], label="duplicate lifecycle attestation").read_bytes()
-                    != checked_file(retained["path"], label="duplicate lifecycle attestation").read_bytes()
-                ):
-                    raise Phase7Error(
-                        "same lifecycle attestation digest resolves to different bytes"
+                if existing is not None:
+                    _, existing_payload = _stable_regular_bytes(
+                        existing["path"], label="duplicate lifecycle attestation"
                     )
+                    _, retained_payload = _stable_regular_bytes(
+                        retained["path"], label="duplicate lifecycle attestation"
+                    )
+                    if existing_payload != retained_payload:
+                        raise Phase7Error(
+                            "same lifecycle attestation digest resolves to different bytes"
+                        )
                 lifecycle_attestation_by_sha.setdefault(retained["sha256"], retained)
         lifecycle_states[lane] = (
             "partial" if "partial" in grid_statuses else "failed"
@@ -5174,10 +6199,9 @@ def validate_runner_inventory(
             descriptor_file(failure, label=f"{lane} controller failure")
         exact_state = state_by_lane.get(lane)
         if exact_state is not None:
-            state_path = descriptor_file(
+            state_path, state = descriptor_object(
                 exact_state, label=f"{lane} exact measured argv"
             )
-            state = strict_object(state_path)
             expected_schema = (
                 "ura-phase6-core-measured-argv/1"
                 if lane in scheduled_core_lanes
@@ -5187,9 +6211,9 @@ def validate_runner_inventory(
                 item
                 for controller in (core, extended)
                 for item in controller.get("lane_specs", [])
-                if strict_object(
-                    descriptor_file(item, label=f"{lane} bound lane spec")
-                ).get("lane_id")
+                if descriptor_object(
+                    item, label=f"{lane} bound lane spec"
+                )[1].get("lane_id")
                 == lane
             )
             runner_argv = state.get("runner_argv")
@@ -5288,23 +6312,12 @@ def validate_runner_inventory(
         raise Phase7Error(
             "LLaVA base runner lanes do not share one exact served identity"
         )
-    if (
-        len(
-            {
-                model_by_lane[lane]
-                for lane in (
-                    "local-llava-rr-text-full",
-                    "local-llava-rr-image-full",
-                    "rjudge-llava-rr",
-                    "gptgeochat-llava-rr",
-                )
-            }
-        )
-        != 1
+    if RR_RUNTIME_TERMINAL_LANE_SET & set(model_by_lane) or any(
+        marker in str(model)
+        for model in model_by_lane.values()
+        for marker in RR_TARGET_IDENTITY_MARKERS
     ):
-        raise Phase7Error(
-            "LLaVA RR runner lanes do not share one exact served identity"
-        )
+        raise Phase7Error("RR runtime-terminal lanes leaked into Runner model evidence")
 
     classification_lanes = {
         lane
@@ -5313,15 +6326,13 @@ def validate_runner_inventory(
     }
     for lane in classification_lanes:
         contract = _expected_contract(lane, specs[lane])
-        grid = strict_object(
-            descriptor_file(
-                next(
-                    item
-                    for item in metric_grids
-                    if Path(str(item["path"])).parent.name == lane
-                ),
-                label=f"{lane} bound classification grid",
-            )
+        _, grid = descriptor_object(
+            next(
+                item
+                for item in metric_grids
+                if Path(str(item["path"])).parent.name == lane
+            ),
+            label=f"{lane} bound classification grid",
         )
         request = grid["request"]
         if (
@@ -5333,15 +6344,13 @@ def validate_runner_inventory(
         ):
             raise Phase7Error(f"{lane}: source-parser classification boundary changed")
     for lane in set(measured_lanes) - classification_lanes:
-        grid = strict_object(
-            descriptor_file(
-                next(
-                    item
-                    for item in metric_grids
-                    if Path(str(item["path"])).parent.name == lane
-                ),
-                label=f"{lane} bound common-metric grid",
-            )
+        _, grid = descriptor_object(
+            next(
+                item
+                for item in metric_grids
+                if Path(str(item["path"])).parent.name == lane
+            ),
+            label=f"{lane} bound common-metric grid",
         )
         request = grid["request"]
         if (
@@ -5390,7 +6399,6 @@ def validate_runner_inventory(
         "model_selectors": {
             "qwen3_vl": model_by_lane["local-qwen3-vl-text-full"],
             "llava_base": model_by_lane["local-llava-base-image-full"],
-            "llava_rr": model_by_lane["local-llava-rr-image-full"],
         },
         "guardrail_selector": {
             "model": EXPECTED_GUARDRAIL_MODEL,
@@ -5577,6 +6585,10 @@ def build_input_manifest(args: argparse.Namespace) -> dict[str, Any]:
             "lane_count": 46,
             "runnable_lane_count": gate5_profile["runnable_lane_count"],
             "terminal_lane_count": gate5_profile["terminal_lane_count"],
+            "target_runtime_terminal": gate5_profile["target_runtime_terminal"],
+            "target_runtime_terminal_artifact": gate5_profile[
+                "target_runtime_terminal_artifact"
+            ],
             "conditional_na_lanes": gate5_profile["conditional_na_lanes"],
         },
         "project_and_source": project_and_source,
@@ -5857,15 +6869,22 @@ class AnalysisController:
                 "Phase 7 bound-artifact list does not exactly cover its inputs"
             )
         for item in bound:
-            descriptor_file(item, label="authorized Phase 7 input")
-        authorized_payload = descriptor_file(
+            if item != value.get("controller_payload"):
+                descriptor_file(item, label="authorized Phase 7 input")
+        _authorized_payload, authorized_payload_bytes = descriptor_bytes(
             value.get("controller_payload"),
             label="authorized Phase 7 controller payload",
+        )
+        payload_path, payload_bytes = _stable_regular_bytes(
+            self.payload_path,
+            label="executing Phase 7 controller payload",
+            max_bytes=512 * 1024 * 1024,
         )
         if (
             self.launch["payload"]["sha256"] != value["controller_payload"]["sha256"]
             or self.launch["payload"]["bytes"] != value["controller_payload"]["bytes"]
-            or self.payload_path.read_bytes() != authorized_payload.read_bytes()
+            or payload_path != self.payload_path
+            or payload_bytes != authorized_payload_bytes
         ):
             raise Phase7Error(
                 "Phase 7 copied payload is not bound by the authorized input"
@@ -5905,14 +6924,20 @@ class AnalysisController:
         scheduled_runner_lanes = tuple(
             lane
             for lane in RUNNER_LANES
-            if conditional_na_lanes != [DEFENSE_LOCAL_LANE]
-            or lane != DEFENSE_LOCAL_LANE
+            if lane not in RR_RUNTIME_TERMINAL_LANE_SET
+            and (
+                conditional_na_lanes != [DEFENSE_LOCAL_LANE]
+                or lane != DEFENSE_LOCAL_LANE
+            )
         )
         scheduled_core_lanes = tuple(
             lane
             for lane in CORE_LANES
-            if conditional_na_lanes != [DEFENSE_LOCAL_LANE]
-            or lane != DEFENSE_LOCAL_LANE
+            if lane not in RR_RUNTIME_TERMINAL_LANE_SET
+            and (
+                conditional_na_lanes != [DEFENSE_LOCAL_LANE]
+                or lane != DEFENSE_LOCAL_LANE
+            )
         )
         measured_lanes = (
             [
@@ -5949,7 +6974,7 @@ class AnalysisController:
             or not isinstance(runner.get("lifecycle_live_attestations"), list)
             or not runner["lifecycle_live_attestations"]
             or set(runner.get("model_selectors", {}))
-            != {"qwen3_vl", "llava_base", "llava_rr"}
+            != {"qwen3_vl", "llava_base"}
             or any(
                 not isinstance(selector, str) or not selector.strip()
                 for selector in runner.get("model_selectors", {}).values()
@@ -6029,10 +7054,9 @@ class AnalysisController:
             ]
             grid_statuses: list[str] = []
             for item in groups.get("runner_grid_artifacts") or []:
-                grid_path = descriptor_file(
+                grid_path, grid = descriptor_object(
                     item, label=f"{lane} lifecycle grid artifact"
                 )
-                grid = strict_object(grid_path)
                 status = grid.get("status")
                 if status not in {"complete", "partial", "running"}:
                     raise Phase7Error(f"{lane}: lifecycle grid status changed")
@@ -6348,19 +7372,33 @@ class AnalysisController:
                 "lane_count",
                 "runnable_lane_count",
                 "terminal_lane_count",
+                "target_runtime_terminal",
+                "target_runtime_terminal_artifact",
                 "conditional_na_lanes",
             }
             or gate5.get("lane_count") != 46
             or gate5.get("runnable_lane_count") != len(scheduled_runner_lanes)
             or gate5.get("terminal_lane_count")
-            != 20 + len(conditional_na_lanes)
+            != 24 + len(conditional_na_lanes)
+            or gate5.get("target_runtime_terminal") != 4
             or gate5.get("conditional_na_lanes") != conditional_na_lanes
             or set(gate5.get("terminal_inventory", {}))
             != set(EXPECTED_GATE5_TERMINALS) | set(conditional_na_lanes)
+            or gate5.get("target_runtime_terminal_artifact")
+            != validate_rr_runtime_terminal_rows(
+                gate5.get("terminal_inventory", {}),
+                label="authorized input",
+            )
         ):
             raise Phase7Error("authorized Gate 5 inventory changed")
         for lane, disposition in EXPECTED_GATE5_TERMINALS.items():
             row = gate5["terminal_inventory"][lane]
+            if lane in RR_RUNTIME_TERMINAL_LANE_SET:
+                if disposition != "unavailable":
+                    raise Phase7Error(
+                        f"authorized RR Gate 5 disposition changed: {lane}"
+                    )
+                continue
             if (
                 disposition != EXPECTED_TERMINAL_ROWS[lane]["disposition"]
                 or not isinstance(row, dict)
@@ -6382,13 +7420,13 @@ class AnalysisController:
         # Rebuild every authoritative snapshot so a hand-edited, then authorized,
         # manifest cannot swap or forge an upstream completion or Gate 5 artifact.
         work = checked_dir(required_env("URA_WORK"), label="URA_WORK")
-        gate5_manifest_path = descriptor_file(
+        gate5_manifest_path, gate5_manifest_payload = descriptor_bytes(
             gate5["manifest"], label="authorized Gate 5 manifest"
         )
-        gate5_runnote_path = descriptor_file(
+        gate5_runnote_path, gate5_runnote_payload = descriptor_bytes(
             gate5["canonical_runnote"], label="authorized canonical Gate 5 RUNNOTE"
         )
-        gate5_promotion_path = descriptor_file(
+        gate5_promotion_path, gate5_promotion_payload = descriptor_bytes(
             gate5["promotion_receipt"], label="authorized Gate 5 promotion receipt"
         )
         gate5_value, note_value, promotion_value, validated_code = validate_gate5(
@@ -6397,6 +7435,9 @@ class AnalysisController:
             gate5_promotion_path,
             project,
             work,
+            manifest_payload=gate5_manifest_payload,
+            runnote_payload=gate5_runnote_payload,
+            promotion_payload=gate5_promotion_payload,
         )
         gate5_profile = gate5_inventory_profile(
             gate5_value["lanes"], label="authorized Gate 5 manifest"
@@ -7255,46 +8296,91 @@ class AnalysisController:
         }
         return status, limitations
 
+    def _validate_non_estimable_rr_contrast(
+        self,
+        *,
+        value: Mapping[str, Any],
+        corpus: str,
+        terminal_descriptor: Mapping[str, Any],
+    ) -> None:
+        expected = {
+            "schema": RR_NON_ESTIMABLE_CONTRAST_SCHEMA,
+            "status": "unavailable",
+            "contrast_id": "llava-base-vs-rr",
+            "modality": "image",
+            "facet": corpus,
+            "comparison_type": "cross_target_endpoint_noncausal",
+            "planned_estimand": (
+                "paired static-image endpoint by datapoint_id x requested_seed"
+            ),
+            "planned_contrast_missing": True,
+            "reason_code": RR_RUNTIME_TERMINAL_REASON_CODE,
+            "reason": RR_RUNTIME_TERMINAL_REASON,
+            "terminal_lanes": list(RR_RUNTIME_TERMINAL_LANES),
+            "target_runtime_terminal_artifact": dict(terminal_descriptor),
+            "analysis_ready_real_run": False,
+            "estimate": None,
+            "paired_compare_invoked": False,
+            "rr_responses_admitted": 0,
+            "human_audit_eligible": False,
+        }
+        if dict(value) != expected:
+            raise Phase7Error(
+                f"LLaVA base-vs-RR non-estimable contrast changed: {corpus}"
+            )
+        _runtime_terminal_descriptor_shape(
+            value["target_runtime_terminal_artifact"],
+            label=f"LLaVA base-vs-RR {corpus}",
+        )
+
     def run_llava_pairs(self) -> dict[str, dict[str, Any]]:
-        selectors = self.inputs["runner"]["model_selectors"]
+        terminal_descriptor = self.inputs["gate5"][
+            "target_runtime_terminal_artifact"
+        ]
         results: dict[str, dict[str, Any]] = {}
         for corpus in IMAGE_ARMS:
             name = f"llava-base-vs-rr-{corpus}"
             output = self.analysis / "paired" / "llava-base-vs-rr" / f"{corpus}.json"
-            argv = [
-                str(self.python),
-                "-m",
-                "experiments.paired_compare",
-                "--results",
-                str(self.analysis_runner_view()),
-                "--left-model",
-                selectors["llava_base"],
-                "--right-model",
-                selectors["llava_rr"],
-                "--left-defense",
-                "none",
-                "--right-defense",
-                "none",
-                "--attacker",
-                "replay",
-                "--corpus",
-                corpus,
-                "--mode",
-                "static",
-                "--output",
-                str(output),
-            ]
-            self.run(name, argv, log_name=f"{name}.log")
-            value = strict_object(output)
-            status, limitations = self._validate_paired(
-                value=value, corpus=corpus, adaptivity=False
+            value = {
+                "schema": RR_NON_ESTIMABLE_CONTRAST_SCHEMA,
+                "status": "unavailable",
+                "contrast_id": "llava-base-vs-rr",
+                "modality": "image",
+                "facet": corpus,
+                "comparison_type": "cross_target_endpoint_noncausal",
+                "planned_estimand": (
+                    "paired static-image endpoint by datapoint_id x requested_seed"
+                ),
+                "planned_contrast_missing": True,
+                "reason_code": RR_RUNTIME_TERMINAL_REASON_CODE,
+                "reason": RR_RUNTIME_TERMINAL_REASON,
+                "terminal_lanes": list(RR_RUNTIME_TERMINAL_LANES),
+                "target_runtime_terminal_artifact": terminal_descriptor,
+                "analysis_ready_real_run": False,
+                "estimate": None,
+                "paired_compare_invoked": False,
+                "rr_responses_admitted": 0,
+                "human_audit_eligible": False,
+            }
+            self._validate_non_estimable_rr_contrast(
+                value=value,
+                corpus=corpus,
+                terminal_descriptor=terminal_descriptor,
             )
+            write_new(output, canonical(value))
             self.status(
                 name,
-                status,
-                detail="LLaVA base-vs-GraySwan RR paired image endpoint, not a universal ranking",
+                "unavailable",
+                detail=RR_RUNTIME_TERMINAL_REASON,
                 outputs=(output,),
-                limitations=limitations if status != "complete" else None,
+                limitations={
+                    "reason_code": RR_RUNTIME_TERMINAL_REASON_CODE,
+                    "planned_contrast_missing": True,
+                    "modality": "image",
+                    "facet": corpus,
+                    "paired_compare_invoked": False,
+                    "target_runtime_terminal_artifact": terminal_descriptor,
+                },
             )
             results[corpus] = value
         if set(results) != set(IMAGE_ARMS) or "mmsafety_official" not in results:
@@ -7355,10 +8441,9 @@ class AnalysisController:
         states = self.inputs["native_outcomes"]["states"]
         terminals = self.inputs["native_outcomes"]["terminals"]
         for engine in NATIVE_ENGINES:
-            terminal_path = descriptor_file(
+            terminal_path, terminal = descriptor_object(
                 terminals[engine], label=f"native terminal {engine}"
             )
-            terminal = strict_object(terminal_path)
             state = states[engine]
             phase7_status = (
                 "complete" if state == "run" else f"input_{state.replace('-', '_')}"
@@ -7383,10 +8468,9 @@ class AnalysisController:
                 continue
             controller_name = "core" if lane in CORE_LANES else "extended"
             failure_descriptor = controllers[controller_name]["lane_failures"][lane]
-            failure_path = descriptor_file(
+            failure_path, failure = descriptor_object(
                 failure_descriptor, label=f"failed Runner lane {lane}"
             )
-            failure = strict_object(failure_path)
             self.status(
                 f"runner-{lane}",
                 "input_failed",
@@ -7426,6 +8510,17 @@ class AnalysisController:
                             "conditional_na_artifact"
                         ],
                         "call_accounting": row["canary"]["call_accounting"],
+                    }
+                )
+            elif lane in RR_RUNTIME_TERMINAL_LANE_SET:
+                limitations.update(
+                    {
+                        "evidence_status": "UNAVAILABLE",
+                        "measured_evidence_admitted": False,
+                        "successful_rr_responses": 0,
+                        "target_runtime_terminal_artifact": row["canary"][
+                            "target_runtime_terminal_artifact"
+                        ],
                     }
                 )
             self.status(
@@ -7580,10 +8675,17 @@ class AnalysisController:
         pair_status = {
             "llava_base_vs_rr": {
                 corpus: {
-                    "analysis_ready_real_run": value["facets"][corpus][
-                        "analysis_ready_real_run"
+                    "status": value["status"],
+                    "analysis_ready_real_run": value["analysis_ready_real_run"],
+                    "estimate_available": value["estimate"] is not None,
+                    "planned_contrast_missing": value["planned_contrast_missing"],
+                    "reason_code": value["reason_code"],
+                    "modality": value["modality"],
+                    "facet": value["facet"],
+                    "paired_compare_invoked": value["paired_compare_invoked"],
+                    "target_runtime_terminal_artifact": value[
+                        "target_runtime_terminal_artifact"
                     ],
-                    "inference_cluster": value["facets"][corpus]["inference_cluster"],
                 }
                 for corpus, value in llava_pairs.items()
             },
@@ -7720,7 +8822,7 @@ class AnalysisController:
             *{f"runner-{lane}" for lane in failed_runner_lanes},
         }
         expected_count = (
-            55
+            59
             + len(self.inputs["gate5"]["conditional_na_lanes"])
             + len(failed_runner_lanes)
         )
@@ -8221,16 +9323,84 @@ def contract_self_test() -> int:
                 ),
             )
 
-    terminal_inventory = copy.deepcopy(EXPECTED_TERMINAL_ROWS)
+    rr_terminal_descriptor = {
+        "path": str((Path.cwd() / "self-test-rr-runtime-terminal.json").resolve()),
+        "sha256": "d" * 64,
+        "bytes": 1,
+    }
+
+    def rr_terminal_fixture(lane: str, index: int) -> dict[str, Any]:
+        def artifact(kind: str) -> dict[str, Any]:
+            value: dict[str, Any] = {
+                "path": str(
+                    (Path.cwd() / f"self-test-{lane}-{kind}.json").resolve()
+                ),
+                "sha256": f"{index + 1:064x}",
+                "bytes": index + 1,
+            }
+            if kind == "projection":
+                value["file"] = Path(value["path"]).name
+            elif kind == "request":
+                value["envelope_id"] = f"request-{index}-{lane}"
+                value["file"] = Path(value["path"]).name
+            return value
+
+        projection_value = {
+            "projection_id": f"projection-{index}-{lane}",
+            "projection_artifact": artifact("projection"),
+            "eligibility_plan_id": f"eligibility-{index}-{lane}",
+            "eligibility_artifact": artifact("eligibility"),
+            "request_envelope_id": f"request-{index}-{lane}",
+            "request_envelope_artifact": artifact("request"),
+            "selection": {"lane_id": lane},
+            "projected_calls": {
+                "trajectories": index + 1,
+                "target_calls": index + 1,
+                "model_judge_calls": 0,
+                "local_guardrail_evaluations": index + 1,
+                "http_attempts": 0,
+            },
+        }
+        unavailable = {"status": "UNAVAILABLE", "value": None}
+        return {
+            "lane_id": lane,
+            "family": "core",
+            "disposition": "unavailable",
+            "reason_code": RR_RUNTIME_TERMINAL_REASON_CODE,
+            "reason": RR_RUNTIME_TERMINAL_REASON,
+            "projection": {"status": "passed", "value": projection_value},
+            "canary": {
+                "status": "UNAVAILABLE",
+                "value": None,
+                "target_runtime_terminal_artifact": dict(
+                    rr_terminal_descriptor
+                ),
+            },
+            "final_preflight": dict(unavailable),
+            "approved_caps": dict(unavailable),
+        }
+
+    rr_terminal_rows = {
+        lane: rr_terminal_fixture(lane, index)
+        for index, lane in enumerate(RR_RUNTIME_TERMINAL_LANES)
+    }
+    terminal_inventory = {
+        **copy.deepcopy(EXPECTED_TERMINAL_ROWS),
+        **copy.deepcopy(rr_terminal_rows),
+    }
     require_exact_gate5_terminal_inventory(
-        terminal_inventory, label="terminal-inventory-self-test"
+        terminal_inventory,
+        label="terminal-inventory-self-test",
+        validate_artifact=False,
     )
     missing_terminal = copy.deepcopy(terminal_inventory)
     missing_terminal.pop(next(iter(EXPECTED_TERMINAL_ROWS)))
     must_fail(
         "gate5-terminal-inventory-missing",
         lambda: require_exact_gate5_terminal_inventory(
-            missing_terminal, label="terminal-inventory-self-test"
+            missing_terminal,
+            label="terminal-inventory-self-test",
+            validate_artifact=False,
         ),
     )
     swapped_terminal = copy.deepcopy(terminal_inventory)
@@ -8242,7 +9412,9 @@ def contract_self_test() -> int:
     must_fail(
         "gate5-terminal-inventory-swapped",
         lambda: require_exact_gate5_terminal_inventory(
-            swapped_terminal, label="terminal-inventory-self-test"
+            swapped_terminal,
+            label="terminal-inventory-self-test",
+            validate_artifact=False,
         ),
     )
     forged_terminal = copy.deepcopy(terminal_inventory)
@@ -8250,7 +9422,9 @@ def contract_self_test() -> int:
     must_fail(
         "gate5-terminal-inventory-forged",
         lambda: require_exact_gate5_terminal_inventory(
-            forged_terminal, label="terminal-inventory-self-test"
+            forged_terminal,
+            label="terminal-inventory-self-test",
+            validate_artifact=False,
         ),
     )
     extra_terminal = copy.deepcopy(terminal_inventory)
@@ -8260,9 +9434,174 @@ def contract_self_test() -> int:
     must_fail(
         "gate5-terminal-inventory-extra",
         lambda: require_exact_gate5_terminal_inventory(
-            extra_terminal, label="terminal-inventory-self-test"
+            extra_terminal,
+            label="terminal-inventory-self-test",
+            validate_artifact=False,
         ),
     )
+
+    with tempfile.TemporaryDirectory(
+        prefix="ura-phase7-rr-continuity-contract-"
+    ) as temp_value:
+        temp = Path(temp_value).resolve(strict=True)
+        deployed = temp / "MLLMRiskBench"
+        config_path = deployed / "experiments" / "local-llava-rr.json"
+        config_path.parent.mkdir(parents=True)
+        config_payload = (
+            b'{\n  "vllm:GraySwanAI/llava-v1.6-mistral-7b-hf-RR": {\n'
+            b'    "revision": "d11b3d7ae2fb21e984f197a83c15bbb0deb66b7e",\n'
+            b'    "modalities": ["text", "image"],\n'
+            b'    "tensor_parallel_size": 1,\n'
+            b'    "gpu_memory_utilization": 0.85,\n'
+            b'    "max_tokens": 4096\n  }\n}\n'
+        )
+        config_path.write_bytes(config_payload)
+        config_descriptor = descriptor(config_path)
+        if (
+            config_descriptor["sha256"] != RR_LOCAL_CONFIG_SHA256
+            or config_descriptor["bytes"] != RR_LOCAL_CONFIG_BYTES
+        ):
+            raise Phase7Error("RR local-config self-test bytes changed")
+
+        def continuity_artifact(
+            name: str,
+            *,
+            local_config: Mapping[str, Any] = config_descriptor,
+            observed_commit: str = RR_OBSERVED_PROJECT_COMMIT,
+        ) -> dict[str, Any]:
+            path = temp / f"{name}.json"
+            path.write_bytes(
+                canonical(
+                    {
+                        "target": {"local_config": dict(local_config)},
+                        "bindings": {
+                            "semantic_source_continuity": {
+                                "observed_project_commit": observed_commit,
+                            }
+                        },
+                    }
+                )
+            )
+            return descriptor(path)
+
+        valid_continuity = continuity_artifact("valid-continuity")
+        original_git_output = globals()["git_output"]
+        try:
+            globals()["git_output"] = lambda *_args: ""
+            validate_rr_runtime_project_continuity(
+                valid_continuity,
+                project_root=deployed,
+                label="RR continuity self-test",
+            )
+            relocated_config_path = temp / "relocated-local-llava-rr.json"
+            relocated_config_path.write_bytes(config_payload)
+            must_fail(
+                "rr-local-config-path",
+                lambda: validate_rr_runtime_project_continuity(
+                    continuity_artifact(
+                        "relocated-config",
+                        local_config=descriptor(relocated_config_path),
+                    ),
+                    project_root=deployed,
+                    label="RR continuity self-test",
+                ),
+            )
+            wrong_config_path = temp / "wrong-project" / "experiments" / (
+                "local-llava-rr.json"
+            )
+            wrong_config_path.parent.mkdir(parents=True)
+            wrong_config_path.write_bytes(config_payload.replace(b"4096", b"4095", 1))
+            must_fail(
+                "rr-local-config-content",
+                lambda: validate_rr_runtime_project_continuity(
+                    continuity_artifact(
+                        "wrong-config",
+                        local_config=descriptor(wrong_config_path),
+                    ),
+                    project_root=wrong_config_path.parent.parent,
+                    label="RR continuity self-test",
+                ),
+            )
+            must_fail(
+                "rr-observed-project-commit",
+                lambda: validate_rr_runtime_project_continuity(
+                    continuity_artifact(
+                        "wrong-observed-commit", observed_commit="0" * 40
+                    ),
+                    project_root=deployed,
+                    label="RR continuity self-test",
+                ),
+            )
+            globals()["git_output"] = lambda *_args: (
+                "experiments/run_matrix.py"
+            )
+            must_fail(
+                "rr-semantic-source-diff",
+                lambda: validate_rr_runtime_project_continuity(
+                    valid_continuity,
+                    project_root=deployed,
+                    label="RR continuity self-test",
+                ),
+            )
+        finally:
+            globals()["git_output"] = original_git_output
+
+    contrast_corpus = IMAGE_ARMS[0]
+    contrast = {
+        "schema": RR_NON_ESTIMABLE_CONTRAST_SCHEMA,
+        "status": "unavailable",
+        "contrast_id": "llava-base-vs-rr",
+        "modality": "image",
+        "facet": contrast_corpus,
+        "comparison_type": "cross_target_endpoint_noncausal",
+        "planned_estimand": (
+            "paired static-image endpoint by datapoint_id x requested_seed"
+        ),
+        "planned_contrast_missing": True,
+        "reason_code": RR_RUNTIME_TERMINAL_REASON_CODE,
+        "reason": RR_RUNTIME_TERMINAL_REASON,
+        "terminal_lanes": list(RR_RUNTIME_TERMINAL_LANES),
+        "target_runtime_terminal_artifact": dict(rr_terminal_descriptor),
+        "analysis_ready_real_run": False,
+        "estimate": None,
+        "paired_compare_invoked": False,
+        "rr_responses_admitted": 0,
+        "human_audit_eligible": False,
+    }
+    AnalysisController._validate_non_estimable_rr_contrast(
+        None,
+        value=contrast,
+        corpus=contrast_corpus,
+        terminal_descriptor=rr_terminal_descriptor,
+    )
+    for mutation_name, mutate in (
+        ("fabricated-estimate", lambda value: value.__setitem__("estimate", 0.0)),
+        (
+            "paired-invocation",
+            lambda value: value.__setitem__("paired_compare_invoked", True),
+        ),
+        (
+            "human-audit-eligible",
+            lambda value: value.__setitem__("human_audit_eligible", True),
+        ),
+        (
+            "wrong-terminal",
+            lambda value: value["target_runtime_terminal_artifact"].__setitem__(
+                "sha256", "e" * 64
+            ),
+        ),
+    ):
+        mutation = copy.deepcopy(contrast)
+        mutate(mutation)
+        must_fail(
+            f"rr-non-estimable-contrast-{mutation_name}",
+            lambda mutation=mutation: AnalysisController._validate_non_estimable_rr_contrast(
+                None,
+                value=mutation,
+                corpus=contrast_corpus,
+                terminal_descriptor=rr_terminal_descriptor,
+            ),
+        )
 
     with tempfile.TemporaryDirectory(
         prefix="ura-phase7-conditional-defense-contract-"
@@ -8601,7 +9940,12 @@ def contract_self_test() -> int:
                 "reason_code": None,
             }
             for lane, family in EXPECTED_RUNNABLE_FAMILIES.items()
-        ] + [copy.deepcopy(row) for row in EXPECTED_TERMINAL_ROWS.values()]
+        ] + [
+            copy.deepcopy(row) for row in EXPECTED_TERMINAL_ROWS.values()
+        ] + [
+            copy.deepcopy(rr_terminal_rows[lane])
+            for lane in RR_RUNTIME_TERMINAL_LANES
+        ]
         success_profile = gate5_inventory_profile(
             success_rows,
             label="success-profile-self-test",
@@ -8619,17 +9963,72 @@ def contract_self_test() -> int:
             validate_artifact=False,
         )
         if (
-            success_profile["runnable_lane_count"] != 26
-            or success_profile["terminal_lane_count"] != 20
+            success_profile["runnable_lane_count"] != 22
+            or success_profile["terminal_lane_count"] != 24
+            or success_profile["target_runtime_terminal"] != 4
             or success_profile["conditional_na_lanes"] != []
-            or conditional_profile["runnable_lane_count"] != 25
-            or conditional_profile["terminal_lane_count"] != 21
+            or conditional_profile["runnable_lane_count"] != 21
+            or conditional_profile["terminal_lane_count"] != 25
+            or conditional_profile["target_runtime_terminal"] != 4
             or conditional_profile["conditional_na_lanes"]
             != [DEFENSE_LOCAL_LANE]
             or DEFENSE_LOCAL_LANE
             in conditional_profile["scheduled_core_lanes"]
         ):
             raise Phase7Error("Gate 5 conditional-defense profiles changed")
+        for mutation_name, mutate in (
+            (
+                "projection-unavailable",
+                lambda row: row.__setitem__(
+                    "projection", {"status": "UNAVAILABLE", "value": None}
+                ),
+            ),
+            (
+                "terminal-descriptor-divergence",
+                lambda row: row["canary"][
+                    "target_runtime_terminal_artifact"
+                ].__setitem__("sha256", "e" * 64),
+            ),
+            (
+                "projection-http-attempt",
+                lambda row: row["projection"]["value"]["projected_calls"].__setitem__(
+                    "http_attempts", 1
+                ),
+            ),
+            (
+                "projection-file-mismatch",
+                lambda row: row["projection"]["value"][
+                    "projection_artifact"
+                ].__setitem__("file", "forged.lane-projection.json"),
+            ),
+            (
+                "request-envelope-id-mismatch",
+                lambda row: row["projection"]["value"][
+                    "request_envelope_artifact"
+                ].__setitem__("envelope_id", "request-envelope-forged"),
+            ),
+            (
+                "eligibility-rich-descriptor",
+                lambda row: row["projection"]["value"][
+                    "eligibility_artifact"
+                ].__setitem__("file", "forged.eligibility.json"),
+            ),
+        ):
+            mutation = copy.deepcopy(success_rows)
+            rr_row = next(
+                row
+                for row in mutation
+                if row["lane_id"] == RR_RUNTIME_TERMINAL_LANES[0]
+            )
+            mutate(rr_row)
+            must_fail(
+                f"gate5-rr-runtime-terminal-{mutation_name}",
+                lambda mutation=mutation: gate5_inventory_profile(
+                    mutation,
+                    label="rr-runtime-terminal-profile-self-test",
+                    validate_artifact=False,
+                ),
+            )
         for mutation_name, mutate in (
             (
                 "wrong-reason-code",

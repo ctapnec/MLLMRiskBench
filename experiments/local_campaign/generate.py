@@ -109,6 +109,10 @@ EXTERNAL_BINDINGS = frozenset(
         "PROMPT_OBSERVATION_TAG",
         "PROMPT_SUMMARY_SHA256",
         "QWEN_CONFIG_SHA256",
+        "RR_IMAGE_EVIDENCE_ROOT",
+        "RR_TEXT_EVIDENCE_ROOT",
+        "RR_TRANSFORMERS_EVIDENCE_ROOT",
+        "RR_VLLM_TAIL_EVIDENCE_ROOT",
         "SOURCE_CONFIG_SHA256",
         "SOURCE_RECEIPT_PATH",
         "SOURCE_RECEIPT_RETAINED_NAME",
@@ -136,8 +140,24 @@ PHASE3_BINDINGS_ADDED_AFTER_A05 = frozenset(
         "PROJECT_RECEIPT_BYTES",
     }
 )
+
+# Commit 5719a4f and its retained controller binding predate the four exact
+# GraySwan RR termination-evidence roots.  Keep that historical inventory
+# explicit so rebind can migrate it without accepting an arbitrary partial
+# current document.
+RR_EVIDENCE_BINDINGS_ADDED_AFTER_5719 = frozenset(
+    {
+        "RR_IMAGE_EVIDENCE_ROOT",
+        "RR_TEXT_EVIDENCE_ROOT",
+        "RR_TRANSFORMERS_EVIDENCE_ROOT",
+        "RR_VLLM_TAIL_EVIDENCE_ROOT",
+    }
+)
+PRE_RR_EXTERNAL_BINDINGS = frozenset(
+    EXTERNAL_BINDINGS - RR_EVIDENCE_BINDINGS_ADDED_AFTER_5719
+)
 LEGACY_A05_EXTERNAL_BINDINGS = frozenset(
-    (EXTERNAL_BINDINGS - PHASE3_BINDINGS_ADDED_AFTER_A05)
+    (PRE_RR_EXTERNAL_BINDINGS - PHASE3_BINDINGS_ADDED_AFTER_A05)
     | {"PHASE3_GPU_INVENTORY_SHA256"}
 )
 
@@ -310,7 +330,11 @@ def validate_binding_document(
     expected_keys: frozenset[str] = EXTERNAL_BINDINGS,
 ) -> dict[str, str]:
     external_binding_keys_from_templates()
-    if expected_keys not in {EXTERNAL_BINDINGS, LEGACY_A05_EXTERNAL_BINDINGS}:
+    if expected_keys not in {
+        EXTERNAL_BINDINGS,
+        PRE_RR_EXTERNAL_BINDINGS,
+        LEGACY_A05_EXTERNAL_BINDINGS,
+    }:
         raise ControllerGenerationError("unsupported binding-key inventory")
     if not isinstance(raw, dict) or set(raw) != {"schema", "values"}:
         raise ControllerGenerationError("bindings must contain exactly schema and values")

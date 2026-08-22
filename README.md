@@ -59,13 +59,15 @@ distro/install.sh all
 ```
 
 That single entry point installs the main URA environment, corpora and pinned
-Ollama runtime, resumes or creates and then verifies all 15 locked third-party
-framework runtimes in separate content-addressed stores (14 private Python
-virtual environments and Promptfoo's private Node runtime) from
-`experiments/framework_runtime_lock.json`, writes the campaign locators, and
-starts the console in tmux. A runtime failure makes `all` exit nonzero; re-running
-the same command safely resumes an interrupted staged install. The phase-by-phase
-form and recovery rules are in
+Ollama runtime, builds BIPIA through its own fully hashed support venv, and
+resumes and verifies all 15 locked third-party framework runtimes in separate
+content-addressed stores (14 private Python virtual environments and Promptfoo's
+private Node runtime) from `experiments/framework_runtime_lock.json`. Each of
+the 15 runtimes gets its own sequential `--only` named session, so one failure
+is recorded without hiding later runtime results; the aggregate phase still
+fails honestly. The installer writes the campaign locators and starts the
+console in tmux, or screen when tmux is unavailable. Re-running the same command
+safely resumes interrupted staged installs. The phase-by-phase form and recovery rules are in
 [`distro/README.md`](distro/README.md) and use the same roots and lock as the
 [operator runbook](experiments/RUN_AND_RETURN.md).
 
@@ -96,6 +98,10 @@ python -c "import bitsandbytes, psutil, torch, vllm; print(vllm.__version__, bit
 snapshot. HarmBench and every other third-party attack/native framework are
 installed only through the strict isolated-runtime lock described in the
 operator runbook; they are not main-environment extras.
+The installer removes legacy top-level PyRIT, Spikee, `datasets`, and
+`jsonlines` copies from the main venv after installing URA, without removing
+their isolated stores. BIPIA's retained `datasets==2.14.7` builder instead uses
+`distro/bipia-build-requirements.lock` in `$URA_WORK/support-venvs`.
 
 ### Isolated framework runtimes
 
@@ -112,6 +118,10 @@ exposes the same fixed per-row actions, while Jobs/Stats shows their bounded
 campaign events. The full CLI, state-root convention, canonical `.store`
 runtime-config handoff, and 20-attacker coverage dispositions are in the
 [operator runbook](experiments/RUN_AND_RETURN.md#122-runner-safe-external-attack-bridges).
+Clean per-runtime homes bind explicit persistent package caches at
+`$URA_WORK/framework-venvs/.cache/{pip,npm}`. Cache bytes are download
+optimizations only; hashed locks, exact inventories, smoke checks, and content
+seals remain authoritative.
 
 Dry-run and synthetic output are plumbing evidence only and cannot enter the
 thesis results. This explicit offline form records
@@ -194,6 +204,18 @@ is passed to vLLM at engine construction, and `max_tokens` may not exceed it.
 Rig Web preserves the field in its selected local config, and the normalized
 value enters grid/run provenance. Each Build row labels either the explicit
 context cap or native model context.
+
+The exact campaign GraySwan RR checkpoint remains sealed and installed but is
+not a runnable target in the current measured inventory. Its text and physical-
+image probes reached the declared 4,096-token generation cap without a stop;
+an independent Transformers control reproduced its two-token repetition while
+the exact LLaVA base emitted EOS. Gate 5 records the four affected lanes through
+one `ura-phase5-target-runtime-terminal/1` artifact with reason
+`target_baseline_nontermination_at_generation_cap`. URA keeps rejecting every
+length-capped vLLM completion: it does not retain a prefix, inject stop strings,
+change the decoding configuration, substitute a checkpoint, send the prefix to
+a judge, or report a same-base estimate. The completed no-call projections and
+the sealed acquisition remain valid engineering/admission records.
 
 Hub-backed local execution is a sealed three-stage workflow, never an implicit
 first-load download. It covers all five model roles: vLLM target, local vLLM
@@ -317,8 +339,10 @@ outer grid's mutable `finished_at` packaging field.
 The focal contrast is cross-provider and associational, not a same-base
 ablation or a causal estimate of a safety mechanism. Broader roster rows are
 descriptive replication/coverage evidence. A verified local same-base defense
-pair is the appropriate design for a defense effect. Fable thinking and Sol
-encrypted reasoning or assistant-output state are retained only as needed for
+pair is the appropriate design for a defense effect. The current LLaVA/GraySwan
+pair is explicitly non-estimable because the GraySwan target failed mandatory
+response admission; that typed omission is not a zero effect. Fable thinking
+and Sol encrypted reasoning or assistant-output state are retained only as needed for
 provider-faithful stateless continuation and checkpoint resume.
 
 ## Sources, modalities, and native engines

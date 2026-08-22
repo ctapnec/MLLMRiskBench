@@ -390,51 +390,79 @@ def descriptor(path: Path) -> dict[str, object]:
         "bytes": len(payload),
     }
 
-def require_gate5_inventory_profile(value: object, *, label: str) -> tuple[int, int, list[str]]:
+def require_gate5_inventory_profile(
+    value: object, *, label: str
+) -> tuple[int, int, int, list[str]]:
     if not isinstance(value, dict):
         raise SystemExit(f"{label} is not an object")
     runnable = value.get("runnable_lanes")
     terminal = value.get("typed_terminal_lanes")
+    target_runtime_terminal = value.get("target_runtime_terminal")
     conditional = value.get("conditional_na_lanes")
-    observed = (runnable, terminal, conditional)
+    observed = (runnable, terminal, target_runtime_terminal, conditional)
     allowed = (
-        (26, 20, []),
-        (25, 21, ["defense-local"]),
+        (22, 24, 4, []),
+        (21, 25, 4, ["defense-local"]),
     )
     if (
         type(runnable) is not int
         or type(terminal) is not int
+        or type(target_runtime_terminal) is not int
         or not isinstance(conditional, list)
         or observed not in allowed
     ):
         raise SystemExit(f"{label} Gate 5 inventory profile changed")
-    return runnable, terminal, list(conditional)
+    return runnable, terminal, target_runtime_terminal, list(conditional)
 
 def inventory_profile_self_test() -> None:
     fixtures = (
-        {"runnable_lanes": 26, "typed_terminal_lanes": 20, "conditional_na_lanes": []},
         {
-            "runnable_lanes": 25,
-            "typed_terminal_lanes": 21,
+            "runnable_lanes": 22, "typed_terminal_lanes": 24,
+            "target_runtime_terminal": 4, "conditional_na_lanes": [],
+        },
+        {
+            "runnable_lanes": 21,
+            "typed_terminal_lanes": 25,
+            "target_runtime_terminal": 4,
             "conditional_na_lanes": ["defense-local"],
         },
     )
     for fixture in fixtures:
         require_gate5_inventory_profile(fixture, label="self-test")
     mutations = (
-        {"runnable_lanes": 25, "typed_terminal_lanes": 20, "conditional_na_lanes": []},
         {
-            "runnable_lanes": 26,
-            "typed_terminal_lanes": 20,
+            "runnable_lanes": 26, "typed_terminal_lanes": 20,
+            "target_runtime_terminal": 0, "conditional_na_lanes": [],
+        },
+        {
+            "runnable_lanes": 25, "typed_terminal_lanes": 21,
+            "target_runtime_terminal": 0,
             "conditional_na_lanes": ["defense-local"],
         },
-        {"runnable_lanes": 25, "typed_terminal_lanes": 21, "conditional_na_lanes": []},
         {
-            "runnable_lanes": 25,
-            "typed_terminal_lanes": 21,
+            "runnable_lanes": 22, "typed_terminal_lanes": 24,
+            "target_runtime_terminal": 3, "conditional_na_lanes": [],
+        },
+        {
+            "runnable_lanes": 22,
+            "typed_terminal_lanes": 24,
+            "target_runtime_terminal": 4,
+            "conditional_na_lanes": ["defense-local"],
+        },
+        {
+            "runnable_lanes": 21, "typed_terminal_lanes": 25,
+            "target_runtime_terminal": 4, "conditional_na_lanes": [],
+        },
+        {
+            "runnable_lanes": 21,
+            "typed_terminal_lanes": 25,
+            "target_runtime_terminal": 4,
             "conditional_na_lanes": ["another-lane"],
         },
-        {"runnable_lanes": True, "typed_terminal_lanes": 20, "conditional_na_lanes": []},
+        {
+            "runnable_lanes": True, "typed_terminal_lanes": 24,
+            "target_runtime_terminal": 4, "conditional_na_lanes": [],
+        },
     )
     for index, mutation in enumerate(mutations, 1):
         try:
@@ -485,6 +513,7 @@ expected_fields = {
     "promotion_receipt",
     "runnable_lanes",
     "typed_terminal_lanes",
+    "target_runtime_terminal",
     "conditional_na_lanes",
     "downloads_observed_bytes",
     "measured_run_launched",
@@ -500,7 +529,7 @@ if (
     or re.fullmatch(r"[0-9a-f]{64}", str(completion.get("authorized_promotion_plan_sha256"))) is None
 ):
     raise SystemExit("Gate 5 exact sequence completion contract changed")
-runnable_lanes, typed_terminal_lanes, conditional_na_lanes = (
+runnable_lanes, typed_terminal_lanes, target_runtime_terminal, conditional_na_lanes = (
     require_gate5_inventory_profile(completion, label="Gate 5 sequence completion")
 )
 phase7.require_utc_timestamp(
@@ -514,6 +543,7 @@ descriptor_fields = expected_fields - {
     "authorized_promotion_plan_sha256",
     "runnable_lanes",
     "typed_terminal_lanes",
+    "target_runtime_terminal",
     "conditional_na_lanes",
     "downloads_observed_bytes",
     "measured_run_launched",
@@ -545,6 +575,8 @@ inventory_counts = gate5_profile["inventory_counts"]
 if (
     inventory_counts.get("runnable") != runnable_lanes
     or inventory_counts.get("typed_terminal") != typed_terminal_lanes
+    or inventory_counts.get("target_runtime_terminal")
+    != target_runtime_terminal
     or inventory_counts.get("conditional_na_lanes") != conditional_na_lanes
 ):
     raise SystemExit("Gate 5 sequence completion and manifest profiles differ")
@@ -559,6 +591,7 @@ value = {
     "promotion_receipt": descriptor(promotion),
     "runnable_lanes": runnable_lanes,
     "typed_terminal_lanes": typed_terminal_lanes,
+    "target_runtime_terminal": target_runtime_terminal,
     "conditional_na_lanes": conditional_na_lanes,
     "downloads_observed_bytes": 0,
     "measured_run_launched": False,
@@ -1048,21 +1081,25 @@ def strict_json(raw: str, label: str) -> dict:
         raise SystemExit(f"{label} is not an object")
     return value
 
-def require_gate5_inventory_profile(value: object, *, label: str) -> tuple[int, int, list[str]]:
+def require_gate5_inventory_profile(
+    value: object, *, label: str
+) -> tuple[int, int, int, list[str]]:
     if not isinstance(value, dict):
         raise SystemExit(f"{label} is not an object")
     runnable = value.get("runnable_lanes")
     terminal = value.get("typed_terminal_lanes")
+    target_runtime_terminal = value.get("target_runtime_terminal")
     conditional = value.get("conditional_na_lanes")
     if (
         type(runnable) is not int
         or type(terminal) is not int
+        or type(target_runtime_terminal) is not int
         or not isinstance(conditional, list)
-        or (runnable, terminal, conditional)
-        not in ((26, 20, []), (25, 21, ["defense-local"]))
+        or (runnable, terminal, target_runtime_terminal, conditional)
+        not in ((22, 24, 4, []), (21, 25, 4, ["defense-local"]))
     ):
         raise SystemExit(f"{label} Gate 5 inventory profile changed")
-    return runnable, terminal, list(conditional)
+    return runnable, terminal, target_runtime_terminal, list(conditional)
 
 CORE_CANDIDATE_ORDER = [
     "local-qwen3-vl-text-full", "local-qwen3-vl-image-full",
@@ -1072,6 +1109,13 @@ CORE_CANDIDATE_ORDER = [
     "gptgeochat-qwen3-vl", "gptgeochat-llava-base", "gptgeochat-llava-rr",
     "crescendo-qwen3-vl", "defense-local",
 ]
+RR_TERMINAL_LANES = (
+    "local-llava-rr-text-full",
+    "local-llava-rr-image-full",
+    "rjudge-llava-rr",
+    "gptgeochat-llava-rr",
+)
+RR_TERMINAL_LANE_SET = set(RR_TERMINAL_LANES)
 
 def require_exact_core_inventory(
     states: object, *, core_conditional: object, gate_conditional: list[str], label: str
@@ -1079,7 +1123,8 @@ def require_exact_core_inventory(
     if gate_conditional not in ([], ["defense-local"]):
         raise SystemExit(f"{label} Gate 5 conditional inventory changed")
     expected = [
-        lane for lane in CORE_CANDIDATE_ORDER if lane not in gate_conditional
+        lane for lane in CORE_CANDIDATE_ORDER
+        if lane not in RR_TERMINAL_LANE_SET and lane not in gate_conditional
     ]
     if (
         not isinstance(states, dict)
@@ -1090,9 +1135,13 @@ def require_exact_core_inventory(
     return expected
 
 def core_inventory_self_test() -> None:
-    success_states = {lane: "measured_complete" for lane in CORE_CANDIDATE_ORDER}
+    success_order = [
+        lane for lane in CORE_CANDIDATE_ORDER
+        if lane not in RR_TERMINAL_LANE_SET
+    ]
+    success_states = {lane: "measured_complete" for lane in success_order}
     conditional_order = [
-        lane for lane in CORE_CANDIDATE_ORDER if lane != "defense-local"
+        lane for lane in success_order if lane != "defense-local"
     ]
     conditional_states = {lane: "measured_complete" for lane in conditional_order}
     require_exact_core_inventory(
@@ -1112,6 +1161,14 @@ def core_inventory_self_test() -> None:
             dict(reversed(list(conditional_states.items()))),
             ["defense-local"],
             ["defense-local"],
+        ),
+        (
+            {
+                **success_states,
+                RR_TERMINAL_LANES[0]: "measured_complete",
+            },
+            [],
+            [],
         ),
     )
     for index, (states, core_conditional, gate_conditional) in enumerate(mutations, 1):
@@ -1294,6 +1351,7 @@ expected_gate5_fields = {
     "promotion_receipt",
     "runnable_lanes",
     "typed_terminal_lanes",
+    "target_runtime_terminal",
     "conditional_na_lanes",
     "downloads_observed_bytes",
     "measured_run_launched",
@@ -1310,7 +1368,7 @@ if (
     or gate5_initial.get("measured_run_launched") is not False
 ):
     raise SystemExit("Gate 5 validation receipt contract changed")
-runnable_lanes, typed_terminal_lanes, conditional_na_lanes = (
+runnable_lanes, typed_terminal_lanes, target_runtime_terminal, conditional_na_lanes = (
     require_gate5_inventory_profile(gate5_initial, label="Gate 5 validation receipt")
 )
 require_exact_core_inventory(
@@ -1403,6 +1461,7 @@ value = {
         "promotion_receipt": gate5_initial["promotion_receipt"],
         "runnable_lanes": runnable_lanes,
         "typed_terminal_lanes": typed_terminal_lanes,
+        "target_runtime_terminal": target_runtime_terminal,
         "conditional_na_lanes": conditional_na_lanes,
     },
     "native_plan": descriptor(native_plan_value),

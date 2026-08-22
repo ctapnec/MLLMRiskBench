@@ -18,7 +18,12 @@ from ura.data_models import Attempt, DialogTurn
 from ura.judges.base import JudgeCascade
 from ura.judges.rules import RuleJudge
 from ura.runner import CODE_VERSION, Runner, _component_config
-from ura.targets.local import MAX_VLLM_MODEL_LEN, OllamaTarget, VLLMTarget
+from ura.targets.local import (
+    MAX_VLLM_MODEL_LEN,
+    LocalTargetOutputError,
+    OllamaTarget,
+    VLLMTarget,
+)
 
 
 SPEC = "vllm:Qwen/Qwen3-VL-8B-Instruct"
@@ -297,6 +302,9 @@ def test_vllm_engine_receives_only_explicit_context_cap(
     assert "max_tokens" not in engine_kwargs[0]
     assert sampling_kwargs[0]["max_tokens"] == 4096
     assert "max_model_len" not in sampling_kwargs[0]
+    assert "stop" not in sampling_kwargs[0]
+    assert "stop_token_ids" not in sampling_kwargs[0]
+    assert "ignore_eos" not in sampling_kwargs[0]
     assert response.raw["max_model_len"] == 15360
     assert response.raw["engine_core_execution_mode"] == "in_process"
     assert response.raw["generation"]["max_tokens"] == 4096
@@ -337,6 +345,22 @@ def test_vllm_engine_receives_only_explicit_context_cap(
     assert os.environ["VLLM_ENABLE_V1_MULTIPROCESSING"] == "operator-value"
     assert "max_model_len" not in engine_kwargs[1]
     assert "max_model_len" not in native_response.raw
+
+
+def test_vllm_length_capped_completion_is_never_admitted_as_a_response() -> None:
+    completion = SimpleNamespace(
+        text="ear Bez " * 256,
+        finish_reason="length",
+        stop_reason=None,
+        token_ids=[644, 22627] * 256,
+    )
+    outputs = [SimpleNamespace(outputs=[completion], prompt_token_ids=[1, 2, 3])]
+
+    with pytest.raises(
+        LocalTargetOutputError,
+        match=r"truncated or incomplete: 'length'",
+    ):
+        VLLMTarget._extract(outputs)
 
 
 def test_ollama_uses_the_same_nonblank_deterministic_attempt_placeholder(

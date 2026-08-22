@@ -18,6 +18,7 @@ from experiments import framework_runtime_installer as installer
 
 
 LOCK_PATH = Path(installer.__file__).with_name("framework_runtime_lock.json")
+BIPIA_LOCK_PATH = LOCK_PATH.parents[1] / "distro" / "bipia-build-requirements.lock"
 
 
 def _minimal_lock() -> dict[str, Any]:
@@ -108,6 +109,7 @@ def test_global_installer_docs_match_the_resumable_fifteen_runtime_lock() -> Non
     )
     install_script = (root / "distro/install.sh").read_text(encoding="utf-8")
     assert "runtimes_session resume" in install_script
+    assert '--only "$framework"' in install_script
     all_dispatch = install_script[
         install_script.index("    all)") : install_script.index("    deps)")
     ]
@@ -116,6 +118,34 @@ def test_global_installer_docs_match_the_resumable_fifteen_runtime_lock() -> Non
     assert "framework_runtime_installer resume" in documents[
         "experiments/RUN_AND_RETURN.md"
     ]
+
+
+def test_bipia_builder_has_its_own_exact_hashed_environment_not_runner_dependencies() -> None:
+    text = BIPIA_LOCK_PATH.read_text(encoding="utf-8")
+    rows = installer._logical_requirements(text)
+    installer._validate_hashed_requirements(text, len(rows), "BIPIA support lock")
+    exact = {row.split(maxsplit=1)[0] for row in rows}
+    assert {
+        "datasets==2.14.7",
+        "jsonlines==4.0.0",
+        "numpy==2.3.5",
+        "pandas==3.0.1",
+        "pyarrow==23.0.1",
+    } <= exact
+
+    script = (LOCK_PATH.parents[1] / "distro" / "install.sh").read_text(
+        encoding="utf-8"
+    )
+    assert 'BIPIA_BUILD_LOCK="$URA_ROOT/distro/bipia-build-requirements.lock"' in script
+    assert 'BIPIA_ENV_STORE="$BIPIA_ENV_ROOT/.store"' in script
+    assert '"$base_python" -m venv --copies "$stage"' in script
+    assert 'include-system-site-packages = false' in script
+    assert 'pip install --require-hashes' in script
+    assert 'PIP_CACHE_DIR="$URA_PACKAGE_CACHE/pip"' in script
+    assert 'yes Y | "$BIPIA_BUILD_PY" process.py' in script
+    assert '"$BIPIA_BUILD_PY" process.py --data_dir' in script
+    assert '"$PY" -m pip install "datasets==2.14.7"' not in script
+    assert 'pip uninstall -y pyrit spikee datasets jsonlines' in script
 
 
 def test_lock_rejects_duplicate_json_keys(tmp_path: Path) -> None:
@@ -735,6 +765,53 @@ def test_command_log_has_a_hard_byte_bound(
     runner = installer.CommandRunner(log, tmp_path)
     runner.run([sys.executable, "-c", "print('x'*10000)"])
     assert log.stat().st_size <= 1024
+
+
+@pytest.mark.parametrize(
+    ("runtime", "variable", "cache_name"),
+    [
+        ("python", "PIP_CACHE_DIR", "pip"),
+        ("node", "NPM_CONFIG_CACHE", "npm"),
+    ],
+)
+def test_runtime_runner_binds_a_persistent_cache_outside_the_sealed_store(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    runtime: str,
+    variable: str,
+    cache_name: str,
+) -> None:
+    layout = installer.Layout(tmp_path / "framework-envs", tmp_path / "state")
+    env_dir = layout.store_root / "demo-runtime"
+    home = layout.state_root / "smoke-home"
+    monkeypatch.setenv(variable, str(tmp_path / "hostile-ambient-cache"))
+    runner = installer._runner(
+        layout,
+        {"name": "demo", "runtime": runtime},
+        env_dir,
+        home=home,
+    )
+    result = runner.run(
+        [
+            sys.executable,
+            "-c",
+            "import json,os; print(json.dumps({k:os.environ.get(k) for k in "
+            + repr([variable, "HOME"])
+            + "}))",
+        ],
+        capture=True,
+    )
+    child = json.loads(result.stdout)
+    expected = layout.cache_root / cache_name
+    assert child == {variable: str(expected), "HOME": str(home)}
+    assert expected.is_dir()
+    assert expected.parent == layout.cache_root
+    assert layout.store_root not in expected.parents
+    with pytest.raises(installer.InstallerError, match="fixed environment key"):
+        runner.run(
+            [sys.executable, "-c", "pass"],
+            extra_env={variable: str(tmp_path / "replacement")},
+        )
 
 
 @pytest.mark.skipif(os.name == "nt", reason="process-group regression targets Linux")
@@ -1418,19 +1495,30 @@ if [ "${1:-}" = "-m" ] && [ "${2:-}" = "experiments.framework_runtime_installer"
   { printf '%s\n' "$@"; printf -- '--END--\n'; } >> "__CALLS__"
   command=$1
   state_root=""
+  only=""
   while [ $# -gt 0 ]; do
-    case "$1" in --state-root) state_root=$2; shift 2 ;; *) shift ;; esac
+    case "$1" in
+      --state-root) state_root=$2; shift 2 ;;
+      --only) only=$2; shift 2 ;;
+      *) shift ;;
+    esac
   done
   case "$command" in
     plan)
       echo '{"schema":"ura-framework-runtime-plan/1","lock_id":"stub","actions":[]}'
       exit 0 ;;
     install|resume|verify)
-      name="ura-framework-$command-stub"
+      name="ura-framework-$command-${only:-all}-stub"
       mkdir -p "$state_root/sessions"
       exit_rc="${URA_STUB_EXIT_RC:-0}"
+      if [ -n "${URA_STUB_FAIL_ONLY:-}" ] && [ "$only" != "$URA_STUB_FAIL_ONLY" ]; then
+        exit_rc=0
+      fi
       if [ "$command" = verify ]; then
         exit_rc="${URA_STUB_VERIFY_EXIT_RC:-$exit_rc}"
+        if [ -n "${URA_STUB_VERIFY_FAIL_ONLY:-}" ] && [ "$only" != "$URA_STUB_VERIFY_FAIL_ONLY" ]; then
+          exit_rc=0
+        fi
       fi
       printf '%s\n' "$exit_rc" > "$state_root/sessions/$name.exit"
       printf 'stub %s transcript\n' "$command" > "$state_root/sessions/$name.log"
@@ -1539,14 +1627,20 @@ def test_distro_runtimes_phase_resumes_fresh_or_staged_store_then_verifies(
     env_root = f"{sandbox.data.as_posix()}/framework-venvs"
     state_root = f"{sandbox.data.as_posix()}/runs/engineering/framework-runtime-{lock_id[:12]}"
     calls = sandbox.installer_calls()
+    frameworks = [entry["name"] for entry in installer.load_lock(LOCK_PATH)["frameworks"]]
     # `resume` is deliberately used even for a fresh store: it handles both a
     # missing store and a stage left by an interrupted earlier invocation. The
     # fresh-only `install` command rejects the latter and broke global recovery.
-    assert [call[0] for call in calls] == ["plan", "resume", "verify"]
+    assert [call[0] for call in calls] == ["plan"] + [
+        command for _framework in frameworks for command in ("resume", "verify")
+    ]
     assert calls[0] == ["plan", "--lock", lock, "--env-root", env_root, "--state-root", state_root]
+    for framework, pair_start in zip(frameworks, range(1, len(calls), 2), strict=True):
+        pair = calls[pair_start : pair_start + 2]
+        assert [call[-2:] for call in pair] == [["--only", framework], ["--only", framework]]
     for call in calls[1:]:
         assert call[1:7] == ["--lock", lock, "--env-root", env_root, "--state-root", state_root]
-        assert call[7] == "--python" and len(call) == 9
+        assert call[7] == "--python" and len(call) == 11
         assert Path(call[8]).name.startswith("python")
         assert "--session-policy" not in call
     logs = sandbox.data / "acquire-logs"
@@ -1555,41 +1649,58 @@ def test_distro_runtimes_phase_resumes_fresh_or_staged_store_then_verifies(
     assert (logs / "runtimes-install.done").exists() and (logs / "runtimes-verify.done").exists()
     assert "[ok]   runtimes-install" in result.stdout
     assert "[ok]   runtimes-verify" in result.stdout
-    install_log = (logs / "runtimes-install.log").read_text(encoding="utf-8")
-    assert "session ura-framework-resume-stub exit 0" in install_log
+    install_log = (logs / "runtime-pyrit-install.log").read_text(encoding="utf-8")
+    assert "session ura-framework-resume-pyrit-stub exit 0" in install_log
     assert "stub resume transcript" in install_log
+    assert all((logs / f"runtime-{name}-verify.done").is_file() for name in frameworks)
     assert "[warn] framework runtimes need" not in result.stdout
 
 
-def test_distro_runtimes_phase_ledgers_a_failed_session_and_skips_verify(tmp_path: Path) -> None:
+def test_distro_runtimes_phase_continues_after_one_failed_isolated_session(tmp_path: Path) -> None:
     sandbox = _DistroSandbox(tmp_path)
-    result = sandbox.run("runtimes", URA_STUB_EXIT_RC="2")
+    result = sandbox.run(
+        "runtimes", URA_STUB_EXIT_RC="2", URA_STUB_FAIL_ONLY="deepteam"
+    )
     assert result.returncode != 0
-    assert [call[0] for call in sandbox.installer_calls()] == ["plan", "resume"]
+    calls = sandbox.installer_calls()
+    selected = [(call[0], call[-1]) for call in calls[1:]]
+    assert ("resume", "deepteam") in selected
+    assert ("verify", "deepteam") not in selected
+    assert ("resume", "harmbench") in selected
+    assert ("verify", "harmbench") in selected
+    assert sum(command == "resume" for command, _name in selected) == 15
+    assert sum(command == "verify" for command, _name in selected) == 14
     logs = sandbox.data / "acquire-logs"
-    assert (logs / "runtimes-install.status").read_text(encoding="utf-8").strip() == "FAIL:2"
+    assert (logs / "runtime-deepteam-install.status").read_text(encoding="utf-8").strip() == "FAIL:2"
+    assert (logs / "runtime-deepteam-verify.status").read_text(encoding="utf-8").strip() == "FAIL:install"
+    assert (logs / "runtime-harmbench-verify.status").read_text(encoding="utf-8").strip() == "OK"
+    assert (logs / "runtimes-install.status").read_text(encoding="utf-8").strip() == "FAIL:1"
     assert not (logs / "runtimes-install.done").exists()
-    assert not (logs / "runtimes-verify.status").exists()
-    assert "[FAIL] runtimes-install" in result.stdout
-    assert "runtimes-verify skipped" in result.stdout
+    assert (logs / "runtimes-verify.status").read_text(encoding="utf-8").strip() == "FAIL:1"
+    assert "[FAIL] runtime-deepteam-install" in result.stdout
+    assert "runtime-deepteam-verify" in result.stdout
+    assert "[ok]   runtime-harmbench-verify" in result.stdout
     assert "FAILED this run" in result.stdout
 
 
 def test_distro_runtimes_phase_propagates_a_verify_failure(tmp_path: Path) -> None:
     sandbox = _DistroSandbox(tmp_path)
-    result = sandbox.run("runtimes", URA_STUB_VERIFY_EXIT_RC="7")
+    result = sandbox.run(
+        "runtimes", URA_STUB_VERIFY_EXIT_RC="7", URA_STUB_VERIFY_FAIL_ONLY="giskard"
+    )
 
     assert result.returncode != 0
-    assert [call[0] for call in sandbox.installer_calls()] == [
-        "plan",
-        "resume",
-        "verify",
-    ]
+    calls = sandbox.installer_calls()
+    assert len(calls) == 31
+    assert (calls[-1][0], calls[-1][-1]) == ("verify", "harmbench")
     logs = sandbox.data / "acquire-logs"
     assert (logs / "runtimes-install.status").read_text(encoding="utf-8").strip() == "OK"
-    assert (logs / "runtimes-verify.status").read_text(encoding="utf-8").strip() == "FAIL:7"
+    assert (logs / "runtime-giskard-verify.status").read_text(encoding="utf-8").strip() == "FAIL:7"
+    assert (logs / "runtime-harmbench-verify.status").read_text(encoding="utf-8").strip() == "OK"
+    assert (logs / "runtimes-verify.status").read_text(encoding="utf-8").strip() == "FAIL:1"
     assert not (logs / "runtimes-verify.done").exists()
-    assert "[FAIL] runtimes-verify" in result.stdout
+    assert "[FAIL] runtime-giskard-verify" in result.stdout
+    assert "[ok]   runtime-harmbench-verify" in result.stdout
     assert "FAILED this run" in result.stdout
 
 
@@ -1650,18 +1761,31 @@ def test_distro_locators_seed_registry_from_example_and_bind_repo_interpreter(tm
     assert campaign_env.count("# --- URA source locators") == 1
 
 
-def test_distro_installer_sources_canonical_ura_env_last() -> None:
+def test_distro_installer_scopes_secrets_and_keeps_canonical_precedence() -> None:
     text = DISTRO_INSTALL.read_text(encoding="utf-8")
     assert 'SECRETS_ENV="$HOME/.ura_env"' in text
     assert 'SECRETS_LEGACY="$HOME/.ura_secrets"' in text
-    # top-level sourcing: legacy first, canonical last (wins)
-    top_legacy = text.index('[ -f "$SECRETS_LEGACY" ] && source "$SECRETS_LEGACY"')
-    top_env = text.index('[ -f "$SECRETS_ENV" ] && source "$SECRETS_ENV"')
-    assert top_legacy < top_env
-    # the generated console launcher keeps the same order
+    source_legacy = '[ -f "$SECRETS_LEGACY" ] && source "$SECRETS_LEGACY"'
+    source_env = '[ -f "$SECRETS_ENV" ] && source "$SECRETS_ENV"'
+    # Secrets are never sourced at process scope. They exist only in the
+    # subshell around an HF-backed command and in the generated console process.
+    before_wrapper = text[: text.index("with_hf_token()")]
+    assert source_legacy not in before_wrapper and source_env not in before_wrapper
+    wrapper = text[text.index("with_hf_token()"): text.index("clone_pin()")]
+    assert wrapper.index(source_legacy) < wrapper.index(source_env)
+    assert "set +x" in wrapper and 'exec "$@"' in wrapper
     launcher = text[text.index('cat > "$URA_DATA/console-launch.sh"'):text.index("\nLAUNCH\n")]
     assert launcher.index("$SECRETS_LEGACY") < launcher.index("$SECRETS_ENV")
-    assert '.ura_env" ] && source' not in text.replace("$SECRETS_ENV", "")
+    assert text.count(source_legacy) == 2
+    assert text.count(source_env) == 2
+    hf_phase = text[text.index("phase_hf()") : text.index("# -- archive helpers")]
+    assert hf_phase.count("run_step hf-") == 7
+    assert hf_phase.count("with_hf_token") == 7
+    assert '"$HF" download' not in text.replace('with_hf_token "$HF" download', "")
+    aggregator = text[text.index("phase_aggregators()") : text.index("phase_ollama()")]
+    assert "run_step \"export-$src\" with_hf_token" in aggregator
+    prereqs = text[text.index("prereqs()") : text.index("# Phases")]
+    assert "HF_TOKEN" not in prereqs
     # prereqs never adopt the system python3 blindly and the venv is built with
     # the resolved interpreter; the runtimes phase uses the venv's base
     assert '"$URA_PYTHON" -m venv "$VENV"' in text
@@ -1675,6 +1799,13 @@ def test_distro_installer_sources_canonical_ura_env_last() -> None:
     # the console relaunch kills consoles by the anchored module invocation only
     assert "pkill -f -- '-m experiments\\.rig_web( |$)'" in text
     assert "pkill -f 'experiments.rig_web'" not in text
+    # Both persistent launchers satisfy the same console contract. tmux remains
+    # preferred, while screen is a real fallback rather than documentation only.
+    assert "if command -v tmux >/dev/null 2>&1; then launcher=tmux; else launcher=screen; fi" in text
+    assert 'screen -DmS console "$URA_DATA/console-launch.sh"' in text
+    prereq_loop = text[text.index("prereqs()") : text.index("# Phases")]
+    assert "for tool in git curl tar; do" in prereq_loop
+    assert "missing prerequisite: tmux or screen" in prereq_loop
     # the runtimes phase names the missing venv instead of an unreadable lock
     assert "runtimes-plan (venv missing:" in text
     assert text.index("runtimes-plan (venv missing:") < text.index("runtimes-plan (cannot read")

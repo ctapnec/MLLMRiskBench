@@ -120,7 +120,7 @@ heterogeneous rates.
 *Console equivalent: this section's commands are also launchable as the `project_revision` form(s) in the rig console (section 18); identical argument vectors, gates and artifacts.*
 
 The intended rig is Linux, exact CPython 3.12.13, two RTX 4090 cards, recent
-NVIDIA drivers, Git, tmux (screen is the only fallback), and enough controlled
+NVIDIA drivers, Git, tmux or screen (tmux is preferred), and enough controlled
 storage for large audio and video releases. Promptfoo receives its own official
 Node runtime, and a pinned user-local Git-LFS runtime is provisioned only when a
 locked source actually needs it; neither system Node nor system Git LFS is a
@@ -136,7 +136,7 @@ if command -v tmux >/dev/null 2>&1; then
 elif command -v screen >/dev/null 2>&1; then
   screen --version
 else
-  echo 'tmux is required (screen is the only fallback)' >&2
+  echo 'tmux or screen is required' >&2
   exit 1
 fi
 
@@ -252,9 +252,10 @@ cannot become shell or Python fragments.
 
 After repin has deployed the new commit and created its project-revision receipt,
 derive a create-only provisional binding from the last validated binding. The
-one-time migration from the exact legacy a05 key inventory requires every new
-or changed binding below as an explicit `--set`; it rejects any other prior
-subset or extra key. Use validated prior Phase 3 values for the provisional
+exact migration from the immediately preceding pre-RR key inventory requires
+the four RR evidence roots below as explicit `--set` values. The older legacy
+a05 migration additionally requires every Phase 3 and installer binding shown
+below; any other prior subset or extra key is rejected. Use validated prior Phase 3 values for the provisional
 artifact fields, but bind the new project receipt's exact byte count. Render the set and
 run only the generated `phase3_guard1b_acquire_fit.sh` at this stage:
 
@@ -267,6 +268,10 @@ python -m experiments.local_campaign.rebind \
   --project-receipt-sha256 <new-project-receipt-sha256> \
   --phase3-guard-tag <fresh-UTC-tag> \
   --set CONTROLLER_INSTALL_ROOT=/home/ura/.ura-controller-active \
+  --set RR_TEXT_EVIDENCE_ROOT=/mnt/stor/data/ura-work/runs/engineering/phase5-core-canaries-20260822T173216Z \
+  --set RR_IMAGE_EVIDENCE_ROOT=/mnt/stor/data/ura-work/runs/engineering/rr-image-probe-20260822T182300Z \
+  --set RR_VLLM_TAIL_EVIDENCE_ROOT=/mnt/stor/data/ura-work/runs/engineering/rr-token-tail-probe-5719b \
+  --set RR_TRANSFORMERS_EVIDENCE_ROOT=/mnt/stor/data/ura-work/runs/engineering/rr-transformers-reference-probe-5719 \
   --set PROJECT_RECEIPT_BYTES=<positive-wc-c> \
   --set PHASE3_REQUEST_BYTES=<prior-positive-wc-c> \
   --set PHASE3_ACQUISITION_BYTES=<prior-positive-wc-c> \
@@ -403,12 +408,20 @@ tmux launch, hash check, and Phase 6/7 seal reads from it. Do not rewrite
 `.ura-controller-active` while an older chain is running changes only the next
 chain; the running chain stays entirely on its pinned generation.
 
-The rendered Gate 5-8 chain enforces the exact 46-row profile: 26 runnable and
-20 typed-terminal rows, or 25/21 only for the exact `defense-local` conditional
+The rendered Gate 5-8 chain enforces the exact 46-row profile: 22 runnable and
+24 typed-terminal rows, or 21/25 only for the exact `defense-local` conditional
 N/A. GPTGeoChat x each of the three RWKV Ollama targets is a typed unavailable
 row because the retained GPTGeoChat source requires images while the exact
 Ollama transport is text-only; those rows never enter projection, canary, or
-measured loops. Phase 7's authoritative lifecycle registry covers complete,
+measured loops. Four GraySwan RR rows are separately unavailable with reason
+`target_baseline_nontermination_at_generation_cap`. Their shared create-only
+`ura-phase5-target-runtime-terminal/1` artifact binds the exact checkpoint,
+local config, sealed acquisition identity, text and physical-image 4,096-token
+failures, the 512-token vLLM repetition probe, the independent Transformers
+base/RR control, and complete call accounting. The completed RR no-call
+projections remain recorded, but no RR canary response, measured request,
+metric row, paired estimate, or human-label item is admitted. The checkpoint
+and its isolated dependencies stay installed. Phase 7's authoritative lifecycle registry covers complete,
 partial, failed-after-request, and genuine pre-Runner-no-request states. Each
 lane binds its controller failure, optional exact measured argv, and retained
 grid, request-envelope, eligibility, and error artifacts. `level1_evidence`
@@ -431,7 +444,15 @@ and separately distributed archives (3.1-3.2), the JALMBench/VLSBench exports
 `HF_HOME` and `URA_MEDIA_ROOTS` written into `~/.ura_campaign_env` together with
 `URA_WORK`, `URA_CORPORA`, `URA_REPO` and `URA_PY`, the six aggregator arms
 registered in `experiments/source-instances.json`, the user-local ollama
-runtime, the isolated framework runtimes, and the console launch.
+runtime, BIPIA's fully hashed isolated support venv, the isolated framework
+runtimes, and the console launch. It removes only legacy duplicate PyRIT,
+Spikee, `datasets`, and `jsonlines` top-level installs from the main URA venv;
+their dedicated environments remain installed. Each of the 15 locked framework
+rows runs as a separate sequential `--only` resume/verify named session and a
+failure does not suppress later rows. The console likewise persists under tmux
+or, when unavailable, screen. Secret files are sourced only within HF-backed
+download/export subprocesses and the console launcher, never for unrelated
+installer phases.
 `distro/install.sh all` is the one-command path; the per-phase commands below
 remain the reference for what it does and for repairing a single source. It
 does not perform the rest of sections 2-4: it roots `URA_WORK` at
@@ -2381,6 +2402,9 @@ disposition. The installer creates one content-addressed store per managed
 framework, verifies there, and atomically publishes only a small stable alias;
 it never renames a built venv or shares site packages. DeepTeam's locked Sentry
 repair and AutoDAN's resolver-compatible repair are data in that same lock.
+The global distro path also keeps BIPIA's legacy corpus builder out of the main
+URA venv: `distro/bipia-build-requirements.lock` is fully hashed and installs to
+its own content-addressed `$URA_WORK/support-venvs` environment.
 
 `install`, `resume`, and `verify` automatically dispatch into a deterministic
 named tmux session (screen only when tmux is unavailable), with a credential-free
@@ -2401,6 +2425,17 @@ content-addressed store instead of verifying or rewriting the retained old
 store.
 A same-version dependency, source shadow, console script, or other retained-file
 change therefore invalidates verification.
+
+Each runtime subprocess receives a clean private HOME plus an explicit package
+cache outside the sealed store: `$URA_FRAMEWORK_ENVS/.cache/pip` for Python and
+`$URA_FRAMEWORK_ENVS/.cache/npm` for Node. Those caches persist across
+interrupted sessions and lock revisions, but are transfer optimizations only;
+the hashed dependency lock, exact inventory, offline smoke, receipt, and whole-
+runtime content seal still decide admission. `distro/install.sh runtimes`
+derives the exact 15 names from the validated lock and runs one sequential
+`resume --only NAME` and, on success, `verify --only NAME` session per row. It
+continues after an isolated row failure and returns a nonzero aggregate after
+all rows have been attempted.
 
 Rig Web exposes the same fixed interface under **Build → Runtimes**, with one
 lock-derived Install/Resume/Verify action per row and no package, path, shell,
@@ -2689,9 +2724,15 @@ CUDA_VISIBLE_DEVICES=0,1 python -m experiments.rig_check \
 Repeat with `run_matrix`, `"${LIVE_ATTESTATION_ARGS[@]}"`,
 `--ack-hosted-judge-data-transfer`, exact totals, and
 `--out runs/thesis/runner/local-qwen3-vl-text`; allow the process to exit, then
-run the image lane. Repeat both for the LLaVA base and GraySwan RR checkpoint using their
-own exact local configs. Their paired comparison is meaningful only on identical
-source clusters, input bytes, inference settings, and judge condition.
+run the image lane. Repeat both for the LLaVA base using its own exact local
+config. Do not run either GraySwan RR lane in the current campaign: its four Gate
+5 rows carry the exact target-runtime terminal described above. The sealed RR
+checkpoint remains in the model store, but its length-capped prefixes are not
+responses and may not be sent to a judge. A future paired comparison is
+meaningful only after a newly admitted exact RR response path passes the normal
+attestation and canary gates with identical source clusters, input bytes,
+inference settings, and judge condition; do not change stops, generation caps,
+checkpoint identity, or decoding settings to make the current pair runnable.
 
 The command above is the pre-registered common-subset pass (hosted `$JUDGE`,
 positive `--limit`). For the full-corpus local pass of section 5.2, repeat the
@@ -3284,7 +3325,9 @@ python -m experiments.kappa --results runs/thesis/runner
 python -m experiments.transfer_matrix --results runs/thesis/runner --attacker replay
 ```
 
-Paired comparisons must name exact conditions and a common source arm. Examples:
+Paired comparisons must name exact conditions and a common source arm. The
+current local campaign runs the first example only when its hosted lane is
+separately authorized:
 
 ```bash
 python -m experiments.paired_compare --results runs/thesis/runner \
@@ -3292,12 +3335,14 @@ python -m experiments.paired_compare --results runs/thesis/runner \
   --attacker replay --corpus strongreject_official \
   --output runs/thesis/analysis/fable-v-sol-strongreject.json
 
-python -m experiments.paired_compare --results runs/thesis/runner \
-  --left-model "vllm:llava-hf/llava-v1.6-mistral-7b-hf@$REF_LOCAL_LLAVA_BASE" \
-  --right-model "vllm:GraySwanAI/llava-v1.6-mistral-7b-hf-RR@$REF_LOCAL_LLAVA_RR" \
-  --attacker replay --corpus mmsafety_official \
-  --output runs/thesis/analysis/llava-base-v-rr-mmsafety.json
 ```
+
+Do not invoke `paired_compare` for the current LLaVA base/RR plan. Phase 7
+instead writes one `ura-phase7-non-estimable-contrast/1` artifact for each of
+the twelve planned image facets. Each binds the shared Gate 5 RR runtime-terminal
+descriptor, declares the planned contrast unavailable, and contains no estimate.
+Those artifacts disclose the missing comparison without treating a truncated
+prefix, a no-call projection, or the successful base lane as RR evidence.
 
 Build the mandatory Level-1 lifecycle inventory from one explicitly selected
 runner cohort. Supply every final eligibility plan in that scope, including

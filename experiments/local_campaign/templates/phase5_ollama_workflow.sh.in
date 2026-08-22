@@ -290,9 +290,15 @@ verify_live_roster() {
   shift
   test ! -e "$output"
   "$PY" - "$@" > "$output" <<'PY'
-import json
+import hashlib
+import os
 import pathlib
 import sys
+
+from experiments.run_matrix import _bounded_nofollow_read
+from ura.eligibility import validate_eligibility_plan
+from ura.lane_projection import validate_lane_projection_binding
+from ura.strict_json import strict_json_loads
 
 from experiments.local_targets import _models_map, load_roster
 from experiments.rig_web_app.ollama_service import OllamaService
@@ -467,12 +473,42 @@ projections = sorted(root.glob("lane-projection-*.lane-projection.json"))
 eligibilities = sorted(root.glob("eligibility-*.eligibility.json"))
 if len(projections) != 1 or len(eligibilities) != 1:
     raise SystemExit("expected one projection and one eligibility artifact")
-projection = json.loads(projections[0].read_text(encoding="utf-8"))
-eligibility = json.loads(eligibilities[0].read_text(encoding="utf-8"))
-if projection.get("schema") != "ura-lane-projection/1" or projection.get("status") != "complete":
-    raise SystemExit("projection is not complete")
-if eligibility.get("schema") != "ura-eligibility-plan/3" or eligibility.get("status") != "complete":
-    raise SystemExit("eligibility plan is not complete")
+try:
+    projection_payload, _ = _bounded_nofollow_read(
+        pathlib.Path(os.path.abspath(projections[0])),
+        label="Ollama Phase 5 lane projection",
+        max_bytes=4 * 1024 * 1024,
+    )
+    eligibility_payload, _ = _bounded_nofollow_read(
+        pathlib.Path(os.path.abspath(eligibilities[0])),
+        label="Ollama Phase 5 eligibility plan",
+        max_bytes=64 * 1024 * 1024,
+    )
+    eligibility = validate_eligibility_plan(
+        strict_json_loads(eligibility_payload.decode("utf-8"))
+    )
+    eligibility_descriptor = {
+        "file": eligibilities[0].name,
+        "sha256": hashlib.sha256(eligibility_payload).hexdigest(),
+        "bytes": len(eligibility_payload),
+        "records": sum(
+            1 for line in eligibility_payload.decode("utf-8").splitlines()
+            if line.strip()
+        ),
+    }
+    projection = validate_lane_projection_binding(
+        strict_json_loads(projection_payload.decode("utf-8")),
+        eligibility_plan=eligibility,
+        eligibility_artifact=eligibility_descriptor,
+    )
+except (OSError, UnicodeError, TypeError, ValueError) as exc:
+    raise SystemExit(f"Ollama projection evidence is invalid: {exc}") from exc
+if (
+    eligibilities[0].name != f"{eligibility['plan_id']}.eligibility.json"
+    or projections[0].name
+    != f"{projection['projection_id']}.lane-projection.json"
+):
+    raise SystemExit("Ollama eligibility/projection filename identity changed")
 execution = eligibility.get("execution", {})
 if execution.get("request_status") != "whole_request_compatible" or execution.get("whole_request_preflight_complete") is not True:
     raise SystemExit("projection eligibility is not wholly compatible")
@@ -557,15 +593,32 @@ PY
 
 compare_projections() {
   "$PY" - "$1" "$2" <<'PY'
-import json
+import os
 import pathlib
 import sys
+
+from experiments.run_matrix import _bounded_nofollow_read
+from ura.lane_projection import validate_lane_projection
+from ura.strict_json import strict_json_loads
 
 def load(root):
     paths = sorted(pathlib.Path(root).glob("lane-projection-*.lane-projection.json"))
     if len(paths) != 1:
         raise SystemExit("expected exactly one lane projection")
-    return json.loads(paths[0].read_text(encoding="utf-8"))
+    try:
+        payload, _opened = _bounded_nofollow_read(
+            pathlib.Path(os.path.abspath(paths[0])),
+            label="Ollama exact-cap lane projection",
+            max_bytes=4 * 1024 * 1024,
+        )
+        projection = validate_lane_projection(
+            strict_json_loads(payload.decode("utf-8"))
+        )
+    except (OSError, UnicodeError, TypeError, ValueError) as exc:
+        raise SystemExit(f"Ollama lane projection is invalid: {exc}") from exc
+    if paths[0].name != f"{projection['projection_id']}.lane-projection.json":
+        raise SystemExit("Ollama lane-projection filename identity changed")
+    return projection
 
 preliminary = load(sys.argv[1])
 final = load(sys.argv[2])
@@ -785,13 +838,20 @@ canary_fields() {
     "$GROUP" <<'PY'
 import hashlib
 import json
+import os
 import pathlib
 import sys
 
+from experiments.run_matrix import _bounded_nofollow_read
 from ura.eligibility import validate_eligibility_plan
 from ura.lane_canary import validate_lane_canary_summary
-from ura.lane_projection import validate_lane_projection
-from ura.request_envelope import load_request_envelope_file
+from ura.lane_projection import validate_lane_projection_binding
+from ura.request_envelope import (
+    request_envelope_bytes,
+    validate_request_envelope,
+    validate_request_envelope_descriptor,
+)
+from ura.strict_json import strict_json_loads
 
 (
     root_text,
@@ -816,8 +876,26 @@ config_path = pathlib.Path(config_text)
 group = group_csv.split(",")
 expected_runtime = expected_spec + "@sha256:" + digest
 
-def sha256_file(path: pathlib.Path) -> str:
-    return hashlib.sha256(path.read_bytes()).hexdigest()
+def stable_payload(
+    path: pathlib.Path, label: str, *, max_bytes: int = 64 * 1024 * 1024
+) -> bytes:
+    try:
+        payload, _opened = _bounded_nofollow_read(
+            pathlib.Path(os.path.abspath(path)), label=label, max_bytes=max_bytes
+        )
+    except (OSError, ValueError) as exc:
+        raise SystemExit(f"{label} cannot be read as one stable artifact: {exc}") from exc
+    return payload
+
+
+def stable_json(path: pathlib.Path, label: str) -> dict[str, object]:
+    try:
+        value = strict_json_loads(stable_payload(path, label).decode("utf-8"))
+    except (UnicodeError, TypeError, ValueError) as exc:
+        raise SystemExit(f"{label} is not strict JSON: {exc}") from exc
+    if not isinstance(value, dict):
+        raise SystemExit(f"{label} is not a JSON object")
+    return value
 
 def one(paths: list[pathlib.Path], label: str) -> pathlib.Path:
     if len(paths) != 1:
@@ -839,35 +917,114 @@ eligibility_path = one(
 projection_path = one(
     sorted(root.glob("lane-projection-*.lane-projection.json")), "lane projection"
 )
-one(sorted(root.rglob("*.complete.json")), "completion marker")
-if not config_path.is_file() or config_path.is_symlink():
-    raise SystemExit("Ollama config is not a regular non-symlink file")
-if sha256_file(config_path) != expected_config_sha:
+completion_path = one(sorted(root.rglob("*.complete.json")), "completion marker")
+stable_payload(completion_path, "Ollama completion marker")
+config_payload = stable_payload(config_path, "Ollama config")
+if hashlib.sha256(config_payload).hexdigest() != expected_config_sha:
     raise SystemExit("Ollama config digest drifted")
-local_config = json.loads(config_path.read_text(encoding="utf-8"))
+local_config = strict_json_loads(config_payload.decode("utf-8"))
 if local_config != {expected_spec: {"digest": digest, "modalities": ["text"]}}:
     raise SystemExit("Ollama config differs from the exact selected tag/digest")
 
 summary = validate_lane_canary_summary(
-    json.loads(summary_path.read_text(encoding="utf-8"))
+    stable_json(summary_path, "Ollama canary summary")
 )
 if summary.get("status") != "complete" or summary.get("evidence_class") != "live_diagnostic":
     raise SystemExit("canary summary is not complete live diagnostic evidence")
-grid = json.loads(grid_path.read_text(encoding="utf-8"))
+grid = stable_json(grid_path, "Ollama canary grid")
 request = grid.get("request")
 if not isinstance(request, dict):
     raise SystemExit("canary grid lacks its request")
-envelope, envelope_descriptor = load_request_envelope_file(envelope_path)
+envelope_payload = stable_payload(
+    envelope_path, "Ollama request envelope", max_bytes=4 * 1024 * 1024
+)
+try:
+    envelope = validate_request_envelope(
+        strict_json_loads(envelope_payload.decode("utf-8"))
+    )
+except (UnicodeError, TypeError, ValueError) as exc:
+    raise SystemExit(f"Ollama request envelope is invalid: {exc}") from exc
+if (
+    envelope_path.name != f"{envelope['envelope_id']}.request-envelope.json"
+    or envelope_payload != request_envelope_bytes(envelope)
+):
+    raise SystemExit("Ollama request envelope filename or canonical bytes changed")
+envelope_descriptor = validate_request_envelope_descriptor({
+    "envelope_id": envelope["envelope_id"],
+    "file": envelope_path.name,
+    "sha256": hashlib.sha256(envelope_payload).hexdigest(),
+    "bytes": len(envelope_payload),
+})
 if request.get("request_envelope") != envelope_descriptor:
     raise SystemExit("grid is not bound to the exact retained request envelope")
+eligibility_payload = stable_payload(eligibility_path, "Ollama eligibility plan")
 eligibility = validate_eligibility_plan(
-    json.loads(eligibility_path.read_text(encoding="utf-8"))
+    strict_json_loads(eligibility_payload.decode("utf-8"))
 )
-projection = validate_lane_projection(
-    json.loads(projection_path.read_text(encoding="utf-8"))
+eligibility_descriptor = {
+    "file": eligibility_path.name,
+    "sha256": hashlib.sha256(eligibility_payload).hexdigest(),
+    "bytes": len(eligibility_payload),
+    "records": sum(
+        1 for line in eligibility_payload.decode("utf-8").splitlines()
+        if line.strip()
+    ),
+}
+projection_payload = stable_payload(
+    projection_path, "Ollama lane projection", max_bytes=4 * 1024 * 1024
 )
-if projection.get("status") != "complete":
-    raise SystemExit("canary projection is not complete")
+projection = validate_lane_projection_binding(
+    strict_json_loads(projection_payload.decode("utf-8")),
+    eligibility_plan=eligibility,
+    eligibility_artifact=eligibility_descriptor,
+)
+if (
+    eligibility_path.name != f"{eligibility['plan_id']}.eligibility.json"
+    or projection_path.name
+    != f"{projection['projection_id']}.lane-projection.json"
+):
+    raise SystemExit("Ollama eligibility/projection filename identity changed")
+projection_descriptor = {
+    "file": projection_path.name,
+    "sha256": hashlib.sha256(projection_payload).hexdigest(),
+    "bytes": len(projection_payload),
+}
+grid_eligibility = request.get("eligibility_plan")
+grid_projection = request.get("lane_projection")
+if (
+    not isinstance(grid_eligibility, dict)
+    or grid_eligibility.get("plan_id") != eligibility.get("plan_id")
+    or grid_eligibility.get("counts") != eligibility.get("counts")
+    or any(
+        grid_eligibility.get(field) != value
+        for field, value in eligibility_descriptor.items()
+    )
+):
+    raise SystemExit("Ollama grid is not bound to the exact eligibility plan")
+if (
+    not isinstance(grid_projection, dict)
+    or grid_projection.get("projection_id") != projection.get("projection_id")
+    or any(
+        grid_projection.get(field) != value
+        for field, value in projection_descriptor.items()
+    )
+):
+    raise SystemExit("Ollama grid is not bound to the exact lane projection")
+eligibility_bindings = eligibility.get("bindings")
+if (
+    not isinstance(eligibility_bindings, dict)
+    or eligibility_bindings.get("request_envelope") != envelope_descriptor
+):
+    raise SystemExit("Ollama eligibility is not bound to its request envelope")
+acquisition = eligibility_bindings.get("model_acquisition")
+selection = acquisition.get("selection") if isinstance(acquisition, dict) else None
+input_bindings = selection.get("input_bindings") if isinstance(selection, dict) else None
+if (
+    not isinstance(input_bindings, dict)
+    or input_bindings.get("request_envelope_sha256")
+    != envelope_descriptor["sha256"]
+):
+    raise SystemExit("Ollama acquisition binding names another request envelope")
 
 project_binding = request.get("project_revision")
 if not isinstance(project_binding, dict) or (

@@ -11,15 +11,26 @@ these templates. A render can be copied to the rig after the project revision
 it names has been deployed. Run evidence, receipts, verification logs, bundles,
 and human-audit material remain outside Git.
 
+The controllers consume, but never install into, the main URA venv. Before a
+rendered chain uses a third-party bridge, `distro/install.sh runtimes` must have
+attempted all 15 lock-derived frameworks as separate sequential `--only` named
+tmux/screen sessions and published only verified stable aliases. Every Python
+framework has its own venv, Promptfoo has its own Node environment, and BIPIA's
+legacy builder has a separate fully hashed support venv. Clean runtime homes use
+the explicit persistent caches under `$URA_WORK/framework-venvs/.cache`; cache
+contents are never campaign admission evidence.
+
 Start the next binding from the last validated one. The binding key set is the
 exact reviewed placeholder inventory across the controller, verifier, and
 installer templates. Every value has a field-specific validator: hashes,
 canonical absolute POSIX paths, safe basenames, real UTC datetimes, and byte
 counts cannot become shell or Python fragments. Rebind output is create-only.
 
-The first rebind from the legacy a05 key shape is a controlled migration. It
-accepts only that exact prior inventory, discards its obsolete shared GPU hash,
-and requires an explicit `--set` for every new or changed binding below.
+Rebinding the immediately preceding pre-RR key shape is a controlled migration.
+It accepts only that exact prior inventory and requires explicit values for all
+four RR evidence roots. The older legacy a05 migration also discards its
+obsolete shared GPU hash and requires an explicit `--set` for every new or
+changed Phase 3 and installer binding below.
 Use the validated prior Phase 3 artifact identities for this provisional render,
 except that the project-receipt byte count describes the new receipt. Do not run
 the launch chain from this provisional binding; run only the generated Phase 3
@@ -34,6 +45,10 @@ python -m experiments.local_campaign.rebind \
   --project-receipt-sha256 <new-64-hex> \
   --phase3-guard-tag <new-tag> \
   --set CONTROLLER_INSTALL_ROOT=/home/ura/.ura-controller-active \
+  --set RR_TEXT_EVIDENCE_ROOT=/mnt/stor/data/ura-work/runs/engineering/phase5-core-canaries-20260822T173216Z \
+  --set RR_IMAGE_EVIDENCE_ROOT=/mnt/stor/data/ura-work/runs/engineering/rr-image-probe-20260822T182300Z \
+  --set RR_VLLM_TAIL_EVIDENCE_ROOT=/mnt/stor/data/ura-work/runs/engineering/rr-token-tail-probe-5719b \
+  --set RR_TRANSFORMERS_EVIDENCE_ROOT=/mnt/stor/data/ura-work/runs/engineering/rr-transformers-reference-probe-5719 \
   --set PROJECT_RECEIPT_BYTES=<positive-wc-c> \
   --set PHASE3_REQUEST_BYTES=<prior-positive-wc-c> \
   --set PHASE3_ACQUISITION_BYTES=<prior-positive-wc-c> \
@@ -191,12 +206,17 @@ already running.
 Its one-case native canaries/imports are engineering diagnostics outside
 `runs/thesis`; they are not Runner/common-metric measured evidence.
 
-The Gate 5 inventory contains 46 rows: 26 runnable rows and 20 typed terminal
-rows, or 25 runnable and 21 terminal rows when `defense-local` takes its exact
+The Gate 5 inventory contains 46 rows: 22 runnable rows and 24 typed terminal
+rows, or 21 runnable and 25 terminal rows when `defense-local` takes its exact
 conditional N/A disposition. The three GPTGeoChat x RWKV Ollama cross-products
 are unavailable because that exact target transport is text-only; the Ollama
 projection and canary controller self-test proves they cannot enter a runnable
-loop.
+loop. Four further rows share one exact
+`ura-phase5-target-runtime-terminal/1` descriptor because the sealed GraySwan RR
+checkpoint reached its generation cap without a stop in both text and physical-
+image probes. The controller retains its completed no-call projections but
+excludes those four identities from canary, measured, metric, paired-analysis,
+and human-audit inputs. The checkpoint and runtime remain installed.
 
 Phase 7 binds two distinct Runner views. Its authoritative lifecycle registry
 covers every scheduled Runner lane and binds each controller failure, optional

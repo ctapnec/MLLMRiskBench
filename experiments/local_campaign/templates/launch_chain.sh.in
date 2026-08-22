@@ -281,19 +281,19 @@ checked_bytes(
     size=@@PHASE3_FIT_RESULT_BYTES@@,
     label="Phase 3 fit result",
 )
-checked_bytes(
+envelope_payload = checked_bytes(
     envelope_path,
     sha256="@@PHASE3_ENVELOPE_SHA256@@",
     size=@@PHASE3_ENVELOPE_BYTES@@,
     label="Phase 3 request envelope",
 )
-checked_bytes(
+projection_payload = checked_bytes(
     projection_path,
     sha256="@@PHASE3_PROJECTION_SHA256@@",
     size=@@PHASE3_PROJECTION_BYTES@@,
     label="Phase 3 lane projection",
 )
-checked_bytes(
+eligibility_payload = checked_bytes(
     eligibility_path,
     sha256="@@PHASE3_ELIGIBILITY_SHA256@@",
     size=@@PHASE3_ELIGIBILITY_BYTES@@,
@@ -407,7 +407,7 @@ resolved_snapshots = verify_receipt_snapshots(plan, receipt, managed_store=store
 if set(resolved_snapshots) != set(expected_resource_roles):
     raise SystemExit("Phase 3 verified snapshot inventory differs")
 
-envelope = validate_request_envelope(json.loads(envelope_path.read_bytes()))
+envelope = validate_request_envelope(json.loads(envelope_payload))
 expected_envelope_request = {
     "approximate_common_metrics": True,
     "call_caps": {"deadline_seconds": 3600, "http_attempts": None, "judge": None, "target": 1},
@@ -436,15 +436,19 @@ if (
 ):
     raise SystemExit("Phase 3 request envelope differs")
 
-eligibility = validate_eligibility_plan(json.loads(eligibility_path.read_bytes()))
+eligibility = validate_eligibility_plan(json.loads(eligibility_payload))
 eligibility_descriptor = {
     "bytes": @@PHASE3_ELIGIBILITY_BYTES@@,
     "file": eligibility_path.name,
-    "records": 442,
+    "records": sum(
+        1
+        for line in eligibility_payload.decode("utf-8").splitlines()
+        if line.strip()
+    ),
     "sha256": "@@PHASE3_ELIGIBILITY_SHA256@@",
 }
 projection = validate_lane_projection_binding(
-    json.loads(projection_path.read_bytes()),
+    json.loads(projection_payload),
     eligibility_plan=eligibility,
     eligibility_artifact=eligibility_descriptor,
 )

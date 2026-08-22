@@ -692,6 +692,27 @@ class Layout:
     def lock_file(self) -> Path:
         return self.state_root / "framework-runtime-installer.lock"
 
+    @property
+    def cache_root(self) -> Path:
+        """Shared package cache outside every sealed runtime store.
+
+        Installer subprocesses receive a clean, per-runtime ``HOME``.  Without
+        an explicit cache root that also discards the operator's pip/npm cache,
+        making an interrupted repair or a new lock download every unchanged
+        artifact again.  The cache is only a transport optimization: hashes,
+        inventories, smokes, and content seals still decide admission.
+        """
+
+        return _lexically_contained(self.env_root, self.env_root / ".cache")
+
+    @property
+    def pip_cache(self) -> Path:
+        return _lexically_contained(self.cache_root, self.cache_root / "pip")
+
+    @property
+    def npm_cache(self) -> Path:
+        return _lexically_contained(self.cache_root, self.cache_root / "npm")
+
     def final(self, slug: str) -> Path:
         return _lexically_contained(self.env_root, self.env_root / slug)
 
@@ -1103,9 +1124,11 @@ class CommandRunner:
         home: Path,
         *,
         redact_paths: Sequence[Path | str] = (),
+        base_env: Mapping[str, str] | None = None,
     ):
         self.log_path = log_path
         self.home = home
+        self.base_env = dict(base_env or {})
         self.redact = _PathRedactor((home, *redact_paths))
         self._log_truncated = False
         log_path.parent.mkdir(parents=True, exist_ok=True)
@@ -1157,10 +1180,16 @@ class CommandRunner:
         executable = Path(command[0]).name if command else "unknown"
         cwd_label = cwd.name if cwd is not None else "default"
         self._log(f"[command] executable={executable} argc={len(command)} cwd={cwd_label}\n")
+        child_env = dict(self.base_env)
+        if extra_env:
+            for key, value in extra_env.items():
+                if key in child_env and child_env[key] != value:
+                    raise InstallerError(f"command attempted to replace fixed environment key: {key}")
+                child_env[key] = value
         process = subprocess.Popen(
             command,
             cwd=cwd,
-            env=_safe_env(self.home, extra_env),
+            env=_safe_env(self.home, child_env),
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
             text=False,
@@ -2297,15 +2326,28 @@ def _runner(
 ) -> CommandRunner:
     """A runner for one framework. ``home`` defaults to the environment itself.
 
-    During installation the environment is the natural home: the tool's cache
-    and state belong inside the artifact being built. Verification is different,
-    because the artifact is already sealed and a tool that writes its logs or a
-    database into its own home would change the very tree the seal covers.
+    During installation the environment is the natural HOME for tool state.
+    Package-manager caches are explicitly bound to ``env_root/.cache`` instead:
+    they persist across clean per-runtime homes and remain outside every sealed
+    store. Verification uses a separate writable HOME because the artifact is
+    already sealed and any tool state written into it would change its bytes.
     """
 
     filename = f"{prefix}{entry['name']}.log"
     process_home = home or env_dir
-    redact_paths: list[Path | str] = [layout.env_root, layout.state_root, env_dir]
+    cache = layout.pip_cache if entry["runtime"] == "python" else layout.npm_cache
+    cache.mkdir(parents=True, exist_ok=True)
+    cache_env = (
+        {"PIP_CACHE_DIR": str(cache)}
+        if entry["runtime"] == "python"
+        else {"NPM_CONFIG_CACHE": str(cache)}
+    )
+    redact_paths: list[Path | str] = [
+        layout.env_root,
+        layout.state_root,
+        env_dir,
+        cache,
+    ]
     if home is not None:
         redact_paths.append(home)
     if _ACTIVE_PYTHON is not None:
@@ -2315,6 +2357,7 @@ def _runner(
         layout.state_root / "logs" / filename,
         process_home,
         redact_paths=redact_paths,
+        base_env=cache_env,
     )
 
 
@@ -2825,6 +2868,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         with CrossProcessLock(layout.lock_file):
             layout.env_root.mkdir(parents=True, exist_ok=True)
             layout.store_root.mkdir(parents=True, exist_ok=True)
+            layout.pip_cache.mkdir(parents=True, exist_ok=True)
+            layout.npm_cache.mkdir(parents=True, exist_ok=True)
             _ensure_campaign(layout.state_root, lock)
             _append_campaign_event(
                 layout.state_root,

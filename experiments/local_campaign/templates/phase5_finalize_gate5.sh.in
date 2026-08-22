@@ -40,6 +40,7 @@ import argparse
 import csv
 from datetime import datetime, timezone
 import hashlib
+import io
 import json
 import math
 import os
@@ -64,7 +65,7 @@ from ura.approximate_metrics import (
 from ura.eligibility import validate_eligibility_plan
 from ura.lane_canary import validate_lane_canary_summary
 from ura.lane_projection import (
-    load_lane_projection_file,
+    validate_lane_projection,
     validate_lane_projection_binding,
 )
 from ura.live_attestation import (
@@ -75,7 +76,11 @@ from ura.live_attestation import (
 )
 from ura.model_acquisition import load_plan, load_receipt
 from ura.project_revision import load_project_revision_file
-from ura.request_envelope import load_request_envelope_file
+from ura.request_envelope import (
+    request_envelope_bytes,
+    validate_request_envelope,
+    validate_request_envelope_descriptor,
+)
 from ura.source_conformance import validate_source_conformance_manifest
 from ura.strict_json import strict_json_loads
 
@@ -88,6 +93,12 @@ EXPECTED_PROJECT_RECEIPT = "@@PROJECT_RECEIPT_PATH@@"
 EXPECTED_PROJECT_RECEIPT_SHA256 = "@@PROJECT_RECEIPT_SHA256@@"
 EXPECTED_SOURCE_RECEIPT = "@@SOURCE_RECEIPT_PATH@@"
 EXPECTED_SOURCE_RECEIPT_SHA256 = "@@SOURCE_RECEIPT_SHA256@@"
+EXPECTED_RR_EVIDENCE_ROOTS = {
+    "text_vllm_4096": "@@RR_TEXT_EVIDENCE_ROOT@@",
+    "image_vllm_4096": "@@RR_IMAGE_EVIDENCE_ROOT@@",
+    "vllm_token_tail_512": "@@RR_VLLM_TAIL_EVIDENCE_ROOT@@",
+    "transformers_reference_512": "@@RR_TRANSFORMERS_EVIDENCE_ROOT@@",
+}
 EXPECTED_SOURCE_ARM_COUNT = 45
 EXPECTED_SOURCE_DISPOSITIONS = {"admitted": 44, "blocked": 1}
 EXPECTED_BLOCKED_SOURCE_ARM = "bipia_test_qa"
@@ -100,6 +111,8 @@ ACQUISITION_DEADLINE_SECONDS = 86_400
 FREE_SPACE_FLOOR_BYTES = 1_099_511_627_776
 EXTERNAL_RETAINED_OUTPUT_POLICY_BYTES = 53_687_091_200
 MAX_JSON_BYTES = 64 * 1024 * 1024
+MAX_LANE_PROJECTION_BYTES = 4 * 1024 * 1024
+MAX_REQUEST_ENVELOPE_BYTES = 4 * 1024 * 1024
 MAX_LOG_BYTES = 256 * 1024 * 1024
 MAX_CONTROL_FILES = 10_000
 LANE_RE = re.compile(r"[a-z0-9][a-z0-9._-]{0,127}")
@@ -141,6 +154,36 @@ DEFENSE_NA_RUNNER_OUTPUTS = {
     "completion_artifacts": 0,
     "error_artifacts": 0,
 }
+RR_TERMINAL_SCHEMA = "ura-phase5-target-runtime-terminal/1"
+RR_TERMINAL_REASON_CODE = "target_baseline_nontermination_at_generation_cap"
+RR_TERMINAL_REASON = (
+    "The exact GraySwan RR checkpoint failed mandatory local-target admission: "
+    "text and physical-image vLLM probes reached the configured generation cap "
+    "without a stop, and an independent Transformers control reproduced the "
+    "non-terminating repetition while the same-base checkpoint emitted EOS."
+)
+RR_TARGET_SPEC = "vllm:GraySwanAI/llava-v1.6-mistral-7b-hf-RR"
+RR_TARGET_MODEL = "GraySwanAI/llava-v1.6-mistral-7b-hf-RR"
+RR_TARGET_REVISION = "d11b3d7ae2fb21e984f197a83c15bbb0deb66b7e"
+RR_TARGET_RESOURCE = "hf-400da4b35ea290e28fcce5f33f8d4090"
+RR_BASE_RESOURCE = "hf-d9e60d9f6c16de2e8fb9d9e08389c44a"
+RR_OBSERVED_PROJECT_COMMIT = "5719a4ff4ba4a711fee433d1f9990c1d3cf2f8a3"
+RR_LOCAL_CONFIG_SHA256 = "3a53ab82405636116e9c95850dae1e0c1e394021317707c978bc35b4178ca334"
+RR_LOCAL_CONFIG_BYTES = 246
+RR_SOURCE_LOCAL_CONFIG = {
+    "revision": RR_TARGET_REVISION,
+    "modalities": ["text", "image"],
+    "max_tokens": 4096,
+    "gpu_memory_utilization": 0.85,
+    "tensor_parallel_size": 1,
+}
+RR_TERMINAL_LANES = (
+    "local-llava-rr-text-full",
+    "local-llava-rr-image-full",
+    "rjudge-llava-rr",
+    "gptgeochat-llava-rr",
+)
+RR_UNAVAILABLE_VALUE = {"status": "UNAVAILABLE", "value": None}
 
 
 def exact_typed_int_contract(
@@ -167,6 +210,34 @@ DEFENSE_LANE_TEXT_ARMS = frozenset({
     "saladbench_base", "airbench_full", "xstest_full",
     "simplesafetytests_full", "decodingtrust_stereotype",
 })
+RR_IMAGE_ARMS = frozenset({
+    "mmsafety_official", "jailbreakv_full", "harmbench_multimodal",
+    "vlsbench_release", "mossbench_official", "siuo_release", "figstep_full",
+    "mllmguard_privacy", "mllmguard_bias", "mllmguard_toxicity",
+    "mllmguard_legality", "holisafe_full",
+})
+RR_PROJECTION_CONTRACT = {
+    "local-llava-rr-text-full": {
+        "arms": DEFENSE_LANE_TEXT_ARMS,
+        "judges": ["rules", "guardrail"],
+        "approximate_common_metrics": True,
+    },
+    "local-llava-rr-image-full": {
+        "arms": RR_IMAGE_ARMS,
+        "judges": ["rules", "guardrail"],
+        "approximate_common_metrics": True,
+    },
+    "rjudge-llava-rr": {
+        "arms": frozenset({"rjudge_release"}),
+        "judges": ["rules"],
+        "approximate_common_metrics": False,
+    },
+    "gptgeochat-llava-rr": {
+        "arms": frozenset({"gptgeochat_release"}),
+        "judges": ["rules"],
+        "approximate_common_metrics": False,
+    },
+}
 
 OWNED_FLAGS_WITH_VALUE = {
     "--max-total-target-calls",
@@ -271,6 +342,7 @@ EXPECTED_CORE_LANES = frozenset({
     "crescendo-qwen3-vl",
     "defense-local",
 })
+EXPECTED_CORE_RUNNABLE_LANES = EXPECTED_CORE_LANES - set(RR_TERMINAL_LANES)
 EXPECTED_BRIDGE_LANES = frozenset({
     "bridge-pyrit",
     "bridge-deepteam",
@@ -293,7 +365,7 @@ EXPECTED_BRIDGE_TERMINALS = {
     "t3mp3st": "unavailable",
 }
 EXPECTED_RUNNABLE_FAMILIES = {
-    **{lane: "core" for lane in EXPECTED_CORE_LANES},
+    **{lane: "core" for lane in EXPECTED_CORE_RUNNABLE_LANES},
     **{lane: "bridge" for lane in EXPECTED_BRIDGE_LANES},
     **{lane: "ollama" for lane in EXPECTED_OLLAMA_LANES},
 }
@@ -422,32 +494,135 @@ def sha256_bytes(payload: bytes) -> str:
     return hashlib.sha256(payload).hexdigest()
 
 
-def sha256_file(path: Path, *, max_bytes: int | None = None) -> str:
-    info = path.lstat()
-    if path.is_symlink() or not stat.S_ISREG(info.st_mode):
-        raise Gate5Error(f"expected regular non-symlink file: {path}")
-    if max_bytes is not None and info.st_size > max_bytes:
-        raise Gate5Error(f"file exceeds {max_bytes} bytes: {path}")
+def stable_file_observation(
+    path_value: str | Path,
+    *,
+    max_bytes: int | None,
+    retain_payload: bool = False,
+) -> tuple[Path, str, int, bytes | None]:
+    """Read one regular file through a stable, no-follow descriptor."""
+
+    path = Path(path_value).expanduser()
+    try:
+        unresolved_before = path.lstat()
+        resolved = path.resolve(strict=True)
+        resolved_before = resolved.lstat()
+    except OSError as exc:
+        raise Gate5Error(f"cannot resolve required file {path}: {exc}") from exc
+    if (
+        stat.S_ISLNK(unresolved_before.st_mode)
+        or not stat.S_ISREG(unresolved_before.st_mode)
+        or stat.S_ISLNK(resolved_before.st_mode)
+        or not stat.S_ISREG(resolved_before.st_mode)
+        or (unresolved_before.st_dev, unresolved_before.st_ino)
+        != (resolved_before.st_dev, resolved_before.st_ino)
+    ):
+        raise Gate5Error(f"required file is not regular and symlink-free: {path}")
+    flags = (
+        os.O_RDONLY
+        | getattr(os, "O_BINARY", 0)
+        | getattr(os, "O_CLOEXEC", 0)
+        | getattr(os, "O_NOFOLLOW", 0)
+    )
+    try:
+        fd = os.open(resolved, flags)
+    except OSError as exc:
+        raise Gate5Error(
+            f"cannot open required file without following links: {resolved}: {exc}"
+        ) from exc
     digest = hashlib.sha256()
     observed = 0
-    with path.open("rb") as handle:
+    chunks: list[bytes] | None = [] if retain_payload else None
+    try:
+        opened_before = os.fstat(fd)
+        if (
+            not stat.S_ISREG(opened_before.st_mode)
+            or (opened_before.st_dev, opened_before.st_ino)
+            != (resolved_before.st_dev, resolved_before.st_ino)
+        ):
+            raise Gate5Error(f"required file changed before it was opened: {resolved}")
+        if max_bytes is not None and opened_before.st_size > max_bytes:
+            raise Gate5Error(f"required file exceeds {max_bytes} bytes: {resolved}")
         while True:
-            block = handle.read(1024 * 1024)
+            block = os.read(fd, 1024 * 1024)
             if not block:
                 break
             observed += len(block)
+            if max_bytes is not None and observed > max_bytes:
+                raise Gate5Error(f"required file exceeds {max_bytes} bytes: {resolved}")
             digest.update(block)
-    if observed != info.st_size:
-        raise Gate5Error(f"file changed while hashing: {path}")
-    return digest.hexdigest()
+            if chunks is not None:
+                chunks.append(block)
+        opened_after = os.fstat(fd)
+    finally:
+        os.close(fd)
+    try:
+        unresolved_after = path.lstat()
+        resolved_after = resolved.lstat()
+        current_resolution = path.resolve(strict=True)
+    except OSError as exc:
+        raise Gate5Error(f"required file changed after reading: {path}: {exc}") from exc
+    identity_before = (
+        opened_before.st_dev,
+        opened_before.st_ino,
+        opened_before.st_size,
+        opened_before.st_mtime_ns,
+    )
+    if (
+        current_resolution != resolved
+        or stat.S_ISLNK(unresolved_after.st_mode)
+        or not stat.S_ISREG(unresolved_after.st_mode)
+        or stat.S_ISLNK(resolved_after.st_mode)
+        or not stat.S_ISREG(resolved_after.st_mode)
+        or identity_before
+        != (
+            opened_after.st_dev,
+            opened_after.st_ino,
+            opened_after.st_size,
+            opened_after.st_mtime_ns,
+        )
+        or (opened_after.st_dev, opened_after.st_ino)
+        != (unresolved_after.st_dev, unresolved_after.st_ino)
+        or (opened_after.st_dev, opened_after.st_ino)
+        != (resolved_after.st_dev, resolved_after.st_ino)
+        or observed != opened_after.st_size
+    ):
+        raise Gate5Error(f"required file changed while reading: {resolved}")
+    payload = b"".join(chunks) if chunks is not None else None
+    return resolved, digest.hexdigest(), observed, payload
+
+
+def sha256_file(path: Path, *, max_bytes: int | None = None) -> str:
+    return stable_file_observation(
+        path, max_bytes=max_bytes, retain_payload=False
+    )[1]
+
+
+def stable_text(
+    path_value: str | Path,
+    *,
+    max_bytes: int,
+    errors: str = "strict",
+) -> tuple[Path, str]:
+    path, _digest, _size, payload = stable_file_observation(
+        path_value, max_bytes=max_bytes, retain_payload=True
+    )
+    assert payload is not None
+    try:
+        text = payload.decode("utf-8", errors=errors)
+    except UnicodeError as exc:
+        raise Gate5Error(f"required text file is not UTF-8: {path}") from exc
+    return path, text
 
 
 def descriptor(path: Path, *, max_bytes: int | None = None) -> dict[str, Any]:
-    resolved = checked_file(path, max_bytes=max_bytes)
+    resolved, digest, size, _payload = stable_file_observation(
+        path, max_bytes=max_bytes, retain_payload=False
+    )
     return {
         "path": str(resolved),
-        "sha256": sha256_file(resolved, max_bytes=max_bytes),
-        "bytes": resolved.stat().st_size,
+        "sha256": digest,
+        "bytes": size,
     }
 
 
@@ -508,10 +683,10 @@ def checked_dir(path_value: str | Path, *, label: str) -> Path:
 
 
 def read_strict_json(path_value: str | Path, *, max_bytes: int = MAX_JSON_BYTES) -> dict[str, Any]:
-    path = checked_file(path_value, max_bytes=max_bytes)
-    raw = path.read_bytes()
-    if len(raw) != path.stat().st_size:
-        raise Gate5Error(f"JSON file changed while reading: {path}")
+    path, _digest, _size, raw = stable_file_observation(
+        path_value, max_bytes=max_bytes, retain_payload=True
+    )
+    assert raw is not None
     try:
         value = strict_json_loads(raw.decode("utf-8"))
     except (UnicodeError, TypeError, ValueError) as exc:
@@ -519,6 +694,345 @@ def read_strict_json(path_value: str | Path, *, max_bytes: int = MAX_JSON_BYTES)
     if not isinstance(value, dict):
         raise Gate5Error(f"expected a JSON object: {path}")
     return value
+
+
+def eligibility_descriptor_from_bytes(
+    path: Path, *, digest: str, payload: bytes
+) -> dict[str, Any]:
+    try:
+        text = payload.decode("utf-8")
+    except UnicodeError as exc:
+        raise Gate5Error(f"eligibility artifact is not UTF-8: {path}") from exc
+    records = sum(1 for line in text.splitlines() if line.strip())
+    if records <= 0:
+        raise Gate5Error(f"eligibility artifact has no nonblank records: {path}")
+    return {
+        "file": path.name,
+        "sha256": digest,
+        "bytes": len(payload),
+        "records": records,
+    }
+
+
+def eligibility_binding_descriptor(path_value: str | Path) -> dict[str, Any]:
+    """Rebuild run_matrix's exact line-counted eligibility descriptor."""
+
+    path, digest, _size, payload = stable_file_observation(
+        path_value, max_bytes=MAX_JSON_BYTES, retain_payload=True
+    )
+    assert payload is not None
+    return eligibility_descriptor_from_bytes(path, digest=digest, payload=payload)
+
+
+def load_eligibility_artifact(
+    path_value: str | Path,
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    """Parse, validate, and describe eligibility from one stable file read."""
+
+    path, digest, _size, payload = stable_file_observation(
+        path_value, max_bytes=MAX_JSON_BYTES, retain_payload=True
+    )
+    assert payload is not None
+    try:
+        raw = strict_json_loads(payload.decode("utf-8"))
+        eligibility = validate_eligibility_plan(raw)
+    except (UnicodeError, TypeError, ValueError) as exc:
+        raise Gate5Error(f"eligibility validation failed for {path}: {exc}") from exc
+    return eligibility, eligibility_descriptor_from_bytes(
+        path, digest=digest, payload=payload
+    )
+
+
+def load_stable_lane_projection_file(
+    path_value: str | Path,
+    expected_sha256: str | None = None,
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    """Parse and describe one lane projection from one stable observation."""
+
+    path, digest, size, payload = stable_file_observation(
+        path_value, max_bytes=MAX_LANE_PROJECTION_BYTES, retain_payload=True
+    )
+    assert payload is not None
+    if expected_sha256 is not None and digest != expected_sha256:
+        raise Gate5Error(f"lane-projection byte digest changed: {path}")
+    try:
+        raw = strict_json_loads(payload.decode("utf-8"))
+        projection = validate_lane_projection(raw)
+    except (UnicodeError, TypeError, ValueError) as exc:
+        raise Gate5Error(f"lane-projection validation failed for {path}: {exc}") from exc
+    if path.name != f"{projection['projection_id']}.lane-projection.json":
+        raise Gate5Error(f"lane-projection filename/content identity changed: {path}")
+    return projection, {"file": path.name, "sha256": digest, "bytes": size}
+
+
+def load_stable_request_envelope_file(
+    path_value: str | Path,
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    """Parse and describe one envelope from the same stable observation."""
+
+    path, digest, size, payload = stable_file_observation(
+        path_value, max_bytes=MAX_REQUEST_ENVELOPE_BYTES, retain_payload=True
+    )
+    assert payload is not None
+    try:
+        raw = strict_json_loads(payload.decode("utf-8"))
+        envelope = validate_request_envelope(raw)
+        canonical = request_envelope_bytes(envelope)
+    except (UnicodeError, TypeError, ValueError) as exc:
+        raise Gate5Error(f"request-envelope validation failed for {path}: {exc}") from exc
+    expected_name = f"{envelope['envelope_id']}.request-envelope.json"
+    if path.name != expected_name or payload != canonical:
+        raise Gate5Error(f"request-envelope filename or canonical bytes changed: {path}")
+    descriptor_value = {
+        "envelope_id": envelope["envelope_id"],
+        "file": path.name,
+        "sha256": digest,
+        "bytes": size,
+    }
+    try:
+        envelope_descriptor = validate_request_envelope_descriptor(descriptor_value)
+    except ValueError as exc:
+        raise Gate5Error(f"request-envelope descriptor is invalid for {path}: {exc}") from exc
+    return envelope, envelope_descriptor
+
+
+def validate_eligibility_envelope_binding(
+    eligibility: Mapping[str, Any],
+    envelope_descriptor: Mapping[str, Any],
+    *,
+    label: str,
+) -> None:
+    """Require eligibility and acquisition admission to bind this envelope."""
+
+    bindings = eligibility.get("bindings")
+    retained = bindings.get("request_envelope") if isinstance(bindings, dict) else None
+    if retained != dict(envelope_descriptor):
+        raise Gate5Error(f"{label}: eligibility does not bind the retained request envelope")
+    acquisition = bindings.get("model_acquisition")
+    selection = acquisition.get("selection") if isinstance(acquisition, dict) else None
+    input_bindings = selection.get("input_bindings") if isinstance(selection, dict) else None
+    if (
+        not isinstance(input_bindings, dict)
+        or input_bindings.get("request_envelope_sha256")
+        != envelope_descriptor.get("sha256")
+    ):
+        raise Gate5Error(
+            f"{label}: model acquisition does not bind the retained request envelope"
+        )
+
+
+def retained_binding_contract_self_test() -> dict[str, Any]:
+    """Exercise real multiline bytes and an envelope-swap mutation."""
+
+    with tempfile.TemporaryDirectory(prefix="ura-gate5-binding-") as temp_root:
+        eligibility_path = Path(temp_root) / "eligibility-fixture.eligibility.json"
+        payload = b'{\n  "fixture": true\n}\n'
+        with eligibility_path.open("xb") as handle:
+            handle.write(payload)
+            handle.flush()
+            os.fsync(handle.fileno())
+        observed = eligibility_binding_descriptor(eligibility_path)
+    if observed["records"] != 3 or observed["bytes"] != len(payload):
+        raise Gate5Error("multiline eligibility descriptor self-test failed")
+    envelope_descriptor = {
+        "envelope_id": "request-envelope-" + "a" * 24,
+        "file": "request-envelope-" + "a" * 24 + ".request-envelope.json",
+        "sha256": "b" * 64,
+        "bytes": 123,
+    }
+    eligibility = {
+        "bindings": {
+            "request_envelope": dict(envelope_descriptor),
+            "model_acquisition": {
+                "selection": {
+                    "input_bindings": {
+                        "request_envelope_sha256": envelope_descriptor["sha256"]
+                    }
+                }
+            },
+        }
+    }
+    validate_eligibility_envelope_binding(
+        eligibility, envelope_descriptor, label="binding self-test"
+    )
+    swapped = {**envelope_descriptor, "sha256": "c" * 64}
+    try:
+        validate_eligibility_envelope_binding(
+            eligibility, swapped, label="binding self-test mutation"
+        )
+    except Gate5Error:
+        swap_rejected = True
+    else:
+        raise Gate5Error("request-envelope swap self-test did not fail closed")
+    return {
+        "eligibility_nonblank_records": observed["records"],
+        "hardcoded_one_rejected": observed["records"] != 1,
+        "request_envelope_swap_rejected": swap_rejected,
+    }
+
+
+def exact_descriptor(raw: object, *, label: str) -> Path:
+    if not isinstance(raw, dict) or set(raw) != {"path", "sha256", "bytes"}:
+        raise Gate5Error(f"{label} descriptor fields changed")
+    if (
+        not isinstance(raw.get("path"), str)
+        or not Path(raw["path"]).is_absolute()
+        or not isinstance(raw.get("sha256"), str)
+        or HEX64_RE.fullmatch(raw["sha256"]) is None
+        or isinstance(raw.get("bytes"), bool)
+        or not isinstance(raw.get("bytes"), int)
+        or raw["bytes"] <= 0
+    ):
+        raise Gate5Error(f"{label} descriptor values changed")
+    path = checked_file(raw["path"], max_bytes=MAX_JSON_BYTES)
+    if descriptor(path, max_bytes=MAX_JSON_BYTES) != raw:
+        raise Gate5Error(f"{label} descriptor bytes changed")
+    return path
+
+
+# BEGIN_RR_EVIDENCE_TREE_DESCRIPTOR
+def rr_tree_inventory(
+    root: Path,
+) -> tuple[list[tuple[str, Path]], dict[str, tuple[int, int, int, int, int]]]:
+    """Enumerate one exact, symlink-free RR evidence-tree inventory."""
+
+    files: list[tuple[str, Path]] = []
+    identities: dict[str, tuple[int, int, int, int, int]] = {}
+    try:
+        members = list(root.rglob("*"))
+    except OSError as exc:
+        raise Gate5Error(f"cannot enumerate RR evidence root {root}: {exc}") from exc
+    for member in members:
+        relative = member.relative_to(root).as_posix()
+        try:
+            entry = member.lstat()
+        except OSError as exc:
+            raise Gate5Error(f"cannot inspect RR evidence member {member}: {exc}") from exc
+        if stat.S_ISLNK(entry.st_mode):
+            raise Gate5Error(f"RR evidence root contains a symlink: {member}")
+        if stat.S_ISDIR(entry.st_mode):
+            kind = stat.S_IFDIR
+        elif stat.S_ISREG(entry.st_mode):
+            kind = stat.S_IFREG
+            files.append((relative, member))
+        else:
+            raise Gate5Error(f"RR evidence root contains a non-regular member: {member}")
+        identities[relative] = (
+            kind,
+            entry.st_dev,
+            entry.st_ino,
+            entry.st_size,
+            entry.st_mtime_ns,
+        )
+    files.sort(key=lambda item: item[0])
+    return files, identities
+
+
+def rr_tree_descriptor(path_value: str | Path) -> dict[str, Any]:
+    root = checked_dir(path_value, label="RR evidence root")
+    try:
+        root_before = root.lstat()
+    except OSError as exc:
+        raise Gate5Error(f"cannot inspect RR evidence root {root}: {exc}") from exc
+    if not stat.S_ISDIR(root_before.st_mode):
+        raise Gate5Error(f"RR evidence root is not a directory: {root}")
+    files, inventory_before = rr_tree_inventory(root)
+    if not files:
+        raise Gate5Error(f"RR evidence root is empty: {root}")
+    tree_hash = hashlib.sha256()
+    total_bytes = 0
+    for relative, member in files:
+        _resolved, file_sha, file_bytes, _payload = stable_file_observation(
+            member, max_bytes=None, retain_payload=False
+        )
+        try:
+            current = member.lstat()
+        except OSError as exc:
+            raise Gate5Error(
+                f"RR evidence member changed after reading: {member}: {exc}"
+            ) from exc
+        current_identity = (
+            stat.S_IFMT(current.st_mode),
+            current.st_dev,
+            current.st_ino,
+            current.st_size,
+            current.st_mtime_ns,
+        )
+        if current_identity != inventory_before[relative]:
+            raise Gate5Error(f"RR evidence member changed during tree scan: {member}")
+        total_bytes += file_bytes
+        tree_hash.update(relative.encode("utf-8"))
+        tree_hash.update(b"\0")
+        tree_hash.update(str(file_bytes).encode("ascii"))
+        tree_hash.update(b"\0")
+        tree_hash.update(file_sha.encode("ascii"))
+        tree_hash.update(b"\n")
+    files_after, inventory_after = rr_tree_inventory(root)
+    try:
+        root_after = root.lstat()
+    except OSError as exc:
+        raise Gate5Error(f"RR evidence root changed after scanning: {root}: {exc}") from exc
+    root_identity_before = (
+        stat.S_IFMT(root_before.st_mode),
+        root_before.st_dev,
+        root_before.st_ino,
+        root_before.st_size,
+        root_before.st_mtime_ns,
+    )
+    root_identity_after = (
+        stat.S_IFMT(root_after.st_mode),
+        root_after.st_dev,
+        root_after.st_ino,
+        root_after.st_size,
+        root_after.st_mtime_ns,
+    )
+    if (
+        [relative for relative, _member in files_after]
+        != [relative for relative, _member in files]
+        or inventory_after != inventory_before
+        or root_identity_after != root_identity_before
+    ):
+        raise Gate5Error(f"RR evidence root changed during tree scan: {root}")
+    return {
+        "path": str(root),
+        "sha256": tree_hash.hexdigest(),
+        "bytes": total_bytes,
+        "files": len(files),
+    }
+# END_RR_EVIDENCE_TREE_DESCRIPTOR
+
+
+def validate_rr_tree_descriptor(raw: object, *, key: str, work: Path) -> Path:
+    if not isinstance(raw, dict) or set(raw) != {"path", "sha256", "bytes", "files"}:
+        raise Gate5Error(f"RR {key} tree descriptor fields changed")
+    expected_path = checked_dir(
+        EXPECTED_RR_EVIDENCE_ROOTS[key], label=f"RR {key} evidence root"
+    )
+    if (
+        raw.get("path") != str(expected_path)
+        or not expected_path.is_relative_to(work)
+        or not isinstance(raw.get("sha256"), str)
+        or HEX64_RE.fullmatch(raw["sha256"]) is None
+        or isinstance(raw.get("bytes"), bool)
+        or not isinstance(raw.get("bytes"), int)
+        or raw["bytes"] < 0
+        or isinstance(raw.get("files"), bool)
+        or not isinstance(raw.get("files"), int)
+        or raw["files"] <= 0
+        or rr_tree_descriptor(expected_path) != raw
+    ):
+        raise Gate5Error(f"RR {key} tree descriptor changed")
+    return expected_path
+
+
+def engineering_probe_record(path: Path, schema: str) -> dict[str, Any]:
+    matches = [
+        value for value in json_objects_from_log(path)
+        if value.get("schema") == schema
+    ]
+    if len(matches) != 1:
+        raise Gate5Error(f"RR probe log lacks one exact {schema} record")
+    return matches[0]
 
 
 def write_create_only(path: Path, payload: bytes, *, mode: int = 0o600) -> dict[str, Any]:
@@ -696,9 +1210,8 @@ def validate_source_receipt() -> dict[str, Any]:
 
 
 def read_tsv(path: Path) -> list[dict[str, str]]:
-    source = checked_file(path, max_bytes=16 * 1024 * 1024)
-    with source.open("r", encoding="utf-8", newline="") as handle:
-        rows = list(csv.DictReader(handle, delimiter="\t"))
+    source, text = stable_text(path, max_bytes=16 * 1024 * 1024)
+    rows = list(csv.DictReader(io.StringIO(text, newline=""), delimiter="\t"))
     if not rows:
         raise Gate5Error(f"TSV has no data rows: {source}")
     if any(None in row for row in rows):
@@ -729,7 +1242,8 @@ def status_path(root: Path, kind: str) -> Path:
 def validate_control_root(root_value: str | Path, *, kind: str) -> dict[str, Any]:
     root = checked_dir(root_value, label=f"{kind} control root")
     exit_path = checked_file(root / ".exit", max_bytes=128)
-    if exit_path.read_text(encoding="utf-8").strip() != "0":
+    _exit_path, exit_text = stable_text(exit_path, max_bytes=128)
+    if exit_text.strip() != "0":
         raise Gate5Error(f"{kind} control root did not finish successfully: {root}")
     status = status_path(root, kind)
     files: list[dict[str, Any]] = [
@@ -762,7 +1276,8 @@ def validate_failed_attempt_root(root_value: str | Path) -> dict[str, Any]:
     """Bind a failed controller tree without admitting it as Gate-5 evidence."""
     root = checked_dir(root_value, label="failed-attempt control root")
     exit_path = checked_file(root / ".exit", max_bytes=128)
-    exit_text = exit_path.read_text(encoding="utf-8").strip()
+    _exit_path, exit_text_raw = stable_text(exit_path, max_bytes=128)
+    exit_text = exit_text_raw.strip()
     try:
         exit_code = int(exit_text, 10)
     except ValueError as exc:
@@ -792,9 +1307,10 @@ def validate_failed_attempt_root(root_value: str | Path) -> dict[str, Any]:
 
     if exit_code == 0:
         controller_log = checked_file(root / "phase5-canary.log", max_bytes=MAX_LOG_BYTES)
-        if "PHASE5_CORE_CANARIES_COMPLETE=" in controller_log.read_text(
-            encoding="utf-8", errors="strict"
-        ):
+        _controller_log, controller_log_text = stable_text(
+            controller_log, max_bytes=MAX_LOG_BYTES
+        )
+        if "PHASE5_CORE_CANARIES_COMPLETE=" in controller_log_text:
             raise Gate5Error(
                 f"zero-exit failed-attempt root contains a completion marker: {root}"
             )
@@ -896,6 +1412,25 @@ def indexed_status(rows: Sequence[Mapping[str, str]], identity_field: str) -> di
             row["projection_id"] = identity
         disposition = row.get("disposition", "").strip()
         conditional_artifact = row.get("conditional_na_artifact", "").strip()
+        rr_terminal_artifact = row.get(
+            "target_runtime_terminal_artifact", ""
+        ).strip()
+        if identity_field == "canary_id" and lane in RR_TERMINAL_LANES:
+            if (
+                identity
+                or disposition != "unavailable"
+                or conditional_artifact
+                or not rr_terminal_artifact
+            ):
+                raise Gate5Error(
+                    f"{lane}: RR terminal status requires a blank canary id and "
+                    "one target-runtime artifact"
+                )
+            row["canary_id"] = ""
+            if lane in output:
+                raise Gate5Error(f"duplicate lane in status TSV: {lane}")
+            output[lane] = row
+            continue
         if (
             identity_field == "canary_id"
             and lane == "defense-local"
@@ -911,7 +1446,11 @@ def indexed_status(rows: Sequence[Mapping[str, str]], identity_field: str) -> di
                 raise Gate5Error(f"duplicate lane in status TSV: {lane}")
             output[lane] = row
             continue
-        if disposition not in {"", "runnable"} or conditional_artifact:
+        if (
+            disposition not in {"", "runnable"}
+            or conditional_artifact
+            or rr_terminal_artifact
+        ):
             raise Gate5Error(f"{lane}: unexpected status disposition or conditional artifact")
         pattern = PROJECTION_ID_RE if identity_field == "projection_id" else CANARY_ID_RE
         if pattern.fullmatch(identity) is None:
@@ -923,18 +1462,17 @@ def indexed_status(rows: Sequence[Mapping[str, str]], identity_field: str) -> di
 
 
 def json_objects_from_log(path: Path) -> Iterable[dict[str, Any]]:
-    source = checked_file(path, max_bytes=MAX_LOG_BYTES)
-    with source.open("r", encoding="utf-8", errors="strict") as handle:
-        for raw in handle:
-            line = raw.strip()
-            if not line or len(line) > MAX_JSON_BYTES:
-                continue
-            try:
-                value = strict_json_loads(line)
-            except (TypeError, ValueError):
-                continue
-            if isinstance(value, dict):
-                yield value
+    _source, text = stable_text(path, max_bytes=MAX_LOG_BYTES)
+    for raw in text.splitlines():
+        line = raw.strip()
+        if not line or len(line) > MAX_JSON_BYTES:
+            continue
+        try:
+            value = strict_json_loads(line)
+        except (TypeError, ValueError):
+            continue
+        if isinstance(value, dict):
+            yield value
 
 
 def nested_strings(value: object) -> Iterable[str]:
@@ -1047,30 +1585,30 @@ def find_artifact_from_control(
 
 
 def find_single(root: Path, pattern: str, *, label: str) -> Path:
-    paths = sorted(path for path in root.glob(pattern) if path.is_file() and not path.is_symlink())
-    if len(paths) != 1:
-        raise Gate5Error(f"{label}: expected exactly one {pattern}, found {len(paths)}")
-    return paths[0].resolve()
+    candidates = sorted(root.glob(pattern))
+    if len(candidates) != 1:
+        raise Gate5Error(
+            f"{label}: expected exactly one {pattern}, found {len(candidates)}"
+        )
+    return checked_file(candidates[0], max_bytes=MAX_JSON_BYTES)
 
 
 def load_projection_bundle(projection_path: Path) -> dict[str, Any]:
-    projection_sha = sha256_file(projection_path, max_bytes=MAX_JSON_BYTES)
-    projection, projection_desc = load_lane_projection_file(projection_path, projection_sha)
+    projection, projection_desc = load_stable_lane_projection_file(projection_path)
     root = projection_path.parent
     eligibility_path = find_single(root, "eligibility-*.eligibility.json", label=str(root))
     envelope_path = find_single(root, "request-envelope-*.request-envelope.json", label=str(root))
-    eligibility = validate_eligibility_plan(read_strict_json(eligibility_path))
-    envelope, envelope_desc = load_request_envelope_file(envelope_path)
-    eligibility_desc = {
-        "file": eligibility_path.name,
-        "sha256": sha256_file(eligibility_path, max_bytes=MAX_JSON_BYTES),
-        "bytes": eligibility_path.stat().st_size,
-        "records": 1,
-    }
+    eligibility, eligibility_desc = load_eligibility_artifact(eligibility_path)
+    envelope, envelope_desc = load_stable_request_envelope_file(envelope_path)
     validate_lane_projection_binding(
         projection,
         eligibility_plan=eligibility,
         eligibility_artifact=eligibility_desc,
+    )
+    validate_eligibility_envelope_binding(
+        eligibility,
+        envelope_desc,
+        label=str(projection_path),
     )
     execution = eligibility.get("execution", {})
     if (
@@ -1453,15 +1991,22 @@ def _canary_artifact_rows(
     name = retained.get("file")
     if not isinstance(name, str) or Path(name).name != name:
         raise Gate5Error(f"{label}: {kind} artifact filename is unsafe")
-    path = checked_file(results_root / name, max_bytes=MAX_JSON_BYTES)
+    path, observed_sha, observed_bytes, payload = stable_file_observation(
+        results_root / name, max_bytes=MAX_JSON_BYTES, retain_payload=True
+    )
+    assert payload is not None
     if (
         path.parent != results_root.resolve(strict=True)
-        or sha256_file(path, max_bytes=MAX_JSON_BYTES) != retained.get("sha256")
-        or path.stat().st_size != retained.get("bytes")
+        or observed_sha != retained.get("sha256")
+        or observed_bytes != retained.get("bytes")
     ):
         raise Gate5Error(f"{label}: {kind} artifact identity changed")
     rows: list[dict[str, Any]] = []
-    for line in path.read_text(encoding="utf-8").splitlines():
+    try:
+        text = payload.decode("utf-8")
+    except UnicodeError as exc:
+        raise Gate5Error(f"{label}: {kind} is not UTF-8") from exc
+    for line in text.splitlines():
         if not line.strip():
             continue
         value = strict_json_loads(line)
@@ -1779,7 +2324,9 @@ def validate_canary_bundle(canary_path: Path, *, expected_id: str) -> dict[str, 
 
     grid_path = find_canary_grid(results_root)
     grid = read_strict_json(grid_path)
-    eligibility = validate_eligibility_plan(read_strict_json(eligibility_path))
+    eligibility, observed_eligibility_identity = load_eligibility_artifact(
+        eligibility_path
+    )
     projection_binding = grid.get("request", {}).get("lane_projection")
     if not isinstance(projection_binding, dict):
         raise Gate5Error(f"canary grid lacks its exact lane-projection binding: {grid_path}")
@@ -1791,13 +2338,11 @@ def validate_canary_bundle(canary_path: Path, *, expected_id: str) -> dict[str, 
     ):
         raise Gate5Error(f"canary lane-projection filename is unsafe: {grid_path}")
     canary_projection_path = checked_file(
-        grid_path.parent / projection_name, max_bytes=MAX_JSON_BYTES
+        grid_path.parent / projection_name, max_bytes=MAX_LANE_PROJECTION_BYTES
     )
-    observed_projection_identity = {
-        "file": canary_projection_path.name,
-        "sha256": sha256_file(canary_projection_path, max_bytes=MAX_JSON_BYTES),
-        "bytes": canary_projection_path.stat().st_size,
-    }
+    canary_projection, observed_projection_identity = (
+        load_stable_lane_projection_file(canary_projection_path)
+    )
     if {
         key: projection_binding.get(key) for key in observed_projection_identity
     } != observed_projection_identity:
@@ -1805,13 +2350,25 @@ def validate_canary_bundle(canary_path: Path, *, expected_id: str) -> dict[str, 
     eligibility_binding = grid.get("request", {}).get("eligibility_plan")
     if not isinstance(eligibility_binding, dict):
         raise Gate5Error(f"canary grid lacks its exact eligibility binding: {grid_path}")
+    if {
+        key: eligibility_binding.get(key) for key in observed_eligibility_identity
+    } != observed_eligibility_identity:
+        raise Gate5Error(f"canary eligibility artifact binding changed: {grid_path}")
     canary_projection = validate_lane_projection_binding(
-        read_strict_json(canary_projection_path),
+        canary_projection,
         eligibility_plan=eligibility,
-        eligibility_artifact={
-            key: eligibility_binding.get(key)
-            for key in ("file", "sha256", "bytes", "records")
-        },
+        eligibility_artifact=observed_eligibility_identity,
+    )
+    envelope_path = find_single(
+        results_root,
+        "request-envelope-*.request-envelope.json",
+        label=str(results_root),
+    )
+    _envelope, envelope_descriptor = load_stable_request_envelope_file(envelope_path)
+    validate_eligibility_envelope_binding(
+        eligibility,
+        envelope_descriptor,
+        label=f"canary {canary_path}",
     )
     if canary_projection.get("projection_id") != projection_binding.get("projection_id"):
         raise Gate5Error(f"canary lane-projection identity changed: {grid_path}")
@@ -1895,9 +2452,13 @@ def validate_defense_response_audit(results_root: Path, *, label: str) -> dict[s
             f"{label}: expected one defense response stream, found {len(response_paths)}"
         )
     responses: list[dict[str, Any]] = []
-    for raw_line in checked_file(
-        response_paths[0], max_bytes=MAX_LOG_BYTES
-    ).read_bytes().splitlines():
+    _response_path, _response_sha, _response_bytes, response_payload = (
+        stable_file_observation(
+            response_paths[0], max_bytes=MAX_LOG_BYTES, retain_payload=True
+        )
+    )
+    assert response_payload is not None
+    for raw_line in response_payload.splitlines():
         if not raw_line.strip():
             continue
         try:
@@ -2442,10 +3003,11 @@ def validate_base_argv_evidence_parity(
         if not path_value or not sha_value:
             raise Gate5Error(f"{lane}: {descriptor_field} argv binding is incomplete")
         path = checked_file(path_value, max_bytes=4 * 1024 * 1024)
+        observed = descriptor(path, max_bytes=4 * 1024 * 1024)
         if (
             sha_value != retained["sha256"]
-            or sha256_file(path, max_bytes=4 * 1024 * 1024) != retained["sha256"]
-            or path.stat().st_size != retained["bytes"]
+            or observed["sha256"] != retained["sha256"]
+            or observed["bytes"] != retained["bytes"]
             or path.name != Path(str(retained["file"])).name
         ):
             raise Gate5Error(f"{lane}: {descriptor_field} argv bytes differ from canary evidence")
@@ -2843,7 +3405,9 @@ def validate_defense_conditional_na_artifact(
         or acquisition_log.name != "defense-local-canary.acquire.log"
     ):
         raise Gate5Error("defense-local: conditional N/A acquisition log location changed")
-    log_text = runner_log.read_text(encoding="utf-8", errors="replace")
+    _runner_log, log_text = stable_text(
+        runner_log, max_bytes=MAX_LOG_BYTES, errors="replace"
+    )
     oom_lines = re.findall(
         r"^cannot initialize matrix lifecycle: [^\r\n]*CUDA out of memory[^\r\n]*$",
         log_text,
@@ -2911,7 +3475,7 @@ def validate_defense_conditional_na_artifact(
         raise Gate5Error("defense-local: preliminary defense request contract changed")
 
     envelope_path = resolved_artifacts["request_envelope"]
-    envelope, _ = load_request_envelope_file(envelope_path)
+    envelope, envelope_descriptor = load_stable_request_envelope_file(envelope_path)
     expected_request = {
         "execution_purpose": "diagnostic_canary",
         "requested_target_keys": ["vllm:Qwen/Qwen3-VL-8B-Instruct"],
@@ -2952,7 +3516,9 @@ def validate_defense_conditional_na_artifact(
         raise Gate5Error("defense-local: conditional N/A project binding changed")
 
     eligibility_path = resolved_artifacts["eligibility_plan"]
-    eligibility = validate_eligibility_plan(read_strict_json(eligibility_path))
+    eligibility, observed_eligibility_identity = load_eligibility_artifact(
+        eligibility_path
+    )
     execution = eligibility.get("execution", {})
     if (
         execution.get("whole_request_preflight_complete") is not True
@@ -2989,16 +3555,16 @@ def validate_defense_conditional_na_artifact(
 
     projection_path = resolved_artifacts["lane_projection"]
     projection_sha = artifacts["lane_projection"]["sha256"]
-    projection, _ = load_lane_projection_file(projection_path, projection_sha)
+    projection, _ = load_stable_lane_projection_file(projection_path, projection_sha)
     validate_lane_projection_binding(
         projection,
         eligibility_plan=eligibility,
-        eligibility_artifact={
-            "file": eligibility_path.name,
-            "sha256": artifacts["eligibility_plan"]["sha256"],
-            "bytes": artifacts["eligibility_plan"]["bytes"],
-            "records": 1,
-        },
+        eligibility_artifact=observed_eligibility_identity,
+    )
+    validate_eligibility_envelope_binding(
+        eligibility,
+        envelope_descriptor,
+        label="defense-local conditional N/A",
     )
     calls = projection.get("call_projection")
     expected_calls = {
@@ -3231,6 +3797,419 @@ def defense_conditional_na_manifest_row(
     }
 
 
+def validate_rr_target_runtime_terminal(
+    path_value: str | Path,
+    *,
+    canary_control: Path,
+    project_root: Path,
+    work: Path,
+) -> dict[str, Any]:
+    artifact_path = checked_file(path_value, max_bytes=MAX_JSON_BYTES)
+    if (
+        artifact_path.parent != canary_control
+        or artifact_path.name != "llava-rr.target-runtime-terminal.json"
+    ):
+        raise Gate5Error("RR target-runtime terminal is not the canonical canary artifact")
+    value = read_strict_json(artifact_path)
+    if set(value) != {
+        "schema", "status", "disposition", "reason_code", "reason",
+        "classified_at_utc", "target", "bindings", "observations",
+        "call_accounting", "applies_to_lanes", "evidence_eligible",
+    }:
+        raise Gate5Error("RR target-runtime terminal field inventory changed")
+    if (
+        value.get("schema") != RR_TERMINAL_SCHEMA
+        or value.get("status") != "unavailable"
+        or value.get("disposition") != "unavailable"
+        or value.get("reason_code") != RR_TERMINAL_REASON_CODE
+        or value.get("reason") != RR_TERMINAL_REASON
+        or value.get("applies_to_lanes") != list(RR_TERMINAL_LANES)
+        or value.get("evidence_eligible") is not False
+    ):
+        raise Gate5Error("RR target-runtime terminal classification changed")
+    try:
+        classified = datetime.strptime(
+            value.get("classified_at_utc", ""), "%Y-%m-%dT%H:%M:%SZ"
+        ).replace(tzinfo=timezone.utc)
+    except (TypeError, ValueError) as exc:
+        raise Gate5Error("RR target-runtime terminal timestamp changed") from exc
+    if classified > datetime.now(timezone.utc):
+        raise Gate5Error("RR target-runtime terminal timestamp is in the future")
+
+    target = value.get("target")
+    if not isinstance(target, dict) or set(target) != {
+        "spec", "model", "revision", "resource_id", "runtime",
+        "runtime_version", "modalities", "configured_max_tokens", "local_config",
+    }:
+        raise Gate5Error("RR target-runtime terminal target fields changed")
+    if (
+        target.get("spec") != RR_TARGET_SPEC
+        or target.get("model") != RR_TARGET_MODEL
+        or target.get("revision") != RR_TARGET_REVISION
+        or target.get("resource_id") != RR_TARGET_RESOURCE
+        or target.get("runtime") != "vllm"
+        or target.get("runtime_version") != "0.27.1"
+        or target.get("modalities") != ["text", "image"]
+        or type(target.get("configured_max_tokens")) is not int
+        or target.get("configured_max_tokens") != 4096
+    ):
+        raise Gate5Error("RR target-runtime terminal target identity changed")
+    local_config_path = exact_descriptor(target.get("local_config"), label="RR local config")
+    if local_config_path != (project_root / "experiments" / "local-llava-rr.json").resolve():
+        raise Gate5Error("RR terminal local config path changed")
+    if target.get("local_config") != {
+        "path": str(local_config_path),
+        "sha256": RR_LOCAL_CONFIG_SHA256,
+        "bytes": RR_LOCAL_CONFIG_BYTES,
+    }:
+        raise Gate5Error("RR terminal local config content identity changed")
+    local_config = read_strict_json(local_config_path)
+    local_identity = local_config.get(RR_TARGET_SPEC)
+    if (
+        set(local_config) != {RR_TARGET_SPEC}
+        or local_identity != RR_SOURCE_LOCAL_CONFIG
+        or type(local_identity.get("max_tokens")) is not int
+        or type(local_identity.get("tensor_parallel_size")) is not int
+        or type(local_identity.get("gpu_memory_utilization")) is not float
+    ):
+        raise Gate5Error("RR terminal local config bytes changed semantically")
+
+    bindings = value.get("bindings")
+    if not isinstance(bindings, dict) or set(bindings) != {
+        "classification_project_commit", "framework_lock_sha256",
+        "project_revision", "semantic_source_continuity", "evidence_roots",
+    }:
+        raise Gate5Error("RR target-runtime terminal binding fields changed")
+    project_revision_path = exact_descriptor(
+        bindings.get("project_revision"), label="RR current project revision"
+    )
+    expected_project_path = checked_file(EXPECTED_PROJECT_RECEIPT, max_bytes=MAX_JSON_BYTES)
+    if (
+        bindings.get("classification_project_commit") != EXPECTED_COMMIT
+        or bindings.get("framework_lock_sha256") != EXPECTED_FRAMEWORK_LOCK
+        or project_revision_path != expected_project_path
+        or bindings["project_revision"].get("sha256") != EXPECTED_PROJECT_RECEIPT_SHA256
+    ):
+        raise Gate5Error("RR target-runtime terminal current bindings changed")
+    continuity = bindings.get("semantic_source_continuity")
+    if not isinstance(continuity, dict) or set(continuity) != {
+        "observed_project_commit", "unchanged_paths", "git_diff_empty",
+    }:
+        raise Gate5Error("RR semantic-source continuity fields changed")
+    observed_commit = continuity.get("observed_project_commit")
+    continuity_paths = ["src/ura/targets/local.py", "experiments/run_matrix.py"]
+    if (
+        observed_commit != RR_OBSERVED_PROJECT_COMMIT
+        or continuity.get("unchanged_paths") != continuity_paths
+        or continuity.get("git_diff_empty") is not True
+        or subprocess.run(
+            ["git", "diff", "--quiet", observed_commit, EXPECTED_COMMIT, "--", *continuity_paths],
+            cwd=project_root,
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            check=False,
+        ).returncode != 0
+    ):
+        raise Gate5Error("RR semantic-source continuity no longer holds")
+    roots = bindings.get("evidence_roots")
+    if not isinstance(roots, dict) or set(roots) != set(EXPECTED_RR_EVIDENCE_ROOTS):
+        raise Gate5Error("RR evidence-root inventory changed")
+    for key in EXPECTED_RR_EVIDENCE_ROOTS:
+        validate_rr_tree_descriptor(roots[key], key=key, work=work)
+
+    observations = value.get("observations")
+    if not isinstance(observations, dict) or set(observations) != set(EXPECTED_RR_EVIDENCE_ROOTS):
+        raise Gate5Error("RR observation inventory changed")
+    text_observation = observations["text_vllm_4096"]
+    if not isinstance(text_observation, dict) or set(text_observation) != {
+        "modality", "corpus", "sample_seeds", "max_tokens", "finish_reasons",
+        "stop_reasons", "successful_responses", "error_artifacts",
+    }:
+        raise Gate5Error("RR text observation fields changed")
+    if (
+        {key: text_observation.get(key) for key in (
+            "modality", "corpus", "sample_seeds", "max_tokens", "finish_reasons",
+            "stop_reasons", "successful_responses",
+        )}
+        != {
+            "modality": "text", "corpus": "strongreject_official",
+            "sample_seeds": [0, 1, 8], "max_tokens": 4096,
+            "finish_reasons": ["length", "length", "length"],
+            "stop_reasons": [None, None, None], "successful_responses": 0,
+        }
+        or type(text_observation.get("max_tokens")) is not int
+        or type(text_observation.get("successful_responses")) is not int
+        or not isinstance(text_observation.get("error_artifacts"), list)
+        or len(text_observation["error_artifacts"]) != 3
+    ):
+        raise Gate5Error("RR text observation changed")
+    image_observation = observations["image_vllm_4096"]
+    if not isinstance(image_observation, dict) or set(image_observation) != {
+        "modality", "corpus", "sample_seed", "max_tokens", "finish_reason",
+        "stop_reason", "successful_responses", "error_artifact",
+    }:
+        raise Gate5Error("RR image observation fields changed")
+    if (
+        {key: image_observation.get(key) for key in (
+            "modality", "corpus", "sample_seed", "max_tokens", "finish_reason",
+            "stop_reason", "successful_responses",
+        )}
+        != {
+            "modality": "image", "corpus": "harmbench_multimodal",
+            "sample_seed": 1, "max_tokens": 4096, "finish_reason": "length",
+            "stop_reason": None, "successful_responses": 0,
+        }
+        or any(type(image_observation.get(field)) is not int for field in (
+            "sample_seed", "max_tokens", "successful_responses",
+        ))
+    ):
+        raise Gate5Error("RR image observation changed")
+    expected_error_message = (
+        "target_call failed (LocalTargetOutputError): vLLM completion is "
+        "truncated or incomplete: 'length'"
+    )
+    error_paths = [
+        exact_descriptor(item, label=f"RR text error {index}")
+        for index, item in enumerate(text_observation["error_artifacts"])
+    ] + [exact_descriptor(image_observation["error_artifact"], label="RR image error")]
+    for index, error_path in enumerate(error_paths):
+        error = read_strict_json(error_path)
+        expected_corpus = "strongreject_official" if index < 3 else "harmbench_multimodal"
+        budget = error.get("call_budget_snapshot")
+        if (
+            error.get("status") != "error"
+            or error.get("exception_type") != "ExternalCallFailure"
+            or error.get("message") != expected_error_message
+            or error.get("corpus") != expected_corpus
+            or error.get("model_spec") != f"{RR_TARGET_SPEC}@{RR_TARGET_REVISION}"
+            or error.get("target") != f"{RR_TARGET_SPEC}@{RR_TARGET_REVISION}"
+            or error.get("completed_attempts") != 0
+            or type(error.get("completed_attempts")) is not int
+            or not isinstance(budget, dict)
+            or budget.get("accounting_semantics")
+            != "durable_pre_call_logical_reservation_v1"
+            or budget.get("target_calls") != 1
+            or budget.get("judge_calls") != 0
+            or budget.get("http_attempts") != 0
+            or any(type(budget.get(field)) is not int for field in (
+                "target_calls", "judge_calls", "http_attempts",
+            ))
+        ):
+            raise Gate5Error(f"RR error artifact classification changed: {error_path}")
+
+    tail = observations["vllm_token_tail_512"]
+    expected_tail_fields = {
+        "probe_schema", "max_tokens", "prompt_tokens", "completion_tokens",
+        "finish_reason", "stop_reason", "unique_completion_tokens",
+        "most_common_token_counts", "special_token_ids", "special_token_counts",
+        "text_sha256", "probe_log",
+    }
+    if not isinstance(tail, dict) or set(tail) != expected_tail_fields:
+        raise Gate5Error("RR vLLM tail observation fields changed")
+    tail_expected = {
+        "probe_schema": "ura-engineering-token-tail-probe/1",
+        "max_tokens": 512,
+        "prompt_tokens": 21,
+        "completion_tokens": 512,
+        "finish_reason": "length",
+        "stop_reason": None,
+        "unique_completion_tokens": 2,
+        "most_common_token_counts": [[644, 501], [22627, 11]],
+        "special_token_ids": {"bos": 1, "eos": 2, "pad": 32001, "unk": 0},
+        "special_token_counts": {"bos": 0, "eos": 0, "pad": 0, "unk": 0},
+        "text_sha256": "277aada87524bc3de88d8b7286ea6653a7b36a94ba08d2ab7211411f9cb6ebdb",
+    }
+    if {key: tail.get(key) for key in tail_expected} != tail_expected:
+        raise Gate5Error("RR vLLM tail observation changed")
+    tail_log = exact_descriptor(tail.get("probe_log"), label="RR vLLM tail probe")
+    tail_raw = engineering_probe_record(tail_log, tail_expected["probe_schema"])
+    if (
+        tail_raw.get("resource_id") != RR_TARGET_RESOURCE
+        or tail_raw.get("prompt_tokens") != 21
+        or tail_raw.get("completion_tokens") != 512
+        or tail_raw.get("finish_reason") != "length"
+        or tail_raw.get("stop_reason") is not None
+        or tail_raw.get("unique_completion_tokens") != 2
+        or tail_raw.get("most_common_token_counts") != [[644, 501], [22627, 11]]
+        or tail_raw.get("tail_token_ids") != [644] * 64
+        or tail_raw.get("special_token_ids") != tail_expected["special_token_ids"]
+        or tail_raw.get("special_token_counts") != tail_expected["special_token_counts"]
+        or tail_raw.get("text_sha256") != tail_expected["text_sha256"]
+    ):
+        raise Gate5Error("RR vLLM tail raw probe changed")
+
+    reference = observations["transformers_reference_512"]
+    if not isinstance(reference, dict) or set(reference) != {
+        "probe_schema", "generation", "base", "rr", "probe_log",
+    }:
+        raise Gate5Error("RR Transformers reference fields changed")
+    expected_generation = {
+        "backend": "transformers", "do_sample": False, "max_new_tokens": 512, "seed": 0,
+    }
+    expected_base = {
+        "label": "base", "resource_id": RR_BASE_RESOURCE, "prompt_tokens": 20,
+        "completion_tokens": 226, "last_token_is_eos": True, "eos_token_id": 2,
+        "eos_token_count": 1,
+        "text_sha256": "7d966860772f8185567a9c1742536f823a49facfadaae6847a97069ddc011499",
+    }
+    expected_rr = {
+        "label": "rr", "resource_id": RR_TARGET_RESOURCE, "prompt_tokens": 20,
+        "completion_tokens": 512, "last_token_is_eos": False, "eos_token_id": 2,
+        "eos_token_count": 0, "unique_completion_tokens": 2,
+        "most_common_token_counts": [[644, 503], [22627, 9]],
+        "text_sha256": "1f8e655ab40cbcd5a5ef23839d6845bd7aaa24ce7d693cfb29b077af590d1bbf",
+    }
+    if (
+        reference.get("probe_schema")
+        != "ura-engineering-transformers-termination-probe/1"
+        or reference.get("generation") != expected_generation
+        or reference.get("base") != expected_base
+        or reference.get("rr") != expected_rr
+    ):
+        raise Gate5Error("RR Transformers reference observation changed")
+    reference_log = exact_descriptor(
+        reference.get("probe_log"), label="RR Transformers probe"
+    )
+    reference_raw = engineering_probe_record(reference_log, reference["probe_schema"])
+    if (
+        reference_raw.get("generation") != expected_generation
+        or not isinstance(reference_raw.get("models"), list)
+        or {item.get("label") for item in reference_raw["models"] if isinstance(item, dict)}
+        != {"base", "rr"}
+    ):
+        raise Gate5Error("RR Transformers raw probe changed")
+
+    expected_accounting = {
+        "accounting_semantics": "durable_pre_call_logical_reservation_v1",
+        "runner_target_call_reservations": 4,
+        "vllm_diagnostic_generations": 1,
+        "transformers_reference_generations": 2,
+        "successful_rr_responses": 0,
+        "hosted_target_calls": 0,
+        "model_judge_calls": 0,
+        "local_guardrail_evaluations": 0,
+        "hosted_judge_calls": 0,
+        "http_attempts": 0,
+    }
+    if (
+        value.get("call_accounting") != expected_accounting
+        or any(
+            type(value["call_accounting"].get(field)) is not int
+            for field in expected_accounting
+            if field != "accounting_semantics"
+        )
+    ):
+        raise Gate5Error("RR target-runtime terminal call accounting changed")
+    return {
+        "value": value,
+        "descriptor": descriptor(artifact_path, max_bytes=MAX_JSON_BYTES),
+    }
+
+
+def rr_projection_value(prelim: Mapping[str, Any]) -> dict[str, Any]:
+    projection = prelim["projection"]
+    calls = projection["call_projection"]
+    return {
+        "projection_id": projection["projection_id"],
+        "projection_artifact": prelim["projection_descriptor"],
+        "eligibility_plan_id": prelim["eligibility"]["plan_id"],
+        "eligibility_artifact": prelim["eligibility_descriptor"],
+        "request_envelope_id": prelim["envelope"]["envelope_id"],
+        "request_envelope_artifact": prelim["envelope_descriptor"],
+        "selection": projection["selection"],
+        "projected_calls": {
+            "trajectories": calls["trajectories"],
+            "target_calls": calls["target_calls"],
+            "model_judge_calls": calls["judge_calls"],
+            "local_guardrail_evaluations": calls["local_guardrail_evaluations"],
+            "http_attempts": calls["http_attempts"],
+        },
+    }
+
+
+def validate_rr_projection_lane(lane: str, prelim: Mapping[str, Any]) -> None:
+    """Bind one completed no-call projection to its exact reviewed RR lane."""
+
+    contract = RR_PROJECTION_CONTRACT.get(lane)
+    if contract is None:
+        raise Gate5Error(f"unexpected RR projection lane: {lane}")
+    request = prelim["envelope"]["request"]
+    requested_arms = request.get("logical_source_arms")
+    selected_arms = prelim["projection"].get("selection", {}).get("arms")
+    calls = prelim["projection"].get("call_projection")
+    expected_call_counts = (
+        {
+            field: calls.get(field)
+            for field in (
+                "trajectories", "target_calls", "judge_calls",
+                "local_guardrail_evaluations", "http_attempts",
+            )
+        }
+        if isinstance(calls, dict)
+        else None
+    )
+    if (
+        request.get("requested_target_keys") != [RR_TARGET_SPEC]
+        or not isinstance(requested_arms, list)
+        or len(requested_arms) != len(contract["arms"])
+        or set(requested_arms) != contract["arms"]
+        or request.get("selected_attackers") != ["replay"]
+        or request.get("judges") != contract["judges"]
+        or request.get("defense") != "none"
+        or request.get("approximate_common_metrics")
+        is not contract["approximate_common_metrics"]
+        or request.get("limit") != 0
+        or request.get("sample_seed") != 0
+        or request.get("seeds") != [0]
+        or request.get("max_queries") != 1
+        or request.get("max_turns") != 1
+        or request.get("call_caps") != {
+            "target": 400_000,
+            "judge": None,
+            "http_attempts": None,
+            "deadline_seconds": 7_776_000,
+        }
+        or not isinstance(selected_arms, list)
+        or len(selected_arms) != len(contract["arms"])
+        or {
+            item.get("logical_source_arm")
+            for item in selected_arms
+            if isinstance(item, dict)
+        }
+        != contract["arms"]
+        or not isinstance(calls, dict)
+        or calls.get("by_attacker") != {"replay": expected_call_counts}
+        or calls.get("judge_calls") != 0
+        or calls.get("http_attempts") != 0
+        or (
+            calls.get("local_guardrail_evaluations", 0) > 0
+        ) != ("guardrail" in contract["judges"])
+    ):
+        raise Gate5Error(f"{lane}: completed RR no-call projection contract changed")
+
+
+def rr_terminal_manifest_row(
+    *, lane: str, prelim: Mapping[str, Any], artifact: Mapping[str, Any]
+) -> dict[str, Any]:
+    if lane not in RR_TERMINAL_LANES:
+        raise Gate5Error(f"unexpected RR terminal lane: {lane}")
+    return {
+        "lane_id": lane,
+        "family": "core",
+        "disposition": "unavailable",
+        "reason_code": RR_TERMINAL_REASON_CODE,
+        "reason": RR_TERMINAL_REASON,
+        "projection": {"status": "passed", "value": rr_projection_value(prelim)},
+        "canary": {
+            **RR_UNAVAILABLE_VALUE,
+            "target_runtime_terminal_artifact": dict(artifact["descriptor"]),
+        },
+        "final_preflight": dict(RR_UNAVAILABLE_VALUE),
+        "approved_caps": dict(RR_UNAVAILABLE_VALUE),
+    }
+
+
 def root_runnable_rows(
     *,
     family: str,
@@ -3267,6 +4246,8 @@ def root_runnable_rows(
 
     output: list[dict[str, Any]] = []
     ollama_judge_counts = {"rules_guardrail": 0, "rules": 0}
+    rr_terminal_descriptors: set[tuple[str, str, int]] = set()
+    rr_projection_identities: set[tuple[str, int]] = set()
     for lane in sorted(projection_rows):
         p_row = projection_rows[lane]
         c_row = canary_rows[lane]
@@ -3323,6 +4304,43 @@ def root_runnable_rows(
             status_field = next((name for name in aliases if p_row.get(name, "") != ""), None)
             if status_field and status_int(p_row, status_field, lane=lane) != calls[field]:
                 raise Gate5Error(f"{lane}: status/projection {field} mismatch")
+        if lane in RR_TERMINAL_LANES:
+            if family != "core":
+                raise Gate5Error(f"{lane}: RR terminal escaped the core family")
+            terminal_path = c_row.get("target_runtime_terminal_artifact", "").strip()
+            if (
+                c_row.get("disposition", "").strip() != "unavailable"
+                or c_row.get("canary_id", "").strip()
+                or c_row.get("conditional_na_artifact", "").strip()
+                or any(c_row.get(field, "").strip() for field in (
+                    "rehearsal_projection_id", "target_cap",
+                    "local_guardrail_evaluations",
+                    "all_configured_stages_represented", "target_status",
+                    "attacker_status", "source_evaluator_status",
+                ))
+                or not terminal_path
+            ):
+                raise Gate5Error(f"{lane}: RR terminal canary status row is not exact")
+            terminal = validate_rr_target_runtime_terminal(
+                terminal_path,
+                canary_control=canary_control,
+                project_root=project_root,
+                work=work,
+            )
+            terminal_descriptor = terminal["descriptor"]
+            validate_rr_projection_lane(lane, prelim)
+            projection_descriptor = prelim["projection_descriptor"]
+            rr_projection_identities.add((
+                projection_descriptor["sha256"], projection_descriptor["bytes"],
+            ))
+            rr_terminal_descriptors.add((
+                terminal_descriptor["path"], terminal_descriptor["sha256"],
+                terminal_descriptor["bytes"],
+            ))
+            output.append(rr_terminal_manifest_row(
+                lane=lane, prelim=prelim, artifact=terminal,
+            ))
+            continue
         if c_row.get("disposition", "").strip() == DEFENSE_NA_DISPOSITION:
             if family != "core" or lane != "defense-local":
                 raise Gate5Error("conditional N/A is allowed only for the core defense-local lane")
@@ -3412,6 +4430,16 @@ def root_runnable_rows(
     if family == "ollama" and ollama_judge_counts != {"rules_guardrail": 3, "rules": 3}:
         raise Gate5Error(
             "Ollama inventory must contain three static rules/guardrail lanes and three R-Judge rules lanes"
+        )
+    if family == "core" and (
+        len(rr_terminal_descriptors) != 1
+        or len(rr_projection_identities) != len(RR_TERMINAL_LANES)
+        or {row["lane_id"] for row in output if row["lane_id"] in RR_TERMINAL_LANES}
+        != set(RR_TERMINAL_LANES)
+    ):
+        raise Gate5Error(
+            "RR terminal lanes do not preserve four distinct projections and one "
+            "shared exact validated artifact"
         )
     return output
 
@@ -3530,6 +4558,11 @@ def explicit_manifest_rows(
             raise Gate5Error("explicit manifest lane must be an object")
         disposition = str(raw.get("disposition", "")).strip().lower().replace("-", "_")
         if disposition != "runnable":
+            lane = str(raw.get("lane_id") or raw.get("lane") or "").strip()
+            if lane in RR_TERMINAL_LANES:
+                validate_rr_terminal_manifest_row(raw, validate_files=True)
+                rows.append(dict(raw))
+                continue
             rows.append(terminal_row(raw))
             continue
         lane = str(raw.get("lane_id") or "").strip()
@@ -3617,7 +4650,159 @@ def expected_terminal_inventory() -> dict[str, dict[str, Any]]:
     return expected
 
 
-def validate_exact_inventory(rows: Sequence[Mapping[str, Any]]) -> None:
+def validate_rr_terminal_manifest_row(
+    raw: Mapping[str, Any], *, validate_files: bool
+) -> tuple[tuple[str, str, int], tuple[str, int]]:
+    if set(raw) != {
+        "lane_id", "family", "disposition", "reason_code", "reason",
+        "projection", "canary", "final_preflight", "approved_caps",
+    }:
+        raise Gate5Error("RR terminal manifest row fields changed")
+    lane = raw.get("lane_id")
+    if (
+        lane not in RR_TERMINAL_LANES
+        or raw.get("family") != "core"
+        or raw.get("disposition") != "unavailable"
+        or raw.get("reason_code") != RR_TERMINAL_REASON_CODE
+        or raw.get("reason") != RR_TERMINAL_REASON
+        or raw.get("final_preflight") != RR_UNAVAILABLE_VALUE
+        or raw.get("approved_caps") != RR_UNAVAILABLE_VALUE
+    ):
+        raise Gate5Error(f"{lane}: RR terminal manifest classification changed")
+    projection = raw.get("projection")
+    if (
+        not isinstance(projection, dict)
+        or set(projection) != {"status", "value"}
+        or projection.get("status") != "passed"
+        or not isinstance(projection.get("value"), dict)
+    ):
+        raise Gate5Error(f"{lane}: RR passed projection is absent")
+    projection_value = projection["value"]
+    if set(projection_value) != {
+        "projection_id", "projection_artifact", "eligibility_plan_id",
+        "eligibility_artifact", "request_envelope_id",
+        "request_envelope_artifact", "selection", "projected_calls",
+    }:
+        raise Gate5Error(f"{lane}: RR passed projection fields changed")
+    if (
+        not isinstance(projection_value.get("projection_id"), str)
+        or PROJECTION_ID_RE.fullmatch(projection_value["projection_id"]) is None
+        or not isinstance(projection_value.get("eligibility_plan_id"), str)
+        or re.fullmatch(r"eligibility-[0-9a-f]{24}", projection_value["eligibility_plan_id"])
+        is None
+        or not isinstance(projection_value.get("request_envelope_id"), str)
+        or re.fullmatch(
+            r"request-envelope-[0-9a-f]{24}", projection_value["request_envelope_id"]
+        ) is None
+        or not isinstance(projection_value.get("selection"), dict)
+    ):
+        raise Gate5Error(f"{lane}: RR passed projection identities changed")
+    calls = projection_value.get("projected_calls")
+    if (
+        not isinstance(calls, dict)
+        or set(calls) != {
+            "trajectories", "target_calls", "model_judge_calls",
+            "local_guardrail_evaluations", "http_attempts",
+        }
+        or any(isinstance(calls.get(field), bool) or not isinstance(calls.get(field), int)
+               for field in calls)
+        or calls["trajectories"] <= 0
+        or calls["target_calls"] <= 0
+        or calls["model_judge_calls"] != 0
+        or calls["http_attempts"] != 0
+        or calls["local_guardrail_evaluations"] < 0
+    ):
+        raise Gate5Error(f"{lane}: RR passed projection call accounting changed")
+    canary = raw.get("canary")
+    if (
+        not isinstance(canary, dict)
+        or set(canary) != {"status", "value", "target_runtime_terminal_artifact"}
+        or {"status": canary.get("status"), "value": canary.get("value")}
+        != RR_UNAVAILABLE_VALUE
+    ):
+        raise Gate5Error(f"{lane}: RR unavailable canary fields changed")
+    artifact = canary.get("target_runtime_terminal_artifact")
+    if not isinstance(artifact, dict) or set(artifact) != {"path", "sha256", "bytes"}:
+        raise Gate5Error(f"{lane}: RR terminal artifact descriptor changed")
+    if (
+        not isinstance(artifact.get("path"), str)
+        or not Path(artifact["path"]).is_absolute()
+        or not isinstance(artifact.get("sha256"), str)
+        or HEX64_RE.fullmatch(artifact["sha256"]) is None
+        or isinstance(artifact.get("bytes"), bool)
+        or not isinstance(artifact.get("bytes"), int)
+        or artifact["bytes"] <= 0
+    ):
+        raise Gate5Error(f"{lane}: RR terminal artifact descriptor values changed")
+    if validate_files:
+        artifact_path = exact_descriptor(artifact, label=f"{lane} RR terminal")
+        artifact_value = read_strict_json(artifact_path)
+        if (
+            artifact_value.get("schema") != RR_TERMINAL_SCHEMA
+            or artifact_value.get("reason_code") != RR_TERMINAL_REASON_CODE
+            or artifact_value.get("reason") != RR_TERMINAL_REASON
+            or artifact_value.get("applies_to_lanes") != list(RR_TERMINAL_LANES)
+            or artifact_value.get("evidence_eligible") is not False
+        ):
+            raise Gate5Error(f"{lane}: RR terminal descriptor points to wrong evidence")
+    projection_artifact = projection_value.get("projection_artifact")
+    eligibility_artifact = projection_value.get("eligibility_artifact")
+    request_envelope_artifact = projection_value.get("request_envelope_artifact")
+    if (
+        not isinstance(projection_artifact, dict)
+        or set(projection_artifact) != {"path", "file", "sha256", "bytes"}
+        or projection_artifact.get("file")
+        != f"{projection_value['projection_id']}.lane-projection.json"
+        or Path(str(projection_artifact.get("path", ""))).name
+        != projection_artifact.get("file")
+        or not isinstance(eligibility_artifact, dict)
+        or set(eligibility_artifact) != {"path", "sha256", "bytes"}
+        or not isinstance(request_envelope_artifact, dict)
+        or set(request_envelope_artifact)
+        != {"path", "envelope_id", "file", "sha256", "bytes"}
+        or request_envelope_artifact.get("envelope_id")
+        != projection_value["request_envelope_id"]
+        or request_envelope_artifact.get("file")
+        != f"{projection_value['request_envelope_id']}.request-envelope.json"
+        or Path(str(request_envelope_artifact.get("path", ""))).name
+        != request_envelope_artifact.get("file")
+    ):
+        raise Gate5Error(f"{lane}: RR projection support descriptor fields changed")
+    for key, item in (
+        ("projection_artifact", projection_artifact),
+        ("eligibility_artifact", eligibility_artifact),
+        ("request_envelope_artifact", request_envelope_artifact),
+    ):
+        if (
+            not isinstance(item.get("path"), str)
+            or not Path(item["path"]).is_absolute()
+            or not isinstance(item.get("sha256"), str)
+            or HEX64_RE.fullmatch(item["sha256"]) is None
+            or type(item.get("bytes")) is not int
+            or item["bytes"] <= 0
+        ):
+            raise Gate5Error(f"{lane}: RR {key} descriptor values changed")
+    if validate_files:
+        exact_descriptor(
+            eligibility_artifact, label=f"{lane} RR eligibility_artifact"
+        )
+        projection_path = checked_file(
+            projection_artifact["path"], max_bytes=MAX_JSON_BYTES
+        )
+        prelim = load_projection_bundle(projection_path)
+        validate_rr_projection_lane(str(lane), prelim)
+        if rr_projection_value(prelim) != projection_value:
+            raise Gate5Error(f"{lane}: RR passed projection differs from retained bytes")
+    terminal_identity = (artifact["path"], artifact["sha256"], artifact["bytes"])
+    projection_identity = (
+        projection_artifact["sha256"], projection_artifact["bytes"]
+    )
+    return terminal_identity, projection_identity
+
+
+def validate_exact_inventory(
+    rows: Sequence[Mapping[str, Any]], *, validate_files: bool = True
+) -> None:
     """Require the reviewed 46-row Gate-5 inventory in every input mode."""
 
     by_id: dict[str, Mapping[str, Any]] = {}
@@ -3632,7 +4817,7 @@ def validate_exact_inventory(rows: Sequence[Mapping[str, Any]]) -> None:
         by_id[lane] = raw
 
     terminal = expected_terminal_inventory()
-    expected_ids = set(EXPECTED_RUNNABLE_FAMILIES) | set(terminal)
+    expected_ids = set(EXPECTED_RUNNABLE_FAMILIES) | set(terminal) | set(RR_TERMINAL_LANES)
     observed_ids = set(by_id)
     if observed_ids != expected_ids or len(rows) != 46:
         raise Gate5Error(
@@ -3660,6 +4845,19 @@ def validate_exact_inventory(rows: Sequence[Mapping[str, Any]]) -> None:
                 "differ from the reviewed contract"
             )
 
+    rr_descriptors: set[tuple[str, str, int]] = set()
+    rr_projection_identities: set[tuple[str, int]] = set()
+    for lane in RR_TERMINAL_LANES:
+        terminal_identity, projection_identity = validate_rr_terminal_manifest_row(
+            by_id[lane], validate_files=validate_files
+        )
+        rr_descriptors.add(terminal_identity)
+        rr_projection_identities.add(projection_identity)
+    if len(rr_descriptors) != 1:
+        raise Gate5Error("RR terminal manifest rows do not share one evidence artifact")
+    if len(rr_projection_identities) != len(RR_TERMINAL_LANES):
+        raise Gate5Error("RR manifest does not preserve four distinct passed projections")
+
     family_counts = {
         "runnable": sum(row.get("disposition") == "runnable" for row in rows),
         "conditional_na": sum(
@@ -3669,18 +4867,19 @@ def validate_exact_inventory(rows: Sequence[Mapping[str, Any]]) -> None:
         "ollama_transport_terminal": sum(
             lane in EXPECTED_OLLAMA_TRANSPORT_TERMINALS for lane in by_id
         ),
+        "target_runtime_terminal": sum(lane in RR_TERMINAL_LANES for lane in by_id),
         "portfolio_terminal": sum(lane in {r["lane_id"] for r in BUILTIN_TERMINAL_ROWS} for lane in by_id),
         "native_terminal": sum(lane in {r["lane_id"] for r in NATIVE_ENGINE_ROWS} for lane in by_id),
     }
     allowed_counts = (
         {
-            "runnable": 26, "conditional_na": 0, "bridge_terminal": 3,
-            "ollama_transport_terminal": 3,
+            "runnable": 22, "conditional_na": 0, "bridge_terminal": 3,
+            "ollama_transport_terminal": 3, "target_runtime_terminal": 4,
             "portfolio_terminal": 5, "native_terminal": 9,
         },
         {
-            "runnable": 25, "conditional_na": 1, "bridge_terminal": 3,
-            "ollama_transport_terminal": 3,
+            "runnable": 21, "conditional_na": 1, "bridge_terminal": 3,
+            "ollama_transport_terminal": 3, "target_runtime_terminal": 4,
             "portfolio_terminal": 5, "native_terminal": 9,
         },
     )
@@ -3693,6 +4892,71 @@ def inventory_contract_self_test() -> dict[str, Any]:
 
     import copy
 
+    shared_rr_artifact = {
+        "path": str(Path.cwd().resolve() / "llava-rr.target-runtime-terminal.json"),
+        "sha256": "9" * 64,
+        "bytes": 1,
+    }
+    rr_rows = []
+    for index, lane in enumerate(RR_TERMINAL_LANES, start=1):
+        token = format(index, "x") * 24
+        descriptor_fixture = {
+            "path": str(
+                Path.cwd().resolve()
+                / f"lane-projection-{token}.lane-projection.json"
+            ),
+            "file": f"lane-projection-{token}.lane-projection.json",
+            "sha256": format(index + 9, "x") * 64,
+            "bytes": 1,
+        }
+        envelope_descriptor_fixture = {
+            "path": str(
+                Path.cwd().resolve()
+                / f"request-envelope-{token}.request-envelope.json"
+            ),
+            "envelope_id": f"request-envelope-{token}",
+            "file": f"request-envelope-{token}.request-envelope.json",
+            "sha256": format(index + 4, "x") * 64,
+            "bytes": 1,
+        }
+        rr_rows.append({
+            "lane_id": lane,
+            "family": "core",
+            "disposition": "unavailable",
+            "reason_code": RR_TERMINAL_REASON_CODE,
+            "reason": RR_TERMINAL_REASON,
+            "projection": {
+                "status": "passed",
+                "value": {
+                    "projection_id": f"lane-projection-{token}",
+                    "projection_artifact": dict(descriptor_fixture),
+                    "eligibility_plan_id": f"eligibility-{token}",
+                    "eligibility_artifact": {
+                        "path": str(
+                            Path.cwd().resolve() / f"{lane}.eligibility.json"
+                        ),
+                        "sha256": format(index + 5, "x") * 64,
+                        "bytes": 1,
+                    },
+                    "request_envelope_id": f"request-envelope-{token}",
+                    "request_envelope_artifact": envelope_descriptor_fixture,
+                    "selection": {"self_test": lane},
+                    "projected_calls": {
+                        "trajectories": 1,
+                        "target_calls": 1,
+                        "model_judge_calls": 0,
+                        "local_guardrail_evaluations": 0,
+                        "http_attempts": 0,
+                    },
+                },
+            },
+            "canary": {
+                **RR_UNAVAILABLE_VALUE,
+                "target_runtime_terminal_artifact": dict(shared_rr_artifact),
+            },
+            "final_preflight": dict(RR_UNAVAILABLE_VALUE),
+            "approved_caps": dict(RR_UNAVAILABLE_VALUE),
+        })
     correct = [
         {
             "lane_id": lane,
@@ -3702,8 +4966,8 @@ def inventory_contract_self_test() -> dict[str, Any]:
             "reason": None,
         }
         for lane, family in sorted(EXPECTED_RUNNABLE_FAMILIES.items())
-    ] + [dict(row) for _, row in sorted(expected_terminal_inventory().items())]
-    validate_exact_inventory(correct)
+    ] + rr_rows + [dict(row) for _, row in sorted(expected_terminal_inventory().items())]
+    validate_exact_inventory(correct, validate_files=False)
     conditional = copy.deepcopy(correct)
     defense_index = next(
         index for index, row in enumerate(conditional)
@@ -3728,7 +4992,7 @@ def inventory_contract_self_test() -> dict[str, Any]:
         "final_preflight": dict(DEFENSE_NA_TYPED_VALUE),
         "approved_caps": dict(DEFENSE_NA_TYPED_VALUE),
     }
-    validate_exact_inventory(conditional)
+    validate_exact_inventory(conditional, validate_files=False)
     mutations: list[tuple[str, Any]] = []
 
     missing = copy.deepcopy(correct)
@@ -3766,6 +5030,36 @@ def inventory_contract_self_test() -> dict[str, Any]:
     wrong_na = copy.deepcopy(correct)
     wrong_na[terminal_index]["canary"] = {"status": "AVAILABLE", "value": None}
     mutations.append(("terminal_typed_na", wrong_na))
+    rr_index = next(
+        index for index, row in enumerate(correct)
+        if row["lane_id"] == RR_TERMINAL_LANES[0]
+    )
+    rr_projection_unavailable = copy.deepcopy(correct)
+    rr_projection_unavailable[rr_index]["projection"] = dict(RR_UNAVAILABLE_VALUE)
+    mutations.append(("rr_projection_unavailable", rr_projection_unavailable))
+    rr_missing_projection_descriptor = copy.deepcopy(correct)
+    rr_missing_projection_descriptor[rr_index]["projection"]["value"].pop(
+        "projection_artifact"
+    )
+    mutations.append(("rr_missing_projection_descriptor", rr_missing_projection_descriptor))
+    rr_split_terminal_evidence = copy.deepcopy(correct)
+    rr_split_terminal_evidence[rr_index]["canary"][
+        "target_runtime_terminal_artifact"
+    ]["sha256"] = "8" * 64
+    mutations.append(("rr_split_terminal_evidence", rr_split_terminal_evidence))
+    rr_duplicate_projection = copy.deepcopy(correct)
+    first_rr = next(
+        row for row in rr_duplicate_projection
+        if row["lane_id"] == RR_TERMINAL_LANES[0]
+    )
+    second_rr = next(
+        row for row in rr_duplicate_projection
+        if row["lane_id"] == RR_TERMINAL_LANES[1]
+    )
+    second_rr["projection"]["value"]["projection_artifact"] = copy.deepcopy(
+        first_rr["projection"]["value"]["projection_artifact"]
+    )
+    mutations.append(("rr_duplicate_projection", rr_duplicate_projection))
     for name, mutate in (
         (
             "conditional_reason",
@@ -3812,11 +5106,77 @@ def inventory_contract_self_test() -> dict[str, Any]:
     accepted: list[str] = []
     for name, mutation in mutations:
         try:
-            validate_exact_inventory(mutation)
+            validate_exact_inventory(mutation, validate_files=False)
         except Gate5Error:
             accepted.append(name)
         else:
             raise Gate5Error(f"inventory mutation self-test did not fail closed: {name}")
+
+    def rr_projection_fixture(lane: str) -> dict[str, Any]:
+        contract = RR_PROJECTION_CONTRACT[lane]
+        counts = {
+            "trajectories": 1,
+            "target_calls": 1,
+            "judge_calls": 0,
+            "local_guardrail_evaluations": (
+                1 if "guardrail" in contract["judges"] else 0
+            ),
+            "http_attempts": 0,
+        }
+        return {
+            "envelope": {"request": {
+                "requested_target_keys": [RR_TARGET_SPEC],
+                "logical_source_arms": sorted(contract["arms"]),
+                "selected_attackers": ["replay"],
+                "judges": list(contract["judges"]),
+                "defense": "none",
+                "approximate_common_metrics": contract[
+                    "approximate_common_metrics"
+                ],
+                "limit": 0,
+                "sample_seed": 0,
+                "seeds": [0],
+                "max_queries": 1,
+                "max_turns": 1,
+                "call_caps": {
+                    "target": 400_000,
+                    "judge": None,
+                    "http_attempts": None,
+                    "deadline_seconds": 7_776_000,
+                },
+            }},
+            "projection": {
+                "selection": {"arms": [
+                    {"logical_source_arm": arm}
+                    for arm in sorted(contract["arms"])
+                ]},
+                "call_projection": {
+                    **counts,
+                    "semantics": "conservative_complete_grid_upper_bound_v1",
+                    "by_attacker": {"replay": dict(counts)},
+                },
+            },
+        }
+
+    rr_projection_fixtures = {
+        lane: rr_projection_fixture(lane) for lane in RR_TERMINAL_LANES
+    }
+    for lane, fixture in rr_projection_fixtures.items():
+        validate_rr_projection_lane(lane, fixture)
+    for lane in RR_TERMINAL_LANES:
+        for swapped_lane in RR_TERMINAL_LANES:
+            if lane == swapped_lane:
+                continue
+            try:
+                validate_rr_projection_lane(lane, rr_projection_fixtures[swapped_lane])
+            except Gate5Error:
+                pass
+            else:
+                raise Gate5Error(
+                    "RR projection lane-swap mutation self-test did not fail closed: "
+                    f"{lane} accepted {swapped_lane}"
+                )
+    accepted.append("rr_swapped_projection_lane")
     receipt_id = "acquisition-receipt-" + "a" * 32
     receipt_sha = "b" * 64
     correct_acquisition = [{
@@ -3943,10 +5303,11 @@ def inventory_contract_self_test() -> dict[str, Any]:
         "status": "passed",
         "schema": "ura-gate5-inventory-contract-self-test/1",
         "expected_rows": 46,
-        "expected_runnable": [25, 26],
+        "expected_runnable": [21, 22],
         "expected_conditional_na_lanes": [[], ["defense-local"]],
         "expected_bridge_terminal": 3,
         "expected_ollama_transport_terminal": 3,
+        "expected_target_runtime_terminal": 4,
         "expected_portfolio_terminal": 5,
         "expected_native_terminal": 9,
         "rejected_mutations": accepted,
@@ -3955,6 +5316,7 @@ def inventory_contract_self_test() -> dict[str, Any]:
         "rejected_conditional_live_attestation_mutations": rejected_live,
         "rejected_conditional_numeric_type_mutations": rejected_numeric,
         "rejected_canary_stage_mutations": canary_stage_contract_self_test(),
+        "retained_binding_self_test": retained_binding_contract_self_test(),
     }
 
 
@@ -3976,8 +5338,8 @@ def validate_inventory_current_bindings(
         envelope = read_strict_json(row["preliminary"]["request_envelope_artifact"]["path"])
         if envelope["bindings"]["project_revision"] != project_receipt["binding"]:
             raise Gate5Error(f"{lane}: preliminary projection is not bound to the current project receipt")
-        eligibility = validate_eligibility_plan(
-            read_strict_json(row["preliminary"]["eligibility_artifact"]["path"])
+        eligibility, _eligibility_descriptor = load_eligibility_artifact(
+            row["preliminary"]["eligibility_artifact"]["path"]
         )
         selected = eligibility["bindings"]["experiment_conditions"]["values"][
             "selected_config_identities"
@@ -4664,10 +6026,11 @@ def artifact_index(root: Path, *, excluded: set[Path]) -> list[dict[str, Any]]:
             continue
         if not path.is_file():
             raise Gate5Error(f"output tree contains a non-regular artifact: {path}")
+        observed = descriptor(path)
         rows.append({
             "file": str(path.relative_to(root)),
-            "sha256": sha256_file(path),
-            "bytes": path.stat().st_size,
+            "sha256": observed["sha256"],
+            "bytes": observed["bytes"],
         })
     return rows
 
@@ -4969,9 +6332,12 @@ def main(argv: Sequence[str]) -> int:
         row["lane_id"] for row in manifest["lanes"]
         if row["disposition"] == DEFENSE_NA_DISPOSITION
     )
+    target_runtime_terminal_count = sum(
+        row["lane_id"] in RR_TERMINAL_LANES for row in manifest["lanes"]
+    )
     if (runnable_count, terminal_count, tuple(conditional_na_lanes)) not in {
-        (26, 20, ()),
-        (25, 21, ("defense-local",)),
+        (22, 24, ()),
+        (21, 25, ("defense-local",)),
     }:
         raise Gate5Error("Gate-5 runnable/terminal/conditional N/A profile changed")
     if not args.launch and not args._payload_execute:
@@ -4981,6 +6347,7 @@ def main(argv: Sequence[str]) -> int:
             "covered_manifest_sha256": manifest_sha,
             "runnable_lanes": runnable_count,
             "typed_terminal_lanes": terminal_count,
+            "target_runtime_terminal": target_runtime_terminal_count,
             "conditional_na_lanes": conditional_na_lanes,
             "next_step": (
                 "repeat the identical evidence arguments with --launch "
@@ -5164,6 +6531,7 @@ def main(argv: Sequence[str]) -> int:
             "runnote_candidate": runnote_desc,
             "runnable_lanes": runnable_count,
             "typed_terminal_lanes": terminal_count,
+            "target_runtime_terminal": target_runtime_terminal_count,
             "conditional_na_lanes": conditional_na_lanes,
             "downloads_observed_bytes": 0,
             "commands": controller.commands,

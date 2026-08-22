@@ -13,13 +13,18 @@ from experiments.local_campaign.generate import (
     LEGACY_A05_EXTERNAL_BINDINGS,
     MAX_PHASE3_DOWNLOAD_BYTES,
     PHASE3_BINDINGS_ADDED_AFTER_A05,
+    PRE_RR_EXTERNAL_BINDINGS,
+    RR_EVIDENCE_BINDINGS_ADDED_AFTER_5719,
     ControllerGenerationError,
     external_binding_keys_from_templates,
     render_controller_set,
     validate_binding_document,
     verify_controller_set,
 )
-from experiments.local_campaign.rebind import main as rebind_main
+from experiments.local_campaign.rebind import (
+    MIGRATION_REVISION_BINDINGS,
+    main as rebind_main,
+)
 
 
 def _valid_values() -> dict[str, str]:
@@ -41,6 +46,8 @@ def _valid_values() -> dict[str, str]:
             value = "/home/ura/MLLMRiskBench"
         elif key == "WORK_ROOT":
             value = "/mnt/stor/data/ura-work"
+        elif key.endswith("_ROOT"):
+            value = f"/mnt/stor/data/ura-work/runs/engineering/{key.lower()}"
         elif key.endswith("_PATH"):
             value = f"/bound/{key.lower()}.json"
         elif key.endswith("_NAME"):
@@ -62,7 +69,8 @@ def _write_document(path: Path, values: dict[str, str]) -> Path:
 
 def test_external_binding_inventory_is_exact_and_reviewed() -> None:
     assert external_binding_keys_from_templates() == EXTERNAL_BINDINGS
-    assert len(EXTERNAL_BINDINGS) == 54
+    assert len(EXTERNAL_BINDINGS) == 58
+    assert len(PRE_RR_EXTERNAL_BINDINGS) == 54
 
     missing = _valid_values()
     missing.pop("PHASE3_REQUEST_BYTES")
@@ -289,7 +297,10 @@ def test_rebind_performs_only_the_exact_controlled_a05_migration(
     legacy = {
         key: value
         for key, value in current.items()
-        if key not in PHASE3_BINDINGS_ADDED_AFTER_A05
+        if key not in (
+            PHASE3_BINDINGS_ADDED_AFTER_A05
+            | RR_EVIDENCE_BINDINGS_ADDED_AFTER_5719
+        )
     }
     legacy["CONTROLLER_INSTALL_ROOT"] = "/home/ura"
     legacy["PHASE3_GPU_INVENTORY_SHA256"] = "3" * 64
@@ -304,7 +315,7 @@ def test_rebind_performs_only_the_exact_controlled_a05_migration(
         "--set",
         f"PROJECT_RECEIPT_BYTES={current['PROJECT_RECEIPT_BYTES']}",
     ]
-    with pytest.raises(SystemExit, match="requires an explicit --set for every"):
+    with pytest.raises(SystemExit, match="requires an explicit replacement for every"):
         rebind_main(incomplete_args)
 
     output = tmp_path / "migrated.json"
@@ -316,6 +327,10 @@ def test_rebind_performs_only_the_exact_controlled_a05_migration(
         )
     )
     for key in sorted(PHASE3_BINDINGS_ADDED_AFTER_A05):
+        args.extend(("--set", f"{key}={current[key]}"))
+    for key in sorted(RR_EVIDENCE_BINDINGS_ADDED_AFTER_5719):
+        args.extend(("--set", f"{key}={current[key]}"))
+    for key in sorted(MIGRATION_REVISION_BINDINGS - PHASE3_BINDINGS_ADDED_AFTER_A05):
         args.extend(("--set", f"{key}={current[key]}"))
     assert rebind_main(args) == 0
     migrated = json.loads(output.read_text(encoding="utf-8"))
@@ -336,3 +351,42 @@ def test_rebind_performs_only_the_exact_controlled_a05_migration(
                 "PHASE3_REQUEST_BYTES=1",
             ]
         )
+
+
+def test_rebind_requires_rr_roots_and_current_project_identity_for_pre_rr_migration(
+    tmp_path: Path,
+) -> None:
+    current = _valid_values()
+    pre_rr = {
+        key: value for key, value in current.items()
+        if key not in RR_EVIDENCE_BINDINGS_ADDED_AFTER_5719
+    }
+    assert frozenset(pre_rr) == PRE_RR_EXTERNAL_BINDINGS
+    base = _write_document(tmp_path / "pre-rr.json", pre_rr)
+    current.update({
+        "EXPECTED_COMMIT": "4" * 40,
+        "PROJECT_RECEIPT_PATH": "/bound/current-project-receipt.json",
+        "PROJECT_RECEIPT_SHA256": "5" * 64,
+        "PROJECT_RECEIPT_BYTES": "4242",
+    })
+    required = RR_EVIDENCE_BINDINGS_ADDED_AFTER_5719 | MIGRATION_REVISION_BINDINGS
+
+    for omitted in sorted(required):
+        args = [
+            "--base", str(base),
+            "--out", str(tmp_path / f"missing-{omitted.lower()}.json"),
+        ]
+        for key in sorted(required - {omitted}):
+            args.extend(("--set", f"{key}={current[key]}"))
+        with pytest.raises(
+            SystemExit, match=rf"requires an explicit replacement.*{omitted}"
+        ):
+            rebind_main(args)
+
+    output = tmp_path / "current.json"
+    args = ["--base", str(base), "--out", str(output)]
+    for key in sorted(required):
+        args.extend(("--set", f"{key}={current[key]}"))
+    assert rebind_main(args) == 0
+    migrated = json.loads(output.read_text(encoding="utf-8"))
+    assert validate_binding_document(migrated) == current

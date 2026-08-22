@@ -12,8 +12,9 @@ already-materialized source (skips are recorded OK in the step ledger).
 
 ## Prerequisites
 
-- `git curl tar tmux` (plus `zstd` for the `ollama` phase; Debian: `apt install
-  git curl tar tmux zstd`).
+- `git curl tar` and at least one persistent launcher, with tmux preferred and
+  screen supported (plus `zstd` for the `ollama` phase; Debian:
+  `apt install git curl tar tmux zstd` or substitute `screen` for `tmux`).
 - A CPython `>=3.12,<3.14` interpreter for the venv (the package declares
   `requires-python = ">=3.12,<3.14"`). The framework runtime lock additionally
   binds exact **CPython 3.12.13** as the venv's base interpreter, so use that:
@@ -42,16 +43,16 @@ failed; logs live under `$URA_DATA/acquire-logs/`.
 
 | phase | what it does |
 |---|---|
-| `deps` | create `.venv` with `$URA_PYTHON` (resolved as above) and editable-install with the `dev,analysis,api,guardrail,local-vllm` extras + `hf`/`gdown` CLI tools (verified present) |
+| `deps` | create `.venv` with `$URA_PYTHON` (resolved as above) and editable-install with the `dev,analysis,api,guardrail,local-vllm` extras + `hf`/`gdown` CLI tools (verified present); remove legacy duplicate top-level PyRIT, Spikee, `datasets`, and `jsonlines` installs from this main venv, then run `pip check` (their isolated runtimes/support environment are retained) |
 | `clones` | pinned upstream git snapshots (StrongREJECT, HarmBench, BIPIA, ...); stale clones are repaired via fetch + re-checkout |
 | `hf` | pinned Hugging Face dataset releases (AgentHarm, JBB, JailBreakV-28K, MLLMGuard, VLSBench, Video-SafetyBench, JALMBench) |
 | `archives` | separately-distributed media: MM-SafetyBench images (Drive, stall-hardened), GPTGeoChat human split (MediaFire scrape), SIUO images (HF dataset repo), Video-SafetyBench extract, JailBreakV image-backed subset generation, JALMBench/VLSBench exports |
-| `bipia` | build the BIPIA qa/abstract sets from their external XSum/NewsQA bases (NewsQA is licensed - obtain `$URA_UPSTREAM/newsqa-data` manually; until then `URA_BIPIA_TEST_QA_PATH` is reported `MISSING ... (blocked: licensed NewsQA base)`) |
+| `bipia` | create or verify a content-addressed, no-system-site-packages support venv under `$URA_DATA/support-venvs` from the fully hashed `distro/bipia-build-requirements.lock`, then build the BIPIA qa/abstract sets without installing its legacy `datasets` stack into the main URA venv (NewsQA is licensed - obtain `$URA_UPSTREAM/newsqa-data` manually; until then `URA_BIPIA_TEST_QA_PATH` is reported `MISSING ... (blocked: licensed NewsQA base)`) |
 | `aggregators` | fetch the aggregator corpora - SALAD-Bench, AIR-Bench 2024, XSTest, SimpleSafetyTests, DecodingTrust (stereotype), HoliSafe (multimodal, gated) - via `experiments.export_aggregators` (the HoliSafe export resolves the `hf` CLI next to the venv interpreter, so the venv need not be activated), per-source skip when present |
 | `ollama` | user-local ollama runtime **v0.32.13** pinned: `ollama-linux-amd64.tar.zst` from the GitHub release, its sha256 checked against the release's published `sha256sum.txt` AND the pin in the script (fail-closed on any mismatch), extracted under `~/.local/ollama` + `~/.local/bin/ollama` symlink (the console-owned daemon needs it on PATH) |
-| `runtimes` | resume or create, then separately verify, all 15 isolated third-party framework runtimes under the strict lock: `framework_runtime_installer resume/verify --lock experiments/framework_runtime_lock.json --env-root $URA_DATA/framework-venvs --state-root $URA_DATA/runs/engineering/framework-runtime-<lock_id[:12]> --python <venv base = CPython 3.12.13>` - 14 private Python venvs plus Promptfoo's private Node runtime, using the same roots as runbook 12.2 and Build -> Runtimes. Each command runs in the installer's named tmux/screen session; the phase waits for its exit marker (168 h deadline, liveness probe) and ledgers the real exit code as `runtimes-install` / `runtimes-verify`. `resume` is safe for a fresh store and resumes a phase-checked staged store after interruption; any install/resume or verify failure makes this phase and `all` exit nonzero. Requires the `deps` venv: without it the phase fails closed as `runtimes-plan (venv missing ...)` |
+| `runtimes` | plan the strict lock, then issue a separate sequential `resume --only NAME` and `verify --only NAME` named tmux/screen session for each of all 15 isolated third-party framework runtimes: 14 private Python venvs plus Promptfoo's private Node runtime under `$URA_DATA/framework-venvs`. A failed row is retained and its verify is skipped, but every later row is still attempted; per-row statuses and honest `runtimes-install`/`runtimes-verify` aggregates make this phase and `all` exit nonzero when any row fails. `resume` safely creates an absent store or repairs a phase-checked stage. The clean per-runtime homes use persistent caches at `$URA_DATA/framework-venvs/.cache/pip` and `.cache/npm`; caches never decide admission. Uses the same lock/roots as runbook 12.2 and Build -> Runtimes and requires the `deps` venv with exact CPython 3.12.13 as its base. |
 | `locators` | write every `URA_*_PATH` binding (incl. `URA_MEDIA_ROOTS`, `HF_HOME`, `PATH`) plus `URA_REPO` (the checkout) and `URA_PY` (`$URA_REPO/.venv/bin/python`, the interpreter the runbook's `ura_native_run` wrapper uses) into `~/.ura_campaign_env`; seed `experiments/source-instances.json` from `experiments/rig/source-instances.example.json` when absent and set the six aggregator arms from that example (labels included - `source_conformance` matches them against the retained receipt); print an existence report |
-| `console` | (re)launch the rig console in tmux session `console` on `127.0.0.1:8642` with the FULL login env (profile + secrets + campaign env + `~/.local/bin` on PATH) |
+| `console` | (re)launch the rig console in persistent session `console` on `127.0.0.1:8642`, preferring tmux and falling back to screen, with the FULL login env (profile + secrets + campaign env + `~/.local/bin` on PATH) |
 | `summary` | per-step OK/FAIL report from the step ledger |
 
 Run a subset by naming phases: `distro/install.sh clones hf aggregators locators`.
@@ -62,12 +63,20 @@ console summary - the complete start-to-end installation.
 ## Secrets
 
 Provider API keys and `HF_TOKEN` live only in `~/.ura_env` (mode 600), never in
-the repo. `~/.ura_env` is the canonical operator secrets file: it is the file the
-console's Config page writes rotated keys into, and the installer, the console
-launcher it generates and `repin.sh` all source it LAST, so it wins over any
-other file. `~/.ura_secrets` is an optional legacy file (rigs provisioned by an
-earlier installer); it is sourced first and overridden by `~/.ura_env`, so a key
-rotated in the console is never shadowed by a stale legacy value.
+the repo. `~/.ura_env` is the canonical operator secrets file and is where the
+console's Config page writes rotated keys. `install.sh` does not source either
+secret file at process scope: it sources them only inside the subshell of an
+HF-backed download/export and inside the generated console launcher, never
+prints a value, and keeps every unrelated install/runtime command free of those
+bindings. `repin.sh` and the console launcher retain their documented narrow
+use. `~/.ura_secrets` is an optional legacy file; whenever both are needed it is
+sourced first and overridden by `~/.ura_env`, so a rotated canonical key wins.
+
+Download caches are explicit and outside sealed environments. BIPIA uses
+`$URA_DATA/package-cache/pip`; managed frameworks use
+`$URA_DATA/framework-venvs/.cache/{pip,npm}` even though each subprocess has a
+clean HOME. Deleting a cache affects transfer time only, never lock, inventory,
+smoke, receipt, or content-seal verification.
 `distro/.env.example` is the template and lists the full provider roster the
 code reads (Anthropic, OpenAI, Gemini/Google, DeepSeek, Moonshot, DashScope/Qwen,
 Zhipu/GLM, Ark/Doubao).

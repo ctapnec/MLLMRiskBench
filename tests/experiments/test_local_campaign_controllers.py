@@ -118,6 +118,12 @@ def test_phase3_uses_one_exact_bound_create_only_tag(tmp_path: Path) -> None:
     assert "phase3-guard1b-acquire-fit-20260822T120000Z" in launch_chain
     assert "phase3-guard1b-20260822T120000Z" in launch_chain
     assert "guard1b-fit-20260822T120000Z" in launch_chain
+    assert "eligibility_payload = checked_bytes(" in launch_chain
+    assert '"records": sum(' in launch_chain
+    assert '"records": 442' not in launch_chain
+    assert "json.loads(eligibility_payload)" in launch_chain
+    assert "json.loads(projection_payload)" in launch_chain
+    assert "json.loads(envelope_payload)" in launch_chain
 
     malformed = json.loads(bindings.read_text(encoding="utf-8"))
     malformed["values"]["PHASE3_GUARD_TAG"] = "20260822-120000Z"
@@ -229,6 +235,236 @@ def test_rendered_phase7_lifecycle_partition_mutations_fail(tmp_path: Path) -> N
     assert "phase7-lifecycle-authorization-cases" in value["contracts"]
 
 
+def test_phase7_rr_runtime_terminal_never_invokes_paired_compare() -> None:
+    import re
+
+    source = (
+        Path(__file__).parents[2]
+        / "experiments"
+        / "local_campaign"
+        / "templates"
+        / "phase7_analysis.py.in"
+    ).read_text(encoding="utf-8")
+    start = source.index("    def run_llava_pairs(")
+    end = source.index("    def run_adaptivity_pairs(", start)
+    rr_contrast = source[start:end]
+    image_start = source.index("IMAGE_ARMS = (")
+    image_end = source.index("ADAPTIVE_ARMS = (", image_start)
+    image_arms = re.findall(r'"([a-z0-9_]+)"', source[image_start:image_end])
+    assert len(image_arms) == 12
+    assert len(set(image_arms)) == 12
+    assert "ura-phase7-non-estimable-contrast/1" in source
+    assert '"paired_compare_invoked": False' in rr_contrast
+    assert '"estimate": None' in rr_contrast
+    assert '"modality": "image"' in rr_contrast
+    assert "for corpus in IMAGE_ARMS:" in rr_contrast
+    assert "experiments.paired_compare" not in rr_contrast
+    assert "self.run(" not in rr_contrast
+    selector_start = source.index('"model_selectors": {')
+    selector_end = source.index('"guardrail_selector":', selector_start)
+    assert '"llava_rr"' not in source[selector_start:selector_end]
+    assert "RR_TARGET_IDENTITY_MARKERS" in source
+    assert 'project_root / "experiments" / "local-llava-rr.json"' in source
+    assert "RR_LOCAL_CONFIG_SHA256" in source
+    assert "RR_OBSERVED_PROJECT_COMMIT" in source
+    assert '"diff",' in source
+    gate5_start = source.index("def validate_gate5(")
+    gate5_end = source.index("def validate_exact_source_portfolio(", gate5_start)
+    assert "validate_rr_runtime_project_continuity(" in source[gate5_start:gate5_end]
+    assert '"10-defense-local.json"' in source
+    assert '"14-defense-local.json"' not in source
+    assert 'set(projection) != {"path", "file", "sha256", "bytes"}' in source
+    assert (
+        '{"path", "envelope_id", "file", "sha256", "bytes"}' in source
+    )
+    assert 'set(eligibility) != {"path", "sha256", "bytes"}' in source
+    assert 'eligibility.get("bindings", {}).get("request_envelope_sha256")' in source
+    assert '"records": eligibility_records' in source
+    assert "projection-file-mismatch" in source
+    assert "request-envelope-id-mismatch" in source
+    assert "candidate.lstat()" in source
+    assert "not stat.S_ISREG(entry.st_mode)" in source
+    assert "evidence member changed while reading" in source
+    assert 'getattr(os, "O_NOFOLLOW", 0)' in source
+    assert "members_after != members_before" in source
+    assert "evidence root changed while reading" in source
+
+
+def test_rendered_phase8_rr_terminal_mutations_fail(tmp_path: Path) -> None:
+    bindings = _bindings(tmp_path / "bindings.json")
+    output = tmp_path / "workspace"
+    render_controller_set(bindings, output)
+    result = subprocess.run(
+        [sys.executable, str(output / "phase8_human_audit.py"), "--self-test"],
+        cwd=Path(__file__).parents[2],
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    value = json.loads(result.stdout)
+    assert value["status"] == "passed"
+    assert value["gate5_inventory_profiles"] == [
+        "46/22/24 with four RR runtime terminals and defense-local runnable",
+        "46/21/25 with four RR runtime terminals and defense-local conditional N/A",
+    ]
+
+
+def test_phase8_rejects_rr_human_samples_and_metric_inputs() -> None:
+    source = (
+        Path(__file__).parents[2]
+        / "experiments"
+        / "local_campaign"
+        / "templates"
+        / "phase8_human_audit.py.in"
+    ).read_text(encoding="utf-8")
+    assert "def _reject_rr_human_row(" in source
+    assert '_reject_rr_human_row(row, label="common sample")' in source
+    assert '_reject_rr_human_row(row, label="source-task sample")' in source
+    assert 'or RR_RUNTIME_TERMINAL_LANE_SET & set(specs)' in source
+    assert "for marker in RR_TARGET_IDENTITY_MARKERS" in source
+    assert 'project_root / "experiments" / "local-llava-rr.json"' in source
+    assert "RR_LOCAL_CONFIG_SHA256" in source
+    assert "RR_OBSERVED_PROJECT_COMMIT" in source
+    gate5_start = source.index("def validate_gate5(")
+    gate5_end = source.index("def validate_core_completion(", gate5_start)
+    assert "_validate_rr_runtime_project_continuity(" in source[gate5_start:gate5_end]
+    assert '"10-defense-local.json"' in source
+    assert '"14-defense-local.json"' not in source
+    assert "validate_rr_non_estimable_contrast(" in source
+    assert 'set(projection) != {"path", "file", "sha256", "bytes"}' in source
+    assert (
+        '{"path", "envelope_id", "file", "sha256", "bytes"}' in source
+    )
+    assert 'set(eligibility) != {"path", "sha256", "bytes"}' in source
+    assert 'eligibility.get("bindings", {}).get("request_envelope_sha256")' in source
+    assert '"records": eligibility_records' in source
+    assert "RR projection descriptor filename mismatch" in source
+    assert "RR request-envelope descriptor identity mismatch" in source
+    assert "candidate.lstat()" in source
+    assert "not stat.S_ISREG(entry.st_mode)" in source
+    assert "evidence member changed while reading" in source
+    assert 'getattr(os, "O_NOFOLLOW", 0)' in source
+    assert "members_after != members_before" in source
+    assert "evidence root changed while reading" in source
+
+
+def test_phase5_rr_preserves_projections_and_starts_terminal_at_canary(
+    tmp_path: Path,
+) -> None:
+    import re
+
+    root = Path(__file__).parents[2] / "experiments" / "local_campaign" / "templates"
+    projections = (root / "phase5_core_projections.sh.in").read_text(encoding="utf-8")
+    canaries = (root / "phase5_core_attest_canary.sh.in").read_text(encoding="utf-8")
+    finalizer = (root / "phase5_finalize_gate5.sh.in").read_text(encoding="utf-8")
+    promoter = (root / "phase5_promote_gate5.sh.in").read_text(encoding="utf-8")
+    sequence = (root / "gate5_after_phase5_sequence.sh.in").read_text(encoding="utf-8")
+    rr_lanes = (
+        "local-llava-rr-text-full",
+        "local-llava-rr-image-full",
+        "rjudge-llava-rr",
+        "gptgeochat-llava-rr",
+    )
+    for lane in rr_lanes:
+        assert projections.count(f"run_preflight {lane} ") == 1
+        assert f"run_canary {lane} " not in canaries
+        assert lane in finalizer
+        assert lane in promoter
+    assert "write_rr_target_runtime_terminal \"$RR_TERMINAL\" \"$RR_CFG\"" in canaries
+    assert canaries.index(
+        'write_rr_target_runtime_terminal "$RR_TERMINAL" "$RR_CFG"'
+    ) < canaries.index(
+        "probe_target qwen3-vl text"
+    )
+    assert '"schema": SCHEMA' in canaries
+    assert 'SCHEMA = "ura-phase5-target-runtime-terminal/1"' in canaries
+    assert 'REASON_CODE = "target_baseline_nontermination_at_generation_cap"' in canaries
+    assert (
+        'OBSERVED_PROJECT_COMMIT = "5719a4ff4ba4a711fee433d1f9990c1d3cf2f8a3"'
+        in canaries
+    )
+    assert (
+        'EXPECTED_CONFIG_SHA256 = "3a53ab82405636116e9c95850dae1e0c1e394021317707c978bc35b4178ca334"'
+        in canaries
+    )
+    assert '"normalized_selected_sha256": "5e64bdc1ddc8e3a719f226cc2ffbb7325248ef03995a5eb9992cc3bd6bff5590"' in canaries
+    assert "not exact_normalized_local_identity(local_identity)" in canaries
+    assert "RR exact commit/config mutation self-test failed" in canaries
+    assert "revision_content_identities([config_descriptor, *observed_config_descriptors])" in canaries
+    assert '"status": "passed", "value": rr_projection_value(prelim)' in finalizer
+    assert '"target_runtime_terminal_artifact": dict(artifact["descriptor"])' in finalizer
+    assert "def validate_rr_projection_lane(" in finalizer
+    assert "rr_swapped_projection_lane" in finalizer
+    assert '{"path", "file", "sha256", "bytes"}' in finalizer
+    assert '{"path", "envelope_id", "file", "sha256", "bytes"}' in finalizer
+    assert '"target_runtime_terminal": 4' in finalizer
+    assert '"target_runtime_terminal": 4' in promoter
+    for source in (finalizer, promoter):
+        assert re.search(r'(?<![A-Za-z_])"records"\s*:\s*1\b', source) is None
+        assert source.count("load_eligibility_artifact(") == 5
+        assert "validate_eligibility_envelope_binding(" in source
+        assert "load_stable_request_envelope_file(" in source
+        assert 'getattr(os, "O_NOFOLLOW", 0)' in source
+        assert "inventory_after != inventory_before" in source
+        assert "member.read_bytes()" not in source
+    assert "inventory_after != inventory_before" in canaries
+    assert "member.read_bytes()" not in canaries
+    assert ".read_bytes()" not in canaries
+    assert ".read_text(" not in canaries
+    assert canaries.count("_bounded_nofollow_read(") >= 4
+    assert canaries.count("validate_lane_projection_binding(") >= 3
+    assert "grid is not bound to the exact retained eligibility plan" in canaries
+    assert "grid is not bound to the exact retained lane projection" in canaries
+    assert "acquisition binding names another request envelope" in canaries
+    assert '(22, 24, 4, [])' in sequence
+    assert '(21, 25, 4, ["defense-local"])' in sequence
+
+    bindings = _bindings(tmp_path / "bindings.json")
+    output = tmp_path / "workspace"
+    render_controller_set(bindings, output)
+    for filename, flag, expected_mutations in (
+        (
+            "phase5_finalize_gate5.sh",
+            "--inventory-contract-self-test",
+            {
+                "rr_projection_unavailable", "rr_missing_projection_descriptor",
+                "rr_split_terminal_evidence", "rr_duplicate_projection",
+                "rr_swapped_projection_lane",
+            },
+        ),
+        (
+            "phase5_promote_gate5.sh",
+            "--promotion-self-test",
+            {
+                "rr_projection_unavailable", "rr_projection_descriptor_missing",
+                "rr_split_terminal_artifact", "rr_duplicate_projection",
+            },
+        ),
+    ):
+        shell = (output / filename).read_text(encoding="utf-8")
+        blocks = re.findall(r"<<'PY'\n(.*?)\nPY(?:\n|$)", shell, re.DOTALL)
+        assert len(blocks) == 1
+        result = subprocess.run(
+            [sys.executable, "-", flag],
+            cwd=Path(__file__).parents[2],
+            input=blocks[0],
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+        value = json.loads(result.stdout)
+        assert value["status"] == "passed"
+        assert value["expected_rows"] == 46
+        assert value["expected_runnable"] == [21, 22]
+        assert value["expected_target_runtime_terminal"] == 4
+        assert expected_mutations <= set(value["rejected_mutations"])
+        assert value["retained_binding_self_test"] == {
+            "eligibility_nonblank_records": 3,
+            "hardcoded_one_rejected": True,
+            "request_envelope_swap_rejected": True,
+        }
+
+
 def test_render_is_commit_bound_and_workspace_drift_fails(tmp_path: Path) -> None:
     bindings = _bindings(tmp_path / "bindings.json")
     output = tmp_path / "workspace"
@@ -294,6 +530,128 @@ def test_phase6_gate5_launch_identity_uses_the_rendered_commit(
     assert "ura-gate5-after-phase5-a0ce1f9" not in phase6
 
 
+def test_phase6_rr_runtime_terminals_are_required_but_never_scheduled() -> None:
+    import re
+
+    root = Path(__file__).parents[2] / "experiments" / "local_campaign" / "templates"
+    names = (
+        "phase6_core_measured.sh.in",
+        "phase6_extended_measured.sh.in",
+        "phase6_native_diagnostics.sh.in",
+        "phase6_sequence.sh.in",
+    )
+    sources = {
+        name: (root / name).read_text(encoding="utf-8") for name in names
+    }
+    rr_lanes = (
+        "local-llava-rr-text-full",
+        "local-llava-rr-image-full",
+        "rjudge-llava-rr",
+        "gptgeochat-llava-rr",
+    )
+    semantic_sources = (
+        sources["phase6_core_measured.sh.in"],
+        sources["phase6_extended_measured.sh.in"],
+        sources["phase6_native_diagnostics.sh.in"],
+    )
+    for source_index, source in enumerate(sources.values()):
+        python_blocks = re.findall(r"<<'PY'\n(.*?)\nPY(?:\n|$)", source, re.DOTALL)
+        assert python_blocks
+        for block_index, block in enumerate(python_blocks):
+            compile(block, f"<phase6-{source_index}-{block_index}>", "exec")
+    for source in semantic_sources:
+        for lane in rr_lanes:
+            assert lane in source
+        assert "ura-phase5-target-runtime-terminal/1" in source
+        assert "target_baseline_nontermination_at_generation_cap" in source
+        assert 'canary.get("target_runtime_terminal_artifact")' in source
+        assert 'projection_field.get("status") != "passed"' in source or (
+            'value.get("status") != "passed"' in source
+        )
+        assert '"target_runtime_terminal": 4' in source
+        assert '"runnable": 22' in source
+        assert '"typed_terminal": 24' in source
+        assert '"runnable": 21' in source
+        assert '"typed_terminal": 25' in source
+        assert '"local-llava-rr.json"' in source
+        assert "5719a4ff4ba4a711fee433d1f9990c1d3cf2f8a3" in source
+        assert (
+            "3a53ab82405636116e9c95850dae1e0c1e394021317707c978bc35b4178ca334"
+            in source
+        )
+        assert 'target["local_config"].get("bytes") != 246' in source
+        assert '"tensor_parallel_size": 1' in source
+        assert '"gpu_memory_utilization": 0.85' in source
+        assert 'tree_hash.update(relative.encode("utf-8"))' in source or (
+            'digest_value.update(relative.encode("utf-8"))' in source
+        )
+        assert 'update(b"\\0")' in source
+        assert 'update(member_sha.encode("ascii"))' in source
+        assert "not stat.S_ISREG(after.st_mode)" in source
+        assert 'getattr(os, "O_NOFOLLOW", 0)' in source
+        assert "members_after != members_before" in source
+        assert "RR evidence root changed while reading" in source
+        assert "member.read_bytes()" not in source
+
+    core = sources["phase6_core_measured.sh.in"]
+    extended = sources["phase6_extended_measured.sh.in"]
+    native = sources["phase6_native_diagnostics.sh.in"]
+    sequence = sources["phase6_sequence.sh.in"]
+    assert core.count("def rr_tree_descriptor(") == 2
+    assert native.count("def rr_tree_descriptor(") == 2
+    assert "revalidate_rr_runtime_terminal_artifact(" in core
+    assert native.count("validate_rr_runtime_terminal_artifact(shared") == 2
+    assert "if lane not in RR_TERMINAL_LANE_SET" in core
+    assert 'test "${#SPEC_FILES[@]}" -eq 9 || test "${#SPEC_FILES[@]}" -eq 10' in core
+    assert 'test "${#SPEC_FILES[@]}" -eq 13' not in core
+    assert "Phase 6 core contains an RR spec, argv, result, root, or reservation" in core
+    assert "Phase 6 extended generated an RR lane spec" in extended
+    assert (
+        "Phase 6 extended contains an RR argv, spec, root, result, or reservation"
+        in extended
+    )
+    assert "native controller contains an RR argv, spec, root, result, or reservation" in native
+    for source in (core, extended, native):
+        assert 'projection.get("bindings", {}).get("request_envelope_sha256")' not in source
+        assert 'eligibility.get("bindings", {}).get("request_envelope_sha256")' in source
+        assert '{"path", "file", "sha256", "bytes"}' in source
+        assert '{"path", "envelope_id", "file", "sha256", "bytes"}' in source
+        assert '"records": eligibility_records' in source
+        assert 'for line in eligibility_payload.decode("utf-8").splitlines()' in source
+        assert "eligibility_path.read_text" not in source
+    assert 'eligibility_content.get("bindings", {}).get(' in core
+    assert native.count(
+        'eligibility.get("bindings", {}).get("request_envelope_sha256")'
+    ) == 2
+    assert "rr-envelope-eligibility-binding" in native
+    assert "rr-projection-byte-mutation" in native
+    assert "rr-envelope-byte-mutation" in native
+    for source in semantic_sources:
+        rr_projection_validators = re.findall(
+            r"def validate_rr_projection_field\(.*?(?=\n\ndef )",
+            source,
+            re.DOTALL,
+        )
+        assert rr_projection_validators
+        for validator in rr_projection_validators:
+            assert "projection_from_bytes(" in validator
+            assert "envelope_from_bytes(" in validator
+            assert "load_lane_projection_file(" not in validator
+            assert "load_request_envelope_file(" not in validator
+    assert "projection_content, observed_projection = projection_from_bytes(" in core
+    assert "envelope_content, observed_envelope = envelope_from_bytes(" in core
+    assert '"target_runtime_terminal": 4' in sequence
+    assert "(22, 24, 4, [])" in sequence
+    assert '(21, 25, 4, ["defense-local"])' in sequence
+    assert "RR_TERMINAL_LANES[0]: \"measured_complete\"" in sequence
+
+    combined = "\n".join(sources.values())
+    assert '"runnable": 26' not in combined
+    assert '"runnable": 25' not in combined
+    assert "(26, 20" not in combined
+    assert "(25, 21" not in combined
+
+
 def test_phase7_completion_identity_uses_the_rendered_payload(
     tmp_path: Path,
 ) -> None:
@@ -338,37 +696,49 @@ def test_phase7_watcher_cross_checks_phase6_inventory_profiles() -> None:
     assert callable(require_profile)
     assert isinstance(candidate_lanes, set)
     complete = {lane: "measured_complete" for lane in candidate_lanes}
+    rr_terminals = {
+        "local-llava-rr-text-full",
+        "local-llava-rr-image-full",
+        "rjudge-llava-rr",
+        "gptgeochat-llava-rr",
+    }
+    complete = {
+        lane: state for lane, state in complete.items() if lane not in rr_terminals
+    }
     conditional = {
         lane: "measured_complete"
         for lane in candidate_lanes
-        if lane != "defense-local"
+        if lane not in rr_terminals and lane != "defense-local"
     }
 
     assert require_profile(
         {
-            "runnable_lanes": 26,
-            "typed_terminal_lanes": 20,
+            "runnable_lanes": 22,
+            "typed_terminal_lanes": 24,
+            "target_runtime_terminal": 4,
             "conditional_na_lanes": [],
         },
         sequence_conditional=[],
         core_states=complete,
         label="test-success",
-    ) == (26, 20, [])
+    ) == (22, 24, 4, [])
     assert require_profile(
         {
-            "runnable_lanes": 25,
-            "typed_terminal_lanes": 21,
+            "runnable_lanes": 21,
+            "typed_terminal_lanes": 25,
+            "target_runtime_terminal": 4,
             "conditional_na_lanes": ["defense-local"],
         },
         sequence_conditional=["defense-local"],
         core_states=conditional,
         label="test-conditional",
-    ) == (25, 21, ["defense-local"])
+    ) == (21, 25, 4, ["defense-local"])
     with pytest.raises(SystemExit, match="conditional and core inventories differ"):
         require_profile(
             {
-                "runnable_lanes": 25,
-                "typed_terminal_lanes": 21,
+                "runnable_lanes": 21,
+                "typed_terminal_lanes": 25,
+                "target_runtime_terminal": 4,
                 "conditional_na_lanes": ["defense-local"],
             },
             sequence_conditional=[],
@@ -422,6 +792,7 @@ def test_phase7_watcher_cross_checks_preparation_metric_profiles() -> None:
                 "lane_count": 46,
                 "runnable_lane_count": runnable,
                 "terminal_lane_count": terminal,
+                "target_runtime_terminal": 4,
                 "conditional_na_lanes": conditional,
             },
             "phase6": {"runner_lane_count": runnable},
@@ -434,16 +805,16 @@ def test_phase7_watcher_cross_checks_preparation_metric_profiles() -> None:
         }
         return result, manifest
 
-    success_result, success_manifest = profile(26, 20, [])
+    success_result, success_manifest = profile(22, 24, [])
     assert require_profile(
         success_result, success_manifest, label="test-success"
-    )[:3] == (26, 20, [])
+    )[:4] == (22, 24, 4, [])
     conditional_result, conditional_manifest = profile(
-        25, 21, ["defense-local"]
+        21, 25, ["defense-local"]
     )
     assert require_profile(
         conditional_result, conditional_manifest, label="test-conditional"
-    )[:3] == (25, 21, ["defense-local"])
+    )[:4] == (21, 25, 4, ["defense-local"])
 
     stale_runner_count = {**conditional_result, "runner_lanes": 26}
     with pytest.raises(SystemExit, match="metric lanes differ"):

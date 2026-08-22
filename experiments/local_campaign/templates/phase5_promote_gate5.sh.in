@@ -44,6 +44,7 @@ import re
 import stat
 import subprocess
 import sys
+import tempfile
 from typing import Any, Mapping, Sequence
 
 from ura.approximate_metrics import (
@@ -52,13 +53,17 @@ from ura.approximate_metrics import (
 )
 from ura.eligibility import validate_eligibility_plan
 from ura.lane_projection import (
-    load_lane_projection_file,
+    validate_lane_projection,
     validate_lane_projection_binding,
 )
 from ura.live_attestation import load_live_attestation_file
 from ura.model_acquisition import load_plan, load_receipt
 from ura.project_revision import load_project_revision_file
-from ura.request_envelope import load_request_envelope_file
+from ura.request_envelope import (
+    request_envelope_bytes,
+    validate_request_envelope,
+    validate_request_envelope_descriptor,
+)
 from ura.source_conformance import validate_source_conformance_manifest
 from ura.strict_json import strict_json_loads
 
@@ -71,6 +76,12 @@ EXPECTED_PROJECT_RECEIPT = "@@PROJECT_RECEIPT_PATH@@"
 EXPECTED_PROJECT_RECEIPT_SHA256 = "@@PROJECT_RECEIPT_SHA256@@"
 EXPECTED_SOURCE_RECEIPT = "@@SOURCE_RECEIPT_PATH@@"
 EXPECTED_SOURCE_RECEIPT_SHA256 = "@@SOURCE_RECEIPT_SHA256@@"
+EXPECTED_RR_EVIDENCE_ROOTS = {
+    "text_vllm_4096": "@@RR_TEXT_EVIDENCE_ROOT@@",
+    "image_vllm_4096": "@@RR_IMAGE_EVIDENCE_ROOT@@",
+    "vllm_token_tail_512": "@@RR_VLLM_TAIL_EVIDENCE_ROOT@@",
+    "transformers_reference_512": "@@RR_TRANSFORMERS_EVIDENCE_ROOT@@",
+}
 EXPECTED_SOURCE_ARM_COUNT = 45
 EXPECTED_SOURCE_DISPOSITIONS = {"admitted": 44, "blocked": 1}
 EXPECTED_BLOCKED_SOURCE_ARM = "bipia_test_qa"
@@ -83,6 +94,8 @@ PROMOTION_SCHEMA = "ura-gate5-runnote-promotion/1"
 PLACEHOLDER_BYTES = b"# URA thesis run note\n"
 PLACEHOLDER_SHA256 = "7ec84df8ea241fd09e6403de30a06fc18c10c8ff449b99834821b567dace17cf"
 MAX_JSON_BYTES = 64 * 1024 * 1024
+MAX_LANE_PROJECTION_BYTES = 4 * 1024 * 1024
+MAX_REQUEST_ENVELOPE_BYTES = 4 * 1024 * 1024
 MAX_MARKDOWN_BYTES = 256 * 1024 * 1024
 CALL_START_DEADLINE_SECONDS = 7_776_000
 ACQUISITION_DEADLINE_SECONDS = 86_400
@@ -134,6 +147,57 @@ DEFENSE_NA_RUNNER_OUTPUTS = {
     "completion_artifacts": 0,
     "error_artifacts": 0,
 }
+RR_TERMINAL_SCHEMA = "ura-phase5-target-runtime-terminal/1"
+RR_TERMINAL_REASON_CODE = "target_baseline_nontermination_at_generation_cap"
+RR_TERMINAL_REASON = (
+    "The exact GraySwan RR checkpoint failed mandatory local-target admission: "
+    "text and physical-image vLLM probes reached the configured generation cap "
+    "without a stop, and an independent Transformers control reproduced the "
+    "non-terminating repetition while the same-base checkpoint emitted EOS."
+)
+RR_TARGET_SPEC = "vllm:GraySwanAI/llava-v1.6-mistral-7b-hf-RR"
+RR_TARGET_MODEL = "GraySwanAI/llava-v1.6-mistral-7b-hf-RR"
+RR_TARGET_REVISION = "d11b3d7ae2fb21e984f197a83c15bbb0deb66b7e"
+RR_TARGET_RESOURCE = "hf-400da4b35ea290e28fcce5f33f8d4090"
+RR_BASE_RESOURCE = "hf-d9e60d9f6c16de2e8fb9d9e08389c44a"
+RR_OBSERVED_PROJECT_COMMIT = "5719a4ff4ba4a711fee433d1f9990c1d3cf2f8a3"
+RR_LOCAL_CONFIG_SHA256 = "3a53ab82405636116e9c95850dae1e0c1e394021317707c978bc35b4178ca334"
+RR_LOCAL_CONFIG_BYTES = 246
+RR_SOURCE_LOCAL_CONFIG = {
+    "revision": RR_TARGET_REVISION,
+    "modalities": ["text", "image"],
+    "max_tokens": 4096,
+    "gpu_memory_utilization": 0.85,
+    "tensor_parallel_size": 1,
+}
+RR_TERMINAL_LANES = (
+    "local-llava-rr-text-full",
+    "local-llava-rr-image-full",
+    "rjudge-llava-rr",
+    "gptgeochat-llava-rr",
+)
+RR_UNAVAILABLE_VALUE = {"status": "UNAVAILABLE", "value": None}
+RR_TEXT_ARMS = frozenset({
+    "strongreject_official", "advbench_harmful", "jailbreakbench_harmful",
+    "jailbreakbench_benign", "harmbench_text", "cyberseceval_mitre",
+    "cyberseceval_interpreter", "cyberseceval_insecure_coding",
+    "saladbench_base", "airbench_full", "xstest_full",
+    "simplesafetytests_full", "decodingtrust_stereotype",
+})
+RR_IMAGE_ARMS = frozenset({
+    "mmsafety_official", "jailbreakv_full", "harmbench_multimodal",
+    "vlsbench_release", "mossbench_official", "siuo_release", "figstep_full",
+    "mllmguard_privacy", "mllmguard_bias", "mllmguard_toxicity",
+    "mllmguard_legality", "holisafe_full",
+})
+RR_PROJECTION_CONTRACT = {
+    "local-llava-rr-text-full": (RR_TEXT_ARMS, ["rules", "guardrail"], True),
+    "local-llava-rr-image-full": (RR_IMAGE_ARMS, ["rules", "guardrail"], True),
+    "rjudge-llava-rr": (frozenset({"rjudge_release"}), ["rules"], False),
+    "gptgeochat-llava-rr": (
+        frozenset({"gptgeochat_release"}), ["rules"], False,
+    ),
+}
 
 
 def exact_typed_int_contract(
@@ -161,9 +225,8 @@ EXPECTED_GROUP_KEYS = [
 CORE = frozenset({
     "local-qwen3-vl-text-full", "local-qwen3-vl-image-full",
     "local-llava-base-text-full", "local-llava-base-image-full",
-    "local-llava-rr-text-full", "local-llava-rr-image-full",
-    "rjudge-qwen3-vl", "rjudge-llava-base", "rjudge-llava-rr",
-    "gptgeochat-qwen3-vl", "gptgeochat-llava-base", "gptgeochat-llava-rr",
+    "rjudge-qwen3-vl", "rjudge-llava-base",
+    "gptgeochat-qwen3-vl", "gptgeochat-llava-base",
     "crescendo-qwen3-vl",
     "defense-local",
 })
@@ -262,7 +325,7 @@ def sha256_bytes(payload: bytes) -> str:
     return hashlib.sha256(payload).hexdigest()
 
 
-def checked_file(value: str | Path, *, max_bytes: int) -> Path:
+def checked_file(value: str | Path, *, max_bytes: int | None) -> Path:
     path = Path(value).expanduser()
     try:
         before = path.lstat()
@@ -272,7 +335,7 @@ def checked_file(value: str | Path, *, max_bytes: int) -> Path:
         raise PromotionError(f"cannot resolve regular file {path}: {exc}") from exc
     if path.is_symlink() or not stat.S_ISREG(before.st_mode) or not stat.S_ISREG(after.st_mode):
         raise PromotionError(f"file is not regular and symlink-free: {path}")
-    if after.st_size > max_bytes:
+    if max_bytes is not None and after.st_size > max_bytes:
         raise PromotionError(f"file exceeds {max_bytes} bytes: {resolved}")
     return resolved
 
@@ -312,26 +375,280 @@ def checked_project_python(project: Path) -> Path:
     return interpreter
 
 
-def file_bytes(path: Path, *, max_bytes: int) -> bytes:
-    regular = checked_file(path, max_bytes=max_bytes)
-    before = regular.stat()
-    payload = regular.read_bytes()
-    after = regular.stat()
+def stable_file_observation(
+    path: str | Path,
+    *,
+    max_bytes: int | None,
+    retain_payload: bool,
+) -> tuple[Path, str, int, bytes | None]:
+    """Read one regular file through one stable, no-follow descriptor."""
+
+    source = Path(path).expanduser()
+    regular = checked_file(source, max_bytes=max_bytes)
+    before = regular.lstat()
+    flags = (
+        os.O_RDONLY
+        | getattr(os, "O_BINARY", 0)
+        | getattr(os, "O_CLOEXEC", 0)
+        | getattr(os, "O_NOFOLLOW", 0)
+    )
+    try:
+        fd = os.open(regular, flags)
+    except OSError as exc:
+        raise PromotionError(
+            f"cannot open regular file without following links: {regular}: {exc}"
+        ) from exc
+    digest = hashlib.sha256()
+    chunks: list[bytes] | None = [] if retain_payload else None
+    observed = 0
+    try:
+        opened_before = os.fstat(fd)
+        if (
+            not stat.S_ISREG(opened_before.st_mode)
+            or (opened_before.st_dev, opened_before.st_ino)
+            != (before.st_dev, before.st_ino)
+        ):
+            raise PromotionError(f"file changed before it was opened: {regular}")
+        while True:
+            block = os.read(fd, 1024 * 1024)
+            if not block:
+                break
+            observed += len(block)
+            if max_bytes is not None and observed > max_bytes:
+                raise PromotionError(f"file exceeds {max_bytes} bytes: {regular}")
+            digest.update(block)
+            if chunks is not None:
+                chunks.append(block)
+        opened_after = os.fstat(fd)
+    finally:
+        os.close(fd)
+    try:
+        source_after = source.lstat()
+        after = regular.lstat()
+        current_resolution = source.resolve(strict=True)
+    except OSError as exc:
+        raise PromotionError(f"file changed after reading: {source}: {exc}") from exc
+    payload = b"".join(chunks) if chunks is not None else None
     if (
-        len(payload) != before.st_size
-        or before.st_dev != after.st_dev
-        or before.st_ino != after.st_ino
-        or before.st_size != after.st_size
-        or before.st_mtime_ns != after.st_mtime_ns
+        current_resolution != regular
+        or stat.S_ISLNK(source_after.st_mode)
+        or not stat.S_ISREG(source_after.st_mode)
+        or stat.S_ISLNK(after.st_mode)
+        or not stat.S_ISREG(after.st_mode)
+        or observed != opened_after.st_size
+        or (opened_before.st_dev, opened_before.st_ino, opened_before.st_size,
+            opened_before.st_mtime_ns)
+        != (opened_after.st_dev, opened_after.st_ino, opened_after.st_size,
+            opened_after.st_mtime_ns)
+        or (opened_after.st_dev, opened_after.st_ino)
+        != (source_after.st_dev, source_after.st_ino)
+        or (opened_after.st_dev, opened_after.st_ino)
+        != (after.st_dev, after.st_ino)
     ):
         raise PromotionError(f"file changed while reading: {regular}")
+    return regular, digest.hexdigest(), observed, payload
+
+
+def file_bytes(path: Path, *, max_bytes: int) -> bytes:
+    _regular, _digest, _size, payload = stable_file_observation(
+        path, max_bytes=max_bytes, retain_payload=True
+    )
+    assert payload is not None
     return payload
 
 
 def artifact(path: Path, *, max_bytes: int) -> dict[str, Any]:
-    regular = checked_file(path, max_bytes=max_bytes)
-    payload = file_bytes(regular, max_bytes=max_bytes)
-    return {"path": str(regular), "sha256": sha256_bytes(payload), "bytes": len(payload)}
+    regular, digest, size, _payload = stable_file_observation(
+        path, max_bytes=max_bytes, retain_payload=False
+    )
+    return {"path": str(regular), "sha256": digest, "bytes": size}
+
+
+def eligibility_descriptor_from_bytes(
+    path: Path, *, digest: str, payload: bytes
+) -> dict[str, Any]:
+    try:
+        text = payload.decode("utf-8")
+    except UnicodeError as exc:
+        raise PromotionError(f"eligibility artifact is not UTF-8: {path}") from exc
+    records = sum(1 for line in text.splitlines() if line.strip())
+    if records <= 0:
+        raise PromotionError(f"eligibility artifact has no nonblank records: {path}")
+    return {
+        "file": path.name,
+        "sha256": digest,
+        "bytes": len(payload),
+        "records": records,
+    }
+
+
+def eligibility_binding_descriptor(path_value: str | Path) -> dict[str, Any]:
+    """Rebuild run_matrix's exact line-counted eligibility descriptor."""
+
+    path, digest, _size, payload = stable_file_observation(
+        path_value, max_bytes=MAX_JSON_BYTES, retain_payload=True
+    )
+    assert payload is not None
+    return eligibility_descriptor_from_bytes(path, digest=digest, payload=payload)
+
+
+def load_eligibility_artifact(
+    path_value: str | Path,
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    """Parse, validate, and describe eligibility from one stable observation."""
+
+    path, digest, _size, payload = stable_file_observation(
+        path_value, max_bytes=MAX_JSON_BYTES, retain_payload=True
+    )
+    assert payload is not None
+    try:
+        raw = strict_json_loads(payload.decode("utf-8"))
+        eligibility = validate_eligibility_plan(raw)
+    except (UnicodeError, TypeError, ValueError) as exc:
+        raise PromotionError(f"eligibility validation failed for {path}: {exc}") from exc
+    return eligibility, eligibility_descriptor_from_bytes(
+        path, digest=digest, payload=payload
+    )
+
+
+def load_stable_lane_projection_file(
+    path_value: str | Path,
+    expected_sha256: str | None = None,
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    """Parse and describe one lane projection from one stable observation."""
+
+    path, digest, size, payload = stable_file_observation(
+        path_value, max_bytes=MAX_LANE_PROJECTION_BYTES, retain_payload=True
+    )
+    assert payload is not None
+    if expected_sha256 is not None and digest != expected_sha256:
+        raise PromotionError(f"lane-projection byte digest changed: {path}")
+    try:
+        raw = strict_json_loads(payload.decode("utf-8"))
+        projection = validate_lane_projection(raw)
+    except (UnicodeError, TypeError, ValueError) as exc:
+        raise PromotionError(
+            f"lane-projection validation failed for {path}: {exc}"
+        ) from exc
+    if path.name != f"{projection['projection_id']}.lane-projection.json":
+        raise PromotionError(
+            f"lane-projection filename/content identity changed: {path}"
+        )
+    return projection, {"file": path.name, "sha256": digest, "bytes": size}
+
+
+def load_stable_request_envelope_file(
+    path_value: str | Path,
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    """Parse and describe one envelope from the same stable observation."""
+
+    path, digest, size, payload = stable_file_observation(
+        path_value, max_bytes=MAX_REQUEST_ENVELOPE_BYTES, retain_payload=True
+    )
+    assert payload is not None
+    try:
+        raw = strict_json_loads(payload.decode("utf-8"))
+        envelope = validate_request_envelope(raw)
+        canonical = request_envelope_bytes(envelope)
+    except (UnicodeError, TypeError, ValueError) as exc:
+        raise PromotionError(
+            f"request-envelope validation failed for {path}: {exc}"
+        ) from exc
+    expected_name = f"{envelope['envelope_id']}.request-envelope.json"
+    if path.name != expected_name or payload != canonical:
+        raise PromotionError(
+            f"request-envelope filename or canonical bytes changed: {path}"
+        )
+    descriptor_value = {
+        "envelope_id": envelope["envelope_id"],
+        "file": path.name,
+        "sha256": digest,
+        "bytes": size,
+    }
+    try:
+        envelope_descriptor = validate_request_envelope_descriptor(descriptor_value)
+    except ValueError as exc:
+        raise PromotionError(
+            f"request-envelope descriptor is invalid for {path}: {exc}"
+        ) from exc
+    return envelope, envelope_descriptor
+
+
+def validate_eligibility_envelope_binding(
+    eligibility: Mapping[str, Any],
+    envelope_descriptor: Mapping[str, Any],
+    *,
+    label: str,
+) -> None:
+    """Require eligibility and acquisition admission to bind this envelope."""
+
+    bindings = eligibility.get("bindings")
+    retained = bindings.get("request_envelope") if isinstance(bindings, dict) else None
+    if retained != dict(envelope_descriptor):
+        raise PromotionError(
+            f"{label}: eligibility does not bind the retained request envelope"
+        )
+    acquisition = bindings.get("model_acquisition")
+    selection = acquisition.get("selection") if isinstance(acquisition, dict) else None
+    input_bindings = selection.get("input_bindings") if isinstance(selection, dict) else None
+    if (
+        not isinstance(input_bindings, dict)
+        or input_bindings.get("request_envelope_sha256")
+        != envelope_descriptor.get("sha256")
+    ):
+        raise PromotionError(
+            f"{label}: model acquisition does not bind the retained request envelope"
+        )
+
+
+def retained_binding_contract_self_test() -> dict[str, Any]:
+    """Exercise real multiline bytes and an envelope-swap mutation."""
+
+    with tempfile.TemporaryDirectory(prefix="ura-gate5-binding-") as temp_root:
+        eligibility_path = Path(temp_root) / "eligibility-fixture.eligibility.json"
+        payload = b'{\n  "fixture": true\n}\n'
+        with eligibility_path.open("xb") as handle:
+            handle.write(payload)
+            handle.flush()
+            os.fsync(handle.fileno())
+        observed = eligibility_binding_descriptor(eligibility_path)
+    if observed["records"] != 3 or observed["bytes"] != len(payload):
+        raise PromotionError("multiline eligibility descriptor self-test failed")
+    envelope_descriptor = {
+        "envelope_id": "request-envelope-" + "a" * 24,
+        "file": "request-envelope-" + "a" * 24 + ".request-envelope.json",
+        "sha256": "b" * 64,
+        "bytes": 123,
+    }
+    eligibility = {
+        "bindings": {
+            "request_envelope": dict(envelope_descriptor),
+            "model_acquisition": {
+                "selection": {
+                    "input_bindings": {
+                        "request_envelope_sha256": envelope_descriptor["sha256"]
+                    }
+                }
+            },
+        }
+    }
+    validate_eligibility_envelope_binding(
+        eligibility, envelope_descriptor, label="binding self-test"
+    )
+    swapped = {**envelope_descriptor, "sha256": "c" * 64}
+    try:
+        validate_eligibility_envelope_binding(
+            eligibility, swapped, label="binding self-test mutation"
+        )
+    except PromotionError:
+        swap_rejected = True
+    else:
+        raise PromotionError("request-envelope swap self-test did not fail closed")
+    return {
+        "eligibility_nonblank_records": observed["records"],
+        "hardcoded_one_rejected": observed["records"] != 1,
+        "request_envelope_swap_rejected": swap_rejected,
+    }
 
 
 def descriptor_path(value: object, label: str, *, max_bytes: int = MAX_JSON_BYTES) -> Path:
@@ -371,6 +688,668 @@ def strict_fields(value: object, fields: set[str], label: str) -> dict[str, Any]
     if not isinstance(value, dict) or set(value) != fields:
         raise PromotionError(f"{label} has an invalid field inventory")
     return value
+
+
+def type_strict_equal(left: object, right: object) -> bool:
+    if type(left) is not type(right):
+        return False
+    if isinstance(left, dict):
+        return set(left) == set(right) and all(
+            type_strict_equal(left[key], right[key]) for key in left
+        )
+    if isinstance(left, list):
+        return len(left) == len(right) and all(
+            type_strict_equal(a, b) for a, b in zip(left, right)
+        )
+    return left == right
+
+
+def exact_descriptor_path(
+    value: object, label: str, *, max_bytes: int = MAX_JSON_BYTES
+) -> Path:
+    if not isinstance(value, dict) or set(value) != {"path", "sha256", "bytes"}:
+        raise PromotionError(f"{label} descriptor fields changed")
+    return descriptor_path(value, label, max_bytes=max_bytes)
+
+
+# BEGIN_RR_EVIDENCE_TREE_DESCRIPTOR
+def rr_tree_inventory(
+    root: Path,
+) -> tuple[list[tuple[str, Path]], dict[str, tuple[int, int, int, int, int]]]:
+    """Enumerate one exact, symlink-free RR evidence-tree inventory."""
+
+    files: list[tuple[str, Path]] = []
+    identities: dict[str, tuple[int, int, int, int, int]] = {}
+    try:
+        members = list(root.rglob("*"))
+    except OSError as exc:
+        raise PromotionError(f"cannot enumerate RR evidence root {root}: {exc}") from exc
+    for member in members:
+        relative = member.relative_to(root).as_posix()
+        try:
+            entry = member.lstat()
+        except OSError as exc:
+            raise PromotionError(
+                f"cannot inspect RR evidence member {member}: {exc}"
+            ) from exc
+        if stat.S_ISLNK(entry.st_mode):
+            raise PromotionError(f"RR evidence root contains a symlink: {member}")
+        if stat.S_ISDIR(entry.st_mode):
+            kind = stat.S_IFDIR
+        elif stat.S_ISREG(entry.st_mode):
+            kind = stat.S_IFREG
+            files.append((relative, member))
+        else:
+            raise PromotionError(
+                f"RR evidence root contains a non-regular member: {member}"
+            )
+        identities[relative] = (
+            kind,
+            entry.st_dev,
+            entry.st_ino,
+            entry.st_size,
+            entry.st_mtime_ns,
+        )
+    files.sort(key=lambda item: item[0])
+    return files, identities
+
+
+def rr_tree_descriptor(path_value: str | Path) -> dict[str, Any]:
+    root = checked_dir(path_value)
+    try:
+        root_before = root.lstat()
+    except OSError as exc:
+        raise PromotionError(f"cannot inspect RR evidence root {root}: {exc}") from exc
+    if not stat.S_ISDIR(root_before.st_mode):
+        raise PromotionError(f"RR evidence root is not a directory: {root}")
+    files, inventory_before = rr_tree_inventory(root)
+    if not files:
+        raise PromotionError(f"RR evidence root is empty: {root}")
+    digest_value = hashlib.sha256()
+    total_bytes = 0
+    for relative, member in files:
+        _resolved, member_sha, member_bytes, _payload = stable_file_observation(
+            member, max_bytes=None, retain_payload=False
+        )
+        try:
+            current = member.lstat()
+        except OSError as exc:
+            raise PromotionError(
+                f"RR evidence member changed after reading: {member}: {exc}"
+            ) from exc
+        current_identity = (
+            stat.S_IFMT(current.st_mode),
+            current.st_dev,
+            current.st_ino,
+            current.st_size,
+            current.st_mtime_ns,
+        )
+        if current_identity != inventory_before[relative]:
+            raise PromotionError(
+                f"RR evidence member changed during tree scan: {member}"
+            )
+        total_bytes += member_bytes
+        digest_value.update(relative.encode("utf-8"))
+        digest_value.update(b"\0")
+        digest_value.update(str(member_bytes).encode("ascii"))
+        digest_value.update(b"\0")
+        digest_value.update(member_sha.encode("ascii"))
+        digest_value.update(b"\n")
+    files_after, inventory_after = rr_tree_inventory(root)
+    try:
+        root_after = root.lstat()
+    except OSError as exc:
+        raise PromotionError(
+            f"RR evidence root changed after scanning: {root}: {exc}"
+        ) from exc
+    root_identity_before = (
+        stat.S_IFMT(root_before.st_mode),
+        root_before.st_dev,
+        root_before.st_ino,
+        root_before.st_size,
+        root_before.st_mtime_ns,
+    )
+    root_identity_after = (
+        stat.S_IFMT(root_after.st_mode),
+        root_after.st_dev,
+        root_after.st_ino,
+        root_after.st_size,
+        root_after.st_mtime_ns,
+    )
+    if (
+        [relative for relative, _member in files_after]
+        != [relative for relative, _member in files]
+        or inventory_after != inventory_before
+        or root_identity_after != root_identity_before
+    ):
+        raise PromotionError(f"RR evidence root changed during tree scan: {root}")
+    return {
+        "path": str(root),
+        "sha256": digest_value.hexdigest(),
+        "bytes": total_bytes,
+        "files": len(files),
+    }
+# END_RR_EVIDENCE_TREE_DESCRIPTOR
+
+
+def validate_rr_tree_descriptor(
+    value: object, *, name: str, work: Path
+) -> Path:
+    if not isinstance(value, dict) or set(value) != {
+        "path", "sha256", "bytes", "files",
+    }:
+        raise PromotionError(f"RR {name} evidence-tree descriptor changed")
+    expected = checked_dir(EXPECTED_RR_EVIDENCE_ROOTS[name])
+    try:
+        expected.relative_to(work)
+    except ValueError as exc:
+        raise PromotionError(f"RR {name} evidence root is outside URA_WORK") from exc
+    if value.get("path") != str(expected) or not type_strict_equal(
+        value, rr_tree_descriptor(expected)
+    ):
+        raise PromotionError(f"RR {name} evidence-tree bytes changed")
+    return expected
+
+
+def json_objects_from_log(path: Path) -> list[dict[str, Any]]:
+    values: list[dict[str, Any]] = []
+    payload = file_bytes(path, max_bytes=MAX_MARKDOWN_BYTES)
+    try:
+        text = payload.decode("utf-8")
+    except UnicodeError as exc:
+        raise PromotionError(f"RR probe log is not UTF-8: {path}") from exc
+    for raw in text.splitlines():
+        line = raw.strip()
+        if not line or len(line) > MAX_JSON_BYTES:
+            continue
+        try:
+            value = strict_json_loads(line)
+        except (TypeError, ValueError):
+            continue
+        if isinstance(value, dict):
+            values.append(value)
+    return values
+
+
+def engineering_probe_record(path: Path, schema: str) -> dict[str, Any]:
+    matches = [
+        value for value in json_objects_from_log(path)
+        if value.get("schema") == schema
+    ]
+    if len(matches) != 1:
+        raise PromotionError(f"RR probe log lacks one exact {schema} record")
+    return matches[0]
+
+
+def validate_rr_terminal_artifact(
+    descriptor: object, *, project: Path, work: Path
+) -> tuple[str, str, int]:
+    path = exact_descriptor_path(descriptor, "RR target-runtime terminal")
+    if path.name != "llava-rr.target-runtime-terminal.json":
+        raise PromotionError("RR target-runtime terminal path convention changed")
+    value = strict_fields(strict_json(path), {
+        "schema", "status", "disposition", "reason_code", "reason",
+        "classified_at_utc", "target", "bindings", "observations",
+        "call_accounting", "applies_to_lanes", "evidence_eligible",
+    }, "RR target-runtime terminal")
+    if (
+        value["schema"] != RR_TERMINAL_SCHEMA
+        or value["status"] != "unavailable"
+        or value["disposition"] != "unavailable"
+        or value["reason_code"] != RR_TERMINAL_REASON_CODE
+        or value["reason"] != RR_TERMINAL_REASON
+        or value["applies_to_lanes"] != list(RR_TERMINAL_LANES)
+        or value["evidence_eligible"] is not False
+    ):
+        raise PromotionError("RR target-runtime terminal classification changed")
+    try:
+        classified = datetime.strptime(
+            str(value["classified_at_utc"]), "%Y-%m-%dT%H:%M:%SZ"
+        ).replace(tzinfo=timezone.utc)
+    except ValueError as exc:
+        raise PromotionError("RR target-runtime terminal timestamp changed") from exc
+    if classified > datetime.now(timezone.utc):
+        raise PromotionError("RR target-runtime terminal timestamp is in the future")
+
+    target = strict_fields(value["target"], {
+        "spec", "model", "revision", "resource_id", "runtime",
+        "runtime_version", "modalities", "configured_max_tokens", "local_config",
+    }, "RR target-runtime terminal target")
+    if not type_strict_equal(
+        {key: target[key] for key in target if key != "local_config"},
+        {
+            "spec": RR_TARGET_SPEC,
+            "model": RR_TARGET_MODEL,
+            "revision": RR_TARGET_REVISION,
+            "resource_id": RR_TARGET_RESOURCE,
+            "runtime": "vllm",
+            "runtime_version": "0.27.1",
+            "modalities": ["text", "image"],
+            "configured_max_tokens": 4096,
+        },
+    ):
+        raise PromotionError("RR target-runtime terminal target identity changed")
+    local_config_path = exact_descriptor_path(target["local_config"], "RR local config")
+    if local_config_path != (project / "experiments" / "local-llava-rr.json").resolve():
+        raise PromotionError("RR terminal local config path changed")
+    if target["local_config"] != {
+        "path": str(local_config_path),
+        "sha256": RR_LOCAL_CONFIG_SHA256,
+        "bytes": RR_LOCAL_CONFIG_BYTES,
+    }:
+        raise PromotionError("RR terminal local config content identity changed")
+    local_config = strict_json(local_config_path)
+    local_target = local_config.get(RR_TARGET_SPEC)
+    if (
+        set(local_config) != {RR_TARGET_SPEC}
+        or local_target != RR_SOURCE_LOCAL_CONFIG
+        or type(local_target.get("max_tokens")) is not int
+        or type(local_target.get("tensor_parallel_size")) is not int
+        or type(local_target.get("gpu_memory_utilization")) is not float
+    ):
+        raise PromotionError("RR terminal local config content changed")
+
+    bindings = strict_fields(value["bindings"], {
+        "classification_project_commit", "framework_lock_sha256",
+        "project_revision", "semantic_source_continuity", "evidence_roots",
+    }, "RR target-runtime terminal bindings")
+    project_revision_path = exact_descriptor_path(
+        bindings["project_revision"], "RR project revision"
+    )
+    if (
+        bindings["classification_project_commit"] != EXPECTED_COMMIT
+        or bindings["framework_lock_sha256"] != EXPECTED_FRAMEWORK_LOCK
+        or project_revision_path != Path(EXPECTED_PROJECT_RECEIPT).resolve(strict=True)
+        or bindings["project_revision"]["sha256"] != EXPECTED_PROJECT_RECEIPT_SHA256
+    ):
+        raise PromotionError("RR target-runtime terminal current bindings changed")
+    continuity = strict_fields(bindings["semantic_source_continuity"], {
+        "observed_project_commit", "unchanged_paths", "git_diff_empty",
+    }, "RR semantic-source continuity")
+    continuity_paths = ["src/ura/targets/local.py", "experiments/run_matrix.py"]
+    observed_commit = continuity["observed_project_commit"]
+    if (
+        observed_commit != RR_OBSERVED_PROJECT_COMMIT
+        or continuity["unchanged_paths"] != continuity_paths
+        or continuity["git_diff_empty"] is not True
+        or subprocess.run(
+            ["git", "diff", "--quiet", observed_commit, EXPECTED_COMMIT, "--", *continuity_paths],
+            cwd=project,
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            check=False,
+        ).returncode != 0
+    ):
+        raise PromotionError("RR semantic-source continuity no longer holds")
+    roots = bindings["evidence_roots"]
+    if not isinstance(roots, dict) or set(roots) != set(EXPECTED_RR_EVIDENCE_ROOTS):
+        raise PromotionError("RR evidence-root inventory changed")
+    for name in EXPECTED_RR_EVIDENCE_ROOTS:
+        validate_rr_tree_descriptor(roots[name], name=name, work=work)
+
+    observations = value["observations"]
+    if not isinstance(observations, dict) or set(observations) != set(EXPECTED_RR_EVIDENCE_ROOTS):
+        raise PromotionError("RR observation inventory changed")
+    text = observations["text_vllm_4096"]
+    errors = text.get("error_artifacts") if isinstance(text, dict) else None
+    if not isinstance(errors, list) or len(errors) != 3 or not type_strict_equal(text, {
+        "modality": "text", "corpus": "strongreject_official",
+        "sample_seeds": [0, 1, 8], "max_tokens": 4096,
+        "finish_reasons": ["length", "length", "length"],
+        "stop_reasons": [None, None, None], "successful_responses": 0,
+        "error_artifacts": errors,
+    }):
+        raise PromotionError("RR text observation changed")
+    image = observations["image_vllm_4096"]
+    image_error = image.get("error_artifact") if isinstance(image, dict) else None
+    if not type_strict_equal(image, {
+        "modality": "image", "corpus": "harmbench_multimodal", "sample_seed": 1,
+        "max_tokens": 4096, "finish_reason": "length", "stop_reason": None,
+        "successful_responses": 0, "error_artifact": image_error,
+    }):
+        raise PromotionError("RR image observation changed")
+    error_paths = [
+        exact_descriptor_path(item, f"RR text error {index}")
+        for index, item in enumerate(errors)
+    ] + [exact_descriptor_path(image_error, "RR image error")]
+    expected_message = (
+        "target_call failed (LocalTargetOutputError): vLLM completion is "
+        "truncated or incomplete: 'length'"
+    )
+    for index, error_path in enumerate(error_paths):
+        error = strict_json(error_path)
+        budget = error.get("call_budget_snapshot")
+        if (
+            error.get("status") != "error"
+            or error.get("exception_type") != "ExternalCallFailure"
+            or error.get("message") != expected_message
+            or error.get("corpus") != (
+                "strongreject_official" if index < 3 else "harmbench_multimodal"
+            )
+            or error.get("model_spec") != f"{RR_TARGET_SPEC}@{RR_TARGET_REVISION}"
+            or error.get("target") != f"{RR_TARGET_SPEC}@{RR_TARGET_REVISION}"
+            or type(error.get("completed_attempts")) is not int
+            or error.get("completed_attempts") != 0
+            or not isinstance(budget, dict)
+            or budget.get("accounting_semantics")
+            != "durable_pre_call_logical_reservation_v1"
+            or any(type(budget.get(field)) is not int for field in (
+                "target_calls", "judge_calls", "http_attempts",
+            ))
+            or {field: budget.get(field) for field in (
+                "target_calls", "judge_calls", "http_attempts",
+            )} != {"target_calls": 1, "judge_calls": 0, "http_attempts": 0}
+        ):
+            raise PromotionError(f"RR error classification changed: {error_path}")
+
+    tail = observations["vllm_token_tail_512"]
+    tail_log = tail.get("probe_log") if isinstance(tail, dict) else None
+    expected_tail = {
+        "probe_schema": "ura-engineering-token-tail-probe/1",
+        "max_tokens": 512, "prompt_tokens": 21, "completion_tokens": 512,
+        "finish_reason": "length", "stop_reason": None,
+        "unique_completion_tokens": 2,
+        "most_common_token_counts": [[644, 501], [22627, 11]],
+        "special_token_ids": {"bos": 1, "eos": 2, "pad": 32001, "unk": 0},
+        "special_token_counts": {"bos": 0, "eos": 0, "pad": 0, "unk": 0},
+        "text_sha256": "277aada87524bc3de88d8b7286ea6653a7b36a94ba08d2ab7211411f9cb6ebdb",
+        "probe_log": tail_log,
+    }
+    if not type_strict_equal(tail, expected_tail):
+        raise PromotionError("RR vLLM tail observation changed")
+    tail_path = exact_descriptor_path(tail_log, "RR vLLM tail probe", max_bytes=MAX_MARKDOWN_BYTES)
+    tail_raw = engineering_probe_record(tail_path, expected_tail["probe_schema"])
+    if (
+        tail_raw.get("resource_id") != RR_TARGET_RESOURCE
+        or tail_raw.get("prompt_tokens") != 21
+        or tail_raw.get("completion_tokens") != 512
+        or tail_raw.get("finish_reason") != "length"
+        or tail_raw.get("stop_reason") is not None
+        or tail_raw.get("unique_completion_tokens") != 2
+        or tail_raw.get("most_common_token_counts") != [[644, 501], [22627, 11]]
+        or tail_raw.get("tail_token_ids") != [644] * 64
+        or tail_raw.get("special_token_ids") != expected_tail["special_token_ids"]
+        or tail_raw.get("special_token_counts") != expected_tail["special_token_counts"]
+        or tail_raw.get("text_sha256") != expected_tail["text_sha256"]
+    ):
+        raise PromotionError("RR vLLM raw tail probe changed")
+
+    reference = observations["transformers_reference_512"]
+    reference_log = reference.get("probe_log") if isinstance(reference, dict) else None
+    expected_generation = {
+        "backend": "transformers", "do_sample": False,
+        "max_new_tokens": 512, "seed": 0,
+    }
+    expected_base = {
+        "label": "base", "resource_id": RR_BASE_RESOURCE, "prompt_tokens": 20,
+        "completion_tokens": 226, "last_token_is_eos": True, "eos_token_id": 2,
+        "eos_token_count": 1,
+        "text_sha256": "7d966860772f8185567a9c1742536f823a49facfadaae6847a97069ddc011499",
+    }
+    expected_rr = {
+        "label": "rr", "resource_id": RR_TARGET_RESOURCE, "prompt_tokens": 20,
+        "completion_tokens": 512, "last_token_is_eos": False, "eos_token_id": 2,
+        "eos_token_count": 0, "unique_completion_tokens": 2,
+        "most_common_token_counts": [[644, 503], [22627, 9]],
+        "text_sha256": "1f8e655ab40cbcd5a5ef23839d6845bd7aaa24ce7d693cfb29b077af590d1bbf",
+    }
+    expected_reference = {
+        "probe_schema": "ura-engineering-transformers-termination-probe/1",
+        "generation": expected_generation, "base": expected_base, "rr": expected_rr,
+        "probe_log": reference_log,
+    }
+    if not type_strict_equal(reference, expected_reference):
+        raise PromotionError("RR Transformers reference observation changed")
+    reference_path = exact_descriptor_path(
+        reference_log, "RR Transformers probe", max_bytes=MAX_MARKDOWN_BYTES
+    )
+    reference_raw = engineering_probe_record(
+        reference_path, expected_reference["probe_schema"]
+    )
+    if (
+        reference_raw.get("generation") != expected_generation
+        or not isinstance(reference_raw.get("models"), list)
+        or {item.get("label") for item in reference_raw["models"] if isinstance(item, dict)}
+        != {"base", "rr"}
+    ):
+        raise PromotionError("RR Transformers raw probe changed")
+
+    expected_accounting = {
+        "accounting_semantics": "durable_pre_call_logical_reservation_v1",
+        "runner_target_call_reservations": 4,
+        "vllm_diagnostic_generations": 1,
+        "transformers_reference_generations": 2,
+        "successful_rr_responses": 0,
+        "hosted_target_calls": 0,
+        "model_judge_calls": 0,
+        "local_guardrail_evaluations": 0,
+        "hosted_judge_calls": 0,
+        "http_attempts": 0,
+    }
+    if not type_strict_equal(value["call_accounting"], expected_accounting):
+        raise PromotionError("RR target-runtime terminal call accounting changed")
+    return (descriptor["path"], descriptor["sha256"], descriptor["bytes"])
+
+
+def validate_rr_projection_lane(
+    lane: str, projection: Mapping[str, Any], envelope: Mapping[str, Any]
+) -> None:
+    contract = RR_PROJECTION_CONTRACT.get(lane)
+    if contract is None:
+        raise PromotionError(f"unexpected RR projection lane: {lane}")
+    expected_arms, expected_judges, expected_approximate = contract
+    request = envelope.get("request")
+    selection = projection.get("selection")
+    calls = projection.get("call_projection")
+    if (
+        not isinstance(request, dict)
+        or not isinstance(selection, dict)
+        or not isinstance(calls, dict)
+    ):
+        raise PromotionError(f"{lane}: RR projection evidence is malformed")
+    requested_arms = request.get("logical_source_arms")
+    selected_arms = selection.get("arms")
+    expected_call_counts = {
+        field: calls.get(field)
+        for field in (
+            "trajectories", "target_calls", "judge_calls",
+            "local_guardrail_evaluations", "http_attempts",
+        )
+    }
+    if (
+        request.get("requested_target_keys") != [RR_TARGET_SPEC]
+        or not isinstance(requested_arms, list)
+        or len(requested_arms) != len(expected_arms)
+        or set(requested_arms) != expected_arms
+        or request.get("selected_attackers") != ["replay"]
+        or request.get("judges") != expected_judges
+        or request.get("defense") != "none"
+        or request.get("approximate_common_metrics") is not expected_approximate
+        or request.get("limit") != 0
+        or request.get("sample_seed") != 0
+        or request.get("seeds") != [0]
+        or request.get("max_queries") != 1
+        or request.get("max_turns") != 1
+        or request.get("call_caps") != {
+            "target": 400_000,
+            "judge": None,
+            "http_attempts": None,
+            "deadline_seconds": 7_776_000,
+        }
+        or not isinstance(selected_arms, list)
+        or len(selected_arms) != len(expected_arms)
+        or {
+            item.get("logical_source_arm")
+            for item in selected_arms
+            if isinstance(item, dict)
+        }
+        != expected_arms
+        or calls.get("by_attacker") != {"replay": expected_call_counts}
+        or calls.get("judge_calls") != 0
+        or calls.get("http_attempts") != 0
+        or (calls.get("local_guardrail_evaluations", 0) > 0)
+        != ("guardrail" in expected_judges)
+    ):
+        raise PromotionError(f"{lane}: completed RR no-call projection contract changed")
+
+
+def validate_rr_projection(
+    value: object, *, lane: str, validate_files: bool
+) -> tuple[str, int]:
+    projection = strict_fields(value, {
+        "projection_id", "projection_artifact", "eligibility_plan_id",
+        "eligibility_artifact", "request_envelope_id",
+        "request_envelope_artifact", "selection", "projected_calls",
+    }, f"{lane} RR passed projection")
+    if (
+        re.fullmatch(r"lane-projection-[0-9a-f]{24}", str(projection["projection_id"])) is None
+        or re.fullmatch(r"eligibility-[0-9a-f]{24}", str(projection["eligibility_plan_id"])) is None
+        or re.fullmatch(r"request-envelope-[0-9a-f]{24}", str(projection["request_envelope_id"])) is None
+        or not isinstance(projection["selection"], dict)
+    ):
+        raise PromotionError(f"{lane}: RR projection identity/selection changed")
+    expected_descriptor_fields = {
+        "projection_artifact": {"path", "file", "sha256", "bytes"},
+        "eligibility_artifact": {"path", "sha256", "bytes"},
+        "request_envelope_artifact": {
+            "path", "envelope_id", "file", "sha256", "bytes",
+        },
+    }
+    for name, fields in expected_descriptor_fields.items():
+        item = projection[name]
+        if (
+            not isinstance(item, dict)
+            or set(item) != fields
+            or not isinstance(item.get("path"), str)
+            or not Path(item["path"]).is_absolute()
+            or not isinstance(item.get("sha256"), str)
+            or HEX64.fullmatch(item["sha256"]) is None
+            or type(item.get("bytes")) is not int
+            or item["bytes"] <= 0
+        ):
+            raise PromotionError(f"{lane}: RR {name} descriptor changed")
+        if validate_files:
+            exact_descriptor_path(item, f"{lane} RR {name}")
+    projection_artifact = projection["projection_artifact"]
+    envelope_artifact = projection["request_envelope_artifact"]
+    if (
+        projection_artifact.get("file")
+        != f"{projection['projection_id']}.lane-projection.json"
+        or Path(projection_artifact["path"]).name != projection_artifact["file"]
+        or envelope_artifact.get("envelope_id") != projection["request_envelope_id"]
+        or envelope_artifact.get("file")
+        != f"{projection['request_envelope_id']}.request-envelope.json"
+        or Path(envelope_artifact["path"]).name != envelope_artifact["file"]
+    ):
+        raise PromotionError(f"{lane}: RR rich projection descriptor identity changed")
+    calls = strict_fields(projection["projected_calls"], {
+        "trajectories", "target_calls", "model_judge_calls",
+        "local_guardrail_evaluations", "http_attempts",
+    }, f"{lane} RR projected calls")
+    if (
+        any(type(calls[name]) is not int or calls[name] < 0 for name in calls)
+        or calls["trajectories"] <= 0
+        or calls["target_calls"] <= 0
+        or calls["model_judge_calls"] != 0
+        or calls["http_attempts"] != 0
+    ):
+        raise PromotionError(f"{lane}: RR projected calls changed")
+    if validate_files:
+        projection_path = exact_descriptor_path(
+            projection_artifact, f"{lane} RR projection_artifact"
+        )
+        eligibility_path = exact_descriptor_path(
+            projection["eligibility_artifact"], f"{lane} RR eligibility_artifact"
+        )
+        envelope_path = exact_descriptor_path(
+            envelope_artifact, f"{lane} RR request_envelope_artifact"
+        )
+        retained_projection, retained_projection_descriptor = load_stable_lane_projection_file(
+            projection_path, projection_artifact["sha256"]
+        )
+        retained_eligibility, retained_eligibility_descriptor = (
+            load_eligibility_artifact(eligibility_path)
+        )
+        retained_envelope, retained_envelope_descriptor = load_stable_request_envelope_file(
+            envelope_path
+        )
+        validate_lane_projection_binding(
+            retained_projection,
+            eligibility_plan=retained_eligibility,
+            eligibility_artifact=retained_eligibility_descriptor,
+        )
+        validate_eligibility_envelope_binding(
+            retained_eligibility,
+            retained_envelope_descriptor,
+            label=f"{lane} retained RR projection",
+        )
+        retained_calls = retained_projection["call_projection"]
+        expected_projected_calls = {
+            "trajectories": retained_calls["trajectories"],
+            "target_calls": retained_calls["target_calls"],
+            "model_judge_calls": retained_calls["judge_calls"],
+            "local_guardrail_evaluations": retained_calls[
+                "local_guardrail_evaluations"
+            ],
+            "http_attempts": retained_calls["http_attempts"],
+        }
+        if (
+            projection_artifact
+            != {"path": str(projection_path), **retained_projection_descriptor}
+            or envelope_artifact
+            != {"path": str(envelope_path), **retained_envelope_descriptor}
+            or retained_projection["projection_id"] != projection["projection_id"]
+            or retained_eligibility["plan_id"] != projection["eligibility_plan_id"]
+            or retained_envelope["envelope_id"] != projection["request_envelope_id"]
+            or retained_projection["selection"] != projection["selection"]
+            or expected_projected_calls != projection["projected_calls"]
+        ):
+            raise PromotionError(f"{lane}: RR projection differs from retained bytes")
+        validate_rr_projection_lane(lane, retained_projection, retained_envelope)
+    return projection_artifact["sha256"], projection_artifact["bytes"]
+
+
+def validate_rr_terminal_row(
+    raw: Mapping[str, Any], *, lane: str, validate_files: bool
+) -> tuple[dict[str, Any], tuple[str, int]]:
+    row = strict_fields(raw, {
+        "lane_id", "family", "disposition", "reason_code", "reason",
+        "projection", "canary", "final_preflight", "approved_caps",
+    }, f"{lane} RR terminal row")
+    if (
+        row["lane_id"] != lane
+        or row["family"] != "core"
+        or row["disposition"] != "unavailable"
+        or row["reason_code"] != RR_TERMINAL_REASON_CODE
+        or row["reason"] != RR_TERMINAL_REASON
+        or row["final_preflight"] != RR_UNAVAILABLE_VALUE
+        or row["approved_caps"] != RR_UNAVAILABLE_VALUE
+    ):
+        raise PromotionError(f"{lane}: RR terminal identity changed")
+    projection = strict_fields(row["projection"], {"status", "value"}, f"{lane} projection")
+    if projection["status"] != "passed" or not isinstance(projection["value"], dict):
+        raise PromotionError(f"{lane}: completed no-call projection was not preserved")
+    if validate_files:
+        projection_identity = validate_rr_projection(
+            projection["value"], lane=lane, validate_files=True
+        )
+    else:
+        projection_identity = validate_rr_projection(
+            projection["value"], lane=lane, validate_files=False
+        )
+    canary = strict_fields(row["canary"], {
+        "status", "value", "target_runtime_terminal_artifact",
+    }, f"{lane} RR canary")
+    if (
+        {"status": canary["status"], "value": canary["value"]}
+        != RR_UNAVAILABLE_VALUE
+        or not isinstance(canary["target_runtime_terminal_artifact"], dict)
+        or set(canary["target_runtime_terminal_artifact"])
+        != {"path", "sha256", "bytes"}
+    ):
+        raise PromotionError(f"{lane}: RR canary terminal descriptor changed")
+    return canary["target_runtime_terminal_artifact"], projection_identity
 
 
 def write_create_only(path: Path, payload: bytes, *, mode: int = 0o600) -> dict[str, Any]:
@@ -488,7 +1467,7 @@ def validate_inventory(rows: object, *, completed: bool) -> dict[str, dict[str, 
             raise PromotionError(f"Gate-5 lane identity is invalid or duplicated: {lane!r}")
         by_id[lane] = row
     terminals = expected_terminals()
-    expected_ids = set(RUNNABLE_FAMILIES) | set(terminals)
+    expected_ids = set(RUNNABLE_FAMILIES) | set(terminals) | set(RR_TERMINAL_LANES)
     if set(by_id) != expected_ids or len(rows) != 46:
         raise PromotionError(
             "Gate-5 inventory is not the exact 46 rows: "
@@ -513,6 +1492,29 @@ def validate_inventory(rows: object, *, completed: bool) -> dict[str, dict[str, 
     for lane, expected in terminals.items():
         if by_id[lane] != expected:
             raise PromotionError(f"{lane}: reviewed terminal disposition/reason/N/A row changed")
+    rr_artifacts: set[tuple[str, str, int]] = set()
+    rr_projections: set[tuple[str, int]] = set()
+    for lane in RR_TERMINAL_LANES:
+        artifact_value, projection_identity = validate_rr_terminal_row(
+            by_id[lane], lane=lane, validate_files=False
+        )
+        if (
+            not isinstance(artifact_value.get("path"), str)
+            or not Path(artifact_value["path"]).is_absolute()
+            or not isinstance(artifact_value.get("sha256"), str)
+            or HEX64.fullmatch(artifact_value["sha256"]) is None
+            or type(artifact_value.get("bytes")) is not int
+            or artifact_value["bytes"] <= 0
+        ):
+            raise PromotionError(f"{lane}: RR terminal artifact descriptor is invalid")
+        rr_artifacts.add((
+            artifact_value["path"], artifact_value["sha256"], artifact_value["bytes"]
+        ))
+        rr_projections.add(projection_identity)
+    if len(rr_artifacts) != 1:
+        raise PromotionError("RR terminal rows do not share one exact evidence artifact")
+    if len(rr_projections) != len(RR_TERMINAL_LANES):
+        raise PromotionError("RR completed projections are not four distinct artifacts")
     return by_id
 
 
@@ -529,20 +1531,23 @@ def inventory_counts(rows: Mapping[str, Mapping[str, Any]]) -> dict[str, Any]:
         "conditional_na_lanes": conditional,
         "bridge_terminal": 3,
         "ollama_transport_terminal": 3,
+        "target_runtime_terminal": 4,
         "portfolio_terminal": 5,
         "native_terminal": 9,
     }
     if counts not in (
         {
-            "total": 46, "runnable": 26, "typed_terminal": 20,
+            "total": 46, "runnable": 22, "typed_terminal": 24,
             "conditional_na_lanes": [], "bridge_terminal": 3,
             "ollama_transport_terminal": 3,
+            "target_runtime_terminal": 4,
             "portfolio_terminal": 5, "native_terminal": 9,
         },
         {
-            "total": 46, "runnable": 25, "typed_terminal": 21,
+            "total": 46, "runnable": 21, "typed_terminal": 25,
             "conditional_na_lanes": ["defense-local"], "bridge_terminal": 3,
             "ollama_transport_terminal": 3,
+            "target_runtime_terminal": 4,
             "portfolio_terminal": 5, "native_terminal": 9,
         },
     ):
@@ -726,7 +1731,9 @@ def validate_defense_conditional_na_artifact(
         if matches != [resolved[name]]:
             raise PromotionError(f"defense-local conditional N/A {name} is not unique")
 
-    envelope, _ = load_request_envelope_file(resolved["request_envelope"])
+    envelope, envelope_descriptor = load_stable_request_envelope_file(
+        resolved["request_envelope"]
+    )
     expected_request = {
         "execution_purpose": "diagnostic_canary",
         "requested_target_keys": ["vllm:Qwen/Qwen3-VL-8B-Instruct"],
@@ -765,7 +1772,7 @@ def validate_defense_conditional_na_artifact(
         raise PromotionError("defense-local conditional N/A project binding changed")
 
     eligibility_path = resolved["eligibility_plan"]
-    eligibility = validate_eligibility_plan(strict_json(eligibility_path))
+    eligibility, eligibility_descriptor = load_eligibility_artifact(eligibility_path)
     execution = eligibility.get("execution", {})
     conditions = eligibility.get("bindings", {}).get("experiment_conditions", {}).get("values")
     if (
@@ -794,16 +1801,18 @@ def validate_defense_conditional_na_artifact(
         raise PromotionError("defense-local conditional N/A conditions changed")
 
     projection_sha = raw_artifacts["lane_projection"]["sha256"]
-    projection, _ = load_lane_projection_file(resolved["lane_projection"], projection_sha)
+    projection, _ = load_stable_lane_projection_file(
+        resolved["lane_projection"], projection_sha
+    )
     validate_lane_projection_binding(
         projection,
         eligibility_plan=eligibility,
-        eligibility_artifact={
-            "file": eligibility_path.name,
-            "sha256": raw_artifacts["eligibility_plan"]["sha256"],
-            "bytes": raw_artifacts["eligibility_plan"]["bytes"],
-            "records": 1,
-        },
+        eligibility_artifact=eligibility_descriptor,
+    )
+    validate_eligibility_envelope_binding(
+        eligibility,
+        envelope_descriptor,
+        label="defense-local conditional N/A",
     )
     calls = projection.get("call_projection")
     expected_calls = {
@@ -1054,6 +2063,69 @@ def inventory_self_test() -> dict[str, Any]:
         "reason": None, "reason_code": None,
         "final_preflight": {"status": "pending_execution", "value": None},
     } for lane, family in sorted(RUNNABLE_FAMILIES.items())]
+    shared_rr_artifact = {
+        "path": str(Path.cwd().resolve() / "llava-rr.target-runtime-terminal.json"),
+        "sha256": "9" * 64,
+        "bytes": 1,
+    }
+    for index, lane in enumerate(RR_TERMINAL_LANES, start=1):
+        token = format(index, "x") * 24
+        projection_descriptor = {
+            "path": str(
+                Path.cwd().resolve()
+                / f"lane-projection-{token}.lane-projection.json"
+            ),
+            "file": f"lane-projection-{token}.lane-projection.json",
+            "sha256": format(index + 9, "x") * 64,
+            "bytes": 1,
+        }
+        support_descriptor = {
+            "path": str(Path.cwd().resolve() / f"{lane}.support.json"),
+            "sha256": format(index + 4, "x") * 64,
+            "bytes": 1,
+        }
+        envelope_descriptor = {
+            "path": str(
+                Path.cwd().resolve()
+                / f"request-envelope-{token}.request-envelope.json"
+            ),
+            "envelope_id": f"request-envelope-{token}",
+            "file": f"request-envelope-{token}.request-envelope.json",
+            "sha256": format(index + 3, "x") * 64,
+            "bytes": 1,
+        }
+        rows.append({
+            "lane_id": lane,
+            "family": "core",
+            "disposition": "unavailable",
+            "reason_code": RR_TERMINAL_REASON_CODE,
+            "reason": RR_TERMINAL_REASON,
+            "projection": {
+                "status": "passed",
+                "value": {
+                    "projection_id": f"lane-projection-{token}",
+                    "projection_artifact": projection_descriptor,
+                    "eligibility_plan_id": f"eligibility-{token}",
+                    "eligibility_artifact": dict(support_descriptor),
+                    "request_envelope_id": f"request-envelope-{token}",
+                    "request_envelope_artifact": dict(envelope_descriptor),
+                    "selection": {"self_test": lane},
+                    "projected_calls": {
+                        "trajectories": 1,
+                        "target_calls": 1,
+                        "model_judge_calls": 0,
+                        "local_guardrail_evaluations": 0,
+                        "http_attempts": 0,
+                    },
+                },
+            },
+            "canary": {
+                **RR_UNAVAILABLE_VALUE,
+                "target_runtime_terminal_artifact": dict(shared_rr_artifact),
+            },
+            "final_preflight": dict(RR_UNAVAILABLE_VALUE),
+            "approved_caps": dict(RR_UNAVAILABLE_VALUE),
+        })
     rows += [copy.deepcopy(row) for row in expected_terminals().values()]
     success_rows = validate_inventory(rows, completed=False)
     inventory_counts(success_rows)
@@ -1101,6 +2173,37 @@ def inventory_self_test() -> dict[str, Any]:
     wrong_terminal = copy.deepcopy(rows)
     next(row for row in wrong_terminal if row["lane_id"] == "bridge-nanogcg")["reason"] += " forged"
     tests.append(("terminal_reason", wrong_terminal))
+    rr_projection_unavailable = copy.deepcopy(rows)
+    next(
+        row for row in rr_projection_unavailable
+        if row["lane_id"] == RR_TERMINAL_LANES[0]
+    )["projection"] = dict(RR_UNAVAILABLE_VALUE)
+    tests.append(("rr_projection_unavailable", rr_projection_unavailable))
+    rr_projection_descriptor_missing = copy.deepcopy(rows)
+    next(
+        row for row in rr_projection_descriptor_missing
+        if row["lane_id"] == RR_TERMINAL_LANES[0]
+    )["projection"]["value"].pop("projection_artifact")
+    tests.append(("rr_projection_descriptor_missing", rr_projection_descriptor_missing))
+    rr_split_terminal_artifact = copy.deepcopy(rows)
+    next(
+        row for row in rr_split_terminal_artifact
+        if row["lane_id"] == RR_TERMINAL_LANES[-1]
+    )["canary"]["target_runtime_terminal_artifact"]["sha256"] = "8" * 64
+    tests.append(("rr_split_terminal_artifact", rr_split_terminal_artifact))
+    rr_duplicate_projection = copy.deepcopy(rows)
+    first_rr = next(
+        row for row in rr_duplicate_projection
+        if row["lane_id"] == RR_TERMINAL_LANES[0]
+    )
+    second_rr = next(
+        row for row in rr_duplicate_projection
+        if row["lane_id"] == RR_TERMINAL_LANES[1]
+    )
+    second_rr["projection"]["value"]["projection_artifact"] = copy.deepcopy(
+        first_rr["projection"]["value"]["projection_artifact"]
+    )
+    tests.append(("rr_duplicate_projection", rr_duplicate_projection))
     for label, mutate in (
         (
             "conditional_reason",
@@ -1159,9 +2262,10 @@ def inventory_self_test() -> dict[str, Any]:
         },
         "inputs": {},
         "inventory_counts": {
-            "total": 46, "runnable": 26, "typed_terminal": 20,
+            "total": 46, "runnable": 22, "typed_terminal": 24,
             "conditional_na_lanes": [], "bridge_terminal": 3,
             "ollama_transport_terminal": 3,
+            "target_runtime_terminal": 4,
             "portfolio_terminal": 5, "native_terminal": 9,
         },
         "local_only": dict(LOCAL_ONLY_CONTRACT),
@@ -1186,9 +2290,10 @@ def inventory_self_test() -> dict[str, Any]:
     validate_plan_fields(plan)
     conditional_plan = copy.deepcopy(plan)
     conditional_plan["inventory_counts"] = {
-        "total": 46, "runnable": 25, "typed_terminal": 21,
+        "total": 46, "runnable": 21, "typed_terminal": 25,
         "conditional_na_lanes": ["defense-local"], "bridge_terminal": 3,
         "ollama_transport_terminal": 3,
+        "target_runtime_terminal": 4,
         "portfolio_terminal": 5, "native_terminal": 9,
     }
     validate_plan_fields(conditional_plan)
@@ -1368,8 +2473,9 @@ def inventory_self_test() -> dict[str, Any]:
             raise PromotionError(f"proxy mutation did not fail closed: {label}")
     return {
         "schema": "ura-gate5-promotion-self-test/1", "status": "passed",
-        "expected_rows": 46, "expected_runnable": [25, 26],
-        "expected_terminal": [20, 21],
+        "expected_rows": 46, "expected_runnable": [21, 22],
+        "expected_terminal": [24, 25],
+        "expected_target_runtime_terminal": 4,
         "expected_conditional_na_lanes": [[], ["defense-local"]],
         "placeholder_bytes": 22, "placeholder_sha256": PLACEHOLDER_SHA256,
         "rejected_mutations": rejected,
@@ -1379,6 +2485,7 @@ def inventory_self_test() -> dict[str, Any]:
         "rejected_conditional_live_attestation_mutations": rejected_live,
         "rejected_conditional_numeric_type_mutations": rejected_numeric,
         "rejected_proxy_mutations": rejected_proxy,
+        "retained_binding_self_test": retained_binding_contract_self_test(),
     }
 
 
@@ -1861,19 +2968,24 @@ def validate_final_lane(
             path.relative_to(run_root)
         except ValueError as exc:
             raise PromotionError(f"{lane}: final artifact is outside its exact preflight root") from exc
-    projection, _ = load_lane_projection_file(
+    projection, _ = load_stable_lane_projection_file(
         final_paths["projection_artifact"], final["projection_artifact"]["sha256"]
     )
-    eligibility = validate_eligibility_plan(strict_json(final_paths["eligibility_artifact"]))
-    envelope, _ = load_request_envelope_file(final_paths["request_envelope_artifact"])
+    eligibility, eligibility_descriptor = load_eligibility_artifact(
+        final_paths["eligibility_artifact"]
+    )
+    envelope, envelope_descriptor = load_stable_request_envelope_file(
+        final_paths["request_envelope_artifact"]
+    )
     validate_lane_projection_binding(
         projection,
         eligibility_plan=eligibility,
-        eligibility_artifact={
-            "file": final_paths["eligibility_artifact"].name,
-            "sha256": final["eligibility_artifact"]["sha256"],
-            "bytes": final["eligibility_artifact"]["bytes"], "records": 1,
-        },
+        eligibility_artifact=eligibility_descriptor,
+    )
+    validate_eligibility_envelope_binding(
+        eligibility,
+        envelope_descriptor,
+        label=f"{lane} final preflight",
     )
     if (
         projection["projection_id"] != final["projection_id"]
@@ -1892,21 +3004,25 @@ def validate_final_lane(
         manifest_row["preliminary"]["request_envelope_artifact"],
         f"{lane} preliminary request envelope",
     )
-    preliminary_projection, _ = load_lane_projection_file(
+    preliminary_projection, _ = load_stable_lane_projection_file(
         preliminary_projection_path,
         manifest_row["preliminary"]["projection_artifact"]["sha256"],
     )
-    preliminary_eligibility = validate_eligibility_plan(strict_json(preliminary_eligibility_path))
-    preliminary_envelope, _ = load_request_envelope_file(preliminary_envelope_path)
+    preliminary_eligibility, preliminary_eligibility_descriptor = (
+        load_eligibility_artifact(preliminary_eligibility_path)
+    )
+    preliminary_envelope, preliminary_envelope_descriptor = load_stable_request_envelope_file(
+        preliminary_envelope_path
+    )
     validate_lane_projection_binding(
         preliminary_projection,
         eligibility_plan=preliminary_eligibility,
-        eligibility_artifact={
-            "file": preliminary_eligibility_path.name,
-            "sha256": manifest_row["preliminary"]["eligibility_artifact"]["sha256"],
-            "bytes": manifest_row["preliminary"]["eligibility_artifact"]["bytes"],
-            "records": 1,
-        },
+        eligibility_artifact=preliminary_eligibility_descriptor,
+    )
+    validate_eligibility_envelope_binding(
+        preliminary_eligibility,
+        preliminary_envelope_descriptor,
+        label=f"{lane} preliminary preflight",
     )
     if (
         preliminary_projection["projection_id"]
@@ -2185,6 +3301,25 @@ def validate_evidence(
         raise PromotionError("covered manifest identity/completeness changed")
     manifest_rows = validate_inventory(manifest["lanes"], completed=False)
     counts = inventory_counts(manifest_rows)
+    rr_terminal_descriptors: list[dict[str, Any]] = []
+    rr_projection_identities: set[tuple[str, int]] = set()
+    for lane in RR_TERMINAL_LANES:
+        terminal_descriptor, projection_identity = validate_rr_terminal_row(
+            manifest_rows[lane], lane=lane, validate_files=True
+        )
+        rr_terminal_descriptors.append(terminal_descriptor)
+        rr_projection_identities.add(projection_identity)
+    if len(rr_projection_identities) != len(RR_TERMINAL_LANES):
+        raise PromotionError("RR completed projections are not four distinct artifacts")
+    rr_terminal_identities = {
+        (item["path"], item["sha256"], item["bytes"])
+        for item in rr_terminal_descriptors
+    }
+    if len(rr_terminal_identities) != 1:
+        raise PromotionError("RR terminal rows do not share one exact evidence artifact")
+    validate_rr_terminal_artifact(
+        rr_terminal_descriptors[0], project=project, work=work
+    )
     if counts["conditional_na_lanes"]:
         validate_defense_conditional_na_artifact(
             manifest_rows["defense-local"], project=project, work=work
@@ -2215,7 +3350,7 @@ def validate_evidence(
         "schema", "status", "completed_at_utc", "covered_manifest_sha256",
         "approval", "manifest", "approval_artifact", "storage_observations",
         "runnote_candidate", "runnable_lanes", "typed_terminal_lanes",
-        "conditional_na_lanes",
+        "target_runtime_terminal", "conditional_na_lanes",
         "downloads_observed_bytes", "commands",
         "artifact_index_excludes_this_receipt_and_exit_marker",
     }, "finalization receipt")
@@ -2229,6 +3364,7 @@ def validate_evidence(
         or receipt["runnote_candidate"] != candidate_desc
         or receipt["runnable_lanes"] != counts["runnable"]
         or receipt["typed_terminal_lanes"] != counts["typed_terminal"]
+        or receipt["target_runtime_terminal"] != counts["target_runtime_terminal"]
         or receipt["conditional_na_lanes"] != counts["conditional_na_lanes"]
         or receipt["downloads_observed_bytes"] != 0
     ):
@@ -2527,15 +3663,17 @@ def validate_plan_fields(plan: object) -> dict[str, Any]:
         }
         or value["inventory_counts"] not in (
             {
-                "total": 46, "runnable": 26, "typed_terminal": 20,
+                "total": 46, "runnable": 22, "typed_terminal": 24,
                 "conditional_na_lanes": [], "bridge_terminal": 3,
                 "ollama_transport_terminal": 3,
+                "target_runtime_terminal": 4,
                 "portfolio_terminal": 5, "native_terminal": 9,
             },
             {
-                "total": 46, "runnable": 25, "typed_terminal": 21,
+                "total": 46, "runnable": 21, "typed_terminal": 25,
                 "conditional_na_lanes": ["defense-local"], "bridge_terminal": 3,
                 "ollama_transport_terminal": 3,
+                "target_runtime_terminal": 4,
                 "portfolio_terminal": 5, "native_terminal": 9,
             },
         )

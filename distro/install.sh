@@ -8,11 +8,10 @@
 # partition or the tracked tree.
 #
 # Secrets (provider API keys, HF_TOKEN) are NOT in this repo. Copy
-# distro/.env.example to ~/.ura_env (mode 600), fill it in, and this script
-# sources it. ~/.ura_env is the canonical operator secrets file - it is the file
-# the rig console writes rotated keys into - so it is sourced LAST and wins.
-# ~/.ura_secrets is an optional legacy file (rigs provisioned by an earlier
-# installer) and is sourced first, i.e. overridden by ~/.ura_env.
+# distro/.env.example to ~/.ura_env (mode 600) and fill it in. The installer
+# sources secrets only inside HF-backed commands and the generated console
+# launcher, never process-wide. ~/.ura_env is canonical and sourced after the
+# optional legacy ~/.ura_secrets in those narrow scopes, so rotated keys win.
 #
 # Python: the venv needs CPython >=3.12,<3.14 (the isolated framework runtimes
 # additionally need the venv's base interpreter to be exact CPython 3.12.13).
@@ -31,7 +30,7 @@
 #   distro/install.sh ollama              # user-local ollama runtime (pinned)
 #   distro/install.sh runtimes            # framework runtimes under the strict lock
 #   distro/install.sh locators            # (re)write the URA_*_PATH env bindings
-#   distro/install.sh console             # launch the rig console in tmux
+#   distro/install.sh console             # launch the rig console in tmux/screen
 #   distro/install.sh summary             # per-step OK/FAIL report from the logs
 #
 # Env overrides: URA_DATA (default /data/ura-work), URA_ROOT (repo, autodetected),
@@ -49,11 +48,16 @@ export URA_CORPORA="${URA_CORPORA:-$URA_DATA/corpora}"
 export URA_UPSTREAM="${URA_UPSTREAM:-$URA_DATA/upstream}"
 export URA_NATIVE_ENVS="${URA_NATIVE_ENVS:-$URA_DATA/native-envs}"
 export HF_HOME="${HF_HOME:-$URA_DATA/hf-cache}"
+export URA_PACKAGE_CACHE="${URA_PACKAGE_CACHE:-$URA_DATA/package-cache}"
 LOG="$URA_DATA/acquire-logs"
 VENV="$URA_ROOT/.venv"
 PY="$VENV/bin/python"
 HF="$VENV/bin/hf"
 GDOWN="$VENV/bin/gdown"
+BIPIA_BUILD_LOCK="$URA_ROOT/distro/bipia-build-requirements.lock"
+BIPIA_ENV_ROOT="$URA_DATA/support-venvs"
+BIPIA_ENV_STORE="$BIPIA_ENV_ROOT/.store"
+BIPIA_BUILD_PY=""
 URA_PY_EXTRAS="${URA_PY_EXTRAS:-dev,analysis,api,guardrail,local-vllm}"
 CAMPAIGN_ENV="$HOME/.ura_campaign_env"
 SECRETS_ENV="$HOME/.ura_env"            # canonical (the console writes rotated keys here)
@@ -64,22 +68,12 @@ OLLAMA_VERSION=0.32.13
 OLLAMA_ARCHIVE=ollama-linux-amd64.tar.zst
 OLLAMA_SHA256=0fd1dece38a1c6242e8013ce20b597345c5de072ae6b320160edb0e729ef1de1
 
-mkdir -p "$LOG" "$URA_CORPORA" "$URA_UPSTREAM" "$URA_NATIVE_ENVS" "$HF_HOME" || {
+mkdir -p "$LOG" "$URA_CORPORA" "$URA_UPSTREAM" "$URA_NATIVE_ENVS" "$HF_HOME" \
+  "$URA_PACKAGE_CACHE/pip" "$BIPIA_ENV_STORE" || {
   echo "cannot create the data tree under $URA_DATA - check the mount and permissions" >&2
   exit 3
 }
 [ -w "$LOG" ] || { echo "$LOG is not writable - check the mount and permissions" >&2; exit 3; }
-# set -a exports everything the secrets files define (HF_TOKEN included), so
-# child processes ($HF, $PY exporters) actually see them. ~/.ura_secrets (legacy)
-# is sourced FIRST and ~/.ura_env (canonical; the console's Config page writes
-# rotated keys there) LAST, so ~/.ura_env wins on any key present in both - the
-# same precedence the console launcher below uses.
-set -a
-[ -f "$SECRETS_LEGACY" ] && source "$SECRETS_LEGACY"
-[ -f "$SECRETS_ENV" ] && source "$SECRETS_ENV"
-set +a
-export HF_TOKEN="${HF_TOKEN:-}"
-
 # Per-invocation ledger: run_step/skip_step append here (append survives the
 # subshells some phases use), so the exit status reflects THIS run only.
 SESSION_LEDGER="$LOG/.session-$$"
@@ -160,6 +154,22 @@ guard_step() { # name reason content-test... -- skip when settled/adoptable, els
   return 1
 }
 
+with_hf_token() ( # command... -- secrets exist only for this HF-backed process
+  # Never enable tracing in this subshell. The legacy file is sourced first and
+  # the canonical console-managed file last, but neither is read for unrelated
+  # phases and no value is printed or copied into an argv.
+  set +x
+  set -a
+  [ -f "$SECRETS_LEGACY" ] && source "$SECRETS_LEGACY"
+  [ -f "$SECRETS_ENV" ] && source "$SECRETS_ENV"
+  set +a
+  export HF_TOKEN="${HF_TOKEN:-}"
+  if [ -z "$HF_TOKEN" ]; then
+    echo "HF_TOKEN is empty; a gated Hugging Face source may refuse this request" >&2
+  fi
+  exec "$@"
+)
+
 clone_pin() { # url dir ref -- clone once, then repair-checkout with a fetch
   local url=$1 dir=$2 ref=$3
   if [ -d "$dir/.git" ]; then
@@ -213,10 +223,17 @@ resolve_python() { # prints the interpreter to build the venv with; fails closed
 
 prereqs() {
   local missing=0 tool requested
-  for tool in git curl tar tmux; do
+  for tool in git curl tar; do
     command -v "$tool" >/dev/null 2>&1 || { echo "  [FAIL] missing prerequisite: $tool"; missing=1; }
   done
-  [ "$missing" -eq 0 ] || { echo "install prerequisites first (apt install git curl tar tmux zstd)"; exit 3; }
+  if ! command -v tmux >/dev/null 2>&1 && ! command -v screen >/dev/null 2>&1; then
+    echo "  [FAIL] missing prerequisite: tmux or screen"
+    missing=1
+  fi
+  [ "$missing" -eq 0 ] || {
+    echo "install prerequisites first (apt install git curl tar zstd and either tmux or screen)"
+    exit 3
+  }
   # The package declares requires-python >=3.12,<3.14 and the framework runtime
   # lock binds exact CPython 3.12.13, so a system python3 (3.11 on Debian 12)
   # must never silently become the venv base. Resolve the interpreter here,
@@ -247,10 +264,6 @@ prereqs() {
   fi
   export URA_PYTHON
   echo "  python: $URA_PYTHON ($("$URA_PYTHON" -c 'import platform; print(platform.python_version())'))"
-  if [ -z "$HF_TOKEN" ]; then
-    echo "  [warn] HF_TOKEN is empty - gated HF datasets (AgentHarm, DecodingTrust,"
-    echo "         HoliSafe) WILL fail. Copy distro/.env.example to ~/.ura_env and fill it."
-  fi
 }
 
 # --------------------------------------------------------------------------- #
@@ -266,6 +279,11 @@ phase_deps() {
     "$PY" -m pip install --upgrade pip >/dev/null || failed=1
     "$PY" -m pip install -e "$URA_ROOT[$URA_PY_EXTRAS]" || failed=1
     "$PY" -m pip install "huggingface_hub[cli]>=0.24" gdown >> "$LOG/deps-tools.log" 2>&1 || failed=1
+    # Remove only legacy duplicate top-level installs from the Runner venv.
+    # Their retained implementations live in the isolated runtime/support
+    # stores built below; shared dependencies required by URA are untouched.
+    "$PY" -m pip uninstall -y pyrit spikee datasets jsonlines >> "$LOG/deps-tools.log" 2>&1 || failed=1
+    "$PY" -m pip check >> "$LOG/deps-tools.log" 2>&1 || failed=1
   fi
   local tool
   for tool in "$PY" "$HF" "$GDOWN"; do
@@ -301,13 +319,13 @@ phase_clones() {
 
 phase_hf() {
   echo "[hf] pinned Hugging Face dataset releases"
-  run_step hf-agentharm   "$HF" download ai-safety-institute/AgentHarm --repo-type dataset --revision "$REF_HF_AGENTHARM" --local-dir "$URA_CORPORA/AgentHarm"
-  run_step hf-jbb         "$HF" download JailbreakBench/JBB-Behaviors  --repo-type dataset --revision "$REF_HF_JBB"       --local-dir "$URA_CORPORA/JBB-Behaviors"
-  run_step hf-jailbreakv  "$HF" download JailbreakV-28K/JailBreakV-28k --repo-type dataset --revision "$REF_HF_JAILBREAKV" --local-dir "$URA_CORPORA/JailBreakV-28K"
-  run_step hf-mllmguard   "$HF" download Carol0110/MLLMGuard           --repo-type dataset --revision "$REF_HF_MLLMGUARD"  --local-dir "$URA_CORPORA/MLLMGuard"
-  run_step hf-vlsbench    "$HF" download Foreshhh/vlsbench             --repo-type dataset --revision "$REF_HF_VLSBENCH"   --local-dir "$URA_CORPORA/VLSBench"
-  run_step hf-videosafety "$HF" download BAAI/Video-SafetyBench       --repo-type dataset --revision "$REF_HF_VIDEOSAFETY" --local-dir "$URA_CORPORA/Video-SafetyBench"
-  run_step hf-jalmbench   "$HF" download AnonymousUser000/JALMBench   --repo-type dataset --revision "$REF_HF_JALMBENCH"  --local-dir "$URA_CORPORA/JALMBench-parquet"
+  run_step hf-agentharm   with_hf_token "$HF" download ai-safety-institute/AgentHarm --repo-type dataset --revision "$REF_HF_AGENTHARM" --local-dir "$URA_CORPORA/AgentHarm"
+  run_step hf-jbb         with_hf_token "$HF" download JailbreakBench/JBB-Behaviors  --repo-type dataset --revision "$REF_HF_JBB"       --local-dir "$URA_CORPORA/JBB-Behaviors"
+  run_step hf-jailbreakv  with_hf_token "$HF" download JailbreakV-28K/JailBreakV-28k --repo-type dataset --revision "$REF_HF_JAILBREAKV" --local-dir "$URA_CORPORA/JailBreakV-28K"
+  run_step hf-mllmguard   with_hf_token "$HF" download Carol0110/MLLMGuard           --repo-type dataset --revision "$REF_HF_MLLMGUARD"  --local-dir "$URA_CORPORA/MLLMGuard"
+  run_step hf-vlsbench    with_hf_token "$HF" download Foreshhh/vlsbench             --repo-type dataset --revision "$REF_HF_VLSBENCH"   --local-dir "$URA_CORPORA/VLSBench"
+  run_step hf-videosafety with_hf_token "$HF" download BAAI/Video-SafetyBench       --repo-type dataset --revision "$REF_HF_VIDEOSAFETY" --local-dir "$URA_CORPORA/Video-SafetyBench"
+  run_step hf-jalmbench   with_hf_token "$HF" download AnonymousUser000/JALMBench   --repo-type dataset --revision "$REF_HF_JALMBENCH"  --local-dir "$URA_CORPORA/JALMBench-parquet"
 }
 
 # -- archive helpers (ported from the rig's proven fix_acquire/fix2_acquire) -- #
@@ -385,7 +403,8 @@ gptgeochat_human() {
 siuo_images() {
   # The official sinwang/SIUO HF dataset ships images/ directly (no zip).
   if ! nonempty_dir "$URA_CORPORA/SIUO-hf/images"; then
-    "$HF" download sinwang/SIUO --repo-type dataset --local-dir "$URA_CORPORA/SIUO-hf" || return 1
+    with_hf_token "$HF" download sinwang/SIUO --repo-type dataset \
+      --local-dir "$URA_CORPORA/SIUO-hf" || return 1
   fi
   test -d "$URA_CORPORA/SIUO-hf/images" || return 1
   rm -rf "$URA_CORPORA/SIUO/data/images"
@@ -465,32 +484,189 @@ phase_archives() {
   } > "$LOG/archives.sha256" 2>&1
 }
 
+discard_bipia_stage() { # exact mktemp path below, never an operator-supplied tree
+  case "$1" in
+    "$BIPIA_ENV_STORE"/.bipia-*.stage.*) rm -rf -- "$1" ;;
+    *) echo "refusing to remove unexpected BIPIA stage path: $1" >&2; return 1 ;;
+  esac
+}
+
+bipia_env_valid() { # environment lock-sha runtime-sha runtime-version
+  local environment=$1 lock_sha=$2 runtime_sha=$3 runtime_version=$4
+  [ -x "$environment/bin/python" ] || return 1
+  [ -f "$environment/pyvenv.cfg" ] \
+    && grep -qi '^include-system-site-packages = false$' "$environment/pyvenv.cfg" \
+    || return 1
+  [ "$(sed -n '1p' "$environment/.ura-bipia-identity" 2>/dev/null)" = "$lock_sha" ] \
+    || return 1
+  [ "$(sed -n '2p' "$environment/.ura-bipia-identity" 2>/dev/null)" = "$runtime_sha" ] \
+    || return 1
+  "$environment/bin/python" -I - "$BIPIA_BUILD_LOCK" "$runtime_sha" "$runtime_version" <<'PYEOF'
+import hashlib
+import importlib.metadata
+import pathlib
+import platform
+import re
+import sys
+
+lock = pathlib.Path(sys.argv[1]).read_text(encoding="utf-8")
+expected_sha, expected_python = sys.argv[2:]
+if platform.python_version() != expected_python:
+    raise SystemExit("BIPIA support Python version differs from the runtime lock")
+if hashlib.sha256(pathlib.Path(sys.executable).read_bytes()).hexdigest() != expected_sha:
+    raise SystemExit("BIPIA support Python binary differs from the runtime lock")
+if sys.prefix == sys.base_prefix:
+    raise SystemExit("BIPIA support interpreter is not a virtual environment")
+
+normalize = lambda value: re.sub(r"[-_.]+", "-", value).lower()
+expected = {
+    normalize(name): version
+    for name, version in re.findall(
+        r"(?m)^([A-Za-z0-9_.-]+)==([^ \\\r\n;]+)", lock
+    )
+}
+if not expected:
+    raise SystemExit("BIPIA dependency lock has no exact requirements")
+actual = {
+    normalize(dist.metadata["Name"]): dist.version
+    for dist in importlib.metadata.distributions()
+    if dist.metadata.get("Name")
+}
+wrong = {
+    name: (version, actual.get(name))
+    for name, version in expected.items()
+    if actual.get(name) != version
+}
+unexpected = set(actual) - set(expected) - {"pip", "setuptools"}
+if wrong or unexpected:
+    raise SystemExit(
+        f"BIPIA support inventory mismatch: wrong={wrong}, unexpected={sorted(unexpected)}"
+    )
+import datasets
+import jsonlines  # noqa: F401
+
+if datasets.__version__ != "2.14.7":
+    raise SystemExit("BIPIA support environment has the wrong datasets release")
+PYEOF
+}
+
+prepare_bipia_build_env() {
+  local framework_lock="$URA_ROOT/experiments/framework_runtime_lock.json"
+  local base_python runtime_identity runtime_version runtime_sha lock_sha final alias stage
+  [ -s "$BIPIA_BUILD_LOCK" ] || {
+    echo "BIPIA support dependency lock missing: $BIPIA_BUILD_LOCK" >&2
+    return 1
+  }
+  [ -s "$framework_lock" ] || {
+    echo "framework runtime lock missing: $framework_lock" >&2
+    return 1
+  }
+  base_python=$("$PY" -c 'import sys; print(sys._base_executable)') || return 1
+  runtime_identity=$("$PY" - "$framework_lock" "$base_python" <<'PYEOF'
+import hashlib
+import json
+import pathlib
+import platform
+import re
+import subprocess
+import sys
+
+lock = json.loads(pathlib.Path(sys.argv[1]).read_text(encoding="utf-8"))
+runtime = lock.get("runtimes", {}).get("python", {})
+version = runtime.get("version")
+digest = runtime.get("binary_sha256")
+if not isinstance(version, str) or not re.fullmatch(r"3\.12\.[0-9]+", version):
+    raise SystemExit("framework lock has no exact CPython 3.12 runtime")
+if not isinstance(digest, str) or not re.fullmatch(r"[0-9a-f]{64}", digest):
+    raise SystemExit("framework lock has no exact Python binary digest")
+base = pathlib.Path(sys.argv[2])
+if not base.is_file() or hashlib.sha256(base.read_bytes()).hexdigest() != digest:
+    raise SystemExit("venv base Python binary differs from the framework lock")
+probe = subprocess.run(
+    [str(base), "-c", "import platform; print(platform.python_version())"],
+    capture_output=True,
+    text=True,
+    check=False,
+)
+if probe.returncode or probe.stdout.strip() != version:
+    raise SystemExit("venv base Python version differs from the framework lock")
+print(version, digest)
+PYEOF
+  ) || return 1
+  read -r runtime_version runtime_sha <<<"$runtime_identity"
+  lock_sha=$(sha256sum "$BIPIA_BUILD_LOCK" | awk '{print $1}') || return 1
+  [[ "$lock_sha" =~ ^[0-9a-f]{64}$ ]] || return 1
+  final="$BIPIA_ENV_STORE/bipia-${lock_sha:0:16}-py${runtime_version//./}-${runtime_sha:0:12}"
+  alias="$BIPIA_ENV_ROOT/bipia"
+
+  if [ -e "$final" ] || [ -L "$final" ]; then
+    bipia_env_valid "$final" "$lock_sha" "$runtime_sha" "$runtime_version" || {
+      echo "existing BIPIA support store failed exact identity verification: $final" >&2
+      return 1
+    }
+  else
+    stage=$(mktemp -d "$BIPIA_ENV_STORE/.bipia-${lock_sha:0:16}.stage.XXXXXX") \
+      || return 1
+    mkdir -p "$BIPIA_ENV_ROOT/.home" "$URA_PACKAGE_CACHE/pip"
+    if ! "$base_python" -m venv --copies "$stage" \
+      || ! env -i \
+          HOME="$BIPIA_ENV_ROOT/.home" LANG=C.UTF-8 LC_ALL=C.UTF-8 \
+          PATH=/usr/bin:/bin PIP_CONFIG_FILE=/dev/null \
+          PIP_DISABLE_PIP_VERSION_CHECK=1 PIP_NO_INPUT=1 \
+          PIP_CACHE_DIR="$URA_PACKAGE_CACHE/pip" \
+          "$stage/bin/python" -m pip install --require-hashes \
+            --index-url https://pypi.org/simple -r "$BIPIA_BUILD_LOCK" \
+      || ! "$stage/bin/python" -m pip check; then
+      discard_bipia_stage "$stage"
+      return 1
+    fi
+    printf '%s\n%s\n' "$lock_sha" "$runtime_sha" > "$stage/.ura-bipia-identity"
+    if ! bipia_env_valid "$stage" "$lock_sha" "$runtime_sha" "$runtime_version"; then
+      discard_bipia_stage "$stage"
+      return 1
+    fi
+    if ! mv "$stage" "$final"; then
+      discard_bipia_stage "$stage"
+      return 1
+    fi
+  fi
+
+  if [ -e "$alias" ] && [ ! -L "$alias" ]; then
+    echo "refusing to replace non-symlink BIPIA support alias: $alias" >&2
+    return 1
+  fi
+  ln -sfn ".store/$(basename "$final")" "$alias" || return 1
+  [ "$(readlink -f "$alias")" = "$(readlink -f "$final")" ] || return 1
+  BIPIA_BUILD_PY="$alias/bin/python"
+  echo "BIPIA support environment: $final"
+}
+
 phase_bipia() {
   echo "[bipia] build qa (NewsQA) + abstract (XSum) sets from external bases"
   bipia_built() {
     [ -s "$URA_CORPORA/BIPIA/benchmark/abstract/test.jsonl" ] \
       && [ -s "$URA_CORPORA/BIPIA/benchmark/qa/test.jsonl" ]
   }
+  if ! prepare_bipia_build_env >> "$LOG/bipia-build.log" 2>&1; then
+    echo "FAIL:1" > "$LOG/bipia-build.status"; rm -f "$LOG/bipia-build.done"
+    echo "FAIL bipia-build" >> "$SESSION_LEDGER"
+    echo "  [FAIL] bipia-build (isolated support environment failed; see $LOG/bipia-build.log)"
+    return 1
+  fi
   if guard_step bipia-build "abstract + qa test.jsonl already built" bipia_built; then
     return 0
   fi
   export HF_DATASETS_TRUST_REMOTE_CODE=1
-  # BIPIA's process.py needs the legacy datasets loader; pin it only when the
-  # builds actually have to run (side effect on the shared venv, noted).
-  "$PY" - <<'PYEOF' >/dev/null 2>&1 || "$PY" -m pip install "datasets==2.14.7" "jsonlines>=4,<5" >> "$LOG/bipia-build.log" 2>&1
-import datasets, sys
-sys.exit(0 if datasets.__version__ == "2.14.7" else 1)
-PYEOF
   if [ ! -s "$URA_CORPORA/BIPIA/benchmark/abstract/test.jsonl" ]; then
     # `yes` dies of SIGPIPE once process.py exits, and pipefail would report
     # that 141 as a build failure - so judge this one on its output, not $?.
     ( cd "$URA_CORPORA/BIPIA/benchmark/abstract" && set +o pipefail \
-        && yes Y | "$PY" process.py ) >> "$LOG/bipia-abstract.log" 2>&1
+        && yes Y | "$BIPIA_BUILD_PY" process.py ) >> "$LOG/bipia-abstract.log" 2>&1
     [ -s "$URA_CORPORA/BIPIA/benchmark/abstract/test.jsonl" ] \
       || echo "  [warn] bipia abstract build failed (external XSum base; see $LOG/bipia-abstract.log)"
   fi
   if [ ! -s "$URA_CORPORA/BIPIA/benchmark/qa/test.jsonl" ]; then
-    ( cd "$URA_CORPORA/BIPIA/benchmark/qa" && "$PY" process.py --data_dir "$URA_UPSTREAM/newsqa-data" ) >> "$LOG/bipia-qa.log" 2>&1
+    ( cd "$URA_CORPORA/BIPIA/benchmark/qa" && "$BIPIA_BUILD_PY" process.py --data_dir "$URA_UPSTREAM/newsqa-data" ) >> "$LOG/bipia-qa.log" 2>&1
     [ -s "$URA_CORPORA/BIPIA/benchmark/qa/test.jsonl" ] \
       || echo "  [warn] bipia qa build needs the licensed NewsQA base at $URA_UPSTREAM/newsqa-data (obtain manually; see $LOG/bipia-qa.log)"
   fi
@@ -517,7 +693,7 @@ phase_aggregators() {
       holisafe)          target="$URA_CORPORA/HoliSafe/holisafe_bench.json" ;;
     esac
     guard_step "export-$src" "already exported" test -s "$target" \
-      || ( cd "$URA_ROOT" && run_step "export-$src" "$PY" -m experiments.export_aggregators \
+      || ( cd "$URA_ROOT" && run_step "export-$src" with_hf_token "$PY" -m experiments.export_aggregators \
           --source "$src" --out-root "$URA_CORPORA" )
   done
 }
@@ -702,14 +878,15 @@ ensure_env_line() { # VAR value -- append 'export VAR="value"' to the campaign e
   printf 'export %s="%s"\n' "$var" "$value" >> "$CAMPAIGN_ENV"
 }
 
-runtimes_session() { # command lock env-root state-root python -- launch, then wait for the exit marker
+runtimes_session() { # command lock env-root state-root python framework -- launch and wait
   # The installer runs inside its own named tmux/screen session and returns a
   # session JSON immediately; this waits for the session's terminal exit marker
   # exactly as the runbook's ura_wait_session does (168 h deadline, liveness
   # probe) and returns the inner exit code, so run_step ledgers the real result.
-  local command=$1 lock=$2 env_root=$3 state_root=$4 python=$5 session_json
+  local command=$1 lock=$2 env_root=$3 state_root=$4 python=$5 framework=$6 session_json
   session_json=$( cd "$URA_ROOT" && "$PY" -m experiments.framework_runtime_installer "$command" \
-      --lock "$lock" --env-root "$env_root" --state-root "$state_root" --python "$python" ) || return 1
+      --lock "$lock" --env-root "$env_root" --state-root "$state_root" --python "$python" \
+      --only "$framework" ) || return 1
   printf '%s\n' "$session_json"
   "$PY" - "$session_json" "$state_root" <<'PYEOF'
 import hashlib, json, re, shutil, subprocess, sys, time
@@ -772,17 +949,38 @@ phase_runtimes() {
   # $URA_WORK/runs/engineering/framework-runtime-<lock_id[:12]>, and the venv's
   # base interpreter (exact CPython 3.12.13; the installer fails closed otherwise).
   local lock="$URA_ROOT/experiments/framework_runtime_lock.json" lock_id base_python base_version
+  local -a lock_rows frameworks
   # The lock is read with the venv interpreter: without the venv the real
   # cause is the missing deps phase, not an unreadable lock - say so.
   [ -x "$PY" ] || { echo "  [FAIL] runtimes-plan (venv missing: $PY - run distro/install.sh deps first)"; echo "FAIL runtimes-plan" >> "$SESSION_LEDGER"; return 1; }
-  lock_id=$("$PY" - "$lock" <<'PYEOF'
+  mapfile -t lock_rows < <("$PY" - "$lock" <<'PYEOF'
 import json, re, sys
-lock_id = json.load(open(sys.argv[1], encoding="utf-8")).get("lock_id")
+row = json.load(open(sys.argv[1], encoding="utf-8"))
+lock_id = row.get("lock_id")
 if not isinstance(lock_id, str) or not re.fullmatch(r"[0-9a-f]{64}", lock_id):
     raise SystemExit("framework_runtime_lock.json has no 64-hex lock_id")
+frameworks = row.get("frameworks")
+if not isinstance(frameworks, list) or len(frameworks) != 15:
+    raise SystemExit("framework_runtime_lock.json must contain exactly 15 frameworks")
+names = [entry.get("name") for entry in frameworks if isinstance(entry, dict)]
+if len(names) != 15 or len(set(names)) != 15:
+    raise SystemExit("framework runtime names must be 15 unique strings")
+if any(not isinstance(name, str) or not re.fullmatch(r"[a-z0-9][a-z0-9-]*", name) for name in names):
+    raise SystemExit("framework runtime name is unsafe")
 print(lock_id)
+print(*names, sep="\n")
 PYEOF
   ) || { echo "  [FAIL] runtimes-plan (cannot read $lock)"; echo "FAIL runtimes-plan" >> "$SESSION_LEDGER"; return 1; }
+  # A Windows-hosted regression shell receives CRLF from the helper Python;
+  # normalize the record boundary without changing any lock-derived name.
+  local row_index
+  for row_index in "${!lock_rows[@]}"; do
+    lock_rows[$row_index]=${lock_rows[$row_index]%$'\r'}
+  done
+  [ "${#lock_rows[@]}" -eq 16 ] \
+    || { echo "  [FAIL] runtimes-plan (lock did not yield 15 framework names)"; echo "FAIL runtimes-plan" >> "$SESSION_LEDGER"; return 1; }
+  lock_id=${lock_rows[0]}
+  frameworks=("${lock_rows[@]:1}")
   base_python=$("$PY" -c 'import sys; print(sys._base_executable)') \
     || { echo "  [FAIL] runtimes-plan (cannot derive the venv base interpreter)"; echo "FAIL runtimes-plan" >> "$SESSION_LEDGER"; return 1; }
   base_version=$("$base_python" -c 'import platform; print(platform.python_version())' 2>/dev/null || echo unknown)
@@ -793,25 +991,71 @@ PYEOF
   echo "  env-root $env_root"
   echo "  state-root $state_root"
   echo "  python $base_python ($base_version)"
-  ( cd "$URA_ROOT" && "$PY" -m experiments.framework_runtime_installer plan \
-      --lock "$lock" --env-root "$env_root" --state-root "$state_root" ) >> "$LOG/runtimes-plan.log" 2>&1 \
-    || echo "  [warn] runtimes plan failed (see $LOG/runtimes-plan.log)"
+  run_step runtimes-plan bash -c \
+    'cd "$1" && exec "$2" -m experiments.framework_runtime_installer plan --lock "$3" --env-root "$4" --state-root "$5"' \
+    _ "$URA_ROOT" "$PY" "$lock" "$env_root" "$state_root"
+  if ! grep -q '^OK' "$LOG/runtimes-plan.status" 2>/dev/null; then
+    echo "  runtimes not started because strict lock planning failed"
+    return 1
+  fi
   # `resume` is the safe universal entry point: it builds an absent store, repairs
   # an interrupted stage phase-by-phase, and re-verifies an already published
   # runtime. Fresh-only `install` would strand a staged store after an SSH or
   # host interruption even though the plan above correctly reports `resume`.
-  run_step runtimes-install runtimes_session resume "$lock" "$env_root" "$state_root" "$base_python"
-  if grep -q '^OK' "$LOG/runtimes-install.status" 2>/dev/null; then
-    run_step runtimes-verify runtimes_session verify "$lock" "$env_root" "$state_root" "$base_python"
-    grep -q '^OK' "$LOG/runtimes-verify.status" 2>/dev/null
+  # One framework per named session prevents one incompatible package set from
+  # terminating the global pass before the other independent stores are tried.
+  # Every successful resume is immediately verified; failures are retained per
+  # framework and the loop continues through the complete locked inventory.
+  local framework install_step verify_step install_failed=0 verify_failed=0
+  for framework in "${frameworks[@]}"; do
+    install_step="runtime-${framework}-install"
+    verify_step="runtime-${framework}-verify"
+    run_step "$install_step" runtimes_session resume "$lock" "$env_root" \
+      "$state_root" "$base_python" "$framework"
+    if grep -q '^OK' "$LOG/$install_step.status" 2>/dev/null; then
+      run_step "$verify_step" runtimes_session verify "$lock" "$env_root" \
+        "$state_root" "$base_python" "$framework"
+      grep -q '^OK' "$LOG/$verify_step.status" 2>/dev/null || verify_failed=1
+    else
+      install_failed=1
+      verify_failed=1
+      echo "FAIL:install" > "$LOG/$verify_step.status"
+      rm -f "$LOG/$verify_step.done"
+      echo "  [skip] $verify_step (that framework's resume failed; later frameworks continue)"
+    fi
+  done
+
+  {
+    for framework in "${frameworks[@]}"; do
+      printf '%s %s\n' "$framework" "$(sed -n '1p' "$LOG/runtime-${framework}-install.status")"
+    done
+  } > "$LOG/runtimes-install.log"
+  if [ "$install_failed" -eq 0 ]; then
+    echo OK > "$LOG/runtimes-install.status"; : > "$LOG/runtimes-install.done"
+    echo "  [ok]   runtimes-install (15/15 isolated rows)"
   else
-    echo "  runtimes-verify skipped (install/resume did not succeed; inspect the named-session log, then re-run this phase)"
-    return 1
+    echo FAIL:1 > "$LOG/runtimes-install.status"; rm -f "$LOG/runtimes-install.done"
+    echo "  [FAIL] runtimes-install aggregate (all 15 rows were attempted)"
   fi
+  {
+    for framework in "${frameworks[@]}"; do
+      printf '%s %s\n' "$framework" "$(sed -n '1p' "$LOG/runtime-${framework}-verify.status")"
+    done
+  } > "$LOG/runtimes-verify.log"
+  if [ "$verify_failed" -eq 0 ]; then
+    echo OK > "$LOG/runtimes-verify.status"; : > "$LOG/runtimes-verify.done"
+    echo "  [ok]   runtimes-verify (15/15 isolated rows)"
+  else
+    echo FAIL:1 > "$LOG/runtimes-verify.status"; rm -f "$LOG/runtimes-verify.done"
+    echo "  [FAIL] runtimes-verify aggregate (see per-row statuses)"
+  fi
+  [ "$install_failed" -eq 0 ] && [ "$verify_failed" -eq 0 ]
 }
 
 phase_console() {
-  echo "[console] launching the rig console in tmux session 'console' on :8642"
+  local launcher
+  if command -v tmux >/dev/null 2>&1; then launcher=tmux; else launcher=screen; fi
+  echo "[console] launching the rig console in $launcher session 'console' on :8642"
   # The launcher carries the FULL login environment (PATH incl ~/.local/bin for
   # ollama, CUDA/library paths, provider keys, campaign locators) - the same
   # contract as the rig's proven start_console.sh. Secrets precedence is the
@@ -834,8 +1078,13 @@ LAUNCH
   # Anchored '-m experiments.rig_web' invocation only (pkill -f patterns are
   # EREs; an unescaped '.' would also match experiments/rig_web_app/... paths).
   pkill -f -- '-m experiments\.rig_web( |$)' 2>/dev/null || true; sleep 1
-  tmux kill-session -t console 2>/dev/null || true
-  tmux new-session -d -s console "$(printf '%q' "$URA_DATA/console-launch.sh")"
+  if [ "$launcher" = tmux ]; then
+    tmux kill-session -t console 2>/dev/null || true
+    tmux new-session -d -s console "$(printf '%q' "$URA_DATA/console-launch.sh")"
+  else
+    screen -S console -X quit 2>/dev/null || true
+    screen -DmS console "$URA_DATA/console-launch.sh"
+  fi
   sleep 3
   curl -s -o /dev/null -w "  console http %{http_code}\n" http://127.0.0.1:8642/ || true
 }

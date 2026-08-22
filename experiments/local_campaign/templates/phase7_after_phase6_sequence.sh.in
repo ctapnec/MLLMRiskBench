@@ -339,6 +339,12 @@ CORE_CANDIDATE_LANES = {
     "gptgeochat-qwen3-vl", "gptgeochat-llava-base", "gptgeochat-llava-rr",
     "crescendo-qwen3-vl", "defense-local",
 }
+RR_RUNTIME_TERMINAL_LANES = {
+    "local-llava-rr-text-full",
+    "local-llava-rr-image-full",
+    "rjudge-llava-rr",
+    "gptgeochat-llava-rr",
+}
 
 def require_phase6_inventory_profile(
     gate5: object,
@@ -346,21 +352,27 @@ def require_phase6_inventory_profile(
     sequence_conditional: object,
     core_states: object,
     label: str,
-) -> tuple[int, int, list[str]]:
+) -> tuple[int, int, int, list[str]]:
     if not isinstance(gate5, dict):
         raise SystemExit(f"{label} Gate 5 profile is not an object")
     runnable = gate5.get("runnable_lanes")
     terminal = gate5.get("typed_terminal_lanes")
+    target_runtime = gate5.get("target_runtime_terminal")
     gate_conditional = gate5.get("conditional_na_lanes")
     if (
         type(runnable) is not int
         or type(terminal) is not int
+        or type(target_runtime) is not int
         or not isinstance(gate_conditional, list)
-        or (runnable, terminal, gate_conditional)
-        not in ((26, 20, []), (25, 21, ["defense-local"]))
+        or (runnable, terminal, target_runtime, gate_conditional)
+        not in ((22, 24, 4, []), (21, 25, 4, ["defense-local"]))
     ):
         raise SystemExit(f"{label} Gate 5 inventory profile changed")
-    expected_core = CORE_CANDIDATE_LANES - set(gate_conditional)
+    expected_core = (
+        CORE_CANDIDATE_LANES
+        - RR_RUNTIME_TERMINAL_LANES
+        - set(gate_conditional)
+    )
     if (
         not isinstance(sequence_conditional, list)
         or sequence_conditional != gate_conditional
@@ -368,23 +380,28 @@ def require_phase6_inventory_profile(
         or set(core_states) != expected_core
     ):
         raise SystemExit(f"{label} conditional and core inventories differ")
-    return runnable, terminal, list(gate_conditional)
+    return runnable, terminal, target_runtime, list(gate_conditional)
 
 def phase6_inventory_profile_self_test() -> None:
-    complete = {lane: "measured_complete" for lane in CORE_CANDIDATE_LANES}
+    complete = {
+        lane: "measured_complete"
+        for lane in CORE_CANDIDATE_LANES - RR_RUNTIME_TERMINAL_LANES
+    }
     conditional = {
         lane: "measured_complete"
         for lane in CORE_CANDIDATE_LANES
-        if lane != "defense-local"
+        if lane not in RR_RUNTIME_TERMINAL_LANES and lane != "defense-local"
     }
     success_profile = {
-        "runnable_lanes": 26,
-        "typed_terminal_lanes": 20,
+        "runnable_lanes": 22,
+        "typed_terminal_lanes": 24,
+        "target_runtime_terminal": 4,
         "conditional_na_lanes": [],
     }
     conditional_profile = {
-        "runnable_lanes": 25,
-        "typed_terminal_lanes": 21,
+        "runnable_lanes": 21,
+        "typed_terminal_lanes": 25,
+        "target_runtime_terminal": 4,
         "conditional_na_lanes": ["defense-local"],
     }
     require_phase6_inventory_profile(
@@ -404,7 +421,7 @@ def phase6_inventory_profile_self_test() -> None:
         (conditional_profile, [], conditional),
         (conditional_profile, ["defense-local"], complete),
         (
-            {**success_profile, "runnable_lanes": 25},
+            {**success_profile, "runnable_lanes": 21},
             [],
             complete,
         ),
@@ -574,6 +591,7 @@ gate5_descriptor_fields = {
 gate5_profile_fields = {
     "runnable_lanes",
     "typed_terminal_lanes",
+    "target_runtime_terminal",
     "conditional_na_lanes",
 }
 if (
@@ -635,7 +653,7 @@ from ura.strict_json import strict_json_loads
 # BEGIN_PHASE7_PREPARATION_PROFILE_CONTRACT
 def require_preparation_profile(
     result: object, manifest: object, *, label: str
-) -> tuple[int, int, list[str], list[str]]:
+) -> tuple[int, int, int, list[str], list[str]]:
     if not isinstance(result, dict) or not isinstance(manifest, dict):
         raise SystemExit(f"{label} is not an object")
     gate5 = manifest.get("gate5")
@@ -649,6 +667,7 @@ def require_preparation_profile(
         raise SystemExit(f"{label} manifest profile is incomplete")
     runnable = gate5.get("runnable_lane_count")
     terminal = gate5.get("terminal_lane_count")
+    target_runtime = gate5.get("target_runtime_terminal")
     conditional = gate5.get("conditional_na_lanes")
     lifecycle = runner.get("lifecycle_lane_order")
     metric = runner.get("metric_lane_order")
@@ -656,9 +675,10 @@ def require_preparation_profile(
     if (
         type(runnable) is not int
         or type(terminal) is not int
+        or type(target_runtime) is not int
         or not isinstance(conditional, list)
-        or (runnable, terminal, conditional)
-        not in ((26, 20, []), (25, 21, ["defense-local"]))
+        or (runnable, terminal, target_runtime, conditional)
+        not in ((22, 24, 4, []), (21, 25, 4, ["defense-local"]))
         or gate5.get("lane_count") != 46
         or not isinstance(lifecycle, list)
         or len(lifecycle) != runnable
@@ -681,7 +701,7 @@ def require_preparation_profile(
         or result.get("metric_runner_lanes") != len(measured)
     ):
         raise SystemExit(f"{label} metric lanes differ from successful measured lanes")
-    return runnable, terminal, list(conditional), measured
+    return runnable, terminal, target_runtime, list(conditional), measured
 # END_PHASE7_PREPARATION_PROFILE_CONTRACT
 
 result_path = Path(sys.argv[1]).resolve(strict=True)

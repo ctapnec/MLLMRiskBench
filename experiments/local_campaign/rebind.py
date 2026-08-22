@@ -14,15 +14,26 @@ from .generate import (
     EXTERNAL_BINDINGS,
     LEGACY_A05_EXTERNAL_BINDINGS,
     PHASE3_BINDINGS_ADDED_AFTER_A05,
+    PRE_RR_EXTERNAL_BINDINGS,
+    RR_EVIDENCE_BINDINGS_ADDED_AFTER_5719,
     ControllerGenerationError,
     validate_binding_document,
 )
 
 
 NAME = re.compile(r"[A-Z][A-Z0-9_]*")
+MIGRATION_REVISION_BINDINGS = frozenset({
+    "EXPECTED_COMMIT",
+    "PROJECT_RECEIPT_PATH",
+    "PROJECT_RECEIPT_SHA256",
+    "PROJECT_RECEIPT_BYTES",
+})
 LEGACY_A05_REQUIRED_REPLACEMENTS = PHASE3_BINDINGS_ADDED_AFTER_A05 | {
     "CONTROLLER_INSTALL_ROOT"
-}
+} | RR_EVIDENCE_BINDINGS_ADDED_AFTER_5719 | MIGRATION_REVISION_BINDINGS
+PRE_RR_REQUIRED_REPLACEMENTS = (
+    RR_EVIDENCE_BINDINGS_ADDED_AFTER_5719 | MIGRATION_REVISION_BINDINGS
+)
 
 
 def _assignment(value: str) -> tuple[str, str]:
@@ -66,21 +77,30 @@ def main(argv: Sequence[str] | None = None) -> int:
         base_keys = set(raw["values"])
         if base_keys == EXTERNAL_BINDINGS:
             values = validate_binding_document(raw)
-            legacy_a05 = False
+            required_migration_replacements: frozenset[str] = frozenset()
+            migration_label = ""
+        elif base_keys == PRE_RR_EXTERNAL_BINDINGS:
+            values = validate_binding_document(
+                raw,
+                expected_keys=PRE_RR_EXTERNAL_BINDINGS,
+            )
+            required_migration_replacements = PRE_RR_REQUIRED_REPLACEMENTS
+            migration_label = "pre-RR migration"
         elif base_keys == LEGACY_A05_EXTERNAL_BINDINGS:
             values = validate_binding_document(
                 raw,
                 expected_keys=LEGACY_A05_EXTERNAL_BINDINGS,
             )
             values.pop("PHASE3_GPU_INVENTORY_SHA256")
-            legacy_a05 = True
+            required_migration_replacements = LEGACY_A05_REQUIRED_REPLACEMENTS
+            migration_label = "legacy a05 migration"
         else:
             allowed = EXTERNAL_BINDINGS | {"PHASE3_GPU_INVENTORY_SHA256"}
             unknown = sorted(base_keys - allowed)
             missing_current = sorted(EXTERNAL_BINDINGS - base_keys)
             raise ControllerGenerationError(
                 "base binding key inventory is neither current nor the exact "
-                "legacy a05 inventory: "
+                "pre-RR or legacy a05 inventory: "
                 f"missing_current={missing_current}, unknown={unknown}"
             )
     except (OSError, UnicodeError, json.JSONDecodeError, ControllerGenerationError) as exc:
@@ -105,14 +125,14 @@ def main(argv: Sequence[str] | None = None) -> int:
         replacements[name] = value
     if not replacements:
         raise SystemExit("at least one binding replacement is required")
-    if legacy_a05:
-        explicitly_added = set(replacements) & LEGACY_A05_REQUIRED_REPLACEMENTS
+    if required_migration_replacements:
+        explicitly_added = set(replacements) & required_migration_replacements
         missing_migration = sorted(
-            LEGACY_A05_REQUIRED_REPLACEMENTS - explicitly_added
+            required_migration_replacements - explicitly_added
         )
         if missing_migration:
             raise SystemExit(
-                "legacy a05 migration requires an explicit --set for every new "
+                f"{migration_label} requires an explicit replacement for every new "
                 f"or changed controller binding: {missing_migration}"
             )
     values.update(replacements)
