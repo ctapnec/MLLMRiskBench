@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 from pathlib import Path
 import subprocess
@@ -274,6 +275,197 @@ def test_a_new_commit_is_a_binding_not_a_source_edit(tmp_path: Path) -> None:
     assert b"1" * 40 in first_bytes
     assert b"3" * 40 in second_bytes
     assert first_bytes != second_bytes
+
+
+def test_phase6_gate5_launch_identity_uses_the_rendered_commit(
+    tmp_path: Path,
+) -> None:
+    bindings = _bindings(tmp_path / "bindings.json", "3" * 40)
+    output = tmp_path / "workspace"
+    render_controller_set(bindings, output)
+    phase6 = (output / "phase6_sequence.sh").read_text(encoding="utf-8")
+
+    expected_identity = "ura-gate5-after-phase5-3333333"
+    assert f"GATE5_SESSION='{expected_identity}'" in phase6
+    assert f"GATE5_SOCKET='{expected_identity}'" in phase6
+    assert phase6.count('"session": gate5_session') == 2
+    assert phase6.count('"socket": gate5_socket') == 2
+    assert '"$AUTHORIZED_SEQUENCE_SHA256" "$GATE5_SESSION" "$GATE5_SOCKET"' in phase6
+    assert "ura-gate5-after-phase5-a0ce1f9" not in phase6
+
+
+def test_phase7_completion_identity_uses_the_rendered_payload(
+    tmp_path: Path,
+) -> None:
+    bindings = _bindings(tmp_path / "bindings.json", "3" * 40)
+    output = tmp_path / "workspace"
+    render_controller_set(bindings, output)
+    watcher = (output / "phase7_after_phase6_sequence.sh").read_text(
+        encoding="utf-8"
+    )
+    payload_sha = hashlib.sha256(
+        (output / "phase7_analysis.py").read_bytes()
+    ).hexdigest()
+
+    assert f"PAYLOAD_SHA256='{payload_sha}'" in watcher
+    assert '"$EXPECTED_FRAMEWORK_LOCK" "$PAYLOAD_SHA256"' in watcher
+    assert 'completion["payload"]["sha256"] != payload_sha' in watcher
+    assert (
+        "4ef7105dcc92cbaa2c3f3fe67b03ca631894c87afd1cce80ca4d1c57fbc2c57e"
+        not in watcher
+    )
+
+
+def test_phase7_watcher_cross_checks_phase6_inventory_profiles() -> None:
+    template = (
+        Path(__file__).parents[2]
+        / "experiments"
+        / "local_campaign"
+        / "templates"
+        / "phase7_after_phase6_sequence.sh.in"
+    ).read_text(encoding="utf-8")
+    begin = "# BEGIN_PHASE6_COMPLETION_PROFILE_CONTRACT\n"
+    end = "# END_PHASE6_COMPLETION_PROFILE_CONTRACT\n"
+    contract = template.split(begin, 1)[1].split(end, 1)[0]
+    namespace: dict[str, object] = {}
+    exec(compile(contract, "<phase6-completion-profile>", "exec"), namespace)
+
+    self_test = namespace["phase6_inventory_profile_self_test"]
+    assert callable(self_test)
+    self_test()
+    require_profile = namespace["require_phase6_inventory_profile"]
+    candidate_lanes = namespace["CORE_CANDIDATE_LANES"]
+    assert callable(require_profile)
+    assert isinstance(candidate_lanes, set)
+    complete = {lane: "measured_complete" for lane in candidate_lanes}
+    conditional = {
+        lane: "measured_complete"
+        for lane in candidate_lanes
+        if lane != "defense-local"
+    }
+
+    assert require_profile(
+        {
+            "runnable_lanes": 26,
+            "typed_terminal_lanes": 20,
+            "conditional_na_lanes": [],
+        },
+        sequence_conditional=[],
+        core_states=complete,
+        label="test-success",
+    ) == (26, 20, [])
+    assert require_profile(
+        {
+            "runnable_lanes": 25,
+            "typed_terminal_lanes": 21,
+            "conditional_na_lanes": ["defense-local"],
+        },
+        sequence_conditional=["defense-local"],
+        core_states=conditional,
+        label="test-conditional",
+    ) == (25, 21, ["defense-local"])
+    with pytest.raises(SystemExit, match="conditional and core inventories differ"):
+        require_profile(
+            {
+                "runnable_lanes": 25,
+                "typed_terminal_lanes": 21,
+                "conditional_na_lanes": ["defense-local"],
+            },
+            sequence_conditional=[],
+            core_states=conditional,
+            label="test-mismatch",
+        )
+
+    completion_fields = template.split(
+        "value = strict_json_loads(completion_path.read_bytes())", 1
+    )[1].split("if (", 1)[0]
+    assert '"conditional_na_lanes",' in completion_fields
+    assert "gate5_descriptor_fields | gate5_profile_fields" in template
+    assert "for field in sorted(gate5_descriptor_fields)" in template
+    assert 'sequence_conditional=value.get("conditional_na_lanes")' in template
+    assert 'core_states=inventories.get("core")' in template
+
+
+def test_phase7_watcher_cross_checks_preparation_metric_profiles() -> None:
+    template = (
+        Path(__file__).parents[2]
+        / "experiments"
+        / "local_campaign"
+        / "templates"
+        / "phase7_after_phase6_sequence.sh.in"
+    ).read_text(encoding="utf-8")
+    begin = "# BEGIN_PHASE7_PREPARATION_PROFILE_CONTRACT\n"
+    end = "# END_PHASE7_PREPARATION_PROFILE_CONTRACT\n"
+    contract = template.split(begin, 1)[1].split(end, 1)[0]
+    namespace: dict[str, object] = {}
+    exec(compile(contract, "<phase7-preparation-profile>", "exec"), namespace)
+    require_profile = namespace["require_preparation_profile"]
+    assert callable(require_profile)
+
+    def profile(
+        runnable: int, terminal: int, conditional: list[str]
+    ) -> tuple[dict[str, object], dict[str, object]]:
+        lifecycle = [f"lane-{index}" for index in range(runnable)]
+        if conditional:
+            assert conditional == ["defense-local"]
+        else:
+            lifecycle[-1] = "defense-local"
+        states = {lane: "measured_complete" for lane in lifecycle}
+        states[lifecycle[0]] = "failed"
+        measured = lifecycle[1:]
+        result = {
+            "runner_lanes": runnable,
+            "metric_runner_lanes": len(measured),
+        }
+        manifest = {
+            "gate5": {
+                "lane_count": 46,
+                "runnable_lane_count": runnable,
+                "terminal_lane_count": terminal,
+                "conditional_na_lanes": conditional,
+            },
+            "phase6": {"runner_lane_count": runnable},
+            "runner": {
+                "lifecycle_lane_order": lifecycle,
+                "metric_lane_order": measured,
+                "terminal_states": states,
+                "conditional_na_lanes": conditional,
+            },
+        }
+        return result, manifest
+
+    success_result, success_manifest = profile(26, 20, [])
+    assert require_profile(
+        success_result, success_manifest, label="test-success"
+    )[:3] == (26, 20, [])
+    conditional_result, conditional_manifest = profile(
+        25, 21, ["defense-local"]
+    )
+    assert require_profile(
+        conditional_result, conditional_manifest, label="test-conditional"
+    )[:3] == (25, 21, ["defense-local"])
+
+    stale_runner_count = {**conditional_result, "runner_lanes": 26}
+    with pytest.raises(SystemExit, match="metric lanes differ"):
+        require_profile(
+            stale_runner_count, conditional_manifest, label="test-stale-count"
+        )
+    stale_metric_count = {
+        **conditional_result,
+        "metric_runner_lanes": conditional_result["metric_runner_lanes"] + 1,
+    }
+    with pytest.raises(SystemExit, match="metric lanes differ"):
+        require_profile(
+            stale_metric_count, conditional_manifest, label="test-stale-metric"
+        )
+
+    preparation_fields = template.split(
+        "result = strict_json_loads(result_path.read_bytes())", 1
+    )[1].split("payload = input_path.read_bytes()", 1)[0]
+    assert '"metric_runner_lanes",' in preparation_fields
+    assert 'result.get("runner_lanes") != runnable' in template
+    assert 'result.get("metric_runner_lanes") != len(measured)' in template
+    assert 'result.get("runner_lanes") != 26' not in template
 
 
 def test_packager_and_installer_are_versioned_and_reproducible(tmp_path: Path) -> None:

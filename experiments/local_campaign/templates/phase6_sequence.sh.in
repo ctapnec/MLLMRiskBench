@@ -978,7 +978,7 @@ SEQUENCE_RC="$(
     "$NATIVE_PLAN" "$NATIVE_PLAN_RESULT" "$SEQUENCE" "$PHASE7" \
     "$CORE" "$EXTENDED" "$NATIVE" "$SELF_TEST" \
     "$EXPECTED_COMMIT" "$EXPECTED_FRAMEWORK_LOCK" \
-    "$AUTHORIZED_SEQUENCE_SHA256" <<'PY'
+    "$AUTHORIZED_SEQUENCE_SHA256" "$GATE5_SESSION" "$GATE5_SOCKET" <<'PY'
 from datetime import datetime, timezone
 import csv
 import hashlib
@@ -1007,6 +1007,8 @@ import sys
     commit,
     lock,
     authorized_sequence_sha,
+    gate5_session,
+    gate5_socket,
 ) = sys.argv[1:]
 
 control = Path(control_value)
@@ -1359,8 +1361,8 @@ if (
     or launch.get("gate5_wait")
     != {
         "control_root": str(Path(gate5_completion_value).parent),
-        "session": "ura-gate5-after-phase5-a0ce1f9",
-        "socket": "ura-gate5-after-phase5-a0ce1f9",
+        "session": gate5_session,
+        "socket": gate5_socket,
     }
     or launch.get("controller_order") != ["core", "extended", "native"]
     or launch.get("long_running_children_use_tmux") is not True

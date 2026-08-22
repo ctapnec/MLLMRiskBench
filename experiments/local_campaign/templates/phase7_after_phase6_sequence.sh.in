@@ -330,6 +330,104 @@ def descriptor_file(raw: object, label: str) -> Path:
         raise SystemExit(f"{label} descriptor bytes changed")
     return path
 
+# BEGIN_PHASE6_COMPLETION_PROFILE_CONTRACT
+CORE_CANDIDATE_LANES = {
+    "local-qwen3-vl-text-full", "local-qwen3-vl-image-full",
+    "local-llava-base-text-full", "local-llava-base-image-full",
+    "local-llava-rr-text-full", "local-llava-rr-image-full",
+    "rjudge-qwen3-vl", "rjudge-llava-base", "rjudge-llava-rr",
+    "gptgeochat-qwen3-vl", "gptgeochat-llava-base", "gptgeochat-llava-rr",
+    "crescendo-qwen3-vl", "defense-local",
+}
+
+def require_phase6_inventory_profile(
+    gate5: object,
+    *,
+    sequence_conditional: object,
+    core_states: object,
+    label: str,
+) -> tuple[int, int, list[str]]:
+    if not isinstance(gate5, dict):
+        raise SystemExit(f"{label} Gate 5 profile is not an object")
+    runnable = gate5.get("runnable_lanes")
+    terminal = gate5.get("typed_terminal_lanes")
+    gate_conditional = gate5.get("conditional_na_lanes")
+    if (
+        type(runnable) is not int
+        or type(terminal) is not int
+        or not isinstance(gate_conditional, list)
+        or (runnable, terminal, gate_conditional)
+        not in ((26, 20, []), (25, 21, ["defense-local"]))
+    ):
+        raise SystemExit(f"{label} Gate 5 inventory profile changed")
+    expected_core = CORE_CANDIDATE_LANES - set(gate_conditional)
+    if (
+        not isinstance(sequence_conditional, list)
+        or sequence_conditional != gate_conditional
+        or not isinstance(core_states, dict)
+        or set(core_states) != expected_core
+    ):
+        raise SystemExit(f"{label} conditional and core inventories differ")
+    return runnable, terminal, list(gate_conditional)
+
+def phase6_inventory_profile_self_test() -> None:
+    complete = {lane: "measured_complete" for lane in CORE_CANDIDATE_LANES}
+    conditional = {
+        lane: "measured_complete"
+        for lane in CORE_CANDIDATE_LANES
+        if lane != "defense-local"
+    }
+    success_profile = {
+        "runnable_lanes": 26,
+        "typed_terminal_lanes": 20,
+        "conditional_na_lanes": [],
+    }
+    conditional_profile = {
+        "runnable_lanes": 25,
+        "typed_terminal_lanes": 21,
+        "conditional_na_lanes": ["defense-local"],
+    }
+    require_phase6_inventory_profile(
+        success_profile,
+        sequence_conditional=[],
+        core_states=complete,
+        label="self-test-success",
+    )
+    require_phase6_inventory_profile(
+        conditional_profile,
+        sequence_conditional=["defense-local"],
+        core_states=conditional,
+        label="self-test-conditional",
+    )
+    mutations = (
+        (success_profile, ["defense-local"], complete),
+        (conditional_profile, [], conditional),
+        (conditional_profile, ["defense-local"], complete),
+        (
+            {**success_profile, "runnable_lanes": 25},
+            [],
+            complete,
+        ),
+    )
+    for index, (gate5, sequence_conditional, core_states) in enumerate(
+        mutations, 1
+    ):
+        try:
+            require_phase6_inventory_profile(
+                gate5,
+                sequence_conditional=sequence_conditional,
+                core_states=core_states,
+                label=f"self-test-mutation-{index}",
+            )
+        except SystemExit:
+            continue
+        raise SystemExit(
+            f"Phase 6 inventory-profile mutation {index} was accepted"
+        )
+# END_PHASE6_COMPLETION_PROFILE_CONTRACT
+
+phase6_inventory_profile_self_test()
+
 root = Path(root_value)
 if (
     not root.is_absolute()
@@ -363,6 +461,7 @@ expected_fields = {
     "successful_controller_evidence",
     "failed_controller_terminals",
     "failed_controller_receipts_are_evidence",
+    "conditional_na_lanes",
     "children",
     "sequence_launch",
     "sequence_script",
@@ -463,7 +562,7 @@ for kind in ("core", "extended", "native"):
     if partition.get(kind) != child["completion"]:
         raise SystemExit(f"Phase 6 {kind} evidence partition changed")
 gate5 = value.get("gate5")
-if not isinstance(gate5, dict) or set(gate5) != {
+gate5_descriptor_fields = {
     "sequence_completion",
     "sequence_exit",
     "initial_validation",
@@ -471,12 +570,27 @@ if not isinstance(gate5, dict) or set(gate5) != {
     "covered_manifest",
     "canonical_runnote",
     "promotion_receipt",
-}:
+}
+gate5_profile_fields = {
+    "runnable_lanes",
+    "typed_terminal_lanes",
+    "conditional_na_lanes",
+}
+if (
+    not isinstance(gate5, dict)
+    or set(gate5) != gate5_descriptor_fields | gate5_profile_fields
+):
     raise SystemExit("Phase 6 Gate 5 binding changed")
 resolved_gate5 = {
     field: descriptor_file(gate5[field], f"Phase 6 Gate 5 {field}")
-    for field in gate5
+    for field in sorted(gate5_descriptor_fields)
 }
+require_phase6_inventory_profile(
+    gate5,
+    sequence_conditional=value.get("conditional_na_lanes"),
+    core_states=inventories.get("core"),
+    label="Phase 6 completion",
+)
 if resolved_gate5["sequence_exit"].read_bytes() != b"0\n":
     raise SystemExit("Phase 6 Gate 5 input did not exit zero")
 for item in (
@@ -518,6 +632,58 @@ import re
 import sys
 from ura.strict_json import strict_json_loads
 
+# BEGIN_PHASE7_PREPARATION_PROFILE_CONTRACT
+def require_preparation_profile(
+    result: object, manifest: object, *, label: str
+) -> tuple[int, int, list[str], list[str]]:
+    if not isinstance(result, dict) or not isinstance(manifest, dict):
+        raise SystemExit(f"{label} is not an object")
+    gate5 = manifest.get("gate5")
+    phase6 = manifest.get("phase6")
+    runner = manifest.get("runner")
+    if (
+        not isinstance(gate5, dict)
+        or not isinstance(phase6, dict)
+        or not isinstance(runner, dict)
+    ):
+        raise SystemExit(f"{label} manifest profile is incomplete")
+    runnable = gate5.get("runnable_lane_count")
+    terminal = gate5.get("terminal_lane_count")
+    conditional = gate5.get("conditional_na_lanes")
+    lifecycle = runner.get("lifecycle_lane_order")
+    metric = runner.get("metric_lane_order")
+    states = runner.get("terminal_states")
+    if (
+        type(runnable) is not int
+        or type(terminal) is not int
+        or not isinstance(conditional, list)
+        or (runnable, terminal, conditional)
+        not in ((26, 20, []), (25, 21, ["defense-local"]))
+        or gate5.get("lane_count") != 46
+        or not isinstance(lifecycle, list)
+        or len(lifecycle) != runnable
+        or len(set(lifecycle)) != len(lifecycle)
+        or ("defense-local" in lifecycle) != (not conditional)
+        or runner.get("conditional_na_lanes") != conditional
+        or phase6.get("runner_lane_count") != runnable
+        or not isinstance(states, dict)
+        or set(states) != set(lifecycle)
+        or set(states.values()) - {"measured_complete", "failed"}
+    ):
+        raise SystemExit(f"{label} lifecycle profile differs from Gate 5")
+    measured = [
+        lane for lane in lifecycle if states.get(lane) == "measured_complete"
+    ]
+    if (
+        not measured
+        or metric != measured
+        or result.get("runner_lanes") != runnable
+        or result.get("metric_runner_lanes") != len(measured)
+    ):
+        raise SystemExit(f"{label} metric lanes differ from successful measured lanes")
+    return runnable, terminal, list(conditional), measured
+# END_PHASE7_PREPARATION_PROFILE_CONTRACT
+
 result_path = Path(sys.argv[1]).resolve(strict=True)
 input_path = Path(sys.argv[2]).resolve(strict=True)
 payload_path = Path(sys.argv[3]).resolve(strict=True)
@@ -532,6 +698,7 @@ expected_fields = {
     "bytes",
     "bound_artifacts",
     "runner_lanes",
+    "metric_runner_lanes",
     "native_outcomes",
     "authorization_required_before_launch",
 }
@@ -549,13 +716,14 @@ if (
     or type(result.get("bound_artifacts")) is not int
     or result.get("bound_artifacts", 0) <= 0
     or type(result.get("runner_lanes")) is not int
-    or result.get("runner_lanes") != 26
+    or type(result.get("metric_runner_lanes")) is not int
     or not isinstance(result.get("native_outcomes"), dict)
     or result.get("authorization_required_before_launch") is not True
     or re.fullmatch(r"[0-9a-f]{64}", digest) is None
 ):
     raise SystemExit("Phase 7 preparation result changed")
 manifest = strict_json_loads(payload)
+require_preparation_profile(result, manifest, label="Phase 7 preparation")
 controller = manifest.get("controller_payload") if isinstance(manifest, dict) else None
 payload_bytes = payload_path.read_bytes()
 expected_controller = {
@@ -675,7 +843,7 @@ verify_regular "$PAYLOAD" "$PAYLOAD_SHA256" "$PAYLOAD_BYTES"
   "$PHASE6_ROOT/.exit" "$PREPARE_RESULT" "$INPUT_MANIFEST" "$INPUT_SHA" \
   "$PHASE7_LAUNCH_OUTPUT" "$PHASE7_CONTROL" "$ANALYSIS_ROOT" \
   "$PHASE7_COMPLETION" "$PHASE7_EXIT" "$WATCHER" "$WRAPPER" "$PAYLOAD" \
-  "$EXPECTED_COMMIT" "$EXPECTED_FRAMEWORK_LOCK" <<'PY'
+  "$EXPECTED_COMMIT" "$EXPECTED_FRAMEWORK_LOCK" "$PAYLOAD_SHA256" <<'PY'
 from datetime import datetime, timezone
 import hashlib
 import json
@@ -702,6 +870,7 @@ from ura.strict_json import strict_json_loads
     payload_value,
     commit,
     lock,
+    payload_sha,
 ) = sys.argv[1:]
 
 def checked_file(raw: str, label: str) -> Path:
@@ -809,8 +978,7 @@ runner_view_path = descriptor_file(
 )
 if (
     hashlib.sha256(input_path.read_bytes()).hexdigest() != input_sha
-    or completion["payload"]["sha256"]
-    != "4ef7105dcc92cbaa2c3f3fe67b03ca631894c87afd1cce80ca4d1c57fbc2c57e"
+    or completion["payload"]["sha256"] != payload_sha
 ):
     raise SystemExit("Phase 7 authorized input or payload changed")
 inventory = strict_json_loads(inventory_path.read_bytes())
