@@ -41,7 +41,7 @@ def test_repin_cleans_only_an_owned_real_pytest_temp_root() -> None:
         encoding="utf-8"
     )
     assert "flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW" in helper
-    assert "with os.scandir(os.dup(descriptor)) as entries:" in helper
+    assert "children = os.listdir(descriptor)" in helper
     assert "os.fchmod(descriptor," in helper
     assert "os.chmod(" not in helper
     assert "shutil.rmtree.avoids_symlink_attacks" in helper

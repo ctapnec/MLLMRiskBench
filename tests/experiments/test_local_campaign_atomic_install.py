@@ -99,6 +99,26 @@ def test_fd_safe_pytest_cleanup_refuses_a_wrong_or_symlinked_root(tmp_path: Path
     assert outside.is_dir()
 
 
+@pytest.mark.skipif(os.name != "posix", reason="fd accounting is POSIX-specific")
+def test_permission_repair_does_not_leak_directory_descriptors(tmp_path: Path) -> None:
+    descriptors = Path("/proc/self/fd")
+    if not descriptors.is_dir():
+        pytest.skip("process descriptor inventory is unavailable")
+    root = tmp_path / "wide-immutable-fixture"
+    for index in range(192):
+        directory = root / f"generation-{index:03d}"
+        directory.mkdir(parents=True)
+        (directory / "controller.sh").write_text("fixture", encoding="utf-8")
+        directory.chmod(0o500)
+    root.chmod(0o500)
+    before = len(os.listdir(descriptors))
+
+    make_directories_user_cleanable(root)
+
+    after = len(os.listdir(descriptors))
+    assert after <= before + 2
+
+
 def _posix_path(path: Path) -> str:
     resolved = Path(os.path.abspath(path))
     if os.name != "nt":

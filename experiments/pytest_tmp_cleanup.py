@@ -57,10 +57,9 @@ def make_directories_user_cleanable(root: Path, *, expected_uid: int | None = No
                 f"uid {metadata.st_uid}, expected {expected_uid}"
             )
         os.fchmod(descriptor, stat.S_IMODE(metadata.st_mode) | stat.S_IRWXU)
-        # scandir owns and closes an integer fd, so give it a duplicate and
-        # retain the original descriptor for the following openat operations.
-        with os.scandir(os.dup(descriptor)) as entries:
-            children = [entry.name for entry in entries]
+        # listdir accepts a directory fd without taking ownership of it. Keep
+        # that descriptor live for every following openat operation.
+        children = os.listdir(descriptor)
         for name in children:
             try:
                 child = os.open(name, flags, dir_fd=descriptor)
