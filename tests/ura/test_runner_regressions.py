@@ -1488,6 +1488,65 @@ def test_local_probe_receipt_admits_measured_run_and_level1(
     assert level1["counts"]["planning_strata"]["attested"] > 0
 
 
+def test_defended_local_preflight_binds_base_model_not_guard_wrapper(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    project_revision_args,
+) -> None:
+    """The defense wrapper is a run condition, not a Hub revision suffix."""
+
+    revision = "a" * 40
+    requested_spec = "vllm:fixture/defended-local"
+    resolved_target = f"{requested_spec}@{revision}"
+    local_config_path = tmp_path / "defended-local-target.json"
+    local_config_path.write_text(json.dumps({requested_spec: {
+        "revision": revision,
+        "modalities": ["text"],
+        "tensor_parallel_size": 1,
+        "gpu_memory_utilization": 0.5,
+        "max_tokens": 64,
+    }}), encoding="utf-8")
+
+    # The real local engine is unnecessary for a no-call preflight, but its
+    # resolved immutable name must still flow through the full matrix builder.
+    base_target = MockTarget(resolved_target)
+    monkeypatch.setattr(run_matrix, "build_target", lambda *_a, **_kw: base_target)
+    out = tmp_path / "defended-local-preflight"
+    args = [
+        "--preflight-only",
+        "--local", requested_spec,
+        "--local-config", str(local_config_path),
+        "--attackers", "replay", "--judges", "rules",
+        "--defense", "both", "--defense-guard", "rules",
+        "--corpora", "synth", "--limit", "1",
+        "--max-queries", "1", "--max-turns", "1",
+        *_finite_budget_args(),
+        *project_revision_args,
+        "--out", str(out),
+    ]
+    acquisition = _sealed_model_acquisition_args(
+        tmp_path / "defended-local-acquisition", args
+    )
+
+    assert run_matrix.main([*args, *acquisition]) == 0
+    assert list(out.glob("*.request.error.json")) == []
+    eligibility = json.loads(next(out.glob("*.eligibility.json")).read_text(
+        encoding="utf-8"
+    ))
+    conditions = eligibility["bindings"]["experiment_conditions"]["values"]
+    assert conditions["defense"] == "both"
+    retained_plan = json.loads(next((out / "model-acquisition").glob(
+        "*.plan.json"
+    )).read_text(encoding="utf-8"))
+    assert retained_plan["resources"] == [{
+        "file_policy": "complete_repository_snapshot",
+        "repo_id": "fixture/defended-local",
+        "resource_id": retained_plan["resources"][0]["resource_id"],
+        "revision": revision,
+        "roles": ["vllm_target"],
+    }]
+
+
 @pytest.mark.parametrize(
     "value",
     ["2026-08-12T10:00:00", "2026-08-12T13:00:00+03:00", " padded "],
