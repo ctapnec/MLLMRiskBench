@@ -1,11 +1,13 @@
 from __future__ import annotations
 
+from collections.abc import Iterator
 from dataclasses import dataclass
 import hashlib
 import json
 import os
 from pathlib import Path
 import shutil
+import stat
 import subprocess
 
 import pytest
@@ -16,10 +18,85 @@ from experiments.local_campaign.generate import (
     package_controller_set,
     render_controller_set,
 )
+from experiments.pytest_tmp_cleanup import (
+    CleanupRefusal,
+    clean_owned_pytest_tmp_root,
+    make_directories_user_cleanable,
+)
 
 
 ROOT = Path(__file__).parents[2]
 TEMPLATES = ROOT / "experiments" / "local_campaign" / "templates"
+
+
+@pytest.fixture(autouse=True)
+def _make_retained_pytest_artifacts_user_cleanable(tmp_path: Path) -> Iterator[None]:
+    """pytest keeps failed tmp trees; leave immutable-install fixtures removable."""
+    yield
+    if os.name == "posix" and tmp_path.exists() and not tmp_path.is_symlink():
+        make_directories_user_cleanable(tmp_path)
+
+
+@pytest.mark.skipif(os.name != "posix", reason="permission cleanup is POSIX-specific")
+def test_permission_finalizer_restores_only_fixture_tree_without_following_links(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "immutable-fixture"
+    protected = root / "generation" / "controller.sh"
+    protected.parent.mkdir(parents=True)
+    protected.write_text("fixture", encoding="utf-8")
+    outside = tmp_path / "outside-target"
+    outside.write_text("outside", encoding="utf-8")
+    (root / "generation" / "outside-link").symlink_to(outside)
+    protected.chmod(0o400)
+    protected.parent.chmod(0o500)
+    root.chmod(0o500)
+    outside.chmod(0o400)
+
+    make_directories_user_cleanable(root)
+
+    assert protected.stat().st_mode & 0o777 == 0o400
+    assert protected.parent.stat().st_mode & stat.S_IRWXU == stat.S_IRWXU
+    assert root.stat().st_mode & stat.S_IRWXU == stat.S_IRWXU
+    assert outside.stat().st_mode & 0o777 == 0o400
+
+
+@pytest.mark.skipif(os.name != "posix", reason="fd-safe cleanup is POSIX-specific")
+def test_fd_safe_pytest_cleanup_removes_only_the_expected_owned_tree(tmp_path: Path) -> None:
+    root = tmp_path / "pytest-of-fixture"
+    immutable = root / "generation" / "controller.sh"
+    immutable.parent.mkdir(parents=True)
+    immutable.write_text("fixture", encoding="utf-8")
+    outside = tmp_path / "outside-target"
+    outside.write_text("outside", encoding="utf-8")
+    (root / "generation" / "outside-link").symlink_to(outside)
+    immutable.parent.chmod(0o500)
+    root.chmod(0o500)
+    outside.chmod(0o400)
+
+    clean_owned_pytest_tmp_root(root, expected_root=root)
+
+    assert not root.exists()
+    assert not root.is_symlink()
+    assert outside.read_text(encoding="utf-8") == "outside"
+    assert outside.stat().st_mode & 0o777 == 0o400
+
+
+@pytest.mark.skipif(os.name != "posix", reason="fd-safe cleanup is POSIX-specific")
+def test_fd_safe_pytest_cleanup_refuses_a_wrong_or_symlinked_root(tmp_path: Path) -> None:
+    actual = tmp_path / "pytest-of-fixture"
+    actual.mkdir()
+    wrong = tmp_path / "other-root"
+    with pytest.raises(CleanupRefusal, match="unexpected pytest temp root"):
+        clean_owned_pytest_tmp_root(actual, expected_root=wrong)
+
+    outside = tmp_path / "outside-directory"
+    outside.mkdir()
+    symlinked = tmp_path / "pytest-of-symlink"
+    symlinked.symlink_to(outside, target_is_directory=True)
+    with pytest.raises(CleanupRefusal, match="symlinked pytest temp root"):
+        clean_owned_pytest_tmp_root(symlinked, expected_root=symlinked)
+    assert outside.is_dir()
 
 
 def _posix_path(path: Path) -> str:

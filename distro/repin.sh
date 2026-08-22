@@ -67,7 +67,15 @@ git checkout --detach "$REF" --quiet
 pkill -f -- '-m experiments\.run_matrix( |$)' 2>/dev/null || true
 pkill -f -- '-m experiments\.rig_web( |$)' 2>/dev/null || true
 sleep 1
-rm -rf "/tmp/pytest-of-$(id -un)"
+
+# Atomic controller-install tests deliberately make generated controller trees
+# immutable. pytest can retain those trees beneath its per-user temp root, so a
+# later re-pin makes only that exact, owned directory user-cleanable before
+# removing it. The Python helper opens every directory by descriptor with
+# O_NOFOLLOW and uses shutil's fd-safe rmtree implementation; it never applies
+# a path-based chmod that a same-UID process could replace with a symlink.
+PYTEST_TMP_ROOT="/tmp/pytest-of-$(id -un)"
+"$PY" -m experiments.pytest_tmp_cleanup --root "$PYTEST_TMP_ROOT"
 
 # Clean-environment full-suite gate: no URA_* variable may leak into the run
 # (digits included: URA_PROJECT_REVISION_SHA256 and friends).

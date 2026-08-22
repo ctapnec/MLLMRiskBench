@@ -31,6 +31,27 @@ def test_default_pytest_suite_includes_campaign_controller_regressions() -> None
     }
 
 
+def test_repin_cleans_only_an_owned_real_pytest_temp_root() -> None:
+    project_root = Path(__file__).resolve().parents[2]
+    repin = (project_root / "distro" / "repin.sh").read_text(encoding="utf-8")
+
+    assert 'PYTEST_TMP_ROOT="/tmp/pytest-of-$(id -un)"' in repin
+    assert '"$PY" -m experiments.pytest_tmp_cleanup --root "$PYTEST_TMP_ROOT"' in repin
+    helper = (project_root / "experiments" / "pytest_tmp_cleanup.py").read_text(
+        encoding="utf-8"
+    )
+    assert "flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW" in helper
+    assert "with os.scandir(os.dup(descriptor)) as entries:" in helper
+    assert "os.fchmod(descriptor," in helper
+    assert "os.chmod(" not in helper
+    assert "shutil.rmtree.avoids_symlink_attacks" in helper
+    assert "refusing unexpected pytest temp root" in helper
+    assert "refusing foreign-owned pytest temp root" in helper
+    assert "rm -rf --" not in repin
+    assert 'find -P "$root"' not in repin
+    assert 'rm -rf "/tmp/pytest-of-$(id -un)"' not in repin
+
+
 def test_framework_packages_are_not_main_environment_extras() -> None:
     project_root = Path(__file__).resolve().parents[2]
     document = tomllib.loads((project_root / "pyproject.toml").read_text(encoding="utf-8"))
