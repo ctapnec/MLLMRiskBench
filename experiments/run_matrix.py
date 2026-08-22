@@ -5545,13 +5545,7 @@ def _main(argv=None) -> int:
                     raise RuntimeError("defense guard was not constructed")
                 target = GuardedTarget(target, shared_defense_guard, mode=args.defense)
             prebuilt_targets[spec] = target
-            # Acquisition binds the underlying model identity. The guarded
-            # wrapper has its own independently persisted defense condition and
-            # reports its effective ``+guard`` target name in the manifest. If
-            # that display name is used as the model spec, the suffix is parsed
-            # as part of the immutable Hub revision and admission fails before
-            # any call (for example ``<40-hex>+guard``).
-            persisted_model_specs[spec] = base_resolved_targets[requested_spec]
+            persisted_model_specs[spec] = str(getattr(target, "name"))
             for corpus_name in corpora:
                 for stale_spec in {
                     requested_model_specs[spec], persisted_model_specs[spec]

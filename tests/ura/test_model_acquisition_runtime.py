@@ -588,6 +588,15 @@ def test_execution_descriptors_bind_all_five_roles_across_legal_run_configs(
     )
     assert validate_model_acquisition_run_binding(stable, suffixed) == stable
 
+    defended = {**suffixed, "defense": "both"}
+    defended["model_spec"] = suffixed["model_spec"] + "+guard"
+    assert validate_model_acquisition_run_binding(stable, defended) == stable
+    with pytest.raises(ModelAcquisitionError, match="active defense condition"):
+        validate_model_acquisition_run_binding(
+            stable,
+            {**defended, "defense": "none"},
+        )
+
     drifted_suffix = dict(run)
     drifted_suffix["model_spec"] = "vllm:Org/Target@" + ("f" * 40)
     with pytest.raises(ModelAcquisitionError, match="revision suffix differs"):
@@ -685,6 +694,18 @@ def test_hosted_targets_and_one_hub_vllm_target_share_exact_grid_descriptor(
         "attacker_configs": {},
     }
     assert validate_model_acquisition_grid_binding(stable, grid) == stable
+    defended_grid = {
+        **grid,
+        "defense": "both",
+        "models": [*grid["models"][:2], local_model + "+guard"],
+        "local_configs": {local_model + "+guard": {"revision": revision}},
+    }
+    assert validate_model_acquisition_grid_binding(stable, defended_grid) == stable
+    with pytest.raises(ModelAcquisitionError, match="active defense condition"):
+        validate_model_acquisition_grid_binding(
+            stable,
+            {**defended_grid, "defense": "none"},
+        )
     for cell in (
         {
             "model_spec": "anthropic:hosted-a",

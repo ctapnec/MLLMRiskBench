@@ -1171,6 +1171,28 @@ def _add_persisted_vllm_identity(
     resources.setdefault(role, set()).add((validate_repo_id(model), revision))
 
 
+def _acquisition_base_model_spec(spec: object, config: Mapping[str, Any]) -> object:
+    """Remove only the explicitly selected defense wrapper from a vLLM spec.
+
+    ``GuardedTarget`` appends ``+guard`` to its effective result identity. The
+    acquisition inventory, however, seals the underlying model while the
+    defense mode and guard identity are bound independently in the run config.
+    Never accept that suffix without an active defense condition.
+    """
+
+    if not (
+        isinstance(spec, str)
+        and spec.startswith("vllm:")
+        and spec.endswith("+guard")
+    ):
+        return spec
+    if config.get("defense") not in {"input", "output", "both"}:
+        raise ModelAcquisitionError(
+            "guarded vLLM acquisition identity requires an active defense condition"
+        )
+    return spec.removesuffix("+guard")
+
+
 def _add_shared_run_identities(
     config: Mapping[str, Any],
     *,
@@ -1304,7 +1326,7 @@ def validate_model_acquisition_run_binding(
     expected_resources: _RoleResources = {}
     expected_exceptions: _RoleExceptions = {}
     _add_persisted_vllm_identity(
-        run_config.get("model_spec"),
+        _acquisition_base_model_spec(run_config.get("model_spec"), run_config),
         run_config.get("local_identity"),
         role="vllm_target",
         resources=expected_resources,
@@ -1376,7 +1398,7 @@ def validate_model_acquisition_grid_binding(
         )
     for model in models:
         _add_persisted_vllm_identity(
-            model,
+            _acquisition_base_model_spec(model, grid_request),
             local_configs.get(model),
             role="vllm_target",
             resources=expected_resources,
@@ -1657,7 +1679,7 @@ def model_acquisition_cell_role_projection(
     expected_resources: _RoleResources = {}
     expected_exceptions: _RoleExceptions = {}
     _add_persisted_vllm_identity(
-        run_config.get("model_spec"),
+        _acquisition_base_model_spec(run_config.get("model_spec"), run_config),
         run_config.get("local_identity"),
         role="vllm_target",
         resources=expected_resources,
