@@ -875,6 +875,8 @@ elif expected_judges == ["rules"]:
     ):
         raise SystemExit("classification rules placeholder was unexpectedly queried")
     source = execution["source_evaluator"]
+    # Parser-invalid predictions are measured validity=0 observations, not
+    # evidence that the implemented source evaluator failed to execute.
     if (
         source.get("status") != "exercised"
         or not isinstance(source.get("required_records"), int)
@@ -882,9 +884,14 @@ elif expected_judges == ["rules"]:
         or not isinstance(source.get("observed_records"), int)
         or source["observed_records"] <= 0
         or not isinstance(source.get("valid_records"), int)
-        or source["valid_records"] <= 0
+        or source["required_records"] != source["observed_records"]
+        or source["observed_records"] != row["workload"]["completed_judgments"]
+        or source["valid_records"] < 0
+        or source["valid_records"] > source["observed_records"]
     ):
-        raise SystemExit("classification source evaluator lacks observed valid support")
+        raise SystemExit(
+            "classification source evaluator lacks complete implemented observations"
+        )
 else:
     raise SystemExit(f"unexpected judge selection {expected_judges_csv!r}")
 

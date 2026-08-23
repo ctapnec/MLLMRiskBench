@@ -726,11 +726,23 @@ previous seven days through the current browser time, and both selected bounds
 are inclusive at the input precision. Date changes reload a date-bounded SQLite
 query rather than filtering only the recent in-memory cache; an explicit notice
 appears if the 5,000-row console-job or 20-row in-range campaign display cap is
-reached. Tags are deliberately short: console
+reached. The dates constrain terminal history, not process visibility: a
+console-owned process that is still running, or an external row whose exact
+named session is currently observed live, remains visible even when it started
+before the selected interval. That bounded exception is called out in the UI;
+terminal rows never receive it. Tags are deliberately short: console
 work uses `running`, `passed`, `failed`, or `orphaned`, while externally managed
 engineering campaigns use the same blue `running` tag plus `partial`, `blocked`,
 `stopped`, or `unknown`. The surrounding detail identifies external `running` as
-a task-log report, not a console-owned process-liveness claim.
+a task-log report, not a console-owned process-liveness claim. Framework-runtime
+and versioned local-campaign controller markers additionally bind an exact named
+tmux socket and session. Their liveness is checked through a short bounded,
+cached batch; a missing exact session becomes `orphaned` instead of remaining
+`running` until a generous campaign hard stop, while a probe failure or an
+unprobed bounded row becomes `unknown` rather than asserting liveness. Terminal
+legacy markers remain readable. Controllers publish their authoritative `.exit` marker before their
+best-effort terminal UI event, so an interrupted event write can under-claim a
+finished controller but cannot create a false `passed` card.
 
 External campaign task counts report task-process outcomes as succeeded,
 failed, skipped, active, or pending. They do not prove that a model was called.
@@ -742,6 +754,34 @@ campaign it must contain exactly one valid row per model task. This operational
 self-report and any reserved-call ledger remain diagnostic context. Validated,
 completion-bound response artifacts are authoritative for actual execution and
 results.
+
+The versioned Phase 5 through Phase 7 controllers emit those engineering
+markers and ordered task events directly from their restorable tmux sessions;
+they do not need to be launched by the console to appear in Jobs and Stats.
+Discovery reconciles exact-session nonterminal controllers before applying the
+20-row recent-history cap, so a controller observed live cannot be hidden by
+newer terminal directories; old terminal rows remain subject to the selected
+history interval.
+Phase 6 also registers each externally owned measured `run_matrix` invocation
+under the fixed `external-measured-jobs` registry immediately before the call
+and writes one create-only terminal event afterwards. Each registration binds
+the exact sanitized argument vector, Runner output root, project commit,
+framework-lock identity, approved Gate 5 digest, and a unique private tmux
+socket/session for that invocation rather than the parent controller. Start
+publication begins only after signal cleanup owns that prospective identity,
+and terminal publication is time-bounded.
+These rows receive normal detail routes and per-job artifact usage/report
+rendering, but no SQLite ownership or Stop action. The registration establishes
+operational ownership only, so even an exit-zero registration remains labelled
+external operational and non-thesis. Completion-bound usage can still be shown.
+Phase 7 diagrams attach only after the existing sealed controller watcher
+launch, frozen watcher/wrapper/payload, Phase 6 completion and exit,
+preparation result, Phase 7 launch output, analysis launch and completion,
+artifact inventory, and authorized input descriptors have all cross-validated
+and agree on the project revision, runtime lock, and approved Gate 5 identity.
+Successful completion-validated Runner and analysis artifacts,
+not their operational registrations, remain the sole basis for metrics and
+diagrams.
 
 `experiments/rig_web.py` is the stable, thin import and `python -m` facade.
 The implementation lives in `experiments/rig_web_app/`: command/catalog and

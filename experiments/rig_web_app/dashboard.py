@@ -35,6 +35,9 @@ from .reports import (
     load_pricing,
     compute_costs,
 )
+from .external_measured import ExternalMeasuredJob
+from .campaigns import EngineeringCampaign
+from .phase7_stats import Phase7StatsBundle, load_phase7_stats_bundle
 
 
 class DashboardMixin:
@@ -696,9 +699,21 @@ class DashboardMixin:
         state: str,
         evidence: Mapping[str, int],
         engineering: bool,
+        external_operational: bool = False,
     ) -> tuple[str, str, str]:
         if engineering:
             return "engineering", "engineering / non-thesis", "gray"
+        if external_operational:
+            # The create-only external registry is an operational ownership and
+            # visibility record. Even valid completion artifacts do not turn
+            # that record itself into thesis authority; promotion requires a
+            # separate validated evidence binding that this schema does not
+            # claim to provide.
+            return (
+                "external-operational",
+                "external operational record / non-thesis",
+                "gray",
+            )
         if kind in {"preflight", "acquisition_plan"}:
             return "preflight", "preflight / no-call", "gray"
         if kind in {"dry_run", "diagnostic_canary", "attestation_probe"}:
@@ -780,7 +795,11 @@ class DashboardMixin:
             }
         return list(records.values())
 
-    def _stats_bounded_run_owners(self) -> list[dict[str, Any]]:
+    def _stats_bounded_run_owners(
+        self,
+        *,
+        external_jobs: list[ExternalMeasuredJob] | None = None,
+    ) -> list[dict[str, Any]]:
         """Complete bounded canonical run-output ownership set."""
 
         rows = self.db.list_run_owners(limit=10_001)
@@ -802,12 +821,37 @@ class DashboardMixin:
                     "artifact_relative": relative,
                 }
             )
+        if external_jobs is None:
+            try:
+                external_jobs, _notice = self._external_measured_job_scan()
+            except (AttributeError, OSError, ValueError):
+                external_jobs = []
+        for job in external_jobs:
+            # A console-owned row wins an accidental identifier collision.
+            # The external registration is never imported or allowed to
+            # become a second owner for that same identifier.
+            if self.db.load_campaign(job.job_id) is not None:
+                continue
+            root = job.out_dir
+            if not root.is_dir() or derived_path_quarantined(root, self.results_root):
+                continue
+            owners.append(
+                {
+                    "job_id": job.job_id,
+                    "root": root,
+                    "artifact_relative": job.artifact_relative,
+                }
+            )
         return owners
 
-    def _stats_report_bindings(self) -> list[dict[str, Any]]:
+    def _stats_report_bindings(
+        self,
+        *,
+        external_jobs: list[ExternalMeasuredJob] | None = None,
+    ) -> list[dict[str, Any]]:
         """Bind each exact report to one unique most-specific retained run."""
 
-        owners = self._stats_bounded_run_owners()
+        owners = self._stats_bounded_run_owners(external_jobs=external_jobs)
         if not owners:
             return []
         bindings_by_path: dict[Path, dict[str, Any]] = {}
@@ -882,33 +926,114 @@ class DashboardMixin:
             if path not in ambiguous_paths
         ]
 
+    @staticmethod
+    def _stats_external_row(job: ExternalMeasuredJob) -> dict[str, Any]:
+        return {
+            "job_id": job.job_id,
+            "kind": job.run_kind,
+            "command": job.command,
+            "out_dir": str(job.out_dir),
+            "pin": job.expected_commit,
+            "state": job.state,
+            "exit_code": job.exit_code,
+            "created_at": job.started_at,
+            "record_source": "external_registration",
+            "source_priority": 2,
+            "_external_job": job,
+        }
+
+    def _stats_console_campaign_prefix(
+        self,
+        *,
+        limit: int,
+    ) -> list[dict[str, Any]] | None:
+        """Load a bounded prefix so external rows can be paginated exactly."""
+
+        rows: list[dict[str, Any]] = []
+        while len(rows) < limit:
+            size = min(100, limit - len(rows))
+            chunk = self.db.list_campaigns_page(limit=size, offset=len(rows))
+            if chunk is None:
+                return None
+            rows.extend(dict(row) for row in chunk)
+            if len(chunk) < size:
+                break
+        return rows
+
+    def _stats_registered_external_jobs(self) -> tuple[list[ExternalMeasuredJob], str]:
+        try:
+            jobs, notice = self._external_measured_job_scan()
+        except (AttributeError, OSError, ValueError):
+            return [], "External measured registry scan unavailable."
+        return (
+            [
+                job
+                for job in jobs
+                if self.db.load_campaign(job.job_id) is None
+            ],
+            notice,
+        )
+
     def _stats_run_campaigns(
         self,
         *,
         page: int = 1,
         exact_job_id: str = "",
     ) -> tuple[list[dict[str, Any]], str, bool]:
+        external_jobs: list[ExternalMeasuredJob]
+        unavailable = ""
         if exact_job_id:
             exact = self.db.load_campaign(exact_job_id)
-            runs = [] if exact is None else [exact]
+            if exact is not None:
+                runs: list[dict[str, Any]] = [dict(exact)]
+                external_jobs = []
+            else:
+                # Exact detail routes use the direct bounded loader. They must
+                # not depend on an arbitrary prefix of the list scanner.
+                try:
+                    external = self._external_measured_job(exact_job_id)
+                except (AttributeError, OSError, ValueError):
+                    external = None
+                if external is not None and self.db.load_campaign(exact_job_id) is not None:
+                    external = None
+                external_jobs = [] if external is None else [external]
+                runs = [] if external is None else [self._stats_external_row(external)]
             has_more = False
         else:
+            external_jobs, external_notice = self._stats_registered_external_jobs()
+            unavailable = external_notice
             offset = (page - 1) * self._STATS_PAGE_SIZE
-            runs = self.db.list_campaigns_page(
-                limit=self._STATS_PAGE_SIZE + 1,
-                offset=offset,
+            required = offset + self._STATS_PAGE_SIZE + 1
+            bounded_required = min(required, 10_001)
+            console_rows = self._stats_console_campaign_prefix(
+                limit=bounded_required,
             )
-            has_more = runs is not None and len(runs) > self._STATS_PAGE_SIZE
-            if runs is not None:
-                runs = runs[: self._STATS_PAGE_SIZE]
-        if runs is None:
-            return (
-                [],
-                "Campaign registry unavailable; no empty history is inferred.",
-                False,
+            if console_rows is None:
+                console_rows = []
+                db_notice = (
+                    "Console campaign registry unavailable; externally registered "
+                    "measured jobs remain read-only and visible."
+                )
+                unavailable = " ".join(part for part in (unavailable, db_notice) if part)
+            combined = console_rows + [
+                self._stats_external_row(job) for job in external_jobs
+            ]
+            combined.sort(
+                key=lambda row: (
+                    float(row.get("created_at") or 0),
+                    str(row.get("job_id") or ""),
+                ),
+                reverse=True,
             )
+            runs = combined[offset : offset + self._STATS_PAGE_SIZE]
+            has_more = len(combined) > offset + self._STATS_PAGE_SIZE
+            if required > 10_001 and not runs:
+                page_notice = (
+                    "Campaign pagination reached the bounded 10,001-row registry view."
+                )
+                unavailable = " ".join(part for part in (unavailable, page_notice) if part)
         pricing = load_pricing(self.repo_root)
-        run_owners = self._stats_bounded_run_owners()
+        run_owners = self._stats_bounded_run_owners(external_jobs=external_jobs)
         owners_by_root: dict[Path, set[str]] = {}
         for owner in run_owners:
             owners_by_root.setdefault(owner["root"], set()).add(owner["job_id"])
@@ -917,6 +1042,7 @@ class DashboardMixin:
         for run_row in runs:
             row = dict(run_row)
             job_id = str(row.get("job_id") or "")
+            external_job = row.get("_external_job")
             job = self.jobs.get(job_id)
             argv: list[str] = []
             started_at = float(row.get("created_at") or 0)
@@ -924,7 +1050,13 @@ class DashboardMixin:
             state = str(row.get("state") or "unknown")
             command = str(row.get("command") or "")
             terminal_run = str(row.get("record_source") or "run") == "run"
-            if job is not None:
+            if isinstance(external_job, ExternalMeasuredJob):
+                argv = list(external_job.argv)
+                started_at = external_job.started_at
+                ended_at = external_job.ended_at
+                state = external_job.state
+                command = external_job.command
+            elif job is not None:
                 argv = list(job.argv)
                 started_at = float(job.started_at)
                 ended_at = job.ended_at
@@ -951,7 +1083,11 @@ class DashboardMixin:
                     if not terminal_run:
                         state = str(stored["state"] or state)
                         command = str(stored["command"] or command)
-            kind = run_kind(command, argv) or str(row.get("kind") or "")
+            kind = (
+                external_job.run_kind
+                if isinstance(external_job, ExternalMeasuredJob)
+                else run_kind(command, argv) or str(row.get("kind") or "")
+            )
             out_dir = str(row.get("out_dir") or "")
             output_root = self._stats_resolve_path(out_dir)
             artifact_relative = self._stats_artifact_relative(output_root)
@@ -1008,6 +1144,7 @@ class DashboardMixin:
                 state=state,
                 evidence=evidence,
                 engineering=quarantined_output,
+                external_operational=isinstance(external_job, ExternalMeasuredJob),
             )
             campaigns.append(
                 {
@@ -1037,9 +1174,16 @@ class DashboardMixin:
                     "authority_label": authority_label,
                     "authority_tone": authority_tone,
                     "reports": [],
+                    "external_owned": isinstance(external_job, ExternalMeasuredJob),
+                    "_external_job": external_job,
+                    "job_href": (
+                        f"/jobs/external/{quote(job_id)}"
+                        if isinstance(external_job, ExternalMeasuredJob)
+                        else f"/jobs/{quote(job_id)}"
+                    ),
                 }
             )
-        return campaigns, "", has_more
+        return campaigns, unavailable, has_more
 
     @staticmethod
     def _stats_contains_path(parent: Path, child: Path) -> bool:
@@ -1054,7 +1198,12 @@ class DashboardMixin:
 
         attached: set[str] = set()
         by_job_id = {str(campaign["job_id"]): campaign for campaign in campaigns}
-        for binding in self._stats_report_bindings():
+        external_jobs = [
+            job
+            for campaign in campaigns
+            if isinstance((job := campaign.get("_external_job")), ExternalMeasuredJob)
+        ]
+        for binding in self._stats_report_bindings(external_jobs=external_jobs or None):
             owner = by_job_id.get(str(binding["owner_job_id"]))
             if owner is None:
                 continue
@@ -1064,10 +1213,78 @@ class DashboardMixin:
         return attached
 
     def _stats_owned_report_paths(self) -> set[str]:
-        return {
+        owned = {
             str(binding["path"])
             for binding in self._stats_report_bindings()
             if binding["path"]
+        }
+        try:
+            engineering, _notice = self._engineering_campaign_scan()
+        except (AttributeError, OSError, ValueError):
+            engineering = []
+        for campaign in engineering:
+            bundle = load_phase7_stats_bundle(self.results_root, campaign)
+            if bundle is not None:
+                owned.update(report.artifact_relative for report in bundle.reports)
+        return owned
+
+    @staticmethod
+    def _stats_phase7_campaign(
+        campaign: EngineeringCampaign,
+        bundle: Phase7StatsBundle,
+    ) -> dict[str, Any]:
+        evidence = {
+            "markers": 0,
+            "skipped_error": 0,
+            "skipped_invalid": 0,
+            "orphan_responses": 0,
+            "truncated": 0,
+            "unreadable_artifacts": 0,
+            "failed_cells": 0,
+        }
+        reports = [
+            {
+                "owner_job_id": campaign.route_id,
+                "path": report.artifact_relative,
+                "source_path": report.path,
+                "display_name": report.display_name,
+                "kind": report.kind,
+                "producer_job_id": campaign.route_id,
+            }
+            for report in bundle.reports
+        ]
+        return {
+            "job_id": campaign.route_id,
+            "command": "phase7_analysis",
+            "argv": [],
+            "kind": "phase7_analysis",
+            "work_label": "sealed Phase 7 read-only analysis",
+            "state": "complete",
+            "started_at": campaign.started_at,
+            "ended_at": campaign.ended_at,
+            "out_dir": str(bundle.analysis_root),
+            "output_root": bundle.analysis_root,
+            "artifact_relative": bundle.artifact_relative,
+            "targets": (),
+            "frameworks": (),
+            "corpora": (),
+            "usage_rows": [],
+            "usage": {
+                "target_calls": 0,
+                "judge_calls": 0,
+                "input_tokens": 0,
+                "output_tokens": 0,
+            },
+            "cost_rows": [],
+            "cost_text": "read-only analysis / no model calls",
+            "evidence": evidence,
+            "authority": "phase7-analysis",
+            "authority_label": "sealed Phase 7 analysis binding",
+            "authority_tone": "blue",
+            "reports": reports,
+            "external_owned": True,
+            "job_href": f"/jobs/campaign/{quote(campaign.route_id)}",
+            "_phase7_bundle": bundle,
         }
 
     @staticmethod
@@ -1139,6 +1356,12 @@ class DashboardMixin:
 
     def _stats_campaign_card(self, campaign: Mapping[str, Any]) -> str:
         state_label, state_tone = self._stats_state_badge(str(campaign["state"]))
+        job_href = str(campaign.get("job_href") or f"/jobs/{quote(str(campaign['job_id']))}")
+        external_badge = (
+            "<span class='badge blue'>external / read-only</span>"
+            if campaign.get("external_owned") is True
+            else ""
+        )
         started = time.strftime(
             "%Y-%m-%d %H:%M:%S UTC", time.gmtime(float(campaign["started_at"]))
         )
@@ -1153,14 +1376,14 @@ class DashboardMixin:
             "<article class='stats-campaign-card' "
             f"data-job-id='{html.escape(str(campaign['job_id']))}' "
             f"data-authority='{html.escape(str(campaign['authority']))}'>"
-            "<div class='stats-campaign-head'><div><h3><a href='/jobs/"
-            f"{quote(str(campaign['job_id']))}'>{html.escape(str(campaign['job_id']))}</a>"
+            "<div class='stats-campaign-head'><div><h3><a href='"
+            f"{html.escape(job_href, quote=True)}'>{html.escape(str(campaign['job_id']))}</a>"
             "</h3><p class='note'>"
             f"{html.escape(str(campaign['work_label']))}</p></div>"
             "<div class='stats-badges'>"
             f"<span class='badge {state_tone}'>{html.escape(state_label)}</span>"
             f"<span class='badge {html.escape(str(campaign['authority_tone']))}'>"
-            f"{html.escape(str(campaign['authority_label']))}</span></div></div>"
+            f"{html.escape(str(campaign['authority_label']))}</span>{external_badge}</div></div>"
             "<dl class='stats-campaign-meta'>"
             f"<dt>Target</dt><dd>{html.escape(self._stats_list_text(campaign['targets']))}</dd>"
             f"<dt>Framework</dt><dd>{html.escape(self._stats_list_text(campaign['frameworks']))}</dd>"
@@ -1265,6 +1488,7 @@ class DashboardMixin:
 
     def _stats_campaign_detail(self, campaign: Mapping[str, Any]) -> str:
         state_label, state_tone = self._stats_state_badge(str(campaign["state"]))
+        job_href = str(campaign.get("job_href") or f"/jobs/{quote(str(campaign['job_id']))}")
         artifact_link = ""
         if campaign["artifact_relative"]:
             artifact_link = (
@@ -1286,6 +1510,7 @@ class DashboardMixin:
             "preflight",
             "acquisition_plan",
             "dry_run",
+            "phase7_analysis",
         }:
             evidence_tone = "amber"
             evidence_label = "not established"
@@ -1298,6 +1523,14 @@ class DashboardMixin:
                 "analysis job is bound to this campaign yet. Completion-bound "
                 "usage and result coverage are still shown above.</p></div>"
             )
+        phase7_note = (
+            "<div class='notice blue'><strong>Sealed Phase 7 analysis binding.</strong>"
+            "<p class='note'>The watcher completion, controller completion, authorized "
+            "input, Gate 5 identity, artifact inventory, and exact report bytes were "
+            "validated before these diagrams were linked.</p></div>"
+            if campaign.get("_phase7_bundle") is not None
+            else ""
+        )
         return (
             "<p class='stats-detail-state'>Campaign status: "
             f"<span class='badge {state_tone}'>{html.escape(state_label)}</span></p>"
@@ -1306,28 +1539,33 @@ class DashboardMixin:
             f"{html.escape(self._stats_coverage_text(evidence))}. "
             "Charts below are rendered only from producer-contract-validated "
             f"reports attached to this job.{artifact_link}</p></div>"
-            "<div class='card'><h3>Recorded calls, tokens &amp; calculated cost</h3>"
+            + phase7_note
+            + "<div class='card'><h3>Recorded calls, tokens &amp; calculated cost</h3>"
             + self._stats_usage_table(campaign)
             + "<p class='note'>Usage is read only from this job's exact output "
             "root and completion-bound artifacts. It is not mixed with diagnostic, "
             "synthetic, engineering, or temporary trees.</p></div>"
             + reports
-            + "<p class='stats-modal-links'><a href='/jobs/"
-            f"{quote(str(campaign['job_id']))}'>Open full job record</a></p>"
+            + "<p class='stats-modal-links'><a href='"
+            + html.escape(job_href, quote=True)
+            + "'>Open full job record</a></p>"
         )
 
     def _stats_campaign_panel(self, page: int) -> str:
         campaigns, unavailable, has_more = self._stats_run_campaigns(page=page)
         cards = [self._stats_campaign_card(campaign) for campaign in campaigns]
-        if unavailable:
-            listing = f"<div class='notice red'>{html.escape(unavailable)}</div>"
-        elif cards:
+        if cards:
             listing = "<div class='stats-campaign-list'>" + "".join(cards) + "</div>"
+            if unavailable:
+                listing = f"<div class='notice amber'>{html.escape(unavailable)}</div>" + listing
+        elif unavailable:
+            listing = f"<div class='notice red'>{html.escape(unavailable)}</div>"
         else:
             listing = (
-                "<div class='card'><p class='note'>No console-owned campaign jobs "
-                "are retained yet. Start a preflight, diagnostic, or measured lane "
-                "from Build; it will appear here without importing unrelated files.</p></div>"
+                "<div class='card'><p class='note'>No console-owned or explicitly "
+                "registered external campaign jobs are retained yet. Start a preflight, "
+                "diagnostic, or measured lane from Build; it will appear here without "
+                "importing unrelated files.</p></div>"
             )
         try:
             engineering, engineering_note = self._engineering_campaign_scan()
@@ -1337,6 +1575,17 @@ class DashboardMixin:
         for campaign in engineering:
             label = html.escape(campaign.campaign_id)
             route = quote(campaign.route_id)
+            phase7 = load_phase7_stats_bundle(self.results_root, campaign)
+            analysis_action = (
+                "<a class='button ghost stats-detail-trigger' href='/stats/job/"
+                + route
+                + "' data-stats-job='"
+                + html.escape(campaign.route_id)
+                + "' aria-controls='campaign-stats-modal' aria-haspopup='dialog' "
+                "aria-expanded='false'>Statistics &amp; diagrams</a>"
+                if phase7 is not None
+                else ""
+            )
             engineering_cards.append(
                 "<article class='stats-campaign-card engineering' "
                 "data-authority='engineering'><div class='stats-campaign-head'>"
@@ -1354,7 +1603,8 @@ class DashboardMixin:
                 )
                 + " (operational self-report)</dd></dl>"
                 f"<p><a href='/jobs/campaign/{route}'>Open engineering details</a></p>"
-                "</article>"
+                + analysis_action
+                + "</article>"
             )
         engineering_html = (
             "<h2>Engineering campaigns <span class='badge gray'>never thesis "
@@ -1417,10 +1667,25 @@ class DashboardMixin:
         campaigns, unavailable, _has_more = self._stats_run_campaigns(
             exact_job_id=job_id
         )
-        if unavailable or not campaigns:
+        if not campaigns:
+            try:
+                engineering = self._engineering_campaign(job_id)
+            except (AttributeError, OSError, ValueError):
+                engineering = None
+            bundle = (
+                load_phase7_stats_bundle(self.results_root, engineering)
+                if engineering is not None
+                else None
+            )
+            if engineering is None or bundle is None:
+                return None
+            campaigns = [self._stats_phase7_campaign(engineering, bundle)]
+            unavailable = ""
+        if unavailable:
             return None
         campaign = campaigns[0]
-        self._stats_attach_job_reports(campaigns)
+        if campaign.get("_phase7_bundle") is None:
+            self._stats_attach_job_reports(campaigns)
         detail = self._stats_campaign_detail(campaign)
         if fragment:
             return detail.encode("utf-8")

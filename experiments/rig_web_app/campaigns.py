@@ -2,12 +2,17 @@
 
 from __future__ import annotations
 
+import hashlib
 import heapq
 import math
 import os
 import re
+import shutil
 import stat
+import subprocess
+import threading
 import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -23,6 +28,16 @@ _MAX_DIRECTORY_ENTRIES = 500
 _MAX_MARKER_BYTES = 64 * 1024
 _MAX_EVENT_LOG_BYTES = 512 * 1024
 _MAX_MODEL_EXECUTION_COUNT = 1_000_000
+_MAX_FRAMEWORK_SESSION_ENTRIES = 256
+_FRAMEWORK_SESSION_START_SLOP_SECONDS = 300
+_FRAMEWORK_SESSION_LAUNCH_GRACE_SECONDS = 30
+_FRAMEWORK_RUNTIME_LOCK_ID = re.compile(r"[0-9a-f]{64}\Z")
+_NAMED_SESSION_TOKEN = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,127}\Z")
+_NAMED_SESSION_PROBE_TIMEOUT_SECONDS = 2
+_NAMED_SESSION_CACHE_TTL_SECONDS = 5
+_NAMED_SESSION_ERROR_CACHE_TTL_SECONDS = 1
+_MAX_NAMED_SESSION_CACHE_ENTRIES = 256
+_MAX_CONCURRENT_SESSION_PROBES = _MAX_CAMPAIGNS
 _PHASE_TASKS = {"bootstrap", "stage2"}
 _TASK_SUCCEEDED = {"passed", "complete", "completed", "success", "succeeded"}
 _TASK_SKIPPED = {"skipped"}
@@ -62,6 +77,316 @@ def _bounded_file(path: Path, limit: int) -> tuple[bytes | None, str | None]:
     if len(data) > limit:
         return None, f"larger than {limit // 1024} KiB"
     return data, None
+
+
+@dataclass(frozen=True)
+class _NamedSessionSpec:
+    directory: Path
+    launcher: str
+    socket: str
+    session: str
+    grace_until: float
+    owner_label: str
+
+
+_NAMED_SESSION_CACHE_LOCK = threading.Lock()
+_NAMED_SESSION_CACHE: dict[
+    _NamedSessionSpec,
+    tuple[float, bool | None],
+] = {}
+
+
+def _clear_named_session_liveness_cache() -> None:
+    """Clear the bounded process cache (used by deterministic regressions)."""
+
+    with _NAMED_SESSION_CACHE_LOCK:
+        _NAMED_SESSION_CACHE.clear()
+
+
+def _exact_marker_session(
+    directory: Path,
+    marker: dict[str, Any],
+    *,
+    started_at: float,
+    owner_label: str,
+) -> _NamedSessionSpec | None:
+    socket = marker.get("tmux_socket")
+    session = marker.get("tmux_session")
+    if socket is None and session is None:
+        return None
+    if (
+        not isinstance(socket, str)
+        or not isinstance(session, str)
+        or _NAMED_SESSION_TOKEN.fullmatch(socket) is None
+        or _NAMED_SESSION_TOKEN.fullmatch(session) is None
+    ):
+        return None
+    return _NamedSessionSpec(
+        directory=directory,
+        launcher="tmux",
+        socket=socket,
+        session=session,
+        grace_until=started_at + _FRAMEWORK_SESSION_LAUNCH_GRACE_SECONDS,
+        owner_label=owner_label,
+    )
+
+
+def _framework_named_session_spec(
+    directory: Path,
+    marker: dict[str, Any],
+    *,
+    started_at: float,
+) -> _NamedSessionSpec | None:
+    """Resolve one exact framework session, preferring marker authority."""
+
+    lock_id = marker.get("runtime_lock_id")
+    target_call_cap = marker.get("target_call_cap")
+    if (
+        marker.get("evidence_class") != "framework_runtime_setup"
+        or not isinstance(lock_id, str)
+        or not _FRAMEWORK_RUNTIME_LOCK_ID.fullmatch(lock_id)
+        or directory.name != f"framework-runtime-{lock_id[:12]}"
+        or marker.get("campaign_id") != directory.name
+        or marker.get("model_tasks") != []
+        or not isinstance(target_call_cap, int)
+        or isinstance(target_call_cap, bool)
+        or target_call_cap != 0
+    ):
+        return None
+
+    explicit = _exact_marker_session(
+        directory,
+        marker,
+        started_at=started_at,
+        owner_label="framework installer",
+    )
+    if explicit is not None:
+        return explicit
+
+    sessions_path = directory / "sessions"
+    try:
+        if sessions_path.is_symlink():
+            return None
+        sessions = sessions_path.resolve(strict=True)
+        if sessions.parent != directory or not stat.S_ISDIR(sessions.lstat().st_mode):
+            return None
+        pattern = re.compile(
+            rf"ura-framework-(?:install|resume|verify)-{lock_id[:8]}-"
+            r"(?:all|[0-9a-f]{8})-[0-9a-f]{10}\.log\Z"
+        )
+        session_logs: list[tuple[int, float, Path]] = []
+        for index, candidate in enumerate(sessions.iterdir()):
+            if index >= _MAX_FRAMEWORK_SESSION_ENTRIES:
+                return None
+            if not pattern.fullmatch(candidate.name):
+                continue
+            metadata = candidate.lstat()
+            if candidate.is_symlink() or not stat.S_ISREG(metadata.st_mode):
+                return None
+            session_logs.append((metadata.st_mtime_ns, metadata.st_mtime, candidate))
+    except OSError:
+        return None
+    if not session_logs:
+        return None
+
+    latest_ns = max(item[0] for item in session_logs)
+    latest = [item for item in session_logs if item[0] == latest_ns]
+    if len(latest) != 1:
+        return None
+    _mtime_ns, log_mtime, log = latest[0]
+    if log_mtime < started_at - _FRAMEWORK_SESSION_START_SLOP_SECONDS:
+        return None
+
+    session = log.name.removesuffix(".log")
+    home = sessions / f"{session}.home"
+    try:
+        if home.is_symlink():
+            return None
+        resolved_home = home.resolve(strict=True)
+        if resolved_home.parent != sessions or not stat.S_ISDIR(resolved_home.lstat().st_mode):
+            return None
+    except OSError:
+        return None
+
+    exit_bytes, exit_error = _bounded_file(sessions / f"{session}.exit", 16)
+    if exit_error is not None:
+        return None
+    if exit_bytes is not None:
+        try:
+            exit_code = int(exit_bytes.strip().decode("ascii"))
+        except (UnicodeError, ValueError):
+            return None
+        if 0 <= exit_code <= 255:
+            # A terminal exit marker is stronger than an operating-system
+            # probe. Preserve it as an already-dead exact specification.
+            return _NamedSessionSpec(
+                directory=directory,
+                launcher="terminal",
+                socket="",
+                session=session,
+                grace_until=0.0,
+                owner_label="framework installer",
+            )
+        return None
+    socket = f"ura-fw-{hashlib.sha256(session.encode('ascii')).hexdigest()[:16]}"
+    return _NamedSessionSpec(
+        directory=directory,
+        launcher="auto",
+        socket=socket,
+        session=session,
+        grace_until=max(started_at, log_mtime) + _FRAMEWORK_SESSION_LAUNCH_GRACE_SECONDS,
+        owner_label="framework installer",
+    )
+
+
+def _campaign_named_session_spec(
+    directory: Path,
+    marker: dict[str, Any],
+    *,
+    started_at: float,
+) -> _NamedSessionSpec | None:
+    evidence_class = marker.get("evidence_class")
+    if evidence_class == "framework_runtime_setup":
+        return _framework_named_session_spec(
+            directory,
+            marker,
+            started_at=started_at,
+        )
+    if (
+        evidence_class == "local_campaign_control"
+        and marker.get("campaign_id") == directory.name
+        and marker.get("hosted_calls_allowed") is False
+    ):
+        return _exact_marker_session(
+            directory,
+            marker,
+            started_at=started_at,
+            owner_label="local campaign controller",
+        )
+    return None
+
+
+def _probe_one_named_session(
+    spec: _NamedSessionSpec,
+    *,
+    tmux: str | None,
+    screen: str | None,
+) -> bool | None:
+    if spec.launcher == "terminal":
+        return False
+    environment = {
+        "HOME": str(spec.directory),
+        "LANG": "C.UTF-8",
+        "LC_ALL": "C.UTF-8",
+        "PATH": os.defpath,
+    }
+    if spec.launcher == "tmux" or (spec.launcher == "auto" and tmux is not None):
+        if tmux is None:
+            return None
+        argv = [tmux, "-L", spec.socket, "has-session", "-t", spec.session]
+        try:
+            completed = subprocess.run(
+                argv,
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                env=environment,
+                timeout=_NAMED_SESSION_PROBE_TIMEOUT_SECONDS,
+                check=False,
+            )
+        except (OSError, subprocess.SubprocessError):
+            return None
+        return (
+            completed.returncode == 0
+            if completed.returncode in {0, 1}
+            else None
+        )
+    if screen is None:
+        return None
+    try:
+        completed = subprocess.run(
+            [screen, "-ls", spec.session],
+            stdin=subprocess.DEVNULL,
+            capture_output=True,
+            text=True,
+            env=environment,
+            timeout=_NAMED_SESSION_PROBE_TIMEOUT_SECONDS,
+            check=False,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    if re.search(
+        rf"(?m)^\s*\d+\.{re.escape(spec.session)}\s+"
+        r"\((?:Attached|Detached|Multi(?:,\s*attached)?)\)\s*$",
+        completed.stdout,
+    ):
+        return True
+    return False if completed.returncode in {0, 1} else None
+
+
+def _named_session_liveness(
+    specs: list[_NamedSessionSpec],
+) -> dict[_NamedSessionSpec, bool | None]:
+    """Probe unique sessions concurrently and cache a bounded short snapshot."""
+
+    unique = list(dict.fromkeys(specs))
+    if not unique:
+        return {}
+    now = time.monotonic()
+    wall_now = time.time()
+    results: dict[_NamedSessionSpec, bool | None] = {}
+    pending: list[_NamedSessionSpec] = []
+    with _NAMED_SESSION_CACHE_LOCK:
+        for spec in unique:
+            if wall_now < spec.grace_until:
+                results[spec] = None
+                continue
+            cached = _NAMED_SESSION_CACHE.get(spec)
+            if cached is not None and now - cached[0] <= (
+                _NAMED_SESSION_CACHE_TTL_SECONDS
+                if cached[1] is not None
+                else _NAMED_SESSION_ERROR_CACHE_TTL_SECONDS
+            ):
+                results[spec] = cached[1]
+            else:
+                pending.append(spec)
+    if not pending:
+        return results
+
+    tmux = shutil.which("tmux", path=os.defpath)
+    screen = shutil.which("screen", path=os.defpath) if tmux is None else None
+    workers = min(_MAX_CONCURRENT_SESSION_PROBES, len(pending))
+    with ThreadPoolExecutor(max_workers=workers, thread_name_prefix="ura-session-probe") as pool:
+        future_specs = {
+            pool.submit(
+                _probe_one_named_session,
+                spec,
+                tmux=tmux,
+                screen=screen,
+            ): spec
+            for spec in pending
+        }
+        for future in as_completed(future_specs):
+            spec = future_specs[future]
+            try:
+                results[spec] = future.result()
+            except Exception:  # noqa: BLE001 - liveness stays unknown on a worker fault
+                results[spec] = None
+
+    observed_at = time.monotonic()
+    with _NAMED_SESSION_CACHE_LOCK:
+        for spec in pending:
+            _NAMED_SESSION_CACHE[spec] = (observed_at, results.get(spec))
+        if len(_NAMED_SESSION_CACHE) > _MAX_NAMED_SESSION_CACHE_ENTRIES:
+            oldest = sorted(
+                _NAMED_SESSION_CACHE,
+                key=lambda item: _NAMED_SESSION_CACHE[item][0],
+            )
+            for spec in oldest[
+                : len(_NAMED_SESSION_CACHE) - _MAX_NAMED_SESSION_CACHE_ENTRIES
+            ]:
+                del _NAMED_SESSION_CACHE[spec]
+    return results
 
 
 def _events(path: Path, *, required: bool = False) -> tuple[list[dict[str, Any]], str | None]:
@@ -254,7 +579,11 @@ class EngineeringCampaign:
         return max(0.0, (self.ended_at or time.time()) - self.started_at)
 
 
-def _load_campaign(directory: Path) -> EngineeringCampaign | None:
+def _load_campaign(
+    directory: Path,
+    *,
+    named_session_liveness: dict[_NamedSessionSpec, bool | None] | None = None,
+) -> EngineeringCampaign | None:
     marker_path = directory / "ENGINEERING_ONLY.json"
     marker_bytes, marker_error = _bounded_file(marker_path, _MAX_MARKER_BYTES)
     if marker_bytes is None or marker_error is not None:
@@ -315,13 +644,77 @@ def _load_campaign(directory: Path) -> EngineeringCampaign | None:
         hard_stop_hours = float(hard_stop_value)
     else:
         hard_stop_hours = None
+    session_spec = _campaign_named_session_spec(
+        directory,
+        marker,
+        started_at=started_at,
+    )
+    session_observed: bool | None = None
+    if state == "running" and marker.get("evidence_class") == "local_campaign_control":
+        if session_spec is None:
+            state = "orphaned"
+            display_state = "orphaned"
+            state_detail = (
+                "local campaign controller lacks exact tmux socket/session identity; "
+                "the retained task log has no terminal event"
+            )
+        else:
+            session_observed = (
+                _named_session_liveness([session_spec]).get(session_spec)
+                if named_session_liveness is None
+                else named_session_liveness.get(session_spec)
+            )
+            if session_observed is False:
+                state = "orphaned"
+                display_state = "orphaned"
+                state_detail = (
+                    "local campaign controller named session is no longer live; "
+                    "the retained task log has no terminal event"
+                )
+            elif session_observed is None:
+                state = "unknown"
+                display_state = "unknown"
+                state_detail = (
+                    "local campaign controller named-session liveness is unavailable; "
+                    "the retained task log has no terminal event"
+                )
+    elif state == "running" and session_spec is not None:
+        session_observed = (
+            _named_session_liveness([session_spec]).get(session_spec)
+            if named_session_liveness is None
+            else named_session_liveness.get(session_spec)
+        )
+        if session_observed is False:
+            state = "orphaned"
+            display_state = "orphaned"
+            state_detail = (
+                f"{session_spec.owner_label} named session is no longer live; "
+                "the retained task log has no terminal event"
+            )
+        elif session_observed is None:
+            state = "unknown"
+            display_state = "unknown"
+            state_detail = (
+                f"{session_spec.owner_label} named-session liveness is unavailable; "
+                "the retained task log has no terminal event"
+            )
     if (
         state == "running"
         and hard_stop_hours is not None
         and time.time() > started_at + hard_stop_hours * 3600
     ):
-        state = "orphaned"
-        display_state = "orphaned"
+        if session_observed is True and session_spec is not None:
+            state_detail = (
+                f"declared hard stop exceeded while the exact "
+                f"{session_spec.owner_label} named session remains live"
+            )
+        else:
+            state = "orphaned"
+            display_state = "orphaned"
+            state_detail = (
+                "declared hard stop exceeded and exact named-session liveness "
+                "is unavailable; the retained task log has no terminal event"
+            )
 
     task_states: dict[str, str] = {}
     task_kinds: dict[str, str] = {}
@@ -661,6 +1054,59 @@ def load_engineering_campaign(
     return _load_campaign(resolved)
 
 
+def _running_campaign_session_spec(directory: Path) -> _NamedSessionSpec | None:
+    """Return the exact session identity for one nonterminal controller.
+
+    This is the deliberately small discovery pass used before the recent-row
+    cap is applied. Every file read remains bounded, and only controller
+    classes with an exact named-session contract can cross that cap.
+    """
+
+    marker_bytes, marker_error = _bounded_file(
+        directory / "ENGINEERING_ONLY.json",
+        _MAX_MARKER_BYTES,
+    )
+    if marker_bytes is None or marker_error is not None:
+        return None
+    try:
+        marker = strict_json_loads(marker_bytes.decode("utf-8"))
+    except (UnicodeError, ValueError, TypeError, RecursionError):
+        return None
+    if (
+        not isinstance(marker, dict)
+        or marker.get("schema") != _CAMPAIGN_SCHEMA
+        or marker.get("thesis_empirical_evidence") is not False
+    ):
+        return None
+    bootstrap, bootstrap_error = _events(
+        directory / "task-log.jsonl",
+        required=True,
+    )
+    stage2, stage2_error = _events(directory / "stage2-task-log.jsonl")
+    stage2_state, _stage2_end, _stage2_terminal = _phase_state(stage2, "stage2")
+    bootstrap_state, _bootstrap_end, _bootstrap_terminal = _phase_state(
+        bootstrap,
+        "bootstrap",
+    )
+    if (
+        bootstrap_error
+        or stage2_error
+        or (stage2_state or bootstrap_state or "unknown") != "running"
+    ):
+        return None
+    started_at = _timestamp(marker.get("started_at"))
+    if started_at is None:
+        try:
+            started_at = (directory / "ENGINEERING_ONLY.json").stat().st_mtime
+        except OSError:
+            started_at = 0.0
+    return _campaign_named_session_spec(
+        directory,
+        marker,
+        started_at=started_at,
+    )
+
+
 def scan_engineering_campaigns(
     results_root: Path,
     *,
@@ -670,8 +1116,9 @@ def scan_engineering_campaigns(
     """Load a bounded campaign index and return any omission notice.
 
     Jobs passes its inclusive date window so marker start times are filtered
-    before the 20-row display cap. Dashboard callers omit the window and retain
-    the bounded recent-directory behavior.
+    before the 20-row display cap. An unwindowed scan also reconciles every
+    exact-session nonterminal controller in the bounded directory scan, so a
+    genuinely live controller cannot disappear behind newer terminal history.
     """
 
     if (started_from is None) != (started_to is None):
@@ -740,7 +1187,7 @@ def scan_engineering_campaigns(
             else (lambda item: item[1])
         ),
     )
-    campaigns = []
+    resolved_candidates: list[Path] = []
     seen_resolved: set[Path] = set()
     for _started, _mtime, candidate in newest:
         try:
@@ -750,17 +1197,69 @@ def scan_engineering_campaigns(
         if resolved in seen_resolved:
             continue
         seen_resolved.add(resolved)
-        campaign = load_engineering_campaign(results_root, candidate.name)
+        resolved_candidates.append(resolved)
+
+    specs_by_directory: dict[Path, _NamedSessionSpec] = {}
+    for resolved in resolved_candidates:
+        spec = _running_campaign_session_spec(resolved)
+        if spec is not None:
+            specs_by_directory[resolved] = spec
+
+    # A date-window scan is a bounded history query. The separate unwindowed
+    # scan used by Jobs is responsible for the live override. Inspect at most
+    # _MAX_DIRECTORY_ENTRIES here, then let the exact tmux/screen probes (each
+    # separately timeout-bounded) decide which older controllers are live.
+    older_session_directories: list[Path] = []
+    if started_from is None:
+        for _started, _mtime, candidate in candidates:
+            try:
+                if candidate.is_symlink():
+                    continue
+                resolved = candidate.resolve(strict=True)
+                if (
+                    resolved.parent != root
+                    or resolved in seen_resolved
+                    or not stat.S_ISDIR(resolved.lstat().st_mode)
+                ):
+                    continue
+            except OSError:
+                continue
+            spec = _running_campaign_session_spec(resolved)
+            if spec is None:
+                continue
+            seen_resolved.add(resolved)
+            specs_by_directory[resolved] = spec
+            older_session_directories.append(resolved)
+    session_liveness = _named_session_liveness(list(specs_by_directory.values()))
+
+    live_older_directories = [
+        resolved
+        for resolved in older_session_directories
+        if session_liveness.get(specs_by_directory[resolved]) is True
+    ]
+    resolved_candidates.extend(live_older_directories)
+
+    campaigns = []
+    for resolved in resolved_candidates:
+        campaign = _load_campaign(
+            resolved,
+            named_session_liveness=session_liveness,
+        )
         if campaign is not None:
             campaigns.append(campaign)
     notices = []
-    omitted = max(0, len(candidates) - len(newest))
+    omitted = max(0, len(candidates) - len(newest) - len(live_older_directories))
     if omitted:
         notices.append(
             f"Showing the {_MAX_CAMPAIGNS} newest retained engineering campaigns"
             f"{' in the selected date range' if started_from is not None else ''}; "
             f"{omitted} additional scanned director"
             f"{'y was' if omitted == 1 else 'ies were'} omitted."
+            + (
+                " Exact-session live controllers outside the recent cap remain included."
+                if started_from is None
+                else ""
+            )
         )
     if truncated:
         notices.append(

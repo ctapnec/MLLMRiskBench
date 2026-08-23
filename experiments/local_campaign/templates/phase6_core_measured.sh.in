@@ -305,6 +305,11 @@ exec > >(tee "$LOG") 2>&1
 current_lane='controller'
 current_stage='startup'
 active_child_pid=''
+active_child_pgid=''
+active_external_job_id=''
+active_external_terminal_log=''
+active_external_tmux_socket=''
+active_external_tmux_session=''
 terminal_completion_written='no'
 terminal_exit_code=''
 finish() {
@@ -358,11 +363,50 @@ PY
 abort_signal() {
   local code="$1"
   local child="$active_child_pid"
+  local child_pgid="$active_child_pgid"
+  local external_rc="$code"
   trap - INT TERM HUP
   if [[ "$child" =~ ^[0-9]+$ ]]; then
-    kill -TERM "$child" 2> /dev/null || true
+    if [[ "$child_pgid" =~ ^[0-9]+$ ]]; then
+      kill -TERM -- "-$child_pgid" 2> /dev/null || true
+    else
+      kill -TERM "$child" 2> /dev/null || true
+    fi
+    for _ in {1..30}; do
+      kill -0 "$child" 2> /dev/null || break
+      sleep 1
+    done
+    if kill -0 "$child" 2> /dev/null; then
+      if [[ "$child_pgid" =~ ^[0-9]+$ ]]; then
+        kill -KILL -- "-$child_pgid" 2> /dev/null || true
+      else
+        kill -KILL "$child" 2> /dev/null || true
+      fi
+    fi
     wait "$child" 2> /dev/null || true
     active_child_pid=''
+    active_child_pgid=''
+  fi
+  if [[ -n "$active_external_tmux_socket" && -n "$active_external_tmux_session" ]]; then
+    timeout --signal=TERM --kill-after=5s 5s \
+      tmux -L "$active_external_tmux_socket" kill-session \
+      -t "$active_external_tmux_session" 2> /dev/null || true
+    timeout --signal=TERM --kill-after=5s 5s \
+      tmux -L "$active_external_tmux_socket" kill-server \
+      2> /dev/null || true
+    active_external_tmux_socket=''
+    active_external_tmux_session=''
+  fi
+  if [[ -n "$active_external_job_id" ]]; then
+    if [[ "$current_lane" != 'controller' ]] \
+      && [[ -f "$ATTEMPT_ROOT/$current_lane.wall-time-exceeded" ]] \
+      && [[ ! -L "$ATTEMPT_ROOT/$current_lane.wall-time-exceeded" ]]; then
+      external_rc=124
+    fi
+    external_measured_terminal "$active_external_job_id" "$external_rc" \
+      "$active_external_terminal_log" || true
+    active_external_job_id=''
+    active_external_terminal_log=''
   fi
   exit "$code"
 }
@@ -376,6 +420,181 @@ run_owned() {
     rc=$?
   fi
   active_child_pid=''
+  active_child_pgid=''
+  return "$rc"
+}
+
+external_measured_terminal() {
+  local job_id="$1" exit_code="$2" terminal_log="$3"
+  local rc
+  if run_owned timeout --signal=TERM --kill-after=30s 30s \
+    "$PY" -m experiments.rig_web_app.external_measured terminal \
+    --results-root "$URA_WORK/runs" \
+    --job-id "$job_id" \
+    --exit-code "$exit_code" \
+    > "$terminal_log" 2>&1; then
+    rc=0
+  else
+    rc=$?
+  fi
+  return "$rc"
+}
+
+external_measured_run() {
+  local lane="$1" invocation="$2" result_root="$3" runner_log="$4"
+  shift 4
+  local job_id session socket gate5_sha runner_rc terminal_rc invocation_token
+  local registration_rc launch_rc runner_launch runner_launch_tmp runner_exit
+  local runner_exit_tmp runner_exit_value tmux_command probe_rc
+  invocation_token="$(date -u +%s%N)-$$"
+  job_id="external-p6c-${ATTEMPT_TAG}-${invocation}-${invocation_token}-${lane}"
+  [[ "$job_id" =~ ^external-[A-Za-z0-9][A-Za-z0-9._-]{0,118}$ ]]
+  session="ura-p6c-job-${ATTEMPT_TAG}-${invocation_token}"
+  socket="$session"
+  [[ "$session" =~ ^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$ ]]
+  gate5_sha="$(sha256sum -- "$MANIFEST" | awk '{print $1}')"
+  [[ "$gate5_sha" =~ ^[0-9a-f]{64}$ ]]
+  if [[ ! -e "$result_root" && ! -L "$result_root" ]]; then
+    mkdir -m 700 "$result_root"
+  fi
+  test -d "$result_root" && test ! -L "$result_root"
+  test "$(readlink -e -- "$result_root")" = "$result_root"
+  runner_launch="$ATTEMPT_ROOT/$lane.$invocation.$invocation_token.runner-launch.sh"
+  runner_launch_tmp="${runner_launch}.tmp"
+  runner_exit="$ATTEMPT_ROOT/$lane.$invocation.$invocation_token.runner-exit"
+  runner_exit_tmp="${runner_exit}.tmp"
+  test ! -e "$runner_launch" && test ! -L "$runner_launch"
+  test ! -e "$runner_launch_tmp" && test ! -L "$runner_launch_tmp"
+  test ! -e "$runner_exit" && test ! -L "$runner_exit"
+  test ! -e "$runner_exit_tmp" && test ! -L "$runner_exit_tmp"
+  {
+    printf '#!/usr/bin/env bash\nset +e\n'
+    printf '%q ' env CUDA_VISIBLE_DEVICES=0,1 "$PY" \
+      -m experiments.run_matrix "$@"
+    printf '> %q 2>&1\n' "$runner_log"
+    printf 'rc=$?\nprintf '\''%%s\\n'\'' "$rc" > %q\nmv -- %q %q\nexit "$rc"\n' \
+      "$runner_exit_tmp" "$runner_exit_tmp" "$runner_exit"
+  } > "$runner_launch_tmp"
+  chmod 700 "$runner_launch_tmp"
+  mv -- "$runner_launch_tmp" "$runner_launch"
+  printf -v tmux_command 'exec bash %q' "$runner_launch"
+
+  # Establish the complete cleanup identity before start publication.  A
+  # signal or publication-side failure can then terminalise any created row.
+  active_external_job_id="$job_id"
+  active_external_terminal_log="${runner_log}.external-terminal.log"
+  active_external_tmux_socket="$socket"
+  active_external_tmux_session="$session"
+  if run_owned "$PY" -m experiments.rig_web_app.external_measured start \
+    --results-root "$URA_WORK/runs" \
+    --job-id "$job_id" \
+    --out-dir "$result_root" \
+    --expected-commit "$EXPECTED_COMMIT" \
+    --framework-lock-id "$EXPECTED_FRAMEWORK_LOCK" \
+    --gate5-sha256 "$gate5_sha" \
+    --tmux-socket "$socket" \
+    --tmux-session "$session" \
+    --argv "$@" \
+    > "${runner_log}.external-start.log" 2>&1; then
+    registration_rc=0
+  else
+    registration_rc=$?
+  fi
+  runner_rc="$registration_rc"
+  if (( registration_rc == 0 )); then
+    if run_owned tmux -L "$socket" new-session -d -s "$session" \
+      "$tmux_command" > "${runner_log}.external-launch.log" 2>&1; then
+      launch_rc=0
+    else
+      launch_rc=$?
+    fi
+    runner_rc="$launch_rc"
+    if (( launch_rc == 0 )); then
+      while true; do
+        if timeout --signal=TERM --kill-after=5s 5s \
+          tmux -L "$socket" has-session -t "$session" 2> /dev/null; then
+          sleep 1
+          continue
+        else
+          probe_rc=$?
+        fi
+        if (( probe_rc == 1 )); then
+          break
+        fi
+        runner_rc=125
+        timeout --signal=TERM --kill-after=5s 5s \
+          tmux -L "$socket" kill-session -t "$session" \
+          2> /dev/null || true
+        timeout --signal=TERM --kill-after=5s 5s \
+          tmux -L "$socket" kill-server 2> /dev/null || true
+        break
+      done
+      if (( runner_rc == 0 )); then
+        if [[ -f "$runner_exit" && ! -L "$runner_exit" ]] \
+          && [[ "$(stat -c '%h' -- "$runner_exit")" = '1' ]]; then
+          runner_exit_value="$(cat -- "$runner_exit")"
+        else
+          runner_exit_value=''
+        fi
+        if [[ "$runner_exit_value" =~ ^([0-9]|[1-9][0-9]|1[0-9][0-9]|2[0-4][0-9]|25[0-5])$ ]]; then
+          runner_rc="$runner_exit_value"
+        else
+          runner_rc=125
+        fi
+      fi
+    fi
+  fi
+  active_external_tmux_socket=''
+  active_external_tmux_session=''
+  if external_measured_terminal "$job_id" "$runner_rc" \
+    "$active_external_terminal_log"; then
+    terminal_rc=0
+  else
+    terminal_rc=$?
+  fi
+  active_external_job_id=''
+  active_external_terminal_log=''
+  if (( runner_rc != 0 )); then
+    return "$runner_rc"
+  fi
+  if (( terminal_rc != 0 )); then
+    return "$terminal_rc"
+  fi
+  return 0
+}
+
+wait_lane_with_ceiling() {
+  local child="$1" lane="$2" ceiling="$3"
+  local deadline=$((SECONDS + ceiling)) grace rc timeout_trigger
+  timeout_trigger="$ATTEMPT_ROOT/$lane.wall-time-exceeded"
+  while kill -0 "$child" 2> /dev/null; do
+    if (( SECONDS >= deadline )); then
+      if [[ ! -e "$timeout_trigger" && ! -L "$timeout_trigger" ]]; then
+        ( set -o noclobber; printf '%s\n' "$ceiling" > "$timeout_trigger" )
+        chmod 600 "$timeout_trigger"
+      fi
+      kill -TERM -- "-$child" 2> /dev/null || true
+      grace=$((SECONDS + 30))
+      while kill -0 "$child" 2> /dev/null && (( SECONDS < grace )); do
+        sleep 1
+      done
+      if kill -0 "$child" 2> /dev/null; then
+        kill -KILL -- "-$child" 2> /dev/null || true
+      fi
+      wait "$child" 2> /dev/null || true
+      active_child_pid=''
+      active_child_pgid=''
+      return 124
+    fi
+    sleep 1
+  done
+  if wait "$child"; then
+    rc=0
+  else
+    rc=$?
+  fi
+  active_child_pid=''
+  active_child_pgid=''
   return "$rc"
 }
 trap 'abort_signal 130' INT
@@ -385,6 +604,7 @@ trap finish EXIT
 
 current_stage='controller-lock'
 command -v flock > /dev/null
+command -v timeout > /dev/null
 test -f "$CONTROLLER_LOCK" && test ! -L "$CONTROLLER_LOCK"
 test "$(stat -c '%a' -- "$CONTROLLER_LOCK")" = '600'
 test "$(stat -c '%h' -- "$CONTROLLER_LOCK")" = '1'
@@ -2310,7 +2530,10 @@ def validate_canonical_approval(value: Any, manifest_sha256: str) -> None:
         or value.get("authentication") != "operator_asserted"
         or value.get("covered_manifest_sha256") != manifest_sha256
         or value.get("scope")
-        != "exact frozen Gate-5 lane inventory, caps, deadline semantics, and external storage policy"
+        != (
+            "exact frozen Gate-5 lane inventory, caps, call-start and "
+            "measured-lane wall-time semantics, and external storage policy"
+        )
     ):
         raise ValueError("RUNNOTE approval does not bind the covered manifest")
     try:
@@ -2327,7 +2550,10 @@ def canonical_approval_self_test() -> None:
     approval = {
         "kind": "operator_assertion", "approver": "project operator",
         "authentication": "operator_asserted", "covered_manifest_sha256": digest,
-        "scope": "exact frozen Gate-5 lane inventory, caps, deadline semantics, and external storage policy",
+        "scope": (
+            "exact frozen Gate-5 lane inventory, caps, call-start and "
+            "measured-lane wall-time semantics, and external storage policy"
+        ),
         "asserted_at_utc": "2026-08-22T00:00:00Z",
     }
     validate_canonical_approval(approval, digest)
@@ -2449,13 +2675,21 @@ if (
         )
     )
     or policy.get("call_start_deadline_semantics") != "admission_window_from_first_invocation_not_completion_timeout"
+    or policy.get("measured_lane_wall_time_semantics")
+    != "controller_completion_ceiling_distinct_from_call_start_admission_window"
 ):
     raise ValueError("Gate 5 policy does not authorize the local exact-cap contract")
 deadline = policy.get("call_start_deadline_seconds")
+lane_wall_time = policy.get("measured_lane_wall_time_seconds")
 free_floor = policy.get("free_space_floor_bytes")
 storage_limit = policy.get("retained_output_policy_bytes")
-if any(isinstance(value, bool) or not isinstance(value, int) or value <= 0 for value in (deadline, free_floor, storage_limit)):
+if any(
+    isinstance(value, bool) or not isinstance(value, int) or value <= 0
+    for value in (deadline, lane_wall_time, free_floor, storage_limit)
+):
     raise ValueError("Gate 5 deadline/storage policy is invalid")
+if lane_wall_time != 1_209_600:
+    raise ValueError("Gate 5 measured-lane wall-time ceiling changed")
 
 markdown = runnote_raw.decode("utf-8", errors="strict")
 matches = re.findall(r"(?ms)^```json\s*$\n(.*?)^```\s*$", markdown)
@@ -2858,6 +3092,7 @@ for index, lane in enumerate(CORE_ORDER, 1):
         or caps.get("http_attempts") != calls["http_attempts"]
         or calls["http_attempts"] != 0
         or caps.get("call_start_deadline_seconds") != deadline
+        or caps.get("measured_lane_wall_time_seconds") != lane_wall_time
         or caps.get("retained_output_policy_bytes") != storage_limit
     ):
         raise ValueError(f"{lane}: approved caps are not the exact Gate 5 projection")
@@ -2929,6 +3164,7 @@ for index, lane in enumerate(CORE_ORDER, 1):
             "model_judge_calls": caps["model_judge_calls"],
             "http_attempts": caps["http_attempts"],
             "deadline_seconds": deadline,
+            "wall_time_seconds": lane_wall_time,
         },
         "storage": {
             "free_space_floor_bytes": free_floor,
@@ -3015,6 +3251,7 @@ for item in (
     str(value["approved_caps"]["model_judge_calls"]),
     str(value["approved_caps"]["http_attempts"]),
     str(value["approved_caps"]["deadline_seconds"]),
+    str(value["approved_caps"]["wall_time_seconds"]),
     str(value["storage"]["free_space_floor_bytes"]),
     str(value["storage"]["retained_output_policy_bytes"]),
 ):
@@ -3963,7 +4200,7 @@ run_lane_body() {
   trap 'abort_signal 143' TERM
   trap 'abort_signal 129' HUP
   mapfile -d '' -t values < <(spec_values "$spec_path")
-  test "${#values[@]}" -eq 12
+  test "${#values[@]}" -eq 13
   LANE="${values[0]}"
   TARGET_SPEC="${values[1]}"
   TARGET_REPO="${values[2]}"
@@ -3974,8 +4211,9 @@ run_lane_body() {
   JUDGE_CAP="${values[7]}"
   HTTP_CAP="${values[8]}"
   DEADLINE="${values[9]}"
-  FREE_FLOOR="${values[10]}"
-  STORAGE_LIMIT="${values[11]}"
+  WALL_TIME="${values[10]}"
+  FREE_FLOOR="${values[11]}"
+  STORAGE_LIMIT="${values[12]}"
   current_lane="$LANE"
   current_stage='environment-recheck'
   assert_environment
@@ -4017,8 +4255,8 @@ run_lane_body() {
     test "${#measured_argv[@]}" -gt 0
     current_stage='runner-resume'
     event "$LANE" runner-resume start 'same sealed argv; Runner checkpoints only'
-    run_owned env CUDA_VISIBLE_DEVICES=0,1 "$PY" -m experiments.run_matrix \
-      "${measured_argv[@]}" > "$ATTEMPT_ROOT/$LANE.runner-resume.log" 2>&1
+    external_measured_run "$LANE" runner-resume "$result_root" \
+      "$ATTEMPT_ROOT/$LANE.runner-resume.log" "${measured_argv[@]}"
   else
     assert_no_runner_execution "$result_root"
     mapfile -d '' -t base_argv < <(spec_base_argv "$spec_path")
@@ -4167,8 +4405,8 @@ PY
     load_exact_state "$state_path" "$spec_path" > /dev/null
     current_stage='measured-run'
     event "$LANE" measured start "$TARGET_CAP target-call cap"
-    run_owned env CUDA_VISIBLE_DEVICES=0,1 "$PY" -m experiments.run_matrix \
-      "${measured_argv[@]}" > "$prep_control/measured.run.log" 2>&1
+    external_measured_run "$LANE" measured-run "$result_root" \
+      "$prep_control/measured.run.log" "${measured_argv[@]}"
   fi
 
   current_stage='measured-revalidation'
@@ -4181,7 +4419,8 @@ write_lane_failure() {
   local failure_path="$ATTEMPT_ROOT/$lane.failure.json"
   test ! -e "$failure_path" && test ! -L "$failure_path"
   "$PY" - "$failure_path" "$lane" "$ATTEMPT_TAG" "$spec_path" \
-    "$state_path" "$result_root" "$rc" "$stage" <<'PY'
+    "$state_path" "$result_root" "$rc" "$stage" \
+    "$EXPECTED_COMMIT" "$EXPECTED_FRAMEWORK_LOCK" <<'PY'
 from __future__ import annotations
 
 from datetime import datetime, timezone
@@ -4193,8 +4432,8 @@ import sys
 
 (
     out_value, lane, attempt, spec_value, state_value, result_value, rc_value,
-    stage,
-) = sys.argv[1:9]
+    stage, expected_commit, expected_lock,
+) = sys.argv[1:11]
 out = Path(out_value)
 
 def descriptor(path: Path) -> dict[str, object]:
@@ -4216,10 +4455,20 @@ if not result_root.is_absolute() or result_root.name != lane:
     raise SystemExit("Phase 6 core failure result root differs")
 if result_root.is_symlink():
     raise SystemExit("Phase 6 core failure result root is a symlink")
-canonical_result_root = result_root.resolve()
-expected_result_root = (
-    Path(os.environ["URA_WORK"]) / "runs" / "thesis" / "runner" / lane
-).resolve()
+runner_parent = (
+    Path(os.environ["URA_WORK"]).resolve(strict=True)
+    / "runs" / "thesis" / "runner"
+)
+if runner_parent.is_symlink() or not runner_parent.is_dir():
+    raise SystemExit("Phase 6 core Runner parent is unsafe")
+expected_result_root = runner_parent / lane
+if result_root != expected_result_root:
+    raise SystemExit("Phase 6 core failure result root escaped the Runner inventory")
+if not result_root.exists():
+    os.mkdir(result_root, 0o700)
+if result_root.is_symlink() or not result_root.is_dir():
+    raise SystemExit("Phase 6 core failure result root is unsafe")
+canonical_result_root = result_root.resolve(strict=True)
 if canonical_result_root != expected_result_root:
     raise SystemExit("Phase 6 core failure result root escaped the Runner inventory")
 returncode = int(rc_value)
@@ -4228,23 +4477,106 @@ if returncode <= 0 or returncode > 255:
 state_descriptor = None
 if state.exists() or state.is_symlink():
     state_descriptor = descriptor(state)
+spec_descriptor = descriptor(spec)
+spec_value = json.loads(spec.read_text(encoding="utf-8"))
+wall_time = spec_value.get("approved_caps", {}).get("wall_time_seconds")
+gate5_sha = spec_value.get("gate5", {}).get("manifest_sha256")
+if (
+    isinstance(wall_time, bool)
+    or not isinstance(wall_time, int)
+    or wall_time != 1_209_600
+    or not isinstance(gate5_sha, str)
+    or len(gate5_sha) != 64
+):
+    raise SystemExit("Phase 6 core failure spec lacks the approved wall-time binding")
+timed_out = stage == "approved-wall-time-ceiling"
+reason_code = (
+    "approved_wall_time_exceeded"
+    if timed_out
+    else "lane_controller_nonzero_exit"
+)
+error_type = "lane_wall_time_exceeded" if timed_out else "lane_controller_nonzero_exit"
+error = (
+    f"lane exceeded approved {wall_time}-second wall-time ceiling; "
+    "no measured evidence admitted"
+    if timed_out
+    else f"lane controller exited {returncode}; no measured evidence admitted"
+)
+critical_patterns = (
+    "*.grid.json", "*.request-envelope.json", "*.eligibility.json", "*.error.json",
+)
+critical_artifacts = sorted({
+    path.resolve(strict=True)
+    for pattern in critical_patterns
+    for path in result_root.rglob(pattern)
+    if path.is_file() and not path.is_symlink()
+})
+pre_runner_descriptor = None
+failed_at = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+if not critical_artifacts:
+    marker = result_root / f".ura-phase6-pre-runner-failure-{attempt}.json"
+    marker_value = {
+        "schema": "ura-phase6-pre-runner-failure/1",
+        "status": "failed",
+        "artifact_role": "controller_pre_runner_failure_not_runner_artifact",
+        "lane_id": lane,
+        "attempt": attempt,
+        "failed_at_utc": failed_at,
+        "stage": stage,
+        "reason_code": reason_code,
+        "error_type": error_type,
+        "error": error,
+        "expected_commit": expected_commit,
+        "framework_lock_id": expected_lock,
+        "gate5_manifest_sha256": gate5_sha,
+        "lane_spec": spec_descriptor,
+        "exact_measured_argv": state_descriptor,
+        "result_root": str(canonical_result_root),
+        "approved_wall_time_seconds": wall_time,
+        "runner_lifecycle_artifact_count": 0,
+        "runner_artifact": False,
+        "evidence_eligible": False,
+    }
+    marker_payload = (
+        json.dumps(
+            marker_value,
+            sort_keys=True,
+            separators=(",", ":"),
+            allow_nan=False,
+        )
+        + "\n"
+    ).encode("ascii")
+    marker_fd = os.open(marker, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    with os.fdopen(marker_fd, "wb") as handle:
+        handle.write(marker_payload)
+        handle.flush()
+        os.fsync(handle.fileno())
+    directory_fd = os.open(result_root, os.O_RDONLY)
+    try:
+        os.fsync(directory_fd)
+    finally:
+        os.close(directory_fd)
+    pre_runner_descriptor = descriptor(marker)
 value = {
     "schema": "ura-phase6-core-lane-failure/1",
     "status": "failed",
     "lane_id": lane,
     "attempt": attempt,
-    "failed_at_utc": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+    "failed_at_utc": failed_at,
     "returncode": returncode,
     "stage": stage,
-    "error_type": "lane_controller_nonzero_exit",
-    "error": f"lane controller exited {returncode}; no measured evidence admitted",
+    "reason_code": reason_code,
+    "error_type": error_type,
+    "error": error,
     "terminal_event": {
         "status": "failed",
-        "detail": f"lane controller exited {returncode}; no measured evidence admitted",
+        "detail": error,
     },
-    "lane_spec": descriptor(spec),
+    "lane_spec": spec_descriptor,
     "exact_measured_argv": state_descriptor,
+    "pre_runner_failure": pre_runner_descriptor,
     "result_root": str(canonical_result_root),
+    "approved_wall_time_seconds": wall_time,
     "evidence_eligible": False,
     "retry_semantics": "next controller attempt revalidates complete Runner state or retries the exact sealed argv",
     "hosted_target_calls": 0,
@@ -4280,8 +4612,19 @@ PY
 
 lane_attempt_finish() {
   local lane_rc="$1" lane="$2" spec_path="$3" state_path="$4" result_root="$5"
-  local failure_stage="$current_stage" failure_write_rc event_rc
+  local failure_stage="$current_stage" failure_write_rc event_rc detail timeout_trigger timeout_value
+  local -a failure_values=()
   trap - EXIT
+  timeout_trigger="$ATTEMPT_ROOT/$lane.wall-time-exceeded"
+  if [[ -f "$timeout_trigger" && ! -L "$timeout_trigger" ]]; then
+    mapfile -d '' -t failure_values < <(spec_values "$spec_path")
+    if [[ "${#failure_values[@]}" -eq 13 ]] \
+      && IFS= read -r timeout_value < "$timeout_trigger" \
+      && [[ "$timeout_value" == "${failure_values[10]}" ]]; then
+      lane_rc=124
+      failure_stage='approved-wall-time-ceiling'
+    fi
+  fi
   if (( lane_rc == 0 )); then
     exit 0
   fi
@@ -4292,8 +4635,12 @@ lane_attempt_finish() {
     "$lane_rc" "$failure_stage"
   failure_write_rc=$?
   if (( failure_write_rc == 0 )); then
-    event "$lane" measured failed \
-      "lane controller exited $lane_rc; no measured evidence admitted"
+    if [[ "$failure_stage" == 'approved-wall-time-ceiling' ]]; then
+      detail="lane exceeded approved ${failure_values[10]}-second wall-time ceiling; no measured evidence admitted"
+    else
+      detail="lane controller exited $lane_rc; no measured evidence admitted"
+    fi
+    event "$lane" measured failed "$detail"
     event_rc=$?
     if (( event_rc != 0 )); then
       printf '%s\n' "$lane: typed failure was sealed but its terminal event failed" >&2
@@ -4309,11 +4656,12 @@ lane_attempt_worker() {
   trap - EXIT
   set -Eeuo pipefail
   active_child_pid=''
+  active_child_pgid=''
   trap 'abort_signal 130' INT
   trap 'abort_signal 143' TERM
   trap 'abort_signal 129' HUP
   mapfile -d '' -t attempt_values < <(spec_values "$spec_path")
-  test "${#attempt_values[@]}" -eq 12
+  test "${#attempt_values[@]}" -eq 13
   lane="${attempt_values[0]}"
   state_path="$CONTROL_ROOT/lanes/$lane/exact-measured-argv.json"
   result_root="$URA_WORK/runs/thesis/runner/$lane"
@@ -4329,17 +4677,52 @@ lane_attempt_worker() {
 
 aggregate_lane_rc=0
 for spec_path in "${SPEC_FILES[@]}"; do
+  mapfile -d '' -t controller_values < <(spec_values "$spec_path")
+  test "${#controller_values[@]}" -eq 13
+  controller_lane="${controller_values[0]}"
+  controller_wall_time="${controller_values[10]}"
   # Launch outside a conditional context. Bash otherwise suppresses errexit
   # throughout a called function, even if that function runs `set -e` itself.
+  # Job control gives the attempt a distinct process group so the approved
+  # wall ceiling terminates and reaps the whole local subprocess tree.
+  set -m
   lane_attempt_worker "$spec_path" &
   active_child_pid="$!"
+  active_child_pgid="$active_child_pid"
+  set +m
   set +e
-  wait "$active_child_pid"
+  wait_lane_with_ceiling "$active_child_pid" "$controller_lane" \
+    "$controller_wall_time"
   lane_rc=$?
   set -e
   active_child_pid=''
+  active_child_pgid=''
   if (( lane_rc != 0 )); then
     aggregate_lane_rc=1
+    controller_failure="$ATTEMPT_ROOT/$controller_lane.failure.json"
+    if [[ ! -e "$controller_failure" && ! -L "$controller_failure" ]]; then
+      controller_state="$CONTROL_ROOT/lanes/$controller_lane/exact-measured-argv.json"
+      controller_result_root="$URA_WORK/runs/thesis/runner/$controller_lane"
+      controller_failure_stage='lane-worker-exit-without-typed-failure'
+      controller_failure_detail="lane controller exited $lane_rc; no measured evidence admitted"
+      if (( lane_rc == 124 )) \
+        && [[ -f "$ATTEMPT_ROOT/$controller_lane.wall-time-exceeded" ]] \
+        && [[ ! -L "$ATTEMPT_ROOT/$controller_lane.wall-time-exceeded" ]]; then
+        controller_failure_stage='approved-wall-time-ceiling'
+        controller_failure_detail="lane exceeded approved ${controller_wall_time}-second wall-time ceiling; no measured evidence admitted"
+      fi
+      set +e
+      write_lane_failure "$controller_lane" "$spec_path" "$controller_state" \
+        "$controller_result_root" "$lane_rc" "$controller_failure_stage"
+      controller_failure_rc=$?
+      if (( controller_failure_rc == 0 )); then
+        event "$controller_lane" measured failed "$controller_failure_detail"
+      else
+        printf '%s\n' \
+          "$controller_lane: parent could not atomically seal its typed failure" >&2
+      fi
+      set -e
+    fi
   fi
 done
 
@@ -4347,7 +4730,7 @@ current_lane='controller'
 current_stage='final-state-revalidation'
 for spec_path in "${SPEC_FILES[@]}"; do
   mapfile -d '' -t final_values < <(spec_values "$spec_path")
-  test "${#final_values[@]}" -eq 12
+  test "${#final_values[@]}" -eq 13
   final_lane="${final_values[0]}"
   final_state="$CONTROL_ROOT/lanes/$final_lane/exact-measured-argv.json"
   final_failure="$ATTEMPT_ROOT/$final_lane.failure.json"
@@ -5600,12 +5983,34 @@ for lane in CORE_ORDER:
         failure = strict_object(failure_path)
         expected_failure_fields = {
             "schema", "status", "lane_id", "attempt", "failed_at_utc",
-            "returncode", "stage", "error_type", "error", "terminal_event",
-            "lane_spec", "exact_measured_argv", "result_root",
+            "returncode", "stage", "reason_code", "error_type", "error",
+            "terminal_event", "lane_spec", "exact_measured_argv",
+            "pre_runner_failure", "result_root", "approved_wall_time_seconds",
             "evidence_eligible", "retry_semantics",
             "hosted_target_calls", "hosted_judge_calls",
             "provider_http_attempts", "downloads_observed_bytes",
         }
+        wall_time = spec.get("approved_caps", {}).get("wall_time_seconds")
+        if wall_time != 1_209_600:
+            raise SystemExit(f"{lane}: approved lane wall-time binding changed")
+        timed_out = failure.get("stage") == "approved-wall-time-ceiling"
+        expected_reason = (
+            "approved_wall_time_exceeded"
+            if timed_out
+            else "lane_controller_nonzero_exit"
+        )
+        expected_error_type = (
+            "lane_wall_time_exceeded"
+            if timed_out
+            else "lane_controller_nonzero_exit"
+        )
+        expected_error = (
+            f"lane exceeded approved {wall_time}-second wall-time ceiling; "
+            "no measured evidence admitted"
+            if timed_out
+            else f"lane controller exited {failure.get('returncode')}; "
+            "no measured evidence admitted"
+        )
         try:
             failed_at = datetime.fromisoformat(
                 str(failure.get("failed_at_utc", "")).replace("Z", "+00:00")
@@ -5624,13 +6029,15 @@ for lane in CORE_ORDER:
             or not 1 <= failure["returncode"] <= 255
             or not isinstance(failure.get("stage"), str)
             or not failure["stage"]
-            or failure.get("error_type") != "lane_controller_nonzero_exit"
-            or failure.get("error")
-            != f"lane controller exited {failure['returncode']}; no measured evidence admitted"
+            or (timed_out and failure.get("returncode") != 124)
+            or failure.get("reason_code") != expected_reason
+            or failure.get("error_type") != expected_error_type
+            or failure.get("error") != expected_error
             or failure.get("terminal_event") != terminal_event
             or failure.get("terminal_event", {}).get("detail") != failure.get("error")
             or failure.get("lane_spec") != spec_descriptor
             or failure.get("result_root") != str(expected_result_root)
+            or failure.get("approved_wall_time_seconds") != wall_time
             or failure.get("evidence_eligible") is not False
             or failure.get("retry_semantics")
             != "next controller attempt revalidates complete Runner state or retries the exact sealed argv"
@@ -5649,6 +6056,86 @@ for lane in CORE_ORDER:
                 raise SystemExit(f"{lane}: failure omitted its existing sealed argv")
         elif state_full_artifact(state_descriptor, f"{lane} failed exact argv") != descriptor(state_path):
             raise SystemExit(f"{lane}: failed exact argv descriptor changed")
+        declared_result_root = Path(str(failure.get("result_root", "")))
+        if (
+            declared_result_root != expected_result_root
+            or declared_result_root.is_symlink()
+            or not declared_result_root.is_dir()
+            or declared_result_root.resolve(strict=True) != expected_result_root
+        ):
+            raise SystemExit(f"{lane}: failed lane Runner root is absent or unsafe")
+        critical_patterns = (
+            "*.grid.json", "*.request-envelope.json", "*.eligibility.json",
+            "*.error.json",
+        )
+        critical_candidates = [
+            path
+            for pattern in critical_patterns
+            for path in declared_result_root.rglob(pattern)
+        ]
+        if any(path.is_symlink() or not path.is_file() for path in critical_candidates):
+            raise SystemExit(f"{lane}: failed lane has an unsafe Runner artifact")
+        marker_candidates = sorted(
+            declared_result_root.glob(
+                ".ura-phase6-pre-runner-failure-*.json"
+            )
+        )
+        if any(path.is_symlink() or not path.is_file() for path in marker_candidates):
+            raise SystemExit(f"{lane}: pre-Runner failure marker is unsafe")
+        pre_runner_descriptor = failure.get("pre_runner_failure")
+        expected_marker = declared_result_root / (
+            f".ura-phase6-pre-runner-failure-{attempt_root.name}.json"
+        )
+        if critical_candidates:
+            if pre_runner_descriptor is not None or expected_marker in marker_candidates:
+                raise SystemExit(
+                    f"{lane}: current pre-Runner marker coexists with Runner lifecycle artifacts"
+                )
+        else:
+            if expected_marker not in marker_candidates:
+                raise SystemExit(
+                    f"{lane}: exact pre-Runner failure marker is absent"
+                )
+            observed_marker_descriptor = descriptor(expected_marker)
+            if pre_runner_descriptor != observed_marker_descriptor:
+                raise SystemExit(
+                    f"{lane}: pre-Runner failure descriptor changed"
+                )
+            marker = strict_object(expected_marker)
+            marker_fields = {
+                "schema", "status", "artifact_role", "lane_id", "attempt",
+                "failed_at_utc", "stage", "reason_code", "error_type", "error",
+                "expected_commit", "framework_lock_id", "gate5_manifest_sha256",
+                "lane_spec", "exact_measured_argv", "result_root",
+                "approved_wall_time_seconds", "runner_lifecycle_artifact_count",
+                "runner_artifact", "evidence_eligible",
+            }
+            if (
+                set(marker) != marker_fields
+                or marker.get("schema") != "ura-phase6-pre-runner-failure/1"
+                or marker.get("status") != "failed"
+                or marker.get("artifact_role")
+                != "controller_pre_runner_failure_not_runner_artifact"
+                or marker.get("lane_id") != lane
+                or marker.get("attempt") != attempt_root.name
+                or marker.get("failed_at_utc") != failure.get("failed_at_utc")
+                or marker.get("stage") != failure.get("stage")
+                or marker.get("reason_code") != failure.get("reason_code")
+                or marker.get("error_type") != failure.get("error_type")
+                or marker.get("error") != failure.get("error")
+                or marker.get("expected_commit") != expected_commit
+                or marker.get("framework_lock_id") != expected_lock
+                or marker.get("gate5_manifest_sha256")
+                != spec.get("gate5", {}).get("manifest_sha256")
+                or marker.get("lane_spec") != spec_descriptor
+                or marker.get("exact_measured_argv") != state_descriptor
+                or marker.get("result_root") != str(expected_result_root)
+                or marker.get("approved_wall_time_seconds") != wall_time
+                or marker.get("runner_lifecycle_artifact_count") != 0
+                or marker.get("runner_artifact") is not False
+                or marker.get("evidence_eligible") is not False
+            ):
+                raise SystemExit(f"{lane}: pre-Runner failure marker changed")
         lane_failures[lane] = descriptor(failure_path)
         continue
     if failure_path.exists() or failure_path.is_symlink():

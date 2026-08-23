@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import sys
+import time
 from dataclasses import replace
 from pathlib import Path
 
@@ -478,6 +480,129 @@ def test_installer_campaign_is_visible_in_jobs_and_stats(tmp_path: Path) -> None
     assert b"engineering campaign" in jobs
     assert service.value.campaign_route_id.encode() in stats
     assert b"engineering / non-thesis" in stats
+
+
+@pytest.mark.parametrize(
+    ("session_returncode", "age_hours", "expected_state", "expected_tone", "detail_fragment"),
+    (
+        (0, 1, "running", "blue", ""),
+        (1, 1, "orphaned", "amber", "named session is no longer live"),
+        (0, 169, "running", "blue", "hard stop exceeded"),
+    ),
+)
+def test_installer_campaign_uses_its_exact_named_session_liveness(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    session_returncode: int,
+    age_hours: int,
+    expected_state: str,
+    expected_tone: str,
+    detail_fragment: str,
+) -> None:
+    from experiments.rig_web_app import campaigns as campaigns_module
+
+    service = _FakeRuntimeService(_snapshot())
+    app = _app(tmp_path, service)
+    lock_id = "b" * 64
+    route = f"framework-runtime-{lock_id[:12]}"
+    campaign = app.results_root / "engineering" / route
+    sessions = campaign / "sessions"
+    sessions.mkdir(parents=True)
+    started_epoch = time.time() - age_hours * 3600
+
+    def timestamp(value: float) -> str:
+        return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(value))
+
+    (campaign / "ENGINEERING_ONLY.json").write_text(
+        json.dumps({
+            "schema": "ura-engineering-campaign/1",
+            "campaign_id": route,
+            "evidence_class": "framework_runtime_setup",
+            "thesis_empirical_evidence": False,
+            "hosted_calls_allowed": False,
+            "target_call_cap": 0,
+            "hard_stop_hours": 168,
+            "started_at": timestamp(started_epoch),
+            "planned_tasks": ["framework-runtime-autodan"],
+            "model_tasks": [],
+            "runtime_lock_id": lock_id,
+        })
+        + "\n",
+        encoding="utf-8",
+    )
+    (campaign / "task-log.jsonl").write_text(
+        "".join(
+            json.dumps(row) + "\n"
+            for row in (
+                {
+                    "at": timestamp(started_epoch),
+                    "event": "campaign_start",
+                    "task": "bootstrap",
+                    "status": "running",
+                },
+                {
+                    "at": timestamp(started_epoch + 1),
+                    "event": "task_start",
+                    "task": "framework-runtime-autodan",
+                    "status": "running",
+                    "detail": "install",
+                },
+            )
+        ),
+        encoding="utf-8",
+    )
+    session = "ura-framework-install-bbbbbbbb-e90e4460-433f927906"
+    log = sessions / f"{session}.log"
+    log.write_text("[command] executable=python argc=17 cwd=default\n", encoding="utf-8")
+    (sessions / f"{session}.home").mkdir()
+    os.utime(log, (started_epoch - 1, started_epoch - 1))
+
+    probes: list[list[str]] = []
+
+    def which(name: str, *, path: str | None = None) -> str | None:
+        assert path == os.defpath
+        return "/usr/bin/tmux" if name == "tmux" else None
+
+    def run(argv: list[str], **_kwargs: object) -> object:
+        probes.append(argv)
+        return campaigns_module.subprocess.CompletedProcess(argv, session_returncode)
+
+    monkeypatch.setattr(campaigns_module.shutil, "which", which)
+    monkeypatch.setattr(campaigns_module.subprocess, "run", run)
+    try:
+        observed = app._engineering_campaign(route)
+        assert observed is not None
+        jobs = app.handle(
+            "GET",
+            f"/jobs?from_ms={int((started_epoch - 10) * 1000)}"
+            f"&to_ms={int((time.time() + 10) * 1000)}",
+        )[2].decode("utf-8")
+        detail = app.handle("GET", f"/jobs/campaign/{route}")[2].decode("utf-8")
+    finally:
+        app.close()
+
+    socket = f"ura-fw-{hashlib.sha256(session.encode('ascii')).hexdigest()[:16]}"
+    assert probes
+    assert all(
+        probe == ["/usr/bin/tmux", "-L", socket, "has-session", "-t", session]
+        for probe in probes
+    )
+    assert observed.state == expected_state
+    assert observed.status_tag == expected_state
+    assert f"<span class='badge {expected_tone}'>{expected_state}</span>" in jobs
+    assert f"<span class='dot {expected_tone}'></span>{expected_state}" in detail
+    if expected_state == "orphaned":
+        assert observed.active_tasks == ()
+        assert observed.task_outcomes == (
+            ("framework-runtime-autodan", "interrupted", "support"),
+        )
+    else:
+        assert observed.active_tasks == ("framework-runtime-autodan",)
+    if detail_fragment:
+        assert detail_fragment in observed.state_detail
+        assert detail_fragment in detail
+    else:
+        assert observed.state_detail == ""
 
 
 # --------------------------------------------------------------------------- #

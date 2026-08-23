@@ -362,6 +362,14 @@ while all three local RWKV Ollama targets are text-only. Those three pairs are
 `unavailable` with reason `target_transport_text_only_for_image_source`; they
 never enter projection, canary or measured loops.
 
+For an R-Judge canary, source-evaluator completeness and source-evaluator
+validity are separate observations. A completed prediction that does not obey
+the source label format remains an exercised, complete observation with
+`valid=0`; it contributes to `rjudge_validity` and the all-output accuracy
+denominator. Gate 5 therefore requires the implemented source evaluator to be
+queried and to complete the planned observations, but it does not require a
+positive valid-prediction count or retry until a parseable answer appears.
+
 Four further rows retain completed no-call projections but are unavailable for
 canary and measured admission because the exact GraySwan RR checkpoint did not
 produce one complete response. Text and physical-image vLLM probes reached the
@@ -385,7 +393,12 @@ Gate 5: projections and canaries retained under `runs/thesis/preflight` and
 `runs/thesis/diagnostics`; the non-evidence GraySwan RR target-runtime terminal
 retained in its sealed Phase 5 engineering control root and bound from the Gate
 5 manifest and run note; caps recorded in `runs/thesis/RUNNOTE.md`; all 46
-planned rows represented exactly once as runnable or typed terminal.
+planned rows represented exactly once as runnable or typed terminal. The
+approved policy records `measured_lane_wall_time_seconds=1209600` (14 days) as
+the process wall-time ceiling for one measured lane. This is distinct from the
+90-day Runner call-start admission deadline: the latter prevents a new call
+after its timestamp and does not interrupt a call or controller that already
+started.
 
 ## 7. Phase 6: measured local lanes (GPU days; sized by the canaries)
 
@@ -458,10 +471,41 @@ one-case runs remain engineering diagnostics under `$URA_WORK/runs/engineering`.
 They exercise the native bridge and importer but are not measured Runner lanes
 and are not promoted into thesis metrics.
 
+Every core and extended measured lane runs in its own process group under the
+Gate 5 14-day lane wall-time ceiling. Core lanes are terminated and reaped on
+that ceiling before the controller continues to the next lane; the extended
+controller applies the same ceiling cumulatively across each lane's preparation,
+resume and measured stages. A setup failure or timeout that occurs before Runner
+can publish its own request/error lifecycle writes one create-only,
+non-empirical `ura-phase6-pre-runner-failure/1` marker inside that exact planned
+`runs/thesis/runner/<lane>` root. The marker is not a Runner artifact and cannot
+enter metrics. It exists so Gate 6 never represents a planned measured lane by
+an absent directory or by an engineering log outside the Runner inventory.
+
+Immediately before each real measured `run_matrix` child, the controller also
+creates one fixed-child operational registration binding the exact sanitized
+argument vector, Runner root, project revision, framework lock, approved Gate 5
+digest and a unique private tmux socket/session for that invocation rather than
+the parent controller; it creates the matching terminal record after
+the child returns. Jobs and Stats use that explicit ownership to display the
+lane and completion-bound usage from its validated artifacts. The console
+neither launches nor stops these external children, and the registration and
+its terminal record remain explicitly external operational and non-thesis even
+after exit zero. The selected Jobs history window never hides an exact-session
+row that is currently observed live; unavailable or bounded-away liveness is
+shown as `unknown`, not asserted as `running`.
+
+The Phase 6 sequence wait for Gate 5 is bounded by its declared 720-hour
+controller hard stop, not by the Runner 90-day call-start window. Cleanup owns a
+prospective external id and exact session before start publication, and terminal
+publication is bounded to 30 seconds, so a signal or stuck publisher cannot
+leave a row borrowing the liveness of the parent controller.
+
 Gate 6: every measured Runner lane completes or records an explicit
-error/partial state under `runs/thesis/runner`; native engineering diagnostics
-retain their separate typed dispositions under `runs/engineering`; caps never
-raised mid-lane.
+error/partial state under `runs/thesis/runner`, either through Runner's own
+lifecycle artifacts or the exact typed pre-Runner marker above; native
+engineering diagnostics retain their separate typed dispositions under
+`runs/engineering`; caps never raised mid-lane.
 
 ## 8. Phase 7: read-only analysis (hours)
 
@@ -480,6 +524,17 @@ and cascade (rules+guardrail) evaluator modes as separate compatibility keys.
 Only successful measured lanes enter those metric and Level-2 views; failed and
 partial lanes remain visible in Level-1 lifecycle evidence rather than being
 silently dropped or replaced by Gate 5 preflight eligibility.
+Phase 7 accepts a planned lane root only when it contains Runner lifecycle
+artifacts or the exact `ura-phase6-pre-runner-failure/1` marker. A missing root
+or an untyped controller-log explanation is rejected rather than normalized to
+an invented pre-Runner disposition. Stats links the resulting Level-1/Level-2
+JSON only after validating the existing sealed Phase 7 watcher launch and frozen
+watcher/wrapper/payload, the Phase 6 completion/exit, preparation result, actual
+Phase 7 and analysis launches, analysis completion, artifact inventory, and
+authorized input manifest, including their project revision, framework lock, and
+approved Gate 5 identity.
+Neither an external registration nor an inventory by itself grants evidence
+authority.
 
 ## 9. Phase 8: human audit (free in money, requires raters and an ethics determination)
 
@@ -533,7 +588,10 @@ Stats for per-job usage/coverage; Config editor for registries) and once
 through the CLI, and confirm that the composed argument vectors (visible in the
 Jobs record) equal the runbook vectors, including `--limit 0`, `--group`,
 `--exclude-tool-conditioned` on synth/dry lanes, and the receipt environment
-defaults on the Run page.
+defaults on the Run page. Direct Phase 5 through Phase 7 controllers must appear
+through their exact engineering marker/task-event records, and every Phase 6
+measured child must have a resolvable external Job/Stats detail route whose
+artifact root equals that child's one declared `--out` directory.
 
 ## 11. Schedule and effort (estimate, to be replaced by observed values)
 

@@ -54,6 +54,7 @@ LOG="$CONTROL_ROOT/controller.log"
 EXIT_TMP="$CONTROL_ROOT/.exit.tmp"
 EXIT_MARKER="$CONTROL_ROOT/.exit"
 COMPLETION="$CONTROL_ROOT/completion.json"
+PY="$PWD/.venv/bin/python"
 
 test "$(git rev-parse HEAD)" = "$EXPECTED_COMMIT"
 test -z "$(git status --porcelain)"
@@ -67,6 +68,7 @@ test "$(sha256sum -- "$FINALIZER" | awk '{print $1}')" = "$FINALIZER_SHA256"
 test "$(sha256sum -- "$PROMOTER" | awk '{print $1}')" = "$PROMOTER_SHA256"
 bash -n "$FINALIZER"
 bash -n "$PROMOTER"
+test -x "$PY"
 
 export HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1 HF_DATASETS_OFFLINE=1
 unset HF_TOKEN HUGGING_FACE_HUB_TOKEN OPENAI_API_KEY ANTHROPIC_API_KEY \
@@ -77,12 +79,69 @@ test ! -e "$CONTROL_ROOT"
 mkdir -m 700 "$CONTROL_ROOT"
 exec > >(tee "$LOG") 2>&1
 
+CONTROL_TASKS=(
+  await-phase5
+  validate-evidence
+  finalize-gate5
+  prepare-promotion
+  promote-runnote
+  sequence-completion
+)
+CONTROL_TASK_INDEX=0
+CONTROL_ACTIVE_TASK=''
+CONSOLE_CAMPAIGN_STARTED=0
+
+console_event() {
+  PYTHONDONTWRITEBYTECODE=1 "$PY" -m experiments.local_campaign.console_events event \
+    --work-root "$URA_WORK" --control-root "$CONTROL_ROOT" \
+    --event "$1" --task "$2" --status "$3" --detail "$4"
+}
+
+controller_task_start() {
+  local task="$1"
+  test -z "$CONTROL_ACTIVE_TASK"
+  test "${CONTROL_TASKS[$CONTROL_TASK_INDEX]}" = "$task"
+  CONTROL_ACTIVE_TASK="$task"
+  console_event task_start "$task" running "${task}_started"
+}
+
+controller_task_pass() {
+  local task="$1"
+  test "$CONTROL_ACTIVE_TASK" = "$task"
+  console_event task_end "$task" passed "${task}_complete"
+  CONTROL_ACTIVE_TASK=''
+  CONTROL_TASK_INDEX=$((CONTROL_TASK_INDEX + 1))
+}
+
+controller_finish() {
+  local rc="$1" task status=failed
+  test "$CONSOLE_CAMPAIGN_STARTED" = '1' || return 0
+  if [ -n "$CONTROL_ACTIVE_TASK" ]; then
+    task="$CONTROL_ACTIVE_TASK"
+    console_event task_end "$task" failed "controller_exit_$rc" || \
+      printf 'console event failed: task_end %s\n' "$task" >&2
+    CONTROL_ACTIVE_TASK=''
+    CONTROL_TASK_INDEX=$((CONTROL_TASK_INDEX + 1))
+  fi
+  while [ "$CONTROL_TASK_INDEX" -lt "${#CONTROL_TASKS[@]}" ]; do
+    task="${CONTROL_TASKS[$CONTROL_TASK_INDEX]}"
+    console_event task_skip "$task" skipped "not_reached_after_controller_exit_$rc" || \
+      printf 'console event failed: task_skip %s\n' "$task" >&2
+    CONTROL_TASK_INDEX=$((CONTROL_TASK_INDEX + 1))
+  done
+  test "$rc" -ne 0 || status=passed
+  console_event campaign_end bootstrap "$status" "local_campaign_controller_exit_$rc" || \
+    printf 'console event failed: campaign_end\n' >&2
+  return 0
+}
+
 finish() {
   rc=$?
   trap - EXIT
   printf '%s\n' "$rc" > "$EXIT_TMP"
   test ! -e "$EXIT_MARKER"
   mv -- "$EXIT_TMP" "$EXIT_MARKER"
+  controller_finish "$rc"
   printf 'GATE5_SEQUENCE_EXIT=%s\n' "$rc"
   exit "$rc"
 }
@@ -90,6 +149,25 @@ trap finish EXIT
 trap 'exit 130' INT
 trap 'exit 143' TERM
 trap 'exit 129' HUP
+
+CONSOLE_START_ARGS=(
+  --work-root "$URA_WORK"
+  --control-root "$CONTROL_ROOT"
+  --campaign-id "${CONTROL_ROOT##*/}"
+  --release-commit "$EXPECTED_COMMIT"
+  --evidence-class local_campaign_control
+  --hard-stop-hours 24
+  --tmux-socket ura-gate5-after-phase5-@@COMMIT_SHORT@@
+  --tmux-session ura-gate5-after-phase5-@@COMMIT_SHORT@@
+)
+for task in "${CONTROL_TASKS[@]}"; do
+  CONSOLE_START_ARGS+=(--planned-task "$task")
+done
+PYTHONDONTWRITEBYTECODE=1 "$PY" -m experiments.local_campaign.console_events start \
+  "${CONSOLE_START_ARGS[@]}"
+CONSOLE_CAMPAIGN_STARTED=1
+
+controller_task_start await-phase5
 
 while tmux -L "$PHASE5_SEQUENCE_SOCKET" has-session -t "$PHASE5_SEQUENCE_SESSION" 2>/dev/null; do
   sleep 30
@@ -139,7 +217,9 @@ FAILED_THREE="$URA_WORK/runs/engineering/phase5-core-canaries-@@FAILED_CANARY_TH
 for root in "$FAILED_ONE" "$FAILED_TWO" "$FAILED_THREE"; do
   test -d "$root" && test ! -L "$root"
 done
+controller_task_pass await-phase5
 
+controller_task_start validate-evidence
 EVIDENCE_ARGS=(
   --core-projections-root "$CORE_PROJECTIONS_ROOT"
   --core-canaries-root "$CORE_CANARIES_ROOT"
@@ -208,7 +288,9 @@ RUNNABLE_LANES="${VALIDATION_VALUES[1]}"
 TYPED_TERMINAL_LANES="${VALIDATION_VALUES[2]}"
 TARGET_RUNTIME_TERMINAL="${VALIDATION_VALUES[3]}"
 CONDITIONAL_NA_LANES_JSON="${VALIDATION_VALUES[4]}"
+controller_task_pass validate-evidence
 
+controller_task_start finalize-gate5
 LAUNCH_RESULT="$CONTROL_ROOT/finalizer-launch.json"
 test ! -e "$LAUNCH_RESULT"
 bash "$FINALIZER" "${EVIDENCE_ARGS[@]}" --launch \
@@ -251,7 +333,9 @@ test -f "$FINALIZER_EXIT" && test ! -L "$FINALIZER_EXIT"
 test "$(tr -d '\r\n' < "$FINALIZER_EXIT")" = '0'
 test -f "$FINALIZATION_ROOT/.exit" && test ! -L "$FINALIZATION_ROOT/.exit"
 test "$(tr -d '\r\n' < "$FINALIZATION_ROOT/.exit")" = '0'
+controller_task_pass finalize-gate5
 
+controller_task_start prepare-promotion
 COVERED_MANIFEST="$FINALIZATION_ROOT/covered-manifest.json"
 FINALIZATION_RECEIPT="$FINALIZATION_ROOT/finalization-receipt.json"
 PROMOTION_PROPOSAL="$CONTROL_ROOT/promotion-proposal.json"
@@ -290,12 +374,16 @@ PY
 test "${#PROMOTION_VALUES[@]}" -eq 2
 PROMOTION_PLAN="${PROMOTION_VALUES[0]}"
 PROMOTION_SHA="${PROMOTION_VALUES[1]}"
+controller_task_pass prepare-promotion
 
+controller_task_start promote-runnote
 PROMOTION_RESULT="$CONTROL_ROOT/promotion-result.json"
 test ! -e "$PROMOTION_RESULT"
 bash "$PROMOTER" --promotion-plan "$PROMOTION_PLAN" \
   --authorize-plan-sha256 "$PROMOTION_SHA" > "$PROMOTION_RESULT"
+controller_task_pass promote-runnote
 
+controller_task_start sequence-completion
 "$PWD/.venv/bin/python" - "$COMPLETION" "$VALIDATION" "$LAUNCH_RESULT" \
   "$FINALIZER_CONTROL" "$FINALIZATION_ROOT" "$RUNNOTE_CANDIDATE" \
   "$PROMOTION_PROPOSAL" "$PROMOTION_RESULT" "$PROMOTION_PLAN" \
@@ -439,5 +527,6 @@ with os.fdopen(fd, "wb") as handle:
     os.fsync(handle.fileno())
 print(json.dumps({"status": "complete", "sha256": hashlib.sha256(payload).hexdigest()}, sort_keys=True))
 PY
+controller_task_pass sequence-completion
 
 printf 'GATE5_SEQUENCE_COMPLETE=%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)"

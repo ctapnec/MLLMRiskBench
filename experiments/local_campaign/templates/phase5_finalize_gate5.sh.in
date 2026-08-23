@@ -109,6 +109,7 @@ INPUT_MANIFEST_SCHEMA = "ura-gate5-lane-input/1"
 RUNNOTE_SCHEMA = "ura-gate5-runnote-candidate/1"
 CONTROLLER_SCHEMA = "ura-gate5-finalization-receipt/1"
 CALL_START_DEADLINE_SECONDS = 7_776_000
+MEASURED_LANE_WALL_TIME_SECONDS = 1_209_600
 ACQUISITION_DEADLINE_SECONDS = 86_400
 FREE_SPACE_FLOOR_BYTES = 1_099_511_627_776
 EXTERNAL_RETAINED_OUTPUT_POLICY_BYTES = 53_687_091_200
@@ -2981,6 +2982,8 @@ def validate_canary_bundle(canary_path: Path, *, expected_id: str) -> dict[str, 
     elif judges == ["rules"]:
         validate_classification_stage_contract(stages, label=str(canary_path))
         source = execution["source_evaluator"]
+        # Parser-invalid predictions remain complete source observations and
+        # contribute validity=0 rather than disappearing from the campaign.
         if (
             source.get("status") != "exercised"
             or not isinstance(source.get("required_records"), int)
@@ -2988,12 +2991,15 @@ def validate_canary_bundle(canary_path: Path, *, expected_id: str) -> dict[str, 
             or not isinstance(source.get("observed_records"), int)
             or source["observed_records"] <= 0
             or not isinstance(source.get("valid_records"), int)
-            or source["valid_records"] <= 0
             or source["required_records"] != source["observed_records"]
-            or source["observed_records"] != source["valid_records"]
-            or source["valid_records"] != retained["workload"]["completed_judgments"]
+            or source["observed_records"] != retained["workload"]["completed_judgments"]
+            or source["valid_records"] < 0
+            or source["valid_records"] > source["observed_records"]
         ):
-            raise Gate5Error(f"classification source evaluator lacks valid support: {canary_path}")
+            raise Gate5Error(
+                "classification source evaluator lacks complete implemented "
+                f"observations: {canary_path}"
+            )
         policy = "source_classification_evaluator_exercised_rules_placeholder_not_reached"
     else:
         raise Gate5Error(f"unsupported local canary judge inventory {judges!r}: {canary_path}")
@@ -5209,6 +5215,7 @@ def runnable_manifest_row(
                 "value": calls["local_guardrail_evaluations"],
             },
             "call_start_deadline_seconds": CALL_START_DEADLINE_SECONDS,
+            "measured_lane_wall_time_seconds": MEASURED_LANE_WALL_TIME_SECONDS,
             "retained_output_policy_bytes": EXTERNAL_RETAINED_OUTPUT_POLICY_BYTES,
             "retained_output_policy_semantics": "external_operator_policy_only_not_runner_enforced",
         },
@@ -6425,6 +6432,8 @@ def build_covered_manifest(
             "downloads_required_bytes": 0,
             "call_start_deadline_seconds": CALL_START_DEADLINE_SECONDS,
             "call_start_deadline_semantics": "admission_window_from_first_invocation_not_completion_timeout",
+            "measured_lane_wall_time_seconds": MEASURED_LANE_WALL_TIME_SECONDS,
+            "measured_lane_wall_time_semantics": "controller_completion_ceiling_distinct_from_call_start_admission_window",
             "free_space_floor_bytes": FREE_SPACE_FLOOR_BYTES,
             "retained_output_policy_bytes": EXTERNAL_RETAINED_OUTPUT_POLICY_BYTES,
             "retained_output_policy_semantics": "external_operator_policy_only_not_runner_enforced",
@@ -6943,6 +6952,7 @@ def runnote_markdown(note: Mapping[str, Any]) -> bytes:
         f"- Covered manifest SHA-256: `{note['approval']['covered_manifest_sha256']}`",
         f"- Approval provenance: `{note['approval']['kind']}` / `{note['approval']['approver']}` / `{note['approval']['authentication']}`",
         f"- Call-start window: `{note['policy']['call_start_deadline_seconds']}` seconds (not a completion timeout)",
+        f"- Per-lane measured wall ceiling: `{note['policy']['measured_lane_wall_time_seconds']}` seconds (controller-enforced, distinct from the call-start window)",
         f"- External retained-output policy: `{note['policy']['retained_output_policy_bytes']}` bytes (not Runner-enforced)",
         f"- Resolved-device free-space floor: `{note['policy']['free_space_floor_bytes']}` bytes",
         "",
@@ -7317,7 +7327,10 @@ def main(argv: Sequence[str]) -> int:
         "approver": "project operator",
         "authentication": "operator_asserted",
         "covered_manifest_sha256": manifest_sha,
-        "scope": "exact frozen Gate-5 lane inventory, caps, deadline semantics, and external storage policy",
+        "scope": (
+            "exact frozen Gate-5 lane inventory, caps, call-start and "
+            "measured-lane wall-time semantics, and external storage policy"
+        ),
     }
     runnable_count = sum(row["disposition"] == "runnable" for row in manifest["lanes"])
     terminal_count = len(manifest["lanes"]) - runnable_count

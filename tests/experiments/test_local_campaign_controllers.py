@@ -680,6 +680,123 @@ def test_a_new_commit_is_a_binding_not_a_source_edit(tmp_path: Path) -> None:
     assert first_bytes != second_bytes
 
 
+def test_top_level_controllers_register_exact_console_campaigns(
+    tmp_path: Path,
+) -> None:
+    import re
+
+    bindings = _bindings(tmp_path / "bindings.json")
+    output = tmp_path / "workspace"
+    render_controller_set(bindings, output)
+    expected = {
+        "phase5_sequence_after_core.sh": (
+            24,
+            (
+                "core-projections",
+                "core-canaries",
+                "bridge-projections",
+                "bridge-canaries",
+                "ollama",
+            ),
+        ),
+        "gate5_after_phase5_sequence.sh": (
+            24,
+            (
+                "await-phase5",
+                "validate-evidence",
+                "finalize-gate5",
+                "prepare-promotion",
+                "promote-runnote",
+                "sequence-completion",
+            ),
+        ),
+        "phase6_sequence.sh": (
+            720,
+            (
+                "controller-preflight",
+                "await-gate5",
+                "core-measured",
+                "extended-measured",
+                "native-diagnostics",
+                "final-validation",
+                "sequence-completion",
+            ),
+        ),
+        "phase7_after_phase6_sequence.sh": (
+            720,
+            (
+                "await-phase6",
+                "validate-phase6",
+                "prepare-analysis",
+                "run-analysis",
+                "validate-analysis",
+            ),
+        ),
+    }
+    for name, (hard_stop, planned_tasks) in expected.items():
+        source = (output / name).read_text(encoding="utf-8")
+        task_block = re.search(
+            r"(?m)^CONTROL_TASKS=\(\n(?P<tasks>(?:  [a-z0-9-]+\n)+)\)$",
+            source,
+        )
+        assert task_block is not None
+        assert tuple(
+            line.strip() for line in task_block.group("tasks").splitlines()
+        ) == planned_tasks
+        assert re.findall(
+            r"(?m)^controller_task_start ([a-z0-9-]+)$", source
+        ) == list(planned_tasks)
+        assert re.findall(
+            r"(?m)^[ \t]*controller_task_pass ([a-z0-9-]+)$", source
+        ) == list(planned_tasks)
+        expected_failures = (
+            (
+                "core-measured",
+                "extended-measured",
+                "native-diagnostics",
+                "sequence-completion",
+            )
+            if name == "phase6_sequence.sh"
+            else ()
+        )
+        assert tuple(
+            re.findall(
+                r"(?m)^[ \t]*controller_task_fail ([a-z0-9-]+)$",
+                source,
+            )
+        ) == expected_failures
+        assert source.count("-m experiments.local_campaign.console_events") == 2
+        assert '--campaign-id "${CONTROL_ROOT##*/}"' in source
+        assert '--release-commit "$EXPECTED_COMMIT"' in source
+        assert "--evidence-class local_campaign_control" in source
+        if name == "phase6_sequence.sh":
+            assert f"CONTROL_HARD_STOP_HOURS={hard_stop}" in source
+            assert '--hard-stop-hours "$CONTROL_HARD_STOP_HOURS"' in source
+        else:
+            assert f"--hard-stop-hours {hard_stop}" in source
+        assert 'CONSOLE_START_ARGS+=(--planned-task "$task")' in source
+        assert 'console_event task_skip "$task" skipped' in source
+        assert 'console_event campaign_end bootstrap "$status"' in source
+        assert "--hosted-calls" not in source
+        registration = source.index(
+            "-m experiments.local_campaign.console_events start"
+        )
+        first_task = source.index(f"controller_task_start {planned_tasks[0]}")
+        assert registration < first_task
+        finish = source.split("finish() {", 1)[1].split(
+            "\n}\ntrap finish EXIT", 1
+        )[0]
+        assert 'controller_finish "$rc"' in finish
+        assert finish.index("printf '%s\\n' \"$rc\"") < finish.index(
+            'controller_finish "$rc"'
+        )
+        if name == "phase6_sequence.sh":
+            assert "CONTROL_TMUX_SESSION='ura-phase6-sequence-1111111'" in source
+            assert "CONTROL_TMUX_SOCKET='ura-phase6-sequence-1111111'" in source
+            assert '--tmux-socket "$CONTROL_TMUX_SOCKET"' in source
+            assert '--tmux-session "$CONTROL_TMUX_SESSION"' in source
+
+
 def test_phase6_gate5_launch_identity_uses_the_rendered_commit(
     tmp_path: Path,
 ) -> None:
@@ -1170,6 +1287,76 @@ def test_campaign_validators_use_canonical_runtime_target_identities(
             _assert_source_contract(changed, required)
 
 
+@pytest.mark.parametrize(
+    ("filename", "completed_expression"),
+    (
+        (
+            "phase5_core_attest_canary.sh.in",
+            'row["workload"]["completed_judgments"]',
+        ),
+        (
+            "phase5_ollama_workflow.sh.in",
+            'workload["completed_judgments"]',
+        ),
+        (
+            "phase5_finalize_gate5.sh.in",
+            'retained["workload"]["completed_judgments"]',
+        ),
+    ),
+)
+def test_classification_canaries_preserve_invalid_source_predictions(
+    filename: str,
+    completed_expression: str,
+) -> None:
+    source = (
+        Path(__file__).parents[2]
+        / "experiments"
+        / "local_campaign"
+        / "templates"
+        / filename
+    ).read_text(encoding="utf-8")
+    required = (
+        'source["required_records"] != source["observed_records"]',
+        f'source["observed_records"] != {completed_expression}',
+        'source["valid_records"] < 0',
+        'source["valid_records"] > source["observed_records"]',
+    )
+    _assert_source_contract(source, required)
+
+    restrictive_mutation = source.replace(
+        'source["valid_records"] < 0',
+        'source["valid_records"] <= 0',
+        1,
+    )
+    assert restrictive_mutation != source
+    with pytest.raises(AssertionError):
+        _assert_source_contract(restrictive_mutation, required)
+
+
+def test_ollama_rjudge_canary_allows_zero_decided_validity_observation() -> None:
+    source = (
+        Path(__file__).parents[2]
+        / "experiments"
+        / "local_campaign"
+        / "templates"
+        / "phase5_ollama_workflow.sh.in"
+    ).read_text(encoding="utf-8")
+    required = (
+        'if mode != "rjudge" and support.get("decided", 0) <= 0:',
+        'raise SystemExit("static canary lacks decided support")',
+    )
+    _assert_source_contract(source, required)
+
+    restrictive_mutation = source.replace(
+        'if mode != "rjudge" and support.get("decided", 0) <= 0:',
+        'if support.get("decided", 0) <= 0:',
+        1,
+    )
+    assert restrictive_mutation != source
+    with pytest.raises(AssertionError):
+        _assert_source_contract(restrictive_mutation, required)
+
+
 def _assert_completion_bound_guard_query_contract(
     template: str, *, summary_name: str
 ) -> None:
@@ -1246,3 +1433,304 @@ def test_static_canaries_prove_a_completion_bound_guard_query(
         _assert_completion_bound_guard_query_contract(
             binding_mutation, summary_name=summary_name
         )
+
+
+def test_phase6_uses_the_approved_lane_wall_ceiling_and_reaps_timed_out_trees() -> None:
+    templates = (
+        Path(__file__).parents[2] / "experiments" / "local_campaign" / "templates"
+    )
+    gate5 = (templates / "phase5_finalize_gate5.sh.in").read_text(encoding="utf-8")
+    core = (templates / "phase6_core_measured.sh.in").read_text(encoding="utf-8")
+    extended = (templates / "phase6_extended_measured.sh.in").read_text(
+        encoding="utf-8"
+    )
+    sequence = (templates / "phase6_sequence.sh.in").read_text(encoding="utf-8")
+
+    gate5_required = (
+        "MEASURED_LANE_WALL_TIME_SECONDS = 1_209_600",
+        '"measured_lane_wall_time_seconds": MEASURED_LANE_WALL_TIME_SECONDS',
+        '"measured_lane_wall_time_semantics":',
+        '"controller_completion_ceiling_distinct_from_call_start_admission_window"',
+        '"measured_lane_wall_time_seconds": MEASURED_LANE_WALL_TIME_SECONDS',
+    )
+    _assert_source_contract(gate5, gate5_required)
+    core_required = (
+        "wait_lane_with_ceiling() {",
+        'kill -TERM -- "-$child"',
+        'kill -KILL -- "-$child"',
+        'wait "$child"',
+        "return 124",
+        'wait_lane_with_ceiling "$active_child_pid" "$controller_lane"',
+        "for spec_path in \"${SPEC_FILES[@]}\"; do",
+        "aggregate_lane_rc=1",
+    )
+    _assert_source_contract(core, core_required)
+    extended_required = (
+        'if os.name != "posix" or not hasattr(signal, "setitimer"):',
+        "signal.setitimer(signal.ITIMER_REAL, wall_time)",
+        "signal.setitimer(signal.ITIMER_REAL, 0)",
+        "start_new_session=True",
+        "os.killpg(process.pid, signal.SIGTERM)",
+        "os.killpg(process.pid, signal.SIGKILL)",
+        "process.wait(timeout=self.remaining_lane_time(lane))",
+        "for spec_path in spec_paths:",
+        "continue",
+    )
+    _assert_source_contract(extended, extended_required)
+    sequence_required = (
+        'GATE5_LANE_WALL_TIME_SECONDS="${gate5_values[4]}"',
+        'test "$GATE5_LANE_WALL_TIME_SECONDS" = \'1209600\'',
+        "controller_ceiling=$((GATE5_LANE_WALL_TIME_SECONDS * (lane_count + 1)))",
+        "controller-wall-time-exceeded",
+        'tmux -L "$socket" kill-session -t "$session"',
+    )
+    _assert_source_contract(sequence, sequence_required)
+
+    for source, required, original, replacement in (
+        (
+            gate5,
+            gate5_required,
+            "MEASURED_LANE_WALL_TIME_SECONDS = 1_209_600",
+            "MEASURED_LANE_WALL_TIME_SECONDS = 7_776_000",
+        ),
+        (core, core_required, 'kill -KILL -- "-$child"', ":"),
+        (
+            extended,
+            extended_required,
+            "os.killpg(process.pid, signal.SIGKILL)",
+            "process.kill()",
+        ),
+        (
+            sequence,
+            sequence_required,
+            'test "$GATE5_LANE_WALL_TIME_SECONDS" = \'1209600\'',
+            'test "$GATE5_LANE_WALL_TIME_SECONDS" = \'7776000\'',
+        ),
+    ):
+        changed = source.replace(original, replacement, 1)
+        assert changed != source
+        with pytest.raises(AssertionError):
+            _assert_source_contract(changed, required)
+
+
+def test_phase6_pre_runner_failures_are_typed_non_evidence_and_phase7_required() -> None:
+    templates = (
+        Path(__file__).parents[2] / "experiments" / "local_campaign" / "templates"
+    )
+    core = (templates / "phase6_core_measured.sh.in").read_text(encoding="utf-8")
+    extended = (templates / "phase6_extended_measured.sh.in").read_text(
+        encoding="utf-8"
+    )
+    phase7 = (templates / "phase7_analysis.py.in").read_text(encoding="utf-8")
+
+    producer_required = (
+        '"schema": "ura-phase6-pre-runner-failure/1"',
+        '"artifact_role": "controller_pre_runner_failure_not_runner_artifact"',
+        '"runner_artifact": False',
+        '"evidence_eligible": False',
+        '"runner_lifecycle_artifact_count": 0',
+    )
+    for producer in (core, extended):
+        _assert_source_contract(producer, producer_required)
+    phase7_required = (
+        "def validate_pre_runner_failure_artifact(",
+        'marker.get("schema") != "ura-phase6-pre-runner-failure/1"',
+        'marker.get("runner_artifact") is not False',
+        'marker.get("evidence_eligible") is not False',
+        'f"{lane}: failed lifecycle Runner root is absent"',
+        'if pre_runner_failures != 1:',
+        'return "pre_runner_failure_no_request_artifact"',
+        '"lifecycle-pre-runner-without-typed-artifact"',
+    )
+    _assert_source_contract(phase7, phase7_required)
+
+    changed = phase7.replace(
+        'f"{lane}: failed lifecycle Runner root is absent"',
+        "continue",
+        1,
+    )
+    assert changed != phase7
+    with pytest.raises(AssertionError):
+        _assert_source_contract(changed, phase7_required)
+
+
+def test_phase6_extended_publishes_only_the_frozen_three_field_descriptor() -> None:
+    source = (
+        Path(__file__).parents[2]
+        / "experiments"
+        / "local_campaign"
+        / "templates"
+        / "phase6_extended_measured.sh.in"
+    ).read_text(encoding="utf-8")
+    required = (
+        'def frozen_descriptor(path: Path) -> dict[str, Any]:',
+        '"path": value["path"],',
+        '"sha256": value["sha256"],',
+        '"bytes": value["bytes"],',
+        'descriptor_fields = {"path", "sha256", "bytes"}',
+        'extra_descriptor_field[failed_lane]["lane_spec"]["file"]',
+        '"frozen-descriptor-rejects-extra-file-field"',
+        "lane: frozen_descriptor(lane_failures[lane]) for lane in failed",
+    )
+    _assert_source_contract(source, required)
+    changed = source.replace(
+        'descriptor_fields = {"path", "sha256", "bytes"}',
+        'descriptor_fields = {"path", "file", "sha256", "bytes"}',
+        1,
+    )
+    assert changed != source
+    with pytest.raises(AssertionError):
+        _assert_source_contract(changed, required)
+
+
+def test_phase6_external_measured_rows_are_one_per_runner_invocation() -> None:
+    templates = (
+        Path(__file__).parents[2] / "experiments" / "local_campaign" / "templates"
+    )
+    core = (templates / "phase6_core_measured.sh.in").read_text(encoding="utf-8")
+    extended = (templates / "phase6_extended_measured.sh.in").read_text(
+        encoding="utf-8"
+    )
+    core_required = (
+        'invocation_token="$(date -u +%s%N)-$$"',
+        'job_id="external-p6c-${ATTEMPT_TAG}-${invocation}-${invocation_token}-${lane}"',
+        'external_measured_run "$LANE" runner-resume',
+        'external_measured_run "$LANE" measured-run',
+        "experiments.rig_web_app.external_measured start",
+        "experiments.rig_web_app.external_measured terminal",
+        'session="ura-p6c-job-${ATTEMPT_TAG}-${invocation_token}"',
+        'tmux -L "$socket" new-session -d -s "$session"',
+        "external_measured_terminal() {",
+        "timeout --signal=TERM --kill-after=30s 30s",
+        '--argv "$@"',
+    )
+    extended_required = (
+        'invocation_token = f"{time.time_ns()}-{os.getpid()}"',
+        'f"external-p6e-{self.attempt_tag}-{stage}-"',
+        'lane, "runner-resume", runner_argv,',
+        'lane, "measured-run", runner_argv,',
+        '"experiments.rig_web_app.external_measured", "start"',
+        '"experiments.rig_web_app.external_measured", "terminal"',
+        'session = f"ura-p6e-job-{self.attempt_tag}-{invocation_token}"',
+        '"tmux", "-L", socket, "new-session", "-d", "-s", session,',
+        "def external_session_running(",
+        "timeout=min(5.0, self.remaining_lane_time(lane))",
+        '"--argv", *argv,',
+    )
+    _assert_source_contract(core, core_required)
+    _assert_source_contract(extended, extended_required)
+    for source, required, original in (
+        (core, core_required, 'invocation_token="$(date -u +%s%N)-$$"'),
+        (
+            extended,
+            extended_required,
+            'invocation_token = f"{time.time_ns()}-{os.getpid()}"',
+        ),
+    ):
+        changed = source.replace(original, 'invocation_token = "fixed"', 1)
+        assert changed != source
+        with pytest.raises(AssertionError):
+            _assert_source_contract(changed, required)
+
+
+def test_phase6_external_measured_lifecycle_is_exact_and_signal_safe() -> None:
+    templates = (
+        Path(__file__).parents[2] / "experiments" / "local_campaign" / "templates"
+    )
+    core = (templates / "phase6_core_measured.sh.in").read_text(encoding="utf-8")
+    extended = (templates / "phase6_extended_measured.sh.in").read_text(
+        encoding="utf-8"
+    )
+
+    core_function = core.split("external_measured_run() {", 1)[1].split(
+        "\n}\n\nwait_lane_with_ceiling()", 1
+    )[0]
+    core_start = core_function.index(
+        "experiments.rig_web_app.external_measured start"
+    )
+    assert core_function.index('active_external_job_id="$job_id"') < core_start
+    assert core_function.index('active_external_tmux_socket="$socket"') < core_start
+    assert core_function.index('active_external_tmux_session="$session"') < core_start
+    assert core_start < core_function.index(
+        'tmux -L "$socket" new-session -d -s "$session"'
+    )
+    assert core_function.index("external_measured_terminal") < core_function.index(
+        'active_external_job_id=\'\''
+    )
+    assert core_function.index('if (( runner_rc != 0 )); then') < core_function.index(
+        'if (( terminal_rc != 0 )); then'
+    )
+
+    extended_function = extended.split("    def run_measured(", 1)[1].split(
+        "\n    def record_failure(", 1
+    )[0]
+    extended_try = extended_function.index("        try:\n")
+    extended_start = extended_function.index(
+        '"experiments.rig_web_app.external_measured", "start"'
+    )
+    extended_launch = extended_function.index(
+        '"tmux", "-L", socket, "new-session", "-d", "-s", session,'
+    )
+    assert extended_try < extended_start < extended_launch
+    assert extended_function.index("runner_error: BaseException | None = None") < (
+        extended_try
+    )
+    assert extended_function.index("self.terminal_external_measured(") > extended_launch
+    assert extended_function.index("if runner_error is not None:") < (
+        extended_function.index("if terminal_error is not None:", extended_launch)
+    )
+
+    mutations = (
+        (
+            core,
+            (
+                'active_external_job_id="$job_id"',
+                'session="ura-p6c-job-${ATTEMPT_TAG}-${invocation_token}"',
+                "timeout --signal=TERM --kill-after=30s 30s",
+            ),
+            'session="ura-p6c-job-${ATTEMPT_TAG}-${invocation_token}"',
+            'session="ura-phase6-core-${ATTEMPT_TAG}"',
+        ),
+        (
+            extended,
+            (
+                'session = f"ura-p6e-job-{self.attempt_tag}-{invocation_token}"',
+                "runner_error: BaseException | None = None\n        runner_exit_code = 1\n        try:",
+                "timeout=min(5.0, self.remaining_lane_time(lane))",
+            ),
+            'session = f"ura-p6e-job-{self.attempt_tag}-{invocation_token}"',
+            'session = f"ura-phase6-extended-{self.attempt_tag}"',
+        ),
+    )
+    for source, required, original, replacement in mutations:
+        _assert_source_contract(source, required)
+        changed = source.replace(original, replacement, 1)
+        assert changed != source
+        with pytest.raises(AssertionError):
+            _assert_source_contract(changed, required)
+
+
+def test_phase6_gate5_wait_uses_the_declared_controller_hard_stop() -> None:
+    source = (
+        Path(__file__).parents[2]
+        / "experiments"
+        / "local_campaign"
+        / "templates"
+        / "phase6_sequence.sh.in"
+    ).read_text(encoding="utf-8")
+    required = (
+        "CONTROL_HARD_STOP_HOURS=720",
+        '--hard-stop-hours "$CONTROL_HARD_STOP_HOURS"',
+        "CONTROL_HARD_STOP_DEADLINE=$((SECONDS + CONTROL_HARD_STOP_HOURS * 3600))",
+        "if (( SECONDS >= CONTROL_HARD_STOP_DEADLINE )); then",
+        "exit 124",
+    )
+    _assert_source_contract(source, required)
+    changed = source.replace(
+        "CONTROL_HARD_STOP_HOURS * 3600",
+        "90 * 24 * 3600",
+        1,
+    )
+    assert changed != source
+    with pytest.raises(AssertionError):
+        _assert_source_contract(changed, required)

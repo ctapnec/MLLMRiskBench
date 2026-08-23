@@ -137,6 +137,15 @@ def test_unimplemented_source_diagnostic_is_not_evaluator_execution() -> None:
         "valid_records": 1,
     }
 
+    implemented_invalid = copy.deepcopy(implemented)
+    implemented_invalid["raw"]["source_evaluation"]["valid"] = False
+    assert _source_evaluator_role([implemented_invalid]) == {
+        "status": "exercised",
+        "required_records": 1,
+        "observed_records": 1,
+        "valid_records": 0,
+    }
+
 
 def test_guardrail_stage_requires_an_actual_model_query() -> None:
     assert _stage_was_queried({"stage_queried": True}, "rules") is True

@@ -193,12 +193,68 @@ unset HF_TOKEN HUGGING_FACE_HUB_TOKEN OPENAI_API_KEY ANTHROPIC_API_KEY \
 test ! -e "$LOG" && test ! -L "$LOG"
 exec > >(tee "$LOG") 2>&1
 
+CONTROL_TASKS=(
+  await-phase6
+  validate-phase6
+  prepare-analysis
+  run-analysis
+  validate-analysis
+)
+CONTROL_TASK_INDEX=0
+CONTROL_ACTIVE_TASK=''
+CONSOLE_CAMPAIGN_STARTED=0
+
+console_event() {
+  "$PY" -m experiments.local_campaign.console_events event \
+    --work-root "$URA_WORK" --control-root "$CONTROL_ROOT" \
+    --event "$1" --task "$2" --status "$3" --detail "$4"
+}
+
+controller_task_start() {
+  local task="$1"
+  test -z "$CONTROL_ACTIVE_TASK"
+  test "${CONTROL_TASKS[$CONTROL_TASK_INDEX]}" = "$task"
+  CONTROL_ACTIVE_TASK="$task"
+  console_event task_start "$task" running "${task}_started"
+}
+
+controller_task_pass() {
+  local task="$1"
+  test "$CONTROL_ACTIVE_TASK" = "$task"
+  console_event task_end "$task" passed "${task}_complete"
+  CONTROL_ACTIVE_TASK=''
+  CONTROL_TASK_INDEX=$((CONTROL_TASK_INDEX + 1))
+}
+
+controller_finish() {
+  local rc="$1" task status=failed
+  test "$CONSOLE_CAMPAIGN_STARTED" = '1' || return 0
+  if [ -n "$CONTROL_ACTIVE_TASK" ]; then
+    task="$CONTROL_ACTIVE_TASK"
+    console_event task_end "$task" failed "controller_exit_$rc" || \
+      printf 'console event failed: task_end %s\n' "$task" >&2
+    CONTROL_ACTIVE_TASK=''
+    CONTROL_TASK_INDEX=$((CONTROL_TASK_INDEX + 1))
+  fi
+  while [ "$CONTROL_TASK_INDEX" -lt "${#CONTROL_TASKS[@]}" ]; do
+    task="${CONTROL_TASKS[$CONTROL_TASK_INDEX]}"
+    console_event task_skip "$task" skipped "not_reached_after_controller_exit_$rc" || \
+      printf 'console event failed: task_skip %s\n' "$task" >&2
+    CONTROL_TASK_INDEX=$((CONTROL_TASK_INDEX + 1))
+  done
+  test "$rc" -ne 0 || status=passed
+  console_event campaign_end bootstrap "$status" "local_campaign_controller_exit_$rc" || \
+    printf 'console event failed: campaign_end\n' >&2
+  return 0
+}
+
 finish() {
   rc=$?
   trap - EXIT
   printf '%s\n' "$rc" > "$EXIT_TMP"
   test ! -e "$EXIT_MARKER" && test ! -L "$EXIT_MARKER"
   mv -- "$EXIT_TMP" "$EXIT_MARKER"
+  controller_finish "$rc"
   printf 'PHASE7_WATCHER_EXIT=%s\n' "$rc"
   exit "$rc"
 }
@@ -206,6 +262,25 @@ trap finish EXIT
 trap 'exit 130' INT
 trap 'exit 143' TERM
 trap 'exit 129' HUP
+
+CONSOLE_START_ARGS=(
+  --work-root "$URA_WORK"
+  --control-root "$CONTROL_ROOT"
+  --campaign-id "${CONTROL_ROOT##*/}"
+  --release-commit "$EXPECTED_COMMIT"
+  --evidence-class local_campaign_control
+  --hard-stop-hours 720
+  --tmux-socket ura-phase7-after-phase6-@@COMMIT_SHORT@@
+  --tmux-session ura-phase7-after-phase6-@@COMMIT_SHORT@@
+)
+for task in "${CONTROL_TASKS[@]}"; do
+  CONSOLE_START_ARGS+=(--planned-task "$task")
+done
+"$PY" -m experiments.local_campaign.console_events start \
+  "${CONSOLE_START_ARGS[@]}"
+CONSOLE_CAMPAIGN_STARTED=1
+
+controller_task_start await-phase6
 
 "$PY" - "$LAUNCH_META" "$CONTROL_ROOT" "$WATCHER" "$WRAPPER" \
   "$PAYLOAD" "$EXPECTED_COMMIT" "$EXPECTED_FRAMEWORK_LOCK" \
@@ -287,7 +362,9 @@ printf 'PHASE7_WATCHER_WAITING_FOR_PHASE6=%s\n' "$PHASE6_ROOT"
 while tmux -L "$PHASE6_SOCKET" has-session -t "$PHASE6_SESSION" 2>/dev/null; do
   sleep 30
 done
+controller_task_pass await-phase6
 
+controller_task_start validate-phase6
 mapfile -d '' -t phase6_values < <(
   "$PY" - "$PHASE6_ROOT/completion.json" "$PHASE6_ROOT/.exit" \
     "$PHASE6_ROOT" "$EXPECTED_COMMIT" "$EXPECTED_FRAMEWORK_LOCK" <<'PY'
@@ -629,7 +706,9 @@ GATE5_PROMOTION="${phase6_values[2]}"
 CORE_COMPLETION="${phase6_values[3]}"
 EXTENDED_COMPLETION="${phase6_values[4]}"
 NATIVE_COMPLETION="${phase6_values[5]}"
+controller_task_pass validate-phase6
 
+controller_task_start prepare-analysis
 test ! -e "$INPUT_MANIFEST" && test ! -L "$INPUT_MANIFEST"
 test ! -e "$PREPARE_RESULT" && test ! -L "$PREPARE_RESULT"
 verify_regular "$WRAPPER" "$WRAPPER_SHA256" "$WRAPPER_BYTES"
@@ -765,7 +844,9 @@ if (
 print(digest)
 PY
 )"
+controller_task_pass prepare-analysis
 
+controller_task_start run-analysis
 test ! -e "$PHASE7_LAUNCH_OUTPUT" && test ! -L "$PHASE7_LAUNCH_OUTPUT"
 bash "$WRAPPER" --input-manifest "$INPUT_MANIFEST" \
   --authorize-input-manifest-sha256 "$INPUT_SHA" > "$PHASE7_LAUNCH_OUTPUT"
@@ -858,7 +939,9 @@ done
 verify_regular "$WATCHER" "$AUTHORIZED_WATCHER_SHA256" -
 verify_regular "$WRAPPER" "$WRAPPER_SHA256" "$WRAPPER_BYTES"
 verify_regular "$PAYLOAD" "$PAYLOAD_SHA256" "$PAYLOAD_BYTES"
+controller_task_pass run-analysis
 
+controller_task_start validate-analysis
 "$PY" - "$COMPLETION" "$LAUNCH_META" "$PHASE6_ROOT/completion.json" \
   "$PHASE6_ROOT/.exit" "$PREPARE_RESULT" "$INPUT_MANIFEST" "$INPUT_SHA" \
   "$PHASE7_LAUNCH_OUTPUT" "$PHASE7_CONTROL" "$ANALYSIS_ROOT" \
@@ -1100,5 +1183,6 @@ with os.fdopen(fd, "wb") as handle:
     handle.flush()
     os.fsync(handle.fileno())
 PY
+controller_task_pass validate-analysis
 
 printf 'PHASE7_WATCHER_COMPLETE=%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)"

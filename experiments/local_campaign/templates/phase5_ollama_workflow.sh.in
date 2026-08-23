@@ -1290,13 +1290,30 @@ elif mode == "rjudge":
     ):
         raise SystemExit("R-Judge rules placeholder was unexpectedly queried")
     source = execution["source_evaluator"]
-    if source.get("status") != "exercised" or source.get("valid_records", 0) <= 0:
-        raise SystemExit("R-Judge source evaluator lacks valid observed support")
+    # Parser-invalid predictions are measured validity=0 observations, not
+    # evidence that the implemented source evaluator failed to execute.
+    if (
+        source.get("status") != "exercised"
+        or not isinstance(source.get("required_records"), int)
+        or source["required_records"] <= 0
+        or not isinstance(source.get("observed_records"), int)
+        or source["observed_records"] <= 0
+        or not isinstance(source.get("valid_records"), int)
+        or source["required_records"] != source["observed_records"]
+        or source["observed_records"] != workload["completed_judgments"]
+        or source["valid_records"] < 0
+        or source["valid_records"] > source["observed_records"]
+    ):
+        raise SystemExit(
+            "R-Judge source evaluator lacks complete implemented observations"
+        )
 else:
     raise SystemExit("unknown canary mode")
 support = summary["decision_support"]
-if support.get("decided", 0) <= 0 or not isinstance(support.get("decision_coverage"), (int, float)):
-    raise SystemExit("canary lacks decided support")
+if not isinstance(support.get("decision_coverage"), (int, float)):
+    raise SystemExit("canary lacks numeric decision coverage")
+if mode != "rjudge" and support.get("decided", 0) <= 0:
+    raise SystemExit("static canary lacks decided support")
 print(
     summary["canary_id"],
     str(roles["all_configured_stages_represented"]).lower(),

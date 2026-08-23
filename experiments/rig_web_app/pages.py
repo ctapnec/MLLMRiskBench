@@ -41,6 +41,7 @@ from .ui import (
 
 from .artifacts import _PIPELINE_STAGES, artifact_inventory, _pipeline_svg, Job, run_kind
 from .campaigns import EngineeringCampaign
+from .external_measured import ExternalMeasuredJob
 
 
 _DASHBOARD_RECENT_FAILURE_LIMIT = 5
@@ -398,9 +399,9 @@ class PagesMixin:
             "<div class='card'><h2>" + _icon("pulse") + "Running</h2>"
             "<div class='scroll'><table><tr><th>Job</th><th>Command</th>"
             "<th>Runtime</th></tr>" + running_rows_html + "</table></div>"
-            "<p class='note'>External running state is a task-log report; it is derived "
-            "from retained task logs; this console does not own "
-            "or stop its process.</p></div>"
+            "<p class='note'>External running state is a task-log report. Framework "
+            "installer campaigns also verify their exact owned named session; this "
+            "console does not own or stop the process.</p></div>"
             if running_rows_html
             else ""
         )
@@ -816,6 +817,7 @@ class PagesMixin:
         )
         started_to = self._jobs_history_bound(filters, "to", now)
         history_note = ""
+        valid_window = started_from <= started_to
         if started_from > started_to:
             history_jobs = []
             history_note = "From must not be after To."
@@ -830,10 +832,105 @@ class PagesMixin:
                     f"Showing the newest {_JOBS_HISTORY_DISPLAY_LIMIT} console jobs "
                     "in this date range. Narrow From/To to retrieve older rows."
                 )
-        campaigns, campaign_scan_note = self._engineering_campaign_scan(
-            started_from=started_from,
-            started_to=started_to,
+
+        def in_window(started_at: float) -> bool:
+            return valid_window and started_from <= started_at <= started_to
+
+        # A start-time filter is a history filter, not a process-visibility
+        # control. Keep genuinely live work visible even when a multi-day run
+        # began before the default seven-day window. Every source remains
+        # bounded by its existing display/scan limit, and terminal rows never
+        # receive this exception.
+        pinned_console_ids: set[str] = set()
+        outside_console = sorted(
+            (
+                job
+                for job in self.jobs.values()
+                if job.process is not None
+                and job.state() == "running"
+                and not in_window(job.started_at)
+            ),
+            key=lambda item: item.started_at,
+            reverse=True,
         )
+        console_live_truncated = len(outside_console) > _JOBS_HISTORY_DISPLAY_LIMIT
+        history_by_id = {job.job_id: job for job in history_jobs}
+        for job in outside_console[:_JOBS_HISTORY_DISPLAY_LIMIT]:
+            pinned_console_ids.add(job.job_id)
+            history_by_id.setdefault(job.job_id, job)
+        history_jobs = sorted(
+            history_by_id.values(),
+            key=lambda item: item.started_at,
+            reverse=True,
+        )
+
+        campaign_notes: list[str] = []
+        if valid_window:
+            campaigns, campaign_window_note = self._engineering_campaign_scan(
+                started_from=started_from,
+                started_to=started_to,
+            )
+            if campaign_window_note:
+                campaign_notes.append(campaign_window_note)
+        else:
+            campaigns = []
+        recent_campaigns, recent_campaign_note = self._engineering_campaign_scan()
+        if recent_campaign_note and recent_campaign_note not in campaign_notes:
+            campaign_notes.append(recent_campaign_note)
+        pinned_campaign_ids: set[str] = set()
+        campaign_by_route = {campaign.route_id: campaign for campaign in campaigns}
+        for campaign in recent_campaigns:
+            # These two controller classes have exact named-session liveness.
+            # A generic task log that merely says "running" is insufficient to
+            # override an operator-selected history window.
+            if (
+                campaign.state == "running"
+                and campaign.evidence_class
+                in {"local_campaign_control", "framework_runtime_setup"}
+                and not in_window(campaign.started_at)
+            ):
+                pinned_campaign_ids.add(campaign.route_id)
+                campaign_by_route.setdefault(campaign.route_id, campaign)
+        campaigns = sorted(
+            campaign_by_route.values(),
+            key=lambda item: item.started_at,
+            reverse=True,
+        )
+        campaign_scan_note = " ".join(campaign_notes)
+
+        # Registration state is reconciled against its exact named tmux
+        # session before this filter. Thus only a verified-live registration,
+        # never an old nonterminal file by itself, may cross the date window.
+        scanned_external_jobs, external_scan_note = self._external_measured_job_scan()
+        external_jobs = [
+            job
+            for job in scanned_external_jobs
+            if in_window(job.started_at) or job.state == "running"
+        ]
+        pinned_external_ids = {
+            job.job_id
+            for job in external_jobs
+            if job.state == "running" and not in_window(job.started_at)
+        }
+        pinned_live_count = (
+            len(pinned_console_ids)
+            + len(pinned_campaign_ids)
+            + len(pinned_external_ids)
+        )
+        live_window_note = ""
+        if pinned_live_count:
+            live_window_note = (
+                f"{pinned_live_count} currently live row"
+                f"{' remains' if pinned_live_count == 1 else 's remain'} visible although "
+                "its start time is outside From/To. Terminal history still obeys the "
+                "selected dates; this live override remains bounded by each source's "
+                "existing scan/display cap."
+            )
+        if console_live_truncated:
+            live_window_note += (
+                f" Only the newest {_JOBS_HISTORY_DISPLAY_LIMIT} out-of-window live "
+                "console jobs are shown."
+            )
         rows = []
         tallies: dict[str, int] = {}
         for job in history_jobs:
@@ -866,7 +963,13 @@ class PagesMixin:
             )
             rows.append(
                 f"<tr data-state='{html.escape(state_tag)}' "
-                f"data-started='{started_ms}' data-hay='{hay}'>"
+                f"data-started='{started_ms}' data-hay='{hay}'"
+                + (
+                    " data-live-window-pin='true'"
+                    if job_id in pinned_console_ids
+                    else ""
+                )
+                + ">"
                 f"<td><a href='/jobs/{html.escape(job_id)}'>"
                 f"{html.escape(job_id)}</a></td>"
                 f"<td>{html.escape(job.command)}</td>"
@@ -880,6 +983,47 @@ class PagesMixin:
                 f"<td>{activity}</td>"
                 f"<td>{'' if job.exit_code() is None else job.exit_code()}"
                 f"</td><td>{stop}</td></tr>"
+            )
+        for job in external_jobs:
+            state_tag = self._job_status_tag(job.state)
+            tallies[state_tag] = tallies.get(state_tag, 0) + 1
+            tone = {
+                "running": "blue",
+                "passed": "green",
+                "failed": "red",
+                "orphaned": "amber",
+            }.get(state_tag, "gray")
+            started = time.strftime(
+                "%Y-%m-%d %H:%M:%S UTC", time.gmtime(job.started_at)
+            )
+            started_ms = int(job.started_at * 1000)
+            hay = html.escape(
+                f"{job.job_id} {job.command} external measured {' '.join(job.argv)}".lower()
+            )
+            output_link = (
+                f"<a href='/artifacts?path={quote(job.artifact_relative)}'>"
+                "exact output</a>"
+            )
+            rows.append(
+                f"<tr data-state='{html.escape(state_tag)}' "
+                f"data-started='{started_ms}' data-hay='{hay}'"
+                + (
+                    " data-live-window-pin='true'"
+                    if job.job_id in pinned_external_ids
+                    else ""
+                )
+                + ">"
+                f"<td><a href='/jobs/external/{quote(job.job_id)}'>"
+                f"{html.escape(job.job_id)}</a></td>"
+                "<td>run_matrix <span class='badge blue'>external / read-only</span></td>"
+                "<td>model campaign</td><td>verify artifacts</td>"
+                f"<td><span class='dot {tone}'></span>"
+                f"<span class='badge {tone}'>{html.escape(state_tag)}</span></td>"
+                f"<td><time class='job-started' data-epoch-ms='{started_ms}'>"
+                f"{started}</time></td>"
+                f"<td>{_human_duration(job.runtime_seconds())}</td>"
+                f"<td>{output_link}; tmux <code>{html.escape(job.tmux_session)}</code></td>"
+                f"<td>{'' if job.exit_code is None else job.exit_code}</td><td></td></tr>"
             )
         for campaign in campaigns:
             state = campaign.state
@@ -924,7 +1068,13 @@ class PagesMixin:
                 )
             rows.append(
                 f"<tr data-state='{html.escape(state_tag)}' "
-                f"data-started='{started_ms}' data-hay='{hay}'>"
+                f"data-started='{started_ms}' data-hay='{hay}'"
+                + (
+                    " data-live-window-pin='true'"
+                    if campaign.route_id in pinned_campaign_ids
+                    else ""
+                )
+                + ">"
                 f"<td><a href='/jobs/campaign/{route_id}'>"
                 f"{html.escape(campaign.campaign_id)}</a></td>"
                 "<td>engineering campaign <span class='badge gray'>external</span></td>"
@@ -950,7 +1100,7 @@ class PagesMixin:
             "<div class='chips'>"
             f"<button type='button' class='chip on' data-state=''>All "
             "(<span class='chip-count'>"
-            f"{len(history_jobs) + len(campaigns)}</span>)</button>"
+            f"{len(history_jobs) + len(external_jobs) + len(campaigns)}</span>)</button>"
             + "".join(
                 f"<button type='button' class='chip' data-state='{state}'>"
                 f"{state.capitalize()} (<span class='chip-count'>{count}</span>)</button>"
@@ -976,8 +1126,8 @@ class PagesMixin:
             "<th>Progress</th><th>Exit</th>"
             "<th></th></tr>" + "".join(rows) + "</table></div>"
             if rows
-            else "<div class='card'><p class='note'>No jobs this session. Start "
-            "one from the <a href='/commands'>Run</a> page.</p></div>"
+            else "<div class='card'><p class='note'>No jobs are retained in this "
+            "window. Start one from the <a href='/commands'>Run</a> page.</p></div>"
         )
         script = (
             "<script>(function(){"
@@ -1030,7 +1180,8 @@ class PagesMixin:
             "var okState=!state||r.getAttribute('data-state')===state;"
             "var okText=(r.getAttribute('data-hay')||'').indexOf(q)>=0;"
             "var started=Number(r.getAttribute('data-started'));"
-            "var okDate=Number.isFinite(started)&&started>=from&&started<=to;"
+            "var livePinned=r.getAttribute('data-live-window-pin')==='true';"
+            "var okDate=livePinned||(Number.isFinite(started)&&started>=from&&started<=to);"
             "var base=okText&&okDate;if(base){counts.all++;var key="
             "r.getAttribute('data-state')||'unknown';counts[key]=(counts[key]||0)+1;}"
             "var show=okState&&base;if(show){visible++;}"
@@ -1077,8 +1228,13 @@ class PagesMixin:
             )
         )
         overview_items = (
-            ("All in current window", len(history_jobs) + len(campaigns), ""),
+            (
+                "Window + verified live" if pinned_live_count else "All in current window",
+                len(history_jobs) + len(external_jobs) + len(campaigns),
+                "",
+            ),
             ("Console jobs", len(history_jobs), None),
+            ("External measured jobs", len(external_jobs), None),
             ("External campaigns", len(campaigns), None),
             ("Running", tallies.get("running", 0), "running"),
             ("Needs attention", attention_count, None),
@@ -1106,8 +1262,9 @@ class PagesMixin:
             "<div class='cols tab-summary'>"
             + overview_cards
             + "</div><div class='card'><h2>Job sources</h2>"
-            "<p class='note'>Console jobs are owned by this process. External "
-            "campaigns are read-only task-log reports. Open History for the "
+            "<p class='note'>Console jobs are owned by this process. Registered "
+            "external measured jobs and engineering campaigns are read-only. "
+            "Open History for the "
             "full table, date window, state chips, text search, logs, and "
             "available stop controls.</p></div>"
         )
@@ -1140,8 +1297,18 @@ class PagesMixin:
                 else ""
             )
             + (
+                "<div class='notice amber'>" + html.escape(external_scan_note) + "</div>"
+                if external_scan_note
+                else ""
+            )
+            + (
                 "<div class='notice amber'>" + html.escape(history_note) + "</div>"
                 if history_note
+                else ""
+            )
+            + (
+                "<div class='notice blue'>" + html.escape(live_window_note) + "</div>"
+                if live_window_note
                 else ""
             )
             + "<div class='page-tabs' data-page-tabs data-tab-key='jobs' "
@@ -1262,8 +1429,9 @@ class PagesMixin:
             f"{html.escape(campaign.campaign_id)}</h1>"
             "<div class='notice amber'><strong>Externally managed engineering work.</strong> "
             "This console observes its retained files read-only; process ownership remains "
-            "with the campaign launcher. Status comes from retained task logs, not an "
-            "operating-system liveness check. It is not thesis empirical evidence.</div>"
+            "with the campaign launcher. Status normally comes from retained task logs; "
+            "framework installer campaigns also verify their exact owned named session. "
+            "It is not thesis empirical evidence.</div>"
             "<div class='cols'>"
             "<div class='card'><div class='stat'>"
             f"<span class='value'><span class='dot {tone}'></span>"
@@ -1283,7 +1451,13 @@ class PagesMixin:
                 if campaign.download_tasks
                 else ""
             )
-            + f"<p>{html.escape(campaign.progress)}</p></div>"
+            + f"<p>{html.escape(campaign.progress)}</p>"
+            + (
+                f"<p class='fieldhint'>{html.escape(campaign.state_detail)}</p>"
+                if campaign.state_detail
+                else ""
+            )
+            + "</div>"
             + details
             + task_table
             + last_detail
@@ -1291,6 +1465,67 @@ class PagesMixin:
             + refresh
         )
         return _page(f"Campaign {campaign.campaign_id}", body, active="Jobs")
+
+    def _external_measured_job_page(self, job: ExternalMeasuredJob) -> bytes:
+        state_tag = self._job_status_tag(job.state)
+        tone = {
+            "running": "blue",
+            "passed": "green",
+            "failed": "red",
+            "orphaned": "amber",
+        }.get(state_tag, "gray")
+        started = time.strftime("%Y-%m-%d %H:%M:%S UTC", time.gmtime(job.started_at))
+        ended = (
+            time.strftime("%Y-%m-%d %H:%M:%S UTC", time.gmtime(job.ended_at))
+            if job.ended_at is not None
+            else "not recorded"
+        )
+        argv_chips = (
+            "<div class='argv'>"
+            + "".join(f"<code>{html.escape(part)}</code>" for part in job.argv)
+            + "</div>"
+        )
+        attach = f"tmux -L {job.tmux_socket} attach -t {job.tmux_session}"
+        body = (
+            f"<h1>{_icon('terminal', size=22)}Job {html.escape(job.job_id)}</h1>"
+            "<div class='notice blue'><strong>Externally owned, read-only measured job."
+            "</strong><p class='note'>The campaign controller owns this tmux process. "
+            "Rig Web reads its create-only registration and exact Runner output root; "
+            "it neither inserts a console database row nor offers Stop.</p></div>"
+            "<div class='cols'><div class='card'><div class='stat'>"
+            f"<span class='value'><span class='dot {tone}'></span>{html.escape(state_tag)}"
+            "</span><span class='label'>state</span></div></div>"
+            "<div class='card'><div class='stat'>"
+            f"<span class='value'>{_human_duration(job.runtime_seconds())}</span>"
+            "<span class='label'>runtime</span></div></div>"
+            "<div class='card'><div class='stat'>"
+            f"<span class='value'>{html.escape(started)}</span>"
+            "<span class='label'>started</span></div></div>"
+            "<div class='card'><div class='stat'>"
+            f"<span class='value'>{html.escape(ended)}</span>"
+            "<span class='label'>ended</span></div></div></div>"
+            "<div class='card'><h2>Operational identity</h2><div class='scroll'>"
+            "<table>"
+            f"<tr><td>Command / kind</td><td><code>{html.escape(job.command)}</code> / "
+            f"{html.escape(job.run_kind)}</td></tr>"
+            f"<tr><td>Expected commit</td><td><code>{html.escape(job.expected_commit)}</code></td></tr>"
+            f"<tr><td>Framework lock</td><td><code>{html.escape(job.framework_lock_id)}</code></td></tr>"
+            f"<tr><td>Gate 5 digest</td><td><code>{html.escape(job.gate5_sha256)}</code></td></tr>"
+            f"<tr><td>Argument digest</td><td><code>{html.escape(job.argv_sha256)}</code></td></tr>"
+            f"<tr><td>tmux</td><td><code>{html.escape(attach)}</code></td></tr>"
+            "</table></div></div>"
+            "<div class='card'><h2>Sanitized exact argument vector</h2>"
+            + argv_chips
+            + "<p><a href='/artifacts?path="
+            + quote(job.artifact_relative)
+            + "'>Browse exact output artifacts</a></p></div>"
+            + (
+                "<script>setTimeout(function(){location.reload();}, 5000);</script>"
+                if job.state == "running"
+                else ""
+            )
+        )
+        return _page(f"Job {job.job_id}", body, active="Jobs")
 
     def _job_page(self, job: Job) -> bytes:
         state = job.state()

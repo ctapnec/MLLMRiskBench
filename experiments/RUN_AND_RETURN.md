@@ -429,10 +429,58 @@ and its isolated dependencies stay installed. Phase 7's authoritative lifecycle 
 partial, failed-after-request, and genuine pre-Runner-no-request states. Each
 lane binds its controller failure, optional exact measured argv, and retained
 grid, request-envelope, eligibility, and error artifacts. `level1_evidence`
-receives all retained Runner/request artifacts it can represent; a pre-Runner
-failure without a request artifact remains registry-only instead of being
-fabricated as Level 1 input. Suite metrics and Level 2 use a separate
+receives all retained Runner/request artifacts it can represent. A setup error
+or 14-day lane timeout that occurs before Runner can publish a lifecycle writes
+one create-only `ura-phase6-pre-runner-failure/1` marker under the exact planned
+`runs/thesis/runner/<lane>` root. The marker is explicitly non-Runner and
+non-empirical: it satisfies the Gate 6 inventory requirement but is never
+fabricated as Level-1 metric input. Phase 7 rejects a missing lane root or an
+untyped controller-log explanation. Suite metrics and Level 2 use a separate
 success-only Runner view.
+
+Gate 5 records `measured_lane_wall_time_seconds=1209600` in its approved policy
+and in `RUNNOTE.md`. This process wall-time ceiling is 14 days per measured
+lane, distinct from the 90-day Runner call-start admission deadline. Core and
+extended controllers terminate and reap a lane process group at the wall-time
+ceiling, record the typed pre-Runner marker when Runner has no lifecycle output,
+and continue to the next declared lane without raising the cap.
+
+The four top-level Phase 5 through Phase 7 controllers publish
+`ura-engineering-campaign/1` markers and ordered task events from their own
+named tmux sessions. Each marker binds its exact socket/session; a missing
+session is rendered `orphaned` rather than left running until the hard stop,
+while an unavailable or bounded-away probe is `unknown` rather than an
+unverified `running` claim. A currently observed-live controller remains visible
+in Jobs even when its start time is older than the selected history interval;
+terminal history still obeys that interval. The unwindowed live reconciliation
+runs before the 20-row recent-history cap, so more than 20 newer engineering
+directories cannot hide an older exact-session controller that is still live.
+The authoritative `.exit` is published before the best-effort terminal display
+event. Therefore a display-write failure may under-claim the terminal but cannot
+publish a false success. These operational records stay outside `runs/thesis`.
+
+Each Phase 6 measured Runner child separately creates one
+`ura-external-measured-job/1` registration immediately before `run_matrix` and
+one create-only terminal record after it returns. The start binds the exact
+sanitized argv, one canonical Runner output root, the project commit, framework
+lock, Gate 5 digest and a unique private tmux socket/session for that invocation,
+not the longer-lived parent controller. Jobs and Stats can then resolve
+the child and validate only its explicitly owned artifact root. Rig Web does not
+insert the child into sqlite, own its process or offer Stop; the registration is
+operational visibility, not evidence, and stays explicitly external operational
+and non-thesis after exit zero. Completion-bound usage may be displayed. Phase 7
+Level-1/Level-2 reports attach only through the validated sealed watcher launch,
+frozen watcher/wrapper/payload, Phase 6 completion/exit, preparation result,
+actual Phase 7 and analysis launches, analysis completion, artifact inventory,
+and authorized-input descriptor chain; no registration or inventory alone grants
+report or metric authority.
+
+Start publication is entered only after signal cleanup owns the prospective
+external id, terminal log, socket and session. Both core and extended terminal
+publication have a 30-second bound and terminate/reap a stuck publisher. Thus a
+signal cannot strand a created row without a terminal attempt, a failed terminal
+write cannot borrow the live parent session, and the original Runner return code
+remains authoritative when Runner and terminal publication both fail.
 
 ## 3. Acquire all twenty-five converter sources
 
@@ -2227,7 +2275,12 @@ ceilings, and the corresponding measured output under
 model-backed judge is configured or called. R-Judge reports source-label
 classification statistics against its reference labels, not independently
 established validity; the risk-explanation effectiveness stage is not
-implemented. GPTGeoChat reports
+implemented. A completed R-Judge output that does not obey the exact source
+label format is retained as an exercised observation with `valid=0`; it remains
+in `rjudge_validity` and the all-output accuracy denominator. Do not retry,
+discard, or block Gate 5 merely to obtain a parseable prediction. Admission
+requires the implemented source evaluator to be exercised and every planned
+observation to complete, not a positive count of valid predictions. GPTGeoChat reports
 threshold-conditioned moderation classification, not a target geolocation ASR.
 
 ## 12. Tier 3: adaptive and transferred attacks
@@ -3574,7 +3627,10 @@ Complete the already-created `runs/thesis/RUNNOTE.md` and record:
   observed commit, HEAD tree, and final validation result; separately record
   `git rev-parse HEAD` and `git status --short` for URA and every upstream checkout;
 - source/model revisions, source file hashes, exact commands, lane ceilings, and
-  non-secret endpoint routes;
+  non-secret endpoint routes; record the approved
+  `measured_lane_wall_time_seconds=1209600` separately from every Runner
+  call-start deadline, plus each external measured Job ID and its one bound
+  Runner output root;
 - the validated compact source-receipt file/SHA-256,
   admitted/blocked/not-selected arm counts, declared-file rehash result, and any
   unresolved operator-review caveat;

@@ -373,6 +373,7 @@ _MARKER_SUFFIX = ".complete.json"
 _DERIVED_SCAN_EXCLUDED_DIRS = frozenset(
     {
         "engineering",
+        "external-measured-jobs",
         "verification",
         "verifications",
         ".pytest_cache",

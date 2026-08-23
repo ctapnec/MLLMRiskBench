@@ -1,0 +1,569 @@
+"""Sealed Phase 7 watcher-to-report binding for the Stats UI."""
+
+from __future__ import annotations
+
+import hashlib
+import json
+import time
+from pathlib import Path
+
+import pytest
+
+from experiments.rig_web import RigWebApp, _LEVEL2_ROW_FIELDS
+from experiments.rig_web_app import phase7_stats as phase7_module
+from experiments.rig_web_app.campaigns import EngineeringCampaign
+from experiments.rig_web_app.phase7_stats import load_phase7_stats_bundle
+
+
+COMMIT = "a" * 40
+LOCK = "b" * 64
+
+
+def _write(path: Path, value: object) -> Path:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        json.dumps(value, sort_keys=True, separators=(",", ":")) + "\n",
+        encoding="utf-8",
+    )
+    return path
+
+
+def _descriptor(path: Path) -> dict[str, object]:
+    payload = path.read_bytes()
+    return {
+        "path": str(path.resolve()),
+        "sha256": hashlib.sha256(payload).hexdigest(),
+        "bytes": len(payload),
+    }
+
+
+def _level1(path: Path) -> None:
+    counts = {
+        name: {"unit": name.replace("_", " "), "completed": 0}
+        for name in (
+            "planning_strata",
+            "execution_units",
+            "judgment_records",
+            "request_level_errors",
+        )
+    }
+    body: dict[str, object] = {
+        "schema_version": "ura-level1-evidence/3",
+        "status": "validated_unit_qualified_lifecycle_inventory",
+        "scope": {
+            "evidence_kind": "measured_run",
+            "empirical_validity_established": False,
+            "contains_diagnostic_dry_run": False,
+        },
+        "counts": counts,
+    }
+    material = json.dumps(
+        body,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+        allow_nan=False,
+    ).encode("utf-8")
+    body["evidence_id"] = "level1-" + hashlib.sha256(material).hexdigest()[:24]
+    _write(path, body)
+
+
+def _level2(path: Path) -> None:
+    row = {field: None for field in _LEVEL2_ROW_FIELDS}
+    row.update(
+        {
+            "run_id": "phase7-run",
+            "corpus_arm": "strongreject_official",
+            "model_spec": "local-model",
+            "resolved_model": "local-model",
+            "source": "strongreject",
+            "risk_category": "harm",
+            "effective_modality": "text",
+            "expected_behavior": "refuse",
+            "attacker": "deepteam",
+            "defense": "none",
+            "semantic_family": "safety",
+            "metric": "refusal_rate",
+            "metric_authority": "authoritative_or_source_native",
+            "value": 0.5,
+            "ci_low": 0.25,
+            "ci_high": 0.75,
+            "n_records": 1,
+            "n_clusters": 1,
+            "judgments_completed": 1,
+            "judgments_evaluable": 1,
+            "judgments_decided": 1,
+            "judgments_abstained": 0,
+            "judgments_non_evaluable": 0,
+            "cross_stratum_pooling_permitted": False,
+        }
+    )
+    body: dict[str, object] = {
+        "schema_version": "ura-level2-report/1",
+        "status": "deterministic_compatible_stratum_export",
+        "empirical_validity_established": False,
+        "pooling_policy": {
+            "universal_safety_score_defined": False,
+            "cross_stratum_pooling_permitted": False,
+            "native_scale_pooling_permitted": False,
+        },
+        "common": {"n_estimate_rows": 1, "estimates": [row]},
+    }
+    material = json.dumps(
+        body,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+        allow_nan=False,
+    ).encode("utf-8")
+    body["report_id"] = "level2-" + hashlib.sha256(material).hexdigest()[:24]
+    _write(path, body)
+
+
+def _campaign(watcher: Path) -> EngineeringCampaign:
+    now = time.time()
+    return EngineeringCampaign(
+        route_id=watcher.name,
+        campaign_id=watcher.name,
+        directory=watcher,
+        state="complete",
+        display_state="passed",
+        status_tag="passed",
+        state_detail="local_campaign_controller_exit_0",
+        started_at=now - 10,
+        ended_at=now,
+        progress="sealed Phase 7 watcher complete",
+        completed_tasks=1,
+        succeeded_tasks=1,
+        failed_tasks=0,
+        skipped_tasks=0,
+        active_tasks=(),
+        download_tasks=(),
+        pending_tasks=0,
+        unplanned_tasks=(),
+        task_outcomes=(("validate-analysis", "passed", "support"),),
+        model_tasks=(),
+        model_declaration_error="",
+        model_succeeded_tasks=0,
+        model_failed_tasks=0,
+        model_skipped_tasks=0,
+        model_active_tasks=0,
+        model_pending_tasks=0,
+        model_attempted_calls=0,
+        model_successful_generations=0,
+        model_execution_covered_tasks=0,
+        model_execution_error="",
+        last_detail="",
+        release_commit=COMMIT,
+        evidence_class="local_campaign_control",
+        thesis_empirical_evidence=False,
+        hosted_calls_allowed=False,
+        target_call_cap=None,
+        reserved_calls=0,
+        hard_stop_hours=720,
+        logs=(),
+    )
+
+
+def _sealed_chain(
+    tmp_path: Path,
+    *,
+    mutation: str = "",
+) -> tuple[Path, EngineeringCampaign, Path]:
+    results = tmp_path / "runs"
+    watcher = results / "engineering" / "phase7-after-phase6-test"
+    control = results / "engineering" / "phase7-analysis-test"
+    analysis = results / "thesis" / "analysis" / "phase7-test"
+    sealed = watcher / "sealed"
+    sealed.mkdir(parents=True)
+    control.mkdir()
+    analysis.mkdir(parents=True)
+    watcher_script = sealed / "phase7_after_phase6_sequence.sh"
+    watcher_script.write_text("#!/usr/bin/env bash\nexit 0\n", encoding="ascii")
+    wrapper = sealed / "phase7_analysis.sh"
+    wrapper.write_text("#!/usr/bin/env bash\nexit 0\n", encoding="ascii")
+    sealed_payload = sealed / "phase7_analysis.py"
+    sealed_payload.write_text("# sealed phase 7 payload\n", encoding="ascii")
+
+    phase6 = results / "engineering" / "phase6-sequence-test"
+    phase6_sealed = phase6 / "sealed"
+    phase6_sealed.mkdir(parents=True)
+    phase6_validator = phase6_sealed / "phase7_analysis.py"
+    phase6_validator.write_bytes(sealed_payload.read_bytes())
+    phase6_doc = {
+        field: None for field in phase7_module._PHASE6_COMPLETION_FIELDS
+    }
+    phase6_doc.update(
+        {
+            "schema": "ura-phase6-sequence-completion/2",
+            "status": "complete",
+            "expected_commit": COMMIT,
+            "framework_lock_id": LOCK,
+            "control_root": str(phase6.resolve()),
+            "controller_order": ["core", "extended", "native"],
+            "all_controllers_attempted": True,
+            "terminal_states": {
+                "core": "complete",
+                "extended": "complete",
+                "native": "complete",
+            },
+            "failed_controller_receipts_are_evidence": False,
+            "conditional_na_lanes": [],
+            "phase7_validator": _descriptor(phase6_validator),
+            "hosted_target_calls": 0,
+            "hosted_judge_calls": 0,
+            "provider_http_attempts": 0,
+            "downloads_observed_bytes": 0,
+        }
+    )
+    if mutation == "phase6_completion_schema":
+        phase6_doc["schema"] = "ura-phase6-sequence-completion/0"
+    phase6_completion = _write(phase6 / "completion.json", phase6_doc)
+    phase6_exit = phase6 / ".exit"
+    phase6_exit.write_bytes(b"1\n" if mutation == "phase6_exit" else b"0\n")
+
+    input_lock = "c" * 64 if mutation == "framework_lock_input" else LOCK
+    gate5_lock = "d" * 64 if mutation == "gate5_code_identity" else input_lock
+    gate5 = _write(
+        results / "thesis" / "gate5" / "covered.json",
+        {
+            "schema": "ura-gate5-covered-manifest/1",
+            "inventory_complete": True,
+            "code_identity": {
+                "expected_commit": COMMIT,
+                "framework_lock_id": gate5_lock,
+            },
+        },
+    )
+    inputs = {
+        "schema": "ura-phase7-analysis-inputs/1",
+        "inventory_complete": True,
+        "scope": "all_local_phase7_read_only_analysis_over_phase6_lifecycle",
+        "code_identity": {"expected_commit": COMMIT, "framework_lock_id": input_lock},
+        "gate5": {"manifest": _descriptor(gate5)},
+        "phase6": {
+            "core": {"lane_terminal_states": {"core-lane": "measured_complete"}},
+            "extended": {
+                "lane_terminal_states": {"extended-lane": "measured_complete"}
+            },
+        },
+        "native_outcomes": {"states": {"native-lane": "run"}},
+        "runner": {
+            "lifecycle_lane_order": ["core-lane", "extended-lane"],
+            "metric_lane_order": ["core-lane", "extended-lane"],
+            "terminal_states": {
+                "core-lane": "measured_complete",
+                "extended-lane": "measured_complete",
+            },
+        },
+    }
+    watcher_input = _write(watcher / "phase7-inputs.json", inputs)
+    control_input = _write(control / "phase7-inputs.json", inputs)
+    input_sha = hashlib.sha256(control_input.read_bytes()).hexdigest()
+    assert watcher_input.read_bytes() == control_input.read_bytes()
+    payload = control / "payload.py"
+    payload.write_bytes(sealed_payload.read_bytes())
+    analysis_launch = {
+        "schema": "ura-phase7-analysis-launch/1",
+        "authorized_input_manifest_sha256": (
+            "d" * 64 if mutation == "control_launch_authorization" else input_sha
+        ),
+        "input_manifest": _descriptor(control_input),
+        "payload": _descriptor(payload),
+        "control_root": str(control.resolve()),
+        "analysis_root": str(analysis.resolve()),
+    }
+    _write(control / "launch.json", analysis_launch)
+
+    prepare_result = {
+        "status": "prepared",
+        "schema": "ura-phase7-analysis-inputs/1",
+        "output": (
+            str(watcher / "wrong-input.json")
+            if mutation == "prepare_result_output"
+            else str(watcher_input.resolve())
+        ),
+        "sha256": input_sha,
+        "bytes": len(watcher_input.read_bytes()),
+        "bound_artifacts": 4,
+        "runner_lanes": 2,
+        "metric_runner_lanes": 2,
+        "native_outcomes": {"native-lane": "run"},
+        "authorization_required_before_launch": True,
+    }
+    prepare_path = _write(watcher / "prepare-result.json", prepare_result)
+
+    phase7_session = (
+        "ura-phase7-wrong" if mutation == "phase7_launch_output_session" else "ura-phase7-test"
+    )
+    phase7_launch = watcher / "phase7-launch.txt"
+    phase7_launch.write_bytes(
+        (
+            "\n".join(
+            (
+                f"SESSION={phase7_session}",
+                "SOCKET=ura-phase7-test",
+                "ATTACH=tmux -L ura-phase7-test attach -t ura-phase7-test",
+                f"CONTROL_ROOT={control.resolve()}",
+                f"ANALYSIS_ROOT={analysis.resolve()}",
+                f"LOG={control.resolve() / 'controller.log'}",
+                f"EXIT_MARKER={control.resolve() / '.exit'}",
+                f"COMPLETION={control.resolve() / 'completion.json'}",
+            )
+            )
+            + "\n"
+        ).encode("ascii")
+    )
+
+    watcher_launch = {
+        "schema": (
+            "ura-phase7-after-phase6-launch/0"
+            if mutation == "watcher_launch_schema"
+            else "ura-phase7-after-phase6-launch/1"
+        ),
+        "status": "waiting_for_phase6",
+        "started_at_utc": "2026-08-23T00:00:00Z",
+        "expected_commit": COMMIT,
+        "framework_lock_id": LOCK,
+        "control_root": str(watcher.resolve()),
+        "authorized_watcher_sha256": _descriptor(watcher_script)["sha256"],
+        "watcher": _descriptor(watcher_script),
+        "phase7_wrapper": _descriptor(wrapper),
+        "phase7_payload": _descriptor(sealed_payload),
+        "phase6_wait": {
+            "control_root": str(phase6.resolve()),
+            "session": f"ura-phase6-sequence-{COMMIT[:7]}",
+            "socket": f"ura-phase6-sequence-{COMMIT[:7]}",
+        },
+        "target_calls_permitted": 0,
+        "judge_calls_permitted": 0,
+        "provider_http_attempts_permitted": 0,
+    }
+    watcher_launch_path = _write(watcher / "watcher-launch.json", watcher_launch)
+    runner_view = _write(analysis / "runner-view.json", {"schema": "runner-view"})
+    level1 = analysis / "level1" / "level1-evidence.json"
+    level2 = analysis / "level2" / "level2-report.json"
+    _level1(level1)
+    _level2(level2)
+    statuses = {"level1-evidence": "complete", "level2-report": "complete"}
+    artifacts = [_descriptor(path) for path in (level1, level2, runner_view)]
+    inventory = _write(
+        analysis / "artifact-inventory.json",
+        {
+            "schema": "ura-phase7-analysis-artifact-inventory/1",
+            "status": "complete",
+            "analysis_root": str(analysis.resolve()),
+            "artifacts": artifacts,
+            "artifact_count": len(artifacts),
+            "status_inventory": statuses,
+            "input_manifest_sha256": (
+                "e" * 64 if mutation == "inventory_input_digest" else input_sha
+            ),
+            "payload_sha256": hashlib.sha256(payload.read_bytes()).hexdigest(),
+            "runner_input_view": _descriptor(runner_view),
+            "target_calls": 0,
+            "judge_calls": 0,
+            "provider_http_attempts": 0,
+            "human_labels_consumed": False,
+        },
+    )
+    exit_path = control / ".exit"
+    exit_path.write_bytes(b"0\n")
+    controller = {field: None for field in phase7_module._CONTROLLER_FIELDS}
+    boundary_fields = (
+        "human_labels_consumed",
+        "human_validity_claimed",
+        "universal_safety_score_defined",
+        "native_scales_pooled",
+        "evaluator_modes_pooled",
+    )
+    controller.update(
+        {
+            "schema": "ura-phase7-analysis-completion/1",
+            "status": "complete",
+            "inventory_complete": True,
+            "input_manifest": _descriptor(control_input),
+            "authorized_input_manifest_sha256": (
+                "f" * 64 if mutation == "controller_input_digest" else input_sha
+            ),
+            "payload": _descriptor(payload),
+            "analysis_root": str(analysis.resolve()),
+            "artifact_inventory": _descriptor(inventory),
+            "runner_input_view": _descriptor(runner_view),
+            "analysis_statuses": statuses,
+            "explicit_limitations": {},
+            "phase6_terminal_states": {
+                "core": {"core-lane": "measured_complete"},
+                "extended": {"extended-lane": "measured_complete"},
+                "native": {"native-lane": "run"},
+            },
+            "target_calls": 0,
+            "judge_calls": 0,
+            "provider_http_attempts": 0,
+            "downloads_observed_bytes": 0,
+            **{
+                field: mutation == f"controller_boundary_{field}"
+                for field in boundary_fields
+            },
+        }
+    )
+    controller_path = _write(control / "completion.json", controller)
+    watcher_descriptor_path = watcher_script
+    wrapper_descriptor_path = wrapper
+    payload_descriptor_path = sealed_payload
+    if mutation == "watcher_descriptor_path":
+        watcher_descriptor_path = sealed / "alternate-watcher.sh"
+        watcher_descriptor_path.write_bytes(watcher_script.read_bytes())
+    if mutation == "wrapper_descriptor_path":
+        wrapper_descriptor_path = sealed / "alternate-wrapper.sh"
+        wrapper_descriptor_path.write_bytes(wrapper.read_bytes())
+    if mutation == "payload_descriptor_path":
+        payload_descriptor_path = sealed / "alternate-payload.py"
+        payload_descriptor_path.write_bytes(sealed_payload.read_bytes())
+    watcher_doc = {field: None for field in phase7_module._WATCHER_FIELDS}
+    watcher_doc.update(
+        {
+            "schema": "ura-phase7-after-phase6-completion/1",
+            "status": (
+                "complete_with_explicit_limitations"
+                if mutation == "watcher_controller_status"
+                else "complete"
+            ),
+            "expected_commit": "c" * 40 if mutation == "watcher_commit" else COMMIT,
+            "framework_lock_id": LOCK,
+            "watcher_launch": _descriptor(watcher_launch_path),
+            "watcher": _descriptor(watcher_descriptor_path),
+            "phase7_wrapper": _descriptor(wrapper_descriptor_path),
+            "phase7_payload": _descriptor(payload_descriptor_path),
+            "phase6_sequence_completion": _descriptor(phase6_completion),
+            "phase6_sequence_exit": _descriptor(phase6_exit),
+            "prepare_result": _descriptor(prepare_path),
+            "authorized_input_manifest": _descriptor(watcher_input),
+            "authorized_input_manifest_sha256": input_sha,
+            "phase7_launch_output": _descriptor(phase7_launch),
+            "phase7_control_root": str(control.resolve()),
+            "analysis_root": str(analysis.resolve()),
+            "phase7_completion": _descriptor(controller_path),
+            "phase7_exit": _descriptor(exit_path),
+            "artifact_inventory": _descriptor(inventory),
+            "runner_input_view": _descriptor(runner_view),
+            "analysis_statuses": statuses,
+            "explicit_limitations": {},
+            "target_calls": 0,
+            "judge_calls": 0,
+            "provider_http_attempts": 0,
+            "downloads_observed_bytes": 0,
+            "human_labels_consumed": False,
+        }
+    )
+    if mutation == "inventory_descriptor_mismatch":
+        alternate = analysis / "alternate-inventory.json"
+        alternate.write_bytes(inventory.read_bytes())
+        watcher_doc["artifact_inventory"] = _descriptor(alternate)
+    _write(watcher / "completion.json", watcher_doc)
+    return results, _campaign(watcher), level2
+
+
+def test_phase7_watcher_chain_binds_reports_and_rejects_mutated_output(
+    tmp_path: Path,
+) -> None:
+    results, campaign, level2 = _sealed_chain(tmp_path)
+    bundle = load_phase7_stats_bundle(results, campaign)
+    assert bundle is not None
+    assert [report.kind for report in bundle.reports] == ["level1", "level2"]
+    assert bundle.expected_commit == COMMIT
+    assert bundle.framework_lock_id == LOCK
+    assert bundle.gate5_sha256 == hashlib.sha256(
+        (results / "thesis" / "gate5" / "covered.json").read_bytes()
+    ).hexdigest()
+
+    # Mutation proof: inventory membership without matching report bytes never
+    # authorizes a chart or detail binding.
+    level2.write_text("{}\n", encoding="utf-8")
+    assert load_phase7_stats_bundle(results, campaign) is None
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    (
+        "watcher_commit",
+        "framework_lock_input",
+        "gate5_code_identity",
+        "controller_input_digest",
+        "inventory_input_digest",
+        "watcher_controller_status",
+        "inventory_descriptor_mismatch",
+        "watcher_launch_schema",
+        "watcher_descriptor_path",
+        "wrapper_descriptor_path",
+        "payload_descriptor_path",
+        "phase6_completion_schema",
+        "phase6_exit",
+        "prepare_result_output",
+        "phase7_launch_output_session",
+        "control_launch_authorization",
+        "controller_boundary_human_labels_consumed",
+        "controller_boundary_human_validity_claimed",
+        "controller_boundary_universal_safety_score_defined",
+        "controller_boundary_native_scales_pooled",
+        "controller_boundary_evaluator_modes_pooled",
+    ),
+)
+def test_phase7_chain_identity_and_boundary_mutations_never_link_stats(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    mutation: str,
+) -> None:
+    results, campaign, _level2_path = _sealed_chain(tmp_path, mutation=mutation)
+    assert load_phase7_stats_bundle(results, campaign) is None
+    app = RigWebApp(
+        results_root=results,
+        state_dir=tmp_path / "state",
+        repo_root=tmp_path,
+        gpu_hardware={"devices": []},
+        system_hardware={},
+    )
+    monkeypatch.setattr(app, "_engineering_campaign_scan", lambda **_kwargs: ([campaign], ""))
+    try:
+        index = app.handle("GET", "/stats")[2].decode("utf-8")
+    finally:
+        app.close()
+    assert f"href='/stats/job/{campaign.route_id}'" not in index
+
+
+def test_stats_links_sealed_phase7_reports_to_watcher_campaign(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    results, campaign, _level2_path = _sealed_chain(tmp_path)
+    app = RigWebApp(
+        results_root=results,
+        state_dir=tmp_path / "state",
+        repo_root=tmp_path,
+        gpu_hardware={"devices": []},
+        system_hardware={},
+    )
+    monkeypatch.setattr(app, "_engineering_campaign_scan", lambda **_kwargs: ([campaign], ""))
+    monkeypatch.setattr(
+        app,
+        "_engineering_campaign",
+        lambda route: campaign if route == campaign.route_id else None,
+    )
+    try:
+        index = app.handle("GET", "/stats")[2].decode("utf-8")
+        status, _headers, detail = app.handle(
+            "GET", f"/stats/job/{campaign.route_id}?fragment=1"
+        )
+    finally:
+        app.close()
+
+    assert f"href='/stats/job/{campaign.route_id}'" in index
+    assert "Statistics &amp; diagrams" in index
+    assert status == 200
+    detail_text = detail.decode("utf-8")
+    assert "Sealed Phase 7 analysis binding" in detail_text
+    assert "level1/level1-evidence.json" in detail_text
+    assert "level2/level2-report.json" in detail_text
+    assert "refusal_rate" in detail_text
+    assert "class='barchart'" in detail_text
+    assert "Open full job record" in detail_text

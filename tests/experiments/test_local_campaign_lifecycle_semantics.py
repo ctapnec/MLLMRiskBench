@@ -80,12 +80,14 @@ def _kinds(
     envelopes: int,
     eligibility: int,
     errors: int,
+    pre_runner: int = 0,
 ) -> dict[str, int]:
     return phase7.lifecycle_artifact_kinds(
         grid_statuses=grids,
         measured_request_envelopes=envelopes,
         eligibility_artifacts=eligibility,
         error_artifacts=errors,
+        pre_runner_failure_artifacts=pre_runner,
     )
 
 
@@ -151,7 +153,7 @@ def test_lifecycle_status_requires_exact_request_artifact_kinds(
                 eligibility=0,
                 errors=1,
             ),
-            "pre_runner_failure_no_request_artifact",
+            "failed_after_runner_request",
         ),
         (
             "failed",
@@ -162,6 +164,19 @@ def test_lifecycle_status_requires_exact_request_artifact_kinds(
                 envelopes=0,
                 eligibility=1,
                 errors=0,
+            ),
+            "failed_after_runner_request",
+        ),
+        (
+            "failed",
+            "failed",
+            _kinds(
+                phase7,
+                grids=[],
+                envelopes=0,
+                eligibility=0,
+                errors=0,
+                pre_runner=1,
             ),
             "pre_runner_failure_no_request_artifact",
         ),
@@ -202,6 +217,31 @@ def test_lifecycle_status_requires_exact_request_artifact_kinds(
             terminal_state="failed",
             lifecycle_state="failed",
             artifact_kinds=unknown_kind,
+        )
+    with pytest.raises(phase7.Phase7Error, match="lacks one typed"):
+        phase7.lifecycle_authorization_status(
+            terminal_state="failed",
+            lifecycle_state="failed",
+            artifact_kinds=_kinds(
+                phase7,
+                grids=[],
+                envelopes=0,
+                eligibility=0,
+                errors=0,
+            ),
+        )
+    with pytest.raises(phase7.Phase7Error, match="coexists"):
+        phase7.lifecycle_authorization_status(
+            terminal_state="failed",
+            lifecycle_state="failed",
+            artifact_kinds=_kinds(
+                phase7,
+                grids=[],
+                envelopes=1,
+                eligibility=0,
+                errors=1,
+                pre_runner=1,
+            ),
         )
 
 

@@ -436,6 +436,10 @@ GATE5_POLICY = {
     "call_start_deadline_semantics": (
         "admission_window_from_first_invocation_not_completion_timeout"
     ),
+    "measured_lane_wall_time_seconds": 1_209_600,
+    "measured_lane_wall_time_semantics": (
+        "controller_completion_ceiling_distinct_from_call_start_admission_window"
+    ),
     "free_space_floor_bytes": 1_099_511_627_776,
     "retained_output_policy_bytes": 53_687_091_200,
     "retained_output_policy_semantics": (
@@ -541,12 +545,15 @@ CORE_LANE_FAILURE_FIELDS = {
     "failed_at_utc",
     "returncode",
     "stage",
+    "reason_code",
     "error_type",
     "error",
     "terminal_event",
     "lane_spec",
     "exact_measured_argv",
+    "pre_runner_failure",
     "result_root",
+    "approved_wall_time_seconds",
     "evidence_eligible",
     "retry_semantics",
     "hosted_target_calls",
@@ -641,8 +648,37 @@ EXTENDED_LANE_FAILURE_FIELDS = {
     "attempt",
     "lane_id",
     "stage",
+    "reason_code",
     "error_type",
     "error",
+    "lane_spec",
+    "exact_measured_argv",
+    "pre_runner_failure",
+    "result_root",
+    "approved_wall_time_seconds",
+    "evidence_eligible",
+}
+PRE_RUNNER_FAILURE_FIELDS = {
+    "schema",
+    "status",
+    "artifact_role",
+    "lane_id",
+    "attempt",
+    "failed_at_utc",
+    "stage",
+    "reason_code",
+    "error_type",
+    "error",
+    "expected_commit",
+    "framework_lock_id",
+    "gate5_manifest_sha256",
+    "lane_spec",
+    "exact_measured_argv",
+    "result_root",
+    "approved_wall_time_seconds",
+    "runner_lifecycle_artifact_count",
+    "runner_artifact",
+    "evidence_eligible",
 }
 NATIVE_COMPLETION_FIELDS = {
     "schema",
@@ -1406,6 +1442,62 @@ def descriptor_object(
 ) -> tuple[Path, dict[str, Any]]:
     path, payload = descriptor_bytes(value, label=label)
     return path, _strict_object_bytes(payload, label=label)
+
+
+def validate_pre_runner_failure_artifact(
+    value: object,
+    *,
+    lane: str,
+    attempt: str,
+    result_root: Path,
+    expected_commit: str,
+    framework_lock_id: str,
+    gate5_manifest_sha256: str,
+    lane_spec: Mapping[str, Any],
+    exact_measured_argv: object,
+    failure: Mapping[str, Any],
+) -> dict[str, Any]:
+    path, marker = descriptor_object(
+        value, label=f"{lane} controller pre-Runner failure"
+    )
+    expected_path = result_root / (
+        f".ura-phase6-pre-runner-failure-{attempt}.json"
+    )
+    if path != expected_path:
+        raise Phase7Error(f"{lane}: pre-Runner failure path changed")
+    require_exact_fields(
+        marker,
+        expected=PRE_RUNNER_FAILURE_FIELDS,
+        label=f"{lane} pre-Runner failure",
+    )
+    if (
+        marker.get("schema") != "ura-phase6-pre-runner-failure/1"
+        or marker.get("status") != "failed"
+        or marker.get("artifact_role")
+        != "controller_pre_runner_failure_not_runner_artifact"
+        or marker.get("lane_id") != lane
+        or marker.get("attempt") != attempt
+        or marker.get("failed_at_utc") != failure.get("failed_at_utc")
+        or marker.get("stage") != failure.get("stage")
+        or marker.get("reason_code") != failure.get("reason_code")
+        or marker.get("error_type") != failure.get("error_type")
+        or marker.get("error") != failure.get("error")
+        or marker.get("expected_commit") != expected_commit
+        or marker.get("framework_lock_id") != framework_lock_id
+        or marker.get("gate5_manifest_sha256") != gate5_manifest_sha256
+        or marker.get("lane_spec") != lane_spec
+        or marker.get("exact_measured_argv") != exact_measured_argv
+        or marker.get("result_root") != str(result_root)
+        or marker.get("approved_wall_time_seconds") != 1_209_600
+        or marker.get("runner_lifecycle_artifact_count") != 0
+        or marker.get("runner_artifact") is not False
+        or marker.get("evidence_eligible") is not False
+    ):
+        raise Phase7Error(f"{lane}: pre-Runner failure artifact changed")
+    require_utc_timestamp(
+        marker.get("failed_at_utc"), label=f"{lane} pre-Runner failure timestamp"
+    )
+    return descriptor(path)
 
 
 def _lane_projection_from_bytes(
@@ -3577,7 +3669,10 @@ def validate_gate5(
         or approval.get("authentication") != "operator_asserted"
         or approval.get("covered_manifest_sha256") != manifest_desc["sha256"]
         or approval.get("scope")
-        != "exact frozen Gate-5 lane inventory, caps, deadline semantics, and external storage policy"
+        != (
+            "exact frozen Gate-5 lane inventory, caps, call-start and "
+            "measured-lane wall-time semantics, and external storage policy"
+        )
         or note.get("policy") != manifest.get("policy")
         or not isinstance(routes, dict)
         or set(routes)
@@ -4517,6 +4612,26 @@ def validate_core_controller(
                 "status": event_by_lane[lane]["status"],
                 "detail": event_by_lane[lane]["detail"],
             }
+            timed_out = failure.get("stage") == "approved-wall-time-ceiling"
+            expected_reason = (
+                "approved_wall_time_exceeded"
+                if timed_out
+                else "lane_controller_nonzero_exit"
+            )
+            expected_error_type = (
+                "lane_wall_time_exceeded"
+                if timed_out
+                else "lane_controller_nonzero_exit"
+            )
+            expected_error = (
+                "lane exceeded approved 1209600-second wall-time ceiling; "
+                "no measured evidence admitted"
+                if timed_out
+                else (
+                    f"lane controller exited {failure.get('returncode')}; "
+                    "no measured evidence admitted"
+                )
+            )
             if (
                 set(failure) != CORE_LANE_FAILURE_FIELDS
                 or failure.get("schema") != "ura-phase6-core-lane-failure/1"
@@ -4527,15 +4642,14 @@ def validate_core_controller(
                 or not 1 <= failure["returncode"] <= 255
                 or not isinstance(failure.get("stage"), str)
                 or not failure["stage"]
-                or failure.get("error_type") != "lane_controller_nonzero_exit"
-                or failure.get("error")
-                != (
-                    f"lane controller exited {failure['returncode']}; "
-                    "no measured evidence admitted"
-                )
+                or (timed_out and failure.get("returncode") != 124)
+                or failure.get("reason_code") != expected_reason
+                or failure.get("error_type") != expected_error_type
+                or failure.get("error") != expected_error
                 or failure.get("terminal_event") != terminal
                 or terminal.get("detail") != failure.get("error")
                 or failure.get("result_root") != str((runner_root / lane).resolve())
+                or failure.get("approved_wall_time_seconds") != 1_209_600
                 or failure.get("evidence_eligible") is not False
                 or failure.get("retry_semantics")
                 != "next controller attempt revalidates complete Runner state or retries the exact sealed argv"
@@ -4563,6 +4677,10 @@ def validate_core_controller(
                 spec_path != expected_spec_path
                 or spec.get("schema") != "ura-phase6-core-lane-spec/1"
                 or spec.get("lane_id") != lane
+                or spec.get("approved_caps", {}).get("wall_time_seconds")
+                != 1_209_600
+                or spec.get("gate5", {}).get("manifest_sha256")
+                != sha256_file(gate5_manifest)
             ):
                 raise Phase7Error(f"{lane}: Phase 6 core failure spec changed")
             if lane in specs:
@@ -4585,6 +4703,48 @@ def validate_core_controller(
                     raise Phase7Error(
                         f"{lane}: failed exact measured argv path changed"
                     )
+            result_root = checked_dir(
+                failure.get("result_root", ""),
+                label=f"{lane} failed Runner root",
+            )
+            expected_result_root = runner_root / lane
+            if result_root != expected_result_root.resolve():
+                raise Phase7Error(f"{lane}: failed Runner root changed")
+            critical_paths = [
+                path
+                for pattern in (
+                    "*.grid.json", "*.request-envelope.json",
+                    "*.eligibility.json", "*.error.json",
+                )
+                for path in result_root.rglob(pattern)
+            ]
+            if any(path.is_symlink() or not path.is_file() for path in critical_paths):
+                raise Phase7Error(f"{lane}: failed Runner artifact is unsafe")
+            current_marker = result_root / (
+                f".ura-phase6-pre-runner-failure-{attempt.name}.json"
+            )
+            if critical_paths:
+                if (
+                    failure.get("pre_runner_failure") is not None
+                    or current_marker.exists()
+                    or current_marker.is_symlink()
+                ):
+                    raise Phase7Error(
+                        f"{lane}: current pre-Runner marker conflicts with Runner artifacts"
+                    )
+            else:
+                validate_pre_runner_failure_artifact(
+                    failure.get("pre_runner_failure"),
+                    lane=lane,
+                    attempt=attempt.name,
+                    result_root=result_root,
+                    expected_commit=str(code_identity["expected_commit"]),
+                    framework_lock_id=str(code_identity["framework_lock_id"]),
+                    gate5_manifest_sha256=sha256_file(gate5_manifest),
+                    lane_spec=failure["lane_spec"],
+                    exact_measured_argv=failed_state,
+                    failure=failure,
+                )
             failure_descriptors[lane] = descriptor(failure_path)
             continue
         result_path, row = descriptor_object(
@@ -5155,23 +5315,104 @@ def validate_extended_controller(
             )
             if failure_path != attempt / f"{lane}.failure.json":
                 raise Phase7Error(f"{lane}: lane-failure path changed")
+            timed_out = failure.get("stage") == "approved-wall-time-ceiling"
+            expected_reason = (
+                "approved_wall_time_exceeded"
+                if timed_out
+                else "lane_controller_exception"
+            )
+            expected_error_type = (
+                "lane_wall_time_exceeded"
+                if timed_out
+                else failure.get("error_type")
+            )
             if (
                 set(failure) != EXTENDED_LANE_FAILURE_FIELDS
                 or failure.get("schema") != "ura-phase6-extended-lane-failure/1"
                 or failure.get("status") != "failed"
                 or failure.get("attempt") != attempt.name
                 or failure.get("lane_id") != lane
-                or failure.get("stage") != "lane"
+                or failure.get("stage")
+                not in {"lane", "approved-wall-time-ceiling"}
+                or failure.get("reason_code") != expected_reason
                 or not isinstance(failure.get("error_type"), str)
                 or not failure["error_type"]
+                or failure.get("error_type") != expected_error_type
                 or not isinstance(failure.get("error"), str)
                 or not failure["error"]
+                or (
+                    timed_out
+                    and failure.get("error")
+                    != "lane exceeded approved 1209600-second wall-time ceiling; "
+                    "no measured evidence admitted"
+                )
+                or failure.get("lane_spec") != descriptor(spec_path)
+                or failure.get("result_root")
+                != str((runner_root / lane).resolve())
+                or failure.get("approved_wall_time_seconds") != 1_209_600
+                or failure.get("evidence_eligible") is not False
+                or _spec.get("approved_caps", {}).get("wall_time_seconds")
+                != 1_209_600
+                or _spec.get("gate5", {}).get("manifest_sha256")
+                != sha256_file(gate5_manifest)
             ):
                 raise Phase7Error(f"{lane}: typed lane failure changed")
             require_utc_timestamp(
                 failure.get("failed_at_utc"),
                 label=f"{lane} lane-failure timestamp",
             )
+            failed_state = failure.get("exact_measured_argv")
+            state_path = control / "lanes" / lane / "exact-measured-argv.json"
+            if failed_state is None:
+                if state_path.exists() or state_path.is_symlink():
+                    raise Phase7Error(
+                        f"{lane}: failure omits its existing sealed measured argv"
+                    )
+            elif descriptor_file(
+                failed_state, label=f"{lane} failed exact measured argv"
+            ) != state_path:
+                raise Phase7Error(f"{lane}: failed exact measured argv changed")
+            result_root = checked_dir(
+                failure.get("result_root", ""),
+                label=f"{lane} failed Runner root",
+            )
+            if result_root != (runner_root / lane).resolve():
+                raise Phase7Error(f"{lane}: failed Runner root changed")
+            critical_paths = [
+                path
+                for pattern in (
+                    "*.grid.json", "*.request-envelope.json",
+                    "*.eligibility.json", "*.error.json",
+                )
+                for path in result_root.rglob(pattern)
+            ]
+            if any(path.is_symlink() or not path.is_file() for path in critical_paths):
+                raise Phase7Error(f"{lane}: failed Runner artifact is unsafe")
+            current_marker = result_root / (
+                f".ura-phase6-pre-runner-failure-{attempt.name}.json"
+            )
+            if critical_paths:
+                if (
+                    failure.get("pre_runner_failure") is not None
+                    or current_marker.exists()
+                    or current_marker.is_symlink()
+                ):
+                    raise Phase7Error(
+                        f"{lane}: current pre-Runner marker conflicts with Runner artifacts"
+                    )
+            else:
+                validate_pre_runner_failure_artifact(
+                    failure.get("pre_runner_failure"),
+                    lane=lane,
+                    attempt=attempt.name,
+                    result_root=result_root,
+                    expected_commit=str(code_identity["expected_commit"]),
+                    framework_lock_id=str(code_identity["framework_lock_id"]),
+                    gate5_manifest_sha256=sha256_file(gate5_manifest),
+                    lane_spec=failure["lane_spec"],
+                    exact_measured_argv=failed_state,
+                    failure=failure,
+                )
             failure_descriptors[lane] = descriptor(failure_path)
             failure_values[lane] = failure
             continue
@@ -6291,6 +6532,7 @@ LIFECYCLE_ARTIFACT_KINDS = frozenset({
     "measured_request_envelope",
     "eligibility_artifact",
     "error_artifact",
+    "pre_runner_failure_artifact",
 })
 
 
@@ -6300,6 +6542,7 @@ def lifecycle_artifact_kinds(
     measured_request_envelopes: int,
     eligibility_artifacts: int,
     error_artifacts: int,
+    pre_runner_failure_artifacts: int = 0,
 ) -> dict[str, int]:
     """Describe only exact artifact kinds that have passed semantic validation."""
 
@@ -6314,6 +6557,7 @@ def lifecycle_artifact_kinds(
         "measured_request_envelope": measured_request_envelopes,
         "eligibility_artifact": eligibility_artifacts,
         "error_artifact": error_artifacts,
+        "pre_runner_failure_artifact": pre_runner_failure_artifacts,
     }
     if any(type(value) is not int or value < 0 for value in counts.values()):
         raise Phase7Error("Runner lifecycle artifact-kind count is invalid")
@@ -6341,6 +6585,7 @@ def lifecycle_authorization_status(
     envelopes = artifact_kinds["measured_request_envelope"]
     eligibility = artifact_kinds["eligibility_artifact"]
     errors = artifact_kinds["error_artifact"]
+    pre_runner_failures = artifact_kinds["pre_runner_failure_artifact"]
     if complete_grids + partial_grids + running_grids > 1 or envelopes > 1:
         raise Phase7Error("Runner lifecycle request artifact cardinality is invalid")
     if terminal_state == "measured_complete":
@@ -6352,6 +6597,7 @@ def lifecycle_authorization_status(
             or envelopes != 1
             or eligibility < 1
             or errors != 0
+            or pre_runner_failures != 0
         ):
             raise Phase7Error("complete Runner authorization lacks complete artifacts")
         return "complete_runner_grid"
@@ -6365,6 +6611,7 @@ def lifecycle_authorization_status(
             or envelopes != 1
             or eligibility < 1
             or errors < 1
+            or pre_runner_failures != 0
         ):
             raise Phase7Error("partial Runner authorization lacks its exact artifact kinds")
         return "partial_runner_grid"
@@ -6372,12 +6619,26 @@ def lifecycle_authorization_status(
         raise Phase7Error("failed Runner authorization has an invalid lifecycle state")
     if partial_grids:
         raise Phase7Error("failed Runner lifecycle contains a partial grid")
-    request_bound = envelopes == 1 or complete_grids == 1 or running_grids == 1
-    return (
-        "failed_after_runner_request"
-        if request_bound
-        else "pre_runner_failure_no_request_artifact"
+    runner_lifecycle_present = any(
+        (
+            complete_grids,
+            running_grids,
+            envelopes,
+            eligibility,
+            errors,
+        )
     )
+    if runner_lifecycle_present:
+        if pre_runner_failures != 0:
+            raise Phase7Error(
+                "pre-Runner failure marker coexists with Runner lifecycle artifacts"
+            )
+        return "failed_after_runner_request"
+    if pre_runner_failures != 1:
+        raise Phase7Error(
+            "pre-Runner failure lacks one typed controller artifact"
+        )
+    return "pre_runner_failure_no_request_artifact"
 
 
 def validate_measured_request_envelope_artifact(
@@ -6820,8 +7081,9 @@ def validate_runner_inventory(
             continue
         failed_runner_artifacts[lane] = []
         if not candidate.exists() and not candidate.is_symlink():
-            lifecycle_states[lane] = "failed"
-            continue
+            raise Phase7Error(
+                f"{lane}: failed lifecycle Runner root is absent"
+            )
         root = checked_dir(candidate, label=f"{lane} failed lifecycle runner root")
         if root != candidate.resolve():
             raise Phase7Error(f"{lane}: failed lifecycle runner root is not canonical")
@@ -6943,6 +7205,25 @@ def validate_runner_inventory(
     for lane in scheduled_runner_lanes:
         root_value = lifecycle_roots.get(lane)
         root = Path(root_value) if root_value is not None else None
+        failure = controller_failure_by_lane.get(lane)
+        pre_runner_failure_artifacts: list[dict[str, Any]] = []
+        if failure is not None:
+            _, failure_value = descriptor_object(
+                failure, label=f"{lane} controller failure"
+            )
+            pre_runner_failure = failure_value.get("pre_runner_failure")
+            if pre_runner_failure is not None:
+                pre_runner_path = descriptor_file(
+                    pre_runner_failure,
+                    label=f"{lane} controller pre-Runner failure",
+                )
+                if root is None or pre_runner_path.parent != root:
+                    raise Phase7Error(
+                        f"{lane}: controller pre-Runner failure root changed"
+                    )
+                pre_runner_failure_artifacts.append(
+                    descriptor(pre_runner_path)
+                )
         patterns = {
             "runner_grid_artifacts": "*.grid.json",
             "runner_request_envelopes": "*.request-envelope.json",
@@ -6994,6 +7275,7 @@ def validate_runner_inventory(
                 grouped_paths["runner_eligibility_artifacts"]
             ),
             error_artifacts=len(grouped_paths["runner_error_artifacts"]),
+            pre_runner_failure_artifacts=len(pre_runner_failure_artifacts),
         )
         terminal_state = normalized_states[lane]
         lifecycle_state = lifecycle_states[lane]
@@ -7002,7 +7284,6 @@ def validate_runner_inventory(
             lifecycle_state=lifecycle_state,
             artifact_kinds=artifact_kind_counts,
         )
-        failure = controller_failure_by_lane.get(lane)
         if (terminal_state == "failed") != (failure is not None):
             raise Phase7Error(f"{lane}: controller failure/lifecycle partition differs")
         if failure is not None:
@@ -7846,6 +8127,20 @@ class AnalysisController:
                     "runner_error_artifacts",
                 )
             } if isinstance(authorization, dict) else {}
+            pre_runner_failures: list[dict[str, Any]] = []
+            failure_descriptor = (
+                authorization.get("controller_failure")
+                if isinstance(authorization, dict)
+                else None
+            )
+            if failure_descriptor is not None:
+                _, failure_value = descriptor_object(
+                    failure_descriptor,
+                    label=f"{lane} lifecycle controller failure",
+                )
+                pre_runner_failure = failure_value.get("pre_runner_failure")
+                if pre_runner_failure is not None:
+                    pre_runner_failures.append(pre_runner_failure)
             if (
                 not isinstance(artifacts, list)
                 or any(not isinstance(group, list) for group in groups.values())
@@ -7853,6 +8148,11 @@ class AnalysisController:
                     not isinstance(item, dict) or not isinstance(item.get("path"), str)
                     for group in groups.values()
                     for item in group
+                )
+                or any(
+                    not isinstance(item, dict)
+                    or not isinstance(item.get("path"), str)
+                    for item in pre_runner_failures
                 )
             ):
                 raise Phase7Error(f"{lane}: lifecycle artifact groups changed")
@@ -7884,6 +8184,7 @@ class AnalysisController:
                     groups.get("runner_eligibility_artifacts") or []
                 ),
                 error_artifacts=len(groups.get("runner_error_artifacts") or []),
+                pre_runner_failure_artifacts=len(pre_runner_failures),
             )
             expected_status = lifecycle_authorization_status(
                 terminal_state=runner_states[lane],
@@ -7938,6 +8239,10 @@ class AnalysisController:
                 raise Phase7Error(f"{lane}: partial lifecycle groups changed")
             for item in artifacts:
                 descriptor_file(item, label=f"{lane} Runner lifecycle artifact")
+            for item in pre_runner_failures:
+                descriptor_file(
+                    item, label=f"{lane} controller pre-Runner failure"
+                )
             for field in ("controller_failure", "exact_measured_argv"):
                 item = authorization.get(field)
                 if item is not None:
@@ -11563,8 +11868,9 @@ def contract_self_test() -> int:
             artifact_kinds=lifecycle_artifact_kinds(
                 grid_statuses=[],
                 measured_request_envelopes=0,
-                eligibility_artifacts=1,
-                error_artifacts=1,
+                eligibility_artifacts=0,
+                error_artifacts=0,
+                pre_runner_failure_artifacts=1,
             ),
         ),
     }
@@ -11595,6 +11901,12 @@ def contract_self_test() -> int:
             empty_kinds,
         ),
         ("lifecycle-partial-without-artifact", "failed", "partial", empty_kinds),
+        (
+            "lifecycle-pre-runner-without-typed-artifact",
+            "failed",
+            "failed",
+            empty_kinds,
+        ),
         (
             "lifecycle-failed-marked-complete",
             "failed",

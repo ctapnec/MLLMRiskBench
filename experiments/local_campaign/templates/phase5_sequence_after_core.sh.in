@@ -37,6 +37,7 @@ EXPECTED_PROJECT_RECEIPT='@@PROJECT_RECEIPT_PATH@@'
 EXPECTED_PROJECT_RECEIPT_SHA256='@@PROJECT_RECEIPT_SHA256@@'
 EXPECTED_SOURCE_RECEIPT='@@SOURCE_RECEIPT_PATH@@'
 EXPECTED_SOURCE_RECEIPT_SHA256='@@SOURCE_RECEIPT_SHA256@@'
+PY="$PWD/.venv/bin/python"
 TAG="${PHASE5_SEQUENCE_TAG:-$(date -u +%Y%m%dT%H%M%SZ)}"
 case "$TAG" in
   20[0-9][0-9][01][0-9][0-3][0-9]T[0-2][0-9][0-5][0-9][0-5][0-9]Z) ;;
@@ -62,6 +63,7 @@ test "$URA_PROJECT_REVISION_MANIFEST" = "$EXPECTED_PROJECT_RECEIPT"
 test "$URA_PROJECT_REVISION_SHA256" = "$EXPECTED_PROJECT_RECEIPT_SHA256"
 test "$URA_SOURCE_CONFORMANCE_MANIFEST" = "$EXPECTED_SOURCE_RECEIPT"
 test "$URA_SOURCE_CONFORMANCE_SHA256" = "$EXPECTED_SOURCE_RECEIPT_SHA256"
+test -x "$PY"
 for script in "${!SCRIPT_HASHES[@]}"; do
   test -f "$script" && test ! -L "$script"
   test "$(sha256sum -- "$script" | awk '{print $1}')" = "${SCRIPT_HASHES[$script]}"
@@ -74,12 +76,68 @@ exec > >(tee "$LOG") 2>&1
 printf 'step\ttime_utc\tstatus\tsession\tsocket\tcontrol_root\texit_marker\n' > "$STEPS"
 chmod 600 "$STEPS"
 
+CONTROL_TASKS=(
+  core-projections
+  core-canaries
+  bridge-projections
+  bridge-canaries
+  ollama
+)
+CONTROL_TASK_INDEX=0
+CONTROL_ACTIVE_TASK=''
+CONSOLE_CAMPAIGN_STARTED=0
+
+console_event() {
+  PYTHONDONTWRITEBYTECODE=1 "$PY" -m experiments.local_campaign.console_events event \
+    --work-root "$URA_WORK" --control-root "$CONTROL_ROOT" \
+    --event "$1" --task "$2" --status "$3" --detail "$4"
+}
+
+controller_task_start() {
+  local task="$1"
+  test -z "$CONTROL_ACTIVE_TASK"
+  test "${CONTROL_TASKS[$CONTROL_TASK_INDEX]}" = "$task"
+  CONTROL_ACTIVE_TASK="$task"
+  console_event task_start "$task" running "${task}_started"
+}
+
+controller_task_pass() {
+  local task="$1"
+  test "$CONTROL_ACTIVE_TASK" = "$task"
+  console_event task_end "$task" passed "${task}_complete"
+  CONTROL_ACTIVE_TASK=''
+  CONTROL_TASK_INDEX=$((CONTROL_TASK_INDEX + 1))
+}
+
+controller_finish() {
+  local rc="$1" task status=failed
+  test "$CONSOLE_CAMPAIGN_STARTED" = '1' || return 0
+  if [ -n "$CONTROL_ACTIVE_TASK" ]; then
+    task="$CONTROL_ACTIVE_TASK"
+    console_event task_end "$task" failed "controller_exit_$rc" || \
+      printf 'console event failed: task_end %s\n' "$task" >&2
+    CONTROL_ACTIVE_TASK=''
+    CONTROL_TASK_INDEX=$((CONTROL_TASK_INDEX + 1))
+  fi
+  while [ "$CONTROL_TASK_INDEX" -lt "${#CONTROL_TASKS[@]}" ]; do
+    task="${CONTROL_TASKS[$CONTROL_TASK_INDEX]}"
+    console_event task_skip "$task" skipped "not_reached_after_controller_exit_$rc" || \
+      printf 'console event failed: task_skip %s\n' "$task" >&2
+    CONTROL_TASK_INDEX=$((CONTROL_TASK_INDEX + 1))
+  done
+  test "$rc" -ne 0 || status=passed
+  console_event campaign_end bootstrap "$status" "local_campaign_controller_exit_$rc" || \
+    printf 'console event failed: campaign_end\n' >&2
+  return 0
+}
+
 finish() {
   rc=$?
   trap - EXIT
   printf '%s\n' "$rc" > "$EXIT_TMP"
   test ! -e "$EXIT_MARKER"
   mv -- "$EXIT_TMP" "$EXIT_MARKER"
+  controller_finish "$rc"
   printf 'PHASE5_SEQUENCE_EXIT=%s\n' "$rc"
   exit "$rc"
 }
@@ -87,6 +145,23 @@ trap finish EXIT
 trap 'exit 130' INT
 trap 'exit 143' TERM
 trap 'exit 129' HUP
+
+CONSOLE_START_ARGS=(
+  --work-root "$URA_WORK"
+  --control-root "$CONTROL_ROOT"
+  --campaign-id "${CONTROL_ROOT##*/}"
+  --release-commit "$EXPECTED_COMMIT"
+  --evidence-class local_campaign_control
+  --hard-stop-hours 24
+  --tmux-socket ura-phase5-sequence-@@COMMIT_SHORT@@
+  --tmux-session ura-phase5-sequence-@@COMMIT_SHORT@@
+)
+for task in "${CONTROL_TASKS[@]}"; do
+  CONSOLE_START_ARGS+=(--planned-task "$task")
+done
+PYTHONDONTWRITEBYTECODE=1 "$PY" -m experiments.local_campaign.console_events start \
+  "${CONSOLE_START_ARGS[@]}"
+CONSOLE_CAMPAIGN_STARTED=1
 
 record() {
   printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
@@ -129,10 +204,20 @@ launch_and_wait() {
   wait_owned "$step" "$session" "$socket" "$root" "$marker"
 }
 
+controller_task_start core-projections
 launch_and_wait core-projections "$URA_CONTROLLER_GENERATION_ROOT/phase5_core_projections.sh"
+controller_task_pass core-projections
+controller_task_start core-canaries
 launch_and_wait core-canaries "$URA_CONTROLLER_GENERATION_ROOT/phase5_core_attest_canary.sh"
+controller_task_pass core-canaries
+controller_task_start bridge-projections
 launch_and_wait bridge-projections "$URA_CONTROLLER_GENERATION_ROOT/phase5_bridge_projections.sh"
+controller_task_pass bridge-projections
+controller_task_start bridge-canaries
 launch_and_wait bridge-canaries "$URA_CONTROLLER_GENERATION_ROOT/phase5_bridge_attest_canary.sh"
+controller_task_pass bridge-canaries
+controller_task_start ollama
 launch_and_wait ollama "$URA_CONTROLLER_GENERATION_ROOT/phase5_ollama_workflow.sh"
+controller_task_pass ollama
 
 printf 'PHASE5_SEQUENCE_COMPLETE=%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)"

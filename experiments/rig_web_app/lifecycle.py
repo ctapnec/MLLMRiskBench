@@ -57,6 +57,11 @@ from .campaigns import (
     load_engineering_campaign,
     scan_engineering_campaigns,
 )
+from .external_measured import (
+    ExternalMeasuredJob,
+    load_external_measured_job,
+    scan_external_measured_jobs,
+)
 
 
 _PRIVATE_LOCAL_CONFIG_ENV = "URA_PRIVATE_TRANSIENT_LOCAL_CONFIG"
@@ -3526,6 +3531,21 @@ class LifecycleMixin:
     def _engineering_campaign(self, route_id: str) -> EngineeringCampaign | None:
         return load_engineering_campaign(self.results_root, route_id)
 
+    def _external_measured_job_scan(
+        self,
+        *,
+        started_from: float | None = None,
+        started_to: float | None = None,
+    ) -> tuple[list[ExternalMeasuredJob], str]:
+        return scan_external_measured_jobs(
+            self.results_root,
+            started_from=started_from,
+            started_to=started_to,
+        )
+
+    def _external_measured_job(self, job_id: str) -> ExternalMeasuredJob | None:
+        return load_external_measured_job(self.results_root, job_id)
+
     @staticmethod
     def _engineering_log_tail(campaign: EngineeringCampaign, stream: str) -> str | None:
         path = next((path for key, _label, path in campaign.logs if key == stream), None)
@@ -3668,6 +3688,26 @@ class LifecycleMixin:
                 return 303, f"/jobs/{job.job_id}", b""
             if method == "GET" and path == "/jobs":
                 return 200, "text/html; charset=utf-8", self._jobs_page(query)
+            if method == "POST" and path.startswith("/jobs/external/") and path.endswith(
+                "/stop"
+            ):
+                return (
+                    405,
+                    "text/plain; charset=utf-8",
+                    b"external measured jobs are read-only and are not owned by this console",
+                )
+            if method == "GET" and path.startswith("/jobs/external/"):
+                job_id = path.removeprefix("/jobs/external/")
+                if not job_id or "/" in job_id:
+                    return 404, "text/plain; charset=utf-8", b"unknown external job"
+                external_job = self._external_measured_job(job_id)
+                if external_job is None:
+                    return 404, "text/plain; charset=utf-8", b"unknown external job"
+                return (
+                    200,
+                    "text/html; charset=utf-8",
+                    self._external_measured_job_page(external_job),
+                )
             if method == "GET" and path.startswith("/jobs/campaign/"):
                 relative = path.removeprefix("/jobs/campaign/")
                 is_log = relative.endswith("/log")
