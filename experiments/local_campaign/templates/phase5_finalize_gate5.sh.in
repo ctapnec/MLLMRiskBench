@@ -2550,10 +2550,24 @@ def validate_canary_live_attestations(
 
 
 def validate_common_stage_contract(
-    stages: object, *, completed_judgments: int, label: str,
+    stages: object,
+    *,
+    completed_judgments: int,
+    evaluable_judgments: int,
+    label: str,
 ) -> None:
     if not isinstance(stages, list):
         raise Gate5Error(f"{label}: rules/guardrail stage inventory is not an array")
+    if (
+        isinstance(completed_judgments, bool)
+        or not isinstance(completed_judgments, int)
+        or completed_judgments <= 0
+        or isinstance(evaluable_judgments, bool)
+        or not isinstance(evaluable_judgments, int)
+        or evaluable_judgments <= 0
+        or evaluable_judgments > completed_judgments
+    ):
+        raise Gate5Error(f"{label}: policy-evaluable judgment support is invalid")
     expected_stage_projection = [(0, "rules"), (1, "guardrail")]
     observed_stage_projection: list[tuple[int, str]] = []
     for stage in stages:
@@ -2564,12 +2578,20 @@ def validate_common_stage_contract(
             observed_stage_projection.append(projected)
         if (
             stage.get("role") not in {"authoritative", "shadow"}
-            or stage.get("reached") is not True
+            or isinstance(stage.get("trail_records"), bool)
+            or not isinstance(stage.get("trail_records"), int)
+            or stage["trail_records"] <= 0
             or isinstance(stage.get("queried_records"), bool)
             or not isinstance(stage.get("queried_records"), int)
-            or stage["queried_records"] <= 0
+            or stage["queried_records"] < 0
+            or isinstance(stage.get("not_queried_records"), bool)
+            or not isinstance(stage.get("not_queried_records"), int)
+            or stage["not_queried_records"] < 0
+            or stage["trail_records"]
+            != stage["queried_records"] + stage["not_queried_records"]
+            or stage.get("reached") is not (stage["queried_records"] > 0)
         ):
-            raise Gate5Error(f"{label}: rules/guardrail has an unqueried or invalid role row")
+            raise Gate5Error(f"{label}: rules/guardrail stage support does not reconcile")
     if observed_stage_projection != expected_stage_projection:
         raise Gate5Error(f"{label}: stage projection is not exactly ordered rules,guardrail")
     for stage_index, judge_name in expected_stage_projection:
@@ -2579,9 +2601,13 @@ def validate_common_stage_contract(
         ]
         if (
             sum(row["trail_records"] for row in stage_rows) != completed_judgments
-            or sum(row["queried_records"] for row in stage_rows) != completed_judgments
+            or sum(row["queried_records"] for row in stage_rows) != evaluable_judgments
+            or sum(row["not_queried_records"] for row in stage_rows)
+            != completed_judgments - evaluable_judgments
         ):
-            raise Gate5Error(f"{label}: stage support does not equal completed judgments")
+            raise Gate5Error(
+                f"{label}: stage support does not equal policy-evaluable judgments"
+            )
     if (
         sum(row["trail_records"] for row in stages if row["role"] == "authoritative")
         != completed_judgments
@@ -2872,7 +2898,18 @@ def canary_stage_contract_self_test() -> list[str]:
         "stage": 0, "judge": "rules", "role": "authoritative", "trail_records": 2,
         "queried_records": 0, "not_queried_records": 2, "reached": False,
     }]
-    validate_common_stage_contract(common, completed_judgments=2, label="self-test")
+    adaptive = [
+        {"stage": 0, "judge": "rules", "role": "authoritative", "trail_records": 3,
+         "queried_records": 1, "not_queried_records": 2, "reached": True},
+        {"stage": 1, "judge": "guardrail", "role": "shadow", "trail_records": 3,
+         "queried_records": 1, "not_queried_records": 2, "reached": True},
+    ]
+    validate_common_stage_contract(
+        common, completed_judgments=2, evaluable_judgments=2, label="self-test"
+    )
+    validate_common_stage_contract(
+        adaptive, completed_judgments=3, evaluable_judgments=1, label="self-test"
+    )
     validate_classification_stage_contract(classification, label="self-test")
     mutations: list[tuple[str, Any, str]] = []
     missing = copy.deepcopy(common)
@@ -2888,14 +2925,28 @@ def canary_stage_contract_self_test() -> list[str]:
     for row in all_authoritative:
         row["role"] = "authoritative"
     mutations.append(("no_dynamic_shadow", all_authoritative, "common"))
+    missing_evaluable_query = copy.deepcopy(adaptive)
+    missing_evaluable_query[1].update(
+        queried_records=0, not_queried_records=3, reached=False
+    )
+    mutations.append((
+        "adaptive_policy_evaluable_query_missing",
+        missing_evaluable_query,
+        "adaptive",
+    ))
     queried_classification = copy.deepcopy(classification)
     queried_classification[0].update(queried_records=1, not_queried_records=1, reached=True)
     mutations.append(("queried_classification_placeholder", queried_classification, "classification"))
     rejected: list[str] = []
     for name, value, kind in mutations:
         try:
-            if kind == "common":
-                validate_common_stage_contract(value, completed_judgments=2, label="self-test")
+            if kind in {"common", "adaptive"}:
+                validate_common_stage_contract(
+                    value,
+                    completed_judgments=3 if kind == "adaptive" else 2,
+                    evaluable_judgments=1 if kind == "adaptive" else 2,
+                    label="self-test",
+                )
             else:
                 validate_classification_stage_contract(value, label="self-test")
         except Gate5Error:
@@ -2974,11 +3025,12 @@ def validate_canary_bundle(canary_path: Path, *, expected_id: str) -> dict[str, 
         validate_common_stage_contract(
             stages,
             completed_judgments=retained["workload"]["completed_judgments"],
+            evaluable_judgments=retained["decision_support"]["evaluable"],
             label=str(canary_path),
         )
         if execution["source_evaluator"]["status"] != "not_applicable":
             raise Gate5Error(f"common-metric canary unexpectedly used source evaluator: {canary_path}")
-        policy = "common_or_adaptive_rules_guardrail_all_stages_reached"
+        policy = "common_or_adaptive_rules_guardrail_policy_evaluable_stages_queried"
     elif judges == ["rules"]:
         validate_classification_stage_contract(stages, label=str(canary_path))
         source = execution["source_evaluator"]

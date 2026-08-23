@@ -805,27 +805,76 @@ if expected_judges == ["rules", "guardrail"]:
             observed_stage_keys.append(key)
     if observed_stage_keys != [(0, "rules"), (1, "guardrail")]:
         raise SystemExit("canary cascade is not the exact ordered rules/guardrail pair")
+    completed = row["workload"]["completed_judgments"]
+    evaluable = row["decision_support"]["evaluable"]
+    if (
+        isinstance(evaluable, bool)
+        or not isinstance(evaluable, int)
+        or evaluable <= 0
+        or evaluable > completed
+    ):
+        raise SystemExit("common/adaptive canary evaluable support is invalid")
     if any(
-        item.get("reached") is not True
+        item.get("role") not in {"authoritative", "shadow"}
+        or isinstance(item.get("trail_records"), bool)
+        or not isinstance(item.get("trail_records"), int)
+        or item["trail_records"] <= 0
+        or isinstance(item.get("queried_records"), bool)
         or not isinstance(item.get("queried_records"), int)
-        or item["queried_records"] <= 0
-        or item.get("not_queried_records") != 0
+        or item["queried_records"] < 0
+        or isinstance(item.get("not_queried_records"), bool)
+        or not isinstance(item.get("not_queried_records"), int)
+        or item["not_queried_records"] < 0
+        or item["trail_records"]
+        != item["queried_records"] + item["not_queried_records"]
+        or item.get("reached") is not (item["queried_records"] > 0)
         for item in stages
     ):
-        raise SystemExit("rules and selected guardrail were not both actually queried")
-    completed = row["workload"]["completed_judgments"]
+        raise SystemExit("rules/guardrail stage support does not reconcile")
+    for stage_index, judge_name in ((0, "rules"), (1, "guardrail")):
+        stage_rows = [
+            item for item in stages
+            if item["stage"] == stage_index and item["judge"] == judge_name
+        ]
+        if (
+            sum(item["trail_records"] for item in stage_rows) != completed
+            or sum(item["queried_records"] for item in stage_rows) != evaluable
+            or sum(item["not_queried_records"] for item in stage_rows)
+            != completed - evaluable
+        ):
+            raise SystemExit(
+                "rules and selected guardrail do not match policy-evaluable support"
+            )
     guard_trails = [
         item for item in completion_rows("trails")
         if item.get("stage") == 1 and item.get("judge") == "guardrail"
     ]
-    if len(guard_trails) != completed or any(
-        item.get("stage_queried") is not True
-        or item.get("guardrail_queried") is not True
-        or item.get("judge_model") != expected_guard
-        or item.get("judge_model_revision") != expected_guard_revision
-        or item.get("judge_model_identity")
-        != f"{expected_guard}@{expected_guard_revision}"
-        for item in guard_trails
+    queried_guard_trails = [
+        item for item in guard_trails if item.get("stage_queried") is True
+    ]
+    unqueried_guard_trails = [
+        item for item in guard_trails if item.get("stage_queried") is False
+    ]
+    if (
+        len(guard_trails) != completed
+        or len(queried_guard_trails) != evaluable
+        or len(unqueried_guard_trails) != completed - evaluable
+        or any(
+            item.get("guardrail_queried") is not True
+            or item.get("judge_model") != expected_guard
+            or item.get("judge_model_revision") != expected_guard_revision
+            or item.get("judge_model_identity")
+            != f"{expected_guard}@{expected_guard_revision}"
+            for item in queried_guard_trails
+        )
+        or any(
+            item.get("guardrail_queried") is not None
+            or item.get("policy_evaluation_status") != "not_evaluable"
+            or item.get("judge_model") != expected_guard
+            or item.get("judge_model_revision") is not None
+            or item.get("judge_model_identity") is not None
+            for item in unqueried_guard_trails
+        )
     ):
         raise SystemExit(
             "completion-bound scoring Guard query/identity differs from the exact selection"

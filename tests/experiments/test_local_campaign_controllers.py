@@ -525,6 +525,10 @@ def test_phase5_rr_preserves_projections_and_starts_terminal_at_canary(
         assert value["expected_runnable"] == [21, 22]
         assert value["expected_target_runtime_terminal"] == 4
         assert expected_mutations <= set(value["rejected_mutations"])
+        if filename == "phase5_finalize_gate5.sh":
+            assert "adaptive_policy_evaluable_query_missing" in value[
+                "rejected_canary_stage_mutations"
+            ]
         assert value["retained_binding_self_test"] == {
             "eligibility_nonblank_records": 3,
             "hardcoded_one_rejected": True,
@@ -1358,7 +1362,7 @@ def test_ollama_rjudge_canary_allows_zero_decided_validity_observation() -> None
 
 
 def _assert_completion_bound_guard_query_contract(
-    template: str, *, summary_name: str
+    template: str, *, summary_name: str, adaptive: bool
 ) -> None:
     assert "completion_payload = stable_payload(completion_path" in template
     assert (
@@ -1384,22 +1388,55 @@ def _assert_completion_bound_guard_query_contract(
         '        raise SystemExit(\n            "', 1
     )[0]
     assert 'completion_rows("trails")' in guard_contract
-    assert guard_contract.count('item.get("stage_queried") is not True') == 1
-    assert guard_contract.count('item.get("guardrail_queried") is not True') == 1
+    if adaptive:
+        stage_contract = template.split(
+            "    for stage_index, judge_name in ((0, \"rules\"), (1, \"guardrail\")):",
+            1,
+        )[1].split("    guard_trails = [", 1)[0]
+        assert (
+            'sum(item["queried_records"] for item in stage_rows) != evaluable'
+            in stage_contract
+        )
+        assert (
+            'sum(item["not_queried_records"] for item in stage_rows)\n'
+            "            != completed - evaluable"
+            in stage_contract
+        )
+        assert "len(queried_guard_trails) != evaluable" in guard_contract
+        assert (
+            "len(unqueried_guard_trails) != completed - evaluable"
+            in guard_contract
+        )
+        assert guard_contract.count('item.get("stage_queried") is True') == 1
+        assert guard_contract.count('item.get("stage_queried") is False') == 1
+        assert guard_contract.count(
+            'item.get("guardrail_queried") is not True'
+        ) == 1
+        assert guard_contract.count(
+            'item.get("guardrail_queried") is not None'
+        ) == 1
+        assert 'item.get("policy_evaluation_status") != "not_evaluable"' in (
+            guard_contract
+        )
+    else:
+        assert guard_contract.count('item.get("stage_queried") is not True') == 1
+        assert guard_contract.count(
+            'item.get("guardrail_queried") is not True'
+        ) == 1
     assert 'item.get("judge_model") != ' in guard_contract
     assert 'item.get("judge_model_revision") != ' in guard_contract
     assert 'item.get("judge_model_identity")' in guard_contract
 
 
 @pytest.mark.parametrize(
-    ("filename", "summary_name"),
+    ("filename", "summary_name", "adaptive"),
     [
-        ("phase5_core_attest_canary.sh.in", "row"),
-        ("phase5_ollama_workflow.sh.in", "summary"),
+        ("phase5_core_attest_canary.sh.in", "row", True),
+        ("phase5_ollama_workflow.sh.in", "summary", False),
     ],
 )
-def test_static_canaries_prove_a_completion_bound_guard_query(
-    filename: str, summary_name: str
+def test_canaries_prove_a_completion_bound_guard_query(
+    filename: str, summary_name: str, adaptive: bool
 ) -> None:
     template = (
         Path(__file__).parents[2]
@@ -1409,19 +1446,53 @@ def test_static_canaries_prove_a_completion_bound_guard_query(
         / filename
     ).read_text(encoding="utf-8")
     _assert_completion_bound_guard_query_contract(
-        template, summary_name=summary_name
+        template, summary_name=summary_name, adaptive=adaptive
     )
 
-    query_mutation = template.replace(
-        'or item.get("guardrail_queried") is not True',
-        'or item.get("stage_queried") is not True',
-        1,
+    guard_start = template.index("    guard_trails = [")
+    query_start = template.index(
+        'item.get("guardrail_queried") is not True', guard_start
+    )
+    query_end = query_start + len(
+        'item.get("guardrail_queried") is not True'
+    )
+    query_mutation = (
+        template[:query_start]
+        + 'item.get("stage_queried") is not True'
+        + template[query_end:]
     )
     assert query_mutation != template
     with pytest.raises(AssertionError):
         _assert_completion_bound_guard_query_contract(
-            query_mutation, summary_name=summary_name
+            query_mutation, summary_name=summary_name, adaptive=adaptive
         )
+
+    if adaptive:
+        stage_denominator_mutation = template.replace(
+            'sum(item["queried_records"] for item in stage_rows) != evaluable',
+            'sum(item["queried_records"] for item in stage_rows) != completed',
+            1,
+        )
+        assert stage_denominator_mutation != template
+        with pytest.raises(AssertionError):
+            _assert_completion_bound_guard_query_contract(
+                stage_denominator_mutation,
+                summary_name=summary_name,
+                adaptive=adaptive,
+            )
+
+        completion_denominator_mutation = template.replace(
+            "len(queried_guard_trails) != evaluable",
+            "len(queried_guard_trails) != completed",
+            1,
+        )
+        assert completion_denominator_mutation != template
+        with pytest.raises(AssertionError):
+            _assert_completion_bound_guard_query_contract(
+                completion_denominator_mutation,
+                summary_name=summary_name,
+                adaptive=adaptive,
+            )
 
     binding_mutation = template.replace(
         f'{summary_name}["bindings"]["completion_artifact"] != completion_descriptor',
@@ -1431,7 +1502,7 @@ def test_static_canaries_prove_a_completion_bound_guard_query(
     assert binding_mutation != template
     with pytest.raises(AssertionError):
         _assert_completion_bound_guard_query_contract(
-            binding_mutation, summary_name=summary_name
+            binding_mutation, summary_name=summary_name, adaptive=adaptive
         )
 
 
