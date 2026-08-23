@@ -359,13 +359,6 @@ def load_phase7_stats_bundle(
             return None
         expected_commit = str(watcher["expected_commit"])
         framework_lock = str(watcher["framework_lock_id"])
-        configured_commit = os.environ.get("REF_URA", "")
-        configured_lock = os.environ.get("URA_FRAMEWORK_LOCK_ID", "")
-        if configured_commit and configured_commit != expected_commit:
-            return None
-        if configured_lock and configured_lock != framework_lock:
-            return None
-
         control_value = watcher.get("phase7_control_root")
         analysis_value = watcher.get("analysis_root")
         if not isinstance(control_value, str) or not isinstance(analysis_value, str):

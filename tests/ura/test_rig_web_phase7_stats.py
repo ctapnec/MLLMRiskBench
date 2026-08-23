@@ -19,6 +19,14 @@ COMMIT = "a" * 40
 LOCK = "b" * 64
 
 
+@pytest.fixture(autouse=True)
+def _serve_from_a_different_release(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Historical sealed reports remain visible after a console repin."""
+
+    monkeypatch.setenv("REF_URA", "c" * 40)
+    monkeypatch.setenv("URA_FRAMEWORK_LOCK_ID", "d" * 64)
+
+
 def _write(path: Path, value: object) -> Path:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(

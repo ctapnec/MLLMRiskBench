@@ -779,6 +779,9 @@ launch, frozen watcher/wrapper/payload, Phase 6 completion and exit,
 preparation result, Phase 7 launch output, analysis launch and completion,
 artifact inventory, and authorized input descriptors have all cross-validated
 and agree on the project revision, runtime lock, and approved Gate 5 identity.
+That agreement is self-contained within each retained campaign chain; it is not
+required to equal the revision currently serving the console, so a later repin
+does not hide valid historical campaign diagrams.
 Successful completion-validated Runner and analysis artifacts,
 not their operational registrations, remain the sole basis for metrics and
 diagrams.

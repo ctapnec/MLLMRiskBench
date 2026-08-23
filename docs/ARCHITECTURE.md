@@ -672,6 +672,9 @@ through the sealed watcher launch, frozen watcher/wrapper/payload, Phase 6
 completion/exit, preparation result, actual Phase 7 and analysis launches,
 analysis completion, inventory, and authorized-input descriptor chain,
 including agreement on the project revision, framework lock, and Gate 5 digest.
+Those identities must agree within the retained campaign chain, but need not
+equal the revision or runtime lock of the console currently reading it; a repin
+therefore preserves valid historical campaign diagrams.
 Charts still require successful completion-validated Level-1/Level-2
 output from that validated chain.
 
