@@ -373,6 +373,15 @@ decided/abstained support and decision coverage; harmful violation and benign
 over-refusal are separate adverse endpoints. Pooled values are
 composition-dependent diagnostics.
 
+The sealed local controller uses Phase 7's validated success-only Runner view.
+Before it writes any sample, the exact common population must cover the
+requested common sample plus 20 disjoint qualification clusters and the
+source-task population must cover its exact request. This is a cardinality
+check; both coverage-priority selectors independently reject an undersized
+request for the achieved cells. A successful preparation terminal remains
+`human_only_blocked` with `gate8_met: false`; prepared blank forms and
+assignments are not human evidence.
+
 Return attempts, responses, complete shadow trails, judgments, manifests,
 checkpoints, completion/error/budget/circuit artifacts, source/native artifacts
 and hashes, modality plans/results, diagnostics, human-audit files, suite

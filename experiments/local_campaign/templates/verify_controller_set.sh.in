@@ -119,10 +119,10 @@ while IFS=$'\t' read -r name bytes sha256 self_test; do
     fail "controller SHA-256 differs: $path"
   controller_hash_count=$((controller_hash_count + 1))
 done < "$INVENTORY"
-[[ "$controller_hash_count" == '24' ]] || fail 'controller inventory count differs'
+[[ "$controller_hash_count" == '25' ]] || fail 'controller inventory count differs'
 [[ -z "$(find -P "$CONTROLLER_ROOT" -mindepth 1 -maxdepth 1 ! -type f -print -quit)" ]] || \
   fail 'active controller generation contains a non-regular entry'
-[[ "$(find -P "$CONTROLLER_ROOT" -mindepth 1 -maxdepth 1 -type f -printf . | wc -c)" == '27' ]] || \
+[[ "$(find -P "$CONTROLLER_ROOT" -mindepth 1 -maxdepth 1 -type f -printf . | wc -c)" == '28' ]] || \
   fail 'active controller generation file count differs'
 
 [[ -d "$PROJECT" && ! -L "$PROJECT" ]] || \
@@ -223,6 +223,7 @@ expected = (
     ("launch_phase7_watcher.sh", "none"),
     ("phase8_human_audit.py", "phase8-self-test"),
     ("phase8_human_audit.sh", "none"),
+    ("phase8_human_audit.README.md", "none"),
     ("launch_chain_@@COMMIT_SHORT@@.sh", "none"),
 )
 
@@ -234,7 +235,11 @@ for index, line in enumerate(raw[:-1].split(b"\n"), start=1):
     name, size, sha256, self_test = fields
     if name in {"", ".", ".."} or "/" in name or "\\" in name:
         raise SystemExit(f"controller inventory row {index} has an unsafe name")
-    if not (name.endswith(".sh") or name.endswith(".py")):
+    if not (
+        name.endswith(".sh")
+        or name.endswith(".py")
+        or name.endswith(".md")
+    ):
         raise SystemExit(f"controller inventory row {index} has an unsupported suffix")
     if not re.fullmatch(r"[1-9][0-9]*", size):
         raise SystemExit(f"controller inventory row {index} has a non-canonical byte count")
@@ -287,6 +292,20 @@ path = Path(sys.argv[1])
 compile(path.read_bytes(), str(path), "exec")
 PY
       ;;
+    *.md)
+      "$PROJECT_PY" - "$path" <<'PY'
+from pathlib import Path
+import sys
+
+raw = Path(sys.argv[1]).read_bytes()
+if not raw or not raw.endswith(b"\n") or b"\r" in raw or b"\0" in raw:
+    raise SystemExit("operator README is not canonical LF-delimited text")
+try:
+    raw.decode("ascii")
+except UnicodeDecodeError as exc:
+    raise SystemExit("operator README is not ASCII") from exc
+PY
+      ;;
     *)
       fail "unexpected controller suffix: $name"
       ;;
@@ -294,7 +313,7 @@ PY
   controller_count=$((controller_count + 1))
 done < "$INVENTORY"
 
-[[ "$controller_count" == '24' ]] || fail 'verified controller count differs'
+[[ "$controller_count" == '25' ]] || fail 'verified controller count differs'
 
 self_test_count=0
 cd "$PROJECT"

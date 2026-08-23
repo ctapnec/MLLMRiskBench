@@ -9,6 +9,7 @@ from pathlib import Path
 import shutil
 import stat
 import subprocess
+import tarfile
 
 import pytest
 
@@ -414,6 +415,102 @@ def test_templates_use_one_atomic_active_generation() -> None:
         assert "@@CONTROLLER_INSTALL_ROOT@@/" not in source
 
 
+def test_verifier_early_counts_match_the_installed_package_and_reject_stale_values(
+    tmp_path: Path,
+) -> None:
+    host = _require_posix_installer_host(tmp_path)
+    base = tmp_path / "controller-base"
+    base.mkdir()
+    home = _install_home(base)
+    package = _build_package(base, "1" * 40, "count-contract")
+
+    inventory = package.output / "controller_inventory_1111111.tsv"
+    inventory_names = {
+        row.split("\t", 1)[0]
+        for row in inventory.read_text(encoding="ascii").splitlines()
+    }
+    assert len(inventory_names) == 25
+    archive = package.output / "controller-set-1111111.tar"
+    with tarfile.open(archive, mode="r:") as stream:
+        members = stream.getmembers()
+    archive_names = {member.name for member in members}
+    assert len(members) == len(archive_names) == 27
+    assert all(member.isfile() for member in members)
+    assert archive_names == inventory_names | {inventory.name, package.verifier.name}
+
+    installed = _run_installer(host, package, home)
+    assert installed.returncode == 0, installed.stdout + installed.stderr
+    generation = base / ".ura-controller-generations" / package.generation_name
+    installed_names = {path.name for path in generation.iterdir()}
+    assert len(installed_names) == 28
+    assert installed_names == archive_names | {".ura-controller-generation.tsv"}
+
+    source = package.verifier.read_text(encoding="ascii")
+    inventory_check = (
+        "[[ \"$controller_hash_count\" == '25' ]] || "
+        "fail 'controller inventory count differs'"
+    )
+    generation_check = (
+        '[[ "$(find -P "$CONTROLLER_ROOT" -mindepth 1 -maxdepth 1 '
+        "-type f -printf . | wc -c)\" == '28' ]] || \\\n"
+        "  fail 'active controller generation file count differs'"
+    )
+    later_check = (
+        "[[ \"$controller_count\" == '25' ]] || "
+        "fail 'verified controller count differs'"
+    )
+    assert source.count(inventory_check) == 1
+    assert source.count(generation_check) == 1
+    assert source.count(later_check) == 1
+
+    environment = {
+        key: value
+        for key, value in os.environ.items()
+        if not key.startswith("URA_") and key not in {"HOME", "HF_TOKEN"}
+    }
+    environment.update(host.environment)
+    environment["HOME"] = _posix_path(home)
+    environment["PATH"] = host.path
+
+    def run_mutant(label: str, mutated: str) -> subprocess.CompletedProcess[str]:
+        assert mutated.count(later_check) == 1
+        path = base / f"verify-{label}.sh"
+        path.write_bytes(mutated.encode("ascii"))
+        return subprocess.run(
+            [host.bash, _posix_path(path)],
+            cwd=base,
+            env=environment,
+            capture_output=True,
+            text=True,
+            timeout=120,
+            check=False,
+        )
+
+    stale_inventory = run_mutant(
+        "stale-inventory-count",
+        source.replace(
+            inventory_check,
+            inventory_check.replace("== '25'", "== '24'"),
+            1,
+        ),
+    )
+    assert stale_inventory.returncode != 0
+    assert "controller inventory count differs" in stale_inventory.stderr
+
+    stale_generation = run_mutant(
+        "stale-generation-count",
+        source.replace(
+            generation_check,
+            generation_check.replace("== '28'", "== '27'"),
+            1,
+        ),
+    )
+    assert stale_generation.returncode != 0
+    assert "active controller generation file count differs" in (
+        stale_generation.stderr
+    )
+
+
 def test_packaged_controllers_bind_internal_launches_to_the_pinned_generation(
     tmp_path: Path,
 ) -> None:
@@ -669,7 +766,15 @@ def test_exact_rerun_is_idempotent_and_foreign_generation_never_activates(
     assert _active_target(base) == expected_first
     first_generation = base / ".ura-controller-generations" / first.generation_name
     assert first_generation.is_dir() and not first_generation.is_symlink()
-    assert len(tuple(first_generation.iterdir())) == 27
+    assert len(tuple(first_generation.iterdir())) == 28
+    operator_readme = first_generation / "phase8_human_audit.README.md"
+    operator_mode = operator_readme.stat().st_mode & 0o777
+    assert operator_mode & 0o222 == 0
+    assert operator_mode & 0o111 == 0
+    installer_source = (TEMPLATES / "install_controller_set.sh.in").read_text(
+        encoding="utf-8"
+    )
+    assert "*.md) chmod 400" in installer_source
 
     rerun = _run_installer(host, first, home)
     assert rerun.returncode == 0, rerun.stdout + rerun.stderr

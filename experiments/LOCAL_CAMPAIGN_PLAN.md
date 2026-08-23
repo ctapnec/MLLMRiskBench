@@ -468,8 +468,9 @@ raised mid-lane.
 `level1_evidence` over `runs/thesis/runner` authorizes the complete measured
 lifecycle, including complete, partial and failed Runner artifacts and their
 final eligibility or request-error records. The metric grid is deliberately
-narrower: `suite_summary`, `level2_report`, `judge_sensitivity`, `kappa`,
-`transfer_matrix --attacker replay`, and the free replay-vs-Crescendo paired
+narrower: `suite_summary`, `level2_report`, `judge_sensitivity --attacker replay
+--defense none`, `kappa --attacker replay --defense none`, `transfer_matrix
+--attacker replay --defense none`, and the free replay-vs-Crescendo paired
 comparison within Qwen3-VL-8B [16]. The planned LLaVA base-vs-RR comparison is
 represented instead by one strict `ura-phase7-non-estimable-contrast/1`
 artifact for each of the twelve planned image facets. Each binds the shared
@@ -482,11 +483,47 @@ silently dropped or replaced by Gate 5 preflight eligibility.
 
 ## 9. Phase 8: human audit (free in money, requires raters and an ethics determination)
 
-`human_audit --prepare` over the completed local cohort [15], rater
-qualification set, two raters minimum, adjudication, then `--labels`; the
-source-task classification audit separately. This is the only route to RQ5
-judge validity for the local tier; it is optional for this plan's
-software-coverage goal.
+Run the sealed Phase 8 machine-preparation controller over Phase 7's validated
+success-only Runner view [15]. Before it writes a sample, its exact cardinality
+plan requires `C >= N + 20` for common-frame population `C` and requested
+sample `N`, and `S >= M` for source-task population `S` and requested sample
+`M`. The additional 20 common clusters are reserved for the independently
+adjudicated qualification set and must remain disjoint from the final common
+sample. The authorized manifest records those populations and requests, and
+execution recomputes them from the same content-bound view. This proves
+cardinality, not coverage feasibility: both deterministic selectors separately
+fail closed unless the requested counts cover all achieved cells.
+
+The controller prepares automated-label-blinded, model-visible samples, blank
+two-rater forms, a qualification set and gold template, assignment and workload
+records, and operator guidance. It makes no model, judge, provider HTTP, or
+download call. Its only successful machine terminal is `human_only_blocked`
+with `gate8_met: false`. A successful process exit is machine preparation, not
+human evidence and not Gate 8.
+
+Gate 8 is met only after all of the following exist and validate:
+
+- an applicable operator-supplied ethics/consent determination explicitly
+  authorizes human exposure and records consent, compensation, withdrawal,
+  harmful-content welfare, and escalation controls;
+- an independent adjudicator establishes gold labels for all 20 qualification
+  items, whose clusters are disjoint from the final common sample;
+- at least two pseudonymous raters independently achieve at least 80 percent
+  agreement on every qualification dimension;
+- two distinct qualified raters independently label every common and
+  source-task row, after verifying every referenced media asset;
+- every non-unanimous composite or dimension is adjudicated after independent
+  ratings are locked;
+- `human_audit --labels` and `human_audit --source-task-labels` both validate
+  the complete labelled files against the same success-only Runner view; and
+- a human operator reviews agreement, prevalence, support, confusion,
+  uncertainty, and decision coverage, then authors an acceptance or limitation
+  record binding the exact preparation, labels, adjudication, and report
+  digests.
+
+Until that human-only record exists, Gate 8 remains open. This is the only route
+to RQ5 judge validity for the local tier; machine preparation alone satisfies
+only the software-coverage objective.
 
 ## 10. Console/CLI parity checks embedded in the campaign
 

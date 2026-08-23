@@ -229,19 +229,29 @@ def _validated_artifacts(results: Path) -> tuple[dict[str, list[Path]], list[dic
         raise ValueError(
             "completed cells mix incompatible code/schema/source identities"
         )
-    by_facet: dict[tuple[str, str], list[dict]] = defaultdict(list)
+    by_facet: dict[tuple[str, str, str], list[dict]] = defaultdict(list)
     for cell in cells:
         run_config = (cell["manifest"].get("config") or {}).get("run")
         if not isinstance(run_config, dict):
             raise ValueError(f"manifest {cell['manifest_path']} lacks config.run")
         attacker = run_config.get("attacker")
         corpus = run_config.get("corpus")
-        if not isinstance(attacker, str) or not isinstance(corpus, str):
-            raise ValueError(f"manifest {cell['manifest_path']} lacks attacker/corpus")
-        by_facet[(attacker, corpus)].append(cell)
-    for (attacker, corpus), facet_cells in by_facet.items():
+        defense = run_config.get("defense")
+        if not all(
+            isinstance(value, str) and value
+            for value in (attacker, corpus, defense)
+        ):
+            raise ValueError(
+                f"manifest {cell['manifest_path']} lacks attacker/corpus/defense"
+            )
+        by_facet[(attacker, corpus, defense)].append(cell)
+    for (attacker, corpus, defense), facet_cells in by_facet.items():
         grid_audit = _validate_grid_scope(
-            results, attacker=attacker, corpus=corpus, cells=facet_cells
+            results,
+            attacker=attacker,
+            corpus=corpus,
+            defense=defense,
+            cells=facet_cells,
         )
         for cell in facet_cells:
             cell["grid_audit"] = grid_audit

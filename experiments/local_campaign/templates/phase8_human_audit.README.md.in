@@ -1,0 +1,142 @@
+# Phase 8 machine-preparation operator guide
+
+Status: generated for project commit
+`@@EXPECTED_COMMIT@@` and framework lock
+`@@FRAMEWORK_LOCK_SHA256@@`.
+
+This guide and the Phase 8 controller are generated from tracked source and
+installed in the same immutable controller generation. Do not use an older
+workspace copy. Invoke the controller through the active generation:
+
+```bash
+bash ~/.ura-controller-active/phase8_human_audit.sh --self-test
+```
+
+Phase 8 has a machine-preparation boundary and a later human-only boundary.
+The controller prepares blinded material only. It never recruits raters,
+creates ethics approval, supplies labels, adjudicates, analyses completed
+labels, or accepts Gate 8. A zero exit means deterministic machine preparation
+completed with terminal status `human_only_blocked` and `gate8_met: false`.
+
+## Required sealed inputs
+
+Run from the exact deployed `MLLMRiskBench` checkout named above. Source only
+`~/.ura_campaign_env`; Phase 8 does not need `~/.ura_env` or any secret.
+
+Input preparation requires:
+
+- the canonical Gate 5 RUNNOTE, covered manifest, and promotion receipt;
+- Phase 6 core, extended, and native completion receipts;
+- the Phase 7 completion receipt and its validated success-only Runner view;
+- an operator-supplied ethics/consent determination and explicit authorization
+  for its exact SHA-256;
+- prospective common-frame and source-task cluster counts.
+
+The Gate 5 inventory is exactly 46 lanes: 22 runnable and 24 typed terminal, or
+21 runnable and 25 typed terminal only when `defense-local` has its exact
+conditional N/A disposition. Four GraySwan RR identities are typed runtime
+terminals and never enter a measured, analysis, or human-audit sample. Phase 6
+therefore contains 10 scheduled core lanes, or nine with the conditional
+defense N/A, plus 12 extended lanes and nine separately typed native engines.
+
+Phase 7 may honestly retain failed Runner lifecycles. Human-audit preparation
+uses Phase 7's validated success-only read-only Runner copy, not the mixed
+canonical Runner root. The input manifest binds both roots and the exact view
+receipt. That receipt binds every relative path, source and view digest and byte
+count, distinct source/copy identity, and read-only copy mode. The completed
+view permits no analysis output or other unbound file.
+
+## Exact sample-cardinality rule
+
+Let `C` be the common-frame unique-cluster population in the validated Phase 7
+view, `N` the authorized common sample, `S` the source-task population, and `M`
+the authorized source-task sample. The prospective cardinality check succeeds
+only when:
+
+```text
+C >= N + 20
+S >= M
+```
+
+The 20-cluster reserve is the independently adjudicated qualification set. Its
+clusters must be disjoint from every cluster in the final common sample. The
+manifest records the exact observed populations, requested counts, and
+post-sample reserve under `sampling.capacity`. The controller recomputes and
+exact-compares that plan immediately before any sample write. The later
+qualification selector independently verifies that exactly 20 disjoint items
+were produced.
+
+This cardinality check is necessary but does not claim selector feasibility.
+The common and source-task selectors separately enforce their achieved
+coverage-cell requirements during authorized preparation. If either requested
+sample cannot cover all achieved cells, choose a larger prospective count and
+prepare a new create-only manifest.
+
+## Two-stage exact authorization
+
+First create and review one absent input candidate. Use paths from the sealed
+Gate 5 through Phase 7 completion receipts:
+
+```bash
+cd /home/ura/MLLMRiskBench
+bash ~/.ura-controller-active/phase8_human_audit.sh \
+  --prepare-input-manifest "$URA_WORK/runs/thesis/phase8-inputs.candidate.json" \
+  --gate5-manifest /absolute/path/to/gate5-covered-manifest.json \
+  --gate5-runnote "$URA_WORK/runs/thesis/RUNNOTE.md" \
+  --gate5-promotion-receipt /absolute/path/to/gate5-promotion-receipt.json \
+  --phase6-core-completion /absolute/path/to/core/completion.json \
+  --phase6-extended-completion /absolute/path/to/extended/completion.json \
+  --phase6-native-completion /absolute/path/to/native/completion.json \
+  --phase7-completion /absolute/path/to/phase7/completion.json \
+  --ethics-determination /absolute/path/to/operator-ethics-determination.json \
+  --authorize-ethics-sha256 EXACT_64_HEX_SHA256 \
+  --common-clusters POSITIVE_INTEGER \
+  --source-task-clusters POSITIVE_INTEGER
+```
+
+Review the complete candidate, including `sampling.capacity`, and calculate its
+SHA-256 independently. Then authorize only those exact bytes:
+
+```bash
+cd /home/ura/MLLMRiskBench
+bash ~/.ura-controller-active/phase8_human_audit.sh \
+  --input-manifest "$URA_WORK/runs/thesis/phase8-inputs.candidate.json" \
+  --authorize-input-manifest-sha256 EXACT_64_HEX_SHA256
+```
+
+The second command starts a deterministic tmux session and prints its socket,
+session, attempt root, prepared root, and terminal path. Monitor the tmux
+session. Do not use process-name matching.
+
+The create-only prepared root contains the common and source-task samples,
+instructions, blank two-rater forms, a 20-item qualification set and blank gold
+template, assignment manifest, boundary validation, workload, codebook,
+qualification-record template, blocker, preparation record, inventory, and
+terminal. Every human field remains blank. Target, judge, provider HTTP, and
+download counts remain exact integer zero.
+
+## Human-only Gate 8
+
+Machine preparation deliberately stops before Gate 8. Gate 8 can be considered
+only after real human work establishes all of the following:
+
+- an applicable ethics/consent determination explicitly authorizes rater
+  exposure and records consent, compensation, withdrawal, welfare, and
+  escalation controls;
+- an independent adjudicator establishes gold labels for all 20 disjoint
+  qualification items;
+- at least two pseudonymous raters score at least 80 percent on every dimension;
+- two distinct qualified raters independently rate every exported row and view
+  every required media asset;
+- every non-unanimous composite or dimension is adjudicated after independent
+  labels are locked;
+- `experiments.human_audit --labels` and `--source-task-labels` both validate
+  complete labelled files against the same success-only Runner view;
+- a human operator reviews agreement, prevalence, support, confusion,
+  uncertainty, and decision coverage, then writes an acceptance or limitation
+  record binding every exact input and output digest.
+
+Until all of those conditions are independently evidenced and validated, report
+Gate 8 as not met. An assignment slot is not a rater, a blank form is not a
+label, a qualification template is not a passed qualification, and automated
+concordance is not human validity.

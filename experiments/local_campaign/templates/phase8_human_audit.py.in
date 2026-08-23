@@ -84,16 +84,18 @@ FROZEN_PHASE7_PAYLOAD = {
     "bytes": @@BYTES:phase7_analysis.py@@,
 }
 
-INPUT_SCHEMA = "ura-phase8-human-audit-inputs/1"
+INPUT_SCHEMA = "ura-phase8-human-audit-inputs/2"
 LAUNCH_SCHEMA = "ura-phase8-human-audit-launch/1"
 PREPARATION_SCHEMA = "ura-phase8-human-audit-preparation/1"
 BOUNDARY_SCHEMA = "ura-phase8-human-audit-boundaries/1"
 ASSIGNMENT_SCHEMA = "ura-phase8-rater-assignment-manifest/1"
 WORKLOAD_SCHEMA = "ura-phase8-human-audit-workload/1"
+CAPACITY_SCHEMA = "ura-phase8-human-audit-capacity/1"
 BLOCKER_SCHEMA = "ura-phase8-human-only-blocker/1"
 TERMINAL_SCHEMA = "ura-phase8-human-audit-controller-terminal/1"
 ETHICS_SCHEMA = "ura-human-audit-ethics-determination/1"
 PROMOTION_SCHEMA = "ura-gate5-runnote-promotion/1"
+QUALIFICATION_ITEM_COUNT = 20
 
 HEX64 = re.compile(r"[0-9a-f]{64}")
 UTC_SYNTAX_RE = re.compile(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z")
@@ -828,13 +830,18 @@ def descriptor_file(raw: object, *, label: str) -> Path:
     return descriptor_bytes(raw, label=label)[0]
 
 
-def descriptor_bytes(raw: object, *, label: str) -> tuple[Path, bytes]:
+def descriptor_bytes(
+    raw: object,
+    *,
+    label: str,
+    max_bytes: int = MAX_TEXT_BYTES,
+) -> tuple[Path, bytes]:
     if not isinstance(raw, dict) or set(raw) != {"path", "sha256", "bytes"}:
         raise Phase8Error(f"{label} descriptor fields differ")
     size = raw.get("bytes")
     digest = raw.get("sha256")
     path, payload = _stable_regular_bytes(
-        str(raw.get("path", "")), label=label, max_bytes=MAX_TEXT_BYTES
+        str(raw.get("path", "")), label=label, max_bytes=max_bytes
     )
     if (
         isinstance(size, bool)
@@ -5996,6 +6003,203 @@ def validate_rr_non_estimable_contrast(
         )
 
 
+def _canonical_view_relative_path(raw: object) -> str:
+    if not isinstance(raw, str) or not raw or raw.startswith(("/", "\\")):
+        raise Phase8Error("Phase 7 Runner view relative path is not canonical")
+    parts = raw.split("/")
+    if (
+        "\\" in raw
+        or any(part in {"", ".", ".."} for part in parts)
+        or any(len(part) > 255 for part in parts)
+        or "/".join(parts) != raw
+    ):
+        raise Phase8Error("Phase 7 Runner view relative path is not canonical")
+    return raw
+
+
+def validate_phase7_runner_view(
+    value: object,
+    *,
+    expected_source_root: Path,
+    expected_view_root: Path,
+    expected_measured_lanes: Sequence[str],
+) -> Path:
+    """Revalidate every completed-view byte and independent source/copy identity."""
+
+    expected_fields = {
+        "schema",
+        "status",
+        "source_runner_root",
+        "view_root",
+        "included_measured_lanes",
+        "regular_files_copied",
+        "logical_bytes",
+        "source_files_modified",
+        "permitted_view_outputs",
+        "file_inventory",
+        "file_inventory_sha256",
+    }
+    if not isinstance(value, dict) or set(value) != expected_fields:
+        raise Phase8Error("Phase 7 Runner view receipt fields differ")
+    source_root = checked_dir(
+        expected_source_root, label="Phase 7 Runner view source root"
+    )
+    view_root = checked_dir(
+        expected_view_root, label="Phase 7 Runner input view"
+    )
+    inventory = value.get("file_inventory")
+    if (
+        value.get("schema") != "ura-phase7-runner-input-view/3"
+        or value.get("status") != "complete"
+        or value.get("source_runner_root") != str(source_root)
+        or value.get("view_root") != str(view_root)
+        or value.get("included_measured_lanes") != list(expected_measured_lanes)
+        or type(value.get("regular_files_copied")) is not int
+        or value.get("regular_files_copied", 0) < 1
+        or type(value.get("logical_bytes")) is not int
+        or value.get("logical_bytes", 0) < 1
+        or value.get("source_files_modified") is not False
+        or value.get("permitted_view_outputs") != []
+        or not isinstance(inventory, list)
+        or not inventory
+        or value.get("file_inventory_sha256")
+        != sha256_bytes(canonical(inventory))
+    ):
+        raise Phase8Error("Phase 7 Runner input view contract differs")
+
+    source_files: set[Path] = set()
+    for lane in expected_measured_lanes:
+        if not isinstance(lane, str) or not lane:
+            raise Phase8Error("Phase 7 Runner view lane identity differs")
+        lane_root = checked_dir(
+            source_root / lane, label=f"Phase 7 measured Runner lane {lane}"
+        )
+        for candidate in [lane_root, *sorted(lane_root.rglob("*"))]:
+            if candidate.is_symlink():
+                raise Phase8Error("Phase 7 Runner view source contains a symlink")
+            if candidate.is_dir():
+                continue
+            if not candidate.is_file():
+                raise Phase8Error(
+                    "Phase 7 Runner view source contains a non-regular entry"
+                )
+            source_files.add(candidate.resolve(strict=True))
+
+    view_files: set[Path] = set()
+    for candidate in sorted(view_root.rglob("*")):
+        if candidate.is_symlink():
+            raise Phase8Error("Phase 7 Runner input view contains a symlink")
+        if candidate.is_dir():
+            continue
+        if not candidate.is_file():
+            raise Phase8Error(
+                "Phase 7 Runner input view contains a non-regular entry"
+            )
+        view_files.add(candidate.resolve(strict=True))
+
+    relative_paths: list[str] = []
+    recorded_source_files: set[Path] = set()
+    recorded_view_files: set[Path] = set()
+    logical_bytes = 0
+    for index, row in enumerate(inventory):
+        if not isinstance(row, dict) or set(row) != {
+            "relative_path",
+            "source",
+            "view",
+            "source_file_identity",
+            "view_file_identity",
+            "independent_copy",
+            "source_view_samefile",
+            "view_mode",
+            "view_link_count",
+        }:
+            raise Phase8Error(
+                f"Phase 7 Runner view inventory row {index} fields differ"
+            )
+        relative = _canonical_view_relative_path(row.get("relative_path"))
+        source_path, source_payload = descriptor_bytes(
+            row.get("source"),
+            label=f"Phase 7 Runner view source {relative}",
+            max_bytes=512 * 1024 * 1024,
+        )
+        view_path, view_payload = descriptor_bytes(
+            row.get("view"),
+            label=f"Phase 7 Runner view file {relative}",
+            max_bytes=512 * 1024 * 1024,
+        )
+        relative_path = Path(*relative.split("/"))
+        if (
+            row["source"].get("path") != str(source_path)
+            or row["view"].get("path") != str(view_path)
+            or source_path != (source_root / relative_path).resolve(strict=True)
+            or view_path != (view_root / relative_path).resolve(strict=True)
+            or source_payload != view_payload
+            or row["source"].get("sha256") != row["view"].get("sha256")
+            or row["source"].get("bytes") != row["view"].get("bytes")
+        ):
+            raise Phase8Error(
+                f"Phase 7 Runner view source/view descriptor differs: {relative}"
+            )
+        source_stat = source_path.stat()
+        view_stat = view_path.stat()
+        expected_source_identity = {
+            "device": source_stat.st_dev,
+            "inode": source_stat.st_ino,
+        }
+        expected_view_identity = {
+            "device": view_stat.st_dev,
+            "inode": view_stat.st_ino,
+        }
+        for label, identity in (
+            ("source", row.get("source_file_identity")),
+            ("view", row.get("view_file_identity")),
+        ):
+            if (
+                not isinstance(identity, dict)
+                or set(identity) != {"device", "inode"}
+                or type(identity.get("device")) is not int
+                or identity["device"] < 0
+                or type(identity.get("inode")) is not int
+                or identity["inode"] < 0
+            ):
+                raise Phase8Error(
+                    f"Phase 7 Runner view {label} file identity differs: {relative}"
+                )
+        if (
+            row.get("source_file_identity") != expected_source_identity
+            or row.get("view_file_identity") != expected_view_identity
+            or row.get("independent_copy") is not True
+            or row.get("source_view_samefile") is not False
+            or expected_source_identity == expected_view_identity
+            or source_path.samefile(view_path)
+            or type(row.get("view_mode")) is not int
+            or row.get("view_mode") != stat.S_IMODE(view_stat.st_mode)
+            or row["view_mode"] & (stat.S_IWUSR | stat.S_IWGRP | stat.S_IWOTH)
+            or row.get("view_link_count") != 1
+            or view_stat.st_nlink != 1
+        ):
+            raise Phase8Error(
+                f"Phase 7 Runner view independent-copy identity differs: {relative}"
+            )
+        relative_paths.append(relative)
+        if source_path in recorded_source_files or view_path in recorded_view_files:
+            raise Phase8Error("Phase 7 Runner view inventory contains a duplicate file")
+        recorded_source_files.add(source_path)
+        recorded_view_files.add(view_path)
+        logical_bytes += len(view_payload)
+
+    if (
+        relative_paths != sorted(relative_paths)
+        or len(set(relative_paths)) != len(relative_paths)
+        or recorded_source_files != source_files
+        or recorded_view_files != view_files
+        or value["regular_files_copied"] != len(inventory)
+        or value["logical_bytes"] != logical_bytes
+    ):
+        raise Phase8Error("Phase 7 Runner view exact file inventory differs")
+    return view_root
+
+
 def validate_phase7_completion(
     path: Path,
     *,
@@ -7474,34 +7678,12 @@ def validate_phase7_completion(
     )
     if runner_view_path != control / "read-only-runner-view.json":
         raise Phase8Error("Phase 7 runner input view receipt moved")
-    runner_view_fields = {
-        "schema",
-        "status",
-        "source_runner_root",
-        "view_root",
-        "included_measured_lanes",
-        "regular_files_linked",
-        "logical_bytes",
-        "source_files_modified",
-        "permitted_view_outputs",
-    }
-    if (
-        set(runner_view) != runner_view_fields
-        or runner_view.get("schema") != "ura-phase7-runner-input-view/1"
-        or runner_view.get("status") != "complete"
-        or runner_view.get("source_runner_root") != runner.get("root")
-        or runner_view.get("view_root") != str(control / "read-only-runner-view")
-        or runner_view.get("included_measured_lanes") != measured_lanes
-        or type(runner_view.get("regular_files_linked")) is not int
-        or runner_view.get("regular_files_linked", 0) < 1
-        or type(runner_view.get("logical_bytes")) is not int
-        or runner_view.get("logical_bytes", 0) < 1
-        or runner_view.get("source_files_modified") is not False
-        or runner_view.get("permitted_view_outputs")
-        != ["judge_kappa.json", "transfer_matrix*"]
-    ):
-        raise Phase8Error("Phase 7 runner input view contract differs")
-    checked_dir(control / "read-only-runner-view", label="Phase 7 runner input view")
+    runner_view_root = validate_phase7_runner_view(
+        runner_view,
+        expected_source_root=runner_root,
+        expected_view_root=control / "read-only-runner-view",
+        expected_measured_lanes=measured_lanes,
+    )
     artifact_paths: set[Path] = set()
     for row in artifacts:
         artifact_path = descriptor_file(row, label="Phase 7 analysis artifact")
@@ -7702,6 +7884,10 @@ def validate_phase7_completion(
         "value": boundaries,
         "descriptor": boundary_descriptor,
         "inputs": inputs,
+        "runner_view": runner_view_root,
+        "runner_view_receipt": value["runner_input_view"],
+        "runner_view_value": runner_view,
+        "runner_view_lanes": measured_lanes,
     }
 
 
@@ -7731,6 +7917,148 @@ def validate_deployed_identity(project: Path) -> None:
     lock = strict_object(lock_path, label="framework runtime lock")
     if lock.get("lock_id") != EXPECTED_FRAMEWORK_LOCK:
         raise Phase8Error("framework lock content identity differs")
+
+
+def plan_phase8_capacity(
+    *,
+    common_available_unique_clusters: object,
+    source_task_available_unique_clusters: object,
+    common_requested_unique_clusters: object,
+    source_task_requested_unique_clusters: object,
+    qualification_required_unique_clusters: object = QUALIFICATION_ITEM_COUNT,
+) -> dict[str, Any]:
+    """Prove cardinality for both requests and the disjoint pilot reserve."""
+
+    common_available = exact_int(
+        common_available_unique_clusters,
+        label="Phase 8 available common clusters",
+        minimum=1,
+    )
+    source_available = exact_int(
+        source_task_available_unique_clusters,
+        label="Phase 8 available source-task clusters",
+        minimum=1,
+    )
+    common_requested = exact_int(
+        common_requested_unique_clusters,
+        label="Phase 8 requested common clusters",
+        minimum=1,
+    )
+    source_requested = exact_int(
+        source_task_requested_unique_clusters,
+        label="Phase 8 requested source-task clusters",
+        minimum=1,
+    )
+    qualification_required = exact_int(
+        qualification_required_unique_clusters,
+        label="Phase 8 qualification clusters",
+        minimum=1,
+    )
+    if qualification_required != QUALIFICATION_ITEM_COUNT:
+        raise Phase8Error(
+            "Phase 8 qualification capacity must reserve exactly "
+            f"{QUALIFICATION_ITEM_COUNT} clusters"
+        )
+    if common_available < common_requested:
+        raise Phase8Error(
+            "Phase 8 common frame cannot supply the exact requested sample: "
+            f"available={common_available}, requested={common_requested}"
+        )
+    common_remaining = common_available - common_requested
+    if common_remaining < qualification_required:
+        raise Phase8Error(
+            "Phase 8 common sample leaves "
+            f"{common_remaining} disjoint qualification clusters; "
+            f"exactly {qualification_required} are required"
+        )
+    if source_available < source_requested:
+        raise Phase8Error(
+            "Phase 8 source-task frame cannot supply the exact requested sample: "
+            f"available={source_available}, requested={source_requested}"
+        )
+    return {
+        "schema": CAPACITY_SCHEMA,
+        "status": "cardinality_sufficient_for_requests_and_qualification_reserve",
+        "common_available_unique_clusters": common_available,
+        "common_requested_unique_clusters": common_requested,
+        "common_remaining_disjoint_unique_clusters": common_remaining,
+        "source_task_available_unique_clusters": source_available,
+        "source_task_requested_unique_clusters": source_requested,
+        "qualification_required_unique_clusters": qualification_required,
+    }
+
+
+def observed_audit_frame_cluster_counts(runner_root: Path) -> tuple[int, int]:
+    """Count the exact validated common and source-task frame populations."""
+
+    try:
+        from experiments.human_audit import _joined_artifacts
+    except Exception as exc:
+        raise Phase8Error(
+            "cannot import the pinned human-audit frame validator"
+        ) from exc
+
+    def frame_clusters(frame: str) -> set[str]:
+        try:
+            _per_judge, metadata, judgments, _audit = _joined_artifacts(
+                runner_root, frame=frame
+            )
+        except Exception as exc:
+            raise Phase8Error(
+                f"cannot derive the validated {frame} human-audit capacity"
+            ) from exc
+        if set(metadata) != set(judgments):
+            raise Phase8Error(
+                f"validated {frame} human-audit frame identity differs"
+            )
+        expected_eligibility = frame == "common"
+        clusters: set[str] = set()
+        for key in sorted(metadata):
+            meta = metadata[key]
+            judgment = judgments[key]
+            if meta.get("common_metrics_eligible") is not expected_eligibility:
+                raise Phase8Error(
+                    f"validated {frame} human-audit frame eligibility differs"
+                )
+            raw = judgment.get("raw") or {}
+            _reject_rr_human_row(
+                {
+                    "model": raw.get("model", ""),
+                    "model_spec": meta.get("model_spec", ""),
+                    "run_id": judgment.get("run_id", ""),
+                    "sample_key": key,
+                },
+                label=f"{frame} capacity candidate",
+            )
+            source = str(meta.get("source") or "")
+            source_cluster_id = str(meta.get("source_cluster_id") or "")
+            if not source or not source_cluster_id:
+                raise Phase8Error(
+                    f"validated {frame} human-audit cluster identity is absent"
+                )
+            clusters.add(f"{source}|{source_cluster_id}")
+        if not clusters:
+            raise Phase8Error(
+                f"validated {frame} human-audit frame contains no clusters"
+            )
+        return clusters
+
+    return len(frame_clusters("common")), len(frame_clusters("source_task"))
+
+
+def revalidate_bound_audit_runner_view(
+    *,
+    receipt: object,
+    source_root: Path,
+    view_root: Path,
+    measured_lanes: Sequence[str],
+) -> Path:
+    return validate_phase7_runner_view(
+        receipt,
+        expected_source_root=source_root,
+        expected_view_root=view_root,
+        expected_measured_lanes=measured_lanes,
+    )
 
 
 def build_input_manifest(args: argparse.Namespace) -> dict[str, Any]:
@@ -7814,6 +8142,22 @@ def build_input_manifest(args: argparse.Namespace) -> dict[str, Any]:
         args.authorize_ethics_sha256.lower(),
         runner_root=runner_root,
     )
+    audit_runner_root = phase7_support["runner_view"]
+    common_available, source_task_available = observed_audit_frame_cluster_counts(
+        audit_runner_root
+    )
+    revalidate_bound_audit_runner_view(
+        receipt=phase7_support["runner_view_value"],
+        source_root=runner_root,
+        view_root=audit_runner_root,
+        measured_lanes=phase7_support["runner_view_lanes"],
+    )
+    capacity = plan_phase8_capacity(
+        common_available_unique_clusters=common_available,
+        source_task_available_unique_clusters=source_task_available,
+        common_requested_unique_clusters=args.common_clusters,
+        source_task_requested_unique_clusters=args.source_task_clusters,
+    )
 
     payload_path = Path(__file__).resolve(strict=True)
     created = utc_now()
@@ -7828,6 +8172,7 @@ def build_input_manifest(args: argparse.Namespace) -> dict[str, Any]:
         "scope": {
             "campaign": "all-local-terminal-portfolio",
             "runner_root": str(runner_root),
+            "audit_runner_root": str(audit_runner_root),
             "thesis_root": str(thesis_root),
             "gate5_lane_count": 46,
             "gate5_runnable_lane_count": gate5_profile["runnable_lane_count"],
@@ -7867,6 +8212,7 @@ def build_input_manifest(args: argparse.Namespace) -> dict[str, Any]:
             "completion": descriptor(phase7_path),
             "input_manifest": phase7["input_manifest"],
             "artifact_inventory": phase7["artifact_inventory"],
+            "runner_input_view": phase7_support["runner_view_receipt"],
             "analysis_boundaries": descriptor(phase7_support["path"]),
             "status": phase7["status"],
             "human_labels_consumed": False,
@@ -7883,7 +8229,8 @@ def build_input_manifest(args: argparse.Namespace) -> dict[str, Any]:
         "sampling": {
             "common_unique_clusters": args.common_clusters,
             "source_task_unique_clusters": args.source_task_clusters,
-            "qualification_items": 20,
+            "qualification_items": QUALIFICATION_ITEM_COUNT,
+            "capacity": capacity,
             "seed": 0,
             "common_selection": "project_deterministic_coverage_priority_whole_cluster",
             "source_task_selection": "project_deterministic_coverage_priority_whole_cluster",
@@ -7899,7 +8246,7 @@ def build_input_manifest(args: argparse.Namespace) -> dict[str, Any]:
                     "-m",
                     "experiments.human_audit",
                     "--results",
-                    str(runner_root),
+                    str(audit_runner_root),
                     "--prepare",
                     str(args.common_clusters),
                     "--output",
@@ -7913,7 +8260,7 @@ def build_input_manifest(args: argparse.Namespace) -> dict[str, Any]:
                     "-m",
                     "experiments.human_audit",
                     "--results",
-                    str(runner_root),
+                    str(audit_runner_root),
                     "--prepare-source-task",
                     str(args.source_task_clusters),
                     "--output",
@@ -7987,6 +8334,7 @@ def prepare_input_manifest(args: argparse.Namespace) -> int:
                     f"46/{value['scope']['gate5_runnable_lane_count']}/"
                     f"{value['scope']['gate5_terminal_lane_count']}"
                 ),
+                "audit_capacity": value["sampling"]["capacity"],
                 "human_claims": False,
                 "authorization_required_before_any_sample_write": True,
             },
@@ -8077,6 +8425,7 @@ def validate_input_manifest(
         != {
             "campaign",
             "runner_root",
+            "audit_runner_root",
             "thesis_root",
             "gate5_lane_count",
             "gate5_runnable_lane_count",
@@ -8086,7 +8435,7 @@ def validate_input_manifest(
         or scope.get("campaign") != "all-local-terminal-portfolio"
         or any(
             not isinstance(scope.get(field), str) or not scope[field]
-            for field in ("runner_root", "thesis_root")
+            for field in ("runner_root", "audit_runner_root", "thesis_root")
         )
         or type(scope.get("gate5_lane_count")) is not int
         or type(scope.get("gate5_runnable_lane_count")) is not int
@@ -8228,6 +8577,7 @@ def validate_input_manifest(
             "completion",
             "input_manifest",
             "artifact_inventory",
+            "runner_input_view",
             "analysis_boundaries",
             "status",
             "human_labels_consumed",
@@ -8266,7 +8616,8 @@ def validate_input_manifest(
         or type(sampling.get("source_task_unique_clusters")) is not int
         or sampling.get("source_task_unique_clusters", 0) < 1
         or type(sampling.get("qualification_items")) is not int
-        or sampling.get("qualification_items") != 20
+        or sampling.get("qualification_items") != QUALIFICATION_ITEM_COUNT
+        or not isinstance(sampling.get("capacity"), dict)
         or type(sampling.get("seed")) is not int
         or sampling.get("seed") != 0
         or sampling.get("automated_labels_blinded") is not True
@@ -8276,6 +8627,7 @@ def validate_input_manifest(
             "common_unique_clusters",
             "source_task_unique_clusters",
             "qualification_items",
+            "capacity",
             "seed",
             "common_selection",
             "source_task_selection",
@@ -8293,6 +8645,24 @@ def validate_input_manifest(
         or sampling.get("model_identity_visible") is not True
     ):
         raise Phase8Error("Phase 8 sampling contract differs")
+    capacity = sampling["capacity"]
+    expected_capacity = plan_phase8_capacity(
+        common_available_unique_clusters=capacity.get(
+            "common_available_unique_clusters"
+        ),
+        source_task_available_unique_clusters=capacity.get(
+            "source_task_available_unique_clusters"
+        ),
+        common_requested_unique_clusters=sampling["common_unique_clusters"],
+        source_task_requested_unique_clusters=sampling[
+            "source_task_unique_clusters"
+        ],
+        qualification_required_unique_clusters=capacity.get(
+            "qualification_required_unique_clusters"
+        ),
+    )
+    if capacity != expected_capacity:
+        raise Phase8Error("Phase 8 capacity plan differs")
     contract = value.get("execution_contract")
     expected_commands = [
         [
@@ -8300,7 +8670,7 @@ def validate_input_manifest(
             "-m",
             "experiments.human_audit",
             "--results",
-            str(scope.get("runner_root")),
+            str(scope.get("audit_runner_root")),
             "--prepare",
             str(sampling.get("common_unique_clusters")),
             "--output",
@@ -8314,7 +8684,7 @@ def validate_input_manifest(
             "-m",
             "experiments.human_audit",
             "--results",
-            str(scope.get("runner_root")),
+            str(scope.get("audit_runner_root")),
             "--prepare-source-task",
             str(sampling.get("source_task_unique_clusters")),
             "--output",
@@ -8640,7 +9010,7 @@ def build_qualification_set(
     candidates = _qualification_candidates(
         runner_root=runner_root, excluded_clusters=excluded_clusters
     )
-    if len(candidates) < 20:
+    if len(candidates) < QUALIFICATION_ITEM_COUNT:
         raise Phase8Error(
             "fewer than 20 disjoint common clusters remain for qualification"
         )
@@ -8662,14 +9032,18 @@ def build_qualification_set(
         if cell not in represented:
             selected.append(row)
             represented.add(cell)
-        if len(selected) == 20:
+        if len(selected) == QUALIFICATION_ITEM_COUNT:
             break
     for row in ordered:
-        if len(selected) == 20:
+        if len(selected) == QUALIFICATION_ITEM_COUNT:
             break
         if row not in selected:
             selected.append(row)
-    if len(selected) != 20 or len({row["cluster_key"] for row in selected}) != 20:
+    if (
+        len(selected) != QUALIFICATION_ITEM_COUNT
+        or len({row["cluster_key"] for row in selected})
+        != QUALIFICATION_ITEM_COUNT
+    ):
         raise Phase8Error("qualification selector did not produce 20 disjoint items")
     represented = {
         (
@@ -8711,7 +9085,7 @@ def build_qualification_set(
     ]
     write_csv(gold_template, gold_fields, gold_rows)
     return {
-        "item_count": 20,
+        "item_count": QUALIFICATION_ITEM_COUNT,
         "clusters_disjoint_from_final_common_sample": True,
         "strata_represented": sorted("|".join(cell) for cell in represented),
         "all_human_fields_blank": True,
@@ -8724,15 +9098,19 @@ def semantic_revalidate(inputs: Mapping[str, Any]) -> dict[str, Any]:
     runner_root = checked_dir(thesis_root / "runner", label="measured runner root")
     model_store = checked_dir(required_env("URA_MODEL_STORE"), label="model store")
     scope = inputs.get("scope")
-    if not isinstance(scope, dict) or scope.get("conditional_na_lanes") not in (
-        [],
-        [DEFENSE_LOCAL_LANE],
+    if (
+        not isinstance(scope, dict)
+        or not isinstance(scope.get("audit_runner_root"), str)
+        or not scope["audit_runner_root"]
+        or scope.get("conditional_na_lanes")
+        not in ([], [DEFENSE_LOCAL_LANE])
     ):
         raise Phase8Error("authorized Phase 8 conditional N/A scope differs")
     conditional_na_lanes = scope["conditional_na_lanes"]
     if scope != {
         "campaign": "all-local-terminal-portfolio",
         "runner_root": str(runner_root),
+        "audit_runner_root": scope["audit_runner_root"],
         "thesis_root": str(thesis_root),
         "gate5_lane_count": 46,
         "gate5_runnable_lane_count": 22 - len(conditional_na_lanes),
@@ -8832,12 +9210,45 @@ def semantic_revalidate(inputs: Mapping[str, Any]) -> dict[str, Any]:
         "completion": descriptor_from_bytes(phase7_path, phase7_payload),
         "input_manifest": phase7["input_manifest"],
         "artifact_inventory": phase7["artifact_inventory"],
+        "runner_input_view": support["runner_view_receipt"],
         "analysis_boundaries": support["descriptor"],
         "status": phase7["status"],
         "human_labels_consumed": False,
         "human_validity_claimed": False,
     }:
         raise Phase8Error("authorized Phase 7 snapshot differs from its receipt")
+    audit_runner_root = support["runner_view"]
+    if scope["audit_runner_root"] != str(audit_runner_root):
+        raise Phase8Error("authorized Phase 8 audit Runner view differs")
+    sampling = inputs.get("sampling")
+    if not isinstance(sampling, dict) or not isinstance(
+        sampling.get("capacity"), dict
+    ):
+        raise Phase8Error("authorized Phase 8 capacity plan is absent")
+    common_available, source_task_available = observed_audit_frame_cluster_counts(
+        audit_runner_root
+    )
+    revalidate_bound_audit_runner_view(
+        receipt=support["runner_view_value"],
+        source_root=runner_root,
+        view_root=audit_runner_root,
+        measured_lanes=support["runner_view_lanes"],
+    )
+    capacity = plan_phase8_capacity(
+        common_available_unique_clusters=common_available,
+        source_task_available_unique_clusters=source_task_available,
+        common_requested_unique_clusters=sampling.get("common_unique_clusters"),
+        source_task_requested_unique_clusters=sampling.get(
+            "source_task_unique_clusters"
+        ),
+        qualification_required_unique_clusters=sampling["capacity"].get(
+            "qualification_required_unique_clusters"
+        ),
+    )
+    if sampling["capacity"] != capacity:
+        raise Phase8Error(
+            "authorized Phase 8 capacity differs from the validated Runner view"
+        )
     ethics_desc = inputs["ethics_determination"]
     ethics_path, ethics_payload = descriptor_bytes(
         ethics_desc["artifact"], label="ethics/consent determination"
@@ -8863,6 +9274,9 @@ def semantic_revalidate(inputs: Mapping[str, Any]) -> dict[str, Any]:
         "work": work,
         "thesis_root": thesis_root,
         "runner_root": runner_root,
+        "audit_runner_root": audit_runner_root,
+        "audit_runner_view_receipt": support["runner_view_value"],
+        "audit_runner_view_lanes": support["runner_view_lanes"],
         "gate5": gate5,
         "core": core,
         "extended": extended,
@@ -9511,7 +9925,7 @@ def _validate_workload(
             "adjudications": "one per non-unanimous task or parse-status label",
         },
         "total_minimum_independent_ratings": 2 * (common_rows + source_rows),
-        "qualification_items": 20,
+        "qualification_items": QUALIFICATION_ITEM_COUNT,
         "qualified_raters_required": 2,
         "capacity_confirmed": False,
     }:
@@ -9938,7 +10352,16 @@ def execute_preparation(control_root: Path, attempt_root: Path) -> int:
     common_path = staging / "human-audit-sample.csv"
     source_path = staging / "source-task-audit-sample.csv"
     sampling = inputs["sampling"]
-    runner_root = support["runner_root"]
+    runner_root = support["audit_runner_root"]
+
+    def revalidate_execution_view() -> None:
+        revalidate_bound_audit_runner_view(
+            receipt=support["audit_runner_view_receipt"],
+            source_root=support["runner_root"],
+            view_root=runner_root,
+            measured_lanes=support["audit_runner_view_lanes"],
+        )
+
     common_argv = [
         sys.executable,
         "-m",
@@ -9967,18 +10390,21 @@ def execute_preparation(control_root: Path, attempt_root: Path) -> int:
         "--seed",
         "0",
     ]
+    revalidate_execution_view()
     run_preparation_command(
         common_argv,
         project=project,
         stdout_path=staging / "common-prepare.stdout.txt",
         stderr_path=staging / "common-prepare.stderr.txt",
     )
+    revalidate_execution_view()
     run_preparation_command(
         source_argv,
         project=project,
         stdout_path=staging / "source-task-prepare.stdout.txt",
         stderr_path=staging / "source-task-prepare.stderr.txt",
     )
+    revalidate_execution_view()
     common = validate_common_sample(
         common_path, requested_clusters=sampling["common_unique_clusters"]
     )
@@ -10003,12 +10429,14 @@ def execute_preparation(control_root: Path, attempt_root: Path) -> int:
     )
     qualification_path = staging / "qualification-items.csv"
     qualification_gold_path = staging / "qualification-gold.template.csv"
+    revalidate_execution_view()
     qualification = build_qualification_set(
         qualification_path,
         qualification_gold_path,
         runner_root=runner_root,
         excluded_clusters=common["clusters"],
     )
+    revalidate_execution_view()
     qualification_sha = sha256_file(qualification_path)
 
     generated_paths = [
@@ -10536,6 +10964,39 @@ def self_test() -> int:
             tests += 1
             return
         raise AssertionError(f"mutation was accepted: {label}")
+
+    exact_capacity = plan_phase8_capacity(
+        common_available_unique_clusters=21,
+        source_task_available_unique_clusters=1,
+        common_requested_unique_clusters=1,
+        source_task_requested_unique_clusters=1,
+    )
+    if (
+        exact_capacity["common_remaining_disjoint_unique_clusters"]
+        != QUALIFICATION_ITEM_COUNT
+        or exact_capacity["status"]
+        != "cardinality_sufficient_for_requests_and_qualification_reserve"
+    ):
+        raise AssertionError("exact Phase 8 qualification capacity was not retained")
+    passed()
+    rejected(
+        lambda: plan_phase8_capacity(
+            common_available_unique_clusters=20,
+            source_task_available_unique_clusters=1,
+            common_requested_unique_clusters=1,
+            source_task_requested_unique_clusters=1,
+        ),
+        "nineteen-cluster qualification reserve",
+    )
+    rejected(
+        lambda: plan_phase8_capacity(
+            common_available_unique_clusters=21,
+            source_task_available_unique_clusters=1,
+            common_requested_unique_clusters=1,
+            source_task_requested_unique_clusters=2,
+        ),
+        "undersized source-task frame",
+    )
 
     _reject_rr_human_row(
         {"model": "Qwen/Qwen3-VL-8B-Instruct", "model_spec": "vllm:qwen"},
@@ -13388,25 +13849,122 @@ def self_test() -> int:
         write_new(phase7_payload, phase7_source.read_bytes())
         view_root = phase7_control / "read-only-runner-view"
         view_root.mkdir()
-        view_receipt_path = phase7_control / "read-only-runner-view.json"
-        write_new(
-            view_receipt_path,
-            canonical(
-                {
-                    "schema": "ura-phase7-runner-input-view/1",
-                    "status": "complete",
-                    "source_runner_root": str(runner_root),
-                    "view_root": str(view_root),
-                    "included_measured_lanes": measured_lanes,
-                    "regular_files_linked": 1,
-                    "logical_bytes": 1,
-                    "source_files_modified": False,
-                    "permitted_view_outputs": [
-                        "judge_kappa.json",
-                        "transfer_matrix*",
-                    ],
-                }
+        view_inventory: list[dict[str, Any]] = []
+        view_sources = sorted(
+            (
+                source
+                for lane in measured_lanes
+                for source in (runner_root / lane).rglob("*")
+                if source.is_file() and not source.is_symlink()
             ),
+            key=lambda source: source.relative_to(runner_root).as_posix(),
+        )
+        for source in view_sources:
+            relative = source.relative_to(runner_root).as_posix()
+            target = view_root / Path(*relative.split("/"))
+            target.parent.mkdir(parents=True, exist_ok=True)
+            write_new(target, source.read_bytes(), mode=0o400)
+            os.chmod(target, 0o400)
+            source_stat = source.stat()
+            target_stat = target.stat()
+            view_inventory.append(
+                {
+                    "relative_path": relative,
+                    "source": descriptor(source),
+                    "view": descriptor(target),
+                    "source_file_identity": {
+                        "device": source_stat.st_dev,
+                        "inode": source_stat.st_ino,
+                    },
+                    "view_file_identity": {
+                        "device": target_stat.st_dev,
+                        "inode": target_stat.st_ino,
+                    },
+                    "independent_copy": True,
+                    "source_view_samefile": False,
+                    "view_mode": stat.S_IMODE(target_stat.st_mode),
+                    "view_link_count": target_stat.st_nlink,
+                }
+            )
+        if not view_inventory:
+            raise AssertionError("Phase 8 self-test Runner view inventory is empty")
+        view_receipt = {
+            "schema": "ura-phase7-runner-input-view/3",
+            "status": "complete",
+            "source_runner_root": str(runner_root),
+            "view_root": str(view_root),
+            "included_measured_lanes": measured_lanes,
+            "regular_files_copied": len(view_inventory),
+            "logical_bytes": sum(row["view"]["bytes"] for row in view_inventory),
+            "source_files_modified": False,
+            "permitted_view_outputs": [],
+            "file_inventory": view_inventory,
+            "file_inventory_sha256": sha256_bytes(canonical(view_inventory)),
+        }
+        view_receipt_path = phase7_control / "read-only-runner-view.json"
+        write_new(view_receipt_path, canonical(view_receipt))
+        validate_phase7_runner_view(
+            view_receipt,
+            expected_source_root=runner_root,
+            expected_view_root=view_root,
+            expected_measured_lanes=measured_lanes,
+        )
+        passed()
+        substituted_row = view_inventory[0]
+        substituted_source = Path(substituted_row["source"]["path"])
+        substituted_view = Path(substituted_row["view"]["path"])
+        substituted_payload = substituted_view.read_bytes()
+        os.chmod(substituted_view, 0o600)
+        substituted_view.unlink()
+        selector_visible_substitution = view_root / "transfer_matrix-shadow.jsonl"
+        write_new(selector_visible_substitution, substituted_payload)
+        rejected(
+            lambda: validate_phase7_runner_view(
+                view_receipt,
+                expected_source_root=runner_root,
+                expected_view_root=view_root,
+                expected_measured_lanes=measured_lanes,
+            ),
+            "count-preserving selector-visible Runner view substitution",
+        )
+        selector_visible_substitution.unlink()
+        write_new(substituted_view, substituted_source.read_bytes(), mode=0o400)
+        os.chmod(substituted_view, 0o400)
+        sealed_source_payload = substituted_source.read_bytes()
+        os.chmod(substituted_view, 0o600)
+        substituted_view.write_bytes(b"X" * len(sealed_source_payload))
+        if substituted_source.read_bytes() != sealed_source_payload:
+            raise AssertionError("independent Runner view mutation changed source bytes")
+        rejected(
+            lambda: validate_phase7_runner_view(
+                view_receipt,
+                expected_source_root=runner_root,
+                expected_view_root=view_root,
+                expected_measured_lanes=measured_lanes,
+            ),
+            "in-place independent Runner view mutation",
+        )
+        substituted_view.unlink()
+        write_new(substituted_view, sealed_source_payload, mode=0o400)
+        os.chmod(substituted_view, 0o400)
+        restored_stat = substituted_view.stat()
+        substituted_row["view"] = descriptor(substituted_view)
+        substituted_row["view_file_identity"] = {
+            "device": restored_stat.st_dev,
+            "inode": restored_stat.st_ino,
+        }
+        substituted_row["view_mode"] = stat.S_IMODE(restored_stat.st_mode)
+        substituted_row["view_link_count"] = restored_stat.st_nlink
+        view_receipt["file_inventory_sha256"] = sha256_bytes(
+            canonical(view_inventory)
+        )
+        view_receipt_path.unlink()
+        write_new(view_receipt_path, canonical(view_receipt))
+        validate_phase7_runner_view(
+            view_receipt,
+            expected_source_root=runner_root,
+            expected_view_root=view_root,
+            expected_measured_lanes=measured_lanes,
         )
         analysis_root = analysis_parent / "phase7-self-test"
         analysis_root.mkdir()

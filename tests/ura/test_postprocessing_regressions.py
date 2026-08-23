@@ -719,6 +719,7 @@ def _write_completed_cell(
             run_id=run_id,
             attacker=attacker,
             corpus=corpus,
+            defense=defense,
         )
 
 
@@ -731,6 +732,7 @@ def _write_grid_manifest(
     run_id: str,
     attacker: str,
     corpus: str,
+    defense: str,
 ) -> None:
     grid = {
         "status": "complete",
@@ -741,6 +743,7 @@ def _write_grid_manifest(
             "corpora": [corpus],
             "attackers": [attacker],
             "attacker_configs": {attacker: {}},
+            "defense": defense,
             "judges": ["rules"],
             "judge_model": None,
             "model_acquisition": _NO_ACQUISITION_FULL,
@@ -1820,6 +1823,141 @@ def test_kappa_skips_source_metric_only_classification_facets(
         load_trail_facets(tmp_path, corpus="rjudge_release")
 
 
+def test_postprocessors_default_to_exact_no_defense_facet(
+    tmp_path: Path,
+) -> None:
+    for stem, model in (("plain-a", "A"), ("plain-b", "B")):
+        _write_completed_cell(
+            tmp_path,
+            stem,
+            model=model,
+            run_id=f"run-{stem}",
+            key="shared",
+            defense="none",
+        )
+    _write_completed_cell(
+        tmp_path,
+        "defended-a",
+        model="A",
+        run_id="run-defended-a",
+        key="shared",
+        defense="both",
+    )
+
+    kappa_facets = load_trail_facets(tmp_path)
+    assert set(kappa_facets) == {"fixture"}
+    _, _, kappa_audit = kappa_facets["fixture"]
+    assert kappa_audit["defense"] == "none"
+    assert kappa_audit["completed_cells"] == 2
+    assert kappa_audit["excluded_other_defense_cells"] == 1
+
+    transfer_facets = load_facets(tmp_path)
+    per_model, transfer_audit = transfer_facets["fixture"]
+    assert set(per_model) == {"A", "B"}
+    assert transfer_audit["facet"] == {
+        "attacker": "replay",
+        "corpus": "fixture",
+        "defense": "none",
+    }
+    assert transfer_audit["selected_judgment_cells"] == 2
+    assert transfer_audit["not_selected_other_facets"] == 1
+
+    sensitivity = analyse_sensitivity(tmp_path)
+    assert sensitivity["selector"] == {
+        "attacker": "replay",
+        "corpus": None,
+        "defense": "none",
+    }
+    assert sensitivity["selection_accounting"]["selected_cells"] == 2
+    assert sensitivity["selection_accounting"]["excluded_cells"] == 1
+    assert {
+        facet["lineage"]["defense"]
+        for facet in sensitivity["facets"].values()
+    } == {"none"}
+    assert sensitivity["selection_accounting"]["excluded_cell_details"] == [
+        {
+            "stem": "defended-a",
+            "run_id": "run-defended-a",
+            "corpus": "fixture",
+            "attacker": "replay",
+            "defense": "both",
+            "reason": "outside_explicit_selector",
+        }
+    ]
+
+
+def test_diagnostics_support_create_only_external_outputs(
+    tmp_path: Path,
+) -> None:
+    sensitivity_inputs = tmp_path / "sensitivity-inputs"
+    sensitivity_inputs.mkdir()
+    _write_completed_cell(
+        sensitivity_inputs,
+        "plain-a",
+        model="A",
+        run_id="run-plain-a",
+        key="shared",
+        defense="none",
+    )
+    sensitivity_output = tmp_path / "analysis" / "sensitivity.json"
+    sensitivity_argv = [
+        "--results",
+        str(sensitivity_inputs),
+        "--defense",
+        "none",
+        "--output",
+        str(sensitivity_output),
+    ]
+    assert sensitivity_main(sensitivity_argv) == 0
+    assert sensitivity_output.is_file()
+    assert not (sensitivity_inputs / "judge_sensitivity.json").exists()
+    assert sensitivity_main(sensitivity_argv) == 1
+
+    kappa_inputs = tmp_path / "kappa-inputs"
+    kappa_inputs.mkdir()
+    _write_human_artifacts(kappa_inputs)
+    kappa_output = tmp_path / "analysis" / "kappa.json"
+    kappa_argv = [
+        "--results",
+        str(kappa_inputs),
+        "--defense",
+        "none",
+        "--output",
+        str(kappa_output),
+    ]
+    assert kappa_main(kappa_argv) == 0
+    assert kappa_output.is_file()
+    assert not (kappa_inputs / "judge_kappa.json").exists()
+    assert kappa_main(kappa_argv) == 1
+
+    transfer_inputs = tmp_path / "transfer-inputs"
+    transfer_inputs.mkdir()
+    for stem, model in (("plain-a", "A"), ("plain-b", "B")):
+        _write_completed_cell(
+            transfer_inputs,
+            stem,
+            model=model,
+            run_id=f"run-{stem}",
+            key="shared",
+            defense="none",
+        )
+    transfer_output = tmp_path / "analysis" / "transfer"
+    transfer_argv = [
+        "--results",
+        str(transfer_inputs),
+        "--bootstrap",
+        "10",
+        "--defense",
+        "none",
+        "--output-dir",
+        str(transfer_output),
+    ]
+    assert transfer_main(transfer_argv) == 0
+    assert (transfer_output / "transfer_matrix.json").is_file()
+    assert not list(transfer_inputs.glob("transfer_matrix*"))
+    assert transfer_main(transfer_argv) == 1
+
+
 def test_postprocessors_reject_rehashed_non_rubric_shadow_stage_drift(
     tmp_path: Path,
 ) -> None:
@@ -2006,7 +2144,11 @@ def test_transfer_facets_multi_corpus_and_defaults_to_replay(tmp_path: Path) -> 
     facets = load_facets(tmp_path)
     assert sorted(facets) == ["c1", "c2", "c3"]
     assert sorted(facets["c1"][0]) == ["A", "B"]
-    assert facets["c1"][1]["facet"] == {"attacker": "replay", "corpus": "c1"}
+    assert facets["c1"][1]["facet"] == {
+        "attacker": "replay",
+        "corpus": "c1",
+        "defense": "none",
+    }
     with pytest.raises(ValueError, match="spans multiple corpora"):
         load(tmp_path)
     assert transfer_main([
@@ -2014,6 +2156,7 @@ def test_transfer_facets_multi_corpus_and_defaults_to_replay(tmp_path: Path) -> 
     ]) == 0
     index = json.loads((tmp_path / "transfer_matrix.json").read_text(encoding="utf-8"))
     assert index["schema_version"] == "2.1-faceted"
+    assert index["defense"] == "none"
     assert sorted(index["facets"]) == ["c1", "c2"]
     assert index["not_applicable_facets"]["c3"]["unexplained_exclusions"] == 0
 
@@ -2336,6 +2479,7 @@ def _write_human_artifacts(root: Path, *, descriptor_marker: bool = True) -> str
         run_id=run_id,
         attacker="replay",
         corpus="fixture",
+        defense="none",
     )
     return key
 
@@ -3615,6 +3759,7 @@ def _write_source_task_artifacts(root: Path, *, stem: str = "stcell") -> str:
         run_id=run_id,
         attacker="replay",
         corpus="rjudge_official",
+        defense="none",
     )
     return key
 

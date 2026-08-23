@@ -196,6 +196,7 @@ CONTROLLERS: tuple[Controller, ...] = (
     Controller("launch_phase7_watcher.sh.in", "launch_phase7_watcher.sh"),
     Controller("phase8_human_audit.py.in", "phase8_human_audit.py", "phase8-self-test"),
     Controller("phase8_human_audit.sh.in", "phase8_human_audit.sh"),
+    Controller("phase8_human_audit.README.md.in", "phase8_human_audit.README.md"),
     Controller("launch_chain.sh.in", "launch_chain_{commit_short}.sh"),
 )
 SUPPORT_TEMPLATES = {"verify_controller_set.sh.in", "install_controller_set.sh.in"}

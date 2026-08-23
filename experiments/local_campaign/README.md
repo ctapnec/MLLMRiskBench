@@ -177,8 +177,9 @@ bash ~/.ura-controller-active/verify_controllers_<new-commit7>.sh
 bash ~/.ura-controller-active/launch_chain_<new-commit7>.sh
 ```
 
-The archive contains the 24 generated controllers, their generated inventory,
-and the generated verifier. The installer remains outside the archive. Both
+The archive contains 24 executable generated controllers, the generated
+read-only Phase 8 operator guide, their generated inventory, and the generated
+verifier. The installer remains outside the archive. Both
 support programs come from the tracked `verify_controller_set.sh.in` and
 `install_controller_set.sh.in` sources; only their hashes and locators are
 workspace bindings.
@@ -226,3 +227,22 @@ artifact it can represent. A genuine pre-Runner failure with no request
 artifact remains explicit in the registry and is not fabricated into Level 1
 input. Suite metrics and Level 2 receive only successful measured Runner lanes.
 A failed lifecycle is never promoted into metric evidence.
+
+Phase 8 consumes Phase 7's validated success-only read-only Runner copy. This
+keeps an honestly failed or partial Runner lifecycle in the canonical lifecycle
+tree without letting `human_audit` mistake it for a completed sample input. The
+view receipt content-binds every relative source/copy file, distinct identity,
+digest, byte count, and read-only mode; the completed view permits no analysis
+output or other extra file. Phase 7's separate lifecycle copy uses the same
+source-preserving boundary for Level 1. The
+create-only Phase 8 input manifest records an exact cardinality plan: the common
+population must cover the requested common sample plus 20 disjoint
+qualification clusters, and the source-task population must cover its exact
+requested sample. Cardinality is recomputed from the same view before any
+sample write, while both selectors retain their independent achieved-cell
+coverage checks. A successful machine controller remains `human_only_blocked` with
+`gate8_met: false`; only real qualified raters, independent labels,
+adjudication, validated reports, and a human acceptance or limitation record
+can satisfy the later Gate 8 conditions. The generated
+`phase8_human_audit.README.md` in the active controller generation is the
+commit-bound operator guide.

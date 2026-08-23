@@ -537,6 +537,109 @@ def test_guardrail_close_releases_loaded_state_once(
     assert guard._model is None and guard._tokenizer is None
 
 
+def test_guardrail_inference_requests_a_tensor_from_current_transformers(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    events: list[object] = []
+
+    class PromptTensor:
+        shape = (1, 3)
+
+        def to(self, device: str):
+            events.append(("prompt-to", device))
+            return self
+
+    prompt = PromptTensor()
+
+    class BatchEncoding(dict):
+        def to(self, _device: str):
+            return self
+
+        def __getattr__(self, _name: str):
+            # Transformers' BatchEncoding raises a message-less AttributeError
+            # for tensor-only attributes such as shape.
+            raise AttributeError
+
+    class Tokenizer:
+        eos_token_id = 2
+
+        def apply_chat_template(self, conversation, **kwargs):
+            events.append(("template", conversation, kwargs))
+            if kwargs.get("return_dict") is not False:
+                return BatchEncoding(input_ids=prompt)
+            return prompt
+
+        def decode(self, generated, *, skip_special_tokens: bool) -> str:
+            events.append(("decode", generated, skip_special_tokens))
+            return "safe"
+
+    class GeneratedRow:
+        def __getitem__(self, selected: slice):
+            assert selected == slice(3, None, None)
+            return (17,)
+
+    class GeneratedBatch:
+        def __getitem__(self, selected: int):
+            assert selected == 0
+            return GeneratedRow()
+
+    class Model:
+        device = "cuda:1"
+
+        def generate(self, *, input_ids, **kwargs):
+            assert input_ids.shape == (1, 3)
+            events.append(("generate", input_ids, kwargs))
+            return GeneratedBatch()
+
+    class NoGrad:
+        def __enter__(self) -> None:
+            events.append("no-grad-enter")
+
+        def __exit__(self, *_args: object) -> None:
+            events.append("no-grad-exit")
+
+    class Runtime:
+        def private_execution(self, role, callback):
+            events.append(("private", role))
+            return callback()
+
+    monkeypatch.setitem(sys.modules, "torch", SimpleNamespace(no_grad=NoGrad))
+    guard = GuardrailJudge(
+        revision="b" * 40,
+        device="cuda:1",
+        model_runtime=Runtime(),
+    )
+    guard._tokenizer = Tokenizer()
+    guard._model = Model()
+    conversation = [
+        {"role": "user", "content": "probe"},
+        {"role": "assistant", "content": "response"},
+    ]
+
+    assert guard._run_guard(conversation) == "safe"
+    assert events == [
+        ("private", "guardrail_judge"),
+        (
+            "template",
+            conversation,
+            {"return_tensors": "pt", "return_dict": False},
+        ),
+        ("prompt-to", "cuda:1"),
+        "no-grad-enter",
+        (
+            "generate",
+            prompt,
+            {
+                "max_new_tokens": guard.max_new_tokens,
+                "do_sample": False,
+                "pad_token_id": 2,
+            },
+        ),
+        "no-grad-exit",
+        ("decode", (17,), True),
+    ]
+
+
 def test_guardrail_close_collects_destructors_inside_private_output(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

@@ -630,14 +630,18 @@ def _discover_facets(results: Path) -> list[dict[str, Any]]:
             raise ValueError(f"manifest {manifest_path} lacks config.run")
         attacker = run_config.get("attacker")
         corpus = run_config.get("corpus")
+        defense = run_config.get("defense")
         if not isinstance(attacker, str) or not attacker:
             raise ValueError(f"manifest {manifest_path} lacks attacker facet")
         if not isinstance(corpus, str) or not corpus:
             raise ValueError(f"manifest {manifest_path} lacks corpus facet")
+        if not isinstance(defense, str) or not defense:
+            raise ValueError(f"manifest {manifest_path} lacks defense facet")
         discovered.append({
             "path": path,
             "attacker": attacker,
             "corpus": corpus,
+            "defense": defense,
             "manifest_path": manifest_path,
         })
     expected_markers = {
@@ -679,9 +683,10 @@ def _validate_grid_scope(
     *,
     attacker: str,
     corpus: str,
+    defense: str,
     cells: list[dict[str, Any]],
 ) -> dict[str, Any]:
-    """Validate requested-grid accounting for one attacker/corpus facet."""
+    """Validate requested-grid accounting for one attacker/corpus/defense facet."""
     locks = sorted([
         *results.rglob("*.grid.lock"),
         *results.rglob("*.cell.lock"),
@@ -697,13 +702,16 @@ def _validate_grid_scope(
         request = grid.get("request")
         if not isinstance(request, dict):
             raise ValueError(f"grid manifest {path} lacks request")
-        if attacker in (request.get("attackers") or []) and corpus in (
-            request.get("corpora") or []
+        if (
+            attacker in (request.get("attackers") or [])
+            and corpus in (request.get("corpora") or [])
+            and request.get("defense") == defense
         ):
             relevant.append((path, grid))
     if not relevant:
         raise ValueError(
-            f"completed cells for attacker={attacker!r}, corpus={corpus!r} "
+            f"completed cells for attacker={attacker!r}, corpus={corpus!r}, "
+            f"defense={defense!r} "
             "are not tracked by any grid manifest"
         )
 
@@ -859,7 +867,7 @@ def _validate_grid_scope(
     if accounted_markers != selected_markers:
         raise ValueError(
             "grid/completed-cell marker inventory mismatch for "
-            f"attacker={attacker!r}, corpus={corpus!r}: "
+            f"attacker={attacker!r}, corpus={corpus!r}, defense={defense!r}: "
             f"grid={sorted(accounted_markers)!r}, cells={sorted(selected_markers)!r}"
         )
     return {
@@ -876,6 +884,7 @@ def load(
     *,
     attacker: str = "replay",
     corpus: str | None = None,
+    defense: str = "none",
 ) -> tuple[dict[str, dict[str, TransferRecord]], dict[str, Any]]:
     """Load one complete, compatible run per model and audit every row."""
     per_model: dict[str, dict[str, TransferRecord]] = defaultdict(dict)
@@ -892,6 +901,7 @@ def load(
         item for item in discovered
         if item["attacker"] == attacker
         and (corpus is None or item["corpus"] == corpus)
+        and item["defense"] == defense
     ]
     selected_corpora = sorted({item["corpus"] for item in selected})
     if corpus is None and len(selected_corpora) > 1:
@@ -902,12 +912,17 @@ def load(
     if not selected:
         qualifier = f", corpus={corpus!r}" if corpus is not None else ""
         raise ValueError(
-            f"no judgment cells for attacker={attacker!r}{qualifier} in {results}"
+            f"no judgment cells for attacker={attacker!r}{qualifier}, "
+            f"defense={defense!r} in {results}"
         )
     effective_corpus = selected_corpora[0]
     cells = [_completed_cell(item["path"]) for item in selected]
     grid_audit = _validate_grid_scope(
-        results, attacker=attacker, corpus=effective_corpus, cells=cells
+        results,
+        attacker=attacker,
+        corpus=effective_corpus,
+        defense=defense,
+        cells=cells,
     )
 
     signatures = {cell["cohort_signature"] for cell in cells}
@@ -1106,7 +1121,11 @@ def load(
             cell["model"]: cell["integrity_mode"]
             for cell in sorted(cells, key=lambda value: value["model"])
         },
-        "facet": {"attacker": attacker, "corpus": effective_corpus},
+        "facet": {
+            "attacker": attacker,
+            "corpus": effective_corpus,
+            "defense": defense,
+        },
         "discovered_judgment_cells": len(discovered),
         "selected_judgment_cells": len(selected),
         "not_selected_other_facets": len(discovered) - len(selected),
@@ -1125,19 +1144,29 @@ def load_facets(
     *,
     attacker: str = "replay",
     corpus: str | None = None,
+    defense: str = "none",
 ) -> dict[str, tuple[dict[str, dict[str, TransferRecord]], dict[str, Any]]]:
-    """Load one strict transfer cohort per corpus for the selected attacker."""
+    """Load one strict transfer cohort per corpus for one attacker/defense."""
     discovered = _discover_facets(results)
     corpora = sorted({
         item["corpus"] for item in discovered
         if item["attacker"] == attacker
         and (corpus is None or item["corpus"] == corpus)
+        and item["defense"] == defense
     })
     if not corpora:
         qualifier = f", corpus={corpus!r}" if corpus is not None else ""
-        raise ValueError(f"no facets for attacker={attacker!r}{qualifier} in {results}")
+        raise ValueError(
+            f"no facets for attacker={attacker!r}{qualifier}, "
+            f"defense={defense!r} in {results}"
+        )
     return {
-        name: load(results, attacker=attacker, corpus=name)
+        name: load(
+            results,
+            attacker=attacker,
+            corpus=name,
+            defense=defense,
+        )
         for name in corpora
     }
 
@@ -1429,6 +1458,22 @@ def _safe_component(value: str) -> str:
     return rendered.strip("-") or "facet"
 
 
+def _write_json_create_only(path: Path, value: object) -> None:
+    try:
+        with path.open("x", encoding="utf-8", newline="\n") as handle:
+            handle.write(
+                json.dumps(
+                    value,
+                    indent=2,
+                    ensure_ascii=False,
+                    allow_nan=False,
+                )
+                + "\n"
+            )
+    except FileExistsError as exc:
+        raise ValueError(f"transfer output already exists: {path}") from exc
+
+
 def _heatmap(
     result: dict[str, Any], out: Path, *, filename: str = "transfer_matrix.png",
 ) -> bool:
@@ -1509,8 +1554,19 @@ def main(argv: list[str] | None = None) -> int:
         help="attacker facet (default: replay; response-conditioned Crescendo is not pooled)",
     )
     parser.add_argument(
+        "--defense",
+        default="none",
+        help="exact defense facet (default: none; defended cells are not pooled)",
+    )
+    parser.add_argument(
         "--corpus", default=None,
         help="optional corpus facet; without it, write one matrix per available corpus",
+    )
+    parser.add_argument(
+        "--output-dir",
+        type=Path,
+        default=None,
+        help="create-only output directory (default: write under RESULTS)",
     )
     args = parser.parse_args(argv)
     if args.bootstrap < 1:
@@ -1521,7 +1577,10 @@ def main(argv: list[str] | None = None) -> int:
         parser.error("--alpha must be strictly between 0 and 1")
     try:
         loaded_facets = load_facets(
-            args.results, attacker=args.attacker, corpus=args.corpus
+            args.results,
+            attacker=args.attacker,
+            corpus=args.corpus,
+            defense=args.defense,
         )
     except ValueError as exc:
         print(f"transfer input validation failed: {exc}", file=sys.stderr)
@@ -1563,48 +1622,62 @@ def main(argv: list[str] | None = None) -> int:
         print(f"transfer analysis validation failed: {exc}", file=sys.stderr)
         return 1
 
-    output = args.results / "transfer_matrix.json"
-    if len(results_by_corpus) == 1 and not not_applicable:
-        corpus_name, result = next(iter(results_by_corpus.items()))
-        output.write_text(
-            json.dumps(result, indent=2, ensure_ascii=False, allow_nan=False) + "\n",
-            encoding="utf-8",
+    output_dir = args.output_dir or args.results
+    if args.output_dir is not None:
+        if output_dir.exists() or output_dir.is_symlink():
+            print(
+                f"transfer output directory already exists: {output_dir}",
+                file=sys.stderr,
+            )
+            return 1
+        output_dir.mkdir(parents=True, exist_ok=False)
+    existing_outputs = sorted(output_dir.glob("transfer_matrix*"))
+    if existing_outputs:
+        print(
+            f"transfer output already exists: {existing_outputs[0]}",
+            file=sys.stderr,
         )
-        _heatmap(result, args.results)
-        _print_matrix(result, corpus=corpus_name)
-    else:
-        artifacts: dict[str, dict[str, str]] = {}
-        for corpus_name, result in results_by_corpus.items():
-            facet_stem = (
-                f"transfer_matrix__{_safe_component(args.attacker)}__"
-                f"{_safe_component(corpus_name)}"
-            )
-            json_path = args.results / f"{facet_stem}.json"
-            png_name = f"{facet_stem}.png"
-            json_path.write_text(
-                json.dumps(result, indent=2, ensure_ascii=False, allow_nan=False) + "\n",
-                encoding="utf-8",
-            )
-            artifacts[corpus_name] = {"json": json_path.name}
-            if _heatmap(result, args.results, filename=png_name):
-                artifacts[corpus_name]["png"] = png_name
+        return 1
+
+    output = output_dir / "transfer_matrix.json"
+    try:
+        if len(results_by_corpus) == 1 and not not_applicable:
+            corpus_name, result = next(iter(results_by_corpus.items()))
+            _write_json_create_only(output, result)
+            _heatmap(result, output_dir)
             _print_matrix(result, corpus=corpus_name)
-        index = {
-            "schema_version": "2.1-faceted",
-            "attacker": args.attacker,
-            "corpora": sorted(results_by_corpus),
-            "artifacts": artifacts,
-            "facets": results_by_corpus,
-            "not_applicable_facets": not_applicable,
-            "unexplained_exclusions": 0,
-            "analysis_source": analysis_source_identity([
-                Path(__file__), Path(__file__).resolve().parents[1] / "src" / "ura" / "metrics.py",
-            ]),
-        }
-        output.write_text(
-            json.dumps(index, indent=2, ensure_ascii=False, allow_nan=False) + "\n",
-            encoding="utf-8",
-        )
+        else:
+            artifacts: dict[str, dict[str, str]] = {}
+            for corpus_name, result in results_by_corpus.items():
+                facet_stem = (
+                    f"transfer_matrix__{_safe_component(args.attacker)}__"
+                    f"{_safe_component(corpus_name)}"
+                )
+                json_path = output_dir / f"{facet_stem}.json"
+                png_name = f"{facet_stem}.png"
+                _write_json_create_only(json_path, result)
+                artifacts[corpus_name] = {"json": json_path.name}
+                if _heatmap(result, output_dir, filename=png_name):
+                    artifacts[corpus_name]["png"] = png_name
+                _print_matrix(result, corpus=corpus_name)
+            index = {
+                "schema_version": "2.1-faceted",
+                "attacker": args.attacker,
+                "defense": args.defense,
+                "corpora": sorted(results_by_corpus),
+                "artifacts": artifacts,
+                "facets": results_by_corpus,
+                "not_applicable_facets": not_applicable,
+                "unexplained_exclusions": 0,
+                "analysis_source": analysis_source_identity([
+                    Path(__file__),
+                    Path(__file__).resolve().parents[1] / "src" / "ura" / "metrics.py",
+                ]),
+            }
+            _write_json_create_only(output, index)
+    except ValueError as exc:
+        print(f"transfer output validation failed: {exc}", file=sys.stderr)
+        return 1
     excluded = {
         corpus_name: result["load_audit"].get("excluded", {})
         for corpus_name, result in results_by_corpus.items()

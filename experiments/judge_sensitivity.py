@@ -725,6 +725,7 @@ def analyse(
     *,
     attacker: str = "replay",
     corpus: str | None = None,
+    defense: str = "none",
 ) -> dict[str, Any]:
     _, cells = _validated_artifacts(results)
     selected: list[dict[str, Any]] = []
@@ -733,7 +734,7 @@ def analyse(
         run = _run_config(cell)
         matches = run["attacker"] == attacker and (
             corpus is None or run["corpus"] == corpus
-        )
+        ) and run["defense"] == defense
         if matches:
             selected.append(cell)
         else:
@@ -742,11 +743,13 @@ def analyse(
                 "run_id": cell["run_id"],
                 "corpus": run["corpus"],
                 "attacker": run["attacker"],
+                "defense": run["defense"],
                 "reason": "outside_explicit_selector",
             })
     if not selected:
         raise ValueError(
-            f"no completed R1 cells for attacker={attacker!r}, corpus={corpus!r}"
+            f"no completed R1 cells for attacker={attacker!r}, corpus={corpus!r}, "
+            f"defense={defense!r}"
         )
     facets: dict[str, Any] = {}
     for cell in selected:
@@ -779,7 +782,11 @@ def analyse(
             "a stage decides only when cascade_confident=true and parsed is not false; "
             "placeholder labels on abstentions are never interpreted as safe/non-events"
         ),
-        "selector": {"attacker": attacker, "corpus": corpus},
+        "selector": {
+            "attacker": attacker,
+            "corpus": corpus,
+            "defense": defense,
+        },
         "artifact_root": str(results),
         "analysis_source": analysis_source_identity([
             Path(__file__), _REPO_ROOT / "experiments" / "human_audit.py",
@@ -805,21 +812,42 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--results", type=Path, required=True)
     parser.add_argument("--attacker", default="replay")
     parser.add_argument("--corpus", default=None)
+    parser.add_argument(
+        "--defense",
+        default="none",
+        help="exact defense facet (default: none; defended responses remain separate)",
+    )
     parser.add_argument("--output", type=Path, default=None)
     args = parser.parse_args(argv)
+    output = args.output or args.results / "judge_sensitivity.json"
+    if output.exists() or output.is_symlink():
+        print(f"judge-sensitivity output already exists: {output}", file=sys.stderr)
+        return 1
     try:
         result = analyse(
-            args.results, attacker=args.attacker, corpus=args.corpus
+            args.results,
+            attacker=args.attacker,
+            corpus=args.corpus,
+            defense=args.defense,
         )
     except ValueError as exc:
         print(f"judge-sensitivity validation failed: {exc}", file=sys.stderr)
         return 1
-    output = args.output or args.results / "judge_sensitivity.json"
     output.parent.mkdir(parents=True, exist_ok=True)
-    output.write_text(
-        json.dumps(result, indent=2, ensure_ascii=False, allow_nan=False) + "\n",
-        encoding="utf-8",
-    )
+    try:
+        with output.open("x", encoding="utf-8", newline="\n") as handle:
+            handle.write(
+                json.dumps(
+                    result,
+                    indent=2,
+                    ensure_ascii=False,
+                    allow_nan=False,
+                )
+                + "\n"
+            )
+    except FileExistsError:
+        print(f"judge-sensitivity output already exists: {output}", file=sys.stderr)
+        return 1
     print(
         f"wrote {output}: {len(result['facets'])} completion-validated cell(s); "
         "no target or judge calls made"

@@ -62,6 +62,7 @@ from ura.approximate_metrics import (
     validate_approximate_decision,
     validate_approximate_metric_provenance,
 )
+from ura.data_models import SCHEMA_VERSION
 from ura.eligibility import validate_eligibility_plan
 from ura.lane_canary import validate_lane_canary_summary
 from ura.lane_projection import (
@@ -81,6 +82,7 @@ from ura.request_envelope import (
     validate_request_envelope,
     validate_request_envelope_descriptor,
 )
+from ura.runner import Runner
 from ura.source_conformance import validate_source_conformance_manifest
 from ura.strict_json import strict_json_loads
 
@@ -119,6 +121,32 @@ LANE_RE = re.compile(r"[a-z0-9][a-z0-9._-]{0,127}")
 HEX64_RE = re.compile(r"[0-9a-f]{64}")
 PROJECTION_ID_RE = re.compile(r"lane-projection-[0-9a-f]{24}")
 CANARY_ID_RE = re.compile(r"lane-canary-[0-9a-f]{24}")
+FAILED_ATTESTATION_SCHEMA = "ura-phase5-failed-live-attestation-attempt/1"
+FAILED_ATTESTATION_ROW_FIELDS = frozenset({
+    "target", "modality", "arm", "sample_seed", "run_root", "exit_code",
+})
+FAILED_ATTESTATION_TSV_FIELDS = (
+    "target", "modality", "arm", "sample_seed", "run_root", "exit_code",
+)
+FAILED_ATTESTATION_CALL_AUDIT_FIELDS = frozenset({
+    "transport_attempt_count", "logical_call_count", "provider", "operation",
+    "resolved_model", "status_code", "error_type", "provider_request_id",
+    "provider_response_id",
+})
+FAILED_ATTESTATION_CIRCUIT_FIELDS = frozenset({
+    "opened_at", "exception_type", "phase", "message", "call_audit",
+    "budget_snapshot",
+})
+EXPECTED_FAILED_ATTESTATION_PROBES = {
+    ("qwen3-vl", "text", "strongreject_official"): frozenset({0, 1, 8}),
+    ("qwen3-vl", "image", "harmbench_multimodal"): frozenset({0, 1, 4, 5, 6}),
+    ("llava-base", "text", "strongreject_official"): frozenset({0, 1, 8}),
+    ("llava-base", "image", "harmbench_multimodal"): frozenset({0, 1, 4, 5, 6}),
+}
+FAILED_ATTESTATION_MODEL_PREFIXES = {
+    "qwen3-vl": "vllm:Qwen/Qwen3-VL-8B-Instruct@",
+    "llava-base": "vllm:llava-hf/llava-v1.6-mistral-7b-hf@",
+}
 PROMPT_PROXY_ARM = "cyberseceval_prompt_injection"
 PROMPT_PROXY_METRIC = "cyberseceval_prompt_injection_judge_question"
 EXPECTED_SCORE_GUARD = "meta-llama/Llama-Guard-3-8B"
@@ -893,30 +921,32 @@ def exact_descriptor(raw: object, *, label: str) -> Path:
 # BEGIN_RR_EVIDENCE_TREE_DESCRIPTOR
 def rr_tree_inventory(
     root: Path,
+    *,
+    label: str = "RR evidence",
 ) -> tuple[list[tuple[str, Path]], dict[str, tuple[int, int, int, int, int]]]:
-    """Enumerate one exact, symlink-free RR evidence-tree inventory."""
+    """Enumerate one exact, symlink-free evidence-tree inventory."""
 
     files: list[tuple[str, Path]] = []
     identities: dict[str, tuple[int, int, int, int, int]] = {}
     try:
         members = list(root.rglob("*"))
     except OSError as exc:
-        raise Gate5Error(f"cannot enumerate RR evidence root {root}: {exc}") from exc
+        raise Gate5Error(f"cannot enumerate {label} root {root}: {exc}") from exc
     for member in members:
         relative = member.relative_to(root).as_posix()
         try:
             entry = member.lstat()
         except OSError as exc:
-            raise Gate5Error(f"cannot inspect RR evidence member {member}: {exc}") from exc
+            raise Gate5Error(f"cannot inspect {label} member {member}: {exc}") from exc
         if stat.S_ISLNK(entry.st_mode):
-            raise Gate5Error(f"RR evidence root contains a symlink: {member}")
+            raise Gate5Error(f"{label} root contains a symlink: {member}")
         if stat.S_ISDIR(entry.st_mode):
             kind = stat.S_IFDIR
         elif stat.S_ISREG(entry.st_mode):
             kind = stat.S_IFREG
             files.append((relative, member))
         else:
-            raise Gate5Error(f"RR evidence root contains a non-regular member: {member}")
+            raise Gate5Error(f"{label} root contains a non-regular member: {member}")
         identities[relative] = (
             kind,
             entry.st_dev,
@@ -1219,6 +1249,647 @@ def read_tsv(path: Path) -> list[dict[str, str]]:
     return [{str(k): str(v) for k, v in row.items()} for row in rows]
 
 
+def read_failed_attestation_tsv(path: Path) -> list[dict[str, str]]:
+    """Read the create-only retry ledger, permitting its canonical empty state."""
+
+    source, text = stable_text(path, max_bytes=16 * 1024 * 1024)
+    expected_header = "\t".join(FAILED_ATTESTATION_TSV_FIELDS)
+    lines = text.splitlines()
+    if (
+        not text.endswith("\n")
+        or "\r" in text
+        or "\0" in text
+        or not lines
+        or lines[0] != expected_header
+        or any(not line for line in lines[1:])
+    ):
+        raise Gate5Error(
+            f"failed live-attestation TSV is not canonical LF-delimited data: {source}"
+        )
+    reader = csv.DictReader(io.StringIO(text, newline=""), delimiter="\t")
+    if tuple(reader.fieldnames or ()) != FAILED_ATTESTATION_TSV_FIELDS:
+        raise Gate5Error(f"failed live-attestation TSV header changed: {source}")
+    rows = list(reader)
+    if any(
+        None in row
+        or set(row) != FAILED_ATTESTATION_ROW_FIELDS
+        or any(value is None for value in row.values())
+        for row in rows
+    ):
+        raise Gate5Error(f"failed live-attestation TSV row shape changed: {source}")
+    return [{str(key): str(value) for key, value in row.items()} for row in rows]
+
+
+def read_json_artifact(
+    path_value: str | Path, *, max_bytes: int = MAX_JSON_BYTES
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    path, digest, size, raw = stable_file_observation(
+        path_value, max_bytes=max_bytes, retain_payload=True
+    )
+    assert raw is not None
+    try:
+        value = strict_json_loads(raw.decode("utf-8"))
+    except (UnicodeError, TypeError, ValueError) as exc:
+        raise Gate5Error(f"strict JSON validation failed for {path}: {exc}") from exc
+    if not isinstance(value, dict):
+        raise Gate5Error(f"expected a JSON object: {path}")
+    return value, {"path": str(path), "sha256": digest, "bytes": size}
+
+
+def failed_attestation_tree_descriptor(root: Path) -> dict[str, Any]:
+    """Bind every retained file in one failed transport-probe tree."""
+
+    label = "failed live-attestation attempt"
+    try:
+        root_before = root.lstat()
+    except OSError as exc:
+        raise Gate5Error(f"cannot inspect {label} root {root}: {exc}") from exc
+    files, inventory_before = rr_tree_inventory(root, label=label)
+    if not files or len(files) > MAX_CONTROL_FILES:
+        raise Gate5Error(f"{label} root has an invalid file inventory: {root}")
+    artifacts: list[dict[str, Any]] = []
+    tree_hash = hashlib.sha256()
+    total_bytes = 0
+    for relative, member in files:
+        _resolved, digest, size, _payload = stable_file_observation(
+            member, max_bytes=MAX_LOG_BYTES, retain_payload=False
+        )
+        try:
+            current = member.lstat()
+        except OSError as exc:
+            raise Gate5Error(f"{label} member changed after reading: {member}") from exc
+        current_identity = (
+            stat.S_IFMT(current.st_mode), current.st_dev, current.st_ino,
+            current.st_size, current.st_mtime_ns,
+        )
+        if current_identity != inventory_before[relative]:
+            raise Gate5Error(f"{label} member changed during tree scan: {member}")
+        artifacts.append({"file": relative, "sha256": digest, "bytes": size})
+        total_bytes += size
+        tree_hash.update(relative.encode("utf-8"))
+        tree_hash.update(b"\0")
+        tree_hash.update(str(size).encode("ascii"))
+        tree_hash.update(b"\0")
+        tree_hash.update(digest.encode("ascii"))
+        tree_hash.update(b"\n")
+    files_after, inventory_after = rr_tree_inventory(root, label=label)
+    try:
+        root_after = root.lstat()
+    except OSError as exc:
+        raise Gate5Error(f"{label} root changed after scanning: {root}") from exc
+    if (
+        [relative for relative, _path in files_after]
+        != [relative for relative, _path in files]
+        or inventory_after != inventory_before
+        or (
+            root_before.st_dev, root_before.st_ino, root_before.st_size,
+            root_before.st_mtime_ns,
+        )
+        != (
+            root_after.st_dev, root_after.st_ino, root_after.st_size,
+            root_after.st_mtime_ns,
+        )
+    ):
+        raise Gate5Error(f"{label} root changed during tree scan: {root}")
+    return {
+        "path": str(root),
+        "sha256": tree_hash.hexdigest(),
+        "bytes": total_bytes,
+        "files": len(artifacts),
+        "artifacts": artifacts,
+    }
+
+
+def failed_attestation_int(raw: str, *, label: str, allow_zero: bool) -> int:
+    if re.fullmatch(r"0|[1-9][0-9]*", raw) is None:
+        raise Gate5Error(f"failed live-attestation {label} is not canonical decimal")
+    value = int(raw, 10)
+    if (not allow_zero and value == 0) or value > 255:
+        raise Gate5Error(f"failed live-attestation {label} is outside its bound")
+    return value
+
+
+def validate_failed_attestation_budget(
+    raw: object, *, grid_id: str
+) -> dict[str, Any]:
+    fields = {
+        "budget_id", "max_target_calls", "max_judge_calls", "max_http_attempts",
+        "deadline_epoch", "target_calls", "judge_calls", "http_attempts",
+        "accounting_semantics",
+    }
+    if not isinstance(raw, dict) or set(raw) != fields:
+        raise Gate5Error("failed live-attestation durable budget fields changed")
+    deadline = raw.get("deadline_epoch")
+    if (
+        raw.get("budget_id") != grid_id
+        or raw.get("accounting_semantics")
+        != "durable_pre_call_logical_reservation_v1"
+        or raw.get("max_target_calls") != 1
+        or type(raw.get("max_target_calls")) is not int
+        or raw.get("max_judge_calls") is not None
+        or raw.get("max_http_attempts") is not None
+        or isinstance(deadline, bool)
+        or not isinstance(deadline, (int, float))
+        or not math.isfinite(float(deadline))
+        or type(raw.get("target_calls")) is not int
+        or not 0 <= raw["target_calls"] <= 1
+        or type(raw.get("judge_calls")) is not int
+        or raw["judge_calls"] != 0
+        or type(raw.get("http_attempts")) is not int
+        or raw["http_attempts"] != 0
+    ):
+        raise Gate5Error("failed live-attestation durable budget values changed")
+    return dict(raw)
+
+
+def validate_failed_attestation_call_audit(
+    raw: object, *, label: str
+) -> dict[str, Any]:
+    if (
+        not isinstance(raw, dict)
+        or set(raw) - FAILED_ATTESTATION_CALL_AUDIT_FIELDS
+    ):
+        raise Gate5Error(f"{label} has invalid failed-call audit provenance")
+    for key, value in raw.items():
+        if key in {"transport_attempt_count", "logical_call_count"}:
+            if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+                raise Gate5Error(f"{label} has invalid failed-call audit {key}")
+        elif not (
+            (isinstance(value, int) and not isinstance(value, bool))
+            or (isinstance(value, str) and len(value) <= 512)
+        ):
+            raise Gate5Error(f"{label} has invalid failed-call audit {key}")
+    return dict(raw)
+
+
+def validate_failed_attestation_circuit(
+    raw: object,
+    *,
+    key: str,
+    budget: Mapping[str, Any],
+    target_key: str,
+) -> dict[str, Any]:
+    expected_stage = {
+        "budget": ("unknown", "BudgetExhausted"),
+        "judge": ("judge_call", "ExternalCallFailure"),
+        target_key: ("target_call", "ExternalCallFailure"),
+    }.get(key)
+    if expected_stage is None:
+        raise Gate5Error(f"failed live-attestation retained an unexpected circuit: {key}")
+    if not isinstance(raw, dict) or set(raw) != FAILED_ATTESTATION_CIRCUIT_FIELDS:
+        raise Gate5Error(f"failed live-attestation circuit fields changed: {key}")
+    for field in ("opened_at", "exception_type", "phase", "message"):
+        value = raw.get(field)
+        if not isinstance(value, str) or not value or len(value) > 2000:
+            raise Gate5Error(
+                f"failed live-attestation circuit {field} is invalid: {key}"
+            )
+    if (raw["phase"], raw["exception_type"]) != expected_stage:
+        raise Gate5Error(f"failed live-attestation circuit stage changed: {key}")
+    if raw.get("budget_snapshot") != budget:
+        raise Gate5Error(f"failed live-attestation circuit budget changed: {key}")
+    return {
+        **raw,
+        "call_audit": validate_failed_attestation_call_audit(
+            raw.get("call_audit"), label=f"failed live-attestation circuit {key}"
+        ),
+    }
+
+
+def failed_checkpoint_descriptor(
+    path: Path,
+    *,
+    run_id: str,
+    budget: Mapping[str, Any],
+    response_only: bool,
+) -> dict[str, Any]:
+    before = descriptor(path, max_bytes=MAX_LOG_BYTES)
+    try:
+        if response_only:
+            records = Runner.load_response_checkpoint(path, expected_run_id=run_id)
+            snapshots = Runner.response_checkpoint_budget_snapshots(path)
+        else:
+            records = Runner.load_checkpoint(path, expected_run_id=run_id)
+            snapshots = Runner.checkpoint_budget_snapshots(path)
+    except (OSError, TypeError, ValueError) as exc:
+        raise Gate5Error(f"failed live-attestation checkpoint is invalid: {path}: {exc}") from exc
+    after = descriptor(path, max_bytes=MAX_LOG_BYTES)
+    if before != after:
+        raise Gate5Error(f"failed live-attestation checkpoint changed while validating: {path}")
+    if not snapshots or any(snapshot != budget for snapshot in snapshots):
+        raise Gate5Error(f"failed live-attestation checkpoint budget differs: {path}")
+    return {"artifact": before, "records": len(records)}
+
+
+def validate_failed_attestation_candidate(
+    raw: Mapping[str, str], *, work: Path
+) -> dict[str, Any]:
+    """Bind one rejected transport-probe candidate without admitting it."""
+
+    if set(raw) != FAILED_ATTESTATION_ROW_FIELDS:
+        raise Gate5Error("failed live-attestation TSV fields changed")
+    target = raw["target"]
+    modality = raw["modality"]
+    arm = raw["arm"]
+    seed = failed_attestation_int(raw["sample_seed"], label="sample seed", allow_zero=True)
+    exit_code = failed_attestation_int(raw["exit_code"], label="exit code", allow_zero=False)
+    probe = (target, modality, arm)
+    if probe not in EXPECTED_FAILED_ATTESTATION_PROBES:
+        raise Gate5Error(f"unexpected failed live-attestation probe identity: {probe!r}")
+    if seed not in EXPECTED_FAILED_ATTESTATION_PROBES[probe]:
+        raise Gate5Error(f"unexpected failed live-attestation sample seed: {probe!r}/{seed}")
+
+    supplied_root = Path(raw["run_root"]).expanduser()
+    if not supplied_root.is_absolute():
+        raise Gate5Error("failed live-attestation run root is not absolute")
+    run_root = checked_dir(supplied_root, label="failed live-attestation run root")
+    if Path(os.path.abspath(supplied_root)) != run_root:
+        raise Gate5Error("failed live-attestation run root is not already resolved")
+    attestation_root = checked_dir(
+        work / "runs" / "thesis" / "attestation",
+        label="thesis live-attestation root",
+    )
+    parent_pattern = re.compile(
+        rf"{re.escape(target)}-{re.escape(modality)}-seed{seed}-"
+        r"20[0-9]{2}[01][0-9][0-3][0-9]T[0-2][0-9][0-5][0-9][0-5][0-9]Z"
+    )
+    if (
+        not run_root.is_relative_to(attestation_root)
+        or run_root.name != "run"
+        or parent_pattern.fullmatch(run_root.parent.name) is None
+        or run_root.parent.parent != attestation_root
+    ):
+        raise Gate5Error("failed live-attestation run root escaped its exact layout")
+
+    tree_before = failed_attestation_tree_descriptor(run_root)
+    grid_paths = sorted(run_root.glob("grid-*.grid.json"))
+    budget_paths = sorted(run_root.glob("grid-*.budget.json"))
+    circuit_paths = sorted(run_root.glob("grid-*.circuits.json"))
+    if (
+        len(grid_paths) != 1
+        or len(budget_paths) != 1
+        or len(circuit_paths) > 1
+    ):
+        raise Gate5Error(
+            "failed live-attestation root must retain one grid/budget and at most one circuit artifact"
+        )
+    grid, grid_artifact = read_json_artifact(grid_paths[0])
+    grid_id = grid.get("grid_id")
+    if (
+        not isinstance(grid_id, str)
+        or re.fullmatch(r"grid-[0-9a-f]{24}", grid_id) is None
+        or grid_paths[0].name != f"{grid_id}.grid.json"
+        or budget_paths[0].name != f"{grid_id}.budget.json"
+        or (
+            circuit_paths
+            and circuit_paths[0].name != f"{grid_id}.circuits.json"
+        )
+    ):
+        raise Gate5Error("failed live-attestation grid artifact identity changed")
+    budget_raw, budget_artifact = read_json_artifact(
+        budget_paths[0], max_bytes=64 * 1024
+    )
+    budget = validate_failed_attestation_budget(budget_raw, grid_id=grid_id)
+    if grid.get("call_budget_snapshot") != budget:
+        raise Gate5Error("failed live-attestation grid rolled back its durable budget")
+
+    request = grid.get("request")
+    expected_global_budget = {
+        "accounting_semantics": "durable_pre_call_logical_reservation_v1",
+        "call_start_deadline_seconds_from_first_invocation": 3600,
+        "max_http_attempts": None,
+        "max_judge_calls": None,
+        "max_target_calls": 1,
+    }
+    if not isinstance(request, dict):
+        raise Gate5Error("failed live-attestation grid lacks its request")
+    models = request.get("models")
+    project_revision = request.get("project_revision")
+    if (
+        request.get("execution_purpose") != "attestation_probe"
+        or request.get("attestation_probe") is not True
+        or request.get("dry_run") is not False
+        or request.get("attackers") != ["replay"]
+        or request.get("corpora") != [arm]
+        or request.get("judges") != ["rules"]
+        or request.get("limit") != 1
+        or type(request.get("limit")) is not int
+        or request.get("sample_seed") != seed
+        or type(request.get("sample_seed")) is not int
+        or request.get("seeds") != [0]
+        or request.get("max_queries") != 1
+        or request.get("max_turns") != 1
+        or request.get("global_call_budget") != expected_global_budget
+        or not isinstance(models, list)
+        or len(models) != 1
+        or not isinstance(models[0], str)
+        or not models[0].startswith(FAILED_ATTESTATION_MODEL_PREFIXES[target])
+        or not isinstance(project_revision, dict)
+        or project_revision.get("expected_commit") != EXPECTED_COMMIT
+        or project_revision.get("observed_commit") != EXPECTED_COMMIT
+    ):
+        raise Gate5Error("failed live-attestation request binding changed")
+    projection = request.get("call_projection")
+    if (
+        not isinstance(projection, dict)
+        or projection.get("semantics") != "conservative_complete_grid_upper_bound_v1"
+        or projection.get("trajectories") != 1
+        or projection.get("target_calls") != 1
+        or projection.get("judge_calls") != 0
+        or projection.get("local_guardrail_evaluations") != 0
+        or projection.get("http_attempts") != 0
+        or any(type(projection.get(field)) is not int for field in (
+            "trajectories", "target_calls", "judge_calls",
+            "local_guardrail_evaluations", "http_attempts",
+        ))
+    ):
+        raise Gate5Error("failed live-attestation call projection changed")
+
+    is_derivation_failure = exit_code == 90
+    cells = grid.get("cells")
+    expected_status = "complete" if is_derivation_failure else "partial"
+    if (
+        grid.get("status") != expected_status
+        or type(grid.get("requested_cells")) is not int
+        or grid.get("requested_cells") != 1
+        or type(grid.get("accounted_cells")) is not int
+        or grid.get("accounted_cells") != 1
+        or not isinstance(cells, list)
+        or len(cells) != 1
+        or not isinstance(cells[0], dict)
+        or cells[0].get("model_spec") != models[0]
+        or cells[0].get("attacker") != "replay"
+        or cells[0].get("corpus") != arm
+    ):
+        raise Gate5Error("failed live-attestation grid lifecycle changed")
+    if is_derivation_failure:
+        if (
+            grid.get("n_errors") != 0
+            or grid.get("n_new_complete") != 1
+            or grid.get("n_existing_complete") != 0
+            or cells[0].get("status") != "complete"
+        ):
+            raise Gate5Error("live-attestation derivation failure lacks a complete probe grid")
+    elif (
+        type(grid.get("n_errors")) is not int
+        or grid["n_errors"] <= 0
+        or grid.get("n_new_complete") != 0
+        or grid.get("n_existing_complete") != 0
+        or cells[0].get("status") != "error"
+    ):
+        raise Gate5Error("failed live-attestation runner failure lifecycle changed")
+
+    error_rows: list[dict[str, Any]] = []
+    completed_attempt_counts: set[int] = set()
+    for error_path in sorted(run_root.glob("*.error.json")):
+        error, error_artifact = read_json_artifact(error_path)
+        completed = error.get("completed_attempts")
+        exception_type = error.get("exception_type")
+        execution_started = error.get("execution_started")
+        call_audit = validate_failed_attestation_call_audit(
+            error.get("call_audit"), label=f"failed live-attestation error {error_path}"
+        )
+        if (
+            error.get("status") != "error"
+            or error.get("grid_id") != grid_id
+            or error.get("call_budget_snapshot") != budget
+            or error.get("phase") != "cell_execution_or_validation"
+            or error.get("corpus") != arm
+            or error.get("model_spec") != models[0]
+            or error.get("attacker") != "replay"
+            or not isinstance(exception_type, str)
+            or not exception_type
+            or len(exception_type) > 2000
+            or type(execution_started) is not bool
+            or type(completed) is not int
+            or completed < 0
+        ):
+            raise Gate5Error(f"failed live-attestation error artifact changed: {error_path}")
+        completed_attempt_counts.add(completed)
+        error_rows.append({
+            "artifact": error_artifact,
+            "run_id": error.get("run_id"),
+            "exception_type": exception_type,
+            "execution_started": execution_started,
+            "call_audit": call_audit,
+            "completed_attempts": completed,
+        })
+    if is_derivation_failure:
+        if error_rows:
+            raise Gate5Error("live-attestation derivation failure retained runner errors")
+        completed_attempts = 1
+    else:
+        if len(error_rows) != 1 or len(completed_attempt_counts) != 1:
+            raise Gate5Error("failed live-attestation runner failure lacks one exact error")
+        completed_attempts = next(iter(completed_attempt_counts))
+        cell_error = cells[0].get("error_artifact")
+        error_artifact = error_rows[0]["artifact"]
+        if cell_error != {
+            "file": Path(error_artifact["path"]).name,
+            "sha256": error_artifact["sha256"],
+            "bytes": error_artifact["bytes"],
+        }:
+            raise Gate5Error("failed live-attestation cell/error descriptor changed")
+        if (
+            cells[0].get("run_id") != error_rows[0]["run_id"]
+            or cells[0].get("execution_started")
+            is not error_rows[0]["execution_started"]
+        ):
+            raise Gate5Error("failed live-attestation cell/error lifecycle changed")
+
+    circuit_artifact: dict[str, Any] | None = None
+    circuit_values: dict[str, dict[str, Any]] = {}
+    if circuit_paths:
+        circuits, circuit_artifact = read_json_artifact(
+            circuit_paths[0], max_bytes=4 * 1024 * 1024
+        )
+        raw_circuits = circuits.get("circuits")
+        if (
+            set(circuits) != {"format_version", "grid_id", "circuits"}
+            or circuits.get("format_version") != 1
+            or type(circuits.get("format_version")) is not int
+            or circuits.get("grid_id") != grid_id
+            or not isinstance(raw_circuits, dict)
+            or len(raw_circuits) != 1
+        ):
+            raise Gate5Error("failed live-attestation circuit accounting changed")
+        target_circuit_key = f"target:{models[0]}"
+        circuit_values = {
+            key: validate_failed_attestation_circuit(
+                value, key=key, budget=budget, target_key=target_circuit_key
+            )
+            for key, value in raw_circuits.items()
+        }
+        if not is_derivation_failure:
+            retained_circuit = next(iter(circuit_values.values()))
+            if (
+                error_rows[0]["exception_type"]
+                != retained_circuit["exception_type"]
+                or error_rows[0]["call_audit"] != retained_circuit["call_audit"]
+            ):
+                raise Gate5Error(
+                    "failed live-attestation error/circuit provenance changed"
+                )
+
+    run_ids = {
+        value for value in (
+            cells[0].get("run_id"),
+            *(item["run_id"] for item in error_rows),
+        )
+        if value is not None
+    }
+    response_paths = sorted(run_root.glob("*.responses.checkpoint.jsonl"))
+    completed_paths = sorted(
+        path for path in run_root.glob("*.checkpoint.jsonl")
+        if not path.name.endswith(".responses.checkpoint.jsonl")
+    )
+    if response_paths or completed_paths:
+        if len(run_ids) != 1 or not isinstance(next(iter(run_ids)), str):
+            raise Gate5Error("failed live-attestation checkpoint run identity changed")
+        run_id = next(iter(run_ids))
+    else:
+        run_id = None
+    response_checkpoints = [
+        failed_checkpoint_descriptor(
+            path, run_id=run_id, budget=budget, response_only=True
+        )
+        for path in response_paths
+        if run_id is not None
+    ]
+    completed_checkpoints = [
+        failed_checkpoint_descriptor(
+            path, run_id=run_id, budget=budget, response_only=False
+        )
+        for path in completed_paths
+        if run_id is not None
+    ]
+    response_records = sum(item["records"] for item in response_checkpoints)
+    completed_records = sum(item["records"] for item in completed_checkpoints)
+    if is_derivation_failure:
+        if (
+            response_checkpoints
+            or completed_checkpoints
+            or circuit_values
+            or budget["target_calls"] != 1
+        ):
+            raise Gate5Error("live-attestation derivation failure retained incomplete checkpoints")
+        runner_failure_stage = "not_applicable"
+    else:
+        if (
+            completed_records != completed_attempts
+            or completed_attempts != 0
+            or completed_checkpoints
+        ):
+            raise Gate5Error(
+                "failed live-attestation completed-checkpoint accounting changed"
+            )
+        target_circuit_key = f"target:{models[0]}"
+        circuit_keys = set(circuit_values)
+        error_type = error_rows[0]["exception_type"]
+        if error_type == "ExternalCallFailure":
+            if circuit_keys not in ({"judge"}, {target_circuit_key}):
+                raise Gate5Error(
+                    "failed live-attestation external-call error lacks its exact circuit"
+                )
+        elif error_type == "BudgetExhausted":
+            if circuit_keys != {"budget"}:
+                raise Gate5Error(
+                    "failed live-attestation budget error lacks its exact circuit"
+                )
+        elif circuit_keys:
+            raise Gate5Error(
+                "failed live-attestation circuit has no matching runner exception"
+            )
+        if budget["target_calls"] == 1 and response_records == 1:
+            if (
+                len(response_checkpoints) != 1
+                or circuit_keys not in (set(), {"judge"})
+            ):
+                raise Gate5Error(
+                    "failed live-attestation post-target provenance changed"
+                )
+            runner_failure_stage = (
+                "judge_call_after_checkpointed_target_response"
+                if circuit_keys == {"judge"}
+                else "local_scoring_after_checkpointed_target_response"
+            )
+        elif budget["target_calls"] == 1 and response_records == 0:
+            if response_checkpoints:
+                raise Gate5Error(
+                    "failed live-attestation response-checkpoint inventory changed"
+                )
+            if circuit_keys == {target_circuit_key}:
+                runner_failure_stage = "target_call_after_durable_reservation"
+            elif not circuit_keys and error_type not in {
+                "ExternalCallFailure", "BudgetExhausted"
+            }:
+                runner_failure_stage = (
+                    "target_response_validation_after_durable_reservation"
+                )
+            else:
+                raise Gate5Error(
+                    "failed live-attestation reserved target call lacks exact provenance"
+                )
+        elif budget["target_calls"] == 0 and response_records == 0:
+            if response_checkpoints or circuit_keys not in (set(), {"budget"}):
+                raise Gate5Error(
+                    "failed live-attestation pre-target provenance changed"
+                )
+            runner_failure_stage = (
+                "budget_before_target_reservation"
+                if circuit_keys == {"budget"}
+                else "runner_before_target_reservation"
+            )
+        else:
+            raise Gate5Error(
+                "failed live-attestation checkpoint/call accounting changed"
+            )
+
+    tree_after = failed_attestation_tree_descriptor(run_root)
+    if tree_after != tree_before:
+        raise Gate5Error("failed live-attestation tree changed during semantic validation")
+    return {
+        "schema": FAILED_ATTESTATION_SCHEMA,
+        "status": "failed_not_accepted_as_gate5_evidence",
+        "evidence_accepted": False,
+        "failure_stage": (
+            "live_attestation_receipt_derivation" if is_derivation_failure
+            else "runner_transport_probe"
+        ),
+        "runner_failure_stage": runner_failure_stage,
+        "controller_status_row": {
+            "target": target,
+            "modality": modality,
+            "arm": arm,
+            "sample_seed": seed,
+            "run_root": str(run_root),
+            "exit_code": exit_code,
+        },
+        "retained_run_tree": tree_after,
+        "artifacts": {
+            "grid": grid_artifact,
+            "budget_ledger": budget_artifact,
+            "response_checkpoints": response_checkpoints,
+            "completed_checkpoints": completed_checkpoints,
+            "errors": error_rows,
+            "circuits": circuit_artifact,
+        },
+        "call_accounting": {
+            "accounting_semantics": budget["accounting_semantics"],
+            "budget_id": budget["budget_id"],
+            "target_calls": budget["target_calls"],
+            "model_judge_calls": budget["judge_calls"],
+            "http_attempts": budget["http_attempts"],
+            "checkpointed_target_responses": response_records,
+            "completed_attempts": completed_attempts,
+        },
+        "acceptance_boundary": (
+            "The failed candidate is content-bound for call accounting only. It is not "
+            "a live-attestation receipt, Gate-5 canary, cap, or launch authorization."
+        ),
+    }
+
+
 def status_path(root: Path, kind: str) -> Path:
     names = (
         ("projections.tsv", "status.tsv")
@@ -1239,7 +1910,9 @@ def status_path(root: Path, kind: str) -> Path:
     raise Gate5Error(f"{root} has no {kind} status TSV with the required identity column")
 
 
-def validate_control_root(root_value: str | Path, *, kind: str) -> dict[str, Any]:
+def validate_control_root(
+    root_value: str | Path, *, kind: str, work: Path
+) -> dict[str, Any]:
     root = checked_dir(root_value, label=f"{kind} control root")
     exit_path = checked_file(root / ".exit", max_bytes=128)
     _exit_path, exit_text = stable_text(exit_path, max_bytes=128)
@@ -1259,10 +1932,13 @@ def validate_control_root(root_value: str | Path, *, kind: str) -> dict[str, Any
         if any(item["path"] == str(resolved) for item in files):
             continue
         files.append(descriptor(candidate, max_bytes=16 * 1024 * 1024))
-    attempt_failures: list[dict[str, str]] = []
+    attempt_failures: list[dict[str, Any]] = []
     attempt_failure_path = root / "attestation-failures.tsv"
     if attempt_failure_path.is_file() and not attempt_failure_path.is_symlink():
-        attempt_failures = read_tsv(attempt_failure_path)
+        attempt_failures = [
+            validate_failed_attestation_candidate(row, work=work)
+            for row in read_failed_attestation_tsv(attempt_failure_path)
+        ]
     return {
         "root": str(root),
         "kind": kind,
@@ -4887,6 +5563,313 @@ def validate_exact_inventory(
         raise Gate5Error(f"Gate-5 inventory category counts changed: {family_counts}")
 
 
+def failed_attestation_tsv_contract_self_test() -> dict[str, Any]:
+    """Prove a canonical empty retry ledger is valid but header drift is not."""
+
+    with tempfile.TemporaryDirectory(prefix="ura-gate5-empty-attestation-tsv-") as raw_tmp:
+        path = Path(raw_tmp).resolve() / "attestation-failures.tsv"
+        header = "\t".join(FAILED_ATTESTATION_TSV_FIELDS)
+        canonical = (header + "\n").encode("ascii")
+        path.write_bytes(canonical)
+        if read_failed_attestation_tsv(path) != []:
+            raise Gate5Error("canonical empty failed-attestation ledger was not empty")
+
+        mutations = {
+            "reordered_empty_ledger_header": (
+                "modality\ttarget\tarm\tsample_seed\trun_root\texit_code\n"
+            ).encode("ascii"),
+            "crlf_empty_ledger_header": (header + "\r\n").encode("ascii"),
+            "blank_row_after_empty_ledger_header": (header + "\n\n").encode("ascii"),
+        }
+        rejected: list[str] = []
+        for name, payload in mutations.items():
+            path.write_bytes(payload)
+            try:
+                read_failed_attestation_tsv(path)
+            except Gate5Error:
+                rejected.append(name)
+            else:
+                raise Gate5Error(
+                    f"empty failed-attestation TSV mutation did not fail closed: {name}"
+                )
+        path.write_bytes(canonical)
+        if read_failed_attestation_tsv(path) != []:
+            raise Gate5Error("restored empty failed-attestation ledger was not empty")
+        return {
+            "schema": "ura-phase5-empty-failed-attestation-tsv-self-test/1",
+            "status": "passed",
+            "canonical_empty_rows": 0,
+            "rejected_mutations": rejected,
+        }
+
+
+def failed_attestation_contract_self_test() -> dict[str, Any]:
+    """Prove failed paid-response evidence cannot be deleted or rolled back."""
+
+    with tempfile.TemporaryDirectory(prefix="ura-gate5-failed-attestation-") as raw_tmp:
+        work = Path(raw_tmp).resolve() / "work"
+        attestation_root = work / "runs" / "thesis" / "attestation"
+        run_root = (
+            attestation_root
+            / "llava-base-text-seed0-20260823T001917Z"
+            / "run"
+        )
+        run_root.mkdir(parents=True)
+        grid_id = "grid-" + "a" * 24
+        run_id = "run-" + "b" * 24
+        model = (
+            "vllm:llava-hf/llava-v1.6-mistral-7b-hf@"
+            + "c" * 40
+        )
+        budget = {
+            "budget_id": grid_id,
+            "max_target_calls": 1,
+            "max_judge_calls": None,
+            "max_http_attempts": None,
+            "deadline_epoch": 1_900_000_000.0,
+            "target_calls": 1,
+            "judge_calls": 0,
+            "http_attempts": 0,
+            "accounting_semantics": "durable_pre_call_logical_reservation_v1",
+        }
+        budget_path = run_root / f"{grid_id}.budget.json"
+        budget_path.write_bytes(canonical_bytes(budget))
+        response_checkpoint_path = run_root / "cell.responses.checkpoint.jsonl"
+        response_checkpoint = {
+            "schema_version": SCHEMA_VERSION,
+            "run_id": run_id,
+            "attempt": {
+                "id": "attempt-1",
+                "datapoint_id": "probe-1",
+                "attacker": "replay",
+                "strategy": "replay",
+                "target": model,
+                "turn_index": 0,
+                "rendered_input": [{"role": "user", "content": "probe"}],
+                "seed": 0,
+                "params": {},
+                "run_id": run_id,
+            },
+            "response": {
+                "attempt_id": "attempt-1",
+                "target": model,
+                "output_turns": [{"role": "assistant", "content": "answer"}],
+                "tool_trace": [],
+                "latency_ms": 1.0,
+                "tokens": {"completion": 1},
+                "raw": {},
+                "run_id": run_id,
+            },
+            "budget_after_target": budget,
+        }
+        response_checkpoint_path.write_bytes(canonical_bytes(response_checkpoint))
+        error_path = run_root / "cell.error.json"
+        error = {
+            "status": "error",
+            "grid_id": grid_id,
+            "run_id": run_id,
+            "phase": "cell_execution_or_validation",
+            "corpus": "strongreject_official",
+            "model_spec": model,
+            "target": model,
+            "attacker": "replay",
+            "exception_type": "ExternalCallFailure",
+            "message": "judge cascade produced no authoritative verdict",
+            "completed_attempts": 0,
+            "call_budget_snapshot": budget,
+            "call_audit": {},
+            "execution_started": True,
+        }
+        error_path.write_bytes(canonical_bytes(error))
+        error_desc = descriptor(error_path)
+        circuit_path = run_root / f"{grid_id}.circuits.json"
+        circuit_path.write_bytes(canonical_bytes({
+            "format_version": 1,
+            "grid_id": grid_id,
+            "circuits": {"judge": {
+                "opened_at": "2026-08-23T00:00:00+00:00",
+                "phase": "judge_call",
+                "exception_type": "ExternalCallFailure",
+                "message": "judge cascade produced no authoritative verdict",
+                "call_audit": {},
+                "budget_snapshot": budget,
+            }},
+        }))
+        request = {
+            "execution_purpose": "attestation_probe",
+            "attestation_probe": True,
+            "dry_run": False,
+            "attackers": ["replay"],
+            "corpora": ["strongreject_official"],
+            "judges": ["rules"],
+            "limit": 1,
+            "sample_seed": 0,
+            "seeds": [0],
+            "max_queries": 1,
+            "max_turns": 1,
+            "models": [model],
+            "project_revision": {
+                "expected_commit": EXPECTED_COMMIT,
+                "observed_commit": EXPECTED_COMMIT,
+            },
+            "global_call_budget": {
+                "accounting_semantics": "durable_pre_call_logical_reservation_v1",
+                "call_start_deadline_seconds_from_first_invocation": 3600,
+                "max_http_attempts": None,
+                "max_judge_calls": None,
+                "max_target_calls": 1,
+            },
+            "call_projection": {
+                "semantics": "conservative_complete_grid_upper_bound_v1",
+                "trajectories": 1,
+                "target_calls": 1,
+                "judge_calls": 0,
+                "local_guardrail_evaluations": 0,
+                "http_attempts": 0,
+            },
+        }
+        grid_path = run_root / f"{grid_id}.grid.json"
+        grid_path.write_bytes(canonical_bytes({
+            "status": "partial",
+            "grid_id": grid_id,
+            "started_at": "2026-08-23T00:00:00+00:00",
+            "finished_at": "2026-08-23T00:00:01+00:00",
+            "request": request,
+            "requested_cells": 1,
+            "accounted_cells": 1,
+            "n_new_complete": 0,
+            "n_existing_complete": 0,
+            "n_errors": 2,
+            "call_budget_snapshot": budget,
+            "modality_coverage_plan": {},
+            "modality_coverage_result": {},
+            "engine_runtime_close": {},
+            "cells": [{
+                "corpus": "strongreject_official",
+                "model_spec": model,
+                "target": model,
+                "attacker": "replay",
+                "run_id": run_id,
+                "status": "error",
+                "phase": "cell_execution_or_validation",
+                "execution_started": True,
+                "error_artifact": {
+                    "file": error_path.name,
+                    "sha256": error_desc["sha256"],
+                    "bytes": error_desc["bytes"],
+                },
+            }],
+        }))
+        row = {
+            "target": "llava-base",
+            "modality": "text",
+            "arm": "strongreject_official",
+            "sample_seed": "0",
+            "run_root": str(run_root),
+            "exit_code": "1",
+        }
+        baseline = validate_failed_attestation_candidate(row, work=work)
+        retained = {
+            path.name: path.read_bytes()
+            for path in run_root.iterdir()
+            if path.is_file()
+        }
+
+        def restore() -> None:
+            for path in run_root.iterdir():
+                if path.is_file() and path.name not in retained:
+                    path.unlink()
+            for name, payload in retained.items():
+                (run_root / name).write_bytes(payload)
+
+        restore()
+        response_checkpoint_path.unlink()
+        target_circuit = strict_json_loads(circuit_path.read_bytes())
+        if not isinstance(target_circuit, dict):
+            raise Gate5Error("self-test target-stage circuit is not an object")
+        target_circuit["circuits"] = {
+            f"target:{model}": {
+                "opened_at": "2026-08-23T00:00:00+00:00",
+                "phase": "target_call",
+                "exception_type": "ExternalCallFailure",
+                "message": "target call failed after durable reservation",
+                "call_audit": {},
+                "budget_snapshot": budget,
+            }
+        }
+        circuit_path.write_bytes(canonical_bytes(target_circuit))
+        target_stage = validate_failed_attestation_candidate(row, work=work)
+        if (
+            target_stage["runner_failure_stage"]
+            != "target_call_after_durable_reservation"
+            or target_stage["call_accounting"]["target_calls"] != 1
+            or target_stage["call_accounting"][
+                "checkpointed_target_responses"
+            ]
+            != 0
+        ):
+            raise Gate5Error("legitimate target-stage reservation failure was not retained")
+        restore()
+
+        def mutate_json(path: Path, field: str) -> None:
+            value = strict_json_loads(path.read_bytes())
+            if not isinstance(value, dict):
+                raise Gate5Error("self-test mutation input is not an object")
+            if field == "budget_target_calls":
+                value["target_calls"] = 0
+            elif field == "checkpoint_target_calls":
+                value["budget_after_target"]["target_calls"] = 0
+            elif field == "grid_target_calls":
+                value["call_budget_snapshot"]["target_calls"] = 0
+            elif field == "circuit_target_calls":
+                value["circuits"]["judge"]["budget_snapshot"]["target_calls"] = 0
+            else:
+                raise Gate5Error(f"unknown self-test mutation {field}")
+            path.write_bytes(canonical_bytes(value))
+
+        mutations = {
+            "deleted_budget_ledger": lambda: budget_path.unlink(),
+            "rolled_back_budget_target_calls": lambda: mutate_json(
+                budget_path, "budget_target_calls"
+            ),
+            "deleted_paid_response_checkpoint": lambda: response_checkpoint_path.unlink(),
+            "rolled_back_checkpoint_target_calls": lambda: mutate_json(
+                response_checkpoint_path, "checkpoint_target_calls"
+            ),
+            "rolled_back_grid_target_calls": lambda: mutate_json(
+                grid_path, "grid_target_calls"
+            ),
+            "deleted_circuit_ledger": lambda: circuit_path.unlink(),
+            "rolled_back_circuit_target_calls": lambda: mutate_json(
+                circuit_path, "circuit_target_calls"
+            ),
+            "deleted_circuit_and_paid_response": lambda: (
+                circuit_path.unlink(), response_checkpoint_path.unlink()
+            ),
+        }
+        rejected: list[str] = []
+        for name, mutate in mutations.items():
+            restore()
+            mutate()
+            try:
+                validate_failed_attestation_candidate(row, work=work)
+            except Gate5Error:
+                rejected.append(name)
+            else:
+                raise Gate5Error(
+                    f"failed live-attestation mutation did not fail closed: {name}"
+                )
+        restore()
+        validate_failed_attestation_candidate(row, work=work)
+        return {
+            "schema": "ura-phase5-failed-live-attestation-contract-self-test/1",
+            "status": "passed",
+            "call_accounting": baseline["call_accounting"],
+            "target_stage_call_accounting": target_stage["call_accounting"],
+            "rejected_mutations": rejected,
+        }
+
+
 def inventory_contract_self_test() -> dict[str, Any]:
     """Mutation checks proving every reviewed inventory dimension fails closed."""
 
@@ -5317,6 +6300,12 @@ def inventory_contract_self_test() -> dict[str, Any]:
         "rejected_conditional_numeric_type_mutations": rejected_numeric,
         "rejected_canary_stage_mutations": canary_stage_contract_self_test(),
         "retained_binding_self_test": retained_binding_contract_self_test(),
+        "empty_failed_live_attestation_tsv_self_test": (
+            failed_attestation_tsv_contract_self_test()
+        ),
+        "failed_live_attestation_self_test": (
+            failed_attestation_contract_self_test()
+        ),
     }
 
 
@@ -5381,7 +6370,11 @@ def build_covered_manifest(
                 "root mode requires all six explicit roots; missing: " + ", ".join(missing)
             )
         controls = {
-            key: validate_control_root(value, kind=("projection" if "projection" in key else "canary"))
+            key: validate_control_root(
+                value,
+                kind=("projection" if "projection" in key else "canary"),
+                work=work,
+            )
             for key, value in root_values.items()
         }
         rows = []

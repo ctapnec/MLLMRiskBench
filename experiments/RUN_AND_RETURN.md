@@ -386,6 +386,10 @@ bash ~/.ura-controller-active/launch_chain_<new7>.sh
 The final archive has a different digest from the provisional archive even
 though both names use the same commit short. The second installer run publishes
 and activates that final immutable generation before the launch chain starts.
+The archive contains 24 executable controllers plus the read-only rendered
+`phase8_human_audit.README.md`. Read that guide through
+`~/.ura-controller-active` before preparing Phase 8 input; a sibling
+`.campaign` copy is disposable and must not be treated as source authority.
 
 The installer validates every archive, inventory, verifier, and controller
 byte before publishing one immutable
@@ -3221,14 +3225,39 @@ returning the envelope alone is not.
 
 *Console equivalent: this section's commands are also launchable as the `human_audit` form(s) in the rig console (section 18); identical argument vectors, gates and artifacts.*
 
-Prepare the blinded audit only after all intended runner grids are complete. Use
-the common `runs/thesis/runner` parent so the sample can include broad roster,
-source, policy, modality, and attack strata. Choose the sample size from feasible
-rater capacity and achieved strata; the number below is only an operator example.
+Prepare the blinded audit only after all intended runner grids are terminal. For
+a direct all-success cohort, the common `runs/thesis/runner` parent lets the
+sample include broad roster, source, policy, modality, and attack strata. The
+sealed local campaign uses the success-only view described below. Choose the
+sample size from feasible rater capacity and achieved strata; the number below
+is only an operator example.
 The selector derives overall and exact risk/modality coverage requirements for
 every observed common-eligible model/defense/attacker/source-policy/population
 arm and fails if the requested whole-cluster sample cannot cover them. Increase
 the sample size; do not remove achieved arms from the audit frame.
+
+For the sealed local campaign, use the generated Phase 8 controller and its
+commit-bound operator guide. The controller consumes Phase 7's validated
+success-only read-only Runner copy rather than the canonical lifecycle tree, so
+an honestly failed lane remains recorded without becoming human-audit sample
+input. Its receipt binds every source/copy file digest, byte count, relative
+path, distinct file identity, and read-only mode, and the completed view admits
+no extra file. Phase 7 also gives Level 1 an independently copied lifecycle
+view, so a postprocessor cannot mutate canonical Phase 6 bytes through its input
+path. Prepare one create-only input manifest, review its exact bytes and
+`sampling.capacity`, authorize its SHA-256, and monitor the returned tmux
+session. The cardinality plan fails before a sample write unless the source-task
+population covers the exact requested source-task sample and the common
+population covers both the exact requested common sample and 20 further
+clusters reserved for a disjoint qualification set. Execution recomputes that
+plan from the same success-only view. This does not pre-approve coverage
+feasibility: both selectors separately fail closed unless their requested counts
+cover all achieved cells.
+
+The machine controller's only successful terminal is `human_only_blocked` with
+`gate8_met: false`. Its zero exit means that blinded forms and guidance were
+prepared, not that a rater exists, a qualification was passed, a label was
+created, or Gate 8 was met.
 
 ```bash
 python -m experiments.human_audit \
@@ -3266,8 +3295,9 @@ prospectively and rerun preparation; do not discard sibling rows after export.
 After adjudication:
 
 ```bash
+PHASE8_AUDIT_RUNNER_VIEW=/absolute/path/from-the-bound-phase7-runner-view-receipt
 python -m experiments.human_audit \
-  --results runs/thesis/runner \
+  --results "$PHASE8_AUDIT_RUNNER_VIEW" \
   --labels runs/thesis/human-audit-labelled.csv
 ```
 
@@ -3305,7 +3335,7 @@ versus parser agreement/confusion, and the parser-valid fraction:
 
 ```bash
 python -m experiments.human_audit \
-  --results runs/thesis/runner \
+  --results "$PHASE8_AUDIT_RUNNER_VIEW" \
   --source-task-labels runs/thesis/source-task-audit-labelled.csv
 ```
 
@@ -3314,6 +3344,14 @@ scale. They are never common ASR/refusal evidence, never enter the common
 human frame or its judge-validity calibration, and never rename classification
 accuracy as safety.
 
+Gate 8 additionally requires the exact ethics/consent authorization, an
+independently adjudicated 20-item qualification set disjoint from the common
+sample, at least two raters passing 80 percent on every dimension, two distinct
+qualified ratings for every exported row, verified media viewing,
+post-independent adjudication, both validated human-audit reports, and an
+operator-authored acceptance or limitation record binding every input and
+output digest. Until that human-only record exists, keep `gate8_met: false`.
+
 ## 16. Read-only analysis and suite summary
 
 *Console equivalent: this section's commands are also launchable as the `judge_sensitivity`, `kappa`, `transfer_matrix`, `paired_compare`, `level1_evidence`, `native_import`, `suite_summary`, `level2_report` and `figures` form(s) in the rig console (section 18); identical argument vectors, gates and artifacts.*
@@ -3321,9 +3359,15 @@ accuracy as safety.
 Run the implemented diagnostics only on completed, content-validated artifacts:
 
 ```bash
-python -m experiments.judge_sensitivity --results runs/thesis/runner
-python -m experiments.kappa --results runs/thesis/runner
-python -m experiments.transfer_matrix --results runs/thesis/runner --attacker replay
+python -m experiments.judge_sensitivity --results runs/thesis/runner \
+  --attacker replay --defense none \
+  --output runs/thesis/analysis/judge-sensitivity-replay-no-defense.json
+python -m experiments.kappa --results runs/thesis/runner \
+  --attacker replay --defense none \
+  --output runs/thesis/analysis/judge-kappa-replay-no-defense.json
+python -m experiments.transfer_matrix --results runs/thesis/runner \
+  --attacker replay --defense none \
+  --output-dir runs/thesis/analysis/transfer-replay-no-defense
 ```
 
 Paired comparisons must name exact conditions and a common source arm. The

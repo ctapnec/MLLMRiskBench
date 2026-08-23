@@ -610,6 +610,15 @@ automated-versus-consensus agreement with cluster-aware uncertainty.
 Its deterministic selector derives non-vacuous coverage requirements from every
 observed common-eligible run/model/defense/attacker/source-policy/population arm
 at overall and exact risk/modality scope; an undersized requested sample fails.
+The sealed local campaign prepares from Phase 7's validated success-only Runner
+view and proves cardinality prospectively: the common population must cover the
+requested sample plus 20 disjoint qualification clusters, while the source-task
+population must cover its exact requested sample. Both coverage-priority
+selectors still fail closed when a requested count cannot cover achieved cells.
+Machine preparation always
+terminates `human_only_blocked` with `gate8_met: false`; only real qualified
+raters, completed independent labels and adjudication, validated reports, and a
+human acceptance or limitation record can meet Gate 8.
 Judge-validity reports are primary within exact run, response-producing arm,
 logical corpus, source policy, modality, expected population, and
 common-eligibility strata. They report decision coverage, treat violation as the

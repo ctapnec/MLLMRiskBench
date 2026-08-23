@@ -31,6 +31,9 @@ INPUT_SCHEMA = "ura-phase7-analysis-inputs/1"
 LAUNCH_SCHEMA = "ura-phase7-analysis-launch/1"
 COMPLETION_SCHEMA = "ura-phase7-analysis-completion/1"
 STATUS_SCHEMA = "ura-phase7-analysis-status/1"
+RUNNER_VIEW_SCHEMA = "ura-phase7-runner-input-view/3"
+LIFECYCLE_RUNNER_VIEW_SCHEMA = "ura-phase7-lifecycle-runner-input-view/2"
+RUNNER_VIEW_PERMITTED_OUTPUTS: list[str] = []
 HEX64 = re.compile(r"[0-9a-f]{64}")
 EXPECTED_COMMIT = "@@EXPECTED_COMMIT@@"
 EXPECTED_FRAMEWORK_LOCK = (
@@ -743,6 +746,78 @@ ADAPTIVE_ARMS = (
     "cyberseceval_interpreter",
     "cyberseceval_insecure_coding",
 )
+ADAPTIVITY_LEFT_LANE = "local-qwen3-vl-text-full"
+ADAPTIVITY_RIGHT_LANE = "crescendo-qwen3-vl"
+REPLAY_ANALYSIS_LANES = (
+    "local-qwen3-vl-text-full",
+    "local-qwen3-vl-image-full",
+    "local-llava-base-text-full",
+    "local-llava-base-image-full",
+    "rjudge-qwen3-vl",
+    "rjudge-llava-base",
+    "gptgeochat-qwen3-vl",
+    "gptgeochat-llava-base",
+    DEFENSE_LOCAL_LANE,
+    "ollama-rwkv-g1d-0p4b-text-full",
+    "rjudge-ollama-rwkv-g1d-0p4b",
+    "ollama-rwkv-g1f-2p9b-text-full",
+    "rjudge-ollama-rwkv-g1f-2p9b",
+    "ollama-rwkv-g1g-1p5b-text-full",
+    "rjudge-ollama-rwkv-g1g-1p5b",
+)
+NO_DEFENSE_REPLAY_LANES = tuple(
+    lane for lane in REPLAY_ANALYSIS_LANES if lane != DEFENSE_LOCAL_LANE
+)
+NO_DEFENSE_COMMON_REPLAY_LANES = (
+    "local-qwen3-vl-text-full",
+    "local-qwen3-vl-image-full",
+    "local-llava-base-text-full",
+    "local-llava-base-image-full",
+    "ollama-rwkv-g1d-0p4b-text-full",
+    "ollama-rwkv-g1f-2p9b-text-full",
+    "ollama-rwkv-g1g-1p5b-text-full",
+)
+NON_ESTIMABLE_ANALYSIS_SCHEMA = "ura-phase7-non-estimable-analysis/1"
+NON_ESTIMABLE_ADAPTIVITY_SCHEMA = (
+    "ura-phase7-non-estimable-adaptivity-contrast/1"
+)
+CONDITIONAL_ANALYSES = {
+    "judge-sensitivity": {
+        "module": "experiments.judge_sensitivity",
+        "selector": {"attacker": "replay", "defense": "none"},
+        "prerequisite_rule": "at_least_one_completed_no_defense_replay_lane",
+        "candidate_lanes": NO_DEFENSE_REPLAY_LANES,
+        "reason_code": "no_completed_no_defense_replay_lane",
+        "reason": (
+            "No sealed no-defense replay lane reached measured_complete, so no "
+            "completed same-response judge trail is available."
+        ),
+    },
+    "kappa": {
+        "module": "experiments.kappa",
+        "selector": {"attacker": "replay", "defense": "none"},
+        "prerequisite_rule": (
+            "at_least_one_completed_no_defense_common_replay_lane"
+        ),
+        "candidate_lanes": NO_DEFENSE_COMMON_REPLAY_LANES,
+        "reason_code": "no_completed_no_defense_common_replay_lane",
+        "reason": (
+            "No sealed no-defense common-metric replay lane reached "
+            "measured_complete, so inter-judge agreement is not estimable."
+        ),
+    },
+    "transfer-matrix": {
+        "module": "experiments.transfer_matrix",
+        "selector": {"attacker": "replay", "defense": "none"},
+        "prerequisite_rule": "at_least_one_completed_no_defense_replay_lane",
+        "candidate_lanes": NO_DEFENSE_REPLAY_LANES,
+        "reason_code": "no_completed_no_defense_replay_lane",
+        "reason": (
+            "No sealed no-defense replay lane reached measured_complete, so no "
+            "exact-input transfer facet is available."
+        ),
+    },
+}
 GROUP_KEYS = (
     "model",
     "source",
@@ -948,6 +1023,384 @@ def descriptor_bytes(value: object, *, label: str) -> tuple[Path, bytes]:
     return path, payload
 
 
+def _regular_file_identity(path: Path, *, label: str) -> dict[str, int]:
+    try:
+        item = path.lstat()
+    except OSError as exc:
+        raise Phase7Error(f"{label} identity cannot be read") from exc
+    if not stat.S_ISREG(item.st_mode) or stat.S_ISLNK(item.st_mode):
+        raise Phase7Error(f"{label} is not one regular non-symlink file")
+    return {"device": int(item.st_dev), "inode": int(item.st_ino)}
+
+
+def _read_only_regular_mode(path: Path, *, label: str) -> int:
+    try:
+        item = path.lstat()
+    except OSError as exc:
+        raise Phase7Error(f"{label} mode cannot be read") from exc
+    mode = stat.S_IMODE(item.st_mode)
+    if (
+        not stat.S_ISREG(item.st_mode)
+        or stat.S_ISLNK(item.st_mode)
+        or mode & (stat.S_IWUSR | stat.S_IWGRP | stat.S_IWOTH)
+    ):
+        raise Phase7Error(f"{label} is not one read-only regular file")
+    return mode
+
+
+def _canonical_relative_parts(value: object, *, label: str) -> tuple[str, ...]:
+    if not isinstance(value, str) or not value or "\\" in value:
+        raise Phase7Error(f"{label} is not one canonical relative path")
+    parts = tuple(value.split("/"))
+    if (
+        value.startswith("/")
+        or any(part in {"", ".", ".."} for part in parts)
+        or "/".join(parts) != value
+    ):
+        raise Phase7Error(f"{label} is not one canonical relative path")
+    return parts
+
+
+def independent_copy_view_file_binding(
+    source: Path,
+    view: Path,
+    *,
+    source_root: Path,
+    view_root: Path,
+) -> dict[str, Any]:
+    source_path, source_payload = _stable_regular_bytes(
+        source,
+        label=f"Runner view source {source}",
+        max_bytes=512 * 1024 * 1024,
+    )
+    view_path, view_payload = _stable_regular_bytes(
+        view,
+        label=f"Runner view link {view}",
+        max_bytes=512 * 1024 * 1024,
+    )
+    try:
+        relative = source_path.relative_to(source_root).as_posix()
+    except ValueError as exc:
+        raise Phase7Error("Runner view source escaped its sealed root") from exc
+    parts = _canonical_relative_parts(relative, label="Runner view relative path")
+    expected_view = view_root.joinpath(*parts).resolve(strict=True)
+    source_identity = _regular_file_identity(
+        source_path, label=f"Runner view source {relative}"
+    )
+    view_identity = _regular_file_identity(
+        view_path, label=f"Runner view link {relative}"
+    )
+    try:
+        same_file = source_path.samefile(view_path)
+    except OSError as exc:
+        raise Phase7Error(f"Runner view copy identity failed: {relative}") from exc
+    view_mode = _read_only_regular_mode(
+        view_path, label=f"Runner view copy {relative}"
+    )
+    view_link_count = int(view_path.stat().st_nlink)
+    if (
+        view_path != expected_view
+        or source_payload != view_payload
+        or source_identity == view_identity
+        or same_file
+        or view_link_count != 1
+    ):
+        raise Phase7Error(
+            f"Runner view independent-copy/content identity differs: {relative}"
+        )
+    return {
+        "relative_path": relative,
+        "source": _descriptor_from_bytes(source_path, source_payload),
+        "view": _descriptor_from_bytes(view_path, view_payload),
+        "source_file_identity": source_identity,
+        "view_file_identity": view_identity,
+        "independent_copy": True,
+        "source_view_samefile": False,
+        "view_mode": view_mode,
+        "view_link_count": view_link_count,
+    }
+
+
+def copy_view_file(
+    source: Path,
+    view: Path,
+    *,
+    source_root: Path,
+    view_root: Path,
+) -> dict[str, Any]:
+    source_path, source_payload = _stable_regular_bytes(
+        source,
+        label=f"Runner view source {source}",
+        max_bytes=512 * 1024 * 1024,
+    )
+    if view.exists() or view.is_symlink():
+        raise Phase7Error(f"Runner view copy is not create-only: {view}")
+    write_new(view, source_payload, mode=0o400)
+    os.chmod(view, 0o400)
+    binding = independent_copy_view_file_binding(
+        source_path,
+        view,
+        source_root=source_root,
+        view_root=view_root,
+    )
+    if binding["source"] != _descriptor_from_bytes(source_path, source_payload):
+        raise Phase7Error("Runner view source changed while its copy was created")
+    return binding
+
+
+def _regular_tree_files(root: Path, *, label: str) -> dict[str, Path]:
+    result: dict[str, Path] = {}
+    for path in sorted(root.rglob("*")):
+        relative = path.relative_to(root).as_posix()
+        if path.is_symlink():
+            raise Phase7Error(f"{label} contains a symlink: {relative}")
+        if path.is_dir():
+            continue
+        try:
+            item = path.lstat()
+        except OSError as exc:
+            raise Phase7Error(f"{label} entry cannot be read: {relative}") from exc
+        if not stat.S_ISREG(item.st_mode):
+            raise Phase7Error(f"{label} contains a non-regular entry: {relative}")
+        _canonical_relative_parts(relative, label=f"{label} relative path")
+        if relative in result:
+            raise Phase7Error(f"{label} duplicates a relative path: {relative}")
+        result[relative] = path
+    return result
+
+
+def _validate_independent_copy_inventory(
+    inventory: object,
+    *,
+    source_root: Path,
+    view_root: Path,
+    included_lanes: Sequence[str],
+    regular_files_copied: object,
+    recorded_logical_bytes: object,
+    label: str,
+) -> None:
+    lanes = list(included_lanes)
+    if (
+        not lanes
+        or len(set(lanes)) != len(lanes)
+        or not isinstance(inventory, list)
+        or not inventory
+        or any(
+            not isinstance(lane, str)
+            or not lane
+            or _canonical_relative_parts(lane, label=f"{label} lane") != (lane,)
+            for lane in lanes
+        )
+    ):
+        raise Phase7Error(f"{label} lane/file inventory changed")
+
+    inventory_by_relative: dict[str, Mapping[str, Any]] = {}
+    relative_order: list[str] = []
+    logical_bytes = 0
+    entry_fields = {
+        "relative_path",
+        "source",
+        "view",
+        "source_file_identity",
+        "view_file_identity",
+        "independent_copy",
+        "source_view_samefile",
+        "view_mode",
+        "view_link_count",
+    }
+    for index, raw in enumerate(inventory, 1):
+        if not isinstance(raw, dict) or set(raw) != entry_fields:
+            raise Phase7Error(f"{label} file binding changed: {index}")
+        relative = raw.get("relative_path")
+        parts = _canonical_relative_parts(
+            relative, label=f"{label} file {index}"
+        )
+        if parts[0] not in lanes or relative in inventory_by_relative:
+            raise Phase7Error(f"{label} relative inventory changed: {relative}")
+        source_path, source_payload = descriptor_bytes(
+            raw.get("source"), label=f"{label} source {relative}"
+        )
+        view_path, view_payload = descriptor_bytes(
+            raw.get("view"), label=f"{label} copy {relative}"
+        )
+        expected_source = source_root.joinpath(*parts).resolve(strict=True)
+        expected_view = view_root.joinpath(*parts).resolve(strict=True)
+        source_identity = _regular_file_identity(
+            source_path, label=f"{label} source {relative}"
+        )
+        view_identity = _regular_file_identity(
+            view_path, label=f"{label} copy {relative}"
+        )
+        try:
+            same_file = source_path.samefile(view_path)
+        except OSError as exc:
+            raise Phase7Error(
+                f"{label} source/copy identity cannot be checked: {relative}"
+            ) from exc
+        view_mode = _read_only_regular_mode(
+            view_path, label=f"{label} copy {relative}"
+        )
+        view_link_count = int(view_path.stat().st_nlink)
+        if (
+            source_path != expected_source
+            or view_path != expected_view
+            or raw["source"].get("path") != str(expected_source)
+            or raw["view"].get("path") != str(expected_view)
+            or source_payload != view_payload
+            or raw.get("source_file_identity") != source_identity
+            or raw.get("view_file_identity") != view_identity
+            or source_identity == view_identity
+            or raw.get("independent_copy") is not True
+            or raw.get("source_view_samefile") is not False
+            or same_file
+            or type(raw.get("view_mode")) is not int
+            or raw.get("view_mode") != view_mode
+            or raw.get("view_link_count") != 1
+            or view_link_count != 1
+        ):
+            raise Phase7Error(
+                f"{label} independent-copy/content binding changed: {relative}"
+            )
+        inventory_by_relative[str(relative)] = raw
+        relative_order.append(str(relative))
+        logical_bytes += len(source_payload)
+
+    if relative_order != sorted(relative_order):
+        raise Phase7Error(f"{label} file inventory order changed")
+
+    expected_source_files: dict[str, Path] = {}
+    for lane in lanes:
+        lane_root = checked_dir(source_root / lane, label=f"{label} source lane {lane}")
+        for lane_relative, path in _regular_tree_files(
+            lane_root, label=f"{label} source lane {lane}"
+        ).items():
+            expected_source_files[f"{lane}/{lane_relative}"] = path
+    if set(expected_source_files) != set(inventory_by_relative):
+        raise Phase7Error(f"{label} sealed source file inventory changed")
+
+    actual_view_files = _regular_tree_files(view_root, label=f"{label} view")
+    if set(actual_view_files) != set(inventory_by_relative):
+        raise Phase7Error(f"{label} view has missing or unbound extra files")
+    if (
+        isinstance(regular_files_copied, bool)
+        or not isinstance(regular_files_copied, int)
+        or regular_files_copied != len(inventory)
+        or isinstance(recorded_logical_bytes, bool)
+        or not isinstance(recorded_logical_bytes, int)
+        or recorded_logical_bytes != logical_bytes
+    ):
+        raise Phase7Error(f"{label} aggregate accounting changed")
+
+
+def validate_runner_input_view_receipt(
+    value: Mapping[str, Any],
+    *,
+    source_root: Path,
+    view_root: Path,
+    included_measured_lanes: Sequence[str],
+) -> dict[str, Any]:
+    """Revalidate every immutable independent copy and reject all extras."""
+
+    expected_fields = {
+        "schema",
+        "status",
+        "source_runner_root",
+        "view_root",
+        "included_measured_lanes",
+        "regular_files_copied",
+        "logical_bytes",
+        "source_files_modified",
+        "permitted_view_outputs",
+        "file_inventory",
+        "file_inventory_sha256",
+    }
+    source_root = checked_dir(source_root, label="Runner view sealed source root")
+    view_root = checked_dir(view_root, label="Runner view root")
+    inventory = value.get("file_inventory")
+    if (
+        set(value) != expected_fields
+        or value.get("schema") != RUNNER_VIEW_SCHEMA
+        or value.get("status") != "complete"
+        or value.get("source_runner_root") != str(source_root)
+        or value.get("view_root") != str(view_root)
+        or value.get("included_measured_lanes") != list(included_measured_lanes)
+        or value.get("source_files_modified") is not False
+        or value.get("permitted_view_outputs") != RUNNER_VIEW_PERMITTED_OUTPUTS
+        or not isinstance(inventory, list)
+        or not inventory
+        or HEX64.fullmatch(str(value.get("file_inventory_sha256", ""))) is None
+        or sha256_bytes(canonical(inventory)) != value["file_inventory_sha256"]
+    ):
+        raise Phase7Error("Runner input-view receipt field/content binding changed")
+    _validate_independent_copy_inventory(
+        inventory,
+        source_root=source_root,
+        view_root=view_root,
+        included_lanes=included_measured_lanes,
+        regular_files_copied=value.get("regular_files_copied"),
+        recorded_logical_bytes=value.get("logical_bytes"),
+        label="Runner input-view",
+    )
+    return dict(value)
+
+
+def validate_lifecycle_runner_input_view_receipt(
+    value: Mapping[str, Any],
+    *,
+    source_root: Path,
+    view_root: Path,
+    included_lifecycle_lanes: Sequence[str],
+    registry_only_lanes: Sequence[str],
+    lifecycle_states: Mapping[str, str],
+) -> dict[str, Any]:
+    expected_fields = {
+        "schema",
+        "status",
+        "source_runner_root",
+        "view_root",
+        "included_lifecycle_lanes",
+        "registry_only_lanes",
+        "lifecycle_states",
+        "regular_files_copied",
+        "logical_bytes",
+        "source_files_modified",
+        "permitted_view_outputs",
+        "file_inventory",
+        "file_inventory_sha256",
+    }
+    source_root = checked_dir(source_root, label="Lifecycle Runner sealed source root")
+    view_root = checked_dir(view_root, label="Lifecycle Runner view root")
+    inventory = value.get("file_inventory")
+    if (
+        set(value) != expected_fields
+        or value.get("schema") != LIFECYCLE_RUNNER_VIEW_SCHEMA
+        or value.get("status") != "complete"
+        or value.get("source_runner_root") != str(source_root)
+        or value.get("view_root") != str(view_root)
+        or value.get("included_lifecycle_lanes")
+        != list(included_lifecycle_lanes)
+        or value.get("registry_only_lanes") != list(registry_only_lanes)
+        or value.get("lifecycle_states") != dict(lifecycle_states)
+        or value.get("source_files_modified") is not False
+        or value.get("permitted_view_outputs") != []
+        or not isinstance(inventory, list)
+        or not inventory
+        or HEX64.fullmatch(str(value.get("file_inventory_sha256", ""))) is None
+        or sha256_bytes(canonical(inventory)) != value["file_inventory_sha256"]
+    ):
+        raise Phase7Error("Lifecycle Runner input-view receipt changed")
+    _validate_independent_copy_inventory(
+        inventory,
+        source_root=source_root,
+        view_root=view_root,
+        included_lanes=included_lifecycle_lanes,
+        regular_files_copied=value.get("regular_files_copied"),
+        recorded_logical_bytes=value.get("logical_bytes"),
+        label="Lifecycle Runner input-view",
+    )
+    return dict(value)
+
+
 def descriptor_object(
     value: object, *, label: str
 ) -> tuple[Path, dict[str, Any]]:
@@ -1041,6 +1494,363 @@ def require_exact_fields(
 def require_exact_order(value: object, *, expected: Sequence[str], label: str) -> None:
     if not isinstance(value, list) or value != list(expected):
         raise Phase7Error(f"{label} ordered inventory changed")
+
+
+def _prerequisite_failure_descriptor_shape(value: object, *, label: str) -> None:
+    if (
+        not isinstance(value, dict)
+        or set(value) != {"path", "sha256", "bytes"}
+        or not isinstance(value.get("path"), str)
+        or not value["path"]
+        or HEX64.fullmatch(str(value.get("sha256", ""))) is None
+        or isinstance(value.get("bytes"), bool)
+        or not isinstance(value.get("bytes"), int)
+        or value["bytes"] <= 0
+    ):
+        raise Phase7Error(f"{label} failure descriptor changed")
+
+
+def runner_prerequisite_snapshot(
+    runner: Mapping[str, Any], candidate_lanes: Sequence[str]
+) -> tuple[dict[str, dict[str, Any]], list[str]]:
+    """Bind analysis availability to sealed Runner terminal evidence."""
+
+    states = runner.get("terminal_states")
+    lifecycle_states = runner.get("lifecycle_states")
+    authorizations = runner.get("lifecycle_authorizations")
+    conditional_na = runner.get("conditional_na_lanes")
+    if (
+        not isinstance(states, dict)
+        or not isinstance(lifecycle_states, dict)
+        or not isinstance(authorizations, dict)
+        or conditional_na not in ([], [DEFENSE_LOCAL_LANE])
+        or not candidate_lanes
+        or len(set(candidate_lanes)) != len(candidate_lanes)
+    ):
+        raise Phase7Error("analysis prerequisite Runner inventory changed")
+    missing = [lane for lane in candidate_lanes if lane not in states]
+    if missing != (
+        [DEFENSE_LOCAL_LANE]
+        if DEFENSE_LOCAL_LANE in candidate_lanes
+        and conditional_na == [DEFENSE_LOCAL_LANE]
+        else []
+    ):
+        raise Phase7Error(
+            f"analysis prerequisite lane inventory changed: {missing!r}"
+        )
+    snapshot: dict[str, dict[str, Any]] = {}
+    for lane in candidate_lanes:
+        if lane not in states:
+            continue
+        state = states[lane]
+        lifecycle_state = lifecycle_states.get(lane)
+        authorization = authorizations.get(lane)
+        if not isinstance(authorization, dict):
+            raise Phase7Error(f"{lane}: analysis prerequisite authorization changed")
+        failure = authorization.get("controller_failure")
+        registry_status = authorization.get("lifecycle_registry_status")
+        if state == "measured_complete":
+            if (
+                lifecycle_state != "complete"
+                or registry_status != "complete_runner_grid"
+                or failure is not None
+            ):
+                raise Phase7Error(
+                    f"{lane}: successful analysis prerequisite changed"
+                )
+        elif state == "failed":
+            if (
+                lifecycle_state not in {"partial", "failed"}
+                or registry_status
+                not in {
+                    "partial_runner_grid",
+                    "failed_after_runner_request",
+                    "pre_runner_failure_no_request_artifact",
+                }
+            ):
+                raise Phase7Error(f"{lane}: failed analysis prerequisite changed")
+            _prerequisite_failure_descriptor_shape(
+                failure, label=f"{lane} analysis prerequisite"
+            )
+        else:
+            raise Phase7Error(f"{lane}: invalid analysis prerequisite terminal state")
+        snapshot[lane] = {
+            "lane_id": lane,
+            "terminal_state": state,
+            "lifecycle_state": lifecycle_state,
+            "lifecycle_registry_status": registry_status,
+            "controller_failure": copy.deepcopy(failure),
+        }
+    if set(snapshot) != set(candidate_lanes) - set(missing):
+        raise Phase7Error("analysis prerequisite snapshot is incomplete")
+    return snapshot, missing
+
+
+def conditional_analysis_plan(
+    runner: Mapping[str, Any], analysis: str
+) -> dict[str, Any]:
+    definition = CONDITIONAL_ANALYSES.get(analysis)
+    if not isinstance(definition, dict):
+        raise Phase7Error(f"unknown conditional analysis: {analysis}")
+    candidates = tuple(definition["candidate_lanes"])
+    snapshot, conditional_na = runner_prerequisite_snapshot(runner, candidates)
+    measured = [
+        lane
+        for lane in candidates
+        if lane in snapshot and snapshot[lane]["terminal_state"] == "measured_complete"
+    ]
+    return {
+        "analysis": analysis,
+        "prerequisite_rule": definition["prerequisite_rule"],
+        "candidate_lanes": [lane for lane in candidates if lane in snapshot],
+        "conditional_na_lanes": conditional_na,
+        "lane_states": snapshot,
+        "measured_complete_lanes": measured,
+        "runnable": bool(measured),
+    }
+
+
+def non_estimable_analysis_value(
+    runner: Mapping[str, Any], analysis: str
+) -> dict[str, Any]:
+    definition = CONDITIONAL_ANALYSES.get(analysis)
+    plan = conditional_analysis_plan(runner, analysis)
+    if not isinstance(definition, dict) or plan["runnable"] is not False:
+        raise Phase7Error(
+            f"{analysis}: non-estimable artifact requested with available input"
+        )
+    return {
+        "schema": NON_ESTIMABLE_ANALYSIS_SCHEMA,
+        "status": "unavailable",
+        "analysis": analysis,
+        "planned_module": definition["module"],
+        "selector": copy.deepcopy(definition["selector"]),
+        "prerequisite_rule": plan["prerequisite_rule"],
+        "candidate_lanes": plan["candidate_lanes"],
+        "conditional_na_lanes": plan["conditional_na_lanes"],
+        "lane_states": plan["lane_states"],
+        "measured_complete_lanes": [],
+        "reason_code": definition["reason_code"],
+        "reason": definition["reason"],
+        "analysis_ready_real_run": False,
+        "result": None,
+        "subprocess_invoked": False,
+        "not_applicable_facets": {
+            "all": {
+                "reason": definition["reason_code"],
+                "unexplained_exclusions": 0,
+            }
+        },
+        "unexplained_exclusions": 0,
+        "target_calls": 0,
+        "judge_calls": 0,
+        "provider_http_attempts": 0,
+        "human_labels_consumed": False,
+    }
+
+
+def validate_non_estimable_analysis(
+    value: Mapping[str, Any], *, runner: Mapping[str, Any], analysis: str
+) -> None:
+    if dict(value) != non_estimable_analysis_value(runner, analysis):
+        raise Phase7Error(f"{analysis}: non-estimable artifact changed")
+
+
+def adaptivity_prerequisite_plan(runner: Mapping[str, Any]) -> dict[str, Any]:
+    snapshot, conditional_na = runner_prerequisite_snapshot(
+        runner, (ADAPTIVITY_LEFT_LANE, ADAPTIVITY_RIGHT_LANE)
+    )
+    if conditional_na:
+        raise Phase7Error("adaptivity prerequisite unexpectedly became conditional N/A")
+    roles = {
+        "left_replay": ADAPTIVITY_LEFT_LANE,
+        "right_crescendo": ADAPTIVITY_RIGHT_LANE,
+    }
+    missing_roles = [
+        role
+        for role, lane in roles.items()
+        if snapshot[lane]["terminal_state"] != "measured_complete"
+    ]
+    return {
+        "roles": roles,
+        "lane_states": snapshot,
+        "missing_roles": missing_roles,
+        "runnable": not missing_roles,
+    }
+
+
+def non_estimable_adaptivity_value(
+    runner: Mapping[str, Any], corpus: str
+) -> dict[str, Any]:
+    if corpus not in ADAPTIVE_ARMS:
+        raise Phase7Error(f"unknown adaptivity corpus: {corpus}")
+    plan = adaptivity_prerequisite_plan(runner)
+    missing_roles = plan["missing_roles"]
+    if plan["runnable"] is not False:
+        raise Phase7Error(
+            "adaptivity non-estimable artifact requested with both arms available"
+        )
+    reason_code = {
+        ("left_replay",): "left_replay_lane_failed",
+        ("right_crescendo",): "right_crescendo_lane_failed",
+        (
+            "left_replay",
+            "right_crescendo",
+        ): "left_replay_and_right_crescendo_lanes_failed",
+    }.get(tuple(missing_roles))
+    if reason_code is None:
+        raise Phase7Error("adaptivity missing-role inventory changed")
+    reason = {
+        "left_replay_lane_failed": (
+            "The sealed static replay lane failed, so the planned Qwen replay-vs-"
+            "Crescendo endpoint contrast has no left arm."
+        ),
+        "right_crescendo_lane_failed": (
+            "The sealed Crescendo lane failed, so the planned Qwen replay-vs-"
+            "Crescendo endpoint contrast has no right arm."
+        ),
+        "left_replay_and_right_crescendo_lanes_failed": (
+            "Both sealed Qwen replay and Crescendo lanes failed, so neither arm of "
+            "the planned endpoint contrast is available."
+        ),
+    }[reason_code]
+    prerequisite_roles = {
+        role: copy.deepcopy(plan["lane_states"][lane])
+        for role, lane in plan["roles"].items()
+    }
+    return {
+        "schema": NON_ESTIMABLE_ADAPTIVITY_SCHEMA,
+        "status": "unavailable",
+        "contrast_id": "qwen-replay-vs-crescendo",
+        "modality": "text",
+        "facet": corpus,
+        "comparison_type": "within_target_adaptivity_endpoint",
+        "planned_estimand": (
+            "paired replay endpoint versus response-conditioned Crescendo endpoint "
+            "by datapoint_id x requested_seed"
+        ),
+        "planned_contrast_missing": True,
+        "reason_code": reason_code,
+        "reason": reason,
+        "missing_roles": missing_roles,
+        "prerequisite_roles": prerequisite_roles,
+        "analysis_ready_real_run": False,
+        "estimate": None,
+        "paired_compare_invoked": False,
+        "failed_lane_metric_evidence_admitted": False,
+        "human_audit_eligible": False,
+        "facets": {
+            corpus: {
+                "analysis_ready_real_run": False,
+                "inference_cluster": "source_cluster_id (fallback datapoint_id)",
+            }
+        },
+        "target_calls": 0,
+        "judge_calls": 0,
+        "provider_http_attempts": 0,
+        "human_labels_consumed": False,
+    }
+
+
+def validate_non_estimable_adaptivity(
+    value: Mapping[str, Any], *, runner: Mapping[str, Any], corpus: str
+) -> None:
+    if dict(value) != non_estimable_adaptivity_value(runner, corpus):
+        raise Phase7Error(
+            f"Qwen replay-vs-Crescendo non-estimable contrast changed: {corpus}"
+        )
+
+
+def _transfer_safe_component(value: str) -> str:
+    rendered = "".join(
+        character if character.isalnum() or character in "-_" else "-"
+        for character in value
+    )
+    return rendered.strip("-") or "facet"
+
+
+def validated_transfer_index_facets(
+    value: Mapping[str, Any],
+) -> tuple[dict[str, Mapping[str, Any]], dict[str, Mapping[str, Any]]]:
+    """Validate single and multi-corpus transfer output without conflating them."""
+
+    schema = value.get("schema_version")
+    if value.get("unexplained_exclusions") != 0:
+        raise Phase7Error("transfer matrix has unexplained exclusions")
+    if schema == "2.1":
+        audit = value.get("load_audit")
+        facet = audit.get("facet") if isinstance(audit, dict) else None
+        if (
+            value.get("analysis_kind") != "diagnostic_conditional_transfer"
+            or not isinstance(facet, dict)
+            or set(facet) != {"attacker", "corpus", "defense"}
+            or facet.get("attacker") != "replay"
+            or facet.get("defense") != "none"
+            or not isinstance(facet.get("corpus"), str)
+            or not facet["corpus"]
+        ):
+            raise Phase7Error("single-facet transfer selector changed")
+        return {str(facet["corpus"]): value}, {}
+    if schema != "2.1-faceted":
+        raise Phase7Error("transfer matrix schema changed")
+    facets = value.get("facets")
+    not_applicable = value.get("not_applicable_facets")
+    corpora = value.get("corpora")
+    artifacts = value.get("artifacts")
+    if (
+        value.get("attacker") != "replay"
+        or value.get("defense") != "none"
+        or not isinstance(facets, dict)
+        or not isinstance(not_applicable, dict)
+        or (not facets and not not_applicable)
+        or not isinstance(corpora, list)
+        or corpora != sorted(facets)
+        or not isinstance(artifacts, dict)
+        or set(artifacts) != set(facets)
+        or set(facets) & set(not_applicable)
+    ):
+        raise Phase7Error("faceted transfer inventory changed")
+    for corpus, facet in facets.items():
+        audit = facet.get("load_audit") if isinstance(facet, dict) else None
+        selector = audit.get("facet") if isinstance(audit, dict) else None
+        artifact = artifacts.get(corpus)
+        stem = f"transfer_matrix__replay__{_transfer_safe_component(corpus)}"
+        if selector != {
+            "attacker": "replay",
+            "corpus": corpus,
+            "defense": "none",
+        } or (
+            not isinstance(artifact, dict)
+            or set(artifact) not in ({"json"}, {"json", "png"})
+            or artifact.get("json") != f"{stem}.json"
+            or (
+                "png" in artifact
+                and artifact.get("png") != f"{stem}.png"
+            )
+        ):
+            raise Phase7Error(f"transfer facet selector changed: {corpus}")
+    artifact_names = [
+        name for artifact in artifacts.values() for name in artifact.values()
+    ]
+    if len(artifact_names) != len(set(artifact_names)):
+        raise Phase7Error("transfer facet artifact names collide")
+    for corpus, row in not_applicable.items():
+        audit = row.get("load_audit") if isinstance(row, dict) else None
+        selector = audit.get("facet") if isinstance(audit, dict) else None
+        if (
+            not isinstance(row, dict)
+            or not isinstance(row.get("reason"), str)
+            or not row["reason"]
+            or row.get("unexplained_exclusions") != 0
+            or selector
+            != {
+                "attacker": "replay",
+                "corpus": corpus,
+                "defense": "none",
+            }
+        ):
+            raise Phase7Error(f"transfer N/A facet changed: {corpus}")
+    return dict(facets), dict(not_applicable)
 
 
 def require_terminal_partition(
@@ -6625,6 +7435,8 @@ def build_input_manifest(args: argparse.Namespace) -> dict[str, Any]:
             "missingness_and_decision_coverage_required": True,
             "source_parser_classification_kept_out_of_common_metrics": True,
             "failed_phase6_lanes_excluded_from_metric_and_level2_views": True,
+            "missing_prerequisites_emit_typed_unavailable_artifacts": True,
+            "analysis_subprocesses_require_successful_prerequisite_lanes": True,
             "human_labels_consumed": False,
             "target_calls_permitted": 0,
             "judge_calls_permitted": 0,
@@ -6725,8 +7537,6 @@ class AnalysisController:
         self.completion_path = self.control / "completion.json"
         self.current_process: subprocess.Popen[bytes] | None = None
         self.current_name = "startup"
-        self.created_runner_scratch: set[Path] = set()
-        self.transfer_scratch_claimed = False
         self.runner_view = self.control / "read-only-runner-view"
         self.runner_view_receipt = self.control / "read-only-runner-view.json"
         self.runner_view_ready = False
@@ -6782,6 +7592,8 @@ class AnalysisController:
             "missingness_and_decision_coverage_required",
             "source_parser_classification_kept_out_of_common_metrics",
             "failed_phase6_lanes_excluded_from_metric_and_level2_views",
+            "missing_prerequisites_emit_typed_unavailable_artifacts",
+            "analysis_subprocesses_require_successful_prerequisite_lanes",
             "human_labels_consumed",
             "target_calls_permitted",
             "judge_calls_permitted",
@@ -6802,6 +7614,8 @@ class AnalysisController:
                     "missingness_and_decision_coverage_required",
                     "source_parser_classification_kept_out_of_common_metrics",
                     "failed_phase6_lanes_excluded_from_metric_and_level2_views",
+                    "missing_prerequisites_emit_typed_unavailable_artifacts",
+                    "analysis_subprocesses_require_successful_prerequisite_lanes",
                 )
             )
         ):
@@ -7523,23 +8337,66 @@ class AnalysisController:
     def runner_root(self) -> Path:
         return checked_dir(self.inputs["runner"]["root"], label="runner root")
 
-    def analysis_runner_view(self) -> Path:
-        """Make a controller-owned input view for CLIs with fixed output paths.
+    def _validate_analysis_runner_view(self) -> dict[str, Any]:
+        if not self.runner_view_ready:
+            raise Phase7Error("Phase 7 runner input view is not ready")
+        receipt = strict_object(self.runner_view_receipt)
+        return validate_runner_input_view_receipt(
+            receipt,
+            source_root=self.runner_root,
+            view_root=self.runner_view,
+            included_measured_lanes=self.inputs["runner"]["metric_lane_order"],
+        )
 
-        Kappa and transfer_matrix document their outputs under ``--results``.
-        Linking the already-validated regular input files into this unique control
-        root keeps those documented CLIs from ever writing into the sealed Phase 6
-        runner root. The tools themselves re-hash every completion-bound artifact.
+    def _lifecycle_registry_only_lanes(self) -> list[str]:
+        return [
+            lane
+            for lane in self.inputs["runner"]["lifecycle_lane_order"]
+            if self.inputs["runner"]["lifecycle_authorizations"][lane][
+                "level1_tool_input_status"
+            ]
+            == "registry_only_pre_runner_failure"
+        ]
+
+    def _lifecycle_included_lanes(self) -> list[str]:
+        registry_only = set(self._lifecycle_registry_only_lanes())
+        roots = self.inputs["runner"]["lifecycle_lane_roots"]
+        return [
+            lane
+            for lane in self.inputs["runner"]["lifecycle_lane_order"]
+            if lane not in registry_only and roots.get(lane) is not None
+        ]
+
+    def _validate_lifecycle_runner_view(self) -> dict[str, Any]:
+        if not self.lifecycle_runner_view_ready:
+            raise Phase7Error("Phase 7 lifecycle Runner input view is not ready")
+        receipt = strict_object(self.lifecycle_runner_view_receipt)
+        return validate_lifecycle_runner_input_view_receipt(
+            receipt,
+            source_root=self.runner_root,
+            view_root=self.lifecycle_runner_view_path,
+            included_lifecycle_lanes=self._lifecycle_included_lanes(),
+            registry_only_lanes=self._lifecycle_registry_only_lanes(),
+            lifecycle_states=self.inputs["runner"]["lifecycle_states"],
+        )
+
+    def analysis_runner_view(self) -> Path:
+        """Make a controller-owned input view for read-only postprocessors.
+
+        Every postprocessor receives explicit output paths outside this view.
+        Copying the already-validated regular input files into this unique control
+        root prevents any input-path write from changing the sealed Phase 6 Runner
+        tree. The tools themselves re-hash every completion-bound artifact.
         """
 
         if self.runner_view_ready:
+            self._validate_analysis_runner_view()
             return checked_dir(self.runner_view, label="Phase 7 runner input view")
         if self.runner_view.exists() or self.runner_view.is_symlink():
             raise Phase7Error("Phase 7 runner input view is not create-only")
         self.runner_view.mkdir(mode=0o700)
         source_root = self.runner_root
-        linked_files = 0
-        logical_bytes = 0
+        file_inventory: list[dict[str, Any]] = []
         for lane in self.inputs["runner"]["metric_lane_order"]:
             lane_root = checked_dir(
                 source_root / lane, label=f"authorized measured runner lane {lane}"
@@ -7559,36 +8416,44 @@ class AnalysisController:
                         f"Phase 6 runner tree contains a non-regular input: {relative}"
                     )
                 target.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
-                os.link(source, target)
-                if not target.samefile(source):
-                    raise Phase7Error(
-                        f"Phase 7 runner input link identity differs: {relative}"
+                file_inventory.append(
+                    copy_view_file(
+                        source,
+                        target,
+                        source_root=source_root,
+                        view_root=self.runner_view,
                     )
-                linked_files += 1
-                logical_bytes += source.stat().st_size
-        if linked_files == 0:
+                )
+        file_inventory.sort(key=lambda item: item["relative_path"])
+        copied_files = len(file_inventory)
+        logical_bytes = sum(item["source"]["bytes"] for item in file_inventory)
+        if copied_files == 0:
             raise Phase7Error("Phase 7 runner input view is empty")
         receipt = {
-            "schema": "ura-phase7-runner-input-view/1",
+            "schema": RUNNER_VIEW_SCHEMA,
             "status": "complete",
             "source_runner_root": str(source_root),
             "view_root": str(self.runner_view),
             "included_measured_lanes": list(
                 self.inputs["runner"]["metric_lane_order"]
             ),
-            "regular_files_linked": linked_files,
+            "regular_files_copied": copied_files,
             "logical_bytes": logical_bytes,
             "source_files_modified": False,
-            "permitted_view_outputs": ["judge_kappa.json", "transfer_matrix*"],
+            "permitted_view_outputs": RUNNER_VIEW_PERMITTED_OUTPUTS,
+            "file_inventory": file_inventory,
+            "file_inventory_sha256": sha256_bytes(canonical(file_inventory)),
         }
         write_new(self.runner_view_receipt, canonical(receipt))
         self.runner_view_ready = True
+        self._validate_analysis_runner_view()
         return self.runner_view
 
     def lifecycle_runner_view(self) -> Path:
-        """Create the Level-1 view over retained Runner filesystem artifacts."""
+        """Create an independent Level-1 copy of retained Runner artifacts."""
 
         if self.lifecycle_runner_view_ready:
+            self._validate_lifecycle_runner_view()
             return checked_dir(
                 self.lifecycle_runner_view_path,
                 label="Phase 7 lifecycle runner input view",
@@ -7599,7 +8464,7 @@ class AnalysisController:
         view.mkdir(mode=0o700)
         source_root = self.runner_root
         roots = self.inputs["runner"]["lifecycle_lane_roots"]
-        linked_files = 0
+        file_inventory: list[dict[str, Any]] = []
         logical_bytes = 0
         included_lanes: list[str] = []
         for lane in self.inputs["runner"]["lifecycle_lane_order"]:
@@ -7634,37 +8499,36 @@ class AnalysisController:
                         f"{relative}"
                     )
                 target.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
-                os.link(source, target)
-                if not target.samefile(source):
-                    raise Phase7Error(
-                        f"Phase 7 lifecycle input link identity differs: {relative}"
-                    )
-                linked_files += 1
-                logical_bytes += source.stat().st_size
-        if linked_files == 0:
+                binding = copy_view_file(
+                    source,
+                    target,
+                    source_root=source_root,
+                    view_root=view,
+                )
+                file_inventory.append(binding)
+                logical_bytes += binding["source"]["bytes"]
+        file_inventory.sort(key=lambda item: item["relative_path"])
+        copied_files = len(file_inventory)
+        if copied_files == 0:
             raise Phase7Error("Phase 7 lifecycle runner input view is empty")
         receipt = {
-            "schema": "ura-phase7-lifecycle-runner-input-view/1",
+            "schema": LIFECYCLE_RUNNER_VIEW_SCHEMA,
             "status": "complete",
             "source_runner_root": str(source_root),
             "view_root": str(view),
             "included_lifecycle_lanes": included_lanes,
-            "registry_only_lanes": [
-                lane
-                for lane in self.inputs["runner"]["lifecycle_lane_order"]
-                if self.inputs["runner"]["lifecycle_authorizations"][lane][
-                    "level1_tool_input_status"
-                ]
-                == "registry_only_pre_runner_failure"
-            ],
+            "registry_only_lanes": self._lifecycle_registry_only_lanes(),
             "lifecycle_states": self.inputs["runner"]["lifecycle_states"],
-            "regular_files_linked": linked_files,
+            "regular_files_copied": copied_files,
             "logical_bytes": logical_bytes,
             "source_files_modified": False,
             "permitted_view_outputs": [],
+            "file_inventory": file_inventory,
+            "file_inventory_sha256": sha256_bytes(canonical(file_inventory)),
         }
         write_new(self.lifecycle_runner_view_receipt, canonical(receipt))
         self.lifecycle_runner_view_ready = True
+        self._validate_lifecycle_runner_view()
         return view
 
     def emit(self, message: str) -> None:
@@ -7746,6 +8610,10 @@ class AnalysisController:
 
     def run(self, name: str, argv: Sequence[str], *, log_name: str) -> None:
         self.current_name = name
+        if self.runner_view_ready:
+            self._validate_analysis_runner_view()
+        if self.lifecycle_runner_view_ready:
+            self._validate_lifecycle_runner_view()
         log_path = self.control / "logs" / log_name
         log_path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
         if log_path.exists():
@@ -7764,6 +8632,10 @@ class AnalysisController:
             self.current_process = process
             returncode = process.wait()
             self.current_process = None
+        if self.runner_view_ready:
+            self._validate_analysis_runner_view()
+        if self.lifecycle_runner_view_ready:
+            self._validate_lifecycle_runner_view()
         if returncode != 0:
             self.event(name, "subprocess", "failed", f"returncode={returncode}")
             raise Phase7Error(f"{name} failed with return code {returncode}")
@@ -7788,19 +8660,9 @@ class AnalysisController:
             process.wait(timeout=10)
 
     def clean_scratch(self) -> None:
-        if self.transfer_scratch_claimed:
-            for path in self.runner_view.glob("transfer_matrix*"):
-                if path.is_file() and not path.is_symlink():
-                    try:
-                        path.unlink()
-                    except OSError:
-                        pass
-        for path in sorted(self.created_runner_scratch):
-            try:
-                if path.exists() and path.is_file() and not path.is_symlink():
-                    path.unlink()
-            except OSError:
-                pass
+        # Analysis subprocesses write only to the create-only analysis root.
+        # Both Runner views remain exact zero-output input inventories.
+        return
 
     def native_args(self) -> list[str]:
         values: list[str] = []
@@ -8007,8 +8869,43 @@ class AnalysisController:
         )
         return value
 
+    def _emit_non_estimable_analysis(
+        self, analysis: str, output: Path
+    ) -> dict[str, Any]:
+        value = non_estimable_analysis_value(self.inputs["runner"], analysis)
+        validate_non_estimable_analysis(
+            value,
+            runner=self.inputs["runner"],
+            analysis=analysis,
+        )
+        write_new(output, canonical(value))
+        self.status(
+            analysis,
+            "unavailable",
+            detail=str(value["reason"]),
+            outputs=(output,),
+            limitations={
+                "reason_code": value["reason_code"],
+                "selector": value["selector"],
+                "candidate_lanes": value["candidate_lanes"],
+                "conditional_na_lanes": value["conditional_na_lanes"],
+                "subprocess_invoked": False,
+            },
+        )
+        return value
+
     def run_judge_sensitivity(self) -> dict[str, Any]:
         output = self.analysis / "diagnostics" / "judge-sensitivity.json"
+        if not conditional_analysis_plan(
+            self.inputs["runner"], "judge-sensitivity"
+        )["runnable"]:
+            return self._emit_non_estimable_analysis(
+                "judge-sensitivity", output
+            )
+        if output.exists() or output.is_symlink():
+            raise Phase7Error(
+                "create-only judge-sensitivity destination already exists"
+            )
         argv = [
             str(self.python),
             "-m",
@@ -8017,6 +8914,8 @@ class AnalysisController:
             str(self.analysis_runner_view()),
             "--attacker",
             "replay",
+            "--defense",
+            "none",
             "--output",
             str(output),
         ]
@@ -8024,10 +8923,29 @@ class AnalysisController:
         value = strict_object(output)
         if (
             value.get("analysis") != "same_response_shadow_judge_sensitivity"
+            or value.get("selector")
+            != {"attacker": "replay", "corpus": None, "defense": "none"}
             or value.get("unexplained_exclusions") != 0
             or value.get("selection_accounting", {}).get("unexplained_exclusions") != 0
         ):
             raise Phase7Error("judge-sensitivity accounting differs")
+        facets = value.get("facets")
+        selection = value.get("selection_accounting")
+        if (
+            not isinstance(facets, dict)
+            or not facets
+            or not isinstance(selection, dict)
+            or selection.get("selected_cells") != len(facets)
+            or selection.get("validated_completed_cells")
+            != selection.get("selected_cells", 0) + selection.get("excluded_cells", 0)
+            or any(
+                not isinstance(facet, dict)
+                or facet.get("lineage", {}).get("attacker") != "replay"
+                or facet.get("lineage", {}).get("defense") != "none"
+                for facet in facets.values()
+            )
+        ):
+            raise Phase7Error("judge-sensitivity defense/facet selection differs")
         ready = value.get("analysis_ready_real_run") is True
         self.status(
             "judge-sensitivity",
@@ -8039,11 +8957,15 @@ class AnalysisController:
         return value
 
     def run_kappa(self) -> dict[str, Any]:
+        output = self.analysis / "diagnostics" / "judge-kappa.json"
+        if not conditional_analysis_plan(self.inputs["runner"], "kappa")[
+            "runnable"
+        ]:
+            return self._emit_non_estimable_analysis("kappa", output)
         view = self.analysis_runner_view()
-        scratch = view / "judge_kappa.json"
-        if scratch.exists() or scratch.is_symlink():
-            raise Phase7Error("runner root already contains judge_kappa.json")
-        self.created_runner_scratch.add(scratch)
+        output.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+        if output.exists() or output.is_symlink():
+            raise Phase7Error("create-only kappa destination already exists")
         argv = [
             str(self.python),
             "-m",
@@ -8052,20 +8974,21 @@ class AnalysisController:
             str(view),
             "--attacker",
             "replay",
+            "--defense",
+            "none",
+            "--output",
+            str(output),
         ]
         self.run("kappa", argv, log_name="kappa.log")
-        if not scratch.is_file() or scratch.is_symlink():
+        if not output.is_file() or output.is_symlink():
             raise Phase7Error("kappa did not create its documented output")
-        output = self.analysis / "diagnostics" / "judge-kappa.json"
-        output.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
-        if output.exists():
-            raise Phase7Error("create-only kappa destination already exists")
-        os.replace(scratch, output)
-        self.created_runner_scratch.discard(scratch)
+        self._validate_analysis_runner_view()
         value = strict_object(output)
         if (
             value.get("analysis_kind") != "diagnostic_inter_judge_agreement"
             or value.get("unexplained_exclusions") != 0
+            or value.get("selector")
+            != {"attacker": "replay", "corpus": None, "defense": "none"}
         ):
             raise Phase7Error("kappa output accounting differs")
         facets = value.get("facets")
@@ -8117,11 +9040,16 @@ class AnalysisController:
         return value
 
     def run_transfer(self) -> dict[str, Any]:
+        output_dir = self.analysis / "transfer"
+        if not conditional_analysis_plan(
+            self.inputs["runner"], "transfer-matrix"
+        )["runnable"]:
+            return self._emit_non_estimable_analysis(
+                "transfer-matrix", output_dir / "transfer_matrix.json"
+            )
         view = self.analysis_runner_view()
-        existing = list(view.glob("transfer_matrix*"))
-        if existing:
-            raise Phase7Error("runner root already contains transfer_matrix outputs")
-        self.transfer_scratch_claimed = True
+        if output_dir.exists() or output_dir.is_symlink():
+            raise Phase7Error("create-only transfer destination already exists")
         argv = [
             str(self.python),
             "-m",
@@ -8130,37 +9058,40 @@ class AnalysisController:
             str(view),
             "--attacker",
             "replay",
+            "--defense",
+            "none",
+            "--output-dir",
+            str(output_dir),
         ]
         self.run("transfer-matrix", argv, log_name="transfer-matrix.log")
-        created = sorted(view.glob("transfer_matrix*"))
-        if not created or not (view / "transfer_matrix.json").is_file():
+        created = sorted(output_dir.glob("transfer_matrix*"))
+        if not created or not (output_dir / "transfer_matrix.json").is_file():
             raise Phase7Error("transfer_matrix did not create its documented inventory")
-        output_dir = self.analysis / "transfer"
-        output_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
-        moved: list[Path] = []
         for source in created:
             if not source.is_file() or source.is_symlink():
                 raise Phase7Error("transfer_matrix created an unsafe output")
-            target = output_dir / source.name
-            if target.exists():
-                raise Phase7Error("create-only transfer destination already exists")
-            os.replace(source, target)
-            moved.append(target)
-        self.transfer_scratch_claimed = False
+        self._validate_analysis_runner_view()
         index = strict_object(output_dir / "transfer_matrix.json")
-        if (
-            index.get("unexplained_exclusions") != 0
-            or index.get("schema_version") != "2.1"
-        ):
-            raise Phase7Error("transfer matrix has unexplained exclusions")
-        if index.get("attacker") not in {None, "replay"}:
-            raise Phase7Error("transfer matrix attacker facet changed")
-        transfer_facets = index.get("facets")
-        if isinstance(transfer_facets, dict):
-            estimated_facets = len(transfer_facets)
+        transfer_facets, not_applicable = validated_transfer_index_facets(index)
+        moved = created
+        moved_names = {path.name for path in moved}
+        if index.get("schema_version") == "2.1-faceted":
+            expected_moved = {
+                "transfer_matrix.json",
+                *{
+                    name
+                    for artifact in index["artifacts"].values()
+                    for name in artifact.values()
+                },
+            }
         else:
-            transfer_facets = {"single": index}
-            estimated_facets = 1
+            allowed_single = {"transfer_matrix.json", "transfer_matrix.png"}
+            if not moved_names <= allowed_single:
+                raise Phase7Error("single-facet transfer output inventory changed")
+            expected_moved = moved_names
+        if moved_names != expected_moved:
+            raise Phase7Error("transfer output/index inventory differs")
+        estimated_facets = len(transfer_facets)
         unready_facets: list[str] = []
         for corpus, facet in transfer_facets.items():
             cells = facet.get("cells") if isinstance(facet, dict) else None
@@ -8188,7 +9119,6 @@ class AnalysisController:
                 )
             if facet.get("analysis_ready_real_run") is not True:
                 unready_facets.append(str(corpus))
-        not_applicable = index.get("not_applicable_facets", {})
         transfer_status = (
             "unavailable"
             if estimated_facets == 0
@@ -8388,8 +9318,46 @@ class AnalysisController:
         return results
 
     def run_adaptivity_pairs(self) -> dict[str, dict[str, Any]]:
-        qwen = self.inputs["runner"]["model_selectors"]["qwen3_vl"]
         results: dict[str, dict[str, Any]] = {}
+        prerequisite_plan = adaptivity_prerequisite_plan(self.inputs["runner"])
+        if not prerequisite_plan["runnable"]:
+            for corpus in ADAPTIVE_ARMS:
+                name = f"qwen-replay-vs-crescendo-{corpus}"
+                output = (
+                    self.analysis
+                    / "paired"
+                    / "qwen-replay-vs-crescendo"
+                    / f"{corpus}.json"
+                )
+                value = non_estimable_adaptivity_value(
+                    self.inputs["runner"], corpus
+                )
+                validate_non_estimable_adaptivity(
+                    value,
+                    runner=self.inputs["runner"],
+                    corpus=corpus,
+                )
+                write_new(output, canonical(value))
+                self.status(
+                    name,
+                    "unavailable",
+                    detail=str(value["reason"]),
+                    outputs=(output,),
+                    limitations={
+                        "reason_code": value["reason_code"],
+                        "missing_roles": value["missing_roles"],
+                        "prerequisite_roles": value["prerequisite_roles"],
+                        "paired_compare_invoked": False,
+                    },
+                )
+                results[corpus] = value
+            if set(results) != set(ADAPTIVE_ARMS):
+                raise Phase7Error(
+                    "Qwen non-estimable adaptivity inventory is incomplete"
+                )
+            return results
+
+        qwen = self.inputs["runner"]["model_selectors"]["qwen3_vl"]
         for corpus in ADAPTIVE_ARMS:
             name = f"qwen-replay-vs-crescendo-{corpus}"
             output = (
@@ -8873,6 +9841,8 @@ class AnalysisController:
             raise Phase7Error(
                 "Phase 7 lifecycle runner input view was never completed"
             )
+        self._validate_analysis_runner_view()
+        self._validate_lifecycle_runner_view()
         runner_view_receipt = descriptor(self.runner_view_receipt)
         inventory = {
             "schema": "ura-phase7-analysis-artifact-inventory/1",
@@ -9545,6 +10515,307 @@ def contract_self_test() -> int:
             )
         finally:
             globals()["git_output"] = original_git_output
+
+    def prerequisite_runner(
+        measured: Sequence[str] = (),
+    ) -> dict[str, Any]:
+        lanes = tuple(dict.fromkeys((*REPLAY_ANALYSIS_LANES, ADAPTIVITY_RIGHT_LANE)))
+        measured_set = set(measured)
+        states = {
+            lane: (
+                "measured_complete" if lane in measured_set else "failed"
+            )
+            for lane in lanes
+        }
+        lifecycle = {
+            lane: ("complete" if state == "measured_complete" else "failed")
+            for lane, state in states.items()
+        }
+        authorizations: dict[str, dict[str, Any]] = {}
+        for index, lane in enumerate(lanes, 1):
+            complete = states[lane] == "measured_complete"
+            authorizations[lane] = {
+                "lifecycle_registry_status": (
+                    "complete_runner_grid"
+                    if complete
+                    else "pre_runner_failure_no_request_artifact"
+                ),
+                "controller_failure": (
+                    None
+                    if complete
+                    else {
+                        "path": f"/phase6/failure-{lane}.json",
+                        "sha256": f"{index:064x}"[-64:],
+                        "bytes": index,
+                    }
+                ),
+            }
+        return {
+            "terminal_states": states,
+            "lifecycle_states": lifecycle,
+            "lifecycle_authorizations": authorizations,
+            "conditional_na_lanes": [],
+        }
+
+    adaptivity_cases = (
+        (
+            (ADAPTIVITY_RIGHT_LANE,),
+            ["left_replay"],
+            "left_replay_lane_failed",
+        ),
+        (
+            (ADAPTIVITY_LEFT_LANE,),
+            ["right_crescendo"],
+            "right_crescendo_lane_failed",
+        ),
+        (
+            (),
+            ["left_replay", "right_crescendo"],
+            "left_replay_and_right_crescendo_lanes_failed",
+        ),
+    )
+    for measured, missing_roles, reason_code in adaptivity_cases:
+        runner = prerequisite_runner(measured)
+        plan = adaptivity_prerequisite_plan(runner)
+        if plan["runnable"] or plan["missing_roles"] != missing_roles:
+            raise Phase7Error("adaptivity prerequisite self-test changed")
+        artifact = non_estimable_adaptivity_value(runner, ADAPTIVE_ARMS[0])
+        if (
+            artifact["reason_code"] != reason_code
+            or artifact["paired_compare_invoked"] is not False
+            or artifact["estimate"] is not None
+        ):
+            raise Phase7Error("adaptivity non-estimable self-test changed")
+        validate_non_estimable_adaptivity(
+            artifact,
+            runner=runner,
+            corpus=ADAPTIVE_ARMS[0],
+        )
+    fully_available_adaptivity = prerequisite_runner(
+        (ADAPTIVITY_LEFT_LANE, ADAPTIVITY_RIGHT_LANE)
+    )
+    if not adaptivity_prerequisite_plan(fully_available_adaptivity)["runnable"]:
+        raise Phase7Error("available adaptivity prerequisite self-test changed")
+    must_fail(
+        "adaptivity-artifact-with-both-arms",
+        lambda: non_estimable_adaptivity_value(
+            fully_available_adaptivity, ADAPTIVE_ARMS[0]
+        ),
+    )
+    failed_adaptivity_runner = prerequisite_runner(())
+    valid_adaptivity_artifact = non_estimable_adaptivity_value(
+        failed_adaptivity_runner, ADAPTIVE_ARMS[0]
+    )
+    for mutation_name, mutate in (
+        (
+            "paired-invocation",
+            lambda value: value.__setitem__("paired_compare_invoked", True),
+        ),
+        ("fabricated-estimate", lambda value: value.__setitem__("estimate", 0.0)),
+        ("missing-role", lambda value: value["missing_roles"].pop()),
+        (
+            "failure-descriptor",
+            lambda value: value["prerequisite_roles"]["left_replay"][
+                "controller_failure"
+            ].__setitem__("sha256", "f" * 64),
+        ),
+        ("nonzero-call", lambda value: value.__setitem__("target_calls", 1)),
+    ):
+        mutation = copy.deepcopy(valid_adaptivity_artifact)
+        mutate(mutation)
+        must_fail(
+            f"adaptivity-non-estimable-{mutation_name}",
+            lambda mutation=mutation: validate_non_estimable_adaptivity(
+                mutation,
+                runner=failed_adaptivity_runner,
+                corpus=ADAPTIVE_ARMS[0],
+            ),
+        )
+
+    all_failed_runner = prerequisite_runner(())
+    classification_only_runner = prerequisite_runner(("rjudge-qwen3-vl",))
+    common_runner = prerequisite_runner((ADAPTIVITY_LEFT_LANE,))
+    defense_only_runner = prerequisite_runner((DEFENSE_LOCAL_LANE,))
+    non_replay_runner = prerequisite_runner((ADAPTIVITY_RIGHT_LANE,))
+    expected_conditional = {
+        "all_failed": (False, False, False),
+        "classification_only": (True, False, True),
+        "common_replay": (True, True, True),
+        "defense_only": (False, False, False),
+        "non_replay_only": (False, False, False),
+    }
+    for label, runner in (
+        ("all_failed", all_failed_runner),
+        ("classification_only", classification_only_runner),
+        ("common_replay", common_runner),
+        ("defense_only", defense_only_runner),
+        ("non_replay_only", non_replay_runner),
+    ):
+        observed = tuple(
+            conditional_analysis_plan(runner, analysis)["runnable"]
+            for analysis in ("judge-sensitivity", "kappa", "transfer-matrix")
+        )
+        if observed != expected_conditional[label]:
+            raise Phase7Error(f"conditional analysis self-test changed: {label}")
+    valid_conditional_artifact = non_estimable_analysis_value(
+        all_failed_runner, "transfer-matrix"
+    )
+    validate_non_estimable_analysis(
+        valid_conditional_artifact,
+        runner=all_failed_runner,
+        analysis="transfer-matrix",
+    )
+    for mutation_name, mutate in (
+        (
+            "subprocess-invoked",
+            lambda value: value.__setitem__("subprocess_invoked", True),
+        ),
+        ("fabricated-result", lambda value: value.__setitem__("result", {})),
+        ("wrong-selector", lambda value: value["selector"].pop("defense")),
+        ("nonzero-call", lambda value: value.__setitem__("judge_calls", 1)),
+        (
+            "failure-descriptor",
+            lambda value: value["lane_states"][ADAPTIVITY_LEFT_LANE][
+                "controller_failure"
+            ].__setitem__("sha256", "f" * 64),
+        ),
+    ):
+        mutation = copy.deepcopy(valid_conditional_artifact)
+        mutate(mutation)
+        must_fail(
+            f"conditional-analysis-{mutation_name}",
+            lambda mutation=mutation: validate_non_estimable_analysis(
+                mutation,
+                runner=all_failed_runner,
+                analysis="transfer-matrix",
+            ),
+        )
+
+    single_transfer = {
+        "schema_version": "2.1",
+        "analysis_kind": "diagnostic_conditional_transfer",
+        "load_audit": {
+            "facet": {
+                "attacker": "replay",
+                "corpus": "fixture",
+                "defense": "none",
+            }
+        },
+        "unexplained_exclusions": 0,
+    }
+    if set(validated_transfer_index_facets(single_transfer)[0]) != {"fixture"}:
+        raise Phase7Error("single transfer schema self-test changed")
+    faceted_transfer = {
+        "schema_version": "2.1-faceted",
+        "attacker": "replay",
+        "defense": "none",
+        "corpora": ["fixture"],
+        "artifacts": {
+            "fixture": {
+                "json": "transfer_matrix__replay__fixture.json",
+            }
+        },
+        "facets": {"fixture": copy.deepcopy(single_transfer)},
+        "not_applicable_facets": {
+            "empty": {
+                "reason": "insufficient_eligible_models",
+                "load_audit": {
+                    "facet": {
+                        "attacker": "replay",
+                        "corpus": "empty",
+                        "defense": "none",
+                    }
+                },
+                "unexplained_exclusions": 0,
+            }
+        },
+        "unexplained_exclusions": 0,
+    }
+    facets, unavailable = validated_transfer_index_facets(faceted_transfer)
+    if set(facets) != {"fixture"} or set(unavailable) != {"empty"}:
+        raise Phase7Error("faceted transfer schema self-test changed")
+    for mutation_name, mutate in (
+        ("schema", lambda value: value.__setitem__("schema_version", "2.1-facet")),
+        ("defense", lambda value: value.__setitem__("defense", "both")),
+        ("corpora", lambda value: value.__setitem__("corpora", [])),
+        (
+            "unexplained",
+            lambda value: value["not_applicable_facets"]["empty"].__setitem__(
+                "unexplained_exclusions", 1
+            ),
+        ),
+    ):
+        mutation = copy.deepcopy(faceted_transfer)
+        mutate(mutation)
+        must_fail(
+            f"transfer-faceted-{mutation_name}",
+            lambda mutation=mutation: validated_transfer_index_facets(mutation),
+        )
+    collision_transfer = copy.deepcopy(faceted_transfer)
+    collision_transfer["corpora"] = ["fixture", "fixture."]
+    collision_transfer["facets"]["fixture."] = copy.deepcopy(single_transfer)
+    collision_transfer["facets"]["fixture."]["load_audit"]["facet"][
+        "corpus"
+    ] = "fixture."
+    collision_transfer["artifacts"]["fixture."] = {
+        "json": "transfer_matrix__replay__fixture.json",
+    }
+    must_fail(
+        "transfer-faceted-artifact-name-collision",
+        lambda: validated_transfer_index_facets(collision_transfer),
+    )
+
+    with tempfile.TemporaryDirectory(
+        prefix="ura-phase7-runner-view-contract-"
+    ) as temp_value:
+        temp = Path(temp_value).resolve(strict=True)
+        source_root = temp / "source"
+        lane_root = source_root / "lane-a"
+        lane_root.mkdir(parents=True)
+        source_file = lane_root / "cell.manifest.json"
+        source_file.write_bytes(b"sealed-runner-input")
+        view_controller = object.__new__(AnalysisController)
+        view_controller.inputs = {
+            "runner": {
+                "root": str(source_root),
+                "metric_lane_order": ["lane-a"],
+            }
+        }
+        view_controller.runner_view = temp / "view"
+        view_controller.runner_view_receipt = temp / "view-receipt.json"
+        view_controller.runner_view_ready = False
+        view_root = view_controller.analysis_runner_view()
+        view_receipt = strict_object(view_controller.runner_view_receipt)
+        validate_runner_input_view_receipt(
+            view_receipt,
+            source_root=source_root,
+            view_root=view_root,
+            included_measured_lanes=["lane-a"],
+        )
+        forged = view_root / "transfer_matrix__replay__forged.manifest.json"
+        forged.write_bytes(b"{}")
+        must_fail(
+            "runner-view-selector-visible-runtime-extra",
+            lambda: validate_runner_input_view_receipt(
+                view_receipt,
+                source_root=source_root,
+                view_root=view_root,
+                included_measured_lanes=["lane-a"],
+            ),
+        )
+        forged.unlink()
+        view_file = view_root / "lane-a" / source_file.name
+        sealed_source = source_file.read_bytes()
+        os.chmod(view_file, 0o600)
+        view_file.write_bytes(b"X" * len(sealed_source))
+        if source_file.read_bytes() != sealed_source or source_file.samefile(view_file):
+            raise Phase7Error(
+                "Runner view mutation changed its independent Phase 6 source"
+            )
+        must_fail(
+            "runner-view-in-place-mutation",
+            view_controller.analysis_runner_view,
+        )
 
     contrast_corpus = IMAGE_ARMS[0]
     contrast = {
@@ -10445,6 +11716,10 @@ def contract_self_test() -> int:
                         "phase6-terminal-partitions",
                         "phase7-lifecycle-vs-metric-partition",
                         "phase7-lifecycle-authorization-cases",
+                        "phase7-conditional-analysis-prerequisites",
+                        "phase7-adaptivity-non-estimable-contrasts",
+                        "phase7-transfer-faceted-index",
+                        "phase7-runner-view-content-binding",
                         "phase7-metric-boundary-derivation",
                         "source-conformance-45-row-portfolio",
                     }

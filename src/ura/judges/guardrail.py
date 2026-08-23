@@ -387,7 +387,9 @@ class GuardrailJudge(BaseJudge):
             import torch
 
             input_ids = self._tokenizer.apply_chat_template(
-                conversation, return_tensors="pt"
+                conversation,
+                return_tensors="pt",
+                return_dict=False,
             ).to(self._model.device)
             with torch.no_grad():
                 output = self._model.generate(

@@ -56,11 +56,15 @@ def _bindings(path: Path, commit: str = "1" * 40) -> Path:
 def test_all_controller_implementations_are_versioned() -> None:
     root = Path(__file__).parents[2] / "experiments" / "local_campaign" / "templates"
     expected = {spec.template for spec in CONTROLLERS}
-    assert len(CONTROLLERS) == 24
+    assert len(CONTROLLERS) == 25
     assert {path.name for path in root.glob("*.in")} == expected | SUPPORT_TEMPLATES
     assert "phase6_native_diagnostics.sh.in" in expected
+    assert "phase8_human_audit.README.md.in" in expected
     assert "phase6_native_measured.sh.in" not in expected
-    assert {spec.output for spec in CONTROLLERS} >= {"phase6_native_diagnostics.sh"}
+    assert {spec.output for spec in CONTROLLERS} >= {
+        "phase6_native_diagnostics.sh",
+        "phase8_human_audit.README.md",
+    }
     assert "phase6_native_measured.sh" not in {spec.output for spec in CONTROLLERS}
     for spec in CONTROLLERS:
         source = (root / spec.template).read_text(encoding="utf-8")
@@ -99,6 +103,24 @@ def test_controller_templates_are_repository_normalized_to_lf() -> None:
         payload = path.read_bytes()
         assert payload.endswith(b"\n")
         assert b"\r" not in payload
+
+
+def test_phase8_operator_readme_is_rendered_and_current(tmp_path: Path) -> None:
+    bindings = _bindings(tmp_path / "bindings.json")
+    output = tmp_path / "workspace"
+    render_controller_set(bindings, output)
+    readme = (output / "phase8_human_audit.README.md").read_text(
+        encoding="ascii"
+    )
+    assert "`1111111111111111111111111111111111111111`" in readme
+    assert "46 lanes: 22 runnable and 24 typed terminal" in readme
+    assert "21 runnable and 25 typed terminal" in readme
+    assert "C >= N + 20" in readme
+    assert "S >= M" in readme
+    assert "human_only_blocked" in readme
+    assert "gate8_met: false" in readme
+    assert "43 total lanes" not in readme
+    assert "8461790bb3e2fe75589c0cd547857406442a0c99" not in readme
 
 
 def test_phase3_uses_one_exact_bound_create_only_tag(tmp_path: Path) -> None:
@@ -233,6 +255,51 @@ def test_rendered_phase7_lifecycle_partition_mutations_fail(tmp_path: Path) -> N
     assert value["status"] == "passed"
     assert "phase7-lifecycle-vs-metric-partition" in value["contracts"]
     assert "phase7-lifecycle-authorization-cases" in value["contracts"]
+    assert "phase7-conditional-analysis-prerequisites" in value["contracts"]
+    assert "phase7-adaptivity-non-estimable-contrasts" in value["contracts"]
+    assert "phase7-transfer-faceted-index" in value["contracts"]
+    assert "phase7-runner-view-content-binding" in value["contracts"]
+
+
+def test_phase7_conditional_analyses_branch_before_subprocesses() -> None:
+    source = (
+        Path(__file__).parents[2]
+        / "experiments"
+        / "local_campaign"
+        / "templates"
+        / "phase7_analysis.py.in"
+    ).read_text(encoding="utf-8")
+    method_bounds = (
+        ("run_judge_sensitivity", "run_kappa", "judge-sensitivity"),
+        ("run_kappa", "run_transfer", "kappa"),
+        ("run_transfer", "_validate_paired", "transfer-matrix"),
+    )
+    for method, next_method, analysis in method_bounds:
+        start = source.index(f"    def {method}(")
+        end = source.index(f"    def {next_method}(", start)
+        body = source[start:end]
+        plan = body.index("conditional_analysis_plan(")
+        dispatch = body.index("self.run(")
+        assert plan < dispatch
+        assert f'"{analysis}"' in body[:dispatch]
+        assert "_emit_non_estimable_analysis(" in body[:dispatch]
+        defense = body.index('"--defense"')
+        assert defense < dispatch
+        assert '"none"' in body[defense:dispatch]
+        if analysis == "kappa":
+            assert '"--output"' in body[:dispatch]
+        if analysis == "transfer-matrix":
+            assert '"--output-dir"' in body[:dispatch]
+
+    start = source.index("    def run_adaptivity_pairs(")
+    end = source.index("    def record_native_outcomes(", start)
+    adaptivity = source[start:end]
+    plan = adaptivity.index("adaptivity_prerequisite_plan(")
+    qwen = adaptivity.index('self.inputs["runner"]["model_selectors"]')
+    dispatch = adaptivity.index("self.run(")
+    assert plan < qwen < dispatch
+    assert "non_estimable_adaptivity_value(" in adaptivity[plan:qwen]
+    assert "return results" in adaptivity[plan:qwen]
 
 
 def test_phase7_rr_runtime_terminal_never_invokes_paired_compare() -> None:
@@ -463,6 +530,106 @@ def test_phase5_rr_preserves_projections_and_starts_terminal_at_canary(
             "hardcoded_one_rejected": True,
             "request_envelope_swap_rejected": True,
         }
+
+
+def test_gate5_failed_attestation_retry_is_content_bound_and_mutation_tested(
+    tmp_path: Path,
+) -> None:
+    import re
+
+    template_root = (
+        Path(__file__).parents[2]
+        / "experiments"
+        / "local_campaign"
+        / "templates"
+    )
+    finalizer_source = (
+        template_root / "phase5_finalize_gate5.sh.in"
+    ).read_text(encoding="utf-8")
+    controller_source = (
+        template_root / "phase5_core_attest_canary.sh.in"
+    ).read_text(encoding="utf-8")
+    assert (
+        "target\\tmodality\\tarm\\tsample_seed\\trun_root\\texit_code"
+        in controller_source
+    )
+    for required in (
+        "def validate_failed_attestation_candidate(",
+        "failed_attestation_tree_descriptor(run_root)",
+        "Runner.load_response_checkpoint(path, expected_run_id=run_id)",
+        'grid.get("call_budget_snapshot") != budget',
+        "read_failed_attestation_tsv(attempt_failure_path)",
+        '"deleted_budget_ledger"',
+        '"rolled_back_budget_target_calls"',
+        '"deleted_paid_response_checkpoint"',
+        '"rolled_back_checkpoint_target_calls"',
+        '"rolled_back_grid_target_calls"',
+        '"deleted_circuit_ledger"',
+        '"rolled_back_circuit_target_calls"',
+        '"deleted_circuit_and_paid_response"',
+    ):
+        assert required in finalizer_source
+
+    bindings = _bindings(tmp_path / "bindings.json")
+    output = tmp_path / "workspace"
+    render_controller_set(bindings, output)
+    shell = (output / "phase5_finalize_gate5.sh").read_text(encoding="utf-8")
+    blocks = re.findall(r"<<'PY'\n(.*?)\nPY(?:\n|$)", shell, re.DOTALL)
+    assert len(blocks) == 1
+    result = subprocess.run(
+        [sys.executable, "-", "--inventory-contract-self-test"],
+        cwd=Path(__file__).parents[2],
+        input=blocks[0],
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    value = json.loads(result.stdout)["failed_live_attestation_self_test"]
+    assert value["schema"] == (
+        "ura-phase5-failed-live-attestation-contract-self-test/1"
+    )
+    assert value["status"] == "passed"
+    assert value["call_accounting"] == {
+        "accounting_semantics": "durable_pre_call_logical_reservation_v1",
+        "budget_id": "grid-" + "a" * 24,
+        "target_calls": 1,
+        "model_judge_calls": 0,
+        "http_attempts": 0,
+        "checkpointed_target_responses": 1,
+        "completed_attempts": 0,
+    }
+    assert value["target_stage_call_accounting"] == {
+        "accounting_semantics": "durable_pre_call_logical_reservation_v1",
+        "budget_id": "grid-" + "a" * 24,
+        "target_calls": 1,
+        "model_judge_calls": 0,
+        "http_attempts": 0,
+        "checkpointed_target_responses": 0,
+        "completed_attempts": 0,
+    }
+    assert set(value["rejected_mutations"]) == {
+        "deleted_budget_ledger",
+        "rolled_back_budget_target_calls",
+        "deleted_paid_response_checkpoint",
+        "rolled_back_checkpoint_target_calls",
+        "rolled_back_grid_target_calls",
+        "deleted_circuit_ledger",
+        "rolled_back_circuit_target_calls",
+        "deleted_circuit_and_paid_response",
+    }
+    empty = json.loads(result.stdout)[
+        "empty_failed_live_attestation_tsv_self_test"
+    ]
+    assert empty == {
+        "schema": "ura-phase5-empty-failed-attestation-tsv-self-test/1",
+        "status": "passed",
+        "canonical_empty_rows": 0,
+        "rejected_mutations": [
+            "reordered_empty_ledger_header",
+            "crlf_empty_ledger_header",
+            "blank_row_after_empty_ledger_header",
+        ],
+    }
 
 
 def test_render_is_commit_bound_and_workspace_drift_fails(tmp_path: Path) -> None:

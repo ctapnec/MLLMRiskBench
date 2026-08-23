@@ -36,24 +36,38 @@ def load_trail_facets(
     *,
     attacker: str = "replay",
     corpus: str | None = None,
+    defense: str = "none",
 ) -> dict[str, tuple[dict[str, dict[str, str]], dict[str, dict], dict]]:
     """Load strict, completion-backed trail cohorts faceted by corpus."""
     _, cells = _validated_artifacts(results)
     grouped: dict[str, list[dict]] = {}
+    excluded_other_defense: dict[str, int] = {}
     for cell in cells:
         run_config = (cell["manifest"].get("config") or {}).get("run")
         if not isinstance(run_config, dict):
             raise ValueError(f"manifest {cell['manifest_path']} lacks config.run")
         cell_attacker = run_config.get("attacker")
         cell_corpus = run_config.get("corpus")
-        if not isinstance(cell_attacker, str) or not isinstance(cell_corpus, str):
-            raise ValueError(f"manifest {cell['manifest_path']} lacks attacker/corpus facets")
+        cell_defense = run_config.get("defense")
+        if not all(
+            isinstance(value, str) and value
+            for value in (cell_attacker, cell_corpus, cell_defense)
+        ):
+            raise ValueError(
+                f"manifest {cell['manifest_path']} lacks attacker/corpus/defense facets"
+            )
         if cell_attacker != attacker or (corpus is not None and cell_corpus != corpus):
+            continue
+        if cell_defense != defense:
+            excluded_other_defense[cell_corpus] = (
+                excluded_other_defense.get(cell_corpus, 0) + 1
+            )
             continue
         grouped.setdefault(cell_corpus, []).append(cell)
     if not grouped:
         raise ValueError(
-            f"no completed trail cohorts for attacker={attacker!r}, corpus={corpus!r}"
+            f"no completed trail cohorts for attacker={attacker!r}, "
+            f"corpus={corpus!r}, defense={defense!r}"
         )
 
     facets = {}
@@ -114,6 +128,7 @@ def load_trail_facets(
             {
                 "attacker": attacker,
                 "corpus": corpus_name,
+                "defense": defense,
                 "cohort_signature": next(iter(signatures)),
                 "run_ids": sorted(cell["run_id"] for cell in cohort),
                 "trail_source_files": sorted(str(path) for path in files),
@@ -133,6 +148,9 @@ def load_trail_facets(
                     )))
                     for cell in cohort
                 ),
+                "excluded_other_defense_cells": excluded_other_defense.get(
+                    corpus_name, 0
+                ),
                 "unexplained_exclusions": 0,
             },
         )
@@ -148,9 +166,15 @@ def load_trails(
     *,
     attacker: str = "replay",
     corpus: str | None = None,
+    defense: str = "none",
 ) -> tuple[dict[str, dict[str, str]], dict[str, dict]]:
     """Compatibility wrapper requiring one explicit/available corpus facet."""
-    facets = load_trail_facets(results, attacker=attacker, corpus=corpus)
+    facets = load_trail_facets(
+        results,
+        attacker=attacker,
+        corpus=corpus,
+        defense=defense,
+    )
     if len(facets) != 1:
         raise ValueError(f"multiple corpus facets found: {sorted(facets)!r}; select --corpus")
     per_judge, metadata, _ = next(iter(facets.values()))
@@ -296,11 +320,26 @@ def main(argv=None) -> int:
     parser.add_argument("--results", type=Path, required=True)
     parser.add_argument("--attacker", default="replay")
     parser.add_argument("--corpus", default=None)
+    parser.add_argument("--defense", default="none")
+    parser.add_argument(
+        "--output",
+        type=Path,
+        default=None,
+        help="create-only output JSON path (default: RESULTS/judge_kappa.json)",
+    )
     args = parser.parse_args(argv)
+
+    destination = args.output or args.results / "judge_kappa.json"
+    if destination.exists() or destination.is_symlink():
+        print(f"kappa output already exists: {destination}", file=sys.stderr)
+        return 1
 
     try:
         facets = load_trail_facets(
-            args.results, attacker=args.attacker, corpus=args.corpus
+            args.results,
+            attacker=args.attacker,
+            corpus=args.corpus,
+            defense=args.defense,
         )
     except ValueError as exc:
         print(f"kappa input validation failed: {exc}", file=sys.stderr)
@@ -315,13 +354,13 @@ def main(argv=None) -> int:
         print(f"kappa facet is not estimable: {exc}", file=sys.stderr)
         return 1
 
-    destination = args.results / "judge_kappa.json"
     output: dict = (
         next(iter(analysed.values()))
         if len(analysed) == 1
         else {
             "schema_version": "2.2-faceted",
             "attacker": args.attacker,
+            "defense": args.defense,
             "facets": analysed,
             "analysis_kind": "diagnostic_inter_judge_agreement",
             "analysis_scope": "descriptive_within_completed_judge_trails",
@@ -349,9 +388,18 @@ def main(argv=None) -> int:
         Path(__file__), _REPO_ROOT / "experiments" / "human_audit.py",
         _REPO_ROOT / "src" / "ura" / "metrics.py",
     ])
-    destination.write_text(
-        json.dumps(output, indent=1, allow_nan=False) + "\n", encoding="utf-8"
-    )
+    output["selector"] = {
+        "attacker": args.attacker,
+        "corpus": args.corpus,
+        "defense": args.defense,
+    }
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        with destination.open("x", encoding="utf-8", newline="\n") as handle:
+            handle.write(json.dumps(output, indent=1, allow_nan=False) + "\n")
+    except FileExistsError:
+        print(f"kappa output already exists: {destination}", file=sys.stderr)
+        return 1
     print(f"\nwrote {destination}")
     return 0
 

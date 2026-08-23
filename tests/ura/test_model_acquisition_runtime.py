@@ -1190,6 +1190,28 @@ def test_constructor_and_inference_output_scrub_private_locators(
     assert str(store) not in str(caught.value)
 
 
+def test_private_execution_retains_blank_exception_type_without_private_paths(
+    tmp_path: Path,
+) -> None:
+    private = (tmp_path / "operator-private" / "guard-snapshot").resolve()
+
+    def fail_without_message() -> None:
+        print(f"guard snapshot={private}")
+        raise StopIteration
+
+    with pytest.raises(ManagedModelLoadError) as caught:
+        runtime_module.private_model_execution(
+            fail_without_message,
+            role="guardrail_judge",
+            private_values=(private,),
+        )
+
+    message = str(caught.value)
+    assert message == "sealed guardrail_judge execution failed (StopIteration)"
+    assert str(private) not in message
+    assert caught.value.__cause__ is None
+
+
 def test_prebound_logger_native_fd_and_child_stderr_are_redacted(
     tmp_path: Path,
     capfd: pytest.CaptureFixture[str],

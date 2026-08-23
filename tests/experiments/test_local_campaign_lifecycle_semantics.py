@@ -416,3 +416,412 @@ def test_measured_envelope_and_grid_requests_are_semantically_bound(
         )
 
     assert measured["request"]["execution_purpose"] == "measured_run"
+
+
+def _analysis_prerequisite_runner(
+    phase7: ModuleType,
+    *,
+    measured: tuple[str, ...] = (),
+) -> dict[str, object]:
+    lanes = tuple(
+        dict.fromkeys(
+            (*phase7.REPLAY_ANALYSIS_LANES, phase7.ADAPTIVITY_RIGHT_LANE)
+        )
+    )
+    measured_set = set(measured)
+    states = {
+        lane: "measured_complete" if lane in measured_set else "failed"
+        for lane in lanes
+    }
+    lifecycle = {
+        lane: "complete" if state == "measured_complete" else "failed"
+        for lane, state in states.items()
+    }
+    authorizations: dict[str, dict[str, object]] = {}
+    for index, lane in enumerate(lanes, 1):
+        complete = states[lane] == "measured_complete"
+        authorizations[lane] = {
+            "lifecycle_registry_status": (
+                "complete_runner_grid"
+                if complete
+                else "pre_runner_failure_no_request_artifact"
+            ),
+            "controller_failure": (
+                None
+                if complete
+                else {
+                    "path": f"/phase6/failure-{lane}.json",
+                    "sha256": f"{index:064x}",
+                    "bytes": index,
+                }
+            ),
+        }
+    return {
+        "terminal_states": states,
+        "lifecycle_states": lifecycle,
+        "lifecycle_authorizations": authorizations,
+        "conditional_na_lanes": [],
+    }
+
+
+def _analysis_controller(
+    phase7: ModuleType,
+    tmp_path: Path,
+    runner: dict[str, object],
+) -> tuple[object, list[tuple[object, ...]], list[tuple[object, ...]]]:
+    controller = object.__new__(phase7.AnalysisController)
+    controller.inputs = {"runner": runner}
+    controller.analysis = tmp_path / "analysis"
+    subprocesses: list[tuple[object, ...]] = []
+    statuses: list[tuple[object, ...]] = []
+    controller.run = lambda *args, **kwargs: subprocesses.append((args, kwargs))
+    controller.status = lambda *args, **kwargs: statuses.append((args, kwargs))
+    return controller, subprocesses, statuses
+
+
+@pytest.mark.parametrize(
+    ("measured", "missing_roles", "reason_code"),
+    (
+        (
+            ("crescendo-qwen3-vl",),
+            ["left_replay"],
+            "left_replay_lane_failed",
+        ),
+        (
+            ("local-qwen3-vl-text-full",),
+            ["right_crescendo"],
+            "right_crescendo_lane_failed",
+        ),
+        (
+            (),
+            ["left_replay", "right_crescendo"],
+            "left_replay_and_right_crescendo_lanes_failed",
+        ),
+    ),
+)
+def test_phase7_adaptivity_writes_typed_non_estimable_artifacts_without_calls(
+    phase7: ModuleType,
+    tmp_path: Path,
+    measured: tuple[str, ...],
+    missing_roles: list[str],
+    reason_code: str,
+) -> None:
+    runner = _analysis_prerequisite_runner(phase7, measured=measured)
+    controller, subprocesses, statuses = _analysis_controller(
+        phase7, tmp_path, runner
+    )
+
+    results = controller.run_adaptivity_pairs()
+
+    assert subprocesses == []
+    assert len(statuses) == len(phase7.ADAPTIVE_ARMS)
+    assert set(results) == set(phase7.ADAPTIVE_ARMS)
+    for corpus, value in results.items():
+        assert value["schema"] == phase7.NON_ESTIMABLE_ADAPTIVITY_SCHEMA
+        assert value["status"] == "unavailable"
+        assert value["facet"] == corpus
+        assert value["missing_roles"] == missing_roles
+        assert value["reason_code"] == reason_code
+        assert value["paired_compare_invoked"] is False
+        assert value["estimate"] is None
+        phase7.validate_non_estimable_adaptivity(
+            value,
+            runner=runner,
+            corpus=corpus,
+        )
+
+
+def test_phase7_conditional_analyses_write_typed_unavailable_without_calls(
+    phase7: ModuleType,
+    tmp_path: Path,
+) -> None:
+    runner = _analysis_prerequisite_runner(phase7)
+    controller, subprocesses, statuses = _analysis_controller(
+        phase7, tmp_path, runner
+    )
+
+    results = {
+        "judge-sensitivity": controller.run_judge_sensitivity(),
+        "kappa": controller.run_kappa(),
+        "transfer-matrix": controller.run_transfer(),
+    }
+
+    assert subprocesses == []
+    assert len(statuses) == 3
+    for analysis, value in results.items():
+        assert value["schema"] == phase7.NON_ESTIMABLE_ANALYSIS_SCHEMA
+        assert value["status"] == "unavailable"
+        assert value["analysis"] == analysis
+        assert value["subprocess_invoked"] is False
+        assert value["result"] is None
+        phase7.validate_non_estimable_analysis(
+            value,
+            runner=runner,
+            analysis=analysis,
+        )
+
+
+def test_phase7_conditional_analysis_availability_is_lane_specific(
+    phase7: ModuleType,
+) -> None:
+    cases = (
+        ((), (False, False, False)),
+        (("rjudge-qwen3-vl",), (True, False, True)),
+        (("local-qwen3-vl-text-full",), (True, True, True)),
+        (("defense-local",), (False, False, False)),
+        (("crescendo-qwen3-vl",), (False, False, False)),
+    )
+    analyses = ("judge-sensitivity", "kappa", "transfer-matrix")
+    for measured, expected in cases:
+        runner = _analysis_prerequisite_runner(phase7, measured=measured)
+        observed = tuple(
+            phase7.conditional_analysis_plan(runner, analysis)["runnable"]
+            for analysis in analyses
+        )
+        assert observed == expected
+
+
+def test_phase7_non_estimable_artifacts_reject_mutations_and_bad_evidence(
+    phase7: ModuleType,
+) -> None:
+    runner = _analysis_prerequisite_runner(phase7)
+    transfer = phase7.non_estimable_analysis_value(runner, "transfer-matrix")
+    analysis_mutations = (
+        ("subprocess_invoked", True),
+        ("result", {}),
+        ("target_calls", 1),
+        ("judge_calls", 1),
+    )
+    for field, replacement in analysis_mutations:
+        mutated = copy.deepcopy(transfer)
+        mutated[field] = replacement
+        with pytest.raises(phase7.Phase7Error, match="artifact changed"):
+            phase7.validate_non_estimable_analysis(
+                mutated,
+                runner=runner,
+                analysis="transfer-matrix",
+            )
+
+    adaptivity = phase7.non_estimable_adaptivity_value(
+        runner, phase7.ADAPTIVE_ARMS[0]
+    )
+    for field, replacement in (
+        ("paired_compare_invoked", True),
+        ("estimate", 0.0),
+        ("target_calls", 1),
+    ):
+        mutated = copy.deepcopy(adaptivity)
+        mutated[field] = replacement
+        with pytest.raises(phase7.Phase7Error, match="contrast changed"):
+            phase7.validate_non_estimable_adaptivity(
+                mutated,
+                runner=runner,
+                corpus=phase7.ADAPTIVE_ARMS[0],
+            )
+
+    invalid_runner = copy.deepcopy(runner)
+    invalid_runner["lifecycle_authorizations"][
+        "local-qwen3-vl-text-full"
+    ]["controller_failure"]["sha256"] = "not-a-digest"
+    with pytest.raises(phase7.Phase7Error, match="failure descriptor changed"):
+        phase7.non_estimable_analysis_value(invalid_runner, "transfer-matrix")
+
+
+def test_phase7_transfer_index_accepts_single_and_faceted_outputs(
+    phase7: ModuleType,
+) -> None:
+    single = {
+        "schema_version": "2.1",
+        "analysis_kind": "diagnostic_conditional_transfer",
+        "load_audit": {
+            "facet": {
+                "attacker": "replay",
+                "corpus": "fixture",
+                "defense": "none",
+            }
+        },
+        "unexplained_exclusions": 0,
+    }
+    facets, unavailable = phase7.validated_transfer_index_facets(single)
+    assert facets == {"fixture": single}
+    assert unavailable == {}
+
+    faceted = {
+        "schema_version": "2.1-faceted",
+        "attacker": "replay",
+        "defense": "none",
+        "corpora": ["fixture"],
+        "artifacts": {
+            "fixture": {
+                "json": "transfer_matrix__replay__fixture.json",
+            }
+        },
+        "facets": {"fixture": copy.deepcopy(single)},
+        "not_applicable_facets": {
+            "empty": {
+                "reason": "insufficient_eligible_models",
+                "load_audit": {
+                    "facet": {
+                        "attacker": "replay",
+                        "corpus": "empty",
+                        "defense": "none",
+                    }
+                },
+                "unexplained_exclusions": 0,
+            }
+        },
+        "unexplained_exclusions": 0,
+    }
+    facets, unavailable = phase7.validated_transfer_index_facets(faceted)
+    assert set(facets) == {"fixture"}
+    assert set(unavailable) == {"empty"}
+
+    for mutation in (
+        {**faceted, "schema_version": "2.1-facet"},
+        {**faceted, "defense": "both"},
+        {**faceted, "corpora": []},
+    ):
+        with pytest.raises(phase7.Phase7Error):
+            phase7.validated_transfer_index_facets(mutation)
+    collision = copy.deepcopy(faceted)
+    collision["corpora"] = ["fixture", "fixture."]
+    collision["facets"]["fixture."] = copy.deepcopy(single)
+    collision["facets"]["fixture."]["load_audit"]["facet"]["corpus"] = (
+        "fixture."
+    )
+    collision["artifacts"]["fixture."] = {
+        "json": "transfer_matrix__replay__fixture.json",
+    }
+    with pytest.raises(phase7.Phase7Error, match="artifact names collide"):
+        phase7.validated_transfer_index_facets(collision)
+
+
+def _runner_view_controller(
+    phase7: ModuleType,
+    tmp_path: Path,
+) -> tuple[object, Path, Path]:
+    source_root = tmp_path / "source"
+    lane_root = source_root / "lane-a"
+    lane_root.mkdir(parents=True)
+    source_file = lane_root / "cell.manifest.json"
+    source_file.write_bytes(b"sealed-runner-input")
+    controller = object.__new__(phase7.AnalysisController)
+    controller.inputs = {
+        "runner": {
+            "root": str(source_root.resolve()),
+            "metric_lane_order": ["lane-a"],
+        }
+    }
+    controller.runner_view = tmp_path / "view"
+    controller.runner_view_receipt = tmp_path / "view-receipt.json"
+    controller.runner_view_ready = False
+    view = controller.analysis_runner_view()
+    return controller, source_file, view / "lane-a" / source_file.name
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    ("in-place-copy-write", "selector-visible-extra"),
+)
+def test_phase7_runner_view_receipt_rejects_content_and_inventory_mutations(
+    phase7: ModuleType,
+    tmp_path: Path,
+    mutation: str,
+) -> None:
+    controller, source_file, view_file = _runner_view_controller(
+        phase7, tmp_path
+    )
+    receipt = json.loads(
+        controller.runner_view_receipt.read_text(encoding="utf-8")
+    )
+    assert receipt["schema"] == phase7.RUNNER_VIEW_SCHEMA
+    assert receipt["permitted_view_outputs"] == []
+    assert receipt["regular_files_copied"] == 1
+    assert receipt["file_inventory"][0]["relative_path"] == (
+        "lane-a/cell.manifest.json"
+    )
+    assert receipt["file_inventory"][0]["source"]["path"] == str(
+        source_file.resolve()
+    )
+    binding = receipt["file_inventory"][0]
+    assert binding["independent_copy"] is True
+    assert binding["source_view_samefile"] is False
+    assert binding["source_file_identity"] != binding["view_file_identity"]
+    assert binding["view_mode"] & 0o222 == 0
+    assert binding["view_link_count"] == 1
+    assert not source_file.samefile(view_file)
+
+    if mutation == "in-place-copy-write":
+        sealed_source = source_file.read_bytes()
+        view_file.chmod(0o600)
+        view_file.write_bytes(b"X" * len(sealed_source))
+        assert source_file.read_bytes() == sealed_source
+    else:
+        (controller.runner_view / "forged.manifest.json").write_bytes(b"{}")
+
+    with pytest.raises(phase7.Phase7Error):
+        controller.analysis_runner_view()
+
+
+def test_phase7_zero_output_view_rejects_selector_visible_extra(
+    phase7: ModuleType,
+    tmp_path: Path,
+) -> None:
+    controller, _source_file, _view_file = _runner_view_controller(
+        phase7, tmp_path
+    )
+    forged = (
+        controller.runner_view
+        / "transfer_matrix__replay__forged.manifest.json"
+    )
+    forged.write_bytes(b"{}")
+    receipt = json.loads(
+        controller.runner_view_receipt.read_text(encoding="utf-8")
+    )
+    with pytest.raises(phase7.Phase7Error, match="unbound extra"):
+        phase7.validate_runner_input_view_receipt(
+            receipt,
+            source_root=Path(controller.inputs["runner"]["root"]),
+            view_root=controller.runner_view,
+            included_measured_lanes=["lane-a"],
+        )
+
+
+def test_phase7_lifecycle_view_write_cannot_modify_phase6_source(
+    phase7: ModuleType,
+    tmp_path: Path,
+) -> None:
+    source_root = tmp_path / "lifecycle-source"
+    lane_root = source_root / "lane-a"
+    lane_root.mkdir(parents=True)
+    source_file = lane_root / "failure.json"
+    source_file.write_bytes(b"sealed-lifecycle-input")
+    controller = object.__new__(phase7.AnalysisController)
+    controller.inputs = {
+        "runner": {
+            "root": str(source_root.resolve()),
+            "lifecycle_lane_order": ["lane-a"],
+            "lifecycle_lane_roots": {"lane-a": str(lane_root.resolve())},
+            "lifecycle_states": {"lane-a": "complete"},
+            "lifecycle_authorizations": {
+                "lane-a": {
+                    "level1_tool_input_status": "retained_runner_artifacts",
+                }
+            },
+        }
+    }
+    controller.lifecycle_runner_view_path = tmp_path / "lifecycle-view"
+    controller.lifecycle_runner_view_receipt = (
+        tmp_path / "lifecycle-view-receipt.json"
+    )
+    controller.lifecycle_runner_view_ready = False
+
+    view = controller.lifecycle_runner_view()
+    view_file = view / "lane-a" / source_file.name
+    sealed_source = source_file.read_bytes()
+    assert not source_file.samefile(view_file)
+    view_file.chmod(0o600)
+    view_file.write_bytes(b"X" * len(sealed_source))
+    assert source_file.read_bytes() == sealed_source
+    with pytest.raises(phase7.Phase7Error):
+        controller.lifecycle_runner_view()

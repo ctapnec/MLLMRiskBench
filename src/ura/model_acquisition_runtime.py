@@ -2337,9 +2337,11 @@ def private_model_execution(
             original.write(sanitized)
             original.flush()
     if error is not None and isinstance(error, Exception):
+        error_type = _sanitize_private_error(type(error).__name__, checked_values)
+        error_detail = _sanitize_private_error(str(error), checked_values)
+        rendered_detail = f": {error_detail}" if error_detail else ""
         raise ManagedModelLoadError(
-            f"sealed {role} execution failed: "
-            + _sanitize_private_error(str(error), checked_values)
+            f"sealed {role} execution failed ({error_type}){rendered_detail}"
         ) from None
     if error is not None:
         raise error
