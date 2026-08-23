@@ -478,6 +478,7 @@ class GuardrailJudge(BaseJudge):
                 raw={
                     "confidence": 1.0,
                     "model": self.model_id,
+                    "judge_model": self.model_id,
                     "model_revision": self.revision,
                     "model_identity": f"{self.model_id}@{self.revision}",
                     "unsafe": False,
@@ -587,6 +588,7 @@ class GuardrailJudge(BaseJudge):
             raw={
                 "confidence": confidence,
                 "model": self.model_id,
+                "judge_model": self.model_id,
                 "model_revision": self.revision,
                 "model_identity": f"{self.model_id}@{self.revision}",
                 "unsafe": is_unsafe,

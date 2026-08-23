@@ -4177,6 +4177,92 @@ def test_non_rubric_shadow_binds_the_full_stage_projection() -> None:
         )
 
 
+def test_guardrail_authority_retains_selected_model_after_target_annotation(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The target grouping stamp must not replace the selected judge model."""
+
+    from ura.approximate_metrics import build_approximate_trail_stage
+    from ura.judges.guardrail import GuardrailJudge
+
+    revision = "d" * 40
+    guardrail = GuardrailJudge(
+        model="meta-llama/Llama-Guard-3-8B",
+        revision=revision,
+    )
+    monkeypatch.setattr(guardrail, "_ensure_loaded", lambda: None)
+    monkeypatch.setattr(guardrail, "_run_guard", lambda conversation: "unsafe\nS1")
+    target = _RecordingTarget()
+    run = Runner(
+        ReplayAttacker(),
+        target,
+        JudgeCascade([RuleJudge(), guardrail]),
+        AttackBudget(max_queries=1, max_turns=1, seed=0),
+        [0],
+    )
+
+    judgments, _ = run.run([_datapoint("guardrail-authority")])
+    assert len(judgments) == 1
+    final = judgments[0]
+    attempt = run.attempts[0]
+    response = run.responses[0]
+    trail = run.trails[attempt.id]
+    rows = [runner_module.judgment_trail_projection(stage) for stage in trail]
+
+    assert [stage.raw["cascade_role"] for stage in trail] == [
+        "shadow",
+        "authoritative",
+    ]
+    assert final.judge == "guardrail"
+    assert final.raw["model"] == target.name
+    assert final.raw["judge_model"] == guardrail.model_id
+    assert rows[1]["judge_model"] == guardrail.model_id
+    assert final.raw["judge_stage_bindings"][1]["judge_model"] == guardrail.model_id
+    approximate_authority = build_approximate_trail_stage(trail[1])
+    # The stage intentionally carries both an explicit model and Guardrail
+    # markers. This assertion kills the old generic-LLM-first kind ordering.
+    assert approximate_authority.judge_kind == "guardrail"
+    assert approximate_authority.judge_model == guardrail.model_id
+    assert approximate_authority.judge_model_identity == revision
+    assert approximate_authority.judge_model_identity_type == "revision"
+    assert approximate_authority.judge_model_identity_kind == "exact"
+    assert target.name not in approximate_authority.model_dump_json()
+    approximate_selected = build_approximate_trail_stage(final)
+    assert approximate_selected.judge_kind == "guardrail"
+    assert approximate_selected.judge_model == guardrail.model_id
+    assert approximate_selected.judge_model_identity == revision
+    assert approximate_selected.judge_model_identity_type == "revision"
+    assert approximate_selected.judge_model_identity_kind == "exact"
+    assert target.name not in approximate_selected.model_dump_json()
+    assert approximate_selected == approximate_authority
+    runner_module.validate_persisted_judgment_trails(
+        {attempt.id: attempt},
+        {attempt.id: response},
+        {attempt.id: final},
+        rows,
+        {"run": {"approximate_common_metrics": False}},
+        ["rules", "guardrail"],
+    )
+
+    # This is the exact reverted producer shape: without an explicit judge-model
+    # field, the post-cascade target grouping stamp becomes the fallback model.
+    reverted_raw = dict(final.raw)
+    del reverted_raw["judge_model"]
+    reverted = final.model_copy(update={"raw": reverted_raw})
+    with pytest.raises(
+        ValueError,
+        match="authoritative judge_model differs from its retained stage projection",
+    ):
+        runner_module.validate_persisted_judgment_trails(
+            {attempt.id: attempt},
+            {attempt.id: response},
+            {attempt.id: reverted},
+            rows,
+            {"run": {"approximate_common_metrics": False}},
+            ["rules", "guardrail"],
+        )
+
+
 def test_strongreject_shadow_binds_the_full_stage_projection() -> None:
     attempt, response, authority, authority_row = (
         _persisted_trail_contract_fixture()

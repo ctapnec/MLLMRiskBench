@@ -972,6 +972,16 @@ def _judge_kind(judgment: Judgment) -> ApproximateJudgeKind:
     raw = judgment.raw
     if raw.get("provider_signal_authoritative") is True:
         return "provider_refusal"
+    guardrail_marker = "guardrail_queried" in raw
+    llm_marker = "judge_model_queried" in raw or "judge_call" in raw
+    if guardrail_marker and llm_marker:
+        raise ValueError(
+            "approximate retained trail mixes Guardrail and LLM call markers"
+        )
+    if guardrail_marker:
+        return "guardrail"
+    if llm_marker:
+        return "llm"
     name = judgment.judge.strip().lower()
     if raw.get("judge_model") is not None or "llm" in name:
         return "llm"
@@ -1016,7 +1026,7 @@ def _judge_identity(
     model_value = (
         raw.get("judge_model")
         if kind == "llm"
-        else guardrail_identity_model or raw.get("model")
+        else raw.get("judge_model") or guardrail_identity_model or raw.get("model")
         if kind == "guardrail"
         else None
     )

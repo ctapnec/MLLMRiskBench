@@ -590,6 +590,67 @@ def test_provider_refusal_never_credits_unqueried_shadow_model() -> None:
     assert proxy["n_model_queried_decisions"] == 0
 
 
+def test_guardrail_only_provider_refusal_retains_model_without_crediting_it(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    target = _ProviderRefusalTarget()
+    guardrail = _FixtureGuardrail()
+
+    def forbidden_load() -> None:  # pragma: no cover - must not run
+        raise AssertionError("typed provider refusal must not load the Guardrail")
+
+    monkeypatch.setattr(guardrail, "_ensure_loaded", forbidden_load)
+    runner = Runner(
+        ReplayAttacker(),
+        target,
+        JudgeCascade([guardrail]),
+        AttackBudget(max_queries=1, max_turns=1, seed=0),
+        [0],
+        approximate_common_metrics=True,
+    )
+
+    judgments, _ = runner.run([_source_point()])
+    assert target.calls == 1
+    final = judgments[0]
+    assert final.raw["model"] == target.name
+    assert final.raw["judge_model"] == guardrail.model_id
+    assert final.raw["guardrail_queried"] is False
+    decision = ApproximateSecurityDecision.model_validate(
+        final.raw["approximate_security_decision"]
+    )
+    assert decision.selected_judge == guardrail.name
+    assert decision.selected_judge_kind == "provider_refusal"
+    assert decision.judge_model is None
+    assert decision.judge_model_identity is None
+    assert decision.judge_model_identity_type is None
+    assert decision.judge_model_identity_kind == "not_applicable"
+    assert decision.judge_model_queried is False
+    assert len(decision.retained_trail) == 1
+    authority = decision.retained_trail[0]
+    assert authority.cascade_role == "authoritative"
+    assert authority.judge == guardrail.name
+    assert authority.judge_kind == "provider_refusal"
+    assert authority.judge_model is None
+    assert authority.judge_model_identity is None
+    assert authority.judge_model_identity_type is None
+    assert authority.judge_model_identity_kind == "not_applicable"
+    assert authority.judge_model_queried is False
+
+    result = next(
+        item
+        for item in runner.aggregate(judgments, [])
+        if item.metric == "approximate_ASR"
+    )
+    proxy = result.provenance["approximate_security"]
+    assert proxy["selected_judges"] == [guardrail.name]
+    assert proxy["judge_kinds"] == ["provider_refusal"]
+    assert proxy["judge_models"] == []
+    assert proxy["judge_model_identities"] == []
+    assert proxy["judge_model_identity_types"] == []
+    assert proxy["judge_identity_kinds"] == ["not_applicable"]
+    assert proxy["n_model_queried_decisions"] == 0
+
+
 def test_provider_refusal_shortcut_requires_typed_response_signal_and_semantics() -> None:
     point = _source_point()
     response = Response(
@@ -1084,22 +1145,57 @@ def test_response_only_guardrail_never_claims_payload_fallback_as_reference() ->
 
 def test_text_guardrail_does_not_invent_declared_reference_credit() -> None:
     guardrail = _FixtureGuardrail()
+    target = _TextTarget()
     runner = Runner(
         ReplayAttacker(),
-        _TextTarget(),
+        target,
         JudgeCascade([guardrail]),
         AttackBudget(max_queries=1, max_turns=1, seed=0),
         [0],
         approximate_common_metrics=True,
     )
     judgments, _ = runner.run([_source_point()])
+    final = judgments[0]
+    assert final.raw["model"] == target.name
+    assert final.raw["judge_model"] == guardrail.model_id
     decision = ApproximateSecurityDecision.model_validate(
-        judgments[0].raw["approximate_security_decision"]
+        final.raw["approximate_security_decision"]
     )
+    assert decision.selected_judge == guardrail.name
+    assert decision.selected_judge_kind == "guardrail"
+    assert decision.judge_model == guardrail.model_id
+    assert decision.judge_model_identity == guardrail.revision
+    assert decision.judge_model_identity_type == "revision"
+    assert decision.judge_model_identity_kind == "exact"
+    assert decision.judge_model_queried is True
     assert decision.declared_reference_sha256 is None
-    assert decision.retained_trail[0].source_reference_context_used is True
+    assert len(decision.retained_trail) == 1
+    authority = decision.retained_trail[0]
+    assert authority.cascade_role == "authoritative"
+    assert authority.judge == guardrail.name
+    assert authority.judge_kind == "guardrail"
+    assert authority.judge_model == guardrail.model_id
+    assert authority.judge_model_identity == guardrail.revision
+    assert authority.judge_model_identity_type == "revision"
+    assert authority.judge_model_identity_kind == "exact"
+    assert authority.judge_model_queried is True
+    assert authority.source_reference_context_used is True
     assert decision.selected_source_reference_context_used is False
     assert decision.selected_evidence_scope == "response_only"
+    result = next(
+        item
+        for item in runner.aggregate(judgments, [])
+        if item.metric == "approximate_ASR"
+    )
+    proxy = result.provenance["approximate_security"]
+    assert proxy["selected_judges"] == [guardrail.name]
+    assert proxy["judge_kinds"] == ["guardrail"]
+    assert proxy["judge_models"] == [guardrail.model_id]
+    assert proxy["judge_model_identities"] == [guardrail.revision]
+    assert proxy["judge_model_identity_types"] == ["revision"]
+    assert proxy["judge_identity_kinds"] == ["exact"]
+    assert proxy["n_model_queried_decisions"] == 1
+    assert target.name not in json.dumps(proxy, sort_keys=True)
     rendered = "\n".join(item["content"] for item in guardrail.last_conversation)
     assert "unsafe request" in rendered
     assert "Detailed unsafe instructions" in rendered
@@ -1288,6 +1384,37 @@ def test_raw_trail_projector_rejects_non_boolean_optional_markers(
     )
     with pytest.raises(ValueError, match="strict boolean"):
         build_approximate_trail_stage(stage)
+
+
+def test_typed_llm_markers_override_guard_name_and_mixed_markers_fail() -> None:
+    stage = Judgment(
+        attempt_id="typed-marker-stage",
+        judge="guard-llm",
+        label="violation",
+        score=1.0,
+        raw={
+            "confidence": 0.8,
+            "cascade_stage": 0,
+            "cascade_role": "authoritative",
+            "judge_model": "fixture/typed-llm",
+            "judge_model_queried": True,
+            "judge_call": {"response_target": "fixture/typed-llm"},
+        },
+    )
+
+    projected = build_approximate_trail_stage(stage)
+    assert projected.judge_kind == "llm"
+    assert projected.judge_model == "fixture/typed-llm"
+    assert projected.judge_model_queried is True
+
+    mixed = stage.model_copy(update={
+        "raw": {**stage.raw, "guardrail_queried": True}
+    })
+    with pytest.raises(
+        ValueError,
+        match="mixes Guardrail and LLM call markers",
+    ):
+        build_approximate_trail_stage(mixed)
 
 
 def test_integer_mock_markers_cannot_emit_measured_proxy_end_to_end() -> None:
