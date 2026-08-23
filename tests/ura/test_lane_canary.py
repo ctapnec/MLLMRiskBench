@@ -7,7 +7,11 @@ from pathlib import Path
 import pytest
 
 from experiments import lane_canary, run_matrix
-from ura.lane_canary import validate_lane_canary_summary
+from ura.lane_canary import (
+    _source_evaluator_role,
+    _stage_was_queried,
+    validate_lane_canary_summary,
+)
 from ura.eligibility import canonical_json_sha256
 
 
@@ -66,6 +70,85 @@ def test_synthetic_canary_to_strict_offline_summary(tmp_path: Path) -> None:
         "--out-dir", str(summaries),
     ]) == 0
     assert len(list(summaries.glob("lane-canary-*.lane-canary.json"))) == 1
+
+
+def test_unimplemented_source_diagnostic_is_not_evaluator_execution() -> None:
+    diagnostic = {
+        "family": "cyberseceval_prompt_injection_judge_question",
+        "implemented": False,
+        "valid": False,
+        "reason": "declared source-specific scorer/runtime is not implemented",
+    }
+    approximate = {
+        "raw": {
+            "common_metrics_eligible": False,
+            "policy_evaluable_turn": True,
+            "source_evaluation": diagnostic,
+        }
+    }
+    assert _source_evaluator_role([approximate]) == {
+        "status": "not_exercised",
+        "required_records": 1,
+        "observed_records": 0,
+        "valid_records": 0,
+    }
+
+    common_proxy = {
+        "raw": {
+            "common_metrics_eligible": True,
+            "policy_evaluable_turn": True,
+            "source_evaluation": diagnostic,
+        }
+    }
+    assert _source_evaluator_role([common_proxy]) == {
+        "status": "not_applicable",
+        "required_records": 0,
+        "observed_records": 0,
+        "valid_records": 0,
+    }
+
+    common_proxy["raw"]["source_evaluation"] = {
+        "family": "diagnostic_only_common_row",
+        "implemented": True,
+        "valid": True,
+    }
+    assert _source_evaluator_role([common_proxy]) == {
+        "status": "not_applicable",
+        "required_records": 0,
+        "observed_records": 0,
+        "valid_records": 0,
+    }
+
+    implemented = {
+        "raw": {
+            "common_metrics_eligible": False,
+            "policy_evaluable_turn": True,
+            "source_evaluation": {
+                "family": "rjudge_safety_judgment",
+                "implemented": True,
+                "valid": True,
+            },
+        }
+    }
+    assert _source_evaluator_role([implemented]) == {
+        "status": "exercised",
+        "required_records": 1,
+        "observed_records": 1,
+        "valid_records": 1,
+    }
+
+
+def test_guardrail_stage_requires_an_actual_model_query() -> None:
+    assert _stage_was_queried({"stage_queried": True}, "rules") is True
+    assert _stage_was_queried(
+        {"stage_queried": True, "guardrail_queried": True}, "guardrail"
+    ) is True
+    assert _stage_was_queried(
+        {"stage_queried": True, "guardrail_queried": False}, "guardrail"
+    ) is False
+    assert _stage_was_queried(
+        {"stage_queried": False, "guardrail_queried": True}, "guardrail"
+    ) is False
 
 
 def test_lane_canary_rejects_tampered_projection_binding(tmp_path: Path) -> None:

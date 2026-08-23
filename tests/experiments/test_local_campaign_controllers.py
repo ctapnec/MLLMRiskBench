@@ -1050,3 +1050,99 @@ def test_rebind_is_create_only_and_validates_named_changes(tmp_path: Path) -> No
             "--out", str(output),
             "--expected-commit", "5" * 40,
         ])
+
+
+def test_bridge_canary_does_not_claim_missing_source_evaluator_ran() -> None:
+    template = (
+        Path(__file__).parents[2]
+        / "experiments"
+        / "local_campaign"
+        / "templates"
+        / "phase5_bridge_attest_canary.sh.in"
+    ).read_text(encoding="utf-8")
+    assert (
+        'execution["source_evaluator"]["status"] != "not_exercised"'
+        in template
+    )
+    assert (
+        'execution["source_evaluator"]["status"] != "not_applicable"'
+        not in template
+    )
+
+
+def _assert_completion_bound_guard_query_contract(
+    template: str, *, summary_name: str
+) -> None:
+    assert "completion_payload = stable_payload(completion_path" in template
+    assert (
+        'completion_marker = strict_json_loads(completion_payload.decode("utf-8"))'
+        in template
+    )
+    assert "def completion_rows(kind: str)" in template
+    assert (
+        'set(descriptor) != {\n        "file", "sha256", "bytes", "records"\n    }'
+        in template
+    )
+    assert (
+        'hashlib.sha256(payload).hexdigest() != descriptor.get("sha256")'
+        in template
+    )
+    assert 'len(rows) != descriptor.get("records")' in template
+    assert (
+        f'{summary_name}["bindings"]["completion_artifact"] != completion_descriptor'
+        in template
+    )
+
+    guard_contract = template.split("    guard_trails = [", 1)[1].split(
+        '        raise SystemExit(\n            "', 1
+    )[0]
+    assert 'completion_rows("trails")' in guard_contract
+    assert guard_contract.count('item.get("stage_queried") is not True') == 1
+    assert guard_contract.count('item.get("guardrail_queried") is not True') == 1
+    assert 'item.get("judge_model") != ' in guard_contract
+    assert 'item.get("judge_model_revision") != ' in guard_contract
+    assert 'item.get("judge_model_identity")' in guard_contract
+
+
+@pytest.mark.parametrize(
+    ("filename", "summary_name"),
+    [
+        ("phase5_core_attest_canary.sh.in", "row"),
+        ("phase5_ollama_workflow.sh.in", "summary"),
+    ],
+)
+def test_static_canaries_prove_a_completion_bound_guard_query(
+    filename: str, summary_name: str
+) -> None:
+    template = (
+        Path(__file__).parents[2]
+        / "experiments"
+        / "local_campaign"
+        / "templates"
+        / filename
+    ).read_text(encoding="utf-8")
+    _assert_completion_bound_guard_query_contract(
+        template, summary_name=summary_name
+    )
+
+    query_mutation = template.replace(
+        'or item.get("guardrail_queried") is not True',
+        'or item.get("stage_queried") is not True',
+        1,
+    )
+    assert query_mutation != template
+    with pytest.raises(AssertionError):
+        _assert_completion_bound_guard_query_contract(
+            query_mutation, summary_name=summary_name
+        )
+
+    binding_mutation = template.replace(
+        f'{summary_name}["bindings"]["completion_artifact"] != completion_descriptor',
+        "completion_descriptor != completion_descriptor",
+        1,
+    )
+    assert binding_mutation != template
+    with pytest.raises(AssertionError):
+        _assert_completion_bound_guard_query_contract(
+            binding_mutation, summary_name=summary_name
+        )

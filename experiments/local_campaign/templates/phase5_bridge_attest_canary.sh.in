@@ -637,8 +637,8 @@ if execution["attacker"]["status"] != "exercised":
     raise SystemExit("attacker was not actually exercised")
 if execution["attacker"]["identity"] != expected_attacker:
     raise SystemExit("exercised attacker identity drift")
-if execution["source_evaluator"]["status"] != "not_applicable":
-    raise SystemExit("approximate common-metrics canary unexpectedly used a source evaluator")
+if execution["source_evaluator"]["status"] != "not_exercised":
+    raise SystemExit("approximate common-metrics canary falsely claims source-evaluator execution")
 if roles["all_configured_stages_represented"] is not True:
     raise SystemExit("not all configured judge stages are represented")
 stages = roles["stages"]

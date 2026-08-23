@@ -918,7 +918,53 @@ projection_path = one(
     sorted(root.glob("lane-projection-*.lane-projection.json")), "lane projection"
 )
 completion_path = one(sorted(root.rglob("*.complete.json")), "completion marker")
-stable_payload(completion_path, "Ollama completion marker")
+completion_payload = stable_payload(completion_path, "Ollama completion marker")
+try:
+    completion_marker = strict_json_loads(completion_payload.decode("utf-8"))
+except (UnicodeError, TypeError, ValueError) as exc:
+    raise SystemExit(f"Ollama completion marker is invalid: {exc}") from exc
+if not isinstance(completion_marker, dict):
+    raise SystemExit("Ollama completion marker is not an object")
+completion_descriptor = {
+    "file": completion_path.name,
+    "sha256": hashlib.sha256(completion_payload).hexdigest(),
+    "bytes": len(completion_payload),
+    "records": 1,
+}
+
+def completion_rows(kind: str) -> list[dict[str, object]]:
+    artifacts = completion_marker.get("artifacts")
+    descriptor = artifacts.get(kind) if isinstance(artifacts, dict) else None
+    if not isinstance(descriptor, dict) or set(descriptor) != {
+        "file", "sha256", "bytes", "records"
+    }:
+        raise SystemExit(f"Ollama completion {kind} descriptor is invalid")
+    name = descriptor.get("file")
+    if not isinstance(name, str) or pathlib.Path(name).name != name:
+        raise SystemExit(f"Ollama completion {kind} filename is unsafe")
+    path = completion_path.parent / name
+    if not path.is_file() or path.is_symlink():
+        raise SystemExit(f"Ollama completion {kind} artifact is unsafe")
+    payload = stable_payload(path, f"Ollama completion-bound {kind}")
+    if (
+        len(payload) != descriptor.get("bytes")
+        or hashlib.sha256(payload).hexdigest() != descriptor.get("sha256")
+    ):
+        raise SystemExit(f"Ollama completion {kind} artifact identity changed")
+    try:
+        rows = [
+            strict_json_loads(line)
+            for line in payload.decode("utf-8").splitlines()
+            if line.strip()
+        ]
+    except (UnicodeError, TypeError, ValueError) as exc:
+        raise SystemExit(f"Ollama completion {kind} artifact is invalid: {exc}") from exc
+    if len(rows) != descriptor.get("records") or any(
+        not isinstance(item, dict) for item in rows
+    ):
+        raise SystemExit(f"Ollama completion {kind} record inventory changed")
+    return rows
+
 config_payload = stable_payload(config_path, "Ollama config")
 if hashlib.sha256(config_payload).hexdigest() != expected_config_sha:
     raise SystemExit("Ollama config digest drifted")
@@ -929,6 +975,8 @@ if local_config != {expected_spec: {"digest": digest, "modalities": ["text"]}}:
 summary = validate_lane_canary_summary(
     stable_json(summary_path, "Ollama canary summary")
 )
+if summary["bindings"]["completion_artifact"] != completion_descriptor:
+    raise SystemExit("Ollama canary summary is not bound to the exact completion marker")
 if summary.get("status") != "complete" or summary.get("evidence_class") != "live_diagnostic":
     raise SystemExit("canary summary is not complete live diagnostic evidence")
 grid = stable_json(grid_path, "Ollama canary grid")
@@ -1180,6 +1228,21 @@ if mode == "static":
     ):
         raise SystemExit("static canary did not actually query rules and the selected guard")
     completed = summary["workload"]["completed_judgments"]
+    guard_trails = [
+        item for item in completion_rows("trails")
+        if item.get("stage") == 1 and item.get("judge") == "guardrail"
+    ]
+    if len(guard_trails) != completed or any(
+        item.get("stage_queried") is not True
+        or item.get("guardrail_queried") is not True
+        or item.get("judge_model") != guard_model
+        or item.get("judge_model_revision") != guard_revision
+        or item.get("judge_model_identity") != f"{guard_model}@{guard_revision}"
+        for item in guard_trails
+    ):
+        raise SystemExit(
+            "Ollama completion-bound scoring Guard query/identity differs from the exact selection"
+        )
     if (
         sum(row["trail_records"] for row in stage_rows if row["role"] == "authoritative")
         != completed

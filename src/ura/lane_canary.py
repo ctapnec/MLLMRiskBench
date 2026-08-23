@@ -203,6 +203,48 @@ def _decision_state(judgment: Mapping[str, Any]) -> str:
     )
 
 
+def _source_evaluator_role(
+    judgments: list[Mapping[str, Any]],
+) -> dict[str, Any]:
+    """Report substantive source-evaluator execution, not diagnostics.
+
+    Runner deliberately persists an ``implemented: false`` source-evaluation
+    object when a corpus declares a source metric whose evaluator is absent.
+    That diagnostic proves why the native metric was not emitted; it does not
+    mean that the missing evaluator ran.
+    """
+
+    required_rows = [
+        row
+        for row in judgments
+        if isinstance(row.get("raw"), dict)
+        and row["raw"].get("common_metrics_eligible") is False
+        and row["raw"].get("policy_evaluable_turn") is True
+    ]
+    required = len(required_rows)
+    observed = sum(
+        isinstance(row["raw"].get("source_evaluation"), dict)
+        and row["raw"]["source_evaluation"].get("implemented") is True
+        for row in required_rows
+    )
+    valid = sum(
+        isinstance(row["raw"].get("source_evaluation"), dict)
+        and row["raw"]["source_evaluation"].get("implemented") is True
+        and row["raw"]["source_evaluation"].get("valid") is True
+        for row in required_rows
+    )
+    return {
+        "status": (
+            "not_applicable"
+            if required == 0
+            else "exercised" if observed else "not_exercised"
+        ),
+        "required_records": required,
+        "observed_records": observed,
+        "valid_records": valid,
+    }
+
+
 def _latency_summary(observations: list[dict[str, Any]], missing: list[str]) -> dict[str, Any]:
     values = [_finite_latency(row["latency_ms"], "latency observation") for row in observations]
     return {
@@ -219,6 +261,16 @@ def _transport_count(raw: object, label: str) -> tuple[int | None, bool]:
     if not isinstance(raw, dict) or "transport_attempt_count" not in raw:
         return None, False
     return _integer(raw["transport_attempt_count"], label), True
+
+
+def _stage_was_queried(row: Mapping[str, Any], judge: str) -> bool:
+    """Distinguish Guard invocation from an actual model inference."""
+
+    if row.get("stage_queried") is False:
+        return False
+    if judge == "guardrail":
+        return row.get("guardrail_queried") is True
+    return True
 
 
 def _validate_latency_summary(
@@ -395,7 +447,7 @@ def build_lane_canary_summary(
         role = row.get("cascade_role")
         if not isinstance(judge, str) or role not in {"authoritative", "shadow"}:
             raise ValueError("trail stage lacks judge/role identity")
-        queried = row.get("stage_queried") is not False
+        queried = _stage_was_queried(row, judge)
         counts = stage_counts.setdefault((stage, judge, role), Counter())
         counts["records"] += 1
         counts["queried" if queried else "not_queried"] += 1
@@ -455,20 +507,7 @@ def build_lane_canary_summary(
                 observed_defense_stages[stage] += 1
         blocked_defense_records += int(raw.get("defense") == "blocked")
         passed_defense_records += int(raw.get("defense") == "passed")
-    source_required = sum(
-        row.get("raw", {}).get("common_metrics_eligible") is False
-        and row.get("raw", {}).get("policy_evaluable_turn") is True
-        for row in judgments
-    )
-    source_observed = sum(
-        isinstance(row.get("raw", {}).get("source_evaluation"), dict)
-        for row in judgments
-    )
-    source_valid = sum(
-        isinstance(row.get("raw", {}).get("source_evaluation"), dict)
-        and row["raw"]["source_evaluation"].get("valid") is True
-        for row in judgments
-    )
+    source_evaluator_role = _source_evaluator_role(judgments)
     target_observed = sum(
         not (
             isinstance(response.get("raw"), dict)
@@ -506,16 +545,7 @@ def build_lane_canary_summary(
             "passed_records": passed_defense_records,
             "blocked_records": blocked_defense_records,
         },
-        "source_evaluator": {
-            "status": (
-                "not_applicable"
-                if source_required == 0
-                else "exercised" if source_observed else "not_exercised"
-            ),
-            "required_records": source_required,
-            "observed_records": source_observed,
-            "valid_records": source_valid,
-        },
+        "source_evaluator": source_evaluator_role,
     }
 
     budget = grid.get("call_budget_snapshot")
