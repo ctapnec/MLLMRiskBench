@@ -4466,6 +4466,7 @@ def _component_model_identity(component: Any) -> dict[str, str]:
         ("provider", "provider"),
         ("endpoint_identity", "endpoint_identity"),
         ("model", "resolved_model"),
+        ("model_id", "resolved_model"),
         ("model_revision", "model_revision"),
         ("revision", "model_revision"),
         ("model_digest", "model_digest"),

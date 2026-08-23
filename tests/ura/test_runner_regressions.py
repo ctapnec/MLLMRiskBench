@@ -4263,6 +4263,54 @@ def test_guardrail_authority_retains_selected_model_after_target_annotation(
         )
 
 
+def test_planned_guardrail_component_binds_constructor_model_id() -> None:
+    """The persisted Guardrail component must match its planned repo/revision."""
+
+    from ura.judges.guardrail import GuardrailJudge
+
+    revision = "e" * 40
+    guardrail = GuardrailJudge(
+        model="meta-llama/Llama-Guard-3-8B",
+        revision=revision,
+    )
+    run = Runner(
+        ReplayAttacker(),
+        _RecordingTarget(),
+        JudgeCascade([RuleJudge(), guardrail]),
+        AttackBudget(max_queries=1, max_turns=1, seed=0),
+        [0],
+    )
+    manifest = run.plan_manifest(
+        [_datapoint("planned-guardrail-component")],
+        run_config={
+            "dry_run": True,
+            "execution_purpose": "diagnostic_canary",
+            "judge_names": ["rules", "guardrail"],
+            "guardrail_model": guardrail.model_id,
+            "guardrail_revision": revision,
+        },
+    )
+    component = manifest.config["components"]["judge_cascade"]["stages"][1]
+
+    # GuardrailJudge's constructor field is named model_id. The generic
+    # component validator must recognize that real persisted spelling instead
+    # of accepting only the hypothetical field name model.
+    assert component["model_id"] == guardrail.model_id
+    assert "model" not in component
+    runner_module.validate_planned_realized_identities(
+        manifest.config["run"],
+        manifest.config["components"],
+        [],
+        [],
+        {"judges": []},
+    )
+    with pytest.raises(ValueError, match="resolved_model identity aliases conflict"):
+        runner_module._component_model_identity({
+            **component,
+            "model": "meta-llama/a-different-model",
+        })
+
+
 def test_strongreject_shadow_binds_the_full_stage_projection() -> None:
     attempt, response, authority, authority_row = (
         _persisted_trail_contract_fixture()
