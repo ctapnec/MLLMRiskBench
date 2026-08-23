@@ -491,7 +491,7 @@ external_measured_run() {
     --out-dir "$result_root" \
     --expected-commit "$EXPECTED_COMMIT" \
     --framework-lock-id "$EXPECTED_FRAMEWORK_LOCK" \
-    --gate5-sha256 "$gate5_sha" \
+    --admission-sha256 "$gate5_sha" \
     --tmux-socket "$socket" \
     --tmux-session "$session" \
     --argv "$@" \

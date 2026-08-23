@@ -1,4 +1,4 @@
-"""Sealed Phase 7 watcher-to-report binding for the Stats UI."""
+"""Local campaign analysis adapter and generic Stats registration."""
 
 from __future__ import annotations
 
@@ -10,9 +10,16 @@ from pathlib import Path
 import pytest
 
 from experiments.rig_web import RigWebApp, _LEVEL2_ROW_FIELDS
-from experiments.rig_web_app import phase7_stats as phase7_module
+from experiments.local_campaign import stats_adapter as phase7_module
+from experiments.local_campaign.stats_adapter import (
+    load_local_campaign_stats_bundle,
+    publish_local_campaign_stats_registration,
+)
+from experiments.rig_web_app import external_measured as external_measured_module
 from experiments.rig_web_app.campaigns import EngineeringCampaign
-from experiments.rig_web_app.phase7_stats import load_phase7_stats_bundle
+from experiments.rig_web_app.external_analysis import (
+    load_external_analysis_registration,
+)
 
 
 COMMIT = "a" * 40
@@ -169,6 +176,7 @@ def _campaign(watcher: Path) -> EngineeringCampaign:
         target_call_cap=None,
         reserved_calls=0,
         hard_stop_hours=720,
+        named_session_liveness_verified=False,
         logs=(),
     )
 
@@ -177,6 +185,7 @@ def _sealed_chain(
     tmp_path: Path,
     *,
     mutation: str = "",
+    limited: bool = False,
 ) -> tuple[Path, EngineeringCampaign, Path]:
     results = tmp_path / "runs"
     watcher = results / "engineering" / "phase7-after-phase6-test"
@@ -198,9 +207,7 @@ def _sealed_chain(
     phase6_sealed.mkdir(parents=True)
     phase6_validator = phase6_sealed / "phase7_analysis.py"
     phase6_validator.write_bytes(sealed_payload.read_bytes())
-    phase6_doc = {
-        field: None for field in phase7_module._PHASE6_COMPLETION_FIELDS
-    }
+    phase6_doc = {field: None for field in phase7_module._PHASE6_COMPLETION_FIELDS}
     phase6_doc.update(
         {
             "schema": "ura-phase6-sequence-completion/2",
@@ -251,9 +258,7 @@ def _sealed_chain(
         "gate5": {"manifest": _descriptor(gate5)},
         "phase6": {
             "core": {"lane_terminal_states": {"core-lane": "measured_complete"}},
-            "extended": {
-                "lane_terminal_states": {"extended-lane": "measured_complete"}
-            },
+            "extended": {"lane_terminal_states": {"extended-lane": "measured_complete"}},
         },
         "native_outcomes": {"states": {"native-lane": "run"}},
         "runner": {
@@ -308,16 +313,16 @@ def _sealed_chain(
     phase7_launch.write_bytes(
         (
             "\n".join(
-            (
-                f"SESSION={phase7_session}",
-                "SOCKET=ura-phase7-test",
-                "ATTACH=tmux -L ura-phase7-test attach -t ura-phase7-test",
-                f"CONTROL_ROOT={control.resolve()}",
-                f"ANALYSIS_ROOT={analysis.resolve()}",
-                f"LOG={control.resolve() / 'controller.log'}",
-                f"EXIT_MARKER={control.resolve() / '.exit'}",
-                f"COMPLETION={control.resolve() / 'completion.json'}",
-            )
+                (
+                    f"SESSION={phase7_session}",
+                    "SOCKET=ura-phase7-test",
+                    "ATTACH=tmux -L ura-phase7-test attach -t ura-phase7-test",
+                    f"CONTROL_ROOT={control.resolve()}",
+                    f"ANALYSIS_ROOT={analysis.resolve()}",
+                    f"LOG={control.resolve() / 'controller.log'}",
+                    f"EXIT_MARKER={control.resolve() / '.exit'}",
+                    f"COMPLETION={control.resolve() / 'completion.json'}",
+                )
             )
             + "\n"
         ).encode("ascii")
@@ -353,7 +358,14 @@ def _sealed_chain(
     level2 = analysis / "level2" / "level2-report.json"
     _level1(level1)
     _level2(level2)
-    statuses = {"level1-evidence": "complete", "level2-report": "complete"}
+    statuses = {
+        "level1-evidence": "complete",
+        "level2-report": "complete_with_limitations" if limited else "complete",
+    }
+    explicit_limitations = {
+        name: status for name, status in statuses.items() if status != "complete"
+    }
+    completion_status = "complete_with_explicit_limitations" if explicit_limitations else "complete"
     artifacts = [_descriptor(path) for path in (level1, level2, runner_view)]
     inventory = _write(
         analysis / "artifact-inventory.json",
@@ -388,7 +400,7 @@ def _sealed_chain(
     controller.update(
         {
             "schema": "ura-phase7-analysis-completion/1",
-            "status": "complete",
+            "status": completion_status,
             "inventory_complete": True,
             "input_manifest": _descriptor(control_input),
             "authorized_input_manifest_sha256": (
@@ -399,7 +411,7 @@ def _sealed_chain(
             "artifact_inventory": _descriptor(inventory),
             "runner_input_view": _descriptor(runner_view),
             "analysis_statuses": statuses,
-            "explicit_limitations": {},
+            "explicit_limitations": explicit_limitations,
             "phase6_terminal_states": {
                 "core": {"core-lane": "measured_complete"},
                 "extended": {"extended-lane": "measured_complete"},
@@ -409,10 +421,7 @@ def _sealed_chain(
             "judge_calls": 0,
             "provider_http_attempts": 0,
             "downloads_observed_bytes": 0,
-            **{
-                field: mutation == f"controller_boundary_{field}"
-                for field in boundary_fields
-            },
+            **{field: mutation == f"controller_boundary_{field}" for field in boundary_fields},
         }
     )
     controller_path = _write(control / "completion.json", controller)
@@ -435,7 +444,7 @@ def _sealed_chain(
             "status": (
                 "complete_with_explicit_limitations"
                 if mutation == "watcher_controller_status"
-                else "complete"
+                else completion_status
             ),
             "expected_commit": "c" * 40 if mutation == "watcher_commit" else COMMIT,
             "framework_lock_id": LOCK,
@@ -456,7 +465,7 @@ def _sealed_chain(
             "artifact_inventory": _descriptor(inventory),
             "runner_input_view": _descriptor(runner_view),
             "analysis_statuses": statuses,
-            "explicit_limitations": {},
+            "explicit_limitations": explicit_limitations,
             "target_calls": 0,
             "judge_calls": 0,
             "provider_http_attempts": 0,
@@ -476,19 +485,20 @@ def test_phase7_watcher_chain_binds_reports_and_rejects_mutated_output(
     tmp_path: Path,
 ) -> None:
     results, campaign, level2 = _sealed_chain(tmp_path)
-    bundle = load_phase7_stats_bundle(results, campaign)
+    bundle = load_local_campaign_stats_bundle(results, campaign)
     assert bundle is not None
     assert [report.kind for report in bundle.reports] == ["level1", "level2"]
     assert bundle.expected_commit == COMMIT
     assert bundle.framework_lock_id == LOCK
-    assert bundle.gate5_sha256 == hashlib.sha256(
-        (results / "thesis" / "gate5" / "covered.json").read_bytes()
-    ).hexdigest()
+    assert (
+        bundle.gate5_sha256
+        == hashlib.sha256((results / "thesis" / "gate5" / "covered.json").read_bytes()).hexdigest()
+    )
 
     # Mutation proof: inventory membership without matching report bytes never
     # authorizes a chart or detail binding.
     level2.write_text("{}\n", encoding="utf-8")
-    assert load_phase7_stats_bundle(results, campaign) is None
+    assert load_local_campaign_stats_bundle(results, campaign) is None
 
 
 @pytest.mark.parametrize(
@@ -523,7 +533,7 @@ def test_phase7_chain_identity_and_boundary_mutations_never_link_stats(
     mutation: str,
 ) -> None:
     results, campaign, _level2_path = _sealed_chain(tmp_path, mutation=mutation)
-    assert load_phase7_stats_bundle(results, campaign) is None
+    assert load_local_campaign_stats_bundle(results, campaign) is None
     app = RigWebApp(
         results_root=results,
         state_dir=tmp_path / "state",
@@ -544,6 +554,10 @@ def test_stats_links_sealed_phase7_reports_to_watcher_campaign(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     results, campaign, _level2_path = _sealed_chain(tmp_path)
+    publish_local_campaign_stats_registration(results, campaign)
+    registration = load_external_analysis_registration(results, campaign.route_id)
+    assert registration is not None
+    assert [report.kind for report in registration.reports] == ["level1", "level2"]
     app = RigWebApp(
         results_root=results,
         state_dir=tmp_path / "state",
@@ -559,9 +573,7 @@ def test_stats_links_sealed_phase7_reports_to_watcher_campaign(
     )
     try:
         index = app.handle("GET", "/stats")[2].decode("utf-8")
-        status, _headers, detail = app.handle(
-            "GET", f"/stats/job/{campaign.route_id}?fragment=1"
-        )
+        status, _headers, detail = app.handle("GET", f"/stats/job/{campaign.route_id}?fragment=1")
     finally:
         app.close()
 
@@ -569,9 +581,220 @@ def test_stats_links_sealed_phase7_reports_to_watcher_campaign(
     assert "Statistics &amp; diagrams" in index
     assert status == 200
     detail_text = detail.decode("utf-8")
-    assert "Sealed Phase 7 analysis binding" in detail_text
+    assert "Registered external analysis" in detail_text
+    assert "does not grant thesis-evidence authority" in detail_text
     assert "level1/level1-evidence.json" in detail_text
     assert "level2/level2-report.json" in detail_text
     assert "refusal_rate" in detail_text
     assert "class='barchart'" in detail_text
     assert "Open full job record" in detail_text
+
+
+def test_stats_preserves_phase7_explicit_limitations_in_status_and_detail(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    results, campaign, _level2_path = _sealed_chain(tmp_path, limited=True)
+    bundle = load_local_campaign_stats_bundle(results, campaign)
+    assert bundle is not None
+    assert bundle.completion_status == "complete_with_explicit_limitations"
+    assert bundle.explicit_limitations == (("level2-report", "complete_with_limitations"),)
+    publish_local_campaign_stats_registration(results, campaign)
+    app = RigWebApp(
+        results_root=results,
+        state_dir=tmp_path / "state",
+        repo_root=tmp_path,
+        gpu_hardware={"devices": []},
+        system_hardware={},
+    )
+    monkeypatch.setattr(app, "_engineering_campaign_scan", lambda **_kwargs: ([campaign], ""))
+    monkeypatch.setattr(
+        app,
+        "_engineering_campaign",
+        lambda route: campaign if route == campaign.route_id else None,
+    )
+    try:
+        index = app.handle("GET", "/stats")[2].decode("utf-8")
+        status, _headers, detail = app.handle("GET", f"/stats/job/{campaign.route_id}?fragment=1")
+    finally:
+        app.close()
+
+    assert "complete with explicit limitations" in index
+    assert status == 200
+    detail_text = detail.decode("utf-8")
+    assert "Analysis completed with explicit limitations" in detail_text
+    assert "level2-report" in detail_text
+    assert "complete_with_limitations" in detail_text
+
+
+def test_generic_registration_fails_closed_after_report_byte_mutation(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    results, campaign, level2_path = _sealed_chain(tmp_path)
+    publish_local_campaign_stats_registration(results, campaign)
+    assert load_external_analysis_registration(results, campaign.route_id) is not None
+
+    # The document remains valid JSON, but its exact registered bytes changed.
+    level2_document = json.loads(level2_path.read_text(encoding="utf-8"))
+    level2_path.write_text(
+        json.dumps(level2_document, ensure_ascii=False, indent=2) + "\n",
+        encoding="utf-8",
+    )
+    assert load_external_analysis_registration(results, campaign.route_id) is None
+
+    app = RigWebApp(
+        results_root=results,
+        state_dir=tmp_path / "state",
+        repo_root=tmp_path,
+        gpu_hardware={"devices": []},
+        system_hardware={},
+    )
+    monkeypatch.setattr(app, "_engineering_campaign_scan", lambda **_kwargs: ([campaign], ""))
+    try:
+        index = app.handle("GET", "/stats")[2].decode("utf-8")
+    finally:
+        app.close()
+    assert f"href='/stats/job/{campaign.route_id}'" not in index
+
+
+def test_render_revalidates_registered_report_bytes(
+    tmp_path: Path,
+) -> None:
+    results, campaign, level2_path = _sealed_chain(tmp_path)
+    publish_local_campaign_stats_registration(results, campaign)
+    registration = load_external_analysis_registration(results, campaign.route_id)
+    assert registration is not None
+
+    level2_document = json.loads(level2_path.read_text(encoding="utf-8"))
+    level2_path.write_text(
+        json.dumps(level2_document, ensure_ascii=False, indent=2) + "\n",
+        encoding="utf-8",
+    )
+    app = RigWebApp(
+        results_root=results,
+        state_dir=tmp_path / "state",
+        repo_root=tmp_path,
+        gpu_hardware={"devices": []},
+        system_hardware={},
+    )
+    try:
+        detail = app._stats_campaign_detail(
+            app._stats_external_analysis_campaign(campaign, registration)
+        )
+    finally:
+        app.close()
+    assert "The exact report output is missing or malformed" in detail
+
+
+def test_generic_registration_rejects_duplicate_report_kind(tmp_path: Path) -> None:
+    results, campaign, _level2_path = _sealed_chain(tmp_path)
+    registration_path = publish_local_campaign_stats_registration(results, campaign)
+    registration = json.loads(registration_path.read_text(encoding="utf-8"))
+    level1_path = results / registration["reports"][0]["path"]
+    duplicate_path = level1_path.with_name("level1-evidence-copy.json")
+    duplicate_path.write_bytes(level1_path.read_bytes())
+    payload = duplicate_path.read_bytes()
+    registration["reports"][1] = {
+        "path": duplicate_path.relative_to(results).as_posix(),
+        "sha256": hashlib.sha256(payload).hexdigest(),
+        "bytes": len(payload),
+        "kind": "level1",
+        "display_name": "level1/level1-evidence-copy.json",
+    }
+    _write(registration_path, registration)
+    assert load_external_analysis_registration(results, campaign.route_id) is None
+
+
+def test_generic_registration_rejects_symlinked_registry_identity(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    results, campaign, _level2_path = _sealed_chain(tmp_path)
+    publish_local_campaign_stats_registration(results, campaign)
+    registry = results / "external-analysis-jobs"
+    original = Path.is_symlink
+
+    def appears_symlinked(path: Path) -> bool:
+        return path == registry or original(path)
+
+    monkeypatch.setattr(Path, "is_symlink", appears_symlinked)
+    assert load_external_analysis_registration(results, campaign.route_id) is None
+
+
+def test_local_adapter_cli_publishes_generic_registration(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    results, campaign, _level2_path = _sealed_chain(tmp_path)
+    assert (
+        phase7_module.main(
+            [
+                "--results-root",
+                str(results),
+                "--campaign-root",
+                str(campaign.directory),
+                "--release-commit",
+                COMMIT,
+            ]
+        )
+        == 0
+    )
+    registration = load_external_analysis_registration(results, campaign.route_id)
+    assert registration is not None
+    assert Path(capsys.readouterr().out.strip()).name == "registration.json"
+
+
+def test_interrupted_generic_registration_is_retryable_without_partial_final(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    results, campaign, _level2_path = _sealed_chain(tmp_path)
+    real_publish = external_measured_module._publish_create_only
+
+    def interrupt_publish(_temporary: Path, _final: Path) -> None:
+        raise OSError("simulated publication interruption")
+
+    monkeypatch.setattr(
+        external_measured_module,
+        "_publish_create_only",
+        interrupt_publish,
+    )
+    with pytest.raises(OSError, match="simulated publication interruption"):
+        publish_local_campaign_stats_registration(results, campaign)
+    job_directory = results / "external-analysis-jobs" / campaign.route_id
+    assert not job_directory.exists()
+
+    monkeypatch.setattr(
+        external_measured_module,
+        "_publish_create_only",
+        real_publish,
+    )
+    registration_path = publish_local_campaign_stats_registration(results, campaign)
+    assert registration_path.is_file()
+    assert load_external_analysis_registration(results, campaign.route_id) is not None
+
+
+def test_interrupted_generic_registration_preserves_foreign_file(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    results, campaign, _level2_path = _sealed_chain(tmp_path)
+    foreign: Path | None = None
+
+    def interrupt_after_foreign_file(_temporary: Path, final: Path) -> None:
+        nonlocal foreign
+        foreign = final.with_name("foreign.keep")
+        foreign.write_text("operator-owned\n", encoding="utf-8")
+        raise OSError("simulated foreign collision")
+
+    monkeypatch.setattr(
+        external_measured_module,
+        "_publish_create_only",
+        interrupt_after_foreign_file,
+    )
+    with pytest.raises(OSError, match="simulated foreign collision"):
+        publish_local_campaign_stats_registration(results, campaign)
+
+    assert foreign is not None and foreign.read_text(encoding="utf-8") == "operator-owned\n"
+    assert not foreign.with_name("registration.json").exists()

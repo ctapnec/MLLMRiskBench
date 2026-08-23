@@ -1,4 +1,4 @@
-"""Rig-local campaign builder and console over the maintained experiment CLIs.
+"""Operator-facing campaign builder and console over maintained experiment CLIs.
 
 A single-operator application (WEB-001 basic console, promoted
 to the WEB-002 campaign builder): it starts allowlisted ``python -m

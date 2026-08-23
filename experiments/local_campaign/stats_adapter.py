@@ -1,18 +1,32 @@
-"""Strict read-only binding of sealed Phase 7 reports to their watcher campaign."""
+"""Local-campaign adapter for sealed read-only analysis reports."""
 
 from __future__ import annotations
 
+import argparse
 import hashlib
 import os
 import re
 import stat
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Mapping
+from typing import Any, Mapping, Protocol
 
 from ura.strict_json import strict_json_loads
 
-from .campaigns import EngineeringCampaign
+from experiments.rig_web_app.external_analysis import (
+    ExternalAnalysisReportSpec,
+    publish_external_analysis_registration,
+)
+
+
+class EngineeringCampaignRecord(Protocol):
+    """Structural campaign record consumed by this plan-owned adapter."""
+
+    route_id: str
+    directory: Path
+    evidence_class: str
+    status_tag: str
+    release_commit: str
 
 
 _HEX40 = re.compile(r"[0-9a-f]{40}\Z")
@@ -172,7 +186,7 @@ _INVENTORY_FIELDS = {
 
 
 @dataclass(frozen=True)
-class Phase7Report:
+class LocalCampaignReport:
     path: Path
     artifact_relative: str
     display_name: str
@@ -180,14 +194,25 @@ class Phase7Report:
 
 
 @dataclass(frozen=True)
-class Phase7StatsBundle:
+class LocalCampaignStatsBundle:
     route_id: str
     analysis_root: Path
     artifact_relative: str
     expected_commit: str
     framework_lock_id: str
     gate5_sha256: str
-    reports: tuple[Phase7Report, ...]
+    completion_status: str
+    explicit_limitations: tuple[tuple[str, str], ...]
+    reports: tuple[LocalCampaignReport, ...]
+
+
+@dataclass(frozen=True)
+class _PublishCampaignRecord:
+    route_id: str
+    directory: Path
+    evidence_class: str
+    status_tag: str
+    release_commit: str
 
 
 def _beneath(path: Path, root: Path) -> bool:
@@ -228,10 +253,8 @@ def _regular_bytes(path: Path, *, maximum: int) -> bytes:
     if (
         len(payload) > maximum
         or len(payload) != before.st_size
-        or identity
-        != (after.st_dev, after.st_ino, after.st_size, after.st_mtime_ns)
-        or identity
-        != (named.st_dev, named.st_ino, named.st_size, named.st_mtime_ns)
+        or identity != (after.st_dev, after.st_ino, after.st_size, after.st_mtime_ns)
+        or identity != (named.st_dev, named.st_ino, named.st_size, named.st_mtime_ns)
         or named.st_nlink != 1
     ):
         raise ValueError("Phase 7 file changed during read")
@@ -317,10 +340,10 @@ def _phase7_launch_rows(payload: bytes) -> dict[str, str]:
     return rows
 
 
-def load_phase7_stats_bundle(
+def load_local_campaign_stats_bundle(
     results_root: Path,
-    campaign: EngineeringCampaign,
-) -> Phase7StatsBundle | None:
+    campaign: EngineeringCampaignRecord,
+) -> LocalCampaignStatsBundle | None:
     """Return report bindings only for an intact terminal Phase 7 watcher chain."""
 
     try:
@@ -340,8 +363,7 @@ def load_phase7_stats_bundle(
         if (
             set(watcher) != _WATCHER_FIELDS
             or watcher.get("schema") != "ura-phase7-after-phase6-completion/1"
-            or watcher.get("status")
-            not in {"complete", "complete_with_explicit_limitations"}
+            or watcher.get("status") not in {"complete", "complete_with_explicit_limitations"}
             or watcher.get("expected_commit") != campaign.release_commit
             or _HEX40.fullmatch(str(watcher.get("expected_commit"))) is None
             or _HEX64.fullmatch(str(watcher.get("framework_lock_id"))) is None
@@ -418,8 +440,7 @@ def load_phase7_stats_bundle(
             or watcher_launch.get("phase7_payload") != watcher.get("phase7_payload")
             or not isinstance(phase6_wait, Mapping)
             or set(phase6_wait) != {"control_root", "session", "socket"}
-            or phase6_wait.get("session")
-            != f"ura-phase6-sequence-{expected_commit[:7]}"
+            or phase6_wait.get("session") != f"ura-phase6-sequence-{expected_commit[:7]}"
             or phase6_wait.get("socket") != phase6_wait.get("session")
             or not _zeros(
                 watcher_launch,
@@ -453,9 +474,7 @@ def load_phase7_stats_bundle(
         )
         phase6 = _object(phase6_bytes)
         phase6_status = phase6.get("status")
-        expected_phase6_exit = (
-            b"0\n" if phase6_status == "complete" else b"1\n"
-        )
+        expected_phase6_exit = b"0\n" if phase6_status == "complete" else b"1\n"
         phase6_states = phase6.get("terminal_states")
         _phase6_validator_path, phase6_validator_bytes = _exact_descriptor(
             phase6.get("phase7_validator"),
@@ -474,8 +493,7 @@ def load_phase7_stats_bundle(
             or phase6.get("all_controllers_attempted") is not True
             or not isinstance(phase6_states, Mapping)
             or set(phase6_states) != {"core", "extended", "native"}
-            or set(phase6_states.values())
-            - {"complete", "complete_with_failures"}
+            or set(phase6_states.values()) - {"complete", "complete_with_failures"}
             or phase6.get("failed_controller_receipts_are_evidence") is not False
             or not isinstance(phase6.get("conditional_na_lanes"), list)
             or phase6_exit_bytes != expected_phase6_exit
@@ -536,8 +554,7 @@ def load_phase7_stats_bundle(
         if (
             launch_rows["SESSION"] != phase7_session
             or launch_rows["SOCKET"] != phase7_session
-            or launch_rows["ATTACH"]
-            != f"tmux -L {phase7_session} attach -t {phase7_session}"
+            or launch_rows["ATTACH"] != f"tmux -L {phase7_session} attach -t {phase7_session}"
             or launch_rows["CONTROL_ROOT"] != str(control)
             or launch_rows["ANALYSIS_ROOT"] != str(analysis)
             or launch_rows["LOG"] != str(control / "controller.log")
@@ -624,10 +641,9 @@ def load_phase7_stats_bundle(
             allowed_root=control,
             maximum=_MAX_CONTROL_BYTES,
         )
-        if (
-            payload_bytes != sealed_payload_bytes
-            or analysis_launch.get("payload") != controller.get("payload")
-        ):
+        if payload_bytes != sealed_payload_bytes or analysis_launch.get(
+            "payload"
+        ) != controller.get("payload"):
             return None
         runner_view_path, runner_view_bytes = _descriptor_file(
             controller.get("runner_input_view"),
@@ -639,10 +655,7 @@ def load_phase7_stats_bundle(
             allowed_root=analysis,
             maximum=_MAX_CONTROL_BYTES,
         )
-        if (
-            watcher_runner_path != runner_view_path
-            or watcher_runner_bytes != runner_view_bytes
-        ):
+        if watcher_runner_path != runner_view_path or watcher_runner_bytes != runner_view_bytes:
             return None
 
         _input_path, input_payload = _exact_descriptor(
@@ -673,30 +686,24 @@ def load_phase7_stats_bundle(
         expected_phase6_states = (
             {
                 "core": phase6_inputs.get("core", {}).get("lane_terminal_states"),
-                "extended": phase6_inputs.get("extended", {}).get(
-                    "lane_terminal_states"
-                ),
+                "extended": phase6_inputs.get("extended", {}).get("lane_terminal_states"),
                 "native": native_outcomes.get("states"),
             }
-            if isinstance(phase6_inputs, Mapping)
-            and isinstance(native_outcomes, Mapping)
+            if isinstance(phase6_inputs, Mapping) and isinstance(native_outcomes, Mapping)
             else None
         )
         if (
             inputs.get("schema") != "ura-phase7-analysis-inputs/1"
             or inputs.get("inventory_complete") is not True
-            or inputs.get("scope")
-            != "all_local_phase7_read_only_analysis_over_phase6_lifecycle"
+            or inputs.get("scope") != "all_local_phase7_read_only_analysis_over_phase6_lifecycle"
             or code_identity
             != {"expected_commit": expected_commit, "framework_lock_id": framework_lock}
             or not isinstance(gate5, Mapping)
             or not isinstance(runner_inputs, Mapping)
             or not isinstance(runner_inputs.get("lifecycle_lane_order"), list)
             or not isinstance(runner_inputs.get("metric_lane_order"), list)
-            or len(runner_inputs["lifecycle_lane_order"])
-            != prepare.get("runner_lanes")
-            or len(runner_inputs["metric_lane_order"])
-            != prepare.get("metric_runner_lanes")
+            or len(runner_inputs["lifecycle_lane_order"]) != prepare.get("runner_lanes")
+            or len(runner_inputs["metric_lane_order"]) != prepare.get("metric_runner_lanes")
             or not isinstance(native_outcomes, Mapping)
             or native_outcomes.get("states") != prepare.get("native_outcomes")
             or controller.get("phase6_terminal_states") != expected_phase6_states
@@ -742,8 +749,7 @@ def load_phase7_stats_bundle(
             or len(artifacts) > _MAX_ARTIFACTS
             or inventory.get("artifact_count") != len(artifacts)
             or inventory.get("input_manifest_sha256") != input_sha
-            or inventory.get("payload_sha256")
-            != hashlib.sha256(payload_bytes).hexdigest()
+            or inventory.get("payload_sha256") != hashlib.sha256(payload_bytes).hexdigest()
             or inventory.get("runner_input_view") != controller.get("runner_input_view")
             or inventory.get("status_inventory") != controller.get("analysis_statuses")
             or not _zeros(
@@ -779,21 +785,84 @@ def load_phase7_stats_bundle(
                 maximum=_MAX_REPORT_BYTES,
             )
             reports.append(
-                Phase7Report(
+                LocalCampaignReport(
                     path=verified,
                     artifact_relative=verified.relative_to(results).as_posix(),
                     display_name=verified.relative_to(analysis).as_posix(),
                     kind=kind,
                 )
             )
-        return Phase7StatsBundle(
+        return LocalCampaignStatsBundle(
             route_id=campaign.route_id,
             analysis_root=analysis,
             artifact_relative=analysis.relative_to(results).as_posix(),
             expected_commit=expected_commit,
             framework_lock_id=framework_lock,
             gate5_sha256=hashlib.sha256(gate5_payload).hexdigest(),
+            completion_status=str(controller["status"]),
+            explicit_limitations=tuple(
+                sorted((str(name), str(status)) for name, status in limitations.items())
+            ),
             reports=tuple(reports),
         )
     except (OSError, TypeError, ValueError, RecursionError):
         return None
+
+
+def publish_local_campaign_stats_registration(
+    results_root: Path,
+    campaign: EngineeringCampaignRecord,
+) -> Path:
+    """Validate the plan-owned chain, then publish its generic UI registration."""
+
+    bundle = load_local_campaign_stats_bundle(results_root, campaign)
+    if bundle is None:
+        raise ValueError("local campaign analysis chain is not publishable")
+    return publish_external_analysis_registration(
+        results_root,
+        job_id=bundle.route_id,
+        analysis_root=bundle.analysis_root,
+        work_label="local campaign read-only analysis",
+        completion_status=bundle.completion_status,
+        explicit_limitations=dict(bundle.explicit_limitations),
+        reports=tuple(
+            ExternalAnalysisReportSpec(
+                path=report.path,
+                kind=report.kind,
+                display_name=report.display_name,
+            )
+            for report in bundle.reports
+        ),
+    )
+
+
+def _parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        description="Publish a validated local-campaign analysis to generic Rig Web Stats"
+    )
+    parser.add_argument("--results-root", type=Path, required=True)
+    parser.add_argument("--campaign-root", type=Path, required=True)
+    parser.add_argument("--release-commit", required=True)
+    parser.add_argument("--status-tag", choices=("passed", "partial"), default="passed")
+    return parser
+
+
+def main(argv: list[str] | None = None) -> int:
+    args = _parser().parse_args(argv)
+    campaign_root = args.campaign_root.resolve(strict=True)
+    if _HEX40.fullmatch(args.release_commit) is None:
+        raise SystemExit("release commit must be lowercase 40-hex")
+    record = _PublishCampaignRecord(
+        route_id=campaign_root.name,
+        directory=campaign_root,
+        evidence_class="local_campaign_control",
+        status_tag=args.status_tag,
+        release_commit=args.release_commit,
+    )
+    path = publish_local_campaign_stats_registration(args.results_root, record)
+    print(path)
+    return 0
+
+
+if __name__ == "__main__":  # pragma: no cover - exercised through main()
+    raise SystemExit(main())

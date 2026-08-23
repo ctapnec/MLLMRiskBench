@@ -252,16 +252,12 @@ def _campaign_named_session_spec(
             marker,
             started_at=started_at,
         )
-    if (
-        evidence_class == "local_campaign_control"
-        and marker.get("campaign_id") == directory.name
-        and marker.get("hosted_calls_allowed") is False
-    ):
+    if marker.get("campaign_id") == directory.name:
         return _exact_marker_session(
             directory,
             marker,
             started_at=started_at,
-            owner_label="local campaign controller",
+            owner_label="engineering campaign",
         )
     return None
 
@@ -573,6 +569,7 @@ class EngineeringCampaign:
     target_call_cap: int | None
     reserved_calls: int
     hard_stop_hours: float | None
+    named_session_liveness_verified: bool
     logs: tuple[tuple[str, str, Path], ...]
 
     def runtime_seconds(self) -> float:
@@ -650,12 +647,18 @@ def _load_campaign(
         started_at=started_at,
     )
     session_observed: bool | None = None
-    if state == "running" and marker.get("evidence_class") == "local_campaign_control":
+    marker_declares_named_session = (
+        marker.get("tmux_socket") is not None
+        or marker.get("tmux_session") is not None
+    )
+    if state == "running" and (
+        marker_declares_named_session or session_spec is not None
+    ):
         if session_spec is None:
-            state = "orphaned"
-            display_state = "orphaned"
+            state = "unknown"
+            display_state = "unknown"
             state_detail = (
-                "local campaign controller lacks exact tmux socket/session identity; "
+                "engineering campaign declares an invalid named-session identity; "
                 "the retained task log has no terminal event"
             )
         else:
@@ -668,36 +671,16 @@ def _load_campaign(
                 state = "orphaned"
                 display_state = "orphaned"
                 state_detail = (
-                    "local campaign controller named session is no longer live; "
+                    f"{session_spec.owner_label} named session is no longer live; "
                     "the retained task log has no terminal event"
                 )
             elif session_observed is None:
                 state = "unknown"
                 display_state = "unknown"
                 state_detail = (
-                    "local campaign controller named-session liveness is unavailable; "
+                    f"{session_spec.owner_label} named-session liveness is unavailable; "
                     "the retained task log has no terminal event"
                 )
-    elif state == "running" and session_spec is not None:
-        session_observed = (
-            _named_session_liveness([session_spec]).get(session_spec)
-            if named_session_liveness is None
-            else named_session_liveness.get(session_spec)
-        )
-        if session_observed is False:
-            state = "orphaned"
-            display_state = "orphaned"
-            state_detail = (
-                f"{session_spec.owner_label} named session is no longer live; "
-                "the retained task log has no terminal event"
-            )
-        elif session_observed is None:
-            state = "unknown"
-            display_state = "unknown"
-            state_detail = (
-                f"{session_spec.owner_label} named-session liveness is unavailable; "
-                "the retained task log has no terminal event"
-            )
     if (
         state == "running"
         and hard_stop_hours is not None
@@ -1015,6 +998,7 @@ def _load_campaign(
         target_call_cap=target_call_cap,
         reserved_calls=reserved_calls,
         hard_stop_hours=hard_stop_hours,
+        named_session_liveness_verified=session_observed is True,
         logs=logs,
     )
 

@@ -17,6 +17,7 @@ from experiments.rig_web_app import dashboard as dashboard_module
 from experiments.rig_web_app import external_measured as external_module
 from experiments.rig_web_app.artifacts import Job
 from experiments.rig_web_app.external_measured import (
+    REGISTRY_DIRECTORY,
     REGISTRATION_SCHEMA,
     TERMINAL_SCHEMA,
     load_external_measured_job,
@@ -29,7 +30,13 @@ from experiments.rig_web_app.external_measured import (
 
 COMMIT = "a" * 40
 FRAMEWORK_LOCK = "b" * 64
-GATE5 = "c" * 64
+ADMISSION = "c" * 64
+
+
+def test_external_measured_v2_storage_contract_is_literal() -> None:
+    assert REGISTRY_DIRECTORY == "external-measured-jobs-v2"
+    assert REGISTRATION_SCHEMA == "ura-external-measured-job/2"
+    assert TERMINAL_SCHEMA == "ura-external-measured-job-terminal/1"
 
 
 def _roots(tmp_path: Path, lane: str = "lane") -> tuple[Path, Path]:
@@ -56,10 +63,10 @@ def _register(
     results: Path,
     output: Path,
     *,
-    job_id: str = "external-phase6-qwen-text",
+    job_id: str = "external-measured-example",
     started_at: float | None = None,
-    tmux_socket: str = "ura-phase6-socket",
-    tmux_session: str = "ura-phase6-session",
+    tmux_socket: str = "ura-external-socket",
+    tmux_session: str = "ura-external-session",
 ) -> Path:
     return register_external_measured_start(
         results,
@@ -70,7 +77,7 @@ def _register(
         out_dir=output.resolve(),
         expected_commit=COMMIT,
         framework_lock_id=FRAMEWORK_LOCK,
-        gate5_sha256=GATE5,
+        admission_sha256=ADMISSION,
         tmux_socket=tmux_socket,
         tmux_session=tmux_session,
         started_at=started_at,
@@ -149,7 +156,7 @@ def test_create_only_api_and_cli_preserve_exact_operational_identity(
     assert registration["out_dir"] == str(output.resolve())
     assert registration["expected_commit"] == COMMIT
     assert registration["framework_lock_id"] == FRAMEWORK_LOCK
-    assert registration["gate5_sha256"] == GATE5
+    assert registration["admission_sha256"] == ADMISSION
     assert registration["registration_authority"] == "operational_only"
     assert registration["thesis_empirical_evidence"] is False
 
@@ -157,7 +164,7 @@ def test_create_only_api_and_cli_preserve_exact_operational_identity(
         _register(results, output, started_at=started)
     terminal_path = register_external_measured_terminal(
         results,
-        job_id="external-phase6-qwen-text",
+        job_id="external-measured-example",
         exit_code=0,
         ended_at=started + 1,
     )
@@ -165,7 +172,7 @@ def test_create_only_api_and_cli_preserve_exact_operational_identity(
     assert terminal == {
         "schema": TERMINAL_SCHEMA,
         "event": "terminal",
-        "job_id": "external-phase6-qwen-text",
+        "job_id": "external-measured-example",
         "ended_at": started + 1,
         "state": "complete",
         "exit_code": 0,
@@ -173,14 +180,14 @@ def test_create_only_api_and_cli_preserve_exact_operational_identity(
     with pytest.raises(FileExistsError):
         register_external_measured_terminal(
             results,
-            job_id="external-phase6-qwen-text",
+            job_id="external-measured-example",
             exit_code=0,
             ended_at=started + 2,
         )
 
     cli_results, cli_output = _roots(tmp_path, "cli-lane")
     assert cli_results == results
-    cli_job = "external-phase6-cli-lane"
+    cli_job = "external-measured-cli-lane"
     assert main(
         [
             "start",
@@ -194,8 +201,8 @@ def test_create_only_api_and_cli_preserve_exact_operational_identity(
             COMMIT,
             "--framework-lock-id",
             FRAMEWORK_LOCK,
-            "--gate5-sha256",
-            GATE5,
+            "--admission-sha256",
+            ADMISSION,
             "--tmux-socket",
             "ura-cli-socket",
             "--tmux-session",
@@ -252,7 +259,7 @@ def test_scanner_rejects_mutated_identity_escape_secret_and_nonregular_rows(
 ) -> None:
     results, output = _roots(tmp_path)
     registration_path = _register(results, output)
-    job_id = "external-phase6-qwen-text"
+    job_id = "external-measured-example"
     assert load_external_measured_job(results, job_id, probe_session=False) is not None
 
     # Mutation proof: a changed digest makes the otherwise complete row
@@ -268,14 +275,14 @@ def test_scanner_rejects_mutated_identity_escape_secret_and_nonregular_rows(
     with pytest.raises(ValueError, match="escapes"):
         register_external_measured_start(
             results,
-            job_id="external-phase6-outside",
+            job_id="external-measured-outside",
             command="run_matrix",
             run_kind_name="measured",
             sanitized_argv=["--out", str(outside.resolve())],
             out_dir=outside.resolve(),
             expected_commit=COMMIT,
             framework_lock_id=FRAMEWORK_LOCK,
-            gate5_sha256=GATE5,
+            admission_sha256=ADMISSION,
             tmux_socket="ura-outside",
             tmux_session="ura-outside",
         )
@@ -284,7 +291,7 @@ def test_scanner_rejects_mutated_identity_escape_secret_and_nonregular_rows(
     with pytest.raises(ValueError, match="secret-bearing"):
         register_external_measured_start(
             results,
-            job_id="external-phase6-secret",
+            job_id="external-measured-secret",
             command="run_matrix",
             run_kind_name="measured",
             sanitized_argv=[
@@ -296,13 +303,13 @@ def test_scanner_rejects_mutated_identity_escape_secret_and_nonregular_rows(
             out_dir=secret_output.resolve(),
             expected_commit=COMMIT,
             framework_lock_id=FRAMEWORK_LOCK,
-            gate5_sha256=GATE5,
+            admission_sha256=ADMISSION,
             tmux_socket="ura-secret",
             tmux_session="ura-secret",
         )
 
-    registry = results / "external-measured-jobs"
-    unsafe = registry / "external-phase6-nonregular"
+    registry = results / "external-measured-jobs-v2"
+    unsafe = registry / "external-measured-nonregular"
     unsafe.mkdir()
     (unsafe / "registration.json").mkdir()
     jobs, _notice = scan_external_measured_jobs(results, probe_session=False)
@@ -320,7 +327,7 @@ def test_extreme_epochs_are_rejected_by_writer_reader_and_scan_window(
     with pytest.raises(ValueError, match="supported UTC datetime range"):
         register_external_measured_terminal(
             results,
-            job_id="external-phase6-qwen-text",
+            job_id="external-measured-example",
             exit_code=0,
             ended_at=1e300,
         )
@@ -340,7 +347,7 @@ def test_extreme_epochs_are_rejected_by_writer_reader_and_scan_window(
     registration_path.write_text(json.dumps(document), encoding="utf-8")
     assert load_external_measured_job(
         results,
-        "external-phase6-qwen-text",
+        "external-measured-example",
         probe_session=False,
     ) is None
 
@@ -364,14 +371,14 @@ def test_secret_option_name_equals_forms_are_rejected(
     with pytest.raises(ValueError, match="secret-bearing"):
         register_external_measured_start(
             results,
-            job_id="external-phase6-secret-equals",
+            job_id="external-measured-secret-equals",
             command="run_matrix",
             run_kind_name="measured",
             sanitized_argv=[*_argv(output), secret_option],
             out_dir=output.resolve(),
             expected_commit=COMMIT,
             framework_lock_id=FRAMEWORK_LOCK,
-            gate5_sha256=GATE5,
+            admission_sha256=ADMISSION,
             tmux_socket="ura-secret-equals",
             tmux_session="ura-secret-equals",
         )
@@ -393,14 +400,14 @@ def test_secret_name_detection_does_not_reject_legitimate_option_words(
     ]
     path = register_external_measured_start(
         results,
-        job_id="external-phase6-legitimate-options",
+        job_id="external-measured-legitimate-options",
         command="run_matrix",
         run_kind_name="measured",
         sanitized_argv=[*_argv(output), *legitimate],
         out_dir=output.resolve(),
         expected_commit=COMMIT,
         framework_lock_id=FRAMEWORK_LOCK,
-        gate5_sha256=GATE5,
+        admission_sha256=ADMISSION,
         tmux_socket="ura-legitimate-options",
         tmux_session="ura-legitimate-options",
     )
@@ -420,7 +427,7 @@ def test_scanner_accepts_only_the_configured_results_root_symlink(
         pytest.skip("directory symlinks are unavailable")
     observed = load_external_measured_job(
         configured,
-        "external-phase6-qwen-text",
+        "external-measured-example",
         probe_session=False,
     )
     assert observed is not None and observed.out_dir == output.resolve()
@@ -439,10 +446,10 @@ def test_failed_start_cleans_only_its_new_empty_registration_directory(
     with pytest.raises(OSError, match="injected"):
         _register(results, output)
     registration_dir = (
-        results / "external-measured-jobs" / "external-phase6-qwen-text"
+        results / "external-measured-jobs-v2" / "external-measured-example"
     )
     assert not registration_dir.exists()
-    assert (results / "external-measured-jobs").is_dir()
+    assert (results / "external-measured-jobs-v2").is_dir()
 
 
 def test_interrupted_terminal_publication_leaves_no_partial_final_and_is_retryable(
@@ -452,7 +459,7 @@ def test_interrupted_terminal_publication_leaves_no_partial_final_and_is_retryab
     results, output = _roots(tmp_path)
     _register(results, output, started_at=time.time() - 1)
     registration_dir = (
-        results / "external-measured-jobs" / "external-phase6-qwen-text"
+        results / "external-measured-jobs-v2" / "external-measured-example"
     )
     terminal = registration_dir / "terminal.json"
     real_publish = external_module._publish_create_only
@@ -475,7 +482,7 @@ def test_interrupted_terminal_publication_leaves_no_partial_final_and_is_retryab
     with pytest.raises(OSError, match="injected publication interruption"):
         register_external_measured_terminal(
             results,
-            job_id="external-phase6-qwen-text",
+            job_id="external-measured-example",
             exit_code=0,
         )
     assert observed_private_files
@@ -485,13 +492,13 @@ def test_interrupted_terminal_publication_leaves_no_partial_final_and_is_retryab
     monkeypatch.setattr(external_module, "_publish_create_only", real_publish)
     published = register_external_measured_terminal(
         results,
-        job_id="external-phase6-qwen-text",
+        job_id="external-measured-example",
         exit_code=0,
     )
     assert published == terminal
     loaded = load_external_measured_job(
         results,
-        "external-phase6-qwen-text",
+        "external-measured-example",
         probe_session=False,
     )
     assert loaded is not None and loaded.state == "complete"
@@ -505,13 +512,13 @@ def test_hard_linked_registration_is_not_scanner_authority(tmp_path: Path) -> No
     assert registration.stat().st_nlink == 2
     assert load_external_measured_job(
         results,
-        "external-phase6-qwen-text",
+        "external-measured-example",
         probe_session=False,
     ) is None
     assert scan_external_measured_jobs(results, probe_session=False)[0] == []
 
     _same_results, terminal_output = _roots(tmp_path, "terminal-hardlink")
-    terminal_job = "external-phase6-terminal-hardlink"
+    terminal_job = "external-measured-terminal-hardlink"
     _register(results, terminal_output, job_id=terminal_job)
     terminal = register_external_measured_terminal(
         results,
@@ -539,7 +546,7 @@ def test_external_scan_batches_and_caches_running_session_probes(
         _register(
             results,
             output,
-            job_id=f"external-phase6-batch-{index:02d}",
+            job_id=f"external-measured-batch-{index:02d}",
             started_at=started + index,
         )
     campaigns_module._clear_named_session_liveness_cache()
@@ -593,7 +600,7 @@ def test_unavailable_named_session_liveness_is_explicitly_unknown(
         return {spec: None for spec in specs}
 
     monkeypatch.setattr(external_module, "_named_session_liveness", unavailable)
-    job = load_external_measured_job(results, "external-phase6-qwen-text")
+    job = load_external_measured_job(results, "external-measured-example")
     assert job is not None
     assert job.state == "unknown"
     assert "liveness is unavailable" in job.state_detail
@@ -612,7 +619,7 @@ def test_external_scan_caps_probes_and_discloses_every_unprobed_running_row(
         _register(
             results,
             output,
-            job_id=f"external-phase6-bounded-{index:02d}",
+            job_id=f"external-measured-bounded-{index:02d}",
             started_at=started + index,
         )
 
@@ -683,7 +690,7 @@ def test_external_scan_cache_is_keyed_bounded_and_invalidated_by_writers(
 
     register_external_measured_terminal(
         results,
-        job_id="external-phase6-qwen-text",
+        job_id="external-measured-example",
         exit_code=0,
     )
     after_terminal_load = loads
@@ -712,7 +719,7 @@ def test_jobs_and_stats_merge_external_read_only_job_without_database_import(
     _register(results, output, started_at=started)
     register_external_measured_terminal(
         results,
-        job_id="external-phase6-qwen-text",
+        job_id="external-measured-example",
         exit_code=0,
         ended_at=started + 0.5,
     )
@@ -723,24 +730,24 @@ def test_jobs_and_stats_merge_external_read_only_job_without_database_import(
     )
 
     jobs = app.handle("GET", "/jobs")[2].decode("utf-8")
-    row = jobs.split("external-phase6-qwen-text", 1)[1].split("</tr>", 1)[0]
+    row = jobs.split("external-measured-example", 1)[1].split("</tr>", 1)[0]
     assert "external / read-only" in row
     assert "model campaign" in row and "verify artifacts" in row
-    assert "action='/jobs/external/external-phase6-qwen-text/stop'" not in row
+    assert "action='/jobs/external/external-measured-example/stop'" not in row
     detail_status, _headers, detail_body = app.handle(
-        "GET", "/jobs/external/external-phase6-qwen-text"
+        "GET", "/jobs/external/external-measured-example"
     )
     assert detail_status == 200
     detail = detail_body.decode("utf-8")
     assert "Externally owned, read-only measured job" in detail
-    assert "tmux -L ura-phase6-socket attach -t ura-phase6-session" in detail
+    assert "tmux -L ura-external-socket attach -t ura-external-session" in detail
     assert "Browse exact output artifacts" in detail
     assert "Stop job" not in detail
     assert app.handle(
-        "POST", "/jobs/external/external-phase6-qwen-text/stop"
+        "POST", "/jobs/external/external-measured-example/stop"
     )[0] == 405
-    assert app.db.load_job("external-phase6-qwen-text") is None
-    assert app.db.load_run("external-phase6-qwen-text") is None
+    assert app.db.load_job("external-measured-example") is None
+    assert app.db.load_run("external-measured-example") is None
 
     observed: list[tuple[Path, bool]] = []
     real_collect = dashboard_module.collect_usage
@@ -751,7 +758,7 @@ def test_jobs_and_stats_merge_external_read_only_job_without_database_import(
 
     monkeypatch.setattr(dashboard_module, "collect_usage", collect_spy)
     stats = app.handle("GET", "/stats")[2].decode("utf-8")
-    card = stats.split("data-job-id='external-phase6-qwen-text'", 1)[1].split(
+    card = stats.split("data-job-id='external-measured-example'", 1)[1].split(
         "</article>", 1
     )[0]
     assert "data-authority='external-operational'" in stats
@@ -759,20 +766,20 @@ def test_jobs_and_stats_merge_external_read_only_job_without_database_import(
     assert "data-authority='thesis-measured'" not in card
     assert "external / read-only" in card
     assert "1 target / 1 judge" in card
-    assert "href='/jobs/external/external-phase6-qwen-text'" in card
+    assert "href='/jobs/external/external-measured-example'" in card
     assert observed and all(root == output.resolve() and verified for root, verified in observed)
     stats_detail = app.handle(
-        "GET", "/stats/job/external-phase6-qwen-text?fragment=1"
+        "GET", "/stats/job/external-measured-example?fragment=1"
     )[2].decode("utf-8")
     assert "1 complete cell" in stats_detail
-    assert "href='/jobs/external/external-phase6-qwen-text'" in stats_detail
+    assert "href='/jobs/external/external-measured-example'" in stats_detail
 
     # The operational registry is a derived-scan boundary and never becomes
     # a report or scientific usage source during reindex.
     reindexed = app.reindex_all()
     assert reindexed["ok"] is True
-    assert app.db.load_job("external-phase6-qwen-text") is None
-    assert app.db.load_run("external-phase6-qwen-text") is None
+    assert app.db.load_job("external-measured-example") is None
+    assert app.db.load_run("external-measured-example") is None
     app.close()
 
 
@@ -781,7 +788,7 @@ def test_stats_exact_external_detail_bypasses_truncated_list_scan(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     results, output = _roots(tmp_path, "beyond-prefix")
-    job_id = "external-phase6-beyond-prefix"
+    job_id = "external-measured-beyond-prefix"
     started = time.time() - 1
     _register(results, output, job_id=job_id, started_at=started)
     register_external_measured_terminal(
@@ -823,21 +830,21 @@ def test_jobs_date_window_pins_live_console_and_external_rows_only(
     _same_results, terminal_output = _roots(tmp_path, "old-terminal")
     now = time.time()
     old = now - 8 * 86400
-    live_external = "external-phase6-old-live"
-    terminal_external = "external-phase6-old-terminal"
+    live_external = "external-measured-old-live"
+    terminal_external = "external-measured-old-terminal"
     _register(
         results,
         live_output,
         job_id=live_external,
         started_at=old,
-        tmux_session="ura-phase6-old-live",
+        tmux_session="ura-external-old-live",
     )
     _register(
         results,
         terminal_output,
         job_id=terminal_external,
         started_at=old + 1,
-        tmux_session="ura-phase6-old-terminal",
+        tmux_session="ura-external-old-terminal",
     )
     register_external_measured_terminal(
         results,

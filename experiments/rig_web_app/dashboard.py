@@ -37,7 +37,12 @@ from .reports import (
 )
 from .external_measured import ExternalMeasuredJob
 from .campaigns import EngineeringCampaign
-from .phase7_stats import Phase7StatsBundle, load_phase7_stats_bundle
+from .external_analysis import (
+    ExternalAnalysisReport,
+    ExternalAnalysisRegistration,
+    load_external_analysis_report,
+    load_external_analysis_registration,
+)
 
 
 class DashboardMixin:
@@ -1223,15 +1228,20 @@ class DashboardMixin:
         except (AttributeError, OSError, ValueError):
             engineering = []
         for campaign in engineering:
-            bundle = load_phase7_stats_bundle(self.results_root, campaign)
-            if bundle is not None:
-                owned.update(report.artifact_relative for report in bundle.reports)
+            registration = load_external_analysis_registration(
+                self.results_root,
+                campaign.route_id,
+            )
+            if registration is not None:
+                owned.update(
+                    report.artifact_relative for report in registration.reports
+                )
         return owned
 
     @staticmethod
-    def _stats_phase7_campaign(
+    def _stats_external_analysis_campaign(
         campaign: EngineeringCampaign,
-        bundle: Phase7StatsBundle,
+        registration: ExternalAnalysisRegistration,
     ) -> dict[str, Any]:
         evidence = {
             "markers": 0,
@@ -1250,21 +1260,22 @@ class DashboardMixin:
                 "display_name": report.display_name,
                 "kind": report.kind,
                 "producer_job_id": campaign.route_id,
+                "_external_analysis_report": report,
             }
-            for report in bundle.reports
+            for report in registration.reports
         ]
         return {
             "job_id": campaign.route_id,
-            "command": "phase7_analysis",
+            "command": "external_analysis",
             "argv": [],
-            "kind": "phase7_analysis",
-            "work_label": "sealed Phase 7 read-only analysis",
-            "state": "complete",
+            "kind": "external_analysis",
+            "work_label": registration.work_label,
+            "state": campaign.status_tag,
             "started_at": campaign.started_at,
             "ended_at": campaign.ended_at,
-            "out_dir": str(bundle.analysis_root),
-            "output_root": bundle.analysis_root,
-            "artifact_relative": bundle.artifact_relative,
+            "out_dir": str(registration.analysis_root),
+            "output_root": registration.analysis_root,
+            "artifact_relative": registration.artifact_relative,
             "targets": (),
             "frameworks": (),
             "corpora": (),
@@ -1275,23 +1286,30 @@ class DashboardMixin:
                 "input_tokens": 0,
                 "output_tokens": 0,
             },
+            "usage_reported": False,
             "cost_rows": [],
-            "cost_text": "read-only analysis / no model calls",
+            "cost_text": "not reported by analysis registration",
             "evidence": evidence,
-            "authority": "phase7-analysis",
-            "authority_label": "sealed Phase 7 analysis binding",
+            "authority": "external-analysis",
+            "authority_label": "registered external analysis / non-thesis",
             "authority_tone": "blue",
             "reports": reports,
+            "analysis_limitations": registration.explicit_limitations,
+            "analysis_status": registration.completion_status,
             "external_owned": True,
             "job_href": f"/jobs/campaign/{quote(campaign.route_id)}",
-            "_phase7_bundle": bundle,
+            "_external_analysis_registration": registration,
         }
 
     @staticmethod
     def _stats_state_badge(state: str) -> tuple[str, str]:
-        label = "passed" if state == "complete" else state or "unknown"
+        label = {
+            "complete": "passed",
+            "complete_with_explicit_limitations": "complete with explicit limitations",
+        }.get(state, state or "unknown")
         tone = {
             "complete": "green",
+            "complete_with_explicit_limitations": "amber",
             "running": "blue",
             "failed": "red",
             "orphaned": "amber",
@@ -1320,6 +1338,11 @@ class DashboardMixin:
         return text + ("; " + ", ".join(extras) if extras else "")
 
     def _stats_usage_table(self, campaign: Mapping[str, Any]) -> str:
+        if campaign.get("usage_reported") is False:
+            return (
+                "<p class='note'>This external analysis registration does not "
+                "carry a model-usage record.</p>"
+            )
         rows = []
         for cost in campaign["cost_rows"]:
             tokens = cost["tokens"]
@@ -1372,6 +1395,17 @@ class DashboardMixin:
             else "running / not recorded"
         )
         usage = campaign["usage"]
+        usage_reported = campaign.get("usage_reported") is not False
+        calls = (
+            f"{usage['target_calls']:,} target / {usage['judge_calls']:,} judge"
+            if usage_reported
+            else "not reported"
+        )
+        tokens = (
+            f"{usage['input_tokens']:,} input / {usage['output_tokens']:,} output"
+            if usage_reported
+            else "not reported"
+        )
         return (
             "<article class='stats-campaign-card' "
             f"data-job-id='{html.escape(str(campaign['job_id']))}' "
@@ -1390,10 +1424,8 @@ class DashboardMixin:
             f"<dt>Corpus</dt><dd>{html.escape(self._stats_list_text(campaign['corpora']))}</dd>"
             f"<dt>Started</dt><dd>{html.escape(started)}</dd>"
             f"<dt>Ended</dt><dd>{html.escape(ended)}</dd>"
-            "<dt>Calls</dt><dd>"
-            f"{usage['target_calls']:,} target / {usage['judge_calls']:,} judge</dd>"
-            "<dt>Tokens</dt><dd>"
-            f"{usage['input_tokens']:,} input / {usage['output_tokens']:,} output</dd>"
+            f"<dt>Calls</dt><dd>{html.escape(calls)}</dd>"
+            f"<dt>Tokens</dt><dd>{html.escape(tokens)}</dd>"
             f"<dt>Cost</dt><dd>{html.escape(str(campaign['cost_text']))}</dd>"
             f"<dt>Results</dt><dd>{html.escape(self._stats_coverage_text(campaign['evidence']))}</dd>"
             "</dl><div class='stats-campaign-actions'>"
@@ -1409,11 +1441,17 @@ class DashboardMixin:
         rel = str(report.get("path") or "")
         display_name = str(report.get("display_name") or rel or "external report")
         kind = str(report.get("kind") or "")
+        registered_report = report.get("_external_analysis_report")
         source = report.get("source_path")
         report_path = source if isinstance(source, Path) else self.results_root / rel
-        try:
-            doc = strict_json_loads(report_path.read_text(encoding="utf-8"))
-        except (OSError, ValueError):
+        if isinstance(registered_report, ExternalAnalysisReport):
+            doc = load_external_analysis_report(registered_report)
+        else:
+            try:
+                doc = strict_json_loads(report_path.read_text(encoding="utf-8"))
+            except (OSError, ValueError):
+                doc = None
+        if doc is None:
             return (
                 "<div class='card'><h3>"
                 + _icon("file")
@@ -1510,7 +1548,7 @@ class DashboardMixin:
             "preflight",
             "acquisition_plan",
             "dry_run",
-            "phase7_analysis",
+            "external_analysis",
         }:
             evidence_tone = "amber"
             evidence_label = "not established"
@@ -1523,12 +1561,30 @@ class DashboardMixin:
                 "analysis job is bound to this campaign yet. Completion-bound "
                 "usage and result coverage are still shown above.</p></div>"
             )
-        phase7_note = (
-            "<div class='notice blue'><strong>Sealed Phase 7 analysis binding.</strong>"
-            "<p class='note'>The watcher completion, controller completion, authorized "
-            "input, Gate 5 identity, artifact inventory, and exact report bytes were "
-            "validated before these diagrams were linked.</p></div>"
-            if campaign.get("_phase7_bundle") is not None
+        external_analysis_note = (
+            "<div class='notice blue'><strong>Registered external analysis.</strong>"
+            "<p class='note'>The generic operational registration and exact report "
+            "bytes were validated before these diagrams were linked. Registration "
+            "does not grant thesis-evidence authority. Analysis status: <code>"
+            + html.escape(str(campaign.get("analysis_status") or "unknown"))
+            + "</code>.</p></div>"
+            if campaign.get("_external_analysis_registration") is not None
+            else ""
+        )
+        limitations = campaign.get("analysis_limitations") or ()
+        limitations_note = (
+            "<div class='notice amber'><strong>Analysis completed with explicit "
+            "limitations.</strong><ul>"
+            + "".join(
+                "<li><code>"
+                + html.escape(str(name))
+                + "</code>: "
+                + html.escape(str(status))
+                + "</li>"
+                for name, status in limitations
+            )
+            + "</ul></div>"
+            if limitations
             else ""
         )
         return (
@@ -1539,7 +1595,8 @@ class DashboardMixin:
             f"{html.escape(self._stats_coverage_text(evidence))}. "
             "Charts below are rendered only from producer-contract-validated "
             f"reports attached to this job.{artifact_link}</p></div>"
-            + phase7_note
+            + external_analysis_note
+            + limitations_note
             + "<div class='card'><h3>Recorded calls, tokens &amp; calculated cost</h3>"
             + self._stats_usage_table(campaign)
             + "<p class='note'>Usage is read only from this job's exact output "
@@ -1575,7 +1632,22 @@ class DashboardMixin:
         for campaign in engineering:
             label = html.escape(campaign.campaign_id)
             route = quote(campaign.route_id)
-            phase7 = load_phase7_stats_bundle(self.results_root, campaign)
+            registration = load_external_analysis_registration(
+                self.results_root,
+                campaign.route_id,
+            )
+            display_state_label, display_state_tone = self._stats_state_badge(
+                campaign.status_tag
+            )
+            analysis_state = (
+                "<dt>Analysis</dt><dd>"
+                + html.escape(
+                    self._stats_state_badge(registration.completion_status)[0]
+                )
+                + "</dd>"
+                if registration is not None
+                else ""
+            )
             analysis_action = (
                 "<a class='button ghost stats-detail-trigger' href='/stats/job/"
                 + route
@@ -1583,7 +1655,7 @@ class DashboardMixin:
                 + html.escape(campaign.route_id)
                 + "' aria-controls='campaign-stats-modal' aria-haspopup='dialog' "
                 "aria-expanded='false'>Statistics &amp; diagrams</a>"
-                if phase7 is not None
+                if registration is not None
                 else ""
             )
             engineering_cards.append(
@@ -1591,11 +1663,13 @@ class DashboardMixin:
                 "data-authority='engineering'><div class='stats-campaign-head'>"
                 f"<div><h3><a href='/jobs/campaign/{route}'>{label}</a></h3>"
                 "<p class='note'>externally managed engineering campaign</p></div>"
-                f"<span class='badge gray'>{html.escape(campaign.status_tag)}</span>"
+                f"<span class='badge {display_state_tone}'>"
+                f"{html.escape(display_state_label)}</span>"
                 "</div><dl class='stats-campaign-meta'>"
                 "<dt>Authority</dt><dd>engineering / non-thesis</dd>"
                 f"<dt>Progress</dt><dd>{html.escape(campaign.progress)}</dd>"
-                "<dt>Reported calls</dt><dd>"
+                + analysis_state
+                + "<dt>Reported calls</dt><dd>"
                 + (
                     "not reported"
                     if campaign.model_attempted_calls is None
@@ -1672,19 +1746,21 @@ class DashboardMixin:
                 engineering = self._engineering_campaign(job_id)
             except (AttributeError, OSError, ValueError):
                 engineering = None
-            bundle = (
-                load_phase7_stats_bundle(self.results_root, engineering)
+            registration = (
+                load_external_analysis_registration(self.results_root, job_id)
                 if engineering is not None
                 else None
             )
-            if engineering is None or bundle is None:
+            if engineering is None or registration is None:
                 return None
-            campaigns = [self._stats_phase7_campaign(engineering, bundle)]
+            campaigns = [
+                self._stats_external_analysis_campaign(engineering, registration)
+            ]
             unavailable = ""
         if unavailable:
             return None
         campaign = campaigns[0]
-        if campaign.get("_phase7_bundle") is None:
+        if campaign.get("_external_analysis_registration") is None:
             self._stats_attach_job_reports(campaigns)
         detail = self._stats_campaign_detail(campaign)
         if fragment:

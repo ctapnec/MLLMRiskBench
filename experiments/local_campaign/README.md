@@ -228,6 +228,34 @@ artifact remains explicit in the registry and is not fabricated into Level 1
 input. Suite metrics and Level 2 receive only successful measured Runner lanes.
 A failed lifecycle is never promoted into metric evidence.
 
+After the watcher is terminal, publish its Stats diagrams through the
+plan-owned adapter, not through Rig Web phase logic:
+
+```bash
+python -m experiments.local_campaign.stats_adapter \
+  --results-root "$URA_WORK/runs" \
+  --campaign-root "$URA_WORK/runs/engineering/<watcher-route>" \
+  --release-commit "$REF_URA"
+```
+
+The adapter validates the complete local campaign chain and then creates one
+generic `external-analysis-jobs/<watcher-route>/registration.json`. Rig Web
+validates only that operational registration and the exact Level-1/Level-2
+report bytes. The registration cannot grant thesis-evidence authority.
+
+Controllers deployed before the generic measured-job v2 contract retain their
+immutable v1 rows. After repinning to the v2 reader, copy them once without
+modifying their source bytes:
+
+```bash
+python -m experiments.local_campaign.migrate_external_measured \
+  --results-root "$URA_WORK/runs"
+```
+
+The command validates the complete v1 batch and all existing v2 destinations
+before writing. It is resumable, refuses a differing v2 collision without
+changing it, and leaves every v1 start and terminal record in place.
+
 Phase 8 consumes Phase 7's validated success-only read-only Runner copy. This
 keeps an honestly failed or partial Runner lifecycle in the canonical lifecycle
 tree without letting `human_audit` mistake it for a completed sample input. The

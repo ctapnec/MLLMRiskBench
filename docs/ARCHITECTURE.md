@@ -628,13 +628,12 @@ Compact tags use blue `running` for both console-owned work and an
 external task-log marker, plus `passed`, `failed`, `orphaned`, `partial`,
 `blocked`, `stopped`, and `unknown`. The surrounding detail labels an external
 running marker as reported state because the console does not own that process.
-For the framework installer and versioned local-campaign controllers, the marker
-also binds one exact named tmux socket/session. A bounded concurrent probe with a
+An external marker may also bind one exact named tmux socket/session. A bounded concurrent probe with a
 short result cache reconciles that explicit identity; after its launch grace, a
-missing session is `orphaned`, and unavailable or deliberately capped probing
+missing session is `unknown`, an exact session observed absent is `orphaned`, and unavailable or deliberately capped probing
 is `unknown` rather than an unverified `running` claim. Generic external markers without an exact
 identity remain task-log-only observations. Terminal legacy markers remain
-readable. A controller publishes its authoritative `.exit` before appending its
+readable. A controller may publish its authoritative `.exit` before appending its
 terminal UI event, so a failure in the operational display path cannot publish a
 false successful terminal.
 
@@ -650,13 +649,12 @@ once. The report and any reserved-call ledger are operational diagnostics, not
 execution proof. Completion-validated response artifacts remain the measurement
 authority.
 
-Long-running Phase 5 through Phase 7 controllers use
-`experiments.local_campaign.console_events` to publish that marker and ordered
-task-event contract from their own restorable tmux sessions. Phase 6 measured
-Runner children use a separate fixed-child `ura-external-measured-job/1`
+Long-running external controllers publish that marker and ordered task-event
+contract from their own restorable named tmux sessions. Measured Runner
+children use a separate fixed-child `ura-external-measured-job/2`
 registry. A create-only start record binds one exact sanitized `run_matrix`
 argument vector, canonical descendant of `runs/thesis/runner`, project commit,
-framework-lock identity, approved Gate 5 digest and a unique private tmux
+framework-lock identity, a generic admission digest and a unique private tmux
 socket/session for the actual invocation rather than the parent controller; one
 bounded create-only terminal publication binds the child exit. Rig Web never recursively
 infers ownership, inserts these rows into sqlite, or offers Stop. Jobs and Stats
@@ -667,16 +665,14 @@ An external registration remains explicitly non-thesis even after exit zero;
 completion-bound usage may be displayed, but authority is not inferred from the
 registration or terminal record. Exact-session nonterminal discovery precedes
 the recent-history cap, so newer terminal directories cannot hide an older
-controller that is positively observed live. Phase 7 reports are linked only
-through the sealed watcher launch, frozen watcher/wrapper/payload, Phase 6
-completion/exit, preparation result, actual Phase 7 and analysis launches,
-analysis completion, inventory, and authorized-input descriptor chain,
-including agreement on the project revision, framework lock, and Gate 5 digest.
-Those identities must agree within the retained campaign chain, but need not
-equal the revision or runtime lock of the console currently reading it; a repin
-therefore preserves valid historical campaign diagrams.
-Charts still require successful completion-validated Level-1/Level-2
-output from that validated chain.
+controller that is positively observed live. External analysis uses a separate
+generic `ura-external-analysis-registration/1` boundary. A producer-owned
+adapter validates any workflow-specific chain before publication. Rig Web then
+validates only the direct registry path, operational-only authority, status,
+limitations, report ownership, exact bytes, and Level-1/Level-2 report
+contracts. The registration is published from a private fsynced temporary file
+with atomic no-replace semantics, and failed publication removes only its own
+empty staging directory. No workflow phase or gate schema is part of Rig Web.
 
 Console state persists in a stdlib-sqlite database (`console.db` under the
 state directory): jobs with their durable argv identities and builder

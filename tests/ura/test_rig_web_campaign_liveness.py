@@ -23,7 +23,7 @@ def _timestamp(value: float) -> str:
     return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(value))
 
 
-def _local_campaign(
+def _engineering_campaign(
     results: Path,
     route: str,
     *,
@@ -38,7 +38,7 @@ def _local_campaign(
         "schema": "ura-engineering-campaign/1",
         "campaign_id": route,
         "release_commit": "a" * 40,
-        "evidence_class": "local_campaign_control",
+        "evidence_class": "external_controller",
         "thesis_empirical_evidence": False,
         "hosted_calls_allowed": False,
         "hard_stop_hours": hard_stop_hours,
@@ -62,7 +62,7 @@ def _local_campaign(
             "event": "campaign_start",
             "task": "bootstrap",
             "status": "running",
-            "detail": "local_campaign_controller",
+            "detail": "external_controller",
         },
         {
             "at": _timestamp(started_at + 1),
@@ -87,7 +87,7 @@ def _local_campaign(
                     "event": "campaign_end",
                     "task": "bootstrap",
                     "status": "passed",
-                    "detail": "local_campaign_controller_exit_0",
+                    "detail": "external_controller_exit_0",
                 },
             ]
         )
@@ -98,28 +98,28 @@ def _local_campaign(
     return directory
 
 
-def test_dead_local_controller_is_orphaned_but_terminal_legacy_route_survives(
+def test_dead_named_session_is_orphaned_but_terminal_legacy_route_survives(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     results = tmp_path / "runs"
     started = time.time() - 120
-    dead_route = "phase6-sequence-dead"
-    _local_campaign(
+    dead_route = "controller-sequence-dead"
+    _engineering_campaign(
         results,
         dead_route,
         started_at=started,
         session_fields=True,
     )
-    missing_route = "phase6-sequence-missing-session"
-    _local_campaign(
+    missing_route = "controller-sequence-missing-session"
+    _engineering_campaign(
         results,
         missing_route,
         started_at=started,
         session_fields=False,
     )
-    legacy_route = "phase5-sequence-terminal-legacy"
-    _local_campaign(
+    legacy_route = "controller-sequence-terminal-legacy"
+    _engineering_campaign(
         results,
         legacy_route,
         started_at=started,
@@ -147,7 +147,7 @@ def test_dead_local_controller_is_orphaned_but_terminal_legacy_route_survives(
 
     assert dead is not None
     assert dead.state == "orphaned"
-    assert "local campaign controller named session is no longer live" in dead.state_detail
+    assert "engineering campaign named session is no longer live" in dead.state_detail
     assert dead.active_tasks == ()
     assert probes == [
         [
@@ -159,11 +159,11 @@ def test_dead_local_controller_is_orphaned_but_terminal_legacy_route_survives(
             f"ura-session-{dead_route}",
         ]
     ]
-    assert missing is not None and missing.state == "orphaned"
-    assert "lacks exact tmux socket/session identity" in missing.state_detail
+    assert missing is not None and missing.state == "running"
+    assert missing.named_session_liveness_verified is False
     assert terminal is not None
     assert terminal.state == "complete" and terminal.status_tag == "passed"
-    assert terminal.state_detail == "local_campaign_controller_exit_0"
+    assert terminal.state_detail == "external_controller_exit_0"
 
 
 def test_campaign_scan_probes_unique_sessions_concurrently_and_uses_cache(
@@ -174,9 +174,9 @@ def test_campaign_scan_probes_unique_sessions_concurrently_and_uses_cache(
     started = time.time() - 120
     count = 12
     for index in range(count):
-        _local_campaign(
+        _engineering_campaign(
             results,
-            f"phase6-sequence-{index:02d}",
+            f"controller-sequence-{index:02d}",
             started_at=started + index,
             session_fields=True,
         )
@@ -237,8 +237,8 @@ def test_hard_stop_fallback_never_overrides_exact_live_session(
     detail_fragment: str,
 ) -> None:
     results = tmp_path / "runs"
-    route = "phase6-sequence-overdue"
-    _local_campaign(
+    route = "controller-sequence-overdue"
+    _engineering_campaign(
         results,
         route,
         started_at=time.time() - 2 * 3600,
@@ -276,16 +276,16 @@ def test_jobs_date_window_pins_exact_live_old_controller_only(
     results = tmp_path / "runs"
     now = time.time()
     old = now - 8 * 86400
-    live_route = "phase6-sequence-old-live"
-    terminal_route = "phase6-sequence-old-terminal"
-    _local_campaign(
+    live_route = "controller-sequence-old-live"
+    terminal_route = "controller-sequence-old-terminal"
+    _engineering_campaign(
         results,
         live_route,
         started_at=old,
         session_fields=True,
         hard_stop_hours=720,
     )
-    _local_campaign(
+    _engineering_campaign(
         results,
         terminal_route,
         started_at=old + 1,
@@ -331,16 +331,16 @@ def test_jobs_pins_exact_live_controller_behind_recent_directory_cap(
     results = tmp_path / "runs"
     now = time.time()
     old = now - 8 * 86400
-    live_route = "phase6-sequence-old-live-beyond-cap"
-    terminal_route = "phase6-sequence-old-terminal-beyond-cap"
-    live_directory = _local_campaign(
+    live_route = "controller-sequence-old-live-beyond-cap"
+    terminal_route = "controller-sequence-old-terminal-beyond-cap"
+    live_directory = _engineering_campaign(
         results,
         live_route,
         started_at=old,
         session_fields=True,
         hard_stop_hours=720,
     )
-    terminal_directory = _local_campaign(
+    terminal_directory = _engineering_campaign(
         results,
         terminal_route,
         started_at=old + 1,
@@ -354,9 +354,9 @@ def test_jobs_pins_exact_live_controller_behind_recent_directory_cap(
     # More than one complete display page of newer retained directories keeps
     # both old controllers outside the ordinary recent-directory selection.
     for index in range(campaigns_module._MAX_CAMPAIGNS + 2):
-        directory = _local_campaign(
+        directory = _engineering_campaign(
             results,
-            f"phase5-sequence-newer-terminal-{index:02d}",
+            f"controller-sequence-newer-terminal-{index:02d}",
             started_at=now - 120 + index,
             session_fields=False,
             terminal=True,

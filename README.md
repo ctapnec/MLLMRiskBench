@@ -734,9 +734,9 @@ terminal rows never receive it. Tags are deliberately short: console
 work uses `running`, `passed`, `failed`, or `orphaned`, while externally managed
 engineering campaigns use the same blue `running` tag plus `partial`, `blocked`,
 `stopped`, or `unknown`. The surrounding detail identifies external `running` as
-a task-log report, not a console-owned process-liveness claim. Framework-runtime
-and versioned local-campaign controller markers additionally bind an exact named
-tmux socket and session. Their liveness is checked through a short bounded,
+a task-log report, not a console-owned process-liveness claim. External
+controller markers may additionally bind an exact named tmux socket and
+session. Their liveness is checked through a short bounded,
 cached batch; a missing exact session becomes `orphaned` instead of remaining
 `running` until a generous campaign hard stop, while a probe failure or an
 unprobed bounded row becomes `unknown` rather than asserting liveness. Terminal
@@ -755,18 +755,18 @@ self-report and any reserved-call ledger remain diagnostic context. Validated,
 completion-bound response artifacts are authoritative for actual execution and
 results.
 
-The versioned Phase 5 through Phase 7 controllers emit those engineering
-markers and ordered task events directly from their restorable tmux sessions;
-they do not need to be launched by the console to appear in Jobs and Stats.
+Externally managed controllers can emit those engineering markers and ordered
+task events directly from restorable named tmux sessions; they do not need to
+be launched by the console to appear in Jobs and Stats.
 Discovery reconciles exact-session nonterminal controllers before applying the
 20-row recent-history cap, so a controller observed live cannot be hidden by
 newer terminal directories; old terminal rows remain subject to the selected
 history interval.
-Phase 6 also registers each externally owned measured `run_matrix` invocation
-under the fixed `external-measured-jobs` registry immediately before the call
-and writes one create-only terminal event afterwards. Each registration binds
+Measured controllers can also register each externally owned `run_matrix`
+invocation under the fixed `external-measured-jobs-v2` registry immediately
+before the call and write one create-only terminal event afterwards. Each registration binds
 the exact sanitized argument vector, Runner output root, project commit,
-framework-lock identity, approved Gate 5 digest, and a unique private tmux
+framework-lock identity, a generic admission digest, and a unique private tmux
 socket/session for that invocation rather than the parent controller. Start
 publication begins only after signal cleanup owns that prospective identity,
 and terminal publication is time-bounded.
@@ -774,14 +774,14 @@ These rows receive normal detail routes and per-job artifact usage/report
 rendering, but no SQLite ownership or Stop action. The registration establishes
 operational ownership only, so even an exit-zero registration remains labelled
 external operational and non-thesis. Completion-bound usage can still be shown.
-Phase 7 diagrams attach only after the existing sealed controller watcher
-launch, frozen watcher/wrapper/payload, Phase 6 completion and exit,
-preparation result, Phase 7 launch output, analysis launch and completion,
-artifact inventory, and authorized input descriptors have all cross-validated
-and agree on the project revision, runtime lock, and approved Gate 5 identity.
-That agreement is self-contained within each retained campaign chain; it is not
-required to equal the revision currently serving the console, so a later repin
-does not hide valid historical campaign diagrams.
+The measured-job registration calls that campaign value a generic admission
+digest; the external workflow decides which approved manifest supplies it.
+External analysis diagrams use a separate generic
+`external-analysis-jobs` registration. A workflow-owned adapter validates its
+own admission, controller, and artifact chain before publishing that record.
+Rig Web knows only the operational registration, exact report byte identities,
+completion status, and explicit limitations. The record is non-thesis and
+cannot grant empirical authority.
 Successful completion-validated Runner and analysis artifacts,
 not their operational registrations, remain the sole basis for metrics and
 diagrams.
@@ -798,6 +798,7 @@ symbols, admission behavior, database, and artifacts are unchanged.
 ```text
 src/ura/       schema, converters, adapters, targets, judges, runtime
 tests/ura/     offline regression and integration tests
+tests/experiments/ controller, packaging and workflow-adapter regressions
 experiments/   matrix execution, diagnostics, human audit, analysis, figures
   rig_web.py   stable rig-console CLI/import facade
   rig_web_app/ modular rig-console implementation

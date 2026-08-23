@@ -448,9 +448,9 @@ and continue to the next declared lane without raising the cap.
 The four top-level Phase 5 through Phase 7 controllers publish
 `ura-engineering-campaign/1` markers and ordered task events from their own
 named tmux sessions. Each marker binds its exact socket/session; a missing
-session is rendered `orphaned` rather than left running until the hard stop,
-while an unavailable or bounded-away probe is `unknown` rather than an
-unverified `running` claim. A currently observed-live controller remains visible
+session is rendered `unknown`, a valid exact session observed absent is
+`orphaned`, and an unavailable probe is `unknown`; none remains an unverified
+`running` claim. A currently observed-live controller remains visible
 in Jobs even when its start time is older than the selected history interval;
 terminal history still obeys that interval. The unwindowed live reconciliation
 runs before the 20-row recent-history cap, so more than 20 newer engineering
@@ -460,20 +460,34 @@ event. Therefore a display-write failure may under-claim the terminal but cannot
 publish a false success. These operational records stay outside `runs/thesis`.
 
 Each Phase 6 measured Runner child separately creates one
-`ura-external-measured-job/1` registration immediately before `run_matrix` and
+`ura-external-measured-job/2` registration immediately before `run_matrix` and
 one create-only terminal record after it returns. The start binds the exact
 sanitized argv, one canonical Runner output root, the project commit, framework
-lock, Gate 5 digest and a unique private tmux socket/session for that invocation,
+lock, generic admission digest and a unique private tmux socket/session for that invocation,
 not the longer-lived parent controller. Jobs and Stats can then resolve
 the child and validate only its explicitly owned artifact root. Rig Web does not
 insert the child into sqlite, own its process or offer Stop; the registration is
 operational visibility, not evidence, and stays explicitly external operational
-and non-thesis after exit zero. Completion-bound usage may be displayed. Phase 7
-Level-1/Level-2 reports attach only through the validated sealed watcher launch,
-frozen watcher/wrapper/payload, Phase 6 completion/exit, preparation result,
-actual Phase 7 and analysis launches, analysis completion, artifact inventory,
-and authorized-input descriptor chain; no registration or inventory alone grants
-report or metric authority.
+and non-thesis after exit zero. Completion-bound usage may be displayed. The
+local campaign analysis adapter validates the sealed watcher, controller,
+input, inventory, and report chain. Only then does it publish a generic
+`external-analysis-jobs` registration for Stats. Rig Web does not contain or
+interpret the campaign's phase or gate schemas; no registration grants report
+or metric authority. The measured-job registration field and CLI flag are
+named `admission_sha256` and `--admission-sha256`; this local campaign supplies
+the approved Gate 5 manifest digest as that value.
+
+If Phase 6 ran under a pre-v2 deployment, repin first and then migrate its
+immutable operational rows without editing or deleting them:
+
+```bash
+python -m experiments.local_campaign.migrate_external_measured \
+  --results-root "$URA_WORK/runs"
+```
+
+The migration validates the complete v1 batch and every existing destination
+before writing. It is create-only, resumable, refuses any differing v2 row
+without changing it, and preserves all v1 bytes.
 
 Start publication is entered only after signal cleanup owns the prospective
 external id, terminal log, socket and session. Both core and extended terminal

@@ -880,13 +880,11 @@ class PagesMixin:
         pinned_campaign_ids: set[str] = set()
         campaign_by_route = {campaign.route_id: campaign for campaign in campaigns}
         for campaign in recent_campaigns:
-            # These two controller classes have exact named-session liveness.
-            # A generic task log that merely says "running" is insufficient to
-            # override an operator-selected history window.
+            # Only an exact, positively verified named session may override an
+            # operator-selected history window.
             if (
                 campaign.state == "running"
-                and campaign.evidence_class
-                in {"local_campaign_control", "framework_runtime_setup"}
+                and campaign.named_session_liveness_verified
                 and not in_window(campaign.started_at)
             ):
                 pinned_campaign_ids.add(campaign.route_id)
@@ -1510,7 +1508,7 @@ class PagesMixin:
             f"{html.escape(job.run_kind)}</td></tr>"
             f"<tr><td>Expected commit</td><td><code>{html.escape(job.expected_commit)}</code></td></tr>"
             f"<tr><td>Framework lock</td><td><code>{html.escape(job.framework_lock_id)}</code></td></tr>"
-            f"<tr><td>Gate 5 digest</td><td><code>{html.escape(job.gate5_sha256)}</code></td></tr>"
+            f"<tr><td>Admission digest</td><td><code>{html.escape(job.admission_sha256)}</code></td></tr>"
             f"<tr><td>Argument digest</td><td><code>{html.escape(job.argv_sha256)}</code></td></tr>"
             f"<tr><td>tmux</td><td><code>{html.escape(attach)}</code></td></tr>"
             "</table></div></div>"

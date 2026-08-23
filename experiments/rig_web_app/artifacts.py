@@ -374,6 +374,8 @@ _DERIVED_SCAN_EXCLUDED_DIRS = frozenset(
     {
         "engineering",
         "external-measured-jobs",
+        "external-measured-jobs-v2",
+        "external-analysis-jobs",
         "verification",
         "verifications",
         ".pytest_cache",

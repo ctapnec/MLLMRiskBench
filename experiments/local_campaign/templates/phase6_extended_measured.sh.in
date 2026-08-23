@@ -5048,7 +5048,7 @@ class Controller:
                     "--out-dir", str(result_root),
                     "--expected-commit", EXPECTED_COMMIT,
                     "--framework-lock-id", EXPECTED_LOCK,
-                    "--gate5-sha256", gate5_sha,
+                    "--admission-sha256", gate5_sha,
                     "--tmux-socket", socket,
                     "--tmux-session", session,
                     "--argv", *argv,

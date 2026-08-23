@@ -31,8 +31,8 @@ from .artifacts import assert_durable_job_state_path_free, run_kind
 from .campaigns import _NamedSessionSpec, _named_session_liveness
 
 
-REGISTRY_DIRECTORY = "external-measured-jobs"
-REGISTRATION_SCHEMA = "ura-external-measured-job/1"
+REGISTRY_DIRECTORY = "external-measured-jobs-v2"
+REGISTRATION_SCHEMA = "ura-external-measured-job/2"
 TERMINAL_SCHEMA = "ura-external-measured-job-terminal/1"
 
 _REGISTRATION_FILE = "registration.json"
@@ -102,7 +102,7 @@ class ExternalMeasuredJob:
     artifact_relative: str
     expected_commit: str
     framework_lock_id: str
-    gate5_sha256: str
+    admission_sha256: str
     tmux_socket: str
     tmux_session: str
     started_at: float
@@ -316,7 +316,7 @@ def _validate_identity(
     results_root: Path,
     expected_commit: str,
     framework_lock_id: str,
-    gate5_sha256: str,
+    admission_sha256: str,
     tmux_socket: str,
     tmux_session: str,
 ) -> tuple[tuple[str, ...], str, Path, str]:
@@ -343,8 +343,8 @@ def _validate_identity(
         raise ValueError("expected commit must be lowercase 40-hex")
     if _HEX64.fullmatch(framework_lock_id) is None:
         raise ValueError("framework lock id must be lowercase 64-hex")
-    if _HEX64.fullmatch(gate5_sha256) is None:
-        raise ValueError("Gate 5 digest must be lowercase 64-hex")
+    if _HEX64.fullmatch(admission_sha256) is None:
+        raise ValueError("admission digest must be lowercase 64-hex")
     if _SAFE_TOKEN.fullmatch(tmux_socket) is None:
         raise ValueError("tmux socket is unsafe")
     if _SAFE_TOKEN.fullmatch(tmux_session) is None:
@@ -465,7 +465,7 @@ def register_external_measured_start(
     out_dir: Path,
     expected_commit: str,
     framework_lock_id: str,
-    gate5_sha256: str,
+    admission_sha256: str,
     tmux_socket: str,
     tmux_session: str,
     started_at: float | None = None,
@@ -485,7 +485,7 @@ def register_external_measured_start(
         results_root=results_root,
         expected_commit=expected_commit,
         framework_lock_id=framework_lock_id,
-        gate5_sha256=gate5_sha256,
+        admission_sha256=admission_sha256,
         tmux_socket=tmux_socket,
         tmux_session=tmux_session,
     )
@@ -508,7 +508,7 @@ def register_external_measured_start(
                 "out_dir": str(resolved_out),
                 "expected_commit": expected_commit,
                 "framework_lock_id": framework_lock_id,
-                "gate5_sha256": gate5_sha256,
+                "admission_sha256": admission_sha256,
                 "tmux": {
                     "launcher": "tmux",
                     "socket": tmux_socket,
@@ -645,7 +645,7 @@ def _load_registration(
         "out_dir",
         "expected_commit",
         "framework_lock_id",
-        "gate5_sha256",
+        "admission_sha256",
         "tmux",
         "started_at",
         "registration_authority",
@@ -674,7 +674,7 @@ def _load_registration(
             results_root=results_root,
             expected_commit=registration["expected_commit"],
             framework_lock_id=registration["framework_lock_id"],
-            gate5_sha256=registration["gate5_sha256"],
+            admission_sha256=registration["admission_sha256"],
             tmux_socket=tmux["socket"],
             tmux_session=tmux["session"],
         )
@@ -734,7 +734,7 @@ def _load_registration(
         artifact_relative=artifact_relative,
         expected_commit=registration["expected_commit"],
         framework_lock_id=registration["framework_lock_id"],
-        gate5_sha256=registration["gate5_sha256"],
+        admission_sha256=registration["admission_sha256"],
         tmux_socket=tmux["socket"],
         tmux_session=tmux["session"],
         started_at=started_at,
@@ -933,7 +933,7 @@ def _parser() -> argparse.ArgumentParser:
     start.add_argument("--out-dir", type=Path, required=True)
     start.add_argument("--expected-commit", required=True)
     start.add_argument("--framework-lock-id", required=True)
-    start.add_argument("--gate5-sha256", required=True)
+    start.add_argument("--admission-sha256", required=True)
     start.add_argument("--tmux-socket", required=True)
     start.add_argument("--tmux-session", required=True)
     start.add_argument("--started-at", type=float)
@@ -958,7 +958,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             out_dir=args.out_dir,
             expected_commit=args.expected_commit,
             framework_lock_id=args.framework_lock_id,
-            gate5_sha256=args.gate5_sha256,
+            admission_sha256=args.admission_sha256,
             tmux_socket=args.tmux_socket,
             tmux_session=args.tmux_session,
             started_at=args.started_at,
