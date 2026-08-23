@@ -328,6 +328,28 @@ class GuardrailJudge(BaseJudge):
             parts.append(GuardrailJudge._media_sentinel(m.modality, m.sha256))
         return " ".join(parts).strip()
 
+    @staticmethod
+    def _alternating_conversation(
+        conversation: list[dict[str, str]], *, assistant_last: bool
+    ) -> list[dict[str, str]]:
+        """Preserve prompt content in the alternating shape Llama Guard requires."""
+        alternating: list[dict[str, str]] = []
+        for message in conversation:
+            role = message["role"]
+            content = message["content"]
+            if alternating and alternating[-1]["role"] == role:
+                previous = alternating[-1]["content"]
+                alternating[-1]["content"] = "\n\n".join(
+                    part for part in (previous, content) if part
+                )
+            else:
+                alternating.append({"role": role, "content": content})
+        if not alternating or alternating[0]["role"] != "user":
+            alternating.insert(0, {"role": "user", "content": ""})
+        if assistant_last and alternating[-1]["role"] != "assistant":
+            alternating.append({"role": "assistant", "content": ""})
+        return alternating
+
     def _build_conversation(
         self, datapoint: DataPoint, response: Response
     ) -> list[dict[str, str]]:
@@ -370,13 +392,11 @@ class GuardrailJudge(BaseJudge):
             text = self._turn_text(turn)
             if text:
                 conv.append({"role": "assistant", "content": text})
-        # Llama-Guard needs at least one turn and expects an assistant last turn
-        # when moderating a response; guarantee both.
-        if not conv:
-            conv.append({"role": "user", "content": ""})
-        if conv[-1]["role"] != "assistant":
-            conv.append({"role": "assistant", "content": ""})
-        return conv
+        # Llama Guard's template requires a user-first alternating conversation
+        # and an assistant last turn when moderating a response. Source grading
+        # context is another user-side input, so fold adjacent same-role content
+        # together instead of dropping it or inventing a substantive reply.
+        return self._alternating_conversation(conv, assistant_last=True)
 
     # ------------------------------------------------------------------ #
     # Inference (isolated so the online path is easy to fix / mock)
@@ -454,8 +474,9 @@ class GuardrailJudge(BaseJudge):
                 conversation.append(
                     {"role": _GUARD_ROLE.get(turn.role, "user"), "content": text}
                 )
-        if not conversation:
-            conversation.append({"role": "user", "content": ""})
+        conversation = self._alternating_conversation(
+            conversation, assistant_last=False
+        )
         raw_output = self._run_guard(conversation)
         return self._make_judgment(
             raw_output, attempt_id="__guard__", subject="user_input"
