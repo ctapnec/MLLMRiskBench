@@ -1070,6 +1070,106 @@ def test_bridge_canary_does_not_claim_missing_source_evaluator_ran() -> None:
     )
 
 
+def _assert_source_contract(source: str, required: tuple[str, ...]) -> None:
+    for snippet in required:
+        assert snippet in source
+
+
+@pytest.mark.parametrize(
+    ("filename", "required", "mutations"),
+    (
+        (
+            "phase5_core_attest_canary.sh.in",
+            (
+                '"requested_target_keys": [expected_spec]',
+                'expected_runtime = f"{expected_spec}@{revision}"',
+                'expected_runtime += "+guard"',
+                '"models": [expected_runtime]',
+                'set(observed_local_configs) != {expected_runtime}',
+                'observed_local_configs[expected_runtime]',
+                'condition.get("requested_model_spec") != expected_runtime',
+                'condition.get("resolved_target") != expected_runtime',
+                'target_snapshot.get("target") != expected_runtime',
+            ),
+            (
+                ('"models": [expected_runtime]', '"models": [expected_spec]'),
+                ('expected_runtime += "+guard"', 'expected_runtime += ""'),
+            ),
+        ),
+        (
+            "phase5_ollama_workflow.sh.in",
+            (
+                '"requested_target_keys": [expected_spec]',
+                'expected_runtime = expected_spec + "@sha256:" + digest',
+                '"models": [expected_runtime]',
+                'expected_runtime: local_config[expected_spec]',
+                'condition.get("requested_model_spec") != expected_runtime',
+                'condition.get("resolved_target") != expected_runtime',
+                'target_snapshot.get("target") != expected_runtime',
+            ),
+            (
+                ('"models": [expected_runtime]', '"models": [expected_spec]'),
+                (
+                    'expected_runtime: local_config[expected_spec]',
+                    'expected_spec: local_config[expected_spec]',
+                ),
+            ),
+        ),
+        (
+            "phase6_core_measured.sh.in",
+            (
+                'expected_runtime = f"{spec[\'target\'][\'spec\']}@'
+                '{spec[\'target\'][\'revision\']}"',
+                'expected_runtime += "+guard"',
+                'grid_request.get("models") != [expected_runtime]',
+                'set(local_configs) != {expected_runtime}',
+                'local_configs[expected_runtime]',
+            ),
+            (
+                (
+                    'grid_request.get("models") != [expected_runtime]',
+                    'grid_request.get("models") != [spec["target"]["spec"]]',
+                ),
+                ('expected_runtime += "+guard"', 'expected_runtime += ""'),
+            ),
+        ),
+        (
+            "phase6_extended_measured.sh.in",
+            (
+                'if spec["family"] == "ollama":',
+                'f"{spec[\'target\'][\'spec\']}@sha256:'
+                '{spec[\'target\'][\'digest\']}"',
+                'f"{spec[\'target\'][\'spec\']}@'
+                '{spec[\'target\'][\'revision\']}"',
+                'grid_request.get("models") != [expected_runtime]',
+            ),
+            ((
+                'grid_request.get("models") != [expected_runtime]',
+                'grid_request.get("models") != [spec["target"]["spec"]]',
+            ),),
+        ),
+    ),
+)
+def test_campaign_validators_use_canonical_runtime_target_identities(
+    filename: str,
+    required: tuple[str, ...],
+    mutations: tuple[tuple[str, str], ...],
+) -> None:
+    source = (
+        Path(__file__).parents[2]
+        / "experiments"
+        / "local_campaign"
+        / "templates"
+        / filename
+    ).read_text(encoding="utf-8")
+    _assert_source_contract(source, required)
+    for original, replacement in mutations:
+        changed = source.replace(original, replacement, 1)
+        assert changed != source
+        with pytest.raises(AssertionError):
+            _assert_source_contract(changed, required)
+
+
 def _assert_completion_bound_guard_query_contract(
     template: str, *, summary_name: str
 ) -> None:

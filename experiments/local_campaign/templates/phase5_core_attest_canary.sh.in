@@ -633,6 +633,9 @@ expected_approximate = approximate == "yes"
 expected_defense = defense_enabled == "yes"
 if defense_enabled not in {"yes", "no"}:
     raise SystemExit("invalid defense-lane selector")
+expected_runtime = f"{expected_spec}@{revision}"
+if expected_defense:
+    expected_runtime += "+guard"
 expected_envelope = {
     "execution_purpose": "diagnostic_canary",
     "requested_target_keys": [expected_spec],
@@ -665,7 +668,7 @@ if envelope.get("request") != expected_envelope:
 
 expected_grid = {
     "execution_purpose": "diagnostic_canary",
-    "models": [expected_spec],
+    "models": [expected_runtime],
     "corpora": [expected_arm],
     "attackers": [expected_attacker],
     "judges": expected_judges,
@@ -690,11 +693,11 @@ for field, expected in expected_grid.items():
 observed_local_configs = request.get("local_configs")
 if (
     not isinstance(observed_local_configs, dict)
-    or set(observed_local_configs) != {expected_spec}
-    or not isinstance(observed_local_configs[expected_spec], dict)
+    or set(observed_local_configs) != {expected_runtime}
+    or not isinstance(observed_local_configs[expected_runtime], dict)
 ):
     raise SystemExit("canary grid local configuration inventory drifted")
-observed_local = observed_local_configs[expected_spec]
+observed_local = observed_local_configs[expected_runtime]
 for field, expected in local_config[expected_spec].items():
     if observed_local.get(field) != expected:
         raise SystemExit(f"canary grid local configuration field {field} drifted")
@@ -758,8 +761,8 @@ condition = row["condition"]
 if (
     condition.get("execution_purpose") != "diagnostic_canary"
     or condition.get("dry_run") is not False
-    or condition.get("requested_model_spec") != expected_spec
-    or condition.get("resolved_target") != f"{expected_spec}@{revision}"
+    or condition.get("requested_model_spec") != expected_runtime
+    or condition.get("resolved_target") != expected_runtime
     or condition.get("logical_source_arm") != expected_arm
     or condition.get("attacker") != expected_attacker
     or condition.get("defense") != ("both" if expected_defense else "none")
@@ -771,7 +774,7 @@ target_identity = condition.get("realized_identities", {}).get("target", {})
 target_snapshot = target_identity.get("snapshot", {})
 if (
     target_identity.get("observations", 0) <= 0
-    or target_snapshot.get("target") != f"{expected_spec}@{revision}"
+    or target_snapshot.get("target") != expected_runtime
     or target_snapshot.get("resolved_model") != expected_spec.removeprefix("vllm:")
     or target_snapshot.get("model_revision") != revision
 ):

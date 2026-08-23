@@ -1423,6 +1423,7 @@ def test_local_probe_receipt_admits_measured_run_and_level1(
     probe_grid = json.loads(next(probe_root.glob("*.grid.json")).read_text(
         encoding="utf-8"
     ))
+    assert probe_grid["request"]["models"] == [resolved_target]
     resolved_local_config = {
         **local_config,
         "parameter_count_b": None,

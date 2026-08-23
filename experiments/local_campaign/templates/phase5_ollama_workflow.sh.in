@@ -1119,7 +1119,7 @@ if envelope.get("request") != expected_envelope:
 
 expected_grid = {
     "execution_purpose": "diagnostic_canary",
-    "models": [expected_spec],
+    "models": [expected_runtime],
     "corpora": [expected_arm],
     "attackers": ["replay"],
     "judges": expected_judges,
@@ -1141,7 +1141,9 @@ expected_grid = {
 for field, expected in expected_grid.items():
     if request.get(field) != expected:
         raise SystemExit(f"canary grid field {field} drifted")
-if request.get("local_configs") != local_config:
+if request.get("local_configs") != {
+    expected_runtime: local_config[expected_spec]
+}:
     raise SystemExit("canary grid Ollama configuration drifted")
 for field, expected_sha in (
     ("local_config_artifact", expected_config_sha),
@@ -1175,7 +1177,7 @@ condition = summary["condition"]
 if (
     condition.get("execution_purpose") != "diagnostic_canary"
     or condition.get("dry_run") is not False
-    or condition.get("requested_model_spec") != expected_spec
+    or condition.get("requested_model_spec") != expected_runtime
     or condition.get("resolved_target") != expected_runtime
     or condition.get("logical_source_arm") != expected_arm
     or condition.get("attacker") != "replay"

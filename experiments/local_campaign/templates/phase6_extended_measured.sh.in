@@ -5552,7 +5552,15 @@ def validate_completed_lane(
     grid_request = grid.get("request")
     if not isinstance(grid_request, dict) or grid_request.get("execution_purpose") != "measured_run":
         raise ValueError("grid request is not measured")
-    if grid_request.get("models") != [spec["target"]["spec"]]:
+    if spec["family"] == "ollama":
+        expected_runtime = (
+            f"{spec['target']['spec']}@sha256:{spec['target']['digest']}"
+        )
+    else:
+        expected_runtime = (
+            f"{spec['target']['spec']}@{spec['target']['revision']}"
+        )
+    if grid_request.get("models") != [expected_runtime]:
         raise ValueError("grid does not contain the exact requested target")
     if grid_request.get("corpora") != spec["expected_corpora"] or grid_request.get("attackers") != [spec["expected_attacker"]] or grid_request.get("judges") != spec["expected_judges"]:
         raise ValueError("grid axes differ from the exact lane spec")
