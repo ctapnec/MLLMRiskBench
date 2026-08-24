@@ -129,7 +129,13 @@ def _nonblank(value: object, label: str) -> str:
     return value
 
 
-def _descriptor(value: object, label: str) -> dict[str, Any]:
+def _descriptor(
+    value: object,
+    label: str,
+    *,
+    minimum_bytes: int = 1,
+    minimum_records: int = 1,
+) -> dict[str, Any]:
     item = _strict_object(value, _DESCRIPTOR_FIELDS, label)
     filename = _nonblank(item.get("file"), f"{label}.file")
     if Path(filename).name != filename:
@@ -137,8 +143,12 @@ def _descriptor(value: object, label: str) -> dict[str, Any]:
     digest = item.get("sha256")
     if not isinstance(digest, str) or _HEX64.fullmatch(digest) is None:
         raise ValueError(f"{label}.sha256 must be lowercase SHA-256")
-    _integer(item.get("bytes"), f"{label}.bytes", minimum=1)
-    _integer(item.get("records"), f"{label}.records", minimum=1)
+    _integer(item.get("bytes"), f"{label}.bytes", minimum=minimum_bytes)
+    _integer(
+        item.get("records"),
+        f"{label}.records",
+        minimum=minimum_records,
+    )
     return item
 
 
@@ -818,7 +828,13 @@ def validate_lane_canary_summary(value: object) -> dict[str, Any]:
     if not isinstance(core, dict) or set(core) != required_roles:
         raise ValueError("lane canary core-artifact inventory is invalid")
     core_descriptors = [
-        _descriptor(item, f"core artifact {role}") for role, item in sorted(core.items())
+        _descriptor(
+            item,
+            f"core artifact {role}",
+            minimum_bytes=0 if role == "results" else 1,
+            minimum_records=0 if role == "results" else 1,
+        )
+        for role, item in sorted(core.items())
     ]
     expected_core_records = {
         "attempts": completed_attempts,
@@ -832,7 +848,18 @@ def validate_lane_canary_summary(value: object) -> dict[str, Any]:
     for role, count in expected_core_records.items():
         if core[role].get("records") != count:
             raise ValueError(f"lane canary core {role} record count mismatch")
-    _integer(core["results"].get("records"), "core results records", minimum=1)
+    result_records = _integer(
+        core["results"].get("records"), "core results records"
+    )
+    result_bytes = _integer(
+        core["results"].get("bytes"), "core results bytes"
+    )
+    if (result_records == 0) != (result_bytes == 0):
+        raise ValueError("core result record/byte counts do not reconcile")
+    if result_records == 0 and core["results"].get("sha256") != hashlib.sha256(
+        b""
+    ).hexdigest():
+        raise ValueError("empty core results descriptor has the wrong digest")
     if _integer(storage.get("core_artifact_bytes"), "core artifact bytes") != sum(
         item["bytes"] for item in core_descriptors
     ):
@@ -929,6 +956,12 @@ def validate_lane_canary_summary(value: object) -> dict[str, Any]:
         raise ValueError("lane canary decision coverage does not reconcile")
     if completed != completed_judgments:
         raise ValueError("lane canary workload/decision counts do not reconcile")
+    if result_records == 0 and not (
+        evaluable > 0 and decided == 0 and abstained == evaluable
+    ):
+        raise ValueError(
+            "zero-result canary requires an all-abstention evaluable population"
+        )
 
     roles = _strict_object(
         artifact.get("role_reachability"), _ROLE_FIELDS, "role reachability"

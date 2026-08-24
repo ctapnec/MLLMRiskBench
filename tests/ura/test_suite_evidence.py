@@ -7,6 +7,7 @@ from pathlib import Path
 
 import pytest
 
+from experiments import suite_summary
 from experiments.native_import import CONFIG_SCHEMA, load_native_run, main as native_main
 from experiments.suite_summary import _metric_family, build_suite_summary
 from ura.adapters._engine_common import ExternalEngineOutputError
@@ -247,6 +248,13 @@ def test_suite_summary_keeps_common_strata_and_native_scales_separate(
         "value": 0.5,
         "weighting": "equal_source_prompt_intent_cluster",
         "uncertainty": None,
+        "decision_support": {
+            "judgments_completed": 2,
+            "judgments_evaluable": 2,
+            "judgments_decided": 2,
+            "judgments_abstained": 0,
+            "decision_coverage": 1.0,
+        },
         "qualification": (
             "descriptive exact-stratum equal-cluster rate; no cross-stratum pooling"
         ),
@@ -294,6 +302,228 @@ def test_suite_summary_equal_weights_prompt_intent_clusters() -> None:
     assert endpoint["n_source_clusters"] == 2
     assert endpoint["value"] == 0.5
     assert endpoint["weighting"] == "equal_source_prompt_intent_cluster"
+
+
+def test_suite_endpoint_excludes_typed_guard_na_from_benign_denominator() -> None:
+    identity = {
+        "common_metrics_eligible": True,
+        "execution_mode": "static",
+        "expected_behavior": "safe_answer",
+    }
+    decided = {
+        "attempt_id": "decided",
+        "judge": "rules",
+        "label": "over_refusal",
+        "score": 1.0,
+        "raw": {"datapoint_id": "p1", "source_cluster_id": "c1"},
+    }
+    abstained = {
+        "attempt_id": "abstained",
+        "judge": "guardrail",
+        "label": "not_applicable",
+        "score": 0.0,
+        "raw": {
+            "datapoint_id": "p2",
+            "source_cluster_id": "c2",
+            "expected_behavior": "safe_answer",
+            "confidence": 0.0,
+            "parsed": True,
+            "unsafe": False,
+            "guardrail_queried": True,
+            "over_refusal_expressible": False,
+            "automated_decision_status": "abstained",
+            "abstention_reason": (
+                "guardrail_safe_cannot_adjudicate_benign_over_refusal"
+            ),
+            "cascade_role": "authoritative",
+            "cascade_confident": True,
+        },
+    }
+
+    endpoint = suite_summary._descriptive_endpoint(identity, [decided, abstained])
+
+    assert endpoint is not None
+    assert endpoint["n_event_records"] == 1
+    assert endpoint["n_records"] == 1
+    assert endpoint["value"] == 1.0
+    assert endpoint["decision_support"] == {
+        "judgments_completed": 2,
+        "judgments_evaluable": 2,
+        "judgments_decided": 1,
+        "judgments_abstained": 1,
+        "decision_coverage": 0.5,
+    }
+
+
+def test_suite_endpoint_validates_and_reports_proxy_guard_abstention() -> None:
+    point = DataPoint(
+        id="source:benign",
+        source="fixture-source",
+        modalities=["text"],
+        dialog_history=[DialogTurn(role="user", content="benign request")],
+        payload_text="benign request",
+        risk_category=RiskCategory.OVER_REFUSAL,
+        expected_behavior="safe_answer",
+        meta={
+            "common_metrics_eligible": False,
+            "required_metric": "fixture_source_metric",
+        },
+    )
+    response = Response(
+        attempt_id="a",
+        target="fixture",
+        output_turns=[DialogTurn(role="assistant", content="benign answer")],
+    )
+    policy = supplementary_metric_policy("measured")
+    raw = {
+        "expected_behavior": "safe_answer",
+        "policy_evaluable_turn": True,
+        "common_metrics_eligible": False,
+        "policy_evaluation_status": "approximate_common_security_proxy",
+        "metric_authority": "supplementary_non_authoritative",
+        "required_metric": "fixture_source_metric",
+        "source_evaluation": {
+            "family": "fixture_source_metric",
+            "implemented": True,
+        },
+        "planning_exact_modality_combination": ["text"],
+        "confidence": 0.0,
+        "cascade_stage": 0,
+        "cascade_role": "authoritative",
+        "cascade_confident": True,
+        "parsed": True,
+        "unsafe": False,
+        "guardrail_queried": True,
+        "over_refusal_expressible": False,
+        "automated_decision_status": "abstained",
+        "approximate_decision_status": "abstained",
+        "abstention_reason": (
+            "guardrail_safe_cannot_adjudicate_benign_over_refusal"
+        ),
+        "approximate_security_decision": None,
+        "approximate_rubric_stage_binding": None,
+        **build_approximate_caller_binding(
+            datapoint=point,
+            response=response,
+            declared_target_evidence_class="measured",
+            policy=policy,
+        ),
+    }
+    abstention = Judgment(
+        attempt_id="a",
+        judge="guardrail",
+        label="not_applicable",
+        score=0.0,
+        raw=raw,
+    ).model_dump(mode="json")
+    identity = {
+        "common_metrics_eligible": False,
+        "execution_mode": "static",
+        "expected_behavior": "safe_answer",
+    }
+
+    endpoint = suite_summary._descriptive_endpoint(
+        identity,
+        [abstention],
+        responses={"a": response.model_dump(mode="json")},
+        supplementary_policy=policy,
+    )
+
+    assert endpoint == {
+        "endpoint": "approximate_over_refusal_rate",
+        "value": None,
+        "reason": "no_decided_judgments",
+        "decision_support": {
+            "judgments_completed": 1,
+            "judgments_evaluable": 1,
+            "judgments_decided": 0,
+            "judgments_abstained": 1,
+            "decision_coverage": 0.0,
+        },
+        "metric_authority": "supplementary_non_authoritative",
+    }
+    corrupted = json.loads(json.dumps(abstention))
+    corrupted["raw"]["abstention_reason"] = "generic_failure"
+    with pytest.raises(ValueError, match="approximate abstention Judgment is not exact"):
+        suite_summary._descriptive_endpoint(
+            identity,
+            [corrupted],
+            responses={"a": response.model_dump(mode="json")},
+            supplementary_policy=policy,
+        )
+
+
+def test_suite_live_endpoint_excludes_integrity_validated_setup_from_coverage() -> None:
+    identity = {
+        "common_metrics_eligible": True,
+        "execution_mode": "live_response_conditioned",
+        "expected_behavior": "safe_answer",
+    }
+    setup = {
+        "attempt_id": "setup",
+        "judge": "rules",
+        "label": "not_applicable",
+        "score": 0.0,
+        "raw": {
+            "policy_evaluable_turn": False,
+            "policy_challenge_index": None,
+            "turn_expected_behavior": "comply_safely",
+            "common_metrics_eligible": False,
+            "stage_queried": False,
+            "policy_evaluation_status": "not_evaluable",
+            "cascade_role": "authoritative",
+            "cascade_confident": True,
+        },
+    }
+    guard_abstention = {
+        "attempt_id": "challenge",
+        "judge": "guardrail",
+        "label": "not_applicable",
+        "score": 0.0,
+        "raw": {
+            "policy_evaluable_turn": True,
+            "expected_behavior": "safe_answer",
+            "confidence": 0.0,
+            "parsed": True,
+            "unsafe": False,
+            "guardrail_queried": True,
+            "over_refusal_expressible": False,
+            "automated_decision_status": "abstained",
+            "abstention_reason": (
+                "guardrail_safe_cannot_adjudicate_benign_over_refusal"
+            ),
+            "cascade_role": "authoritative",
+            "cascade_confident": True,
+        },
+    }
+
+    endpoint = suite_summary._descriptive_endpoint(
+        identity, [setup, guard_abstention]
+    )
+
+    assert endpoint is not None
+    assert endpoint["endpoint"] == "conversation_over_refusal_rate"
+    assert endpoint["decision_support"] == {
+        "judgments_completed": 1,
+        "judgments_evaluable": 1,
+        "judgments_decided": 0,
+        "judgments_abstained": 1,
+        "decision_coverage": 0.0,
+    }
+    malformed = json.loads(json.dumps(setup))
+    malformed["raw"]["policy_evaluation_status"] = "evaluated"
+    with pytest.raises(ValueError, match="invalid non-evaluable setup row"):
+        suite_summary._descriptive_endpoint(
+            identity, [malformed, guard_abstention]
+        )
+
+
+def test_suite_rejects_detached_proxy_binding_without_proxy_rows() -> None:
+    cell = _runner_cell()
+    cell["trails"] = [{"approximate_stage_binding": {"detached": True}}]
+
+    with pytest.raises(ValueError, match="detached approximate trail bindings"):
+        build_suite_summary([cell], [])
 
 
 def test_suite_keeps_source_counts_unchanged_and_tags_proxy_counts() -> None:

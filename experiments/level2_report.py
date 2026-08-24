@@ -349,10 +349,18 @@ def _estimate_rows(cell: dict[str, Any]) -> list[dict[str, Any]]:
         coverage_prefix = "approximate" if approximate is not None else "source"
         selected_coverage = (
             {
-                "judgments_completed": approximate["n_supporting_decisions"],
-                "judgments_evaluable": approximate["n_supporting_decisions"],
-                "judgments_decided": approximate["n_supporting_decisions"],
-                "judgments_abstained": 0,
+                "judgments_completed": bucket_coverage[
+                    "approximate_judgments_completed"
+                ],
+                "judgments_evaluable": bucket_coverage[
+                    "approximate_judgments_evaluable"
+                ],
+                "judgments_decided": bucket_coverage[
+                    "approximate_judgments_decided"
+                ],
+                "judgments_abstained": bucket_coverage[
+                    "approximate_judgments_abstained"
+                ],
                 "judgments_non_evaluable": 0,
                 "official_source_evaluator": bucket_coverage[
                     "official_source_evaluator"

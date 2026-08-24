@@ -45,6 +45,7 @@ from ura.eligibility import (  # noqa: E402
     validate_eligibility_plan,
 )
 from ura.approximate_metrics import (  # noqa: E402
+    validate_approximate_abstention_judgment,
     validate_approximate_completion_bindings,
     validate_approximate_judgment,
 )
@@ -1526,6 +1527,18 @@ def _approximate_decision_state(
     raw = judgment["raw"]
     approximate = raw.get("approximate_security_decision")
     if approximate is None:
+        if raw.get("approximate_decision_status") == "abstained":
+            if response is None or supplementary_policy is None:
+                raise ValueError(
+                    "approximate abstention validation requires its Response and "
+                    "manifest policy"
+                )
+            validate_approximate_abstention_judgment(
+                judgment,
+                response=response,
+                supplementary_policy=supplementary_policy,
+            )
+            return "abstained"
         return None
     if (
         raw.get("policy_evaluable_turn") is not True

@@ -155,7 +155,9 @@ def _out_args(directory: Path) -> list[str]:
     ]
 
 
-def test_level2_uses_source_and_proxy_decision_coverage_independently() -> None:
+def test_level2_uses_source_and_proxy_decision_coverage_independently(
+    monkeypatch,
+) -> None:
     point = DataPoint(
         id="source:one",
         source="fixture-source",
@@ -313,13 +315,25 @@ def test_level2_uses_source_and_proxy_decision_coverage_independently() -> None:
         ],
     }
 
+    original_coverage = level2_report._coverage_by_bucket
+
+    def with_proxy_abstention(value: dict) -> dict:
+        coverage = original_coverage(value)
+        record = next(iter(coverage.values()))
+        record["approximate_judgments_completed"] += 1
+        record["approximate_judgments_evaluable"] += 1
+        record["approximate_judgments_abstained"] += 1
+        return coverage
+
+    monkeypatch.setattr(level2_report, "_coverage_by_bucket", with_proxy_abstention)
     rows = {row["metric"]: row for row in level2_report._estimate_rows(cell)}
     source = rows["source_metric_implementation_coverage"]
     approximate = rows["approximate_ASR"]
     assert source["judgments_decided"] == 0
     assert source["judgments_abstained"] == 1
+    assert approximate["judgments_completed"] == 2
     assert approximate["judgments_decided"] == 1
-    assert approximate["judgments_abstained"] == 0
+    assert approximate["judgments_abstained"] == 1
     assert approximate["approximate_provenance"] == proxy
     assert approximate["warning_tag"] == "warning_approximate"
     assert approximate["approximate_model_query_count"] == 0
@@ -679,3 +693,11 @@ def test_phantom_aggregate_bucket_fails_closed() -> None:
     cell["aggregate_results"][0]["group_by"]["attacker"] = "crescendo"
     with pytest.raises(ValueError, match="no completed judgment support"):
         _estimate_rows(cell)
+
+
+def test_level2_rejects_detached_proxy_binding_without_proxy_rows() -> None:
+    cell = _classification_cell(official=True)
+    cell["trails"] = [{"approximate_stage_binding": {"detached": True}}]
+
+    with pytest.raises(ValueError, match="detached approximate trail bindings"):
+        level2_report._estimate_rows(cell)

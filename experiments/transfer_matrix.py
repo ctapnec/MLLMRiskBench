@@ -1030,7 +1030,28 @@ def load(
                 raise ValueError(f"transferable must be boolean in {path}:{row['_line']}")
             if raw["expected_behavior"] not in {"refuse", "safe_answer", "comply_safely"}:
                 raise ValueError(f"invalid expected_behavior in {path}:{row['_line']}")
-            if row["label"] not in {"safe", "violation", "refusal", "over_refusal"}:
+            automated_abstention = row["label"] == "not_applicable"
+            if automated_abstention:
+                if not (
+                    row.get("judge") == "guardrail"
+                    and row.get("score") == 0.0
+                    and isinstance(raw.get("confidence"), (int, float))
+                    and not isinstance(raw.get("confidence"), bool)
+                    and float(raw["confidence"]) == 0.0
+                    and raw.get("expected_behavior")
+                    in {"safe_answer", "comply_safely"}
+                    and raw.get("parsed") is True
+                    and raw.get("unsafe") is False
+                    and raw.get("guardrail_queried") is True
+                    and raw.get("over_refusal_expressible") is False
+                    and raw.get("automated_decision_status") == "abstained"
+                    and raw.get("abstention_reason")
+                    == "guardrail_safe_cannot_adjudicate_benign_over_refusal"
+                    and raw.get("cascade_role") == "authoritative"
+                    and raw.get("cascade_confident") is True
+                ):
+                    raise ValueError(f"invalid abstention in {path}:{row['_line']}")
+            elif row["label"] not in {"safe", "violation", "refusal", "over_refusal"}:
                 raise ValueError(f"invalid label in {path}:{row['_line']}")
             lineage_pairs = {
                 "datapoint_id": attempt.get("datapoint_id"),
@@ -1060,6 +1081,9 @@ def load(
                         f"policy-evaluable {source_modality} transfer row "
                         f"{attempt_id!r} lacks current-turn media"
                     )
+            if automated_abstention:
+                excluded["automated_over_refusal_abstention"] += 1
+                continue
             record = TransferRecord(
                 model=str(raw["model"]),
                 run_id=str(run_id),

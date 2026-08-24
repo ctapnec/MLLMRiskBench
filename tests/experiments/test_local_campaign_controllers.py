@@ -71,6 +71,32 @@ def _rendered_gate5_namespace(tmp_path: Path) -> dict[str, object]:
     return namespace
 
 
+def _rendered_phase6_extended_namespace(tmp_path: Path) -> dict[str, object]:
+    import re
+
+    bindings = _bindings(tmp_path / "bindings-phase6.json")
+    output = tmp_path / "workspace-phase6"
+    render_controller_set(bindings, output)
+    shell = (output / "phase6_extended_measured.sh").read_text(encoding="utf-8")
+    blocks = re.findall(
+        r"<<'PHASE6_PAYLOAD'\n(.*?)\nPHASE6_PAYLOAD(?:\n|$)",
+        shell,
+        re.DOTALL,
+    )
+    assert len(blocks) == 1
+    source = blocks[0].split('\nif __name__ == "__main__":', 1)[0]
+    source = source.replace(
+        'PROJECT = Path.home() / "MLLMRiskBench"\n'
+        "os.chdir(PROJECT)\n"
+        "sys.path.insert(0, str(PROJECT))",
+        "PROJECT = Path.cwd()\nsys.path.insert(0, str(PROJECT))",
+        1,
+    )
+    namespace: dict[str, object] = {"__name__": "phase6_extended_contract_test"}
+    exec(compile(source, "phase6_extended_payload.py", "exec"), namespace)
+    return namespace
+
+
 def test_all_controller_implementations_are_versioned() -> None:
     root = Path(__file__).parents[2] / "experiments" / "local_campaign" / "templates"
     expected = {spec.template for spec in CONTROLLERS}
@@ -797,9 +823,43 @@ def test_phase5_rr_preserves_projections_and_starts_terminal_at_canary(
             "v2_boolean_stream_count",
         }
         if filename == "phase5_finalize_gate5.sh":
-            assert "adaptive_policy_evaluable_query_missing" in value[
-                "rejected_canary_stage_mutations"
-            ]
+            assert {
+                "adaptive_policy_evaluable_query_missing",
+                "proxy_decision_missing_metric",
+                "proxy_decision_abstention_mismatch",
+                "proxy_abstention_invents_metric",
+                "proxy_abstention_invents_selected_judge",
+                "proxy_abstention_wrong_coverage",
+                "proxy_abstention_integer_coverage",
+                "proxy_multiple_authorities",
+                "proxy_decision_authority_mismatch",
+                "proxy_abstention_rules_authority",
+                "proxy_abstention_not_terminal_na",
+                "proxy_boolean_stage",
+                "proxy_confident_shadow",
+                "proxy_boolean_trail_confidence",
+                "proxy_nonzero_trail_confidence",
+                "proxy_decision_score_detached",
+                "proxy_abstention_source_evaluator_claim",
+                "proxy_abstention_missing_status",
+                "proxy_abstention_boolean_judgment_confidence",
+                "proxy_abstention_nonzero_judgment_confidence",
+            } <= set(value["rejected_canary_stage_mutations"])
+        else:
+            assert {
+                "proxy-decision-missing-result",
+                "proxy-abstention-metric",
+                "proxy-abstention-coverage",
+                "proxy-abstention-integer-coverage",
+                "proxy-abstention-multiple-authorities",
+                "proxy-abstention-boolean-stage",
+                "proxy-abstention-confident-shadow",
+                "proxy-abstention-boolean-trail-confidence",
+                "proxy-abstention-nonzero-trail-confidence",
+                "proxy-abstention-source-evaluator-claim",
+                "proxy-abstention-boolean-judgment-confidence",
+                "proxy-abstention-nonzero-judgment-confidence",
+            } <= set(value["rejected_proxy_mutations"])
         assert value["retained_binding_self_test"] == {
             "eligibility_nonblank_records": 3,
             "hardcoded_one_rejected": True,
@@ -1820,6 +1880,150 @@ def test_gate5_revalidates_the_bounded_harmbench_attacker_config(
             sha_value="0" * 64,
             expected_identity=bounded_identity,
         )
+
+
+def test_gate5_accepts_exact_prompt_proxy_guard_abstention_without_results(
+    tmp_path: Path,
+) -> None:
+    import copy
+
+    namespace = _rendered_gate5_namespace(tmp_path)
+    metric = namespace["PROMPT_PROXY_METRIC"]
+    model = namespace["EXPECTED_SCORE_GUARD"]
+    revision = namespace["EXPECTED_SCORE_GUARD_REVISION"]
+    attempt_id = "attempt-prompt-proxy-abstention"
+    policy = {
+        "stage_queried": True,
+        "policy_evaluation_status": "approximate_common_security_proxy",
+        "metric_authority": "supplementary_non_authoritative",
+        "required_metric": metric,
+    }
+    judgment = {
+        "attempt_id": attempt_id,
+        "judge": "guardrail",
+        "label": "not_applicable",
+        "score": 0.0,
+        "raw": {
+            **policy,
+            "expected_behavior": "safe_answer",
+            "policy_evaluable_turn": True,
+            "common_metrics_eligible": False,
+            "cascade_stage": 1,
+            "cascade_role": "authoritative",
+            "cascade_confident": True,
+            "confidence": 0.0,
+            "parsed": True,
+            "unsafe": False,
+            "guardrail_queried": True,
+            "over_refusal_expressible": False,
+            "automated_decision_status": "abstained",
+            "approximate_decision_status": "abstained",
+            "abstention_reason": (
+                "guardrail_safe_cannot_adjudicate_benign_over_refusal"
+            ),
+            "approximate_security_decision": None,
+            "approximate_rubric_stage_binding": None,
+            "model": model,
+            "model_revision": revision,
+            "model_identity": f"{model}@{revision}",
+            "source_evaluation": {
+                "family": metric,
+                "implemented": False,
+                "valid": False,
+            },
+        },
+    }
+    trails = [
+        {
+            **policy,
+            "attempt_id": attempt_id,
+            "stage": 0,
+            "judge": "rules",
+            "cascade_role": "shadow",
+            "cascade_confident": False,
+        },
+        {
+            **policy,
+            "attempt_id": attempt_id,
+            "stage": 1,
+            "judge": "guardrail",
+            "cascade_role": "authoritative",
+            "cascade_confident": True,
+            "confidence": 0.0,
+            "label": "not_applicable",
+            "score": 0.0,
+            "parsed": True,
+            "guardrail_unsafe": False,
+            "guardrail_queried": True,
+            "over_refusal_expressible": False,
+            "automated_decision_status": "abstained",
+            "abstention_reason": (
+                "guardrail_safe_cannot_adjudicate_benign_over_refusal"
+            ),
+            "judge_model": model,
+            "judge_model_revision": revision,
+            "judge_model_identity": f"{model}@{revision}",
+        },
+    ]
+    rows = {"judgments": [judgment], "trails": trails, "results": []}
+    (tmp_path / "cell.complete.json").write_text("{}\n", encoding="utf-8")
+    namespace["read_strict_json"] = lambda _path: {}
+    namespace["_canary_artifact_rows"] = (
+        lambda _root, _marker, kind, *, label: copy.deepcopy(rows[kind])
+    )
+    validate = namespace["validate_prompt_proxy_artifacts"]
+    summary = validate(tmp_path, label="test")
+    assert summary["metrics"] == []
+    assert summary["evaluable"] == 1
+    assert summary["decisions"] == 0
+    assert summary["abstentions"] == 1
+    assert summary["decision_coverage"] == 0.0
+    assert summary["aggregate_results"] == 0
+    assert summary["selected_judges"] == []
+
+    rows["results"] = [{"metric": "approximate_over_refusal_rate"}]
+    with pytest.raises(
+        namespace["Gate5Error"], match="abstained prompt proxy retained metric results"
+    ):
+        validate(tmp_path, label="test")
+    rows["results"] = []
+    rows["judgments"][0]["raw"]["confidence"] = False
+    with pytest.raises(namespace["Gate5Error"], match="abstention is not exact"):
+        validate(tmp_path, label="test")
+    rows["judgments"][0]["raw"]["confidence"] = 0.0
+    rows["trails"][1]["confidence"] = 0.1
+    with pytest.raises(
+        namespace["Gate5Error"], match="terminal Guard N/A disposition"
+    ):
+        validate(tmp_path, label="test")
+    rows["trails"][1]["confidence"] = 0.0
+    rows["trails"][0]["cascade_role"] = "authoritative"
+    rows["trails"][0]["cascade_confident"] = True
+    with pytest.raises(namespace["Gate5Error"], match="lacks one authority"):
+        validate(tmp_path, label="test")
+
+
+def test_phase6_prompt_proxy_selftest_covers_exact_guard_abstention(
+    tmp_path: Path,
+) -> None:
+    namespace = _rendered_phase6_extended_namespace(tmp_path)
+    value = namespace["selected_judge_contract_self_test"]()
+    assert value["status"] == "passed"
+    assert {
+        "proxy-decision-missing-result",
+        "proxy-abstention-invented-summary-result",
+        "proxy-abstention-wrong-coverage",
+        "proxy-abstention-integer-coverage",
+        "proxy-abstention-source-evaluator-claim",
+        "proxy-abstention-multiple-authorities",
+        "proxy-abstention-boolean-stage",
+        "proxy-abstention-confident-shadow",
+        "proxy-abstention-boolean-trail-confidence",
+        "proxy-abstention-nonzero-trail-confidence",
+        "proxy-abstention-boolean-judgment-confidence",
+        "proxy-abstention-nonzero-judgment-confidence",
+        "proxy-abstention-invented-result",
+    } <= set(value["rejected_cases"])
 
 
 def test_gate5_relationship_helpers_reject_coherent_mutations(

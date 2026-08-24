@@ -1,7 +1,8 @@
 from __future__ import annotations
 
-import json
 import copy
+import hashlib
+import json
 from pathlib import Path
 
 import pytest
@@ -245,6 +246,44 @@ def test_lane_canary_validator_rejects_nested_semantic_mutations(
         _with_content_id(changed)
         with pytest.raises(ValueError):
             validate_lane_canary_summary(changed)
+
+
+def test_lane_canary_allows_zero_results_only_for_all_abstentions(
+    tmp_path: Path,
+) -> None:
+    results, eligibility = _produce_synthetic_canary(tmp_path)
+    summary, _ = lane_canary.summarize_canary(
+        results=results,
+        eligibility_path=eligibility,
+        out_dir=tmp_path / "summaries",
+    )
+    empty = copy.deepcopy(summary)
+    result_descriptor = empty["artifact_storage"]["core_by_role"]["results"]
+    prior_bytes = result_descriptor["bytes"]
+    result_descriptor.update({
+        "sha256": hashlib.sha256(b"").hexdigest(),
+        "bytes": 0,
+        "records": 0,
+    })
+    empty["artifact_storage"]["core_artifact_bytes"] -= prior_bytes
+    decision_support = empty["decision_support"]
+    decision_support.update({
+        "decided": 0,
+        "abstained": decision_support["evaluable"],
+        "decision_coverage": 0.0,
+    })
+    _with_content_id(empty)
+    assert validate_lane_canary_summary(empty) == empty
+
+    forged_decision = copy.deepcopy(empty)
+    forged_decision["decision_support"].update({
+        "decided": 1,
+        "abstained": 0,
+        "decision_coverage": 1.0,
+    })
+    _with_content_id(forged_decision)
+    with pytest.raises(ValueError, match="zero-result canary"):
+        validate_lane_canary_summary(forged_decision)
 
 
 def test_lane_canary_cli_rejects_valid_but_wrong_eligibility_condition(

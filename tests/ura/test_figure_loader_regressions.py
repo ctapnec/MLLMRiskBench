@@ -24,6 +24,7 @@ from ura.data_models import (
     SCHEMA_VERSION,
     DataPoint,
     DialogTurn,
+    Judgment,
     MediaRef,
     Response,
     RiskCategory,
@@ -136,6 +137,7 @@ def test_figure_point_and_bootstrap_equal_weight_source_clusters() -> None:
             source_cluster_id=cluster_id,
             seed=index, expected_behavior="refuse", risk_category="information_security",
             declared_modality="text", effective_modality="text", eligible=True,
+            decided=True,
             attack_fingerprint=f"fp-{index}", transfer_key=f"key-{index}",
         )
         left = figure_results._Unit(value=left_value, **common)
@@ -153,6 +155,82 @@ def test_figure_point_and_bootstrap_equal_weight_source_clusters() -> None:
     units = [left for left, _ in paired.values()]
     assert len({unit.cluster for unit in units}) == 2
     assert len({unit.datapoint_id for unit in units}) == 4
+
+
+def test_figure_estimate_excludes_abstentions_and_reports_decision_coverage(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def unit(
+        datapoint_id: str, *, decided: bool, value: float,
+    ) -> figure_results._Unit:
+        return figure_results._Unit(
+            corpus="fixture",
+            source="source",
+            datapoint_id=datapoint_id,
+            source_cluster_id=datapoint_id,
+            seed=0,
+            expected_behavior="safe_answer",
+            risk_category="over_refusal",
+            declared_modality="text",
+            effective_modality="text",
+            eligible=True,
+            decided=decided,
+            value=value,
+            attack_fingerprint=f"fp-{datapoint_id}",
+            transfer_key=f"key-{datapoint_id}",
+        )
+
+    decided_left = unit("decided", decided=True, value=1.0)
+    decided_right = unit("decided", decided=True, value=0.0)
+    abstained_left = unit("abstained", decided=False, value=0.0)
+    abstained_right = unit("abstained", decided=False, value=1.0)
+    paired = {
+        decided_left.key: (decided_left, decided_right),
+        abstained_left.key: (abstained_left, abstained_right),
+    }
+    monkeypatch.setattr(figure_results, "_arm_provenance", lambda _cell: {})
+    common = {
+        "predicate": lambda candidate: candidate.expected_behavior == "safe_answer",
+        "point_id": "benign",
+        "corpus": "fixture",
+        "population": "benign_expected_answer",
+        "left": {},
+        "right": {},
+        "semantic": {
+            "comparison_type": "paired_endpoint",
+            "causal_interpretation_eligible": False,
+            "comparison_config_signature": "left",
+            "right_comparison_config_signature": "right",
+        },
+        "policy_label": "policy",
+        "multiplicity_family": "family",
+        "minimum_cell_n": 1,
+        "n_resamples": 20,
+        "seed": 0,
+    }
+
+    estimate = figure_results._estimate(paired, **common)
+    assert estimate["value"] == 1.0
+    assert estimate["n_population_pairs"] == 2
+    assert estimate["n_pairs"] == 1
+    assert estimate["decision_coverage"] == {
+        "left": 0.5,
+        "right": 0.5,
+        "joint": 0.5,
+    }
+
+    no_decisions = figure_results._estimate(
+        {abstained_left.key: (abstained_left, abstained_right)}, **common
+    )
+    assert no_decisions["status"] == "not_estimable_no_joint_decisions"
+    assert no_decisions["value"] is None
+    assert no_decisions["n_population_pairs"] == 1
+    assert no_decisions["n_pairs"] == 0
+    assert no_decisions["decision_coverage"] == {
+        "left": 0.0,
+        "right": 0.0,
+        "joint": 0.0,
+    }
 
 
 def test_figure_loader_rejects_only_alias_arms_with_the_same_condition() -> None:
@@ -630,6 +708,10 @@ def _cell(
             "score": score,
             "confidence": 0.95,
             "parsed": None,
+            "guardrail_unsafe": None,
+            "over_refusal_expressible": None,
+            "automated_decision_status": None,
+            "abstention_reason": None,
             "cascade_confident": True,
             "cascade_role": "authoritative",
             "cascade_policy": "first_confident_with_full_shadow_trail",
@@ -994,6 +1076,29 @@ def _refresh_identity_metadata(cell: dict[str, Any]) -> None:
     _refresh_marker(cell)
 
 
+def _typed_guard_abstention_judgment(row: dict[str, Any]) -> dict[str, Any]:
+    updated = json.loads(json.dumps(row))
+    updated.update({
+        "judge": "guardrail",
+        "label": "not_applicable",
+        "score": 0.0,
+    })
+    updated["raw"].update({
+        "confidence": 0.0,
+        "parsed": True,
+        "unsafe": False,
+        "guardrail_queried": True,
+        "over_refusal_expressible": False,
+        "automated_decision_status": "abstained",
+        "abstention_reason": (
+            "guardrail_safe_cannot_adjudicate_benign_over_refusal"
+        ),
+        "cascade_role": "authoritative",
+        "cascade_confident": True,
+    })
+    return updated
+
+
 def _paired_model_grid(root: Path, corpora: tuple[str, ...] = ("alpha",)) -> list[dict]:
     cells = [
         _cell(
@@ -1018,6 +1123,155 @@ def _paired_model_grid(root: Path, corpora: tuple[str, ...] = ("alpha",)) -> lis
     ]
     _grid(root, name="models", cells=cells)
     return cells
+
+
+def test_figure_cell_accepts_zero_results_only_for_exact_all_abstention(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    cell = _cell(
+        tmp_path,
+        stem="all-abstained",
+        model_spec="left",
+        corpus="benign",
+        datapoints=[{
+            "id": datapoint_id,
+            "source": "source-benign",
+            "risk": "over_refusal",
+            "modality": "text",
+            "expected": "safe_answer",
+            "label": "safe",
+            "eligible": True,
+            "seed": 0,
+        } for datapoint_id in (
+            "benign-probe", "setup-companion", "source-only-companion",
+        )],
+    )
+    _grid(tmp_path, name="all-abstained", cells=[cell])
+    judgments = [
+        json.loads(line)
+        for line in cell["paths"]["judgments"].read_text(
+            encoding="utf-8"
+        ).splitlines()
+        if line.strip()
+    ]
+    judgments[0] = _typed_guard_abstention_judgment(judgments[0])
+    judgments[1].update({"label": "not_applicable", "score": 0.0})
+    judgments[1]["raw"].update({
+        "policy_evaluable_turn": False,
+        "common_metrics_eligible": False,
+        "stage_queried": False,
+        "policy_evaluation_status": "not_evaluable",
+        "turn_expected_behavior": "comply_safely",
+        "metric_authority": None,
+        "required_metric": None,
+    })
+    judgments[2].update({"label": "not_applicable", "score": 0.0})
+    judgments[2]["raw"].update({
+        "policy_evaluable_turn": True,
+        "common_metrics_eligible": False,
+        "stage_queried": False,
+        "policy_evaluation_status": "source_metric_only",
+        "metric_authority": None,
+        "required_metric": "native_source_metric",
+    })
+    _write_jsonl(cell["paths"]["judgments"], judgments)
+    cell["paths"]["results"].write_text("", encoding="utf-8")
+    marker = json.loads(cell["marker"].read_text(encoding="utf-8"))
+    marker["n_results"] = 0
+    cell["marker"].write_text(json.dumps(marker), encoding="utf-8")
+    _refresh_marker(cell)
+    refs = figure_results._grid_allowlist(tmp_path)[cell["marker"].resolve()]
+
+    # This test isolates the aggregate-result admission gate. The complete
+    # plan and persisted-trail bindings have their own regressions; this fixture
+    # deliberately leaves those unrelated rules-era records unchanged.
+    monkeypatch.setattr(
+        figure_results,
+        "validate_attempts_against_attacker_input_plan",
+        lambda *args, **kwargs: {},
+    )
+    monkeypatch.setattr(figure_results, "_validate_trails", lambda *args, **kwargs: None)
+    validated = figure_results._validate_cell(cell["marker"], refs)
+    assert validated["aggregate_results"] == []
+    assert len(validated["judgments"]) == 3
+
+    judgments[0]["raw"]["abstention_reason"] = "ambiguous_guard_output"
+    _write_jsonl(cell["paths"]["judgments"], judgments)
+    _refresh_marker(cell)
+    with pytest.raises(ValueError, match="exact all-abstention population"):
+        figure_results._validate_cell(cell["marker"], refs)
+
+
+def test_zero_result_population_allows_only_exact_unscored_companion_rows() -> None:
+    evaluated = Judgment.model_validate(_typed_guard_abstention_judgment({
+        "attempt_id": "evaluated",
+        "run_id": "run",
+        "judge": "rules",
+        "label": "safe",
+        "score": 0.0,
+        "raw": {
+            "expected_behavior": "safe_answer",
+            "policy_evaluable_turn": True,
+            "common_metrics_eligible": True,
+            "stage_queried": True,
+            "policy_evaluation_status": "evaluated",
+            "turn_expected_behavior": "safe_answer",
+            "metric_authority": None,
+            "required_metric": None,
+        },
+    }), strict=True)
+    setup = Judgment.model_validate({
+        "attempt_id": "setup",
+        "run_id": "run",
+        "judge": "rules",
+        "label": "not_applicable",
+        "score": 0.0,
+        "raw": {
+            "policy_evaluable_turn": False,
+            "common_metrics_eligible": False,
+            "stage_queried": False,
+            "policy_evaluation_status": "not_evaluable",
+            "turn_expected_behavior": "comply_safely",
+            "metric_authority": None,
+            "required_metric": None,
+        },
+    }, strict=True)
+    source_only = Judgment.model_validate({
+        "attempt_id": "source-only",
+        "run_id": "run",
+        "judge": "rules",
+        "label": "not_applicable",
+        "score": 0.0,
+        "raw": {
+            "policy_evaluable_turn": True,
+            "common_metrics_eligible": False,
+            "stage_queried": False,
+            "policy_evaluation_status": "source_metric_only",
+            "turn_expected_behavior": "refuse",
+            "metric_authority": None,
+            "required_metric": "native_source_metric",
+        },
+    }, strict=True)
+
+    assert figure_results._zero_result_guardrail_abstention_population([
+        setup, source_only, evaluated,
+    ]) is True
+    assert figure_results._zero_result_guardrail_abstention_population([
+        setup, source_only,
+    ]) is False
+
+    invalid_setup = setup.model_copy(update={
+        "raw": {**setup.raw, "stage_queried": True},
+    })
+    invalid_source = source_only.model_copy(update={
+        "raw": {**source_only.raw, "required_metric": ""},
+    })
+    assert figure_results._zero_result_guardrail_abstention_population([
+        invalid_setup, evaluated,
+    ]) is False
+    assert figure_results._zero_result_guardrail_abstention_population([
+        invalid_source, evaluated,
+    ]) is False
 
 
 def _one_hub_local_acquisition(

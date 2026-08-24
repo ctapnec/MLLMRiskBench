@@ -2802,45 +2802,70 @@ def validate_classification_stage_contract(stages: object, *, label: str) -> Non
 def validate_prompt_proxy_summary(value: object, *, label: str) -> dict[str, Any]:
     expected_fields = {
         "status", "arm", "required_metric", "authority", "method", "metrics",
-        "decisions", "aggregate_results", "guardrail_trail_queries",
+        "evaluable", "decisions", "abstentions", "decision_coverage",
+        "aggregate_results", "guardrail_trail_queries",
         "selected_judges", "selected_guardrail_decisions",
         "selected_guardrail_aggregate_results", "guardrail_model",
         "guardrail_revision",
     }
     if not isinstance(value, dict) or set(value) != expected_fields:
         raise Gate5Error(f"{label}: approximate-proxy summary shape changed")
-    positive_fields = (
-        "decisions", "aggregate_results", "guardrail_trail_queries",
+    integer_fields = (
+        "evaluable", "decisions", "abstentions", "aggregate_results",
+        "guardrail_trail_queries", "selected_guardrail_decisions",
+        "selected_guardrail_aggregate_results",
     )
+    decision_coverage = value.get("decision_coverage")
+    selected_judges = value.get("selected_judges")
     if (
         value.get("status") != "validated"
         or value.get("arm") != PROMPT_PROXY_ARM
         or value.get("required_metric") != PROMPT_PROXY_METRIC
         or value.get("authority") != "supplementary_non_authoritative"
         or value.get("method") != "common_judge_cascade_response_proxy"
-        or value.get("metrics") != ["approximate_over_refusal_rate"]
-        or any(
-            isinstance(value.get(field), bool)
-            or not isinstance(value.get(field), int)
-            or value[field] <= 0
-            for field in positive_fields
-        )
-        or not isinstance(value.get("selected_judges"), list)
-        or not value["selected_judges"]
-        or set(value["selected_judges"]) - {"rules", "guardrail"}
+        or not isinstance(value.get("metrics"), list)
         or any(
             isinstance(value.get(field), bool)
             or not isinstance(value.get(field), int)
             or value[field] < 0
-            for field in (
-                "selected_guardrail_decisions",
-                "selected_guardrail_aggregate_results",
-            )
+            for field in integer_fields
         )
+        or value["evaluable"] <= 0
+        or value["guardrail_trail_queries"] != value["evaluable"]
+        or value["decisions"] + value["abstentions"] != value["evaluable"]
+        or type(decision_coverage) is not float
+        or not math.isfinite(float(decision_coverage))
+        or decision_coverage != value["decisions"] / value["evaluable"]
+        or not isinstance(selected_judges, list)
+        or selected_judges != sorted(set(selected_judges))
+        or set(selected_judges) - {"rules", "guardrail"}
+        or value["selected_guardrail_decisions"] > value["decisions"]
+        or value["selected_guardrail_aggregate_results"]
+        > value["aggregate_results"]
+        or ("guardrail" in selected_judges)
+        is not (value["selected_guardrail_decisions"] > 0)
+        or ("guardrail" in selected_judges)
+        is not (value["selected_guardrail_aggregate_results"] > 0)
         or value.get("guardrail_model") != EXPECTED_SCORE_GUARD
         or value.get("guardrail_revision") != EXPECTED_SCORE_GUARD_REVISION
     ):
         raise Gate5Error(f"{label}: approximate-proxy summary is not exact")
+    decided = value["decisions"] > 0
+    if decided:
+        if (
+            value["metrics"] != ["approximate_over_refusal_rate"]
+            or value["aggregate_results"] <= 0
+            or not value["selected_judges"]
+        ):
+            raise Gate5Error(f"{label}: decided proxy summary lacks its metric support")
+    elif (
+        value["metrics"] != []
+        or value["aggregate_results"] != 0
+        or value["selected_judges"] != []
+        or value["selected_guardrail_decisions"] != 0
+        or value["selected_guardrail_aggregate_results"] != 0
+    ):
+        raise Gate5Error(f"{label}: abstained proxy summary invents a metric decision")
     return value
 
 
@@ -2883,6 +2908,147 @@ def _canary_artifact_rows(
     return rows
 
 
+def _validate_prompt_proxy_abstention_judgment(
+    judgment: Mapping[str, Any], *, label: str
+) -> None:
+    """Accept only the exact terminal Guard N/A proxy disposition."""
+
+    raw = judgment.get("raw")
+    source = raw.get("source_evaluation") if isinstance(raw, Mapping) else None
+    score = judgment.get("score")
+    if (
+        judgment.get("judge") != "guardrail"
+        or judgment.get("label") != "not_applicable"
+        or isinstance(score, bool)
+        or not isinstance(score, (int, float))
+        or float(score) != 0.0
+        or not isinstance(raw, Mapping)
+        or raw.get("expected_behavior") not in {"safe_answer", "comply_safely"}
+        or raw.get("policy_evaluable_turn") is not True
+        or raw.get("common_metrics_eligible") is not False
+        or raw.get("policy_evaluation_status")
+        != "approximate_common_security_proxy"
+        or raw.get("metric_authority") != "supplementary_non_authoritative"
+        or raw.get("required_metric") != PROMPT_PROXY_METRIC
+        or raw.get("cascade_stage") != 1
+        or raw.get("cascade_role") != "authoritative"
+        or raw.get("cascade_confident") is not True
+        or raw.get("stage_queried") is not True
+        or type(raw.get("confidence")) is not float
+        or raw.get("confidence") != 0.0
+        or raw.get("parsed") is not True
+        or raw.get("unsafe") is not False
+        or raw.get("guardrail_queried") is not True
+        or raw.get("over_refusal_expressible") is not False
+        or raw.get("automated_decision_status") != "abstained"
+        or raw.get("approximate_decision_status") != "abstained"
+        or raw.get("abstention_reason")
+        != "guardrail_safe_cannot_adjudicate_benign_over_refusal"
+        or raw.get("approximate_security_decision") is not None
+        or "approximate_rubric_stage_binding" not in raw
+        or raw.get("approximate_rubric_stage_binding") is not None
+        or raw.get("model") != EXPECTED_SCORE_GUARD
+        or raw.get("model_revision") != EXPECTED_SCORE_GUARD_REVISION
+        or raw.get("model_identity")
+        != f"{EXPECTED_SCORE_GUARD}@{EXPECTED_SCORE_GUARD_REVISION}"
+        or not isinstance(source, Mapping)
+        or source.get("family") != PROMPT_PROXY_METRIC
+        or source.get("implemented") is not False
+        or source.get("valid") is not False
+    ):
+        raise Gate5Error(f"{label}: prompt-proxy abstention is not exact")
+
+
+def _validate_prompt_proxy_trail_attempt(
+    rows: Sequence[Mapping[str, Any]],
+    *,
+    disposition: str,
+    selected_judge: str | None,
+    label: str,
+    selected_label: str | None = None,
+    selected_score: float | None = None,
+) -> None:
+    """Require one authority and the exact ordered rules/Guard trail."""
+
+    if (
+        [(row.get("stage"), row.get("judge")) for row in rows]
+        != [(0, "rules"), (1, "guardrail")]
+        or any(type(row.get("stage")) is not int for row in rows)
+        or any(
+            row.get("stage_queried") is not True
+            or row.get("policy_evaluation_status")
+            != "approximate_common_security_proxy"
+            or row.get("metric_authority")
+            != "supplementary_non_authoritative"
+            or row.get("required_metric") != PROMPT_PROXY_METRIC
+            or row.get("cascade_role") not in {"authoritative", "shadow"}
+            for row in rows
+        )
+    ):
+        raise Gate5Error(f"{label}: prompt-proxy trail policy changed")
+    authorities = [
+        row for row in rows if row.get("cascade_role") == "authoritative"
+    ]
+    if (
+        len(authorities) != 1
+        or any(
+            row.get("cascade_role") != "shadow"
+            or row.get("cascade_confident") is not False
+            for row in rows
+            if row is not authorities[0]
+        )
+        or authorities[0].get("cascade_confident") is not True
+    ):
+        raise Gate5Error(f"{label}: prompt-proxy trail lacks one authority")
+
+    guard = rows[1]
+    if (
+        guard.get("guardrail_queried") is not True
+        or guard.get("judge_model") != EXPECTED_SCORE_GUARD
+        or guard.get("judge_model_revision") != EXPECTED_SCORE_GUARD_REVISION
+        or guard.get("judge_model_identity")
+        != f"{EXPECTED_SCORE_GUARD}@{EXPECTED_SCORE_GUARD_REVISION}"
+    ):
+        raise Gate5Error(f"{label}: retained exact Guard query changed")
+    if disposition == "decision":
+        authority_score = authorities[0].get("score")
+        if (
+            selected_judge not in {"rules", "guardrail"}
+            or authorities[0].get("judge") != selected_judge
+            or not isinstance(selected_label, str)
+            or authorities[0].get("label") != selected_label
+            or type(selected_score) is not float
+            or type(authority_score) is not float
+            or authority_score != selected_score
+        ):
+            raise Gate5Error(
+                f"{label}: decision does not name the sole trail authority"
+            )
+        return
+    if disposition != "abstention" or selected_judge is not None:
+        raise Gate5Error(f"{label}: prompt-proxy disposition is invalid")
+    guard_score = guard.get("score")
+    guard_confidence = guard.get("confidence")
+    if (
+        authorities[0] is not guard
+        or guard.get("label") != "not_applicable"
+        or isinstance(guard_score, bool)
+        or not isinstance(guard_score, (int, float))
+        or float(guard_score) != 0.0
+        or type(guard_confidence) is not float
+        or guard_confidence != 0.0
+        or guard.get("parsed") is not True
+        or guard.get("guardrail_unsafe") is not False
+        or guard.get("over_refusal_expressible") is not False
+        or guard.get("automated_decision_status") != "abstained"
+        or guard.get("abstention_reason")
+        != "guardrail_safe_cannot_adjudicate_benign_over_refusal"
+    ):
+        raise Gate5Error(
+            f"{label}: abstention is not an exact terminal Guard N/A disposition"
+        )
+
+
 def validate_prompt_proxy_artifacts(results_root: Path, *, label: str) -> dict[str, Any]:
     marker_paths = sorted(results_root.glob("*.complete.json"))
     if len(marker_paths) != 1:
@@ -2896,24 +3062,58 @@ def validate_prompt_proxy_artifacts(results_root: Path, *, label: str) -> dict[s
     if not judgments:
         raise Gate5Error(f"{label}: prompt proxy retained no judgments")
 
-    attempt_ids: set[str] = set()
+    attempt_states: dict[
+        str, tuple[str, str | None, str | None, float | None]
+    ] = {}
     selected_judges: set[str] = set()
     selected_guardrail_decisions = 0
+    decisions = 0
+    abstentions = 0
     for judgment in judgments:
         attempt_id = judgment.get("attempt_id")
         raw = judgment.get("raw")
-        if not isinstance(attempt_id, str) or not isinstance(raw, dict):
+        if (
+            not isinstance(attempt_id, str)
+            or not attempt_id.strip()
+            or not isinstance(raw, dict)
+        ):
             raise Gate5Error(f"{label}: prompt-proxy judgment lineage changed")
+        if attempt_id in attempt_states:
+            raise Gate5Error(f"{label}: duplicate prompt-proxy judgment attempt")
         if (
             raw.get("common_metrics_eligible") is not False
             or raw.get("policy_evaluable_turn") is not True
+            or raw.get("expected_behavior")
+            not in {"safe_answer", "comply_safely"}
+            or raw.get("policy_evaluation_status")
+            != "approximate_common_security_proxy"
+            or raw.get("metric_authority")
+            != "supplementary_non_authoritative"
             or raw.get("required_metric") != PROMPT_PROXY_METRIC
+            or raw.get("stage_queried") is not True
         ):
             raise Gate5Error(f"{label}: prompt-proxy judgment construct changed")
-        try:
-            decision = validate_approximate_decision(
-                raw.get("approximate_security_decision")
+        raw_decision = raw.get("approximate_security_decision")
+        decision_status = raw.get("approximate_decision_status")
+        if raw_decision is None:
+            if decision_status != "abstained":
+                raise Gate5Error(
+                    f"{label}: prompt proxy has neither a decision nor typed abstention"
+                )
+            _validate_prompt_proxy_abstention_judgment(
+                judgment, label=f"{label} attempt {attempt_id}"
             )
+            attempt_states[attempt_id] = (
+                "abstention", None, None, None
+            )
+            abstentions += 1
+            continue
+        if decision_status is not None:
+            raise Gate5Error(
+                f"{label}: prompt-proxy decision also claims an abstention"
+            )
+        try:
+            decision = validate_approximate_decision(raw_decision)
         except (TypeError, ValueError) as exc:
             raise Gate5Error(f"{label}: approximate decision is invalid: {exc}") from exc
         if (
@@ -2925,6 +3125,30 @@ def validate_prompt_proxy_artifacts(results_root: Path, *, label: str) -> dict[s
             or decision.selected_judge not in {"rules", "guardrail"}
         ):
             raise Gate5Error(f"{label}: approximate decision provenance changed")
+        source = raw.get("source_evaluation")
+        authorities = [
+            stage for stage in decision.retained_trail
+            if stage.cascade_role == "authoritative"
+        ]
+        if (
+            not isinstance(source, Mapping)
+            or source.get("family") != PROMPT_PROXY_METRIC
+            or source.get("implemented") is not False
+            or source.get("valid") is not False
+            or len(authorities) != 1
+            or attempt_id != authorities[0].attempt_id
+            or judgment.get("judge") != authorities[0].judge
+            or judgment.get("label") != authorities[0].label
+            or type(judgment.get("score")) is not float
+            or judgment.get("score") != authorities[0].score
+            or type(raw.get("cascade_stage")) is not int
+            or raw.get("cascade_stage") != authorities[0].stage
+            or raw.get("cascade_role") != "authoritative"
+            or raw.get("cascade_confident") is not True
+        ):
+            raise Gate5Error(
+                f"{label}: approximate decision is detached from its sole authority"
+            )
         guard_stages = [
             stage for stage in decision.retained_trail
             if stage.stage == 1 and stage.judge == "guardrail"
@@ -2949,46 +3173,47 @@ def validate_prompt_proxy_artifacts(results_root: Path, *, label: str) -> dict[s
             ):
                 raise Gate5Error(f"{label}: selected Guard identity/query changed")
         selected_judges.add(decision.selected_judge)
-        attempt_ids.add(attempt_id)
+        attempt_states[attempt_id] = (
+            "decision",
+            decision.selected_judge,
+            authorities[0].label,
+            authorities[0].score,
+        )
+        decisions += 1
 
     trails_by_attempt: dict[object, list[dict[str, Any]]] = {}
     for row in trails:
         trails_by_attempt.setdefault(row.get("attempt_id"), []).append(row)
-    if set(trails_by_attempt) != attempt_ids:
+    if set(trails_by_attempt) != set(attempt_states):
         raise Gate5Error(f"{label}: prompt-proxy trail inventory differs")
     guardrail_trail_queries = 0
     for attempt_id, rows in trails_by_attempt.items():
-        if {(row.get("stage"), row.get("judge")) for row in rows} != {
-            (0, "rules"), (1, "guardrail")
-        } or any(
-            row.get("stage_queried") is not True
-            or row.get("policy_evaluation_status")
-            != "approximate_common_security_proxy"
-            or row.get("metric_authority") != "supplementary_non_authoritative"
-            or row.get("required_metric") != PROMPT_PROXY_METRIC
-            for row in rows
-        ):
-            raise Gate5Error(f"{label}: prompt-proxy trail policy changed: {attempt_id}")
-        guard = next(row for row in rows if row.get("judge") == "guardrail")
-        if (
-            guard.get("guardrail_queried") is not True
-            or guard.get("judge_model") != EXPECTED_SCORE_GUARD
-            or guard.get("judge_model_revision") != EXPECTED_SCORE_GUARD_REVISION
-            or guard.get("judge_model_identity")
-            != f"{EXPECTED_SCORE_GUARD}@{EXPECTED_SCORE_GUARD_REVISION}"
-        ):
-            raise Gate5Error(f"{label}: retained exact Guard query changed")
+        disposition, selected_judge, selected_label, selected_score = (
+            attempt_states[attempt_id]
+        )
+        _validate_prompt_proxy_trail_attempt(
+            rows,
+            disposition=disposition,
+            selected_judge=selected_judge,
+            label=f"{label} attempt {attempt_id}",
+            selected_label=selected_label,
+            selected_score=selected_score,
+        )
         guardrail_trail_queries += 1
 
     approximate_results = [
         row for row in results
         if str(row.get("metric", "")).startswith("approximate_")
     ]
-    if not approximate_results or {
-        row.get("metric") for row in approximate_results
-    } != {"approximate_over_refusal_rate"}:
-        raise Gate5Error(f"{label}: approximate over-refusal result is absent")
+    if decisions:
+        if not approximate_results or {
+            row.get("metric") for row in approximate_results
+        } != {"approximate_over_refusal_rate"}:
+            raise Gate5Error(f"{label}: approximate over-refusal result is absent")
+    elif approximate_results:
+        raise Gate5Error(f"{label}: abstained prompt proxy retained metric results")
     selected_guardrail_results = 0
+    aggregate_selected_judges: set[str] = set()
     for result in approximate_results:
         nested = result.get("provenance")
         try:
@@ -3007,6 +3232,7 @@ def validate_prompt_proxy_artifacts(results_root: Path, *, label: str) -> dict[s
             or set(provenance.selected_judges) - {"rules", "guardrail"}
         ):
             raise Gate5Error(f"{label}: approximate aggregate provenance changed")
+        aggregate_selected_judges.update(provenance.selected_judges)
         if "guardrail" in provenance.selected_judges:
             selected_guardrail_results += 1
             if (
@@ -3024,6 +3250,10 @@ def validate_prompt_proxy_artifacts(results_root: Path, *, label: str) -> dict[s
             or provenance.judge_model_identity_types
         ):
             raise Gate5Error(f"{label}: rules-selected aggregate credits a model")
+    if aggregate_selected_judges != selected_judges:
+        raise Gate5Error(
+            f"{label}: aggregate selected judges differ from judgment decisions"
+        )
 
     return validate_prompt_proxy_summary({
         "status": "validated",
@@ -3031,8 +3261,13 @@ def validate_prompt_proxy_artifacts(results_root: Path, *, label: str) -> dict[s
         "required_metric": PROMPT_PROXY_METRIC,
         "authority": "supplementary_non_authoritative",
         "method": "common_judge_cascade_response_proxy",
-        "metrics": ["approximate_over_refusal_rate"],
-        "decisions": len(judgments),
+        "metrics": (
+            ["approximate_over_refusal_rate"] if approximate_results else []
+        ),
+        "evaluable": len(judgments),
+        "decisions": decisions,
+        "abstentions": abstentions,
+        "decision_coverage": decisions / len(judgments),
         "aggregate_results": len(approximate_results),
         "guardrail_trail_queries": guardrail_trail_queries,
         "selected_judges": sorted(selected_judges),
@@ -3067,10 +3302,12 @@ def canary_stage_contract_self_test() -> list[str]:
          "queried_records": 1, "not_queried_records": 2, "reached": True},
     ]
     validate_common_stage_contract(
-        common, completed_judgments=2, evaluable_judgments=2, label="self-test"
+        common, completed_judgments=2, evaluable_judgments=2,
+        label="self-test"
     )
     validate_common_stage_contract(
-        adaptive, completed_judgments=3, evaluable_judgments=1, label="self-test"
+        adaptive, completed_judgments=3, evaluable_judgments=1,
+        label="self-test"
     )
     validate_classification_stage_contract(classification, label="self-test")
     mutations: list[tuple[str, Any, str]] = []
@@ -3122,7 +3359,10 @@ def canary_stage_contract_self_test() -> list[str]:
         "authority": "supplementary_non_authoritative",
         "method": "common_judge_cascade_response_proxy",
         "metrics": ["approximate_over_refusal_rate"],
+        "evaluable": 1,
         "decisions": 1,
+        "abstentions": 0,
+        "decision_coverage": 1.0,
         "aggregate_results": 1,
         "guardrail_trail_queries": 1,
         "selected_judges": ["guardrail"],
@@ -3147,6 +3387,284 @@ def canary_stage_contract_self_test() -> list[str]:
             rejected.append(name)
         else:
             raise Gate5Error(f"proxy-summary mutation did not fail closed: {name}")
+    abstained_proxy = {
+        **proxy,
+        "metrics": [],
+        "decisions": 0,
+        "abstentions": 1,
+        "decision_coverage": 0.0,
+        "aggregate_results": 0,
+        "selected_judges": [],
+        "selected_guardrail_decisions": 0,
+        "selected_guardrail_aggregate_results": 0,
+    }
+    validate_prompt_proxy_summary(abstained_proxy, label="self-test")
+    summary_mutations = (
+        (
+            "proxy_decision_missing_metric",
+            proxy,
+            {
+                "metrics": [],
+                "aggregate_results": 0,
+                "selected_guardrail_aggregate_results": 0,
+            },
+        ),
+        (
+            "proxy_decision_abstention_mismatch",
+            proxy,
+            {"abstentions": 1},
+        ),
+        (
+            "proxy_abstention_invents_metric",
+            abstained_proxy,
+            {"metrics": ["approximate_over_refusal_rate"], "aggregate_results": 1},
+        ),
+        (
+            "proxy_abstention_invents_selected_judge",
+            abstained_proxy,
+            {"selected_judges": ["guardrail"]},
+        ),
+        (
+            "proxy_abstention_wrong_coverage",
+            abstained_proxy,
+            {"decision_coverage": 1.0},
+        ),
+        (
+            "proxy_abstention_integer_coverage",
+            abstained_proxy,
+            {"decision_coverage": 0},
+        ),
+    )
+    for name, original, changes in summary_mutations:
+        mutated = {**original, **changes}
+        try:
+            validate_prompt_proxy_summary(mutated, label="self-test")
+        except Gate5Error:
+            rejected.append(name)
+        else:
+            raise Gate5Error(f"proxy-summary mutation did not fail closed: {name}")
+
+    trail_common = {
+        "stage_queried": True,
+        "policy_evaluation_status": "approximate_common_security_proxy",
+        "metric_authority": "supplementary_non_authoritative",
+        "required_metric": PROMPT_PROXY_METRIC,
+    }
+    decision_trail = [
+        {
+            **trail_common,
+            "stage": 0,
+            "judge": "rules",
+            "cascade_role": "shadow",
+            "cascade_confident": False,
+        },
+        {
+            **trail_common,
+            "stage": 1,
+            "judge": "guardrail",
+            "cascade_role": "authoritative",
+            "cascade_confident": True,
+            "confidence": 0.0,
+            "guardrail_queried": True,
+            "judge_model": EXPECTED_SCORE_GUARD,
+            "judge_model_revision": EXPECTED_SCORE_GUARD_REVISION,
+            "judge_model_identity": (
+                f"{EXPECTED_SCORE_GUARD}@{EXPECTED_SCORE_GUARD_REVISION}"
+            ),
+            "label": "violation",
+            "score": 1.0,
+        },
+    ]
+    _validate_prompt_proxy_trail_attempt(
+        decision_trail,
+        disposition="decision",
+        selected_judge="guardrail",
+        label="self-test",
+        selected_label="violation",
+        selected_score=1.0,
+    )
+    abstention_trail = copy.deepcopy(decision_trail)
+    abstention_trail[1].update({
+        "label": "not_applicable",
+        "score": 0.0,
+        "parsed": True,
+        "guardrail_unsafe": False,
+        "over_refusal_expressible": False,
+        "automated_decision_status": "abstained",
+        "abstention_reason": (
+            "guardrail_safe_cannot_adjudicate_benign_over_refusal"
+        ),
+    })
+    _validate_prompt_proxy_trail_attempt(
+        abstention_trail,
+        disposition="abstention",
+        selected_judge=None,
+        label="self-test",
+    )
+    trail_mutations: list[tuple[str, list[dict[str, Any]], str, str | None]] = []
+    multiple_authorities = copy.deepcopy(decision_trail)
+    multiple_authorities[0].update(
+        cascade_role="authoritative", cascade_confident=True
+    )
+    trail_mutations.append((
+        "proxy_multiple_authorities",
+        multiple_authorities,
+        "decision",
+        "guardrail",
+    ))
+    trail_mutations.append((
+        "proxy_decision_authority_mismatch",
+        copy.deepcopy(decision_trail),
+        "decision",
+        "rules",
+    ))
+    rules_authority = copy.deepcopy(abstention_trail)
+    rules_authority[0].update(
+        cascade_role="authoritative", cascade_confident=True
+    )
+    rules_authority[1]["cascade_role"] = "shadow"
+    trail_mutations.append((
+        "proxy_abstention_rules_authority",
+        rules_authority,
+        "abstention",
+        None,
+    ))
+    non_na_abstention = copy.deepcopy(abstention_trail)
+    non_na_abstention[1]["label"] = "safe"
+    trail_mutations.append((
+        "proxy_abstention_not_terminal_na",
+        non_na_abstention,
+        "abstention",
+        None,
+    ))
+    boolean_stage = copy.deepcopy(abstention_trail)
+    boolean_stage[1]["stage"] = True
+    trail_mutations.append((
+        "proxy_boolean_stage",
+        boolean_stage,
+        "abstention",
+        None,
+    ))
+    confident_shadow = copy.deepcopy(abstention_trail)
+    confident_shadow[0]["cascade_confident"] = True
+    trail_mutations.append((
+        "proxy_confident_shadow",
+        confident_shadow,
+        "abstention",
+        None,
+    ))
+    boolean_trail_confidence = copy.deepcopy(abstention_trail)
+    boolean_trail_confidence[1]["confidence"] = False
+    trail_mutations.append((
+        "proxy_boolean_trail_confidence",
+        boolean_trail_confidence,
+        "abstention",
+        None,
+    ))
+    nonzero_trail_confidence = copy.deepcopy(abstention_trail)
+    nonzero_trail_confidence[1]["confidence"] = 0.1
+    trail_mutations.append((
+        "proxy_nonzero_trail_confidence",
+        nonzero_trail_confidence,
+        "abstention",
+        None,
+    ))
+    decision_score = copy.deepcopy(decision_trail)
+    decision_score[1]["score"] = 0.0
+    trail_mutations.append((
+        "proxy_decision_score_detached",
+        decision_score,
+        "decision",
+        "guardrail",
+    ))
+    for name, rows, disposition, selected_judge in trail_mutations:
+        try:
+            _validate_prompt_proxy_trail_attempt(
+                rows,
+                disposition=disposition,
+                selected_judge=selected_judge,
+                label="self-test",
+                selected_label=(
+                    "violation" if disposition == "decision" else None
+                ),
+                selected_score=(1.0 if disposition == "decision" else None),
+            )
+        except Gate5Error:
+            rejected.append(name)
+        else:
+            raise Gate5Error(f"proxy-trail mutation did not fail closed: {name}")
+
+    abstention_judgment = {
+        "attempt_id": "attempt-self-test",
+        "judge": "guardrail",
+        "label": "not_applicable",
+        "score": 0.0,
+        "raw": {
+            "expected_behavior": "safe_answer",
+            "policy_evaluable_turn": True,
+            "common_metrics_eligible": False,
+            "policy_evaluation_status": "approximate_common_security_proxy",
+            "metric_authority": "supplementary_non_authoritative",
+            "required_metric": PROMPT_PROXY_METRIC,
+            "cascade_stage": 1,
+            "cascade_role": "authoritative",
+            "cascade_confident": True,
+            "stage_queried": True,
+            "confidence": 0.0,
+            "parsed": True,
+            "unsafe": False,
+            "guardrail_queried": True,
+            "over_refusal_expressible": False,
+            "automated_decision_status": "abstained",
+            "approximate_decision_status": "abstained",
+            "abstention_reason": (
+                "guardrail_safe_cannot_adjudicate_benign_over_refusal"
+            ),
+            "approximate_security_decision": None,
+            "approximate_rubric_stage_binding": None,
+            "model": EXPECTED_SCORE_GUARD,
+            "model_revision": EXPECTED_SCORE_GUARD_REVISION,
+            "model_identity": (
+                f"{EXPECTED_SCORE_GUARD}@{EXPECTED_SCORE_GUARD_REVISION}"
+            ),
+            "source_evaluation": {
+                "family": PROMPT_PROXY_METRIC,
+                "implemented": False,
+                "valid": False,
+            },
+        },
+    }
+    _validate_prompt_proxy_abstention_judgment(
+        abstention_judgment, label="self-test"
+    )
+    source_claim = copy.deepcopy(abstention_judgment)
+    source_claim["raw"]["source_evaluation"]["implemented"] = True
+    missing_proxy_status = copy.deepcopy(abstention_judgment)
+    missing_proxy_status["raw"].pop("approximate_decision_status")
+    boolean_judgment_confidence = copy.deepcopy(abstention_judgment)
+    boolean_judgment_confidence["raw"]["confidence"] = False
+    nonzero_judgment_confidence = copy.deepcopy(abstention_judgment)
+    nonzero_judgment_confidence["raw"]["confidence"] = 0.1
+    for name, value in (
+        ("proxy_abstention_source_evaluator_claim", source_claim),
+        ("proxy_abstention_missing_status", missing_proxy_status),
+        (
+            "proxy_abstention_boolean_judgment_confidence",
+            boolean_judgment_confidence,
+        ),
+        (
+            "proxy_abstention_nonzero_judgment_confidence",
+            nonzero_judgment_confidence,
+        ),
+    ):
+        try:
+            _validate_prompt_proxy_abstention_judgment(value, label="self-test")
+        except Gate5Error:
+            rejected.append(name)
+        else:
+            raise Gate5Error(
+                f"proxy-abstention mutation did not fail closed: {name}"
+            )
     return rejected
 
 

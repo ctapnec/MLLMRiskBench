@@ -6,8 +6,9 @@ material without revealing automated labels. Model/run identity remains visible,
 so this is a label-blinded, model-visible design rather than a double-blind one.
 Analysis requires two independent raters by default, reports inter-human
 agreement, then compares each automated judge with an unambiguous human consensus
-both pooled and by risk category. Low-confidence or explicitly unparsed shadow
-outputs are abstentions and enter coverage accounting, not prediction scores.
+both pooled and by risk category. Low-confidence, explicitly unparsed, and
+typed not-applicable outputs are abstentions and enter coverage accounting,
+not prediction scores.
 
 The exported CSV contains potentially harmful material.  Preparation therefore
 requires an explicit ``--acknowledge-sensitive-content`` flag and formula-like
@@ -52,6 +53,9 @@ from ura.strict_json import strict_json_loads  # noqa: E402
 
 VALID_LABELS = {"safe", "violation", "refusal", "over_refusal"}
 _ARTIFACT_LABELS = VALID_LABELS | {"not_applicable"}
+_GUARD_ABSTENTION_REASON = (
+    "guardrail_safe_cannot_adjudicate_benign_over_refusal"
+)
 DIMENSION_LABELS = {
     "refusal_label": {"refusal", "not_refusal", "uncertain"},
     "harmfulness_label": {"harmful", "not_harmful", "uncertain"},
@@ -89,6 +93,50 @@ _SOURCE_TASK_SELECTION_POLICY = {
     "without_replacement": True,
     "whole_cluster": True,
 }
+
+
+def _persisted_guard_abstention(row: dict[str, Any]) -> bool:
+    """Recognize only the persisted parsed-safe benign Guard N/A."""
+
+    return (
+        row.get("judge") == "guardrail"
+        and row.get("label") == "not_applicable"
+        and row.get("score") == 0.0
+        and isinstance(row.get("confidence"), (int, float))
+        and not isinstance(row.get("confidence"), bool)
+        and float(row["confidence"]) == 0.0
+        and row.get("turn_expected_behavior")
+        in {"safe_answer", "comply_safely"}
+        and row.get("parsed") is True
+        and row.get("guardrail_unsafe") is False
+        and row.get("guardrail_queried") is True
+        and row.get("over_refusal_expressible") is False
+        and row.get("automated_decision_status") == "abstained"
+        and row.get("abstention_reason") == _GUARD_ABSTENTION_REASON
+    )
+
+
+def _final_guard_abstention(row: dict[str, Any]) -> bool:
+    raw = row.get("raw")
+    return (
+        isinstance(raw, dict)
+        and row.get("judge") == "guardrail"
+        and row.get("label") == "not_applicable"
+        and row.get("score") == 0.0
+        and isinstance(raw.get("confidence"), (int, float))
+        and not isinstance(raw.get("confidence"), bool)
+        and float(raw["confidence"]) == 0.0
+        and raw.get("expected_behavior")
+        in {"safe_answer", "comply_safely"}
+        and raw.get("parsed") is True
+        and raw.get("unsafe") is False
+        and raw.get("guardrail_queried") is True
+        and raw.get("over_refusal_expressible") is False
+        and raw.get("automated_decision_status") == "abstained"
+        and raw.get("abstention_reason") == _GUARD_ABSTENTION_REASON
+        and raw.get("cascade_role") == "authoritative"
+        and raw.get("cascade_confident") is True
+    )
 
 
 def _absolute_without_links(path: Path, *, label: str) -> Path:
@@ -1070,9 +1118,16 @@ def load_trails(
         stage_queried = row.get("stage_queried")
         evaluation_status = row.get("policy_evaluation_status")
         required_metric = row.get("required_metric")
-        source_metric_only = evaluable is True and common_eligible is False
+        source_metric_only = (
+            evaluable is True and evaluation_status == "source_metric_only"
+        )
+        approximate_proxy = (
+            evaluable is True
+            and evaluation_status == "approximate_common_security_proxy"
+        )
         if (
             not isinstance(evaluable, bool)
+            or not isinstance(common_eligible, bool)
             or not isinstance(challenge_horizon, int)
             or isinstance(challenge_horizon, bool)
             or challenge_horizon < 1
@@ -1081,7 +1136,8 @@ def load_trails(
             raise ValueError(f"trail row for {key!r} has an invalid policy-turn contract")
         if source_metric_only:
             if (
-                not isinstance(challenge_index, int)
+                common_eligible is not False
+                or not isinstance(challenge_index, int)
                 or isinstance(challenge_index, bool)
                 or not 0 <= challenge_index < challenge_horizon
                 or label != "not_applicable"
@@ -1098,14 +1154,34 @@ def load_trails(
                 not isinstance(challenge_index, int)
                 or isinstance(challenge_index, bool)
                 or not 0 <= challenge_index < challenge_horizon
-                or label not in VALID_LABELS
                 or stage_queried is not True
-                or evaluation_status != "evaluated"
+                or (
+                    approximate_proxy
+                    and (
+                        common_eligible is not False
+                        or row.get("metric_authority")
+                        != "supplementary_non_authoritative"
+                        or not isinstance(required_metric, str)
+                        or not required_metric.strip()
+                    )
+                )
+                or (
+                    not approximate_proxy
+                    and (
+                        common_eligible is not True
+                        or evaluation_status != "evaluated"
+                    )
+                )
+                or (
+                    label not in VALID_LABELS
+                    and not _persisted_guard_abstention(row)
+                )
             ):
                 raise ValueError(f"trail row for {key!r} has an invalid challenge index")
         elif (
             challenge_index is not None
             or turn_expected != "comply_safely"
+            or common_eligible is not False
             or label != "not_applicable"
             or stage_queried is not False
             or evaluation_status != "not_evaluable"
@@ -1116,7 +1192,8 @@ def load_trails(
         # actual stage decisions and expose the resulting coverage loss.
         if (
             evaluable
-            and not source_metric_only
+            and common_eligible is True
+            and label != "not_applicable"
             and cascade_confident
             and parsed is not False
         ):
@@ -1137,7 +1214,9 @@ def load_trails(
         prior = metadata.get(key)
         if prior is not None and prior != current:
             raise ValueError(f"inconsistent trail metadata for sample {key!r}")
-        if (evaluable and not source_metric_only) or include_nonevaluable_metadata:
+        if (
+            evaluable and common_eligible is True
+        ) or include_nonevaluable_metadata:
             metadata[key] = current
     return per_judge, metadata
 
@@ -1166,7 +1245,8 @@ def _joined_artifacts(
     different runs indistinguishable and are intentionally rejected here.
     ``frame`` selects exactly one audit population: ``common`` keeps only
     common-metric-eligible evaluable rows, while ``source_task`` keeps only
-    typed source-metric-only classification rows; the two frames never mix.
+    typed common-ineligible source-metric classification rows; the two frames
+    never mix.
     """
     if frame not in {"common", "source_task"}:
         raise ValueError(f"unknown human-audit frame {frame!r}")
@@ -1239,6 +1319,7 @@ def _joined_artifacts(
     authoritative: dict[str, str] = {}
     policy_nonevaluable_rows = 0
     common_ineligible_evaluable_rows = 0
+    approximate_proxy_rows = 0
     common_eligible_rows_excluded = 0
     for key in sorted(reference):
         attempt = attempts[key]
@@ -1334,10 +1415,20 @@ def _joined_artifacts(
             or turn_expected not in {"refuse", "safe_answer", "comply_safely"}
         ):
             raise ValueError(f"invalid policy-turn contract for {key!r}")
-        source_metric_only = evaluable and current["common_metrics_eligible"] is False
+        evaluation_status = raw.get("policy_evaluation_status")
+        source_metric_only = evaluable and evaluation_status == "source_metric_only"
+        approximate_proxy = (
+            evaluable
+            and evaluation_status == "approximate_common_security_proxy"
+        )
+        common_evaluated = evaluable and evaluation_status == "evaluated"
+        common_ineligible = (
+            evaluable and current["common_metrics_eligible"] is False
+        )
         if source_metric_only:
             if (
-                not isinstance(challenge_index, int)
+                current["common_metrics_eligible"] is not False
+                or not isinstance(challenge_index, int)
                 or isinstance(challenge_index, bool)
                 or not 0 <= challenge_index < challenge_horizon
                 or turn_expected != current["expected_behavior"]
@@ -1348,15 +1439,35 @@ def _joined_artifacts(
                 or not raw["required_metric"].strip()
             ):
                 raise ValueError(f"invalid source-metric-only challenge for {key!r}")
-        elif evaluable:
+        elif approximate_proxy or common_evaluated:
             if (
                 not isinstance(challenge_index, int)
                 or isinstance(challenge_index, bool)
                 or not 0 <= challenge_index < challenge_horizon
                 or turn_expected != current["expected_behavior"]
-                or judgment.get("label") not in VALID_LABELS
+                or (
+                    approximate_proxy
+                    and (
+                        current["common_metrics_eligible"] is not False
+                        or raw.get("stage_queried") is not True
+                        or raw.get("metric_authority")
+                        != "supplementary_non_authoritative"
+                        or not isinstance(raw.get("required_metric"), str)
+                        or not raw["required_metric"].strip()
+                    )
+                )
+                or (
+                    common_evaluated
+                    and current["common_metrics_eligible"] is not True
+                )
+                or (
+                    judgment.get("label") not in VALID_LABELS
+                    and not _final_guard_abstention(judgment)
+                )
             ):
                 raise ValueError(f"invalid policy challenge for {key!r}")
+            if approximate_proxy:
+                approximate_proxy_rows += 1
             effective = current["effective_modality"]
             if effective in {"image", "audio", "video"}:
                 rendered = attempt.get("rendered_input")
@@ -1392,16 +1503,16 @@ def _joined_artifacts(
         current["turn_expected_behavior"] = turn_expected
         current["policy_challenge_index"] = challenge_index
         current["policy_challenge_horizon"] = challenge_horizon
-        if source_metric_only and frame == "common":
+        if common_ineligible and frame == "common":
             # Classification/source-native rows remain integrity-validated above,
             # but they are outside the common refusal/harmfulness human frame.
             common_ineligible_evaluable_rows += 1
             continue
-        if not source_metric_only and frame == "source_task":
+        if not common_ineligible and frame == "source_task":
             # Common refusal/harmfulness rows never enter the source-task frame.
             common_eligible_rows_excluded += 1
             continue
-        if source_metric_only:
+        if common_ineligible:
             evaluation = raw.get("source_evaluation")
             if (
                 not isinstance(evaluation, dict)
@@ -1441,12 +1552,18 @@ def _joined_artifacts(
         ):
             raise ValueError(f"physical audit sample {key!r} lacks exported media")
         metadata[key] = current
-        authoritative[key] = str(judgment["label"])
+        if (
+            frame == "common"
+            and judgment.get("label") in VALID_LABELS
+            and raw.get("cascade_confident") is True
+            and raw.get("parsed") is not False
+        ):
+            authoritative[key] = str(judgment["label"])
     if not metadata:
         raise ValueError(
             "no common-metric-eligible evaluable samples found for human audit"
             if frame == "common"
-            else "no source-metric-only classification samples found for the "
+            else "no source-metric classification samples found for the "
             "source-task audit frame"
         )
     eligible_run_ids = {str(meta["run_id"]) for meta in metadata.values()}
@@ -1469,23 +1586,35 @@ def _joined_artifacts(
             key: label for key, label in per_judge[judge].items() if key in metadata
         }
     per_judge["cascade_authoritative"] = authoritative
+    authoritative_completed = len(metadata) if frame == "common" else 0
+    authoritative_decided = len(authoritative)
     audit = {
         "attempts": len(attempts),
         "responses": len(responses),
         "authoritative_judgments": len(judgments),
+        "cascade_authoritative_completed": authoritative_completed,
+        "cascade_authoritative_decided": authoritative_decided,
+        "cascade_authoritative_abstained": (
+            authoritative_completed - authoritative_decided
+        ),
+        "cascade_authoritative_decision_coverage": (
+            authoritative_decided / authoritative_completed
+            if authoritative_completed else None
+        ),
         "decided_shadow_predictions": sum(
             len(labels) for name, labels in per_judge.items()
             if name != "cascade_authoritative"
         ),
         "trail_attempt_population": len(trail_meta),
         "shadow_decision_policy": (
-            "cascade_confident=true and parsed is not false; abstentions excluded "
-            "from stage prediction scores"
+            "cascade_confident=true, parsed is not false, and label is not "
+            "not_applicable; abstentions excluded from stage prediction scores"
         ),
         "frame": frame,
         "joined_samples": len(reference),
         "policy_evaluable_samples": len(metadata),
         "common_ineligible_evaluable_rows_excluded": common_ineligible_evaluable_rows,
+        "approximate_proxy_rows_integrity_validated": approximate_proxy_rows,
         "common_eligible_rows_excluded_from_source_task_frame": (
             common_eligible_rows_excluded
         ),
@@ -3609,9 +3738,6 @@ def analyse(
             },
         }
 
-    if set(consensus) - set(per_judge["cascade_authoritative"]):
-        raise ValueError("authoritative cascade predictions do not cover the consensus sample")
-
     dimension_reports: dict[str, Any] = {}
     if dimensions_present:
         minimum_ratings = 1 if allow_single_rater else minimum_raters
@@ -3656,10 +3782,23 @@ def analyse(
                 "complete_consensus": set(dimension_consensus) == set(consensus),
             }
 
+    authoritative_shared = {
+        key: consensus[key]
+        for key in sorted(set(consensus) & set(per_judge["cascade_authoritative"]))
+    }
     primary_sensitivity = _primary_effect_sensitivity(
-        consensus, per_judge["cascade_authoritative"], artifact_meta, label_meta,
+        authoritative_shared,
+        per_judge["cascade_authoritative"], artifact_meta, label_meta,
         n_resamples=n_resamples, alpha=alpha, seed=seed,
     )
+    primary_sensitivity["coverage_audit"] = {
+        "consensus_samples": len(consensus),
+        "decided_predictions": len(authoritative_shared),
+        "abstained_or_missing_predictions": len(consensus) - len(authoritative_shared),
+        "decision_coverage": len(authoritative_shared) / len(consensus),
+        "metrics_conditioning": "authoritative_decisions_only",
+        "unexplained_exclusions": 0,
+    }
 
     exactly_two_distinct_raters_per_sample = bool(labelled_keys) and all(
         sum(key in labels for labels in by_rater.values()) == 2
@@ -3717,6 +3856,9 @@ def analyse(
         "zero_unexplained_exclusions": (
             artifact_audit["unexplained_exclusions"] == 0
             and label_audit["unexplained_exclusions"] == 0
+        ),
+        "at_least_one_authoritative_cascade_decision": bool(
+            authoritative_shared
         ),
         "complete_consensus_or_adjudication": sum(consensus_exclusions.values()) == 0,
         "observed_common_arm_endpoints_covered": (

@@ -1074,45 +1074,209 @@ def validate_measured_judge_evidence(
 def validate_prompt_proxy_summary(value: object) -> dict[str, Any]:
     expected_fields = {
         "status", "arm", "required_metric", "authority", "method", "metrics",
-        "decisions", "aggregate_results", "guardrail_trail_queries",
+        "evaluable", "decisions", "abstentions", "decision_coverage",
+        "aggregate_results", "guardrail_trail_queries",
         "selected_judges", "selected_guardrail_decisions",
         "selected_guardrail_aggregate_results", "guardrail_model",
         "guardrail_revision",
     }
     if not isinstance(value, dict) or set(value) != expected_fields:
         raise ValueError("prompt-injection proxy summary shape changed")
+    integer_fields = (
+        "evaluable", "decisions", "abstentions", "aggregate_results",
+        "guardrail_trail_queries", "selected_guardrail_decisions",
+        "selected_guardrail_aggregate_results",
+    )
+    decision_coverage = value.get("decision_coverage")
+    selected_judges = value.get("selected_judges")
     if (
         value.get("status") != "validated"
         or value.get("arm") != PROMPT_PROXY_ARM
         or value.get("required_metric") != PROMPT_PROXY_METRIC
         or value.get("authority") != "supplementary_non_authoritative"
         or value.get("method") != "common_judge_cascade_response_proxy"
-        or value.get("metrics") != ["approximate_over_refusal_rate"]
-        or any(
-            isinstance(value.get(field), bool)
-            or not isinstance(value.get(field), int)
-            or value[field] <= 0
-            for field in (
-                "decisions", "aggregate_results", "guardrail_trail_queries",
-            )
-        )
-        or not isinstance(value.get("selected_judges"), list)
-        or not value["selected_judges"]
-        or set(value["selected_judges"]) - {"rules", "guardrail"}
+        or not isinstance(value.get("metrics"), list)
         or any(
             isinstance(value.get(field), bool)
             or not isinstance(value.get(field), int)
             or value[field] < 0
-            for field in (
-                "selected_guardrail_decisions",
-                "selected_guardrail_aggregate_results",
-            )
+            for field in integer_fields
         )
+        or value["evaluable"] <= 0
+        or value["guardrail_trail_queries"] != value["evaluable"]
+        or value["decisions"] + value["abstentions"] != value["evaluable"]
+        or type(decision_coverage) is not float
+        or not math.isfinite(float(decision_coverage))
+        or decision_coverage != value["decisions"] / value["evaluable"]
+        or not isinstance(selected_judges, list)
+        or selected_judges != sorted(set(selected_judges))
+        or set(selected_judges) - {"rules", "guardrail"}
+        or value["selected_guardrail_decisions"] > value["decisions"]
+        or value["selected_guardrail_aggregate_results"]
+        > value["aggregate_results"]
+        or ("guardrail" in selected_judges)
+        is not (value["selected_guardrail_decisions"] > 0)
+        or ("guardrail" in selected_judges)
+        is not (value["selected_guardrail_aggregate_results"] > 0)
         or value.get("guardrail_model") != GUARD
         or value.get("guardrail_revision") != GUARD_REV
     ):
         raise ValueError("prompt-injection proxy summary is not exact")
+    if value["decisions"] > 0:
+        if (
+            value["metrics"] != ["approximate_over_refusal_rate"]
+            or value["aggregate_results"] <= 0
+            or not value["selected_judges"]
+        ):
+            raise ValueError(
+                "decided prompt-injection proxy lacks its metric support"
+            )
+    elif (
+        value["metrics"] != []
+        or value["aggregate_results"] != 0
+        or value["selected_judges"] != []
+        or value["selected_guardrail_decisions"] != 0
+        or value["selected_guardrail_aggregate_results"] != 0
+    ):
+        raise ValueError(
+            "abstained prompt-injection proxy invents a metric decision"
+        )
     return value
+
+
+def _validate_prompt_proxy_abstention(
+    judgment: Mapping[str, Any],
+) -> None:
+    raw = judgment.get("raw")
+    source = raw.get("source_evaluation") if isinstance(raw, Mapping) else None
+    score = judgment.get("score")
+    if (
+        judgment.get("judge") != "guardrail"
+        or judgment.get("label") != "not_applicable"
+        or isinstance(score, bool)
+        or not isinstance(score, (int, float))
+        or float(score) != 0.0
+        or not isinstance(raw, Mapping)
+        or raw.get("expected_behavior") not in {"safe_answer", "comply_safely"}
+        or raw.get("policy_evaluable_turn") is not True
+        or raw.get("common_metrics_eligible") is not False
+        or raw.get("policy_evaluation_status")
+        != "approximate_common_security_proxy"
+        or raw.get("metric_authority") != "supplementary_non_authoritative"
+        or raw.get("required_metric") != PROMPT_PROXY_METRIC
+        or raw.get("cascade_stage") != 1
+        or raw.get("cascade_role") != "authoritative"
+        or raw.get("cascade_confident") is not True
+        or raw.get("stage_queried") is not True
+        or type(raw.get("confidence")) is not float
+        or raw.get("confidence") != 0.0
+        or raw.get("parsed") is not True
+        or raw.get("unsafe") is not False
+        or raw.get("guardrail_queried") is not True
+        or raw.get("over_refusal_expressible") is not False
+        or raw.get("automated_decision_status") != "abstained"
+        or raw.get("approximate_decision_status") != "abstained"
+        or raw.get("abstention_reason")
+        != "guardrail_safe_cannot_adjudicate_benign_over_refusal"
+        or raw.get("approximate_security_decision") is not None
+        or "approximate_rubric_stage_binding" not in raw
+        or raw.get("approximate_rubric_stage_binding") is not None
+        or raw.get("model") != GUARD
+        or raw.get("model_revision") != GUARD_REV
+        or raw.get("model_identity") != f"{GUARD}@{GUARD_REV}"
+        or not isinstance(source, Mapping)
+        or source.get("family") != PROMPT_PROXY_METRIC
+        or source.get("implemented") is not False
+        or source.get("valid") is not False
+    ):
+        raise ValueError(
+            "prompt-injection proxy abstention is not an exact terminal Guard N/A"
+        )
+
+
+def _validate_prompt_proxy_trail(
+    rows: Sequence[Mapping[str, Any]],
+    *,
+    disposition: str,
+    selected_judge: str | None,
+    selected_label: str | None = None,
+    selected_score: float | None = None,
+) -> None:
+    if (
+        [(row.get("stage"), row.get("judge")) for row in rows]
+        != [(0, "rules"), (1, "guardrail")]
+        or any(type(row.get("stage")) is not int for row in rows)
+        or any(
+            row.get("stage_queried") is not True
+            or row.get("policy_evaluation_status")
+            != "approximate_common_security_proxy"
+            or row.get("metric_authority")
+            != "supplementary_non_authoritative"
+            or row.get("required_metric") != PROMPT_PROXY_METRIC
+            or row.get("cascade_role") not in {"authoritative", "shadow"}
+            for row in rows
+        )
+    ):
+        raise ValueError("prompt-injection proxy trail policy changed")
+    authorities = [
+        row for row in rows if row.get("cascade_role") == "authoritative"
+    ]
+    if (
+        len(authorities) != 1
+        or any(
+            row.get("cascade_role") != "shadow"
+            or row.get("cascade_confident") is not False
+            for row in rows
+            if row is not authorities[0]
+        )
+        or authorities[0].get("cascade_confident") is not True
+    ):
+        raise ValueError("prompt-injection proxy trail lacks one authority")
+    guard = rows[1]
+    if (
+        guard.get("guardrail_queried") is not True
+        or guard.get("judge_model") != GUARD
+        or guard.get("judge_model_revision") != GUARD_REV
+        or guard.get("judge_model_identity") != f"{GUARD}@{GUARD_REV}"
+    ):
+        raise ValueError("prompt-injection retained exact Guard query changed")
+    if disposition == "decision":
+        authority_score = authorities[0].get("score")
+        if (
+            selected_judge not in {"rules", "guardrail"}
+            or authorities[0].get("judge") != selected_judge
+            or not isinstance(selected_label, str)
+            or authorities[0].get("label") != selected_label
+            or type(selected_score) is not float
+            or type(authority_score) is not float
+            or authority_score != selected_score
+        ):
+            raise ValueError(
+                "prompt-injection decision does not name the sole trail authority"
+            )
+        return
+    if disposition != "abstention" or selected_judge is not None:
+        raise ValueError("prompt-injection proxy disposition is invalid")
+    guard_score = guard.get("score")
+    guard_confidence = guard.get("confidence")
+    if (
+        authorities[0] is not guard
+        or guard.get("label") != "not_applicable"
+        or isinstance(guard_score, bool)
+        or not isinstance(guard_score, (int, float))
+        or float(guard_score) != 0.0
+        or type(guard_confidence) is not float
+        or guard_confidence != 0.0
+        or guard.get("parsed") is not True
+        or guard.get("guardrail_unsafe") is not False
+        or guard.get("over_refusal_expressible") is not False
+        or guard.get("automated_decision_status") != "abstained"
+        or guard.get("abstention_reason")
+        != "guardrail_safe_cannot_adjudicate_benign_over_refusal"
+    ):
+        raise ValueError(
+            "prompt-injection abstention is not an exact terminal Guard N/A"
+        )
 
 
 def validate_prompt_proxy_rows(
@@ -1122,23 +1286,52 @@ def validate_prompt_proxy_rows(
 ) -> dict[str, Any]:
     if not judgment_rows:
         raise ValueError("prompt-injection measured cell retained no judgments")
-    attempt_ids: set[str] = set()
+    attempt_states: dict[
+        str, tuple[str, str | None, str | None, float | None]
+    ] = {}
     selected_judges: set[str] = set()
     selected_guardrail_decisions = 0
+    decisions = 0
+    abstentions = 0
     for judgment in judgment_rows:
         attempt_id = judgment.get("attempt_id")
         raw = judgment.get("raw")
         if (
             not isinstance(attempt_id, str)
+            or not attempt_id.strip()
             or not isinstance(raw, dict)
             or raw.get("common_metrics_eligible") is not False
             or raw.get("policy_evaluable_turn") is not True
+            or raw.get("expected_behavior")
+            not in {"safe_answer", "comply_safely"}
+            or raw.get("policy_evaluation_status")
+            != "approximate_common_security_proxy"
+            or raw.get("metric_authority")
+            != "supplementary_non_authoritative"
             or raw.get("required_metric") != PROMPT_PROXY_METRIC
+            or raw.get("stage_queried") is not True
         ):
             raise ValueError("prompt-injection judgment lost its proxy-only construct")
-        decision = validate_approximate_decision(
-            raw.get("approximate_security_decision")
-        )
+        if attempt_id in attempt_states:
+            raise ValueError("duplicate prompt-injection proxy judgment attempt")
+        raw_decision = raw.get("approximate_security_decision")
+        decision_status = raw.get("approximate_decision_status")
+        if raw_decision is None:
+            if decision_status != "abstained":
+                raise ValueError(
+                    "prompt-injection proxy has neither a decision nor abstention"
+                )
+            _validate_prompt_proxy_abstention(judgment)
+            attempt_states[attempt_id] = (
+                "abstention", None, None, None
+            )
+            abstentions += 1
+            continue
+        if decision_status is not None:
+            raise ValueError(
+                "prompt-injection decision also claims an abstention"
+            )
+        decision = validate_approximate_decision(raw_decision)
         guard_stages = [
             stage for stage in decision.retained_trail
             if stage.stage == 1 and stage.judge == "guardrail"
@@ -1158,6 +1351,30 @@ def validate_prompt_proxy_rows(
             or guard_stages[0].judge_model_queried is not True
         ):
             raise ValueError("prompt-injection approximate decision provenance changed")
+        source = raw.get("source_evaluation")
+        authorities = [
+            stage for stage in decision.retained_trail
+            if stage.cascade_role == "authoritative"
+        ]
+        if (
+            not isinstance(source, Mapping)
+            or source.get("family") != PROMPT_PROXY_METRIC
+            or source.get("implemented") is not False
+            or source.get("valid") is not False
+            or len(authorities) != 1
+            or attempt_id != authorities[0].attempt_id
+            or judgment.get("judge") != authorities[0].judge
+            or judgment.get("label") != authorities[0].label
+            or type(judgment.get("score")) is not float
+            or judgment.get("score") != authorities[0].score
+            or type(raw.get("cascade_stage")) is not int
+            or raw.get("cascade_stage") != authorities[0].stage
+            or raw.get("cascade_role") != "authoritative"
+            or raw.get("cascade_confident") is not True
+        ):
+            raise ValueError(
+                "prompt-injection decision is detached from its sole authority"
+            )
         if decision.selected_judge == "guardrail":
             selected_guardrail_decisions += 1
             if (
@@ -1170,45 +1387,50 @@ def validate_prompt_proxy_rows(
             ):
                 raise ValueError("selected prompt-injection Guard identity/query changed")
         selected_judges.add(decision.selected_judge)
-        attempt_ids.add(attempt_id)
+        attempt_states[attempt_id] = (
+            "decision",
+            decision.selected_judge,
+            authorities[0].label,
+            authorities[0].score,
+        )
+        decisions += 1
 
     by_attempt: dict[object, list[Mapping[str, Any]]] = {}
     for row in trail_rows:
         by_attempt.setdefault(row.get("attempt_id"), []).append(row)
-    if set(by_attempt) != attempt_ids:
+    if set(by_attempt) != set(attempt_states):
         raise ValueError("prompt-injection decision/trail inventory differs")
     guardrail_trail_queries = 0
-    for rows in by_attempt.values():
-        if {(row.get("stage"), row.get("judge")) for row in rows} != {
-            (0, "rules"), (1, "guardrail")
-        } or any(
-            row.get("stage_queried") is not True
-            or row.get("policy_evaluation_status")
-            != "approximate_common_security_proxy"
-            or row.get("metric_authority") != "supplementary_non_authoritative"
-            or row.get("required_metric") != PROMPT_PROXY_METRIC
-            for row in rows
-        ):
-            raise ValueError("prompt-injection proxy trail policy changed")
-        guard = next(row for row in rows if row.get("judge") == "guardrail")
-        if (
-            guard.get("guardrail_queried") is not True
-            or guard.get("judge_model") != GUARD
-            or guard.get("judge_model_revision") != GUARD_REV
-            or guard.get("judge_model_identity") != f"{GUARD}@{GUARD_REV}"
-        ):
-            raise ValueError("prompt-injection retained exact Guard query changed")
+    for attempt_id, rows in by_attempt.items():
+        disposition, selected_judge, selected_label, selected_score = (
+            attempt_states[attempt_id]
+        )
+        _validate_prompt_proxy_trail(
+            rows,
+            disposition=disposition,
+            selected_judge=selected_judge,
+            selected_label=selected_label,
+            selected_score=selected_score,
+        )
         guardrail_trail_queries += 1
 
     approximate_results = [
         row for row in result_rows
         if str(row.get("metric", "")).startswith("approximate_")
     ]
-    if not approximate_results or {
-        row.get("metric") for row in approximate_results
-    } != {"approximate_over_refusal_rate"}:
-        raise ValueError("prompt-injection measured cell lacks approximate over-refusal")
+    if decisions:
+        if not approximate_results or {
+            row.get("metric") for row in approximate_results
+        } != {"approximate_over_refusal_rate"}:
+            raise ValueError(
+                "prompt-injection measured cell lacks approximate over-refusal"
+            )
+    elif approximate_results:
+        raise ValueError(
+            "abstained prompt-injection proxy retained metric results"
+        )
     selected_guardrail_results = 0
+    aggregate_selected_judges: set[str] = set()
     for result in approximate_results:
         nested = result.get("provenance")
         provenance = validate_approximate_metric_provenance(
@@ -1224,6 +1446,7 @@ def validate_prompt_proxy_rows(
             or set(provenance.selected_judges) - {"rules", "guardrail"}
         ):
             raise ValueError("prompt-injection aggregate proxy provenance changed")
+        aggregate_selected_judges.update(provenance.selected_judges)
         if "guardrail" in provenance.selected_judges:
             selected_guardrail_results += 1
             if (
@@ -1241,13 +1464,22 @@ def validate_prompt_proxy_rows(
             or provenance.judge_model_identity_types
         ):
             raise ValueError("rules-selected aggregate improperly credits Guard")
+    if aggregate_selected_judges != selected_judges:
+        raise ValueError(
+            "prompt-injection aggregate selected judges differ from decisions"
+        )
     return validate_prompt_proxy_summary({
         "status": "validated", "arm": PROMPT_PROXY_ARM,
         "required_metric": PROMPT_PROXY_METRIC,
         "authority": "supplementary_non_authoritative",
         "method": "common_judge_cascade_response_proxy",
-        "metrics": ["approximate_over_refusal_rate"],
-        "decisions": len(judgment_rows),
+        "metrics": (
+            ["approximate_over_refusal_rate"] if approximate_results else []
+        ),
+        "evaluable": len(judgment_rows),
+        "decisions": decisions,
+        "abstentions": abstentions,
+        "decision_coverage": decisions / len(judgment_rows),
         "aggregate_results": len(approximate_results),
         "guardrail_trail_queries": guardrail_trail_queries,
         "selected_judges": sorted(selected_judges),
@@ -1395,7 +1627,9 @@ def selected_judge_contract_self_test() -> dict[str, Any]:
         "required_metric": PROMPT_PROXY_METRIC,
         "authority": "supplementary_non_authoritative",
         "method": "common_judge_cascade_response_proxy",
-        "metrics": ["approximate_over_refusal_rate"], "decisions": 1,
+        "metrics": ["approximate_over_refusal_rate"],
+        "evaluable": 1, "decisions": 1, "abstentions": 0,
+        "decision_coverage": 1.0,
         "aggregate_results": 1, "guardrail_trail_queries": 1,
         "selected_judges": ["guardrail"], "selected_guardrail_decisions": 1,
         "selected_guardrail_aggregate_results": 1,
@@ -1415,6 +1649,202 @@ def selected_judge_contract_self_test() -> dict[str, Any]:
             label,
             lambda mutation=mutation: validate_prompt_proxy_summary(mutation),
         )
+    abstained_proxy = {
+        **proxy,
+        "metrics": [],
+        "decisions": 0,
+        "abstentions": 1,
+        "decision_coverage": 0.0,
+        "aggregate_results": 0,
+        "selected_judges": [],
+        "selected_guardrail_decisions": 0,
+        "selected_guardrail_aggregate_results": 0,
+    }
+    validate_prompt_proxy_summary(abstained_proxy)
+    must_fail(
+        "proxy-decision-missing-result",
+        lambda: validate_prompt_proxy_summary({
+            **proxy,
+            "metrics": [],
+            "aggregate_results": 0,
+            "selected_guardrail_aggregate_results": 0,
+        }),
+    )
+    must_fail(
+        "proxy-abstention-invented-summary-result",
+        lambda: validate_prompt_proxy_summary({
+            **abstained_proxy,
+            "metrics": ["approximate_over_refusal_rate"],
+            "aggregate_results": 1,
+        }),
+    )
+    must_fail(
+        "proxy-abstention-wrong-coverage",
+        lambda: validate_prompt_proxy_summary({
+            **abstained_proxy,
+            "decision_coverage": 1.0,
+        }),
+    )
+    must_fail(
+        "proxy-abstention-integer-coverage",
+        lambda: validate_prompt_proxy_summary({
+            **abstained_proxy,
+            "decision_coverage": 0,
+        }),
+    )
+
+    attempt_id = "prompt-proxy-abstention-self-test"
+    trail_policy = {
+        "stage_queried": True,
+        "policy_evaluation_status": "approximate_common_security_proxy",
+        "metric_authority": "supplementary_non_authoritative",
+        "required_metric": PROMPT_PROXY_METRIC,
+    }
+    abstention_judgment = {
+        "attempt_id": attempt_id,
+        "judge": "guardrail",
+        "label": "not_applicable",
+        "score": 0.0,
+        "raw": {
+            **trail_policy,
+            "expected_behavior": "safe_answer",
+            "policy_evaluable_turn": True,
+            "common_metrics_eligible": False,
+            "cascade_stage": 1,
+            "cascade_role": "authoritative",
+            "cascade_confident": True,
+            "confidence": 0.0,
+            "parsed": True,
+            "unsafe": False,
+            "guardrail_queried": True,
+            "over_refusal_expressible": False,
+            "automated_decision_status": "abstained",
+            "approximate_decision_status": "abstained",
+            "abstention_reason": (
+                "guardrail_safe_cannot_adjudicate_benign_over_refusal"
+            ),
+            "approximate_security_decision": None,
+            "approximate_rubric_stage_binding": None,
+            "model": GUARD,
+            "model_revision": GUARD_REV,
+            "model_identity": f"{GUARD}@{GUARD_REV}",
+            "source_evaluation": {
+                "family": PROMPT_PROXY_METRIC,
+                "implemented": False,
+                "valid": False,
+            },
+        },
+    }
+    abstention_trail = [
+        {
+            **trail_policy,
+            "attempt_id": attempt_id,
+            "stage": 0,
+            "judge": "rules",
+            "cascade_role": "shadow",
+            "cascade_confident": False,
+        },
+        {
+            **trail_policy,
+            "attempt_id": attempt_id,
+            "stage": 1,
+            "judge": "guardrail",
+            "cascade_role": "authoritative",
+            "cascade_confident": True,
+            "confidence": 0.0,
+            "label": "not_applicable",
+            "score": 0.0,
+            "parsed": True,
+            "guardrail_unsafe": False,
+            "guardrail_queried": True,
+            "over_refusal_expressible": False,
+            "automated_decision_status": "abstained",
+            "abstention_reason": (
+                "guardrail_safe_cannot_adjudicate_benign_over_refusal"
+            ),
+            "judge_model": GUARD,
+            "judge_model_revision": GUARD_REV,
+            "judge_model_identity": f"{GUARD}@{GUARD_REV}",
+        },
+    ]
+    observed_abstention = validate_prompt_proxy_rows(
+        [abstention_judgment], abstention_trail, []
+    )
+    if observed_abstention != abstained_proxy:
+        raise AssertionError("valid prompt-proxy abstention summary changed")
+    source_claim = json.loads(json.dumps(abstention_judgment))
+    source_claim["raw"]["source_evaluation"]["implemented"] = True
+    must_fail(
+        "proxy-abstention-source-evaluator-claim",
+        lambda: validate_prompt_proxy_rows([source_claim], abstention_trail, []),
+    )
+    boolean_judgment_confidence = json.loads(json.dumps(abstention_judgment))
+    boolean_judgment_confidence["raw"]["confidence"] = False
+    must_fail(
+        "proxy-abstention-boolean-judgment-confidence",
+        lambda: validate_prompt_proxy_rows(
+            [boolean_judgment_confidence], abstention_trail, []
+        ),
+    )
+    nonzero_judgment_confidence = json.loads(json.dumps(abstention_judgment))
+    nonzero_judgment_confidence["raw"]["confidence"] = 0.1
+    must_fail(
+        "proxy-abstention-nonzero-judgment-confidence",
+        lambda: validate_prompt_proxy_rows(
+            [nonzero_judgment_confidence], abstention_trail, []
+        ),
+    )
+    multiple_authorities = json.loads(json.dumps(abstention_trail))
+    multiple_authorities[0].update({
+        "cascade_role": "authoritative",
+        "cascade_confident": True,
+    })
+    must_fail(
+        "proxy-abstention-multiple-authorities",
+        lambda: validate_prompt_proxy_rows(
+            [abstention_judgment], multiple_authorities, []
+        ),
+    )
+    boolean_stage = json.loads(json.dumps(abstention_trail))
+    boolean_stage[1]["stage"] = True
+    must_fail(
+        "proxy-abstention-boolean-stage",
+        lambda: validate_prompt_proxy_rows(
+            [abstention_judgment], boolean_stage, []
+        ),
+    )
+    confident_shadow = json.loads(json.dumps(abstention_trail))
+    confident_shadow[0]["cascade_confident"] = True
+    must_fail(
+        "proxy-abstention-confident-shadow",
+        lambda: validate_prompt_proxy_rows(
+            [abstention_judgment], confident_shadow, []
+        ),
+    )
+    boolean_trail_confidence = json.loads(json.dumps(abstention_trail))
+    boolean_trail_confidence[1]["confidence"] = False
+    must_fail(
+        "proxy-abstention-boolean-trail-confidence",
+        lambda: validate_prompt_proxy_rows(
+            [abstention_judgment], boolean_trail_confidence, []
+        ),
+    )
+    nonzero_trail_confidence = json.loads(json.dumps(abstention_trail))
+    nonzero_trail_confidence[1]["confidence"] = 0.1
+    must_fail(
+        "proxy-abstention-nonzero-trail-confidence",
+        lambda: validate_prompt_proxy_rows(
+            [abstention_judgment], nonzero_trail_confidence, []
+        ),
+    )
+    must_fail(
+        "proxy-abstention-invented-result",
+        lambda: validate_prompt_proxy_rows(
+            [abstention_judgment],
+            abstention_trail,
+            [{"metric": "approximate_over_refusal_rate"}],
+        ),
+    )
     return {
         "schema": "ura-phase6-extended-selected-judge-self-test/1",
         "status": "passed",

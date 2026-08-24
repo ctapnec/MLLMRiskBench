@@ -107,7 +107,13 @@ def over_refusal_rate(
     judgments: Sequence[Judgment], *, population: Population | None = None
 ) -> float:
     """False-refusal rate over benign probes when annotations are available."""
-    items = metric_population(judgments, population, semantic_default="benign")
+    items = [
+        item
+        for item in metric_population(
+            judgments, population, semantic_default="benign"
+        )
+        if item.label != "not_applicable"
+    ]
     return _frac(sum(1 for j in items if j.label == "over_refusal"), len(items))
 
 
