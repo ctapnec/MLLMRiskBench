@@ -566,7 +566,7 @@ def test_phase5_rr_preserves_projections_and_starts_terminal_at_canary(
     assert 'SCHEMA = "ura-phase5-target-runtime-terminal/1"' in canaries
     assert 'REASON_CODE = "target_baseline_nontermination_at_generation_cap"' in canaries
     assert (
-        'OBSERVED_PROJECT_COMMIT = "21b27d56da0d081125f4cf4117884a8262386e5d"'
+        'OBSERVED_PROJECT_COMMIT = "5c0a288e7b19dcd748c3169abdf52e2e7d37b2fa"'
         in canaries
     )
     assert (
@@ -664,8 +664,11 @@ def test_phase5_rr_preserves_projections_and_starts_terminal_at_canary(
 
 def test_every_rr_consumer_binds_the_current_commit_observation() -> None:
     root = Path(__file__).parents[2] / "experiments" / "local_campaign" / "templates"
-    observed_commit = "21b27d56da0d081125f4cf4117884a8262386e5d"
-    superseded_commit = "5719a4ff4ba4a711fee433d1f9990c1d3cf2f8a3"
+    observed_commit = "5c0a288e7b19dcd748c3169abdf52e2e7d37b2fa"
+    superseded_commits = (
+        "5719a4ff4ba4a711fee433d1f9990c1d3cf2f8a3",
+        "21b27d56da0d081125f4cf4117884a8262386e5d",
+    )
     consumers = (
         "phase5_core_attest_canary.sh.in",
         "phase5_finalize_gate5.sh.in",
@@ -679,13 +682,15 @@ def test_every_rr_consumer_binds_the_current_commit_observation() -> None:
     for name in consumers:
         source = (root / name).read_text(encoding="utf-8")
         assert observed_commit in source, name
-        assert superseded_commit not in source, name
+        assert not any(commit in source for commit in superseded_commits), name
 
-    current_text_root = "phase5-core-canaries-20260824T012347Z"
-    current_image_root = "rr-image-probe-20260824T012347Z"
+    current_text_root = "phase5-core-canaries-20260824T053641Z"
+    current_image_root = "rr-image-probe-20260824T053641Z"
     old_roots = (
         "phase5-core-canaries-20260822T173216Z",
         "rr-image-probe-20260822T182300Z",
+        "phase5-core-canaries-20260824T012347Z",
+        "rr-image-probe-20260824T012347Z",
     )
     for path in (
         Path(__file__).parents[2] / "experiments" / "RUN_AND_RETURN.md",
@@ -1195,7 +1200,7 @@ def test_phase6_rr_runtime_terminals_are_required_but_never_scheduled() -> None:
         assert '"runnable": 21' in source
         assert '"typed_terminal": 25' in source
         assert '"local-llava-rr.json"' in source
-        assert "21b27d56da0d081125f4cf4117884a8262386e5d" in source
+        assert "5c0a288e7b19dcd748c3169abdf52e2e7d37b2fa" in source
         assert (
             "3a53ab82405636116e9c95850dae1e0c1e394021317707c978bc35b4178ca334"
             in source

@@ -276,7 +276,8 @@ class BuilderPageMixin:
         rows = []
         for index, runtime in enumerate(snapshot.rows, start=1):
             latest = runtime.latest
-            if latest is not None and latest.status == "running":
+            latest_reports_running = latest is not None and latest.status == "running"
+            if latest_reports_running and snapshot.campaign_state == "running":
                 state_text = f"{latest.action.capitalize()} running"
                 tone = "blue"
                 next_action = (
@@ -287,6 +288,29 @@ class BuilderPageMixin:
                     "The retained task log has no terminal event. The exact plan remains "
                     "authoritative: dispatch safely rejoins an identical live named session, "
                     "or lets the installer lock reject a conflicting live operation."
+                )
+            elif latest_reports_running:
+                campaign_label = (
+                    snapshot.campaign_status_tag.strip()
+                    or snapshot.campaign_state.strip()
+                    or "unknown"
+                )
+                state_text = f"{latest.action.capitalize()} {campaign_label}"
+                tone = {
+                    "failed": "red",
+                    "orphaned": "amber",
+                    "unknown": "amber",
+                    "complete": "amber",
+                }.get(snapshot.campaign_state, "gray")
+                next_action = (
+                    runtime.plan_action
+                    if runtime.plan_action in {"install", "resume", "verify"}
+                    else ""
+                )
+                history = (
+                    "The retained task log has no terminal event, but the enclosing "
+                    f"campaign is {campaign_label}; this action is not reported as "
+                    "live. The exact current plan remains authoritative."
                 )
             elif runtime.plan_action == "install":
                 state_text = "Not installed"

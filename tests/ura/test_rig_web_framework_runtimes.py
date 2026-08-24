@@ -195,6 +195,57 @@ def test_stale_running_event_does_not_override_the_current_plan(tmp_path: Path) 
     assert "dispatch safely rejoins an identical live named session" in runtime_html
 
 
+@pytest.mark.parametrize(
+    ("campaign_state", "campaign_status", "expected_tone"),
+    (
+        ("orphaned", "orphaned", "amber"),
+        ("unknown", "unknown", "amber"),
+        ("failed", "failed", "red"),
+        ("complete", "partial", "amber"),
+    ),
+)
+def test_reconciled_campaign_state_overrides_stale_running_runtime_event(
+    tmp_path: Path,
+    campaign_state: str,
+    campaign_status: str,
+    expected_tone: str,
+) -> None:
+    snapshot = _snapshot()
+    rows = list(snapshot.rows)
+    rows[0] = replace(
+        rows[0],
+        latest=RuntimeAttempt("install", "running", "2026-08-18T19:00:00Z", ""),
+    )
+    service = _FakeRuntimeService(
+        replace(
+            snapshot,
+            campaign_state=campaign_state,
+            campaign_status_tag=campaign_status,
+            rows=tuple(rows),
+        )
+    )
+    app = _app(tmp_path, service)
+    try:
+        status, _kind, body = app.handle("GET", "/build#build-runtimes")
+    finally:
+        app.close()
+
+    assert status == 200
+    runtime_html = body.decode("utf-8").split(
+        "data-page-panel='build-runtimes'", 1
+    )[1]
+    runtime_html = runtime_html.split(
+        "<form method='post' action='/build' id='builder'>", 1
+    )[0]
+    assert "Install running" not in runtime_html
+    assert (
+        f"<span class='badge {expected_tone}'>Install {campaign_status}</span>"
+        in runtime_html
+    )
+    assert "this action is not reported as live" in runtime_html
+    assert "The exact current plan remains authoritative" in runtime_html
+
+
 def test_service_dispatches_current_plan_despite_stale_running_event(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

@@ -830,16 +830,30 @@ def _load_campaign(
         marker.get("tmux_socket") is not None
         or marker.get("tmux_session") is not None
     )
-    if state == "running" and (
-        marker_declares_named_session or session_spec is not None
-    ):
+    hard_stop_exceeded = (
+        hard_stop_hours is not None
+        and time.time() > started_at + hard_stop_hours * 3600
+    )
+    if state == "running":
         if session_spec is None:
-            state = "unknown"
-            display_state = "unknown"
-            state_detail = (
-                "engineering campaign declares an invalid named-session identity; "
-                "the retained task log has no terminal event"
-            )
+            if not marker_declares_named_session and hard_stop_exceeded:
+                state = "orphaned"
+                display_state = "orphaned"
+                state_detail = (
+                    "declared hard stop exceeded without a valid exact named-session "
+                    "identity; the retained task log has no terminal event"
+                )
+            else:
+                state = "unknown"
+                display_state = "unknown"
+                state_detail = (
+                    "engineering campaign declares an invalid named-session identity; "
+                    if marker_declares_named_session
+                    else "engineering campaign has no valid exact named-session identity; "
+                ) + (
+                    "running state cannot be verified because the retained task log "
+                    "has no terminal event"
+                )
         else:
             session_observed = (
                 _named_session_liveness([session_spec]).get(session_spec)
@@ -862,8 +876,7 @@ def _load_campaign(
                 )
     if (
         state == "running"
-        and hard_stop_hours is not None
-        and time.time() > started_at + hard_stop_hours * 3600
+        and hard_stop_exceeded
     ):
         if session_observed is True and session_spec is not None:
             state_detail = (

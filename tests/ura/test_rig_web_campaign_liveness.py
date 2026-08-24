@@ -98,7 +98,7 @@ def _engineering_campaign(
     return directory
 
 
-def test_dead_named_session_is_orphaned_but_terminal_legacy_route_survives(
+def test_dead_or_missing_session_is_not_running_but_terminal_legacy_route_survives(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -117,6 +117,14 @@ def test_dead_named_session_is_orphaned_but_terminal_legacy_route_survives(
         missing_route,
         started_at=started,
         session_fields=False,
+    )
+    overdue_missing_route = "controller-sequence-overdue-missing-session"
+    _engineering_campaign(
+        results,
+        overdue_missing_route,
+        started_at=time.time() - 2 * 3600,
+        session_fields=False,
+        hard_stop_hours=1,
     )
     legacy_route = "controller-sequence-terminal-legacy"
     _engineering_campaign(
@@ -142,6 +150,7 @@ def test_dead_named_session_is_orphaned_but_terminal_legacy_route_survives(
     monkeypatch.setattr(campaigns_module.subprocess, "run", run)
     dead = load_engineering_campaign(results, dead_route)
     missing = load_engineering_campaign(results, missing_route)
+    overdue_missing = load_engineering_campaign(results, overdue_missing_route)
     terminal = load_engineering_campaign(results, legacy_route)
     campaigns_module._clear_named_session_liveness_cache()
 
@@ -159,8 +168,14 @@ def test_dead_named_session_is_orphaned_but_terminal_legacy_route_survives(
             f"ura-session-{dead_route}",
         ]
     ]
-    assert missing is not None and missing.state == "running"
+    assert missing is not None and missing.state == "unknown"
+    assert "no valid exact named-session identity" in missing.state_detail
+    assert "running state cannot be verified" in missing.state_detail
     assert missing.named_session_liveness_verified is False
+    assert overdue_missing is not None and overdue_missing.state == "orphaned"
+    assert "declared hard stop exceeded" in overdue_missing.state_detail
+    assert "without a valid exact named-session identity" in overdue_missing.state_detail
+    assert overdue_missing.active_tasks == ()
     assert terminal is not None
     assert terminal.state == "complete" and terminal.status_tag == "passed"
     assert terminal.state_detail == "external_controller_exit_0"

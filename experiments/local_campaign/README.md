@@ -59,8 +59,8 @@ python -m experiments.local_campaign.rebind \
   --project-receipt-sha256 <new-64-hex> \
   --phase3-guard-tag <new-tag> \
   --set CONTROLLER_INSTALL_ROOT=/home/ura/.ura-controller-active \
-  --set RR_TEXT_EVIDENCE_ROOT=/mnt/stor/data/ura-work/runs/engineering/phase5-core-canaries-20260824T012347Z \
-  --set RR_IMAGE_EVIDENCE_ROOT=/mnt/stor/data/ura-work/runs/engineering/rr-image-probe-20260824T012347Z \
+  --set RR_TEXT_EVIDENCE_ROOT=/mnt/stor/data/ura-work/runs/engineering/phase5-core-canaries-20260824T053641Z \
+  --set RR_IMAGE_EVIDENCE_ROOT=/mnt/stor/data/ura-work/runs/engineering/rr-image-probe-20260824T053641Z \
   --set RR_VLLM_TAIL_EVIDENCE_ROOT=/mnt/stor/data/ura-work/runs/engineering/rr-token-tail-probe-5719b \
   --set RR_TRANSFORMERS_EVIDENCE_ROOT=/mnt/stor/data/ura-work/runs/engineering/rr-transformers-reference-probe-5719 \
   --set PROJECT_RECEIPT_BYTES=<positive-wc-c> \

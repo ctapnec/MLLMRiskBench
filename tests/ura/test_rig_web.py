@@ -3785,7 +3785,8 @@ def test_jobs_lists_external_engineering_campaign_read_only(tmp_path: Path) -> N
     text = body.decode("utf-8")
     assert status == 200
     assert "All (<span class='chip-count'>1</span>)" in text
-    assert "Running (<span class='chip-count'>1</span>)" in text
+    assert "Unknown (<span class='chip-count'>1</span>)" in text
+    assert "Running (<span class='chip-count'>1</span>)" not in text
     assert "local-only-20260817T000000Z" in text
     assert "engineering campaign" in text and "external" in text
     assert "task processes: 1 succeeded; 0 failed; 0 skipped; 0 active" in text
@@ -4440,7 +4441,10 @@ def test_external_campaign_phase_ties_use_append_order(tmp_path: Path) -> None:
 
     retried = app._engineering_campaign("local-only-20260817T000000Z")
     assert retried is not None
-    assert retried.state == "running" and retried.display_state == "running"
+    # The later same-timestamp start wins. Because this legacy fixture has no
+    # verifiable named session, liveness reconciliation then reports unknown.
+    assert retried.state == "unknown" and retried.display_state == "unknown"
+    assert "running state cannot be verified" in retried.state_detail
 
     with stage2.open("a", encoding="utf-8") as handle:
         for status in ("failed", "passed"):
@@ -4586,7 +4590,7 @@ def test_external_campaign_directory_scan_cap_is_visible(
     app.close()
 
 
-def test_dashboard_lists_external_running_and_failed_campaigns(
+def test_dashboard_lists_external_indeterminate_and_failed_campaigns(
     tmp_path: Path,
 ) -> None:
     app = _app(tmp_path)
@@ -4603,11 +4607,16 @@ def test_dashboard_lists_external_running_and_failed_campaigns(
     running = body.decode("utf-8")
     assert status == 200
     assert "jobs (console + external)" in running
-    assert "<span class='value'><span class='dot blue'></span>0</span>" in running
-    assert "<span class='value'><span class='dot blue'></span>1</span>" in running
-    assert "<span class='value'><span class='dot red'></span>0</span>" in running
+    assert running.count(
+        "<span class='value'><span class='dot blue'></span>0</span>"
+    ) == 2
+    assert running.count(
+        "<span class='value'><span class='dot red'></span>0</span>"
+    ) == 2
+    assert "<span class='value'><span class='dot amber'></span>1</span>" in running
     assert "running (external task-log report)" in running
-    assert "External running state is a task-log report" in running
+    assert "External running state is a task-log report" not in running
+    assert "Needs attention" in running and "external, unknown" in running
     assert "/jobs/campaign/local-only-20260817T000000Z" in running
     assert "<img src=x onerror=alert(1)>" not in running
     assert "&lt;img src=x onerror=alert(1)&gt;" in running

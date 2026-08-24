@@ -264,6 +264,8 @@ def test_shared_picker_is_accessible_and_keeps_target_and_judge_state_isolated(
     assert "input.type=input.getAttribute('data-target-type')||'checkbox'" in text
     assert "data-target-selected" in text
     assert "rememberPickerSelection();" in text
+    assert "var llmStage=form.querySelector(\".judgebox[data-judge='llm']\");" in text
+    assert "if(llmStage){llmStage.checked=true;}" in text
     assert "setPickerRole('target')" in text
     app.close()
 
@@ -418,6 +420,18 @@ def test_server_validates_explicit_judge_and_local_engine_conflicts(
     assert "judge_model" not in app._validate_builder({
         **base, "judge_model": _LOCAL,
     })
+    stale_selection = {
+        **base,
+        "judges": "rules",
+        "judge_model": _LOCAL,
+    }
+    assert "requires enabling the llm judge stage" in app._validate_builder(
+        stale_selection
+    )["judge_model"]
+    status, _headers, body = app.handle("POST", "/build", stale_selection)
+    assert status == 200
+    assert b"requires enabling the llm judge stage" in body
+    assert app.jobs == {}
     assert "cannot share one process" in app._validate_builder({
         **base, "api": "", "local": _LOCAL,
         "judge_model": _LOCAL_OTHER,
@@ -1976,9 +1990,12 @@ def test_web_compose_materializes_local_judge_but_dry_mode_stays_mock(
         "attackers": "replay",
         "judges": "rules,llm",
         "judge_model": _LOCAL,
+        "approximate_common_metrics": "on",
         "out": "runs/judge",
     })
+    assert values["--judges"] == "rules,llm"
     assert values["--judge-model"] == _LOCAL
+    assert values["--approximate-common-metrics"] == "on"
     assert "--local" not in values
     local_config = Path(values["--local-config"])
     assert set(json.loads(local_config.read_text(encoding="utf-8"))) == {_LOCAL}
@@ -2308,7 +2325,8 @@ def test_download_indicator_requires_explicit_active_activity_event(
     directory = _campaign_dir(tmp_path, event)
     campaign = _load_campaign(directory)
     assert campaign is not None
-    assert campaign.status_tag == "running"
+    assert campaign.status_tag == "unknown"
+    assert "running state cannot be verified" in campaign.state_detail
     assert campaign.download_tasks == ()
 
     event["task_kind"] = "model_download"
@@ -2331,7 +2349,7 @@ def test_download_indicator_requires_explicit_active_activity_event(
     assert campaign is not None and campaign.download_tasks == ()
 
 
-def test_jobs_date_controls_and_external_running_presentation_match_ui(
+def test_jobs_date_controls_and_external_indeterminate_presentation_match_ui(
     tmp_path: Path,
 ) -> None:
     app = _repo_app(tmp_path)
@@ -2352,8 +2370,9 @@ def test_jobs_date_controls_and_external_running_presentation_match_ui(
     assert "targetfilters job-date-filters" in jobs
     assert jobs.count("type='datetime-local'") == 2
     assert ".job-date-filters input[type=datetime-local]" in style
-    assert "<span class='badge blue'>running</span>" in dashboard
-    assert "External running state is a task-log report" in dashboard
+    assert "<span class='badge amber'>external, unknown</span>" in dashboard
+    assert "running state cannot be verified" in dashboard
+    assert "External running state is a task-log report" not in dashboard
     assert "reported running" not in (jobs + dashboard).lower()
     app.close()
 

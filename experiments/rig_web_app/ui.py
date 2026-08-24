@@ -752,7 +752,12 @@ input.setAttribute('data-target-selected',input.checked?'true':'false');});
 return;}
 var selected=form.querySelector('.modelbox:checked');
 var judgeInput=document.getElementById('judge-model-input');
-if(selected&&judgeInput){judgeInput.value=selected.getAttribute('data-model')||'';}}
+if(selected&&judgeInput){
+judgeInput.value=selected.getAttribute('data-model')||'';
+// Choosing a judge is an execution choice, not a dormant preference. Keep the
+// submitted stage inventory coherent with the model the operator just chose.
+var llmStage=form.querySelector(".judgebox[data-judge='llm']");
+if(llmStage){llmStage.checked=true;}}}
 function configurePickerInputs(){
 var judgeInput=document.getElementById('judge-model-input');
 var judgeModel=judgeInput?judgeInput.value:'';

@@ -689,7 +689,7 @@ def validate_rr_runtime_terminal_artifact(
         not isinstance(continuity, dict)
         or set(continuity) != {"observed_project_commit", "unchanged_paths", "git_diff_empty"}
         or continuity.get("observed_project_commit")
-        != "21b27d56da0d081125f4cf4117884a8262386e5d"
+        != "5c0a288e7b19dcd748c3169abdf52e2e7d37b2fa"
         or continuity.get("unchanged_paths") != ["src/ura/targets/local.py", "experiments/run_matrix.py"]
         or continuity.get("git_diff_empty") is not True
     ):
@@ -2321,7 +2321,7 @@ def validate_rr_runtime_terminal_artifact(
             "observed_project_commit", "unchanged_paths", "git_diff_empty",
         }
         or continuity.get("observed_project_commit")
-        != "21b27d56da0d081125f4cf4117884a8262386e5d"
+        != "5c0a288e7b19dcd748c3169abdf52e2e7d37b2fa"
         or continuity.get("unchanged_paths")
         != ["src/ura/targets/local.py", "experiments/run_matrix.py"]
         or continuity.get("git_diff_empty") is not True

@@ -1585,6 +1585,10 @@ class BuilderValidationMixin:
             )
         if judge_model and judge_model != "mock" and judge_kind is None:
             errors["judge_model"] = "unknown LLM judge model selection"
+        elif judge_model and "llm" not in judges_list:
+            errors["judge_model"] = (
+                "the selected LLM judge model requires enabling the llm judge stage"
+            )
         if live_llm_judge:
             if not judge_model:
                 errors["judge_model"] = "choose an explicit hosted or local LLM judge model"
