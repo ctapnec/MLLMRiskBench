@@ -57,13 +57,18 @@ import time
 from typing import Any, Iterable, Mapping, Sequence
 
 from experiments.lane_canary import summarize_canary
-from experiments.run_matrix import build_parser
+from experiments.run_matrix import (
+    _load_attacker_config,
+    _load_source_config,
+    build_parser,
+    load_corpus_with_audit,
+)
 from ura.approximate_metrics import (
     validate_approximate_decision,
     validate_approximate_metric_provenance,
 )
 from ura.data_models import SCHEMA_VERSION
-from ura.eligibility import validate_eligibility_plan
+from ura.eligibility import canonical_json_sha256, validate_eligibility_plan
 from ura.lane_canary import validate_lane_canary_summary
 from ura.lane_projection import (
     validate_lane_projection,
@@ -3145,6 +3150,41 @@ def canary_stage_contract_self_test() -> list[str]:
     return rejected
 
 
+def validate_common_source_evaluator(
+    source: object, *, arm: str, label: str
+) -> None:
+    """Validate the exact source-evaluator role for common/proxy canaries."""
+
+    if not isinstance(source, Mapping):
+        raise Gate5Error(f"{label}: source-evaluator role is not an object")
+    required = source.get("required_records")
+    observed = source.get("observed_records")
+    valid = source.get("valid_records")
+    if arm == PROMPT_PROXY_ARM:
+        if (
+            source.get("status") != "not_exercised"
+            or isinstance(required, bool)
+            or not isinstance(required, int)
+            or required <= 0
+            or observed != 0
+            or valid != 0
+        ):
+            raise Gate5Error(
+                f"{label}: prompt-proxy source evaluator is not the exact "
+                "required-but-unimplemented role"
+            )
+        return
+    if source != {
+        "status": "not_applicable",
+        "required_records": 0,
+        "observed_records": 0,
+        "valid_records": 0,
+    }:
+        raise Gate5Error(
+            f"{label}: common-metric canary unexpectedly requires or uses a source evaluator"
+        )
+
+
 def validate_canary_bundle(canary_path: Path, *, expected_id: str) -> dict[str, Any]:
     retained = validate_lane_canary_summary(read_strict_json(canary_path))
     if retained["canary_id"] != expected_id or canary_path.name != f"{expected_id}.lane-canary.json":
@@ -3185,8 +3225,11 @@ def validate_canary_bundle(canary_path: Path, *, expected_id: str) -> dict[str, 
             evaluable_judgments=retained["decision_support"]["evaluable"],
             label=str(canary_path),
         )
-        if execution["source_evaluator"]["status"] != "not_applicable":
-            raise Gate5Error(f"common-metric canary unexpectedly used source evaluator: {canary_path}")
+        validate_common_source_evaluator(
+            execution.get("source_evaluator"),
+            arm=retained["condition"]["logical_source_arm"],
+            label=str(canary_path),
+        )
         policy = "common_or_adaptive_rules_guardrail_policy_evaluable_stages_queried"
     elif judges == ["rules"]:
         validate_classification_stage_contract(stages, label=str(canary_path))
@@ -3401,7 +3444,326 @@ def validate_defense_response_audit(results_root: Path, *, label: str) -> dict[s
     return {"responses": len(responses), "queried_defense_stages": stages}
 
 
-def validate_lane_relationship(lane: str, prelim: Mapping[str, Any], canary: Mapping[str, Any]) -> None:
+def selected_source_instances(
+    project_root: Path, arms: Sequence[str], *, label: str
+) -> tuple[dict[str, dict[str, object]], dict[str, str]]:
+    source_config = checked_file(
+        project_root / "experiments" / "source-instances.json",
+        max_bytes=4 * 1024 * 1024,
+    )
+    try:
+        instances, artifact = _load_source_config(
+            str(source_config), list(arms), sha256_file(source_config)
+        )
+    except ValueError as exc:
+        raise Gate5Error(f"{label}: pinned source config cannot be normalized: {exc}") from exc
+    normalized = artifact.get("normalized_selected_sha256") if artifact else None
+    if not isinstance(normalized, str) or HEX64_RE.fullmatch(normalized) is None:
+        raise Gate5Error(f"{label}: pinned source config lacks its selected identity")
+    return instances, {"normalized_selected_sha256": normalized}
+
+
+def validate_selected_config_relationship(
+    *,
+    lane: str,
+    preliminary_values: Mapping[str, Any],
+    canary_values: Mapping[str, Any],
+    preliminary_source_identity: Mapping[str, str],
+    canary_source_identity: Mapping[str, str],
+) -> None:
+    """Allow only the two purpose-bound config-identity differences."""
+
+    fields = {
+        "source_config", "source_conformance", "attacker_config",
+        "engine_runtime_config", "api_config", "local_config",
+    }
+    preliminary = preliminary_values.get("selected_config_identities")
+    canary = canary_values.get("selected_config_identities")
+    if (
+        not isinstance(preliminary, Mapping)
+        or set(preliminary) != fields
+        or not isinstance(canary, Mapping)
+        or set(canary) != fields
+    ):
+        raise Gate5Error(f"{lane}: selected config-identity inventory changed")
+    if preliminary.get("source_config") != dict(preliminary_source_identity):
+        raise Gate5Error(f"{lane}: bounded source-config selection identity changed")
+    if canary.get("source_config") != dict(canary_source_identity):
+        raise Gate5Error(f"{lane}: canary source-config selection identity changed")
+    for field in (
+        "source_conformance", "engine_runtime_config", "api_config", "local_config",
+    ):
+        if canary.get(field) != preliminary.get(field):
+            raise Gate5Error(f"{lane}: canary/bounded {field} identity differs")
+    preliminary_attacker = preliminary.get("attacker_config")
+    canary_attacker = canary.get("attacker_config")
+    if lane != "harmbench-replay":
+        if canary_attacker != preliminary_attacker:
+            raise Gate5Error(f"{lane}: canary/bounded attacker-config identity differs")
+        return
+    for label, value in (
+        ("bounded", preliminary_attacker), ("canary", canary_attacker)
+    ):
+        if (
+            not isinstance(value, Mapping)
+            or set(value) != {"normalized_selected_sha256"}
+            or HEX64_RE.fullmatch(str(value.get("normalized_selected_sha256", ""))) is None
+        ):
+            raise Gate5Error(
+                f"harmbench-replay: {label} selection-bound attacker identity is invalid"
+            )
+    if preliminary_attacker == canary_attacker:
+        raise Gate5Error(
+            "harmbench-replay: limit-1 and limit-50 replay identities were not regenerated"
+        )
+
+
+def sampling_binding_from_audit(audit: Mapping[str, Any]) -> dict[str, Any]:
+    return {
+        "converter": audit.get("converter"),
+        "full_converted_corpus_sha256": audit.get("full_converted_corpus_sha256"),
+        "selected_converted_corpus_sha256": audit.get(
+            "selected_converted_corpus_sha256"
+        ),
+        "selected_datapoint_ids_sha256": canonical_json_sha256(
+            sorted(audit.get("selected_ids") or [])
+        ),
+        "selected_records": audit.get("selected_records"),
+        "sample_seed": audit.get("sample_seed"),
+        "limit": audit.get("limit"),
+    }
+
+
+def projection_arm_from_audit(
+    audit: Mapping[str, Any], *, logical_source_arm: str
+) -> dict[str, Any]:
+    return {
+        "logical_source_arm": logical_source_arm,
+        "converter": audit.get("converter"),
+        "selected_converted_corpus_sha256": audit.get(
+            "selected_converted_corpus_sha256"
+        ),
+        "selected_datapoint_ids_sha256": canonical_json_sha256(
+            sorted(audit.get("selected_ids") or [])
+        ),
+        "total_records": audit.get("total_records"),
+        "selected_records": audit.get("selected_records"),
+        "total_clusters": audit.get("total_clusters"),
+        "selected_clusters": audit.get("selected_clusters"),
+        "selected_cluster_ids_sha256": canonical_json_sha256(
+            sorted(audit.get("selected_cluster_ids") or [])
+        ),
+        "sample_seed": audit.get("sample_seed"),
+        "limit": audit.get("limit"),
+    }
+
+
+def validate_recomputed_sampling_arm(
+    *,
+    lane: str,
+    label: str,
+    arm: str,
+    expected_limit: int,
+    projection_arm: Mapping[str, Any],
+    selected_binding: Mapping[str, Any],
+    audit: Mapping[str, Any],
+) -> None:
+    if (
+        audit.get("selection_method") != BOUNDED_SELECTION_METHOD
+        or audit.get("sample_seed") != 0
+        or audit.get("limit") != expected_limit
+        or audit.get("selected_clusters")
+        != min(audit.get("total_clusters", 0), expected_limit)
+    ):
+        raise Gate5Error(
+            f"{lane}: recomputed {label} sample is not the deterministic bounded prefix"
+        )
+    if dict(selected_binding) != sampling_binding_from_audit(audit):
+        raise Gate5Error(f"{lane}: {label} selected-corpus binding failed recomputation")
+    expected_arm = projection_arm_from_audit(audit, logical_source_arm=arm)
+    for field, value in expected_arm.items():
+        if projection_arm.get(field) != value:
+            raise Gate5Error(
+                f"{lane}: {label} projection arm {field} failed recomputation"
+            )
+
+
+def validate_sampling_relationship_evidence(
+    *,
+    lane: str,
+    arm: str,
+    expected_limit: int,
+    preliminary_arm: Mapping[str, Any],
+    preliminary_binding: Mapping[str, Any],
+    canary_arm: Mapping[str, Any],
+    canary_binding: Mapping[str, Any],
+    bounded_audit: Mapping[str, Any],
+    canary_audit: Mapping[str, Any],
+    canary_workload: Mapping[str, Any] | None,
+) -> None:
+    """Prove a limit-1 canary is nested in the exact bounded source sample."""
+
+    validate_recomputed_sampling_arm(
+        lane=lane,
+        label="bounded",
+        arm=arm,
+        expected_limit=expected_limit,
+        projection_arm=preliminary_arm,
+        selected_binding=preliminary_binding,
+        audit=bounded_audit,
+    )
+    validate_recomputed_sampling_arm(
+        lane=lane,
+        label="canary",
+        arm=arm,
+        expected_limit=1,
+        projection_arm=canary_arm,
+        selected_binding=canary_binding,
+        audit=canary_audit,
+    )
+    if (
+        bounded_audit.get("converter") != canary_audit.get("converter")
+        or bounded_audit.get("full_converted_corpus_sha256")
+        != canary_audit.get("full_converted_corpus_sha256")
+        or bounded_audit.get("total_records") != canary_audit.get("total_records")
+        or bounded_audit.get("total_clusters") != canary_audit.get("total_clusters")
+    ):
+        raise Gate5Error(f"{lane}: canary and bounded source universes differ")
+    bounded_clusters = bounded_audit.get("selected_cluster_ids")
+    canary_clusters = canary_audit.get("selected_cluster_ids")
+    if (
+        not isinstance(bounded_clusters, list)
+        or not isinstance(canary_clusters, list)
+        or len(canary_clusters) != 1
+        or not set(canary_clusters).issubset(set(bounded_clusters))
+    ):
+        raise Gate5Error(f"{lane}: canary cluster is not nested in the bounded sample")
+    if canary_workload is not None:
+        expected_clusters = sorted(canary_audit.get("selected_cluster_ids") or [])
+        expected_rows = sorted(canary_audit.get("selected_ids") or [])
+        expected_workload = {
+            "selected_clusters": 1,
+            "selected_cluster_ids": expected_clusters,
+            "selected_cluster_ids_sha256": canonical_json_sha256(expected_clusters),
+            "selected_rows": len(expected_rows),
+            "selected_row_ids": expected_rows,
+            "selected_row_ids_sha256": canonical_json_sha256(expected_rows),
+        }
+        for field, value in expected_workload.items():
+            if canary_workload.get(field) != value:
+                raise Gate5Error(
+                    f"{lane}: canary workload {field} failed source recomputation"
+                )
+
+
+def revalidate_nested_selection(
+    *,
+    lane: str,
+    prelim: Mapping[str, Any],
+    canary_eligibility: Mapping[str, Any],
+    canary_projection: Mapping[str, Any],
+    arm: str,
+    project_root: Path,
+    canary_workload: Mapping[str, Any] | None,
+    observed_canary_instances: object | None,
+) -> tuple[dict[str, str], dict[str, str]]:
+    request = prelim["envelope"]["request"]
+    expected_limit = EXPECTED_MEASURED_LIMITS[lane]
+    instances, preliminary_source_identity = selected_source_instances(
+        project_root, request["logical_source_arms"], label=f"{lane} bounded request"
+    )
+    canary_instances, canary_source_identity = selected_source_instances(
+        project_root, [arm], label=f"{lane} canary request"
+    )
+    if observed_canary_instances is not None and observed_canary_instances != canary_instances:
+        raise Gate5Error(f"{lane}: canary grid source-instance mapping changed")
+    request_arms = request["logical_source_arms"]
+    preliminary_arms = {
+        item.get("logical_source_arm"): item
+        for item in prelim["projection"].get("selection", {}).get("arms", [])
+        if isinstance(item, Mapping)
+    }
+    preliminary_bindings = prelim["eligibility"]["bindings"].get("selected_corpora")
+    if (
+        len(request_arms) != len(set(request_arms))
+        or set(preliminary_arms) != set(request_arms)
+        or len(preliminary_arms)
+        != len(prelim["projection"].get("selection", {}).get("arms", []))
+        or not isinstance(preliminary_bindings, Mapping)
+        or set(preliminary_bindings) != set(request_arms)
+    ):
+        raise Gate5Error(f"{lane}: bounded source-arm inventory changed")
+    bounded_audits: dict[str, Mapping[str, Any]] = {}
+    try:
+        for bounded_arm in request_arms:
+            _rows, audit = load_corpus_with_audit(
+                bounded_arm,
+                expected_limit,
+                0,
+                source_instance=instances[bounded_arm],
+            )
+            bounded_audits[bounded_arm] = audit
+            selected_binding = preliminary_bindings[bounded_arm]
+            if not isinstance(selected_binding, Mapping):
+                raise Gate5Error(
+                    f"{lane}: bounded selected-corpus binding is not an object"
+                )
+            validate_recomputed_sampling_arm(
+                lane=lane,
+                label=f"bounded {bounded_arm}",
+                arm=bounded_arm,
+                expected_limit=expected_limit,
+                projection_arm=preliminary_arms[bounded_arm],
+                selected_binding=selected_binding,
+                audit=audit,
+            )
+        _canary_rows, canary_audit = load_corpus_with_audit(
+            arm, 1, 0, source_instance=canary_instances[arm]
+        )
+    except Gate5Error:
+        raise
+    except (KeyError, OSError, ValueError) as exc:
+        raise Gate5Error(f"{lane}: source selection cannot be recomputed: {exc}") from exc
+    canary_arms = canary_projection.get("selection", {}).get("arms")
+    if (
+        arm not in preliminary_arms
+        or not isinstance(canary_arms, list)
+        or len(canary_arms) != 1
+        or not isinstance(canary_arms[0], Mapping)
+        or canary_arms[0].get("logical_source_arm") != arm
+    ):
+        raise Gate5Error(f"{lane}: source arm is not unique in both projections")
+    canary_bindings = canary_eligibility["bindings"].get("selected_corpora")
+    if (
+        not isinstance(preliminary_bindings, Mapping)
+        or not isinstance(preliminary_bindings.get(arm), Mapping)
+        or not isinstance(canary_bindings, Mapping)
+        or set(canary_bindings) != {arm}
+        or not isinstance(canary_bindings.get(arm), Mapping)
+    ):
+        raise Gate5Error(f"{lane}: selected-corpus binding inventory changed")
+    validate_sampling_relationship_evidence(
+        lane=lane,
+        arm=arm,
+        expected_limit=expected_limit,
+        preliminary_arm=preliminary_arms[arm],
+        preliminary_binding=preliminary_bindings[arm],
+        canary_arm=canary_arms[0],
+        canary_binding=canary_bindings[arm],
+        bounded_audit=bounded_audits[arm],
+        canary_audit=canary_audit,
+        canary_workload=canary_workload,
+    )
+    return preliminary_source_identity, canary_source_identity
+
+
+def validate_lane_relationship(
+    lane: str,
+    prelim: Mapping[str, Any],
+    canary: Mapping[str, Any],
+    *,
+    project_root: Path,
+) -> None:
     request = prelim["envelope"]["request"]
     condition = canary["canary"]["condition"]
     grid_request = canary["grid"].get("request")
@@ -3431,7 +3793,6 @@ def validate_lane_relationship(lane: str, prelim: Mapping[str, Any], canary: Map
             or selected != min(total, expected_limit)
             or selected_arm.get("sample_seed") != 0
             or selected_arm.get("limit") != expected_limit
-            or selected_arm.get("selection_method") != BOUNDED_SELECTION_METHOD
         ):
             raise Gate5Error(
                 f"{lane}: projection arm is not the complete deterministic bounded prefix"
@@ -3547,9 +3908,16 @@ def validate_lane_relationship(lane: str, prelim: Mapping[str, Any], canary: Map
         raise Gate5Error(f"{lane}: canary arm is not uniquely represented in both projections")
     preliminary_arm = preliminary_arms[arm]
     canary_arm = canary_arms[0]
-    for field in ("converter", "selected_converted_corpus_sha256", "sample_seed"):
-        if canary_arm.get(field) != preliminary_arm.get(field):
-            raise Gate5Error(f"{lane}: canary/bounded projection arm {field} differs")
+    preliminary_source_identity, canary_source_identity = revalidate_nested_selection(
+        lane=lane,
+        prelim=prelim,
+        canary_eligibility=canary["eligibility"],
+        canary_projection=canary["lane_projection"],
+        arm=arm,
+        project_root=project_root,
+        canary_workload=canary["canary"]["workload"],
+        observed_canary_instances=grid_request.get("source_instances"),
+    )
 
     def media_modalities(item: Mapping[str, Any], *, label: str) -> tuple[str, ...]:
         media = item.get("selected_input_media")
@@ -3615,7 +3983,6 @@ def validate_lane_relationship(lane: str, prelim: Mapping[str, Any], canary: Map
         "group_keys",
         "quantization",
         "dtype",
-        "selected_config_identities",
         "engine_runtimes",
         "model_acquisition",
     )
@@ -3624,6 +3991,13 @@ def validate_lane_relationship(lane: str, prelim: Mapping[str, Any], canary: Map
             raise Gate5Error(
                 f"{lane}: canary/bounded projection experiment condition {field} differs"
             )
+    validate_selected_config_relationship(
+        lane=lane,
+        preliminary_values=preliminary_values,
+        canary_values=canary_values,
+        preliminary_source_identity=preliminary_source_identity,
+        canary_source_identity=canary_source_identity,
+    )
     for field in (
         "defense", "defense_guard", "judges", "judge_model", "guardrail_model",
         "guardrail_revision", "guardrail_device", "defense_guardrail_model",
@@ -3911,6 +4285,43 @@ def derive_base_argv(
     return validate_base_argv(argv, lane=lane), acquisition_mode
 
 
+def validate_bounded_harmbench_attacker_config(
+    *,
+    path_value: object,
+    sha_value: object,
+    expected_identity: object,
+) -> Path:
+    if (
+        not isinstance(path_value, str)
+        or not path_value
+        or not isinstance(sha_value, str)
+        or HEX64_RE.fullmatch(sha_value) is None
+    ):
+        raise Gate5Error(
+            "harmbench-replay: bounded attacker-config binding is incomplete"
+        )
+    attacker_config = checked_file(path_value, max_bytes=4 * 1024 * 1024)
+    if sha256_file(attacker_config, max_bytes=4 * 1024 * 1024) != sha_value:
+        raise Gate5Error("harmbench-replay: bounded attacker-config SHA differs")
+    try:
+        configs, artifact = _load_attacker_config(
+            str(attacker_config), ["harmbench"], sha_value
+        )
+    except (OSError, ValueError) as exc:
+        raise Gate5Error(
+            f"harmbench-replay: bounded attacker config is invalid: {exc}"
+        ) from exc
+    observed_identity = (
+        {"normalized_selected_sha256": artifact.get("normalized_selected_sha256")}
+        if artifact else None
+    )
+    if set(configs) != {"harmbench"} or observed_identity != expected_identity:
+        raise Gate5Error(
+            "harmbench-replay: bounded attacker config does not match projection evidence"
+        )
+    return attacker_config
+
+
 def validate_base_argv_evidence_parity(
     argv: Sequence[str], *, lane: str, prelim: Mapping[str, Any],
     canary: Mapping[str, Any], project_root: Path,
@@ -3955,10 +4366,17 @@ def validate_base_argv_evidence_parity(
         "--local-config", "--local-config-sha256", "local_config_artifact",
         required=True,
     )
-    attacker_config = bound_config(
-        "--attacker-config", "--attacker-config-sha256", "attacker_config_artifact",
-        required=False,
-    )
+    if lane == "harmbench-replay":
+        attacker_config = validate_bounded_harmbench_attacker_config(
+            path_value=option(argv, "--attacker-config"),
+            sha_value=option(argv, "--attacker-config-sha256"),
+            expected_identity=condition["selected_config_identities"]["attacker_config"],
+        )
+    else:
+        attacker_config = bound_config(
+            "--attacker-config", "--attacker-config-sha256", "attacker_config_artifact",
+            required=False,
+        )
     runtime_config = bound_config(
         "--engine-runtime-config", "--engine-runtime-config-sha256",
         "engine_runtime_config_artifact", required=False,
@@ -4557,12 +4975,24 @@ def validate_defense_conditional_na_artifact(
     canary_arm = canary_arms[0]
     if canary_arm.get("logical_source_arm") != "jailbreakbench_benign":
         raise Gate5Error("defense-local: conditional N/A selected the wrong source arm")
-    preliminary_arm = prelim_arms["jailbreakbench_benign"]
-    for field in (
-        "converter", "selected_converted_corpus_sha256", "sample_seed",
-    ):
-        if canary_arm.get(field) != preliminary_arm.get(field):
-            raise Gate5Error(f"defense-local: conditional N/A projection {field} changed")
+    preliminary_source_identity, canary_source_identity = revalidate_nested_selection(
+        lane="defense-local",
+        prelim=prelim,
+        canary_eligibility=eligibility,
+        canary_projection=projection,
+        arm="jailbreakbench_benign",
+        project_root=project_root,
+        canary_workload=None,
+        observed_canary_instances=None,
+    )
+    validate_selected_config_relationship(
+        lane="defense-local",
+        preliminary_values=prelim["eligibility"]["bindings"]
+        ["experiment_conditions"]["values"],
+        canary_values=conditions,
+        preliminary_source_identity=preliminary_source_identity,
+        canary_source_identity=canary_source_identity,
+    )
 
     deadline = read_strict_json(resolved_artifacts["invocation_deadline"])
     budget_path = resolved_artifacts["budget_ledger"]
@@ -5496,9 +5926,9 @@ def root_runnable_rows(
             ).lower(),
         }
         for field, expected in expected_status_fields.items():
-            if c_row.get(field, "") and c_row[field].lower() != str(expected).lower():
+            if c_row.get(field, "").lower() != str(expected).lower():
                 raise Gate5Error(f"{lane}: canary status TSV field {field} mismatches summary")
-        validate_lane_relationship(lane, prelim, canary)
+        validate_lane_relationship(lane, prelim, canary, project_root=project_root)
         base_argv, acquisition_mode = derive_base_argv(
             lane=lane,
             family=family,
@@ -5686,7 +6116,7 @@ def explicit_manifest_rows(
         if CANARY_ID_RE.fullmatch(canary_id) is None:
             raise Gate5Error(f"{lane}: explicit manifest has invalid canary_id")
         canary = validate_canary_bundle(canary_path, expected_id=canary_id)
-        validate_lane_relationship(lane, prelim, canary)
+        validate_lane_relationship(lane, prelim, canary, project_root=project_root)
         base_argv = validate_base_argv(raw.get("base_argv"), lane=lane)
         acquisition_mode = str(raw.get("acquisition_mode", ""))
         validate_base_argv_evidence_parity(

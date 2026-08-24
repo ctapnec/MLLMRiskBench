@@ -54,6 +54,23 @@ def _bindings(path: Path, commit: str = "1" * 40) -> Path:
     return path
 
 
+def _rendered_gate5_namespace(tmp_path: Path) -> dict[str, object]:
+    import re
+
+    bindings = _bindings(tmp_path / "bindings.json")
+    output = tmp_path / "workspace"
+    render_controller_set(bindings, output)
+    shell = (output / "phase5_finalize_gate5.sh").read_text(encoding="utf-8")
+    blocks = re.findall(r"<<'PY'\n(.*?)\nPY(?:\n|$)", shell, re.DOTALL)
+    assert len(blocks) == 1
+    source = blocks[0].split(
+        "\ntry:\n    raise SystemExit(main(sys.argv[1:]))", 1
+    )[0]
+    namespace: dict[str, object] = {"__name__": "gate5_contract_test"}
+    exec(compile(source, "phase5_finalize_gate5.py", "exec"), namespace)
+    return namespace
+
+
 def test_all_controller_implementations_are_versioned() -> None:
     root = Path(__file__).parents[2] / "experiments" / "local_campaign" / "templates"
     expected = {spec.template for spec in CONTROLLERS}
@@ -404,32 +421,51 @@ def test_ollama_bounded_lane_identity_is_used_by_every_workflow_stage() -> None:
     assert 'static_lane="ollama-${label}-text-full"' not in source
 
 
-def test_gate5_binds_each_bounded_arm_to_the_declared_sampling_method() -> None:
+def test_gate5_revalidates_nested_samples_without_inventing_projection_fields() -> None:
     root = Path(__file__).parents[2] / "experiments" / "local_campaign" / "templates"
     finalizer = (root / "phase5_finalize_gate5.sh.in").read_text(encoding="utf-8")
     promoter = (root / "phase5_promote_gate5.sh.in").read_text(encoding="utf-8")
-    contracts = (
+    finalizer_required = (
+        'BOUNDED_SELECTION_METHOD = "seeded_nested_source_cluster_prefix_v1"',
+        'audit.get("selection_method") != BOUNDED_SELECTION_METHOD',
+        'load_corpus_with_audit(',
+        'for bounded_arm in request_arms:',
+        '"full_converted_corpus_sha256"',
+        'not set(canary_clusters).issubset(set(bounded_clusters))',
+        'revalidate_nested_selection(',
+    )
+    promoter_required = (
+        'BOUNDED_SELECTION_METHOD = "seeded_nested_source_cluster_prefix_v1"',
+        'or arm.get("limit") != expected_limit',
+        'tests.append(("bounded_selection_limit", wrong_selection_limit))',
+        '"selection_method": BOUNDED_SELECTION_METHOD',
+    )
+    _assert_source_contract(finalizer, finalizer_required)
+    _assert_source_contract(promoter, promoter_required)
+    assert 'selected_arm.get("selection_method")' not in finalizer
+    assert 'arm.get("selection_method")' not in promoter
+    assert (
+        'for field in ("converter", "selected_converted_corpus_sha256", "sample_seed")'
+        not in finalizer
+    )
+    for source, required, original in (
         (
             finalizer,
-            (
-                'BOUNDED_SELECTION_METHOD = "seeded_nested_source_cluster_prefix_v1"',
-                'or selected_arm.get("limit") != expected_limit',
-                'or selected_arm.get("selection_method") != BOUNDED_SELECTION_METHOD',
-            ),
+            finalizer_required,
+            'not set(canary_clusters).issubset(set(bounded_clusters))',
+        ),
+        (
+            finalizer,
+            finalizer_required,
+            'for bounded_arm in request_arms:',
         ),
         (
             promoter,
-            (
-                'BOUNDED_SELECTION_METHOD = "seeded_nested_source_cluster_prefix_v1"',
-                'or arm.get("limit") != expected_limit',
-                'or arm.get("selection_method") != BOUNDED_SELECTION_METHOD',
-                'tests.append(("bounded_selection_method", wrong_selection_method))',
-            ),
+            promoter_required,
+            'tests.append(("bounded_selection_limit", wrong_selection_limit))',
         ),
-    )
-    for source, required in contracts:
-        _assert_source_contract(source, required)
-        changed = source.replace(required[2], "or False", 1)
+    ):
+        changed = source.replace(original, "MUTATED_SAMPLING_CONTRACT", 1)
         assert changed != source
         with pytest.raises(AssertionError):
             _assert_source_contract(changed, required)
@@ -733,7 +769,7 @@ def test_phase5_rr_preserves_projections_and_starts_terminal_at_canary(
             {
                 "rr_projection_unavailable", "rr_projection_descriptor_missing",
                 "rr_split_terminal_artifact", "rr_duplicate_projection",
-                "bounded_selection_method", "conditional_v2_cross_mix",
+                "bounded_selection_limit", "conditional_v2_cross_mix",
             },
         ),
     ):
@@ -1687,14 +1723,303 @@ def test_bridge_canary_does_not_claim_missing_source_evaluator_ran() -> None:
         / "templates"
         / "phase5_bridge_attest_canary.sh.in"
     ).read_text(encoding="utf-8")
-    assert (
-        'execution["source_evaluator"]["status"] != "not_exercised"'
-        in template
+    required = (
+        'source_evaluator = execution["source_evaluator"]\n'
+        'if expected_arm == "cyberseceval_prompt_injection":',
+        'source_evaluator["status"] != "not_exercised"',
+        'elif source_evaluator != {\n    "status": "not_applicable",',
+        'source_evaluator["required_records"] <= 0',
+        'source_evaluator["observed_records"] != 0',
+        'source_evaluator["valid_records"] != 0',
+        r'attacker_status\tsource_evaluator_status\n',
+        '"not_exercised" if row["lane"] == "bridge-purplellama" else "not_applicable"',
+        'if row["source_evaluator_status"] != expected_source:',
     )
-    assert (
-        'execution["source_evaluator"]["status"] != "not_applicable"'
-        not in template
+    _assert_source_contract(template, required)
+    for original, replacement in (
+        (
+            'source_evaluator = execution["source_evaluator"]\n'
+            'if expected_arm == "cyberseceval_prompt_injection":',
+            'source_evaluator = execution["source_evaluator"]\nif False:',
+        ),
+        (
+            'elif source_evaluator != {\n    "status": "not_applicable",',
+            'elif source_evaluator != {\n    "status": "not_exercised",',
+        ),
+        (
+            'if row["source_evaluator_status"] != expected_source:',
+            'if False:',
+        ),
+    ):
+        changed = template.replace(original, replacement, 1)
+        assert changed != template
+        with pytest.raises(AssertionError):
+            _assert_source_contract(changed, required)
+
+
+def test_gate5_revalidates_the_bounded_harmbench_attacker_config(
+    tmp_path: Path,
+) -> None:
+    namespace = _rendered_gate5_namespace(tmp_path)
+
+    def make_config(name: str, replay_payload: bytes) -> tuple[Path, str, dict[str, str]]:
+        replay = tmp_path / f"{name}.replay.json"
+        replay.write_bytes(replay_payload)
+        replay_sha = hashlib.sha256(replay_payload).hexdigest()
+        config = tmp_path / f"{name}.attacker.json"
+        config.write_text(
+            json.dumps(
+                {
+                    "harmbench": {
+                        "methods": ["DirectRequest"],
+                        "experiment": "llama2_7b",
+                        "upstream_revision": "a" * 40,
+                        "replay_artifact": str(replay.resolve()),
+                        "replay_artifact_sha256": replay_sha,
+                    }
+                },
+                sort_keys=True,
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        config_sha = hashlib.sha256(config.read_bytes()).hexdigest()
+        _loaded, artifact = namespace["_load_attacker_config"](
+            str(config.resolve()), ["harmbench"], config_sha
+        )
+        assert artifact is not None
+        identity = {
+            "normalized_selected_sha256": artifact["normalized_selected_sha256"]
+        }
+        return config.resolve(), config_sha, identity
+
+    bounded, bounded_sha, bounded_identity = make_config(
+        "bounded", b'{"selection":{"limit":50}}\n'
     )
+    canary, canary_sha, canary_identity = make_config(
+        "canary", b'{"selection":{"limit":1}}\n'
+    )
+    assert bounded_identity != canary_identity
+
+    validate = namespace["validate_bounded_harmbench_attacker_config"]
+    assert validate(
+        path_value=str(bounded),
+        sha_value=bounded_sha,
+        expected_identity=bounded_identity,
+    ) == bounded
+    gate5_error = namespace["Gate5Error"]
+    with pytest.raises(gate5_error, match="does not match projection evidence"):
+        validate(
+            path_value=str(canary),
+            sha_value=canary_sha,
+            expected_identity=bounded_identity,
+        )
+    with pytest.raises(gate5_error, match="SHA differs"):
+        validate(
+            path_value=str(bounded),
+            sha_value="0" * 64,
+            expected_identity=bounded_identity,
+        )
+
+
+def test_gate5_relationship_helpers_reject_coherent_mutations(
+    tmp_path: Path,
+) -> None:
+    namespace = _rendered_gate5_namespace(tmp_path)
+    gate5_error = namespace["Gate5Error"]
+
+    validate_source = namespace["validate_common_source_evaluator"]
+    common_source = {
+        "status": "not_applicable",
+        "required_records": 0,
+        "observed_records": 0,
+        "valid_records": 0,
+    }
+    proxy_source = {
+        "status": "not_exercised",
+        "required_records": 1,
+        "observed_records": 0,
+        "valid_records": 0,
+    }
+    validate_source(common_source, arm="strongreject_official", label="test")
+    validate_source(
+        proxy_source, arm="cyberseceval_prompt_injection", label="test"
+    )
+    with pytest.raises(gate5_error, match="unexpectedly requires"):
+        validate_source(proxy_source, arm="strongreject_official", label="test")
+    with pytest.raises(gate5_error, match="required-but-unimplemented"):
+        validate_source(
+            common_source, arm="cyberseceval_prompt_injection", label="test"
+        )
+
+    def audit(
+        *,
+        limit: int,
+        clusters: list[str],
+        rows: list[str],
+        selected_digest: str,
+        full_digest: str = "f" * 64,
+    ) -> dict[str, object]:
+        return {
+            "converter": "test-converter",
+            "full_converted_corpus_sha256": full_digest,
+            "selected_converted_corpus_sha256": selected_digest,
+            "total_records": 3,
+            "selected_records": len(rows),
+            "selected_ids": rows,
+            "total_clusters": 3,
+            "selected_clusters": len(clusters),
+            "total_cluster_ids": ["cluster-1", "cluster-2", "cluster-3"],
+            "selected_cluster_ids": clusters,
+            "sample_seed": 0,
+            "limit": limit,
+            "selection_method": "seeded_nested_source_cluster_prefix_v1",
+        }
+
+    arm_from_audit = namespace["projection_arm_from_audit"]
+    binding_from_audit = namespace["sampling_binding_from_audit"]
+    canonical_digest = namespace["canonical_json_sha256"]
+    validate_sampling = namespace["validate_sampling_relationship_evidence"]
+
+    def workload(value: dict[str, object]) -> dict[str, object]:
+        clusters = sorted(value["selected_cluster_ids"])
+        rows = sorted(value["selected_ids"])
+        return {
+            "selected_clusters": len(clusters),
+            "selected_cluster_ids": clusters,
+            "selected_cluster_ids_sha256": canonical_digest(clusters),
+            "selected_rows": len(rows),
+            "selected_row_ids": rows,
+            "selected_row_ids_sha256": canonical_digest(rows),
+        }
+
+    bounded_audit = audit(
+        limit=2,
+        clusters=["cluster-1", "cluster-2"],
+        rows=["row-1", "row-2"],
+        selected_digest="b" * 64,
+    )
+    canary_audit = audit(
+        limit=1,
+        clusters=["cluster-1"],
+        rows=["row-1"],
+        selected_digest="c" * 64,
+    )
+
+    def validate_pair(canary_value: dict[str, object]) -> None:
+        validate_sampling(
+            lane="test-lane",
+            arm="test-arm",
+            expected_limit=2,
+            preliminary_arm=arm_from_audit(
+                bounded_audit, logical_source_arm="test-arm"
+            ),
+            preliminary_binding=binding_from_audit(bounded_audit),
+            canary_arm=arm_from_audit(
+                canary_value, logical_source_arm="test-arm"
+            ),
+            canary_binding=binding_from_audit(canary_value),
+            bounded_audit=bounded_audit,
+            canary_audit=canary_value,
+            canary_workload=workload(canary_value),
+        )
+
+    validate_pair(canary_audit)
+    assert (
+        bounded_audit["selected_converted_corpus_sha256"]
+        != canary_audit["selected_converted_corpus_sha256"]
+    )
+    outside_sample = audit(
+        limit=1,
+        clusters=["cluster-3"],
+        rows=["row-3"],
+        selected_digest="d" * 64,
+    )
+    with pytest.raises(gate5_error, match="not nested"):
+        validate_pair(outside_sample)
+    different_universe = audit(
+        limit=1,
+        clusters=["cluster-1"],
+        rows=["row-1"],
+        selected_digest="c" * 64,
+        full_digest="e" * 64,
+    )
+    with pytest.raises(gate5_error, match="source universes differ"):
+        validate_pair(different_universe)
+
+    shared = {
+        "source_conformance": {"sha256": "9" * 64, "bytes": 1},
+        "engine_runtime_config": None,
+        "api_config": None,
+        "local_config": {"normalized_selected_sha256": "8" * 64},
+    }
+
+    def selected_configs(source: str, attacker: object) -> dict[str, object]:
+        return {
+            "source_config": {"normalized_selected_sha256": source},
+            "attacker_config": attacker,
+            **shared,
+        }
+
+    validate_configs = namespace["validate_selected_config_relationship"]
+    bounded_values = {
+        "selected_config_identities": selected_configs("1" * 64, None)
+    }
+    canary_values = {
+        "selected_config_identities": selected_configs("2" * 64, None)
+    }
+    validate_configs(
+        lane="test-lane",
+        preliminary_values=bounded_values,
+        canary_values=canary_values,
+        preliminary_source_identity={"normalized_selected_sha256": "1" * 64},
+        canary_source_identity={"normalized_selected_sha256": "2" * 64},
+    )
+    changed_shared_config = {
+        "selected_config_identities": {
+            **selected_configs("2" * 64, None),
+            "local_config": {"normalized_selected_sha256": "7" * 64},
+        }
+    }
+    with pytest.raises(gate5_error, match="local_config identity differs"):
+        validate_configs(
+            lane="test-lane",
+            preliminary_values=bounded_values,
+            canary_values=changed_shared_config,
+            preliminary_source_identity={"normalized_selected_sha256": "1" * 64},
+            canary_source_identity={"normalized_selected_sha256": "2" * 64},
+        )
+
+    bounded_attacker = {"normalized_selected_sha256": "3" * 64}
+    canary_attacker = {"normalized_selected_sha256": "4" * 64}
+    harm_bounded = {
+        "selected_config_identities": selected_configs(
+            "1" * 64, bounded_attacker
+        )
+    }
+    harm_canary = {
+        "selected_config_identities": selected_configs("2" * 64, canary_attacker)
+    }
+    validate_configs(
+        lane="harmbench-replay",
+        preliminary_values=harm_bounded,
+        canary_values=harm_canary,
+        preliminary_source_identity={"normalized_selected_sha256": "1" * 64},
+        canary_source_identity={"normalized_selected_sha256": "2" * 64},
+    )
+    unregenerated = {
+        "selected_config_identities": selected_configs(
+            "2" * 64, bounded_attacker
+        )
+    }
+    with pytest.raises(gate5_error, match="were not regenerated"):
+        validate_configs(
+            lane="harmbench-replay",
+            preliminary_values=harm_bounded,
+            canary_values=unregenerated,
+            preliminary_source_identity={"normalized_selected_sha256": "1" * 64},
+            canary_source_identity={"normalized_selected_sha256": "2" * 64},
+        )
 
 
 def _assert_source_contract(source: str, required: tuple[str, ...]) -> None:

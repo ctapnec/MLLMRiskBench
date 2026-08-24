@@ -306,6 +306,10 @@ class LifecycleMixin:
         )
 
     def _job_for_id(self, job_id: str) -> Job | None:
+        # Detail and log routes must publish the same reconciled lifecycle as
+        # the Jobs list. In particular, wait for detached log redactors before
+        # exposing a terminal state and its retained stderr.
+        self._reconcile()
         job = self.jobs.get(job_id)
         if job is not None:
             return job

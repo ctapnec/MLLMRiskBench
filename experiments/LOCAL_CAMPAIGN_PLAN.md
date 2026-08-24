@@ -532,7 +532,7 @@ JALMBench invocation. Every other arm observes in under 15 s.
 | 2 [11] | R-Judge and GPTGeoChat classification | vLLM roster for both; text-only Ollama targets for R-Judge only, with GPTGeoChat pairs typed unavailable | replay | rules (not queried; source parser authoritative) | `runs/thesis/runner/rjudge`, `.../gptgeochat` |
 | 3 [12.1] | live Crescendo (response-conditioned) | Qwen3-VL-8B | crescendo | rules,guardrail | `runs/thesis/runner/crescendo-<model>` |
 | 3 [12.2] | frozen measured Runner-safe bridges | Qwen3-VL-8B | pyrit, deepteam, h4rm3l, spikee (sealed workers), purplellama (CyberSecEval arms) | rules,guardrail | `runs/thesis/runner/bridge-<attacker>` |
-| 3 [12.2] | prepared attacks | Qwen3-VL-8B | harmbench prepare (local source model) + replay; t3mp3st stays blocked-unpinned | rules,guardrail | `runs/thesis/runner/harmbench-replay` |
+| 3 [12.2] | prepared attacks | Qwen3-VL-8B | pinned HarmBench DirectRequest preparation + replay; t3mp3st stays blocked-unpinned | rules,guardrail | `runs/thesis/runner/harmbench-replay` |
 | prospective, outside frozen cohort | prepared replay capability | Qwen3-VL-8B | nanogcg attributable suffixes; ideator seed pairs | rules,guardrail | fresh content-bound root only after new admission |
 | 4 [13] | same-base defense contrast | non-estimable: LLaVA base runs, while the exact LLaVA RR target is a Gate 5 runtime terminal and makes no Phase 6 call | replay | rules,guardrail | typed Phase 7 unavailable artifacts, not a paired estimate |
 | 4 [13] | guard defense (text-only) | Qwen3-VL-8B with `--defense both --defense-guard guardrail` (1B guard on GPU 1 alongside the 8B scoring guard only if VRAM allows; otherwise N/A) | replay | rules,guardrail | `runs/thesis/runner/defense-local` |

@@ -123,7 +123,7 @@ mkdir -p "$RECEIPTS_ROOT" "$TRANSPORT_CACHE" "$ATTEST_RECEIPTS" \
   "$PRIVATE_ROOT" "$PREPARED_ROOT"
 chmod 700 "$RECEIPTS_BASE" "$PRIVATE_ROOT" "$PREPARED_ROOT"
 printf 'target\tmodality\treceipt\tsha256\n' > "$ATTEST_STATUS"
-printf 'lane\trehearsal_projection_id\ttarget_cap\tlocal_guardrail_evaluations\tcanary_id\trequest_envelope_id\tall_configured_stages_represented\ttarget_status\tattacker_status\n' > "$STATUS"
+printf 'lane\trehearsal_projection_id\ttarget_cap\tlocal_guardrail_evaluations\tcanary_id\trequest_envelope_id\tall_configured_stages_represented\ttarget_status\tattacker_status\tsource_evaluator_status\n' > "$STATUS"
 printf 'lane\tdisposition\treason\n' > "$DISPOSITIONS"
 printf 'lane\texit_code\treason\n' > "$FAILURES"
 
@@ -637,8 +637,28 @@ if execution["attacker"]["status"] != "exercised":
     raise SystemExit("attacker was not actually exercised")
 if execution["attacker"]["identity"] != expected_attacker:
     raise SystemExit("exercised attacker identity drift")
-if execution["source_evaluator"]["status"] != "not_exercised":
-    raise SystemExit("approximate common-metrics canary falsely claims source-evaluator execution")
+source_evaluator = execution["source_evaluator"]
+if expected_arm == "cyberseceval_prompt_injection":
+    if (
+        source_evaluator["status"] != "not_exercised"
+        or not isinstance(source_evaluator["required_records"], int)
+        or isinstance(source_evaluator["required_records"], bool)
+        or source_evaluator["required_records"] <= 0
+        or source_evaluator["observed_records"] != 0
+        or source_evaluator["valid_records"] != 0
+    ):
+        raise SystemExit(
+            "prompt-proxy canary did not retain the exact required-but-unimplemented source role"
+        )
+elif source_evaluator != {
+    "status": "not_applicable",
+    "required_records": 0,
+    "observed_records": 0,
+    "valid_records": 0,
+}:
+    raise SystemExit(
+        "common-metric canary unexpectedly requires or uses a source evaluator"
+    )
 if roles["all_configured_stages_represented"] is not True:
     raise SystemExit("not all configured judge stages are represented")
 stages = roles["stages"]
@@ -660,6 +680,7 @@ print(
     str(roles["all_configured_stages_represented"]).lower(),
     execution["target"]["status"],
     execution["attacker"]["status"],
+    source_evaluator["status"],
 )
 PY
 }
@@ -671,6 +692,7 @@ run_canary() {
   local config_sha rehearsal_base rehearsal_plan rehearsal_run
   local diagnostic_base diagnostic_plan diagnostic_run projection_id target_cap
   local guard_evals eligibility canary_id request_id stages target_status attacker_status
+  local source_evaluator_status
   config_sha="$(sha256sum -- "$QWEN_CFG" | awk '{print $1}')"
   rehearsal_base="$PREFLIGHT_ROOT/${lane}-${TAG}"
   rehearsal_plan="$rehearsal_base/plan"
@@ -759,12 +781,13 @@ run_canary() {
     --results "$diagnostic_run" \
     --eligibility "$eligibility" \
     --out-dir "$diagnostic_run" > "$CONTROL_ROOT/${lane}.lane-canary.log" 2>&1
-  read -r canary_id request_id stages target_status attacker_status < <(
+  read -r canary_id request_id stages target_status attacker_status source_evaluator_status < <(
     canary_fields "$diagnostic_run" "$attacker" "$arm"
   )
-  printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
+  printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
     "$lane" "$projection_id" "$target_cap" "$guard_evals" "$canary_id" \
-    "$request_id" "$stages" "$target_status" "$attacker_status" | tee -a "$STATUS"
+    "$request_id" "$stages" "$target_status" "$attacker_status" \
+    "$source_evaluator_status" | tee -a "$STATUS"
   printf 'CANARY_END=%s TIME=%s\n' "$lane" "$(date -Is)"
 }
 
@@ -860,6 +883,11 @@ for row in rows:
         raise SystemExit(f"{row['lane']}: incomplete scoring-stage reachability")
     if row["target_status"] != "exercised" or row["attacker_status"] != "exercised":
         raise SystemExit(f"{row['lane']}: target or attacker was not exercised")
+    expected_source = (
+        "not_exercised" if row["lane"] == "bridge-purplellama" else "not_applicable"
+    )
+    if row["source_evaluator_status"] != expected_source:
+        raise SystemExit(f"{row['lane']}: source-evaluator status is not exact")
 
 with open(sys.argv[2], encoding="utf-8", newline="") as handle:
     dispositions = list(csv.DictReader(handle, delimiter="\t"))

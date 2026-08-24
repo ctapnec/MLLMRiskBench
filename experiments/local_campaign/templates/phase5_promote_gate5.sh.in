@@ -1660,7 +1660,6 @@ def validate_inventory(rows: object, *, completed: bool) -> dict[str, dict[str, 
                 or selected != min(total, expected_limit)
                 or arm.get("sample_seed") != 0
                 or arm.get("limit") != expected_limit
-                or arm.get("selection_method") != BOUNDED_SELECTION_METHOD
             ):
                 raise PromotionError(f"{lane}: bounded projection selection changed")
         expected_final_status = "complete" if completed else "pending_execution"
@@ -2424,7 +2423,6 @@ def inventory_self_test() -> dict[str, Any]:
                         "selected_clusters": limit,
                         "sample_seed": 0,
                         "limit": limit,
-                        "selection_method": BOUNDED_SELECTION_METHOD,
                     }],
                 },
             },
@@ -2545,12 +2543,12 @@ def inventory_self_test() -> dict[str, Any]:
     wrong_family = copy.deepcopy(rows)
     next(row for row in wrong_family if row["lane_id"] == "local-qwen3-vl-text-primary-100")["family"] = "bridge"
     tests.append(("family", wrong_family))
-    wrong_selection_method = copy.deepcopy(rows)
+    wrong_selection_limit = copy.deepcopy(rows)
     next(
-        row for row in wrong_selection_method
+        row for row in wrong_selection_limit
         if row["lane_id"] == "local-qwen3-vl-text-primary-100"
-    )["preliminary"]["selection"]["arms"][0]["selection_method"] = "random_sample_v0"
-    tests.append(("bounded_selection_method", wrong_selection_method))
+    )["preliminary"]["selection"]["arms"][0]["limit"] = 1
+    tests.append(("bounded_selection_limit", wrong_selection_limit))
     wrong_terminal = copy.deepcopy(rows)
     next(row for row in wrong_terminal if row["lane_id"] == "bridge-nanogcg")["reason"] += " forged"
     tests.append(("terminal_reason", wrong_terminal))

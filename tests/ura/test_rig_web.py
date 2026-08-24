@@ -901,6 +901,42 @@ def test_failed_job_displays_failure_and_stderr(tmp_path: Path) -> None:
     assert stderr_tail  # the CLI's own message is preserved verbatim
 
 
+def test_job_detail_lookup_reconciles_detached_log_publication(tmp_path: Path) -> None:
+    app = _app(tmp_path)
+    directory = app.state_dir / "delayed-log"
+    directory.mkdir()
+    (directory / "stdout.log").write_bytes(b"")
+    stderr = directory / "stderr.log"
+    stderr.write_bytes(b"")
+
+    class _TerminalProcess:
+        @staticmethod
+        def poll() -> int:
+            return 2
+
+    class _DelayedLogWorker:
+        @staticmethod
+        def wait(*, timeout: float) -> int:
+            assert timeout == 1.0
+            stderr.write_bytes(b"delayed authoritative failure\n")
+            return 0
+
+    job = Job(
+        job_id="delayed-log",
+        command="level1_evidence",
+        argv=[],
+        directory=directory,
+        process=_TerminalProcess(),
+    )
+    app.jobs[job.job_id] = job
+    app._log_capture_workers[job.job_id] = (_DelayedLogWorker(),)
+
+    assert app._job_for_id(job.job_id) is job
+    assert job.run_recorded is True
+    assert job.failure == "delayed authoritative failure"
+    assert stderr.read_bytes() == b"delayed authoritative failure\n"
+
+
 def test_artifact_rendering_shows_evidence_badges(tmp_path: Path) -> None:
     app = _app(tmp_path)
     (app.results_root / "level1.json").write_text(json.dumps({
