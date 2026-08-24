@@ -17,6 +17,7 @@ import importlib
 import json
 import os
 import re
+import signal
 import subprocess
 import sys
 import time
@@ -743,7 +744,15 @@ def test_local_wall_time_kills_sigterm_ignoring_descendant(
         wrapped[3] = "--kill-after=1s"
         wrapped[4] = "1s"
         completed = subprocess.run(wrapped, check=False, timeout=10)
-        assert completed.returncode == 124
+        # A command that exits on TERM gives GNU timeout's ordinary 124. When
+        # the command ignores TERM, --kill-after sends KILL to the managed
+        # process group; Python may observe the supervisor itself as -SIGKILL,
+        # while a shell intermediary reports the conventional 128 + SIGKILL.
+        assert completed.returncode in {
+            124,
+            -signal.SIGKILL,
+            128 + signal.SIGKILL,
+        }
         before = heartbeat.stat().st_size
         time.sleep(0.3)
         assert heartbeat.stat().st_size == before
