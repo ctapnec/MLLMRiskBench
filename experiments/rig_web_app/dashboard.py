@@ -1363,7 +1363,8 @@ class DashboardMixin:
         )
 
     def _stats_campaign_card(self, campaign: Mapping[str, Any]) -> str:
-        state_label, state_tone = self._stats_state_badge(str(campaign["state"]))
+        state = str(campaign["state"])
+        state_label, state_tone = self._stats_state_badge(state)
         job_href = str(campaign.get("job_href") or f"/jobs/{quote(str(campaign['job_id']))}")
         external_badge = (
             "<span class='badge blue'>external / read-only</span>"
@@ -1374,11 +1375,12 @@ class DashboardMixin:
             "%Y-%m-%d %H:%M:%S UTC", time.gmtime(float(campaign["started_at"]))
         )
         ended_at = campaign["ended_at"]
-        ended = (
-            time.strftime("%Y-%m-%d %H:%M:%S UTC", time.gmtime(float(ended_at)))
-            if ended_at is not None
-            else "running / not recorded"
-        )
+        if ended_at is not None:
+            ended = time.strftime(
+                "%Y-%m-%d %H:%M:%S UTC", time.gmtime(float(ended_at))
+            )
+        else:
+            ended = "running / not recorded" if state == "running" else "not recorded"
         usage = campaign["usage"]
         usage_reported = campaign.get("usage_reported") is not False
         calls = (

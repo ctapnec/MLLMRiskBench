@@ -770,6 +770,7 @@ def test_stats_includes_active_run_kind_job_in_card_and_detail_only(
         "</article>", 1
     )[0]
     assert "<span class='badge blue'>running</span>" in card
+    assert "<dt>Ended</dt><dd>running / not recorded</dd>" in card
     assert "data-authority='measured-incomplete'" in card
     assert "running-model" in card and "deepteam" in card
     for job_id in (
@@ -794,6 +795,31 @@ def test_stats_includes_active_run_kind_job_in_card_and_detail_only(
     ):
         assert app.handle("GET", f"/stats/job/{job_id}")[0] == 404
     app.close()
+
+
+def test_stats_orphaned_run_without_end_time_never_says_running(
+    tmp_path: Path,
+) -> None:
+    app = _app(tmp_path)
+    output = app.results_root / "diagnostic-orphaned"
+    _write_completed_cell(output, run_id="run-orphaned", target="mock")
+    _record_running_job(
+        app,
+        tmp_path,
+        job_id="job-orphaned",
+        extra=["--dry-run", "--api", "mock", "--out", str(output)],
+    )
+    app.close()
+
+    restarted = _app(tmp_path)
+    index = restarted.handle("GET", "/stats")[2].decode("utf-8")
+    card = index.split("data-job-id='job-orphaned'", 1)[1].split(
+        "</article>", 1
+    )[0]
+    assert "<span class='badge amber'>orphaned</span>" in card
+    assert "<dt>Ended</dt><dd>not recorded</dd>" in card
+    assert "<dt>Ended</dt><dd>running / not recorded</dd>" not in card
+    restarted.close()
 
 
 def test_stats_active_job_participates_in_pagination_and_run_row_wins(
