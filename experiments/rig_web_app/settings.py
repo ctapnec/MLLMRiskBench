@@ -14,7 +14,7 @@ from urllib.parse import quote
 
 from ura.strict_json import strict_json_loads
 
-from .catalog import _PROVIDER_BUDGETS, _EDITABLE_CONFIGS, _icon
+from .catalog import _EDITABLE_CONFIGS, _icon
 
 from .ui import _page
 
@@ -24,8 +24,7 @@ from .reports import reconcile_pricing_ownership
 
 class SettingsMixin:
     def _budgets(self) -> list[tuple[str, str, str, str]]:
-        """(name, prepaid, match-prefix, funds) rows from the editable
-        budgets config, falling back to the recorded ledger defaults."""
+        """Return configured (name, prepaid, match-prefix, funds) rows."""
 
         document = self._load_registry("budgets.json", "rig/budgets.example.json")
         providers = document.get("providers")
@@ -45,35 +44,30 @@ class SettingsMixin:
                         str(entry.get("funds", "")).strip(),
                     )
                 )
-        if rows:
-            return rows
-        return [
-            (name, amount, name.split()[0].lower(), role)
-            for name, amount, role in _PROVIDER_BUDGETS
-        ]
+        return rows
 
     def _budget_card(self) -> str:
+        configured = self._budgets()
         rows = "".join(
             f"<tr><td>{html.escape(name)}</td>"
             f"<td><strong>{html.escape(amount)}</strong></td>"
             f"<td>{html.escape(role)}</td></tr>"
-            for name, amount, _match, role in self._budgets()
+            for name, amount, _match, role in configured
+        )
+        table = (
+            "<div class='scroll'><table><tr><th>Provider</th><th>Prepaid</th>"
+            "<th>Funds</th></tr>" + rows + "</table></div>"
+            if configured
+            else "<p class='note'>No provider budgets are configured.</p>"
         )
         return (
             "<div class='card'><h2>" + _icon("coins") + "Provider budgets</h2>"
-            "<div class='scroll'><table><tr><th>Provider</th><th>Prepaid</th>"
-            "<th>Funds</th></tr>" + rows + "</table></div>"
-            "<p class='note'>Prepaid budgets from the editable "
-            "<a href='/config?file=budgets'>budgets</a> config (defaults "
-            "recorded in ledger 11.22). The funded campaign defaults to a "
-            "metered Haiku judge, so its Anthropic balance is the recorded "
-            "constraint, including local-target lanes. A different selected "
-            "hosted judge shifts the provider and cost constraint; a local "
-            "judge avoids hosted API spend but cannot share a process with a "
-            "local target. Canaries report only exact "
-            "observed tokens and spend; campaign <code>--limit</code> and call "
-            "caps come from prepaid funds plus the prospective call upper "
-            "bound. This card spends nothing.</p></div>"
+            + table
+            + "<p class='note'>Optional operator values come from the editable "
+            "<a href='/config?file=budgets'>budgets</a> config. They support "
+            "usage reporting only: execution limits remain the explicit "
+            "sampling, call, HTTP and deadline controls recorded by each run. "
+            "This card spends nothing.</p></div>"
         )
 
     @staticmethod

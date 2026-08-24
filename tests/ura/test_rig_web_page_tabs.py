@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import re
 import time
 from collections import Counter
@@ -102,7 +103,7 @@ def test_dashboard_and_build_sections_have_sensible_boundaries(tmp_path: Path) -
     assert "Rig hardware" in system and "Console database" in system
     assert "Campaign pipeline" in campaigns and "Campaign bindings" in campaigns
     assert "Provider budgets" in governance
-    assert "Campaign sampling policy" in governance and "Boundaries" in governance
+    assert "Campaign sampling policy" not in governance and "Boundaries" in governance
 
     general_at = builder.index("data-page-panel='build-general'")
     builder_form_at = builder.index("<form method='post' action='/build' id='builder'>")
@@ -136,6 +137,58 @@ def test_dashboard_and_build_sections_have_sensible_boundaries(tmp_path: Path) -
     # non-nested form, and the modal has no hidden tab-panel ancestor.
     assert builder[builder_form_at:builder_form_end].count("<form") == 1
     assert "</section>" in builder[execution_at:modal_at]
+
+
+def test_rig_web_core_does_not_embed_local_campaign_policy(tmp_path: Path) -> None:
+    """Local evidence-collection policy belongs outside generic Rig Web core."""
+
+    app = _app(tmp_path)
+    try:
+        dashboard = app.handle("GET", "/")[2].decode("utf-8")
+        builder = app.handle("GET", "/build")[2].decode("utf-8")
+    finally:
+        app.close()
+
+    repo_root = Path(__file__).parents[2]
+    core_root = repo_root / "experiments" / "rig_web_app"
+    boundary_files = [
+        *sorted(core_root.glob("*.py")),
+        repo_root / "experiments" / "rig_web.py",
+        repo_root / "experiments" / "rig" / "budgets.example.json",
+    ]
+    core_text = "\n".join(
+        path.read_text(encoding="utf-8") for path in boundary_files
+    )
+    forbidden = (
+        "LOCAL_CAMPAIGN_PLAN",
+        "100 clusters per core arm",
+        "50 per extended arm",
+        "sample seed 0",
+        "Current local tiers",
+        "Current paid-API tier",
+        "thesis ledger",
+        "ledger 11.22",
+        "runbook section 5.2",
+        "_PROVIDER_BUDGETS",
+        "focal Fable target",
+        "metered Haiku judge",
+    )
+    for term in forbidden:
+        assert term.casefold() not in core_text.casefold()
+        assert term.casefold() not in dashboard.casefold()
+
+    budget_example = json.loads(boundary_files[-1].read_text(encoding="utf-8"))
+    assert budget_example == {"providers": []}
+    assert "No provider budgets are configured" in dashboard
+
+    # The generic controls remain available and are not assigned a fixed
+    # campaign tier or seed by the server-rendered form.
+    assert "name='limit'" in builder
+    assert "name='sample_seed'" in builder
+    assert "name='cap_target'" in builder and "--max-total-target-calls" in builder
+    assert "name='cap_judge'" in builder and "--max-total-judge-calls" in builder
+    assert "name='cap_http'" in builder and "--max-total-http-attempts" in builder
+    assert "name='deadline'" in builder and "--deadline-seconds" in builder
 
 
 def test_tab_dom_has_unique_ids_safe_form_ownership_and_no_disabled_state(

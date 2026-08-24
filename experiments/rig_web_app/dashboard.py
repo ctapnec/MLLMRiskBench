@@ -14,7 +14,7 @@ from urllib.parse import quote
 
 from ura.strict_json import strict_json_loads
 
-from .catalog import _WARNINGS_FILE, _WARNINGS_MAX, _WARNING_TONES, _CAMPAIGN_POLICY, _icon
+from .catalog import _WARNINGS_FILE, _WARNINGS_MAX, _WARNING_TONES, _icon
 
 from .ui import _page, _page_tablist, _page_tabpanel
 
@@ -135,21 +135,6 @@ class DashboardMixin:
             "if(restore){restore.addEventListener('click',function(e){"
             "e.preventDefault();save([]);apply();});}"
             "apply();})();</script>"
-        )
-
-    @staticmethod
-    def _policy_card() -> str:
-        rows = "".join(
-            f"<tr><td>{html.escape(term)}</td><td>{html.escape(rule)}</td></tr>"
-            for term, rule in _CAMPAIGN_POLICY
-        )
-        return (
-            "<div class='card'><h2>" + _icon("receipt") + "Campaign sampling policy</h2>"
-            "<div class='scroll'><table>" + rows + "</table></div>"
-            "<p class='note'>Operator-recorded policy (thesis ledger "
-            "Sections 11.22/11.27; runbook section 5.2). Enforcement lives "
-            "in each recorded run_matrix invocation, not in this card.</p>"
-            "</div>"
         )
 
     def _campaign_context(self) -> str:

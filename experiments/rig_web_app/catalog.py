@@ -18,46 +18,6 @@ _WARNINGS_FILE = "console-warnings.json"
 _WARNINGS_MAX = 40
 _WARNING_TONES = {"error": "red", "warning": "amber", "info": "blue"}
 
-#: Recorded campaign sampling policy (thesis ledger 11.22/11.27, runbook 5.2).
-#: Presentation of operator-recorded decisions; actual enforcement is the
-#: selected universe, limit, optional bounded-sample seed, projection and caps
-#: recorded on each measured Runner invocation.
-_CAMPAIGN_POLICY = (
-    (
-        "Current local tiers",
-        "100 clusters per core arm and 50 per extended arm at sample seed 0; "
-        "a full local replication remains a separate cohort",
-    ),
-    (
-        "Current paid-API tier",
-        "run a pre-registered cluster subsample (recorded "
-        "--limit and --sample-seed); conditions with the same logical arm, "
-        "converted corpus digest, limit and seed use the identical subset, and "
-        "comparisons restrict to that intersection",
-    ),
-    (
-        "Separate full replication",
-        "explicit --limit 0 is supported locally or through a hosted route only "
-        "with its own complete projection, caps and approval",
-    ),
-    (
-        "No cross-population pooling",
-        "results with different selected universes, limits, sample seeds or "
-        "evaluator routes remain distinct strata",
-    ),
-    (
-        "Judge budget",
-        "the selected model judge consumes the judge-call ceiling on every "
-        "judged response; hosted judges additionally incur provider spend",
-    ),
-    (
-        "Prepaid budgets",
-        "Anthropic $100, OpenAI $50, Google $25, "
-        "Moonshot $15, DeepSeek $10; canaries record observed tokens/spend, "
-        "while per-lane caps use prepaid funds and prospective call upper bounds",
-    ),
-)
-
 
 @dataclass(frozen=True)
 class CommandParam:
@@ -122,8 +82,7 @@ _PARAM_HELP: dict[str, str] = {
     "arm; 0 means the complete selected release for every arm. "
     "Hosted paid lanes must enter the value explicitly: use a positive bound, "
     "or 0 only with a separate full-grid projection, covering call/HTTP/judge "
-    "caps, deadline and approval. The current campaign authorizes hosted lanes "
-    "only at their positive prospective bounds.",
+    "caps, deadline and approval.",
     "--sample-seed": "Seed for each arm-scoped pseudorandom cluster shuffle "
     "without replacement. Fix and record it so limits are nested and conditions "
     "with the same logical arm, converted corpus digest, limit and seed see "
@@ -234,22 +193,6 @@ _LOCAL_BUDGET_HELP = (
     "Final measured all-local process only. Whole hours become a detached process "
     "wall-time cap that terminates and then kills the complete process tree after "
     "expiry. Set --deadline-seconds independently for Runner's call-start window."
-)
-
-
-#: Prepaid provider budgets (thesis ledger Section 11.22).  Presentation of a
-#: recorded operator decision; the console never spends anything.
-_PROVIDER_BUDGETS: tuple[tuple[str, str, str], ...] = (
-    (
-        "Anthropic",
-        "$100",
-        "focal Fable target + the Haiku judge (the volume "
-        "driver, metered on every judged response) + one breadth row",
-    ),
-    ("OpenAI", "$50", "focal GPT-5.6 Sol + at most one extra breadth row"),
-    ("Google AI", "$25", "Gemini Flash-class row"),
-    ("Moonshot", "$15", "one to two Kimi snapshots"),
-    ("DeepSeek", "$10", "one row"),
 )
 
 

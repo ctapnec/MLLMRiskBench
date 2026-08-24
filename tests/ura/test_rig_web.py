@@ -3416,15 +3416,16 @@ def test_local_targets_roster_parse_and_modality_inference() -> None:
 
 
 def test_stats_page_renders_budget_and_tolerates_missing_results(tmp_path: Path) -> None:
-    # Budgets render from the editable config (ledger defaults as fallback)
-    # and an empty results root degrades gracefully.  Charts come ONLY from
+    # Budget tracking remains available without inventing a funded campaign,
+    # and an empty results root degrades gracefully. Charts come ONLY from
     # schema-valid producer artifacts (see the real Level-1/Level-2 tests);
     # an unrecognized ad-hoc JSON shape renders nothing.
     app = _app(tmp_path)
     status, _, body = app.handle("GET", "/stats")
     text = body.decode("utf-8")
     assert status == 200
-    assert "Budgets" in text and "Anthropic" in text and "$100" in text
+    assert "Budgets" in text and "/config?file=budgets" in text
+    assert "Anthropic" not in text and "$100" not in text
     assert "No Level-1/Level-2 report" in text  # graceful empty state
     # A fake rows/asr table is NOT a Level-2 report and must not chart.
     (app.results_root / "level2.json").write_text(json.dumps({
@@ -3508,19 +3509,15 @@ def test_dashboard_shows_presence_only_pipeline(tmp_path: Path) -> None:
     assert "data-name='run_matrix'" not in run_text
 
 
-def test_dashboard_notices_and_policy_card(tmp_path: Path) -> None:
+def test_dashboard_notices_do_not_depend_on_campaign_policy(tmp_path: Path) -> None:
     # Operator notices from console-warnings.json render as banners with the
-    # annotate-never-authorize disclaimer; malformed files are ignored; and
-    # the recorded sampling policy is always visible.
+    # annotate-never-authorize disclaimer, and malformed files are ignored.
     app = _app(tmp_path)
     status, _, body = app.handle("GET", "/")
     text = body.decode("utf-8")
     assert status == 200
     assert "Notices" not in text  # no warnings file -> no banner card
-    assert "Campaign sampling policy" in text
-    assert "100 clusters per core arm and 50 per extended arm" in text
-    assert "explicit --limit 0 is supported locally or through a hosted route" in text
-    assert "different selected universes" in text and "distinct strata" in text
+    assert "Campaign sampling policy" not in text
 
     (app.results_root / "console-warnings.json").write_text(json.dumps({
         "warnings": [

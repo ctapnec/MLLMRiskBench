@@ -1,9 +1,3 @@
 {
-  "providers": [
-    {"name": "Anthropic", "prepaid": "$100", "match": "anthropic", "funds": "focal Fable target + the Haiku judge (the volume driver, metered on every judged response) + one breadth row"},
-    {"name": "OpenAI", "prepaid": "$50", "match": "openai", "funds": "focal GPT-5.6 Sol + at most one extra breadth row"},
-    {"name": "Google AI", "prepaid": "$25", "match": "google", "funds": "Gemini Flash-class row"},
-    {"name": "Moonshot", "prepaid": "$15", "match": "kimi", "funds": "one to two Kimi snapshots"},
-    {"name": "DeepSeek", "prepaid": "$10", "match": "deepseek", "funds": "one row"}
-  ]
+  "providers": []
 }

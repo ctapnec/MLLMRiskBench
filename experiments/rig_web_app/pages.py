@@ -580,7 +580,6 @@ class PagesMixin:
         )
         governance_panel = (
             self._budget_card()
-            + self._policy_card()
             + "<div class='card'><h2>"
             + _icon("logo")
             + "Boundaries</h2>"
