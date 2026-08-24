@@ -1406,6 +1406,11 @@ class DashboardMixin:
             if usage_reported
             else "not reported"
         )
+        has_chart = any(
+            "class='barchart'" in self._stats_report_card(report)
+            for report in campaign["reports"]
+        )
+        detail_label = "Statistics &amp; diagrams" if has_chart else "Statistics details"
         return (
             "<article class='stats-campaign-card' "
             f"data-job-id='{html.escape(str(campaign['job_id']))}' "
@@ -1434,7 +1439,7 @@ class DashboardMixin:
             f"{html.escape(str(campaign['job_id']))}' "
             "aria-controls='campaign-stats-modal' aria-haspopup='dialog' "
             "aria-expanded='false'>"
-            "Statistics &amp; diagrams</a></div></article>"
+            f"{detail_label}</a></div></article>"
         )
 
     def _stats_report_card(self, report: Mapping[str, Any]) -> str:
@@ -1610,6 +1615,7 @@ class DashboardMixin:
 
     def _stats_campaign_panel(self, page: int) -> str:
         campaigns, unavailable, has_more = self._stats_run_campaigns(page=page)
+        self._stats_attach_job_reports(campaigns)
         cards = [self._stats_campaign_card(campaign) for campaign in campaigns]
         if cards:
             listing = "<div class='stats-campaign-list'>" + "".join(cards) + "</div>"
@@ -1632,6 +1638,7 @@ class DashboardMixin:
         for campaign in engineering:
             label = html.escape(campaign.campaign_id)
             route = quote(campaign.route_id)
+            artifact_route = quote(f"engineering/{campaign.route_id}")
             registration = load_external_analysis_registration(
                 self.results_root,
                 campaign.route_id,
@@ -1676,7 +1683,8 @@ class DashboardMixin:
                     else str(campaign.model_attempted_calls)
                 )
                 + " (operational self-report)</dd></dl>"
-                f"<p><a href='/jobs/campaign/{route}'>Open engineering details</a></p>"
+                f"<p><a href='/jobs/campaign/{route}'>Open engineering details</a> "
+                f"<a href='/artifacts?path={artifact_route}'>Browse campaign artifacts</a></p>"
                 + analysis_action
                 + "</article>"
             )
@@ -1718,13 +1726,15 @@ class DashboardMixin:
         )
         return (
             "<h2>Campaign runs</h2>"
-            "<p class='note'>Actual console Job/run records, newest first. Passed "
-            "means the CLI exited with status 0; only completion-bound artifacts "
-            "establish model execution. Thesis-measured, diagnostic, synthetic, "
-            "engineering, and preflight work remain visibly separate.</p>"
+            "<p class='note'>Externally managed campaign records appear first, "
+            "followed by console run attempts. Passed means a process exited with "
+            "status 0; only completion-bound artifacts establish model execution. "
+            "Thesis-measured, diagnostic, synthetic, engineering, and preflight "
+            "work remain visibly separate.</p>"
+            + engineering_html
+            + "<h2>Console run attempts</h2>"
             + listing
             + page_links
-            + engineering_html
             + reusable_modal
             + self._stats_modal_script()
         )

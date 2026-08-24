@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 import re
+import time
 from collections import Counter
 from html.parser import HTMLParser
 from pathlib import Path
+from types import SimpleNamespace
 
 from experiments.rig_web import Job, RigWebApp
 from experiments.rig_web_app.ui import _BUILDER_SCRIPT, _PAGE_TABS_SCRIPT
@@ -300,3 +302,69 @@ def test_jobs_overview_keeps_history_filters_and_count_links_consistent(
     filtered_root = _opening_tag(filtered, "data-tab-key='jobs'")
     assert "data-default-tab='jobs-history'" in filtered_root
     assert "data-force-default='true'" in filtered_root
+
+
+def test_jobs_history_globally_orders_heterogeneous_rows_by_start_time(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    app = _app(tmp_path)
+    now = time.time()
+    console_dir = tmp_path / "console-job"
+    console_dir.mkdir()
+    app.jobs["console-oldest"] = Job(
+        job_id="console-oldest",
+        command="webui_selftest",
+        argv=[],
+        directory=console_dir,
+        process=None,
+        restored_state="passed",
+        restored_exit=0,
+        started_at=now - 30,
+    )
+    external = SimpleNamespace(
+        job_id="external-newest",
+        command="run_matrix",
+        argv=(),
+        started_at=now - 10,
+        state="passed",
+        artifact_relative="thesis/runner/external-newest",
+        tmux_session="external-newest",
+        exit_code=0,
+        runtime_seconds=lambda: 1.0,
+    )
+    campaign = SimpleNamespace(
+        route_id="campaign-middle",
+        campaign_id="campaign-middle",
+        started_at=now - 20,
+        state="passed",
+        status_tag="passed",
+        progress="complete",
+        named_session_liveness_verified=False,
+        model_tasks=(),
+        task_outcomes=(),
+        model_execution_error="",
+        model_attempted_calls=0,
+        model_successful_generations=0,
+        model_execution_covered_tasks=0,
+        download_tasks=(),
+        runtime_seconds=lambda: 1.0,
+    )
+    monkeypatch.setattr(
+        app,
+        "_external_measured_job_scan",
+        lambda: ([external], ""),
+    )
+    monkeypatch.setattr(
+        app,
+        "_engineering_campaign_scan",
+        lambda **_kwargs: ([campaign], ""),
+    )
+    try:
+        page = app._jobs_page().decode("utf-8")
+    finally:
+        app.close()
+
+    table = page[page.index("id='jobstable'") : page.index("</table>")]
+    assert table.index("external-newest") < table.index("campaign-middle")
+    assert table.index("campaign-middle") < table.index("console-oldest")

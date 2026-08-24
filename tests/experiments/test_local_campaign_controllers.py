@@ -270,6 +270,101 @@ def test_phase3_uses_one_exact_bound_create_only_tag(tmp_path: Path) -> None:
         render_controller_set(invalid, tmp_path / "invalid-workspace")
 
 
+def test_phase3_registers_one_tmux_owned_console_campaign_with_exact_progress(
+    tmp_path: Path,
+) -> None:
+    import re
+
+    bindings = _bindings(tmp_path / "bindings.json")
+    output = tmp_path / "workspace"
+    render_controller_set(bindings, output)
+    source = (output / "phase3_guard1b_acquire_fit.sh").read_text(
+        encoding="utf-8"
+    )
+    expected_tasks = (
+        "validate-deployed-inputs",
+        "derive-plan",
+        "sealed-acquisition",
+        "zero-call-fit-preflight",
+        "validate-fit-evidence",
+    )
+
+    def assert_contract(value: str) -> None:
+        task_block = re.search(
+            r"(?m)^readonly -a CONTROL_TASKS=\(\n"
+            r"(?P<tasks>(?:  [a-z0-9-]+\n)+)\)$",
+            value,
+        )
+        assert task_block is not None
+        assert tuple(
+            line.strip() for line in task_block.group("tasks").splitlines()
+        ) == expected_tasks
+        assert re.findall(
+            r"(?m)^  controller_task_start ([a-z0-9-]+)$", value
+        ) == list(expected_tasks)
+        assert re.findall(
+            r"(?m)^  controller_task_pass ([a-z0-9-]+)$", value
+        ) == list(expected_tasks)
+        assert value.count(
+            "-m experiments.local_campaign.console_events start"
+        ) == 1
+        assert '--campaign-id "${control_root##*/}"' in value
+        assert '--release-commit "$EXPECTED_COMMIT"' in value
+        assert "--evidence-class local_campaign_control" in value
+        assert "readonly CONTROL_HARD_STOP_HOURS='25'" in value
+        assert '--hard-stop-hours "$CONTROL_HARD_STOP_HOURS"' in value
+        assert '--tmux-socket "$socket"' in value
+        assert '--tmux-session "$session"' in value
+        assert 'console_start_args+=(--planned-task "$task")' in value
+        registration = value.index(
+            "-m experiments.local_campaign.console_events start"
+        )
+        tmux_launch = value.index('tmux -L "$socket" new-session -d -s "$session"')
+        assert registration < tmux_launch
+
+        launch_failure = value[tmux_launch : value.index("  printf 'SESSION=%s", tmux_launch)]
+        assert 'if (( launch_rc != 0 )); then' in launch_failure
+        assert (
+            '--event task_skip --task "$task" --status skipped'
+            in launch_failure
+        )
+        assert (
+            '--event campaign_end --task bootstrap --status failed'
+            in launch_failure
+        )
+        assert 'return "$launch_rc"' in launch_failure
+
+        finish = value.split("\n  finish() {", 1)[1].split(
+            "\n  }\n  trap finish EXIT", 1
+        )[0]
+        exit_publication = finish.index(
+            'mv -T -- "$CONTROL_ROOT/.exit.tmp" "$CONTROL_ROOT/.exit"'
+        )
+        assert 'controller_finish "$rc"' in finish
+        terminal_publication = finish.index('controller_finish "$rc"')
+        assert exit_publication < terminal_publication < finish.index('exit "$rc"')
+        assert "[[ \"$STAGE\" == 'complete' ]]" in value
+        assert "CONTROL_TASK_INDEX == ${#CONTROL_TASKS[@]}" in value
+        assert 'console_event task_end "$task" failed "$detail"' in value
+        assert 'console_event task_skip "$task" skipped' in value
+        assert 'console_event campaign_end bootstrap "$status" "$detail"' in value
+
+    assert_contract(source)
+    for original, replacement in (
+        ('--tmux-session "$session"', '--tmux-session wrong-session'),
+        (
+            '--event campaign_end --task bootstrap --status failed',
+            '--event campaign_end --task bootstrap --status passed',
+        ),
+        ('controller_finish "$rc"', ':'),
+        ('controller_task_start sealed-acquisition', ':'),
+        ('[[ "$STAGE" == \'complete\' ]]', '[[ -n "$STAGE" ]]'),
+    ):
+        assert original in source
+        with pytest.raises(AssertionError):
+            assert_contract(source.replace(original, replacement, 1))
+
+
 def test_native_diagnostics_distinguish_importer_from_canonical_engine() -> None:
     source = (
         Path(__file__).parents[2]

@@ -703,6 +703,10 @@ def test_phase3_tmux_reexec_stays_on_the_opened_generation(tmp_path: Path) -> No
     work.mkdir()
     home = tmp_path / "home"
     home.mkdir()
+    project_python = home / "MLLMRiskBench" / ".venv" / "bin" / "python"
+    project_python.parent.mkdir(parents=True)
+    project_python.write_text("#!/usr/bin/env bash\nexit 0\n", encoding="ascii")
+    project_python.chmod(0o700)
     campaign_env = home / ".ura_campaign_env"
     campaign_env.write_text(
         f"export URA_WORK='{_posix_path(work)}'\n"

@@ -960,6 +960,7 @@ class PagesMixin:
                 "console jobs are shown."
             )
         rows = []
+        row_started_at: list[float] = []
         tallies: dict[str, int] = {}
         for job in history_jobs:
             job_id = job.job_id
@@ -1012,6 +1013,7 @@ class PagesMixin:
                 f"<td>{'' if job.exit_code() is None else job.exit_code()}"
                 f"</td><td>{stop}</td></tr>"
             )
+            row_started_at.append(job.started_at)
         for job in external_jobs:
             state_tag = self._job_status_tag(job.state)
             tallies[state_tag] = tallies.get(state_tag, 0) + 1
@@ -1053,6 +1055,7 @@ class PagesMixin:
                 f"<td>{output_link}; tmux <code>{html.escape(job.tmux_session)}</code></td>"
                 f"<td>{'' if job.exit_code is None else job.exit_code}</td><td></td></tr>"
             )
+            row_started_at.append(job.started_at)
         for campaign in campaigns:
             state = campaign.state
             state_tag = campaign.status_tag
@@ -1124,6 +1127,15 @@ class PagesMixin:
                 f"<a href='/jobs/campaign/{route_id}'>logs</a></td>"
                 "<td>-</td><td></td></tr>"
             )
+            row_started_at.append(campaign.started_at)
+        rows = [
+            row
+            for _started, row in sorted(
+                zip(row_started_at, rows, strict=True),
+                key=lambda item: item[0],
+                reverse=True,
+            )
+        ]
         chips = (
             "<div class='chips'>"
             f"<button type='button' class='chip on' data-state=''>All "

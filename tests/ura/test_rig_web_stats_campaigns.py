@@ -200,6 +200,78 @@ def _write_level2(path: Path, *, run_id: str, model: str, metric: str) -> None:
     path.write_text(json.dumps(report), encoding="utf-8")
 
 
+def _write_empty_level2(path: Path) -> None:
+    report: dict[str, object] = {
+        "schema_version": "ura-level2-report/1",
+        "status": "deterministic_compatible_stratum_export",
+        "empirical_validity_established": False,
+        "pooling_policy": {
+            "universal_safety_score_defined": False,
+            "cross_stratum_pooling_permitted": False,
+            "native_scale_pooling_permitted": False,
+        },
+        "common": {"n_estimate_rows": 0, "estimates": []},
+    }
+    material = json.dumps(
+        report,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+        allow_nan=False,
+    ).encode("utf-8")
+    report["report_id"] = "level2-" + hashlib.sha256(material).hexdigest()[:24]
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(report), encoding="utf-8")
+
+
+def _write_engineering_campaign(
+    app: RigWebApp,
+    *,
+    campaign_id: str,
+    started_at: float,
+) -> Path:
+    root = app.results_root / "engineering" / campaign_id
+    root.mkdir(parents=True)
+    stamp = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(started_at))
+    (root / "ENGINEERING_ONLY.json").write_text(
+        json.dumps(
+            {
+                "schema": "ura-engineering-campaign/1",
+                "campaign_id": campaign_id,
+                "release_commit": "1" * 40,
+                "evidence_class": "engineering_test",
+                "thesis_empirical_evidence": False,
+                "hosted_calls_allowed": False,
+                "hard_stop_hours": 1,
+                "started_at": stamp,
+                "planned_tasks": ["inspect"],
+            }
+        ),
+        encoding="utf-8",
+    )
+    events = (
+        {
+            "at": stamp,
+            "event": "campaign_start",
+            "task": "bootstrap",
+            "status": "running",
+            "detail": "started",
+        },
+        {
+            "at": stamp,
+            "event": "campaign_end",
+            "task": "bootstrap",
+            "status": "passed",
+            "detail": "complete",
+        },
+    )
+    (root / "task-log.jsonl").write_text(
+        "".join(json.dumps(event) + "\n" for event in events),
+        encoding="utf-8",
+    )
+    return root
+
+
 def _record_analysis_job(
     app: RigWebApp,
     tmp_path: Path,
@@ -278,12 +350,107 @@ def test_stats_lists_real_jobs_with_distinct_authority_and_one_lazy_modal(
     assert "local / not billed" in text and "1 complete cell" in text
     assert text.count("id='campaign-stats-modal'") == 1
     assert text.count("data-stats-job=") == 4
+    assert text.count("Statistics details") == 4
+    for job_id in ("job-measured", "job-synthetic", "job-diagnostic", "job-preflight"):
+        card = text.split(f"data-job-id='{job_id}'", 1)[1].split("</article>", 1)[0]
+        assert "Statistics details" in card
+        assert "Statistics &amp; diagrams" not in card
     assert "fetch(trigger.href" in text
     assert "aria-haspopup='dialog'" in text
     assert "event.key==='Escape'" in text and "last.focus()" in text
     assert "class='barchart'" not in text
     # A real href is the complete no-JS fallback; it is not an inert hash.
     assert "href='/stats/job/job-measured'" in text
+    app.close()
+
+
+def test_stats_lists_external_campaigns_first_with_resolvable_detail_and_artifacts(
+    tmp_path: Path,
+) -> None:
+    app = _app(tmp_path)
+    campaign_id = "external-campaign-newer"
+    _write_engineering_campaign(
+        app,
+        campaign_id=campaign_id,
+        started_at=time.time() + 60,
+    )
+    _record_run(
+        app,
+        tmp_path,
+        job_id="job-older-diagnostic",
+        out=app.results_root / "diagnostic-old",
+        extra=["--diagnostic-canary", "--api", "mock"],
+    )
+
+    text = app.handle("GET", "/stats")[2].decode("utf-8")
+    campaign_card = text.index(f"/jobs/campaign/{campaign_id}")
+    console_heading = text.index("<h2>Console run attempts</h2>")
+    console_card = text.index("data-job-id='job-older-diagnostic'")
+    assert campaign_card < console_heading < console_card
+
+    detail_href = f"/jobs/campaign/{campaign_id}"
+    artifact_href = f"/artifacts?path=engineering/{campaign_id}"
+    assert f"href='{detail_href}'" in text
+    assert f"href='{artifact_href}'" in text
+    assert app.handle("GET", detail_href)[0] == 200
+    assert app.handle("GET", artifact_href)[0] == 200
+    app.close()
+
+
+def test_stats_cta_promises_diagrams_only_for_chart_renderable_bound_report(
+    tmp_path: Path,
+) -> None:
+    app = _app(tmp_path)
+    chart_root = app.results_root / "thesis" / "chart"
+    table_root = app.results_root / "thesis" / "table-only"
+    for job_id, root in (("job-chart", chart_root), ("job-table", table_root)):
+        root.mkdir(parents=True)
+        _record_run(
+            app,
+            tmp_path,
+            job_id=job_id,
+            out=root,
+            extra=["--api", "openai:model", "--corpora", "strongreject_official"],
+        )
+
+    chart_report = app.results_root / "thesis" / "analysis" / "chart.json"
+    table_report = app.results_root / "thesis" / "analysis" / "table.json"
+    _write_level2(
+        chart_report,
+        run_id="run-chart",
+        model="model",
+        metric="chart_metric",
+    )
+    _write_empty_level2(table_report)
+    _record_analysis_job(
+        app,
+        tmp_path,
+        job_id="analysis-chart",
+        results=chart_root,
+        report=chart_report,
+    )
+    _record_analysis_job(
+        app,
+        tmp_path,
+        job_id="analysis-table",
+        results=table_root,
+        report=table_report,
+    )
+
+    index = app.handle("GET", "/stats")[2].decode("utf-8")
+    chart_card = index.split("data-job-id='job-chart'", 1)[1].split("</article>", 1)[0]
+    table_card = index.split("data-job-id='job-table'", 1)[1].split("</article>", 1)[0]
+    assert "Statistics &amp; diagrams" in chart_card
+    assert "Statistics details" not in chart_card
+    assert "Statistics details" in table_card
+    assert "Statistics &amp; diagrams" not in table_card
+    assert "class='barchart'" not in index
+
+    chart_detail = app.handle("GET", "/stats/job/job-chart?fragment=1")[2].decode("utf-8")
+    table_detail = app.handle("GET", "/stats/job/job-table?fragment=1")[2].decode("utf-8")
+    assert "class='barchart'" in chart_detail
+    assert "class='barchart'" not in table_detail
+    assert "Validated Level-2 report with no common estimate rows" in table_detail
     app.close()
 
 

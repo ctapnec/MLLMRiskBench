@@ -31,8 +31,16 @@ readonly MAX_DOWNLOAD_BYTES='8589934592'
 readonly MIN_FREE_BYTES='1099511627776'
 readonly ACQUISITION_DEADLINE_SECONDS='86400'
 readonly REQUEST_DEADLINE_SECONDS='3600'
+readonly CONTROL_HARD_STOP_HOURS='25'
 
 REQUEST_ARGS=()
+readonly -a CONTROL_TASKS=(
+  validate-deployed-inputs
+  derive-plan
+  sealed-acquisition
+  zero-call-fit-preflight
+  validate-fit-evidence
+)
 
 fail() {
   printf 'phase3 guard1b: %s\n' "$*" >&2
@@ -281,7 +289,7 @@ self_test() {
 
 launch_controller() {
   source "$HOME/.ura_campaign_env"
-  local tag session socket work_root control_root script
+  local tag session socket work_root control_root script py launch_rc task
   tag="$BOUND_TAG"
   validate_bound_tag "$tag" || fail 'bound Phase 3 tag is invalid'
   session="ura-phase3-guard1b-${tag}"
@@ -296,8 +304,44 @@ launch_controller() {
   script="$(opened_controller_script)"
   [[ -f "$script" && ! -L "$script" ]] || fail 'controller must be one regular non-symlink file'
   command -v tmux >/dev/null 2>&1 || fail 'tmux is required'
+  cd "$HOME/MLLMRiskBench"
+  py="$PWD/.venv/bin/python"
+  [[ -x "$py" ]] || fail 'project Python is unavailable'
+  local -a console_start_args=(
+    --work-root "$work_root"
+    --control-root "$control_root"
+    --campaign-id "${control_root##*/}"
+    --release-commit "$EXPECTED_COMMIT"
+    --evidence-class local_campaign_control
+    --hard-stop-hours "$CONTROL_HARD_STOP_HOURS"
+    --tmux-socket "$socket"
+    --tmux-session "$session"
+  )
+  for task in "${CONTROL_TASKS[@]}"; do
+    console_start_args+=(--planned-task "$task")
+  done
+  PYTHONDONTWRITEBYTECODE=1 "$py" -m experiments.local_campaign.console_events start \
+    "${console_start_args[@]}"
+  set +e
   tmux -L "$socket" new-session -d -s "$session" \
     "exec bash $(printf '%q' "$script") --payload $(printf '%q' "$control_root") $(printf '%q' "$tag")"
+  launch_rc=$?
+  set -e
+  if (( launch_rc != 0 )); then
+    for task in "${CONTROL_TASKS[@]}"; do
+      PYTHONDONTWRITEBYTECODE=1 "$py" -m experiments.local_campaign.console_events event \
+        --work-root "$work_root" --control-root "$control_root" \
+        --event task_skip --task "$task" --status skipped \
+        --detail "not_reached_after_tmux_launch_failed_exit_${launch_rc}" || \
+        printf 'console event failed after tmux launch: task_skip %s\n' "$task" >&2
+    done
+    PYTHONDONTWRITEBYTECODE=1 "$py" -m experiments.local_campaign.console_events event \
+      --work-root "$work_root" --control-root "$control_root" \
+      --event campaign_end --task bootstrap --status failed \
+      --detail "tmux_launch_failed_exit_${launch_rc}" || \
+      printf 'console event failed after tmux launch: campaign_end\n' >&2
+    return "$launch_rc"
+  fi
   printf 'SESSION=%s\n' "$session"
   printf 'SOCKET=%s\n' "$socket"
   printf 'ATTACH=tmux -L %s attach -t %s\n' "$socket" "$session"
@@ -729,14 +773,68 @@ run_payload() {
   umask 077
   source "$HOME/.ura_campaign_env"
 
-  local work_root expected_control
-  work_root="$(readlink -f -- "${URA_WORK:?URA_WORK is required}")"
-  expected_control="$work_root/runs/engineering/phase3-guard1b-acquire-fit-${tag}"
+  WORK_ROOT="$(readlink -f -- "${URA_WORK:?URA_WORK is required}")"
+  local expected_control
+  expected_control="$WORK_ROOT/runs/engineering/phase3-guard1b-acquire-fit-${tag}"
   [[ "$(readlink -f -- "$CONTROL_ROOT")" == "$expected_control" ]] \
     || fail 'payload control root is outside its exact campaign location'
   [[ -d "$CONTROL_ROOT" && ! -L "$CONTROL_ROOT" ]] || fail 'payload control root is invalid'
 
+  PY="$HOME/MLLMRiskBench/.venv/bin/python"
+  CONTROL_TASK_INDEX=0
+  CONTROL_ACTIVE_TASK=''
   STAGE='startup'
+
+  console_event() {
+    PYTHONDONTWRITEBYTECODE=1 "$PY" -m experiments.local_campaign.console_events event \
+      --work-root "$WORK_ROOT" --control-root "$CONTROL_ROOT" \
+      --event "$1" --task "$2" --status "$3" --detail "$4"
+  }
+
+  controller_task_start() {
+    local task="$1"
+    [[ -z "$CONTROL_ACTIVE_TASK" ]]
+    [[ "${CONTROL_TASKS[$CONTROL_TASK_INDEX]}" == "$task" ]]
+    CONTROL_ACTIVE_TASK="$task"
+    console_event task_start "$task" running "${task}_started"
+  }
+
+  controller_task_pass() {
+    local task="$1"
+    [[ "$CONTROL_ACTIVE_TASK" == "$task" ]]
+    console_event task_end "$task" passed "${task}_complete"
+    CONTROL_ACTIVE_TASK=''
+    CONTROL_TASK_INDEX=$((CONTROL_TASK_INDEX + 1))
+  }
+
+  controller_finish() {
+    local rc="$1" task status='failed' detail
+    detail="phase3_guard1b_${STAGE}_exit_${rc}"
+    if (( rc == 0 )) \
+        && [[ "$STAGE" == 'complete' ]] \
+        && [[ -z "$CONTROL_ACTIVE_TASK" ]] \
+        && (( CONTROL_TASK_INDEX == ${#CONTROL_TASKS[@]} )); then
+      status='passed'
+      detail='phase3_guard1b_complete'
+    fi
+    if [[ -n "$CONTROL_ACTIVE_TASK" ]]; then
+      task="$CONTROL_ACTIVE_TASK"
+      console_event task_end "$task" failed "$detail" || \
+        printf 'console event failed: task_end %s\n' "$task" >&2
+      CONTROL_ACTIVE_TASK=''
+      CONTROL_TASK_INDEX=$((CONTROL_TASK_INDEX + 1))
+    fi
+    while (( CONTROL_TASK_INDEX < ${#CONTROL_TASKS[@]} )); do
+      task="${CONTROL_TASKS[$CONTROL_TASK_INDEX]}"
+      console_event task_skip "$task" skipped "not_reached_after_${detail}" || \
+        printf 'console event failed: task_skip %s\n' "$task" >&2
+      CONTROL_TASK_INDEX=$((CONTROL_TASK_INDEX + 1))
+    done
+    console_event campaign_end bootstrap "$status" "$detail" || \
+      printf 'console event failed: campaign_end\n' >&2
+    return 0
+  }
+
   finish() {
     local rc=$?
     trap - EXIT
@@ -745,6 +843,7 @@ run_payload() {
     mv -T -- "$CONTROL_ROOT/.stage.tmp" "$CONTROL_ROOT/.stage"
     printf '%s\n' "$rc" > "$CONTROL_ROOT/.exit.tmp"
     mv -T -- "$CONTROL_ROOT/.exit.tmp" "$CONTROL_ROOT/.exit"
+    controller_finish "$rc"
     printf 'PHASE3_GUARD1B_EXIT=%s STAGE=%s\n' "$rc" "$STAGE"
     exit "$rc"
   }
@@ -757,7 +856,6 @@ run_payload() {
   printf 'PHASE3_GUARD1B_START=%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 
   cd "$HOME/MLLMRiskBench"
-  PY="$PWD/.venv/bin/python"
   PROJECT_RECEIPT="$URA_PROJECT_REVISION_MANIFEST"
   PROJECT_RECEIPT_SHA="$URA_PROJECT_REVISION_SHA256"
   SOURCE_RECEIPT="$URA_SOURCE_CONFORMANCE_MANIFEST"
@@ -769,10 +867,10 @@ run_payload() {
   MODEL_STORE="$(readlink -f -- "$URA_MODEL_STORE")"
   TRANSPORT_CACHE="$MODEL_STORE/.transport-cache"
   local phase_root plan_root receipts_root
-  phase_root="$work_root/runs/thesis/acquisition/phase3-guard1b-${tag}"
+  phase_root="$WORK_ROOT/runs/thesis/acquisition/phase3-guard1b-${tag}"
   plan_root="$phase_root/plan"
   receipts_root="$phase_root/receipts"
-  RUN_ROOT="$work_root/runs/thesis/preflight/guard1b-fit-${tag}"
+  RUN_ROOT="$WORK_ROOT/runs/thesis/preflight/guard1b-fit-${tag}"
   REQUEST_CONTRACT="$CONTROL_ROOT/request-argv.json"
   ACQUISITION_EVIDENCE="$CONTROL_ROOT/acquisition-evidence.json"
   FIT_RESULT="$CONTROL_ROOT/fit-result.json"
@@ -791,6 +889,7 @@ run_payload() {
     URA_MODEL_ACQUISITION_RECEIPT_SHA256 URA_MODEL_ACQUISITION_STORE
 
   STAGE='validate-deployed-inputs'
+  controller_task_start validate-deployed-inputs
   [[ "$PROJECT_RECEIPT_SHA" == "$EXPECTED_PROJECT_RECEIPT_SHA" ]] || fail 'campaign project receipt binding differs'
   [[ "$SOURCE_RECEIPT_SHA" == "$EXPECTED_SOURCE_RECEIPT_SHA" ]] || fail 'campaign source receipt binding differs'
   [[ "$SOURCE_CONFIG_SHA" == "$EXPECTED_SOURCE_CONFIG_SHA" ]] || fail 'source config digest differs'
@@ -802,14 +901,16 @@ run_payload() {
   validate_deployed_inputs
   validate_qwen_config
   validate_limits "$MAX_DOWNLOAD_BYTES" "$MIN_FREE_BYTES" "$ACQUISITION_DEADLINE_SECONDS"
+  controller_task_pass validate-deployed-inputs
 
+  STAGE='derive-plan'
+  controller_task_start derive-plan
   [[ ! -e "$phase_root" && ! -L "$phase_root" ]] || fail 'phase acquisition root already exists'
   [[ ! -e "$RUN_ROOT" && ! -L "$RUN_ROOT" ]] || fail 'fit output root already exists'
   mkdir -- "$phase_root"
   mkdir -- "$plan_root" "$receipts_root"
   mkdir -p -- "$TRANSPORT_CACHE"
 
-  STAGE='derive-plan'
   build_request_args
   validate_request_args
   write_request_contract
@@ -823,8 +924,10 @@ run_payload() {
   [[ -f "$PLAN_PATH" && ! -L "$PLAN_PATH" ]] || fail 'plan output is not a regular file'
   [[ "$(sha256sum -- "$PLAN_PATH" | awk '{print $1}')" == "$PLAN_SHA" ]] || fail 'plan digest differs'
   validate_plan_resources
+  controller_task_pass derive-plan
 
   STAGE='sealed-acquisition'
+  controller_task_start sealed-acquisition
   printf 'ACQUISITION_LOG=%s\n' "$acquire_log"
   set +e
   (
@@ -860,7 +963,9 @@ run_payload() {
   [[ "$(sha256sum -- "$RECEIPT_PATH" | awk '{print $1}')" == "$RECEIPT_SHA" ]] || fail 'receipt digest differs'
   (( DOWNLOADED_BYTES >= 0 && DOWNLOADED_BYTES <= MAX_DOWNLOAD_BYTES )) || fail 'downloaded bytes exceed the 8 GiB cap'
   validate_receipt_and_write_evidence
+  controller_task_pass sealed-acquisition
 
+  controller_task_start zero-call-fit-preflight
   STAGE='idle-gpu-admission'
   capture_gpu_inventory before-fit
   validate_idle_big_rig
@@ -885,11 +990,14 @@ run_payload() {
     printf 'ZERO_CALL_FIT_PREFLIGHT_FAILED=%s RESULT=%s\n' "$fit_rc" "$FIT_RESULT" >&2
     exit "$fit_rc"
   fi
+  controller_task_pass zero-call-fit-preflight
 
   STAGE='validate-fit-evidence'
+  controller_task_start validate-fit-evidence
   validate_successful_fit
   validate_post_fit_cleanup
   write_fit_result "$fit_rc"
+  controller_task_pass validate-fit-evidence
   STAGE='complete'
   printf 'PHASE3_GUARD1B_COMPLETE=1\n'
   printf 'PLAN=%s\n' "$(descriptor_json "$PLAN_PATH")"
