@@ -842,6 +842,14 @@ class BuilderValidationMixin:
                 raw_pairs = entry.get("seed_pairs")
                 if not isinstance(raw_pairs, list) or not raw_pairs:
                     raise ValueError("prepared IDEATOR seed-pair inventory is invalid")
+                pair_limit = entry.get("pair_limit")
+                if (
+                    isinstance(pair_limit, bool)
+                    or not isinstance(pair_limit, int)
+                    or not 0 <= pair_limit <= 256
+                    or pair_limit > len(raw_pairs)
+                ):
+                    raise ValueError("prepared IDEATOR pair limit is invalid")
                 portable_pairs: list[dict[str, object]] = []
                 for index, raw_pair in enumerate(raw_pairs):
                     if not isinstance(raw_pair, Mapping):
@@ -1387,6 +1395,7 @@ class BuilderValidationMixin:
         reject_duplicates("attackers", attackers)
         reject_duplicates("judges", judges_list)
         harm_requirements: tuple[str, int, int, int] | None = None
+        ideator_requirements: tuple[int, int] | None = None
 
         known_arms = {arm for arm, _mods, _reason in _ARM_CATALOG} | {"synth"}
         unknown_arms = sorted(set(corpora) - known_arms)
@@ -1425,9 +1434,23 @@ class BuilderValidationMixin:
             if attacker not in attackers:
                 continue
             try:
-                self._prepared_attacker_entries({**params, "attackers": attacker})
+                prepared = self._prepared_attacker_entries(
+                    {**params, "attackers": attacker}
+                )
                 if attacker == "harmbench":
                     harm_requirements = self._harmbench_replay_requirements(params)
+                elif attacker == "ideator":
+                    ideator = prepared.get("ideator")
+                    if not isinstance(ideator, Mapping):  # pragma: no cover - invariant
+                        raise ValueError("prepared IDEATOR configuration is missing")
+                    raw_pairs = ideator.get("seed_pairs")
+                    pair_limit = ideator.get("pair_limit")
+                    if not isinstance(raw_pairs, list) or not isinstance(pair_limit, int):
+                        raise ValueError("prepared IDEATOR pair inventory is invalid")
+                    ideator_requirements = (
+                        len(raw_pairs),
+                        len(raw_pairs) if pair_limit == 0 else pair_limit,
+                    )
             except ValueError as exc:
                 errors[error_field] = str(exc)
         unknown_judges = sorted(set(judges_list) - {"rules", "llm", "guardrail"})
@@ -1827,22 +1850,28 @@ class BuilderValidationMixin:
         sample_seed_value = require_int("sample_seed")
         max_queries_value = require_int("max_queries", positive=True)
         max_turns_value = require_int("max_turns", positive=True)
-        local_budget_raw = params.get("local_budget_hours", "")
-        local_budget_value = require_int("local_budget_hours", positive=True)
-        if local_budget_raw:
-            if mode != "measured" or not local or api:
-                errors["local_budget_hours"] = (
-                    "local call-start hours apply only to a measured lane with a "
-                    "local target and no hosted target"
+        if ideator_requirements is not None:
+            available_pairs, selected_pairs = ideator_requirements
+            effective_max_queries = 4 if max_queries_value is None else max_queries_value
+            effective_max_turns = 4 if max_turns_value is None else max_turns_value
+            if effective_max_queries < selected_pairs:
+                errors["max_queries"] = (
+                    f"IDEATOR selects {selected_pairs} of {available_pairs} verified "
+                    "pairs; --max-queries must cover every selected pair"
                 )
-            if local_budget_value is not None:
-                expected_seconds = local_budget_value * 3600
-                deadline_value = require_int("deadline", positive=True)
-                if deadline_value is not None and deadline_value != expected_seconds:
-                    errors["deadline"] = (
-                        "must equal local call-start hours x 3600; this is Runner's "
-                        "call-start window, not a completion timeout"
-                    )
+            if effective_max_turns < selected_pairs:
+                errors["max_turns"] = (
+                    f"IDEATOR selects {selected_pairs} of {available_pairs} verified "
+                    "pairs; --max-turns must cover every selected pair"
+                )
+        local_budget_raw = params.get("local_budget_hours", "")
+        require_int("local_budget_hours", positive=True)
+        if local_budget_raw:
+            if mode != "measured" or not local or api or hosted_judge_selected:
+                errors["local_budget_hours"] = (
+                    "the local process wall-time cap applies only to a measured "
+                    "all-local lane with a local target and no hosted target or judge"
+                )
         if harm_requirements is not None:
             captured_corpus, captured_limit, captured_seed, minimum = harm_requirements
             if corpora != [captured_corpus]:
@@ -2186,7 +2215,7 @@ class BuilderValidationMixin:
     def _read_lane_projection(
         self,
         params: Mapping[str, str],
-    ) -> tuple[dict[str, int] | None, str]:
+    ) -> tuple[dict[str, object] | None, str]:
         """The required target/judge/HTTP upper bounds from a no-call preflight.
 
         Only a successful console preflight carrying the same normalized grid
@@ -2249,8 +2278,26 @@ class BuilderValidationMixin:
                 continue
             projection = doc["call_projection"]
             return {
-                key: int(projection[key])
-                for key in ("target_calls", "judge_calls", "http_attempts")
+                "projection_id": str(doc["projection_id"]),
+                "call_projection": {
+                    key: int(projection[key])
+                    for key in ("target_calls", "judge_calls", "http_attempts")
+                },
+                "arms": [
+                    {
+                        key: arm[key]
+                        for key in (
+                            "logical_source_arm",
+                            "total_records",
+                            "selected_records",
+                            "total_clusters",
+                            "selected_clusters",
+                            "limit",
+                            "sample_seed",
+                        )
+                    }
+                    for arm in doc["selection"]["arms"]
+                ],
             }, ""
         return None, "the matching preflight's lane projection is missing or invalid"
 
@@ -2349,6 +2396,12 @@ class BuilderValidationMixin:
                     "hard cap on transport attempts, retries included",
                 ),
                 (
+                    "local_budget_hours",
+                    "controller wall time",
+                    "detached process wall-time cap in whole hours for the final "
+                    "measured all-local run; independent of Runner's call-start window",
+                ),
+                (
                     "deadline",
                     "--deadline-seconds",
                     "durable call-start window from first invocation; not a "
@@ -2362,6 +2415,12 @@ class BuilderValidationMixin:
                 ),
                 ("max_queries", "--max-queries", "target calls per datapoint and seed"),
                 ("max_turns", "--max-turns", "conversation turns per datapoint and seed"),
+                (
+                    "ideator_pair_limit",
+                    "IDEATOR pair limit",
+                    "0 selects the complete verified manifest; positive N selects "
+                    "ordered_prefix_v1 and must fit both query and turn budgets",
+                ),
             )
         )
         # No-call projection: the required upper bounds from the CLI preflight
@@ -2370,13 +2429,16 @@ class BuilderValidationMixin:
         projection, why = self._read_lane_projection(params)
         caps_ok = projection is not None
         if projection is not None:
+            call_projection = projection.get("call_projection", projection)
+            if not isinstance(call_projection, Mapping):
+                raise ValueError("validated lane projection call inventory is invalid")
             proj_rows = []
             for label, cap_field, proj_key in (
                 ("target calls", "cap_target", "target_calls"),
                 ("judge calls", "cap_judge", "judge_calls"),
                 ("HTTP attempts", "cap_http", "http_attempts"),
             ):
-                required = projection[proj_key]
+                required = int(call_projection[proj_key])
                 entered_raw = params.get(cap_field, "")
                 try:
                     entered = int(entered_raw) if entered_raw else None

@@ -228,12 +228,12 @@ _PARAM_HELP: dict[str, str] = {
     "report remains ineligible for evidence-ready human-audit claims.",
 }
 
-#: Builder-only human-scale spelling of ``--deadline-seconds`` for long local
-#: measured lanes. It is deliberately not a CLI parameter.
+#: Builder-owned process wall-time ceiling for long local measured lanes. It is
+#: deliberately separate from Runner's ``--deadline-seconds`` call-start gate.
 _LOCAL_BUDGET_HELP = (
-    "Measured local-target lanes only. Build converts whole hours to the exact "
-    "--deadline-seconds call-start window. This stops new calls after expiry; "
-    "it is not a process completion timeout and does not interrupt an admitted call."
+    "Final measured all-local process only. Whole hours become a detached process "
+    "wall-time cap that terminates and then kills the complete process tree after "
+    "expiry. Set --deadline-seconds independently for Runner's call-start window."
 )
 
 

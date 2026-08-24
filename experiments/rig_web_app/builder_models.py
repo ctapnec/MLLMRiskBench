@@ -876,6 +876,16 @@ class BuilderModelsMixin:
                 raise ValueError("IDEATOR manifest seed_pairs must be a non-empty list")
             if len(raw_pairs) > 256:
                 raise ValueError("IDEATOR manifest exceeds the 256 seed-pair limit")
+            raw_pair_limit = str(params.get("ideator_pair_limit", "")).strip() or "0"
+            if re.fullmatch(r"[0-9]+", raw_pair_limit) is None:
+                raise ValueError("IDEATOR pair limit must be an integer from 0 to 256")
+            pair_limit = int(raw_pair_limit)
+            if pair_limit > 256:
+                raise ValueError("IDEATOR pair limit must be an integer from 0 to 256")
+            if pair_limit > len(raw_pairs):
+                raise ValueError(
+                    "IDEATOR pair limit exceeds the verified manifest inventory"
+                )
             pairs: list[dict[str, object]] = []
             total_image_bytes = 0
             for index, raw_pair in enumerate(raw_pairs):
@@ -952,6 +962,7 @@ class BuilderModelsMixin:
                 "seed_pair_manifest": str(manifest),
                 "seed_pair_manifest_sha256": expected,
                 "seed_pairs": pairs,
+                "pair_limit": pair_limit,
             }
         if "nanogcg" in selected:
             suffix = str(params.get("nanogcg_suffix", "")).strip()
@@ -1140,6 +1151,14 @@ class BuilderModelsMixin:
                 raw_pairs = ideator.get("seed_pairs")
                 if not isinstance(raw_pairs, list) or not raw_pairs:
                     raise ValueError("reviewed IDEATOR seed-pair snapshot is invalid")
+                pair_limit = ideator.get("pair_limit")
+                if (
+                    isinstance(pair_limit, bool)
+                    or not isinstance(pair_limit, int)
+                    or not 0 <= pair_limit <= 256
+                    or pair_limit > len(raw_pairs)
+                ):
+                    raise ValueError("reviewed IDEATOR pair limit is invalid")
                 runtime_pairs: list[list[str]] = []
                 runtime_image_sha256: list[str] = []
                 for index, raw_pair in enumerate(raw_pairs):
@@ -1184,6 +1203,7 @@ class BuilderModelsMixin:
                 runtime_entries["ideator"] = {
                     "seed_pairs": runtime_pairs,
                     "seed_pair_image_sha256": runtime_image_sha256,
+                    "pair_limit": pair_limit,
                 }
             runtime_payload = self._canonical_json_bytes(runtime_entries)
             if len(runtime_payload) > _RUNNER_ATTACKER_CONFIG_MAX_BYTES:

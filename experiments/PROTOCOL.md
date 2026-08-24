@@ -172,17 +172,21 @@ by `--limit 1` remains in a later `--limit N` cohort, and every sibling row in a
 selected cluster is retained. This supports operational canary continuity; it
 does not make the canary statistically representative.
 
-The selection is pseudorandom, not first-N source order. Its nested prefixes are
-not disjoint partitions. Unique clusters are inventoried in first
-source-appearance order.
-SHA-256 over the UTF-8 bytes
-`ura-corpus-cluster-order-v1\0<logical-arm>\0<sample_seed>` supplies an unsigned
-big-endian PRNG seed from its first eight bytes. The inventory positions are
-shuffled once without replacement, the first N are retained, and all selected
-sibling rows are restored to source order. Consequently limit 50 is contained
-in limit 100 for one arm and seed, while logical-arm identity contributes to
-seed derivation and gives each arm an independently scoped ordering.
-`--limit 0` returns the exact full arm.
+The selection is pseudorandom, not first-N source order. `--limit N` is an equal
+per-arm cap applied independently to each logical source arm, using deterministic
+whole-cluster sampling without replacement. Cluster-key fallback precedence is
+nonblank `meta["source_cluster_id"]`, then nonblank `DataPoint.id`, then the
+converted row index. Unique cluster keys are inventoried in first
+source-appearance order. SHA-256 over the UTF-8 bytes
+`ura-corpus-cluster-order-v1\0<logical-arm>\0<sample_seed>` supplies the unsigned
+big-endian `scoped_seed` from its first eight bytes. Python's
+`random.Random(scoped_seed).shuffle(...)` permutes inventory positions once, the
+first N are retained, and all selected sibling rows are restored to source
+order. For one unchanged arm, converted-corpus digest and sample seed, the
+prefixes are nested and overlapping rather than disjoint partitions: limit 50
+is contained in limit 100. Logical-arm identity contributes to seed derivation
+and gives each arm an independently scoped ordering. `--limit 0` returns the
+exact full arm.
 
 Population tiers. A prospective amendment dated 24 August 2026, fixed after
 source inventory and diagnostic feasibility work but before any measured Phase
@@ -190,12 +194,17 @@ source inventory and diagnostic feasibility work but before any measured Phase
 its converted corpus. The measured local cohort has two tiers: core static,
 classification, Crescendo and eligible defense lanes use `--limit 100`; the
 Runner-safe bridge and Ollama lanes use `--limit 50`. Both use
-`--sample-seed 0 --seeds 0`. The current hosted API cohort remains separately
-bounded by its prepaid budget and a positive pre-registered limit. The framework
-also accepts explicit hosted `--limit 0` only as a separately projected and
-approved full-corpus cohort whose target, judge and HTTP caps cover the complete
-grid. The current campaign authorizes `--limit 0` only for an all-local
-replication, not as a substitute for either bounded measured tier.
+`--sample-seed 0 --seeds 0`. The current measured population cohort uses
+`--sample-seed 0` only. `--sample-seed 1` is a separately projected future cohort
+that requires its own selection-bound projections, acquisition envelopes, Gate
+5 caps, output roots and analysis stratum before any calls; it is never appended
+in response to observed throughput or outcomes. The current hosted API cohort
+remains separately bounded by its prepaid budget and a positive pre-registered
+limit. The framework supports full-set execution for local and hosted targets
+through explicit `--limit 0` in a separately projected and approved full-corpus
+cohort whose target, judge and HTTP caps cover the complete grid.
+Current-campaign policy authorizes full mode only for all-local replication, not
+as a substitute for either bounded measured tier.
 
 The limit is an equal cap applied independently to every logical source arm,
 not a proportional or risk-stratified sample. Every row in a selected source

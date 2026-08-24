@@ -64,6 +64,7 @@ class BuilderCaptureMixin:
         "harm_config",
         "ideator_manifest",
         "ideator_manifest_sha",
+        "ideator_pair_limit",
         "engine_runtime_config",
         "engine_runtime_config_sha",
         "nanogcg_model_id",
@@ -527,6 +528,7 @@ class BuilderCaptureMixin:
         if "ideator" not in attackers:
             params.pop("ideator_manifest", None)
             params.pop("ideator_manifest_sha", None)
+            params.pop("ideator_pair_limit", None)
         if "nanogcg" not in attackers:
             for field in (
                 "nanogcg_model_id",
@@ -535,17 +537,6 @@ class BuilderCaptureMixin:
                 "nanogcg_suffix_source",
             ):
                 params.pop(field, None)
-        local_budget_hours = params.get("local_budget_hours", "")
-        if (
-            local_budget_hours
-            and re.fullmatch(r"[1-9][0-9]*", local_budget_hours)
-            and not params.get("deadline", "")
-        ):
-            # A local call-start budget is a human-friendly spelling of the
-            # Runner's durable call-start window. Validation restricts it to a
-            # measured local-target lane and checks any explicitly supplied
-            # seconds value for exact agreement.
-            params["deadline"] = str(int(local_budget_hours) * 3600)
         return params
 
     def _compose_from_builder(

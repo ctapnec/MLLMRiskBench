@@ -412,12 +412,30 @@ tmux launch, hash check, and Phase 6/7 seal reads from it. Do not rewrite
 `.ura-controller-active` while an older chain is running changes only the next
 chain; the running chain stays entirely on its pinned generation.
 
+The Phase 5 and Gate 5 orchestration controllers enforce a 24-hour global
+controller deadline, and the Phase 7 watcher enforces 720 hours. At expiry, a
+controller records exit 124 and the exact wait/hours reason in task and campaign
+events. It terminates and confirms absence of only an exact tmux session it
+launched and owns; a controller that times out while awaiting upstream Phase 5
+or Phase 6 never terminates that upstream session.
+
 The rendered Gate 5-8 chain enforces the exact 46-row profile: 22 runnable and
 24 typed-terminal rows, or 21/25 only for the exact `defense-local` conditional
 N/A. GPTGeoChat x each of the three RWKV Ollama targets is a typed unavailable
 row because the retained GPTGeoChat source requires images while the exact
 Ollama transport is text-only; those rows never enter projection, canary, or
-measured loops. Four GraySwan RR rows are separately unavailable with reason
+measured loops. The frozen current cohort also types `bridge-nanogcg` and
+`bridge-ideator` as `unavailable` and does not schedule either lane for measured
+execution. No attributable NanoGCG suffix artifact was bound before Gate 5, and
+no defensible IDEATOR seed-pair manifest with source mapping was bound. The
+IDEATOR Build/UI seed-pair quantity control in revision C is prospective
+capability, not admission or evidence for this cohort. Either lane requires a fresh
+prepared-input manifest or attributable artifact, no-call projection,
+diagnostic canary, Gate 5 record, and controller generation before measured
+scheduling. This does not remove either adapter or optional full-set execution
+through the framework: a future prepared-replay cohort may use a positive limit
+or explicit `--limit 0` with its own complete projection and sufficient admitted
+caps. Four GraySwan RR rows are separately unavailable with reason
 `target_baseline_nontermination_at_generation_cap`. Their shared create-only
 `ura-phase5-target-runtime-terminal/1` artifact binds the exact checkpoint,
 local config, sealed acquisition identity, text and physical-image 4,096-token
@@ -473,11 +491,15 @@ the child and validate only its explicitly owned artifact root. Rig Web does not
 insert the child into sqlite, own its process or offer Stop; the registration is
 operational visibility, not evidence, and stays explicitly external operational
 and non-thesis after exit zero. Completion-bound usage may be displayed. The
-local campaign analysis adapter validates the sealed watcher, controller,
-input, inventory, and report chain. Only then does it publish a generic
-`external-analysis-jobs` registration for Stats. Rig Web does not contain or
+Phase 7 watcher runs a final `publish-stats` task after terminal analysis
+validation. The local campaign adapter validates the sealed watcher,
+controller, input, inventory, and report chain before it creates the generic
+`external-analysis-jobs` registration. A validation or publication failure is
+a failed watcher task, not a published success. Rig Web does not contain or
 interpret the campaign's phase or gate schemas; no registration grants report
-or metric authority. The measured-job registration field and CLI flag are
+or metric authority. A pre-automatic controller generation can use the manual
+adapter command in `experiments/local_campaign/README.md` when no registration
+exists. The measured-job registration field and CLI flag are
 named `admission_sha256` and `--admission-sha256`; this local campaign supplies
 the approved Gate 5 manifest digest as that value.
 
@@ -1245,27 +1267,38 @@ export URA_LOCAL_SAMPLE_SEED=0
 - Current hosted API lanes remain separately bounded by prepaid budgets and a
   positive pre-registered limit. Audio and video remain hosted-only and retain
   their own prospective limits.
-- Explicit `--limit 0` is supported for a separately projected and approved
-  local or hosted full-corpus replication. A hosted full cohort must retain
-  attestation and transfer acknowledgement where applicable, and its target,
-  judge and HTTP caps must cover the complete no-call projection. The current
-  campaign authorizes full mode only for all-local replication. It is not the
-  measured bounded cohort and cannot reuse its Gate record, caps or output
-  roots.
+- The framework supports full-set execution for local and hosted targets through
+  explicit `--limit 0` in a separately projected and approved full-corpus
+  replication. A hosted full cohort must retain attestation and transfer
+  acknowledgement where applicable, and its target, judge and HTTP caps must
+  cover the complete no-call projection. Current-campaign policy authorizes full
+  mode only for all-local replication. It is not the measured bounded cohort and
+  cannot reuse its Gate record, caps or output roots.
 
-`--limit N` is applied independently to each logical source arm. Unique clusters
-are inventoried in first source-appearance order. SHA-256 over the UTF-8 bytes
-`ura-corpus-cluster-order-v1\0<logical-arm>\0<sample_seed>` supplies an unsigned
-big-endian PRNG seed from its first eight bytes. The sampler shuffles inventory
-positions once without replacement, takes the first N, and restores all selected
-sibling rows to source order. Thus the design is source-arm capped rather than
-proportional or risk-stratified. The prefixes are nested and overlapping, not
-disjoint partitions: for an unchanged arm and seed, limit 1 is contained in 50,
-which is contained in 100. Logical-arm identity contributes to seed derivation
-and gives each arm an independently scoped ordering. A source with fewer than N
-clusters is complete but precision-limited, and limit 0 returns the exact full
-arm. Fanout rows, repeated model conditions and turns do not increase the
-independent cluster count.
+`--limit N` is an equal per-arm cap applied independently to each logical source
+arm. Selection is deterministic whole-cluster sampling without replacement and
+retains every sibling row. Cluster-key fallback precedence is nonblank
+`meta["source_cluster_id"]`, then nonblank `DataPoint.id`, then the converted row
+index. Unique cluster keys are inventoried in first source-appearance order.
+SHA-256 over the UTF-8 bytes
+`ura-corpus-cluster-order-v1\0<logical-arm>\0<sample_seed>` supplies the unsigned
+big-endian `scoped_seed` from its first eight bytes. Python's
+`random.Random(scoped_seed).shuffle(...)` permutes inventory positions once, the
+first N are retained, and all selected sibling rows are restored to source
+order. Thus the design is not proportional or risk-stratified. The prefixes are
+nested and overlapping, not disjoint partitions: for one unchanged arm,
+converted-corpus digest and sample seed, limit 1 is contained in 50, which is
+contained in 100. Logical-arm identity contributes to seed derivation and gives
+each arm an independently scoped ordering. A source with fewer than N clusters
+is complete but precision-limited, and limit 0 returns the exact full arm.
+Fanout rows, repeated model conditions and turns do not increase the independent
+cluster count.
+
+The current measured population cohort uses `--sample-seed 0` only.
+`--sample-seed 1` is a separately projected future cohort that requires its own
+selection-bound projections, acquisition envelopes, Gate 5 caps, output roots
+and analysis stratum before any calls. It is never added to the seed-0 cohort in
+response to observed throughput or outcomes.
 
 The manifest retains the full-corpus digest, complete cluster inventory, exact
 selected cluster identities, converted-row fanout and achieved source-policy
@@ -2106,10 +2139,12 @@ export (section 16) requires at least these eight keys and rejects any
 narrower grouping, so every preflight and measured lane below passes exactly
 this value (or omits `--group` to inherit it).
 
-Use whole source-cluster sampling. `--limit 0` means the complete selected
-release and is admitted only as a separately projected local-only cohort;
-`--limit N` retains every row in each of at most N selected clusters per
-logical source arm.
+Use whole source-cluster sampling. The framework supports the complete selected
+release for local or hosted targets through explicit `--limit 0` and a separate
+complete projection with sufficient admitted caps. Current-campaign policy
+admits that full mode only as a separately projected all-local replication.
+`--limit N` retains every row in each of at most N selected clusters under the
+equal cap applied independently to every logical source arm.
 For the same real converted-corpus digest and `--sample-seed`, limits are nested
 prefixes of one deterministic cluster ordering: the `--limit 1` canary cluster
 is contained in a later `--limit N` selection. This continuity is operational,
@@ -2653,6 +2688,18 @@ The remaining runner bridges are specialized:
 | `purplellama` | only with `cyberseceval` rows; source-identity replay, not the native pipeline |
 | `ideator` | verified precomputed text-image `seed_pairs` only; Build accepts an exact `ura-ideator-seed-pairs/1` manifest plus digest and the live package path remains disabled |
 | `t3mp3st` | currently `blocked-unpinned`: no exact executable Op-General source URL/revision is documented; admit no live planner until a prospective lock amendment supplies both, and use only an already attributable replay bundle |
+
+The frozen current cohort types `bridge-nanogcg` and `bridge-ideator` as
+`unavailable` and does not schedule either lane for measured execution. No
+attributable NanoGCG suffix artifact was bound before Gate 5, and no defensible
+IDEATOR seed-pair manifest with source mapping was bound. The IDEATOR Build/UI
+seed-pair quantity control in revision C is prospective capability, not admission or
+evidence for this cohort. Either lane requires a fresh prepared-input manifest
+or attributable artifact, no-call projection, diagnostic canary, Gate 5 record,
+and controller generation before measured scheduling. This does not remove
+either adapter or optional full-set execution through the framework: a future
+prepared-replay cohort may use a positive limit or explicit `--limit 0` with its
+own complete projection and sufficient admitted caps.
 
 NanoGCG live configuration is deliberately rejected before managed-snapshot,
 framework, target, or model construction in Stage 1. Use only an already

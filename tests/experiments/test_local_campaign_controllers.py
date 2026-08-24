@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 from pathlib import Path
+import shutil
 import subprocess
 import sys
 
@@ -276,6 +277,114 @@ def test_gptgeochat_rwkv_cross_products_are_exact_typed_terminals() -> None:
     assert '"total": 46' in combined
     assert '(26, 17, [])' not in combined
     assert '(25, 18, ["defense-local"])' not in combined
+
+
+def test_frozen_nanogcg_and_ideator_terminals_match_campaign_documents() -> None:
+    project = Path(__file__).parents[2]
+    templates = project / "experiments" / "local_campaign" / "templates"
+    finalizer = (templates / "phase5_finalize_gate5.sh.in").read_text(
+        encoding="utf-8"
+    )
+    extended = (templates / "phase6_extended_measured.sh.in").read_text(
+        encoding="utf-8"
+    )
+    documents = {
+        "plan": (project / "experiments" / "LOCAL_CAMPAIGN_PLAN.md").read_text(
+            encoding="utf-8"
+        ),
+        "runbook": (project / "experiments" / "RUN_AND_RETURN.md").read_text(
+            encoding="utf-8"
+        ),
+        "controller README": (
+            project / "experiments" / "local_campaign" / "README.md"
+        ).read_text(encoding="utf-8"),
+    }
+    runnable = (
+        "bridge-pyrit",
+        "bridge-deepteam",
+        "bridge-h4rm3l",
+        "bridge-spikee",
+        "bridge-purplellama",
+        "harmbench-replay",
+    )
+    frozen_terminals = ("bridge-nanogcg", "bridge-ideator")
+    document_contract = (
+        "The frozen current cohort",
+        "`bridge-nanogcg` and `bridge-ideator` as `unavailable`",
+        "does not schedule either lane for measured execution",
+        "IDEATOR Build/UI seed-pair quantity control in revision C is prospective capability",
+        "fresh prepared-input manifest or attributable artifact, no-call projection, "
+        "diagnostic canary, Gate 5 record, and controller generation",
+        "optional full-set execution through the framework",
+        "positive limit or explicit `--limit 0`",
+    )
+
+    def assert_contract(
+        finalizer_source: str,
+        extended_source: str,
+        document_sources: dict[str, str],
+    ) -> None:
+        finalizer_order = finalizer_source.split(
+            "EXPECTED_BRIDGE_LANES = frozenset({", 1
+        )[1].split("})", 1)[0]
+        extended_order = extended_source.split("BRIDGE_ORDER = [", 1)[1].split(
+            "]", 1
+        )[0]
+        for lane in runnable:
+            assert f'"{lane}"' in finalizer_order
+            assert f'"{lane}"' in extended_order
+        for lane in frozen_terminals:
+            assert f'"{lane}"' not in finalizer_order
+            assert f'"{lane}"' not in extended_order
+            assert f'"{lane}": "unavailable"' in finalizer_source
+            assert f'"{lane}": "unavailable"' in extended_source
+        for source in document_sources.values():
+            flat = " ".join(source.split())
+            for required in document_contract:
+                assert required in flat
+
+    assert_contract(finalizer, extended, documents)
+
+    controller_mutations = (
+        (
+            finalizer.replace(
+                '"bridge-ideator": "unavailable"',
+                '"bridge-ideator": "runnable"',
+                1,
+            ),
+            extended,
+        ),
+        (
+            finalizer,
+            extended.replace(
+                '"bridge-pyrit", "bridge-deepteam"',
+                '"bridge-pyrit", "bridge-ideator", "bridge-deepteam"',
+                1,
+            ),
+        ),
+        (
+            finalizer,
+            extended.replace(
+                '"bridge-purplellama", "harmbench-replay",',
+                '"bridge-purplellama",',
+                1,
+            ),
+        ),
+    )
+    for changed_finalizer, changed_extended in controller_mutations:
+        assert (changed_finalizer, changed_extended) != (finalizer, extended)
+        with pytest.raises(AssertionError):
+            assert_contract(changed_finalizer, changed_extended, documents)
+
+    for required in document_contract:
+        changed_documents = dict(documents)
+        flat_plan = " ".join(changed_documents["plan"].split())
+        changed_documents["plan"] = flat_plan.replace(
+            required, "MUTATED_FROZEN_COHORT_CONTRACT", 1
+        )
+        assert changed_documents["plan"] != flat_plan
+        with pytest.raises(AssertionError):
+            assert_contract(finalizer, extended, changed_documents)
 
 
 def test_ollama_bounded_lane_identity_is_used_by_every_workflow_stage() -> None:
@@ -1072,6 +1181,7 @@ def test_top_level_controllers_register_exact_console_campaigns(
                 "prepare-analysis",
                 "run-analysis",
                 "validate-analysis",
+                "publish-stats",
             ),
         ),
     }
@@ -1111,11 +1221,8 @@ def test_top_level_controllers_register_exact_console_campaigns(
         assert '--campaign-id "${CONTROL_ROOT##*/}"' in source
         assert '--release-commit "$EXPECTED_COMMIT"' in source
         assert "--evidence-class local_campaign_control" in source
-        if name == "phase6_sequence.sh":
-            assert f"CONTROL_HARD_STOP_HOURS={hard_stop}" in source
-            assert '--hard-stop-hours "$CONTROL_HARD_STOP_HOURS"' in source
-        else:
-            assert f"--hard-stop-hours {hard_stop}" in source
+        assert f"CONTROL_HARD_STOP_HOURS={hard_stop}" in source
+        assert '--hard-stop-hours "$CONTROL_HARD_STOP_HOURS"' in source
         assert 'CONSOLE_START_ARGS+=(--planned-task "$task")' in source
         assert 'console_event task_skip "$task" skipped' in source
         assert 'console_event campaign_end bootstrap "$status"' in source
@@ -1137,6 +1244,67 @@ def test_top_level_controllers_register_exact_console_campaigns(
             assert "CONTROL_TMUX_SOCKET='ura-phase6-sequence-1111111'" in source
             assert '--tmux-socket "$CONTROL_TMUX_SOCKET"' in source
             assert '--tmux-session "$CONTROL_TMUX_SESSION"' in source
+
+
+def test_phase7_stats_publication_is_plan_owned_ordered_and_fail_closed(
+    tmp_path: Path,
+) -> None:
+    bindings = _bindings(tmp_path / "bindings.json")
+    output = tmp_path / "workspace"
+    render_controller_set(bindings, output)
+    source = (output / "phase7_after_phase6_sequence.sh").read_text(
+        encoding="utf-8"
+    )
+
+    required = (
+        "set -Eeuo pipefail",
+        "controller_task_pass validate-analysis",
+        "controller_task_start publish-stats",
+        '"$PY" -m experiments.local_campaign.stats_adapter',
+        '--results-root "$URA_WORK/runs"',
+        '--campaign-root "$CONTROL_ROOT"',
+        '--release-commit "$EXPECTED_COMMIT"',
+        'EXPECTED_STATS_REGISTRATION="$URA_WORK/runs/external-analysis-jobs/',
+        'test "$STATS_REGISTRATION" = "$EXPECTED_STATS_REGISTRATION"',
+        'test -f "$STATS_REGISTRATION" && test ! -L "$STATS_REGISTRATION"',
+        'test "$(readlink -e -- "$STATS_REGISTRATION")" = "$STATS_REGISTRATION"',
+        "controller_task_pass publish-stats",
+    )
+
+    def assert_publication_contract(value: str) -> None:
+        _assert_source_contract(value, required)
+        start = value.index("controller_task_start publish-stats")
+        end = value.index("controller_task_pass publish-stats", start) + len(
+            "controller_task_pass publish-stats"
+        )
+        assert value.index("controller_task_pass validate-analysis") < start
+        publication = value[start:end]
+        ordered = tuple(publication.index(snippet) for snippet in required[2:])
+        assert ordered == tuple(sorted(ordered))
+        assert "experiments.rig_web_app" not in publication
+
+    assert_publication_contract(source)
+
+    for original, replacement in (
+        (
+            '"$PY" -m experiments.local_campaign.stats_adapter',
+            '"$PY" -m experiments.rig_web_app.dashboard',
+        ),
+        (
+            'test -f "$STATS_REGISTRATION" && test ! -L "$STATS_REGISTRATION"',
+            ":",
+        ),
+        (
+            "controller_task_pass validate-analysis\n\n"
+            "controller_task_start publish-stats",
+            "controller_task_start publish-stats\n\n"
+            "controller_task_pass validate-analysis",
+        ),
+    ):
+        changed = source.replace(original, replacement, 1)
+        assert changed != source
+        with pytest.raises(AssertionError):
+            assert_publication_contract(changed)
 
 
 def test_phase6_gate5_launch_identity_uses_the_rendered_commit(
@@ -2151,3 +2319,352 @@ def test_phase6_gate5_wait_uses_the_declared_controller_hard_stop() -> None:
     assert changed != source
     with pytest.raises(AssertionError):
         _assert_source_contract(changed, required)
+
+
+@pytest.mark.parametrize(
+    ("controller", "hard_stop_hours", "waits"),
+    (
+        (
+            "phase5_sequence_after_core.sh",
+            24,
+            (
+                (
+                    'while tmux -L "$socket" has-session -t "$session" '
+                    "2>/dev/null; do",
+                    'controller_hard_stop_check "$step" "$socket" "$session"',
+                    True,
+                ),
+            ),
+        ),
+        (
+            "gate5_after_phase5_sequence.sh",
+            24,
+            (
+                (
+                    'while tmux -L "$PHASE5_SEQUENCE_SOCKET" has-session -t '
+                    '"$PHASE5_SEQUENCE_SESSION" 2>/dev/null; do',
+                    "controller_hard_stop_check await-phase5",
+                    False,
+                ),
+                (
+                    'while tmux -L "$FINALIZER_SOCKET" has-session -t '
+                    '"$FINALIZER_SESSION" 2>/dev/null; do',
+                    'controller_hard_stop_check finalize-gate5 '
+                    '"$FINALIZER_SOCKET" "$FINALIZER_SESSION"',
+                    True,
+                ),
+            ),
+        ),
+        (
+            "phase7_after_phase6_sequence.sh",
+            720,
+            (
+                (
+                    'while tmux -L "$PHASE6_SOCKET" has-session -t '
+                    '"$PHASE6_SESSION" 2>/dev/null; do',
+                    "controller_hard_stop_check await-phase6",
+                    False,
+                ),
+                (
+                    'while tmux -L "$PHASE7_SOCKET" has-session -t '
+                    '"$PHASE7_SESSION" 2>/dev/null; do',
+                    'controller_hard_stop_check run-analysis '
+                    '"$PHASE7_SOCKET" "$PHASE7_SESSION"',
+                    True,
+                ),
+            ),
+        ),
+    ),
+)
+def test_controller_waits_enforce_their_declared_global_hard_stop(
+    tmp_path: Path,
+    controller: str,
+    hard_stop_hours: int,
+    waits: tuple[tuple[str, str, bool], ...],
+) -> None:
+    import re
+
+    bindings = _bindings(tmp_path / "bindings.json")
+    output = tmp_path / "workspace"
+    render_controller_set(bindings, output)
+    source = (output / controller).read_text(encoding="utf-8")
+
+    required = (
+        f"CONTROL_HARD_STOP_HOURS={hard_stop_hours}",
+        f'test "$CONTROL_HARD_STOP_HOURS" = \'{hard_stop_hours}\'',
+        "CONTROL_HARD_STOP_DEADLINE=$((SECONDS + "
+        "CONTROL_HARD_STOP_HOURS * 3600))",
+        '--hard-stop-hours "$CONTROL_HARD_STOP_HOURS"',
+        "controller_hard_stop_check() {",
+        'local wait_label="$1" owned_socket="${2:-}" owned_session="${3:-}"',
+        "if (( SECONDS >= CONTROL_HARD_STOP_DEADLINE )); then",
+        'CONTROL_FAILURE_DETAIL="controller_hard_stop_exceeded_wait_'
+        '${wait_label}_hours_${CONTROL_HARD_STOP_HOURS}"',
+        "CONTROLLER_HARD_STOP_EXCEEDED=1 WAIT=%s HOURS=%s",
+        'failure_detail="$CONTROL_FAILURE_DETAIL"',
+        'console_event task_end "$task" failed "$failure_detail"',
+        'console_event campaign_end bootstrap "$status" '
+        '"local_campaign_${failure_detail}"',
+        'tmux -L "$owned_socket" kill-session -t "$owned_session"',
+        "exit 124",
+    )
+
+    def assert_contract(value: str) -> None:
+        _assert_source_contract(value, required)
+        deadline = value.index("CONTROL_HARD_STOP_DEADLINE=$((SECONDS + ")
+        registration = value.index(
+            "-m experiments.local_campaign.console_events start"
+        )
+        assert deadline < registration
+        owned_probe = (
+            'if tmux -L "$owned_socket" has-session -t '
+            '"$owned_session" 2>/dev/null; then'
+        )
+        assert value.count(owned_probe) == 2
+        assert value.count(
+            'tmux -L "$owned_socket" kill-session -t "$owned_session"'
+        ) == 1
+        assert value.count("exit 124") == 3
+        for loop_start, check, owns_session in waits:
+            start = value.index(loop_start)
+            terminal = re.search(r"\n[ \t]*done", value[start:])
+            assert terminal is not None
+            end = start + terminal.end()
+            loop = value[start:end]
+            _assert_source_contract(loop, (check, "sleep 30"))
+            assert len(
+                re.findall(rf"(?m)^[ \t]*{re.escape(check)}$", value)
+            ) == 3
+            if not owns_session:
+                assert not re.search(
+                    rf"(?m)^[ \t]*{re.escape(check)}[ \t]+\S+", value
+                )
+
+    assert_contract(source)
+
+    for original, replacement in (
+        ("CONTROL_HARD_STOP_HOURS * 3600", "365 * 24 * 3600"),
+        ("exit 124", "exit 1"),
+        (
+            '--hard-stop-hours "$CONTROL_HARD_STOP_HOURS"',
+            f"--hard-stop-hours {hard_stop_hours}",
+        ),
+        (
+            'tmux -L "$owned_socket" kill-session -t "$owned_session"',
+            ":",
+        ),
+        (
+            'console_event task_end "$task" failed "$failure_detail"',
+            'console_event task_end "$task" failed "controller_exit_$rc"',
+        ),
+        (
+            'console_event campaign_end bootstrap "$status" '
+            '"local_campaign_${failure_detail}"',
+            'console_event campaign_end bootstrap "$status" '
+            '"local_campaign_controller_exit_$rc"',
+        ),
+    ):
+        changed = source.replace(original, replacement, 1)
+        assert changed != source
+        with pytest.raises(AssertionError):
+            assert_contract(changed)
+
+    for loop_start, check, _owns_session in waits:
+        start = source.index(loop_start)
+        terminal = re.search(r"\n[ \t]*done", source[start:])
+        assert terminal is not None
+        end = start + terminal.end()
+        loop = source[start:end]
+        changed_loop = loop.replace(check, ":", 1)
+        assert changed_loop != loop
+        changed = source[:start] + changed_loop + source[end:]
+        assert changed != source
+        with pytest.raises(AssertionError):
+            assert_contract(changed)
+
+
+def _controller_test_bash() -> str:
+    if sys.platform == "win32":
+        git_bash = Path("C:/Program Files/Git/bin/bash.exe")
+        if git_bash.is_file():
+            return str(git_bash)
+    bash = shutil.which("bash")
+    if bash is None:
+        pytest.skip("bash is unavailable")
+    return bash
+
+
+def _controller_test_posix_path(path: Path) -> str:
+    resolved = path.resolve()
+    if sys.platform != "win32":
+        return str(resolved)
+    drive = resolved.drive.rstrip(":").lower()
+    tail = resolved.as_posix().split(":", 1)[1].lstrip("/")
+    return f"/{drive}/{tail}"
+
+
+def _shell_function(source: str, name: str) -> str:
+    start = source.index(f"{name}() {{")
+    end = source.index("\n}\n", start) + 3
+    return source[start:end]
+
+
+@pytest.mark.parametrize(
+    ("controller", "hard_stop_hours", "wait_label", "owns_session"),
+    (
+        ("phase5_sequence_after_core.sh", 24, "core-projections", True),
+        ("gate5_after_phase5_sequence.sh", 24, "await-phase5", False),
+        ("gate5_after_phase5_sequence.sh", 24, "finalize-gate5", True),
+        ("phase7_after_phase6_sequence.sh", 720, "await-phase6", False),
+        ("phase7_after_phase6_sequence.sh", 720, "run-analysis", True),
+    ),
+)
+def test_controller_hard_stop_terminates_only_owned_session_and_records_reason(
+    tmp_path: Path,
+    controller: str,
+    hard_stop_hours: int,
+    wait_label: str,
+    owns_session: bool,
+) -> None:
+    bindings = _bindings(tmp_path / "bindings.json")
+    output = tmp_path / "workspace"
+    render_controller_set(bindings, output)
+    source = (output / controller).read_text(encoding="utf-8")
+    finish = _shell_function(source, "controller_finish")
+    hard_stop = _shell_function(source, "controller_hard_stop_check")
+
+    state = tmp_path / "tmux-state"
+    calls = tmp_path / "tmux-calls"
+    events = tmp_path / "events"
+    harness = tmp_path / "hard-stop-harness.sh"
+    state.write_bytes(
+        b"upstream-socket|upstream-session\nowned-socket|owned-session\n"
+    )
+    calls.write_bytes(b"")
+    events.write_bytes(b"")
+    owned_arguments = " owned-socket owned-session" if owns_session else ""
+    harness.write_bytes(
+        f"""set -eu
+tmux() {{
+  local socket action session entry
+  test "$1" = '-L'
+  socket="$2"
+  action="$3"
+  test "$4" = '-t'
+  session="$5"
+  printf '%s|%s|%s\\n' "$action" "$socket" "$session" >> "$TMUX_CALLS"
+  case "$action" in
+    has-session)
+      while IFS= read -r entry; do
+        if [ "$entry" = "$socket|$session" ]; then
+          return 0
+        fi
+      done < "$TMUX_STATE"
+      return 1
+      ;;
+    kill-session)
+      : > "$TMUX_STATE.next"
+      while IFS= read -r entry; do
+        if [ "$entry" != "$socket|$session" ]; then
+          printf '%s\\n' "$entry" >> "$TMUX_STATE.next"
+        fi
+      done < "$TMUX_STATE"
+      mv -- "$TMUX_STATE.next" "$TMUX_STATE"
+      ;;
+    *) return 2 ;;
+  esac
+}}
+console_event() {{
+  printf '%s|%s|%s|%s\\n' "$1" "$2" "$3" "$4" >> "$EVENTS"
+}}
+CONTROL_TASKS=({wait_label} next-task)
+CONTROL_TASK_INDEX=0
+CONTROL_ACTIVE_TASK={wait_label}
+CONTROL_FAILURE_DETAIL=''
+CONSOLE_CAMPAIGN_STARTED=1
+CONTROL_HARD_STOP_HOURS={hard_stop_hours}
+CONTROL_HARD_STOP_DEADLINE=0
+{finish}{hard_stop}trap 'rc=$?; trap - EXIT; controller_finish "$rc"' EXIT
+controller_hard_stop_check {wait_label}{owned_arguments}
+""".encode("ascii")
+    )
+
+    result = subprocess.run(
+        [
+            _controller_test_bash(),
+            "-c",
+            'TMUX_STATE="$1"; TMUX_CALLS="$2"; EVENTS="$3"; '
+            'export TMUX_STATE TMUX_CALLS EVENTS; source "$4"',
+            "--",
+            _controller_test_posix_path(state),
+            _controller_test_posix_path(calls),
+            _controller_test_posix_path(events),
+            _controller_test_posix_path(harness),
+        ],
+        capture_output=True,
+        text=True,
+        timeout=10,
+        check=False,
+    )
+
+    reason = (
+        f"controller_hard_stop_exceeded_wait_{wait_label}_hours_"
+        f"{hard_stop_hours}"
+    )
+    assert result.returncode == 124, result.stderr
+    assert (
+        f"CONTROLLER_HARD_STOP_EXCEEDED=1 WAIT={wait_label} "
+        f"HOURS={hard_stop_hours}"
+    ) in result.stderr
+    assert events.read_text(encoding="ascii").splitlines() == [
+        f"task_end|{wait_label}|failed|{reason}",
+        f"task_skip|next-task|skipped|not_reached_after_{reason}",
+        f"campaign_end|bootstrap|failed|local_campaign_{reason}",
+    ]
+    remaining = state.read_text(encoding="ascii").splitlines()
+    recorded_calls = calls.read_text(encoding="ascii").splitlines()
+    assert "upstream-socket|upstream-session" in remaining
+    if owns_session:
+        assert "owned-socket|owned-session" not in remaining
+        assert recorded_calls == [
+            "has-session|owned-socket|owned-session",
+            "kill-session|owned-socket|owned-session",
+            "has-session|owned-socket|owned-session",
+        ]
+    else:
+        assert "owned-socket|owned-session" in remaining
+        assert recorded_calls == []
+
+
+def test_controller_hard_stop_documentation_matches_owned_session_semantics() -> None:
+    root = Path(__file__).parents[2]
+    documents = (
+        root / "experiments" / "LOCAL_CAMPAIGN_PLAN.md",
+        root / "experiments" / "RUN_AND_RETURN.md",
+        root / "experiments" / "local_campaign" / "README.md",
+    )
+    required = (
+        "The Phase 5 and Gate 5 orchestration controllers enforce a 24-hour "
+        "global\ncontroller deadline, and the Phase 7 watcher enforces 720 hours.",
+        "controller records exit 124 and the exact wait/hours reason in task and "
+        "campaign\nevents.",
+        "It terminates and confirms absence of only an exact tmux session it\n"
+        "launched and owns;",
+        "awaiting upstream Phase 5\nor Phase 6 never terminates that upstream session.",
+    )
+
+    def assert_contract(value: str) -> None:
+        _assert_source_contract(value, required)
+
+    for path in documents:
+        source = path.read_text(encoding="utf-8")
+        assert_contract(source)
+        for original, replacement in (
+            ("records exit 124", "records a generic failure"),
+            ("only an exact tmux session", "every tmux session"),
+            ("never terminates that upstream session", "terminates the upstream session"),
+        ):
+            changed = source.replace(original, replacement, 1)
+            assert changed != source
+            with pytest.raises(AssertionError):
+                assert_contract(changed)

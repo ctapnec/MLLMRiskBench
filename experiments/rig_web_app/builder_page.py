@@ -1626,6 +1626,43 @@ class BuilderPageMixin:
             if selected_prepared
             else " hidden aria-hidden='true'"
         )
+        ideator_available_pairs: int | None = None
+        if "ideator" in selected_prepared:
+            try:
+                ideator_entry = self._prepared_attacker_entries(
+                    {**prefill, "attackers": "ideator"}
+                ).get("ideator")
+                raw_pairs = (
+                    ideator_entry.get("seed_pairs")
+                    if isinstance(ideator_entry, Mapping)
+                    else None
+                )
+                if isinstance(raw_pairs, list):
+                    ideator_available_pairs = len(raw_pairs)
+            except (OSError, TypeError, ValueError):
+                ideator_available_pairs = None
+        raw_ideator_limit = prefill.get("ideator_pair_limit", "") or "0"
+        try:
+            parsed_ideator_limit = int(raw_ideator_limit)
+        except ValueError:
+            parsed_ideator_limit = -1
+        if ideator_available_pairs is None:
+            ideator_pair_status = (
+                "Available and selected pair counts appear after the complete "
+                "manifest and image inventory validate."
+            )
+            ideator_available_attr = ""
+        else:
+            effective_ideator_pairs = (
+                ideator_available_pairs
+                if parsed_ideator_limit == 0
+                else min(max(parsed_ideator_limit, 0), ideator_available_pairs)
+            )
+            ideator_pair_status = (
+                f"{effective_ideator_pairs} selected of "
+                f"{ideator_available_pairs} verified pairs in manifest order."
+            )
+            ideator_available_attr = str(ideator_available_pairs)
         prepared_workflow_fields = (
             "<div class='prepared-workflows' id='prepared-workflows'" + workflows_visibility + ">"
             "<p class='note'>Prepared replay and model-backed attack inputs are "
@@ -1792,10 +1829,22 @@ class BuilderPageMixin:
                 "Manifest SHA-256",
                 "exact 64-hex digest of the manifest bytes",
             )
-            + "</div></div></section></div></div>"
+            + text_field(
+                "ideator_pair_limit",
+                "Replay pair limit",
+                "0 = all verified pairs; positive N = ordered manifest prefix",
+                default="0",
+                kind="number",
+            )
+            + "</div><p class='note' id='ideator-pair-status' data-available='"
+            + html.escape(ideator_available_attr)
+            + "' aria-live='polite'>"
+            + html.escape(ideator_pair_status)
+            + "</p></div></section></div></div>"
         )
 
-        selected_arm_count = len(self._split_list(prefill.get("corpora", "")))
+        selected_arms = self._split_list(prefill.get("corpora", ""))
+        selected_arm_count = len(selected_arms)
         synthetic_canary = (
             selected_mode == "diagnostic_canary"
             and prefill.get("canary_dry") == "on"
@@ -1809,33 +1858,124 @@ class BuilderPageMixin:
         except ValueError:
             parsed_limit = None
         range_value = parsed_limit if parsed_limit is not None and parsed_limit >= 0 else 50
-        range_max = max(1000, range_value)
+        projection_view, _projection_reason = self._read_lane_projection(prefill)
+        projected_arm_counts: dict[str, dict[str, int]] = {}
+        if isinstance(projection_view, Mapping):
+            raw_projected_arms = projection_view.get("arms")
+            if isinstance(raw_projected_arms, list):
+                for raw_arm in raw_projected_arms:
+                    if not isinstance(raw_arm, Mapping):
+                        projected_arm_counts = {}
+                        break
+                    arm_id = raw_arm.get("logical_source_arm")
+                    integer_fields = (
+                        "total_records",
+                        "selected_records",
+                        "total_clusters",
+                        "selected_clusters",
+                        "limit",
+                        "sample_seed",
+                    )
+                    if (
+                        not isinstance(arm_id, str)
+                        or not arm_id
+                        or any(
+                            isinstance(raw_arm.get(field), bool)
+                            or not isinstance(raw_arm.get(field), int)
+                            for field in integer_fields
+                        )
+                    ):
+                        projected_arm_counts = {}
+                        break
+                    projected_arm_counts[arm_id] = {
+                        field: int(raw_arm[field]) for field in integer_fields
+                    }
+        exact_arm_cardinality = (
+            not synthetic_canary
+            and bool(selected_arms)
+            and set(projected_arm_counts) == set(selected_arms)
+        )
+        range_max = (
+            max(item["total_clusters"] for item in projected_arm_counts.values())
+            if exact_arm_cardinality
+            else 1
+        )
+        range_render_value = min(range_value, range_max)
         sampling_hidden = (
             " aria-hidden='false'"
             if effective_arm_count
             else " hidden aria-hidden='true'"
         )
         sampling_disabled = "" if effective_arm_count else " disabled"
-        sampling_status = (
-            (
-                "full release for each selected arm"
+        range_field_hidden = "" if exact_arm_cardinality else " hidden"
+        range_disabled = "" if exact_arm_cardinality else " disabled"
+        if exact_arm_cardinality:
+            effective_clusters = sum(
+                item["total_clusters"]
                 if parsed_limit == 0
-                else f"up to {parsed_limit} clusters in each selected arm"
-                if parsed_limit is not None and parsed_limit > 0
-                else "blank uses the current mode default for each selected arm"
+                else min(
+                    parsed_limit if parsed_limit is not None and parsed_limit > 0 else 50,
+                    item["total_clusters"],
+                )
+                for item in projected_arm_counts.values()
             )
-            if effective_arm_count
-            else "Select one or more arms to configure sampling"
-        )
+            selected_records = sum(
+                item["selected_records"] for item in projected_arm_counts.values()
+            )
+            sampling_status = (
+                f"Exact projection: {effective_clusters} clusters across "
+                f"{selected_arm_count} independently capped arms; the current "
+                f"selection expands to {selected_records} converted rows."
+            )
+        elif effective_arm_count:
+            sampling_status = (
+                "Enter a non-negative cluster limit now. The exact slider range and "
+                "per-arm record fanout appear after a matching no-call preflight."
+            )
+        else:
+            sampling_status = "Select one or more arms to configure sampling"
         sampling_arm_label = (
             "Synthetic arm selected automatically"
             if synthetic_canary
             else f"{selected_arm_count} arm{'s' if selected_arm_count != 1 else ''} selected"
         )
+        if exact_arm_cardinality:
+            inventory_rows = "".join(
+                "<tr><td><code>"
+                + html.escape(arm_id)
+                + "</code></td><td>"
+                + f"{item['total_clusters']:,}"
+                + "</td><td>"
+                + f"{item['total_records']:,}"
+                + "</td></tr>"
+                for arm_id, item in sorted(projected_arm_counts.items())
+            )
+            sampling_inventory = (
+                "<div class='scroll' id='sample-arm-inventory'><table>"
+                "<tr><th>Arm</th><th>Available clusters</th>"
+                "<th>Available converted rows</th></tr>"
+                + inventory_rows
+                + "</table></div>"
+            )
+        else:
+            sampling_inventory = (
+                "<p class='note' id='sample-arm-inventory'>No exact arm cardinality "
+                "is claimed until the matching no-call preflight validates it.</p>"
+            )
+        arm_cardinality_json = html.escape(
+            json.dumps(
+                projected_arm_counts if exact_arm_cardinality else {},
+                sort_keys=True,
+                separators=(",", ":"),
+            )
+        )
         sample_seed = prefill.get("sample_seed", "0")
         sampling_fields = (
             "<section class='sample-size-control' id='sample-size-control'"
             + sampling_hidden
+            + " data-arm-cardinalities='"
+            + arm_cardinality_json
+            + "'"
             + ">"
             "<div class='sample-size-head'><div><h3>Per-arm sample size</h3>"
             "<p class='note'>The same value applies independently to every selected "
@@ -1846,12 +1986,14 @@ class BuilderPageMixin:
             "<span class='badge blue' id='sample-arm-count'>"
             + html.escape(sampling_arm_label)
             + "</span></div>"
-            "<div class='sample-size-grid'><div class='fieldcell'>"
+            "<div class='sample-size-grid'><div class='fieldcell sample-range-field'"
+            + range_field_hidden
+            + ">"
             "<label class='fieldlabel' for='sample-limit-range'>Sample-size range "
-            "<span class='fieldhint'>slide to 0 for full mode</span></label>"
+            "<span class='fieldhint'>exact validated maximum; 0 is full mode</span></label>"
             f"<input id='sample-limit-range' type='range' min='0' max='{range_max}' "
-            f"step='1' value='{range_value}' data-base-max='1000'"
-            + sampling_disabled
+            f"step='1' value='{range_render_value}'"
+            + range_disabled
             + " aria-describedby='sample-limit-status'>"
             "</div><div class='fieldcell'>"
             "<label class='fieldlabel' for='sample-limit-number'>--limit "
@@ -1875,7 +2017,9 @@ class BuilderPageMixin:
             + "</div></div><p class='fieldhint' id='sample-limit-status' "
             "aria-live='polite'>"
             + html.escape(sampling_status)
-            + "</p></section>"
+            + "</p>"
+            + sampling_inventory
+            + "</section>"
         )
 
         # Repeatable live-attestation receipt/digest rows.
@@ -2299,7 +2443,7 @@ class BuilderPageMixin:
             )
             + text_field(
                 "local_budget_hours",
-                "Local call-start budget (hours)",
+                "Local process wall-time cap (hours)",
                 _LOCAL_BUDGET_HELP,
                 kind="number",
             )

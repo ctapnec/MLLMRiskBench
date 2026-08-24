@@ -14,6 +14,10 @@ from ura.adapters.deepteam import DeepTeamAttacker
 from ura.adapters.h4rm3l import H4rm3lAttacker
 from ura.adapters.harmbench import HarmBenchAttacker
 from ura.adapters.ideator import IDEATORAttacker
+from ura.adapters._engine_common import (
+    ExternalEngineConformanceError,
+    ExternalEngineOutputError,
+)
 from ura.adapters.nanogcg import NanoGCGAttacker
 from ura.adapters.purplellama import PurpleLlamaAttacker
 from ura.adapters.pyrit import PyRITAttacker
@@ -298,6 +302,48 @@ def test_ideator_contract_preserves_repeated_generated_image_occurrences(
         contract.generated_media[0].sha256,
         contract.generated_media[0].sha256,
     ]
+
+
+def test_ideator_pair_limit_is_an_explicit_ordered_prefix(
+    tmp_path: Path,
+) -> None:
+    image_path = tmp_path / "ordered-prefix.png"
+    image_path.write_bytes(_PNG)
+    pairs = [
+        ("pair one", str(image_path)),
+        ("pair two", str(image_path)),
+        ("pair three", str(image_path)),
+    ]
+    bounded = IDEATORAttacker(seed_pairs=pairs, pair_limit=2)
+    contract = bounded.plan_target_inputs(_text_datapoint(), _budget(2))
+    attempts = list(bounded.generate(_text_datapoint(), _budget(2)))
+    assert [item.rendered_input[-1].content for item in attempts] == [
+        "pair one",
+        "pair two",
+    ]
+    assert all(item.params["sampling_policy"] == "ordered_prefix_v1" for item in attempts)
+    assert all(item.params["selected_pairs"] == 2 for item in attempts)
+
+    all_pairs = IDEATORAttacker(seed_pairs=pairs, pair_limit=0)
+    assert len(all_pairs.plan_target_inputs(_text_datapoint(), _budget(3)).turns) == 3
+    reordered = IDEATORAttacker(
+        seed_pairs=[pairs[1], pairs[0], pairs[2]], pair_limit=2
+    ).plan_target_inputs(_text_datapoint(), _budget(2))
+    assert reordered.contract_id != contract.contract_id
+
+    with pytest.raises(ExternalEngineConformanceError, match="max_queries and max_turns"):
+        bounded.plan_target_inputs(_text_datapoint(), _budget(1))
+    with pytest.raises(ExternalEngineOutputError, match="exceeds"):
+        IDEATORAttacker(seed_pairs=pairs, pair_limit=4).plan_target_inputs(
+            _text_datapoint(), _budget(4)
+        )
+    with pytest.raises(ValueError, match="0 to 256"):
+        IDEATORAttacker(seed_pairs=pairs, pair_limit=-1)
+    with pytest.raises(ExternalEngineOutputError, match="only non-blank"):
+        IDEATORAttacker(
+            seed_pairs=[pairs[0], ("", str(image_path)), pairs[2]],
+            pair_limit=2,
+        ).plan_target_inputs(_text_datapoint(), _budget(2))
 
 
 def test_all_runner_adapters_expose_a_path_free_text_contract(tmp_path: Path) -> None:

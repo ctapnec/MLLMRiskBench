@@ -745,6 +745,27 @@ def test_local_adapter_cli_publishes_generic_registration(
     assert Path(capsys.readouterr().out.strip()).name == "registration.json"
 
 
+def test_local_adapter_cli_fails_before_publication_for_mutated_terminal_chain(
+    tmp_path: Path,
+) -> None:
+    results, campaign, _level2_path = _sealed_chain(
+        tmp_path,
+        mutation="watcher_commit",
+    )
+    with pytest.raises(ValueError, match="chain is not publishable"):
+        phase7_module.main(
+            [
+                "--results-root",
+                str(results),
+                "--campaign-root",
+                str(campaign.directory),
+                "--release-commit",
+                COMMIT,
+            ]
+        )
+    assert not (results / "external-analysis-jobs").exists()
+
+
 def test_interrupted_generic_registration_is_retryable_without_partial_final(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

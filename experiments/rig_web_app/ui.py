@@ -701,21 +701,45 @@ var visible=!!(box&&box.checked);panel.hidden=!visible;
 panel.setAttribute('aria-hidden',visible?'false':'true');
 if(box){box.setAttribute('aria-expanded',visible?'true':'false');}
 if(visible){any=true;}});
-var group=document.getElementById('prepared-workflows');
-if(group){group.hidden=!any;group.setAttribute('aria-hidden',any?'false':'true');}}
+ var group=document.getElementById('prepared-workflows');
+ if(group){group.hidden=!any;group.setAttribute('aria-hidden',any?'false':'true');}}
+function syncIdeatorPairLimit(){
+ var status=document.getElementById('ideator-pair-status');
+ var input=form.querySelector("[name='ideator_pair_limit']");
+ if(!status||!input){return;}
+ var available=parseInt(status.getAttribute('data-available')||'',10);
+ var raw=input.value.trim();
+ if(!Number.isFinite(available)){
+ status.textContent='Available and selected pair counts appear after the complete manifest and image inventory validate.';return;}
+ if(!/^[0-9]+$/.test(raw)){
+ status.textContent='Enter 0 or a positive ordered-prefix pair count.';return;}
+ var requested=parseInt(raw,10);var selected=requested===0?available:Math.min(requested,available);
+ status.textContent=selected+' selected of '+available+' verified pairs in manifest order'+
+ (requested>available?' (requested limit exceeds the inventory)':'')+'.';}
 var samplePanel=document.getElementById('sample-size-control');
 var sampleRange=document.getElementById('sample-limit-range');
 var sampleNumber=document.getElementById('sample-limit-number');
 var sampleSeed=document.getElementById('sample-seed-input');
+function sampleArmCardinalities(){
+ if(!samplePanel){return {};}try{
+ var parsed=JSON.parse(samplePanel.getAttribute('data-arm-cardinalities')||'{}');
+ return parsed&&typeof parsed==='object'&&!Array.isArray(parsed)?parsed:{};
+ }catch(_error){return {};}}
 function syncSampleSizeControl(){
 var arms=checked('.armbox','data-arm');
 var mode=(form.querySelector('input[name=mode]:checked')||{}).value||'measured';
 var drySynthetic=mode==='diagnostic_canary'&&checkedName('canary_dry');
 var effectiveCount=drySynthetic?1:arms.length;var enabled=effectiveCount>0;
+var counts=sampleArmCardinalities();var countKeys=Object.keys(counts).sort();
+var selectedKeys=arms.slice().sort();var exact=!drySynthetic&&enabled&&
+countKeys.length===selectedKeys.length&&countKeys.every(function(key,index){return key===selectedKeys[index];});
 if(samplePanel){samplePanel.hidden=!enabled;
 samplePanel.setAttribute('aria-hidden',enabled?'false':'true');}
-[sampleRange,sampleNumber,sampleSeed].forEach(function(input){
-if(input){input.disabled=!enabled;}});
+if(sampleNumber){sampleNumber.disabled=!enabled;}if(sampleSeed){sampleSeed.disabled=!enabled;}
+var rangeField=sampleRange&&sampleRange.closest('.sample-range-field');
+if(sampleRange){sampleRange.disabled=!exact;}if(rangeField){rangeField.hidden=!exact;}
+var inventory=document.getElementById('sample-arm-inventory');
+if(inventory&&countKeys.length){inventory.hidden=!exact;}
 var count=document.getElementById('sample-arm-count');
 if(count){count.textContent=drySynthetic?'Synthetic arm selected automatically':
 arms.length+' arm'+(arms.length===1?'':'s')+' selected';}
@@ -730,20 +754,19 @@ function(b){return (b.getAttribute('data-model')||'')===judgeModelValue;});
 var localOnlyMeasured=mode==='measured'&&!api.length&&!hostedJudge;
 var defaultValue=localOnlyMeasured?0:50;
 var value=valid?parseInt(raw,10):defaultValue;
-var base=parseInt(sampleRange.getAttribute('data-base-max')||'1000',10);
-sampleRange.max=String(Math.max(base,value));sampleRange.value=String(value);
+if(exact){var exactMax=countKeys.reduce(function(maximum,key){
+return Math.max(maximum,parseInt(counts[key].total_clusters,10));},0);
+sampleRange.max=String(exactMax);sampleRange.value=String(Math.min(value,exactMax));}
 var status=document.getElementById('sample-limit-status');if(!status){return;}
 if(!enabled){status.textContent='Select one or more arms to configure sampling';}
-else if(!raw&&localOnlyMeasured){status.textContent='Blank composes 0: the full selected release for each arm';}
-else if(!raw){status.textContent='Blank uses the CLI default of 50 clusters independently for each selected arm';}
-else if(value===0){status.textContent='Full selected release for each of '+effectiveCount+' selected arm'+(effectiveCount===1?'':'s');}
-else{status.textContent='Up to '+value+' source clusters in each of '+effectiveCount+' selected arm'+(effectiveCount===1?'':'s');}}
+else if(!exact){status.textContent='Enter a non-negative cluster limit now. The exact slider range and per-arm record fanout appear after a matching no-call preflight.';}
+else{var effective=countKeys.reduce(function(total,key){var available=parseInt(counts[key].total_clusters,10);
+return total+(value===0?available:Math.min(value,available));},0);
+status.textContent='Effective selection: '+effective+' clusters across '+effectiveCount+
+' independently capped arm'+(effectiveCount===1?'':'s')+
+'; converted-row fanout is fixed by the matching preflight.';}}
 if(sampleRange&&sampleNumber){
-sampleRange.addEventListener('input',function(){sampleNumber.value=this.value;});
-sampleNumber.addEventListener('input',function(){var raw=this.value.trim();
-if(!/^[0-9]+$/.test(raw)){return;}var value=parseInt(raw,10);
-var base=parseInt(sampleRange.getAttribute('data-base-max')||'1000',10);
-sampleRange.max=String(Math.max(base,value));sampleRange.value=String(value);});}
+sampleRange.addEventListener('input',function(){sampleNumber.value=this.value;});}
 function rememberPickerSelection(){
 if(!pickerIsOpen()){return;}
 if(pickerRole==='target'){
@@ -871,6 +894,7 @@ function setBuildSummary(id,value){var out=document.getElementById(id);
 if(out){out.textContent=value;}}
 function refresh(){rememberPickerSelection();updateUnknownPrecisionBadges();
 applyScope();applyPreparedFields();
+syncIdeatorPairLimit();
 syncSampleSizeControl();
 updateSelectionSummaries();
 // live preview
@@ -930,16 +954,17 @@ completeAtt+' complete'+(incompleteAtt?(', '+incompleteAtt+' incomplete'):'')+
 '; scope: '+namedValue('scope','not set')+'; max age: '+namedValue('max_age','not set'));
 setBuildSummary('build-summary-trajectory','per-arm limit: '+namedValue('limit',
 localOnlyMeasured?'0 (complete release)':'not set')+
-'; sample seed: '+namedValue('sample_seed','not set')+'; seeds: '+
-namedValue('seeds','not set')+'; queries: '+namedValue('max_queries','not set')+
-'; turns: '+namedValue('max_turns','not set')+'; group: '+namedValue('group','CLI default')+
+ '; sample seed: '+namedValue('sample_seed','not set')+'; seeds: '+
+ namedValue('seeds','not set')+'; queries: '+namedValue('max_queries','not set')+
+ '; turns: '+namedValue('max_turns','not set')+'; group: '+namedValue('group','CLI default')+
+ '; IDEATOR pair limit: '+namedValue('ideator_pair_limit','0 (all)')+
 '; exclude tool-conditioned: '+(checkedName('exclude_tool_conditioned')?'on':'off')+
 '; reset open circuits: '+(checkedName('reset_open_circuits')?'on':'off')+
 '; lock stale seconds: '+namedValue('lock_stale_seconds','CLI default'));
 setBuildSummary('build-summary-budget','target / judge / HTTP: '+
 namedValue('cap_target','not set')+' / '+namedValue('cap_judge','not set')+
-' / '+namedValue('cap_http','not set')+'; local call-start budget: '+
-namedValue('local_budget_hours','not set')+' h; call-start window: '+
+ ' / '+namedValue('cap_http','not set')+'; local process wall-time cap: '+
+ namedValue('local_budget_hours','not set')+' h; independent call-start window: '+
 namedValue('deadline','not set')+' s (not a completion timeout)');
 var localPrecisions=[];
 form.querySelectorAll(".modelbox[data-kind='local'][data-target-selected='true']")

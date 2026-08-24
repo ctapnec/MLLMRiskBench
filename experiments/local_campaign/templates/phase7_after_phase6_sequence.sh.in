@@ -161,6 +161,8 @@ PHASE7_LAUNCH_OUTPUT="$CONTROL_ROOT/phase7-launch.txt"
 COMPLETION="$CONTROL_ROOT/completion.json"
 EXIT_TMP="$CONTROL_ROOT/.exit.tmp"
 EXIT_MARKER="$CONTROL_ROOT/.exit"
+CONTROL_HARD_STOP_HOURS=720
+test "$CONTROL_HARD_STOP_HOURS" = '720'
 
 verify_regular() {
   local path="$1" expected_sha="$2" expected_bytes="$3"
@@ -199,9 +201,11 @@ CONTROL_TASKS=(
   prepare-analysis
   run-analysis
   validate-analysis
+  publish-stats
 )
 CONTROL_TASK_INDEX=0
 CONTROL_ACTIVE_TASK=''
+CONTROL_FAILURE_DETAIL=''
 CONSOLE_CAMPAIGN_STARTED=0
 
 console_event() {
@@ -227,23 +231,27 @@ controller_task_pass() {
 }
 
 controller_finish() {
-  local rc="$1" task status=failed
+  local rc="$1" task status=failed failure_detail
+  failure_detail="controller_exit_$rc"
+  if [ -n "$CONTROL_FAILURE_DETAIL" ]; then
+    failure_detail="$CONTROL_FAILURE_DETAIL"
+  fi
   test "$CONSOLE_CAMPAIGN_STARTED" = '1' || return 0
   if [ -n "$CONTROL_ACTIVE_TASK" ]; then
     task="$CONTROL_ACTIVE_TASK"
-    console_event task_end "$task" failed "controller_exit_$rc" || \
+    console_event task_end "$task" failed "$failure_detail" || \
       printf 'console event failed: task_end %s\n' "$task" >&2
     CONTROL_ACTIVE_TASK=''
     CONTROL_TASK_INDEX=$((CONTROL_TASK_INDEX + 1))
   fi
   while [ "$CONTROL_TASK_INDEX" -lt "${#CONTROL_TASKS[@]}" ]; do
     task="${CONTROL_TASKS[$CONTROL_TASK_INDEX]}"
-    console_event task_skip "$task" skipped "not_reached_after_controller_exit_$rc" || \
+    console_event task_skip "$task" skipped "not_reached_after_${failure_detail}" || \
       printf 'console event failed: task_skip %s\n' "$task" >&2
     CONTROL_TASK_INDEX=$((CONTROL_TASK_INDEX + 1))
   done
   test "$rc" -ne 0 || status=passed
-  console_event campaign_end bootstrap "$status" "local_campaign_controller_exit_$rc" || \
+  console_event campaign_end bootstrap "$status" "local_campaign_${failure_detail}" || \
     printf 'console event failed: campaign_end\n' >&2
   return 0
 }
@@ -263,13 +271,40 @@ trap 'exit 130' INT
 trap 'exit 143' TERM
 trap 'exit 129' HUP
 
+CONTROL_HARD_STOP_DEADLINE=$((SECONDS + CONTROL_HARD_STOP_HOURS * 3600))
+
+controller_hard_stop_check() {
+  local wait_label="$1" owned_socket="${2:-}" owned_session="${3:-}"
+  if (( SECONDS >= CONTROL_HARD_STOP_DEADLINE )); then
+    CONTROL_FAILURE_DETAIL="controller_hard_stop_exceeded_wait_${wait_label}_hours_${CONTROL_HARD_STOP_HOURS}"
+    printf 'CONTROLLER_HARD_STOP_EXCEEDED=1 WAIT=%s HOURS=%s\n' \
+      "$wait_label" "$CONTROL_HARD_STOP_HOURS" >&2
+    if [ -n "$owned_socket" ] || [ -n "$owned_session" ]; then
+      if [ -z "$owned_socket" ] || [ -z "$owned_session" ]; then
+        printf 'CONTROLLER_HARD_STOP_INVALID_OWNED_SESSION=1 WAIT=%s\n' \
+          "$wait_label" >&2
+        exit 124
+      fi
+      if tmux -L "$owned_socket" has-session -t "$owned_session" 2>/dev/null; then
+        tmux -L "$owned_socket" kill-session -t "$owned_session" 2>/dev/null || true
+      fi
+      if tmux -L "$owned_socket" has-session -t "$owned_session" 2>/dev/null; then
+        printf 'CONTROLLER_HARD_STOP_OWNED_SESSION_STILL_LIVE=1 WAIT=%s SOCKET=%s SESSION=%s\n' \
+          "$wait_label" "$owned_socket" "$owned_session" >&2
+        exit 124
+      fi
+    fi
+    exit 124
+  fi
+}
+
 CONSOLE_START_ARGS=(
   --work-root "$URA_WORK"
   --control-root "$CONTROL_ROOT"
   --campaign-id "${CONTROL_ROOT##*/}"
   --release-commit "$EXPECTED_COMMIT"
   --evidence-class local_campaign_control
-  --hard-stop-hours 720
+  --hard-stop-hours "$CONTROL_HARD_STOP_HOURS"
   --tmux-socket ura-phase7-after-phase6-@@COMMIT_SHORT@@
   --tmux-session ura-phase7-after-phase6-@@COMMIT_SHORT@@
 )
@@ -359,9 +394,12 @@ PY
 
 printf 'PHASE7_WATCHER_CONTROL_ROOT=%s\n' "$CONTROL_ROOT"
 printf 'PHASE7_WATCHER_WAITING_FOR_PHASE6=%s\n' "$PHASE6_ROOT"
+controller_hard_stop_check await-phase6
 while tmux -L "$PHASE6_SOCKET" has-session -t "$PHASE6_SESSION" 2>/dev/null; do
+  controller_hard_stop_check await-phase6
   sleep 30
 done
+controller_hard_stop_check await-phase6
 controller_task_pass await-phase6
 
 controller_task_start validate-phase6
@@ -932,9 +970,12 @@ PHASE7_COMPLETION="${launch_values[6]}"
 
 printf 'PHASE7_ANALYSIS_WAITING=%s CONTROL_ROOT=%s LOG=%s\n' \
   "$PHASE7_SESSION" "$PHASE7_CONTROL" "$PHASE7_LOG"
+controller_hard_stop_check run-analysis "$PHASE7_SOCKET" "$PHASE7_SESSION"
 while tmux -L "$PHASE7_SOCKET" has-session -t "$PHASE7_SESSION" 2>/dev/null; do
+  controller_hard_stop_check run-analysis "$PHASE7_SOCKET" "$PHASE7_SESSION"
   sleep 30
 done
+controller_hard_stop_check run-analysis "$PHASE7_SOCKET" "$PHASE7_SESSION"
 
 verify_regular "$WATCHER" "$AUTHORIZED_WATCHER_SHA256" -
 verify_regular "$WRAPPER" "$WRAPPER_SHA256" "$WRAPPER_BYTES"
@@ -1185,4 +1226,16 @@ with os.fdopen(fd, "wb") as handle:
 PY
 controller_task_pass validate-analysis
 
-printf 'PHASE7_WATCHER_COMPLETE=%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+controller_task_start publish-stats
+STATS_REGISTRATION="$("$PY" -m experiments.local_campaign.stats_adapter \
+  --results-root "$URA_WORK/runs" \
+  --campaign-root "$CONTROL_ROOT" \
+  --release-commit "$EXPECTED_COMMIT")"
+EXPECTED_STATS_REGISTRATION="$URA_WORK/runs/external-analysis-jobs/${CONTROL_ROOT##*/}/registration.json"
+test "$STATS_REGISTRATION" = "$EXPECTED_STATS_REGISTRATION"
+test -f "$STATS_REGISTRATION" && test ! -L "$STATS_REGISTRATION"
+test "$(readlink -e -- "$STATS_REGISTRATION")" = "$STATS_REGISTRATION"
+controller_task_pass publish-stats
+
+printf 'PHASE7_WATCHER_COMPLETE=%s STATS_REGISTRATION=%s\n' \
+  "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$STATS_REGISTRATION"

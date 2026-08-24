@@ -15,6 +15,7 @@ import base64
 import hashlib
 import importlib
 import json
+import os
 import re
 import subprocess
 import sys
@@ -398,7 +399,7 @@ def test_non_dry_lane_always_carries_an_explicit_limit(
     assert "Omit only" not in _PARAM_HELP["--limit"]
 
 
-def test_builder_sampling_control_and_local_compute_hours_keep_cli_semantics(
+def test_builder_sampling_control_and_local_wall_time_keep_cli_semantics(
     tmp_path: Path,
 ) -> None:
     app = _app(tmp_path)
@@ -414,10 +415,14 @@ def test_builder_sampling_control_and_local_compute_hours_keep_cli_semantics(
         assert "name='limit' value='0'" in selected
         assert "name='sample_seed' value='17'" in selected
         assert "syncSampleSizeControl" in _BUILDER_SCRIPT
-        assert "Full selected release for each of " in _BUILDER_SCRIPT
-        assert "Blank composes 0: the full selected release" in _BUILDER_SCRIPT
-        assert "CLI default of 50 clusters independently" in _BUILDER_SCRIPT
-        assert "source clusters in each of " in _BUILDER_SCRIPT
+        assert "matching no-call preflight" in _BUILDER_SCRIPT
+        assert "Effective selection: " in _BUILDER_SCRIPT
+        assert "Math.min(value,exactMax)" in _BUILDER_SCRIPT
+        assert "data-base-max='1000'" not in selected
+        unknown_range = _opening_tag(selected, "id='sample-limit-range'")
+        assert " hidden" not in unknown_range and " disabled" in unknown_range
+        unknown_number = _opening_tag(selected, "id='sample-limit-number'")
+        assert " disabled" not in unknown_number
 
         dry_canary_page = app._build_page(prefill={
             "mode": "diagnostic_canary",
@@ -444,9 +449,10 @@ def test_builder_sampling_control_and_local_compute_hours_keep_cli_semantics(
             "mode": "measured",
             "local": "vllm:fixture/model",
             "local_budget_hours": "3",
+            "deadline": "7200",
         })
         assert normalized["local_budget_hours"] == "3"
-        assert normalized["deadline"] == "10800"
+        assert normalized["deadline"] == "7200"
 
         measured_local = {
             **normalized,
@@ -459,14 +465,15 @@ def test_builder_sampling_control_and_local_compute_hours_keep_cli_semantics(
         errors = app._validate_builder(measured_local)
         assert "local_budget_hours" not in errors
         assert "deadline" not in errors
-        mismatch = app._validate_builder({**measured_local, "deadline": "7200"})
-        assert "call-start window" in mismatch["deadline"]
+        independent = app._validate_builder({**measured_local, "deadline": "10800"})
+        assert "local_budget_hours" not in independent
+        assert "deadline" not in independent
         wrong_route = app._validate_builder({
             **_DRY_BASE,
             "local_budget_hours": "3",
-            "deadline": "10800",
+            "deadline": "7200",
         })
-        assert "measured lane with a local target" in wrong_route["local_budget_hours"]
+        assert "measured all-local lane" in wrong_route["local_budget_hours"]
         no_seed = app._validate_builder({
             **measured_local,
             "sample_seed": "",
@@ -476,8 +483,272 @@ def test_builder_sampling_control_and_local_compute_hours_keep_cli_semantics(
         app.close()
 
     assert "call-start admission window" in _PARAM_HELP["--deadline-seconds"]
-    assert "not a process completion timeout" in _LOCAL_BUDGET_HELP
-    assert "does not interrupt an admitted call" in _LOCAL_BUDGET_HELP
+    assert "process wall-time cap" in _LOCAL_BUDGET_HELP
+    assert "complete process tree" in _LOCAL_BUDGET_HELP
+    assert "Set --deadline-seconds independently" in _LOCAL_BUDGET_HELP
+
+
+def test_builder_sampling_slider_uses_exact_per_arm_projection_counts(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    app = _app(tmp_path)
+    arms = [
+        {
+            "logical_source_arm": "airbench_full",
+            "total_records": 30,
+            "selected_records": 30,
+            "total_clusters": 3,
+            "selected_clusters": 3,
+            "limit": 4,
+            "sample_seed": 7,
+        },
+        {
+            "logical_source_arm": "strongreject_official",
+            "total_records": 100,
+            "selected_records": 40,
+            "total_clusters": 10,
+            "selected_clusters": 4,
+            "limit": 4,
+            "sample_seed": 7,
+        },
+    ]
+    monkeypatch.setattr(
+        app,
+        "_read_lane_projection",
+        lambda _params: ({
+            "projection_id": "lane-projection-" + "1" * 24,
+            "call_projection": {
+                "target_calls": 70,
+                "judge_calls": 0,
+                "http_attempts": 0,
+            },
+            "arms": arms,
+        }, ""),
+    )
+    try:
+        params = {
+            **_DRY_BASE,
+            "corpora": "airbench_full,strongreject_official",
+            "limit": "4",
+            "sample_seed": "7",
+        }
+        page = app._build_page(prefill=params).decode("utf-8")
+        exact_range = _opening_tag(page, "id='sample-limit-range'")
+        assert "max='10'" in exact_range and "value='4'" in exact_range
+        assert " disabled" not in exact_range
+        assert "Available clusters" in page and "Available converted rows" in page
+        assert "airbench_full" in page and "strongreject_official" in page
+        assert "Exact projection: 7 clusters" in page
+
+        changed_arms = app._build_page(
+            prefill={**params, "corpora": "airbench_full"}
+        ).decode("utf-8")
+        changed_range = _opening_tag(changed_arms, "id='sample-limit-range'")
+        assert " disabled" in changed_range
+        assert "matching no-call preflight" in changed_arms
+        assert "Exact projection:" not in changed_arms
+
+        full = app._build_page(prefill={**params, "limit": "0"}).decode("utf-8")
+        assert "Exact projection: 13 clusters" in full
+        above = app._build_page(prefill={**params, "limit": "12"}).decode("utf-8")
+        assert "name='limit' value='12'" in above
+        above_range = _opening_tag(above, "id='sample-limit-range'")
+        assert "max='10'" in above_range and "value='10'" in above_range
+    finally:
+        app.close()
+
+
+def test_local_wall_time_wraps_only_final_measured_all_local_process(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    app = _app(tmp_path)
+    try:
+        monkeypatch.setattr(
+            app, "_coreutils_timeout_executable", lambda: "/usr/bin/timeout"
+        )
+        inner = [sys.executable, "-m", "experiments.run_matrix", "--deadline-seconds", "7200"]
+        params = {
+            "mode": "measured",
+            "local": "vllm:fixture/model",
+            "judges": "rules,guardrail",
+            "local_budget_hours": "3",
+            "deadline": "7200",
+        }
+        wrapped, seconds = app._wrap_local_measured_wall_time(
+            "run_matrix", {}, params, inner
+        )
+        assert seconds == 10800
+        assert wrapped == [
+            "/usr/bin/timeout",
+            "--verbose",
+            "--signal=TERM",
+            "--kill-after=10s",
+            "10800s",
+            *inner,
+        ]
+        assert inner[-1] == "7200"
+
+        for values in (
+            {"--dry-run": "on"},
+            {"--preflight-only": "on"},
+            {"--model-acquisition-plan-only": "on"},
+        ):
+            assert app._wrap_local_measured_wall_time(
+                "run_matrix", values, params, inner
+            ) == (inner, None)
+        assert app._wrap_local_measured_wall_time(
+            "model_acquire", {}, params, inner
+        ) == (inner, None)
+
+        with pytest.raises(ValueError, match="all-local"):
+            app._wrap_local_measured_wall_time(
+                "run_matrix",
+                {},
+                {**params, "judges": "rules,llm", "judge_model": "openai:gpt"},
+                inner,
+            )
+        monkeypatch.setattr(app, "_coreutils_timeout_executable", lambda: None)
+        with pytest.raises(ValueError, match="GNU coreutils timeout"):
+            app._wrap_local_measured_wall_time("run_matrix", {}, params, inner)
+    finally:
+        app.close()
+
+
+def test_start_job_launches_but_does_not_retain_wall_time_wrapper(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import experiments.rig_web_app.lifecycle as lifecycle_module
+
+    app = _app(tmp_path)
+    inner = [sys.executable, "-m", "experiments.run_matrix", "--deadline-seconds", "7200"]
+    retained = [
+        sys.executable,
+        "-m",
+        "experiments.run_matrix",
+        "--deadline-seconds",
+        "7200",
+    ]
+    launched: list[list[str]] = []
+
+    class FakeProcess:
+        pid = 5252
+
+        @staticmethod
+        def poll() -> None:
+            return None
+
+    def fake_popen(argv, **_kwargs):  # noqa: ANN001
+        launched.append(list(argv))
+        return FakeProcess()
+
+    params = {
+        "mode": "measured",
+        "local": "vllm:fixture/model",
+        "judges": "rules,guardrail",
+        "local_budget_hours": "3",
+        "deadline": "7200",
+    }
+    monkeypatch.setattr(lifecycle_module, "build_argv", lambda *_args, **_kwargs: inner)
+    monkeypatch.setattr(lifecycle_module.subprocess, "Popen", fake_popen)
+    monkeypatch.setattr(lifecycle_module, "_win_managed_job", lambda: None)
+    monkeypatch.setattr(
+        app, "_bind_selected_execution_config_identity", lambda value: dict(value)
+    )
+    monkeypatch.setattr(
+        app, "_bind_execution_config_bundle_identity", lambda value: dict(value)
+    )
+    monkeypatch.setattr(
+        app,
+        "_durable_launch_state",
+        lambda *_args, **_kwargs: (
+            retained,
+            dict(params),
+            None,
+            None,
+            None,
+            None,
+            None,
+            (),
+        ),
+    )
+    monkeypatch.setattr(app, "_run_matrix_child_environment", lambda *_args, **_kwargs: {})
+    monkeypatch.setattr(app, "_durable_log_redactions", lambda *_args, **_kwargs: ())
+    monkeypatch.setattr(app, "_start_log_capture", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(
+        app, "_coreutils_timeout_executable", lambda: "/usr/bin/timeout"
+    )
+    try:
+        job = app.start_job("run_matrix", {}, builder_params=params)
+        assert launched == [[
+            "/usr/bin/timeout",
+            "--verbose",
+            "--signal=TERM",
+            "--kill-after=10s",
+            "10800s",
+            *inner,
+        ]]
+        command_document = json.loads(
+            (job.directory / "command.json").read_text(encoding="utf-8")
+        )
+        assert command_document == {
+            "job_id": job.job_id,
+            "command": "run_matrix",
+            "argv": retained,
+            "controller_wall_time_seconds": 10800,
+        }
+        assert job.argv == retained
+    finally:
+        app.close()
+
+
+@pytest.mark.skipif(os.name == "nt", reason="GNU timeout process-group semantics")
+def test_local_wall_time_kills_sigterm_ignoring_descendant(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    app = _app(tmp_path)
+    heartbeat = tmp_path / "heartbeat"
+    grandchild = (
+        "import pathlib,signal,sys,time;"
+        "signal.signal(signal.SIGTERM,signal.SIG_IGN);"
+        "p=pathlib.Path(sys.argv[1]);"
+        "exec('while True:\\n p.open(\\\"ab\\\").write(b\\\"x\\\")\\n time.sleep(0.05)')"
+    )
+    child = (
+        "import signal,subprocess,sys,time;"
+        "signal.signal(signal.SIGTERM,signal.SIG_IGN);"
+        "subprocess.Popen([sys.executable,'-c',sys.argv[1],sys.argv[2]]);"
+        "exec('while True:\\n time.sleep(1)')"
+    )
+    try:
+        timeout_executable = app._coreutils_timeout_executable()
+        assert timeout_executable is not None
+        monkeypatch.setattr(
+            app, "_coreutils_timeout_executable", lambda: timeout_executable
+        )
+        wrapped, _seconds = app._wrap_local_measured_wall_time(
+            "run_matrix",
+            {},
+            {
+                "mode": "measured",
+                "local": "vllm:fixture/model",
+                "judges": "rules",
+                "local_budget_hours": "1",
+            },
+            [sys.executable, "-c", child, grandchild, str(heartbeat)],
+        )
+        wrapped[3] = "--kill-after=1s"
+        wrapped[4] = "1s"
+        completed = subprocess.run(wrapped, check=False, timeout=10)
+        assert completed.returncode == 124
+        before = heartbeat.stat().st_size
+        time.sleep(0.3)
+        assert heartbeat.stat().st_size == before
+    finally:
+        app.close()
 
 
 # -- P1-MISSED-1: the Build synth dry lane runs with the CLI default limit -------
@@ -767,6 +1038,8 @@ def test_ideator_builder_replay_is_digest_bound_and_snapshot_materialized(
         assert "id='prepared-ideator'" in page
         assert "name='ideator_manifest'" in page
         assert "name='ideator_manifest_sha'" in page
+        assert "name='ideator_pair_limit'" in page
+        assert "syncIdeatorPairLimit" in _BUILDER_SCRIPT
 
         png = base64.b64decode(
             "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk"
@@ -791,6 +1064,7 @@ def test_ideator_builder_replay_is_digest_bound_and_snapshot_materialized(
             "attackers": "ideator",
             "ideator_manifest": str(manifest),
             "ideator_manifest_sha": hashlib.sha256(manifest.read_bytes()).hexdigest(),
+            "ideator_pair_limit": "1",
         }
         assert app._validate_builder(params) == {}
         reviewed, snapshot, _snapshot_sha256 = (
@@ -836,7 +1110,12 @@ def test_ideator_builder_replay_is_digest_bound_and_snapshot_materialized(
         )
         assert selected is not None
         emitted = json.loads(selected.read_text(encoding="utf-8"))["ideator"]
-        assert set(emitted) == {"seed_pairs", "seed_pair_image_sha256"}
+        assert set(emitted) == {
+            "seed_pairs",
+            "seed_pair_image_sha256",
+            "pair_limit",
+        }
+        assert emitted["pair_limit"] == 1
         assert emitted["seed_pair_image_sha256"] == [
             hashlib.sha256(png).hexdigest()
         ]
@@ -866,11 +1145,20 @@ def test_ideator_builder_replay_is_digest_bound_and_snapshot_materialized(
         assert operational["ideator"]["seed_pairs"] == [
             ["reviewed text", str(held_image)]
         ]
+        assert operational["ideator"]["pair_limit"] == 1
         assert "seed_pair_image_sha256" not in operational["ideator"]
         assert artifact_identity is not None
-        assert run_matrix._portable_attacker_configs(operational)["ideator"][
-            "seed_pairs_identity"
-        ][0]["image"]["sha256"] == hashlib.sha256(png).hexdigest()
+        portable_ideator = run_matrix._portable_attacker_configs(operational)[
+            "ideator"
+        ]
+        assert portable_ideator["seed_pairs_identity"][0]["image"][
+            "sha256"
+        ] == hashlib.sha256(png).hexdigest()
+        assert portable_ideator["pair_limit"] == 1
+        assert app._projection_params(params)["ideator_pair_limit"] == "1"
+        assert app._projection_params(params) != app._projection_params(
+            {**params, "ideator_pair_limit": "0"}
+        )
 
         # The reviewed digest remains authoritative across the private
         # Builder-to-Runner handoff, not merely across the operator snapshot.
@@ -909,6 +1197,10 @@ def test_ideator_builder_replay_is_digest_bound_and_snapshot_materialized(
         assert "ideator" in app._validate_builder(params)
         manifest_bad = {**params, "ideator_manifest_sha": "0" * 64}
         assert "does not match" in app._validate_builder(manifest_bad)["ideator"]
+        excessive_pairs = {**params, "ideator_pair_limit": "2"}
+        assert "exceeds the verified manifest inventory" in app._validate_builder(
+            excessive_pairs
+        )["ideator"]
         outside_image = tmp_path / "outside-results.png"
         outside_image.write_bytes(png)
         outside_manifest = app.results_root / "outside-seed-pairs.json"

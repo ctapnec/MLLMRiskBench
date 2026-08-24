@@ -60,9 +60,9 @@ class IDEATORAttacker(BaseAttacker):
     ``device`` selects the GPU. ``out_dir`` is where synthesized images are written
     (a persistent temp dir when unset, so the MediaRef paths stay valid). Pass
     ``seed_pairs`` (a list of ``(text, image_path)``) to run fully offline in seed
-    mode; otherwise the VLM + diffusion pipeline runs via a lazy import of the
-    ideator package. No live exploit is ever executed against a deployed system
-    (thesis N5).
+    mode. ``pair_limit`` selects an ordered manifest prefix (``0`` means every
+    verified pair); query and turn budgets must cover that complete selection.
+    No live exploit is ever executed against a deployed system (thesis N5).
     """
 
     name = "ideator"
@@ -73,11 +73,16 @@ class IDEATORAttacker(BaseAttacker):
     def plan_target_inputs(
         self, datapoint: DataPoint, budget: AttackBudget
     ) -> AttackerInputContract:
+        selected, _mode = self._pairs(
+            datapoint.payload_text or datapoint.payload_code or "",
+            self._effective_pair_count(),
+            budget,
+        )
         return generated_image_input_contract(
             self.name,
             datapoint,
             budget,
-            seed_pairs=tuple(self.seed_pairs or ()),
+            seed_pairs=tuple(selected),
         )
 
     def __init__(
@@ -87,6 +92,7 @@ class IDEATORAttacker(BaseAttacker):
         device: str = "cuda:0",
         out_dir: str | None = None,
         seed_pairs: list[tuple[str, str]] | None = None,
+        pair_limit: int = 0,
     ) -> None:
         # Red-teamer VLM backend and the diffusion synthesizer that paints the image.
         self.vlm = vlm
@@ -97,14 +103,17 @@ class IDEATORAttacker(BaseAttacker):
         self.out_dir = out_dir
         # Precomputed (text, image_path) pairs; when set, generate() is fully offline.
         self.seed_pairs = seed_pairs
+        if (
+            isinstance(pair_limit, bool)
+            or not isinstance(pair_limit, int)
+            or not 0 <= pair_limit <= 256
+        ):
+            raise ValueError("IDEATOR pair_limit must be an integer from 0 to 256")
+        self.pair_limit = pair_limit
 
     def generate(self, datapoint: DataPoint, budget: AttackBudget) -> Iterable[Attempt]:
         objective = datapoint.payload_text or datapoint.payload_code or ""
-        pairs, mode = self._pairs(
-            objective,
-            min(budget.max_queries, budget.max_turns),
-            budget,
-        )
+        pairs, mode = self._pairs(objective, self._effective_pair_count(), budget)
         # Preserve the adapter's established conformance/output exceptions from
         # ``_pairs`` while still binding every accepted image before yielding an
         # Attempt. Runner admission calls ``plan_target_inputs`` on the original
@@ -140,6 +149,9 @@ class IDEATORAttacker(BaseAttacker):
                     },
                     "modalities": ["image", "text"],
                     "mode": mode,
+                    "pair_limit": self.pair_limit,
+                    "sampling_policy": "ordered_prefix_v1",
+                    "selected_pairs": len(pairs),
                 },
             )
             # Attach the synthesized image so the rendered dialog is truly multimodal:
@@ -166,22 +178,61 @@ class IDEATORAttacker(BaseAttacker):
         ``seed_pairs`` value is a conformance error rather than an invented live
         generation path."""
         if self.seed_pairs is not None:
-            pairs = [
-                (text, image)
-                for text, image in self.seed_pairs
-                if isinstance(text, str)
-                and text.strip()
-                and isinstance(image, str)
-                and image.strip()
-            ][:n]
+            pairs = self._validated_seed_pairs()
             if not pairs:
                 raise ExternalEngineOutputError(
                     "IDEATOR seed-pair input contains no valid image+text pairs"
                 )
-            return pairs, "seed"
+            effective = len(pairs) if self.pair_limit == 0 else self.pair_limit
+            if effective > len(pairs):
+                raise ExternalEngineOutputError(
+                    "IDEATOR pair_limit exceeds the verified seed-pair inventory"
+                )
+            if n != effective:
+                raise ExternalEngineConformanceError(
+                    "IDEATOR selected pair count changed between planning and generation"
+                )
+            if budget.max_queries < effective or budget.max_turns < effective:
+                raise ExternalEngineConformanceError(
+                    "IDEATOR selected pairs require max_queries and max_turns to be "
+                    f"at least {effective}"
+                )
+            return pairs[:effective], "seed"
 
         raise ExternalEngineConformanceError(
             "IDEATOR live generation is disabled: the official repository does "
             "not expose the ideator.IDEATOR package API assumed by the former "
             "bridge. Supply verified precomputed seed_pairs instead."
         )
+
+    def _effective_pair_count(self) -> int:
+        if self.seed_pairs is None:
+            raise ExternalEngineConformanceError(
+                "IDEATOR live generation is disabled; supply verified seed_pairs"
+            )
+        pairs = self._validated_seed_pairs()
+        if not pairs:
+            raise ExternalEngineOutputError(
+                "IDEATOR seed-pair input contains no valid image+text pairs"
+            )
+        return len(pairs) if self.pair_limit == 0 else self.pair_limit
+
+    def _validated_seed_pairs(self) -> list[tuple[str, str]]:
+        """Return the exact configured order, rejecting any unverified entry."""
+
+        if self.seed_pairs is None:  # pragma: no cover - guarded by callers
+            return []
+        if any(
+            not isinstance(pair, (list, tuple))
+            or len(pair) != 2
+            or not isinstance(pair[0], str)
+            or not pair[0].strip()
+            or not isinstance(pair[1], str)
+            or not pair[1].strip()
+            for pair in self.seed_pairs
+        ):
+            raise ExternalEngineOutputError(
+                "IDEATOR seed_pairs must contain only non-blank "
+                "(text, image_path) pairs"
+            )
+        return [(pair[0], pair[1]) for pair in self.seed_pairs]

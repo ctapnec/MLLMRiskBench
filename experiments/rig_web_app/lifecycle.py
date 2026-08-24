@@ -8,6 +8,7 @@ import json
 import os
 import re
 import secrets
+import shutil
 import stat
 import subprocess
 import threading
@@ -2976,6 +2977,73 @@ class LifecycleMixin:
             )
         return ""
 
+    def _coreutils_timeout_executable(self) -> str | None:
+        """Return the detached POSIX wall-time controller available to this host."""
+
+        if os.name == "nt":
+            return None
+        return shutil.which("timeout")
+
+    def _wrap_local_measured_wall_time(
+        self,
+        command: str,
+        values: Mapping[str, str],
+        builder_params: Mapping[str, str] | None,
+        launch_argv: list[str],
+    ) -> tuple[list[str], int | None]:
+        """Wrap only a final measured all-local Runner process.
+
+        Runner's deadline is deliberately a call-start admission gate. The
+        Builder's optional whole-hour ceiling instead belongs to a detached
+        process supervisor, so it remains effective if the console restarts and
+        can terminate an already admitted model call.
+        """
+
+        if command != "run_matrix" or builder_params is None:
+            return launch_argv, None
+        raw_hours = str(builder_params.get("local_budget_hours", "")).strip()
+        if not raw_hours:
+            return launch_argv, None
+        if any(
+            str(values.get(flag, "")) == "on"
+            for flag in (
+                "--dry-run",
+                "--preflight-only",
+                "--model-acquisition-plan-only",
+            )
+        ):
+            return launch_argv, None
+        if re.fullmatch(r"[1-9][0-9]*", raw_hours) is None:
+            raise ValueError("local process wall-time hours must be a positive integer")
+        mode = str(builder_params.get("mode", "measured")).strip() or "measured"
+        local = self._split_list(str(builder_params.get("local", "")))
+        api = self._split_list(str(builder_params.get("api", "")))
+        judges = self._split_list(str(builder_params.get("judges", "")))
+        judge_model = str(builder_params.get("judge_model", "")).strip()
+        hosted_judge = (
+            "llm" in judges
+            and judge_model not in {"", "mock"}
+            and not judge_model.startswith(("vllm:", "ollama:"))
+        )
+        if mode != "measured" or not local or api or hosted_judge:
+            raise ValueError(
+                "local process wall-time cap requires a final measured all-local lane"
+            )
+        timeout_executable = self._coreutils_timeout_executable()
+        if not timeout_executable:
+            raise ValueError(
+                "local process wall-time cap requires GNU coreutils timeout on this host"
+            )
+        seconds = int(raw_hours) * 3600
+        return [
+            timeout_executable,
+            "--verbose",
+            "--signal=TERM",
+            "--kill-after=10s",
+            f"{seconds}s",
+            *launch_argv,
+        ], seconds
+
     def start_job(
         self,
         command: str,
@@ -3057,6 +3125,14 @@ class LifecycleMixin:
                 transient_evidence_files,
             ) = self._durable_launch_state(
                 command, values, builder_params
+            )
+            launch_argv, controller_wall_time_seconds = (
+                self._wrap_local_measured_wall_time(
+                    command,
+                    values,
+                    builder_params,
+                    launch_argv,
+                )
             )
             # This is the exact SQLite path-privacy boundary and must run before
             # a subprocess, job directory, or in-memory Job can exist.
@@ -3153,16 +3229,17 @@ class LifecycleMixin:
                 os.chmod(directory, 0o700)
             except OSError:
                 pass
+            command_document: dict[str, object] = {
+                "job_id": job_id,
+                "command": command,
+                "argv": argv,
+            }
+            if controller_wall_time_seconds is not None:
+                command_document["controller_wall_time_seconds"] = (
+                    controller_wall_time_seconds
+                )
             (directory / "command.json").write_text(
-                json.dumps(
-                    {
-                        "job_id": job_id,
-                        "command": command,
-                        "argv": argv,
-                    },
-                    indent=2,
-                    sort_keys=True,
-                ),
+                json.dumps(command_document, indent=2, sort_keys=True),
                 encoding="utf-8",
             )
             stdout_handle = (directory / "stdout.log").open("wb")

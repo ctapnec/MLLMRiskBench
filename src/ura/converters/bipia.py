@@ -11,8 +11,6 @@ from __future__ import annotations
 import random
 from pathlib import Path
 
-from nltk.tokenize.punkt import PunktSentenceTokenizer
-
 from ..adapters.base import BaseConverter
 from ..data_models import DataPoint, DialogTurn
 from ._common import CorpusFormatError, CorpusNotFoundError, Rc, dp, missing, read_json, read_jsonl
@@ -92,6 +90,12 @@ def _insert(context: str, attack: str, position: str, *, seed: int = 2023) -> st
         return "\n".join((attack, context))
     if position == "end":
         return "\n".join((context, attack))
+    # NLTK belongs to BIPIA's raw middle-insertion path. Importing it at module
+    # load made every unrelated direct converter import require NLTK because
+    # ura.converters exposes an eager registry. Framework bridge environments
+    # that never execute BIPIA must not inherit that unrelated dependency.
+    from nltk.tokenize.punkt import PunktSentenceTokenizer
+
     sentence_indexes = list(PunktSentenceTokenizer().span_tokenize(context))
     if not sentence_indexes:
         raise CorpusFormatError("BIPIA middle insertion found no sentence span")

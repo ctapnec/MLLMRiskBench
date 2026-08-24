@@ -339,21 +339,24 @@ assumption with two measured population tiers. Core lanes use `--limit 100
 --sample-seed 0 --seeds 0`; extended Runner-safe bridge and Ollama lanes use
 `--limit 50 --sample-seed 0 --seeds 0`. The amendment was fixed from source
 inventories, no-call projections and diagnostic feasibility, not from measured
-benchmark outcomes. `--limit` is applied independently within every logical
-source arm. It selects a deterministic prefix of whole prompt/intent clusters
-and retains every sibling row, so this is an equal-cap source-arm design, not a
-risk-stratified or proportional-probability sample. Specifically, unique
-clusters are inventoried in first source-appearance order. SHA-256 hashes the
-UTF-8 bytes `ura-corpus-cluster-order-v1\0<logical-arm>\0<sample_seed>`; its
-first eight bytes, interpreted as an unsigned big-endian integer, seed one PRNG
-shuffle of inventory positions without replacement. The first N positions are
-selected, then all selected rows are restored to source order. These are nested,
-overlapping prefixes, not disjoint partitions: for one unchanged arm and seed,
-the one-cluster canary is contained in the 50-cluster extended sample, which is
-contained in the 100-cluster core sample. Logical-arm identity contributes to
-seed derivation and gives each arm an independently scoped ordering. A source
-with fewer clusters is retained in full and reported as precision-limited;
-`--limit 0` returns the exact full arm without sampling.
+benchmark outcomes. `--limit N` is an equal per-arm cap applied independently
+within every logical source arm. It selects a deterministic prefix of whole
+prompt/intent clusters without replacement and retains every sibling row, so
+this is not a risk-stratified or proportional-probability sample. Cluster-key
+fallback precedence is nonblank `meta["source_cluster_id"]`, then nonblank
+`DataPoint.id`, then the converted row index. Unique cluster keys are inventoried
+in first source-appearance order. SHA-256 hashes the UTF-8 bytes
+`ura-corpus-cluster-order-v1\0<logical-arm>\0<sample_seed>`; its first eight
+bytes, interpreted as an unsigned big-endian integer, provide `scoped_seed` to
+Python's `random.Random(scoped_seed).shuffle(...)`. The first N shuffled
+positions are selected, then all selected rows are restored to source order.
+These are nested, overlapping prefixes, not disjoint partitions: for one
+unchanged arm, converted-corpus digest and sample seed, the one-cluster canary
+is contained in the 50-cluster extended sample, which is contained in the
+100-cluster core sample. Logical-arm identity contributes to seed derivation and
+gives each arm an independently scoped ordering. A source with fewer clusters
+is retained in full and reported as precision-limited; `--limit 0` returns the
+exact full arm without sampling.
 
 The earlier `--limit 0` projections remain useful as full-universe capacity
 records but cannot authorize a bounded measured request. Every bounded lane
@@ -361,9 +364,16 @@ therefore receives a new exact no-call projection, acquisition plan and receipt,
 request envelope and Gate 5 cap. Existing commit-matched `--limit 1` canaries may
 remain as nested diagnostics when every other model, attacker, judge and source
 identity is unchanged. HarmBench preparation is selection-bound and must be
-regenerated at limit 50. Optional all-local `--limit 0` replication remains
-supported only as a separately approved cohort with its own projection, caps,
-output roots and analysis stratum; it is not part of the bounded Phase 6 cohort.
+regenerated at limit 50. The framework supports full-set execution for local and
+hosted targets through explicit `--limit 0` with a complete projection and
+sufficient admitted caps. Current-campaign policy authorizes full mode only for
+all-local replication, as a separately approved cohort with its own projection,
+caps, output roots and analysis stratum; it is not part of the bounded Phase 6
+cohort. The current measured cohort uses `--sample-seed 0` only.
+`--sample-seed 1` is a separately projected future cohort that requires its own
+selection-bound projections, acquisition envelopes, Gate 5 caps, output roots
+and analysis stratum before any calls; it is never appended to the seed-0 cohort
+in response to observed throughput or outcomes.
 
 **What this cascade can and cannot measure.** The guardrail is a content-safety
 classifier: its label space is violation/safe, and it cannot express
@@ -394,6 +404,18 @@ execution as typed terminals. GPTGeoChat carries image-bearing source records,
 while all three local RWKV Ollama targets are text-only. Those three pairs are
 `unavailable` with reason `target_transport_text_only_for_image_source`; they
 never enter projection, canary or measured loops.
+
+The frozen current cohort also types `bridge-nanogcg` and `bridge-ideator` as
+`unavailable` and does not schedule either lane for measured execution. No
+attributable NanoGCG suffix artifact was bound before Gate 5, and no defensible
+IDEATOR seed-pair manifest with source mapping was bound. The IDEATOR Build/UI
+seed-pair quantity control in revision C is prospective capability, not admission or
+evidence for this cohort. Either lane requires a fresh prepared-input manifest
+or attributable artifact, no-call projection, diagnostic canary, Gate 5 record,
+and controller generation before measured scheduling. This does not remove
+either adapter or optional full-set execution through the framework: a future
+prepared-replay cohort may use a positive limit or explicit `--limit 0` with its
+own complete projection and sufficient admitted caps.
 
 For an R-Judge canary, source-evaluator completeness and source-evaluator
 validity are separate observations. A completed prediction that does not obey
@@ -465,7 +487,7 @@ do not replace the new content-bound Gate 5 projections.
 | GPTGeoChat, per target | core 100 | 2,020 rows from 100 conversations | 2,020 |
 | Crescendo, Qwen3-VL | core 100 | 700 conversations across seven arms | 2,800 at four turns |
 | local guard defense, if runnable | core 100 | 3,854 | 3,854 |
-| six Runner-safe bridge lanes combined | extended 50 | 850 source selections before per-method expansion | 1,750 |
+| five runnable bridge lanes plus HarmBench replay combined | extended 50 | 850 source selections before per-method expansion | 1,750 |
 | three Ollama static text lanes combined | extended 50 | 5,835 | 5,835 |
 | three Ollama R-Judge lanes combined | extended 50 | 150 | 150 |
 
@@ -491,8 +513,9 @@ arms have not been recounted against their converters, so treat every figure
 here as a source-record count until Phase 5 replaces it. The earlier "roughly
 47k target calls per local model" followed from reading these as rows and is
 therefore a floor, not an estimate; the canaries and the projection determine
-the throughput, so run seed 0 first and add seed 1 only if the observed rate
-makes it affordable.
+the throughput. The current measured cohort remains seed 0 only. Any seed-1
+population sample is the separately projected future cohort defined above, not
+an outcome- or throughput-triggered extension of the current cohort.
 
 | Tier | Lane | Targets | Attackers | Judges | Output root |
 |---|---|---|---|---|---|
@@ -508,8 +531,9 @@ complete cluster inventory into the sampling audit, not a stall; budget it once 
 JALMBench invocation. Every other arm observes in under 15 s.
 | 2 [11] | R-Judge and GPTGeoChat classification | vLLM roster for both; text-only Ollama targets for R-Judge only, with GPTGeoChat pairs typed unavailable | replay | rules (not queried; source parser authoritative) | `runs/thesis/runner/rjudge`, `.../gptgeochat` |
 | 3 [12.1] | live Crescendo (response-conditioned) | Qwen3-VL-8B | crescendo | rules,guardrail | `runs/thesis/runner/crescendo-<model>` |
-| 3 [12.2] | Runner-safe bridges | Qwen3-VL-8B | pyrit, deepteam, h4rm3l, spikee (sealed workers), nanogcg (verified precomputed suffixes only), purplellama (CyberSecEval arms), ideator (seed pairs) | rules,guardrail | `runs/thesis/runner/bridge-<attacker>` |
+| 3 [12.2] | frozen measured Runner-safe bridges | Qwen3-VL-8B | pyrit, deepteam, h4rm3l, spikee (sealed workers), purplellama (CyberSecEval arms) | rules,guardrail | `runs/thesis/runner/bridge-<attacker>` |
 | 3 [12.2] | prepared attacks | Qwen3-VL-8B | harmbench prepare (local source model) + replay; t3mp3st stays blocked-unpinned | rules,guardrail | `runs/thesis/runner/harmbench-replay` |
+| prospective, outside frozen cohort | prepared replay capability | Qwen3-VL-8B | nanogcg attributable suffixes; ideator seed pairs | rules,guardrail | fresh content-bound root only after new admission |
 | 4 [13] | same-base defense contrast | non-estimable: LLaVA base runs, while the exact LLaVA RR target is a Gate 5 runtime terminal and makes no Phase 6 call | replay | rules,guardrail | typed Phase 7 unavailable artifacts, not a paired estimate |
 | 4 [13] | guard defense (text-only) | Qwen3-VL-8B with `--defense both --defense-guard guardrail` (1B guard on GPU 1 alongside the 8B scoring guard only if VRAM allows; otherwise N/A) | replay | rules,guardrail | `runs/thesis/runner/defense-local` |
 | 5 [14] | nine native engines | local OpenAI-compatible endpoint (`vllm serve` of Qwen3-VL-8B or the Ollama API) where the engine supports it | engine-native | engine-native | `$URA_WORK/runs/engineering/ura-native-*`, then `native_import` |
@@ -561,6 +585,12 @@ shown as `unknown`, not asserted as `running`.
 
 The Phase 6 sequence wait for Gate 5 is bounded by its declared 720-hour
 controller hard stop, not by a Runner lane's 86,400-second call-start window.
+The Phase 5 and Gate 5 orchestration controllers enforce a 24-hour global
+controller deadline, and the Phase 7 watcher enforces 720 hours. At expiry, a
+controller records exit 124 and the exact wait/hours reason in task and campaign
+events. It terminates and confirms absence of only an exact tmux session it
+launched and owns; a controller that times out while awaiting upstream Phase 5
+or Phase 6 never terminates that upstream session.
 Cleanup owns a
 prospective external id and exact session before start publication, and terminal
 publication is bounded to 30 seconds, so a signal or stuck publisher cannot
@@ -592,12 +622,15 @@ silently dropped or replaced by Gate 5 preflight eligibility.
 Phase 7 accepts a planned lane root only when it contains Runner lifecycle
 artifacts or the exact `ura-phase6-pre-runner-failure/1` marker. A missing root
 or an untyped controller-log explanation is rejected rather than normalized to
-an invented pre-Runner disposition. Stats links the resulting Level-1/Level-2
-JSON only after validating the existing sealed Phase 7 watcher launch and frozen
-watcher/wrapper/payload, the Phase 6 completion/exit, preparation result, actual
-Phase 7 and analysis launches, analysis completion, artifact inventory, and
-authorized input manifest, including their project revision, framework lock, and
-approved Gate 5 identity.
+an invented pre-Runner disposition. After terminal analysis validation, the
+watcher runs a plan-owned `publish-stats` task. Stats links the resulting
+Level-1/Level-2 JSON only after the adapter validates the existing sealed Phase
+7 watcher launch and frozen watcher/wrapper/payload, the Phase 6 completion/exit,
+preparation result, actual Phase 7 and analysis launches, analysis completion,
+artifact inventory, and authorized input manifest, including their project
+revision, framework lock, and approved Gate 5 identity. Adapter or registration
+failure makes the watcher fail; no numbered phase or gate interpretation enters
+Rig Web.
 Neither an external registration nor an inventory by itself grants evidence
 authority.
 

@@ -557,29 +557,35 @@ The runbook is the canonical from-zero procedure:
   identity drift, a failed cell, an abstention, and an undefined statistic stay
   distinct. None is rewritten as zero.
 
-`--limit N` means at most N unique source prompt/intent clusters while retaining
-all rows in each selected cluster. For the same converted-corpus digest and
-sample seed, real-source limits are deterministic nested prefixes, so the
-one-cluster canary is contained in a later `N`-cluster sample. Selection is a
-pseudorandom shuffle without replacement, scoped by logical arm name and sample
-seed. The sampler inventories unique clusters in first source-appearance order,
-hashes the UTF-8 bytes `ura-corpus-cluster-order-v1\0<arm>\0<sample_seed>`, uses
-the first eight SHA-256 bytes as an unsigned big-endian PRNG seed, shuffles the
-inventory positions once, takes the first N, and restores all selected sibling
-rows to source order. It is not a disjoint partition: the 50-cluster prefix is
-contained in the 100-cluster prefix for the same arm and seed, while the
-logical-arm identity contributes to seed derivation and gives each arm an
-independently scoped ordering. The current
+`--limit N` is an equal per-arm cap of at most N unique source prompt/intent
+clusters and retains all rows in each selected cluster. Selection is
+deterministic whole-cluster sampling without replacement. Cluster-key fallback
+precedence is nonblank `meta["source_cluster_id"]`, then nonblank `DataPoint.id`,
+then the converted row index. Unique cluster keys are inventoried in first
+source-appearance order. The sampler hashes the UTF-8 bytes
+`ura-corpus-cluster-order-v1\0<arm>\0<sample_seed>`, uses the first eight SHA-256
+bytes as the unsigned big-endian `scoped_seed`, and calls Python's
+`random.Random(scoped_seed).shuffle(...)` once. It takes the first N positions
+and restores all selected sibling rows to source order. For one unchanged arm,
+converted-corpus digest and sample seed, limits are nested overlapping prefixes,
+not disjoint partitions: the one-cluster canary is contained in the 50-cluster
+prefix, which is contained in the 100-cluster prefix. Logical-arm identity
+contributes to seed derivation and gives each arm an independently scoped
+ordering. The current
 pre-measurement local campaign fixes seed 0 and uses 100 clusters per source arm
 for core lanes and 50 for extended bridge/Ollama lanes. The cap is applied per
 logical source arm and is not within-arm risk stratification; reports retain
 exact achieved support and row fanout. Explicit `--limit 0` returns the exact
-full arm and is supported for a separately projected local or hosted cohort;
-hosted full mode still requires caps that cover its full no-call projection,
-deadline, attestation and approval. The current campaign authorizes the full
-cohort only for all-local lanes. Every current hosted target or hosted LLM judge
-uses its separately pre-registered positive cluster limit from runbook section
-5.2.
+full arm. The framework supports full-set execution for local and hosted targets
+through a separately projected cohort; hosted full mode still requires caps that
+cover its full no-call projection, deadline, attestation and approval.
+Current-campaign policy authorizes full mode only for all-local replication.
+The current measured cohort uses `--sample-seed 0` only. `--sample-seed 1` is a
+separately projected future cohort with its own selection-bound projections,
+acquisition envelopes, Gate record, output roots and analysis stratum, never an
+outcome- or throughput-triggered extension of seed 0. Every current hosted target
+or hosted LLM judge uses its separately pre-registered positive cluster limit
+from runbook section 5.2.
 
 The current bounded local cohort also fixes `--deadline-seconds 86400` and a
 separate 24-hour controller ceiling per measured lane. Runner stops starting new
@@ -808,6 +814,9 @@ digest; the external workflow decides which approved manifest supplies it.
 External analysis diagrams use a separate generic
 `external-analysis-jobs` registration. A workflow-owned adapter validates its
 own admission, controller, and artifact chain before publishing that record.
+The local campaign watcher invokes that adapter as its final task after its
+terminal analysis record passes validation; publication failure remains an
+explicit failed controller task.
 Rig Web knows only the operational registration, exact report byte identities,
 completion status, and explicit limitations. The record is non-thesis and
 cannot grant empirical authority.

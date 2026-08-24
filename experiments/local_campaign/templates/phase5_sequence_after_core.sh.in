@@ -48,6 +48,8 @@ LOG="$CONTROL_ROOT/sequence.log"
 STEPS="$CONTROL_ROOT/steps.tsv"
 EXIT_TMP="$CONTROL_ROOT/.exit.tmp"
 EXIT_MARKER="$CONTROL_ROOT/.exit"
+CONTROL_HARD_STOP_HOURS=24
+test "$CONTROL_HARD_STOP_HOURS" = '24'
 
 declare -A SCRIPT_HASHES=(
   ["$URA_CONTROLLER_GENERATION_ROOT/phase5_core_projections.sh"]='@@SHA:phase5_core_projections.sh@@'
@@ -85,6 +87,7 @@ CONTROL_TASKS=(
 )
 CONTROL_TASK_INDEX=0
 CONTROL_ACTIVE_TASK=''
+CONTROL_FAILURE_DETAIL=''
 CONSOLE_CAMPAIGN_STARTED=0
 
 console_event() {
@@ -110,23 +113,27 @@ controller_task_pass() {
 }
 
 controller_finish() {
-  local rc="$1" task status=failed
+  local rc="$1" task status=failed failure_detail
+  failure_detail="controller_exit_$rc"
+  if [ -n "$CONTROL_FAILURE_DETAIL" ]; then
+    failure_detail="$CONTROL_FAILURE_DETAIL"
+  fi
   test "$CONSOLE_CAMPAIGN_STARTED" = '1' || return 0
   if [ -n "$CONTROL_ACTIVE_TASK" ]; then
     task="$CONTROL_ACTIVE_TASK"
-    console_event task_end "$task" failed "controller_exit_$rc" || \
+    console_event task_end "$task" failed "$failure_detail" || \
       printf 'console event failed: task_end %s\n' "$task" >&2
     CONTROL_ACTIVE_TASK=''
     CONTROL_TASK_INDEX=$((CONTROL_TASK_INDEX + 1))
   fi
   while [ "$CONTROL_TASK_INDEX" -lt "${#CONTROL_TASKS[@]}" ]; do
     task="${CONTROL_TASKS[$CONTROL_TASK_INDEX]}"
-    console_event task_skip "$task" skipped "not_reached_after_controller_exit_$rc" || \
+    console_event task_skip "$task" skipped "not_reached_after_${failure_detail}" || \
       printf 'console event failed: task_skip %s\n' "$task" >&2
     CONTROL_TASK_INDEX=$((CONTROL_TASK_INDEX + 1))
   done
   test "$rc" -ne 0 || status=passed
-  console_event campaign_end bootstrap "$status" "local_campaign_controller_exit_$rc" || \
+  console_event campaign_end bootstrap "$status" "local_campaign_${failure_detail}" || \
     printf 'console event failed: campaign_end\n' >&2
   return 0
 }
@@ -146,13 +153,40 @@ trap 'exit 130' INT
 trap 'exit 143' TERM
 trap 'exit 129' HUP
 
+CONTROL_HARD_STOP_DEADLINE=$((SECONDS + CONTROL_HARD_STOP_HOURS * 3600))
+
+controller_hard_stop_check() {
+  local wait_label="$1" owned_socket="${2:-}" owned_session="${3:-}"
+  if (( SECONDS >= CONTROL_HARD_STOP_DEADLINE )); then
+    CONTROL_FAILURE_DETAIL="controller_hard_stop_exceeded_wait_${wait_label}_hours_${CONTROL_HARD_STOP_HOURS}"
+    printf 'CONTROLLER_HARD_STOP_EXCEEDED=1 WAIT=%s HOURS=%s\n' \
+      "$wait_label" "$CONTROL_HARD_STOP_HOURS" >&2
+    if [ -n "$owned_socket" ] || [ -n "$owned_session" ]; then
+      if [ -z "$owned_socket" ] || [ -z "$owned_session" ]; then
+        printf 'CONTROLLER_HARD_STOP_INVALID_OWNED_SESSION=1 WAIT=%s\n' \
+          "$wait_label" >&2
+        exit 124
+      fi
+      if tmux -L "$owned_socket" has-session -t "$owned_session" 2>/dev/null; then
+        tmux -L "$owned_socket" kill-session -t "$owned_session" 2>/dev/null || true
+      fi
+      if tmux -L "$owned_socket" has-session -t "$owned_session" 2>/dev/null; then
+        printf 'CONTROLLER_HARD_STOP_OWNED_SESSION_STILL_LIVE=1 WAIT=%s SOCKET=%s SESSION=%s\n' \
+          "$wait_label" "$owned_socket" "$owned_session" >&2
+        exit 124
+      fi
+    fi
+    exit 124
+  fi
+}
+
 CONSOLE_START_ARGS=(
   --work-root "$URA_WORK"
   --control-root "$CONTROL_ROOT"
   --campaign-id "${CONTROL_ROOT##*/}"
   --release-commit "$EXPECTED_COMMIT"
   --evidence-class local_campaign_control
-  --hard-stop-hours 24
+  --hard-stop-hours "$CONTROL_HARD_STOP_HOURS"
   --tmux-socket ura-phase5-sequence-@@COMMIT_SHORT@@
   --tmux-session ura-phase5-sequence-@@COMMIT_SHORT@@
 )
@@ -179,9 +213,12 @@ wait_owned() {
     *) printf '%s: exit marker escaped controller root\n' "$step" >&2; return 1 ;;
   esac
   record "$step" waiting "$session" "$socket" "$root" "$marker"
+  controller_hard_stop_check "$step" "$socket" "$session"
   while tmux -L "$socket" has-session -t "$session" 2>/dev/null; do
+    controller_hard_stop_check "$step" "$socket" "$session"
     sleep 30
   done
+  controller_hard_stop_check "$step" "$socket" "$session"
   test -f "$marker" && test ! -L "$marker"
   test "$(tr -d '\r\n' < "$marker")" = '0'
   record "$step" complete "$session" "$socket" "$root" "$marker"

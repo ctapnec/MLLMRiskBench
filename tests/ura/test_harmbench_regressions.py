@@ -5,6 +5,7 @@ import hashlib
 import json
 import shutil
 import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -22,6 +23,38 @@ from ura.converters.harmbench import HarmBenchConverter
 from ura.data_models import DataPoint, RiskCategory
 
 _REVISION = "1" * 40
+_PROJECT_ROOT = Path(__file__).parents[2]
+
+
+def test_harmbench_capture_import_does_not_require_bipia_nltk_dependency() -> None:
+    probe = r"""
+import builtins
+from pathlib import Path
+import sys
+
+root = Path(sys.argv[1])
+sys.path[:0] = [str(root), str(root / "src")]
+original_import = builtins.__import__
+
+def import_without_nltk(name, globals=None, locals=None, fromlist=(), level=0):
+    if name == "nltk" or name.startswith("nltk."):
+        raise ModuleNotFoundError("blocked unrelated BIPIA dependency")
+    return original_import(name, globals, locals, fromlist, level)
+
+builtins.__import__ = import_without_nltk
+from experiments import harmbench_capture
+
+assert harmbench_capture.HarmBenchConverter.__module__ == "ura.converters.harmbench"
+assert not any(name == "nltk" or name.startswith("nltk.") for name in sys.modules)
+"""
+    completed = subprocess.run(
+        [sys.executable, "-I", "-B", "-c", probe, str(_PROJECT_ROOT)],
+        cwd=_PROJECT_ROOT,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert completed.returncode == 0, completed.stdout + completed.stderr
 
 
 def _datapoint() -> DataPoint:

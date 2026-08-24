@@ -191,6 +191,13 @@ bash ~/.ura-controller-active/verify_controllers_<new-commit7>.sh
 bash ~/.ura-controller-active/launch_chain_<new-commit7>.sh
 ```
 
+The Phase 5 and Gate 5 orchestration controllers enforce a 24-hour global
+controller deadline, and the Phase 7 watcher enforces 720 hours. At expiry, a
+controller records exit 124 and the exact wait/hours reason in task and campaign
+events. It terminates and confirms absence of only an exact tmux session it
+launched and owns; a controller that times out while awaiting upstream Phase 5
+or Phase 6 never terminates that upstream session.
+
 The archive contains 24 executable generated controllers, the generated
 read-only Phase 8 operator guide, their generated inventory, and the generated
 verifier. The installer remains outside the archive. Both
@@ -233,6 +240,18 @@ image probes. The controller retains its completed no-call projections but
 excludes those four identities from canary, measured, metric, paired-analysis,
 and human-audit inputs. The checkpoint and runtime remain installed.
 
+The frozen current cohort also types `bridge-nanogcg` and `bridge-ideator` as
+`unavailable` and does not schedule either lane for measured execution. No
+attributable NanoGCG suffix artifact was bound before Gate 5, and no defensible
+IDEATOR seed-pair manifest with source mapping was bound. The IDEATOR Build/UI
+seed-pair quantity control in revision C is prospective capability, not admission or
+evidence for this cohort. Either lane requires a fresh prepared-input manifest
+or attributable artifact, no-call projection, diagnostic canary, Gate 5 record,
+and controller generation before measured scheduling. This does not remove
+either adapter or optional full-set execution through the framework: a future
+prepared-replay cohort may use a positive limit or explicit `--limit 0` with its
+own complete projection and sufficient admitted caps.
+
 Phase 7 binds two distinct Runner views. Its authoritative lifecycle registry
 covers every scheduled Runner lane and binds each controller failure, optional
 exact measured argv, and retained grid, request-envelope, eligibility, and
@@ -242,8 +261,15 @@ artifact remains explicit in the registry and is not fabricated into Level 1
 input. Suite metrics and Level 2 receive only successful measured Runner lanes.
 A failed lifecycle is never promoted into metric evidence.
 
-After the watcher is terminal, publish its Stats diagrams through the
-plan-owned adapter, not through Rig Web phase logic:
+The watcher runs `publish-stats` only after its terminal Phase 7 record and
+artifact inventory pass the sealed validation. The plan-owned adapter validates
+the complete chain and creates the generic Stats registration. An adapter,
+registration, path, or byte-identity failure makes the watcher fail instead of
+claiming publication. Rig Web contains no Phase 7 logic.
+
+For a controller generation deployed before automatic publication, or for
+explicit recovery when no registration was created, run the same adapter after
+the watcher is terminal:
 
 ```bash
 python -m experiments.local_campaign.stats_adapter \
@@ -252,10 +278,10 @@ python -m experiments.local_campaign.stats_adapter \
   --release-commit "$REF_URA"
 ```
 
-The adapter validates the complete local campaign chain and then creates one
-generic `external-analysis-jobs/<watcher-route>/registration.json`. Rig Web
-validates only that operational registration and the exact Level-1/Level-2
-report bytes. The registration cannot grant thesis-evidence authority.
+The create-only destination is
+`external-analysis-jobs/<watcher-route>/registration.json`. Rig Web validates
+only that operational registration and the exact Level-1/Level-2 report bytes.
+The registration cannot grant thesis-evidence authority.
 
 Controllers deployed before the generic measured-job v2 contract retain their
 immutable v1 rows. After repinning to the v2 reader, copy them once without

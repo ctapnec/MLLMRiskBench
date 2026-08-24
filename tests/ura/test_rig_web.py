@@ -2178,10 +2178,26 @@ def test_lane_projection_reads_grand_totals_not_per_attacker(tmp_path: Path) -> 
     assert app._preflight_output_dir(exact_params) == proj_dir
     found, why = app._read_lane_projection(exact_params)
     assert why == ""
-    assert found == {
+    assert found is not None
+    assert found["call_projection"] == {
         key: projection["call_projection"][key]
         for key in ("target_calls", "judge_calls", "http_attempts")
     }
+    assert found["arms"] == [
+        {
+            key: arm[key]
+            for key in (
+                "logical_source_arm",
+                "total_records",
+                "selected_records",
+                "total_clusters",
+                "selected_clusters",
+                "limit",
+                "sample_seed",
+            )
+        }
+        for arm in projection["selection"]["arms"]
+    ]
     # Every grid-defining field remains exact.
     changed_grid = {**exact_params, "attackers": "replay"}
     assert app._read_lane_projection(changed_grid)[0] is None

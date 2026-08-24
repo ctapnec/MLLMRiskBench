@@ -531,34 +531,63 @@ def test_runbook_lanes_use_the_level2_grouping_and_bounded_population_tiers() ->
     # hosted-route lane may run the complete corpus.
     assert not any("--limit 0" in command for command in commands)
     assert sum(limit_placeholder in command for command in commands) >= 9
-    runbook_flat = " ".join(runbook.split())
-    protocol_flat = " ".join(protocol.split())
+    flattened = {
+        "runbook": " ".join(runbook.split()),
+        "protocol": " ".join(protocol.split()),
+        "local plan": " ".join(local_plan.split()),
+        "README": " ".join(readme.split()),
+    }
+    runbook_flat = flattened["runbook"]
+    protocol_flat = flattened["protocol"]
     for flat in (runbook_flat, protocol_flat):
         assert "--limit 100" in flat
         assert "--limit 50" in flat
         assert "24-hour" in flat and "86400" in flat
         assert "ura-corpus-cluster-order-v1\\0<logical-arm>\\0<sample_seed>" in flat
         assert "first eight bytes" in flat and "big-endian" in flat
-        assert "without replacement" in flat and "not disjoint partitions" in flat
-    local_plan_flat = " ".join(local_plan.split())
+        assert "without replacement" in flat and "nested" in flat
+    local_plan_flat = flattened["local plan"]
     assert "ura-corpus-cluster-order-v1\\0<logical-arm>\\0<sample_seed>" in (
         local_plan_flat
     )
     assert "nested, overlapping prefixes, not disjoint partitions" in local_plan_flat
-    assert (
-        "source-arm capped rather than proportional or risk-stratified" in runbook_flat
-    )
     assert "not a proportional or risk-stratified sample" in protocol_flat
     assert "local scoring stages" in runbook_flat
     assert "scores through local stages only" in protocol_flat
     assert "rules-only cascade is not a general scoring mode" in protocol_flat
-    readme_flat = " ".join(readme.split())
+    readme_flat = flattened["README"]
     assert (
         "100 clusters per source arm for core lanes and 50 for extended" in readme_flat
     )
-    assert "The current campaign authorizes the full cohort only for all-local" in (
-        readme_flat
+
+    sampling_contract = (
+        "equal per-arm cap",
+        "Cluster-key fallback precedence is nonblank "
+        "`meta[\"source_cluster_id\"]`, then nonblank `DataPoint.id`, then the "
+        "converted row index",
+        "Python's `random.Random(scoped_seed).shuffle(...)`",
+        "without replacement",
+        "nested",
+        "uses `--sample-seed 0` only",
+        "`--sample-seed 1` is a separately projected future cohort",
+        "The framework supports full-set execution for local and hosted targets",
+        "Current-campaign policy authorizes full mode only for all-local replication",
     )
+
+    def assert_sampling_contract(document: str) -> None:
+        for required in sampling_contract:
+            assert required in document
+
+    for document in flattened.values():
+        assert_sampling_contract(document)
+
+    # Mutation probes prove that the test fails if exact RNG, fallback, cohort,
+    # or current-campaign full-mode semantics are weakened independently.
+    for required in sampling_contract:
+        mutated = runbook_flat.replace(required, "MUTATED_CONTRACT_TOKEN")
+        assert mutated != runbook_flat
+        with pytest.raises(AssertionError):
+            assert_sampling_contract(mutated)
 
 
 def test_runbook_section_18_documents_the_build_surface_and_hf_token_children() -> None:
