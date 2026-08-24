@@ -7949,28 +7949,34 @@ def prepare(args: argparse.Namespace) -> int:
     return 0
 
 
+def _validated_launch_control_root(launch_path: Path) -> Path:
+    validated_path = checked_file(launch_path, label="Phase 7 launch")
+    launch = strict_object(validated_path)
+    expected_launch_fields = {
+        "schema",
+        "authorized_input_manifest_sha256",
+        "input_manifest",
+        "payload",
+        "control_root",
+        "analysis_root",
+    }
+    if set(launch) != expected_launch_fields or launch.get("schema") != LAUNCH_SCHEMA:
+        raise Phase7Error("Phase 7 launch field inventory or schema changed")
+    control = checked_dir(launch["control_root"], label="Phase 7 control root")
+    work = checked_dir(required_env("URA_WORK"), label="URA_WORK")
+    engineering = checked_dir(work / "runs" / "engineering", label="engineering root")
+    if control.parent != engineering:
+        raise Phase7Error("Phase 7 control root is not a direct engineering campaign")
+    if validated_path != control / "launch.json":
+        raise Phase7Error("Phase 7 launch is not in its declared control root")
+    return control
+
+
 class AnalysisController:
     def __init__(self, launch_path: Path) -> None:
         self.launch_path = checked_file(launch_path, label="Phase 7 launch")
         self.launch = strict_object(self.launch_path)
-        expected_launch_fields = {
-            "schema",
-            "authorized_input_manifest_sha256",
-            "input_manifest",
-            "payload",
-            "control_root",
-            "analysis_root",
-        }
-        if (
-            set(self.launch) != expected_launch_fields
-            or self.launch.get("schema") != LAUNCH_SCHEMA
-        ):
-            raise Phase7Error("Phase 7 launch field inventory or schema changed")
-        self.control = checked_dir(
-            self.launch["control_root"], label="Phase 7 control root"
-        )
-        if self.launch_path != self.control / "launch.json":
-            raise Phase7Error("Phase 7 launch is not in its declared control root")
+        self.control = _validated_launch_control_root(self.launch_path)
         self.analysis = Path(self.launch["analysis_root"])
         if (
             not self.analysis.is_absolute()
@@ -10464,9 +10470,42 @@ class AnalysisController:
         self.finish()
 
 
+def _console_child(action: str, control: Path, exit_code: int | None = None) -> None:
+    argv = [
+        sys.executable,
+        "-m",
+        "experiments.local_campaign.console_events",
+        action,
+        "--work-root",
+        os.environ["URA_WORK"],
+        "--control-root",
+        str(control),
+    ]
+    if action == "child-start":
+        argv.extend([
+            "--campaign-id", control.name,
+            "--release-commit", EXPECTED_COMMIT,
+            "--evidence-class", "local_campaign_control",
+            "--hard-stop-hours", "720",
+            "--tmux-socket", os.environ["SOCKET"],
+            "--tmux-session", os.environ["SESSION"],
+        ])
+    elif action == "child-finish" and exit_code is not None:
+        argv.extend(["--exit-code", str(exit_code)])
+    else:
+        raise Phase7Error("invalid console child lifecycle action")
+    subprocess.run(
+        argv,
+        cwd=Path("@@PROJECT_ROOT@@"),
+        check=True,
+    )
+
+
 def execute(args: argparse.Namespace) -> int:
     controller: AnalysisController | None = None
+    terminal_root: Path | None = None
     exit_code = 1
+    console_registered = False
 
     def interrupted(signum: int, _frame: object) -> None:
         if controller is not None:
@@ -10481,7 +10520,22 @@ def execute(args: argparse.Namespace) -> int:
     for signum in (signal.SIGHUP, signal.SIGINT, signal.SIGTERM):
         signal.signal(signum, interrupted)
     try:
+        terminal_root = _validated_launch_control_root(Path(args.launch))
+        ambient_control = Path(os.environ.get("CONTROL_ROOT", ""))
+        if (
+            not ambient_control.is_absolute()
+            or ambient_control != terminal_root
+            or checked_dir(ambient_control, label="ambient Phase 7 control root")
+            != terminal_root
+        ):
+            raise Phase7Error(
+                "ambient Phase 7 control root differs from the validated launch"
+            )
+        console_registered = True
+        _console_child("child-start", terminal_root)
         controller = AnalysisController(Path(args.launch))
+        if controller.control != terminal_root:
+            raise Phase7Error("Phase 7 launch control root changed during validation")
         controller.execute_all()
         exit_code = 0
     except Interrupted as exc:
@@ -10529,12 +10583,15 @@ def execute(args: argparse.Namespace) -> int:
             )
         exit_code = 1
     finally:
-        control_value = os.environ.get("CONTROL_ROOT", "")
-        if control_value:
-            control = Path(control_value)
-            exit_path = control / ".exit"
-            if control.is_dir() and not exit_path.exists():
+        if terminal_root is not None:
+            exit_path = terminal_root / ".exit"
+            if terminal_root.is_dir() and not exit_path.exists():
                 write_new(exit_path, f"{exit_code}\n".encode("ascii"))
+            if console_registered:
+                try:
+                    _console_child("child-finish", terminal_root, exit_code)
+                except Exception as exc:  # Jobs registration must not change evidence
+                    print(f"console child terminal failed: {exc}", file=sys.stderr)
     return exit_code
 
 

@@ -8628,16 +8628,23 @@ def launch_payload(
     ]
     quoted_child = " ".join(shlex.quote(item) for item in child_argv)
     quoted_control = shlex.quote(str(control_root))
+    quoted_work = shlex.quote(str(work))
+    quoted_python = shlex.quote(sys.executable)
+    session = f"ura-gate5-{tag}"
+    socket = f"ura-gate5-{tag}"
     payload_text = "\n".join((
         "#!/usr/bin/env bash",
         "set -Eeuo pipefail",
         "umask 077",
         f"CONTROL_ROOT={quoted_control}",
+        f"URA_WORK={quoted_work}",
+        f"PY={quoted_python}",
         "LOG=\"$CONTROL_ROOT/finalizer.log\"",
         "LOG_SHA_TMP=\"$CONTROL_ROOT/.finalizer.log.sha256.tmp\"",
         "LOG_SHA=\"$CONTROL_ROOT/finalizer.log.sha256\"",
         "EXIT_TMP=\"$CONTROL_ROOT/.exit.tmp\"",
         "EXIT_MARKER=\"$CONTROL_ROOT/.exit\"",
+        "CONSOLE_CAMPAIGN_STARTED=0",
         "exec 3>&1 4>&2",
         "exec > >(tee -- \"$LOG\") 2>&1",
         "finish() {",
@@ -8652,6 +8659,9 @@ def launch_payload(
         "  printf '%s\\n' \"$rc\" > \"$EXIT_TMP\"",
         "  test ! -e \"$EXIT_MARKER\"",
         "  mv -- \"$EXIT_TMP\" \"$EXIT_MARKER\"",
+        "  if [ \"$CONSOLE_CAMPAIGN_STARTED\" = '1' ]; then",
+        "    PYTHONDONTWRITEBYTECODE=1 \"$PY\" -m experiments.local_campaign.console_events child-finish --work-root \"$URA_WORK\" --control-root \"$CONTROL_ROOT\" --exit-code \"$rc\" || printf 'console child terminal failed\\n' >&2",
+        "  fi",
         "  printf 'GATE5_FINALIZER_EXIT=%s\\n' \"$rc\"",
         "  exit \"$rc\"",
         "}",
@@ -8659,6 +8669,9 @@ def launch_payload(
         "trap 'exit 130' INT",
         "trap 'exit 143' TERM",
         "trap 'exit 129' HUP",
+        "CONSOLE_CAMPAIGN_STARTED=1",
+        "PYTHONDONTWRITEBYTECODE=1 \"$PY\" -m experiments.local_campaign.console_events child-start --work-root \"$URA_WORK\" --control-root \"$CONTROL_ROOT\" --campaign-id \"${CONTROL_ROOT##*/}\" --release-commit '@@EXPECTED_COMMIT@@' --evidence-class local_campaign_control --hard-stop-hours 24 "
+        f"--tmux-socket {shlex.quote(socket)} --tmux-session {shlex.quote(session)}",
         "export URA_GATE5_PAYLOAD_EXECUTION=1",
         f"export URA_GATE5_PAYLOAD_PATH={shlex.quote(str(payload_path))}",
         "export URA_GATE5_PAYLOAD_SHA256=__PAYLOAD_SHA256__",
@@ -8687,8 +8700,6 @@ def launch_payload(
     launch_desc = write_create_only(
         control_root / "launch.json", canonical_bytes(launch_record)
     )
-    session = f"ura-gate5-{tag}"
-    socket = f"ura-gate5-{tag}"
     tmux_argv = [
         "tmux", "-L", socket, "new-session", "-d", "-s", session,
         shlex.quote(str(payload_path)),

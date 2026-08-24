@@ -27,6 +27,7 @@ _EVIDENCE_CLASS = re.compile(r"[a-z][a-z0-9_]{0,127}\Z")
 _NAMED_SESSION_TOKEN = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,127}\Z")
 _TERMINAL_EVENTS = {"campaign_end", "campaign_stop"}
 _TASK_EVENTS = {"task_start", "task_end", "task_skip"}
+_CONTROLLER_TASK = "controller"
 _FileIdentity = tuple[int, int]
 
 
@@ -205,6 +206,7 @@ def start_campaign(
     tmux_socket: str,
     tmux_session: str,
     at: str | None = None,
+    initial_running_tasks: Sequence[str] = (),
 ) -> None:
     root = _control_root(work_root, control_root)
     if campaign_id != root.name or not _ROUTE_ID.fullmatch(campaign_id):
@@ -229,6 +231,12 @@ def start_campaign(
         or any(not _TASK.fullmatch(task) or task in {"bootstrap", "stage2"} for task in tasks)
     ):
         raise ConsoleEventError("planned tasks must be non-empty, safe, and unique")
+    running_tasks = tuple(initial_running_tasks)
+    if (
+        len(running_tasks) != len(set(running_tasks))
+        or any(task not in tasks for task in running_tasks)
+    ):
+        raise ConsoleEventError("initial running tasks must be unique planned tasks")
     timestamp = _utc_timestamp(at)
     marker = {
         "schema": _CAMPAIGN_SCHEMA,
@@ -247,17 +255,28 @@ def start_campaign(
     # marker, whereas publishing a marker before its required log would expose
     # a transient, false "unknown" campaign.
     task_log = root / "task-log.jsonl"
-    task_log_identity = _write_create_only(
-        task_log,
-        _canonical_line(
+    initial_events = [
+        {
+            "at": timestamp,
+            "event": "campaign_start",
+            "task": "bootstrap",
+            "status": "running",
+            "detail": "local_campaign_controller",
+        },
+        *(
             {
                 "at": timestamp,
-                "event": "campaign_start",
-                "task": "bootstrap",
+                "event": "task_start",
+                "task": task,
                 "status": "running",
-                "detail": "local_campaign_controller",
+                "detail": "child_controller_started",
             }
+            for task in running_tasks
         ),
+    ]
+    task_log_identity = _write_create_only(
+        task_log,
+        b"".join(_canonical_line(event) for event in initial_events),
     )
     try:
         _write_create_only(root / "ENGINEERING_ONLY.json", _canonical_line(marker))
@@ -267,6 +286,78 @@ def start_campaign(
         except ConsoleEventError as recovery_exc:
             raise recovery_exc from exc
         raise
+
+
+def _append_events(
+    *,
+    work_root: Path,
+    control_root: Path,
+    events: Sequence[tuple[str, str, str, str]],
+    at: str | None = None,
+) -> None:
+    root = _control_root(work_root, control_root)
+    rows = tuple(events)
+    if not rows:
+        raise ConsoleEventError("at least one campaign event is required")
+    allowed_statuses = {
+        "task_start": {"running"},
+        "task_end": {"passed", "failed"},
+        "task_skip": {"skipped"},
+        "campaign_end": {"passed", "failed", "blocked"},
+        "campaign_stop": {"stopped"},
+    }
+    marker = _read_marker(root / "ENGINEERING_ONLY.json")
+    if (
+        not isinstance(marker, dict)
+        or marker.get("schema") != _CAMPAIGN_SCHEMA
+        or marker.get("campaign_id") != root.name
+        or marker.get("thesis_empirical_evidence") is not False
+        or marker.get("hosted_calls_allowed") is not False
+    ):
+        raise ConsoleEventError("campaign marker does not own this control root")
+    planned_tasks = marker.get("planned_tasks")
+    timestamp = _utc_timestamp(at)
+    payload = bytearray()
+    for event, task, status, detail in rows:
+        if event not in _TASK_EVENTS | _TERMINAL_EVENTS:
+            raise ConsoleEventError("unsupported campaign event")
+        if not _TASK.fullmatch(task):
+            raise ConsoleEventError("invalid event task")
+        if event in _TERMINAL_EVENTS and task != "bootstrap":
+            raise ConsoleEventError("campaign terminal must target bootstrap")
+        if event in _TASK_EVENTS and task in {"bootstrap", "stage2"}:
+            raise ConsoleEventError("task event uses a reserved phase name")
+        normalized_status = status.strip().lower()
+        if not _TASK.fullmatch(normalized_status):
+            raise ConsoleEventError("invalid event status")
+        if normalized_status not in allowed_statuses[event]:
+            raise ConsoleEventError("event status does not match its lifecycle event")
+        if not isinstance(detail, str) or len(detail) > 1000:
+            raise ConsoleEventError("event detail exceeds 1000 characters")
+        if (
+            event in _TASK_EVENTS
+            and (
+                not isinstance(planned_tasks, list)
+                or task not in planned_tasks
+                or any(not isinstance(item, str) for item in planned_tasks)
+            )
+        ):
+            raise ConsoleEventError("task event is not in the declared campaign plan")
+        payload.extend(
+            _canonical_line(
+                {
+                    "at": timestamp,
+                    "event": event,
+                    "task": task,
+                    "status": normalized_status,
+                    "detail": detail,
+                }
+            )
+        )
+    _append(
+        root / "task-log.jsonl",
+        bytes(payload),
+    )
 
 
 def append_event(
@@ -279,59 +370,64 @@ def append_event(
     detail: str,
     at: str | None = None,
 ) -> None:
-    root = _control_root(work_root, control_root)
-    if event not in _TASK_EVENTS | _TERMINAL_EVENTS:
-        raise ConsoleEventError("unsupported campaign event")
-    if not _TASK.fullmatch(task):
-        raise ConsoleEventError("invalid event task")
-    if event in _TERMINAL_EVENTS and task != "bootstrap":
-        raise ConsoleEventError("campaign terminal must target bootstrap")
-    if event in _TASK_EVENTS and task in {"bootstrap", "stage2"}:
-        raise ConsoleEventError("task event uses a reserved phase name")
-    normalized_status = status.strip().lower()
-    if not _TASK.fullmatch(normalized_status):
-        raise ConsoleEventError("invalid event status")
-    allowed_statuses = {
-        "task_start": {"running"},
-        "task_end": {"passed", "failed"},
-        "task_skip": {"skipped"},
-        "campaign_end": {"passed", "failed", "blocked"},
-        "campaign_stop": {"stopped"},
-    }
-    if normalized_status not in allowed_statuses[event]:
-        raise ConsoleEventError("event status does not match its lifecycle event")
-    if not isinstance(detail, str) or len(detail) > 1000:
-        raise ConsoleEventError("event detail exceeds 1000 characters")
-    marker = _read_marker(root / "ENGINEERING_ONLY.json")
-    if (
-        not isinstance(marker, dict)
-        or marker.get("schema") != _CAMPAIGN_SCHEMA
-        or marker.get("campaign_id") != root.name
-        or marker.get("thesis_empirical_evidence") is not False
-        or marker.get("hosted_calls_allowed") is not False
-    ):
-        raise ConsoleEventError("campaign marker does not own this control root")
-    planned_tasks = marker.get("planned_tasks")
-    if (
-        event in _TASK_EVENTS
-        and (
-            not isinstance(planned_tasks, list)
-            or task not in planned_tasks
-            or any(not isinstance(item, str) for item in planned_tasks)
-        )
-    ):
-        raise ConsoleEventError("task event is not in the declared campaign plan")
-    _append(
-        root / "task-log.jsonl",
-        _canonical_line(
-            {
-                "at": _utc_timestamp(at),
-                "event": event,
-                "task": task,
-                "status": normalized_status,
-                "detail": detail,
-            }
+    _append_events(
+        work_root=work_root,
+        control_root=control_root,
+        events=((event, task, status, detail),),
+        at=at,
+    )
+
+
+def start_child_controller(
+    *,
+    work_root: Path,
+    control_root: Path,
+    campaign_id: str,
+    release_commit: str,
+    evidence_class: str,
+    hard_stop_hours: int,
+    tmux_socket: str,
+    tmux_session: str,
+    at: str | None = None,
+) -> None:
+    """Register an independently launched child under the normal Jobs contract."""
+
+    start_campaign(
+        work_root=work_root,
+        control_root=control_root,
+        campaign_id=campaign_id,
+        release_commit=release_commit,
+        evidence_class=evidence_class,
+        hard_stop_hours=hard_stop_hours,
+        planned_tasks=(_CONTROLLER_TASK,),
+        tmux_socket=tmux_socket,
+        tmux_session=tmux_session,
+        at=at,
+        initial_running_tasks=(_CONTROLLER_TASK,),
+    )
+
+
+def finish_child_controller(
+    *,
+    work_root: Path,
+    control_root: Path,
+    exit_code: int,
+    at: str | None = None,
+) -> None:
+    """Publish task and campaign terminals for a registered child controller."""
+
+    if isinstance(exit_code, bool) or not isinstance(exit_code, int) or not 0 <= exit_code <= 255:
+        raise ConsoleEventError("controller exit code must be between 0 and 255")
+    status = "passed" if exit_code == 0 else "failed"
+    detail = f"child_controller_exit_{exit_code}"
+    _append_events(
+        work_root=work_root,
+        control_root=control_root,
+        events=(
+            ("task_end", _CONTROLLER_TASK, status, detail),
+            ("campaign_end", "bootstrap", status, detail),
         ),
+        at=at,
     )
 
 
@@ -349,6 +445,21 @@ def _parser() -> argparse.ArgumentParser:
     start.add_argument("--tmux-socket", required=True)
     start.add_argument("--tmux-session", required=True)
     start.add_argument("--at")
+    child_start = subparsers.add_parser("child-start")
+    child_start.add_argument("--work-root", type=Path, required=True)
+    child_start.add_argument("--control-root", type=Path, required=True)
+    child_start.add_argument("--campaign-id", required=True)
+    child_start.add_argument("--release-commit", required=True)
+    child_start.add_argument("--evidence-class", required=True)
+    child_start.add_argument("--hard-stop-hours", type=int, required=True)
+    child_start.add_argument("--tmux-socket", required=True)
+    child_start.add_argument("--tmux-session", required=True)
+    child_start.add_argument("--at")
+    child_finish = subparsers.add_parser("child-finish")
+    child_finish.add_argument("--work-root", type=Path, required=True)
+    child_finish.add_argument("--control-root", type=Path, required=True)
+    child_finish.add_argument("--exit-code", type=int, required=True)
+    child_finish.add_argument("--at")
     event = subparsers.add_parser("event")
     event.add_argument("--work-root", type=Path, required=True)
     event.add_argument("--control-root", type=Path, required=True)
@@ -373,6 +484,25 @@ def main(argv: Sequence[str] | None = None) -> int:
             planned_tasks=args.planned_task,
             tmux_socket=args.tmux_socket,
             tmux_session=args.tmux_session,
+            at=args.at,
+        )
+    elif args.action == "child-start":
+        start_child_controller(
+            work_root=args.work_root,
+            control_root=args.control_root,
+            campaign_id=args.campaign_id,
+            release_commit=args.release_commit,
+            evidence_class=args.evidence_class,
+            hard_stop_hours=args.hard_stop_hours,
+            tmux_socket=args.tmux_socket,
+            tmux_session=args.tmux_session,
+            at=args.at,
+        )
+    elif args.action == "child-finish":
+        finish_child_controller(
+            work_root=args.work_root,
+            control_root=args.control_root,
+            exit_code=args.exit_code,
             at=args.at,
         )
     else:

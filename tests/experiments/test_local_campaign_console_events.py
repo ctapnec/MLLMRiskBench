@@ -6,12 +6,17 @@ from pathlib import Path
 
 import pytest
 
+from experiments.local_campaign import console_events as console_events_module
 from experiments.local_campaign.console_events import (
     ConsoleEventError,
     append_event,
+    finish_child_controller,
+    main as console_main,
     start_campaign,
+    start_child_controller,
 )
 from experiments.rig_web_app.campaigns import load_engineering_campaign
+from experiments.rig_web_app.app import RigWebApp
 
 
 _TEMPLATES = Path(__file__).parents[2] / "experiments" / "local_campaign" / "templates"
@@ -97,6 +102,272 @@ def test_tmux_controller_registration_is_visible_and_reaches_terminal(
     assert terminal.skipped_tasks == 1
     assert terminal.active_tasks == ()
     assert terminal.pending_tasks == 0
+
+
+def test_child_controller_uses_native_jobs_index_and_detail_routes(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from experiments.rig_web_app import campaigns as campaigns_module
+
+    monkeypatch.setattr(
+        campaigns_module,
+        "_named_session_liveness",
+        lambda specs: {spec: True for spec in specs},
+    )
+    work, control = _roots(tmp_path)
+    assert (
+        console_main(
+            [
+                "child-start",
+                "--work-root",
+                str(work),
+                "--control-root",
+                str(control),
+                "--campaign-id",
+                control.name,
+                "--release-commit",
+                "a" * 40,
+                "--evidence-class",
+                "local_campaign_control",
+                "--hard-stop-hours",
+                "24",
+                "--tmux-socket",
+                "ura-child-controller",
+                "--tmux-session",
+                "ura-child-controller",
+                "--at",
+                "2026-08-23T12:00:00Z",
+            ]
+        )
+        == 0
+    )
+    initial_rows = [
+        json.loads(line)
+        for line in (control / "task-log.jsonl").read_text(encoding="utf-8").splitlines()
+    ]
+    assert [row["event"] for row in initial_rows] == [
+        "campaign_start",
+        "task_start",
+    ]
+
+    app = RigWebApp(
+        results_root=work / "runs",
+        state_dir=tmp_path / "state",
+    )
+    jobs = app.handle("GET", "/jobs")
+    detail = app.handle("GET", f"/jobs/campaign/{control.name}")
+    assert jobs[0] == 200
+    assert f"/jobs/campaign/{control.name}" in jobs[2].decode("utf-8")
+    assert detail[0] == 200
+    assert "controller" in detail[2].decode("utf-8")
+
+    assert (
+        console_main(
+            [
+                "child-finish",
+                "--work-root",
+                str(work),
+                "--control-root",
+                str(control),
+                "--exit-code",
+                "0",
+                "--at",
+                "2026-08-23T12:00:01Z",
+            ]
+        )
+        == 0
+    )
+    terminal = load_engineering_campaign(work / "runs", control.name)
+    assert terminal is not None
+    assert terminal.state == "complete"
+    assert terminal.status_tag == "passed"
+    assert terminal.task_outcomes == (("controller", "passed", "unclassified"),)
+    app.close()
+
+
+def test_child_start_marker_failure_removes_complete_initial_lifecycle(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    work, control = _roots(tmp_path)
+    write_create_only = console_events_module._write_create_only
+
+    def fail_marker(path: Path, payload: bytes) -> tuple[int, int]:
+        if path.name == "ENGINEERING_ONLY.json":
+            raise ConsoleEventError("injected marker failure")
+        return write_create_only(path, payload)
+
+    monkeypatch.setattr(console_events_module, "_write_create_only", fail_marker)
+    with pytest.raises(ConsoleEventError, match="injected marker failure"):
+        start_child_controller(
+            work_root=work,
+            control_root=control,
+            campaign_id=control.name,
+            release_commit="a" * 40,
+            evidence_class="local_campaign_control",
+            hard_stop_hours=24,
+            tmux_socket="ura-child-controller",
+            tmux_session="ura-child-controller",
+        )
+
+    assert not (control / "ENGINEERING_ONLY.json").exists()
+    assert not (control / "task-log.jsonl").exists()
+
+
+def test_child_finish_appends_one_complete_terminal_batch(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    work, control = _roots(tmp_path)
+    start_child_controller(
+        work_root=work,
+        control_root=control,
+        campaign_id=control.name,
+        release_commit="a" * 40,
+        evidence_class="local_campaign_control",
+        hard_stop_hours=24,
+        tmux_socket="ura-child-controller",
+        tmux_session="ura-child-controller",
+    )
+    append = console_events_module._append
+    payloads: list[bytes] = []
+
+    def record_append(path: Path, payload: bytes) -> None:
+        payloads.append(payload)
+        append(path, payload)
+
+    monkeypatch.setattr(console_events_module, "_append", record_append)
+    finish_child_controller(work_root=work, control_root=control, exit_code=1)
+
+    assert len(payloads) == 1
+    terminal_rows = [json.loads(line) for line in payloads[0].splitlines()]
+    assert [row["event"] for row in terminal_rows] == ["task_end", "campaign_end"]
+    assert {row["status"] for row in terminal_rows} == {"failed"}
+
+
+def test_child_finish_append_failure_leaves_lifecycle_unchanged(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    work, control = _roots(tmp_path)
+    start_child_controller(
+        work_root=work,
+        control_root=control,
+        campaign_id=control.name,
+        release_commit="a" * 40,
+        evidence_class="local_campaign_control",
+        hard_stop_hours=24,
+        tmux_socket="ura-child-controller",
+        tmux_session="ura-child-controller",
+    )
+    task_log = control / "task-log.jsonl"
+    before = task_log.read_bytes()
+
+    def fail_append(_path: Path, _payload: bytes) -> None:
+        raise ConsoleEventError("injected terminal append failure")
+
+    monkeypatch.setattr(console_events_module, "_append", fail_append)
+    with pytest.raises(ConsoleEventError, match="injected terminal append failure"):
+        finish_child_controller(work_root=work, control_root=control, exit_code=1)
+
+    assert task_log.read_bytes() == before
+
+
+def test_resumable_controller_cannot_rebind_create_only_session_identity(
+    tmp_path: Path,
+) -> None:
+    work, control = _roots(tmp_path)
+    start_child_controller(
+        work_root=work,
+        control_root=control,
+        campaign_id=control.name,
+        release_commit="a" * 40,
+        evidence_class="local_campaign_control",
+        hard_stop_hours=24,
+        tmux_socket="ura-attempt-one",
+        tmux_session="ura-attempt-one",
+    )
+    finish_child_controller(work_root=work, control_root=control, exit_code=130)
+    retained_marker = (control / "ENGINEERING_ONLY.json").read_bytes()
+    retained_log = (control / "task-log.jsonl").read_bytes()
+
+    with pytest.raises(ConsoleEventError, match="create-only"):
+        start_child_controller(
+            work_root=work,
+            control_root=control,
+            campaign_id=control.name,
+            release_commit="a" * 40,
+            evidence_class="local_campaign_control",
+            hard_stop_hours=24,
+            tmux_socket="ura-attempt-two",
+            tmux_session="ura-attempt-two",
+        )
+
+    marker = json.loads(retained_marker)
+    assert marker["tmux_session"] == "ura-attempt-one"
+    assert (control / "ENGINEERING_ONLY.json").read_bytes() == retained_marker
+    assert (control / "task-log.jsonl").read_bytes() == retained_log
+    terminal = load_engineering_campaign(work / "runs", control.name)
+    assert terminal is not None
+    assert terminal.state == "failed"
+
+
+@pytest.mark.parametrize("exit_code", (-1, 256, True))
+def test_child_controller_terminal_rejects_invalid_exit_code(
+    tmp_path: Path,
+    exit_code: int,
+) -> None:
+    work, control = _roots(tmp_path)
+    start_child_controller(
+        work_root=work,
+        control_root=control,
+        campaign_id=control.name,
+        release_commit="a" * 40,
+        evidence_class="local_campaign_control",
+        hard_stop_hours=24,
+        tmux_socket="ura-child-controller",
+        tmux_session="ura-child-controller",
+    )
+    before = (control / "task-log.jsonl").read_bytes()
+
+    with pytest.raises(ConsoleEventError, match="exit code"):
+        finish_child_controller(
+            work_root=work,
+            control_root=control,
+            exit_code=exit_code,
+        )
+
+    assert (control / "task-log.jsonl").read_bytes() == before
+
+
+@pytest.mark.parametrize("spoof", ("outside", "campaign_id"))
+def test_child_controller_registration_preserves_native_root_ownership(
+    tmp_path: Path,
+    spoof: str,
+) -> None:
+    work, control = _roots(tmp_path)
+    campaign_id = control.name
+    if spoof == "outside":
+        control = work / "runs" / "thesis" / control.name
+        control.mkdir(parents=True)
+    else:
+        campaign_id = "spoofed-child"
+
+    with pytest.raises(ConsoleEventError, match="direct engineering|must equal"):
+        start_child_controller(
+            work_root=work,
+            control_root=control,
+            campaign_id=campaign_id,
+            release_commit="a" * 40,
+            evidence_class="local_campaign_control",
+            hard_stop_hours=24,
+            tmux_socket="ura-child-controller",
+            tmux_session="ura-child-controller",
+        )
+
+    assert not (control / "ENGINEERING_ONLY.json").exists()
+    assert not (control / "task-log.jsonl").exists()
 
 
 def test_human_only_campaign_is_terminal_blocked_not_running(

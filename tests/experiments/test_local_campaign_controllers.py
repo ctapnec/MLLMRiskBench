@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import argparse
 import hashlib
 import json
 from pathlib import Path
@@ -19,7 +20,12 @@ from experiments.local_campaign.generate import (
     render_controller_set,
     verify_controller_set,
 )
+from experiments.local_campaign.console_events import (
+    finish_child_controller,
+    start_child_controller,
+)
 from experiments.local_campaign.rebind import main as rebind_main
+from experiments.rig_web_app.campaigns import load_engineering_campaign
 
 
 def _template_tokens() -> set[str]:
@@ -97,6 +103,17 @@ def _rendered_phase6_extended_namespace(tmp_path: Path) -> dict[str, object]:
     return namespace
 
 
+def _rendered_phase7_namespace(tmp_path: Path) -> dict[str, object]:
+    bindings = _bindings(tmp_path / "bindings-phase7.json")
+    output = tmp_path / "workspace-phase7"
+    render_controller_set(bindings, output)
+    source = (output / "phase7_analysis.py").read_text(encoding="utf-8")
+    source = source.split('\nif __name__ == "__main__":', 1)[0]
+    namespace: dict[str, object] = {"__name__": "phase7_contract_test"}
+    exec(compile(source, "phase7_analysis.py", "exec"), namespace)
+    return namespace
+
+
 def _bridge_canary_fields_namespace() -> dict[str, object]:
     import re
 
@@ -135,6 +152,160 @@ def test_all_controller_implementations_are_versioned() -> None:
         source = (root / spec.template).read_text(encoding="utf-8")
         if "EXPECTED_COMMIT" in source:
             assert "@@EXPECTED_COMMIT@@" in source
+
+
+def test_independently_launched_children_render_native_jobs_registration(
+    tmp_path: Path,
+) -> None:
+    bindings = _bindings(tmp_path / "bindings.json")
+    output = tmp_path / "workspace"
+    render_controller_set(bindings, output)
+
+    shell_registered = (
+        "phase5_core_projections.sh",
+        "phase5_core_attest_canary.sh",
+        "phase5_bridge_projections.sh",
+        "phase5_bridge_attest_canary.sh",
+        "phase5_ollama_workflow.sh",
+        "phase5_finalize_gate5.sh",
+    )
+    for name in shell_registered:
+        source = (output / name).read_text(encoding="utf-8")
+        assert "console_events" in source
+        assert "child-start" in source
+        assert "child-finish" in source
+        assert source.index("CONSOLE_CAMPAIGN_STARTED=1") < source.index("child-start")
+
+    phase7_payload = (output / "phase7_analysis.py").read_text(encoding="utf-8")
+    assert '_console_child("child-start", terminal_root)' in phase7_payload
+    assert '_console_child("child-finish", terminal_root, exit_code)' in phase7_payload
+    assert phase7_payload.index("console_registered = True") < phase7_payload.index(
+        '_console_child("child-start", terminal_root)'
+    )
+
+    for name in (
+        "phase6_core_measured.sh",
+        "phase6_extended_measured.sh",
+        "phase6_native_diagnostics.sh",
+    ):
+        source = (output / name).read_text(encoding="utf-8")
+        assert "child-start" not in source
+        assert "start_child_controller" not in source
+
+    phase7_launcher = (output / "phase7_analysis.sh").read_text(encoding="utf-8")
+    assert 'SESSION=$(printf \'%q\' "$SESSION")' in phase7_launcher
+    assert 'SOCKET=$(printf \'%q\' "$SOCKET")' in phase7_launcher
+
+
+@pytest.mark.parametrize(
+    "case", ("mismatch", "success", "start_failure", "constructor_failure")
+)
+def test_phase7_registers_only_the_launch_validated_control_root(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    case: str,
+) -> None:
+    namespace = _rendered_phase7_namespace(tmp_path)
+    authoritative = tmp_path / "work" / "runs" / "engineering" / "phase7-analysis"
+    ambient = authoritative if case != "mismatch" else authoritative.parent / "spoofed"
+    authoritative.mkdir(parents=True)
+    if ambient != authoritative:
+        ambient.mkdir()
+    launch_path = authoritative / "launch.json"
+    launch_path.write_text(
+        json.dumps(
+            {
+                "schema": "ura-phase7-analysis-launch/1",
+                "authorized_input_manifest_sha256": "a" * 64,
+                "input_manifest": {},
+                "payload": {},
+                "control_root": str(authoritative),
+                "analysis_root": str(tmp_path / "analysis"),
+            }
+        ),
+        encoding="utf-8",
+    )
+    calls: list[tuple[object, ...]] = []
+
+    class FakeController:
+        def __init__(self, launch: Path) -> None:
+            calls.append(("validated", launch))
+            if case == "constructor_failure":
+                raise RuntimeError("injected full controller validation failure")
+            self.control = authoritative
+            self.failure_path = authoritative / "failure.json"
+            self.current_name = "startup"
+
+        def execute_all(self) -> None:
+            calls.append(("execute", self.control))
+
+        def terminate_child(self) -> None:
+            calls.append(("terminate", self.control))
+
+        def clean_scratch(self) -> None:
+            calls.append(("clean", self.control))
+
+        def emit(self, message: str) -> None:
+            calls.append(("emit", message))
+
+    def console_child(action: str, control: Path, exit_code: int | None = None) -> None:
+        calls.append((action, control, exit_code))
+        if action == "child-start":
+            start_child_controller(
+                work_root=tmp_path / "work",
+                control_root=control,
+                campaign_id=control.name,
+                release_commit="1" * 40,
+                evidence_class="local_campaign_control",
+                hard_stop_hours=720,
+                tmux_socket="ura-phase7-test",
+                tmux_session="ura-phase7-test",
+            )
+            if case == "start_failure":
+                raise RuntimeError("injected post-marker interruption")
+        elif action == "child-finish" and exit_code is not None:
+            finish_child_controller(
+                work_root=tmp_path / "work",
+                control_root=control,
+                exit_code=exit_code,
+            )
+
+    monkeypatch.setenv("CONTROL_ROOT", str(ambient))
+    monkeypatch.setenv("URA_WORK", str(tmp_path / "work"))
+    for name, value in (("SIGHUP", 1), ("SIGINT", 2), ("SIGTERM", 15)):
+        monkeypatch.setattr(namespace["signal"], name, value, raising=False)
+    monkeypatch.setattr(namespace["signal"], "signal", lambda *_args: None)
+    namespace["AnalysisController"] = FakeController
+    namespace["_console_child"] = console_child
+    result = namespace["execute"](argparse.Namespace(launch=str(launch_path)))
+
+    if case == "success":
+        assert result == 0
+        assert ("child-start", authoritative, None) in calls
+        assert ("validated", launch_path) in calls
+        assert ("execute", authoritative) in calls
+        assert ("child-finish", authoritative, 0) in calls
+    elif case == "mismatch":
+        assert result == 1
+        assert not any(call[0] in {"child-start", "child-finish"} for call in calls)
+        assert (authoritative / ".exit").read_text(encoding="ascii") == "1\n"
+        assert not (ambient / ".exit").exists()
+    elif case == "start_failure":
+        assert result == 1
+        assert ("child-start", authoritative, None) in calls
+        assert not any(call[0] == "validated" for call in calls)
+        assert ("child-finish", authoritative, 1) in calls
+    else:
+        assert result == 1
+        assert ("child-start", authoritative, None) in calls
+        assert ("validated", launch_path) in calls
+        assert ("child-finish", authoritative, 1) in calls
+        assert (authoritative / ".exit").read_text(encoding="ascii") == "1\n"
+        assert (authoritative / "ENGINEERING_ONLY.json").is_file()
+        terminal = load_engineering_campaign(tmp_path / "work" / "runs", authoritative.name)
+        assert terminal is not None
+        assert terminal.state == "failed"
+        assert terminal.task_outcomes == (("controller", "failed", "unclassified"),)
 
 
 def test_controller_templates_are_repository_normalized_to_lf() -> None:

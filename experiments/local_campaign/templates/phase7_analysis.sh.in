@@ -232,7 +232,7 @@ PY
 SESSION="ura-phase7-$TAG"
 SOCKET="ura-phase7-$TAG"
 tmux -L "$SOCKET" new-session -d -s "$SESSION" \
-  "exec env CONTROL_ROOT=$(printf '%q' "$CONTROL_ROOT") ANALYSIS_ROOT=$(printf '%q' "$ANALYSIS_ROOT") $PY $(printf '%q' "$CONTROL_ROOT/payload.py") execute --launch $(printf '%q' "$CONTROL_ROOT/launch.json")"
+  "exec env CONTROL_ROOT=$(printf '%q' "$CONTROL_ROOT") ANALYSIS_ROOT=$(printf '%q' "$ANALYSIS_ROOT") SESSION=$(printf '%q' "$SESSION") SOCKET=$(printf '%q' "$SOCKET") $PY $(printf '%q' "$CONTROL_ROOT/payload.py") execute --launch $(printf '%q' "$CONTROL_ROOT/launch.json")"
 
 printf 'SESSION=%s\n' "$SESSION"
 printf 'SOCKET=%s\n' "$SOCKET"
