@@ -1870,7 +1870,7 @@ def test_rebind_is_create_only_and_validates_named_changes(tmp_path: Path) -> No
         ])
 
 
-def test_bridge_canary_does_not_claim_missing_source_evaluator_ran() -> None:
+def test_bridge_canary_preserves_source_role_and_typed_abstention_contracts() -> None:
     template = (
         Path(__file__).parents[2]
         / "experiments"
@@ -1889,6 +1889,14 @@ def test_bridge_canary_does_not_claim_missing_source_evaluator_ran() -> None:
         r'attacker_status\tsource_evaluator_status\n',
         '"not_exercised" if row["lane"] == "bridge-purplellama" else "not_applicable"',
         'if row["source_evaluator_status"] != expected_source:',
+        'responses = artifact_rows("responses")',
+        "bound_decisions = validate_approximate_completion_bindings(\n",
+        'supplementary_policy=supplementary_metric_policy("measured")',
+        "if decision is None:\n            attempt_ids.add(attempt_id)\n            continue",
+        "if decision_attempts:\n        if not approximate_results",
+        'elif approximate_results:\n        raise SystemExit("prompt-injection abstention retained approximate results")',
+        "or decision.judge_model != expected_guard\n"
+        "            or decision.judge_model_identity != expected_revision",
     )
     _assert_source_contract(template, required)
     for original, replacement in (
@@ -1904,6 +1912,23 @@ def test_bridge_canary_does_not_claim_missing_source_evaluator_ran() -> None:
         (
             'if row["source_evaluator_status"] != expected_source:',
             'if False:',
+        ),
+        (
+            "bound_decisions = validate_approximate_completion_bindings(\n",
+            "bound_decisions = validate_approximate_decision(\n",
+        ),
+        (
+            "if decision is None:\n            attempt_ids.add(attempt_id)\n            continue",
+            "if False:\n            attempt_ids.add(attempt_id)\n            continue",
+        ),
+        (
+            "if decision_attempts:\n        if not approximate_results",
+            "if not approximate_results",
+        ),
+        (
+            "or decision.judge_model != expected_guard\n"
+            "            or decision.judge_model_identity != expected_revision",
+            "or False\n            or False",
         ),
     ):
         changed = template.replace(original, replacement, 1)

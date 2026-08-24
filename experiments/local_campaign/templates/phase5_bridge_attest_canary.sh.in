@@ -402,12 +402,14 @@ import pathlib
 import sys
 
 from ura.approximate_metrics import (
-    validate_approximate_decision,
+    supplementary_metric_policy,
+    validate_approximate_completion_bindings,
     validate_approximate_metric_provenance,
 )
 from ura.lane_canary import validate_lane_canary_summary
 from ura.request_envelope import load_request_envelope_file
 from ura.strict_json import strict_json_loads
+
 
 root = pathlib.Path(sys.argv[1])
 expected_attacker, expected_arm, expected_guard, expected_revision = sys.argv[2:]
@@ -511,12 +513,28 @@ if expected_arm == "cyberseceval_prompt_injection":
             raise SystemExit(f"prompt-injection {kind} record inventory changed")
         return rows
 
+    responses = artifact_rows("responses")
     judgments = artifact_rows("judgments")
     trails = artifact_rows("trails")
     results = artifact_rows("results")
     if not judgments:
         raise SystemExit("prompt-injection canary retained no judgments")
+    try:
+        bound_decisions = validate_approximate_completion_bindings(
+            judgments=judgments,
+            responses=responses,
+            supplementary_policy=supplementary_metric_policy("measured"),
+            trails=trails,
+        )
+    except (TypeError, ValueError) as exc:
+        raise SystemExit(
+            f"prompt-injection proxy decision/abstention binding is invalid: {exc}"
+        ) from exc
+    decisions_by_attempt = {
+        judgment.attempt_id: decision for judgment, decision in bound_decisions
+    }
     attempt_ids = set()
+    decision_attempts = set()
     for judgment in judgments:
         attempt_id = judgment.get("attempt_id")
         raw = judgment.get("raw")
@@ -528,9 +546,10 @@ if expected_arm == "cyberseceval_prompt_injection":
             or raw.get("required_metric") != required_metric
         ):
             raise SystemExit("prompt-injection judgment lost its proxy-only construct")
-        decision = validate_approximate_decision(
-            raw.get("approximate_security_decision")
-        )
+        decision = decisions_by_attempt.get(attempt_id)
+        if decision is None:
+            attempt_ids.add(attempt_id)
+            continue
         if (
             decision.source_required_metric != required_metric
             or decision.source_evaluator_implemented is not False
@@ -562,6 +581,7 @@ if expected_arm == "cyberseceval_prompt_injection":
             raise SystemExit("selected prompt-injection Guard identity is not exact")
         if decision.selected_judge not in {"rules", "guardrail"}:
             raise SystemExit("prompt-injection selected an unexpected judge")
+        decision_attempts.add(attempt_id)
         attempt_ids.add(attempt_id)
 
     by_attempt = {}
@@ -595,10 +615,13 @@ if expected_arm == "cyberseceval_prompt_injection":
         row for row in results
         if str(row.get("metric", "")).startswith("approximate_")
     ]
-    if not approximate_results or {
-        row.get("metric") for row in approximate_results
-    } != {"approximate_over_refusal_rate"}:
-        raise SystemExit("prompt-injection canary lacks approximate over-refusal")
+    if decision_attempts:
+        if not approximate_results or {
+            row.get("metric") for row in approximate_results
+        } != {"approximate_over_refusal_rate"}:
+            raise SystemExit("prompt-injection canary lacks approximate over-refusal")
+    elif approximate_results:
+        raise SystemExit("prompt-injection abstention retained approximate results")
     for result in approximate_results:
         provenance = validate_approximate_metric_provenance(
             result["metric"], result.get("provenance", {}).get("approximate_security")
