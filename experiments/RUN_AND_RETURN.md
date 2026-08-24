@@ -3990,10 +3990,12 @@ range/numeric sample-size control and the sample seed. Its `--limit` value is
 per selected arm: `0` means the complete release for every selected arm and a
 positive value is a whole-cluster cap applied independently to each arm. Every
 bounded measured lane records `--sample-seed`. The optional local budget in
-whole hours converts exactly to `--deadline-seconds` for a measured local-only
-lane. It is Runner's durable call-start window, not a process timeout: expiry
-prevents a new model acquisition or call, but does not interrupt an admitted
-call or guarantee when the process finishes.
+whole hours is a detached process wall-time ceiling for the final measured
+all-local `run_matrix` process. On POSIX, expiry terminates that process tree and
+kills it after a bounded grace period. Dry runs, no-call preflights and model
+acquisition remain outside this elapsed interval. Set `--deadline-seconds`
+independently for Runner's durable call-start window: it prevents later calls
+after expiry but does not interrupt a call already admitted.
 
 The console binds the operator-configured `--host` and `--port`, builds argument
 vectors exclusively from a typed allowlist (no shell), caps POST bodies, runs

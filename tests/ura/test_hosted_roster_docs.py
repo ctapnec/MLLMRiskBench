@@ -616,8 +616,10 @@ def test_runbook_section_18_documents_the_build_surface_and_hf_token_children() 
         assert token in section, token
     assert "CLI-only" not in section
     assert "per selected arm" in section
+    assert "detached process wall-time ceiling" in section
+    assert "Set `--deadline-seconds` independently" in section
     assert "durable call-start window" in section
-    assert "not a process timeout" in section
+    assert "converts exactly to `--deadline-seconds`" not in section
     assert "dedicated sealed-acquisition child" not in runbook
     architecture = " ".join(
         (_ROOT / "docs" / "ARCHITECTURE.md").read_text(encoding="utf-8").split()

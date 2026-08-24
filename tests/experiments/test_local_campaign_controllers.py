@@ -3317,3 +3317,44 @@ def test_controller_hard_stop_documentation_matches_owned_session_semantics() ->
             assert changed != source
             with pytest.raises(AssertionError):
                 assert_contract(changed)
+
+
+def test_local_campaign_plan_documents_bounded_controls_and_gate7() -> None:
+    plan = (
+        Path(__file__).parents[2] / "experiments" / "LOCAL_CAMPAIGN_PLAN.md"
+    ).read_text(encoding="utf-8")
+    required = (
+        "outer population selector",
+        "`--max-queries` and `--max-turns`",
+        "The bounded HarmBench preparation is fixed to `DirectRequest`, "
+        "experiment `llama2_7b`, one case per method, limit 50, sample seed 0",
+        "`pair_limit` uses 0 for all verified manifest pairs and a positive value "
+        "for `ordered_prefix_v1`",
+        "NanoGCG accepts one attributable precomputed suffix and has no invented "
+        "quantity selector",
+        "The aggregate is `complete` or `complete_with_failures` according to that "
+        "exact terminal partition",
+        "a typed failure never becomes `measured_complete` and never prevents later "
+        "independent lanes from being attempted",
+        "Gate 7: the complete Phase 6 terminal inventory validates as `complete` or "
+        "`complete_with_failures`",
+        "at least one scheduled Runner lane is `measured_complete`",
+        "Level-1 retains every representable Runner/request lifecycle",
+        "If no measured Runner lane completes",
+    )
+
+    def assert_contract(value: str) -> None:
+        flattened = " ".join(value.split())
+        for item in required:
+            assert item in flattened
+
+    assert_contract(plan)
+    for original, replacement in (
+        ("complete_with_failures", "complete_without_failure_inventory"),
+        ("at least one scheduled Runner lane", "zero scheduled Runner lanes"),
+        ("ordered_prefix_v1", "random_pair_sample"),
+    ):
+        changed = plan.replace(original, replacement)
+        assert changed != plan
+        with pytest.raises(AssertionError):
+            assert_contract(changed)

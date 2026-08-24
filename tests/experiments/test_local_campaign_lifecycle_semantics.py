@@ -521,6 +521,159 @@ def _analysis_controller(
     return controller, subprocesses, statuses
 
 
+def test_phase7_accepts_only_exact_suite_all_abstained_proxy_conditions(
+    phase7: ModuleType,
+    tmp_path: Path,
+) -> None:
+    key = (
+        "vllm:fixture/model",
+        phase7.PROMPT_PROXY_ARM,
+        "purplellama",
+        phase7.PROMPT_PROXY_METRIC,
+    )
+    expected = {
+        key: {
+            "lane_id": "bridge-purplellama",
+            "model_spec": key[0],
+            "corpus_arm": key[1],
+            "attacker": key[2],
+            "required_metric": key[3],
+        }
+    }
+    stratum = {
+        "model_spec": key[0],
+        "corpus_arm": key[1],
+        "attacker": key[2],
+        "source_metric_family": key[3],
+        "common_metrics_eligible": False,
+        "execution_mode": "static_or_exact_replay",
+        "expected_behavior": "safe_answer",
+        "measurement_families": [
+            "approximate_benign_refusal_rate",
+            "classification_quality",
+        ],
+        "n_completed_records": 2,
+        "n_source_clusters": 2,
+        "label_counts": {"not_applicable": 2},
+        "approximate_proxy_label_counts": {},
+        "n_approximate_proxy_abstained": 2,
+        "n_approximate_strongreject_graded": 0,
+        "descriptive_common_endpoint": {
+            "endpoint": "approximate_over_refusal_rate",
+            "value": None,
+            "reason": "no_decided_judgments",
+            "decision_support": {
+                "judgments_completed": 2,
+                "judgments_evaluable": 2,
+                "judgments_decided": 0,
+                "judgments_abstained": 2,
+                "decision_coverage": 0.0,
+            },
+            "metric_authority": "supplementary_non_authoritative",
+        },
+    }
+    suite = {"runner": {"strata": [stratum]}}
+
+    assert phase7.all_abstained_proxy_conditions(suite, expected) == {key}
+
+    mutations = (
+        (
+            "reason",
+            lambda row: row["descriptive_common_endpoint"].__setitem__(
+                "reason", "generic_failure"
+            ),
+        ),
+        (
+            "coverage",
+            lambda row: row["descriptive_common_endpoint"][
+                "decision_support"
+            ].__setitem__("decision_coverage", 1.0),
+        ),
+        (
+            "abstentions",
+            lambda row: row.__setitem__("n_approximate_proxy_abstained", 1),
+        ),
+        (
+            "metric",
+            lambda row: row.__setitem__("source_metric_family", "detached_metric"),
+        ),
+    )
+    for _label, mutate in mutations:
+        changed = copy.deepcopy(suite)
+        mutate(changed["runner"]["strata"][0])
+        assert phase7.all_abstained_proxy_conditions(changed, expected) == set()
+
+    runner = {
+        "metric_lane_order": ["bridge-purplellama"],
+        "classification_lanes": [],
+        "cascade_expected_lanes": ["bridge-purplellama"],
+        "proxy_expected_conditions": list(expected.values()),
+        "guardrail_selector": {
+            "model": phase7.EXPECTED_GUARDRAIL_MODEL,
+            "revision": phase7.EXPECTED_GUARDRAIL_REVISION,
+            "device": phase7.EXPECTED_GUARDRAIL_DEVICE,
+        },
+        "terminal_states": {"bridge-purplellama": "measured_complete"},
+        "lifecycle_states": {"bridge-purplellama": "complete"},
+        "lifecycle_authorizations": {"bridge-purplellama": {}},
+    }
+    controller, _subprocesses, _statuses = _analysis_controller(
+        phase7, tmp_path, runner
+    )
+    controller.inputs.update(
+        {
+            "gate5": {"conditional_na_lanes": []},
+            "native_outcomes": {"states": {}},
+        }
+    )
+    level2 = {
+        "common": {
+            "estimates": [
+                {
+                    "ordered_judges": ["rules", "guardrail"],
+                    "corpus_arm": "ordinary_common_arm",
+                    "metric": "ordinary_common_metric",
+                }
+            ]
+        }
+    }
+    malformed_suite = copy.deepcopy(suite)
+    malformed_suite["runner"]["strata"][0]["descriptive_common_endpoint"]["reason"] = (
+        "generic_failure"
+    )
+    malformed_suite["source_native_presence"] = {}
+    with pytest.raises(
+        phase7.Phase7Error,
+        match="estimated/all-abstained proxy conditions differ",
+    ):
+        controller.build_boundaries(
+            suite=malformed_suite,
+            level2=level2,
+            transfer={"schema_version": "2.1"},
+            llava_pairs={},
+            adaptivity_pairs={},
+        )
+
+    suite["source_native_presence"] = {}
+    boundary = controller.build_boundaries(
+        suite=suite,
+        level2=level2,
+        transfer={"schema_version": "2.1"},
+        llava_pairs={},
+        adaptivity_pairs={},
+    )
+    assert boundary["approximate_common_metrics"] == {
+        "supplementary_non_authoritative": True,
+        "expected_from_ineligible_opted_in_strata": True,
+        "expected_conditions": list(expected.values()),
+        "estimate_rows": 0,
+        "selected_judges": [],
+        "judge_models": [],
+        "selected_guardrail": runner["guardrail_selector"],
+        "queried_rows_bind_selected_guardrail": True,
+    }
+
+
 @pytest.mark.parametrize(
     ("measured", "missing_roles", "reason_code"),
     (

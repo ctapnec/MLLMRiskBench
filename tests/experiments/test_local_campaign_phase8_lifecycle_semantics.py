@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import copy
 import importlib.util
 import json
 import os
@@ -108,6 +109,120 @@ def _status(
     )
 
 
+def _analysis_boundary(
+    phase8: ModuleType,
+    *,
+    purplellama_complete: bool,
+) -> tuple[dict[str, object], dict[str, str], list[str], list[dict[str, str]]]:
+    lanes = tuple(
+        lane
+        for lane in phase8.RUNNABLE_LANES
+        if lane not in phase8.RR_RUNTIME_TERMINAL_LANE_SET
+    )
+    states = {lane: "failed" for lane in lanes}
+    states["local-qwen3-vl-image-primary-100"] = "measured_complete"
+    states[phase8.DEFENSE_LOCAL_LANE] = "measured_complete"
+    if purplellama_complete:
+        states["bridge-purplellama"] = "measured_complete"
+    cascade = sorted(
+        lane for lane, state in states.items() if state == "measured_complete"
+    )
+    conditions = (
+        [
+            {
+                "lane_id": "bridge-purplellama",
+                "model_spec": "vllm:fixture/model",
+                "corpus_arm": "cyberseceval_prompt_injection",
+                "attacker": "purplellama",
+                "required_metric": "cyberseceval_prompt_injection_judge_question",
+            }
+        ]
+        if purplellama_complete
+        else []
+    )
+    rr_terminal = _descriptor("rr-terminal", 40)
+    rr_terminal["path"] = str(
+        (Path.cwd() / ".fixture-runner" / "rr-terminal-40.json").resolve()
+    )
+    boundary: dict[str, object] = {
+        "schema": "ura-phase7-analysis-boundaries/1",
+        "status": "validated",
+        "evaluator_compatibility_modes": {"rules,guardrail": 2},
+        "evaluator_modes_pooled": False,
+        "cascade_expected_lanes": cascade,
+        "classification": {
+            "source_parser_only": True,
+            "common_metric_rows": 0,
+            "estimate_rows": 0,
+        },
+        "approximate_common_metrics": {
+            "supplementary_non_authoritative": True,
+            "expected_from_ineligible_opted_in_strata": bool(conditions),
+            "expected_conditions": conditions,
+            "estimate_rows": 0,
+            "selected_judges": [],
+            "judge_models": [],
+            "selected_guardrail": phase8.EXPECTED_GUARDRAIL,
+            "queried_rows_bind_selected_guardrail": True,
+        },
+        "cluster_semantics": {
+            "paired_inference_unit": "source_cluster_id (fallback datapoint_id)",
+            "equal_cluster_weighting_preserved_by_tool": True,
+            "missingness_sensitivity_retained": True,
+        },
+        "paired_status": {
+            "llava_base_vs_rr": {
+                corpus: {
+                    "status": "unavailable",
+                    "analysis_ready_real_run": False,
+                    "estimate_available": False,
+                    "planned_contrast_missing": True,
+                    "reason_code": phase8.RR_RUNTIME_TERMINAL_REASON_CODE,
+                    "modality": "image",
+                    "facet": corpus,
+                    "paired_compare_invoked": False,
+                    "target_runtime_terminal_artifact": rr_terminal,
+                }
+                for corpus in phase8.IMAGE_ARMS
+            },
+            "qwen_replay_vs_crescendo": {
+                corpus: {
+                    "analysis_ready_real_run": False,
+                    "inference_cluster": "source_cluster_id (fallback datapoint_id)",
+                }
+                for corpus in phase8.ADAPTIVE_ARMS
+            },
+        },
+        "transfer": {
+            "attacker": "replay",
+            "unexplained_exclusions": 0,
+            "not_applicable_facets": [],
+        },
+        "native_outcomes": {},
+        "runner_outcomes": states,
+        "conditional_na_lanes": [],
+        "defense_local_evidence": {
+            "status": "measured_runner_lane",
+            "value": phase8.DEFENSE_LOCAL_LANE,
+            "disposition": "runnable",
+            "reason_code": None,
+            "reason": None,
+            "measured_evidence_admitted": True,
+        },
+        "lifecycle_registry_states": {
+            lane: "complete" if state == "measured_complete" else "failed"
+            for lane, state in states.items()
+        },
+        "runner_lifecycle_authorizations": {lane: {} for lane in states},
+        "failed_phase6_lanes_excluded_from_metric_and_level2_views": True,
+        "native_scales_pooled": False,
+        "suite_missingness": {},
+        "human_labels_consumed": False,
+        "human_validity_claimed": False,
+    }
+    return boundary, states, cascade, conditions
+
+
 def test_phase8_reconstructs_lifecycle_from_exact_artifact_kinds(
     phase8: ModuleType,
 ) -> None:
@@ -169,6 +284,60 @@ def test_phase8_does_not_promote_non_request_files_by_generic_count(
 
     source = Path(phase8.__file__).read_text(encoding="utf-8")
     assert "runner_artifact_count" not in source
+
+
+def test_phase8_accepts_failed_proxy_bridge_without_inventing_approximation(
+    phase8: ModuleType,
+) -> None:
+    boundary, states, cascade, conditions = _analysis_boundary(
+        phase8, purplellama_complete=False
+    )
+    assert conditions == []
+    phase8.validate_analysis_boundaries(
+        boundary,
+        expected_runner_states=states,
+        expected_cascade_lanes=cascade,
+        expected_proxy_conditions=conditions,
+    )
+
+    invented = copy.deepcopy(boundary)
+    approximate = invented["approximate_common_metrics"]
+    approximate["estimate_rows"] = 1
+    approximate["selected_judges"] = ["rules"]
+    with pytest.raises(phase8.Phase8Error, match="proxy realization"):
+        phase8.validate_analysis_boundaries(
+            invented,
+            expected_runner_states=states,
+            expected_cascade_lanes=cascade,
+            expected_proxy_conditions=conditions,
+        )
+
+
+def test_phase8_accepts_expected_proxy_with_zero_all_abstained_estimates(
+    phase8: ModuleType,
+) -> None:
+    boundary, states, cascade, conditions = _analysis_boundary(
+        phase8, purplellama_complete=True
+    )
+    assert len(conditions) == 1
+    phase8.validate_analysis_boundaries(
+        boundary,
+        expected_runner_states=states,
+        expected_cascade_lanes=cascade,
+        expected_proxy_conditions=conditions,
+    )
+
+    detached = copy.deepcopy(boundary)
+    detached["approximate_common_metrics"][
+        "expected_from_ineligible_opted_in_strata"
+    ] = False
+    with pytest.raises(phase8.Phase8Error, match="proxy realization"):
+        phase8.validate_analysis_boundaries(
+            detached,
+            expected_runner_states=states,
+            expected_cascade_lanes=cascade,
+            expected_proxy_conditions=conditions,
+        )
 
 
 def test_phase8_capacity_reserves_exact_twenty_disjoint_clusters(

@@ -417,6 +417,19 @@ either adapter or optional full-set execution through the framework: a future
 prepared-replay cohort may use a positive limit or explicit `--limit 0` with its
 own complete projection and sufficient admitted caps.
 
+The corpus limit is the outer population selector, not a universal framework-
+operation limit. `--limit 0` selects every source cluster; a positive limit uses
+the seeded whole-cluster policy above. `--max-queries` and `--max-turns` must
+separately cover the selected attacker's per-datapoint fanout. The bounded
+HarmBench preparation is fixed to `DirectRequest`, experiment `llama2_7b`, one
+case per method, limit 50, sample seed 0, a 28,800-second preparation timeout,
+and query/turn bounds of one. T3MP3ST capture exposes its own corpus limit,
+sample seed and per-request timeout, but remains `blocked-unpinned` in this
+cohort. IDEATOR's prospective `pair_limit` uses 0 for all verified manifest
+pairs and a positive value for `ordered_prefix_v1`; it is distinct from random
+corpus sampling. NanoGCG accepts one attributable precomputed suffix and has no
+invented quantity selector.
+
 For an R-Judge canary, source-evaluator completeness and source-evaluator
 validity are separate observations. A completed prediction that does not obey
 the source label format remains an exercised, complete observation with
@@ -596,11 +609,15 @@ prospective external id and exact session before start publication, and terminal
 publication is bounded to 30 seconds, so a signal or stuck publisher cannot
 leave a row borrowing the liveness of the parent controller.
 
-Gate 6: every measured Runner lane completes or records an explicit
-error/partial state under `runs/thesis/runner`, either through Runner's own
-lifecycle artifacts or the exact typed pre-Runner marker above; native
-engineering diagnostics retain their separate typed dispositions under
-`runs/engineering`; caps never raised mid-lane.
+Gate 6: every planned measured Runner lane is attempted independently and
+either completes or records an explicit error/partial state under
+`runs/thesis/runner`, through Runner's own lifecycle artifacts or the exact
+typed pre-Runner marker above. The aggregate is `complete` or
+`complete_with_failures` according to that exact terminal partition; a typed
+failure never becomes `measured_complete` and never prevents later independent
+lanes from being attempted. Native engineering diagnostics retain their
+separate typed dispositions under `runs/engineering`; caps are never raised
+mid-lane.
 
 ## 8. Phase 7: read-only analysis (hours)
 
@@ -633,6 +650,14 @@ failure makes the watcher fail; no numbered phase or gate interpretation enters
 Rig Web.
 Neither an external registration nor an inventory by itself grants evidence
 authority.
+
+Gate 7: the complete Phase 6 terminal inventory validates as `complete` or
+`complete_with_failures`, at least one scheduled Runner lane is
+`measured_complete`, the validated lifecycle registry retains every typed lane
+state, Level-1 retains every representable Runner/request lifecycle, success-
+only metric and Level-2 outputs validate, and the Stats publication registration
+succeeds. If no measured Runner lane completes, the typed Phase 6 inventory
+remains retained but Gate 7 is not met and no metric analysis is published.
 
 ## 9. Phase 8: human audit (free in money, requires raters and an ethics determination)
 

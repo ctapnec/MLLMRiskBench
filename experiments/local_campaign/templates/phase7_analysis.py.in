@@ -7635,6 +7635,81 @@ def expected_metric_boundary_contract(runner: Mapping[str, Any]) -> dict[str, An
     }
 
 
+def all_abstained_proxy_conditions(
+    suite: Mapping[str, Any],
+    expected_conditions: Mapping[tuple[str, str, str, str], Mapping[str, str]],
+) -> set[tuple[str, str, str, str]]:
+    """Return exact proxy conditions whose validated suite rows all abstained."""
+
+    runner = suite.get("runner")
+    strata = runner.get("strata") if isinstance(runner, Mapping) else None
+    if not isinstance(strata, list):
+        raise Phase7Error("suite proxy-stratum inventory is malformed")
+    grouped: dict[tuple[str, str, str, str], list[Mapping[str, Any]]] = {}
+    for row in strata:
+        if not isinstance(row, Mapping):
+            raise Phase7Error("suite proxy stratum is malformed")
+        key = (
+            row.get("model_spec"),
+            row.get("corpus_arm"),
+            row.get("attacker"),
+            row.get("source_metric_family"),
+        )
+        if key in expected_conditions:
+            grouped.setdefault(key, []).append(row)
+
+    result: set[tuple[str, str, str, str]] = set()
+    for key, rows in grouped.items():
+        exact_all_abstained = True
+        for row in rows:
+            completed = row.get("n_completed_records")
+            clusters = row.get("n_source_clusters")
+            endpoint = row.get("descriptive_common_endpoint")
+            support = (
+                endpoint.get("decision_support")
+                if isinstance(endpoint, Mapping)
+                else None
+            )
+            if (
+                row.get("common_metrics_eligible") is not False
+                or row.get("execution_mode") != "static_or_exact_replay"
+                or row.get("expected_behavior")
+                not in {"safe_answer", "comply_safely"}
+                or isinstance(completed, bool)
+                or not isinstance(completed, int)
+                or completed <= 0
+                or isinstance(clusters, bool)
+                or not isinstance(clusters, int)
+                or not 0 < clusters <= completed
+                or row.get("label_counts") != {"not_applicable": completed}
+                or row.get("approximate_proxy_label_counts") != {}
+                or row.get("n_approximate_proxy_abstained") != completed
+                or row.get("n_approximate_strongreject_graded") != 0
+                or not isinstance(row.get("measurement_families"), list)
+                or "approximate_benign_refusal_rate"
+                not in row["measurement_families"]
+                or not isinstance(endpoint, Mapping)
+                or endpoint.get("endpoint") != "approximate_over_refusal_rate"
+                or endpoint.get("value") is not None
+                or endpoint.get("reason") != "no_decided_judgments"
+                or endpoint.get("metric_authority")
+                != "supplementary_non_authoritative"
+                or support
+                != {
+                    "judgments_completed": completed,
+                    "judgments_evaluable": completed,
+                    "judgments_decided": 0,
+                    "judgments_abstained": completed,
+                    "decision_coverage": 0.0,
+                }
+            ):
+                exact_all_abstained = False
+                break
+        if exact_all_abstained:
+            result.add(key)
+    return result
+
+
 def collect_descriptors(value: object) -> list[dict[str, Any]]:
     found: dict[str, dict[str, Any]] = {}
 
@@ -9993,15 +10068,23 @@ class AnalysisController:
         expected_classification = boundary_contract["expected_classification"]
         expected_cascade = boundary_contract["expected_cascade"]
         expected_approximate = boundary_contract["expected_approximate"]
-        if observed_proxy_conditions != set(expected_proxy_conditions):
+        all_abstained_conditions = all_abstained_proxy_conditions(
+            suite, expected_proxy_conditions
+        )
+        if observed_proxy_conditions & all_abstained_conditions:
             raise Phase7Error(
-                "Level 2 approximate metrics differ from admitted proxy strata"
+                "approximate proxy condition is both estimated and all-abstained"
             )
-        if (expected_classification and not classification_rows) or (
-            expected_approximate and not approximate_rows
+        if (
+            observed_proxy_conditions | all_abstained_conditions
+            != set(expected_proxy_conditions)
         ):
             raise Phase7Error(
-                "Level 2 lacks a classification or approximate metric boundary"
+                "estimated/all-abstained proxy conditions differ from admitted strata"
+            )
+        if expected_classification and not classification_rows:
+            raise Phase7Error(
+                "Level 2 lacks its classification metric boundary"
             )
         if (
             expected_classification
@@ -12146,6 +12229,75 @@ def contract_self_test() -> int:
         lambda: expected_metric_boundary_contract(overlapping_modes),
     )
 
+    proxy_key = next(iter(boundary["proxy_conditions"]))
+    abstained_stratum = {
+        "model_spec": proxy_key[0],
+        "corpus_arm": proxy_key[1],
+        "attacker": proxy_key[2],
+        "source_metric_family": proxy_key[3],
+        "common_metrics_eligible": False,
+        "execution_mode": "static_or_exact_replay",
+        "expected_behavior": "safe_answer",
+        "measurement_families": [
+            "approximate_benign_refusal_rate",
+            "classification_quality",
+        ],
+        "n_completed_records": 2,
+        "n_source_clusters": 2,
+        "label_counts": {"not_applicable": 2},
+        "approximate_proxy_label_counts": {},
+        "n_approximate_proxy_abstained": 2,
+        "n_approximate_strongreject_graded": 0,
+        "descriptive_common_endpoint": {
+            "endpoint": "approximate_over_refusal_rate",
+            "value": None,
+            "reason": "no_decided_judgments",
+            "decision_support": {
+                "judgments_completed": 2,
+                "judgments_evaluable": 2,
+                "judgments_decided": 0,
+                "judgments_abstained": 2,
+                "decision_coverage": 0.0,
+            },
+            "metric_authority": "supplementary_non_authoritative",
+        },
+    }
+    abstained_suite = {"runner": {"strata": [abstained_stratum]}}
+
+    def require_exact_abstained_suite(value: Mapping[str, Any]) -> None:
+        if all_abstained_proxy_conditions(
+            value, boundary["proxy_conditions"]
+        ) != {proxy_key}:
+            raise Phase7Error("exact all-abstained proxy condition was not retained")
+
+    require_exact_abstained_suite(abstained_suite)
+    for label, mutate in (
+        (
+            "metric-boundary-abstention-reason",
+            lambda value: value["runner"]["strata"][0][
+                "descriptive_common_endpoint"
+            ].__setitem__("reason", "generic_failure"),
+        ),
+        (
+            "metric-boundary-abstention-coverage",
+            lambda value: value["runner"]["strata"][0][
+                "descriptive_common_endpoint"
+            ]["decision_support"].__setitem__("decision_coverage", 1.0),
+        ),
+        (
+            "metric-boundary-abstention-count",
+            lambda value: value["runner"]["strata"][0].__setitem__(
+                "n_approximate_proxy_abstained", 1
+            ),
+        ),
+    ):
+        mutation = copy.deepcopy(abstained_suite)
+        mutate(mutation)
+        must_fail(
+            label,
+            lambda mutation=mutation: require_exact_abstained_suite(mutation),
+        )
+
     print(
         json.dumps(
             {
@@ -12169,6 +12321,7 @@ def contract_self_test() -> int:
                         "phase7-transfer-faceted-index",
                         "phase7-runner-view-content-binding",
                         "phase7-metric-boundary-derivation",
+                        "phase7-all-abstained-proxy-boundary",
                         "source-conformance-45-row-portfolio",
                     }
                 ),

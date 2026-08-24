@@ -5619,10 +5619,24 @@ def validate_analysis_boundaries(
         raise Phase8Error(
             "approximate common metrics do not bind the selected judge model"
         )
+    expected_condition_rows = approximate["expected_conditions"]
+    expected_approximate = bool(expected_condition_rows)
+    estimate_rows = approximate["estimate_rows"]
+    selected_judges = approximate["selected_judges"]
+    judge_models = approximate["judge_models"]
+    if (
+        approximate["expected_from_ineligible_opted_in_strata"]
+        is not expected_approximate
+        or (not expected_approximate and estimate_rows != 0)
+        or (estimate_rows == 0 and (selected_judges or judge_models))
+        or (estimate_rows > 0 and not selected_judges)
+    ):
+        raise Phase8Error(
+            "Phase 7 approximate proxy realization differs from its conditions"
+        )
     if (
         expected_proxy_conditions is not None
-        and approximate["expected_conditions"]
-        != list(expected_proxy_conditions)
+        and expected_condition_rows != list(expected_proxy_conditions)
     ):
         raise Phase8Error("Phase 7 approximate proxy-condition boundary differs")
     paired_status = value.get("paired_status")
@@ -5748,15 +5762,14 @@ def validate_analysis_boundaries(
             lane.startswith("rjudge-") or lane.startswith("gptgeochat-")
             for lane in measured
         )
-        expected_approximate = any(
-            not (lane.startswith("rjudge-") or lane.startswith("gptgeochat-"))
-            for lane in measured
-        )
         if (
             (classification["estimate_rows"] > 0) is not expected_classification
-            or (approximate["estimate_rows"] > 0) is not expected_approximate
+            or (
+                expected_proxy_conditions is not None
+                and bool(expected_proxy_conditions) is not expected_approximate
+            )
             or (expected_classification and "rules" not in modes)
-            or (expected_approximate and "rules,guardrail" not in modes)
+            or (cascade_lanes and "rules,guardrail" not in modes)
         ):
             raise Phase8Error("Phase 7 boundary rows differ from measured lanes")
     if expected_native_states is not None and value.get("native_outcomes") != dict(
@@ -12438,11 +12451,11 @@ def self_test() -> int:
         },
         "approximate_common_metrics": {
             "supplementary_non_authoritative": True,
-            "expected_from_ineligible_opted_in_strata": True,
+            "expected_from_ineligible_opted_in_strata": False,
             "expected_conditions": [],
-            "estimate_rows": 3,
-            "selected_judges": ["guardrail", "rules"],
-            "judge_models": [EXPECTED_GUARDRAIL["model"]],
+            "estimate_rows": 0,
+            "selected_judges": [],
+            "judge_models": [],
             "selected_guardrail": EXPECTED_GUARDRAIL,
             "queried_rows_bind_selected_guardrail": True,
         },
@@ -12536,6 +12549,69 @@ def self_test() -> int:
     rejected(
         lambda: validate_analysis_boundaries(bad_boundary),
         "source parser leaked into common metrics",
+    )
+    bad_boundary = json.loads(json.dumps(boundary))
+    bad_boundary["approximate_common_metrics"][
+        "expected_from_ineligible_opted_in_strata"
+    ] = True
+    rejected(
+        lambda: validate_analysis_boundaries(bad_boundary),
+        "proxy expectation without condition",
+    )
+    bad_boundary = json.loads(json.dumps(boundary))
+    bad_boundary["approximate_common_metrics"]["estimate_rows"] = 1
+    bad_boundary["approximate_common_metrics"]["selected_judges"] = ["rules"]
+    rejected(
+        lambda: validate_analysis_boundaries(bad_boundary),
+        "proxy estimate without condition",
+    )
+    all_abstained_boundary = json.loads(json.dumps(boundary))
+    proxy_condition = {
+        "lane_id": "bridge-purplellama",
+        "model_spec": "vllm:fixture/model",
+        "corpus_arm": "cyberseceval_prompt_injection",
+        "attacker": "purplellama",
+        "required_metric": "cyberseceval_prompt_injection_judge_question",
+    }
+    all_abstained_boundary["evaluator_compatibility_modes"] = {
+        "rules,guardrail": 1
+    }
+    all_abstained_boundary["cascade_expected_lanes"] = ["bridge-purplellama"]
+    all_abstained_boundary["approximate_common_metrics"].update(
+        {
+            "expected_from_ineligible_opted_in_strata": True,
+            "expected_conditions": [proxy_condition],
+            "estimate_rows": 0,
+            "selected_judges": [],
+            "judge_models": [],
+        }
+    )
+    all_abstained_boundary["runner_outcomes"] = {
+        "bridge-purplellama": "measured_complete"
+    }
+    all_abstained_boundary["lifecycle_registry_states"] = {
+        "bridge-purplellama": "complete"
+    }
+    all_abstained_boundary["runner_lifecycle_authorizations"] = {
+        "bridge-purplellama": {}
+    }
+    validate_analysis_boundaries(
+        all_abstained_boundary,
+        expected_cascade_lanes=["bridge-purplellama"],
+        expected_proxy_conditions=[proxy_condition],
+    )
+    passed()
+    bad_all_abstained = json.loads(json.dumps(all_abstained_boundary))
+    bad_all_abstained["approximate_common_metrics"][
+        "expected_from_ineligible_opted_in_strata"
+    ] = False
+    rejected(
+        lambda: validate_analysis_boundaries(
+            bad_all_abstained,
+            expected_cascade_lanes=["bridge-purplellama"],
+            expected_proxy_conditions=[proxy_condition],
+        ),
+        "all-abstained proxy expectation mismatch",
     )
     bad_boundary = json.loads(json.dumps(boundary))
     bad_boundary["cascade_expected_lanes"] = ["forged-lane"]
