@@ -207,6 +207,54 @@ def test_gptgeochat_rwkv_cross_products_are_exact_typed_terminals() -> None:
     assert '(25, 18, ["defense-local"])' not in combined
 
 
+def test_ollama_bounded_lane_identity_is_used_by_every_workflow_stage() -> None:
+    source = (
+        Path(__file__).parents[2]
+        / "experiments"
+        / "local_campaign"
+        / "templates"
+        / "phase5_ollama_workflow.sh.in"
+    ).read_text(encoding="utf-8")
+
+    assert source.count('f"ollama-{label}-text-exploratory-50"') == 2
+    assert source.count(
+        'static_lane="ollama-${label}-text-exploratory-50"'
+    ) == 2
+    assert 'f"ollama-{label}-text-full"' not in source
+    assert 'static_lane="ollama-${label}-text-full"' not in source
+
+
+def test_gate5_binds_each_bounded_arm_to_the_declared_sampling_method() -> None:
+    root = Path(__file__).parents[2] / "experiments" / "local_campaign" / "templates"
+    finalizer = (root / "phase5_finalize_gate5.sh.in").read_text(encoding="utf-8")
+    promoter = (root / "phase5_promote_gate5.sh.in").read_text(encoding="utf-8")
+    contracts = (
+        (
+            finalizer,
+            (
+                'BOUNDED_SELECTION_METHOD = "seeded_nested_source_cluster_prefix_v1"',
+                'or selected_arm.get("limit") != expected_limit',
+                'or selected_arm.get("selection_method") != BOUNDED_SELECTION_METHOD',
+            ),
+        ),
+        (
+            promoter,
+            (
+                'BOUNDED_SELECTION_METHOD = "seeded_nested_source_cluster_prefix_v1"',
+                'or arm.get("limit") != expected_limit',
+                'or arm.get("selection_method") != BOUNDED_SELECTION_METHOD',
+                'tests.append(("bounded_selection_method", wrong_selection_method))',
+            ),
+        ),
+    )
+    for source, required in contracts:
+        _assert_source_contract(source, required)
+        changed = source.replace(required[2], "or False", 1)
+        assert changed != source
+        with pytest.raises(AssertionError):
+            _assert_source_contract(changed, required)
+
+
 def test_phase7_splits_lifecycle_from_success_only_metric_views() -> None:
     source = (
         Path(__file__).parents[2]
@@ -496,7 +544,7 @@ def test_phase5_rr_preserves_projections_and_starts_terminal_at_canary(
             {
                 "rr_projection_unavailable", "rr_missing_projection_descriptor",
                 "rr_split_terminal_evidence", "rr_duplicate_projection",
-                "rr_swapped_projection_lane",
+                "rr_swapped_projection_lane", "conditional_v2_cross_mix",
             },
         ),
         (
@@ -505,6 +553,7 @@ def test_phase5_rr_preserves_projections_and_starts_terminal_at_canary(
             {
                 "rr_projection_unavailable", "rr_projection_descriptor_missing",
                 "rr_split_terminal_artifact", "rr_duplicate_projection",
+                "bounded_selection_method", "conditional_v2_cross_mix",
             },
         ),
     ):
@@ -525,6 +574,12 @@ def test_phase5_rr_preserves_projections_and_starts_terminal_at_canary(
         assert value["expected_runnable"] == [21, 22]
         assert value["expected_target_runtime_terminal"] == 4
         assert expected_mutations <= set(value["rejected_mutations"])
+        assert set(value["rejected_conditional_variant_mutations"]) == {
+            "v2_reason_from_v1",
+            "v2_accounting_from_v1",
+            "v1_with_evidence_limits",
+            "v2_boolean_stream_count",
+        }
         if filename == "phase5_finalize_gate5.sh":
             assert "adaptive_policy_evaluable_query_missing" in value[
                 "rejected_canary_stage_mutations"
@@ -534,6 +589,178 @@ def test_phase5_rr_preserves_projections_and_starts_terminal_at_canary(
             "hardcoded_one_rejected": True,
             "request_envelope_swap_rejected": True,
         }
+
+
+def test_phase5_defense_failure_classifiers_are_disjoint_and_mutation_bound() -> None:
+    source = (
+        Path(__file__).parents[2]
+        / "experiments"
+        / "local_campaign"
+        / "templates"
+        / "phase5_core_attest_canary.sh.in"
+    ).read_text(encoding="utf-8")
+    oom_start = source.index("write_defense_conditional_na() {")
+    output_start = source.index("write_defense_output_noncompletion_na() {")
+    rr_start = source.index("write_rr_target_runtime_terminal() {")
+    oom_classifier = source[oom_start:output_start].rstrip()
+    output_classifier = source[output_start:rr_start].rstrip()
+
+    # The admitted pre-call OOM classifier is an existing evidence contract.
+    # Keep it byte-for-byte stable while adding the disjoint post-call terminal.
+    assert hashlib.sha256(oom_classifier.encode("utf-8")).hexdigest() == (
+        "6df16db7fac421d9eef29ac40d94d323423b7ceaceca36c774c377733f1690b6"
+    )
+    assert 'SCHEMA = "ura-phase5-defense-canary-na/1"' in oom_classifier
+    assert 'REASON_CODE = "co_resident_cuda_oom_before_calls"' in oom_classifier
+    assert "target_calls\": 0" in oom_classifier
+    assert "grid_paths or response_paths or completion_paths or error_paths" in (
+        oom_classifier
+    )
+
+    required = (
+        'SCHEMA = "ura-phase5-defense-canary-na/2"',
+        'REASON_CODE = "target_output_noncompletion_at_generation_cap"',
+        'EXPECTED_TARGET_REVISION = "60595ebc30ec8e3b1d3b9e65d4943ca011c0006a"',
+        'EXPECTED_SCORING_GUARD_REVISION = "7327bd9f6efbbe6101dc6cc4736302b3cbb6e425"',
+        'EXPECTED_DEFENSE_GUARD_REVISION = "acf7aafa60f0410f8f42b1fa35e077d705892029"',
+        'error.get("model_spec") != resolved_target',
+        'error.get("target") != resolved_target',
+        'type(budget.get(field)) is not int',
+        'budget.get("target_calls") != 1',
+        'grid.get("n_errors") != 2',
+        'grid.get("engine_runtime_close") is not None',
+        '"model_spec", "phase", "run_id", "status", "target"',
+        '"class": "ura.targets.guarded.GuardedTarget"',
+        'components != expected_components',
+        'set(circuits) != {"format_version", "grid_id", "circuits"}',
+        'circuit.get("message") != expected_error_message',
+        'runner_log.splitlines().count(expected_failure_line) != 1',
+        'runner_log.splitlines().count(expected_done_line) != 1',
+        '"target_calls": 1',
+        '"defense_guardrail_evaluations": 1',
+        '"output_defense_guardrail_evaluations": 0',
+        '"scoring_guardrail_evaluations": 0',
+        '"category": "target_output_noncompletion"',
+        '"partial_grid": descriptor(grid_path)',
+        '"circuit_ledger": descriptor(circuits_path)',
+        '"target_error": descriptor(error_path)',
+        '"failed_cell_manifest": descriptor(manifest_path)',
+        '"parquet_placeholder": descriptor(parquet_path)',
+        'parquet_metadata.num_rows != 0',
+        'parquet_metadata.num_columns != 0',
+        'grid_resources != receipt_runtime_resources',
+        'manifest_resources != receipt_runtime_resources',
+        'retained_attestation_payload != attestation_payload',
+        '"retained_live_attestation": retained_attestation_desc',
+        'allow_empty: bool = False',
+        'allow_empty=True',
+        'initial.st_size != 0',
+        '"per_attempt_defense_audit_retained": False',
+    )
+    _assert_source_contract(output_classifier, required)
+    python_body = output_classifier.split("<<'PY'\n", 1)[1].rsplit("\nPY", 1)[0]
+    compile(python_body, "phase5-defense-output-noncompletion", "exec")
+
+    mutations = (
+        (
+            'SCHEMA = "ura-phase5-defense-canary-na/2"',
+            'SCHEMA = "ura-phase5-defense-canary-na/1"',
+        ),
+        ('budget.get("target_calls") != 1', 'budget.get("target_calls") != 0'),
+        ('"target_calls": 1', '"target_calls": 0'),
+        (
+            '"defense_guardrail_evaluations": 1',
+            '"defense_guardrail_evaluations": 0',
+        ),
+        (
+            'error.get("target") != resolved_target',
+            'error.get("target") != error.get("model_spec")',
+        ),
+        (
+            '"class": "ura.targets.guarded.GuardedTarget"',
+            '"class": "ura.targets.local.VLLMTarget"',
+        ),
+        (
+            'EXPECTED_SCORING_GUARD_REVISION = "7327bd9f6efbbe6101dc6cc4736302b3cbb6e425"',
+            'EXPECTED_SCORING_GUARD_REVISION = "0" * 40',
+        ),
+        (
+            'set(circuits) != {"format_version", "grid_id", "circuits"}',
+            'set(circuits) != {"format_version", "grid_id"}',
+        ),
+        (
+            'runner_log.splitlines().count(expected_failure_line) != 1',
+            'runner_log.splitlines().count(expected_failure_line) < 0',
+        ),
+        (
+            '"failed_cell_manifest": descriptor(manifest_path)',
+            '"failed_cell_manifest": None',
+        ),
+        ('parquet_metadata.num_rows != 0', 'parquet_metadata.num_rows < 0'),
+        (
+            'grid_resources != receipt_runtime_resources',
+            'grid_resources == receipt_runtime_resources',
+        ),
+        ('initial.st_size != 0', 'initial.st_size < 0'),
+        (
+            'retained_attestation_payload != attestation_payload',
+            'retained_attestation_payload == attestation_payload',
+        ),
+    )
+    for original, replacement in mutations:
+        changed = output_classifier.replace(original, replacement, 1)
+        assert changed != output_classifier
+        with pytest.raises(AssertionError):
+            _assert_source_contract(changed, required)
+
+    dispatch = source[source.index("if (( canary_rc != 0 )); then"):]
+    dispatch_required = (
+        "if write_defense_conditional_na \\",
+        "elif write_defense_output_noncompletion_na \\",
+        'return "$canary_rc"',
+        '[[ -f "$conditional_artifact" && ! -L "$conditional_artifact" ]]',
+    )
+    _assert_source_contract(dispatch, dispatch_required)
+    dispatch_mutation = dispatch.replace(
+        "elif write_defense_output_noncompletion_na \\",
+        "elif write_defense_conditional_na \\",
+        1,
+    )
+    with pytest.raises(AssertionError):
+        _assert_source_contract(dispatch_mutation, dispatch_required)
+
+
+def test_defense_output_noncompletion_log_prefix_is_shared_end_to_end() -> None:
+    template_root = (
+        Path(__file__).parents[2]
+        / "experiments"
+        / "local_campaign"
+        / "templates"
+    )
+    writer = (template_root / "phase5_core_attest_canary.sh.in").read_text(
+        encoding="utf-8"
+    )
+    finalizer = (template_root / "phase5_finalize_gate5.sh.in").read_text(
+        encoding="utf-8"
+    )
+    promoter = (template_root / "phase5_promote_gate5.sh.in").read_text(
+        encoding="utf-8"
+    )
+    core = (template_root / "phase6_core_measured.sh.in").read_text(
+        encoding="utf-8"
+    )
+    exact_prefix = (
+        'r"^  ! cell failed \\[[^\\r\\n]+\\]: ExternalCallFailure: target_call failed "'
+    )
+    assert 'f"  ! cell failed [{cell_prefix}]: ExternalCallFailure: "' in writer
+    for downstream, expected_count in (
+        (finalizer, 1),
+        (promoter, 1),
+        (core, 2),
+    ):
+        assert downstream.count(exact_prefix) == expected_count
+        assert exact_prefix.replace("^  !", "^!") not in downstream
+        assert '"retained_live_attestation"' in downstream
 
 
 def test_gate5_failed_attestation_retry_is_content_bound_and_mutation_tested(
@@ -1518,7 +1745,7 @@ def test_phase6_uses_the_approved_lane_wall_ceiling_and_reaps_timed_out_trees() 
     sequence = (templates / "phase6_sequence.sh.in").read_text(encoding="utf-8")
 
     gate5_required = (
-        "MEASURED_LANE_WALL_TIME_SECONDS = 1_209_600",
+        "MEASURED_LANE_WALL_TIME_SECONDS = 86_400",
         '"measured_lane_wall_time_seconds": MEASURED_LANE_WALL_TIME_SECONDS',
         '"measured_lane_wall_time_semantics":',
         '"controller_completion_ceiling_distinct_from_call_start_admission_window"',
@@ -1546,11 +1773,13 @@ def test_phase6_uses_the_approved_lane_wall_ceiling_and_reaps_timed_out_trees() 
         "process.wait(timeout=self.remaining_lane_time(lane))",
         "for spec_path in spec_paths:",
         "continue",
+        'wrong_wall_time[failed_lane]["approved_wall_time_seconds"] = 86_401',
+        'must_fail("wall-time-ceiling", mutated_failures=wrong_wall_time)',
     )
     _assert_source_contract(extended, extended_required)
     sequence_required = (
         'GATE5_LANE_WALL_TIME_SECONDS="${gate5_values[4]}"',
-        'test "$GATE5_LANE_WALL_TIME_SECONDS" = \'1209600\'',
+        'test "$GATE5_LANE_WALL_TIME_SECONDS" = \'86400\'',
         "controller_ceiling=$((GATE5_LANE_WALL_TIME_SECONDS * (lane_count + 1)))",
         "controller-wall-time-exceeded",
         'tmux -L "$socket" kill-session -t "$session"',
@@ -1561,8 +1790,8 @@ def test_phase6_uses_the_approved_lane_wall_ceiling_and_reaps_timed_out_trees() 
         (
             gate5,
             gate5_required,
-            "MEASURED_LANE_WALL_TIME_SECONDS = 1_209_600",
-            "MEASURED_LANE_WALL_TIME_SECONDS = 7_776_000",
+            "MEASURED_LANE_WALL_TIME_SECONDS = 86_400",
+            "MEASURED_LANE_WALL_TIME_SECONDS = 86_401",
         ),
         (core, core_required, 'kill -KILL -- "-$child"', ":"),
         (
@@ -1572,10 +1801,16 @@ def test_phase6_uses_the_approved_lane_wall_ceiling_and_reaps_timed_out_trees() 
             "process.kill()",
         ),
         (
+            extended,
+            extended_required,
+            'wrong_wall_time[failed_lane]["approved_wall_time_seconds"] = 86_401',
+            'wrong_wall_time[failed_lane]["approved_wall_time_seconds"] = 86_400',
+        ),
+        (
             sequence,
             sequence_required,
-            'test "$GATE5_LANE_WALL_TIME_SECONDS" = \'1209600\'',
-            'test "$GATE5_LANE_WALL_TIME_SECONDS" = \'7776000\'',
+            'test "$GATE5_LANE_WALL_TIME_SECONDS" = \'86400\'',
+            'test "$GATE5_LANE_WALL_TIME_SECONDS" = \'86401\'',
         ),
     ):
         changed = source.replace(original, replacement, 1)

@@ -409,8 +409,8 @@ def descriptor_file(raw: object, label: str) -> Path:
 
 # BEGIN_PHASE6_COMPLETION_PROFILE_CONTRACT
 CORE_CANDIDATE_LANES = {
-    "local-qwen3-vl-text-full", "local-qwen3-vl-image-full",
-    "local-llava-base-text-full", "local-llava-base-image-full",
+    "local-qwen3-vl-text-primary-100", "local-qwen3-vl-image-primary-100",
+    "local-llava-base-text-primary-100", "local-llava-base-image-primary-100",
     "local-llava-rr-text-full", "local-llava-rr-image-full",
     "rjudge-qwen3-vl", "rjudge-llava-base", "rjudge-llava-rr",
     "gptgeochat-qwen3-vl", "gptgeochat-llava-base", "gptgeochat-llava-rr",

@@ -54,6 +54,7 @@ class BuilderCaptureMixin:
         "cap_target",
         "cap_judge",
         "cap_http",
+        "local_budget_hours",
         "deadline",
         "dtype",
         "quantization",
@@ -61,6 +62,8 @@ class BuilderCaptureMixin:
         "t3_artifact",
         "t3_artifact_sha",
         "harm_config",
+        "ideator_manifest",
+        "ideator_manifest_sha",
         "engine_runtime_config",
         "engine_runtime_config_sha",
         "nanogcg_model_id",
@@ -141,6 +144,10 @@ class BuilderCaptureMixin:
                 and not key.startswith(("t3cap_", "hcap_"))
                 and (key not in {"t3_artifact", "t3_artifact_sha"} or "t3mp3st" in attackers)
                 and (key != "harm_config" or "harmbench" in attackers)
+                and (
+                    key not in {"ideator_manifest", "ideator_manifest_sha"}
+                    or "ideator" in attackers
+                )
                 and str(value).strip()
             )
         }
@@ -517,6 +524,9 @@ class BuilderCaptureMixin:
             params.pop("t3_artifact_sha", None)
         if "harmbench" not in attackers:
             params.pop("harm_config", None)
+        if "ideator" not in attackers:
+            params.pop("ideator_manifest", None)
+            params.pop("ideator_manifest_sha", None)
         if "nanogcg" not in attackers:
             for field in (
                 "nanogcg_model_id",
@@ -525,6 +535,17 @@ class BuilderCaptureMixin:
                 "nanogcg_suffix_source",
             ):
                 params.pop(field, None)
+        local_budget_hours = params.get("local_budget_hours", "")
+        if (
+            local_budget_hours
+            and re.fullmatch(r"[1-9][0-9]*", local_budget_hours)
+            and not params.get("deadline", "")
+        ):
+            # A local call-start budget is a human-friendly spelling of the
+            # Runner's durable call-start window. Validation restricts it to a
+            # measured local-target lane and checks any explicitly supplied
+            # seconds value for exact agreement.
+            params["deadline"] = str(int(local_budget_hours) * 3600)
         return params
 
     def _compose_from_builder(
@@ -605,7 +626,8 @@ class BuilderCaptureMixin:
             # never "full corpus" on the CLI (its argparse default is 50
             # clusters).  Validation admits a blank limit only for a local-only
             # measured lane, whose documented policy is the complete release
-            # (--limit 0); hosted paid lanes must type a positive value.  The
+            # (--limit 0); hosted paid lanes must type an explicit positive
+            # bound or 0 for a separately approved full cohort.  The
             # retained params carry the same value so the review page, the
             # ceilings card, and the preflight identity all agree.
             values["--limit"] = "0"

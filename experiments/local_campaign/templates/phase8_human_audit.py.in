@@ -10,6 +10,7 @@ preparation completed; the terminal record remains human-only blocked.
 from __future__ import annotations
 
 import argparse
+import copy
 import csv
 import datetime as dt
 import dis
@@ -119,10 +120,10 @@ MAX_TEXT_BYTES = 256 * 1024 * 1024
 _SOURCE_ONLY_CACHE: tempfile.TemporaryDirectory[str] | None = None
 
 CORE_LANES = (
-    "local-qwen3-vl-text-full",
-    "local-qwen3-vl-image-full",
-    "local-llava-base-text-full",
-    "local-llava-base-image-full",
+    "local-qwen3-vl-text-primary-100",
+    "local-qwen3-vl-image-primary-100",
+    "local-llava-base-text-primary-100",
+    "local-llava-base-image-primary-100",
     "local-llava-rr-text-full",
     "local-llava-rr-image-full",
     "rjudge-qwen3-vl",
@@ -171,11 +172,11 @@ EXTENDED_LANES = (
     "bridge-spikee",
     "bridge-purplellama",
     "harmbench-replay",
-    "ollama-rwkv-g1d-0p4b-text-full",
+    "ollama-rwkv-g1d-0p4b-text-exploratory-50",
     "rjudge-ollama-rwkv-g1d-0p4b",
-    "ollama-rwkv-g1f-2p9b-text-full",
+    "ollama-rwkv-g1f-2p9b-text-exploratory-50",
     "rjudge-ollama-rwkv-g1f-2p9b",
-    "ollama-rwkv-g1g-1p5b-text-full",
+    "ollama-rwkv-g1g-1p5b-text-exploratory-50",
     "rjudge-ollama-rwkv-g1g-1p5b",
 )
 RUNNABLE_LANES = CORE_LANES + EXTENDED_LANES
@@ -195,6 +196,71 @@ DEFENSE_LOCAL_CONDITIONAL_ACCOUNTING = {
     "hosted_target_calls": 0,
     "hosted_judge_calls": 0,
     "http_attempts": 0,
+}
+DEFENSE_LOCAL_CONDITIONAL_V2_SCHEMA = "ura-phase5-defense-canary-na/2"
+DEFENSE_LOCAL_CONDITIONAL_V2_REASON_CODE = (
+    "target_output_noncompletion_at_generation_cap"
+)
+DEFENSE_LOCAL_CONDITIONAL_V2_REASON = (
+    "The defense-local canary completed one input screening with the exact "
+    "Llama Guard 1B defense and then made one Qwen3-VL target call, but the "
+    "target completion reached the 4096-token generation cap and was rejected "
+    "as incomplete. No output-defense or scoring-guard judgment was produced."
+)
+DEFENSE_LOCAL_CONDITIONAL_V2_ACCOUNTING = {
+    "accounting_semantics": "durable_pre_call_logical_reservation_v1",
+    "target_calls": 1, "model_judge_calls": 0, "local_guardrail_evaluations": 1,
+    "defense_guardrail_evaluations": 1,
+    "output_defense_guardrail_evaluations": 0,
+    "scoring_guardrail_evaluations": 0, "hosted_target_calls": 0,
+    "hosted_judge_calls": 0, "http_attempts": 0,
+}
+DEFENSE_LOCAL_CONDITIONAL_VARIANTS = {
+    DEFENSE_LOCAL_CONDITIONAL_SCHEMA: {
+        "reason_code": DEFENSE_LOCAL_CONDITIONAL_REASON_CODE,
+        "reason": DEFENSE_LOCAL_CONDITIONAL_REASON,
+        "accounting": DEFENSE_LOCAL_CONDITIONAL_ACCOUNTING,
+        "classification": {"category": "co_resident_cuda_oom",
+            "runner_lifecycle_phase": "model_preload_before_grid_start",
+            "positive_evidence": "run_matrix_lifecycle_error_cuda_out_of_memory",
+            "returncode": 1},
+        "runner_outputs": {"grid_artifacts": 0, "response_streams": 0,
+            "completion_artifacts": 0, "error_artifacts": 0},
+        "evidence_limits": None,
+        "artifacts": {"runner_log", "budget_ledger", "invocation_deadline",
+            "request_envelope", "eligibility_plan", "lane_projection",
+            "acquisition_plan", "acquisition_receipt", "acquisition_result_log",
+            "live_attestation", "local_config", "project_revision", "source_config",
+            "source_conformance"},
+    },
+    DEFENSE_LOCAL_CONDITIONAL_V2_SCHEMA: {
+        "reason_code": DEFENSE_LOCAL_CONDITIONAL_V2_REASON_CODE,
+        "reason": DEFENSE_LOCAL_CONDITIONAL_V2_REASON,
+        "accounting": DEFENSE_LOCAL_CONDITIONAL_V2_ACCOUNTING,
+        "classification": {"category": "target_output_noncompletion",
+            "runner_lifecycle_phase": "cell_target_call",
+            "positive_evidence": "local_target_output_error_finish_reason_length",
+            "returncode": 1},
+        "runner_outputs": {"grid_artifacts": 1, "manifest_artifacts": 1,
+            "response_streams": 1, "attempt_streams": 1,
+            "judge_trail_streams": 1, "result_streams": 1,
+            "parquet_artifacts": 1, "completion_artifacts": 0,
+            "error_artifacts": 1, "stream_records": {"attempts": 0,
+                "responses": 0, "judge_trails": 0, "results": 0}},
+        "evidence_limits": {"successful_cells": 0, "successful_responses": 0,
+            "output_defense_evaluations": 0, "scoring_guardrail_evaluations": 0,
+            "input_defense_evaluation_basis":
+                "pinned_guarded_target_control_flow_before_reserved_base_target_call",
+            "per_attempt_defense_audit_retained": False},
+        "artifacts": {"runner_log", "budget_ledger", "partial_grid", "circuit_ledger",
+            "target_error", "failed_cell_manifest", "empty_attempts", "empty_responses",
+            "empty_judge_trails", "empty_results", "parquet_placeholder",
+            "invocation_deadline", "request_envelope", "eligibility_plan",
+            "lane_projection", "acquisition_plan", "acquisition_receipt",
+            "acquisition_result_log", "live_attestation", "retained_live_attestation",
+            "local_config",
+            "project_revision", "source_config", "source_conformance"},
+    },
 }
 TERMINAL_LANES = {
     **{lane: "unavailable" for lane in RR_RUNTIME_TERMINAL_LANES},
@@ -1745,6 +1811,20 @@ def _validate_rr_runtime_terminal_rows(
     return shared
 
 
+def exact_json_contract(left: object, right: object) -> bool:
+    if type(left) is not type(right):
+        return False
+    if isinstance(right, dict):
+        return set(left) == set(right) and all(
+            exact_json_contract(left[key], right[key]) for key in right
+        )
+    if isinstance(right, list):
+        return len(left) == len(right) and all(
+            exact_json_contract(a, b) for a, b in zip(left, right)
+        )
+    return left == right
+
+
 def _validate_conditional_defense_row(
     row: object, *, label: str, validate_artifact: bool = True
 ) -> None:
@@ -1766,8 +1846,6 @@ def _validate_conditional_defense_row(
         row.get("lane_id") != DEFENSE_LOCAL_LANE
         or row.get("family") != "core"
         or row.get("disposition") != "conditional_na"
-        or row.get("reason_code") != DEFENSE_LOCAL_CONDITIONAL_REASON_CODE
-        or row.get("reason") != DEFENSE_LOCAL_CONDITIONAL_REASON
         or row.get("projection") != typed_na
         or row.get("final_preflight") != typed_na
         or row.get("approved_caps") != typed_na
@@ -1776,21 +1854,17 @@ def _validate_conditional_defense_row(
         != {"status", "value", "conditional_na_artifact", "call_accounting"}
         or canary.get("status") != "N/A"
         or canary.get("value") is not None
-        or canary.get("call_accounting") != DEFENSE_LOCAL_CONDITIONAL_ACCOUNTING
     ):
         raise Phase8Error(f"{label} conditional defense row changed")
-    exact_zero_fields(
-        canary["call_accounting"],
-        (
-            "target_calls",
-            "model_judge_calls",
-            "local_guardrail_evaluations",
-            "hosted_target_calls",
-            "hosted_judge_calls",
-            "http_attempts",
-        ),
-        label=f"{label} conditional defense canary accounting",
-    )
+    row_variants = [
+        variant for variant in DEFENSE_LOCAL_CONDITIONAL_VARIANTS.values()
+        if row.get("reason_code") == variant["reason_code"]
+        and row.get("reason") == variant["reason"]
+        and exact_json_contract(canary.get("call_accounting"), variant["accounting"])
+    ]
+    if len(row_variants) != 1:
+        raise Phase8Error(f"{label} conditional defense variants are cross-mixed")
+    row_variant = row_variants[0]
     raw_descriptor = canary.get("conditional_na_artifact")
     if not isinstance(raw_descriptor, dict) or set(raw_descriptor) != {
         "path",
@@ -1803,7 +1877,8 @@ def _validate_conditional_defense_row(
     artifact_path, artifact = descriptor_object(
         raw_descriptor, label=f"{label} conditional defense artifact"
     )
-    if set(artifact) != {
+    variant = DEFENSE_LOCAL_CONDITIONAL_VARIANTS.get(artifact.get("schema"))
+    expected_fields = {
         "schema",
         "status",
         "lane_id",
@@ -1817,32 +1892,22 @@ def _validate_conditional_defense_row(
         "runner_outputs",
         "artifacts",
         "resource_identities",
-    }:
+    }
+    if variant is not None and variant["evidence_limits"] is not None:
+        expected_fields.add("evidence_limits")
+    if variant is None or variant is not row_variant or set(artifact) != expected_fields:
         raise Phase8Error(f"{label} conditional defense artifact fields changed")
     if (
-        artifact.get("schema") != DEFENSE_LOCAL_CONDITIONAL_SCHEMA
-        or artifact.get("status") != "N/A"
+        artifact.get("status") != "N/A"
         or artifact.get("lane_id") != DEFENSE_LOCAL_LANE
         or artifact.get("disposition") != "conditional_na"
-        or artifact.get("reason_code") != DEFENSE_LOCAL_CONDITIONAL_REASON_CODE
-        or artifact.get("reason") != DEFENSE_LOCAL_CONDITIONAL_REASON
+        or artifact.get("reason_code") != variant["reason_code"]
+        or artifact.get("reason") != variant["reason"]
         or UTC_RE.fullmatch(str(artifact.get("classified_at_utc", ""))) is None
-        or artifact.get("classification")
-        != {
-            "category": "co_resident_cuda_oom",
-            "runner_lifecycle_phase": "model_preload_before_grid_start",
-            "positive_evidence": "run_matrix_lifecycle_error_cuda_out_of_memory",
-            "returncode": 1,
-        }
-        or artifact.get("call_accounting")
-        != DEFENSE_LOCAL_CONDITIONAL_ACCOUNTING
-        or artifact.get("runner_outputs")
-        != {
-            "grid_artifacts": 0,
-            "response_streams": 0,
-            "completion_artifacts": 0,
-            "error_artifacts": 0,
-        }
+        or not exact_json_contract(artifact.get("classification"), variant["classification"])
+        or not exact_json_contract(artifact.get("call_accounting"), variant["accounting"])
+        or not exact_json_contract(artifact.get("runner_outputs"), variant["runner_outputs"])
+        or not exact_json_contract(artifact.get("evidence_limits"), variant["evidence_limits"])
     ):
         raise Phase8Error(f"{label} conditional defense artifact changed")
     classification = artifact["classification"]
@@ -1850,28 +1915,6 @@ def _validate_conditional_defense_row(
         raise Phase8Error(
             f"{label} conditional defense classifier return code changed"
         )
-    exact_zero_fields(
-        artifact["call_accounting"],
-        (
-            "target_calls",
-            "model_judge_calls",
-            "local_guardrail_evaluations",
-            "hosted_target_calls",
-            "hosted_judge_calls",
-            "http_attempts",
-        ),
-        label=f"{label} conditional defense artifact accounting",
-    )
-    exact_zero_fields(
-        artifact["runner_outputs"],
-        (
-            "grid_artifacts",
-            "response_streams",
-            "completion_artifacts",
-            "error_artifacts",
-        ),
-        label=f"{label} conditional defense runner outputs",
-    )
     bindings = artifact.get("bindings")
     if not isinstance(bindings, dict) or set(bindings) != {
         "expected_commit",
@@ -1905,22 +1948,7 @@ def _validate_conditional_defense_row(
     ):
         raise Phase8Error(f"{label} conditional defense binding values changed")
     artifacts = artifact.get("artifacts")
-    expected_artifacts = {
-        "runner_log",
-        "budget_ledger",
-        "invocation_deadline",
-        "request_envelope",
-        "eligibility_plan",
-        "lane_projection",
-        "acquisition_plan",
-        "acquisition_receipt",
-        "acquisition_result_log",
-        "live_attestation",
-        "local_config",
-        "project_revision",
-        "source_config",
-        "source_conformance",
-    }
+    expected_artifacts = variant["artifacts"]
     if not isinstance(artifacts, dict) or set(artifacts) != expected_artifacts:
         raise Phase8Error(f"{label} conditional defense artifact inventory changed")
     artifact_observations = {
@@ -1962,14 +1990,28 @@ def _validate_conditional_defense_row(
         if isinstance(retained_attestation, dict)
         else None
     )
-    live_descriptor = artifacts["live_attestation"]
+    live_name = (
+        "retained_live_attestation"
+        if artifact.get("schema") == DEFENSE_LOCAL_CONDITIONAL_V2_SCHEMA
+        else "live_attestation"
+    )
+    live_descriptor = artifacts[live_name]
+    if artifact.get("schema") == DEFENSE_LOCAL_CONDITIONAL_V2_SCHEMA and (
+        live_descriptor["sha256"] != artifacts["live_attestation"]["sha256"]
+        or live_descriptor["bytes"] != artifacts["live_attestation"]["bytes"]
+        or Path(live_descriptor["path"]).name
+        != f"live-attestation-{artifacts['live_attestation']['sha256'][:24]}.json"
+    ):
+        raise Phase8Error(
+            f"{label} retained live attestation differs from source"
+        )
     expected_live_artifact = {
         "file": Path(live_descriptor["path"]).name,
         "sha256": live_descriptor["sha256"],
         "bytes": live_descriptor["bytes"],
     }
     live_attestation = strict_loads(
-        artifact_observations["live_attestation"][1],
+        artifact_observations[live_name][1],
         label=f"{label} conditional defense live attestation",
     )
     if not isinstance(live_attestation, dict):
@@ -7428,8 +7470,8 @@ def validate_phase7_completion(
         raise Phase8Error("Phase 7 lifecycle Runner authorization differs")
 
     qwen_lanes = {
-        "local-qwen3-vl-text-full",
-        "local-qwen3-vl-image-full",
+        "local-qwen3-vl-text-primary-100",
+        "local-qwen3-vl-image-primary-100",
         "rjudge-qwen3-vl",
         "gptgeochat-qwen3-vl",
         "crescendo-qwen3-vl",
@@ -7443,8 +7485,8 @@ def validate_phase7_completion(
     }
     qwen_lanes &= set(scheduled_runner_lanes)
     llava_base_lanes = {
-        "local-llava-base-text-full",
-        "local-llava-base-image-full",
+        "local-llava-base-text-primary-100",
+        "local-llava-base-image-primary-100",
         "rjudge-llava-base",
         "gptgeochat-llava-base",
     }
@@ -11536,7 +11578,7 @@ def self_test() -> int:
     next(
         row
         for row in other_conditional
-        if row["lane_id"] == "local-qwen3-vl-text-full"
+        if row["lane_id"] == "local-qwen3-vl-text-primary-100"
     )["disposition"] = "conditional_na"
     rejected(
         lambda: _exact_inventory(other_conditional, validate_artifact=False),
@@ -12174,6 +12216,79 @@ def self_test() -> int:
                 if row["lane_id"] == DEFENSE_LOCAL_LANE
             )
         ] = retained_conditional_row
+        conditional_artifact_v2 = copy.deepcopy(conditional_artifact)
+        variant_v2 = DEFENSE_LOCAL_CONDITIONAL_VARIANTS[
+            DEFENSE_LOCAL_CONDITIONAL_V2_SCHEMA
+        ]
+        conditional_artifact_v2.update({
+            "schema": DEFENSE_LOCAL_CONDITIONAL_V2_SCHEMA,
+            "reason_code": variant_v2["reason_code"],
+            "reason": variant_v2["reason"],
+            "classification": copy.deepcopy(variant_v2["classification"]),
+            "call_accounting": copy.deepcopy(variant_v2["accounting"]),
+            "runner_outputs": copy.deepcopy(variant_v2["runner_outputs"]),
+            "evidence_limits": copy.deepcopy(variant_v2["evidence_limits"]),
+        })
+        for name in variant_v2["artifacts"] - set(
+            conditional_artifact_v2["artifacts"]
+        ):
+            if name == "retained_live_attestation":
+                source_live = conditional_artifact_v2["artifacts"]["live_attestation"]
+                evidence_path = root / (
+                    f"live-attestation-{source_live['sha256'][:24]}.json"
+                )
+                write_new(evidence_path, Path(source_live["path"]).read_bytes())
+            else:
+                evidence_path = root / f"conditional-defense-v2-{name}.fixture"
+                write_new(
+                    evidence_path,
+                    b"" if name.startswith("empty_") else b"{}\n",
+                )
+            conditional_artifact_v2["artifacts"][name] = descriptor(evidence_path)
+        retained_live = conditional_artifact_v2["artifacts"][
+            "retained_live_attestation"
+        ]
+        eligibility_v2 = json.loads(
+            Path(
+                conditional_artifact_v2["artifacts"]["eligibility_plan"]["path"]
+            ).read_text(encoding="utf-8")
+        )
+        eligibility_v2["experiment_conditions"]["values"]["live_attestation"][
+            "artifacts"
+        ][0].update({
+            "file": Path(retained_live["path"]).name,
+            "sha256": retained_live["sha256"],
+            "bytes": retained_live["bytes"],
+        })
+        eligibility_v2_path = root / "conditional-defense-v2-eligibility.json"
+        write_new(eligibility_v2_path, canonical(eligibility_v2))
+        conditional_artifact_v2["artifacts"]["eligibility_plan"] = descriptor(
+            eligibility_v2_path
+        )
+        conditional_artifact_v2_path = root / "conditional-defense-na-v2.json"
+        write_new(conditional_artifact_v2_path, canonical(conditional_artifact_v2))
+        retained_conditional_row_v2 = copy.deepcopy(retained_conditional_row)
+        retained_conditional_row_v2.update({
+            "reason_code": variant_v2["reason_code"],
+            "reason": variant_v2["reason"],
+        })
+        retained_conditional_row_v2["canary"].update({
+            "conditional_na_artifact": descriptor(conditional_artifact_v2_path),
+            "call_accounting": copy.deepcopy(variant_v2["accounting"]),
+        })
+        _validate_conditional_defense_row(
+            retained_conditional_row_v2,
+            label="conditional-defense-artifact-v2-self-test",
+        )
+        cross_mixed_v2 = copy.deepcopy(retained_conditional_row_v2)
+        cross_mixed_v2["reason"] = DEFENSE_LOCAL_CONDITIONAL_REASON
+        rejected(
+            lambda: _validate_conditional_defense_row(
+                cross_mixed_v2,
+                label="conditional-defense-artifact-v2-self-test",
+            ),
+            "conditional defense v2 cross mix",
+        )
         passed()
         for mutation_name, container, field, replacement in (
             (

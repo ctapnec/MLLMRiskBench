@@ -599,6 +599,11 @@ class LifecycleMixin:
         )
         bind_path("t3_artifact", "private-t3mp3st-artifact", "t3_artifact_sha")
         bind_path(
+            "ideator_manifest",
+            "private-ideator-seed-pair-manifest",
+            "ideator_manifest_sha",
+        )
+        bind_path(
             "engine_runtime_config",
             "private-engine-runtime-config",
             "engine_runtime_config_sha",
@@ -945,6 +950,28 @@ class LifecycleMixin:
                     path.name,
                 ):
                     found.append(path)
+            seed_pairs = entry.get("seed_pairs")
+            if isinstance(seed_pairs, list):
+                for pair in seed_pairs:
+                    if (
+                        not isinstance(pair, list)
+                        or len(pair) != 2
+                        or not isinstance(pair[1], str)
+                    ):
+                        continue
+                    candidate = Path(pair[1]).expanduser()
+                    if candidate.is_symlink() or candidate.is_junction():
+                        continue
+                    try:
+                        path = candidate.resolve(strict=False)
+                    except (OSError, RuntimeError):
+                        continue
+                    if path.parent == root and re.fullmatch(
+                        r"selected-ideator-image-[0-9]{4}-[0-9a-f]{24}-"
+                        r"[0-9a-f]{16}\.json",
+                        path.name,
+                    ):
+                        found.append(path)
         return tuple(found)
 
     def _private_evidence_paths(

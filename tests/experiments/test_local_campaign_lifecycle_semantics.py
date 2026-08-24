@@ -283,7 +283,7 @@ def _request(phase7: ModuleType, purpose: str) -> dict[str, object]:
         "judge_model": None,
         "seeds": [0],
         "sample_seed": 0,
-        "limit": 0,
+        "limit": 100,
         "max_queries": 1,
         "max_turns": 1,
         "defense": "none",
@@ -337,7 +337,7 @@ def _request_fixture(
     gate5_path = write_request_envelope(tmp_path / "gate5", gate5)
     measured_path = write_request_envelope(tmp_path / "measured", measured)
     spec = {
-        "lane_id": "lane-a",
+        "lane_id": "local-qwen3-vl-text-primary-100",
         "target": {"spec": "vllm:model-a"},
         "expected_corpora": ["arm-a"],
         "expected_attacker": "replay",
@@ -366,7 +366,7 @@ def test_measured_envelope_and_grid_requests_are_semantically_bound(
     )
     assert phase7.validate_measured_request_envelope_artifact(
         measured_path,
-        lane="lane-a",
+        lane="local-qwen3-vl-text-primary-100",
         spec=spec,
         expected_project_binding=project,
     ) == envelope_descriptor
@@ -387,7 +387,7 @@ def test_measured_envelope_and_grid_requests_are_semantically_bound(
         "hosted_judge_data_transfer_acknowledged": False,
         "seeds": [0],
         "sample_seed": 0,
-        "limit": 0,
+        "limit": 100,
         "group_keys": list(phase7.GROUP_KEYS),
         "defense": "none",
         "defense_guard": "rules",
@@ -410,7 +410,7 @@ def test_measured_envelope_and_grid_requests_are_semantically_bound(
     }
     assert phase7.validate_measured_grid_request(
         grid_request,
-        lane="lane-a",
+        lane="local-qwen3-vl-text-primary-100",
         spec=spec,
         model_selector="vllm:model-a",
         expected_project_binding=project,
@@ -422,6 +422,8 @@ def test_measured_envelope_and_grid_requests_are_semantically_bound(
         ("dry_run", True),
         ("models", ["vllm:model-b"]),
         ("corpora", ["arm-b"]),
+        ("limit", 0),
+        ("sample_seed", 1),
         ("source_conformance_artifact", {"sha256": "4" * 64}),
     ):
         mutated = copy.deepcopy(grid_request)
@@ -429,7 +431,7 @@ def test_measured_envelope_and_grid_requests_are_semantically_bound(
         with pytest.raises(phase7.Phase7Error, match="sealed measured lane"):
             phase7.validate_measured_grid_request(
                 mutated,
-                lane="lane-a",
+                lane="local-qwen3-vl-text-primary-100",
                 spec=spec,
                 model_selector="vllm:model-a",
                 expected_project_binding=project,
@@ -450,7 +452,7 @@ def test_measured_envelope_and_grid_requests_are_semantically_bound(
     with pytest.raises(phase7.Phase7Error, match="exact Gate 5 request"):
         phase7.validate_measured_request_envelope_artifact(
             mismatch_path,
-            lane="lane-a",
+            lane="local-qwen3-vl-text-primary-100",
             spec=spec,
             expected_project_binding=project,
         )
@@ -528,7 +530,7 @@ def _analysis_controller(
             "left_replay_lane_failed",
         ),
         (
-            ("local-qwen3-vl-text-full",),
+            ("local-qwen3-vl-text-primary-100",),
             ["right_crescendo"],
             "right_crescendo_lane_failed",
         ),
@@ -607,7 +609,7 @@ def test_phase7_conditional_analysis_availability_is_lane_specific(
     cases = (
         ((), (False, False, False)),
         (("rjudge-qwen3-vl",), (True, False, True)),
-        (("local-qwen3-vl-text-full",), (True, True, True)),
+        (("local-qwen3-vl-text-primary-100",), (True, True, True)),
         (("defense-local",), (False, False, False)),
         (("crescendo-qwen3-vl",), (False, False, False)),
     )
@@ -661,7 +663,7 @@ def test_phase7_non_estimable_artifacts_reject_mutations_and_bad_evidence(
 
     invalid_runner = copy.deepcopy(runner)
     invalid_runner["lifecycle_authorizations"][
-        "local-qwen3-vl-text-full"
+        "local-qwen3-vl-text-primary-100"
     ]["controller_failure"]["sha256"] = "not-a-digest"
     with pytest.raises(phase7.Phase7Error, match="failure descriptor changed"):
         phase7.non_estimable_analysis_value(invalid_runner, "transfer-matrix")

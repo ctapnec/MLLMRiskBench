@@ -23,6 +23,7 @@ from .catalog import (
     _FRAMEWORKS,
     _BUILD_MODES,
     _RUNBOOK_GROUP,
+    _LOCAL_BUDGET_HELP,
     _icon,
     _arm_head,
 )
@@ -1409,7 +1410,7 @@ class BuilderPageMixin:
                 )
             prepared_badge = ""
             prepared_control = ""
-            if fw in {"t3mp3st", "harmbench", "nanogcg"}:
+            if fw in {"t3mp3st", "harmbench", "ideator", "nanogcg"}:
                 if fw == "t3mp3st":
                     detail = (
                         "Capture a validated planning bundle first; measured replay "
@@ -1422,13 +1423,20 @@ class BuilderPageMixin:
                         "capture config, corpus, and digest before calls."
                     )
                     badge = "prepare + replay"
-                else:
+                elif fw == "nanogcg":
                     detail = (
                         "Provide an exact precomputed suffix for replay. Live "
                         "nanoGCG generation remains disabled until its isolated "
                         "runtime handshake is implemented."
                     )
                     badge = "precomputed replay"
+                else:
+                    detail = (
+                        "Provide a content-addressed ura-ideator-seed-pairs/1 "
+                        "manifest. Build verifies and snapshots every declared "
+                        "PNG before the reviewed lane can launch."
+                    )
+                    badge = "verified seed-pair replay"
                 prepared_badge = (
                     "<span class='badge blue tip prepared-framework-badge' "
                     "tabindex='0'>"
@@ -1576,7 +1584,12 @@ class BuilderPageMixin:
             + "</div></section>"
         )
 
-        selected_prepared = attackers_selected & {"t3mp3st", "harmbench", "nanogcg"}
+        selected_prepared = attackers_selected & {
+            "t3mp3st",
+            "harmbench",
+            "ideator",
+            "nanogcg",
+        }
 
         def visibility(name: str) -> str:
             return (
@@ -1732,7 +1745,114 @@ class BuilderPageMixin:
                 "Suffix source",
                 "paper, artifact, or retained run identity",
             )
+            + "</div></div></section>"
+            "<section class='workflow-panel prepared-fields' id='prepared-ideator' "
+            "data-prepared='ideator'" + visibility("ideator") + ">"
+            "<h3>IDEATOR <span class='badge blue'>Verified seed-pair replay"
+            "</span></h3>"
+            "<p class='note'>Live IDEATOR generation remains disabled. Supply a "
+            "strict <code>ura-ideator-seed-pairs/1</code> JSON manifest under the "
+            "results root. Each entry contains only <code>text</code>, "
+            "<code>image_path</code>, and <code>image_sha256</code>. Build verifies "
+            "the exact manifest and PNG bytes, captures them in the review ticket, "
+            "and materializes private replay copies at launch.</p>"
+            + err("ideator")
+            + "<div class='workflow-step'><h4>Precomputed text-image pairs</h4>"
+            "<div class='cols'>"
+            + text_field(
+                "ideator_manifest",
+                "Seed-pair manifest",
+                "ura-ideator-seed-pairs/1 path under results",
+            )
+            + text_field(
+                "ideator_manifest_sha",
+                "Manifest SHA-256",
+                "exact 64-hex digest of the manifest bytes",
+            )
             + "</div></div></section></div></div>"
+        )
+
+        selected_arm_count = len(self._split_list(prefill.get("corpora", "")))
+        synthetic_canary = (
+            selected_mode == "diagnostic_canary"
+            and prefill.get("canary_dry") == "on"
+        )
+        effective_arm_count = 1 if synthetic_canary else selected_arm_count
+        raw_limit = prefill.get("limit", "")
+        if synthetic_canary and not raw_limit:
+            raw_limit = "1"
+        try:
+            parsed_limit = int(raw_limit) if raw_limit else None
+        except ValueError:
+            parsed_limit = None
+        range_value = parsed_limit if parsed_limit is not None and parsed_limit >= 0 else 50
+        range_max = max(1000, range_value)
+        sampling_hidden = (
+            " aria-hidden='false'"
+            if effective_arm_count
+            else " hidden aria-hidden='true'"
+        )
+        sampling_disabled = "" if effective_arm_count else " disabled"
+        sampling_status = (
+            (
+                "full release for each selected arm"
+                if parsed_limit == 0
+                else f"up to {parsed_limit} clusters in each selected arm"
+                if parsed_limit is not None and parsed_limit > 0
+                else "blank uses the current mode default for each selected arm"
+            )
+            if effective_arm_count
+            else "Select one or more arms to configure sampling"
+        )
+        sampling_arm_label = (
+            "Synthetic arm selected automatically"
+            if synthetic_canary
+            else f"{selected_arm_count} arm{'s' if selected_arm_count != 1 else ''} selected"
+        )
+        sample_seed = prefill.get("sample_seed", "0")
+        sampling_fields = (
+            "<section class='sample-size-control' id='sample-size-control'"
+            + sampling_hidden
+            + ">"
+            "<div class='sample-size-head'><div><h3>Per-arm sample size</h3>"
+            "<p class='note'>The same value applies independently to every selected "
+            "arm. <strong>0 = full selected release</strong>; a positive value is "
+            "the maximum source-cluster count per selected arm, with all sibling "
+            "rows retained. A fixed seed gives nested pseudorandom prefixes without "
+            "replacement; selected rows keep source order.</p></div>"
+            "<span class='badge blue' id='sample-arm-count'>"
+            + html.escape(sampling_arm_label)
+            + "</span></div>"
+            "<div class='sample-size-grid'><div class='fieldcell'>"
+            "<label class='fieldlabel' for='sample-limit-range'>Sample-size range "
+            "<span class='fieldhint'>slide to 0 for full mode</span></label>"
+            f"<input id='sample-limit-range' type='range' min='0' max='{range_max}' "
+            f"step='1' value='{range_value}' data-base-max='1000'"
+            + sampling_disabled
+            + " aria-describedby='sample-limit-status'>"
+            "</div><div class='fieldcell'>"
+            "<label class='fieldlabel' for='sample-limit-number'>--limit "
+            "<span class='fieldhint'>non-negative clusters per selected arm</span>"
+            "</label><input class='wide' id='sample-limit-number' type='number' "
+            "min='0' step='1' name='limit'"
+            + (f" value='{html.escape(raw_limit)}'" if raw_limit else "")
+            + sampling_disabled
+            + ">"
+            + err("limit")
+            + "</div><div class='fieldcell'>"
+            "<label class='fieldlabel' for='sample-seed-input'>--sample-seed "
+            "<span class='fieldhint'>reproducible cluster subset within each arm"
+            "</span></label><input class='wide' id='sample-seed-input' type='number' "
+            "step='1' name='sample_seed' value='"
+            + html.escape(sample_seed)
+            + "'"
+            + sampling_disabled
+            + ">"
+            + err("sample_seed")
+            + "</div></div><p class='fieldhint' id='sample-limit-status' "
+            "aria-live='polite'>"
+            + html.escape(sampling_status)
+            + "</p></section>"
         )
 
         # Repeatable live-attestation receipt/digest rows.
@@ -1789,6 +1909,7 @@ class BuilderPageMixin:
                     "attackers",
                     "engine_runtime_config",
                     "nanogcg",
+                    "ideator",
                     "t3_replay",
                     "harm_replay",
                 },
@@ -2060,24 +2181,9 @@ class BuilderPageMixin:
             "data-page-panel='build-execution'>"
             "<div class='card'><h2>"
             + _icon("sliders")
-            + "Sampling &amp; turns</h2><div class='cols'>"
-            + text_field(
-                "limit",
-                "--limit",
-                "max source clusters per corpus; always composed on non-dry "
-                "lanes: 0 = complete release (local-only lanes; the default "
-                "when blank), hosted paid lanes need a positive value; probes "
-                "need 1-2, canaries exactly 1; blank on a dry lane means the "
-                "CLI default of 50",
-                kind="number",
-            )
-            + text_field(
-                "sample_seed",
-                "--sample-seed",
-                "fix and record for a reproducible subset",
-                default="0",
-                kind="number",
-            )
+            + "Sampling &amp; turns</h2>"
+            + sampling_fields
+            + "<div class='cols'>"
             + text_field("seeds", "--seeds", "comma list of trajectory seeds", default="0")
             + text_field(
                 "max_queries",
@@ -2167,7 +2273,17 @@ class BuilderPageMixin:
                 kind="number",
             )
             + text_field(
-                "deadline", "--deadline-seconds", "wall-clock deadline for the lane", kind="number"
+                "local_budget_hours",
+                "Local call-start budget (hours)",
+                _LOCAL_BUDGET_HELP,
+                kind="number",
+            )
+            + text_field(
+                "deadline",
+                "--deadline-seconds",
+                "durable call-start window from first invocation; not a "
+                "completion timeout and does not interrupt an admitted call",
+                kind="number",
             )
             + "</div></div>"
             "<div class='card'><h2>" + _icon("disk") + "Local serving (vLLM)</h2><div class='cols'>"

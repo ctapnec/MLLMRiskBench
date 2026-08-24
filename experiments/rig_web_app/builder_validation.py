@@ -637,6 +637,42 @@ class BuilderValidationMixin:
                     max_bytes=max_bytes,
                 )
                 components[f"attacker_artifact_{attacker}"] = raw
+            ideator = attacker_configs.get("ideator")
+            if isinstance(ideator, Mapping):
+                manifest_path = ideator.get("seed_pair_manifest")
+                manifest_sha256 = ideator.get("seed_pair_manifest_sha256")
+                if not isinstance(manifest_path, str) or not isinstance(
+                    manifest_sha256, str
+                ):
+                    raise ValueError("prepared IDEATOR manifest identity is incomplete")
+                raw_manifest, _manifest_actual = self._bounded_content_snapshot(
+                    manifest_path,
+                    manifest_sha256,
+                    label="prepared IDEATOR seed-pair manifest",
+                    max_bytes=4 * 1024 * 1024,
+                )
+                components["attacker_artifact_ideator"] = raw_manifest
+                seed_pairs = ideator.get("seed_pairs")
+                if not isinstance(seed_pairs, list):
+                    raise ValueError("prepared IDEATOR seed-pair inventory is invalid")
+                for index, pair in enumerate(seed_pairs):
+                    if not isinstance(pair, Mapping):
+                        raise ValueError("prepared IDEATOR seed-pair inventory is invalid")
+                    image_path = pair.get("image_path")
+                    image_sha256 = pair.get("image_sha256")
+                    if not isinstance(image_path, str) or not isinstance(
+                        image_sha256, str
+                    ):
+                        raise ValueError("prepared IDEATOR image identity is incomplete")
+                    raw_image, _image_actual = self._bounded_content_snapshot(
+                        image_path,
+                        image_sha256,
+                        label=f"prepared IDEATOR image {index}",
+                        max_bytes=25 * 1024 * 1024,
+                    )
+                    components[
+                        f"attacker_artifact_ideator_image_{index:04d}"
+                    ] = raw_image
 
         _engine_snapshot, _engine_digest, engine_raw, engine_actual = (
             self._selected_engine_runtime_config_snapshot(bound)
@@ -736,7 +772,7 @@ class BuilderValidationMixin:
             name
             for name in components
             if re.fullmatch(
-                r"(?:live_attestation_\d{2}|attacker_artifact_(?:t3mp3st|harmbench))",
+                r"(?:live_attestation_\d{2}|attacker_artifact_(?:t3mp3st|harmbench|ideator)|attacker_artifact_ideator_image_\d{4})",
                 name,
             )
         }
@@ -792,6 +828,48 @@ class BuilderValidationMixin:
         portable: dict[str, dict[str, object]] = {}
         for name, raw_entry in entries.items():
             entry = dict(raw_entry)
+            if name == "ideator":
+                manifest_path = entry.pop("seed_pair_manifest", None)
+                manifest_sha256 = entry.get("seed_pair_manifest_sha256")
+                if not isinstance(manifest_path, str) or not manifest_path:
+                    raise ValueError("prepared IDEATOR manifest path is missing")
+                if not isinstance(manifest_sha256, str) or re.fullmatch(
+                    r"[0-9a-f]{64}", manifest_sha256
+                ) is None:
+                    raise ValueError(
+                        "prepared IDEATOR manifest lacks an exact content digest"
+                    )
+                raw_pairs = entry.get("seed_pairs")
+                if not isinstance(raw_pairs, list) or not raw_pairs:
+                    raise ValueError("prepared IDEATOR seed-pair inventory is invalid")
+                portable_pairs: list[dict[str, object]] = []
+                for index, raw_pair in enumerate(raw_pairs):
+                    if not isinstance(raw_pair, Mapping):
+                        raise ValueError(
+                            "prepared IDEATOR seed-pair inventory is invalid"
+                        )
+                    pair = dict(raw_pair)
+                    path = pair.pop("image_path", None)
+                    digest = pair.get("image_sha256")
+                    byte_count = pair.get("image_bytes")
+                    text = pair.get("text")
+                    if (
+                        set(pair) != {"text", "image_sha256", "image_bytes"}
+                        or not isinstance(path, str)
+                        or not path
+                        or not isinstance(text, str)
+                        or not text.strip()
+                        or not isinstance(digest, str)
+                        or re.fullmatch(r"[0-9a-f]{64}", digest) is None
+                        or isinstance(byte_count, bool)
+                        or not isinstance(byte_count, int)
+                        or byte_count <= 0
+                    ):
+                        raise ValueError(
+                            f"prepared IDEATOR seed-pair {index} is invalid"
+                        )
+                    portable_pairs.append(pair)
+                entry["seed_pairs"] = portable_pairs
             for path_field, digest_field in (
                 ("response_artifact", "response_artifact_sha256"),
                 ("replay_artifact", "replay_artifact_sha256"),
@@ -1317,9 +1395,9 @@ class BuilderValidationMixin:
         unknown_attackers = sorted(set(attackers) - set(_ATTACKER_NAMES))
         if unknown_attackers:
             errors["attackers"] = "unknown attack framework(s): " + ", ".join(unknown_attackers)
-        # Precomputed-only adapters without a builder input for their required
-        # prepared config: reject with the exact CLI reason before any
-        # subprocess, mirroring run_matrix's attacker-input-contract preflight.
+        # Precomputed-only adapters without a Builder input for their required
+        # prepared config remain rejected before any subprocess. IDEATOR is not
+        # in this map because its verified manifest panel is handled below.
         for attacker in attackers:
             reason = _CLI_ONLY_ATTACKERS.get(attacker)
             if reason:
@@ -1341,6 +1419,7 @@ class BuilderValidationMixin:
         for attacker, error_field in (
             ("t3mp3st", "t3_replay"),
             ("harmbench", "harm_replay"),
+            ("ideator", "ideator"),
             ("nanogcg", "nanogcg"),
         ):
             if attacker not in attackers:
@@ -1469,6 +1548,21 @@ class BuilderValidationMixin:
             if unknown_local:
                 details.append("local: " + ", ".join(unknown_local))
             errors["models"] = "unknown target selection(s): " + "; ".join(details)
+        if "ideator" in attackers:
+            text_only_targets = [
+                target
+                for kind, target in (
+                    [("api", value) for value in api]
+                    + [("local", value) for value in local]
+                )
+                if (mods := target_mods.get((kind, target))) is not None
+                and "image" not in mods
+            ]
+            if text_only_targets:
+                errors["models"] = (
+                    "IDEATOR seed-pair replay requires an image-capable target: "
+                    + ", ".join(text_only_targets)
+                )
         live_llm_judge = "llm" in judges_list and mode != "dry_run" and not canary_dry
         judge_model = params.get("judge_model", "").strip()
         judge_kind = option_kind.get(judge_model)
@@ -1720,6 +1814,22 @@ class BuilderValidationMixin:
         sample_seed_value = require_int("sample_seed")
         max_queries_value = require_int("max_queries", positive=True)
         max_turns_value = require_int("max_turns", positive=True)
+        local_budget_raw = params.get("local_budget_hours", "")
+        local_budget_value = require_int("local_budget_hours", positive=True)
+        if local_budget_raw:
+            if mode != "measured" or not local or api:
+                errors["local_budget_hours"] = (
+                    "local call-start hours apply only to a measured lane with a "
+                    "local target and no hosted target"
+                )
+            if local_budget_value is not None:
+                expected_seconds = local_budget_value * 3600
+                deadline_value = require_int("deadline", positive=True)
+                if deadline_value is not None and deadline_value != expected_seconds:
+                    errors["deadline"] = (
+                        "must equal local call-start hours x 3600; this is Runner's "
+                        "call-start window, not a completion timeout"
+                    )
         if harm_requirements is not None:
             captured_corpus, captured_limit, captured_seed, minimum = harm_requirements
             if corpora != [captured_corpus]:
@@ -2034,16 +2144,28 @@ class BuilderValidationMixin:
                 errors["models"] = "select at least one target model"
             require_live_admission()
             paid_hosted_route = bool(api) or hosted_judge_selected
-            if paid_hosted_route and (limit is None or limit <= 0):
+            if paid_hosted_route and limit is None:
                 errors["limit"] = (
-                    "hosted paid lanes must carry a positive pre-registered "
-                    "--limit that bounds spend (campaign sampling policy); "
-                    "--limit 0 would run the full corpus"
+                    "hosted paid lanes must carry an explicit --limit: use a "
+                    "positive pre-registered cluster bound, or 0 only for a "
+                    "separately projected and approved full-corpus cohort"
                 )
-            if paid_hosted_route and not params.get("sample_seed", ""):
+            if (
+                paid_hosted_route
+                and limit is not None
+                and limit > 0
+                and not params.get("sample_seed", "")
+            ):
                 errors["sample_seed"] = (
                     "hosted paid lanes must record --sample-seed (identical "
                     "subset across conditions)"
+                )
+            elif limit is not None and limit > 0 and not params.get(
+                "sample_seed", ""
+            ):
+                errors["sample_seed"] = (
+                    "bounded measured lanes must record --sample-seed; the value "
+                    "selects clusters independently within each selected arm"
                 )
         return errors
 
@@ -2212,7 +2334,12 @@ class BuilderValidationMixin:
                     "--max-total-http-attempts",
                     "hard cap on transport attempts, retries included",
                 ),
-                ("deadline", "--deadline-seconds", "wall-clock admission deadline for the lane"),
+                (
+                    "deadline",
+                    "--deadline-seconds",
+                    "durable call-start window from first invocation; not a "
+                    "completion timeout and does not interrupt an admitted call",
+                ),
                 (
                     "limit",
                     "--limit",

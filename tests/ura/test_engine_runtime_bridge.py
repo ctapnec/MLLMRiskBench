@@ -781,10 +781,18 @@ def test_cleanup_terminates_group_even_after_worker_leader_exits(
             runtime, "_win_terminate_job", lambda value: events.append(value) or True
         )
         monkeypatch.setattr(
+            runtime,
+            "_win_wait_job_empty",
+            lambda value, *, timeout_seconds: events.append(
+                ("wait", value, timeout_seconds)
+            )
+            or True,
+        )
+        monkeypatch.setattr(
             runtime, "_win_close_handle", lambda value: events.append(("close", value))
         )
         session._terminate_process()
-        assert events == [job, ("close", job)]
+        assert events == [job, ("wait", job, 5), ("close", job)]
     else:
         session._windows_job = None
         session._process_group_id = 12345
@@ -793,6 +801,96 @@ def test_cleanup_terminates_group_even_after_worker_leader_exits(
         )
         session._terminate_process()
         assert len(events) == 1 and events[0][0] == 12345
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Windows Job Object lifecycle")
+def test_windows_job_empty_timeout_closes_handle_and_fails_closed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class _Process:
+        stdin = None
+
+        @staticmethod
+        def poll() -> int:
+            return 0
+
+        @staticmethod
+        def wait(*, timeout: float) -> int:
+            assert timeout == 5
+            return 0
+
+    session = object.__new__(runtime._PersistentEngineSession)
+    session._requirement = runtime.ENGINE_RUNTIME_REQUIREMENTS["pyrit"]
+    session._process = _Process()
+    session._process_group_id = None
+    job = object()
+    session._windows_job = job
+    session._parent_guard_write = None
+    events: list[object] = []
+    monkeypatch.setattr(runtime, "_win_terminate_job", lambda value: value is job)
+    monkeypatch.setattr(
+        runtime,
+        "_win_wait_job_empty",
+        lambda value, *, timeout_seconds: events.append(
+            ("wait", value, timeout_seconds)
+        )
+        or False,
+    )
+    monkeypatch.setattr(
+        runtime,
+        "_win_close_handle",
+        lambda value: events.append(("close", value)),
+    )
+
+    with pytest.raises(ExternalEngineError, match="could not be confirmed terminated"):
+        session._terminate_process()
+
+    assert events == [("wait", job, 5), ("close", job)]
+    assert session._process is None and session._windows_job is None
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Windows Job Object lifecycle")
+def test_windows_job_wait_interrupt_still_closes_owned_handle(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class _Process:
+        stdin = None
+
+        @staticmethod
+        def poll() -> int:
+            return 0
+
+        @staticmethod
+        def wait(*, timeout: float) -> int:
+            assert timeout == 5
+            return 0
+
+    session = object.__new__(runtime._PersistentEngineSession)
+    session._requirement = runtime.ENGINE_RUNTIME_REQUIREMENTS["pyrit"]
+    session._process = _Process()
+    session._process_group_id = None
+    job = object()
+    session._windows_job = job
+    session._parent_guard_write = None
+    events: list[object] = []
+    monkeypatch.setattr(runtime, "_win_terminate_job", lambda value: value is job)
+
+    def interrupt_wait(value: object, *, timeout_seconds: float) -> bool:
+        assert value is job and timeout_seconds == 5
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr(runtime, "_win_wait_job_empty", interrupt_wait)
+    monkeypatch.setattr(
+        runtime,
+        "_win_close_handle",
+        lambda value: events.append(("close", value)),
+    )
+
+    with pytest.raises(KeyboardInterrupt):
+        session._terminate_process()
+
+    assert events == [("close", job)]
+    assert session._process is None and session._windows_job is None
 
 
 @pytest.mark.skipif(os.name != "posix", reason="POSIX parent-liveness pipe")

@@ -326,10 +326,17 @@ response artifacts remain authoritative.
 - `--limit N` counts source prompt/intent clusters and retains every selected
   cluster row. For an unchanged real converted-corpus digest and sample seed,
   limits are deterministic nested prefixes: the one-cluster canary remains in a
-  later `N`-cluster selection. Complete local-only planned lanes use
-  `--limit 0` after bounded diagnostics; every lane with a hosted target or a
-  hosted LLM judge uses its pre-registered positive cluster limit (runbook
-  section 5.2).
+  later `N`-cluster selection. Unique clusters are inventoried in first source
+  order; SHA-256 over
+  `ura-corpus-cluster-order-v1\0<arm>\0<sample_seed>` supplies an unsigned
+  big-endian seed from its first eight bytes for one shuffle without
+  replacement. The first N positions are selected and all sibling rows return
+  to source order. Prefixes overlap and are nested, not disjoint partitions.
+  The current measured local campaign uses its pre-registered positive per-arm
+  tier limit. Explicit local or hosted `--limit 0` is supported only as a
+  separately projected full-corpus cohort with caps covering the complete grid;
+  the current hosted campaign lanes retain their positive prospective limits
+  (runbook section 5.2).
 - Persisted local media use `@media-root/<index>/<relative-path>` and rebind to
   the same ordered roots and relative layout on resume.
 - Missing media, unsupported modality, absent source evaluator, target/transport

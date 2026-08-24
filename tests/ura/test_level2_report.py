@@ -115,7 +115,7 @@ def _measured_cohort(
         "--local", requested_spec,
         "--local-config", str(local_config_path),
         "--attackers", "replay", "--judges", "rules",
-        "--corpora", "synth", "--limit", "1",
+        "--corpora", "synth", "--limit", "1", "--sample-seed", "0",
         "--max-queries", "1", "--max-turns", "1",
         *_finite_budget_args(),
         *project_revision_args,

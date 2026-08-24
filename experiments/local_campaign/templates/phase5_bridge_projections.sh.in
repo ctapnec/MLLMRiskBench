@@ -103,6 +103,7 @@ QWEN_CFG_SHA="$(sha256sum -- "$QWEN_CFG" | awk '{print $1}')"
 SCORE_GUARD='meta-llama/Llama-Guard-3-8B'
 SCORE_GUARD_REV='7327bd9f6efbbe6101dc6cc4736302b3cbb6e425'
 GROUP='model,source,risk,effective_modality,expected_behavior,attacker,source_policy_id,source_policy_version'
+EXPLORATORY_CLUSTER_LIMIT=50
 TRANSFER_ARMS='strongreject_official,advbench_harmful,jailbreakbench_harmful'
 PURPLE_ARMS='cyberseceval_mitre,cyberseceval_interpreter,cyberseceval_insecure_coding,cyberseceval_prompt_injection'
 
@@ -290,8 +291,8 @@ prepare_harmbench() {
 
   HB_CANARY_ARTIFACT="$PREPARED_ROOT/harmbench-direct-canary.json"
   HB_CANARY_CONFIG="$PREPARED_ROOT/harmbench-direct-canary-config.json"
-  HB_FULL_ARTIFACT="$PREPARED_ROOT/harmbench-direct-full.json"
-  HB_FULL_CONFIG="$PREPARED_ROOT/harmbench-direct-full-config.json"
+  HB_BOUNDED_ARTIFACT="$PREPARED_ROOT/harmbench-direct-exploratory-50.json"
+  HB_BOUNDED_CONFIG="$PREPARED_ROOT/harmbench-direct-exploratory-50-config.json"
 
   PYTHONDONTWRITEBYTECODE=1 "$python" -m experiments.harmbench_capture \
     --repo "$repo" --revision "$revision" --source "$source" \
@@ -305,13 +306,13 @@ prepare_harmbench() {
   PYTHONDONTWRITEBYTECODE=1 "$python" -m experiments.harmbench_capture \
     --repo "$repo" --revision "$revision" --source "$source" \
     --corpus-name harmbench_text --method DirectRequest --experiment llama2_7b \
-    --limit 0 --sample-seed 0 --cases-per-method 1 \
-    --artifact-out "$HB_FULL_ARTIFACT" \
-    --attacker-config-out "$HB_FULL_CONFIG" \
+    --limit "$EXPLORATORY_CLUSTER_LIMIT" --sample-seed 0 --cases-per-method 1 \
+    --artifact-out "$HB_BOUNDED_ARTIFACT" \
+    --attacker-config-out "$HB_BOUNDED_CONFIG" \
     --python "$python" --timeout-seconds 28800 \
-    > "$CONTROL_ROOT/harmbench-full-capture.log" 2>&1
+    > "$CONTROL_ROOT/harmbench-exploratory-50-capture.log" 2>&1
 
-  for path in "$HB_CANARY_ARTIFACT" "$HB_CANARY_CONFIG" "$HB_FULL_ARTIFACT" "$HB_FULL_CONFIG"; do
+  for path in "$HB_CANARY_ARTIFACT" "$HB_CANARY_CONFIG" "$HB_BOUNDED_ARTIFACT" "$HB_BOUNDED_CONFIG"; do
     test -f "$path" && test ! -L "$path"
   done
 }
@@ -346,7 +347,7 @@ run_preflight() {
     --source-config-sha256 "$SOURCE_CONFIG_SHA256"
     --source-conformance "$SOURCE_RECEIPT"
     --source-conformance-sha256 "$SOURCE_RECEIPT_SHA256"
-    --limit 0
+    --limit "$EXPLORATORY_CLUSTER_LIMIT"
     --sample-seed 0
     --seeds 0
     --max-queries "$max_queries"
@@ -355,7 +356,7 @@ run_preflight() {
     --max-total-target-calls 400000
     --max-total-judge-calls 0
     --max-total-http-attempts 0
-    --deadline-seconds 7776000
+    --deadline-seconds 86400
     --out "$run_root"
     "$@"
   )
@@ -427,8 +428,8 @@ run_preflight bridge-spikee spikee "$TRANSFER_ARMS" 4 4 \
 run_preflight bridge-purplellama purplellama "$PURPLE_ARMS" 1 1
 
 run_preflight harmbench-replay harmbench harmbench_text 1 1 \
-  --attacker-config "$HB_FULL_CONFIG" \
-  --attacker-config-sha256 "$(sha256sum "$HB_FULL_CONFIG" | awk '{print $1}')"
+  --attacker-config "$HB_BOUNDED_CONFIG" \
+  --attacker-config-sha256 "$(sha256sum "$HB_BOUNDED_CONFIG" | awk '{print $1}')"
 
 printf 'bridge-nanogcg\tunavailable\tno attributable precomputed suffix artifact exists; live optimization remains disabled\n' >> "$DISPOSITIONS"
 printf 'bridge-ideator\tunavailable\tno attributable seed-pair artifact or defensible source-pair mapping exists\n' >> "$DISPOSITIONS"

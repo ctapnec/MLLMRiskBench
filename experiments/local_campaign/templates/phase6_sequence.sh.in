@@ -712,7 +712,7 @@ with os.fdopen(fd, "wb") as handle:
 lane_wall_time = validated_manifest.get("policy", {}).get(
     "measured_lane_wall_time_seconds"
 )
-if lane_wall_time != 1_209_600:
+if lane_wall_time != 86_400:
     raise SystemExit("Gate 5 measured-lane wall-time ceiling changed")
 for item in (
     manifest,
@@ -733,7 +733,7 @@ GATE5_RUNNOTE="${gate5_values[1]}"
 GATE5_PROMOTION="${gate5_values[2]}"
 GATE5_MANIFEST_SHA="${gate5_values[3]}"
 GATE5_LANE_WALL_TIME_SECONDS="${gate5_values[4]}"
-test "$GATE5_LANE_WALL_TIME_SECONDS" = '1209600'
+test "$GATE5_LANE_WALL_TIME_SECONDS" = '86400'
 controller_task_pass await-gate5
 
 record_step() {
@@ -1258,8 +1258,8 @@ def require_gate5_inventory_profile(
     return runnable, terminal, target_runtime_terminal, list(conditional)
 
 CORE_CANDIDATE_ORDER = [
-    "local-qwen3-vl-text-full", "local-qwen3-vl-image-full",
-    "local-llava-base-text-full", "local-llava-base-image-full",
+    "local-qwen3-vl-text-primary-100", "local-qwen3-vl-image-primary-100",
+    "local-llava-base-text-primary-100", "local-llava-base-image-primary-100",
     "local-llava-rr-text-full", "local-llava-rr-image-full",
     "rjudge-qwen3-vl", "rjudge-llava-base", "rjudge-llava-rr",
     "gptgeochat-qwen3-vl", "gptgeochat-llava-base", "gptgeochat-llava-rr",

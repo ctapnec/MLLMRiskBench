@@ -517,6 +517,58 @@ def _win_terminate_job(handle: Any) -> bool:
         return False
 
 
+def _win_wait_job_empty(handle: Any, *, timeout_seconds: float) -> bool:
+    """Wait until a terminated Job has released every process and its CWD."""
+
+    if handle is None or os.name != "nt" or timeout_seconds <= 0:
+        return False
+    try:
+        import ctypes  # noqa: PLC0415 - Windows-only stdlib boundary
+        from ctypes import wintypes  # noqa: PLC0415 - Windows-only stdlib boundary
+
+        class _BasicAccountingInformation(ctypes.Structure):
+            _fields_ = [
+                ("TotalUserTime", ctypes.c_longlong),
+                ("TotalKernelTime", ctypes.c_longlong),
+                ("ThisPeriodTotalUserTime", ctypes.c_longlong),
+                ("ThisPeriodTotalKernelTime", ctypes.c_longlong),
+                ("TotalPageFaultCount", wintypes.DWORD),
+                ("TotalProcesses", wintypes.DWORD),
+                ("ActiveProcesses", wintypes.DWORD),
+                ("TotalTerminatedProcesses", wintypes.DWORD),
+            ]
+
+        query = ctypes.WinDLL(
+            "kernel32", use_last_error=True
+        ).QueryInformationJobObject
+        query.argtypes = [
+            wintypes.HANDLE,
+            ctypes.c_int,
+            wintypes.LPVOID,
+            wintypes.DWORD,
+            ctypes.POINTER(wintypes.DWORD),
+        ]
+        query.restype = wintypes.BOOL
+        deadline = time.monotonic() + timeout_seconds
+        while True:
+            information = _BasicAccountingInformation()
+            if not query(
+                handle,
+                1,  # JobObjectBasicAccountingInformation
+                ctypes.byref(information),
+                ctypes.sizeof(information),
+                None,
+            ):
+                return False
+            if information.ActiveProcesses == 0:
+                return True
+            if time.monotonic() >= deadline:
+                return False
+            time.sleep(0.01)
+    except Exception:  # noqa: BLE001 - caller reports cleanup failure
+        return False
+
+
 def _win_close_handle(handle: Any) -> None:
     if handle is None or os.name != "nt":
         return
@@ -1012,7 +1064,6 @@ class _PersistentEngineSession:
         if os.name == "nt":
             if windows_job is not None:
                 group_failure = not _win_terminate_job(windows_job)
-                _win_close_handle(windows_job)
             elif process is not None:
                 group_failure = True
         elif process_group_id is not None:
@@ -1034,6 +1085,12 @@ class _PersistentEngineSession:
                 process.wait(timeout=5)
             except (OSError, subprocess.TimeoutExpired):
                 group_failure = True
+        if os.name == "nt" and windows_job is not None:
+            try:
+                if not _win_wait_job_empty(windows_job, timeout_seconds=5):
+                    group_failure = True
+            finally:
+                _win_close_handle(windows_job)
         if group_failure:
             raise ExternalEngineError(
                 f"{self._requirement.engine} isolated runtime process tree could "

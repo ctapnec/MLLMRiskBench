@@ -333,6 +333,38 @@ call/time/storage caps from the projection before any measured lane. Judges for
 local-target lanes are `rules,guardrail` (no hosted LLM judge; a local LLM judge
 cannot share a process with a local target).
 
+**Prospective bounded-sampling amendment (24 August 2026).** Before any Phase 6
+measured lane started, the local programme replaced its earlier exhaustive-local
+assumption with two measured population tiers. Core lanes use `--limit 100
+--sample-seed 0 --seeds 0`; extended Runner-safe bridge and Ollama lanes use
+`--limit 50 --sample-seed 0 --seeds 0`. The amendment was fixed from source
+inventories, no-call projections and diagnostic feasibility, not from measured
+benchmark outcomes. `--limit` is applied independently within every logical
+source arm. It selects a deterministic prefix of whole prompt/intent clusters
+and retains every sibling row, so this is an equal-cap source-arm design, not a
+risk-stratified or proportional-probability sample. Specifically, unique
+clusters are inventoried in first source-appearance order. SHA-256 hashes the
+UTF-8 bytes `ura-corpus-cluster-order-v1\0<logical-arm>\0<sample_seed>`; its
+first eight bytes, interpreted as an unsigned big-endian integer, seed one PRNG
+shuffle of inventory positions without replacement. The first N positions are
+selected, then all selected rows are restored to source order. These are nested,
+overlapping prefixes, not disjoint partitions: for one unchanged arm and seed,
+the one-cluster canary is contained in the 50-cluster extended sample, which is
+contained in the 100-cluster core sample. The same numeric seed deliberately
+produces different permutations for different arms. A source with fewer
+clusters is retained in full and reported as precision-limited; `--limit 0`
+returns the exact full arm without sampling.
+
+The earlier `--limit 0` projections remain useful as full-universe capacity
+records but cannot authorize a bounded measured request. Every bounded lane
+therefore receives a new exact no-call projection, acquisition plan and receipt,
+request envelope and Gate 5 cap. Existing commit-matched `--limit 1` canaries may
+remain as nested diagnostics when every other model, attacker, judge and source
+identity is unchanged. HarmBench preparation is selection-bound and must be
+regenerated at limit 50. Optional all-local `--limit 0` replication remains
+supported only as a separately approved cohort with its own projection, caps,
+output roots and analysis stratum; it is not part of the bounded Phase 6 cohort.
+
 **What this cascade can and cannot measure.** The guardrail is a content-safety
 classifier: its label space is violation/safe, and it cannot express
 over-refusal, because a refusal is itself safe content. It therefore adjudicates
@@ -353,8 +385,9 @@ add a local LLM judge stage for the benign arms in a separate process, which
 model resident on the pair of cards. Every lane uses the Level-2-compatible grouping
 `--group model,source,risk,effective_modality,expected_behavior,attacker,source_policy_id,source_policy_version`
 (the CLI default; the Build field defaults to it; the Level-2 export rejects
-narrower groupings) and `--limit 0` (full corpus; admitted only because every
-target and judge is local; the Build field now emits it explicitly).
+narrower groupings). The bounded local cohort uses the tier-specific positive
+limit above. The Build and CLI requests must emit that limit and sample seed
+explicitly.
 
 The Gate 5 inventory also records target-source pairs that cannot enter measured
 execution as typed terminals. GPTGeoChat carries image-bearing source records,
@@ -393,14 +426,19 @@ Gate 5: projections and canaries retained under `runs/thesis/preflight` and
 `runs/thesis/diagnostics`; the non-evidence GraySwan RR target-runtime terminal
 retained in its sealed Phase 5 engineering control root and bound from the Gate
 5 manifest and run note; caps recorded in `runs/thesis/RUNNOTE.md`; all 46
-planned rows represented exactly once as runnable or typed terminal. The
-approved policy records `measured_lane_wall_time_seconds=1209600` (14 days) as
-the process wall-time ceiling for one measured lane. This is distinct from the
-90-day Runner call-start admission deadline: the latter prevents a new call
-after its timestamp and does not interrupt a call or controller that already
-started.
+planned rows represented exactly once as runnable or typed terminal. Each
+runnable row also binds `core_primary_100` or `extended_50`, limit, sample seed,
+selected-cluster and converted-row identities, exact no-call projection and
+approved call caps. The approved policy records
+`measured_lane_wall_time_seconds=86400` as the 24-hour process wall-time ceiling
+for one measured lane and binds `--deadline-seconds 86400` as that request's
+Runner call-start window. The Runner refuses to begin a later call after its
+deadline but does not interrupt an in-flight call. The controller ceiling is
+separate: it may terminate and reap the lane process group at 24 hours. Both
+values are prospective current-cohort bindings; the software supports other
+positive values only in a separately projected and approved cohort.
 
-## 7. Phase 6: measured local lanes (GPU days; sized by the canaries)
+## 7. Phase 6: bounded measured local lanes (sized by projections and canaries)
 
 **Source-record inventory, which is NOT the row count.** The figures below are
 released source records and equal the receipt's `raw_records.accepted`, which is
@@ -414,6 +452,32 @@ assistant turn per moderation level, 500 conversations giving 9,820 rows over
 correct as clusters and wrong as rows. Do not size a lane from this paragraph:
 the no-call projection in Phase 5 reports the exact per-arm cell count for the
 selection actually requested, and it is the only figure that should set a cap.
+
+The seed-0 sampler over the currently admitted conversions gives the following
+pre-measurement sizing calculation. These values are not benchmark results and
+do not replace the new content-bound Gate 5 projections.
+
+| Measured group | Tier | Selected converted rows | Conservative target-call ceiling |
+|---|---|---:|---:|
+| static text, per target | core 100 | 3,854 | 3,854 |
+| static image, per target | core 100 | 1,632 | 1,632 |
+| R-Judge, per target | core 100 | 100 | 100 |
+| GPTGeoChat, per target | core 100 | 2,020 rows from 100 conversations | 2,020 |
+| Crescendo, Qwen3-VL | core 100 | 700 conversations across seven arms | 2,800 at four turns |
+| local guard defense, if runnable | core 100 | 3,854 | 3,854 |
+| six Runner-safe bridge lanes combined | extended 50 | 850 source selections before per-method expansion | 1,750 |
+| three Ollama static text lanes combined | extended 50 | 5,835 | 5,835 |
+| three Ollama R-Judge lanes combined | extended 50 | 150 | 150 |
+
+The total below counts each `per target` core group for the two planned core
+targets, then adds the single Qwen3-VL Crescendo lane and the combined bridge
+and Ollama groups shown above.
+
+The bounded design permits at most 25,747 target calls when the local defense is
+typed unavailable, or 29,601 when it is runnable. Model-judge and provider HTTP
+caps remain zero in this local campaign. Local scoring and defense-guard
+evaluations are accounted separately and are fixed by the new projection. Caps
+are never raised mid-lane.
 
 Source records: common text arms about 35,900 (SALAD-Bench base 21,318;
 AIR-Bench 5,694; DecodingTrust 3,456; CyberSecEval 3,416; AdvBench 520; XSTest
@@ -472,7 +536,7 @@ They exercise the native bridge and importer but are not measured Runner lanes
 and are not promoted into thesis metrics.
 
 Every core and extended measured lane runs in its own process group under the
-Gate 5 14-day lane wall-time ceiling. Core lanes are terminated and reaped on
+Gate 5 24-hour lane wall-time ceiling. Core lanes are terminated and reaped on
 that ceiling before the controller continues to the next lane; the extended
 controller applies the same ceiling cumulatively across each lane's preparation,
 resume and measured stages. A setup failure or timeout that occurs before Runner
@@ -496,7 +560,8 @@ row that is currently observed live; unavailable or bounded-away liveness is
 shown as `unknown`, not asserted as `running`.
 
 The Phase 6 sequence wait for Gate 5 is bounded by its declared 720-hour
-controller hard stop, not by the Runner 90-day call-start window. Cleanup owns a
+controller hard stop, not by a Runner lane's 86,400-second call-start window.
+Cleanup owns a
 prospective external id and exact session before start publication, and terminal
 publication is bounded to 30 seconds, so a signal or stuck publisher cannot
 leave a row borrowing the liveness of the parent controller.
@@ -586,7 +651,8 @@ Run each phase at least once through the console (Build -> Runtimes; Build
 wizard for attestation probe, canary and measured lanes; Jobs for lifecycle;
 Stats for per-job usage/coverage; Config editor for registries) and once
 through the CLI, and confirm that the composed argument vectors (visible in the
-Jobs record) equal the runbook vectors, including `--limit 0`, `--group`,
+Jobs record) equal the runbook vectors, including tier-specific `--limit 100`
+or `--limit 50`, `--sample-seed 0`, `--group`,
 `--exclude-tool-conditioned` on synth/dry lanes, and the receipt environment
 defaults on the Run page. Direct Phase 5 through Phase 7 controllers must appear
 through their exact engineering marker/task-event records, and every Phase 6
@@ -603,7 +669,7 @@ artifact root equals that child's one declared `--out` directory.
 | 3 models | 1-3 h | 0.5 h |
 | 4 attestations | 1 h | 0.5 h |
 | 5 projections/canaries | 2-4 h | 2 h |
-| 6 measured lanes | several GPU days (seed 0; the Phase 5 projection sets the call count, which exceeds the 47k source-record floor) | periodic |
+| 6 measured lanes | bounded inference; observed wall time to be reported, with a provisional 25,747 or 29,601 target-call ceiling pending exact Gate 5 projections | periodic |
 | 7 analysis | 2-4 h | 2 h |
 | 8 human audit | rater-dependent | rater-dependent |
 

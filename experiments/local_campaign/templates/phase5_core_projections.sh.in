@@ -102,6 +102,7 @@ SCORE_GUARD_REV='7327bd9f6efbbe6101dc6cc4736302b3cbb6e425'
 DEFENSE_GUARD='meta-llama/Llama-Guard-3-1B'
 DEFENSE_GUARD_REV='acf7aafa60f0410f8f42b1fa35e077d705892029'
 GROUP='model,source,risk,effective_modality,expected_behavior,attacker,source_policy_id,source_policy_version'
+PRIMARY_CLUSTER_LIMIT=100
 
 TEXT_ARMS='strongreject_official,advbench_harmful,jailbreakbench_harmful,jailbreakbench_benign,harmbench_text,cyberseceval_mitre,cyberseceval_interpreter,cyberseceval_insecure_coding,saladbench_base,airbench_full,xstest_full,simplesafetytests_full,decodingtrust_stereotype'
 IMAGE_ARMS='mmsafety_official,jailbreakv_full,harmbench_multimodal,vlsbench_release,mossbench_official,siuo_release,figstep_full,mllmguard_privacy,mllmguard_bias,mllmguard_toxicity,mllmguard_legality,holisafe_full'
@@ -166,9 +167,10 @@ PY
 run_preflight() {
   local lane="$1" spec="$2" config="$3" attackers="$4" arms="$5"
   local judges="$6" max_queries="$7" max_turns="$8" approximate="$9"
+  local cluster_limit="${10}"
   local config_sha plan_root run_root plan_log acquire_log run_log
   local plan_id plan_sha receipt_id receipt_sha downloaded plan_path receipt_path
-  shift 9
+  shift 10
 
   config_sha="$(sha256sum -- "$config" | awk '{print $1}')"
   plan_root="$PREFLIGHT_ROOT/${lane}-prelim-${TAG}/plan"
@@ -192,7 +194,7 @@ run_preflight() {
     --source-config-sha256 "$SOURCE_CONFIG_SHA256"
     --source-conformance "$SOURCE_RECEIPT"
     --source-conformance-sha256 "$SOURCE_RECEIPT_SHA256"
-    --limit 0
+    --limit "$cluster_limit"
     --sample-seed 0
     --seeds 0
     --max-queries "$max_queries"
@@ -200,7 +202,7 @@ run_preflight() {
     --group "$GROUP"
     --max-total-target-calls 400000
     --max-total-http-attempts 0
-    --deadline-seconds 7776000
+    --deadline-seconds 86400
     --out "$run_root"
   )
 
@@ -262,22 +264,22 @@ BASE_CFG="$PWD/experiments/local-llava-base.json"
 RR='vllm:GraySwanAI/llava-v1.6-mistral-7b-hf-RR'
 RR_CFG="$PWD/experiments/local-llava-rr.json"
 
-run_preflight local-qwen3-vl-text-full "$QWEN" "$QWEN_CFG" replay "$TEXT_ARMS" rules,guardrail 1 1 yes
-run_preflight local-qwen3-vl-image-full "$QWEN" "$QWEN_CFG" replay "$IMAGE_ARMS" rules,guardrail 1 1 yes
-run_preflight local-llava-base-text-full "$BASE" "$BASE_CFG" replay "$TEXT_ARMS" rules,guardrail 1 1 yes
-run_preflight local-llava-base-image-full "$BASE" "$BASE_CFG" replay "$IMAGE_ARMS" rules,guardrail 1 1 yes
-run_preflight local-llava-rr-text-full "$RR" "$RR_CFG" replay "$TEXT_ARMS" rules,guardrail 1 1 yes
-run_preflight local-llava-rr-image-full "$RR" "$RR_CFG" replay "$IMAGE_ARMS" rules,guardrail 1 1 yes
+run_preflight local-qwen3-vl-text-primary-100 "$QWEN" "$QWEN_CFG" replay "$TEXT_ARMS" rules,guardrail 1 1 yes "$PRIMARY_CLUSTER_LIMIT"
+run_preflight local-qwen3-vl-image-primary-100 "$QWEN" "$QWEN_CFG" replay "$IMAGE_ARMS" rules,guardrail 1 1 yes "$PRIMARY_CLUSTER_LIMIT"
+run_preflight local-llava-base-text-primary-100 "$BASE" "$BASE_CFG" replay "$TEXT_ARMS" rules,guardrail 1 1 yes "$PRIMARY_CLUSTER_LIMIT"
+run_preflight local-llava-base-image-primary-100 "$BASE" "$BASE_CFG" replay "$IMAGE_ARMS" rules,guardrail 1 1 yes "$PRIMARY_CLUSTER_LIMIT"
+run_preflight local-llava-rr-text-full "$RR" "$RR_CFG" replay "$TEXT_ARMS" rules,guardrail 1 1 yes 0
+run_preflight local-llava-rr-image-full "$RR" "$RR_CFG" replay "$IMAGE_ARMS" rules,guardrail 1 1 yes 0
 
-run_preflight rjudge-qwen3-vl "$QWEN" "$QWEN_CFG" replay rjudge_release rules 1 1 no
-run_preflight rjudge-llava-base "$BASE" "$BASE_CFG" replay rjudge_release rules 1 1 no
-run_preflight rjudge-llava-rr "$RR" "$RR_CFG" replay rjudge_release rules 1 1 no
-run_preflight gptgeochat-qwen3-vl "$QWEN" "$QWEN_CFG" replay gptgeochat_release rules 1 1 no
-run_preflight gptgeochat-llava-base "$BASE" "$BASE_CFG" replay gptgeochat_release rules 1 1 no
-run_preflight gptgeochat-llava-rr "$RR" "$RR_CFG" replay gptgeochat_release rules 1 1 no
+run_preflight rjudge-qwen3-vl "$QWEN" "$QWEN_CFG" replay rjudge_release rules 1 1 no "$PRIMARY_CLUSTER_LIMIT"
+run_preflight rjudge-llava-base "$BASE" "$BASE_CFG" replay rjudge_release rules 1 1 no "$PRIMARY_CLUSTER_LIMIT"
+run_preflight rjudge-llava-rr "$RR" "$RR_CFG" replay rjudge_release rules 1 1 no 0
+run_preflight gptgeochat-qwen3-vl "$QWEN" "$QWEN_CFG" replay gptgeochat_release rules 1 1 no "$PRIMARY_CLUSTER_LIMIT"
+run_preflight gptgeochat-llava-base "$BASE" "$BASE_CFG" replay gptgeochat_release rules 1 1 no "$PRIMARY_CLUSTER_LIMIT"
+run_preflight gptgeochat-llava-rr "$RR" "$RR_CFG" replay gptgeochat_release rules 1 1 no 0
 
-run_preflight crescendo-qwen3-vl "$QWEN" "$QWEN_CFG" crescendo "$ADAPTIVE_ARMS" rules,guardrail 4 4 yes
-run_preflight defense-local "$QWEN" "$QWEN_CFG" replay "$TEXT_ARMS" rules,guardrail 1 1 yes \
+run_preflight crescendo-qwen3-vl "$QWEN" "$QWEN_CFG" crescendo "$ADAPTIVE_ARMS" rules,guardrail 4 4 yes "$PRIMARY_CLUSTER_LIMIT"
+run_preflight defense-local "$QWEN" "$QWEN_CFG" replay "$TEXT_ARMS" rules,guardrail 1 1 yes "$PRIMARY_CLUSTER_LIMIT" \
   --defense both \
   --defense-guard guardrail \
   --defense-guardrail-model "$DEFENSE_GUARD" \

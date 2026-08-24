@@ -19,20 +19,30 @@ _WARNINGS_MAX = 40
 _WARNING_TONES = {"error": "red", "warning": "amber", "info": "blue"}
 
 #: Recorded campaign sampling policy (thesis ledger 11.22/11.27, runbook 5.2).
-#: Presentation of an operator-recorded decision; the actual enforcement is
-#: the recorded --limit/--sample-seed on each hosted run_matrix invocation.
+#: Presentation of operator-recorded decisions; actual enforcement is the
+#: selected universe, limit, optional bounded-sample seed, projection and caps
+#: recorded on each measured Runner invocation.
 _CAMPAIGN_POLICY = (
-    ("Full converted corpora", "run on local lanes only - never a hosted paid-API model"),
     (
-        "Paid-API lanes",
+        "Current local tiers",
+        "100 clusters per core arm and 50 per extended arm at sample seed 0; "
+        "a full local replication remains a separate cohort",
+    ),
+    (
+        "Current paid-API tier",
         "run a pre-registered cluster subsample (recorded "
         "--limit and --sample-seed); the identical subset is used across every "
         "hosted condition and comparisons restrict to that intersection",
     ),
     (
-        "No cross-tier pooling",
-        "local full-corpus and hosted-subsample rates "
-        "are distinct populations and are never pooled",
+        "Separate full replication",
+        "explicit --limit 0 is supported locally or through a hosted route only "
+        "with its own complete projection, caps and approval",
+    ),
+    (
+        "No cross-population pooling",
+        "results with different selected universes, limits, sample seeds or "
+        "evaluator routes remain distinct strata",
     ),
     (
         "Judge budget",
@@ -81,12 +91,13 @@ _PARAM_HELP: dict[str, str] = {
     "attacker can execute them yet) with a recorded exclusion count instead of "
     "failing the whole request. Used by the offline smoke and this preflight.",
     "--api": "Comma list of hosted target ids from api-targets.json (e.g. the "
-    "Fable/Sol focal pair). Hosted lanes must carry --limit and "
-    "--sample-seed.",
+    "Fable/Sol focal pair). Hosted lanes must carry an explicit --limit; "
+    "--sample-seed is required only for a positive bounded selection.",
     "--local": "Comma list of backend:model specs for local GPU lanes. Local "
-    "lanes run the full corpus. A selected hosted judge remains metered; a "
-    "local judge avoids hosted API spend but cannot share one process with a "
-    "local target.",
+    "lanes may use an approved bounded per-arm sample or an explicitly "
+    "projected full-corpus cohort. A selected hosted judge remains metered; "
+    "a local judge avoids hosted API spend but cannot share one process with "
+    "a local target.",
     "--corpora": "Comma list of source arm ids (from source-instances.json) or "
     "'synth'. Every selected real arm must be admitted in the "
     "source-conformance receipt.",
@@ -104,13 +115,17 @@ _PARAM_HELP: dict[str, str] = {
     "common-security response proxies on common-metric-ineligible source rows. "
     "These are non-authoritative, never replace source-native metrics, and carry "
     "an uncalibrated reliability indicator that is not probability or accuracy.",
-    "--limit": "Maximum unique source clusters per corpus. Omitting it means "
-    "the CLI default of 50 clusters; 0 means the complete selected release. "
-    "REQUIRED and positive on every hosted paid lane - it bounds spend; local "
-    "full-corpus lanes pass 0 explicitly (Build always emits it on non-dry lanes).",
-    "--sample-seed": "Deterministic seed for the cluster subsample. Fix it and "
-    "record it so every hosted condition sees the identical "
-    "subset (comparable, never pooled across tiers).",
+    "--limit": "Maximum unique source clusters applied independently to each "
+    "selected corpus arm. Omitting it means the CLI default of 50 clusters per "
+    "arm; 0 means the complete selected release for every arm. "
+    "Hosted paid lanes must enter the value explicitly: use a positive bound, "
+    "or 0 only with a separate full-grid projection, covering call/HTTP/judge "
+    "caps, deadline and approval. The current campaign authorizes hosted lanes "
+    "only at their positive prospective bounds.",
+    "--sample-seed": "Seed for each arm-scoped pseudorandom cluster shuffle "
+    "without replacement. Fix and record it so limits are nested and every "
+    "condition sees the identical within-arm subset (comparable, never pooled "
+    "across arms or tiers).",
     "--seeds": "Comma list of trajectory seeds (attack stochasticity), distinct "
     "from --sample-seed.",
     "--max-queries": "Max target queries per trajectory (turn budget upper bound).",
@@ -121,7 +136,10 @@ _PARAM_HELP: dict[str, str] = {
     "calls, hosted or local. A budget guard.",
     "--max-total-http-attempts": "Hard cap on total HTTP attempts across the "
     "lane (retries included).",
-    "--deadline-seconds": "Wall-clock deadline for the lane; a runaway guard.",
+    "--deadline-seconds": "Durable call-start admission window measured from "
+    "the matrix's first invocation. It prevents new model acquisitions and "
+    "new calls after expiry; it does not interrupt an already admitted call "
+    "or guarantee that the process finishes within this many seconds.",
     "--source-config": "Path to the source registry (experiments/"
     "source-instances.json). Bound automatically when the "
     "campaign env is exported.",
@@ -201,6 +219,14 @@ _PARAM_HELP: dict[str, str] = {
     "--alpha": "Two-sided significance level in (0, 1).",
     "--seed": "Deterministic analysis resampling seed.",
 }
+
+#: Builder-only human-scale spelling of ``--deadline-seconds`` for long local
+#: measured lanes. It is deliberately not a CLI parameter.
+_LOCAL_BUDGET_HELP = (
+    "Measured local-target lanes only. Build converts whole hours to the exact "
+    "--deadline-seconds call-start window. This stops new calls after expiry; "
+    "it is not a process completion timeout and does not interrupt an admitted call."
+)
 
 
 #: Prepaid provider budgets (thesis ledger Section 11.22).  Presentation of a
@@ -426,21 +452,10 @@ _NATIVE_ONLY_ATTACKERS: frozenset[str] = frozenset(
 #: Every registered adapter is visible in Build. T3MP3ST and HarmBench use the
 #: explicit prepare/capture controls rendered beside the normal lane builder.
 _BUILDER_OMITTED_ATTACKERS: frozenset[str] = frozenset()
-#: Precomputed-only adapters whose required prepared input has NO builder
-#: control yet.  They are shown disabled with the exact reason and rejected
-#: server-side, so the console never composes a lane that run_matrix's
-#: attacker-input-contract preflight would reject after launch.  Launch them
-#: from the CLI with a validated --attacker-config (runbook section 12).
-_CLI_ONLY_ATTACKERS: dict[str, str] = {
-    "ideator": (
-        "IDEATOR runs only from verified precomputed text-image seed_pairs "
-        "supplied through a CLI --attacker-config (framework lock status "
-        "precomputed-only; the live package path is disabled). The builder "
-        "has no seed-pairs input, so run_matrix would reject a console lane at "
-        "the attacker input contract preflight. Launch it from the CLI with "
-        "--attacker-config instead."
-    ),
-}
+#: Precomputed-only adapters whose required prepared input still has no Builder
+#: control. IDEATOR is intentionally absent: Build accepts its exact
+#: content-addressed seed-pair manifest and snapshots every selected PNG.
+_CLI_ONLY_ATTACKERS: dict[str, str] = {}
 #: Adapters that replay only rows of one upstream source family (the adapter
 #: raises for any other DataPoint.source).  Maps attacker -> (arm id prefix,
 #: reason); mirrored in builder validation so the lane is rejected before a
@@ -508,7 +523,7 @@ _FRAMEWORK_DESCRIPTIONS: dict[str, tuple[str, tuple[str, ...]]] = {
     "easyjailbreak": ("EasyJailbreak adapter", ("text",)),
     "h4rm3l": ("h4rm3l 0.2.4 in its own explicit venv", ("text",)),
     "spikee": ("Spikee 0.9.1 in its own explicit venv", ("text",)),
-    "ideator": ("IDEATOR precomputed seed-pair replay (CLI --attacker-config only)", ("text",)),
+    "ideator": ("IDEATOR verified precomputed text-image seed-pair replay", ("text",)),
     "purplellama": ("PurpleLlama source-identity replay (CyberSecEval arms only)", ("text",)),
     "asb": ("Agent Security Bench adapter", ("text",)),
     "harmbench": ("prepared HarmBench case-transfer replay", ("text",)),

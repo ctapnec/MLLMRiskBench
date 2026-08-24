@@ -321,13 +321,18 @@ def test_documented_hosted_judge_commands_ack_only_live_transfer() -> None:
         "runs/thesis/runner/static-video",
         "runs/thesis/runner/crescendo-text",
         'runs/thesis/runner/transfer-$ATTACKER',
-        "runs/thesis/runner/local-qwen3-vl-text",
         "runs/thesis/runner/defense-text",
     ):
         position = runbook.index(measured_destination)
         assert "--ack-hosted-judge-data-transfer" in runbook[
             max(0, position - 600) : position
         ]
+    local_destination = "runs/thesis/runner/local-qwen3-vl-text-core100"
+    local_position = runbook.index(local_destination)
+    local_context = runbook[max(0, local_position - 800) : local_position]
+    assert "--ack-hosted-judge-data-transfer" not in local_context
+    assert "--judges rules,guardrail" in local_context
+    assert '--limit "$URA_LOCAL_CORE_CLUSTER_LIMIT"' in local_context
 
 
 def test_core_docs_describe_request_endpoint_and_execution_config_contracts() -> None:
@@ -501,13 +506,16 @@ _CLI_DEFAULT_GROUP_KEYS = (
 )
 
 
-def test_runbook_lanes_use_the_level2_grouping_and_two_population_tiers() -> None:
+def test_runbook_lanes_use_the_level2_grouping_and_bounded_population_tiers() -> None:
     """Every documented measured/preflight lane passes the CLI-default eight-key
-    grouping (the only grouping the Level-2 export admits), every hosted-target
-    or hosted-judge lane carries the pre-registered positive limit placeholder,
-    and PROTOCOL/runbook describe the same two population tiers (R4-1/2/3)."""
+    grouping (the only grouping the Level-2 export admits), hosted-target or
+    hosted-judge lanes carry a positive-limit binding, and the core/extended
+    local tiers remain explicit and separate (R4-1/2/3)."""
     runbook = (_ROOT / "experiments" / "RUN_AND_RETURN.md").read_text(encoding="utf-8")
     protocol = (_ROOT / "experiments" / "PROTOCOL.md").read_text(encoding="utf-8")
+    local_plan = (_ROOT / "experiments" / "LOCAL_CAMPAIGN_PLAN.md").read_text(
+        encoding="utf-8"
+    )
     readme = (_ROOT / "README.md").read_text(encoding="utf-8")
     lanes = runbook[runbook.index("## 9. Plan lanes"):runbook.index("## 14. Tier 5")]
     group_values = re.findall(r"--group (\S+)", lanes)
@@ -522,13 +530,34 @@ def test_runbook_lanes_use_the_level2_grouping_and_two_population_tiers() -> Non
     # Canaries keep --limit 1 and the audio lane its bounded variable; no
     # hosted-route lane may run the complete corpus.
     assert not any("--limit 0" in command for command in commands)
-    assert sum(limit_placeholder in command for command in commands) >= 10
-    for document in (runbook, protocol):
-        flat = " ".join(document.split())
-        assert "is not a full-corpus scoring mode" in flat
-        assert "score through local stages only" in flat
-    assert "pre-registered positive cluster limit of runbook section 5.2" in " ".join(
-        readme.split()
+    assert sum(limit_placeholder in command for command in commands) >= 9
+    runbook_flat = " ".join(runbook.split())
+    protocol_flat = " ".join(protocol.split())
+    for flat in (runbook_flat, protocol_flat):
+        assert "--limit 100" in flat
+        assert "--limit 50" in flat
+        assert "24-hour" in flat and "86400" in flat
+        assert "ura-corpus-cluster-order-v1\\0<logical-arm>\\0<sample_seed>" in flat
+        assert "first eight bytes" in flat and "big-endian" in flat
+        assert "without replacement" in flat and "not disjoint partitions" in flat
+    local_plan_flat = " ".join(local_plan.split())
+    assert "ura-corpus-cluster-order-v1\\0<logical-arm>\\0<sample_seed>" in (
+        local_plan_flat
+    )
+    assert "nested, overlapping prefixes, not disjoint partitions" in local_plan_flat
+    assert (
+        "source-arm capped rather than proportional or risk-stratified" in runbook_flat
+    )
+    assert "not a proportional or risk-stratified sample" in protocol_flat
+    assert "local scoring stages" in runbook_flat
+    assert "scores through local stages only" in protocol_flat
+    assert "rules-only cascade is not a general scoring mode" in protocol_flat
+    readme_flat = " ".join(readme.split())
+    assert (
+        "100 clusters per source arm for core lanes and 50 for extended" in readme_flat
+    )
+    assert "The current campaign authorizes the full cohort only for all-local" in (
+        readme_flat
     )
 
 
@@ -542,6 +571,7 @@ def test_runbook_section_18_documents_the_build_surface_and_hf_token_children() 
     for token in (
         "`--models`",
         "`ideator`",
+        "`ura-ideator-seed-pairs/1`",
         "`purplellama`",
         "`cyberseceval_*`",
         "`--group`",
@@ -555,10 +585,16 @@ def test_runbook_section_18_documents_the_build_surface_and_hf_token_children() 
         "acquisition children (`model_acquire` and `export_aggregators`)",
     ):
         assert token in section, token
+    assert "CLI-only" not in section
+    assert "per selected arm" in section
+    assert "durable call-start window" in section
+    assert "not a process timeout" in section
     assert "dedicated sealed-acquisition child" not in runbook
     architecture = " ".join(
         (_ROOT / "docs" / "ARCHITECTURE.md").read_text(encoding="utf-8").split()
     )
     assert "`--models` shorthand" in architecture
+    assert "`ura-ideator-seed-pairs/1`" in architecture
+    assert "`ideator` is CLI-only" not in architecture
     assert _CLI_DEFAULT_GROUP_KEYS in architecture
     assert "dedicated acquisition child" not in architecture

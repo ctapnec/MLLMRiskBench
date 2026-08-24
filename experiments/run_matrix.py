@@ -669,6 +669,8 @@ _SECRET_CONFIG_KEY = re.compile(
     re.IGNORECASE,
 )
 
+_IDEATOR_TRANSIENT_IMAGE_DIGESTS_FIELD = "seed_pair_image_sha256"
+
 
 _PATH_ROOT = re.compile(r"^(?:[/\\]+|[A-Za-z]:[/\\]*)$")
 _PATH_LAST_COMPONENT = re.compile(r"[/\\]+[^/\\]+[/\\]*$")
@@ -754,6 +756,11 @@ def _portable_attacker_configs(
             ):
                 raise ValueError("IDEATOR out_dir must be null or a non-blank path")
             item["out_dir_configured"] = out_dir is not None
+        if name == "ideator" and _IDEATOR_TRANSIENT_IMAGE_DIGESTS_FIELD in item:
+            raise ValueError(
+                "IDEATOR private image-digest metadata must be verified and "
+                "removed before portable attacker configuration is derived"
+            )
         if name == "ideator" and "seed_pairs" in item:
             raw_pairs = item.pop("seed_pairs")
             if not isinstance(raw_pairs, list) or not raw_pairs:
@@ -1089,6 +1096,62 @@ def _load_attacker_config(
         raise ValueError(
             "--attacker-config contains unselected attackers: " + ", ".join(unused)
         )
+    if transient:
+        # The transient config has already been consumed. Transfer ownership
+        # of exact Builder-held artifacts before any digest or portable-identity
+        # check can fail so a rejected launch cannot orphan private copies.
+        _register_transient_attacker_artifact_cleanup(normalized, path)
+    ideator = normalized.get("ideator")
+    if ideator is not None:
+        has_digest_metadata = _IDEATOR_TRANSIENT_IMAGE_DIGESTS_FIELD in ideator
+        if not transient and has_digest_metadata:
+            raise ValueError(
+                "IDEATOR seed_pair_image_sha256 is reserved for the private "
+                "transient Builder handoff"
+            )
+        raw_pairs = ideator.get("seed_pairs")
+        if transient and raw_pairs is not None:
+            raw_digests = ideator.get(_IDEATOR_TRANSIENT_IMAGE_DIGESTS_FIELD)
+            if (
+                not isinstance(raw_pairs, list)
+                or not raw_pairs
+                or not isinstance(raw_digests, list)
+                or len(raw_digests) != len(raw_pairs)
+            ):
+                raise ValueError(
+                    "private transient IDEATOR seed pairs require one exact "
+                    "reviewed image digest per pair"
+                )
+            for index, (pair, declared_sha256) in enumerate(
+                zip(raw_pairs, raw_digests, strict=True)
+            ):
+                if (
+                    not isinstance(pair, (list, tuple))
+                    or len(pair) != 2
+                    or not isinstance(pair[1], str)
+                    or not pair[1].strip()
+                    or not isinstance(declared_sha256, str)
+                    or re.fullmatch(r"[0-9a-f]{64}", declared_sha256) is None
+                ):
+                    raise ValueError(
+                        f"private transient IDEATOR seed pair {index} lacks an "
+                        "exact reviewed image path and digest"
+                    )
+                media_input_identity(
+                    MediaRef(
+                        modality="image",
+                        path=pair[1],
+                        sha256=declared_sha256,
+                        mime="image/png",
+                    ),
+                    origin="attacker_generated",
+                    require_declared_sha256=True,
+                )
+            ideator.pop(_IDEATOR_TRANSIENT_IMAGE_DIGESTS_FIELD)
+        elif transient and has_digest_metadata:
+            raise ValueError(
+                "private transient IDEATOR image digests require seed_pairs"
+            )
     portable = _portable_attacker_configs(normalized)
     return normalized, {
         "file": (
@@ -1100,6 +1163,94 @@ def _load_attacker_config(
         "bytes": size,
         "normalized_selected_sha256": _sha256_json(portable),
     }
+
+
+def _cleanup_transient_attacker_artifacts(
+    identities: tuple[tuple[Path, int, int, int, int], ...],
+) -> None:
+    """Remove only the unchanged private artifacts owned by this Runner child."""
+
+    for path, device, inode, mode, size in identities:
+        try:
+            if path.is_symlink() or path.is_junction():
+                continue
+            current = path.lstat()
+            if (
+                not stat.S_ISREG(current.st_mode)
+                or (
+                    current.st_dev,
+                    current.st_ino,
+                    current.st_mode,
+                    current.st_size,
+                )
+                != (device, inode, mode, size)
+                or path.resolve(strict=True) != path
+            ):
+                continue
+            path.unlink()
+        except OSError:
+            continue
+
+
+def _register_transient_attacker_artifact_cleanup(
+    configs: dict[str, dict[str, object]],
+    transient_config_path: Path,
+) -> None:
+    """Give a detached Runner ownership of exact Builder-held attacker files."""
+
+    try:
+        root = (
+            transient_config_path.parent.parent / ".private-attacker-artifacts"
+        ).resolve(strict=True)
+    except OSError:
+        return
+    candidates: list[str] = []
+    for config in configs.values():
+        for field in ("response_artifact", "replay_artifact"):
+            value = config.get(field)
+            if isinstance(value, str):
+                candidates.append(value)
+        pairs = config.get("seed_pairs")
+        if isinstance(pairs, list):
+            for pair in pairs:
+                if (
+                    isinstance(pair, list)
+                    and len(pair) == 2
+                    and isinstance(pair[1], str)
+                ):
+                    candidates.append(pair[1])
+    identities: list[tuple[Path, int, int, int, int]] = []
+    filename = re.compile(
+        r"selected-(?:(?:t3mp3st|harmbench)-artifact|"
+        r"ideator-image-[0-9]{4})-[0-9a-f]{24}-[0-9a-f]{16}\.json"
+    )
+    for raw in dict.fromkeys(candidates):
+        unresolved = Path(raw).expanduser()
+        try:
+            if unresolved.is_symlink() or unresolved.is_junction():
+                continue
+            path = unresolved.resolve(strict=True)
+            opened = path.lstat()
+        except OSError:
+            continue
+        if (
+            path.parent != root
+            or filename.fullmatch(path.name) is None
+            or not stat.S_ISREG(opened.st_mode)
+        ):
+            continue
+        identities.append((
+            path,
+            opened.st_dev,
+            opened.st_ino,
+            opened.st_mode,
+            opened.st_size,
+        ))
+    if identities:
+        atexit.register(
+            _cleanup_transient_attacker_artifacts,
+            tuple(identities),
+        )
 
 
 def _load_engine_runtime_config(
@@ -4240,16 +4391,14 @@ def _main(argv=None) -> int:
         and args.judge_model != "mock"
         and local_judge_spec is None
     )
-    paid_hosted_route = bool(api_specs) or hosted_judge_selected
-    if execution_purpose == "measured_run" and paid_hosted_route:
-        if args.limit <= 0:
-            ap.error(
-                "measured hosted target/judge routes require a positive --limit"
-            )
-        if not sample_seed_explicit:
-            ap.error(
-                "measured hosted target/judge routes require explicit --sample-seed"
-            )
+    if (
+        execution_purpose == "measured_run"
+        and args.limit > 0
+        and not sample_seed_explicit
+    ):
+        ap.error(
+            "measured bounded-cluster routes require explicit --sample-seed"
+        )
     transfers_to_hosted_judge = (
         hosted_judge_selected and not args.preflight_only
     )

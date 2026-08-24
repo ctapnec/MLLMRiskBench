@@ -557,9 +557,31 @@ The runbook is the canonical from-zero procedure:
 `--limit N` means at most N unique source prompt/intent clusters while retaining
 all rows in each selected cluster. For the same converted-corpus digest and
 sample seed, real-source limits are deterministic nested prefixes, so the
-one-cluster canary is contained in a later `N`-cluster sample. Full-corpus
-local lanes use `--limit 0`; every lane with a hosted target or a hosted LLM
-judge uses the pre-registered positive cluster limit of runbook section 5.2.
+one-cluster canary is contained in a later `N`-cluster sample. Selection is a
+pseudorandom shuffle without replacement, scoped by logical arm name and sample
+seed. The sampler inventories unique clusters in first source-appearance order,
+hashes the UTF-8 bytes `ura-corpus-cluster-order-v1\0<arm>\0<sample_seed>`, uses
+the first eight SHA-256 bytes as an unsigned big-endian PRNG seed, shuffles the
+inventory positions once, takes the first N, and restores all selected sibling
+rows to source order. It is not a disjoint partition: the 50-cluster prefix is
+contained in the 100-cluster prefix for the same arm and seed, while the same
+numeric seed deliberately produces a different permutation for a different
+arm. The current
+pre-measurement local campaign fixes seed 0 and uses 100 clusters per source arm
+for core lanes and 50 for extended bridge/Ollama lanes. The cap is applied per
+logical source arm and is not within-arm risk stratification; reports retain
+exact achieved support and row fanout. Explicit `--limit 0` returns the exact
+full arm and is supported for a separately projected local or hosted cohort;
+hosted full mode still requires caps that cover its full no-call projection,
+deadline, attestation and approval. The current campaign authorizes the full
+cohort only for all-local lanes. Every current hosted target or hosted LLM judge
+uses its separately pre-registered positive cluster limit from runbook section
+5.2.
+
+The current bounded local cohort also fixes `--deadline-seconds 86400` and a
+separate 24-hour controller ceiling per measured lane. Runner stops starting new
+calls at its deadline but does not interrupt one already in flight; the
+controller may terminate and reap an over-time lane process group.
 
 ## Artifacts and recovery
 

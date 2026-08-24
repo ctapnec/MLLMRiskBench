@@ -10,8 +10,16 @@ import secrets
 from pathlib import Path
 from typing import Any, Mapping
 
+from ura.attacker_input_contract import media_input_identity
+from ura.data_models import MediaRef
 from ura.strict_json import strict_json_loads
 from ura.adapters.nanogcg import LIVE_NANOGCG_DISABLED_MESSAGE
+
+
+_RUNNER_ATTACKER_CONFIG_MAX_BYTES = 1024 * 1024
+_IDEATOR_SERIALIZED_TEXT_BUDGET_BYTES = (
+    _RUNNER_ATTACKER_CONFIG_MAX_BYTES // 2
+)
 
 
 class BuilderModelsMixin:
@@ -844,6 +852,107 @@ class BuilderModelsMixin:
                 "replay_artifact": str(replay_artifact),
                 "replay_artifact_sha256": artifact_sha,
             }
+        if "ideator" in selected:
+            manifest = self._prepared_file(
+                params.get("ideator_manifest", ""),
+                label="IDEATOR seed-pair manifest",
+            )
+            expected = params.get("ideator_manifest_sha", "").strip().lower()
+            if re.fullmatch(r"[0-9a-f]{64}", expected) is None:
+                raise ValueError("IDEATOR manifest SHA-256 must be exact 64-hex")
+            if verify_digest and self._file_sha256(manifest) != expected:
+                raise ValueError("IDEATOR manifest SHA-256 does not match the file")
+            document = self._strict_json_object(manifest, max_bytes=4 * 1024 * 1024)
+            if set(document) != {"format_version", "seed_pairs"}:
+                raise ValueError(
+                    "IDEATOR manifest must contain only format_version and seed_pairs"
+                )
+            if document.get("format_version") != "ura-ideator-seed-pairs/1":
+                raise ValueError(
+                    "IDEATOR manifest is not a ura-ideator-seed-pairs/1 artifact"
+                )
+            raw_pairs = document.get("seed_pairs")
+            if not isinstance(raw_pairs, list) or not raw_pairs:
+                raise ValueError("IDEATOR manifest seed_pairs must be a non-empty list")
+            if len(raw_pairs) > 256:
+                raise ValueError("IDEATOR manifest exceeds the 256 seed-pair limit")
+            pairs: list[dict[str, object]] = []
+            total_image_bytes = 0
+            for index, raw_pair in enumerate(raw_pairs):
+                if not isinstance(raw_pair, dict) or set(raw_pair) != {
+                    "text",
+                    "image_path",
+                    "image_sha256",
+                }:
+                    raise ValueError(
+                        f"IDEATOR seed_pairs[{index}] must contain exactly text, "
+                        "image_path, and image_sha256"
+                    )
+                text = raw_pair.get("text")
+                image_path = raw_pair.get("image_path")
+                image_sha256 = raw_pair.get("image_sha256")
+                if not isinstance(text, str) or not text.strip():
+                    raise ValueError(
+                        f"IDEATOR seed_pairs[{index}].text must be non-blank"
+                    )
+                if not isinstance(image_path, str) or not image_path.strip():
+                    raise ValueError(
+                        f"IDEATOR seed_pairs[{index}].image_path must be non-blank"
+                    )
+                if not isinstance(image_sha256, str) or re.fullmatch(
+                    r"[0-9a-fA-F]{64}", image_sha256
+                ) is None:
+                    raise ValueError(
+                        f"IDEATOR seed_pairs[{index}].image_sha256 must be exact 64-hex"
+                    )
+                image = self._prepared_file(
+                    image_path,
+                    label=f"IDEATOR seed-pair image {index}",
+                )
+                normalized_sha256 = image_sha256.lower()
+                try:
+                    identity = media_input_identity(
+                        MediaRef(
+                            modality="image",
+                            path=str(image),
+                            sha256=normalized_sha256,
+                            mime="image/png",
+                        ),
+                        origin="attacker_generated",
+                        require_declared_sha256=True,
+                    )
+                except ValueError as exc:
+                    raise ValueError(
+                        f"IDEATOR seed-pair image {index} is not the declared PNG: {exc}"
+                    ) from exc
+                total_image_bytes += identity.bytes
+                if total_image_bytes > 256 * 1024 * 1024:
+                    raise ValueError(
+                        "IDEATOR seed-pair images exceed the 256 MiB snapshot limit"
+                    )
+                pairs.append({
+                    "text": text,
+                    "image_path": str(image),
+                    "image_sha256": normalized_sha256,
+                    "image_bytes": identity.bytes,
+                })
+            projected_text_payload = self._canonical_json_bytes({
+                "ideator": {
+                    "seed_pairs": [
+                        [str(pair["text"]), ""] for pair in pairs
+                    ]
+                }
+            })
+            if len(projected_text_payload) > _IDEATOR_SERIALIZED_TEXT_BUDGET_BYTES:
+                raise ValueError(
+                    "IDEATOR serialized seed text exceeds its 512 KiB share "
+                    "of Runner's 1 MiB attacker-config bound"
+                )
+            entries["ideator"] = {
+                "seed_pair_manifest": str(manifest),
+                "seed_pair_manifest_sha256": expected,
+                "seed_pairs": pairs,
+            }
         if "nanogcg" in selected:
             suffix = str(params.get("nanogcg_suffix", "")).strip()
             suffix_source = str(params.get("nanogcg_suffix_source", "")).strip()
@@ -946,6 +1055,7 @@ class BuilderModelsMixin:
             expected_names = set(self._split_list(params.get("attackers", ""))) & {
                 "t3mp3st",
                 "harmbench",
+                "ideator",
                 "nanogcg",
             }
             if set(entries) != expected_names or len(entries) != len(loaded):
@@ -1006,8 +1116,82 @@ class BuilderModelsMixin:
                 )
                 materialized_artifacts.append(artifact_path)
                 entry[path_field] = str(artifact_path)
+            ideator = runtime_entries.get("ideator")
+            if ideator is not None:
+                manifest_sha256 = str(
+                    ideator.get("seed_pair_manifest_sha256", "")
+                ).lower()
+                if re.fullmatch(r"[0-9a-f]{64}", manifest_sha256) is None:
+                    raise ValueError(
+                        "reviewed IDEATOR manifest lacks an exact content digest"
+                    )
+                if snapshot_payload is not None:
+                    manifest_payload = (artifact_snapshots or {}).get(
+                        "attacker_artifact_ideator"
+                    )
+                    if (
+                        manifest_payload is None
+                        or hashlib.sha256(manifest_payload).hexdigest()
+                        != manifest_sha256
+                    ):
+                        raise ValueError(
+                            "reviewed IDEATOR manifest snapshot no longer matches"
+                        )
+                raw_pairs = ideator.get("seed_pairs")
+                if not isinstance(raw_pairs, list) or not raw_pairs:
+                    raise ValueError("reviewed IDEATOR seed-pair snapshot is invalid")
+                runtime_pairs: list[list[str]] = []
+                runtime_image_sha256: list[str] = []
+                for index, raw_pair in enumerate(raw_pairs):
+                    if not isinstance(raw_pair, dict):
+                        raise ValueError("reviewed IDEATOR seed-pair snapshot is invalid")
+                    text = raw_pair.get("text")
+                    image_path = raw_pair.get("image_path")
+                    image_sha256 = raw_pair.get("image_sha256")
+                    if (
+                        not isinstance(text, str)
+                        or not text.strip()
+                        or not isinstance(image_path, str)
+                        or not image_path
+                        or not isinstance(image_sha256, str)
+                        or re.fullmatch(r"[0-9a-f]{64}", image_sha256) is None
+                    ):
+                        raise ValueError(
+                            "reviewed IDEATOR seed-pair snapshot is invalid"
+                        )
+                    artifact_payload = (artifact_snapshots or {}).get(
+                        f"attacker_artifact_ideator_image_{index:04d}"
+                    )
+                    if snapshot_payload is not None and artifact_payload is None:
+                        raise ValueError(
+                            f"reviewed IDEATOR image {index} snapshot is missing"
+                        )
+                    runtime_image_path = image_path
+                    if artifact_payload is not None:
+                        if hashlib.sha256(artifact_payload).hexdigest() != image_sha256:
+                            raise ValueError(
+                                f"reviewed IDEATOR image {index} snapshot no longer matches"
+                            )
+                        private_image, _image_digest = self._materialize_private_config(
+                            payload=bytes(artifact_payload),
+                            directory_name=".private-attacker-artifacts",
+                            filename_prefix=f"ideator-image-{index:04d}",
+                        )
+                        materialized_artifacts.append(private_image)
+                        runtime_image_path = str(private_image)
+                    runtime_pairs.append([text, runtime_image_path])
+                    runtime_image_sha256.append(image_sha256)
+                runtime_entries["ideator"] = {
+                    "seed_pairs": runtime_pairs,
+                    "seed_pair_image_sha256": runtime_image_sha256,
+                }
+            runtime_payload = self._canonical_json_bytes(runtime_entries)
+            if len(runtime_payload) > _RUNNER_ATTACKER_CONFIG_MAX_BYTES:
+                raise ValueError(
+                    "prepared attacker config exceeds Runner's 1 MiB bound"
+                )
             path, _payload_sha256 = self._materialize_private_config(
-                payload=self._canonical_json_bytes(runtime_entries),
+                payload=runtime_payload,
                 directory_name=".private-attacker-configs",
                 filename_prefix="attacker",
             )

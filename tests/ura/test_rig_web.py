@@ -1083,7 +1083,8 @@ def test_builder_page_renders_full_surface(tmp_path: Path) -> None:
         "name='scope'", "name='max_age'", "name='att_path1'",
         "name='att_sha1'", "name='seeds'", "name='max_queries'",
         "name='max_turns'", "name='cap_target'", "name='cap_judge'",
-        "name='cap_http'", "name='deadline'", "name='dtype'",
+        "name='cap_http'", "name='local_budget_hours'", "name='deadline'",
+        "name='limit'", "name='sample_seed'", "name='dtype'",
         "name='quantization'", "name='judge_model'", "name='defense_guard'",
         "name='canary_dry'", "name='approximate_common_metrics'",
         # Scoring and defense guardrail inputs (model/revision/device each).
@@ -1092,6 +1093,8 @@ def test_builder_page_renders_full_surface(tmp_path: Path) -> None:
         "name='defense_guardrail_revision'", "name='defense_guardrail_device'",
     ):
         assert field in text, field
+    assert "id='sample-limit-range'" in text
+    assert "id='prepared-ideator'" in text
     assert "addatt" in text  # repeatable receipt rows
 
 
@@ -3463,8 +3466,9 @@ def test_dashboard_notices_and_policy_card(tmp_path: Path) -> None:
     assert status == 200
     assert "Notices" not in text  # no warnings file -> no banner card
     assert "Campaign sampling policy" in text
-    assert "local lanes only" in text
-    assert "never be pooled" in text or "never pooled" in text
+    assert "100 clusters per core arm and 50 per extended arm" in text
+    assert "explicit --limit 0 is supported locally or through a hosted route" in text
+    assert "different selected universes" in text and "distinct strata" in text
 
     (app.results_root / "console-warnings.json").write_text(json.dumps({
         "warnings": [
@@ -6410,7 +6414,8 @@ def test_stats_renders_real_level2_report(
         "--local", "vllm:fixture/local-model",
         "--local-config", str(tmp_path / "local-targets.json"),
         "--attackers", "replay", "--judges", "rules", "--corpora", "synth",
-        "--limit", "1", "--max-queries", "1", "--max-turns", "1",
+        "--limit", "1", "--sample-seed", "0",
+        "--max-queries", "1", "--max-turns", "1",
         "--max-total-target-calls", "100000",
         "--max-total-judge-calls", "100000",
         "--max-total-http-attempts", "100000", "--deadline-seconds", "3600",
@@ -7063,9 +7068,11 @@ def test_builder_dry_canary_composes_synth_and_validates(tmp_path: Path) -> None
     app.close()
 
 
-def test_builder_hosted_measured_rejects_limit_zero(tmp_path: Path, monkeypatch) -> None:
-    # MED: a hosted paid measured lane must carry a positive pre-registered
-    # --limit; 0 ("all clusters") defeats the sampling policy and is rejected.
+def test_builder_hosted_measured_requires_explicit_bounded_or_full_limit(
+    tmp_path: Path, monkeypatch,
+) -> None:
+    # A blank paid limit is never silently expanded. An explicit 0 selects the
+    # complete arm, but still passes through projection, cap and approval gates.
     monkeypatch.setenv("URA_PROJECT_REVISION_MANIFEST", str(tmp_path / "r"))
     monkeypatch.setenv("URA_PROJECT_REVISION_SHA256", "a" * 64)
     monkeypatch.setenv("URA_SOURCE_CONFORMANCE_MANIFEST", str(tmp_path / "s"))
@@ -7079,8 +7086,14 @@ def test_builder_hosted_measured_rejects_limit_zero(tmp_path: Path, monkeypatch)
         "att_sha1": "c" * 64, "cap_target": "4", "cap_judge": "4",
         "cap_http": "12", "deadline": "600",
     }
-    assert "limit" in app._validate_builder({**base, "limit": "0"})
+    blank = dict(base)
+    blank.pop("sample_seed")
+    assert "limit" in app._validate_builder(blank)
     assert "limit" in app._validate_builder({**base, "limit": "-1"})
+    full = {**base, "limit": "0"}
+    full.pop("sample_seed")
+    full_errors = app._validate_builder(full)
+    assert "limit" not in full_errors and "sample_seed" not in full_errors
     assert "limit" not in app._validate_builder({**base, "limit": "5"})
     app.close()
 

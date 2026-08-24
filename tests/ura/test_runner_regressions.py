@@ -468,6 +468,75 @@ def test_cluster_limits_are_nested_prefixes_for_one_sample_seed(
     )
 
 
+def test_cluster_selection_is_arm_scoped_and_full_mode_is_exact() -> None:
+    records = [
+        _datapoint(f"row-{index}").model_copy(update={
+            "meta": {"source_cluster_id": f"intent-{index:02d}"}
+        })
+        for index in range(20)
+    ]
+
+    first, _, first_ids, all_ids = run_matrix._select_corpus(
+        "logical-arm-a", records, 10, 23
+    )
+    second, _, second_ids, _ = run_matrix._select_corpus(
+        "logical-arm-b", records, 10, 23
+    )
+    full, full_indices, full_ids, full_inventory = run_matrix._select_corpus(
+        "logical-arm-a", records, 0, 999
+    )
+
+    assert first != second
+    assert set(first_ids) != set(second_ids)
+    assert len(first_ids) == len(second_ids) == 10
+    assert all_ids == [f"intent-{index:02d}" for index in range(20)]
+    assert full == records
+    assert full_indices == list(range(20))
+    assert full_ids == full_inventory == all_ids
+
+
+def test_cluster_selection_sha256_prng_known_vector() -> None:
+    records = [
+        _datapoint(f"row-{index}").model_copy(update={
+            "meta": {"source_cluster_id": f"intent-{index:02d}"}
+        })
+        for index in range(12)
+    ]
+
+    selected, indices, selected_ids, inventory = run_matrix._select_corpus(
+        "known-vector-arm", records, 5, 23
+    )
+
+    assert inventory == [f"intent-{index:02d}" for index in range(12)]
+    assert selected_ids == [
+        "intent-00", "intent-01", "intent-04", "intent-06", "intent-07",
+    ]
+    assert indices == [0, 1, 4, 6, 7]
+    assert selected == [records[index] for index in indices]
+
+
+def test_cluster_selection_retains_interleaved_siblings_in_source_order() -> None:
+    cluster_ids = ["a", "b", "c", "a", "b", "c"]
+    records = [
+        _datapoint(f"row-{index}").model_copy(update={
+            "meta": {"source_cluster_id": cluster_id}
+        })
+        for index, cluster_id in enumerate(cluster_ids)
+    ]
+
+    selected, indices, selected_ids, _ = run_matrix._select_corpus(
+        "interleaved-arm", records, 1, 7
+    )
+
+    assert len(selected_ids) == 1
+    expected_indices = [
+        index for index, cluster_id in enumerate(cluster_ids)
+        if cluster_id == selected_ids[0]
+    ]
+    assert indices == expected_indices
+    assert selected == [records[index] for index in expected_indices]
+
+
 def test_real_corpus_runs_directly_and_records_source_identity(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, project_revision_args,
 ) -> None:
@@ -1405,7 +1474,7 @@ def test_local_probe_receipt_admits_measured_run_and_level1(
         "--local", requested_spec,
         "--local-config", str(local_config_path),
         "--attackers", "replay", "--judges", "rules",
-        "--corpora", "synth", "--limit", "1",
+        "--corpora", "synth", "--limit", "1", "--sample-seed", "0",
         "--max-queries", "1", "--max-turns", "1",
         *_finite_budget_args(),
         *project_revision_args,
@@ -2210,15 +2279,13 @@ def test_same_served_model_at_distinct_custom_endpoints_is_a_distinct_route() ->
 @pytest.mark.parametrize(
     "policy_args, expected",
     (
-        (("--limit", "0", "--sample-seed", "0", "--ack-hosted-judge-data-transfer"),
-         "require a positive --limit"),
         (("--limit", "1", "--ack-hosted-judge-data-transfer"),
          "require explicit --sample-seed"),
         (("--limit", "1", "--sample-seed", "0"),
          "requires --ack-hosted-judge-data-transfer"),
     ),
 )
-def test_direct_cli_rejects_unbounded_or_unacknowledged_hosted_judge_before_models(
+def test_direct_cli_rejects_unseeded_or_unacknowledged_hosted_judge_before_models(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     project_revision_args,
@@ -2249,6 +2316,83 @@ def test_direct_cli_rejects_unbounded_or_unacknowledged_hosted_judge_before_mode
             *_finite_budget_args(), *project_revision_args,
         ])
     assert expected in capsys.readouterr().err
+    assert constructions == []
+
+
+@pytest.mark.parametrize("hosted_judge", (False, True))
+def test_direct_cli_explicit_full_hosted_route_reaches_receipt_admission_without_calls(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    project_revision_args,
+    capsys: pytest.CaptureFixture[str],
+    hosted_judge: bool,
+) -> None:
+    spec = "anthropic:full-corpus-fixture"
+    judge_spec = "anthropic:full-corpus-judge-fixture"
+    constructions: list[str] = []
+    monkeypatch.setattr(
+        run_matrix,
+        "build_target",
+        lambda *_args, **_kwargs: constructions.append("build"),
+    )
+    missing_attestation = tmp_path / "missing-live-attestation.json"
+    judge_args = (
+        [
+            "--judges", "rules,llm", "--judge-model", judge_spec,
+            "--ack-hosted-judge-data-transfer",
+        ]
+        if hosted_judge
+        else ["--judges", "rules"]
+    )
+    result = run_matrix.main([
+        "--api", spec,
+        *_api_config_args(tmp_path, spec, judge_spec),
+        "--attackers", "replay", "--corpora", "synth",
+        *judge_args, "--limit", "0",
+        "--execution-scope-id", "hosted-full-corpus-policy",
+        "--live-attestation-max-age-hours", "2",
+        "--live-attestation", str(missing_attestation),
+        "--live-attestation-sha256", "c" * 64,
+        "--max-queries", "1", "--max-turns", "1",
+        "--out", str(tmp_path / "hosted-full-corpus-policy"),
+        *_finite_budget_args(), *project_revision_args,
+    ])
+    error = capsys.readouterr().err
+    assert result == 1
+    assert "positive --limit" not in error
+    assert "missing-live-attestation.json" in error
+    assert constructions == []
+
+
+def test_direct_cli_requires_explicit_seed_for_bounded_local_measured_sample(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    project_revision_args,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    constructions: list[str] = []
+
+    def unexpected_build(*_args, **_kwargs):
+        constructions.append("build")
+        raise AssertionError("sample admission must precede target construction")
+
+    monkeypatch.setattr(run_matrix, "build_target", unexpected_build)
+    with pytest.raises(SystemExit):
+        run_matrix.main([
+            "--local", "vllm:org/local-target",
+            "--attackers", "replay", "--corpora", "synth",
+            "--judges", "rules", "--limit", "100",
+            "--execution-scope-id", "local-bounded-sample-policy",
+            "--live-attestation-max-age-hours", "2",
+            "--live-attestation", str(tmp_path / "receipt.json"),
+            "--live-attestation-sha256", "c" * 64,
+            "--max-queries", "1", "--max-turns", "1",
+            "--out", str(tmp_path / "local-bounded-sample-policy"),
+            *_finite_budget_args(), *project_revision_args,
+        ])
+    assert "measured bounded-cluster routes require explicit --sample-seed" in (
+        capsys.readouterr().err
+    )
     assert constructions == []
 
 

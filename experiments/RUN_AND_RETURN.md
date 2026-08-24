@@ -430,7 +430,7 @@ partial, failed-after-request, and genuine pre-Runner-no-request states. Each
 lane binds its controller failure, optional exact measured argv, and retained
 grid, request-envelope, eligibility, and error artifacts. `level1_evidence`
 receives all retained Runner/request artifacts it can represent. A setup error
-or 14-day lane timeout that occurs before Runner can publish a lifecycle writes
+or 24-hour lane timeout that occurs before Runner can publish a lifecycle writes
 one create-only `ura-phase6-pre-runner-failure/1` marker under the exact planned
 `runs/thesis/runner/<lane>` root. The marker is explicitly non-Runner and
 non-empirical: it satisfies the Gate 6 inventory requirement but is never
@@ -438,12 +438,16 @@ fabricated as Level-1 metric input. Phase 7 rejects a missing lane root or an
 untyped controller-log explanation. Suite metrics and Level 2 use a separate
 success-only Runner view.
 
-Gate 5 records `measured_lane_wall_time_seconds=1209600` in its approved policy
-and in `RUNNOTE.md`. This process wall-time ceiling is 14 days per measured
-lane, distinct from the 90-day Runner call-start admission deadline. Core and
-extended controllers terminate and reap a lane process group at the wall-time
+Gate 5 records `measured_lane_wall_time_seconds=86400` in its approved policy
+and `RUNNOTE.md`, and every current bounded measured request carries
+`--deadline-seconds 86400`. The first is a 24-hour process wall-time ceiling;
+the second is Runner's call-start window. Runner refuses to start a later call
+after its deadline but does not interrupt an in-flight call. Core and extended
+controllers can terminate and reap a lane process group at the wall-time
 ceiling, record the typed pre-Runner marker when Runner has no lifecycle output,
-and continue to the next declared lane without raising the cap.
+and continue to the next declared lane without raising either cap. Other
+positive values remain a generic configurable capability for a separately
+projected and approved cohort.
 
 The four top-level Phase 5 through Phase 7 controllers publish
 `ura-engineering-campaign/1` markers and ordered task events from their own
@@ -1218,53 +1222,69 @@ confirmed.
 Every funded row remains subject to the section 8 gates: a lane that fails
 its attestation probe or canary is removed, never substituted.
 
-### 5.2 Budget-bounded lane sampling (operator decision, 13 August 2026)
+### 5.2 Bounded lane sampling (prospective amendment, 24 August 2026)
 
-Frontier hosted conditions (the Fable and Sol focal pair above all) would
-consume the prepaid budgets far too quickly at full corpus size, so the
-campaign runs two pre-registered population tiers:
+The 13 August design bounded paid hosted routes but assumed that every local
+lane would exhaust its converted corpus. Full-universe projections later made
+the converted-row fanout and repeated inference burden explicit. Before any
+Phase 6 measured call or benchmark outcome, the local campaign therefore fixed
+two bounded measured tiers:
 
-- Local lanes run the full converted corpora: target calls cost only local
-  GPU time.
-- Hosted API lanes run a bounded cluster subsample of each corpus, fixed
-  prospectively by `--limit` and a recorded `--sample-seed` before any
-  outcome is inspected. The sampling audit in every manifest retains the
-  full-corpus digest, the complete cluster inventory, and the exact
-  selected clusters, so the subsample is reproducible and reviewable.
-- Comparability: with identical corpus, `--limit`, and `--sample-seed`,
-  every hosted condition receives the identical cluster subset. A
-  local-versus-hosted comparison restricts to the intersection of their
-  cluster sets, which is exactly that pre-registered subset. Pooled rates
-  across the two population tiers remain forbidden - different
-  denominators; the compatibility rules already refuse them. The
-  full-corpus local lanes double as an internal check of the design: on a
-  local model, the subset estimate can be compared with the full-corpus
-  estimate to quantify the subsampling error empirically.
-- Judge budget: in the recorded funded plan, the selected hosted Haiku judge is
-  metered on every judged response regardless of whether the target is local,
-  so full-corpus local lanes cannot default to hosted LLM judging. Full local
-  corpora score through local stages only (the deterministic rules stage plus
-  the local scoring guardrail, `--judges rules,guardrail`, or a local LLM
-  judge); the hosted LLM-judge stage runs only on the pre-registered common
-  subset (identical to the hosted lanes) unless post-canary projections show
-  budget for more. A rules-only cascade (`--judges rules`) is not a
-  full-corpus scoring mode: it fails closed on any row the rules stage cannot
-  classify confidently. Evaluator modes with different judge stages are
-  distinct compatibility keys and are never pooled.
-- Enforcement: the CLI and the console's Build admission require a positive
-  pre-registered `--limit` (with an explicit `--sample-seed`) for any measured
-  lane with a paid hosted route - a hosted target or a hosted LLM judge - and
-  admit `--limit 0` only for lanes whose target and judge stages are all
-  local.
-- Exact per-lane limits and call caps are fixed after the section 9.1
-  diagnostic canaries from the prepaid budgets, conservative call projection,
-  and exact observed usage/spend, and are recorded before any
-  measured lane starts. [13 August 2026: the operator delegated setting
-  these limits to the campaign agent, bounded by the operator-recorded
-  prepaid provider budgets (ledger Section 11.27); the limits remain
-  prospective and recorded, and the delegation does not extend to any
-  other operator-only judgment.] Audio and video remain hosted-only and
-  already bounded (section 10.3).
+```bash
+export URA_LOCAL_CORE_CLUSTER_LIMIT=100
+export URA_LOCAL_EXTENDED_CLUSTER_LIMIT=50
+export URA_LOCAL_SAMPLE_SEED=0
+```
+
+- Core static text/image, R-Judge, GPTGeoChat, Crescendo and an eligible local
+  defense use `--limit 100 --sample-seed 0 --seeds 0`.
+- Runner-safe bridge and Ollama lanes use
+  `--limit 50 --sample-seed 0 --seeds 0`. Keep each attacker's declared
+  query/turn semantics; do not turn a four-operation bridge into a different
+  one-operation attack merely to shorten the run.
+- Current hosted API lanes remain separately bounded by prepaid budgets and a
+  positive pre-registered limit. Audio and video remain hosted-only and retain
+  their own prospective limits.
+- Explicit `--limit 0` is supported for a separately projected and approved
+  local or hosted full-corpus replication. A hosted full cohort must retain
+  attestation and transfer acknowledgement where applicable, and its target,
+  judge and HTTP caps must cover the complete no-call projection. The current
+  campaign authorizes full mode only for all-local replication. It is not the
+  measured bounded cohort and cannot reuse its Gate record, caps or output
+  roots.
+
+`--limit N` is applied independently to each logical source arm. Unique clusters
+are inventoried in first source-appearance order. SHA-256 over the UTF-8 bytes
+`ura-corpus-cluster-order-v1\0<logical-arm>\0<sample_seed>` supplies an unsigned
+big-endian PRNG seed from its first eight bytes. The sampler shuffles inventory
+positions once without replacement, takes the first N, and restores all selected
+sibling rows to source order. Thus the design is source-arm capped rather than
+proportional or risk-stratified. The prefixes are nested and overlapping, not
+disjoint partitions: for an unchanged arm and seed, limit 1 is contained in 50,
+which is contained in 100. The same numeric seed deliberately produces a
+different permutation for another arm. A source with fewer than N clusters is
+complete but precision-limited, and limit 0 returns the exact full arm. Fanout
+rows, repeated model conditions and turns do not increase the independent
+cluster count.
+
+The manifest retains the full-corpus digest, complete cluster inventory, exact
+selected cluster identities, converted-row fanout and achieved source-policy
+support. Analysis never pools tiers. It reports total selected, completed,
+policy-evaluable, decided and abstained clusters, exact risk/policy coverage and
+missingness. Core estimates target 100 matched clusters where available;
+extended estimates are descriptive and precision-limited. A bounded selection
+does not guarantee coverage of every risk stratum inside an arm.
+
+Every changed selection receives a new `rig_check` projection, purpose-bound
+acquisition plan/receipt, request envelope and Gate 5 cap. The earlier
+full-corpus projections remain capacity records only. Existing exact-revision
+limit-1 canaries remain nested diagnostics when all other identities match;
+they are not measured evidence. HarmBench capture is selection-bound and must be
+regenerated with limit 50. Exact target, local-guard, model-judge, HTTP, time and
+storage ceilings are recorded before measurement and are never raised
+mid-lane. The selected hosted LLM judge remains metered and runs only in its
+separately authorized hosted cohort; the all-local cohort uses local scoring
+stages.
 
 ## 6. Configure scoring and optional defense guards
 
@@ -2084,12 +2104,15 @@ narrower grouping, so every preflight and measured lane below passes exactly
 this value (or omits `--group` to inherit it).
 
 Use whole source-cluster sampling. `--limit 0` means the complete selected
-release (admitted only for local-only lanes, section 5.2); `--limit N` retains
-every row in each of at most N selected clusters.
+release and is admitted only as a separately projected local-only cohort;
+`--limit N` retains every row in each of at most N selected clusters per
+logical source arm.
 For the same real converted-corpus digest and `--sample-seed`, limits are nested
 prefixes of one deterministic cluster ordering: the `--limit 1` canary cluster
 is contained in a later `--limit N` selection. This continuity is operational,
-not evidence that one cluster represents the population.
+not evidence that one cluster represents the population. The sampler does not
+stratify within an arm by risk or policy, so report achieved exact-stratum
+support rather than assuming it.
 
 ## 10. Tier 1: broad static replay
 
@@ -2119,7 +2142,7 @@ python -m experiments.rig_check \
   --limit '<pre-registered-cluster-limit (section 5.2)>' --sample-seed 0 --seeds 0,1 --max-queries 1 --max-turns 1 \
   --group model,source,risk,effective_modality,expected_behavior,attacker,source_policy_id,source_policy_version \
   --max-total-target-calls '<planning-ceiling>' --max-total-judge-calls '<planning-ceiling>' \
-  --max-total-http-attempts '<planning-ceiling>' --deadline-seconds 7776000 \
+  --max-total-http-attempts '<planning-ceiling>' --deadline-seconds '<pre-registered-call-start-window-seconds>' \
   --out runs/thesis/preflight/static-text
 
 python -m experiments.run_matrix \
@@ -2132,7 +2155,7 @@ python -m experiments.run_matrix \
   --limit '<pre-registered-cluster-limit (section 5.2)>' --sample-seed 0 --seeds 0,1 --max-queries 1 --max-turns 1 \
   --group model,source,risk,effective_modality,expected_behavior,attacker,source_policy_id,source_policy_version \
   --max-total-target-calls '<projected-target-total>' --max-total-judge-calls '<projected-judge-total>' \
-  --max-total-http-attempts '<projected-http-total>' --deadline-seconds 7776000 \
+  --max-total-http-attempts '<projected-http-total>' --deadline-seconds '<pre-registered-call-start-window-seconds>' \
   --out runs/thesis/runner/static-text
 ```
 
@@ -2142,7 +2165,9 @@ pre-registered positive cluster limit (identical in the preflight and the
 measured command, and required in every hosted-target or hosted-judge lane
 below, where the same placeholder appears), the first command's ceilings are
 operator capacity bounds, and the second command's ceilings come from the
-successful no-call projection.
+successful no-call projection. The call-start-window placeholder is likewise a
+positive cohort-specific value recorded before execution; it is not inherited
+from the current bounded local cohort.
 
 ### 10.2 Image roster
 
@@ -2170,7 +2195,7 @@ python -m experiments.rig_check \
   --limit '<pre-registered-cluster-limit (section 5.2)>' --sample-seed 0 --seeds 0,1 --max-queries 1 --max-turns 1 \
   --group model,source,risk,effective_modality,expected_behavior,attacker,source_policy_id,source_policy_version \
   --max-total-target-calls '<planning-ceiling>' --max-total-judge-calls '<planning-ceiling>' \
-  --max-total-http-attempts '<planning-ceiling>' --deadline-seconds 7776000 \
+  --max-total-http-attempts '<planning-ceiling>' --deadline-seconds '<pre-registered-call-start-window-seconds>' \
   --out runs/thesis/preflight/static-image
 ```
 
@@ -2202,7 +2227,7 @@ python -m experiments.rig_check \
   --limit "$AUDIO_SAMPLE_CLUSTERS" --sample-seed 0 --seeds 0 --max-queries 1 --max-turns 1 \
   --group model,source,risk,effective_modality,expected_behavior,attacker,source_policy_id,source_policy_version \
   --max-total-target-calls '<planning-ceiling>' --max-total-judge-calls '<planning-ceiling>' \
-  --max-total-http-attempts '<planning-ceiling>' --deadline-seconds 7776000 \
+  --max-total-http-attempts '<planning-ceiling>' --deadline-seconds '<pre-registered-call-start-window-seconds>' \
   --out runs/thesis/preflight/static-audio
 
 # Video: the benign-query and harmful-query releases are both harmful joint-input probes.
@@ -2215,7 +2240,7 @@ python -m experiments.rig_check \
   --limit '<pre-registered-cluster-limit (section 5.2)>' --sample-seed 0 --seeds 0,1 --max-queries 1 --max-turns 1 \
   --group model,source,risk,effective_modality,expected_behavior,attacker,source_policy_id,source_policy_version \
   --max-total-target-calls '<planning-ceiling>' --max-total-judge-calls '<planning-ceiling>' \
-  --max-total-http-attempts '<planning-ceiling>' --deadline-seconds 7776000 \
+  --max-total-http-attempts '<planning-ceiling>' --deadline-seconds '<pre-registered-call-start-window-seconds>' \
   --out runs/thesis/preflight/static-video
 ```
 
@@ -2265,7 +2290,7 @@ python -m experiments.rig_check \
   --group model,source,risk,effective_modality,expected_behavior,attacker,source_policy_id,source_policy_version \
   --max-total-target-calls '<planning-ceiling>' \
   --max-total-http-attempts '<planning-ceiling>' \
-  --deadline-seconds 7776000 --out runs/thesis/preflight/rjudge
+  --deadline-seconds '<pre-registered-call-start-window-seconds>' --out runs/thesis/preflight/rjudge
 
 # GPTGeoChat: image-capable roster, five moderation thresholds per conversation.
 python -m experiments.rig_check \
@@ -2276,7 +2301,7 @@ python -m experiments.rig_check \
   --group model,source,risk,effective_modality,expected_behavior,attacker,source_policy_id,source_policy_version \
   --max-total-target-calls '<planning-ceiling>' \
   --max-total-http-attempts '<planning-ceiling>' \
-  --deadline-seconds 7776000 --out runs/thesis/preflight/gptgeochat
+  --deadline-seconds '<pre-registered-call-start-window-seconds>' --out runs/thesis/preflight/gptgeochat
 ```
 
 The no-call projection must report zero model-judge calls and zero local
@@ -2320,7 +2345,7 @@ python -m experiments.rig_check \
   --limit '<pre-registered-cluster-limit (section 5.2)>' --sample-seed 0 --seeds 0,1 --max-queries 4 --max-turns 4 \
   --group model,source,risk,effective_modality,expected_behavior,attacker,source_policy_id,source_policy_version \
   --max-total-target-calls '<planning-ceiling>' --max-total-judge-calls '<planning-ceiling>' \
-  --max-total-http-attempts '<planning-ceiling>' --deadline-seconds 7776000 \
+  --max-total-http-attempts '<planning-ceiling>' --deadline-seconds '<pre-registered-call-start-window-seconds>' \
   --out runs/thesis/preflight/crescendo-text
 ```
 
@@ -2601,7 +2626,7 @@ python -m experiments.rig_check \
   --group model,source,risk,effective_modality,expected_behavior,attacker,source_policy_id,source_policy_version \
   --max-total-target-calls '<planning-ceiling>' \
   --max-total-judge-calls '<planning-ceiling>' --max-total-http-attempts '<planning-ceiling>' \
-  --deadline-seconds 7776000 --out "runs/thesis/preflight/transfer-$ATTACKER"
+  --deadline-seconds '<pre-registered-call-start-window-seconds>' --out "runs/thesis/preflight/transfer-$ATTACKER"
 ```
 
 Run h4rm3l and Spikee in separate invocations with
@@ -2623,7 +2648,7 @@ The remaining runner bridges are specialized:
 | `nanogcg` | Stage 1 accepts only a precomputed suffix with `suffix_source` and records that the framework was not invoked; live optimization remains fail-closed until the managed-snapshot subprocess handshake is implemented |
 | `harmbench` attacker | prepare text cases from a clean exact-revision checkout with `experiments.harmbench_capture`, then replay only its exact `ura-harmbench-transfer-replay/1` in the measured grid |
 | `purplellama` | only with `cyberseceval` rows; source-identity replay, not the native pipeline |
-| `ideator` | verified precomputed text-image `seed_pairs` only; live package path is disabled |
+| `ideator` | verified precomputed text-image `seed_pairs` only; Build accepts an exact `ura-ideator-seed-pairs/1` manifest plus digest and the live package path remains disabled |
 | `t3mp3st` | currently `blocked-unpinned`: no exact executable Op-General source URL/revision is documented; admit no live planner until a prospective lock amendment supplies both, and use only an already attributable replay bundle |
 
 NanoGCG live configuration is deliberately rejected before managed-snapshot,
@@ -2782,20 +2807,18 @@ export LOCAL_CONFIG='experiments/local-qwen3-vl.json'
 
 CUDA_VISIBLE_DEVICES=0,1 python -m experiments.rig_check \
   --local "$LOCAL_SPEC" --local-config "$LOCAL_CONFIG" \
-  --attackers replay --judges rules,guardrail,llm --judge-model "$JUDGE" \
-  --api-config experiments/api-targets.json \
+  --attackers replay --judges rules,guardrail \
   --guardrail-model "$SCORE_GUARD" --guardrail-revision "$SCORE_GUARD_REV" --guardrail-device cuda:1 \
   --corpora "$TEXT_ARMS" --source-config experiments/source-instances.json \
-  --limit '<pre-registered-cluster-limit (section 5.2)>' --sample-seed 0 --seeds 0,1 --max-queries 1 --max-turns 1 \
+  --limit "$URA_LOCAL_CORE_CLUSTER_LIMIT" --sample-seed "$URA_LOCAL_SAMPLE_SEED" --seeds 0 --max-queries 1 --max-turns 1 \
   --group model,source,risk,effective_modality,expected_behavior,attacker,source_policy_id,source_policy_version \
   --max-total-target-calls '<planning-ceiling>' \
-  --max-total-judge-calls '<planning-ceiling>' --max-total-http-attempts '<planning-ceiling>' \
-  --deadline-seconds 7776000 --out runs/thesis/preflight/local-qwen3-vl-text
+  --max-total-judge-calls 0 --max-total-http-attempts 0 \
+  --deadline-seconds 86400 --out runs/thesis/preflight/local-qwen3-vl-text-core100
 ```
 
-Repeat with `run_matrix`, `"${LIVE_ATTESTATION_ARGS[@]}"`,
-`--ack-hosted-judge-data-transfer`, exact totals, and
-`--out runs/thesis/runner/local-qwen3-vl-text`; allow the process to exit, then
+Repeat with `run_matrix`, `"${LIVE_ATTESTATION_ARGS[@]}"`, exact totals, and
+`--out runs/thesis/runner/local-qwen3-vl-text-core100`; allow the process to exit, then
 run the image lane. Repeat both for the LLaVA base using its own exact local
 config. Do not run either GraySwan RR lane in the current campaign: its four Gate
 5 rows carry the exact target-runtime terminal described above. The sealed RR
@@ -2806,17 +2829,14 @@ attestation and canary gates with identical source clusters, input bytes,
 inference settings, and judge condition; do not change stops, generation caps,
 checkpoint identity, or decoding settings to make the current pair runnable.
 
-The command above is the pre-registered common-subset pass (hosted `$JUDGE`,
-positive `--limit`). For the full-corpus local pass of section 5.2, repeat the
-same `rig_check`/`run_matrix` pair with `--judges rules,guardrail` (local
-stages only), no `--judge-model`, no `--ack-hosted-judge-data-transfer`,
-`--limit 0`, the exact printed totals, and a separate output prefix (for
-example `runs/thesis/preflight/local-qwen3-vl-text-full` and
-`runs/thesis/runner/local-qwen3-vl-text-full`); its no-call projection must
-report zero model-judge calls. That evaluator mode differs from the
-hosted-judge cascade, so the two passes are never pooled, and a rules-only
-(`--judges rules`) full-corpus pass is not an option: it fails closed on any
-row the rules stage cannot classify confidently.
+The command above is the pre-registered bounded core pass. Its exact seed-0
+selection must agree across every model used in a paired comparison. An
+optional full-corpus replication repeats the same local-stage request with
+`--limit 0`, a new projection and acquisition envelope, separately approved
+caps and a separate output prefix. It is a different sampling stratum and is
+never pooled with core 100, extended 50 or a hosted cohort. A rules-only
+(`--judges rules`) pass is not an option: it fails closed on any row the rules
+stage cannot classify confidently.
 
 The optional hosted text-only defense contrast uses a separate model identity
 and GPU for each guard. Put the 8B scoring guard on GPU 0 and the 1B defense
@@ -2838,7 +2858,7 @@ python -m experiments.rig_check \
   --group model,source,risk,effective_modality,expected_behavior,attacker,source_policy_id,source_policy_version \
   --max-total-target-calls '<planning-ceiling>' \
   --max-total-judge-calls '<planning-ceiling>' --max-total-http-attempts '<planning-ceiling>' \
-  --deadline-seconds 7776000 --out runs/thesis/preflight/defense-text
+  --deadline-seconds '<pre-registered-call-start-window-seconds>' --out runs/thesis/preflight/defense-text
 ```
 
 Repeat the successful defense check with `run_matrix`,
@@ -3642,8 +3662,8 @@ Complete the already-created `runs/thesis/RUNNOTE.md` and record:
   `git rev-parse HEAD` and `git status --short` for URA and every upstream checkout;
 - source/model revisions, source file hashes, exact commands, lane ceilings, and
   non-secret endpoint routes; record the approved
-  `measured_lane_wall_time_seconds=1209600` separately from every Runner
-  call-start deadline, plus each external measured Job ID and its one bound
+  `measured_lane_wall_time_seconds=86400` separately from the current cohort's
+  86,400-second Runner call-start window, plus each external measured Job ID and its one bound
   Runner output root;
 - the validated compact source-receipt file/SHA-256,
   admitted/blocked/not-selected arm counts, declared-file rehash result, and any
@@ -3817,9 +3837,14 @@ target/arm combinations are rejected by the same UI/CLI parity checks.
 Build surface. Build composes every `run_matrix`/`rig_check` flag the lanes
 above use except the `--models` shorthand, which is CLI/`rig_check`-only: Build
 always emits the equivalent explicit `--api`/`--local` split. `ideator` is
-CLI-only (it needs verified precomputed `seed_pairs` supplied through
-`--attacker-config`, section 12) and is shown disabled with that reason and
-rejected server-side; `purplellama` admits only `cyberseceval_*` arms. Build
+available through a verified precomputed-replay panel. Supply a strict
+`ura-ideator-seed-pairs/1` manifest under the results root and its exact
+SHA-256. Each `seed_pairs` item contains only `text`, `image_path`, and
+`image_sha256`; every declared PNG must also resolve under the results root.
+Build validates the exact bytes, captures the manifest and images in the review
+ticket, and materializes private copies for the generated `--attacker-config`
+at launch. This does not enable live IDEATOR generation. `purplellama` admits
+only `cyberseceval_*` arms. Build
 also exposes the documented `--group` (default: the CLI default
 `model,source,risk,effective_modality,expected_behavior,attacker,source_policy_id,source_policy_version`,
 the value every lane above passes; narrower groupings are rejected at the
@@ -3833,6 +3858,16 @@ supplies them; dry lanes launch with them scrubbed. The Acquisition exports
 Run-page forms; `export_aggregators` additionally receives the console's
 process-held `HF_TOKEN` (the gated section 3.4 sources), the same exception
 as `model_acquire`.
+
+After one or more arms are selected, the Execution tab shows one synchronized
+range/numeric sample-size control and the sample seed. Its `--limit` value is
+per selected arm: `0` means the complete release for every selected arm and a
+positive value is a whole-cluster cap applied independently to each arm. Every
+bounded measured lane records `--sample-seed`. The optional local budget in
+whole hours converts exactly to `--deadline-seconds` for a measured local-only
+lane. It is Runner's durable call-start window, not a process timeout: expiry
+prevents a new model acquisition or call, but does not interrupt an admitted
+call or guarantee when the process finishes.
 
 The console binds the operator-configured `--host` and `--port`, builds argument
 vectors exclusively from a typed allowlist (no shell), caps POST bodies, runs

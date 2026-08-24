@@ -172,29 +172,58 @@ by `--limit 1` remains in a later `--limit N` cohort, and every sibling row in a
 selected cluster is retained. This supports operational canary continuity; it
 does not make the canary statistically representative.
 
-Population tiers. The measured lanes run over two pre-registered population
-tiers (runbook section 5.2, fixed before any outcome inspection). Local lanes
-run the full converted corpora, because their target calls cost only local GPU
-time. Hosted API lanes run a bounded whole-cluster subsample of each corpus,
-fixed prospectively by `--limit` (the maximum number of unique source clusters;
-every row of a selected cluster is retained) and a recorded `--sample-seed`;
-the sampling audit in every manifest retains the full-corpus digest, the
-complete cluster inventory and the exact selected clusters, so the subsample is
-reproducible and reviewable. With an identical corpus, limit and seed, every
-hosted condition receives the identical cluster subset, and a local-versus-
-hosted contrast is restricted to the intersection of the two cluster sets,
-which is exactly that pre-registered subset. Rates are never pooled across the
-two tiers, whose denominators differ; the compatibility keys refuse such a
-pool. Because the hosted LLM judge is metered on every judged response
-regardless of the target, full-corpus local lanes score through local stages
-only (the deterministic rules stage plus the local scoring guardrail, or a
-local LLM judge), while the hosted LLM-judge stage runs only on the
-pre-registered common subset unless post-canary projections show budget for
-more. A rules-only cascade is not a full-corpus scoring mode: it fails closed
-on any row the rules stage cannot classify confidently. Evaluator modes with
-different judge stages are distinct compatibility keys and are never pooled.
-On a local model the subset estimate is compared with the full-corpus estimate
-as an internal check of the subsampling error.
+The selection is pseudorandom, not first-N source order. Its nested prefixes are
+not disjoint partitions. Unique clusters are inventoried in first
+source-appearance order.
+SHA-256 over the UTF-8 bytes
+`ura-corpus-cluster-order-v1\0<logical-arm>\0<sample_seed>` supplies an unsigned
+big-endian PRNG seed from its first eight bytes. The inventory positions are
+shuffled once without replacement, the first N are retained, and all selected
+sibling rows are restored to source order. Consequently limit 50 is contained
+in limit 100 for one arm and seed, while one numeric seed deliberately produces
+different permutations for different arms. `--limit 0` returns the exact full
+arm.
+
+Population tiers. A prospective amendment dated 24 August 2026, fixed after
+source inventory and diagnostic feasibility work but before any measured Phase
+6 call, replaces the earlier assumption that every all-local lane must exhaust
+its converted corpus. The measured local cohort has two tiers: core static,
+classification, Crescendo and eligible defense lanes use `--limit 100`; the
+Runner-safe bridge and Ollama lanes use `--limit 50`. Both use
+`--sample-seed 0 --seeds 0`. The current hosted API cohort remains separately
+bounded by its prepaid budget and a positive pre-registered limit. The framework
+also accepts explicit hosted `--limit 0` only as a separately projected and
+approved full-corpus cohort whose target, judge and HTTP caps cover the complete
+grid. The current campaign authorizes `--limit 0` only for an all-local
+replication, not as a substitute for either bounded measured tier.
+
+The limit is an equal cap applied independently to every logical source arm,
+not a proportional or risk-stratified sample. Every row in a selected source
+prompt/intent cluster is retained. The sampling audit records the full-corpus
+digest, complete cluster inventory, exact selected clusters and selected-row
+fanout. With an unchanged arm, digest and seed, limit 1, 50 and 100 are nested;
+conditions with the same limit therefore receive the same clusters, and the
+extended sample is contained in an overlapping core sample. A source with fewer
+clusters is complete but precision-limited. Rates from different tiers are not
+pooled. Comparisons use only exact cluster intersections and report achieved
+risk/policy support, completion, evaluator decision coverage and missingness.
+The design does not guarantee that every within-arm risk stratum is populated.
+
+Because the hosted LLM judge is metered on every judged response, the all-local
+cohort scores through local stages only (the deterministic rules stage plus the
+local scoring guardrail, or a local LLM judge). The hosted LLM-judge stage runs
+only on its separately pre-registered budgeted subset. A rules-only cascade is
+not a general scoring mode: it fails closed on any row the rules stage cannot
+classify confidently. Evaluator modes with different judge stages are distinct
+compatibility keys and are never pooled.
+
+The amended local cohort fixes a 24-hour controller wall-time ceiling per
+measured lane and `--deadline-seconds 86400` for Runner call starts. These are
+distinct: Runner refuses to start a later call after its deadline but does not
+interrupt an in-flight call, whereas the controller may terminate and reap the
+lane process group at its wall-time ceiling. Both values are request/Gate
+bindings. Other positive values require a separately projected and approved
+cohort rather than a mid-run cap change.
 
 Conversion is necessary but insufficient for scored admission. A common harmful
 or benign endpoint requires compatible expected behavior and implemented judge
@@ -431,10 +460,13 @@ observed attempts and records only observed artifact bytes, timing records,
 decision support, and role reachability. Completion artifacts also retain exact
 observed token usage, from which the console reports exact observed spend only
 when all required effective-dated prices exist. Neither is multiplied into a
-campaign estimate. Campaign caps use prepaid budgets, the conservative call
-projection, and an operator decision; the hosted-lane `--limit`/`--sample-seed`
-subsample of the population tiers above is the prospective containment of paid
-calls, not a post-hoc cut. No single-cluster throughput, storage,
+campaign estimate. Campaign caps use prepaid budgets or local resource
+ceilings, the conservative call projection, and an operator decision. The
+selected tier, `--limit` and `--sample-seed` are immutable request bindings and
+prospective containment, not a post-hoc cut. Changing them requires a new
+projection, acquisition envelope, Gate record and output cohort; a full-corpus
+projection is capacity information only for a bounded request. No
+single-cluster throughput, storage,
 safety, validity, or measured campaign-total extrapolation is permitted. Level-1,
 figures, suite summary, paired/transfer analysis, and human-audit preparation
 reject canary grids. Source-native one-case canaries remain in their independent

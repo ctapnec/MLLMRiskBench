@@ -163,8 +163,12 @@ def test_tab_dom_has_unique_ids_safe_form_ownership_and_no_disabled_state(
     assert parser.context["builder"] == (None, None)
     assert parser.context["ollama-service"] == ("build-general", None)
     assert parser.context["model-picker"] == (None, "builder")
-    for field in ("name='mode'", "name='corpora'", "name='judge_model'", "name='limit'"):
+    for field in ("name='mode'", "name='corpora'", "name='judge_model'"):
         assert " disabled" not in _opening_tag(builder, field)
+    # The synchronized per-arm sampling fields are the one intentional dynamic
+    # disabled state: they become visible/enabled only after an arm is selected.
+    assert " disabled" in _opening_tag(builder, "name='limit'")
+    assert "syncSampleSizeControl" in _BUILDER_SCRIPT
 
     # Tab switching changes only panel visibility. It never disables controls
     # or marks them inert, so values in inactive builder sections still submit.
@@ -214,6 +218,7 @@ def test_general_pipeline_summary_covers_every_builder_section_and_refreshes(
         "cap_target",
         "cap_judge",
         "cap_http",
+        "local_budget_hours",
         "deadline",
         "dtype",
         "quantization",

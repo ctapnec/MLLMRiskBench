@@ -20,6 +20,20 @@ legacy builder has a separate fully hashed support venv. Clean runtime homes use
 the explicit persistent caches under `$URA_WORK/framework-venvs/.cache`; cache
 contents are never campaign admission evidence.
 
+The current rendered campaign implements the prospective 24 August 2026 local
+sampling amendment: core measured lanes use limit 100 and extended bridge/Ollama
+lanes use limit 50, both with sample seed 0. These are plan-owned controller and
+Gate bindings, not generic Runner defaults. A render must fail if its projection,
+base argv, prepared-attack selection, approved caps or Phase 7 validator differs
+from the tier bound to that lane. Optional limit-0 execution is a separate
+cohort and is not emitted by this bounded chain.
+
+Each current measured lane also binds `--deadline-seconds 86400` and
+`measured_lane_wall_time_seconds=86400`. The Runner value gates call starts and
+does not interrupt an in-flight call; the controller value permits termination
+and process-group reaping at 24 hours. A different positive pair belongs to a
+new projected and approved controller generation.
+
 Start the next binding from the last validated one. The binding key set is the
 exact reviewed placeholder inventory across the controller, verifier, and
 installer templates. Every value has a field-specific validator: hashes,

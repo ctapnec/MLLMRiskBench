@@ -11,8 +11,10 @@ launch.  Every app instance uses temporary state and results directories.
 from __future__ import annotations
 
 import argparse
+import base64
 import hashlib
 import importlib
+import json
 import re
 import subprocess
 import sys
@@ -28,6 +30,7 @@ from experiments.rig_web_app.catalog import (
     _CLI_DEFAULT_GROUP,
     _CLI_ONLY_ATTACKERS,
     _GROUP_KEYS,
+    _LOCAL_BUDGET_HELP,
     _PARAM_HELP,
     _RUNBOOK_GROUP,
     _SOURCE_RESTRICTED_ATTACKERS,
@@ -221,10 +224,13 @@ def test_build_page_exposes_group_exclusion_and_resume_controls(tmp_path: Path) 
     reset_tag = _opening_tag(execution, "name='reset_open_circuits'")
     assert " checked" not in reset_tag
     assert "name='lock_stale_seconds'" in execution
-    # The --limit hint is truthful about the CLI default and 0.
-    limit_at = execution.index("name='limit'")
-    limit_hint = execution[execution.rfind("<label", 0, limit_at):limit_at]
-    assert "CLI default of 50" in limit_hint and "0 = complete release" in limit_hint
+    # Sampling is one synchronized per-arm control. The numeric field keeps the
+    # CLI's blank/default behavior while the range exposes 0 as explicit full mode.
+    assert "id='sample-size-control'" in execution
+    assert "id='sample-limit-range' type='range' min='0'" in execution
+    assert "0 = full selected release" in execution
+    assert "maximum source-cluster count per selected arm" in execution
+    assert "id='sample-seed-input'" in execution
     # The live preview mirrors the new controls.
     for field in ("group", "exclude_tool_conditioned", "reset_open_circuits", "lock_stale_seconds"):
         assert f"'{field}'" in _BUILDER_SCRIPT
@@ -292,9 +298,16 @@ def test_non_dry_lane_always_carries_an_explicit_limit(
         "cap_judge": "4", "cap_http": "12", "deadline": "600",
     }
     try:
-        # A hosted paid lane must type a positive limit (blank is NOT admitted).
+        # A hosted paid lane must type a limit (blank is NOT admitted).
         hosted_blank = app._validate_builder({**measured, "api": "anthropic:claude-opus-5"})
-        assert "limit" in hosted_blank and "positive" in hosted_blank["limit"]
+        assert "limit" in hosted_blank and "explicit" in hosted_blank["limit"]
+        hosted_full = app._validate_builder({
+            **measured,
+            "api": "anthropic:claude-opus-5",
+            "limit": "0",
+            "sample_seed": "",
+        })
+        assert "limit" not in hosted_full and "sample_seed" not in hosted_full
         # A local-only measured lane may leave it blank: the documented policy
         # is the complete release, which the builder composes as --limit 0.
         local_blank = app._validate_builder({**measured, "local": "vllm:local/model"})
@@ -323,6 +336,10 @@ def test_non_dry_lane_always_carries_an_explicit_limit(
         })
         assert values["--limit"] == "5" and params["limit"] == "5"
         _cmd, values, params = app._compose_from_builder({
+            **measured, "api": "anthropic:claude-opus-5", "limit": "0",
+        })
+        assert values["--limit"] == "0" and params["limit"] == "0"
+        _cmd, values, params = app._compose_from_builder({
             "mode": "attestation_probe", "corpora": "strongreject_official",
             "api": "anthropic:claude-opus-5", "attackers": "replay",
             "judges": "rules", "limit": "1", "seeds": "0", "scope": "s",
@@ -335,6 +352,88 @@ def test_non_dry_lane_always_carries_an_explicit_limit(
         app.close()
     assert "50" in _PARAM_HELP["--limit"] and "0 means the complete" in _PARAM_HELP["--limit"]
     assert "Omit only" not in _PARAM_HELP["--limit"]
+
+
+def test_builder_sampling_control_and_local_compute_hours_keep_cli_semantics(
+    tmp_path: Path,
+) -> None:
+    app = _app(tmp_path)
+    try:
+        fresh = app.handle("GET", "/build")[2].decode("utf-8")
+        selected = app._build_page(
+            prefill={**_DRY_BASE, "limit": "0", "sample_seed": "17"}
+        ).decode("utf-8")
+        fresh_panel = _opening_tag(fresh, "id='sample-size-control'")
+        selected_panel = _opening_tag(selected, "id='sample-size-control'")
+        assert " hidden" in fresh_panel and "aria-hidden='true'" in fresh_panel
+        assert " hidden" not in selected_panel and "aria-hidden='false'" in selected_panel
+        assert "name='limit' value='0'" in selected
+        assert "name='sample_seed' value='17'" in selected
+        assert "syncSampleSizeControl" in _BUILDER_SCRIPT
+        assert "Full selected release for each of " in _BUILDER_SCRIPT
+        assert "Blank composes 0: the full selected release" in _BUILDER_SCRIPT
+        assert "CLI default of 50 clusters independently" in _BUILDER_SCRIPT
+        assert "source clusters in each of " in _BUILDER_SCRIPT
+
+        dry_canary_page = app._build_page(prefill={
+            "mode": "diagnostic_canary",
+            "canary_dry": "on",
+            "attackers": "replay",
+            "judges": "rules",
+            "seeds": "0",
+        }).decode("utf-8")
+        dry_canary_panel = _opening_tag(
+            dry_canary_page, "id='sample-size-control'"
+        )
+        assert " hidden" not in dry_canary_panel
+        assert "aria-hidden='false'" in dry_canary_panel
+        assert "name='limit' value='1'" in dry_canary_page
+        assert "Synthetic arm selected automatically" in dry_canary_page
+        assert "mode==='diagnostic_canary'&&checkedName('canary_dry')" in (
+            _BUILDER_SCRIPT
+        )
+        assert "parts.push('--corpora synth')" in _BUILDER_SCRIPT
+        assert "parts.push('--dry-run')" in _BUILDER_SCRIPT
+
+        normalized = app._builder_params({
+            **_DRY_BASE,
+            "mode": "measured",
+            "local": "vllm:fixture/model",
+            "local_budget_hours": "3",
+        })
+        assert normalized["local_budget_hours"] == "3"
+        assert normalized["deadline"] == "10800"
+
+        measured_local = {
+            **normalized,
+            "limit": "5",
+            "sample_seed": "17",
+            "cap_target": "1",
+            "cap_judge": "1",
+            "cap_http": "1",
+        }
+        errors = app._validate_builder(measured_local)
+        assert "local_budget_hours" not in errors
+        assert "deadline" not in errors
+        mismatch = app._validate_builder({**measured_local, "deadline": "7200"})
+        assert "call-start window" in mismatch["deadline"]
+        wrong_route = app._validate_builder({
+            **_DRY_BASE,
+            "local_budget_hours": "3",
+            "deadline": "10800",
+        })
+        assert "measured lane with a local target" in wrong_route["local_budget_hours"]
+        no_seed = app._validate_builder({
+            **measured_local,
+            "sample_seed": "",
+        })
+        assert "within each selected arm" in no_seed["sample_seed"]
+    finally:
+        app.close()
+
+    assert "call-start admission window" in _PARAM_HELP["--deadline-seconds"]
+    assert "not a process completion timeout" in _LOCAL_BUDGET_HELP
+    assert "does not interrupt an admitted call" in _LOCAL_BUDGET_HELP
 
 
 # -- P1-MISSED-1: the Build synth dry lane runs with the CLI default limit -------
@@ -562,33 +661,193 @@ def test_receipt_env_reaches_non_dry_matrix_children_only(
         assert "forwards" in _PARAM_HELP[flag + "-sha256"]
 
 
-# -- P1-05: precomputed-only attackers the console cannot supply -----------------
+# -- P1-05: reviewed precomputed attacker inputs ---------------------------------
 
 
-def test_ideator_is_cli_only_and_rejected_server_side(tmp_path: Path) -> None:
-    assert set(_CLI_ONLY_ATTACKERS) == {"ideator"}
-    assert "ideator" not in _SUGGEST_STATIC["attackers"]
+def test_ideator_builder_replay_is_digest_bound_and_snapshot_materialized(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    assert _CLI_ONLY_ATTACKERS == {}
+    assert "ideator" in _SUGGEST_STATIC["attackers"]
     app = _app(tmp_path)
     try:
         page = app.handle("GET", "/build")[2].decode("utf-8")
         ideator_tag = _opening_tag(page, "data-fw='ideator'")
-        assert "disabled" in ideator_tag
+        assert "disabled" not in ideator_tag
         row = page[page.index("data-fw='ideator'"):]
         row = row[:row.index("</label>")]
-        assert "CLI-only (precomputed input)" in row and "seed_pairs" in row
-        # A replay-able prepared attacker keeps its enabled prepared control.
-        assert "disabled" not in _opening_tag(page, "data-fw='nanogcg'")
-        errors = app._validate_builder({**_DRY_BASE, "attackers": "ideator"})
-        assert "seed_pairs" in errors["attackers"] and "--attacker-config" in errors["attackers"]
-        errors = app._validate_builder({**_DRY_BASE, "attackers": "replay,ideator"})
-        assert "seed_pairs" in errors["attackers"]
-        # The form path rejects it before any subprocess exists.
-        started = len(app.jobs)
-        status, _ctype, body = app.handle("POST", "/build", {
-            **_DRY_BASE, "attackers": "ideator",
+        assert "verified seed-pair replay" in row
+        assert "id='prepared-ideator'" in page
+        assert "name='ideator_manifest'" in page
+        assert "name='ideator_manifest_sha'" in page
+
+        png = base64.b64decode(
+            "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk"
+            "+A8AAQUBAScY42YAAAAASUVORK5CYII="
+        )
+        image = app.results_root / "ideator-pair.png"
+        image.write_bytes(png)
+        manifest = app.results_root / "ideator-seed-pairs.json"
+        manifest.write_text(
+            json.dumps({
+                "format_version": "ura-ideator-seed-pairs/1",
+                "seed_pairs": [{
+                    "text": "reviewed text",
+                    "image_path": str(image),
+                    "image_sha256": hashlib.sha256(png).hexdigest(),
+                }],
+            }),
+            encoding="utf-8",
+        )
+        params = {
+            **_DRY_BASE,
+            "attackers": "ideator",
+            "ideator_manifest": str(manifest),
+            "ideator_manifest_sha": hashlib.sha256(manifest.read_bytes()).hexdigest(),
+        }
+        assert app._validate_builder(params) == {}
+        reviewed, snapshot, _snapshot_sha256 = (
+            app._capture_execution_config_snapshot(params)
+        )
+        assert {
+            "attacker_config",
+            "attacker_artifact_ideator",
+            "attacker_artifact_ideator_image_0000",
+        } <= set(snapshot)
+
+        oversized_manifest = app.results_root / "ideator-oversized-text.json"
+        oversized_manifest.write_text(
+            json.dumps({
+                "format_version": "ura-ideator-seed-pairs/1",
+                "seed_pairs": [{
+                    "text": '"' * 300_000,
+                    "image_path": str(image),
+                    "image_sha256": hashlib.sha256(png).hexdigest(),
+                }],
+            }),
+            encoding="utf-8",
+        )
+        oversized_params = {
+            **params,
+            "ideator_manifest": str(oversized_manifest),
+            "ideator_manifest_sha": hashlib.sha256(
+                oversized_manifest.read_bytes()
+            ).hexdigest(),
+        }
+        assert "serialized seed text exceeds" in app._validate_builder(
+            oversized_params
+        )["ideator"]
+
+        # Mutation regression: changing the operator file after review cannot
+        # change the launched bytes. A mutation inside the held snapshot is
+        # independently rejected by the execution-ticket digest.
+        image.write_bytes(png + b"mutated after review")
+        selected = app._materialize_prepared_attacker_config(
+            reviewed,
+            snapshot_payload=snapshot["attacker_config"],
+            artifact_snapshots=snapshot,
+        )
+        assert selected is not None
+        emitted = json.loads(selected.read_text(encoding="utf-8"))["ideator"]
+        assert set(emitted) == {"seed_pairs", "seed_pair_image_sha256"}
+        assert emitted["seed_pair_image_sha256"] == [
+            hashlib.sha256(png).hexdigest()
+        ]
+        held_image = Path(emitted["seed_pairs"][0][1])
+        assert held_image.read_bytes() == png
+        assert held_image != image.resolve()
+        selected_digest = hashlib.sha256(selected.read_bytes()).hexdigest()
+        private_paths = app._private_attacker_artifact_paths({
+            "--attacker-config": str(selected),
+            "--attacker-config-sha256": selected_digest,
         })
-        assert status == 200 and len(app.jobs) == started
-        assert "The lane was not started" in body.decode("utf-8")
+        assert held_image in private_paths
+        cleanup_registrations: list[tuple[object, tuple[object, ...]]] = []
+        monkeypatch.setattr(
+            run_matrix.atexit,
+            "register",
+            lambda callback, *args: cleanup_registrations.append((callback, args)),
+        )
+        monkeypatch.setenv(
+            "URA_PRIVATE_TRANSIENT_ATTACKER_CONFIG", str(selected.resolve())
+        )
+        operational, artifact_identity = run_matrix._load_attacker_config(
+            str(selected),
+            ["ideator"],
+            selected_digest,
+        )
+        assert operational["ideator"]["seed_pairs"] == [
+            ["reviewed text", str(held_image)]
+        ]
+        assert "seed_pair_image_sha256" not in operational["ideator"]
+        assert artifact_identity is not None
+        assert run_matrix._portable_attacker_configs(operational)["ideator"][
+            "seed_pairs_identity"
+        ][0]["image"]["sha256"] == hashlib.sha256(png).hexdigest()
+
+        # The reviewed digest remains authoritative across the private
+        # Builder-to-Runner handoff, not merely across the operator snapshot.
+        mutated_selected = app._materialize_prepared_attacker_config(
+            reviewed,
+            snapshot_payload=snapshot["attacker_config"],
+            artifact_snapshots=snapshot,
+        )
+        assert mutated_selected is not None
+        mutated_emitted = json.loads(
+            mutated_selected.read_text(encoding="utf-8")
+        )["ideator"]
+        mutated_image = Path(mutated_emitted["seed_pairs"][0][1])
+        mutated_image.write_bytes(png + b"mutated private handoff")
+        mutated_digest = hashlib.sha256(mutated_selected.read_bytes()).hexdigest()
+        monkeypatch.setenv(
+            "URA_PRIVATE_TRANSIENT_ATTACKER_CONFIG",
+            str(mutated_selected.resolve()),
+        )
+        with pytest.raises(ValueError, match="SHA-256 mismatch"):
+            run_matrix._load_attacker_config(
+                str(mutated_selected),
+                ["ideator"],
+                mutated_digest,
+            )
+        assert len(cleanup_registrations) == 2
+        assert mutated_image.exists()
+        cleanup_callback, cleanup_args = cleanup_registrations[-1]
+        cleanup_callback(*cleanup_args)
+        assert not mutated_image.exists()
+        tampered = dict(snapshot)
+        tampered["attacker_artifact_ideator_image_0000"] = png + b"ticket mutation"
+        with pytest.raises(ValueError, match="snapshot bytes do not match"):
+            app._validate_execution_snapshot(reviewed, tampered)
+
+        assert "ideator" in app._validate_builder(params)
+        manifest_bad = {**params, "ideator_manifest_sha": "0" * 64}
+        assert "does not match" in app._validate_builder(manifest_bad)["ideator"]
+        outside_image = tmp_path / "outside-results.png"
+        outside_image.write_bytes(png)
+        outside_manifest = app.results_root / "outside-seed-pairs.json"
+        outside_manifest.write_text(
+            json.dumps({
+                "format_version": "ura-ideator-seed-pairs/1",
+                "seed_pairs": [{
+                    "text": "must not escape",
+                    "image_path": str(outside_image),
+                    "image_sha256": hashlib.sha256(png).hexdigest(),
+                }],
+            }),
+            encoding="utf-8",
+        )
+        outside_params = {
+            **params,
+            "ideator_manifest": str(outside_manifest),
+            "ideator_manifest_sha": hashlib.sha256(
+                outside_manifest.read_bytes()
+            ).hexdigest(),
+        }
+        assert "under the results root" in app._validate_builder(outside_params)[
+            "ideator"
+        ]
+
         # purplellama replays only CyberSecEval rows: any other arm (including
         # synth) is rejected with the adapter's reason; cyberseceval arms pass.
         assert "purplellama" in _SOURCE_RESTRICTED_ATTACKERS
@@ -832,7 +1091,9 @@ def test_preview_limit_zero_only_for_local_only_measured_lanes() -> None:
     assert "else if(localOnlyMeasured){parts.push('--limit 0');}" in _BUILDER_SCRIPT
     assert "localOnlyMeasured?'0 (complete release)':'not set'" in _BUILDER_SCRIPT
     assert "mode!=='dry_run'&&!(mode==='diagnostic_canary'" not in _BUILDER_SCRIPT
-    hosted_judge_at = _BUILDER_SCRIPT.index("var hostedJudge=")
+    # The synchronized sampling control computes the same predicate earlier;
+    # inspect the later command-preview instance exercised by this contract.
+    hosted_judge_at = _BUILDER_SCRIPT.rindex("var hostedJudge=")
     hosted_judge = _BUILDER_SCRIPT[hosted_judge_at:_BUILDER_SCRIPT.index(";", hosted_judge_at)]
     assert "jg.indexOf('llm')>=0" in hosted_judge
     assert ".modelbox[data-kind='api']" in hosted_judge and "judgeModelValue" in hosted_judge

@@ -97,8 +97,9 @@ MAX_JSON_BYTES = 64 * 1024 * 1024
 MAX_LANE_PROJECTION_BYTES = 4 * 1024 * 1024
 MAX_REQUEST_ENVELOPE_BYTES = 4 * 1024 * 1024
 MAX_MARKDOWN_BYTES = 256 * 1024 * 1024
-CALL_START_DEADLINE_SECONDS = 7_776_000
+CALL_START_DEADLINE_SECONDS = 86_400
 ACQUISITION_DEADLINE_SECONDS = 86_400
+MEASURED_LANE_WALL_TIME_SECONDS = 86_400
 FREE_SPACE_FLOOR_BYTES = 1_099_511_627_776
 EXTERNAL_RETAINED_OUTPUT_POLICY_BYTES = 53_687_091_200
 HEX64 = re.compile(r"[0-9a-f]{64}")
@@ -146,6 +147,59 @@ DEFENSE_NA_RUNNER_OUTPUTS = {
     "response_streams": 0,
     "completion_artifacts": 0,
     "error_artifacts": 0,
+}
+DEFENSE_NA_V2_SCHEMA = "ura-phase5-defense-canary-na/2"
+DEFENSE_NA_V2_REASON_CODE = "target_output_noncompletion_at_generation_cap"
+DEFENSE_NA_V2_REASON = (
+    "The defense-local canary completed one input screening with the exact "
+    "Llama Guard 1B defense and then made one Qwen3-VL target call, but the "
+    "target completion reached the 4096-token generation cap and was rejected "
+    "as incomplete. No output-defense or scoring-guard judgment was produced."
+)
+DEFENSE_NA_V2_CLASSIFICATION = {
+    "category": "target_output_noncompletion",
+    "runner_lifecycle_phase": "cell_target_call",
+    "positive_evidence": "local_target_output_error_finish_reason_length",
+    "returncode": 1,
+}
+DEFENSE_NA_V2_CALL_ACCOUNTING = {
+    "accounting_semantics": "durable_pre_call_logical_reservation_v1",
+    "target_calls": 1,
+    "model_judge_calls": 0,
+    "local_guardrail_evaluations": 1,
+    "defense_guardrail_evaluations": 1,
+    "output_defense_guardrail_evaluations": 0,
+    "scoring_guardrail_evaluations": 0,
+    "hosted_target_calls": 0,
+    "hosted_judge_calls": 0,
+    "http_attempts": 0,
+}
+DEFENSE_NA_V2_EVIDENCE_LIMITS = {
+    "successful_cells": 0,
+    "successful_responses": 0,
+    "output_defense_evaluations": 0,
+    "scoring_guardrail_evaluations": 0,
+    "input_defense_evaluation_basis": (
+        "pinned_guarded_target_control_flow_before_reserved_base_target_call"
+    ),
+    "per_attempt_defense_audit_retained": False,
+}
+DEFENSE_NA_V2_RUNNER_OUTPUTS = {
+    "grid_artifacts": 1,
+    "manifest_artifacts": 1,
+    "response_streams": 1,
+    "attempt_streams": 1,
+    "judge_trail_streams": 1,
+    "result_streams": 1,
+    "parquet_artifacts": 1,
+    "completion_artifacts": 0,
+    "error_artifacts": 1,
+    "stream_records": {
+        "attempts": 0,
+        "responses": 0,
+        "judge_trails": 0,
+        "results": 0,
+    },
 }
 RR_TERMINAL_SCHEMA = "ura-phase5-target-runtime-terminal/1"
 RR_TERMINAL_REASON_CODE = "target_baseline_nontermination_at_generation_cap"
@@ -210,6 +264,22 @@ def exact_typed_int_contract(
     )
 
 
+def exact_json_contract(raw: object, expected: object) -> bool:
+    """Compare retained JSON without Python's bool/int equality aliasing."""
+
+    if type(raw) is not type(expected):
+        return False
+    if isinstance(expected, dict):
+        return set(raw) == set(expected) and all(
+            exact_json_contract(raw[key], expected[key]) for key in expected
+        )
+    if isinstance(expected, list):
+        return len(raw) == len(expected) and all(
+            exact_json_contract(item, wanted) for item, wanted in zip(raw, expected)
+        )
+    return raw == expected
+
+
 DEFENSE_NA_TYPED_VALUE = {"status": "N/A", "value": None}
 DEFENSE_NA_ARTIFACT_KEYS = frozenset({
     "runner_log", "budget_ledger", "invocation_deadline", "request_envelope",
@@ -217,14 +287,90 @@ DEFENSE_NA_ARTIFACT_KEYS = frozenset({
     "acquisition_receipt", "acquisition_result_log", "live_attestation",
     "local_config", "project_revision", "source_config", "source_conformance",
 })
+DEFENSE_NA_V2_ARTIFACT_KEYS = frozenset({
+    "runner_log", "budget_ledger", "partial_grid", "circuit_ledger",
+    "target_error", "failed_cell_manifest", "empty_attempts", "empty_responses",
+    "empty_judge_trails", "empty_results", "parquet_placeholder",
+    "invocation_deadline", "request_envelope", "eligibility_plan",
+    "lane_projection", "acquisition_plan", "acquisition_receipt",
+    "acquisition_result_log", "live_attestation", "retained_live_attestation",
+    "local_config",
+    "project_revision", "source_config", "source_conformance",
+})
+DEFENSE_NA_VARIANTS = {
+    DEFENSE_NA_SCHEMA: {
+        "reason_code": DEFENSE_NA_REASON_CODE,
+        "reason": DEFENSE_NA_REASON,
+        "classification": DEFENSE_NA_CLASSIFICATION,
+        "call_accounting": DEFENSE_NA_CALL_ACCOUNTING,
+        "runner_outputs": DEFENSE_NA_RUNNER_OUTPUTS,
+        "artifact_keys": DEFENSE_NA_ARTIFACT_KEYS,
+        "evidence_limits": None,
+    },
+    DEFENSE_NA_V2_SCHEMA: {
+        "reason_code": DEFENSE_NA_V2_REASON_CODE,
+        "reason": DEFENSE_NA_V2_REASON,
+        "classification": DEFENSE_NA_V2_CLASSIFICATION,
+        "call_accounting": DEFENSE_NA_V2_CALL_ACCOUNTING,
+        "runner_outputs": DEFENSE_NA_V2_RUNNER_OUTPUTS,
+        "artifact_keys": DEFENSE_NA_V2_ARTIFACT_KEYS,
+        "evidence_limits": DEFENSE_NA_V2_EVIDENCE_LIMITS,
+    },
+}
+
+
+def defense_na_variant_from_value(value: object) -> Mapping[str, Any]:
+    if not isinstance(value, Mapping):
+        raise PromotionError("defense-local conditional N/A is not an object")
+    variant = DEFENSE_NA_VARIANTS.get(value.get("schema"))
+    if variant is None:
+        raise PromotionError("defense-local conditional N/A schema is not allowed")
+    expected_top = {
+        "schema", "status", "lane_id", "disposition", "reason_code", "reason",
+        "classified_at_utc", "classification", "bindings", "call_accounting",
+        "runner_outputs", "artifacts", "resource_identities",
+    }
+    if variant["evidence_limits"] is not None:
+        expected_top.add("evidence_limits")
+    if set(value) != expected_top or (
+        value.get("status") != "N/A"
+        or value.get("lane_id") != "defense-local"
+        or value.get("disposition") != DEFENSE_NA_DISPOSITION
+        or value.get("reason_code") != variant["reason_code"]
+        or value.get("reason") != variant["reason"]
+        or not exact_json_contract(value.get("classification"), variant["classification"])
+        or not exact_json_contract(value.get("call_accounting"), variant["call_accounting"])
+        or not exact_json_contract(value.get("runner_outputs"), variant["runner_outputs"])
+        or not exact_json_contract(value.get("evidence_limits"), variant["evidence_limits"])
+    ):
+        raise PromotionError(
+            "defense-local conditional N/A variant fields are cross-mixed or changed"
+        )
+    return variant
+
+
+def defense_na_manifest_variant(raw: Mapping[str, Any]) -> Mapping[str, Any]:
+    canary = raw.get("canary")
+    matches = [
+        variant for variant in DEFENSE_NA_VARIANTS.values()
+        if raw.get("reason_code") == variant["reason_code"]
+        and raw.get("reason") == variant["reason"]
+        and isinstance(canary, Mapping)
+        and exact_json_contract(canary.get("call_accounting"), variant["call_accounting"])
+    ]
+    if len(matches) != 1:
+        raise PromotionError(
+            "defense-local conditional N/A manifest variant is cross-mixed or changed"
+        )
+    return matches[0]
 EXPECTED_GROUP_KEYS = [
     "model", "source", "risk", "effective_modality", "expected_behavior",
     "attacker", "source_policy_id", "source_policy_version",
 ]
 
 CORE = frozenset({
-    "local-qwen3-vl-text-full", "local-qwen3-vl-image-full",
-    "local-llava-base-text-full", "local-llava-base-image-full",
+    "local-qwen3-vl-text-primary-100", "local-qwen3-vl-image-primary-100",
+    "local-llava-base-text-primary-100", "local-llava-base-image-primary-100",
     "rjudge-qwen3-vl", "rjudge-llava-base",
     "gptgeochat-qwen3-vl", "gptgeochat-llava-base",
     "crescendo-qwen3-vl",
@@ -235,14 +381,22 @@ BRIDGE = frozenset({
     "bridge-purplellama", "harmbench-replay",
 })
 OLLAMA = frozenset({
-    "ollama-rwkv-g1d-0p4b-text-full", "ollama-rwkv-g1f-2p9b-text-full",
-    "ollama-rwkv-g1g-1p5b-text-full", "rjudge-ollama-rwkv-g1d-0p4b",
+    "ollama-rwkv-g1d-0p4b-text-exploratory-50", "ollama-rwkv-g1f-2p9b-text-exploratory-50",
+    "ollama-rwkv-g1g-1p5b-text-exploratory-50", "rjudge-ollama-rwkv-g1d-0p4b",
     "rjudge-ollama-rwkv-g1f-2p9b", "rjudge-ollama-rwkv-g1g-1p5b",
 })
 RUNNABLE_FAMILIES = {
     **{lane: "core" for lane in CORE},
     **{lane: "bridge" for lane in BRIDGE},
     **{lane: "ollama" for lane in OLLAMA},
+}
+PRIMARY_CORE_LIMIT = 100
+EXPLORATORY_EXTENDED_LIMIT = 50
+BOUNDED_SELECTION_METHOD = "seeded_nested_source_cluster_prefix_v1"
+EXPECTED_MEASURED_LIMITS = {
+    **{lane: PRIMARY_CORE_LIMIT for lane in CORE},
+    **{lane: EXPLORATORY_EXTENDED_LIMIT for lane in BRIDGE},
+    **{lane: EXPLORATORY_EXTENDED_LIMIT for lane in OLLAMA},
 }
 
 TERMINAL_IDENTITIES: tuple[dict[str, str], ...] = (
@@ -651,7 +805,10 @@ def retained_binding_contract_self_test() -> dict[str, Any]:
     }
 
 
-def descriptor_path(value: object, label: str, *, max_bytes: int = MAX_JSON_BYTES) -> Path:
+def descriptor_path(
+    value: object, label: str, *, max_bytes: int = MAX_JSON_BYTES,
+    allow_empty: bool = False,
+) -> Path:
     if not isinstance(value, dict):
         raise PromotionError(f"{label} descriptor is absent")
     path_value = value.get("path")
@@ -663,7 +820,7 @@ def descriptor_path(value: object, label: str, *, max_bytes: int = MAX_JSON_BYTE
         or HEX64.fullmatch(digest) is None
         or isinstance(size, bool)
         or not isinstance(size, int)
-        or size <= 0
+        or size < (0 if allow_empty else 1)
     ):
         raise PromotionError(f"{label} descriptor is invalid")
     path = checked_file(path_value, max_bytes=max_bytes)
@@ -1175,7 +1332,7 @@ def validate_rr_projection_lane(
             "target": 400_000,
             "judge": None,
             "http_attempts": None,
-            "deadline_seconds": 7_776_000,
+            "deadline_seconds": 86_400,
         }
         or not isinstance(selected_arms, list)
         or len(selected_arms) != len(expected_arms)
@@ -1409,8 +1566,6 @@ def validate_defense_conditional_na_row(raw: Mapping[str, Any]) -> None:
         raw.get("lane_id") != "defense-local"
         or raw.get("family") != "core"
         or raw.get("disposition") != DEFENSE_NA_DISPOSITION
-        or raw.get("reason_code") != DEFENSE_NA_REASON_CODE
-        or raw.get("reason") != DEFENSE_NA_REASON
         or raw.get("projection") != DEFENSE_NA_TYPED_VALUE
         or raw.get("final_preflight") != DEFENSE_NA_TYPED_VALUE
         or raw.get("approved_caps") != DEFENSE_NA_TYPED_VALUE
@@ -1419,16 +1574,12 @@ def validate_defense_conditional_na_row(raw: Mapping[str, Any]) -> None:
     canary = strict_fields(raw.get("canary"), {
         "status", "value", "conditional_na_artifact", "call_accounting",
     }, "defense-local conditional N/A canary")
+    variant = defense_na_manifest_variant(raw)
     if (
         {"status": canary.get("status"), "value": canary.get("value")}
         != DEFENSE_NA_TYPED_VALUE
-        or not exact_typed_int_contract(
-            canary.get("call_accounting"),
-            DEFENSE_NA_CALL_ACCOUNTING,
-            (
-                "target_calls", "model_judge_calls", "local_guardrail_evaluations",
-                "hosted_target_calls", "hosted_judge_calls", "http_attempts",
-            ),
+        or not exact_json_contract(
+            canary.get("call_accounting"), variant["call_accounting"]
         )
     ):
         raise PromotionError("defense-local conditional N/A canary accounting changed")
@@ -1485,6 +1636,33 @@ def validate_inventory(rows: object, *, completed: bool) -> dict[str, dict[str, 
             or row.get("reason_code") is not None
         ):
             raise PromotionError(f"{lane}: reviewed runnable identity changed")
+        expected_limit = EXPECTED_MEASURED_LIMITS[lane]
+        if (
+            one_option(row.get("base_argv"), "--limit") != str(expected_limit)
+            or one_option(row.get("base_argv"), "--sample-seed") != "0"
+            or one_option(row.get("base_argv"), "--seeds") != "0"
+        ):
+            raise PromotionError(f"{lane}: prospective bounded population changed")
+        preliminary = row.get("preliminary")
+        selection = preliminary.get("selection") if isinstance(preliminary, dict) else None
+        arms = selection.get("arms") if isinstance(selection, dict) else None
+        if not isinstance(arms, list) or not arms:
+            raise PromotionError(f"{lane}: bounded projection arm inventory changed")
+        for arm in arms:
+            total = arm.get("total_clusters") if isinstance(arm, dict) else None
+            selected = arm.get("selected_clusters") if isinstance(arm, dict) else None
+            if (
+                isinstance(total, bool)
+                or not isinstance(total, int)
+                or total <= 0
+                or isinstance(selected, bool)
+                or not isinstance(selected, int)
+                or selected != min(total, expected_limit)
+                or arm.get("sample_seed") != 0
+                or arm.get("limit") != expected_limit
+                or arm.get("selection_method") != BOUNDED_SELECTION_METHOD
+            ):
+                raise PromotionError(f"{lane}: bounded projection selection changed")
         expected_final_status = "complete" if completed else "pending_execution"
         final = row.get("final_preflight")
         if not isinstance(final, dict) or final.get("status") != expected_final_status:
@@ -1570,8 +1748,10 @@ def validate_zero_download_result_rows(
         raise PromotionError("defense-local acquisition result is not exact zero-download evidence")
 
 
-def validate_defense_na_artifact_inventory_shape(raw: object) -> dict[str, dict[str, Any]]:
-    if not isinstance(raw, dict) or set(raw) != DEFENSE_NA_ARTIFACT_KEYS:
+def validate_defense_na_artifact_inventory_shape(
+    raw: object, *, expected_keys: frozenset[str] = DEFENSE_NA_ARTIFACT_KEYS
+) -> dict[str, dict[str, Any]]:
+    if not isinstance(raw, dict) or set(raw) != expected_keys:
         raise PromotionError("defense-local conditional N/A artifact inventory changed")
     for name, item in raw.items():
         if not isinstance(item, dict) or set(item) != {"path", "sha256", "bytes"}:
@@ -1583,7 +1763,12 @@ def validate_defense_na_artifact_inventory_shape(raw: object) -> dict[str, dict[
             or HEX64.fullmatch(item["sha256"]) is None
             or isinstance(item.get("bytes"), bool)
             or not isinstance(item.get("bytes"), int)
-            or item["bytes"] <= 0
+            or item["bytes"] < (
+                0 if name in {
+                    "empty_attempts", "empty_responses", "empty_judge_trails",
+                    "empty_results",
+                } else 1
+            )
         ):
             raise PromotionError(f"defense-local conditional N/A {name} descriptor is invalid")
     return raw
@@ -1630,36 +1815,12 @@ def validate_defense_conditional_na_artifact(
         row_descriptor, "defense-local conditional N/A", max_bytes=MAX_JSON_BYTES
     )
     value = strict_json(artifact_path)
-    strict_fields(value, {
-        "schema", "status", "lane_id", "disposition", "reason_code", "reason",
-        "classified_at_utc", "classification", "bindings", "call_accounting",
-        "runner_outputs", "artifacts", "resource_identities",
-    }, "defense-local conditional N/A artifact")
-    if (
-        value.get("schema") != DEFENSE_NA_SCHEMA
-        or value.get("status") != "N/A"
-        or value.get("lane_id") != "defense-local"
-        or value.get("disposition") != DEFENSE_NA_DISPOSITION
-        or value.get("reason_code") != DEFENSE_NA_REASON_CODE
-        or value.get("reason") != DEFENSE_NA_REASON
-        or not exact_typed_int_contract(
-            value.get("classification"), DEFENSE_NA_CLASSIFICATION, ("returncode",)
+    variant = defense_na_variant_from_value(value)
+    if defense_na_manifest_variant(row) is not variant:
+        raise PromotionError(
+            "defense-local manifest and retained artifact name different N/A variants"
         )
-        or not exact_typed_int_contract(
-            value.get("call_accounting"),
-            DEFENSE_NA_CALL_ACCOUNTING,
-            (
-                "target_calls", "model_judge_calls", "local_guardrail_evaluations",
-                "hosted_target_calls", "hosted_judge_calls", "http_attempts",
-            ),
-        )
-        or not exact_typed_int_contract(
-            value.get("runner_outputs"),
-            DEFENSE_NA_RUNNER_OUTPUTS,
-            ("grid_artifacts", "response_streams", "completion_artifacts", "error_artifacts"),
-        )
-    ):
-        raise PromotionError("defense-local conditional N/A classification changed")
+    is_output_noncompletion = value.get("schema") == DEFENSE_NA_V2_SCHEMA
     classified = value.get("classified_at_utc")
     try:
         classified_at = datetime.strptime(str(classified), "%Y-%m-%dT%H:%M:%SZ").replace(
@@ -1670,7 +1831,9 @@ def validate_defense_conditional_na_artifact(
     if not isinstance(classified, str) or classified_at > datetime.now(timezone.utc):
         raise PromotionError("defense-local conditional N/A time is invalid")
 
-    raw_artifacts = validate_defense_na_artifact_inventory_shape(value.get("artifacts"))
+    raw_artifacts = validate_defense_na_artifact_inventory_shape(
+        value.get("artifacts"), expected_keys=variant["artifact_keys"]
+    )
     resolved: dict[str, Path] = {}
     for name, descriptor in raw_artifacts.items():
         if not isinstance(descriptor, dict) or set(descriptor) != {"path", "sha256", "bytes"}:
@@ -1683,6 +1846,10 @@ def validate_defense_conditional_na_artifact(
                 if name in {"runner_log", "acquisition_result_log"}
                 else MAX_JSON_BYTES
             ),
+            allow_empty=name in {
+                "empty_attempts", "empty_responses", "empty_judge_trails",
+                "empty_results",
+            },
         )
     if (
         resolved["runner_log"].parent != artifact_path.parent
@@ -1694,7 +1861,23 @@ def validate_defense_conditional_na_artifact(
     log_text = file_bytes(
         resolved["runner_log"], max_bytes=MAX_MARKDOWN_BYTES
     ).decode("utf-8", errors="replace")
-    if len(re.findall(
+    if is_output_noncompletion:
+        failure_lines = re.findall(
+            r"^  ! cell failed \[[^\r\n]+\]: ExternalCallFailure: target_call failed "
+            r"\(LocalTargetOutputError\): vLLM completion is truncated or incomplete: "
+            r"'length'$",
+            log_text,
+            flags=re.MULTILINE,
+        )
+        if (
+            len(failure_lines) != 1
+            or log_text.count("done: 0 cells written, 0 already complete, 2 failed") != 1
+            or "CUDA out of memory" in log_text
+        ):
+            raise PromotionError(
+                "defense-local conditional N/A lacks exact target-output noncompletion"
+            )
+    elif len(re.findall(
         r"^cannot initialize matrix lifecycle: [^\r\n]*CUDA out of memory[^\r\n]*$",
         log_text,
         flags=re.IGNORECASE | re.MULTILINE,
@@ -1708,9 +1891,58 @@ def validate_defense_conditional_na_artifact(
         "budget_ledger", "invocation_deadline", "request_envelope",
         "eligibility_plan", "lane_projection",
     }
+    if is_output_noncompletion:
+        root_local.update({
+            "partial_grid", "circuit_ledger", "target_error", "failed_cell_manifest",
+            "empty_attempts", "empty_responses", "empty_judge_trails", "empty_results",
+            "parquet_placeholder", "retained_live_attestation",
+        })
     if any(resolved[name].parent != run_root for name in root_local):
         raise PromotionError("defense-local conditional N/A Runner artifacts span roots")
-    if (
+    if is_output_noncompletion:
+        expected_inventory = {
+            "partial_grid": "grid-*.grid.json",
+            "circuit_ledger": "grid-*.circuits.json",
+            "target_error": "*.error.json",
+            "failed_cell_manifest": "*.manifest.json",
+            "empty_attempts": "*.attempts.jsonl",
+            "empty_responses": "*.responses.jsonl",
+            "empty_judge_trails": "*.trails.jsonl",
+            "empty_results": "*.jsonl",
+            "parquet_placeholder": "*.parquet",
+            "retained_live_attestation": "live-attestation-*.json",
+        }
+        for name, pattern in expected_inventory.items():
+            matches = sorted(
+                candidate.resolve()
+                for candidate in run_root.rglob(pattern)
+                if candidate.is_file() and not candidate.is_symlink()
+                and (
+                    name != "empty_results"
+                    or not candidate.name.endswith(
+                        (".attempts.jsonl", ".responses.jsonl", ".trails.jsonl")
+                    )
+                )
+            )
+            if matches != [resolved[name]]:
+                raise PromotionError(
+                    f"defense-local conditional N/A {name} is not unique"
+                )
+        if list(run_root.rglob("*.complete.json")):
+            raise PromotionError(
+                "defense-local output-noncompletion N/A has completion evidence"
+            )
+        if any(
+            resolved[name].stat().st_size != 0
+            for name in (
+                "empty_attempts", "empty_responses", "empty_judge_trails",
+                "empty_results",
+            )
+        ):
+            raise PromotionError(
+                "defense-local output-noncompletion streams are not empty"
+            )
+    elif (
         list(run_root.glob("grid-*.grid.json"))
         or list(run_root.rglob("*.responses.jsonl"))
         or list(run_root.rglob("*.complete.json"))
@@ -1837,6 +2069,7 @@ def validate_defense_conditional_na_artifact(
     budget = strict_json(budget_path)
     budget_id = budget_path.name.removesuffix(".budget.json")
     deadline_epoch = budget.get("deadline_epoch")
+    expected_target_calls = 1 if is_output_noncompletion else 0
     if (
         budget != {
             "budget_id": budget_id,
@@ -1844,7 +2077,7 @@ def validate_defense_conditional_na_artifact(
             "max_judge_calls": None,
             "max_http_attempts": None,
             "deadline_epoch": deadline_epoch,
-            "target_calls": 0,
+            "target_calls": expected_target_calls,
             "judge_calls": 0,
             "http_attempts": 0,
             "accounting_semantics": "durable_pre_call_logical_reservation_v1",
@@ -1858,7 +2091,7 @@ def validate_defense_conditional_na_artifact(
         or not isinstance(deadline_epoch, (int, float))
         or not math.isfinite(float(deadline_epoch))
     ):
-        raise PromotionError("defense-local conditional N/A zero-call ledger changed")
+        raise PromotionError("defense-local conditional N/A call ledger changed")
     deadline = strict_json(resolved["invocation_deadline"])
     if deadline != {
         "schema": "ura-invocation-deadline/1",
@@ -1867,6 +2100,103 @@ def validate_defense_conditional_na_artifact(
         "deadline_epoch": deadline_epoch,
     }:
         raise PromotionError("defense-local conditional N/A deadline changed")
+
+    if is_output_noncompletion:
+        expected_target = (
+            "vllm:Qwen/Qwen3-VL-8B-Instruct@"
+            "60595ebc30ec8e3b1d3b9e65d4943ca011c0006a+guard"
+        )
+        expected_message = (
+            "target_call failed (LocalTargetOutputError): vLLM completion is "
+            "truncated or incomplete: 'length'"
+        )
+        error = strict_json(resolved["target_error"])
+        if (
+            set(error) != {
+                "attacker", "call_audit", "call_budget_snapshot", "completed_attempts",
+                "corpus", "exception_type", "execution_started", "grid_id", "message",
+                "model_spec", "phase", "run_id", "status", "target",
+            }
+            or error.get("attacker") != "replay"
+            or error.get("call_audit") != {}
+            or error.get("call_budget_snapshot") != budget
+            or type(error.get("completed_attempts")) is not int
+            or error.get("completed_attempts") != 0
+            or error.get("corpus") != "jailbreakbench_benign"
+            or error.get("exception_type") != "ExternalCallFailure"
+            or error.get("execution_started") is not True
+            or error.get("grid_id") != budget_id
+            or error.get("message") != expected_message
+            or error.get("model_spec") != expected_target
+            or error.get("phase") != "cell_execution_or_validation"
+            or error.get("status") != "error"
+            or error.get("target") != expected_target
+            or re.fullmatch(r"run-[0-9a-f]{24}", str(error.get("run_id", ""))) is None
+        ):
+            raise PromotionError("defense-local target-output error changed")
+        grid = strict_json(resolved["partial_grid"])
+        cells = grid.get("cells") if isinstance(grid, dict) else None
+        cell = cells[0] if isinstance(cells, list) and len(cells) == 1 else None
+        request = grid.get("request") if isinstance(grid, dict) else None
+        if (
+            grid.get("grid_id") != budget_id
+            or grid.get("status") != "partial"
+            or type(grid.get("requested_cells")) is not int
+            or grid.get("requested_cells") != 1
+            or type(grid.get("accounted_cells")) is not int
+            or grid.get("accounted_cells") != 1
+            or type(grid.get("n_errors")) is not int
+            or grid.get("n_errors") != 2
+            or type(grid.get("n_new_complete")) is not int
+            or grid.get("n_new_complete") != 0
+            or type(grid.get("n_existing_complete")) is not int
+            or grid.get("n_existing_complete") != 0
+            or grid.get("call_budget_snapshot") != budget
+            or grid.get("engine_runtime_close") is not None
+            or not isinstance(cell, dict)
+            or cell.get("status") != "error"
+            or cell.get("execution_started") is not True
+            or cell.get("phase") != "cell_execution_or_validation"
+            or cell.get("run_id") != error.get("run_id")
+            or cell.get("model_spec") != expected_target
+            or cell.get("target") != expected_target
+            or not isinstance(request, dict)
+            or request.get("execution_purpose") != "diagnostic_canary"
+            or request.get("corpora") != ["jailbreakbench_benign"]
+            or request.get("attackers") != ["replay"]
+            or request.get("judges") != ["rules", "guardrail"]
+            or request.get("models") != [expected_target]
+            or request.get("approximate_common_metrics") is not True
+            or request.get("limit") != 1
+            or request.get("sample_seed") != 0
+            or request.get("seeds") != [0]
+            or request.get("defense") != "both"
+            or request.get("defense_guard") != "guardrail"
+        ):
+            raise PromotionError("defense-local target-output partial grid changed")
+        circuits = strict_json(resolved["circuit_ledger"])
+        circuit_map = circuits.get("circuits") if isinstance(circuits, dict) else None
+        circuit_key = f"target:{expected_target}"
+        circuit = circuit_map.get(circuit_key) if isinstance(circuit_map, dict) else None
+        if (
+            set(circuits) != {"format_version", "grid_id", "circuits"}
+            or type(circuits.get("format_version")) is not int
+            or circuits.get("format_version") != 1
+            or circuits.get("grid_id") != budget_id
+            or not isinstance(circuit_map, dict)
+            or set(circuit_map) != {circuit_key}
+            or not isinstance(circuit, dict)
+            or set(circuit) != {
+                "budget_snapshot", "call_audit", "exception_type", "message",
+                "opened_at", "phase",
+            }
+            or circuit.get("budget_snapshot") != budget
+            or circuit.get("call_audit") != {}
+            or circuit.get("exception_type") != "ExternalCallFailure"
+            or circuit.get("message") != expected_message
+            or circuit.get("phase") != "target_call"
+        ):
+            raise PromotionError("defense-local target-output circuit ledger changed")
 
     if (
         resolved["project_revision"] != Path(EXPECTED_PROJECT_RECEIPT).resolve()
@@ -1908,10 +2238,15 @@ def validate_defense_conditional_na_artifact(
         or HEX64.fullmatch(str(selected["local_config"].get("normalized_selected_sha256", ""))) is None
     ):
         raise PromotionError("defense-local conditional N/A selected configs changed")
+    retained_live_name = (
+        "retained_live_attestation" if is_output_noncompletion else "live_attestation"
+    )
+    retained_live_descriptor = raw_artifacts[retained_live_name]
+    retained_live_path = resolved[retained_live_name]
     live_artifacts = validate_defense_na_live_binding_shape(
         conditions.get("live_attestation"),
-        attestation=raw_artifacts["live_attestation"],
-        filename=resolved["live_attestation"].name,
+        attestation=retained_live_descriptor,
+        filename=retained_live_path.name,
     )
     try:
         attestation_manifest, attestation_observed = load_live_attestation_file(
@@ -1921,6 +2256,20 @@ def validate_defense_conditional_na_artifact(
         raise PromotionError(
             "defense-local conditional N/A live-attestation artifact is invalid"
         ) from exc
+    if (
+        is_output_noncompletion
+        and (
+            retained_live_path.name
+            != f"live-attestation-{raw_artifacts['live_attestation']['sha256'][:24]}.json"
+            or retained_live_descriptor["sha256"]
+            != raw_artifacts["live_attestation"]["sha256"]
+            or retained_live_descriptor["bytes"]
+            != raw_artifacts["live_attestation"]["bytes"]
+        )
+    ):
+        raise PromotionError(
+            "defense-local retained live-attestation copy differs from its source"
+        )
     if (
         attestation_observed != {
             "file": resolved["live_attestation"].name,
@@ -2058,11 +2407,29 @@ def validate_prompt_proxy_summary(value: object, *, label: str) -> dict[str, Any
 
 
 def inventory_self_test() -> dict[str, Any]:
-    rows = [{
-        "lane_id": lane, "family": family, "disposition": "runnable",
-        "reason": None, "reason_code": None,
-        "final_preflight": {"status": "pending_execution", "value": None},
-    } for lane, family in sorted(RUNNABLE_FAMILIES.items())]
+    rows: list[dict[str, Any]] = []
+    for lane, family in sorted(RUNNABLE_FAMILIES.items()):
+        limit = EXPECTED_MEASURED_LIMITS[lane]
+        rows.append({
+            "lane_id": lane, "family": family, "disposition": "runnable",
+            "reason": None, "reason_code": None,
+            "base_argv": [
+                "--limit", str(limit), "--sample-seed", "0", "--seeds", "0",
+            ],
+            "preliminary": {
+                "selection": {
+                    "arms": [{
+                        "arm": "self-test",
+                        "total_clusters": limit + 1,
+                        "selected_clusters": limit,
+                        "sample_seed": 0,
+                        "limit": limit,
+                        "selection_method": BOUNDED_SELECTION_METHOD,
+                    }],
+                },
+            },
+            "final_preflight": {"status": "pending_execution", "value": None},
+        })
     shared_rr_artifact = {
         "path": str(Path.cwd().resolve() / "llava-rr.target-runtime-terminal.json"),
         "sha256": "9" * 64,
@@ -2155,6 +2522,14 @@ def inventory_self_test() -> dict[str, Any]:
     }
     conditional_rows = validate_inventory(conditional, completed=False)
     inventory_counts(conditional_rows)
+    conditional_v2 = copy.deepcopy(conditional)
+    conditional_v2_row = conditional_v2[defense_index]
+    conditional_v2_row["reason_code"] = DEFENSE_NA_V2_REASON_CODE
+    conditional_v2_row["reason"] = DEFENSE_NA_V2_REASON
+    conditional_v2_row["canary"]["call_accounting"] = copy.deepcopy(
+        DEFENSE_NA_V2_CALL_ACCOUNTING
+    )
+    inventory_counts(validate_inventory(conditional_v2, completed=False))
     tests: list[tuple[str, list[dict[str, Any]]]] = []
     tests.append(("missing", copy.deepcopy(rows[:-1])))
     extra = copy.deepcopy(rows)
@@ -2168,8 +2543,14 @@ def inventory_self_test() -> dict[str, Any]:
     duplicate.append(copy.deepcopy(duplicate[0]))
     tests.append(("duplicate", duplicate))
     wrong_family = copy.deepcopy(rows)
-    next(row for row in wrong_family if row["lane_id"] == "local-qwen3-vl-text-full")["family"] = "bridge"
+    next(row for row in wrong_family if row["lane_id"] == "local-qwen3-vl-text-primary-100")["family"] = "bridge"
     tests.append(("family", wrong_family))
+    wrong_selection_method = copy.deepcopy(rows)
+    next(
+        row for row in wrong_selection_method
+        if row["lane_id"] == "local-qwen3-vl-text-primary-100"
+    )["preliminary"]["selection"]["arms"][0]["selection_method"] = "random_sample_v0"
+    tests.append(("bounded_selection_method", wrong_selection_method))
     wrong_terminal = copy.deepcopy(rows)
     next(row for row in wrong_terminal if row["lane_id"] == "bridge-nanogcg")["reason"] += " forged"
     tests.append(("terminal_reason", wrong_terminal))
@@ -2237,13 +2618,16 @@ def inventory_self_test() -> dict[str, Any]:
         mutation = copy.deepcopy(conditional)
         mutate(next(row for row in mutation if row["lane_id"] == "defense-local"))
         tests.append((label, mutation))
+    conditional_v2_cross_mix = copy.deepcopy(conditional_v2)
+    conditional_v2_cross_mix[defense_index]["reason"] = DEFENSE_NA_REASON
+    tests.append(("conditional_v2_cross_mix", conditional_v2_cross_mix))
     wrong_lane = copy.deepcopy(rows)
     index = next(
         index for index, row in enumerate(wrong_lane)
-        if row["lane_id"] == "local-qwen3-vl-text-full"
+        if row["lane_id"] == "local-qwen3-vl-text-primary-100"
     )
     wrong_lane[index] = copy.deepcopy(conditional[defense_index])
-    wrong_lane[index]["lane_id"] = "local-qwen3-vl-text-full"
+    wrong_lane[index]["lane_id"] = "local-qwen3-vl-text-primary-100"
     tests.append(("conditional_wrong_lane", wrong_lane))
     rejected: list[str] = []
     for label, mutation in tests:
@@ -2443,6 +2827,51 @@ def inventory_self_test() -> dict[str, Any]:
                 f"conditional numeric-type mutation did not fail closed: {label}"
             )
         rejected_numeric.append(label)
+    variant_fixtures: dict[str, dict[str, Any]] = {}
+    for schema, variant in DEFENSE_NA_VARIANTS.items():
+        fixture = {
+            "schema": schema, "status": "N/A", "lane_id": "defense-local",
+            "disposition": DEFENSE_NA_DISPOSITION,
+            "reason_code": variant["reason_code"], "reason": variant["reason"],
+            "classified_at_utc": "2026-08-22T00:00:00Z",
+            "classification": copy.deepcopy(variant["classification"]),
+            "bindings": {},
+            "call_accounting": copy.deepcopy(variant["call_accounting"]),
+            "runner_outputs": copy.deepcopy(variant["runner_outputs"]),
+            "artifacts": {}, "resource_identities": [],
+        }
+        if variant["evidence_limits"] is not None:
+            fixture["evidence_limits"] = copy.deepcopy(variant["evidence_limits"])
+        defense_na_variant_from_value(fixture)
+        variant_fixtures[schema] = fixture
+    rejected_variants: list[str] = []
+    for label, mutation in {
+        "v2_reason_from_v1": {
+            **variant_fixtures[DEFENSE_NA_V2_SCHEMA], "reason": DEFENSE_NA_REASON,
+        },
+        "v2_accounting_from_v1": {
+            **variant_fixtures[DEFENSE_NA_V2_SCHEMA],
+            "call_accounting": copy.deepcopy(DEFENSE_NA_CALL_ACCOUNTING),
+        },
+        "v1_with_evidence_limits": {
+            **variant_fixtures[DEFENSE_NA_SCHEMA],
+            "evidence_limits": copy.deepcopy(DEFENSE_NA_V2_EVIDENCE_LIMITS),
+        },
+        "v2_boolean_stream_count": {
+            **variant_fixtures[DEFENSE_NA_V2_SCHEMA],
+            "runner_outputs": {
+                **DEFENSE_NA_V2_RUNNER_OUTPUTS, "grid_artifacts": True,
+            },
+        },
+    }.items():
+        try:
+            defense_na_variant_from_value(mutation)
+        except PromotionError:
+            rejected_variants.append(label)
+        else:
+            raise PromotionError(
+                f"conditional variant mutation did not fail closed: {label}"
+            )
     proxy = {
         "status": "validated", "arm": PROMPT_PROXY_ARM,
         "required_metric": PROMPT_PROXY_METRIC,
@@ -2484,6 +2913,7 @@ def inventory_self_test() -> dict[str, Any]:
         "rejected_conditional_artifact_descriptor_mutations": rejected_descriptors,
         "rejected_conditional_live_attestation_mutations": rejected_live,
         "rejected_conditional_numeric_type_mutations": rejected_numeric,
+        "rejected_conditional_variant_mutations": rejected_variants,
         "rejected_proxy_mutations": rejected_proxy,
         "retained_binding_self_test": retained_binding_contract_self_test(),
     }
@@ -3052,6 +3482,7 @@ def validate_final_lane(
             "value": projected_calls["local_guardrail_evaluations"],
         },
         "call_start_deadline_seconds": CALL_START_DEADLINE_SECONDS,
+        "measured_lane_wall_time_seconds": MEASURED_LANE_WALL_TIME_SECONDS,
         "retained_output_policy_bytes": EXTERNAL_RETAINED_OUTPUT_POLICY_BYTES,
         "retained_output_policy_semantics": (
             "external_operator_policy_only_not_runner_enforced"
@@ -3326,6 +3757,24 @@ def validate_evidence(
         )
     policy = manifest["policy"]
     if policy != {
+        "population_tiers": {
+            "primary_core": {
+                "cluster_limit_per_selected_arm": PRIMARY_CORE_LIMIT,
+                "sample_seed": 0,
+                "selection_method": BOUNDED_SELECTION_METHOD,
+                "purpose": "primary_cluster_level_estimation",
+            },
+            "extended_exploratory": {
+                "cluster_limit_per_selected_arm": EXPLORATORY_EXTENDED_LIMIT,
+                "sample_seed": 0,
+                "selection_method": BOUNDED_SELECTION_METHOD,
+                "purpose": "descriptive_precision_limited_framework_and_ollama_evidence",
+            },
+            "full_corpus_mode": {
+                "cluster_limit_per_selected_arm": 0,
+                "status": "supported_not_selected_for_this_measured_cohort",
+            },
+        },
         "target_and_transport_caps": "exact_preliminary_call_projection_totals",
         "model_judge_calls_required": 0,
         "http_attempts_required": 0,
@@ -3333,6 +3782,10 @@ def validate_evidence(
         "call_start_deadline_seconds": CALL_START_DEADLINE_SECONDS,
         "call_start_deadline_semantics": (
             "admission_window_from_first_invocation_not_completion_timeout"
+        ),
+        "measured_lane_wall_time_seconds": MEASURED_LANE_WALL_TIME_SECONDS,
+        "measured_lane_wall_time_semantics": (
+            "controller_completion_ceiling_distinct_from_call_start_admission_window"
         ),
         "free_space_floor_bytes": FREE_SPACE_FLOOR_BYTES,
         "retained_output_policy_bytes": EXTERNAL_RETAINED_OUTPUT_POLICY_BYTES,

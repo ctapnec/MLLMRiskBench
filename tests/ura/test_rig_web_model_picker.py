@@ -1864,13 +1864,12 @@ def test_hosted_judge_sampling_and_data_transfer_are_fail_closed_in_builder(
         })
         assert "may be sent" in missing_ack["ack_hosted_judge_data_transfer"]
 
-        unbounded = app._validate_builder({
+        full = app._validate_builder({
             **base,
             "ack_hosted_judge_data_transfer": "on",
             "limit": "0",
-            "sample_seed": "0",
         })
-        assert "bounds spend" in unbounded["limit"]
+        assert "limit" not in full and "sample_seed" not in full
 
         unseeded = app._validate_builder({
             **base,

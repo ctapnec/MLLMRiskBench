@@ -276,8 +276,8 @@ RR_TERMINAL_REASON = (
 )
 RUNNABLE_FAMILIES = {
     **{lane: "core" for lane in {
-        "local-qwen3-vl-text-full", "local-qwen3-vl-image-full",
-        "local-llava-base-text-full", "local-llava-base-image-full",
+        "local-qwen3-vl-text-primary-100", "local-qwen3-vl-image-primary-100",
+        "local-llava-base-text-primary-100", "local-llava-base-image-primary-100",
         "rjudge-qwen3-vl", "rjudge-llava-base",
         "gptgeochat-qwen3-vl", "gptgeochat-llava-base",
         "crescendo-qwen3-vl",
@@ -288,8 +288,8 @@ RUNNABLE_FAMILIES = {
         "bridge-purplellama", "harmbench-replay",
     }},
     **{lane: "ollama" for lane in {
-        "ollama-rwkv-g1d-0p4b-text-full", "ollama-rwkv-g1f-2p9b-text-full",
-        "ollama-rwkv-g1g-1p5b-text-full", "rjudge-ollama-rwkv-g1d-0p4b",
+        "ollama-rwkv-g1d-0p4b-text-exploratory-50", "ollama-rwkv-g1f-2p9b-text-exploratory-50",
+        "ollama-rwkv-g1g-1p5b-text-exploratory-50", "rjudge-ollama-rwkv-g1d-0p4b",
         "rjudge-ollama-rwkv-g1f-2p9b", "rjudge-ollama-rwkv-g1g-1p5b",
     }},
 }
@@ -364,6 +364,25 @@ ZERO_CALL_ACCOUNTING = {
     "hosted_judge_calls": 0,
     "http_attempts": 0,
 }
+DEFENSE_NA_V2_REASON_CODE = "target_output_noncompletion_at_generation_cap"
+DEFENSE_NA_V2_REASON = (
+    "The defense-local canary completed one input screening with the exact Llama Guard "
+    "1B defense and then made one Qwen3-VL target call, but the target completion reached "
+    "the 4096-token generation cap and was rejected as incomplete. No output-defense or "
+    "scoring-guard judgment was produced."
+)
+ONE_TARGET_CALL_ACCOUNTING = {
+    "accounting_semantics": "durable_pre_call_logical_reservation_v1",
+    "target_calls": 1, "model_judge_calls": 0, "local_guardrail_evaluations": 1,
+    "defense_guardrail_evaluations": 1,
+    "output_defense_guardrail_evaluations": 0,
+    "scoring_guardrail_evaluations": 0, "hosted_target_calls": 0,
+    "hosted_judge_calls": 0, "http_attempts": 0,
+}
+DEFENSE_NA_VARIANTS = (
+    (DEFENSE_NA_REASON_CODE, DEFENSE_NA_REASON, ZERO_CALL_ACCOUNTING),
+    (DEFENSE_NA_V2_REASON_CODE, DEFENSE_NA_V2_REASON, ONE_TARGET_CALL_ACCOUNTING),
+)
 SUCCESS_COUNTS = {
     "total": 46, "runnable": 22, "typed_terminal": 24,
     "conditional_na_lanes": [], "bridge_terminal": 3,
@@ -418,26 +437,32 @@ def is_defense_na_row(row: object) -> bool:
         return False
     marker = {"status": "N/A", "value": None}
     canary = row.get("canary")
+    accounting = canary.get("call_accounting") if isinstance(canary, dict) else None
+    variant_matches = [
+        expected_accounting
+        for reason_code, reason, expected_accounting in DEFENSE_NA_VARIANTS
+        if row.get("reason_code") == reason_code
+        and row.get("reason") == reason
+        and isinstance(accounting, dict)
+        and set(accounting) == set(expected_accounting)
+        and all(
+            type(accounting[field]) is type(expected_accounting[field])
+            and accounting[field] == expected_accounting[field]
+            for field in expected_accounting
+        )
+    ]
     return (
         row.get("lane_id") == "defense-local"
         and row.get("family") == "core"
         and row.get("disposition") == "conditional_na"
-        and row.get("reason_code") == DEFENSE_NA_REASON_CODE
-        and row.get("reason") == DEFENSE_NA_REASON
+        and len(variant_matches) == 1
         and row.get("projection") == marker
         and isinstance(canary, dict)
         and set(canary) == {"status", "value", "conditional_na_artifact", "call_accounting"}
         and canary.get("status") == "N/A"
         and canary.get("value") is None
         and valid_descriptor(canary.get("conditional_na_artifact"))
-        and canary.get("call_accounting") == ZERO_CALL_ACCOUNTING
-        and all(
-            type(canary["call_accounting"].get(field)) is int
-            for field in (
-                "target_calls", "model_judge_calls", "local_guardrail_evaluations",
-                "hosted_target_calls", "hosted_judge_calls", "http_attempts",
-            )
-        )
+        and accounting is not None
         and row.get("final_preflight") == marker
         and row.get("approved_caps") == marker
     )
@@ -1711,8 +1736,8 @@ RR_TERMINAL_REASON = (
 )
 RUNNABLE_FAMILIES = {
     **{lane: "core" for lane in {
-        "local-qwen3-vl-text-full", "local-qwen3-vl-image-full",
-        "local-llava-base-text-full", "local-llava-base-image-full",
+        "local-qwen3-vl-text-primary-100", "local-qwen3-vl-image-primary-100",
+        "local-llava-base-text-primary-100", "local-llava-base-image-primary-100",
         "rjudge-qwen3-vl", "rjudge-llava-base",
         "gptgeochat-qwen3-vl", "gptgeochat-llava-base",
         "crescendo-qwen3-vl",
@@ -1723,8 +1748,8 @@ RUNNABLE_FAMILIES = {
         "bridge-purplellama", "harmbench-replay",
     }},
     **{lane: "ollama" for lane in {
-        "ollama-rwkv-g1d-0p4b-text-full", "ollama-rwkv-g1f-2p9b-text-full",
-        "ollama-rwkv-g1g-1p5b-text-full", "rjudge-ollama-rwkv-g1d-0p4b",
+        "ollama-rwkv-g1d-0p4b-text-exploratory-50", "ollama-rwkv-g1f-2p9b-text-exploratory-50",
+        "ollama-rwkv-g1g-1p5b-text-exploratory-50", "rjudge-ollama-rwkv-g1d-0p4b",
         "rjudge-ollama-rwkv-g1f-2p9b", "rjudge-ollama-rwkv-g1g-1p5b",
     }},
 }
@@ -1760,6 +1785,25 @@ ZERO_CALL_ACCOUNTING = {
     "hosted_judge_calls": 0,
     "http_attempts": 0,
 }
+DEFENSE_NA_V2_REASON_CODE = "target_output_noncompletion_at_generation_cap"
+DEFENSE_NA_V2_REASON = (
+    "The defense-local canary completed one input screening with the exact Llama Guard "
+    "1B defense and then made one Qwen3-VL target call, but the target completion reached "
+    "the 4096-token generation cap and was rejected as incomplete. No output-defense or "
+    "scoring-guard judgment was produced."
+)
+ONE_TARGET_CALL_ACCOUNTING = {
+    "accounting_semantics": "durable_pre_call_logical_reservation_v1",
+    "target_calls": 1, "model_judge_calls": 0, "local_guardrail_evaluations": 1,
+    "defense_guardrail_evaluations": 1,
+    "output_defense_guardrail_evaluations": 0,
+    "scoring_guardrail_evaluations": 0, "hosted_target_calls": 0,
+    "hosted_judge_calls": 0, "http_attempts": 0,
+}
+DEFENSE_NA_VARIANTS = (
+    (DEFENSE_NA_REASON_CODE, DEFENSE_NA_REASON, ZERO_CALL_ACCOUNTING),
+    (DEFENSE_NA_V2_REASON_CODE, DEFENSE_NA_V2_REASON, ONE_TARGET_CALL_ACCOUNTING),
+)
 SUCCESS_GATE5_COUNTS = {
     "total": 46, "runnable": 22, "typed_terminal": 24,
     "conditional_na_lanes": [], "bridge_terminal": 3,
@@ -2013,26 +2057,32 @@ def is_defense_na_row(row: object) -> bool:
         return False
     marker = {"status": "N/A", "value": None}
     canary = row.get("canary")
+    accounting = canary.get("call_accounting") if isinstance(canary, dict) else None
+    variant_matches = [
+        expected_accounting
+        for reason_code, reason, expected_accounting in DEFENSE_NA_VARIANTS
+        if row.get("reason_code") == reason_code
+        and row.get("reason") == reason
+        and isinstance(accounting, dict)
+        and set(accounting) == set(expected_accounting)
+        and all(
+            type(accounting[field]) is type(expected_accounting[field])
+            and accounting[field] == expected_accounting[field]
+            for field in expected_accounting
+        )
+    ]
     return (
         row.get("lane_id") == "defense-local"
         and row.get("family") == "core"
         and row.get("disposition") == "conditional_na"
-        and row.get("reason_code") == DEFENSE_NA_REASON_CODE
-        and row.get("reason") == DEFENSE_NA_REASON
+        and len(variant_matches) == 1
         and row.get("projection") == marker
         and isinstance(canary, dict)
         and set(canary) == {"status", "value", "conditional_na_artifact", "call_accounting"}
         and canary.get("status") == "N/A"
         and canary.get("value") is None
         and valid_descriptor_shape(canary.get("conditional_na_artifact"))
-        and canary.get("call_accounting") == ZERO_CALL_ACCOUNTING
-        and all(
-            type(canary["call_accounting"].get(field)) is int
-            for field in (
-                "target_calls", "model_judge_calls", "local_guardrail_evaluations",
-                "hosted_target_calls", "hosted_judge_calls", "http_attempts",
-            )
-        )
+        and accounting is not None
         and row.get("final_preflight") == marker
         and row.get("approved_caps") == marker
     )
@@ -2778,7 +2828,7 @@ def gate5_contract_self_test(contract: Mapping[str, Any]) -> dict[str, Any]:
     duplicate[-1] = copy.deepcopy(duplicate[0])
     must_fail("duplicate-lane", lambda: validate_gate5_inventory(duplicate, "mutated manifest"))
     wrong_family = copy.deepcopy(rows)
-    next(row for row in wrong_family if row["lane_id"] == "local-qwen3-vl-text-full")["family"] = "bridge"
+    next(row for row in wrong_family if row["lane_id"] == "local-qwen3-vl-text-primary-100")["family"] = "bridge"
     must_fail("runnable-family", lambda: validate_gate5_inventory(wrong_family, "mutated manifest"))
     wrong_native = copy.deepcopy(rows)
     next(row for row in wrong_native if row["lane_id"] == "structural-native-giskard")["reason_code"] = "forged"
@@ -2893,6 +2943,32 @@ def gate5_contract_self_test(contract: Mapping[str, Any]) -> dict[str, Any]:
     alternate_counts = gate5_inventory_counts(alternate_by_id)
     if alternate_counts not in (SUCCESS_GATE5_COUNTS, DEFENSE_NA_GATE5_COUNTS):
         raise AssertionError("alternate Gate 5 defense profile did not validate")
+    v2_rows = copy.deepcopy(rows)
+    v2_defense = next(row for row in v2_rows if row["lane_id"] == "defense-local")
+    marker = {"status": "N/A", "value": None}
+    v2_rows[v2_rows.index(v2_defense)] = {
+        "lane_id": "defense-local", "family": "core",
+        "disposition": "conditional_na", "reason_code": DEFENSE_NA_V2_REASON_CODE,
+        "reason": DEFENSE_NA_V2_REASON, "projection": marker,
+        "canary": {
+            "status": "N/A", "value": None,
+            "conditional_na_artifact": {
+                "path": "/fixture/defense-na-v2.json", "sha256": "b" * 64,
+                "bytes": 1,
+            },
+            "call_accounting": ONE_TARGET_CALL_ACCOUNTING,
+        },
+        "final_preflight": marker, "approved_caps": marker,
+    }
+    validate_gate5_inventory(v2_rows, "v2 valid manifest")
+    v2_cross_mix = copy.deepcopy(v2_rows)
+    next(row for row in v2_cross_mix if row["lane_id"] == "defense-local")[
+        "reason"
+    ] = DEFENSE_NA_REASON
+    must_fail(
+        "defense-na-v2-cross-mix",
+        lambda: validate_gate5_inventory(v2_cross_mix, "mutated v2 manifest"),
+    )
     malformed_defense = copy.deepcopy(alternate_rows)
     malformed_row = next(row for row in malformed_defense if row["lane_id"] == "defense-local")
     if is_defense_na_row(malformed_row):

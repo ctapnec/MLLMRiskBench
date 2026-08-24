@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import base64
 import hashlib
 import json
 import os
@@ -535,6 +536,63 @@ def test_private_source_and_attacker_configs_are_exact_read_once_inputs(
     assert artifact is not None
     assert artifact["sha256"] == digest
     assert str(tmp_path) not in json.dumps(artifact)
+
+
+def test_private_ideator_images_are_child_owned_across_console_restart(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    png = base64.b64decode(
+        "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk"
+        "+A8AAQUBAScY42YAAAAASUVORK5CYII="
+    )
+    artifact_dir = tmp_path / ".private-attacker-artifacts"
+    artifact_dir.mkdir()
+    image_digest = hashlib.sha256(png).hexdigest()
+    private_image = artifact_dir / (
+        f"selected-ideator-image-0000-{image_digest[:24]}-{'2' * 16}.json"
+    )
+    private_image.write_bytes(png)
+    external_image = tmp_path / "operator-image.png"
+    external_image.write_bytes(png)
+
+    payload = {
+        "ideator": {
+            "seed_pairs": [
+                ["private pair", str(private_image.resolve())],
+                ["operator pair", str(external_image.resolve())],
+            ],
+            "seed_pair_image_sha256": [image_digest, image_digest],
+        }
+    }
+    raw = (json.dumps(payload, sort_keys=True, separators=(",", ":")) + "\n").encode()
+    digest = hashlib.sha256(raw).hexdigest()
+    config_dir = tmp_path / ".private-attacker-configs"
+    config_dir.mkdir()
+    config = config_dir / f"selected-attacker-{digest[:24]}-{'3' * 16}.json"
+    config.write_bytes(raw)
+    monkeypatch.setenv(
+        "URA_PRIVATE_TRANSIENT_ATTACKER_CONFIG", str(config.resolve())
+    )
+    registered: list[tuple[object, tuple[object, ...]]] = []
+    monkeypatch.setattr(
+        run_matrix.atexit,
+        "register",
+        lambda callback, *args: registered.append((callback, args)),
+    )
+
+    loaded, artifact = run_matrix._load_attacker_config(
+        str(config.resolve()), ["ideator"], digest
+    )
+
+    assert not config.exists()
+    assert loaded["ideator"]["seed_pairs"][0][1] == str(private_image.resolve())
+    assert artifact is not None and str(tmp_path) not in json.dumps(artifact)
+    assert len(registered) == 1
+    callback, args = registered[0]
+    callback(*args)
+    assert not private_image.exists()
+    assert external_image.read_bytes() == png
 
 
 def test_content_addressed_json_rejects_same_size_inode_swap(

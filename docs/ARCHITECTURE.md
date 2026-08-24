@@ -528,9 +528,14 @@ text/image path so audio mismatches fail UI/CLI parity.
 
 Build composes every `run_matrix`/`rig_check` flag the documented lanes use
 except the `--models` shorthand (CLI/`rig_check`-only; Build emits the explicit
-`--api`/`--local` split). `ideator` is CLI-only (precomputed `seed_pairs`
-through `--attacker-config`) and `purplellama` admits only `cyberseceval_*`
-arms; both are rejected server-side, not only in the page. Build also exposes
+`--api`/`--local` split). `ideator` is available only through its verified
+precomputed replay panel: the operator supplies an exact
+`ura-ideator-seed-pairs/1` manifest and its digest, and every declared PNG path
+and digest is validated under the results root. The reviewed manifest and image
+bytes are captured in the execution ticket and materialized as private launch
+copies; the live generation path remains disabled. `purplellama` admits only
+`cyberseceval_*` arms and is rejected server-side for every other arm, not only
+in the page. Build also exposes
 `--group` (default: the CLI default
 `model,source,risk,effective_modality,expected_behavior,attacker,source_policy_id,source_policy_version`,
 the grouping the Level-2 export requires), `--exclude-tool-conditioned` (on by
@@ -538,6 +543,16 @@ default for dry lanes), the measured-only `--reset-open-circuits`, and
 `--lock-stale-seconds`. Non-dry `run_matrix`/`rig_check` children inherit the
 console process's exported `URA_PROJECT_REVISION_*`/`URA_SOURCE_CONFORMANCE_*`
 receipt locators; dry lanes launch with them scrubbed.
+
+Once at least one source arm is selected, Build exposes one synchronized range
+and numeric `--limit` control plus the sampling seed. The limit is applied
+independently to every selected arm: `0` selects the complete release for each
+arm, while a positive value caps whole source clusters per arm. A measured
+bounded selection requires an explicit `--sample-seed`. The optional local
+budget in hours is only a human-scale spelling of the exact Runner
+`--deadline-seconds` call-start window for a measured local-target lane. Expiry
+blocks new model acquisition and model calls; it neither interrupts an admitted
+call nor bounds process completion.
 
 For a reviewed paid launch, Builder first derives exact selected API, local,
 source, source-conformance, and prepared-attacker snapshots, then binds their

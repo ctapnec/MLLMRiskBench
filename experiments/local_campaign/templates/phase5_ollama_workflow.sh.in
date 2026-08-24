@@ -120,6 +120,7 @@ ATTEST_RECEIPTS="$URA_WORK/runs/thesis/attestation/receipts/ollama-phase5"
 SCORE_GUARD='meta-llama/Llama-Guard-3-8B'
 SCORE_GUARD_REV='7327bd9f6efbbe6101dc6cc4736302b3cbb6e425'
 GROUP='model,source,risk,effective_modality,expected_behavior,attacker,source_policy_id,source_policy_version'
+EXPLORATORY_CLUSTER_LIMIT=50
 SCOPE="$URA_EXECUTION_SCOPE_ID"
 MAX_ATTESTATION_AGE_HOURS='24'
 TEXT_ARMS='strongreject_official,advbench_harmful,jailbreakbench_harmful,jailbreakbench_benign,harmbench_text,cyberseceval_mitre,cyberseceval_interpreter,cyberseceval_insecure_coding,saladbench_base,airbench_full,xstest_full,simplesafetytests_full,decodingtrust_stereotype'
@@ -187,7 +188,10 @@ expected_terminals = {f"gptgeochat-ollama-{label}" for label in expected_labels}
 runnable = {
     lane
     for label in labels
-    for lane in (f"ollama-{label}-text-full", f"rjudge-ollama-{label}")
+    for lane in (
+        f"ollama-{label}-text-exploratory-50",
+        f"rjudge-ollama-{label}",
+    )
 }
 if (
     set(terminals) != expected_terminals
@@ -205,7 +209,7 @@ PY
 assert_ollama_runnable_lane() {
   local lane="$1"
   case "$lane" in
-    ollama-rwkv-g1d-0p4b-text-full|ollama-rwkv-g1f-2p9b-text-full|ollama-rwkv-g1g-1p5b-text-full|rjudge-ollama-rwkv-g1d-0p4b|rjudge-ollama-rwkv-g1f-2p9b|rjudge-ollama-rwkv-g1g-1p5b) ;;
+    ollama-rwkv-g1d-0p4b-text-exploratory-50|ollama-rwkv-g1f-2p9b-text-exploratory-50|ollama-rwkv-g1g-1p5b-text-exploratory-50|rjudge-ollama-rwkv-g1d-0p4b|rjudge-ollama-rwkv-g1f-2p9b|rjudge-ollama-rwkv-g1g-1p5b) ;;
     *) printf 'non-runnable Ollama lane rejected: %s\n' "$lane" >&2; return 1 ;;
   esac
   local terminal
@@ -536,7 +540,7 @@ if caps.get("target") != expected_cap or caps.get("judge") is not None or caps.g
     raise SystemExit("projection call-cap envelope differs from the exact request")
 if conditions.get("deadline_seconds") is not None:
     raise SystemExit("unexpected top-level deadline field")
-if caps.get("deadline_seconds") not in {3600, 7776000}:
+if caps.get("deadline_seconds") not in {3600, 86400}:
     raise SystemExit("projection deadline is outside the declared workflow")
 acquisition = bindings.get("model_acquisition", {})
 role_acquisition = conditions.get("model_acquisition", {})
@@ -644,7 +648,7 @@ run_rig_projection() {
     "${args[@]}" "${acq[@]}" > "$run_log" 2>&1
 }
 
-run_full_projection_lane() {
+run_bounded_projection_lane() {
   local lane="$1" label="$2" mode="$3" arms="$4"
   local spec="${MODEL_SPECS[$label]}" digest="${MODEL_DIGESTS[$label]}"
   local config="${MODEL_CONFIGS[$label]}" config_sha
@@ -676,7 +680,7 @@ run_full_projection_lane() {
     --source-config-sha256 "$SOURCE_CONFIG_SHA256"
     --source-conformance "$SOURCE_RECEIPT"
     --source-conformance-sha256 "$SOURCE_RECEIPT_SHA256"
-    --limit 0
+    --limit "$EXPLORATORY_CLUSTER_LIMIT"
     --sample-seed 0
     --seeds 0
     --max-queries 1
@@ -697,7 +701,7 @@ run_full_projection_lane() {
     --max-total-target-calls 400000
     --max-total-judge-calls 0
     --max-total-http-attempts 0
-    --deadline-seconds 7776000
+    --deadline-seconds 86400
     --out "$preliminary_run"
   )
   printf 'PROJECTION_PRELIMINARY_START=%s TIME=%s\n' "$lane" "$(date -Is)"
@@ -712,7 +716,7 @@ run_full_projection_lane() {
     --max-total-target-calls "$target_cap"
     --max-total-judge-calls "$judge_cap"
     --max-total-http-attempts "$http_cap"
-    --deadline-seconds 7776000
+    --deadline-seconds 86400
     --out "$final_run"
   )
   run_rig_projection "${lane}-final" "$mode" "$final_plan" \
@@ -1441,22 +1445,22 @@ run_canary_lane() {
   printf 'CANARY_END=%s TIME=%s\n' "$lane" "$(date -Is)"
 }
 
-# Phase 5 full no-call projections. Each lane gets a preliminary ceiling and a
+# Phase 5 bounded no-call projections. Each lane gets a preliminary ceiling and a
 # second, independently bound final preflight whose target cap equals the exact
 # retained projection. Failures are isolated so every other runnable lane is
 # still attempted before this tmux session reports its final status.
 for label in "${MODEL_LABELS[@]}"; do
-  static_lane="ollama-${label}-text-full"
+  static_lane="ollama-${label}-text-exploratory-50"
   rjudge_lane="rjudge-ollama-${label}"
   assert_ollama_runnable_lane "$static_lane"
   assert_ollama_runnable_lane "$rjudge_lane"
   run_isolated projection "$static_lane" \
-    run_full_projection_lane "$static_lane" "$label" static "$TEXT_ARMS"
+    run_bounded_projection_lane "$static_lane" "$label" static "$TEXT_ARMS"
   run_isolated projection "$rjudge_lane" \
-    run_full_projection_lane "$rjudge_lane" "$label" rjudge rjudge_release
+    run_bounded_projection_lane "$rjudge_lane" "$label" rjudge rjudge_release
 done
 
-# Derive the expiring receipts only after full projections, immediately before
+# Derive the expiring receipts only after bounded projections, immediately before
 # the canaries that consume them.
 for label in "${MODEL_LABELS[@]}"; do
   run_isolated attestation "$label" probe_ollama_text "$label"
@@ -1471,7 +1475,7 @@ done
 # exact projection or target attestation failed is explicitly blocked; it is
 # never silently replaced by another model, arm, judge, or stale receipt.
 for label in "${MODEL_LABELS[@]}"; do
-  static_lane="ollama-${label}-text-full"
+  static_lane="ollama-${label}-text-exploratory-50"
   rjudge_lane="rjudge-ollama-${label}"
   assert_ollama_runnable_lane "$static_lane"
   assert_ollama_runnable_lane "$rjudge_lane"
@@ -1511,7 +1515,10 @@ labels = ["rwkv-g1d-0p4b", "rwkv-g1f-2p9b", "rwkv-g1g-1p5b"]
 expected_runnable = {
     lane
     for label in labels
-    for lane in (f"ollama-{label}-text-full", f"rjudge-ollama-{label}")
+    for lane in (
+        f"ollama-{label}-text-exploratory-50",
+        f"rjudge-ollama-{label}",
+    )
 }
 typed_terminals = {f"gptgeochat-ollama-{label}" for label in labels}
 if len(projections) != 6:
