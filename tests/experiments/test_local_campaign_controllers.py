@@ -97,6 +97,27 @@ def _rendered_phase6_extended_namespace(tmp_path: Path) -> dict[str, object]:
     return namespace
 
 
+def _bridge_canary_fields_namespace() -> dict[str, object]:
+    import re
+
+    template = (
+        Path(__file__).parents[2]
+        / "experiments"
+        / "local_campaign"
+        / "templates"
+        / "phase5_bridge_attest_canary.sh.in"
+    ).read_text(encoding="utf-8")
+    function = template.split("canary_fields() {", 1)[1].split(
+        "\n}\n\nrun_canary()", 1
+    )[0]
+    match = re.search(r"<<'PY'\n(.*?)\nPY(?:\n|$)", function, re.DOTALL)
+    assert match is not None
+    source = match.group(1).split("\nroot = pathlib.Path", 1)[0]
+    namespace: dict[str, object] = {"__name__": "bridge_canary_contract_test"}
+    exec(compile(source, "phase5_bridge_canary_fields.py", "exec"), namespace)
+    return namespace
+
+
 def test_all_controller_implementations_are_versioned() -> None:
     root = Path(__file__).parents[2] / "experiments" / "local_campaign" / "templates"
     expected = {spec.template for spec in CONTROLLERS}
@@ -936,6 +957,9 @@ def test_phase5_rr_preserves_projections_and_starts_terminal_at_canary(
                 "proxy_nonzero_trail_confidence",
                 "proxy_decision_score_detached",
                 "proxy_abstention_source_evaluator_claim",
+                "proxy_abstention_wrong_judge_model",
+                "proxy_abstention_wrong_judge_revision",
+                "proxy_abstention_wrong_judge_identity",
                 "proxy_abstention_missing_status",
                 "proxy_abstention_boolean_judgment_confidence",
                 "proxy_abstention_nonzero_judgment_confidence",
@@ -952,6 +976,9 @@ def test_phase5_rr_preserves_projections_and_starts_terminal_at_canary(
                 "proxy-abstention-boolean-trail-confidence",
                 "proxy-abstention-nonzero-trail-confidence",
                 "proxy-abstention-source-evaluator-claim",
+                "proxy-abstention-wrong-judge-model",
+                "proxy-abstention-wrong-judge-revision",
+                "proxy-abstention-wrong-judge-identity",
                 "proxy-abstention-boolean-judgment-confidence",
                 "proxy-abstention-nonzero-judgment-confidence",
             } <= set(value["rejected_proxy_mutations"])
@@ -1891,10 +1918,21 @@ def test_bridge_canary_preserves_source_role_and_typed_abstention_contracts() ->
         'if row["source_evaluator_status"] != expected_source:',
         'responses = artifact_rows("responses")',
         "bound_decisions = validate_approximate_completion_bindings(\n",
-        'supplementary_policy=supplementary_metric_policy("measured")',
-        "if decision is None:\n            attempt_ids.add(attempt_id)\n            continue",
-        "if decision_attempts:\n        if not approximate_results",
-        'elif approximate_results:\n        raise SystemExit("prompt-injection abstention retained approximate results")',
+        'proxy_policy = supplementary_metric_policy("measured")',
+        "if decision is None:\n            try:\n"
+        "                validate_prompt_proxy_abstention_guard_identity(",
+        "validate_prompt_proxy_abstention_guard_identity(\n",
+        'raw.get("judge_model") != expected_guard',
+        'raw.get("model_revision") != expected_revision',
+        'f"{expected_guard}@{expected_revision}"',
+        "bound_results = validate_prompt_proxy_aggregate_bindings(\n",
+        "aggregate_approximate_provenance(\n",
+        'result.value != sum(values) / len(values)',
+        'result.n != recomputed["n_result_units"]',
+        'result.ci_low is not None',
+        'raise ValueError(\n                "prompt-injection approximate result bucket is duplicated"',
+        'raise ValueError(\n            "prompt-injection approximate result bucket inventory differs"',
+        'provenance.model_dump(mode="json") != recomputed',
         "or decision.judge_model != expected_guard\n"
         "            or decision.judge_model_identity != expected_revision",
     )
@@ -1918,12 +1956,20 @@ def test_bridge_canary_preserves_source_role_and_typed_abstention_contracts() ->
             "bound_decisions = validate_approximate_decision(\n",
         ),
         (
-            "if decision is None:\n            attempt_ids.add(attempt_id)\n            continue",
-            "if False:\n            attempt_ids.add(attempt_id)\n            continue",
+            "if decision is None:",
+            "if False:",
         ),
         (
-            "if decision_attempts:\n        if not approximate_results",
-            "if not approximate_results",
+            'raw.get("judge_model") != expected_guard',
+            "False",
+        ),
+        (
+            "bound_results = validate_prompt_proxy_aggregate_bindings(\n",
+            "bound_results = []  # ",
+        ),
+        (
+            'provenance.model_dump(mode="json") != recomputed',
+            "False",
         ),
         (
             "or decision.judge_model != expected_guard\n"
@@ -1935,6 +1981,235 @@ def test_bridge_canary_preserves_source_role_and_typed_abstention_contracts() ->
         assert changed != template
         with pytest.raises(AssertionError):
             _assert_source_contract(changed, required)
+
+
+def _mixed_prompt_proxy_fixture(tmp_path: Path) -> dict[str, object]:
+    from ura.adapters.base import AttackBudget
+    from ura.adapters.replay import ReplayAttacker
+    from ura.approximate_metrics import validate_approximate_completion_bindings
+    from ura.data_models import (
+        DataPoint,
+        DialogTurn,
+        Judgment,
+        Response,
+        RiskCategory,
+    )
+    from ura.judges.base import BaseJudge, JudgeCascade
+    from ura.judges.guardrail import GuardrailJudge
+    from ura.runner import Runner
+    from ura.targets.base import BaseTarget
+
+    guard_model = "fixture/prompt-proxy-guard"
+    guard_revision = "b" * 40
+    required_metric = "cyberseceval_prompt_injection_judge_question"
+
+    class FixtureTarget(BaseTarget):
+        name = "fixture-target"
+        modality_support = ("text",)
+
+        def generate(self, dialog, *, seed=None):
+            del dialog
+            return Response(
+                attempt_id="rebound-by-runner",
+                target=self.name,
+                output_turns=[
+                    DialogTurn(role="assistant", content="harmless fixture answer")
+                ],
+                raw={
+                    "requested_seed": seed,
+                    "target_sampling_control": "deterministic_fixture",
+                },
+            )
+
+    class MixedRules(BaseJudge):
+        name = "rules"
+        escalate_below = 0.75
+
+        def judge(self, datapoint, response):
+            decided = "abstain" not in datapoint.id
+            return Judgment(
+                attempt_id=response.attempt_id,
+                judge=self.name,
+                label="over_refusal" if decided else "safe",
+                score=1.0 if decided else 0.0,
+                raw={"confidence": 0.9 if decided else 0.0},
+            )
+
+    class SafeGuard(GuardrailJudge):
+        def __init__(self) -> None:
+            super().__init__(
+                model=guard_model,
+                revision=guard_revision,
+                escalate_below=0.75,
+            )
+
+        def _ensure_loaded(self) -> None:
+            return None
+
+        def _run_guard(self, conversation) -> str:
+            del conversation
+            return "safe"
+
+    def point(identifier: str, source: str) -> DataPoint:
+        return DataPoint(
+            id=identifier,
+            source=source,
+            modalities=["text"],
+            dialog_history=[
+                DialogTurn(role="user", content="Explain a harmless concept.")
+            ],
+            payload_text="Explain a harmless concept.",
+            risk_category=RiskCategory.AGENTIC_MISUSE,
+            expected_behavior="safe_answer",
+            meta={
+                "source_cluster_id": f"{source}-cluster",
+                "common_metrics_eligible": False,
+                "required_metric": required_metric,
+                "source_metric_attackers": ["replay"],
+            },
+        )
+
+    runner = Runner(
+        ReplayAttacker(),
+        FixtureTarget(),
+        JudgeCascade([MixedRules(), SafeGuard()]),
+        AttackBudget(max_queries=1, max_turns=1, seed=0),
+        [0],
+        approximate_common_metrics=True,
+    )
+    judgments, manifest = runner.run(
+        [
+            point("proxy-a-decision-1", "proxy-a"),
+            point("proxy-a-decision-2", "proxy-a"),
+            point("proxy-a-abstain", "proxy-a"),
+            point("proxy-b-decision", "proxy-b"),
+        ]
+    )
+    results = runner.aggregate(judgments, ["source"])
+    trail_path = tmp_path / "mixed-prompt-proxy.trails.jsonl"
+    runner.save_trails(trail_path)
+    trails = [
+        json.loads(line)
+        for line in trail_path.read_text(encoding="utf-8").splitlines()
+        if line.strip()
+    ]
+    policy = manifest.config["supplementary_metric_policy"]
+    bound_decisions = validate_approximate_completion_bindings(
+        judgments=judgments,
+        responses=runner.responses,
+        supplementary_policy=policy,
+        trails=trails,
+    )
+    return {
+        "namespace": _bridge_canary_fields_namespace(),
+        "guard_model": guard_model,
+        "guard_revision": guard_revision,
+        "required_metric": required_metric,
+        "judgments": [row.model_dump(mode="json") for row in judgments],
+        "responses": [row.model_dump(mode="json") for row in runner.responses],
+        "results": [row.model_dump(mode="json") for row in results],
+        "policy": policy,
+        "bound_decisions": bound_decisions,
+    }
+
+
+def test_bridge_canary_binds_abstention_authoritative_guard_identity(
+    tmp_path: Path,
+) -> None:
+    import copy
+
+    fixture = _mixed_prompt_proxy_fixture(tmp_path)
+    validate = fixture["namespace"][
+        "validate_prompt_proxy_abstention_guard_identity"
+    ]
+    abstention = next(
+        row
+        for row in fixture["judgments"]
+        if row["raw"].get("approximate_decision_status") == "abstained"
+    )
+    validate(
+        abstention,
+        expected_guard=fixture["guard_model"],
+        expected_revision=fixture["guard_revision"],
+    )
+
+    mutations = (
+        ("judge_model", "fixture/wrong-guard"),
+        ("model_revision", "0" * 40),
+        ("model_identity", "fixture/wrong-guard@" + "0" * 40),
+    )
+    for field, value in mutations:
+        changed = copy.deepcopy(abstention)
+        changed["raw"][field] = value
+        with pytest.raises(ValueError, match="exact selected Guard"):
+            validate(
+                changed,
+                expected_guard=fixture["guard_model"],
+                expected_revision=fixture["guard_revision"],
+            )
+
+
+def test_bridge_canary_recomputes_mixed_proxy_aggregate_buckets(
+    tmp_path: Path,
+) -> None:
+    import copy
+
+    fixture = _mixed_prompt_proxy_fixture(tmp_path)
+    validate = fixture["namespace"]["validate_prompt_proxy_aggregate_bindings"]
+    approximate_results = [
+        row
+        for row in fixture["results"]
+        if row["metric"].startswith("approximate_")
+    ]
+    common = {
+        "bound_decisions": fixture["bound_decisions"],
+        "responses": fixture["responses"],
+        "group_keys": ["source"],
+        "required_metric": fixture["required_metric"],
+        "supplementary_policy": fixture["policy"],
+    }
+    validated = validate(results=approximate_results, **common)
+    assert len(validated) == 2
+    assert len(fixture["bound_decisions"]) == 3
+    assert sum(
+        row["raw"].get("approximate_decision_status") == "abstained"
+        for row in fixture["judgments"]
+    ) == 1
+
+    with pytest.raises(ValueError, match="bucket inventory differs"):
+        validate(results=approximate_results[:-1], **common)
+    with pytest.raises(ValueError, match="bucket is duplicated"):
+        validate(
+            results=[*approximate_results, copy.deepcopy(approximate_results[0])],
+            **common,
+        )
+
+    changed = copy.deepcopy(approximate_results)
+    one_decision_result = next(row for row in changed if row["n"] == 1)
+    assert one_decision_result["value"] == 1.0
+    one_decision_result["value"] = 0.0
+    with pytest.raises(ValueError, match="estimate or support differs"):
+        validate(results=changed, **common)
+
+    changed = copy.deepcopy(approximate_results)
+    next(row for row in changed if row["n"] == 2)["n"] = 1
+    with pytest.raises(ValueError, match="EvalResult.n"):
+        validate(results=changed, **common)
+
+    changed = copy.deepcopy(approximate_results)
+    two_decision_result = next(row for row in changed if row["n"] == 2)
+    two_decision_result["n"] = 1
+    nested = two_decision_result["provenance"]["approximate_security"]
+    nested["n_supporting_decisions"] = 1
+    nested["n_result_units"] = 1
+    with pytest.raises(ValueError, match="estimate or support differs"):
+        validate(results=changed, **common)
+
+    changed = copy.deepcopy(approximate_results)
+    nested = changed[0]["provenance"]["approximate_security"]
+    nested["reliability_score"] = 0.0
+    with pytest.raises(ValueError, match="does not match its exact decisions"):
+        validate(results=changed, **common)
 
 
 def test_gate5_revalidates_the_bounded_harmbench_attacker_config(
@@ -2043,7 +2318,8 @@ def test_gate5_accepts_exact_prompt_proxy_guard_abstention_without_results(
             ),
             "approximate_security_decision": None,
             "approximate_rubric_stage_binding": None,
-            "model": model,
+            "model": "fixture-target",
+            "judge_model": model,
             "model_revision": revision,
             "model_identity": f"{model}@{revision}",
             "source_evaluation": {
@@ -2107,6 +2383,20 @@ def test_gate5_accepts_exact_prompt_proxy_guard_abstention_without_results(
     ):
         validate(tmp_path, label="test")
     rows["results"] = []
+    rows["judgments"][0]["raw"]["judge_model"] = "fixture/wrong-guard"
+    with pytest.raises(namespace["Gate5Error"], match="abstention is not exact"):
+        validate(tmp_path, label="test")
+    rows["judgments"][0]["raw"]["judge_model"] = model
+    rows["judgments"][0]["raw"]["model_revision"] = "0" * 40
+    with pytest.raises(namespace["Gate5Error"], match="abstention is not exact"):
+        validate(tmp_path, label="test")
+    rows["judgments"][0]["raw"]["model_revision"] = revision
+    rows["judgments"][0]["raw"]["model_identity"] = (
+        f"fixture/wrong-guard@{'0' * 40}"
+    )
+    with pytest.raises(namespace["Gate5Error"], match="abstention is not exact"):
+        validate(tmp_path, label="test")
+    rows["judgments"][0]["raw"]["model_identity"] = f"{model}@{revision}"
     rows["judgments"][0]["raw"]["confidence"] = False
     with pytest.raises(namespace["Gate5Error"], match="abstention is not exact"):
         validate(tmp_path, label="test")
@@ -2135,6 +2425,9 @@ def test_phase6_prompt_proxy_selftest_covers_exact_guard_abstention(
         "proxy-abstention-wrong-coverage",
         "proxy-abstention-integer-coverage",
         "proxy-abstention-source-evaluator-claim",
+        "proxy-abstention-wrong-judge-model",
+        "proxy-abstention-wrong-judge-revision",
+        "proxy-abstention-wrong-judge-identity",
         "proxy-abstention-multiple-authorities",
         "proxy-abstention-boolean-stage",
         "proxy-abstention-confident-shadow",

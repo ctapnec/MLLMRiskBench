@@ -402,13 +402,175 @@ import pathlib
 import sys
 
 from ura.approximate_metrics import (
+    aggregate_approximate_provenance,
+    metric_supporting_rows,
     supplementary_metric_policy,
     validate_approximate_completion_bindings,
     validate_approximate_metric_provenance,
 )
+from ura.data_models import EvalResult
 from ura.lane_canary import validate_lane_canary_summary
 from ura.request_envelope import load_request_envelope_file
 from ura.strict_json import strict_json_loads
+
+
+def validate_prompt_proxy_abstention_guard_identity(
+    judgment, *, expected_guard, expected_revision
+):
+    """Bind a typed terminal abstention to its authoritative Guard identity."""
+
+    raw = judgment.get("raw") if isinstance(judgment, dict) else None
+    if (
+        not isinstance(raw, dict)
+        or raw.get("judge_model") != expected_guard
+        or raw.get("model_revision") != expected_revision
+        or raw.get("model_identity")
+        != f"{expected_guard}@{expected_revision}"
+    ):
+        raise ValueError(
+            "prompt-injection abstention does not name the exact selected Guard"
+        )
+
+
+def _prompt_proxy_group_value(judgment, key):
+    if key in judgment.raw and judgment.raw[key] is not None:
+        return str(judgment.raw[key])
+    value = getattr(judgment, key, None)
+    return str(value) if value is not None else "unknown"
+
+
+def validate_prompt_proxy_aggregate_bindings(
+    *,
+    bound_decisions,
+    responses,
+    results,
+    group_keys,
+    required_metric,
+    supplementary_policy,
+):
+    """Recompute every decided proxy bucket while retaining typed abstentions."""
+
+    if (
+        not isinstance(group_keys, list)
+        or any(not isinstance(key, str) or not key for key in group_keys)
+        or len(set(group_keys)) != len(group_keys)
+        or not isinstance(required_metric, str)
+        or not required_metric
+    ):
+        raise ValueError("prompt-injection proxy group-key inventory is invalid")
+    proxy_group_keys = list(group_keys)
+    if "required_metric" not in proxy_group_keys:
+        proxy_group_keys.append("required_metric")
+
+    expected_buckets = {}
+    for judgment, _decision in bound_decisions:
+        if _prompt_proxy_group_value(judgment, "required_metric") != required_metric:
+            raise ValueError(
+                "prompt-injection decision required metric differs"
+            )
+        bucket = tuple(
+            (key, _prompt_proxy_group_value(judgment, key))
+            for key in proxy_group_keys
+        )
+        expected_buckets.setdefault(bucket, []).append(judgment)
+
+    approximate_results = [
+        row for row in results
+        if str(row.get("metric", "")).startswith("approximate_")
+    ]
+    if not expected_buckets:
+        if approximate_results:
+            raise ValueError(
+                "prompt-injection abstention retained approximate results"
+            )
+        return []
+    if not approximate_results or {
+        row.get("metric") for row in approximate_results
+    } != {"approximate_over_refusal_rate"}:
+        raise ValueError("prompt-injection canary lacks approximate over-refusal")
+
+    observed_buckets = set()
+    validated_results = []
+    for raw_result in approximate_results:
+        result = EvalResult.model_validate(raw_result, strict=True)
+        if set(result.group_by) != set(proxy_group_keys):
+            raise ValueError(
+                "prompt-injection approximate result grouping differs"
+            )
+        bucket = tuple(
+            (key, result.group_by[key]) for key in proxy_group_keys
+        )
+        if bucket not in expected_buckets:
+            raise ValueError(
+                "prompt-injection approximate result has no supporting decision bucket"
+            )
+        if bucket in observed_buckets:
+            raise ValueError(
+                "prompt-injection approximate result bucket is duplicated"
+            )
+        provenance = validate_approximate_metric_provenance(
+            result.metric,
+            result.provenance.get("approximate_security"),
+        )
+        recomputed = aggregate_approximate_provenance(
+            expected_buckets[bucket],
+            metric=result.metric.removeprefix("approximate_"),
+            responses=responses,
+            supplementary_policy=supplementary_policy,
+        )
+        support = metric_supporting_rows(
+            expected_buckets[bucket], "over_refusal_rate"
+        )
+        if len(support) != len(expected_buckets[bucket]):
+            raise ValueError(
+                "prompt-injection approximate result support population differs"
+            )
+        values = [
+            1.0 if judgment.label == "over_refusal" else 0.0
+            for judgment in support
+        ]
+        cluster_ids = [
+            str(
+                judgment.raw.get("source_cluster_id")
+                or judgment.raw.get("datapoint_id", judgment.attempt_id)
+            )
+            for judgment in support
+        ]
+        if len(set(cluster_ids)) != 1:
+            raise ValueError(
+                "prompt-injection canary result is not one source cluster"
+            )
+        if (
+            result.value != sum(values) / len(values)
+            or result.n != len(support)
+            or result.n != recomputed["n_result_units"]
+            or result.ci_low is not None
+            or result.ci_high is not None
+        ):
+            raise ValueError(
+                "prompt-injection approximate result estimate or support differs"
+            )
+        run_ids = {judgment.run_id for judgment in support}
+        if len(run_ids) != 1 or None in run_ids:
+            raise ValueError(
+                "prompt-injection approximate result support run lineage differs"
+            )
+        run_id = next(iter(run_ids))
+        if result.run_id != run_id:
+            raise ValueError(
+                "prompt-injection approximate result run lineage differs"
+            )
+        if provenance.model_dump(mode="json") != recomputed:
+            raise ValueError(
+                "prompt-injection approximate result does not match its exact decisions"
+            )
+        observed_buckets.add(bucket)
+        validated_results.append((raw_result, provenance))
+    if observed_buckets != set(expected_buckets):
+        raise ValueError(
+            "prompt-injection approximate result bucket inventory differs"
+        )
+    return validated_results
 
 
 root = pathlib.Path(sys.argv[1])
@@ -519,11 +681,12 @@ if expected_arm == "cyberseceval_prompt_injection":
     results = artifact_rows("results")
     if not judgments:
         raise SystemExit("prompt-injection canary retained no judgments")
+    proxy_policy = supplementary_metric_policy("measured")
     try:
         bound_decisions = validate_approximate_completion_bindings(
             judgments=judgments,
             responses=responses,
-            supplementary_policy=supplementary_metric_policy("measured"),
+            supplementary_policy=proxy_policy,
             trails=trails,
         )
     except (TypeError, ValueError) as exc:
@@ -534,7 +697,6 @@ if expected_arm == "cyberseceval_prompt_injection":
         judgment.attempt_id: decision for judgment, decision in bound_decisions
     }
     attempt_ids = set()
-    decision_attempts = set()
     for judgment in judgments:
         attempt_id = judgment.get("attempt_id")
         raw = judgment.get("raw")
@@ -548,6 +710,16 @@ if expected_arm == "cyberseceval_prompt_injection":
             raise SystemExit("prompt-injection judgment lost its proxy-only construct")
         decision = decisions_by_attempt.get(attempt_id)
         if decision is None:
+            try:
+                validate_prompt_proxy_abstention_guard_identity(
+                    judgment,
+                    expected_guard=expected_guard,
+                    expected_revision=expected_revision,
+                )
+            except (TypeError, ValueError) as exc:
+                raise SystemExit(
+                    f"prompt-injection abstention Guard identity is invalid: {exc}"
+                ) from exc
             attempt_ids.add(attempt_id)
             continue
         if (
@@ -581,7 +753,6 @@ if expected_arm == "cyberseceval_prompt_injection":
             raise SystemExit("selected prompt-injection Guard identity is not exact")
         if decision.selected_judge not in {"rules", "guardrail"}:
             raise SystemExit("prompt-injection selected an unexpected judge")
-        decision_attempts.add(attempt_id)
         attempt_ids.add(attempt_id)
 
     by_attempt = {}
@@ -611,21 +782,20 @@ if expected_arm == "cyberseceval_prompt_injection":
         ):
             raise SystemExit("prompt-injection trail lacks the queried exact Guard")
 
-    approximate_results = [
-        row for row in results
-        if str(row.get("metric", "")).startswith("approximate_")
-    ]
-    if decision_attempts:
-        if not approximate_results or {
-            row.get("metric") for row in approximate_results
-        } != {"approximate_over_refusal_rate"}:
-            raise SystemExit("prompt-injection canary lacks approximate over-refusal")
-    elif approximate_results:
-        raise SystemExit("prompt-injection abstention retained approximate results")
-    for result in approximate_results:
-        provenance = validate_approximate_metric_provenance(
-            result["metric"], result.get("provenance", {}).get("approximate_security")
+    try:
+        bound_results = validate_prompt_proxy_aggregate_bindings(
+            bound_decisions=bound_decisions,
+            responses=responses,
+            results=results,
+            group_keys=request.get("group_keys"),
+            required_metric=required_metric,
+            supplementary_policy=proxy_policy,
         )
+    except (TypeError, ValueError) as exc:
+        raise SystemExit(
+            f"prompt-injection aggregate proxy binding is invalid: {exc}"
+        ) from exc
+    for result, provenance in bound_results:
         if (
             provenance.source_required_metric != required_metric
             or provenance.source_evaluator_implemented is not False

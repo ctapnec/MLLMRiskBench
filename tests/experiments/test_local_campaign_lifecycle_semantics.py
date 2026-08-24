@@ -666,11 +666,182 @@ def test_phase7_accepts_only_exact_suite_all_abstained_proxy_conditions(
         "supplementary_non_authoritative": True,
         "expected_from_ineligible_opted_in_strata": True,
         "expected_conditions": list(expected.values()),
+        "estimated_conditions": [],
+        "all_abstained_conditions": [
+            {
+                "condition": next(iter(expected.values())),
+                "estimate_rows": 0,
+                "completed_records": 2,
+                "typed_abstentions": 2,
+            }
+        ],
         "estimate_rows": 0,
         "selected_judges": [],
         "judge_models": [],
         "selected_guardrail": runner["guardrail_selector"],
         "queried_rows_bind_selected_guardrail": True,
+    }
+    assert boundary["schema"] == "ura-phase7-analysis-boundaries/2"
+
+
+def test_phase7_persists_disjoint_mixed_proxy_condition_partitions(
+    phase7: ModuleType,
+    tmp_path: Path,
+) -> None:
+    estimated_condition = {
+        "lane_id": "bridge-purplellama",
+        "model_spec": "vllm:fixture/model",
+        "corpus_arm": phase7.PROMPT_PROXY_ARM,
+        "attacker": "purplellama",
+        "required_metric": phase7.PROMPT_PROXY_METRIC,
+    }
+    all_abstained_condition = {
+        **estimated_condition,
+        "corpus_arm": "fixture_second_benign_proxy",
+        "required_metric": "fixture_second_benign_judge_question",
+    }
+
+    def condition_key(row: dict[str, str]) -> tuple[str, str, str, str]:
+        return (
+            row["model_spec"],
+            row["corpus_arm"],
+            row["attacker"],
+            row["required_metric"],
+        )
+
+    expected_conditions = sorted(
+        [estimated_condition, all_abstained_condition], key=condition_key
+    )
+    runner = {
+        "metric_lane_order": ["bridge-purplellama"],
+        "classification_lanes": [],
+        "cascade_expected_lanes": ["bridge-purplellama"],
+        "proxy_expected_conditions": expected_conditions,
+        "guardrail_selector": {
+            "model": phase7.EXPECTED_GUARDRAIL_MODEL,
+            "revision": phase7.EXPECTED_GUARDRAIL_REVISION,
+            "device": phase7.EXPECTED_GUARDRAIL_DEVICE,
+        },
+        "terminal_states": {"bridge-purplellama": "measured_complete"},
+        "lifecycle_states": {"bridge-purplellama": "complete"},
+        "lifecycle_authorizations": {"bridge-purplellama": {}},
+    }
+    controller, _subprocesses, _statuses = _analysis_controller(
+        phase7, tmp_path, runner
+    )
+    controller.inputs.update(
+        {
+            "gate5": {"conditional_na_lanes": []},
+            "native_outcomes": {"states": {}},
+        }
+    )
+    suite = {
+        "runner": {
+            "strata": [
+                {
+                    "model_spec": estimated_condition["model_spec"],
+                    "corpus_arm": estimated_condition["corpus_arm"],
+                    "attacker": estimated_condition["attacker"],
+                    "source_metric_family": estimated_condition["required_metric"],
+                    "n_completed_records": 1,
+                    "n_approximate_proxy_abstained": 0,
+                },
+                {
+                    "model_spec": all_abstained_condition["model_spec"],
+                    "corpus_arm": all_abstained_condition["corpus_arm"],
+                    "attacker": all_abstained_condition["attacker"],
+                    "source_metric_family": all_abstained_condition["required_metric"],
+                    "common_metrics_eligible": False,
+                    "execution_mode": "static_or_exact_replay",
+                    "expected_behavior": "safe_answer",
+                    "measurement_families": ["approximate_benign_refusal_rate"],
+                    "n_completed_records": 2,
+                    "n_source_clusters": 2,
+                    "label_counts": {"not_applicable": 2},
+                    "approximate_proxy_label_counts": {},
+                    "n_approximate_proxy_abstained": 2,
+                    "n_approximate_strongreject_graded": 0,
+                    "descriptive_common_endpoint": {
+                        "endpoint": "approximate_over_refusal_rate",
+                        "value": None,
+                        "reason": "no_decided_judgments",
+                        "decision_support": {
+                            "judgments_completed": 2,
+                            "judgments_evaluable": 2,
+                            "judgments_decided": 0,
+                            "judgments_abstained": 2,
+                            "decision_coverage": 0.0,
+                        },
+                        "metric_authority": "supplementary_non_authoritative",
+                    },
+                },
+            ]
+        },
+        "source_native_presence": {},
+    }
+    level2 = {
+        "common": {
+            "estimates": [
+                {
+                    "ordered_judges": ["rules", "guardrail"],
+                    "model_spec": estimated_condition["model_spec"],
+                    "corpus_arm": estimated_condition["corpus_arm"],
+                    "attacker": estimated_condition["attacker"],
+                    "metric": "approximate_over_refusal_rate",
+                    "metric_authority": "supplementary_non_authoritative",
+                    "endpoint_status": "approximate_common_proxy",
+                    "warning_tag": "warning_approximate",
+                    "approximate_provenance": {
+                        "method": "common_judge_cascade_response_proxy",
+                        "source_required_metric": estimated_condition[
+                            "required_metric"
+                        ],
+                        "selected_judges": ["guardrail"],
+                        "n_model_queried_decisions": 1,
+                        "judge_models": [phase7.EXPECTED_GUARDRAIL_MODEL],
+                        "judge_model_identities": [phase7.EXPECTED_GUARDRAIL_REVISION],
+                        "judge_model_identity_types": ["revision"],
+                        "judge_identity_kinds": ["exact"],
+                    },
+                }
+            ]
+        }
+    }
+
+    boundary = controller.build_boundaries(
+        suite=suite,
+        level2=level2,
+        transfer={"schema_version": "2.1"},
+        llava_pairs={},
+        adaptivity_pairs={},
+    )
+
+    approximate = boundary["approximate_common_metrics"]
+    assert approximate["expected_conditions"] == expected_conditions
+    assert approximate["estimated_conditions"] == [
+        {
+            "condition": estimated_condition,
+            "estimate_rows": 1,
+            "completed_records": 1,
+            "typed_abstentions": 0,
+        }
+    ]
+    assert approximate["all_abstained_conditions"] == [
+        {
+            "condition": all_abstained_condition,
+            "estimate_rows": 0,
+            "completed_records": 2,
+            "typed_abstentions": 2,
+        }
+    ]
+    assert approximate["estimate_rows"] == 1
+    assert approximate["selected_judges"] == ["guardrail"]
+    assert approximate["judge_models"] == [phase7.EXPECTED_GUARDRAIL_MODEL]
+    assert set(approximate["all_abstained_conditions"][0]) == {
+        "condition",
+        "estimate_rows",
+        "completed_records",
+        "typed_abstentions",
     }
 
 

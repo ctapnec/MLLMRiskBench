@@ -7710,6 +7710,49 @@ def all_abstained_proxy_conditions(
     return result
 
 
+def proxy_condition_observation_counts(
+    suite: Mapping[str, Any],
+    expected_conditions: Mapping[tuple[str, str, str, str], Mapping[str, str]],
+) -> dict[tuple[str, str, str, str], dict[str, int]]:
+    """Count completed records and typed abstentions for each proxy condition."""
+
+    runner = suite.get("runner")
+    strata = runner.get("strata") if isinstance(runner, Mapping) else None
+    if not isinstance(strata, list):
+        raise Phase7Error("suite proxy-stratum inventory is malformed")
+    counts: dict[tuple[str, str, str, str], dict[str, int]] = {}
+    for row in strata:
+        if not isinstance(row, Mapping):
+            raise Phase7Error("suite proxy stratum is malformed")
+        key = (
+            row.get("model_spec"),
+            row.get("corpus_arm"),
+            row.get("attacker"),
+            row.get("source_metric_family"),
+        )
+        if key not in expected_conditions:
+            continue
+        completed = row.get("n_completed_records")
+        typed_abstentions = row.get("n_approximate_proxy_abstained")
+        if (
+            isinstance(completed, bool)
+            or not isinstance(completed, int)
+            or completed <= 0
+            or isinstance(typed_abstentions, bool)
+            or not isinstance(typed_abstentions, int)
+            or not 0 <= typed_abstentions <= completed
+        ):
+            raise Phase7Error("suite proxy condition counts are malformed")
+        current = counts.setdefault(
+            key, {"completed_records": 0, "typed_abstentions": 0}
+        )
+        current["completed_records"] += completed
+        current["typed_abstentions"] += typed_abstentions
+    if set(counts) != set(expected_conditions):
+        raise Phase7Error("suite proxy condition count inventory is incomplete")
+    return counts
+
+
 def collect_descriptors(value: object) -> list[dict[str, Any]]:
     found: dict[str, dict[str, Any]] = {}
 
@@ -9964,6 +10007,9 @@ class AnalysisController:
         boundary_contract = expected_metric_boundary_contract(self.inputs["runner"])
         expected_proxy_conditions = boundary_contract["proxy_conditions"]
         observed_proxy_conditions: set[tuple[str, str, str, str]] = set()
+        estimate_rows_by_condition: dict[
+            tuple[str, str, str, str], int
+        ] = {}
         forbidden_common_metrics = {
             "ASR",
             "refusal_rate",
@@ -10044,6 +10090,9 @@ class AnalysisController:
                         "CyberSecEval prompt injection was reported under the wrong proxy"
                     )
                 observed_proxy_conditions.add(condition_key)
+                estimate_rows_by_condition[condition_key] = (
+                    estimate_rows_by_condition.get(condition_key, 0) + 1
+                )
                 if queried_decisions > 0:
                     if (
                         provenance.get("judge_models") != [EXPECTED_GUARDRAIL_MODEL]
@@ -10082,6 +10131,9 @@ class AnalysisController:
             raise Phase7Error(
                 "estimated/all-abstained proxy conditions differ from admitted strata"
             )
+        observation_counts = proxy_condition_observation_counts(
+            suite, expected_proxy_conditions
+        )
         if expected_classification and not classification_rows:
             raise Phase7Error(
                 "Level 2 lacks its classification metric boundary"
@@ -10123,8 +10175,28 @@ class AnalysisController:
                 for corpus, value in adaptivity_pairs.items()
             },
         }
+        expected_condition_rows = [
+            expected_proxy_conditions[key]
+            for key in sorted(expected_proxy_conditions)
+        ]
+        estimated_condition_rows = [
+            {
+                "condition": expected_proxy_conditions[key],
+                "estimate_rows": estimate_rows_by_condition[key],
+                **observation_counts[key],
+            }
+            for key in sorted(observed_proxy_conditions)
+        ]
+        all_abstained_condition_rows = [
+            {
+                "condition": expected_proxy_conditions[key],
+                "estimate_rows": 0,
+                **observation_counts[key],
+            }
+            for key in sorted(all_abstained_conditions)
+        ]
         value = {
-            "schema": "ura-phase7-analysis-boundaries/1",
+            "schema": "ura-phase7-analysis-boundaries/2",
             "status": "validated",
             "evaluator_compatibility_modes": dict(sorted(evaluator_modes.items())),
             "evaluator_modes_pooled": False,
@@ -10137,10 +10209,9 @@ class AnalysisController:
             "approximate_common_metrics": {
                 "supplementary_non_authoritative": True,
                 "expected_from_ineligible_opted_in_strata": expected_approximate,
-                "expected_conditions": [
-                    expected_proxy_conditions[key]
-                    for key in sorted(expected_proxy_conditions)
-                ],
+                "expected_conditions": expected_condition_rows,
+                "estimated_conditions": estimated_condition_rows,
+                "all_abstained_conditions": all_abstained_condition_rows,
                 "estimate_rows": len(approximate_rows),
                 "selected_judges": sorted(
                     {
@@ -12271,6 +12342,12 @@ def contract_self_test() -> int:
             raise Phase7Error("exact all-abstained proxy condition was not retained")
 
     require_exact_abstained_suite(abstained_suite)
+    if proxy_condition_observation_counts(
+        abstained_suite, boundary["proxy_conditions"]
+    ) != {
+        proxy_key: {"completed_records": 2, "typed_abstentions": 2}
+    }:
+        raise Phase7Error("proxy condition realization counts changed")
     for label, mutate in (
         (
             "metric-boundary-abstention-reason",
@@ -12297,6 +12374,14 @@ def contract_self_test() -> int:
             label,
             lambda mutation=mutation: require_exact_abstained_suite(mutation),
         )
+    malformed_counts = copy.deepcopy(abstained_suite)
+    malformed_counts["runner"]["strata"][0]["n_completed_records"] = True
+    must_fail(
+        "metric-boundary-boolean-condition-count",
+        lambda: proxy_condition_observation_counts(
+            malformed_counts, boundary["proxy_conditions"]
+        ),
+    )
 
     print(
         json.dumps(
@@ -12322,6 +12407,7 @@ def contract_self_test() -> int:
                         "phase7-runner-view-content-binding",
                         "phase7-metric-boundary-derivation",
                         "phase7-all-abstained-proxy-boundary",
+                        "phase7-proxy-condition-realization-counts",
                         "source-conformance-45-row-portfolio",
                     }
                 ),

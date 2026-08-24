@@ -5345,7 +5345,7 @@ def _find_boundary_artifact(
             path, value = descriptor_object(row, label="Phase 7 analysis artifact")
         except Phase8Error:
             continue
-        if value.get("schema") == "ura-phase7-analysis-boundaries/1":
+        if value.get("schema") == "ura-phase7-analysis-boundaries/2":
             matches.append((path, value, row))
     if len(matches) != 1:
         raise Phase8Error(
@@ -5511,7 +5511,7 @@ def validate_analysis_boundaries(
     }
     if (
         set(value) != expected_fields
-        or value.get("schema") != "ura-phase7-analysis-boundaries/1"
+        or value.get("schema") != "ura-phase7-analysis-boundaries/2"
         or value.get("status") != "validated"
         or value.get("evaluator_modes_pooled") is not False
         or value.get("native_scales_pooled") is not False
@@ -5587,6 +5587,8 @@ def validate_analysis_boundaries(
             "supplementary_non_authoritative",
             "expected_from_ineligible_opted_in_strata",
             "expected_conditions",
+            "estimated_conditions",
+            "all_abstained_conditions",
             "estimate_rows",
             "selected_judges",
             "judge_models",
@@ -5598,6 +5600,8 @@ def validate_analysis_boundaries(
             approximate.get("expected_from_ineligible_opted_in_strata"), bool
         )
         or not isinstance(approximate.get("expected_conditions"), list)
+        or not isinstance(approximate.get("estimated_conditions"), list)
+        or not isinstance(approximate.get("all_abstained_conditions"), list)
         or type(approximate.get("estimate_rows")) is not int
         or approximate.get("estimate_rows", -1) < 0
         or not isinstance(approximate.get("selected_judges"), list)
@@ -5619,7 +5623,115 @@ def validate_analysis_boundaries(
         raise Phase8Error(
             "approximate common metrics do not bind the selected judge model"
         )
+    condition_fields = {
+        "lane_id", "model_spec", "corpus_arm", "attacker", "required_metric"
+    }
+    condition_key_fields = (
+        "model_spec", "corpus_arm", "attacker", "required_metric"
+    )
+
+    def condition_key(
+        row: Mapping[str, Any], *, label: str
+    ) -> tuple[str, str, str, str]:
+        if (
+            not isinstance(row, dict)
+            or set(row) != condition_fields
+            or any(
+                not isinstance(row[field], str) or not row[field]
+                for field in condition_fields
+            )
+        ):
+            raise Phase8Error(f"Phase 7 {label} proxy condition is malformed")
+        return tuple(row[field] for field in condition_key_fields)
+
+    def condition_inventory(
+        rows: Sequence[Mapping[str, Any]], *, label: str
+    ) -> dict[tuple[str, str, str, str], dict[str, str]]:
+        inventory: dict[tuple[str, str, str, str], dict[str, str]] = {}
+        for row in rows:
+            key = condition_key(row, label=label)
+            if key in inventory:
+                raise Phase8Error(f"Phase 7 {label} proxy condition is duplicated")
+            inventory[key] = dict(row)
+        if list(rows) != [inventory[key] for key in sorted(inventory)]:
+            raise Phase8Error(f"Phase 7 {label} proxy conditions are not canonical")
+        return inventory
+
+    def realization_inventory(
+        rows: Sequence[Mapping[str, Any]],
+        *,
+        label: str,
+        estimated: bool,
+    ) -> dict[tuple[str, str, str, str], dict[str, Any]]:
+        inventory: dict[tuple[str, str, str, str], dict[str, Any]] = {}
+        for row in rows:
+            if not isinstance(row, dict) or set(row) != {
+                "condition",
+                "estimate_rows",
+                "completed_records",
+                "typed_abstentions",
+            }:
+                raise Phase8Error(
+                    f"Phase 7 {label} proxy realization is malformed"
+                )
+            key = condition_key(row.get("condition"), label=label)
+            estimate_count = row.get("estimate_rows")
+            completed = row.get("completed_records")
+            typed_abstentions = row.get("typed_abstentions")
+            if (
+                key in inventory
+                or type(estimate_count) is not int
+                or estimate_count < 0
+                or type(completed) is not int
+                or completed <= 0
+                or type(typed_abstentions) is not int
+                or not 0 <= typed_abstentions <= completed
+                or (estimated and estimate_count <= 0)
+                or (estimated and typed_abstentions >= completed)
+                or (not estimated and estimate_count != 0)
+                or (not estimated and typed_abstentions != completed)
+            ):
+                raise Phase8Error(
+                    f"Phase 7 {label} proxy realization disposition differs"
+                )
+            inventory[key] = dict(row)
+        if list(rows) != [inventory[key] for key in sorted(inventory)]:
+            raise Phase8Error(
+                f"Phase 7 {label} proxy realizations are not canonical"
+            )
+        return inventory
+
     expected_condition_rows = approximate["expected_conditions"]
+    estimated_condition_rows = approximate["estimated_conditions"]
+    all_abstained_condition_rows = approximate["all_abstained_conditions"]
+    expected_condition_inventory = condition_inventory(
+        expected_condition_rows, label="expected"
+    )
+    estimated_condition_inventory = realization_inventory(
+        estimated_condition_rows, label="estimated", estimated=True
+    )
+    all_abstained_condition_inventory = realization_inventory(
+        all_abstained_condition_rows, label="all-abstained", estimated=False
+    )
+    expected_condition_keys = set(expected_condition_inventory)
+    estimated_condition_keys = set(estimated_condition_inventory)
+    all_abstained_condition_keys = set(all_abstained_condition_inventory)
+    if (
+        estimated_condition_keys & all_abstained_condition_keys
+        or estimated_condition_keys | all_abstained_condition_keys
+        != expected_condition_keys
+        or any(
+            row["condition"] != expected_condition_inventory[key]
+            for inventory in (
+                estimated_condition_inventory,
+                all_abstained_condition_inventory,
+            )
+            for key, row in inventory.items()
+        )
+    ):
+        raise Phase8Error(
+            "Phase 7 estimated/all-abstained proxy condition partition differs"
+        )
     expected_approximate = bool(expected_condition_rows)
     estimate_rows = approximate["estimate_rows"]
     selected_judges = approximate["selected_judges"]
@@ -5628,6 +5740,9 @@ def validate_analysis_boundaries(
         approximate["expected_from_ineligible_opted_in_strata"]
         is not expected_approximate
         or (not expected_approximate and estimate_rows != 0)
+        or bool(estimate_rows) is not bool(estimated_condition_rows)
+        or estimate_rows
+        != sum(row["estimate_rows"] for row in estimated_condition_rows)
         or (estimate_rows == 0 and (selected_judges or judge_models))
         or (estimate_rows > 0 and not selected_judges)
     ):
@@ -12439,7 +12554,7 @@ def self_test() -> int:
         )
 
     boundary = {
-        "schema": "ura-phase7-analysis-boundaries/1",
+        "schema": "ura-phase7-analysis-boundaries/2",
         "status": "validated",
         "evaluator_compatibility_modes": {"rules": 2, "rules,guardrail": 3},
         "evaluator_modes_pooled": False,
@@ -12453,6 +12568,8 @@ def self_test() -> int:
             "supplementary_non_authoritative": True,
             "expected_from_ineligible_opted_in_strata": False,
             "expected_conditions": [],
+            "estimated_conditions": [],
+            "all_abstained_conditions": [],
             "estimate_rows": 0,
             "selected_judges": [],
             "judge_models": [],
@@ -12581,6 +12698,13 @@ def self_test() -> int:
         {
             "expected_from_ineligible_opted_in_strata": True,
             "expected_conditions": [proxy_condition],
+            "estimated_conditions": [],
+            "all_abstained_conditions": [{
+                "condition": proxy_condition,
+                "estimate_rows": 0,
+                "completed_records": 1,
+                "typed_abstentions": 1,
+            }],
             "estimate_rows": 0,
             "selected_judges": [],
             "judge_models": [],
@@ -12613,6 +12737,111 @@ def self_test() -> int:
         ),
         "all-abstained proxy expectation mismatch",
     )
+    mixed_boundary = json.loads(json.dumps(all_abstained_boundary))
+    estimated_condition = {
+        **proxy_condition,
+        "corpus_arm": "fixture_second_benign_proxy",
+        "required_metric": "fixture_second_benign_judge_question",
+    }
+    mixed_conditions = sorted(
+        [proxy_condition, estimated_condition],
+        key=lambda row: (
+            row["model_spec"],
+            row["corpus_arm"],
+            row["attacker"],
+            row["required_metric"],
+        ),
+    )
+    estimated_realization = {
+        "condition": estimated_condition,
+        "estimate_rows": 1,
+        "completed_records": 1,
+        "typed_abstentions": 0,
+    }
+    all_abstained_realization = {
+        "condition": proxy_condition,
+        "estimate_rows": 0,
+        "completed_records": 1,
+        "typed_abstentions": 1,
+    }
+    mixed_boundary["approximate_common_metrics"].update(
+        {
+            "expected_conditions": mixed_conditions,
+            "estimated_conditions": [estimated_realization],
+            "all_abstained_conditions": [all_abstained_realization],
+            "estimate_rows": 1,
+            "selected_judges": ["guardrail"],
+            "judge_models": [EXPECTED_GUARDRAIL["model"]],
+        }
+    )
+    validate_analysis_boundaries(
+        mixed_boundary,
+        expected_cascade_lanes=["bridge-purplellama"],
+        expected_proxy_conditions=mixed_conditions,
+    )
+    passed()
+    canonical_reordering = json.loads(json.dumps(mixed_boundary))
+    canonical_reordering["approximate_common_metrics"][
+        "expected_conditions"
+    ].reverse()
+    rejected(
+        lambda: validate_analysis_boundaries(
+            canonical_reordering,
+            expected_cascade_lanes=["bridge-purplellama"],
+            expected_proxy_conditions=mixed_conditions,
+        ),
+        "mixed proxy canonical condition reordering",
+    )
+    for label, mutate in (
+        (
+            "mixed proxy partition missing condition",
+            lambda value: value["approximate_common_metrics"][
+                "all_abstained_conditions"
+            ].clear(),
+        ),
+        (
+            "mixed proxy condition dispositions swapped",
+            lambda value: value["approximate_common_metrics"].update(
+                {
+                    "estimated_conditions": [all_abstained_realization],
+                    "all_abstained_conditions": [estimated_realization],
+                }
+            ),
+        ),
+        (
+            "mixed proxy condition is duplicated",
+            lambda value: value["approximate_common_metrics"][
+                "all_abstained_conditions"
+            ].append(all_abstained_realization),
+        ),
+        (
+            "mixed proxy condition appears in both partitions",
+            lambda value: value["approximate_common_metrics"][
+                "all_abstained_conditions"
+            ].append(
+                {
+                    **all_abstained_realization,
+                    "condition": estimated_condition,
+                }
+            ),
+        ),
+        (
+            "mixed proxy partition condition detached from expected identity",
+            lambda value: value["approximate_common_metrics"][
+                "estimated_conditions"
+            ][0]["condition"].__setitem__("lane_id", "detached-lane"),
+        ),
+    ):
+        mutation = json.loads(json.dumps(mixed_boundary))
+        mutate(mutation)
+        rejected(
+            lambda mutation=mutation: validate_analysis_boundaries(
+                mutation,
+                expected_cascade_lanes=["bridge-purplellama"],
+                expected_proxy_conditions=mixed_conditions,
+            ),
+            label,
+        )
     bad_boundary = json.loads(json.dumps(boundary))
     bad_boundary["cascade_expected_lanes"] = ["forged-lane"]
     rejected(

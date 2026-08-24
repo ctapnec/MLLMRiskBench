@@ -3094,7 +3094,8 @@ def inventory_self_test() -> dict[str, Any]:
             ),
             "approximate_security_decision": None,
             "approximate_rubric_stage_binding": None,
-            "model": EXPECTED_SCORE_GUARD,
+            "model": "fixture-target",
+            "judge_model": EXPECTED_SCORE_GUARD,
             "model_revision": EXPECTED_SCORE_GUARD_REVISION,
             "model_identity": (
                 f"{EXPECTED_SCORE_GUARD}@{EXPECTED_SCORE_GUARD_REVISION}"
@@ -3111,12 +3112,23 @@ def inventory_self_test() -> dict[str, Any]:
     )
     source_claim = copy.deepcopy(abstention_judgment)
     source_claim["raw"]["source_evaluation"]["implemented"] = True
+    wrong_judge_model = copy.deepcopy(abstention_judgment)
+    wrong_judge_model["raw"]["judge_model"] = "fixture/wrong-guard"
+    wrong_judge_revision = copy.deepcopy(abstention_judgment)
+    wrong_judge_revision["raw"]["model_revision"] = "0" * 40
+    wrong_judge_identity = copy.deepcopy(abstention_judgment)
+    wrong_judge_identity["raw"]["model_identity"] = (
+        f"fixture/wrong-guard@{'0' * 40}"
+    )
     boolean_judgment_confidence = copy.deepcopy(abstention_judgment)
     boolean_judgment_confidence["raw"]["confidence"] = False
     nonzero_judgment_confidence = copy.deepcopy(abstention_judgment)
     nonzero_judgment_confidence["raw"]["confidence"] = 0.1
     for mutation_label, mutation in (
         ("proxy-abstention-source-evaluator-claim", source_claim),
+        ("proxy-abstention-wrong-judge-model", wrong_judge_model),
+        ("proxy-abstention-wrong-judge-revision", wrong_judge_revision),
+        ("proxy-abstention-wrong-judge-identity", wrong_judge_identity),
         (
             "proxy-abstention-boolean-judgment-confidence",
             boolean_judgment_confidence,
@@ -3356,7 +3368,7 @@ def _validate_proxy_abstention_judgment(
         or raw.get("approximate_security_decision") is not None
         or "approximate_rubric_stage_binding" not in raw
         or raw.get("approximate_rubric_stage_binding") is not None
-        or raw.get("model") != EXPECTED_SCORE_GUARD
+        or raw.get("judge_model") != EXPECTED_SCORE_GUARD
         or raw.get("model_revision") != EXPECTED_SCORE_GUARD_REVISION
         or raw.get("model_identity")
         != f"{EXPECTED_SCORE_GUARD}@{EXPECTED_SCORE_GUARD_REVISION}"

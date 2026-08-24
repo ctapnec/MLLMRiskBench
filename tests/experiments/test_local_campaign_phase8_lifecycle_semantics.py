@@ -145,7 +145,7 @@ def _analysis_boundary(
         (Path.cwd() / ".fixture-runner" / "rr-terminal-40.json").resolve()
     )
     boundary: dict[str, object] = {
-        "schema": "ura-phase7-analysis-boundaries/1",
+        "schema": "ura-phase7-analysis-boundaries/2",
         "status": "validated",
         "evaluator_compatibility_modes": {"rules,guardrail": 2},
         "evaluator_modes_pooled": False,
@@ -159,6 +159,16 @@ def _analysis_boundary(
             "supplementary_non_authoritative": True,
             "expected_from_ineligible_opted_in_strata": bool(conditions),
             "expected_conditions": conditions,
+            "estimated_conditions": [],
+            "all_abstained_conditions": [
+                {
+                    "condition": condition,
+                    "estimate_rows": 0,
+                    "completed_records": 1,
+                    "typed_abstentions": 1,
+                }
+                for condition in conditions
+            ],
             "estimate_rows": 0,
             "selected_judges": [],
             "judge_models": [],
@@ -338,6 +348,113 @@ def test_phase8_accepts_expected_proxy_with_zero_all_abstained_estimates(
             expected_cascade_lanes=cascade,
             expected_proxy_conditions=conditions,
         )
+
+
+def test_phase8_rejects_structural_mixed_proxy_partition_defects(
+    phase8: ModuleType,
+) -> None:
+    boundary, _states, _cascade, conditions = _analysis_boundary(
+        phase8, purplellama_complete=True
+    )
+    all_abstained_condition = conditions[0]
+    estimated_condition = {
+        **all_abstained_condition,
+        "corpus_arm": "fixture_second_benign_proxy",
+        "required_metric": "fixture_second_benign_judge_question",
+    }
+    conditions = sorted(
+        [all_abstained_condition, estimated_condition],
+        key=lambda row: (
+            row["model_spec"],
+            row["corpus_arm"],
+            row["attacker"],
+            row["required_metric"],
+        ),
+    )
+    approximate = boundary["approximate_common_metrics"]
+    estimated_realization = {
+        "condition": estimated_condition,
+        "estimate_rows": 1,
+        "completed_records": 1,
+        "typed_abstentions": 0,
+    }
+    all_abstained_realization = {
+        "condition": all_abstained_condition,
+        "estimate_rows": 0,
+        "completed_records": 1,
+        "typed_abstentions": 1,
+    }
+    approximate.update(
+        {
+            "expected_conditions": conditions,
+            "estimated_conditions": [estimated_realization],
+            "all_abstained_conditions": [all_abstained_realization],
+            "estimate_rows": 1,
+            "selected_judges": ["guardrail"],
+            "judge_models": [phase8.EXPECTED_GUARDRAIL["model"]],
+        }
+    )
+    phase8.validate_analysis_boundaries(
+        boundary,
+        expected_proxy_conditions=conditions,
+    )
+    reordered = copy.deepcopy(boundary)
+    reordered["approximate_common_metrics"]["expected_conditions"].reverse()
+    with pytest.raises(phase8.Phase8Error, match="not canonical"):
+        phase8.validate_analysis_boundaries(
+            reordered,
+            expected_proxy_conditions=conditions,
+        )
+
+    swapped = copy.deepcopy(boundary)
+    swapped["approximate_common_metrics"].update(
+        {
+            "estimated_conditions": [all_abstained_realization],
+            "all_abstained_conditions": [estimated_realization],
+        }
+    )
+    with pytest.raises(phase8.Phase8Error, match="realization disposition"):
+        phase8.validate_analysis_boundaries(
+            swapped,
+            expected_proxy_conditions=conditions,
+        )
+
+    mutations = {
+        "missing": lambda value: value["approximate_common_metrics"][
+            "all_abstained_conditions"
+        ].clear(),
+        "duplicate": lambda value: value["approximate_common_metrics"][
+            "all_abstained_conditions"
+        ].append(copy.deepcopy(all_abstained_realization)),
+        "overlapping": lambda value: value["approximate_common_metrics"][
+            "all_abstained_conditions"
+        ].append(
+            {
+                **all_abstained_realization,
+                "condition": estimated_condition,
+            }
+        ),
+        "detached": lambda value: value["approximate_common_metrics"][
+            "estimated_conditions"
+        ].__setitem__(
+            0,
+            {
+                **estimated_realization,
+                "condition": {**estimated_condition, "lane_id": "detached-lane"},
+            },
+        ),
+    }
+    for mutate in mutations.values():
+        changed = copy.deepcopy(boundary)
+        mutate(changed)
+        with pytest.raises(
+            phase8.Phase8Error,
+            match="proxy[- ]condition|proxy realization",
+        ):
+            phase8.validate_analysis_boundaries(
+                changed,
+                expected_proxy_conditions=conditions,
+            )
 
 
 def test_phase8_capacity_reserves_exact_twenty_disjoint_clusters(
