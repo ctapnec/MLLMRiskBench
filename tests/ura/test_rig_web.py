@@ -3420,7 +3420,7 @@ def test_stats_page_renders_budget_and_tolerates_missing_results(tmp_path: Path)
     # and an empty results root degrades gracefully. Charts come ONLY from
     # schema-valid producer artifacts (see the real Level-1/Level-2 tests);
     # an unrecognized ad-hoc JSON shape renders nothing.
-    app = _app(tmp_path)
+    app = _isolated_app(tmp_path)
     status, _, body = app.handle("GET", "/stats")
     text = body.decode("utf-8")
     assert status == 200

@@ -143,6 +143,7 @@ def test_rig_web_core_does_not_embed_local_campaign_policy(tmp_path: Path) -> No
     """Local evidence-collection policy belongs outside generic Rig Web core."""
 
     app = _app(tmp_path)
+    app._budgets = lambda: []
     try:
         dashboard = app.handle("GET", "/")[2].decode("utf-8")
         builder = app.handle("GET", "/build")[2].decode("utf-8")
