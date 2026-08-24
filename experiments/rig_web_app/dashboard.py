@@ -1727,8 +1727,10 @@ class DashboardMixin:
         return (
             "<h2>Campaign runs</h2>"
             "<p class='note'>Externally managed campaign records appear first, "
-            "followed by console run attempts. Passed means a process exited with "
-            "status 0; only completion-bound artifacts establish model execution. "
+            "followed by console run attempts. Passed means the CLI exited with "
+            "status 0 for a console run attempt; external campaign status comes "
+            "from its generic terminal record. Only completion-bound artifacts "
+            "establish model execution. "
             "Thesis-measured, diagnostic, synthetic, engineering, and preflight "
             "work remain visibly separate.</p>"
             + engineering_html
