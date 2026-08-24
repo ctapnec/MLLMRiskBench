@@ -105,8 +105,11 @@ installed only through the strict isolated-runtime lock described in the
 operator runbook; they are not main-environment extras.
 The installer removes legacy top-level PyRIT, Spikee, `datasets`, and
 `jsonlines` copies from the main venv after installing URA, without removing
-their isolated stores. BIPIA's retained `datasets==2.14.7` builder instead uses
-`distro/bipia-build-requirements.lock` in `$URA_WORK/support-venvs`.
+their isolated stores. It then derives every installed framework root from the
+strict lock and fails if a reused main venv still contains one; it never prunes
+shared transitive dependencies. BIPIA's retained `datasets==2.14.7` builder
+instead uses `distro/bipia-build-requirements.lock` in
+`$URA_WORK/support-venvs`.
 
 ### Isolated framework runtimes
 

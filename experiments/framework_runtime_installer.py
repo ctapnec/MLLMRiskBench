@@ -616,6 +616,77 @@ def load_lock(path: Path = DEFAULT_LOCK) -> dict[str, Any]:
     return lock
 
 
+def managed_framework_root_distributions(
+    lock: Mapping[str, Any],
+) -> tuple[str, ...]:
+    """Derive installed framework roots without naming transitive dependencies.
+
+    A Python row that installs a framework distribution uses that distribution's
+    import as its offline smoke. Source-only rows instead smoke one of their
+    support dependencies and therefore have no managed root distribution to
+    check in the main URA environment.
+    """
+
+    frameworks = lock.get("frameworks")
+    if not isinstance(frameworks, list):
+        raise InstallerError("runtime lock has no framework list")
+    roots: set[str] = set()
+    for entry in frameworks:
+        if not isinstance(entry, Mapping) or entry.get("runtime") != "python":
+            continue
+        install = entry.get("install")
+        if not isinstance(install, Mapping):
+            raise InstallerError("Python framework row has no install metadata")
+        source_mode = install.get("source_mode")
+        if source_mode == "source-only":
+            continue
+        if source_mode not in {"none", "wheel", "provenance-only"}:
+            raise InstallerError("Python framework row has unsupported source mode")
+        smoke = entry.get("smoke")
+        if not isinstance(smoke, Mapping) or smoke.get("mode") != "import":
+            raise InstallerError(
+                "installed Python framework row needs one import smoke for root derivation"
+            )
+        module = smoke.get("module")
+        if not isinstance(module, str) or not module.strip():
+            raise InstallerError("installed Python framework row has no smoke module")
+        root = _canonical_name(module.split(".", 1)[0])
+        expected_inventory = entry.get("expected_inventory")
+        distributions = (
+            expected_inventory.get("distributions")
+            if isinstance(expected_inventory, Mapping)
+            else None
+        )
+        if not isinstance(distributions, list):
+            raise InstallerError("installed Python framework row has no distribution inventory")
+        inventory_names = {
+            _canonical_name(row.split("==", 1)[0])
+            for row in distributions
+            if isinstance(row, str) and "==" in row
+        }
+        if root not in inventory_names:
+            raise InstallerError(
+                f"framework {entry.get('name')!r} smoke module does not name its "
+                "installed root distribution"
+            )
+        roots.add(root)
+    return tuple(sorted(roots))
+
+
+def managed_framework_roots_present(
+    lock: Mapping[str, Any], installed_distributions: Sequence[str]
+) -> tuple[str, ...]:
+    """Return lock-managed framework roots present in another environment."""
+
+    managed = set(managed_framework_root_distributions(lock))
+    installed = {
+        _canonical_name(name)
+        for name in installed_distributions
+        if isinstance(name, str) and name.strip()
+    }
+    return tuple(sorted(managed & installed))
+
+
 def _lock_content_id(lock: Mapping[str, Any]) -> str:
     content = dict(lock)
     content["lock_id"] = "0" * 64

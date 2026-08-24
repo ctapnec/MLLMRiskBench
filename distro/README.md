@@ -43,7 +43,7 @@ failed; logs live under `$URA_DATA/acquire-logs/`.
 
 | phase | what it does |
 |---|---|
-| `deps` | create `.venv` with `$URA_PYTHON` (resolved as above) and editable-install with the `dev,analysis,api,guardrail,local-vllm` extras + `hf`/`gdown` CLI tools (verified present); remove legacy duplicate top-level PyRIT, Spikee, `datasets`, and `jsonlines` installs from this main venv, then run `pip check` (their isolated runtimes/support environment are retained) |
+| `deps` | create `.venv` with `$URA_PYTHON` (resolved as above) and editable-install with the `dev,analysis,api,guardrail,local-vllm` extras + `hf`/`gdown` CLI tools (verified present); remove legacy duplicate top-level PyRIT, Spikee, `datasets`, and `jsonlines` installs, fail if any other lock-derived framework root remains in a reused main venv without pruning shared transitive dependencies, then run `pip check` (their isolated runtimes/support environment are retained) |
 | `clones` | pinned upstream git snapshots (StrongREJECT, HarmBench, BIPIA, ...); stale clones are repaired via fetch + re-checkout |
 | `hf` | pinned Hugging Face dataset releases (AgentHarm, JBB, JailBreakV-28K, MLLMGuard, VLSBench, Video-SafetyBench, JALMBench) |
 | `archives` | separately-distributed media: MM-SafetyBench images (Drive, stall-hardened), GPTGeoChat human split (MediaFire scrape), SIUO images (HF dataset repo), Video-SafetyBench extract, JailBreakV image-backed subset generation, JALMBench/VLSBench exports |

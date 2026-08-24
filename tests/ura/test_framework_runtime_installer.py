@@ -80,14 +80,53 @@ def test_repository_lock_is_strict_and_covers_all_registered_attackers() -> None
     }
 
 
-def test_global_installer_docs_match_the_resumable_fifteen_runtime_lock() -> None:
+def test_main_venv_framework_roots_are_derived_from_lock_smokes() -> None:
     lock = installer.load_lock(LOCK_PATH)
-    root = LOCK_PATH.parents[1]
-    documents = {
-        name: (root / name).read_text(encoding="utf-8")
-        for name in ("README.md", "distro/README.md", "experiments/RUN_AND_RETURN.md")
-    }
+    roots = installer.managed_framework_root_distributions(lock)
+    assert roots == (
+        "agentdojo",
+        "deepteam",
+        "easyjailbreak",
+        "fuzzyai",
+        "garak",
+        "giskard",
+        "h4rm3l",
+        "inspect-petri",
+        "nanogcg",
+        "pyrit",
+        "spikee",
+    )
+    assert installer.managed_framework_roots_present(
+        lock, ["requests", "DeepTeam", "inspect_petri"]
+    ) == ("deepteam", "inspect-petri")
+    # These are support imports for source-only checkouts, not framework root
+    # distributions. In particular, vLLM is intentionally a main URA extra.
+    assert installer.managed_framework_roots_present(
+        lock, ["aios", "framework", "vllm"]
+    ) == ()
 
+    mutated = json.loads(json.dumps(lock))
+    pyrit = next(row for row in mutated["frameworks"] if row["name"] == "pyrit")
+    pyrit["smoke"]["module"] = "not_the_installed_distribution"
+    with pytest.raises(
+        installer.InstallerError, match="smoke module does not name its installed root"
+    ):
+        installer.managed_framework_root_distributions(mutated)
+
+
+def _inventory_version(entry: dict[str, Any], distribution: str) -> str:
+    expected = installer._canonical_name(distribution)
+    for row in entry["expected_inventory"]["distributions"]:
+        name, version = row.split("==", 1)
+        if installer._canonical_name(name) == expected:
+            return version
+    raise AssertionError(f"{distribution!r} is absent from the locked inventory")
+
+
+def _assert_global_installer_docs_match_lock(
+    lock: dict[str, Any], documents: dict[str, str], install_script: str
+) -> None:
+    frameworks = {entry["name"]: entry for entry in lock["frameworks"]}
     assert len(lock["frameworks"]) == 15
     normalized = {name: " ".join(text.split()) for name, text in documents.items()}
     assert "all 15 locked third-party framework runtimes" in normalized["README.md"]
@@ -108,7 +147,6 @@ def test_global_installer_docs_match_the_resumable_fifteen_runtime_lock() -> Non
         "14 separate CPython virtual environments and Promptfoo's separate Node environment"
         in normalized["experiments/RUN_AND_RETURN.md"]
     )
-    install_script = (root / "distro/install.sh").read_text(encoding="utf-8")
     assert "runtimes_session resume" in install_script
     assert '--only "$framework"' in install_script
     all_dispatch = install_script[
@@ -116,9 +154,110 @@ def test_global_installer_docs_match_the_resumable_fifteen_runtime_lock() -> Non
     ]
     assert "phase_runtimes || RC=1" in all_dispatch
     assert "session_summary || RC=1" in install_script
+    assert "managed_framework_roots_present" in install_script
+    assert "for distribution in metadata.distributions()" in install_script
+    assert "main URA venv contains lock-managed framework root distributions" in install_script
     assert "framework_runtime_installer resume" in documents[
         "experiments/RUN_AND_RETURN.md"
     ]
+
+    readme = normalized["README.md"]
+    bridge_versions = {
+        name: frameworks[name]["version"]
+        for name in ("pyrit", "deepteam", "h4rm3l", "spikee")
+    }
+    assert (
+        "Runner-safe PyRIT {pyrit}, DeepTeam {deepteam}, h4rm3l {h4rm3l}, "
+        "and Spikee {spikee}".format(**bridge_versions)
+        in readme
+    )
+    runbook = documents["experiments/RUN_AND_RETURN.md"]
+    config_section = runbook[
+        runbook.index("configs = {") : runbook.index("attacker = sys.argv[1]")
+    ]
+    for name, version in bridge_versions.items():
+        assert re.search(
+            rf'"{re.escape(name)}"\s*:\s*\{{[^{{}}]*'
+            rf'"(?:upstream|engine)_version"\s*:\s*"{re.escape(version)}"'
+            rf'[^{{}}]*\}}',
+            config_section,
+            flags=re.DOTALL,
+        )
+
+    python_version = lock["runtimes"]["python"]["version"]
+    assert f"exact CPython {python_version}" in readme
+    assert f"CPython {python_version}" in normalized["distro/README.md"]
+    assert f"exact CPython {python_version}" in normalized[
+        "experiments/RUN_AND_RETURN.md"
+    ]
+    assert f'[ "$base_version" = "{python_version}" ]' in install_script
+
+    harmbench_revision = frameworks["harmbench"]["version"]
+    assert f"REF_HARMBENCH={harmbench_revision}" in install_script
+    assert f"export REF_HARMBENCH={harmbench_revision}" in runbook
+
+    garak_version = _inventory_version(frameworks["garak"], "garak")
+    assert f"# Garak {garak_version}:" in runbook
+    promptfoo_version = frameworks["promptfoo"]["version"]
+    assert f"# Promptfoo {promptfoo_version}:" in runbook
+    node_runtime_dir = frameworks["promptfoo"]["install"]["node_runtime_dir"]
+    assert runbook.count(
+        f'$URA_PROMPTFOO_ENV/runtime/{node_runtime_dir}/bin/node'
+    ) == 2
+
+    assert "experiments/attacker-config.json" not in runbook
+    assert 'export ATTACKER_CONFIG="runs/private/attacker-config-$ATTACKER.json"' in runbook
+    assert '--attacker-config "$ATTACKER_CONFIG"' in runbook
+    assert 'Path(sys.argv[2]).open("x"' in runbook
+
+
+def test_global_installer_docs_match_the_resumable_fifteen_runtime_lock() -> None:
+    lock = installer.load_lock(LOCK_PATH)
+    root = LOCK_PATH.parents[1]
+    documents = {
+        name: (root / name).read_text(encoding="utf-8")
+        for name in ("README.md", "distro/README.md", "experiments/RUN_AND_RETURN.md")
+    }
+    install_script = (root / "distro/install.sh").read_text(encoding="utf-8")
+    _assert_global_installer_docs_match_lock(lock, documents, install_script)
+
+
+def test_global_installer_doc_sync_rejects_mutated_duplicate_pins() -> None:
+    lock = installer.load_lock(LOCK_PATH)
+    root = LOCK_PATH.parents[1]
+    documents = {
+        name: (root / name).read_text(encoding="utf-8")
+        for name in ("README.md", "distro/README.md", "experiments/RUN_AND_RETURN.md")
+    }
+    install_script = (root / "distro/install.sh").read_text(encoding="utf-8")
+    frameworks = {entry["name"]: entry for entry in lock["frameworks"]}
+
+    mutated_readme = dict(documents)
+    mutated_readme["README.md"] = mutated_readme["README.md"].replace(
+        f"PyRIT {frameworks['pyrit']['version']}", "PyRIT 0.0.0", 1
+    )
+    mutated_runbook = dict(documents)
+    mutated_runbook["experiments/RUN_AND_RETURN.md"] = mutated_runbook[
+        "experiments/RUN_AND_RETURN.md"
+    ].replace(
+        f"# Promptfoo {frameworks['promptfoo']['version']}:",
+        "# Promptfoo 0.0.0:",
+        1,
+    )
+    mutated_script = install_script.replace(
+        f"REF_HARMBENCH={frameworks['harmbench']['version']}",
+        "REF_HARMBENCH=" + "0" * 40,
+        1,
+    )
+    for candidate_documents, candidate_script in (
+        (mutated_readme, install_script),
+        (mutated_runbook, install_script),
+        (documents, mutated_script),
+    ):
+        with pytest.raises(AssertionError):
+            _assert_global_installer_docs_match_lock(
+                lock, candidate_documents, candidate_script
+            )
 
 
 def test_bipia_builder_has_its_own_exact_hashed_environment_not_runner_dependencies() -> None:
@@ -1522,6 +1661,9 @@ _STUB_PYTHON = r"""#!/usr/bin/env bash
 # Stub venv python for distro/install.sh tests: intercept the framework
 # runtime installer module (record argv, emulate the session contract),
 # pass every other invocation through to the real interpreter.
+if [ "${URA_STUB_PIP_OK:-}" = "1" ] && [ "${1:-}" = "-m" ] && [ "${2:-}" = "pip" ]; then
+  exit 0
+fi
 if [ "${1:-}" = "-m" ] && [ "${2:-}" = "experiments.framework_runtime_installer" ]; then
   shift 2
   { printf '%s\n' "$@"; printf -- '--END--\n'; } >> "__CALLS__"
@@ -1646,6 +1788,59 @@ class _DistroSandbox:
             return []
         blocks = self.calls.read_text(encoding="utf-8").split("--END--\n")
         return [block.splitlines() for block in blocks if block.strip()]
+
+
+@pytest.mark.skipif(os.name == "nt", reason="distro shell contract targets Linux")
+@pytest.mark.parametrize(
+    ("installed_distributions", "expected_success"),
+    [("requests", True), ("requests,deepteam", False)],
+)
+def test_distro_deps_propagates_lock_derived_main_venv_contamination(
+    tmp_path: Path, installed_distributions: str, expected_success: bool
+) -> None:
+    sandbox = _DistroSandbox(tmp_path)
+    for name in ("hf", "gdown"):
+        tool = sandbox.root / ".venv" / "bin" / name
+        tool.write_text("#!/usr/bin/env bash\nexit 0\n", encoding="utf-8")
+        tool.chmod(0o755)
+
+    hook = tmp_path / "metadata-hook"
+    hook.mkdir()
+    (hook / "sitecustomize.py").write_text(
+        "import importlib.metadata as metadata\n"
+        "import os\n"
+        "class Distribution:\n"
+        "    def __init__(self, name):\n"
+        "        self.metadata = {'Name': name}\n"
+        "names = os.environ['URA_TEST_MAIN_DISTRIBUTIONS'].split(',')\n"
+        "metadata.distributions = lambda **_kwargs: [Distribution(name) for name in names]\n",
+        encoding="utf-8",
+    )
+    python_path = os.pathsep.join((str(hook), str(LOCK_PATH.parents[1])))
+
+    result = sandbox.run(
+        "deps",
+        PYTHONPATH=python_path,
+        URA_STUB_PIP_OK="1",
+        URA_TEST_MAIN_DISTRIBUTIONS=installed_distributions,
+    )
+    status = (sandbox.data / "acquire-logs" / "deps.status").read_text(
+        encoding="utf-8"
+    ).strip()
+    log = (sandbox.data / "acquire-logs" / "deps-tools.log").read_text(
+        encoding="utf-8"
+    )
+    if expected_success:
+        assert result.returncode == 0, result.stdout + result.stderr
+        assert status == "OK"
+        assert (sandbox.data / "acquire-logs" / "deps.done").is_file()
+        assert "lock-managed framework root distributions" not in log
+    else:
+        assert result.returncode != 0
+        assert status == "FAIL:1"
+        assert not (sandbox.data / "acquire-logs" / "deps.done").exists()
+        assert "main URA venv contains lock-managed framework root distributions: deepteam" in log
+        assert "[FAIL] deps - every later phase depends on this venv" in result.stdout
 
 
 def test_distro_runtimes_phase_resumes_fresh_or_staged_store_then_verifies(

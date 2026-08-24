@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import shlex
 import shutil
 import subprocess
@@ -56,15 +57,25 @@ def test_framework_packages_are_not_main_environment_extras() -> None:
     project_root = Path(__file__).resolve().parents[2]
     document = tomllib.loads((project_root / "pyproject.toml").read_text(encoding="utf-8"))
     extras = document["project"]["optional-dependencies"]
-    lock = json.loads(
-        (project_root / "experiments" / "framework_runtime_lock.json").read_text(
-            encoding="utf-8"
-        )
+    from experiments.framework_runtime_installer import (
+        load_lock,
+        managed_framework_root_distributions,
     )
-    frameworks = {entry["name"]: entry for entry in lock["frameworks"]}
 
-    assert "harmbench" not in extras
+    lock = load_lock(project_root / "experiments" / "framework_runtime_lock.json")
+    frameworks = {entry["name"]: entry for entry in lock["frameworks"]}
+    assert set(frameworks).isdisjoint(extras)
     assert "giskard-v2" not in extras
+    declared_requirements = list(document["project"].get("dependencies", ()))
+    for requirements in extras.values():
+        declared_requirements.extend(requirements)
+    declared_names = {
+        re.sub(r"[-_.]+", "-", match.group(0)).lower()
+        for requirement in declared_requirements
+        if (match := re.match(r"[A-Za-z0-9][A-Za-z0-9._-]*", requirement))
+    }
+
+    assert set(managed_framework_root_distributions(lock)).isdisjoint(declared_names)
     assert frameworks["harmbench"]["env_slug"] == "harmbench-8e1604d-py312"
     assert "vllm==0.27.1" in frameworks["harmbench"]["install"]["constraints"]
     assert frameworks["giskard"]["version"] == "2.19.2+86512399daf0"

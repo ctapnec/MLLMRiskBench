@@ -283,6 +283,34 @@ phase_deps() {
     # Their retained implementations live in the isolated runtime/support
     # stores built below; shared dependencies required by URA are untouched.
     "$PY" -m pip uninstall -y pyrit spikee datasets jsonlines >> "$LOG/deps-tools.log" 2>&1 || failed=1
+    # Reused venvs may retain another framework root from an older manual
+    # install. Derive only the actual installed roots from the strict lock's
+    # import smokes; source-only rows have no framework distribution to prune.
+    # Fail closed instead of uninstalling any shared transitive dependency.
+    "$PY" - "$URA_ROOT/experiments/framework_runtime_lock.json" \
+      >> "$LOG/deps-tools.log" 2>&1 <<'PYEOF' || failed=1
+from importlib import metadata
+from pathlib import Path
+import sys
+
+from experiments.framework_runtime_installer import (
+    load_lock,
+    managed_framework_roots_present,
+)
+
+lock = load_lock(Path(sys.argv[1]))
+installed = [
+    distribution.metadata.get("Name", "")
+    for distribution in metadata.distributions()
+]
+remaining = managed_framework_roots_present(lock, installed)
+if remaining:
+    raise SystemExit(
+        "main URA venv contains lock-managed framework root distributions: "
+        + ", ".join(remaining)
+        + "; remove them or rebuild .venv before installing isolated runtimes"
+    )
+PYEOF
     "$PY" -m pip check >> "$LOG/deps-tools.log" 2>&1 || failed=1
   fi
   local tool

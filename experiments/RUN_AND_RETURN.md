@@ -537,12 +537,14 @@ and separately distributed archives (3.1-3.2), the JALMBench/VLSBench exports
 `URA_WORK`, `URA_CORPORA`, `URA_REPO` and `URA_PY`, the six aggregator arms
 registered in `experiments/source-instances.json`, the user-local ollama
 runtime, BIPIA's fully hashed isolated support venv, the isolated framework
-runtimes, and the console launch. It removes only legacy duplicate PyRIT,
-Spikee, `datasets`, and `jsonlines` top-level installs from the main URA venv;
-their dedicated environments remain installed. Each of the 15 locked framework
-rows runs as a separate sequential `--only` resume/verify named session and a
-failure does not suppress later rows. The console likewise persists under tmux
-or, when unavailable, screen. Secret files are sourced only within HF-backed
+runtimes, and the console launch. It removes legacy duplicate PyRIT, Spikee,
+`datasets`, and `jsonlines` top-level installs from the main URA venv, then
+fails if any other lock-derived framework root remains in a reused main venv;
+it does not prune shared transitive dependencies, and the dedicated
+environments remain installed. Each of the 15 locked framework rows runs as a
+separate sequential `--only` resume/verify named session and a failure does not
+suppress later rows. The console likewise persists under tmux or, when
+unavailable, screen. Secret files are sourced only within HF-backed
 download/export subprocesses and the console launcher, never for unrelated
 installer phases.
 `distro/install.sh all` is the one-command path; the per-phase commands below
@@ -2630,16 +2632,39 @@ lifecycle, not a filesystem/network sandbox. Keep the config and environments
 operator-private; result, grid, completion, Figure, transfer, and Level-1
 evidence retain only path-free identities and exact closing seals.
 
-Use `experiments/attacker-config.json` to bind exact constructor arguments. A
-minimal deterministic-transfer configuration is:
+Create one operator-private config containing only the selected attacker's exact
+constructor arguments. Set `ATTACKER` separately for each lane; this create-only
+step refuses to overwrite an earlier condition:
 
-```json
-{
-  "deepteam": {"attack": "Base64", "upstream_version": "1.0.7"},
-  "h4rm3l": {"engine_version": "0.2.4", "syntax_version": 2},
-  "pyrit": {"converters": ["Base64Converter"], "upstream_version": "0.14.0"},
-  "spikee": {"plugins": ["base64", "1337"], "positions": ["start", "middle", "end"], "engine_version": "0.9.1"}
+```bash
+export ATTACKER='pyrit'
+export ATTACKER_CONFIG="runs/private/attacker-config-$ATTACKER.json"
+umask 077
+mkdir -p runs/private
+python - "$ATTACKER" "$ATTACKER_CONFIG" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+configs = {
+    "deepteam": {"attack": "Base64", "upstream_version": "1.0.7"},
+    "h4rm3l": {"engine_version": "0.2.4", "syntax_version": 2},
+    "pyrit": {"converters": ["Base64Converter"], "upstream_version": "0.14.0"},
+    "spikee": {
+        "plugins": ["base64", "1337"],
+        "positions": ["start", "middle", "end"],
+        "engine_version": "0.9.1",
+    },
 }
+attacker = sys.argv[1]
+if attacker not in configs:
+    raise SystemExit(f"unsupported deterministic-transfer attacker: {attacker}")
+payload = json.dumps(
+    {attacker: configs[attacker]}, sort_keys=True, separators=(",", ":")
+) + "\n"
+with Path(sys.argv[2]).open("x", encoding="utf-8", newline="\n") as handle:
+    handle.write(payload)
+PY
 ```
 
 Run PyRIT, DeepTeam, h4rm3l, and Spikee as separate lanes over the declared
@@ -2651,10 +2676,9 @@ export TRANSFER_ARMS='strongreject_official,advbench_harmful,jailbreakbench_harm
 
 # PyRIT and DeepTeam emit one transformed attempt per selected configuration.
 # Repeat ATTACKER=pyrit and deepteam with max-queries=1/max-turns=1.
-export ATTACKER='pyrit'
 python -m experiments.rig_check \
   --api "$FOCAL_HOSTED" --api-config experiments/api-targets.json \
-  --attackers "$ATTACKER" --attacker-config experiments/attacker-config.json \
+  --attackers "$ATTACKER" --attacker-config "$ATTACKER_CONFIG" \
   --engine-runtime-config "$ENGINE_RUNTIME_CONFIG" \
   --engine-runtime-config-sha256 "$ENGINE_RUNTIME_CONFIG_SHA256" \
   --judges rules,guardrail,llm --judge-model "$JUDGE" \
@@ -2672,10 +2696,11 @@ Run h4rm3l and Spikee in separate invocations with
 admits only the first generated variant. The completed artifacts, not the
 configured maximum, establish the realized variant count.
 
-Because `attacker-config.json` must contain only selected attacker keys, create a
-one-attacker copy for each invocation or remove the unselected rows before the
-check. Repeat the successful check with `experiments.run_matrix`, the same
-paired engine-runtime flags, `"${LIVE_ATTESTATION_ARGS[@]}"`,
+The private config must contain only the selected attacker key. For each later
+lane, rerun the create-only block with its new `ATTACKER` and distinct
+`ATTACKER_CONFIG`; do not reuse or edit another lane's condition. Repeat the
+successful check with `experiments.run_matrix`, the same paired engine-runtime
+flags, `"${LIVE_ATTESTATION_ARGS[@]}"`,
 `--ack-hosted-judge-data-transfer`, its exact totals, and
 `--out "runs/thesis/runner/transfer-$ATTACKER"`.
 
