@@ -177,7 +177,6 @@ class BuilderPageMixin:
             )
         )
 
-        token = html.escape(str(self.ollama.action_token), quote=True)
         start_disabled = "" if state == "stopped" else " disabled"
         stop_disabled = "" if can_stop else " disabled"
         pull_disabled = "" if status.get("can_pull") is True else " disabled"
@@ -209,12 +208,8 @@ class BuilderPageMixin:
             "<form class='inline' method='get' action='/build#ollama-service'>"
             "<button class='ghost' type='submit'>Status</button></form>"
             "<form class='inline' method='post' action='/ollama/start' data-busy>"
-            f"<input type='hidden' name='action_token' value='{token}'>"
-            "<input type='hidden' name='confirm' value='yes'>"
             f"<button type='submit'{start_disabled}>Start</button></form>"
             "<form class='inline' method='post' action='/ollama/stop' data-busy>"
-            f"<input type='hidden' name='action_token' value='{token}'>"
-            "<input type='hidden' name='confirm' value='yes'>"
             f"<button class='danger' type='submit'{stop_disabled}>Stop</button>"
             "</form></div><h3>Pull a model</h3>"
             "<p class='note'>Enter the daemon model tag without the "
@@ -223,8 +218,6 @@ class BuilderPageMixin:
             "<span class='badge blue'>downloading</span> only while its explicit "
             "activity is live.</p>"
             "<form class='cmd' method='post' action='/ollama/pull' data-busy>"
-            f"<input type='hidden' name='action_token' value='{token}'>"
-            "<input type='hidden' name='confirm' value='yes'>"
             "<label for='ollama-pull-model'>Exact model tag</label>"
             f"<input id='ollama-pull-model' type='text' name='model' "
             f"maxlength='256' autocomplete='off' placeholder='llama3.2:3b' "
@@ -474,14 +467,20 @@ class BuilderPageMixin:
             return html.escape(prefill.get(field, default))
 
         selected_mode = prefill.get("mode", "dry_run")
-        # The tool-conditioned exclusion defaults ON for a dry lane (the synth
-        # corpus carries rows no Runner attacker can execute) and OFF
-        # otherwise; a re-rendered submitted form keeps the operator's choice
-        # (an unchecked box is simply absent from the submission).
+        # The tool-conditioned exclusion defaults ON for a standalone dry lane
+        # (the synth corpus carries rows no Runner attacker can execute) and is
+        # disabled and forced OFF otherwise. A re-rendered dry form keeps the
+        # operator's choice (an unchecked box is absent from the submission).
         exclude_tool_conditioned_checked = (
-            prefill.get("exclude_tool_conditioned") == "on"
-            if "mode" in prefill
-            else selected_mode == "dry_run"
+            selected_mode == "dry_run"
+            and (
+                prefill.get("exclude_tool_conditioned") == "on"
+                if "mode" in prefill
+                else True
+            )
+        )
+        exclude_tool_conditioned_disabled = (
+            "" if selected_mode == "dry_run" else " disabled"
         )
         # Mode radios.
         mode_html = "".join(
@@ -2201,10 +2200,11 @@ class BuilderPageMixin:
             "<div class='card'><h2>"
             + _icon("chart")
             + "Aggregation, row admission &amp; resume</h2>"
-            "<p class='note'>The same --group, --exclude-tool-conditioned, "
-            "--reset-open-circuits, and --lock-stale-seconds the documented "
-            "CLI lanes pass (runbook sections 8-13, 17); the composed command "
-            "is identical to the CLI's.</p><div class='cols'>"
+            "<p class='note'>The same --group, --reset-open-circuits, and "
+            "--lock-stale-seconds the documented CLI lanes pass (runbook "
+            "sections 8-13, 17), plus the standalone-dry-only "
+            "--exclude-tool-conditioned diagnostic; the composed command is "
+            "identical to the CLI's.</p><div class='cols'>"
             + text_field(
                 "group",
                 "--group",
@@ -2235,12 +2235,13 @@ class BuilderPageMixin:
             + "<label class='check'><input type='checkbox' "
             "name='exclude_tool_conditioned'"
             + (" checked" if exclude_tool_conditioned_checked else "")
+            + exclude_tool_conditioned_disabled
             + "><span><strong>Exclude tool-conditioned rows "
             "(--exclude-tool-conditioned)</strong> "
             "<span class='fieldhint'>drop source rows no Runner attacker can "
             "execute with a recorded exclusion count instead of failing the "
-            "request; on by default for dry/synthetic lanes (the synth "
-            "corpus carries such rows), off otherwise</span></span></label>"
+            "request; available only for a standalone dry run and on by default "
+            "there (the synth corpus carries such rows)</span></span></label>"
             + err("reset_open_circuits")
             + "<label class='check'><input type='checkbox' "
             "name='reset_open_circuits'"

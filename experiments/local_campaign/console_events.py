@@ -295,7 +295,7 @@ def append_event(
         "task_start": {"running"},
         "task_end": {"passed", "failed"},
         "task_skip": {"skipped"},
-        "campaign_end": {"passed", "failed"},
+        "campaign_end": {"passed", "failed", "blocked"},
         "campaign_stop": {"stopped"},
     }
     if normalized_status not in allowed_statuses[event]:

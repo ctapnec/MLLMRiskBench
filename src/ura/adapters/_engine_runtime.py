@@ -580,6 +580,29 @@ def _win_close_handle(handle: Any) -> None:
         pass
 
 
+def _signal_publish_in_progress(path: Path, *, worker_pid: int) -> bool:
+    """Recognize, but never accept, the worker's atomic-link publish window."""
+
+    if worker_pid <= 0:
+        return False
+    temporary = path.with_name(f".{path.name}.{worker_pid}.partial")
+    try:
+        marker = path.lstat()
+        staged = temporary.lstat()
+    except OSError:
+        return False
+    return (
+        stat.S_ISREG(marker.st_mode)
+        and stat.S_ISREG(staged.st_mode)
+        and marker.st_nlink == 2
+        and staged.st_nlink == 2
+        and marker.st_size == 1
+        and staged.st_size == 1
+        and (marker.st_dev, marker.st_ino, marker.st_mtime_ns)
+        == (staged.st_dev, staged.st_ino, staged.st_mtime_ns)
+    )
+
+
 class _PersistentEngineSession:
     """One sealed worker process reused for every operation in a matrix run."""
 
@@ -734,12 +757,16 @@ class _PersistentEngineSession:
         deadline = time.monotonic() + timeout
         while True:
             if path.exists():
-                _read_stable_file(
-                    path,
-                    label=f"{self._requirement.engine} session {phase} signal",
-                    max_bytes=1,
-                )
-                return
+                process = self._process
+                if process is None or not _signal_publish_in_progress(
+                    path, worker_pid=process.pid
+                ):
+                    _read_stable_file(
+                        path,
+                        label=f"{self._requirement.engine} session {phase} signal",
+                        max_bytes=1,
+                    )
+                    return
             process = self._process
             if process is None or process.poll() is not None:
                 status = None if process is None else process.returncode

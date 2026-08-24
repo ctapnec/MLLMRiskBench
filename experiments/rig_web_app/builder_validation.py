@@ -1798,6 +1798,15 @@ class BuilderValidationMixin:
             errors["exclude_tool_conditioned"] = (
                 "the tool-conditioned exclusion must be an explicit checkbox"
             )
+        elif (
+            params.get("exclude_tool_conditioned") == "on"
+            and mode != "dry_run"
+        ):
+            errors["exclude_tool_conditioned"] = (
+                "tool-conditioned row exclusion is available only for a "
+                "standalone dry run; probes, canaries, preflights, and measured "
+                "lanes must retain every selected cluster row"
+            )
         reset_open_circuits = params.get("reset_open_circuits", "")
         if reset_open_circuits not in {"", "on"}:
             errors["reset_open_circuits"] = (
@@ -2158,7 +2167,8 @@ class BuilderValidationMixin:
             ):
                 errors["sample_seed"] = (
                     "hosted paid lanes must record --sample-seed (identical "
-                    "subset across conditions)"
+                    "subset only for the same logical arm, converted corpus "
+                    "digest, limit and sample seed)"
                 )
             elif limit is not None and limit > 0 and not params.get(
                 "sample_seed", ""

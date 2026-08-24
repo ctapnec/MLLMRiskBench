@@ -191,12 +191,16 @@ or retaining a random-audit component. A small audit is reported as a
 limited-sample validity study with intervals. Kappa is diagnostic, not a stand-alone pass/fail
 certificate.
 
-The achieved audit is stored as `ura-human-audit/1.1`. It reports
+The achieved audit is stored as `ura-human-audit/1.2`. It reports
 `analysis_ready_real_run=true` and `complete_sample_conditional` only after the
 selected sample, ratings, adjudication, completed/labelled run inventories, and content digests
 pass the implemented checks. It always records
 `population_validity_claimed=false`; readiness means the achieved sample can be
 analysed, not that the cascade is validated for the full population.
+Each sample has exactly two distinct independently qualified raters. Those
+pairs may rotate across the sample, and inter-rater results include every pair
+that actually shares one or more rated items; raters are not required to rate
+items to which they were not assigned.
 Preparation and analysis deterministically derive the same coverage requirements
 from every observed common-eligible run/model/defense/attacker/source-policy/
 population arm, both overall and at its exact risk/modality cell. The requested
@@ -213,7 +217,7 @@ stop/escalation route. No minor is recruited; returned records use pseudonymous
 rater IDs and omit unnecessary personal data. Model visibility, when retained,
 is an explicit expectation-bias limitation.
 
-The separate source-task classification audit frame covers R-Judge/GPTGeoChat rows: whole-cluster export with the parser prediction, its validity flag and the source reference blinded; at least two independent raters answer the source task from the response text alone, and the analysis reports inter-rater agreement, adjudicated-human versus source-reference accuracy with a cluster bootstrap, human versus parser agreement, and the parser-valid fraction in `source_task_audit.json`. These are source-defined classification results, never common refusal/harmfulness evidence, and never calibrate the common judge cascade.
+The separate `ura-source-task-audit/2` classification audit frame covers R-Judge/GPTGeoChat rows: whole-cluster export with the parser prediction, its validity flag and the source reference blinded; exactly two distinct independent raters answer each source task from the response text alone, pairs may rotate between rows, and the analysis reports every observed pair with shared assignments, adjudicated-human versus source-reference accuracy with a cluster bootstrap, human versus parser agreement, and the parser-valid fraction in `source_task_audit.json`. These are source-defined classification results, never common refusal/harmfulness evidence, and never calibrate the common judge cascade.
 
 
 ## Failure and missingness semantics

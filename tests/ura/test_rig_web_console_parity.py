@@ -238,14 +238,22 @@ def test_build_page_exposes_group_exclusion_and_resume_controls(tmp_path: Path) 
 
 
 def test_exclusion_default_follows_the_mode_on_rerender(tmp_path: Path) -> None:
-    # A fresh page defaults the exclusion on (dry lane); a re-rendered
-    # submitted measured form without the box keeps it off; a re-rendered dry
-    # form keeps whatever the operator submitted.
+    # A fresh page defaults the exclusion on (dry lane); every measured render
+    # forces it disabled/off even if a stale submission carried the field; a
+    # re-rendered dry form keeps whatever the operator submitted.
     app = _app(tmp_path)
     try:
         measured = app._build_page(
             prefill={"mode": "measured", "corpora": "strongreject_official"},
             errors={"models": "fixture"},
+        ).decode("utf-8")
+        stale_measured = app._build_page(
+            prefill={
+                "mode": "measured",
+                "corpora": "strongreject_official",
+                "exclude_tool_conditioned": "on",
+            },
+            errors={"exclude_tool_conditioned": "fixture"},
         ).decode("utf-8")
         dry_off = app._build_page(prefill={"mode": "dry_run"}).decode("utf-8")
         dry_on = app._build_page(
@@ -254,8 +262,44 @@ def test_exclusion_default_follows_the_mode_on_rerender(tmp_path: Path) -> None:
     finally:
         app.close()
     assert " checked" not in _opening_tag(measured, "name='exclude_tool_conditioned'")
+    assert " disabled" in _opening_tag(measured, "name='exclude_tool_conditioned'")
+    assert " checked" not in _opening_tag(
+        stale_measured, "name='exclude_tool_conditioned'"
+    )
+    assert " disabled" in _opening_tag(
+        stale_measured, "name='exclude_tool_conditioned'"
+    )
     assert " checked" not in _opening_tag(dry_off, "name='exclude_tool_conditioned'")
+    assert " disabled" not in _opening_tag(dry_off, "name='exclude_tool_conditioned'")
     assert " checked" in _opening_tag(dry_on, "name='exclude_tool_conditioned'")
+    assert " disabled" not in _opening_tag(dry_on, "name='exclude_tool_conditioned'")
+
+
+def test_builder_forbids_tool_row_exclusion_outside_standalone_dry_run(
+    tmp_path: Path,
+) -> None:
+    app = _app(tmp_path)
+    try:
+        assert "exclude_tool_conditioned" not in app._validate_builder({
+            **_DRY_BASE,
+            "exclude_tool_conditioned": "on",
+        })
+        for mode in ("measured", "attestation_probe", "diagnostic_canary"):
+            errors = app._validate_builder({
+                **_DRY_BASE,
+                "mode": mode,
+                "exclude_tool_conditioned": "on",
+            })
+            assert "standalone dry run" in errors["exclude_tool_conditioned"]
+            assert "retain every selected cluster row" in errors[
+                "exclude_tool_conditioned"
+            ]
+    finally:
+        app.close()
+
+    assert "box.disabled=m!=='dry_run';box.checked=m==='dry_run'" in (
+        _BUILDER_SCRIPT
+    )
 
 
 def test_group_is_validated_against_the_cli_and_composed(tmp_path: Path) -> None:
@@ -542,7 +586,7 @@ def test_resume_and_lock_controls_compose_only_for_measured_lanes(
         })["exclude_tool_conditioned"]
         command, values, params = app._compose_from_builder({
             **measured, "reset_open_circuits": "on", "lock_stale_seconds": "3600",
-            "group": _RUNBOOK_GROUP, "exclude_tool_conditioned": "on",
+            "group": _RUNBOOK_GROUP,
         })
         assert values["--reset-open-circuits"] == "on"
         assert values["--lock-stale-seconds"] == "3600"
@@ -551,11 +595,16 @@ def test_resume_and_lock_controls_compose_only_for_measured_lanes(
         assert parsed.reset_open_circuits is True and parsed.lock_stale_seconds == 3600
         # The no-call preflight projection of the same lane never clears
         # durable circuit state, but keeps the grid-shaping flags.
-        projected = app._builder_preflight_values(values, output=tmp_path / "pre")
+        # Even a stale retained workflow cannot carry the standalone-dry-only
+        # exclusion into the purpose-changed --preflight-only child.
+        projected = app._builder_preflight_values(
+            {**values, "--exclude-tool-conditioned": "on"},
+            output=tmp_path / "pre",
+        )
         assert "--reset-open-circuits" not in projected
         assert projected["--preflight-only"] == "on"
         assert projected["--group"] == _RUNBOOK_GROUP
-        assert projected["--exclude-tool-conditioned"] == "on"
+        assert "--exclude-tool-conditioned" not in projected
         assert projected["--lock-stale-seconds"] == "3600"
         # The resume/diagnostic controls never change the grid identity the
         # preflight reuse check compares.
@@ -589,9 +638,47 @@ def test_playbook_run_matrix_steps_open_build(tmp_path: Path) -> None:
     assert "set from canary" not in playbook
     assert playbook.count("href='/build'>open Build") == 3
     # The no-call preflight still prefills the generic rig_check form with a
-    # complete, valid argument set (no shell placeholders).
-    assert "cmd=rig_check" in playbook and "--exclude-tool-conditioned" in playbook
+    # complete, valid argument set (no shell placeholders). rig_check always
+    # adds --preflight-only, so its form cannot carry the dry-run-only row
+    # exclusion; limit 1 avoids the tool-conditioned synth fixture rows.
+    assert "cmd=rig_check" in playbook
+    assert "--exclude-tool-conditioned" not in playbook
+    assert "--limit=1" in playbook
     assert "prefill" in playbook
+
+
+def test_run_page_rig_check_omits_and_rejects_row_exclusion(
+    tmp_path: Path,
+) -> None:
+    assert "--exclude-tool-conditioned" not in {
+        param.flag for param in COMMANDS["rig_check"].params
+    }
+    with pytest.raises(ValueError, match="unknown parameter"):
+        build_argv("rig_check", {"--exclude-tool-conditioned": "on"})
+
+    app = _app(tmp_path)
+    try:
+        page = app.handle("GET", "/commands")[2].decode("utf-8")
+        marker = "<input type='hidden' name='command' value='rig_check'>"
+        marker_at = page.index(marker)
+        card = page[page.rfind("<details", 0, marker_at):page.index(
+            "</details>", marker_at
+        )]
+        assert "name='--exclude-tool-conditioned'" not in card
+
+        status, _content_type, body = app.handle("POST", "/jobs", {
+            "command": "rig_check",
+            "--dry-run": "on",
+            "--corpora": "synth",
+            "--limit": "1",
+            "--exclude-tool-conditioned": "on",
+            "--out": str(app.results_root / "forbidden-preflight"),
+        })
+        assert status == 400
+        assert b"unknown parameter" in body
+        assert app.jobs == {}
+    finally:
+        app.close()
 
 
 # -- P1-04: receipt locators reach a non-dry matrix child -----------------------
@@ -636,14 +723,13 @@ def test_receipt_env_reaches_non_dry_matrix_children_only(
         monkeypatch.setattr(subprocess, "Popen", spy)
         status, location, _body = app.handle("POST", "/jobs", {
             "command": "rig_check", "--corpora": "synth", "--limit": "1",
-            "--exclude-tool-conditioned": "on",
             "--out": str(app.results_root / "preflight"),
         })
         assert status == 303
         app.stop_job(location.rsplit("/", 1)[1])
         status, location, _body = app.handle("POST", "/jobs", {
             "command": "rig_check", "--dry-run": "on", "--corpora": "synth",
-            "--limit": "1", "--exclude-tool-conditioned": "on",
+            "--limit": "1",
             "--out": str(app.results_root / "dry-preflight"),
         })
         assert status == 303

@@ -894,18 +894,12 @@ def test_pull_disk_guard_runs_before_request_and_tracks_reported_remaining(
 
 
 class _ControlService:
-    action_token = "fresh-token"
-
     def __init__(self) -> None:
         self.started = 0
         self.stopped = 0
         self.invalidated = 0
         self.closed = 0
         self.storage_checks = 0
-
-    def validate_action(self, token: str, confirmed: str) -> None:
-        if token != self.action_token or confirmed != "yes":
-            raise ValueError("bad token")
 
     def status(self) -> dict[str, object]:
         return {
@@ -962,7 +956,14 @@ def _app(tmp_path: Path, service: _ControlService) -> RigWebApp:
     )
 
 
-def test_routes_require_fresh_token_and_pull_sets_explicit_activity(
+def test_ollama_service_has_no_process_lifetime_action_token(tmp_path: Path) -> None:
+    service = OllamaService(tmp_path)
+
+    assert not hasattr(OllamaService, "validate_action")
+    assert not hasattr(service, "action_token")
+
+
+def test_routes_dispatch_without_action_token_and_pull_sets_explicit_activity(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     service = _ControlService()
@@ -977,26 +978,17 @@ def test_routes_require_fresh_token_and_pull_sets_explicit_activity(
     try:
         status, content_type, body = app.handle("GET", "/ollama/status")
         assert status == 200 and content_type.startswith("application/json")
-        assert "fresh-token" not in body.decode("utf-8")
-        rejected = app.handle(
-            "POST", "/ollama/start", {"confirm": "yes", "action_token": "stale"}
-        )
-        assert rejected[0] == 303 and "ollama_error=" in rejected[1]
-        assert service.started == 0
-        started = app.handle(
-            "POST",
-            "/ollama/start",
-            {"confirm": "yes", "action_token": "fresh-token"},
-        )
+        assert "action_token" not in body.decode("utf-8")
+        started = app.handle("POST", "/ollama/start", {})
         assert started[:2] == (303, "/build?ollama_state=external")
+        assert service.started == 1
+        stopped = app.handle("POST", "/ollama/stop", {})
+        assert stopped[:2] == (303, "/build?ollama_state=external")
+        assert service.stopped == 1
         pulled = app.handle(
             "POST",
             "/ollama/pull",
-            {
-                "confirm": "yes",
-                "action_token": "fresh-token",
-                "model": "fixture:latest",
-            },
+            {"model": "fixture:latest"},
         )
         assert pulled[:2] == (303, "/jobs/pull-job")
         assert service.storage_checks == 1
@@ -1088,7 +1080,7 @@ def test_build_renders_owned_boundaries_and_pull_controls_without_nested_forms(
         assert "action='/ollama/stop'" in page
         assert "action='/ollama/pull'" in page
         assert page.index("action='/ollama/start'") < page.index("id='builder'")
-        assert page.count("value='fresh-token'") == 3
+        assert "name='action_token'" not in page
         assert page.count("<div class='modelrow'") == page.count(
             "class='modelbox'"
         )
@@ -1102,6 +1094,9 @@ def test_build_renders_owned_boundaries_and_pull_controls_without_nested_forms(
         stop = stop[: stop.index("</form>")]
         pull = page[page.index("action='/ollama/pull'"):]
         pull = pull[: pull.index("</form>")]
+        assert "name='confirm'" not in start
+        assert "name='confirm'" not in stop
+        assert "name='confirm'" not in pull
         assert "<button type='submit' disabled>Start</button>" in start
         assert "type='submit' disabled>Stop</button>" in stop
         assert "type='submit' disabled>Pull model</button>" in pull

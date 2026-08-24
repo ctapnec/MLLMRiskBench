@@ -31,8 +31,9 @@ _CAMPAIGN_POLICY = (
     (
         "Current paid-API tier",
         "run a pre-registered cluster subsample (recorded "
-        "--limit and --sample-seed); the identical subset is used across every "
-        "hosted condition and comparisons restrict to that intersection",
+        "--limit and --sample-seed); conditions with the same logical arm, "
+        "converted corpus digest, limit and seed use the identical subset, and "
+        "comparisons restrict to that intersection",
     ),
     (
         "Separate full replication",
@@ -89,7 +90,8 @@ _PARAM_HELP: dict[str, str] = {
     "step; the per-model cost anchor comes from here.",
     "--exclude-tool-conditioned": "Drop tool-conditioned source rows (no Runner "
     "attacker can execute them yet) with a recorded exclusion count instead of "
-    "failing the whole request. Used by the offline smoke and this preflight.",
+    "failing the whole request. Valid only for a standalone offline dry run; "
+    "preflight and evidence-bearing routes reject it.",
     "--api": "Comma list of hosted target ids from api-targets.json (e.g. the "
     "Fable/Sol focal pair). Hosted lanes must carry an explicit --limit; "
     "--sample-seed is required only for a positive bounded selection.",
@@ -123,9 +125,9 @@ _PARAM_HELP: dict[str, str] = {
     "caps, deadline and approval. The current campaign authorizes hosted lanes "
     "only at their positive prospective bounds.",
     "--sample-seed": "Seed for each arm-scoped pseudorandom cluster shuffle "
-    "without replacement. Fix and record it so limits are nested and every "
-    "condition sees the identical within-arm subset (comparable, never pooled "
-    "across arms or tiers).",
+    "without replacement. Fix and record it so limits are nested and conditions "
+    "with the same logical arm, converted corpus digest, limit and seed see "
+    "the identical subset (comparable, never pooled across arms or tiers).",
     "--seeds": "Comma list of trajectory seeds (attack stochasticity), distinct "
     "from --sample-seed.",
     "--max-queries": "Max target queries per trajectory (turn budget upper bound).",
@@ -212,12 +214,18 @@ _PARAM_HELP: dict[str, str] = {
     "--minimum-unique-clusters": "Minimum source prompt/intent clusters per "
     "estimable transfer cell (>= 2).",
     "--bootstrap": "Cluster bootstrap resamples for the analysis CLIs.",
-    "--bootstrap-resamples": "Bootstrap resamples for the human-audit "
-    "analysis (this CLI's spelling of --bootstrap).",
-    "--allow-single-rater": "Exploratory only: accept a labels file with one "
-    "rater (agreement statistics need two or more).",
-    "--alpha": "Two-sided significance level in (0, 1).",
-    "--seed": "Deterministic analysis resampling seed.",
+    "--bootstrap-resamples": "Labels-analysis-only bootstrap resamples for "
+    "the human audit (this CLI's spelling of --bootstrap); invalid during "
+    "preparation.",
+    "--prepared-rating-form": "Exact controller-prepared blank two-rater form "
+    "that the completed labels must match without dropped or substituted rows.",
+    "--prepared-rating-form-sha256": "Authorized lowercase SHA-256 of the exact "
+    "prepared rating form.",
+    "--alpha": "Labels-analysis-only two-sided significance level in (0, 1).",
+    "--seed": "Labels-analysis-only deterministic resampling seed; preparation "
+    "uses a versioned seedless selector.",
+    "--allow-single-rater": "Exploratory labels analysis only. The resulting "
+    "report remains ineligible for evidence-ready human-audit claims.",
 }
 
 #: Builder-only human-scale spelling of ``--deadline-seconds`` for long local
@@ -634,9 +642,9 @@ class Command:
     params: tuple[CommandParam, ...]
 
 
-#: Shared surface for the matrix driver and its argv-forwarding preflight.
-#: One entry per real ``run_matrix`` argparse option (asserted by the
-#: interface-parity tests against ``run_matrix.build_parser()``).
+#: Complete matrix-driver surface. One entry per real ``run_matrix`` argparse
+#: option (asserted by interface-parity tests). The argv-forwarding preflight
+#: derives its subset below because it always adds ``--preflight-only``.
 _MATRIX_PARAMS = (
     CommandParam("--dry-run", "flag"),
     CommandParam("--preflight-only", "flag"),
@@ -700,6 +708,15 @@ _MATRIX_PARAMS = (
     CommandParam("--live-attestation-sha256", "str", repeat=True),
     CommandParam("--live-attestation-max-age-hours", "float"),
     CommandParam("--out", "path"),
+)
+
+# rig_check always appends --preflight-only. The standalone-dry-only exclusion
+# can therefore never be valid on that forwarding surface, even when the form
+# also supplies --dry-run.
+_RIG_CHECK_PARAMS = tuple(
+    param
+    for param in _MATRIX_PARAMS
+    if param.flag != "--exclude-tool-conditioned"
 )
 
 
@@ -781,8 +798,8 @@ def _commands() -> dict[str, Command]:
         Command(
             "rig_check",
             "experiments.rig_check",
-            "No-call preflight for a planned grid (same surface as run_matrix)",
-            _MATRIX_PARAMS,
+            "No-call preflight for a planned grid",
+            _RIG_CHECK_PARAMS,
         ),
         Command(
             "run_matrix",
@@ -859,6 +876,8 @@ def _commands() -> dict[str, Command]:
                 CommandParam("--prepare-source-task", "int"),
                 CommandParam("--labels", "path"),
                 CommandParam("--source-task-labels", "path"),
+                CommandParam("--prepared-rating-form", "path"),
+                CommandParam("--prepared-rating-form-sha256", "str"),
                 CommandParam("--output", "path"),
                 CommandParam("--acknowledge-sensitive-content", "flag"),
                 CommandParam("--allow-single-rater", "flag"),
@@ -1180,6 +1199,62 @@ def build_argv(
     unknown = sorted(set(values) - allowed)
     if unknown:
         raise ValueError(f"unknown parameter(s) for {command!r}: {unknown}")
+    if command == "human_audit":
+        populated = {
+            flag
+            for flag in (
+                "--prepare",
+                "--prepare-source-task",
+                "--labels",
+                "--source-task-labels",
+            )
+            if isinstance(values.get(flag), str) and values[flag].strip()
+        }
+        if len(populated) != 1:
+            raise ValueError("human_audit requires exactly one preparation or labels mode")
+        output = values.get("--output", "")
+        output = output.strip() if isinstance(output, str) else ""
+        prepared_path = values.get("--prepared-rating-form", "")
+        prepared_sha = values.get("--prepared-rating-form-sha256", "")
+        prepared_path = prepared_path.strip() if isinstance(prepared_path, str) else ""
+        prepared_sha = prepared_sha.strip() if isinstance(prepared_sha, str) else ""
+        labels_mode = bool(populated & {"--labels", "--source-task-labels"})
+        analysis_only = {
+            flag
+            for flag in (
+                "--allow-single-rater",
+                "--bootstrap-resamples",
+                "--alpha",
+                "--seed",
+            )
+            if isinstance(values.get(flag), str) and values[flag].strip()
+        }
+        if not labels_mode and analysis_only:
+            raise ValueError(
+                "human_audit preparation is deterministic and seedless; "
+                "analysis-only option(s) are invalid: "
+                + ", ".join(sorted(analysis_only))
+            )
+        if labels_mode and not output:
+            raise ValueError(
+                "human_audit labels modes require an explicit external --output"
+            )
+        if bool(prepared_path) != bool(prepared_sha):
+            raise ValueError(
+                "--prepared-rating-form and --prepared-rating-form-sha256 must "
+                "be provided together"
+            )
+        if not labels_mode and (prepared_path or prepared_sha):
+            raise ValueError(
+                "human_audit preparation modes cannot consume a prepared rating form"
+            )
+        if prepared_sha and (
+            len(prepared_sha) != 64
+            or any(character not in "0123456789abcdef" for character in prepared_sha)
+        ):
+            raise ValueError(
+                "--prepared-rating-form-sha256 must be 64 lowercase hex digits"
+            )
     argv = [sys.executable, "-m", entry.module]
     for param in entry.params:
         raws = _param_values(param, values)

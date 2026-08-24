@@ -1876,7 +1876,10 @@ def test_hosted_judge_sampling_and_data_transfer_are_fail_closed_in_builder(
             "ack_hosted_judge_data_transfer": "on",
             "limit": "1",
         })
-        assert "subset across conditions" in unseeded["sample_seed"]
+        assert (
+            "same logical arm, converted corpus digest, limit and sample seed"
+            in unseeded["sample_seed"]
+        )
 
         local_rules = app._validate_builder({
             **base,

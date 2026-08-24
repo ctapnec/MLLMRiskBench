@@ -180,9 +180,9 @@ SHA-256 over the UTF-8 bytes
 big-endian PRNG seed from its first eight bytes. The inventory positions are
 shuffled once without replacement, the first N are retained, and all selected
 sibling rows are restored to source order. Consequently limit 50 is contained
-in limit 100 for one arm and seed, while one numeric seed deliberately produces
-different permutations for different arms. `--limit 0` returns the exact full
-arm.
+in limit 100 for one arm and seed, while logical-arm identity contributes to
+seed derivation and gives each arm an independently scoped ordering.
+`--limit 0` returns the exact full arm.
 
 Population tiers. A prospective amendment dated 24 August 2026, fixed after
 source inventory and diagnostic feasibility work but before any measured Phase
@@ -208,6 +208,11 @@ clusters is complete but precision-limited. Rates from different tiers are not
 pooled. Comparisons use only exact cluster intersections and report achieved
 risk/policy support, completion, evaluator decision coverage and missingness.
 The design does not guarantee that every within-arm risk stratum is populated.
+The separate `--exclude-tool-conditioned` switch is not an experimental
+sampling policy. It is admitted only for the standalone offline dry-run smoke;
+preflight, acquisition, attestation, canary, and measured routes reject it.
+Thus no evidence-bearing cohort can discard a sibling row after whole-cluster
+selection.
 
 Because the hosted LLM judge is metered on every judged response, the all-local
 cohort scores through local stages only (the deterministic rules stage plus the

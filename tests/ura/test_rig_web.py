@@ -4913,13 +4913,19 @@ def _parser_options(parser: argparse.ArgumentParser) -> set[str]:
 
 
 def test_matrix_params_match_real_run_matrix_parser_exactly() -> None:
-    # The console's run_matrix/rig_check surface is one-to-one with the real
-    # parser: no phantom UI flag (the old --models bug) and no missing CLI
-    # option.  --help is the only exclusion.
+    # The Builder's run_matrix surface is one-to-one with the real parser: no
+    # phantom UI flag (the old --models bug) and no missing CLI option. --help
+    # is the only exclusion. rig_check forwards the same parser but always adds
+    # --preflight-only, so its generic form omits the standalone-dry-only row
+    # exclusion that can never be valid there.
+    from experiments.rig_web import COMMANDS
+
     real = _parser_options(run_matrix.build_parser()) - {"--help"}
     ui = {param.flag for param in _MATRIX_PARAMS}
     assert ui - real == set(), f"UI flags absent from run_matrix: {ui - real}"
     assert real - ui == set(), f"run_matrix flags absent from the UI: {real - ui}"
+    rig_check_ui = {param.flag for param in COMMANDS["rig_check"].params}
+    assert rig_check_ui == ui - {"--exclude-tool-conditioned"}
 
 
 def test_every_ui_command_parses_with_its_real_module_parser() -> None:
@@ -4963,7 +4969,7 @@ def test_every_ui_command_parses_with_its_real_module_parser() -> None:
             "--python": "/usr/bin/python", "--credential-env": "HF_TOKEN",
             "--timeout-seconds": "600",
         }],
-        "rig_check": [],  # forwards the run_matrix surface (asserted above)
+        "rig_check": [],  # forwards the valid preflight subset (asserted above)
         "run_matrix": [{
             "--dry-run": "on", "--corpora": "synth", "--attackers": "replay",
             "--judges": "rules", "--judge-model": "mock", "--limit": "2",
@@ -5023,14 +5029,22 @@ def test_every_ui_command_parses_with_its_real_module_parser() -> None:
         }],
         "human_audit": [
             {"--results": "runs/a", "--prepare": "40",
-             "--acknowledge-sensitive-content": "on",
-             "--output": "runs/a/audit.csv", "--seed": "1"},
-            {"--results": "runs/a", "--labels": "runs/a/labels.csv",
-             "--allow-single-rater": "on", "--bootstrap-resamples": "100",
-             "--alpha": "0.05", "--seed": "0"},
-            {"--results": "runs/a", "--prepare-source-task": "10",
              "--acknowledge-sensitive-content": "on"},
-            {"--results": "runs/a", "--source-task-labels": "runs/a/s.csv"},
+            {"--results": "runs/a", "--labels": "runs/a/exploratory.csv",
+             "--allow-single-rater": "on",
+             "--output": "runs/analysis/exploratory.json"},
+            {"--results": "runs/a", "--labels": "runs/a/labels.csv",
+             "--prepared-rating-form": "runs/prepared/common.csv",
+             "--prepared-rating-form-sha256": "a" * 64,
+             "--output": "runs/analysis/human_audit.json",
+             "--bootstrap-resamples": "100", "--alpha": "0.05", "--seed": "0"},
+            {"--results": "runs/a", "--prepare-source-task": "10",
+             "--acknowledge-sensitive-content": "on",
+             "--output": "runs/a/source-task.csv"},
+            {"--results": "runs/a", "--source-task-labels": "runs/a/s.csv",
+             "--prepared-rating-form": "runs/prepared/source.csv",
+             "--prepared-rating-form-sha256": "b" * 64,
+             "--output": "runs/analysis/source_task_audit.json"},
         ],
         "figures": [
             {"--synth": "on", "--out": "runs/figs"},
@@ -5114,6 +5128,103 @@ def test_every_ui_command_parses_with_its_real_module_parser() -> None:
             assert argv[2] == entry.module
             # The REAL parser must accept the generated vector.
             parser.parse_args(argv[3:])
+
+
+def test_human_audit_ui_matches_exploratory_and_bound_analysis_contract() -> None:
+    labels = {
+        "--results": "runs/runner-view",
+        "--labels": "runs/labels/common.csv",
+        "--output": "runs/analysis/human_audit.json",
+    }
+    exploratory = build_argv(
+        "human_audit", {**labels, "--allow-single-rater": "on"}
+    )
+    assert "--allow-single-rater" in exploratory
+    assert "--prepared-rating-form" not in exploratory
+    with pytest.raises(ValueError, match="64 lowercase hex"):
+        build_argv(
+            "human_audit",
+            {
+                **labels,
+                "--prepared-rating-form": "runs/prepared/common.csv",
+                "--prepared-rating-form-sha256": "ABC",
+            },
+        )
+
+    argv = build_argv(
+        "human_audit",
+        {
+            **labels,
+            "--prepared-rating-form": "runs/prepared/common.csv",
+            "--prepared-rating-form-sha256": "a" * 64,
+        },
+    )
+    assert "--allow-single-rater" not in argv
+    assert argv[-6:] == [
+        "--prepared-rating-form",
+        "runs/prepared/common.csv",
+        "--prepared-rating-form-sha256",
+        "a" * 64,
+        "--output",
+        "runs/analysis/human_audit.json",
+    ]
+
+    preparation = {
+        "--results": "runs/runner-view",
+        "--prepare": "20",
+        "--acknowledge-sensitive-content": "on",
+    }
+    preparation_argv = build_argv("human_audit", preparation)
+    assert "--output" not in preparation_argv
+    for flag, value in (
+        ("--allow-single-rater", "on"),
+        ("--bootstrap-resamples", "100"),
+        ("--alpha", "0.05"),
+        ("--seed", "0"),
+    ):
+        with pytest.raises(ValueError, match="deterministic and seedless"):
+            build_argv("human_audit", {**preparation, flag: value})
+
+    with pytest.raises(ValueError, match="explicit external --output"):
+        build_argv(
+            "human_audit",
+            {"--results": "runs/runner-view", "--labels": "runs/labels.csv"},
+        )
+    with pytest.raises(ValueError, match="must be provided together"):
+        build_argv(
+            "human_audit",
+            {
+                **labels,
+                "--prepared-rating-form": "runs/prepared/common.csv",
+            },
+        )
+
+
+def test_human_audit_command_form_hides_analysis_controls_during_preparation(
+    tmp_path: Path,
+) -> None:
+    app = _app(tmp_path)
+    try:
+        page = app._commands_page().decode("utf-8")
+    finally:
+        app.close()
+    marker = "<input type='hidden' name='command' value='human_audit'>"
+    marker_at = page.index(marker)
+    card = page[page.rfind("<details", 0, marker_at):page.index("</details>", marker_at)]
+    for flag in (
+        "--prepared-rating-form",
+        "--prepared-rating-form-sha256",
+        "--bootstrap-resamples",
+        "--alpha",
+        "--seed",
+        "--allow-single-rater",
+    ):
+        opening = _opening_tag(card, f"name='{flag}'")
+        input_at = card.index(opening)
+        field = card[card.rfind("<label", 0, input_at):input_at + len(opening)]
+        assert "data-human-audit-scope='analysis'" in field
+    assert "function syncHumanAudit(form)" in page
+    assert "control.disabled=!visible" in page
 
 
 def test_models_flag_resolves_registries_and_rejects_unknown(

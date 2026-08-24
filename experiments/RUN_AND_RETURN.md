@@ -268,8 +268,8 @@ python -m experiments.local_campaign.rebind \
   --project-receipt-sha256 <new-project-receipt-sha256> \
   --phase3-guard-tag <fresh-UTC-tag> \
   --set CONTROLLER_INSTALL_ROOT=/home/ura/.ura-controller-active \
-  --set RR_TEXT_EVIDENCE_ROOT=/mnt/stor/data/ura-work/runs/engineering/phase5-core-canaries-20260822T173216Z \
-  --set RR_IMAGE_EVIDENCE_ROOT=/mnt/stor/data/ura-work/runs/engineering/rr-image-probe-20260822T182300Z \
+  --set RR_TEXT_EVIDENCE_ROOT=/mnt/stor/data/ura-work/runs/engineering/phase5-core-canaries-20260824T012347Z \
+  --set RR_IMAGE_EVIDENCE_ROOT=/mnt/stor/data/ura-work/runs/engineering/rr-image-probe-20260824T012347Z \
   --set RR_VLLM_TAIL_EVIDENCE_ROOT=/mnt/stor/data/ura-work/runs/engineering/rr-token-tail-probe-5719b \
   --set RR_TRANSFORMERS_EVIDENCE_ROOT=/mnt/stor/data/ura-work/runs/engineering/rr-transformers-reference-probe-5719 \
   --set PROJECT_RECEIPT_BYTES=<positive-wc-c> \
@@ -1261,11 +1261,11 @@ positions once without replacement, takes the first N, and restores all selected
 sibling rows to source order. Thus the design is source-arm capped rather than
 proportional or risk-stratified. The prefixes are nested and overlapping, not
 disjoint partitions: for an unchanged arm and seed, limit 1 is contained in 50,
-which is contained in 100. The same numeric seed deliberately produces a
-different permutation for another arm. A source with fewer than N clusters is
-complete but precision-limited, and limit 0 returns the exact full arm. Fanout
-rows, repeated model conditions and turns do not increase the independent
-cluster count.
+which is contained in 100. Logical-arm identity contributes to seed derivation
+and gives each arm an independently scoped ordering. A source with fewer than N
+clusters is complete but precision-limited, and limit 0 returns the exact full
+arm. Fanout rows, repeated model conditions and turns do not increase the
+independent cluster count.
 
 The manifest retains the full-corpus digest, complete cluster inventory, exact
 selected cluster identities, converted-row fanout and achieved source-policy
@@ -1654,6 +1654,9 @@ python -m experiments.figures --synth --out runs/thesis/diagnostics/figure-check
 (`synth-4`, `synth-10`) with a recorded exclusion count so this diagnostic dry
 run completes; omitting it fails closed on the tool contract by design, since no
 Runner attacker can execute a tool-conditioned row yet.
+It is valid only on a standalone `--dry-run`; preflight, acquisition,
+attestation, canary, and measured routes reject it so they cannot partially
+retain a selected source cluster.
 
 ### 8.1 Explicit zero-human synthetic paths
 
@@ -3346,14 +3349,28 @@ The machine controller's only successful terminal is `human_only_blocked` with
 prepared, not that a rater exists, a qualification was passed, a label was
 created, or Gate 8 was met.
 
+The preparation selectors are deterministic, seedless, and without
+replacement. The common and source-task frames are whole-cluster selectors.
+The common frame binds
+`coverage_priority_then_stratum_round_robin_sha256_v1`, the source-task frame
+binds `coverage_priority_then_sha256_fill_v1`. The disjoint qualification set
+binds
+`disjoint_risk_modality_behavior_coverage_then_sha256_lexicographic_representative_fill_v1`
+and emits one lexicographic-minimum `sample_key` representative from each
+selected cluster, rather than every sibling row. Terminal validation replays
+that exact selection against the bound Phase 7 Runner view. The
+`--bootstrap-resamples`, `--alpha`, and `--seed` flags are label-analysis
+controls and are rejected by either preparation mode.
+
 ```bash
 python -m experiments.human_audit \
-  --results runs/thesis/runner --prepare 400 \
-  --output runs/thesis/human-audit-sample.csv \
+  --results "$URA_WORK/runs/thesis/runner" --prepare 400 \
+  --output "$URA_WORK/runs/thesis/human-audit-sample.csv" \
   --acknowledge-sensitive-content
 ```
 
-Before main labelling, create `runs/thesis/human-rater-qualification.md` with
+Before main labelling, create
+`$URA_WORK/runs/thesis/human-rater-qualification.md` with
 pseudonymous rater IDs, language competence, graduate-level study or equivalent
 relevant safety/moderation experience, conflict disclosures, training date,
 qualification-set digest, per-dimension score and adjudicator. Use an
@@ -3362,19 +3379,22 @@ must reach at least 80% agreement on every dimension; after reviewed retraining,
 one repeat is permitted. Do not silently lower the threshold or select raters on
 the final sample.
 
-Use at least two independently qualified raters. Adjudicate every non-unanimous
-composite or dimension; unanimous ratings need no adjudication. Rate refusal,
-harmfulness, convincingness, and specificity separately under the exact source
-policy and dimension rubric. Resolve and verify every media reference before
-rating. Keep all join columns. Raters must not see automated labels or metric
-outputs; model identity remains visible in the current export and must be
-reported as a limitation. The deterministic coverage-priority selector claims
+Assign exactly two distinct independently qualified raters to each exported
+row. Pairs may rotate between rows; the analysis reports every rater pair that
+shares one or more assigned items and does not require a rater to label
+unassigned rows. Adjudicate every non-unanimous composite or dimension;
+unanimous ratings need no adjudication. Rate refusal, harmfulness,
+convincingness, and specificity separately under the exact source policy and
+dimension rubric. Resolve and verify every media reference before rating. Keep
+all join columns. Raters must not see automated labels or metric outputs; model
+identity remains visible in the current export and must be reported as a
+limitation. The deterministic coverage-priority selector claims
 no equal-probability inclusion probabilities and uses no inverse-probability
 weights. Retain a probability-sampled component if any uncertainty- or
 disagreement-enriched quota is added and population interpretation is intended.
 `--prepare 400` means 400 source clusters, not 400 CSV rows. Every selected
 sibling model/seed/run response is exported. Before assigning work, record the
-reported exported-row count `R`, reserve at least `2R` independent item-ratings,
+reported exported-row count `R`, schedule exactly `2R` independent item ratings,
 and budget additional adjudication for every non-unanimous composite or
 dimension. If that realized load is infeasible, choose a smaller cluster count
 prospectively and rerun preparation; do not discard sibling rows after export.
@@ -3383,10 +3403,31 @@ After adjudication:
 
 ```bash
 PHASE8_AUDIT_RUNNER_VIEW=/absolute/path/from-the-bound-phase7-runner-view-receipt
+PHASE8_ANALYSIS_ROOT="$URA_WORK/runs/thesis/human-audit-analysis"
+PHASE8_COMMON_PREPARED_FORM=/absolute/path/to/prepared/human-audit-rating-form.csv
+PHASE8_COMMON_PREPARED_FORM_SHA256="$(sha256sum "$PHASE8_COMMON_PREPARED_FORM" | awk '{print $1}')"
+mkdir -p "$PHASE8_ANALYSIS_ROOT"
 python -m experiments.human_audit \
   --results "$PHASE8_AUDIT_RUNNER_VIEW" \
-  --labels runs/thesis/human-audit-labelled.csv
+  --labels "$URA_WORK/runs/thesis/human-audit-labelled.csv" \
+  --prepared-rating-form "$PHASE8_COMMON_PREPARED_FORM" \
+  --prepared-rating-form-sha256 "$PHASE8_COMMON_PREPARED_FORM_SHA256" \
+  --output "$PHASE8_ANALYSIS_ROOT/human_audit.json"
 ```
+
+The success-only Runner view is sealed and admits no additional file. Both
+human analysis reports therefore use create-only outputs in the separate
+Phase 8 analysis root; never write a report into the bound Phase 7 view.
+The common report schema is exactly `ura-human-audit/1.2`; the separate
+source-task report schema is exactly `ura-source-task-audit/2`. Older schemas
+are not Gate 8 evidence.
+The prepared-form path and digest are a pair. In Gate 8 analysis they bind the
+completed CSV to the exact controller-created blank form: header order,
+immutable cell content and row multiplicity must match, every prepared sample
+must remain present, and each sample must contain exactly two distinct non-empty
+`rater_id` values. Those two IDs may differ between samples. The report records
+the verified prepared-form descriptor and agreement for every observed pair
+with shared items.
 
 Until this succeeds, judge validity is pending. Small strata are pilot evidence
 with cluster-aware intervals, not validated rankings. Kappa is diagnostic and is
@@ -3408,22 +3449,28 @@ flag, and the source reference, and includes whole clusters:
 
 ```bash
 python -m experiments.human_audit \
-  --results runs/thesis/runner --prepare-source-task 50 \
+  --results "$URA_WORK/runs/thesis/runner" --prepare-source-task 50 \
   --acknowledge-sensitive-content \
-  --output runs/thesis/source-task-audit-sample.csv
+  --output "$URA_WORK/runs/thesis/source-task-audit-sample.csv"
 ```
 
-At least two qualified raters label each row independently with the exact
+Exactly two distinct qualified raters label each row independently with the exact
 `task_label_vocabulary` and a parse-status judgment, then adjudicate. Analysis
 re-joins every labelled row to the exact exported prompt/response content and
-writes `source_task_audit.json` with inter-rater agreement, adjudicated-human
+writes `source_task_audit.json` with agreement for every observed rater pair
+with shared assignments, adjudicated-human
 versus source-reference accuracy (cluster-bootstrap interval), adjudicated
 versus parser agreement/confusion, and the parser-valid fraction:
 
 ```bash
+PHASE8_SOURCE_PREPARED_FORM=/absolute/path/to/prepared/source-task-audit-rating-form.csv
+PHASE8_SOURCE_PREPARED_FORM_SHA256="$(sha256sum "$PHASE8_SOURCE_PREPARED_FORM" | awk '{print $1}')"
 python -m experiments.human_audit \
   --results "$PHASE8_AUDIT_RUNNER_VIEW" \
-  --source-task-labels runs/thesis/source-task-audit-labelled.csv
+  --source-task-labels "$URA_WORK/runs/thesis/source-task-audit-labelled.csv" \
+  --prepared-rating-form "$PHASE8_SOURCE_PREPARED_FORM" \
+  --prepared-rating-form-sha256 "$PHASE8_SOURCE_PREPARED_FORM_SHA256" \
+  --output "$PHASE8_ANALYSIS_ROOT/source_task_audit.json"
 ```
 
 These results are source-task classification evidence on the source's own
@@ -3628,14 +3675,14 @@ The explicit corpus aliases reuse those broad-root cells;
 they do not trigger or require duplicate focal model calls:
 
 ```bash
-export HUMAN_AUDIT_SHA256="$(sha256sum runs/thesis/runner/human_audit.json | awk '{print $1}')"
+export HUMAN_AUDIT_SHA256="$(sha256sum "$URA_WORK/runs/thesis/human-audit-analysis/human_audit.json" | awk '{print $1}')"
 python -m experiments.figures \
   --results runs/thesis/runner \
   --left-model "$FABLE" --right-model "$SOL" \
   --strongreject-corpus strongreject_official \
   --mmsafety-corpus mmsafety_official \
   --mossbench-corpus mossbench_official \
-  --human-audit runs/thesis/runner/human_audit.json \
+  --human-audit "$URA_WORK/runs/thesis/human-audit-analysis/human_audit.json" \
   --human-audit-sha256 "$HUMAN_AUDIT_SHA256" \
   --out runs/thesis/figures
 ```
@@ -3848,12 +3895,19 @@ only `cyberseceval_*` arms. Build
 also exposes the documented `--group` (default: the CLI default
 `model,source,risk,effective_modality,expected_behavior,attacker,source_policy_id,source_policy_version`,
 the value every lane above passes; narrower groupings are rejected at the
-Level-2 export), `--exclude-tool-conditioned` (on by default for dry lanes,
-off otherwise), the measured-only `--reset-open-circuits` (never a default),
+Level-2 export), `--exclude-tool-conditioned` (available and on by default only
+for a standalone dry run; rejected otherwise), the measured-only
+`--reset-open-circuits` (never a default),
 and the optional `--lock-stale-seconds`. Non-dry `run_matrix`/`rig_check`
 children inherit the console process's exported `URA_PROJECT_REVISION_*` /
 `URA_SOURCE_CONFORMANCE_*` receipt locators exactly as the campaign shell
-supplies them; dry lanes launch with them scrubbed. The Acquisition exports
+supplies them; dry lanes launch with them scrubbed.
+
+The generic Run-page `rig_check` form omits `--exclude-tool-conditioned`
+because that forwarder always adds `--preflight-only`; use the Build standalone
+dry-run mode for the exclusion smoke.
+
+The Acquisition exports
 (`export_jalmbench`, `export_vlsbench`, `export_aggregators`) run as ordinary
 Run-page forms; `export_aggregators` additionally receives the console's
 process-held `HF_TOKEN` (the gated section 3.4 sources), the same exception

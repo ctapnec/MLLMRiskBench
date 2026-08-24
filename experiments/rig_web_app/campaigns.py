@@ -15,7 +15,7 @@ import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from datetime import datetime
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Any
 
 from ura.strict_json import strict_json_loads
@@ -23,6 +23,12 @@ from ura.strict_json import strict_json_loads
 
 _CAMPAIGN_SCHEMA = "ura-engineering-campaign/1"
 _ROUTE_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,127}\Z")
+_ARTIFACT_LINKS_SCHEMA = "ura-engineering-campaign-artifact-links/1"
+_ARTIFACT_LINKS_FILE = "artifact-links.json"
+_ARTIFACT_LINK_LABEL = re.compile(r"[A-Za-z0-9][A-Za-z0-9 ._()-]{0,79}\Z")
+_ARTIFACT_LINK_KINDS = frozenset({"directory", "file"})
+_MAX_ARTIFACT_LINKS = 16
+_MAX_ARTIFACT_LINK_PATH = 2048
 _MAX_CAMPAIGNS = 20
 _MAX_DIRECTORY_ENTRIES = 500
 _MAX_MARKER_BYTES = 64 * 1024
@@ -77,6 +83,62 @@ def _bounded_file(path: Path, limit: int) -> tuple[bytes | None, str | None]:
     if len(data) > limit:
         return None, f"larger than {limit // 1024} KiB"
     return data, None
+
+
+def _bounded_single_link_json(path: Path, limit: int) -> dict[str, Any] | None:
+    """Read one immutable small JSON object through a stable file snapshot."""
+
+    descriptor: int | None = None
+    try:
+        if path.is_symlink():
+            return None
+        named_before = path.lstat()
+        if (
+            not stat.S_ISREG(named_before.st_mode)
+            or named_before.st_nlink != 1
+            or not 0 < named_before.st_size <= limit
+        ):
+            return None
+        descriptor = os.open(
+            path,
+            os.O_RDONLY
+            | getattr(os, "O_BINARY", 0)
+            | getattr(os, "O_NOFOLLOW", 0),
+        )
+        opened = os.fstat(descriptor)
+        identity = lambda item: (  # noqa: E731 - compact stat identity
+            item.st_mode,
+            item.st_dev,
+            item.st_ino,
+            item.st_nlink,
+            item.st_size,
+            item.st_mtime_ns,
+        )
+        if not stat.S_ISREG(opened.st_mode) or identity(opened) != identity(
+            named_before
+        ):
+            return None
+        chunks: list[bytes] = []
+        remaining = opened.st_size
+        while remaining:
+            chunk = os.read(descriptor, min(64 * 1024, remaining))
+            if not chunk:
+                return None
+            chunks.append(chunk)
+            remaining -= len(chunk)
+        after = os.fstat(descriptor)
+        named_after = path.lstat()
+        if identity(opened) != identity(after) or identity(after) != identity(
+            named_after
+        ):
+            return None
+        value = strict_json_loads(b"".join(chunks).decode("utf-8"))
+    except (OSError, UnicodeError, ValueError, TypeError, RecursionError):
+        return None
+    finally:
+        if descriptor is not None:
+            os.close(descriptor)
+    return value if isinstance(value, dict) else None
 
 
 @dataclass(frozen=True)
@@ -571,9 +633,126 @@ class EngineeringCampaign:
     hard_stop_hours: float | None
     named_session_liveness_verified: bool
     logs: tuple[tuple[str, str, Path], ...]
+    artifact_links: tuple[tuple[str, str], ...] = ()
+    artifact_link_error: str = ""
 
     def runtime_seconds(self) -> float:
         return max(0.0, (self.ended_at or time.time()) - self.started_at)
+
+
+def _engineering_artifact_links(
+    directory: Path,
+    *,
+    marker_campaign_id: object,
+) -> tuple[tuple[tuple[str, str], ...], str]:
+    """Load one generic, bounded set of retained engineering-artifact links."""
+
+    descriptor_path = directory / _ARTIFACT_LINKS_FILE
+    descriptor_present = descriptor_path.exists() or descriptor_path.is_symlink()
+    if not descriptor_present:
+        return (), ""
+    value = _bounded_single_link_json(descriptor_path, _MAX_MARKER_BYTES)
+    if (
+        not isinstance(value, dict)
+        or set(value) != {"schema", "campaign_id", "links"}
+        or value.get("schema") != _ARTIFACT_LINKS_SCHEMA
+        or value.get("campaign_id") != directory.name
+        or value.get("campaign_id") != marker_campaign_id
+    ):
+        return (), "Engineering artifact-link descriptor is invalid."
+    raw_links = value.get("links")
+    if (
+        not isinstance(raw_links, list)
+        or not raw_links
+        or len(raw_links) > _MAX_ARTIFACT_LINKS
+    ):
+        return (), "Engineering artifact-link descriptor is invalid."
+
+    try:
+        results = directory.parent.parent.resolve(strict=True)
+    except OSError:
+        return (), "Engineering artifact-link descriptor is invalid."
+
+    links: list[tuple[str, str]] = [
+        (
+            "Link descriptor",
+            f"engineering/{directory.name}/{_ARTIFACT_LINKS_FILE}",
+        )
+    ]
+    labels: set[str] = set()
+    paths: set[str] = set()
+    for raw in raw_links:
+        if not isinstance(raw, dict) or set(raw) != {
+            "label",
+            "path",
+            "kind",
+            "required",
+        }:
+            return (), "Engineering artifact-link descriptor is invalid."
+        label = raw.get("label")
+        path_value = raw.get("path")
+        kind = raw.get("kind")
+        required = raw.get("required")
+        if (
+            not isinstance(label, str)
+            or _ARTIFACT_LINK_LABEL.fullmatch(label) is None
+            or label in labels
+            or not isinstance(path_value, str)
+            or not path_value
+            or len(path_value) > _MAX_ARTIFACT_LINK_PATH
+            or not path_value.isprintable()
+            or "\\" in path_value
+            or not isinstance(kind, str)
+            or kind not in _ARTIFACT_LINK_KINDS
+            or type(required) is not bool
+        ):
+            return (), "Engineering artifact-link descriptor is invalid."
+        relative = PurePosixPath(path_value)
+        if (
+            not relative.parts
+            or relative.is_absolute()
+            or relative.as_posix() != path_value
+            or any(part in {"", ".", ".."} or ":" in part for part in relative.parts)
+            or path_value in paths
+        ):
+            return (), "Engineering artifact-link descriptor is invalid."
+        labels.add(label)
+        paths.add(path_value)
+        current = results
+        target_missing = False
+        for index, part in enumerate(relative.parts):
+            current /= part
+            try:
+                metadata = current.lstat()
+                is_alias = stat.S_ISLNK(metadata.st_mode) or current.is_junction()
+            except FileNotFoundError:
+                target_missing = True
+                break
+            except (OSError, ValueError, RuntimeError):
+                return (), "Engineering artifact-link descriptor is invalid."
+            if is_alias:
+                return (), "Engineering artifact-link descriptor is invalid."
+            try:
+                resolved = current.resolve(strict=True)
+            except (OSError, ValueError, RuntimeError):
+                return (), "Engineering artifact-link descriptor is invalid."
+            is_target = index == len(relative.parts) - 1
+            if (
+                resolved != current
+                or results not in resolved.parents
+                or (not is_target and not stat.S_ISDIR(metadata.st_mode))
+            ):
+                return (), "Engineering artifact-link descriptor is invalid."
+        if target_missing:
+            if required:
+                return (), "Engineering artifact-link descriptor is invalid."
+            continue
+        if (kind == "directory" and not stat.S_ISDIR(metadata.st_mode)) or (
+            kind == "file" and not stat.S_ISREG(metadata.st_mode)
+        ):
+            return (), "Engineering artifact-link descriptor is invalid."
+        links.append((label, path_value))
+    return tuple(links), ""
 
 
 def _load_campaign(
@@ -959,9 +1138,15 @@ def _load_campaign(
         )
         if not path.is_symlink() and path.is_file()
     )
+    marker_campaign_id = marker.get("campaign_id")
+    campaign_id = str(marker_campaign_id or directory.name)
+    artifact_links, artifact_link_error = _engineering_artifact_links(
+        directory,
+        marker_campaign_id=marker_campaign_id,
+    )
     return EngineeringCampaign(
         route_id=directory.name,
-        campaign_id=str(marker.get("campaign_id") or directory.name),
+        campaign_id=campaign_id,
         directory=directory,
         state=state,
         display_state=display_state,
@@ -1000,6 +1185,8 @@ def _load_campaign(
         hard_stop_hours=hard_stop_hours,
         named_session_liveness_verified=session_observed is True,
         logs=logs,
+        artifact_links=artifact_links,
+        artifact_link_error=artifact_link_error,
     )
 
 

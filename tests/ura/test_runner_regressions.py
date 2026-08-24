@@ -537,6 +537,88 @@ def test_cluster_selection_retains_interleaved_siblings_in_source_order() -> Non
     assert selected == [records[index] for index in expected_indices]
 
 
+@pytest.mark.parametrize(
+    "route_args",
+    (
+        (),
+        ("--preflight-only",),
+        ("--attestation-probe",),
+        ("--diagnostic-canary", "--dry-run"),
+    ),
+)
+def test_tool_conditioned_row_exclusion_is_standalone_dry_run_only(
+    route_args: tuple[str, ...],
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    with pytest.raises(SystemExit):
+        run_matrix.main([
+            *route_args,
+            "--exclude-tool-conditioned",
+            "--corpora", "synth",
+            "--attackers", "replay",
+            "--judges", "rules,llm",
+            "--limit", "1",
+            "--out", str(tmp_path / "forbidden-row-exclusion"),
+        ])
+
+    error = capsys.readouterr().err
+    assert "valid only for a standalone diagnostic --dry-run" in error
+    assert "must retain every selected cluster row" in error
+    assert not (tmp_path / "forbidden-row-exclusion").exists()
+
+
+def test_rig_check_forwarder_rejects_tool_row_exclusion_before_artifacts(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    from experiments import rig_check
+
+    output = tmp_path / "forbidden-rig-check"
+    with pytest.raises(SystemExit):
+        rig_check.main([
+            "--dry-run",
+            "--exclude-tool-conditioned",
+            "--corpora", "synth",
+            "--attackers", "replay",
+            "--judges", "rules,llm",
+            "--limit", "1",
+            "--out", str(output),
+        ])
+
+    error = capsys.readouterr().err
+    assert "valid only for a standalone diagnostic --dry-run" in error
+    assert "preflight" in error
+    assert not output.exists()
+
+
+def test_acquisition_plan_route_rejects_tool_row_exclusion_before_artifacts(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    private_plans = tmp_path / "private-plans"
+    private_plans.mkdir()
+    output = tmp_path / "forbidden-acquisition-plan"
+    with pytest.raises(SystemExit):
+        run_matrix.main([
+            "--dry-run",
+            "--exclude-tool-conditioned",
+            "--model-acquisition-plan-only",
+            "--model-acquisition-plan-dir", str(private_plans.resolve()),
+            "--corpora", "synth",
+            "--attackers", "replay",
+            "--judges", "rules,llm",
+            "--limit", "1",
+            "--out", str(output),
+        ])
+
+    error = capsys.readouterr().err
+    assert "valid only for a standalone diagnostic --dry-run" in error
+    assert "acquisition" in error
+    assert not output.exists()
+    assert list(private_plans.iterdir()) == []
+
+
 def test_real_corpus_runs_directly_and_records_source_identity(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, project_revision_args,
 ) -> None:

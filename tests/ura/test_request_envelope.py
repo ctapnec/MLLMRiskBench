@@ -125,6 +125,19 @@ def test_envelope_fixes_only_exact_requested_whole_arm_cross_product() -> None:
     assert envelope["limitations"]["compatibility_evaluated"] is False
 
 
+def test_request_envelope_rejects_unbound_row_exclusion_switch() -> None:
+    project, harness, driver = _source_bindings()
+    request = {**_request(), "exclude_tool_conditioned": True}
+
+    with pytest.raises(ValueError, match="invalid field inventory"):
+        build_request_envelope(
+            request=request,
+            project_revision=project,
+            harness_source=harness,
+            driver_source=driver,
+        )
+
+
 def test_envelope_loader_is_canonical_strict_and_content_addressed(
     tmp_path: Path,
 ) -> None:

@@ -3528,8 +3528,8 @@ def load_corpus_with_audit(
     Runner attacker can execute yet) are dropped from the executed sample with a
     recorded ``excluded_tool_conditioned_*`` count, while
     ``full_converted_corpus_sha256`` and ``total_*`` still describe the complete
-    selection. This lets the offline smoke and console preflight run without
-    weakening the fail-closed default (which rejects the whole request).
+    selection. This lets the standalone offline smoke run without weakening the
+    fail-closed default (which rejects the whole request).
     """
     if limit < 0:
         raise ValueError("limit must be non-negative")
@@ -3784,7 +3784,7 @@ def build_parser() -> argparse.ArgumentParser:
         help=(
             "drop tool-conditioned source rows (which no Runner attacker can "
             "execute yet) with a recorded exclusion count instead of failing the "
-            "whole request; use for the offline smoke and console preflight"
+            "whole request; valid only for a standalone offline dry-run smoke"
         ),
     )
     ap.add_argument(
@@ -4193,6 +4193,18 @@ def _main(argv=None) -> int:
         if args.attestation_probe
         else "measured_run"
     )
+    if args.exclude_tool_conditioned and (
+        not args.dry_run
+        or args.diagnostic_canary
+        or args.preflight_only
+        or args.attestation_probe
+        or args.model_acquisition_plan_only
+    ):
+        ap.error(
+            "--exclude-tool-conditioned is valid only for a standalone "
+            "diagnostic --dry-run; preflight, acquisition, attestation, "
+            "canary, and measured routes must retain every selected cluster row"
+        )
 
     if bool(args.project_revision) != bool(args.project_revision_sha256):
         ap.error(

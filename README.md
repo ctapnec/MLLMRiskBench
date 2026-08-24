@@ -86,6 +86,9 @@ The `synth` fixture ships two tool-conditioned rows (`synth-4`, `synth-10`) that
 no Runner attacker can execute yet; `--exclude-tool-conditioned` drops them with
 a recorded exclusion count so the offline smoke completes. Without that flag the
 same command fails closed on the tool contract by design.
+The switch is admitted only on a standalone diagnostic `--dry-run`. Preflight,
+acquisition, attestation, canary, and measured routes reject it so no
+evidence-bearing sample can drop a sibling row from a selected source cluster.
 
 The rig's local-vLLM environment is installed from the checked-in extra rather
 than from separate version variables:
@@ -564,9 +567,9 @@ hashes the UTF-8 bytes `ura-corpus-cluster-order-v1\0<arm>\0<sample_seed>`, uses
 the first eight SHA-256 bytes as an unsigned big-endian PRNG seed, shuffles the
 inventory positions once, takes the first N, and restores all selected sibling
 rows to source order. It is not a disjoint partition: the 50-cluster prefix is
-contained in the 100-cluster prefix for the same arm and seed, while the same
-numeric seed deliberately produces a different permutation for a different
-arm. The current
+contained in the 100-cluster prefix for the same arm and seed, while the
+logical-arm identity contributes to seed derivation and gives each arm an
+independently scoped ordering. The current
 pre-measurement local campaign fixes seed 0 and uses 100 clusters per source arm
 for core lanes and 50 for extended bridge/Ollama lanes. The cap is applied per
 logical source arm and is not within-arm risk stratification; reports retain
@@ -623,9 +626,11 @@ terminal.
 ## Human validity and post-experiment analysis
 
 The automated-label-blinded, model-visible human audit samples complete source
-clusters, uses at least two independently qualified raters under the declared
-language/experience, conflict, training, and out-of-sample pilot criteria,
-requires adjudication for every
+clusters and assigns exactly two distinct independently qualified raters to
+each sampled response under the declared language/experience, conflict,
+training, and out-of-sample pilot criteria. Rater pairs may rotate between
+responses; agreement is reported for every pair that shares one or more items.
+The audit requires adjudication for every
 non-unanimous composite or dimension, keeps refusal, harmfulness,
 convincingness, and specificity separate, and reports inter-rater as well as
 automated-versus-consensus agreement with cluster-aware uncertainty.
@@ -647,11 +652,13 @@ common-eligibility strata. They report decision coverage, treat violation as the
 harmful adverse event and over-refusal as the benign adverse event, and label
 their intervals as conditional on defined bootstrap replicates. Cross-stratum
 pooled values are explicitly composition-dependent diagnostics.
-The resulting `ura-human-audit/1.1` artifact becomes
+The resulting `ura-human-audit/1.2` artifact becomes
 `complete_sample_conditional` and `analysis_ready_real_run=true` only when the
 achieved labels and run binding pass every integrity check. This permits
 sample-conditional analysis; it does not claim population-wide judge validity.
 Cohen's kappa is diagnostic and must be accompanied by support and intervals.
+The separate source-task report uses the exact `ura-source-task-audit/2`
+schema; older common or source-task report schemas are not Gate 8 evidence.
 
 Paired effects, judge sensitivity, kappa, transfer, and figures are computed
 only from completion-validated recorded artifacts and make no new target calls.

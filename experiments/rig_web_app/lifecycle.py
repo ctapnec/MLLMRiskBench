@@ -1971,6 +1971,10 @@ class LifecycleMixin:
                 "--dry-run",
                 "--diagnostic-canary",
                 "--attestation-probe",
+                # The projected child is always --preflight-only. A stale
+                # reviewed value must not carry the standalone-dry-only row
+                # exclusion across that purpose boundary.
+                "--exclude-tool-conditioned",
                 "--ack-hosted-judge-data-transfer",
                 "--execution-scope-id",
                 "--live-attestation-max-age-hours",
@@ -3628,11 +3632,7 @@ class LifecycleMixin:
                     ).encode("utf-8"),
                 )
             if method == "POST" and path in {"/ollama/start", "/ollama/stop"}:
-                data = dict(form or {})
                 try:
-                    self.ollama.validate_action(
-                        data.get("action_token", ""), data.get("confirm", "")
-                    )
                     status = (
                         self.ollama.start()
                         if path.endswith("/start")
@@ -3644,9 +3644,6 @@ class LifecycleMixin:
             if method == "POST" and path == "/ollama/pull":
                 data = dict(form or {})
                 try:
-                    self.ollama.validate_action(
-                        data.get("action_token", ""), data.get("confirm", "")
-                    )
                     model = validate_ollama_tag(data.get("model", ""))
                     if self.ollama.status().get("api_reachable") is not True:
                         raise ValueError("Ollama loopback daemon is not running")

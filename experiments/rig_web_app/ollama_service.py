@@ -8,12 +8,10 @@ is never stopped by the console.
 
 from __future__ import annotations
 
-import hmac
 import errno
 import json
 import os
 import re
-import secrets
 import shutil
 import signal
 import subprocess
@@ -647,13 +645,6 @@ class OllamaService:
         self._last_error = ""
         self._roster_cache: dict[str, object] | None = None
         self._roster_cache_at = 0.0
-        self.action_token = secrets.token_urlsafe(32)
-
-    def validate_action(self, token: str, confirmed: str) -> None:
-        """Require the route-specific action capability and confirmation."""
-
-        if confirmed != "yes" or not hmac.compare_digest(token, self.action_token):
-            raise ValueError("Ollama action requires a fresh confirmation token")
 
     def invalidate_roster(self) -> None:
         with self._lock:

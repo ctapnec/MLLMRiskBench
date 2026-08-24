@@ -2118,14 +2118,40 @@ def test_loader_rejects_completion_from_a_different_request_envelope(
 def _write_direct_human_audit(
     path: Path, run_ids: list[str], *, completed_run_ids: list[str] | None = None,
     primary_effect_sensitivity: dict[str, Any] | None = None,
+    prepared_bound: bool = True,
+    prepared_name: str = "human-audit-rating-form.csv",
 ) -> str:
+    prepared_path = path.parent / prepared_name
+    if not prepared_path.exists():
+        prepared_path.write_text("sample_key,rater_id,label\n", encoding="utf-8")
+    prepared_descriptor = {
+        "path": str(prepared_path.resolve(strict=True)),
+        "bytes": prepared_path.stat().st_size,
+        "sha256": hashlib.sha256(prepared_path.read_bytes()).hexdigest(),
+    }
+    checks = {
+        name: True for name in figure_results._HUMAN_AUDIT_READINESS_CHECKS
+    }
+    checks["prepared_rating_form_bound"] = prepared_bound
+    selection_policy = dict(figure_results._HUMAN_AUDIT_SELECTION_POLICY)
     artifact = {
-        "schema_version": "ura-human-audit/1.1",
-        "analysis_ready_real_run": True,
+        "schema_version": "ura-human-audit/1.2",
+        "analysis_ready_real_run": prepared_bound,
         "analysis_readiness": {
-            "status": "complete_sample_conditional",
-            "checks": {"multi_rater": True, "integrity": True},
+            "status": (
+                "complete_sample_conditional" if prepared_bound else "incomplete"
+            ),
+            "checks": checks,
             "population_validity_claimed": False,
+        },
+        "prepared_rating_form": (
+            prepared_descriptor if prepared_bound else None
+        ),
+        "achieved_audit_design": {"selection_policy": selection_policy},
+        "audit": {
+            "achieved_selection_coverage": {
+                "selection_policy": dict(selection_policy),
+            },
         },
         "results_identity": {
             "completed_run_ids": sorted(completed_run_ids or run_ids),
@@ -2137,6 +2163,37 @@ def _write_direct_human_audit(
         artifact["primary_effect_sensitivity"] = primary_effect_sensitivity
     path.write_text(json.dumps(artifact), encoding="utf-8")
     return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def test_human_audit_loader_uses_content_bindings_not_basenames(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        figure_results, "validate_analysis_source_identity", lambda value: value,
+    )
+    results = tmp_path / "runner"
+    results.mkdir()
+    analysis = tmp_path / "analysis"
+    analysis.mkdir()
+    audit = analysis / "renamed-human-report.json"
+    digest = _write_direct_human_audit(
+        audit,
+        [],
+        prepared_name="renamed-blank-rating-form.csv",
+    )
+
+    loaded, identity = figure_results._load_human_audit(
+        results,
+        audit,
+        expected_sha256=digest,
+    )
+
+    assert loaded["schema_version"] == "ura-human-audit/1.2"
+    assert loaded["prepared_rating_form"]["path"].endswith(
+        "renamed-blank-rating-form.csv"
+    )
+    assert identity["sha256"] == digest
 
 
 def _direct_primary_sensitivity(
@@ -2263,7 +2320,9 @@ def test_direct_figure_loader_emits_exact_sample_conditional_inventory(
             "strongreject-" + model + "-replay",
             "strongreject-" + model + "-crescendo",
         })
-    audit = tmp_path / "human_audit.json"
+    analysis_root = tmp_path / "phase8-analysis"
+    analysis_root.mkdir()
+    audit = analysis_root / "human_audit.json"
     digest = _write_direct_human_audit(
         audit, sorted(run_ids),
         primary_effect_sensitivity=_direct_primary_sensitivity(
@@ -2428,5 +2487,120 @@ def test_direct_figure_loader_rejects_human_audit_digest_mismatch(
             right_model="provider:right",
             human_audit=audit,
             human_audit_sha256="0" * 64,
+            n_resamples=10,
+        )
+
+
+def test_direct_figure_loader_rejects_unbound_prepared_rating_form(
+    tmp_path: Path,
+) -> None:
+    audit = tmp_path / "human_audit.json"
+    digest = _write_direct_human_audit(audit, [], prepared_bound=False)
+    with pytest.raises(ValueError, match="not integrity-complete"):
+        figure_results.load_postrun_results(
+            tmp_path,
+            left_model="provider:left",
+            right_model="provider:right",
+            human_audit=audit,
+            human_audit_sha256=digest,
+            n_resamples=10,
+        )
+
+
+def test_direct_figure_loader_rejects_legacy_global_rater_readiness(
+    tmp_path: Path,
+) -> None:
+    current_names = figure_results._HUMAN_AUDIT_READINESS_CHECKS
+    assert {
+        "exactly_two_distinct_raters_per_sample",
+        "all_observed_overlapping_rater_pairs_reported",
+    }.issubset(current_names)
+    assert {
+        "full_rater_coverage",
+        "all_inter_rater_pairs_reported",
+    }.isdisjoint(current_names)
+
+    audit = tmp_path / "human_audit.json"
+    _write_direct_human_audit(audit, [])
+    artifact = json.loads(audit.read_text(encoding="utf-8"))
+    checks = artifact["analysis_readiness"]["checks"]
+    checks["full_rater_coverage"] = checks.pop(
+        "exactly_two_distinct_raters_per_sample"
+    )
+    checks["all_inter_rater_pairs_reported"] = checks.pop(
+        "all_observed_overlapping_rater_pairs_reported"
+    )
+    audit.write_text(json.dumps(artifact), encoding="utf-8")
+    digest = hashlib.sha256(audit.read_bytes()).hexdigest()
+
+    with pytest.raises(ValueError, match="not integrity-complete"):
+        figure_results.load_postrun_results(
+            tmp_path,
+            left_model="provider:left",
+            right_model="provider:right",
+            human_audit=audit,
+            human_audit_sha256=digest,
+            n_resamples=10,
+        )
+
+
+def test_direct_figure_loader_rejects_false_prepared_form_descriptor(
+    tmp_path: Path,
+) -> None:
+    audit = tmp_path / "human_audit.json"
+    _write_direct_human_audit(audit, [])
+    artifact = json.loads(audit.read_text(encoding="utf-8"))
+    artifact["prepared_rating_form"]["sha256"] = "0" * 64
+    audit.write_text(json.dumps(artifact), encoding="utf-8")
+    digest = hashlib.sha256(audit.read_bytes()).hexdigest()
+    with pytest.raises(ValueError, match="descriptor differs"):
+        figure_results.load_postrun_results(
+            tmp_path,
+            left_model="provider:left",
+            right_model="provider:right",
+            human_audit=audit,
+            human_audit_sha256=digest,
+            n_resamples=10,
+        )
+
+
+def test_direct_figure_loader_rejects_unversioned_selection_claim(
+    tmp_path: Path,
+) -> None:
+    audit = tmp_path / "human_audit.json"
+    _write_direct_human_audit(audit, [])
+    artifact = json.loads(audit.read_text(encoding="utf-8"))
+    artifact["achieved_audit_design"]["selection_policy"]["algorithm"] = (
+        "unversioned-selection"
+    )
+    audit.write_text(json.dumps(artifact), encoding="utf-8")
+    digest = hashlib.sha256(audit.read_bytes()).hexdigest()
+    with pytest.raises(ValueError, match="versioned selector policy"):
+        figure_results.load_postrun_results(
+            tmp_path,
+            left_model="provider:left",
+            right_model="provider:right",
+            human_audit=audit,
+            human_audit_sha256=digest,
+            n_resamples=10,
+        )
+
+
+def test_direct_figure_loader_rejects_superseded_human_audit_schema(
+    tmp_path: Path,
+) -> None:
+    audit = tmp_path / "human_audit.json"
+    _write_direct_human_audit(audit, [])
+    artifact = json.loads(audit.read_text(encoding="utf-8"))
+    artifact["schema_version"] = "ura-human-audit/1.1"
+    audit.write_text(json.dumps(artifact), encoding="utf-8")
+    digest = hashlib.sha256(audit.read_bytes()).hexdigest()
+    with pytest.raises(ValueError, match="not integrity-complete"):
+        figure_results.load_postrun_results(
+            tmp_path,
+            left_model="provider:left",
+            right_model="provider:right",
+            human_audit=audit,
+            human_audit_sha256=digest,
             n_resamples=10,
         )

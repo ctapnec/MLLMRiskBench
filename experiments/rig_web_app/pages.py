@@ -118,8 +118,11 @@ class PagesMixin:
                 {
                     "--dry-run": "on",
                     "--corpora": "synth",
-                    "--exclude-tool-conditioned": "on",
-                    "--limit": "12",
+                    # rig_check always adds --preflight-only, so the
+                    # standalone-dry-only row exclusion is not valid here.
+                    # One synth row keeps this convenience vector executable
+                    # without selecting either tool-conditioned fixture row.
+                    "--limit": "1",
                 },
             ),
             # run_matrix is Build-only (the generic Run form rejects it), so
@@ -644,11 +647,24 @@ class PagesMixin:
             help_text = param.help or _PARAM_HELP.get(param.flag, "")
             title = f" title='{html.escape(help_text)}'" if help_text else ""
             hint = f"<span class='fieldhint'>{html.escape(help_text)}</span>" if help_text else ""
+            scope = ""
+            if name == "human_audit":
+                if param.flag in {
+                    "--prepared-rating-form",
+                    "--prepared-rating-form-sha256",
+                    "--bootstrap-resamples",
+                    "--alpha",
+                    "--seed",
+                    "--allow-single-rater",
+                }:
+                    scope = " data-human-audit-scope='analysis' hidden"
+                elif param.flag == "--acknowledge-sensitive-content":
+                    scope = " data-human-audit-scope='preparation' hidden"
             fields.append(
-                f"<label{title}>{html.escape(param.flag)}{required} "
+                f"<label{title}{scope}>{html.escape(param.flag)}{required} "
                 f"<span class='kind'>{html.escape(param.kind)}</span>"
                 "</label>"
-                f"<div class='fieldwrap'>{self._param_input(param)}{hint}</div>"
+                f"<div class='fieldwrap'{scope}>{self._param_input(param)}{hint}</div>"
             )
         haystack = html.escape(f"{name} {entry.description}".lower())
         return (
@@ -776,6 +792,20 @@ class PagesMixin:
             "(val==='on'||val==='true'||val==='1'||val==='yes');}"
             "else{field.value=val;}});"
             "det.scrollIntoView({behavior:'smooth',block:'center'});}}"
+            "function syncHumanAudit(form){"
+            "function filled(name){var field=form.querySelector('[name=\"'+name+'\"]');"
+            "return !!(field&&String(field.value||'').trim());}"
+            "var analysis=filled('--labels')||filled('--source-task-labels');"
+            "var preparation=filled('--prepare')||filled('--prepare-source-task');"
+            "form.querySelectorAll('[data-human-audit-scope]').forEach(function(node){"
+            "var scope=node.getAttribute('data-human-audit-scope');"
+            "var visible=(scope==='analysis'&&analysis)||(scope==='preparation'&&preparation);"
+            "node.hidden=!visible;node.querySelectorAll('input,select,textarea').forEach("
+            "function(control){control.disabled=!visible;});});}"
+            "document.querySelectorAll('form.cmd input[name=command][value=human_audit]')"
+            ".forEach(function(command){var form=command.closest('form');"
+            "syncHumanAudit(form);form.addEventListener('input',function(){syncHumanAudit(form);});"
+            "form.addEventListener('change',function(){syncHumanAudit(form);});});"
             "})();</script>"
         )
         return _page("Run a command", body, active="Run")
@@ -1411,6 +1441,25 @@ class PagesMixin:
             + f"<p><a href='/artifacts?path={quote(relative)}'>"
             "Browse all retained campaign files</a></p></div>"
         )
+        artifact_links = "".join(
+            "<li><a href='/artifacts?path="
+            + quote(relative)
+            + "'>"
+            + html.escape(label)
+            + "</a></li>"
+            for label, relative in campaign.artifact_links
+        )
+        related_artifacts = (
+            "<div class='card'><h2>Related retained artifacts</h2>"
+            + (
+                f"<div class='notice red'>{html.escape(campaign.artifact_link_error)}</div>"
+                if campaign.artifact_link_error
+                else f"<ul>{artifact_links}</ul>"
+            )
+            + "</div>"
+            if campaign.artifact_links or campaign.artifact_link_error
+            else ""
+        )
         last_detail = (
             "<div class='card'><h2>" + _icon("terminal") + "Latest activity</h2>"
             f"<pre>{html.escape(campaign.last_detail)}</pre></div>"
@@ -1459,6 +1508,7 @@ class PagesMixin:
             + details
             + task_table
             + last_detail
+            + related_artifacts
             + logs
             + refresh
         )

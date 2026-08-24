@@ -99,6 +99,68 @@ def test_tmux_controller_registration_is_visible_and_reaches_terminal(
     assert terminal.pending_tasks == 0
 
 
+def test_human_only_campaign_is_terminal_blocked_not_running(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from experiments.rig_web_app import campaigns as campaigns_module
+
+    monkeypatch.setattr(
+        campaigns_module,
+        "_named_session_liveness",
+        lambda specs: {spec: False for spec in specs},
+    )
+    work, control = _roots(tmp_path)
+    start_campaign(
+        work_root=work,
+        control_root=control,
+        campaign_id=control.name,
+        release_commit="a" * 40,
+        evidence_class="local_campaign_control",
+        hard_stop_hours=24,
+        planned_tasks=("machine-preparation",),
+        tmux_socket="ura-phase8-human-audit",
+        tmux_session="ura-phase8-human-audit",
+        at="2026-08-23T12:00:00Z",
+    )
+    append_event(
+        work_root=work,
+        control_root=control,
+        event="task_start",
+        task="machine-preparation",
+        status="running",
+        detail="prepared-rating-forms",
+        at="2026-08-23T12:00:01Z",
+    )
+    append_event(
+        work_root=work,
+        control_root=control,
+        event="task_end",
+        task="machine-preparation",
+        status="passed",
+        detail="prepared-rating-forms",
+        at="2026-08-23T12:00:02Z",
+    )
+    append_event(
+        work_root=work,
+        control_root=control,
+        event="campaign_end",
+        task="bootstrap",
+        status="blocked",
+        detail="human_only",
+        at="2026-08-23T12:00:03Z",
+    )
+
+    terminal = load_engineering_campaign(work / "runs", control.name)
+    assert terminal is not None
+    assert terminal.state == "failed"
+    assert terminal.display_state == "blocked"
+    assert terminal.state_detail == "human_only"
+    assert terminal.succeeded_tasks == 1
+    assert terminal.active_tasks == ()
+    assert terminal.pending_tasks == 0
+
+
 def test_registration_is_create_only_and_cannot_escape_engineering(tmp_path: Path) -> None:
     work, control = _roots(tmp_path)
     kwargs = {

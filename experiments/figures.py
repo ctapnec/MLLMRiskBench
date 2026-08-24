@@ -351,7 +351,7 @@ def main(argv: list[str] | None = None) -> int:
     )
     parser.add_argument(
         "--human-audit", type=Path,
-        help="achieved human_audit.json directly under --results",
+        help="achieved content-bound human_audit.json artifact",
     )
     parser.add_argument(
         "--human-audit-sha256",

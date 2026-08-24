@@ -92,6 +92,33 @@ _FIGURE_NAMES = (
     "fig-v-policy-proxies.png",
     "fig-v-adaptivity.png",
 )
+_HUMAN_AUDIT_READINESS_CHECKS = frozenset({
+    "prepared_rating_form_bound",
+    "multi_rater",
+    "exactly_two_distinct_raters_per_sample",
+    "all_observed_overlapping_rater_pairs_reported",
+    "whole_cluster_sample",
+    "deterministic_selection_replayed",
+    "versioned_selector_policy",
+    "all_dimensions_present_and_resolved",
+    "completion_integrity",
+    "grid_accounted",
+    "source_identity_validated",
+    "single_exact_judge_configuration",
+    "real_run",
+    "zero_unexplained_exclusions",
+    "complete_consensus_or_adjudication",
+    "observed_common_arm_endpoints_covered",
+})
+_HUMAN_AUDIT_SELECTION_POLICY = {
+    "algorithm": "coverage_priority_then_stratum_round_robin_sha256_v1",
+    "deterministic": True,
+    "randomized": False,
+    "without_replacement": True,
+    "whole_cluster": True,
+}
+
+
 def _valid_sha256(value: Any) -> bool:
     return (
         isinstance(value, str)
@@ -1725,29 +1752,79 @@ def _decision_binding(points: list[dict[str, Any]]) -> dict[str, Any]:
 def _load_human_audit(
     results: Path, path: Path, *, expected_sha256: str,
 ) -> tuple[dict[str, Any], dict[str, Any]]:
-    results = results.resolve()
+    if not results.resolve(strict=True).is_dir():
+        raise ValueError("measured figure --results must be a directory")
     path = Path(path)
-    if path.name != "human_audit.json" or path.resolve().parent != results:
-        raise ValueError(
-            "measured figures require human_audit.json directly under --results"
-        )
     artifact = read_bound_json(path, expected_sha256=expected_sha256)
     identity = artifact.pop("_artifact_identity")
     readiness = artifact.get("analysis_readiness")
     checks = readiness.get("checks") if isinstance(readiness, dict) else None
+    prepared = artifact.get("prepared_rating_form")
+    design = artifact.get("achieved_audit_design")
+    audit = artifact.get("audit")
+    coverage = (
+        audit.get("achieved_selection_coverage")
+        if isinstance(audit, dict) else None
+    )
     if (
-        artifact.get("schema_version") != "ura-human-audit/1.1"
+        artifact.get("schema_version") != "ura-human-audit/1.2"
         or artifact.get("analysis_ready_real_run") is not True
         or not isinstance(readiness, dict)
         or readiness.get("status") != "complete_sample_conditional"
         or readiness.get("population_validity_claimed") is not False
         or not isinstance(checks, dict)
-        or not checks
+        or set(checks) != _HUMAN_AUDIT_READINESS_CHECKS
         or not all(value is True for value in checks.values())
     ):
         raise ValueError(
             "human audit is not integrity-complete, real-run, and sample-conditional"
         )
+    if (
+        not isinstance(design, dict)
+        or design.get("selection_policy") != _HUMAN_AUDIT_SELECTION_POLICY
+        or not isinstance(coverage, dict)
+        or coverage.get("selection_policy") != _HUMAN_AUDIT_SELECTION_POLICY
+    ):
+        raise ValueError("human audit lacks the exact versioned selector policy")
+    if not isinstance(prepared, dict) or set(prepared) != {
+        "path", "bytes", "sha256",
+    }:
+        raise ValueError("human audit lacks an exact prepared rating-form descriptor")
+    prepared_path = Path(str(prepared.get("path", "")))
+    prepared_bytes = prepared.get("bytes")
+    if (
+        not prepared_path.is_absolute()
+        or type(prepared_bytes) is not int
+        or prepared_bytes <= 0
+        or not _valid_sha256(prepared.get("sha256"))
+        or prepared_path.is_symlink()
+        or not prepared_path.is_file()
+    ):
+        raise ValueError("human audit prepared rating-form descriptor is invalid")
+    try:
+        resolved_prepared = prepared_path.resolve(strict=True)
+        before = prepared_path.stat()
+        payload = prepared_path.read_bytes()
+        after = prepared_path.stat()
+    except OSError as exc:
+        raise ValueError("human audit prepared rating form cannot be verified") from exc
+    identity_fields = lambda value: (  # noqa: E731 - compact stat projection
+        value.st_mode,
+        value.st_dev,
+        value.st_ino,
+        value.st_size,
+        value.st_mtime_ns,
+        value.st_ctime_ns,
+        value.st_nlink,
+    )
+    if (
+        resolved_prepared != prepared_path
+        or before.st_nlink != 1
+        or identity_fields(before) != identity_fields(after)
+        or len(payload) != prepared_bytes
+        or hashlib.sha256(payload).hexdigest() != prepared["sha256"]
+    ):
+        raise ValueError("human audit prepared rating-form descriptor differs")
     validate_analysis_source_identity(artifact.get("analysis_source"))
     return artifact, identity
 

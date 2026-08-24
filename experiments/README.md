@@ -337,6 +337,10 @@ response artifacts remain authoritative.
   separately projected full-corpus cohort with caps covering the complete grid;
   the current hosted campaign lanes retain their positive prospective limits
   (runbook section 5.2).
+- `--exclude-tool-conditioned` is not a sampling mode. It is admitted only for
+  the standalone offline dry-run smoke and records its diagnostic row
+  exclusions. Preflight, acquisition, attestation, canary, and measured routes
+  reject it, so every evidence-bearing selected cluster retains all siblings.
 - Persisted local media use `@media-root/<index>/<relative-path>` and rebind to
   the same ordered roots and relative layout on resume.
 - Missing media, unsupported modality, absent source evaluator, target/transport
@@ -367,8 +371,8 @@ conditional on source-model success and an identical rendered input. Adaptive
 trajectories use conversation endpoints and the declared challenge horizon.
 Source-native outcomes and common proxies are reported separately.
 
-The human audit hides automated labels, keeps model identity visible, requires
-at least two independent raters plus adjudication, and labels refusal,
+The human audit hides automated labels, keeps model identity visible, assigns
+exactly two distinct independent raters per row plus adjudication, and labels refusal,
 harmfulness, convincingness, and specificity separately. A small or selectively
 sampled audit is limited-sample evidence with intervals, not population-wide
 judge validation. Its deterministic whole-cluster selector must cover every

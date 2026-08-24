@@ -753,6 +753,95 @@ def test_timeout_terminates_the_complete_worker_group(
     assert events == ["tree"]
 
 
+def test_wait_signal_defers_exact_worker_atomic_link_publish(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    class _Process:
+        pid = 24680
+        returncode = None
+
+        @staticmethod
+        def poll() -> None:
+            return None
+
+    target = tmp_path / "ready.done"
+    staged = tmp_path / f".{target.name}.{_Process.pid}.partial"
+    staged.write_bytes(b"1")
+    os.link(staged, target)
+    assert target.stat().st_nlink == 2
+
+    session = object.__new__(runtime._PersistentEngineSession)
+    session._requirement = runtime.ENGINE_RUNTIME_REQUIREMENTS["pyrit"]
+    session._process = _Process()
+    waits: list[float] = []
+
+    def finish_publish(seconds: float) -> None:
+        waits.append(seconds)
+        staged.unlink()
+
+    monkeypatch.setattr(runtime.time, "sleep", finish_publish)
+
+    session._wait_signal(target, timeout=1, phase="admission")
+
+    assert waits == [0.01]
+    assert target.read_bytes() == b"1"
+    assert target.stat().st_nlink == 1
+
+
+def test_wait_signal_rejects_mismatched_hardlink(tmp_path: Path) -> None:
+    class _Process:
+        pid = 24680
+        returncode = None
+
+        @staticmethod
+        def poll() -> None:
+            return None
+
+    target = tmp_path / "ready.done"
+    unrelated = tmp_path / "unrelated"
+    unrelated.write_bytes(b"1")
+    os.link(unrelated, target)
+
+    session = object.__new__(runtime._PersistentEngineSession)
+    session._requirement = runtime.ENGINE_RUNTIME_REQUIREMENTS["pyrit"]
+    session._process = _Process()
+
+    with pytest.raises(ExternalEngineError, match="not one bounded regular file"):
+        session._wait_signal(target, timeout=1, phase="admission")
+
+
+def test_wait_signal_never_accepts_persistent_worker_atomic_link(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    class _Process:
+        pid = 24680
+        returncode = None
+
+        @staticmethod
+        def poll() -> None:
+            return None
+
+    target = tmp_path / "ready.done"
+    staged = tmp_path / f".{target.name}.{_Process.pid}.partial"
+    staged.write_bytes(b"1")
+    os.link(staged, target)
+
+    session = object.__new__(runtime._PersistentEngineSession)
+    session._requirement = runtime.ENGINE_RUNTIME_REQUIREMENTS["pyrit"]
+    session._process = _Process()
+    terminations: list[str] = []
+    ticks = iter((10.0, 11.0))
+    monkeypatch.setattr(runtime.time, "monotonic", lambda: next(ticks))
+    monkeypatch.setattr(
+        session, "_terminate_process", lambda: terminations.append("tree")
+    )
+
+    with pytest.raises(ExternalEngineError, match="timed out"):
+        session._wait_signal(target, timeout=0.5, phase="admission")
+
+    assert terminations == ["tree"]
+
+
 def test_cleanup_terminates_group_even_after_worker_leader_exits(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -801,6 +890,83 @@ def test_cleanup_terminates_group_even_after_worker_leader_exits(
         )
         session._terminate_process()
         assert len(events) == 1 and events[0][0] == 12345
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Windows Job Object lifecycle")
+def test_windows_job_empty_queries_active_processes_until_zero(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import ctypes
+
+    active_counts = [2, 0]
+
+    class _Query:
+        argtypes: object = None
+        restype: object = None
+
+        def __call__(self, _handle, info_class, information, _size, _returned) -> int:
+            assert info_class == 1
+            information._obj.ActiveProcesses = active_counts.pop(0)
+            return 1
+
+    query = _Query()
+
+    class _Kernel32:
+        QueryInformationJobObject = query
+
+    monkeypatch.setattr(ctypes, "WinDLL", lambda *_args, **_kwargs: _Kernel32())
+
+    assert runtime._win_wait_job_empty(object(), timeout_seconds=1)
+    assert active_counts == []
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Windows Job Object lifecycle")
+def test_windows_job_empty_fails_closed_when_accounting_query_fails(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import ctypes
+
+    class _Query:
+        argtypes: object = None
+        restype: object = None
+
+        @staticmethod
+        def __call__(_handle, info_class, _information, _size, _returned) -> int:
+            assert info_class == 1
+            return 0
+
+    class _Kernel32:
+        QueryInformationJobObject = _Query()
+
+    monkeypatch.setattr(ctypes, "WinDLL", lambda *_args, **_kwargs: _Kernel32())
+
+    assert not runtime._win_wait_job_empty(object(), timeout_seconds=1)
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Windows Job Object lifecycle")
+def test_windows_job_empty_fails_closed_when_active_processes_outlive_deadline(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import ctypes
+
+    class _Query:
+        argtypes: object = None
+        restype: object = None
+
+        @staticmethod
+        def __call__(_handle, info_class, information, _size, _returned) -> int:
+            assert info_class == 1
+            information._obj.ActiveProcesses = 1
+            return 1
+
+    class _Kernel32:
+        QueryInformationJobObject = _Query()
+
+    ticks = iter((10.0, 11.0))
+    monkeypatch.setattr(ctypes, "WinDLL", lambda *_args, **_kwargs: _Kernel32())
+    monkeypatch.setattr(runtime.time, "monotonic", lambda: next(ticks))
+
+    assert not runtime._win_wait_job_empty(object(), timeout_seconds=0.5)
 
 
 @pytest.mark.skipif(os.name != "nt", reason="Windows Job Object lifecycle")

@@ -526,9 +526,12 @@ Dry composition discards real API/local selections because the runner uses
 `MockTarget`, and local roster modality metadata is narrowed to its supported
 text/image path so audio mismatches fail UI/CLI parity.
 
-Build composes every `run_matrix`/`rig_check` flag the documented lanes use
-except the `--models` shorthand (CLI/`rig_check`-only; Build emits the explicit
-`--api`/`--local` split). `ideator` is available only through its verified
+Build composes every `run_matrix` flag the documented lanes use except the
+`--models` shorthand (CLI/`rig_check`-only; Build emits the explicit
+`--api`/`--local` split). The generic `rig_check` form forwards the matrix
+surface except `--exclude-tool-conditioned`, because `rig_check` always adds
+`--preflight-only` and the exclusion is standalone-dry-run-only. `ideator` is
+available only through its verified
 precomputed replay panel: the operator supplies an exact
 `ura-ideator-seed-pairs/1` manifest and its digest, and every declared PNG path
 and digest is validated under the results root. The reviewed manifest and image
@@ -538,8 +541,9 @@ copies; the live generation path remains disabled. `purplellama` admits only
 in the page. Build also exposes
 `--group` (default: the CLI default
 `model,source,risk,effective_modality,expected_behavior,attacker,source_policy_id,source_policy_version`,
-the grouping the Level-2 export requires), `--exclude-tool-conditioned` (on by
-default for dry lanes), the measured-only `--reset-open-circuits`, and
+the grouping the Level-2 export requires), `--exclude-tool-conditioned`
+(available and on by default only for a standalone dry run), the measured-only
+`--reset-open-circuits`, and
 `--lock-stale-seconds`. Non-dry `run_matrix`/`rig_check` children inherit the
 console process's exported `URA_PROJECT_REVISION_*`/`URA_SOURCE_CONFORMANCE_*`
 receipt locators; dry lanes launch with them scrubbed.
@@ -602,8 +606,8 @@ locator/token spelling, and writes only the sanitized stream to Job logs. The
 safe canonical plan/receipt evidence copied into the result tree contains no
 locator or credential.
 
-Ollama lifecycle actions use a process-local confirmation token. The API origin
-is literal loopback HTTP, request/response sizes and timeouts are bounded,
+Ollama lifecycle actions dispatch directly to the state-gated service. The API
+origin is literal loopback HTTP, request/response sizes and timeouts are bounded,
 redirects and proxies are disabled, response opens and reads obey hard monotonic
 deadlines, and `ollama serve` is launched with a fixed argument vector and a
 dedicated process group. Status distinguishes absent, external, starting,

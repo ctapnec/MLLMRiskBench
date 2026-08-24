@@ -174,7 +174,7 @@ def test_phase8_does_not_promote_non_request_files_by_generic_count(
 def test_phase8_capacity_reserves_exact_twenty_disjoint_clusters(
     phase8: ModuleType,
 ) -> None:
-    assert phase8.INPUT_SCHEMA == "ura-phase8-human-audit-inputs/2"
+    assert phase8.INPUT_SCHEMA == "ura-phase8-human-audit-inputs/3"
     exact = phase8.plan_phase8_capacity(
         common_available_unique_clusters=21,
         source_task_available_unique_clusters=1,

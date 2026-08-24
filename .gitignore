@@ -59,6 +59,7 @@ coverage.xml
 /.codex-test-tmp-*/
 /.codex-release-*.bundle
 /tmp*/
+/.campaign/
 cover/
 
 # Translations

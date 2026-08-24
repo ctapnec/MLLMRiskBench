@@ -949,13 +949,12 @@ var prev=document.getElementById('buildpreview');
 if(prev){prev.textContent=parts.join(' ');}}
 form.addEventListener('change',refresh);
 form.addEventListener('input',refresh);
-// The tool-conditioned exclusion defaults ON for dry/synthetic lanes (the
-// synth corpus carries tool-conditioned rows no Runner attacker can execute)
-// and OFF otherwise; switching the mode re-applies that default, and the
-// operator may still toggle the box afterwards.
+// The tool-conditioned exclusion is an offline-smoke-only diagnostic.  It is
+// enabled and defaults ON only for a standalone dry run; evidence-bearing
+// preflight, probe, canary, and measured routes must retain whole clusters.
 function applyExclusionDefault(){var box=form.querySelector("input[name='exclude_tool_conditioned']");
 if(!box){return;}var m=(form.querySelector('input[name=mode]:checked')||{}).value||'measured';
-box.checked=(m==='dry_run')||(m==='diagnostic_canary'&&checkedName('canary_dry'));refresh();}
+box.disabled=m!=='dry_run';box.checked=m==='dry_run';refresh();}
 form.querySelectorAll("input[name='mode'],input[name='canary_dry']").forEach(function(el){
 el.addEventListener('change',applyExclusionDefault);});
 // The two maximum-parameter controls are one filter, expressed in billions.

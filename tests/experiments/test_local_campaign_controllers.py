@@ -119,8 +119,79 @@ def test_phase8_operator_readme_is_rendered_and_current(tmp_path: Path) -> None:
     assert "S >= M" in readme
     assert "human_only_blocked" in readme
     assert "gate8_met: false" in readme
+    assert "pairs may rotate between rows" in readme
+    assert "pair with shared assignments" in readme
+    assert "deterministic, seedless, and without" in readme
+    assert "coverage_priority_then_stratum_round_robin_sha256_v1" in readme
+    assert "coverage_priority_then_sha256_fill_v1" in readme
+    assert (
+        "disjoint_risk_modality_behavior_coverage_then_sha256_"
+        "lexicographic_representative_fill_v1"
+        in readme
+    )
+    assert "not every sibling row" in readme
     assert "43 total lanes" not in readme
     assert "8461790bb3e2fe75589c0cd547857406442a0c99" not in readme
+
+
+def test_phase8_preparation_binds_versioned_seedless_selector_policies() -> None:
+    source = (
+        Path(__file__).parents[2]
+        / "experiments"
+        / "local_campaign"
+        / "templates"
+        / "phase8_human_audit.py.in"
+    ).read_text(encoding="utf-8")
+    for algorithm in (
+        "coverage_priority_then_stratum_round_robin_sha256_v1",
+        "coverage_priority_then_sha256_fill_v1",
+    ):
+        assert source.count(algorithm) == 1
+    assert (
+        source.count(
+            '"disjoint_risk_modality_behavior_coverage_then_sha256_"'
+        )
+        == 1
+    )
+    assert source.count('"lexicographic_representative_fill_v1"') == 1
+    for policy in (
+        "COMMON_SELECTION_POLICY",
+        "SOURCE_TASK_SELECTION_POLICY",
+    ):
+        start = source.index(policy + " = {")
+        end = source.index("}\n", start) + 2
+        descriptor = source[start:end]
+        assert '"deterministic": True' in descriptor
+        assert '"randomized": False' in descriptor
+        assert '"without_replacement": True' in descriptor
+        assert '"whole_cluster": True' in descriptor
+
+    qualification_start = source.index("QUALIFICATION_SELECTION_POLICY = {")
+    qualification_end = source.index("}\n", qualification_start) + 2
+    qualification = source[qualification_start:qualification_end]
+    assert '"deterministic": True' in qualification
+    assert '"randomized": False' in qualification
+    assert '"without_replacement": True' in qualification
+    assert '"whole_cluster": False' in qualification
+    assert (
+        '"output_unit": "one_representative_row_per_selected_cluster"'
+        in qualification
+    )
+    assert (
+        '"representative_rule": "lexicographic_min_sample_key_v1"'
+        in qualification
+    )
+    assert "qualification-sibling-substitution" in source
+    assert "Phase 8 qualification items differ from exact selector replay" in source
+
+    manifest_start = source.index('        "sampling": {')
+    manifest_end = source.index('        "claims": {', manifest_start)
+    manifest = source[manifest_start:manifest_end]
+    assert '"seed"' not in manifest
+    assert '"--seed"' not in manifest
+    execution_start = source.index("    common_argv = [")
+    execution_end = source.index("    revalidate_execution_view()", execution_start)
+    assert '"--seed"' not in source[execution_start:execution_end]
 
 
 def test_phase3_uses_one_exact_bound_create_only_tag(tmp_path: Path) -> None:
@@ -495,7 +566,7 @@ def test_phase5_rr_preserves_projections_and_starts_terminal_at_canary(
     assert 'SCHEMA = "ura-phase5-target-runtime-terminal/1"' in canaries
     assert 'REASON_CODE = "target_baseline_nontermination_at_generation_cap"' in canaries
     assert (
-        'OBSERVED_PROJECT_COMMIT = "5719a4ff4ba4a711fee433d1f9990c1d3cf2f8a3"'
+        'OBSERVED_PROJECT_COMMIT = "21b27d56da0d081125f4cf4117884a8262386e5d"'
         in canaries
     )
     assert (
@@ -589,6 +660,41 @@ def test_phase5_rr_preserves_projections_and_starts_terminal_at_canary(
             "hardcoded_one_rejected": True,
             "request_envelope_swap_rejected": True,
         }
+
+
+def test_every_rr_consumer_binds_the_current_commit_observation() -> None:
+    root = Path(__file__).parents[2] / "experiments" / "local_campaign" / "templates"
+    observed_commit = "21b27d56da0d081125f4cf4117884a8262386e5d"
+    superseded_commit = "5719a4ff4ba4a711fee433d1f9990c1d3cf2f8a3"
+    consumers = (
+        "phase5_core_attest_canary.sh.in",
+        "phase5_finalize_gate5.sh.in",
+        "phase5_promote_gate5.sh.in",
+        "phase6_core_measured.sh.in",
+        "phase6_extended_measured.sh.in",
+        "phase6_native_diagnostics.sh.in",
+        "phase7_analysis.py.in",
+        "phase8_human_audit.py.in",
+    )
+    for name in consumers:
+        source = (root / name).read_text(encoding="utf-8")
+        assert observed_commit in source, name
+        assert superseded_commit not in source, name
+
+    current_text_root = "phase5-core-canaries-20260824T012347Z"
+    current_image_root = "rr-image-probe-20260824T012347Z"
+    old_roots = (
+        "phase5-core-canaries-20260822T173216Z",
+        "rr-image-probe-20260822T182300Z",
+    )
+    for path in (
+        Path(__file__).parents[2] / "experiments" / "RUN_AND_RETURN.md",
+        root.parent / "README.md",
+    ):
+        source = path.read_text(encoding="utf-8")
+        assert current_text_root in source, path.name
+        assert current_image_root in source, path.name
+        assert not any(old in source for old in old_roots), path.name
 
 
 def test_phase5_defense_failure_classifiers_are_disjoint_and_mutation_bound() -> None:
@@ -1089,7 +1195,7 @@ def test_phase6_rr_runtime_terminals_are_required_but_never_scheduled() -> None:
         assert '"runnable": 21' in source
         assert '"typed_terminal": 25' in source
         assert '"local-llava-rr.json"' in source
-        assert "5719a4ff4ba4a711fee433d1f9990c1d3cf2f8a3" in source
+        assert "21b27d56da0d081125f4cf4117884a8262386e5d" in source
         assert (
             "3a53ab82405636116e9c95850dae1e0c1e394021317707c978bc35b4178ca334"
             in source

@@ -350,10 +350,10 @@ shuffle of inventory positions without replacement. The first N positions are
 selected, then all selected rows are restored to source order. These are nested,
 overlapping prefixes, not disjoint partitions: for one unchanged arm and seed,
 the one-cluster canary is contained in the 50-cluster extended sample, which is
-contained in the 100-cluster core sample. The same numeric seed deliberately
-produces different permutations for different arms. A source with fewer
-clusters is retained in full and reported as precision-limited; `--limit 0`
-returns the exact full arm without sampling.
+contained in the 100-cluster core sample. Logical-arm identity contributes to
+seed derivation and gives each arm an independently scoped ordering. A source
+with fewer clusters is retained in full and reported as precision-limited;
+`--limit 0` returns the exact full arm without sampling.
 
 The earlier `--limit 0` projections remain useful as full-universe capacity
 records but cannot authorize a bounded measured request. Every bounded lane
@@ -621,6 +621,18 @@ download call. Its only successful machine terminal is `human_only_blocked`
 with `gate8_met: false`. A successful process exit is machine preparation, not
 human evidence and not Gate 8.
 
+Preparation is deterministic, seedless, and without replacement. The common
+and source-task frames use whole-cluster selectors
+`coverage_priority_then_stratum_round_robin_sha256_v1` and
+`coverage_priority_then_sha256_fill_v1`, respectively. The disjoint
+qualification set uses
+`disjoint_risk_modality_behavior_coverage_then_sha256_lexicographic_representative_fill_v1`:
+it emits one row per selected cluster, specifically that cluster's
+lexicographic-minimum `sample_key` representative, and terminal validation
+replays the exact selection against the bound Phase 7 Runner view.
+`--bootstrap-resamples`, `--alpha`, and `--seed` apply only to later label
+analysis and are invalid during preparation.
+
 Gate 8 is met only after all of the following exist and validate:
 
 - an applicable operator-supplied ethics/consent determination explicitly
@@ -630,16 +642,27 @@ Gate 8 is met only after all of the following exist and validate:
   items, whose clusters are disjoint from the final common sample;
 - at least two pseudonymous raters independently achieve at least 80 percent
   agreement on every qualification dimension;
-- two distinct qualified raters independently label every common and
-  source-task row, after verifying every referenced media asset;
+- exactly two distinct qualified raters independently label each common and
+  source-task row, after verifying every referenced media asset; pairs may
+  rotate between rows, and agreement is reported for every pair with shared
+  assignments;
 - every non-unanimous composite or dimension is adjudicated after independent
   ratings are locked;
 - `human_audit --labels` and `human_audit --source-task-labels` both validate
-  the complete labelled files against the same success-only Runner view; and
+  the complete labelled files against the same success-only Runner view, bind
+  each one by path and SHA-256 to its exact controller-prepared blank rating
+  form, require identical headers and immutable row multisets with exactly two
+  distinct rater IDs per sample, and write create-only reports containing the
+  prepared-form descriptors into a separate Phase 8 analysis root, never into
+  the sealed Phase 7 view; and
 - a human operator reviews agreement, prevalence, support, confusion,
   uncertainty, and decision coverage, then authors an acceptance or limitation
   record binding the exact preparation, labels, adjudication, and report
   digests.
+
+The accepted report schemas are exactly `ura-human-audit/1.2` for the common
+frame and `ura-source-task-audit/2` for the separate source-task frame. Older
+report schemas are not Gate 8 evidence.
 
 Until that human-only record exists, Gate 8 remains open. This is the only route
 to RQ5 judge validity for the local tier; machine preparation alone satisfies
@@ -653,8 +676,11 @@ Stats for per-job usage/coverage; Config editor for registries) and once
 through the CLI, and confirm that the composed argument vectors (visible in the
 Jobs record) equal the runbook vectors, including tier-specific `--limit 100`
 or `--limit 50`, `--sample-seed 0`, `--group`,
-`--exclude-tool-conditioned` on synth/dry lanes, and the receipt environment
-defaults on the Run page. Direct Phase 5 through Phase 7 controllers must appear
+`--exclude-tool-conditioned` on standalone synth dry runs, and the receipt
+environment defaults on the Run page. The exclusion is standalone-dry-run-only;
+every preflight, acquisition, attestation, canary, or measured route must reject
+it.
+Direct Phase 5 through Phase 7 controllers must appear
 through their exact engineering marker/task-event records, and every Phase 6
 measured child must have a resolvable external Job/Stats detail route whose
 artifact root equals that child's one declared `--out` directory.
