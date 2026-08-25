@@ -1527,6 +1527,8 @@ def test_gate5_failed_attestation_retry_is_content_bound_and_mutation_tested(
         "failed_attestation_tree_descriptor(run_root)",
         "Runner.load_response_checkpoint(path, expected_run_id=run_id)",
         'grid.get("call_budget_snapshot") != budget',
+        "include_runner_records=True",
+        '"records": error_artifact["records"]',
         "read_failed_attestation_tsv(attempt_failure_path)",
         '"deleted_budget_ledger"',
         '"rolled_back_budget_target_calls"',
@@ -1538,6 +1540,24 @@ def test_gate5_failed_attestation_retry_is_content_bound_and_mutation_tested(
         '"deleted_circuit_and_paid_response"',
     ):
         assert required in finalizer_source
+
+    def assert_failed_root_summary(source: str) -> None:
+        assert "four HarmBench multimodal probes exited 134" in source
+        assert "seed 6 completed its one-cell grid and real response" in source
+        assert (
+            "three admitted HarmBench multimodal probes failed before generation"
+            not in source
+        )
+
+    assert_failed_root_summary(finalizer_source)
+    stale_summary = finalizer_source.replace(
+        "four HarmBench multimodal probes exited 134",
+        "three admitted HarmBench multimodal probes failed before generation",
+        1,
+    )
+    assert stale_summary != finalizer_source
+    with pytest.raises(AssertionError):
+        assert_failed_root_summary(stale_summary)
 
     bindings = _bindings(tmp_path / "bindings.json")
     output = tmp_path / "workspace"
@@ -1576,12 +1596,15 @@ def test_gate5_failed_attestation_retry_is_content_bound_and_mutation_tested(
         "checkpointed_target_responses": 0,
         "completed_attempts": 0,
     }
+    assert value["error_artifact_records"] > 1
     assert set(value["rejected_mutations"]) == {
         "deleted_budget_ledger",
         "rolled_back_budget_target_calls",
         "deleted_paid_response_checkpoint",
         "rolled_back_checkpoint_target_calls",
         "rolled_back_grid_target_calls",
+        "omitted_error_artifact_records",
+        "wrong_error_artifact_records",
         "deleted_circuit_ledger",
         "rolled_back_circuit_target_calls",
         "deleted_circuit_and_paid_response",
@@ -1599,6 +1622,170 @@ def test_gate5_failed_attestation_retry_is_content_bound_and_mutation_tested(
             "blank_row_after_empty_ledger_header",
         ],
     }
+
+
+def test_gate5_guard_snapshot_matches_runner_local_judge_identity() -> None:
+    source = (
+        Path(__file__).parents[2]
+        / "experiments"
+        / "local_campaign"
+        / "templates"
+        / "phase5_finalize_gate5.sh.in"
+    ).read_text(encoding="utf-8")
+
+    def assert_contract(value: str) -> None:
+        snapshot = value.split("expected_guard_snapshot = {", 1)[1].split(
+            "\n        }", 1
+        )[0]
+        assert '"resolved_model": model,' in snapshot
+        assert (
+            'realized_judges[1]["snapshot"] != expected_guard_snapshot'
+            in value
+        )
+
+    assert_contract(source)
+    reverted = source.replace('            "resolved_model": model,\n', "", 1)
+    assert reverted != source
+    with pytest.raises(AssertionError):
+        assert_contract(reverted)
+
+
+def test_gate5_maps_raw_vllm_request_to_exact_sealed_runtime() -> None:
+    source = (
+        Path(__file__).parents[2]
+        / "experiments"
+        / "local_campaign"
+        / "templates"
+        / "phase5_finalize_gate5.sh.in"
+    ).read_text(encoding="utf-8")
+    required = (
+        'elif requested_target.startswith("vllm:"):',
+        'set(local_configs) != {expected_realized}',
+        'condition["requested_model_spec"] != expected_realized',
+        'condition["resolved_target"] != expected_realized',
+        'snapshot.get("target") != expected_realized',
+        'requested_target.removeprefix("vllm:")',
+        'snapshot.get("model_revision") != revision',
+    )
+    _assert_source_contract(source, required)
+    reverted = source.replace(
+        'elif requested_target.startswith("vllm:"):',
+        'elif requested_targets == [condition["requested_model_spec"]]:',
+        1,
+    )
+    assert reverted != source
+    with pytest.raises(AssertionError):
+        _assert_source_contract(reverted, required)
+
+
+def test_gate5_accepts_private_engine_runtime_logical_name_with_content_seals() -> None:
+    source = (
+        Path(__file__).parents[2]
+        / "experiments"
+        / "local_campaign"
+        / "templates"
+        / "phase5_finalize_gate5.sh.in"
+    ).read_text(encoding="utf-8")
+
+    def assert_contract(value: str) -> None:
+        bound_config = value.split("    def bound_config(", 1)[1].split(
+            "\n    source_config = bound_config(", 1
+        )[0]
+        for required in (
+            'if descriptor_field == "engine_runtime_config_artifact":',
+            'f"private-engine-runtime-config@sha256:{retained[\'sha256\']}"',
+            'retained_name_matches = path.name == Path(str(retained["file"])).name',
+            'sha_value != retained["sha256"]',
+            'observed["sha256"] != retained["sha256"]',
+            'observed["bytes"] != retained["bytes"]',
+            "or not retained_name_matches",
+        ):
+            assert required in bound_config
+        selected_relationship = value.split(
+            "def validate_selected_config_relationship(", 1
+        )[1].split("\ndef sampling_binding_from_audit(", 1)[0]
+        assert (
+            '"source_conformance", "engine_runtime_config", "api_config", '
+            '"local_config",'
+            in selected_relationship
+        )
+        assert "if canary.get(field) != preliminary.get(field):" in selected_relationship
+
+    assert_contract(source)
+    exact_private_branch = '''        if descriptor_field == "engine_runtime_config_artifact":
+            retained_name_matches = retained["file"] == (
+                f"private-engine-runtime-config@sha256:{retained['sha256']}"
+            )
+        else:
+            retained_name_matches = path.name == Path(str(retained["file"])).name
+'''
+    reverted = source.replace(
+        exact_private_branch,
+        '        retained_name_matches = path.name == Path(str(retained["file"])).name\n',
+        1,
+    )
+    assert reverted != source
+    with pytest.raises(AssertionError):
+        assert_contract(reverted)
+
+
+def test_gate5_accepts_header_only_status_for_known_incomplete_failed_attempt(
+    tmp_path: Path,
+) -> None:
+    namespace = _rendered_gate5_namespace(tmp_path)
+    fields = namespace["FAILED_CORE_STATUS_FIELDS"]
+    status = tmp_path / "status.tsv"
+    status.write_text("\t".join(fields) + "\n", encoding="utf-8")
+
+    assert namespace["read_tsv"](
+        status,
+        allow_empty=True,
+        expected_fields=fields,
+    ) == []
+    with pytest.raises(namespace["Gate5Error"], match="no data rows"):
+        namespace["read_tsv"](status)
+
+    status.write_text("wrong\theader\n", encoding="utf-8")
+    with pytest.raises(namespace["Gate5Error"], match="header changed"):
+        namespace["read_tsv"](
+            status,
+            allow_empty=True,
+            expected_fields=fields,
+        )
+
+
+def test_gate5_expands_project_receipt_descriptor_to_experiment_binding(
+    tmp_path: Path,
+) -> None:
+    namespace = _rendered_gate5_namespace(tmp_path)
+    manifest = tmp_path / "project-revision.json"
+    manifest.write_text("{}\n", encoding="utf-8")
+    expected_sha = "a" * 64
+    receipt = {"revision_id": "project-revision-test"}
+    descriptor_binding = {
+        "file": manifest.name,
+        "sha256": expected_sha,
+        "bytes": manifest.stat().st_size,
+        "revision_id": receipt["revision_id"],
+    }
+    expanded = {"mode": "verified", "sha256": expected_sha}
+    calls: list[tuple[object, object]] = []
+
+    namespace["EXPECTED_PROJECT_RECEIPT"] = str(manifest)
+    namespace["EXPECTED_PROJECT_RECEIPT_SHA256"] = expected_sha
+    namespace["required_env"] = lambda name: (
+        str(manifest) if name == "URA_PROJECT_REVISION_MANIFEST" else expected_sha
+    )
+    namespace["load_project_revision_file"] = (
+        lambda *_args, **_kwargs: (receipt, descriptor_binding)
+    )
+    namespace["project_revision_binding"] = lambda observed_receipt, observed_descriptor: (
+        calls.append((observed_receipt, observed_descriptor)) or expanded
+    )
+
+    result = namespace["validate_project_receipt"](tmp_path)
+    assert result["binding"] == expanded
+    assert calls == [(receipt, descriptor_binding)]
 
 
 def test_render_is_commit_bound_and_workspace_drift_fails(tmp_path: Path) -> None:

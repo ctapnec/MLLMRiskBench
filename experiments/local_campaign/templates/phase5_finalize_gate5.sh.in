@@ -92,7 +92,7 @@ from ura.live_attestation import (
     validate_required_live_attestations,
 )
 from ura.model_acquisition import load_plan, load_receipt
-from ura.project_revision import load_project_revision_file
+from ura.project_revision import load_project_revision_file, project_revision_binding
 from ura.request_envelope import (
     request_envelope_bytes,
     validate_request_envelope,
@@ -654,8 +654,11 @@ KNOWN_FAILED_CORE_CANARIES = {
         "status": "interrupted_failed_not_accepted_as_gate5_evidence",
         "evidence_accepted": False,
         "primary_failure": (
-            "three admitted HarmBench multimodal probes failed before generation "
-            "with target_call OSError bad file descriptor and process exit 134"
+            "four HarmBench multimodal probes exited 134: seed 1 and seed 4 "
+            "failed at target_call with OSError bad file descriptor before a "
+            "response; seed 6 completed its one-cell grid and real response before "
+            "vLLM teardown assertions; seed 0 checkpointed a response before a "
+            "rules-only judge abstention and teardown"
         ),
         "secondary_failure": (
             "the operator stopped redundant retries; the payload EXIT-only signal "
@@ -664,6 +667,17 @@ KNOWN_FAILED_CORE_CANARIES = {
         "allow_incomplete_zero_exit_marker": True,
     },
 }
+FAILED_CORE_STATUS_FIELDS = (
+    "lane",
+    "rehearsal_projection_id",
+    "target_cap",
+    "local_guardrail_evaluations",
+    "canary_id",
+    "all_configured_stages_represented",
+    "target_status",
+    "attacker_status",
+    "source_evaluator_status",
+)
 FAILED_ATTEMPT_PROVENANCE = {
     "kind": "operator_assertion",
     "approver": "project operator",
@@ -1329,7 +1343,7 @@ def validate_project_receipt(project_root: Path) -> dict[str, Any]:
     expected_sha = required_env("URA_PROJECT_REVISION_SHA256").lower()
     if expected_sha != EXPECTED_PROJECT_RECEIPT_SHA256:
         raise Gate5Error("URA_PROJECT_REVISION_SHA256 is not the recascaded digest")
-    receipt, binding = load_project_revision_file(
+    receipt, descriptor_binding = load_project_revision_file(
         manifest,
         expected_sha,
         project_root / "experiments" / "run_matrix.py",
@@ -1338,7 +1352,7 @@ def validate_project_receipt(project_root: Path) -> dict[str, Any]:
     return {
         "artifact": descriptor(manifest, max_bytes=MAX_JSON_BYTES),
         "revision_id": receipt["revision_id"],
-        "binding": binding,
+        "binding": project_revision_binding(receipt, descriptor_binding),
     }
 
 
@@ -1413,10 +1427,20 @@ def validate_source_receipt() -> dict[str, Any]:
     }
 
 
-def read_tsv(path: Path) -> list[dict[str, str]]:
+def read_tsv(
+    path: Path,
+    *,
+    allow_empty: bool = False,
+    expected_fields: Sequence[str] | None = None,
+) -> list[dict[str, str]]:
     source, text = stable_text(path, max_bytes=16 * 1024 * 1024)
-    rows = list(csv.DictReader(io.StringIO(text, newline=""), delimiter="\t"))
-    if not rows:
+    reader = csv.DictReader(io.StringIO(text, newline=""), delimiter="\t")
+    if expected_fields is not None and tuple(reader.fieldnames or ()) != tuple(
+        expected_fields
+    ):
+        raise Gate5Error(f"TSV header changed: {source}")
+    rows = list(reader)
+    if not rows and not allow_empty:
         raise Gate5Error(f"TSV has no data rows: {source}")
     if any(None in row for row in rows):
         raise Gate5Error(f"TSV contains surplus columns: {source}")
@@ -1455,19 +1479,32 @@ def read_failed_attestation_tsv(path: Path) -> list[dict[str, str]]:
 
 
 def read_json_artifact(
-    path_value: str | Path, *, max_bytes: int = MAX_JSON_BYTES
+    path_value: str | Path,
+    *,
+    max_bytes: int = MAX_JSON_BYTES,
+    include_runner_records: bool = False,
 ) -> tuple[dict[str, Any], dict[str, Any]]:
     path, digest, size, raw = stable_file_observation(
         path_value, max_bytes=max_bytes, retain_payload=True
     )
     assert raw is not None
     try:
-        value = strict_json_loads(raw.decode("utf-8"))
+        text = raw.decode("utf-8")
+        value = strict_json_loads(text)
     except (UnicodeError, TypeError, ValueError) as exc:
         raise Gate5Error(f"strict JSON validation failed for {path}: {exc}") from exc
     if not isinstance(value, dict):
         raise Gate5Error(f"expected a JSON object: {path}")
-    return value, {"path": str(path), "sha256": digest, "bytes": size}
+    artifact = {"path": str(path), "sha256": digest, "bytes": size}
+    if include_runner_records:
+        if path.name.endswith(".manifest.json"):
+            records = 1
+        else:
+            records = sum(
+                1 for line in io.StringIO(text, newline=None) if line.strip()
+            )
+        artifact["records"] = records
+    return value, artifact
 
 
 def failed_attestation_tree_descriptor(root: Path) -> dict[str, Any]:
@@ -1816,7 +1853,9 @@ def validate_failed_attestation_candidate(
     error_rows: list[dict[str, Any]] = []
     completed_attempt_counts: set[int] = set()
     for error_path in sorted(run_root.glob("*.error.json")):
-        error, error_artifact = read_json_artifact(error_path)
+        error, error_artifact = read_json_artifact(
+            error_path, include_runner_records=True
+        )
         completed = error.get("completed_attempts")
         exception_type = error.get("exception_type")
         execution_started = error.get("execution_started")
@@ -1862,6 +1901,7 @@ def validate_failed_attestation_candidate(
             "file": Path(error_artifact["path"]).name,
             "sha256": error_artifact["sha256"],
             "bytes": error_artifact["bytes"],
+            "records": error_artifact["records"],
         }:
             raise Gate5Error("failed live-attestation cell/error descriptor changed")
         if (
@@ -2165,7 +2205,9 @@ def validate_failed_attempt_root(root_value: str | Path) -> dict[str, Any]:
                 f"zero-exit failed-attempt root contains a completion marker: {root}"
             )
         status_rows = read_tsv(
-            checked_file(root / "status.tsv", max_bytes=16 * 1024 * 1024)
+            checked_file(root / "status.tsv", max_bytes=16 * 1024 * 1024),
+            allow_empty=True,
+            expected_fields=FAILED_CORE_STATUS_FIELDS,
         )
         if len(status_rows) >= len(EXPECTED_CORE_LANES):
             raise Gate5Error(
@@ -3906,6 +3948,7 @@ def validate_canary_bundle(canary_path: Path, *, expected_id: str) -> dict[str, 
         expected_guard_snapshot = {
             "judge": "guardrail",
             "requested_model": model,
+            "resolved_model": model,
             "model_revision": revision,
             "model_identity": f"{model}@{revision}",
         }
@@ -4382,6 +4425,36 @@ def validate_lane_relationship(
         )
         if snapshot.get("model_digest") != digest or snapshot.get("target") != expected_realized:
             raise Gate5Error(f"{lane}: Ollama realized target snapshot/digest mismatch")
+    elif requested_target.startswith("vllm:"):
+        local_configs = grid_request.get("local_configs")
+        if not isinstance(local_configs, dict) or len(local_configs) != 1:
+            raise Gate5Error(f"{lane}: vLLM canary lacks one exact realized local config")
+        local_config = next(iter(local_configs.values()))
+        revision = local_config.get("revision") if isinstance(local_config, dict) else None
+        if not isinstance(revision, str) or re.fullmatch(r"[0-9a-f]{40}", revision) is None:
+            raise Gate5Error(f"{lane}: vLLM canary local config lacks an immutable revision")
+        expected_realized = f"{requested_target}@{revision}"
+        if (
+            set(local_configs) != {expected_realized}
+            or condition["requested_model_spec"] != expected_realized
+            or condition["resolved_target"] != expected_realized
+        ):
+            raise Gate5Error(
+                f"{lane}: raw vLLM request does not map to its exact sealed runtime"
+            )
+        realized = condition.get("realized_identities")
+        snapshot = (
+            realized.get("target", {}).get("snapshot", {})
+            if isinstance(realized, dict)
+            else {}
+        )
+        if (
+            snapshot.get("target") != expected_realized
+            or snapshot.get("resolved_model")
+            != requested_target.removeprefix("vllm:")
+            or snapshot.get("model_revision") != revision
+        ):
+            raise Gate5Error(f"{lane}: vLLM realized target snapshot/revision mismatch")
     elif requested_targets != [condition["requested_model_spec"]]:
         raise Gate5Error(f"{lane}: canary target does not match the bounded request")
     if request["selected_attackers"] != [condition["attacker"]]:
@@ -4902,11 +4975,17 @@ def validate_base_argv_evidence_parity(
             raise Gate5Error(f"{lane}: {descriptor_field} argv binding is incomplete")
         path = checked_file(path_value, max_bytes=4 * 1024 * 1024)
         observed = descriptor(path, max_bytes=4 * 1024 * 1024)
+        if descriptor_field == "engine_runtime_config_artifact":
+            retained_name_matches = retained["file"] == (
+                f"private-engine-runtime-config@sha256:{retained['sha256']}"
+            )
+        else:
+            retained_name_matches = path.name == Path(str(retained["file"])).name
         if (
             sha_value != retained["sha256"]
             or observed["sha256"] != retained["sha256"]
             or observed["bytes"] != retained["bytes"]
-            or path.name != Path(str(retained["file"])).name
+            or not retained_name_matches
         ):
             raise Gate5Error(f"{lane}: {descriptor_field} argv bytes differ from canary evidence")
         return path
@@ -7316,8 +7395,28 @@ def failed_attestation_contract_self_test() -> dict[str, Any]:
             "call_audit": {},
             "execution_started": True,
         }
-        error_path.write_bytes(canonical_bytes(error))
-        error_desc = descriptor(error_path)
+        error_payload = (
+            json.dumps(
+                error,
+                ensure_ascii=False,
+                sort_keys=True,
+                indent=2,
+                allow_nan=False,
+            )
+            + "\n"
+        ).encode("utf-8")
+        error_path.write_bytes(error_payload)
+        _error_value, error_desc = read_json_artifact(
+            error_path, include_runner_records=True
+        )
+        expected_error_records = sum(
+            1 for line in error_payload.decode("utf-8").splitlines() if line.strip()
+        )
+        if (
+            error_desc["records"] != expected_error_records
+            or expected_error_records <= 1
+        ):
+            raise Gate5Error("multiline Runner error descriptor self-test failed")
         circuit_path = run_root / f"{grid_id}.circuits.json"
         circuit_path.write_bytes(canonical_bytes({
             "format_version": 1,
@@ -7393,6 +7492,7 @@ def failed_attestation_contract_self_test() -> dict[str, Any]:
                     "file": error_path.name,
                     "sha256": error_desc["sha256"],
                     "bytes": error_desc["bytes"],
+                    "records": error_desc["records"],
                 },
             }],
         }))
@@ -7457,6 +7557,10 @@ def failed_attestation_contract_self_test() -> dict[str, Any]:
                 value["budget_after_target"]["target_calls"] = 0
             elif field == "grid_target_calls":
                 value["call_budget_snapshot"]["target_calls"] = 0
+            elif field == "error_artifact_records_omitted":
+                del value["cells"][0]["error_artifact"]["records"]
+            elif field == "error_artifact_records_wrong":
+                value["cells"][0]["error_artifact"]["records"] += 1
             elif field == "circuit_target_calls":
                 value["circuits"]["judge"]["budget_snapshot"]["target_calls"] = 0
             else:
@@ -7474,6 +7578,12 @@ def failed_attestation_contract_self_test() -> dict[str, Any]:
             ),
             "rolled_back_grid_target_calls": lambda: mutate_json(
                 grid_path, "grid_target_calls"
+            ),
+            "omitted_error_artifact_records": lambda: mutate_json(
+                grid_path, "error_artifact_records_omitted"
+            ),
+            "wrong_error_artifact_records": lambda: mutate_json(
+                grid_path, "error_artifact_records_wrong"
             ),
             "deleted_circuit_ledger": lambda: circuit_path.unlink(),
             "rolled_back_circuit_target_calls": lambda: mutate_json(
@@ -7502,6 +7612,7 @@ def failed_attestation_contract_self_test() -> dict[str, Any]:
             "status": "passed",
             "call_accounting": baseline["call_accounting"],
             "target_stage_call_accounting": target_stage["call_accounting"],
+            "error_artifact_records": error_desc["records"],
             "rejected_mutations": rejected,
         }
 
