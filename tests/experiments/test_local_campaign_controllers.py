@@ -734,6 +734,32 @@ def test_ollama_bounded_lane_identity_is_used_by_every_workflow_stage() -> None:
     assert 'static_lane="ollama-${label}-text-full"' not in source
 
 
+def test_rendered_ollama_roster_validator_imports_json(tmp_path: Path) -> None:
+    import re
+
+    bindings = _bindings(tmp_path / "bindings.json")
+    output = tmp_path / "workspace"
+    render_controller_set(bindings, output)
+    shell = (output / "phase5_ollama_workflow.sh").read_text(encoding="utf-8")
+    function = shell.split("verify_live_roster() {", 1)[1].split(
+        "\n}\n\nroster_args=()", 1
+    )[0]
+    match = re.search(r"<<'PY'\n(.*?)\nPY(?:\n|$)", function, re.DOTALL)
+    assert match is not None
+
+    imports = match.group(1).split("\nitems = sys.argv[1:]", 1)[0]
+    namespace: dict[str, object] = {}
+    exec(
+        compile(
+            imports + '\nserialized = json.dumps({"available": True})',
+            "phase5_ollama_verify_live_roster.py",
+            "exec",
+        ),
+        namespace,
+    )
+    assert namespace["serialized"] == '{"available": true}'
+
+
 def test_gate5_revalidates_nested_samples_without_inventing_projection_fields() -> None:
     root = Path(__file__).parents[2] / "experiments" / "local_campaign" / "templates"
     finalizer = (root / "phase5_finalize_gate5.sh.in").read_text(encoding="utf-8")

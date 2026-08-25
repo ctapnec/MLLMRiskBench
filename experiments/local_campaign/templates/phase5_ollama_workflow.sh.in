@@ -308,6 +308,7 @@ verify_live_roster() {
   test ! -e "$output"
   "$PY" - "$@" > "$output" <<'PY'
 import hashlib
+import json
 import os
 import pathlib
 import sys
