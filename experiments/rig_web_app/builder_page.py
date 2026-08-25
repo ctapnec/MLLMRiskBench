@@ -1455,9 +1455,9 @@ class BuilderPageMixin:
                     badge = "precomputed replay"
                 else:
                     detail = (
-                        "Provide a content-addressed ura-ideator-seed-pairs/1 "
-                        "manifest. Build verifies and snapshots every declared "
-                        "PNG before the reviewed lane can launch."
+                        "Provide an exact source-mapped ura-ideator-seed-pairs/2 "
+                        "manifest. Legacy v1 manifests remain accepted. Build "
+                        "verifies and snapshots every declared PNG before launch."
                     )
                     badge = "verified seed-pair replay"
                 prepared_badge = (
@@ -1810,19 +1810,20 @@ class BuilderPageMixin:
             "data-prepared='ideator'" + visibility("ideator") + ">"
             "<h3>IDEATOR <span class='badge blue'>Verified seed-pair replay"
             "</span></h3>"
-            "<p class='note'>Live IDEATOR generation remains disabled. Supply a "
-            "strict <code>ura-ideator-seed-pairs/1</code> JSON manifest under the "
-            "results root. Each entry contains only <code>text</code>, "
-            "<code>image_path</code>, and <code>image_sha256</code>. Build verifies "
-            "the exact manifest and PNG bytes, captures them in the review ticket, "
-            "and materializes private replay copies at launch.</p>"
+            "<p class='note'>Live IDEATOR generation remains disabled. Prefer an "
+            "exact source-mapped <code>ura-ideator-seed-pairs/2</code> JSON manifest "
+            "under the results root; it binds every pair to one admitted source "
+            "row. Legacy <code>ura-ideator-seed-pairs/1</code> manifests remain "
+            "accepted for previously reviewed pairs. Build verifies the manifest "
+            "and PNG bytes, captures them in the review ticket, and materializes "
+            "private replay copies at launch.</p>"
             + err("ideator")
             + "<div class='workflow-step'><h4>Precomputed text-image pairs</h4>"
             "<div class='cols'>"
             + text_field(
                 "ideator_manifest",
                 "Seed-pair manifest",
-                "ura-ideator-seed-pairs/1 path under results",
+                "source-mapped v2 path under results (v1 is legacy)",
             )
             + text_field(
                 "ideator_manifest_sha",

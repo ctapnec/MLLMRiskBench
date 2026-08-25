@@ -380,22 +380,22 @@ EXPECTED_TERMINAL_ROWS = {
             "bridge-nanogcg",
             "bridge",
             "unavailable",
-            "unavailable",
-            "no attributable precomputed suffix artifact exists; live optimization remains disabled",
+            "separate_follow_on_cohort",
+            "the attributable NanoGCG suffix is assigned to a separate follow-on cohort and is not bound to this core cohort",
         ),
         _terminal_contract(
             "bridge-ideator",
             "bridge",
             "unavailable",
-            "unavailable",
-            "no attributable seed-pair artifact or defensible source-pair mapping exists",
+            "separate_follow_on_cohort",
+            "the source-mapped IDEATOR seed pairs are assigned to a separate follow-on cohort and are not bound to this core cohort",
         ),
         _terminal_contract(
             "t3mp3st",
             "bridge",
             "unavailable",
-            "blocked_unpinned",
-            "no exact executable source URL and revision is documented",
+            "separate_follow_on_cohort",
+            "the pinned T3MP3ST capture and replay are assigned to a separate follow-on cohort and are not bound to this core cohort",
         ),
         *(
             _terminal_contract(

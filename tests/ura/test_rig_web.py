@@ -1330,7 +1330,7 @@ def test_prepared_workflows_live_under_attack_frameworks_without_nested_forms(
         runtime_actions = before_builder.count(
             "action='/build/framework-runtimes'"
         )
-        assert runtime_actions == 15
+        assert runtime_actions == 16
         assert before_builder.count("<form ") == 4 + runtime_actions
         assert before_builder.count("</form>") == 4 + runtime_actions
         assert page[builder_at:].count("<form ") == 1
@@ -1702,6 +1702,14 @@ def test_prepared_capture_forms_validate_preview_and_start_exact_commands(
     app = RigWebApp(
         results_root=results, state_dir=results / "state", repo_root=repo,
     )
+    framework_lock = repo / "experiments" / "framework_runtime_lock.json"
+    framework_env = tmp_path / "framework-venvs"
+    framework_state = results / "engineering" / "framework-runtime-fixture"
+    monkeypatch.setattr(
+        app.framework_runtimes,
+        "capture_binding_paths",
+        lambda: (framework_lock, framework_env, framework_state),
+    )
     captured: list[tuple[str, dict[str, str]]] = []
 
     def fake_start(command, values, **_kwargs):
@@ -1768,6 +1776,9 @@ def test_prepared_capture_forms_validate_preview_and_start_exact_commands(
         assert status == 303 and location == "/jobs/capture-job"
         assert captured[-1][0] == "capture_t3mp3st"
         assert captured[-1][1]["--out"] == str(results / "t3-captures")
+        assert captured[-1][1]["--framework-lock"] == str(framework_lock)
+        assert captured[-1][1]["--framework-env-root"] == str(framework_env)
+        assert captured[-1][1]["--framework-state-root"] == str(framework_state)
         replayed = app.handle(
             "POST",
             "/build/t3mp3st/capture",
@@ -1874,6 +1885,7 @@ def test_prepared_capture_forms_validate_preview_and_start_exact_commands(
 
 def test_prepared_capture_forms_accept_canonical_symlinked_results_root(
     tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     repo = tmp_path / "repo"
     repo.mkdir()
@@ -1893,6 +1905,15 @@ def test_prepared_capture_forms_accept_canonical_symlinked_results_root(
         results_root=results,
         state_dir=results / "state",
         repo_root=repo,
+    )
+    monkeypatch.setattr(
+        app.framework_runtimes,
+        "capture_binding_paths",
+        lambda: (
+            repo / "experiments" / "framework_runtime_lock.json",
+            tmp_path / "framework-venvs",
+            real_results / "engineering" / "framework-runtime-fixture",
+        ),
     )
     try:
         status, _, body = app.handle("POST", "/build/t3mp3st/capture", {
@@ -3816,6 +3837,7 @@ def test_jobs_date_window_filters_campaign_markers_before_recent_cap(
     assert status == 200
     assert "campaign-00" in text
     assert "campaign-20" not in text
+    assert "1 additional retained engineering campaign was omitted" not in text
     app.close()
 
 

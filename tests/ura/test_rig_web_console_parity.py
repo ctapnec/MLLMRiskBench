@@ -1048,6 +1048,9 @@ def test_ideator_builder_replay_is_digest_bound_and_snapshot_materialized(
         assert "name='ideator_manifest'" in page
         assert "name='ideator_manifest_sha'" in page
         assert "name='ideator_pair_limit'" in page
+        assert "ura-ideator-seed-pairs/2" in page
+        assert "v1 is legacy" in page
+        assert "binds every pair to one admitted source row" in page
         assert "syncIdeatorPairLimit" in _BUILDER_SCRIPT
 
         png = base64.b64decode(

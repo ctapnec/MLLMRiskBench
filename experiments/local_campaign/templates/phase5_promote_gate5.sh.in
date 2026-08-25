@@ -411,18 +411,18 @@ EXPECTED_MEASURED_LIMITS = {
 TERMINAL_IDENTITIES: tuple[dict[str, str], ...] = (
     {
         "lane_id": "bridge-nanogcg", "family": "bridge",
-        "disposition": "unavailable", "reason_code": "unavailable",
-        "reason": "no attributable precomputed suffix artifact exists; live optimization remains disabled",
+        "disposition": "unavailable", "reason_code": "separate_follow_on_cohort",
+        "reason": "the attributable NanoGCG suffix is assigned to a separate follow-on cohort and is not bound to this core cohort",
     },
     {
         "lane_id": "bridge-ideator", "family": "bridge",
-        "disposition": "unavailable", "reason_code": "unavailable",
-        "reason": "no attributable seed-pair artifact or defensible source-pair mapping exists",
+        "disposition": "unavailable", "reason_code": "separate_follow_on_cohort",
+        "reason": "the source-mapped IDEATOR seed pairs are assigned to a separate follow-on cohort and are not bound to this core cohort",
     },
     {
         "lane_id": "t3mp3st", "family": "bridge",
-        "disposition": "unavailable", "reason_code": "blocked_unpinned",
-        "reason": "no exact executable source URL and revision is documented",
+        "disposition": "unavailable", "reason_code": "separate_follow_on_cohort",
+        "reason": "the pinned T3MP3ST capture and replay are assigned to a separate follow-on cohort and are not bound to this core cohort",
     },
     *tuple({
         "lane_id": f"gptgeochat-ollama-{model}", "family": "ollama",
@@ -1396,7 +1396,7 @@ def validate_rr_projection(
         ):
             raise PromotionError(f"{lane}: RR {name} descriptor changed")
         if validate_files:
-            exact_descriptor_path(item, f"{lane} RR {name}")
+            descriptor_path(item, f"{lane} RR {name}")
     projection_artifact = projection["projection_artifact"]
     envelope_artifact = projection["request_envelope_artifact"]
     if (
@@ -1422,13 +1422,13 @@ def validate_rr_projection(
     ):
         raise PromotionError(f"{lane}: RR projected calls changed")
     if validate_files:
-        projection_path = exact_descriptor_path(
+        projection_path = descriptor_path(
             projection_artifact, f"{lane} RR projection_artifact"
         )
         eligibility_path = exact_descriptor_path(
             projection["eligibility_artifact"], f"{lane} RR eligibility_artifact"
         )
-        envelope_path = exact_descriptor_path(
+        envelope_path = descriptor_path(
             envelope_artifact, f"{lane} RR request_envelope_artifact"
         )
         retained_projection, retained_projection_descriptor = load_stable_lane_projection_file(

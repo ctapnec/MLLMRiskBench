@@ -13,9 +13,10 @@ and human-audit material remain outside Git.
 
 The controllers consume, but never install into, the main URA venv. Before a
 rendered chain uses a third-party bridge, `distro/install.sh runtimes` must have
-attempted all 15 lock-derived frameworks as separate sequential `--only` named
+attempted all 16 lock-derived frameworks as separate sequential `--only` named
 tmux/screen sessions and published only verified stable aliases. Every Python
-framework has its own venv, Promptfoo has its own Node environment, and BIPIA's
+framework has its own venv, Promptfoo and T3MP3ST have separate Node
+environments, and BIPIA's
 legacy builder has a separate fully hashed support venv. Clean runtime homes use
 the explicit persistent caches under `$URA_WORK/framework-venvs/.cache`; cache
 contents are never campaign admission evidence.
@@ -257,17 +258,23 @@ nonjudgeable output conditions exclude that static lane from this campaign
 cohort's measured schedule. Earlier completed canary attempts remain diagnostic
 observations; the disposition is not a general model/runtime claim.
 
-The frozen current cohort also types `bridge-nanogcg` and `bridge-ideator` as
-`unavailable` and does not schedule either lane for measured execution. No
-attributable NanoGCG suffix artifact was bound before Gate 5, and no defensible
-IDEATOR seed-pair manifest with source mapping was bound. The IDEATOR Build/UI
-seed-pair quantity control in revision C is prospective capability, not admission or
-evidence for this cohort. Either lane requires a fresh prepared-input manifest
-or attributable artifact, no-call projection, diagnostic canary, Gate 5 record,
-and controller generation before measured scheduling. This does not remove
-either adapter or optional full-set execution through the framework: a future
-prepared-replay cohort may use a positive limit or explicit `--limit 0` with its
-own complete projection and sufficient admitted caps.
+The core cohort records `bridge-nanogcg`, `bridge-ideator`, and `t3mp3st` as
+`unavailable` only because their prepared artifacts are assigned to a separate
+follow-on cohort and were not bound when its Gate 5 authorization was sealed.
+This is not a current capability disposition. The core controller does not
+schedule those three lanes for core-cohort measured execution. The follow-on
+cohort binds the NanoGCG capture config, IDEATOR v2 source-mapped manifest, and
+T3MP3ST bundle and uses the ordinary documented Runner commands with its own
+retained immutable argument array. For each lane, the retained schedule
+contains a prepared artifact, no-call projection, diagnostic canary,
+Gate 5 record, and measured schedule. NanoGCG may use a positive outer limit or a
+separately projected `--limit 0` transfer cohort. IDEATOR v2 is instead
+fixed to `advbench_harmful --limit 1 --sample-seed 105`;
+`pair_limit=0` means all eight verified pairs mapped to `advbench:245`,
+not all 520 AdvBench rows.
+The exact NanoGCG plan/acquire/capture/replay and IDEATOR v2 prepare/Build
+procedures are the named subsections of `experiments/RUN_AND_RETURN.md`;
+this controller README does not redefine them.
 
 Phase 7 binds two distinct Runner views. Its authoritative lifecycle registry
 covers every scheduled Runner lane and binds each controller failure, optional

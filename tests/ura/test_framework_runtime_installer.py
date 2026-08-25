@@ -22,6 +22,11 @@ LOCK_PATH = Path(installer.__file__).with_name("framework_runtime_lock.json")
 BIPIA_LOCK_PATH = LOCK_PATH.parents[1] / "distro" / "bipia-build-requirements.lock"
 
 
+def _t3mp3st_runtime_entry() -> dict[str, Any]:
+    lock = json.loads(LOCK_PATH.read_text(encoding="utf-8"))
+    return next(entry for entry in lock["frameworks"] if entry["name"] == "t3mp3st")
+
+
 def _minimal_lock() -> dict[str, Any]:
     return {"lock_id": "a" * 64, "frameworks": [{"name": "pyrit"}, {"name": "garak"}]}
 
@@ -29,7 +34,7 @@ def _minimal_lock() -> dict[str, Any]:
 def test_repository_lock_is_strict_and_covers_all_registered_attackers() -> None:
     lock = installer.load_lock(LOCK_PATH)
     assert lock["schema"] == "ura-framework-runtime-lock/1"
-    assert len(lock["frameworks"]) == 15
+    assert len(lock["frameworks"]) == 16
     assert {entry["name"] for entry in lock["frameworks"]} == {
         "agentdojo",
         "asb",
@@ -46,6 +51,7 @@ def test_repository_lock_is_strict_and_covers_all_registered_attackers() -> None
         "promptfoo",
         "pyrit",
         "spikee",
+        "t3mp3st",
     }
     python_runtimes = [
         entry for entry in lock["frameworks"] if entry["runtime"] == "python"
@@ -54,7 +60,7 @@ def test_repository_lock_is_strict_and_covers_all_registered_attackers() -> None
         entry for entry in lock["frameworks"] if entry["runtime"] == "node"
     ]
     assert len(python_runtimes) == 14
-    assert [entry["name"] for entry in node_runtimes] == ["promptfoo"]
+    assert [entry["name"] for entry in node_runtimes] == ["promptfoo", "t3mp3st"]
     assert len(lock["coverage"]) == 20
     assert {row["attacker"] for row in lock["coverage"]} == {
         "agentdojo",
@@ -78,6 +84,25 @@ def test_repository_lock_is_strict_and_covers_all_registered_attackers() -> None
         "spikee",
         "t3mp3st",
     }
+
+
+def test_t3mp3st_source_runtime_pin_is_admitted_and_commands_are_sealed(
+    tmp_path: Path,
+) -> None:
+    lock = json.loads(LOCK_PATH.read_text(encoding="utf-8"))
+    coverage = next(row for row in lock["coverage"] if row["attacker"] == "t3mp3st")
+    assert coverage["status"] == "installer-managed"
+    assert coverage["runtime"] == "t3mp3st"
+    t3mp3st = next(row for row in lock["frameworks"] if row["name"] == "t3mp3st")
+    assert t3mp3st["source"]["commit"] == "f2eec3c48cefe301983b3865811eda89d454e988"
+
+    t3mp3st["install"]["commands"][-1] = "npm run build:unchecked"
+    lock["lock_id"] = "0" * 64
+    lock["lock_id"] = installer._lock_content_id(lock)
+    path = tmp_path / "framework-runtime-lock.json"
+    path.write_text(json.dumps(lock), encoding="utf-8")
+    with pytest.raises(installer.InstallerError, match="sealed build path"):
+        installer.load_lock(path)
 
 
 def test_main_venv_framework_roots_are_derived_from_lock_smokes() -> None:
@@ -127,24 +152,24 @@ def _assert_global_installer_docs_match_lock(
     lock: dict[str, Any], documents: dict[str, str], install_script: str
 ) -> None:
     frameworks = {entry["name"]: entry for entry in lock["frameworks"]}
-    assert len(lock["frameworks"]) == 15
+    assert len(lock["frameworks"]) == 16
     normalized = {name: " ".join(text.split()) for name, text in documents.items()}
-    assert "all 15 locked third-party framework runtimes" in normalized["README.md"]
+    assert "all 16 locked third-party framework runtimes" in normalized["README.md"]
     assert (
-        "14 private Python virtual environments and Promptfoo's private Node runtime"
+        "14 private Python virtual environments and two private Node runtimes"
         in normalized["README.md"]
     )
-    assert "all 15 isolated third-party framework runtimes" in normalized[
+    assert "all 16 isolated third-party framework runtimes" in normalized[
         "distro/README.md"
     ]
-    assert "14 private Python venvs plus Promptfoo's private Node runtime" in normalized[
+    assert "14 private Python venvs plus separate Promptfoo and T3MP3ST Node runtimes" in normalized[
         "distro/README.md"
     ]
-    assert "manifest for 15 managed runtimes" in normalized[
+    assert "manifest for 16 managed runtimes" in normalized[
         "experiments/RUN_AND_RETURN.md"
     ]
     assert (
-        "14 separate CPython virtual environments and Promptfoo's separate Node environment"
+        "14 separate CPython virtual environments and separate Promptfoo and T3MP3ST Node environments"
         in normalized["experiments/RUN_AND_RETURN.md"]
     )
     assert "runtimes_session resume" in install_script
@@ -211,7 +236,7 @@ def _assert_global_installer_docs_match_lock(
     assert 'Path(sys.argv[2]).open("x"' in runbook
 
 
-def test_global_installer_docs_match_the_resumable_fifteen_runtime_lock() -> None:
+def test_global_installer_docs_match_the_resumable_sixteen_runtime_lock() -> None:
     lock = installer.load_lock(LOCK_PATH)
     root = LOCK_PATH.parents[1]
     documents = {
@@ -761,6 +786,86 @@ def test_node_inventory_is_derived_from_installed_packages_and_detects_extra(
     new_rows, new_digest = installer._node_installed_inventory(tmp_path)
     assert len(new_rows) == 2
     assert new_digest != digest
+
+
+def _write_source_node_fixture(source_dir: Path, entry: dict[str, Any]) -> None:
+    source_dir.mkdir(parents=True, exist_ok=True)
+    package_lock = {
+        "name": "t3mp3st",
+        "version": "1.0.0",
+        "lockfileVersion": 3,
+        "requires": True,
+        "packages": {
+            "": {"name": "t3mp3st", "version": "1.0.0"},
+            "node_modules/example": {
+                "version": "1.0.0",
+                "resolved": "https://registry.npmjs.org/example/-/example-1.0.0.tgz",
+                "integrity": "sha512-fixture",
+            },
+        },
+    }
+    raw = (json.dumps(package_lock, indent=2) + "\n").encode()
+    (source_dir / "package-lock.json").write_bytes(raw)
+    (source_dir / "package.json").write_text(
+        json.dumps({"name": "t3mp3st", "version": "1.0.0"}), encoding="utf-8"
+    )
+    entry["dependencies"] = {
+        "fully_hashed": True,
+        "source_lock_sha256": hashlib.sha256(raw).hexdigest(),
+        "source_lock_bytes": len(raw),
+        "package_count": 1,
+    }
+
+
+def test_source_node_lock_identity_and_integrity_are_verified(tmp_path: Path) -> None:
+    entry = _t3mp3st_runtime_entry()
+    _write_source_node_fixture(tmp_path, entry)
+    installer._validate_source_node_lock(entry, tmp_path)
+
+    lock_path = tmp_path / "package-lock.json"
+    lock_path.write_bytes(lock_path.read_bytes() + b" ")
+    with pytest.raises(installer.InstallerError, match="lock identity mismatch"):
+        installer._validate_source_node_lock(entry, tmp_path)
+
+
+def test_source_node_install_runs_exact_npm_ci_and_build(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    entry = _t3mp3st_runtime_entry()
+    stage = tmp_path / "stage"
+    stage.mkdir()
+    installer._write_state(stage, {"completed": ["node-runtime"]})
+    source_dir = stage / "source" / "t3mp3st"
+
+    def acquire(*_args, **_kwargs):
+        _write_source_node_fixture(source_dir, entry)
+        return source_dir
+
+    class Runner:
+        def __init__(self) -> None:
+            self.calls: list[tuple[list[str], Path | None]] = []
+
+        def run(self, argv, **kwargs):  # noqa: ANN001, ANN003 - test double
+            self.calls.append(([str(item) for item in argv], kwargs.get("cwd")))
+            return subprocess.CompletedProcess(argv, 0, stdout="", stderr="")
+
+    monkeypatch.setattr(installer, "_acquire_source", acquire)
+    monkeypatch.setattr(
+        installer,
+        "_verify_node",
+        lambda *_args: {"inventory_sha256": "a" * 64, "distribution_count": 1},
+    )
+    runner = Runner()
+    result = installer._install_node(
+        entry, {"runtimes": {"node": {}}}, stage, runner, resume=False
+    )
+
+    assert result["distribution_count"] == 1
+    assert [call[0][1:] for call in runner.calls] == [
+        ["ci", "--ignore-scripts", "--no-audit", "--no-fund"],
+        ["run", "build"],
+    ]
+    assert all(call[1] == source_dir for call in runner.calls)
 
 
 def test_existing_receipt_never_skips_verification(
@@ -1895,8 +2000,8 @@ def test_distro_runtimes_phase_continues_after_one_failed_isolated_session(tmp_p
     assert ("verify", "deepteam") not in selected
     assert ("resume", "harmbench") in selected
     assert ("verify", "harmbench") in selected
-    assert sum(command == "resume" for command, _name in selected) == 15
-    assert sum(command == "verify" for command, _name in selected) == 14
+    assert sum(command == "resume" for command, _name in selected) == 16
+    assert sum(command == "verify" for command, _name in selected) == 15
     logs = sandbox.data / "acquire-logs"
     assert (logs / "runtime-deepteam-install.status").read_text(encoding="utf-8").strip() == "FAIL:2"
     assert (logs / "runtime-deepteam-verify.status").read_text(encoding="utf-8").strip() == "FAIL:install"
@@ -1918,8 +2023,8 @@ def test_distro_runtimes_phase_propagates_a_verify_failure(tmp_path: Path) -> No
 
     assert result.returncode != 0
     calls = sandbox.installer_calls()
-    assert len(calls) == 31
-    assert (calls[-1][0], calls[-1][-1]) == ("verify", "harmbench")
+    assert len(calls) == 33
+    assert (calls[-1][0], calls[-1][-1]) == ("verify", "t3mp3st")
     logs = sandbox.data / "acquire-logs"
     assert (logs / "runtimes-install.status").read_text(encoding="utf-8").strip() == "OK"
     assert (logs / "runtime-giskard-verify.status").read_text(encoding="utf-8").strip() == "FAIL:7"

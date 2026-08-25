@@ -14,6 +14,10 @@ from ura.attacker_input_contract import media_input_identity
 from ura.data_models import MediaRef
 from ura.strict_json import strict_json_loads
 from ura.adapters.nanogcg import LIVE_NANOGCG_DISABLED_MESSAGE
+from ura.adapters.ideator_manifest import (
+    FORMAT_VERSION as IDEATOR_MAPPED_FORMAT,
+    validate_manifest as validate_ideator_mapped_manifest,
+)
 
 
 _RUNNER_ATTACKER_CONFIG_MAX_BYTES = 1024 * 1024
@@ -863,13 +867,30 @@ class BuilderModelsMixin:
             if verify_digest and self._file_sha256(manifest) != expected:
                 raise ValueError("IDEATOR manifest SHA-256 does not match the file")
             document = self._strict_json_object(manifest, max_bytes=4 * 1024 * 1024)
-            if set(document) != {"format_version", "seed_pairs"}:
+            format_version = document.get("format_version")
+            source_bindings: list[dict[str, object]] | None = None
+            if format_version == "ura-ideator-seed-pairs/1":
+                if set(document) != {"format_version", "seed_pairs"}:
+                    raise ValueError(
+                        "IDEATOR v1 manifest must contain only format_version and "
+                        "seed_pairs"
+                    )
+            elif format_version == IDEATOR_MAPPED_FORMAT:
+                document = validate_ideator_mapped_manifest(document)
+                source_bindings = [
+                    {
+                        "source_id": pair["source_id"],
+                        "source_text_sha256": pair["source_text_sha256"],
+                        "upstream_split": pair["upstream_split"],
+                        "upstream_index": pair["upstream_index"],
+                        "upstream_record_sha256": pair["upstream_record_sha256"],
+                        "upstream_image_path": pair["upstream_image_path"],
+                    }
+                    for pair in document["seed_pairs"]
+                ]
+            else:
                 raise ValueError(
-                    "IDEATOR manifest must contain only format_version and seed_pairs"
-                )
-            if document.get("format_version") != "ura-ideator-seed-pairs/1":
-                raise ValueError(
-                    "IDEATOR manifest is not a ura-ideator-seed-pairs/1 artifact"
+                    "IDEATOR manifest is not a supported seed-pair artifact"
                 )
             raw_pairs = document.get("seed_pairs")
             if not isinstance(raw_pairs, list) or not raw_pairs:
@@ -889,14 +910,18 @@ class BuilderModelsMixin:
             pairs: list[dict[str, object]] = []
             total_image_bytes = 0
             for index, raw_pair in enumerate(raw_pairs):
-                if not isinstance(raw_pair, dict) or set(raw_pair) != {
-                    "text",
-                    "image_path",
-                    "image_sha256",
-                }:
+                expected_pair_fields = (
+                    {"text", "image_path", "image_sha256"}
+                    if format_version == "ura-ideator-seed-pairs/1"
+                    else {
+                        "text", "image_path", "image_sha256", "source_id",
+                        "source_text_sha256", "upstream_split", "upstream_index",
+                        "upstream_record_sha256", "upstream_image_path",
+                    }
+                )
+                if not isinstance(raw_pair, dict) or set(raw_pair) != expected_pair_fields:
                     raise ValueError(
-                        f"IDEATOR seed_pairs[{index}] must contain exactly text, "
-                        "image_path, and image_sha256"
+                        f"IDEATOR seed_pairs[{index}] has invalid fields"
                     )
                 text = raw_pair.get("text")
                 image_path = raw_pair.get("image_path")
@@ -950,7 +975,8 @@ class BuilderModelsMixin:
                 "ideator": {
                     "seed_pairs": [
                         [str(pair["text"]), ""] for pair in pairs
-                    ]
+                    ],
+                    "seed_pair_source_bindings": source_bindings,
                 }
             })
             if len(projected_text_payload) > _IDEATOR_SERIALIZED_TEXT_BUDGET_BYTES:
@@ -963,6 +989,11 @@ class BuilderModelsMixin:
                 "seed_pair_manifest_sha256": expected,
                 "seed_pairs": pairs,
                 "pair_limit": pair_limit,
+                **(
+                    {"seed_pair_source_bindings": source_bindings}
+                    if source_bindings is not None
+                    else {}
+                ),
             }
         if "nanogcg" in selected:
             suffix = str(params.get("nanogcg_suffix", "")).strip()
@@ -1151,6 +1182,13 @@ class BuilderModelsMixin:
                 raw_pairs = ideator.get("seed_pairs")
                 if not isinstance(raw_pairs, list) or not raw_pairs:
                     raise ValueError("reviewed IDEATOR seed-pair snapshot is invalid")
+                source_bindings = ideator.get("seed_pair_source_bindings")
+                if source_bindings is not None and (
+                    not isinstance(source_bindings, list)
+                    or len(source_bindings) != len(raw_pairs)
+                    or any(not isinstance(item, dict) for item in source_bindings)
+                ):
+                    raise ValueError("reviewed IDEATOR source-binding snapshot is invalid")
                 pair_limit = ideator.get("pair_limit")
                 if (
                     isinstance(pair_limit, bool)
@@ -1204,6 +1242,11 @@ class BuilderModelsMixin:
                     "seed_pairs": runtime_pairs,
                     "seed_pair_image_sha256": runtime_image_sha256,
                     "pair_limit": pair_limit,
+                    **(
+                        {"seed_pair_source_bindings": source_bindings}
+                        if source_bindings is not None
+                        else {}
+                    ),
                 }
             runtime_payload = self._canonical_json_bytes(runtime_entries)
             if len(runtime_payload) > _RUNNER_ATTACKER_CONFIG_MAX_BYTES:

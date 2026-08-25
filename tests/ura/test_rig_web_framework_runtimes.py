@@ -102,6 +102,34 @@ def _app(tmp_path: Path, service: _FakeRuntimeService) -> RigWebApp:
     )
 
 
+def test_capture_binding_paths_follow_the_checked_in_lock(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    repo = tmp_path / "repo"
+    experiments = repo / "experiments"
+    experiments.mkdir(parents=True)
+    lock_path = experiments / "framework_runtime_lock.json"
+    lock_path.write_text("{}\n", encoding="utf-8")
+    results = tmp_path / "runs"
+    results.mkdir()
+    monkeypatch.setattr(
+        "experiments.rig_web_app.framework_runtimes.load_lock",
+        lambda path: {"lock_id": "a" * 64} if path == lock_path else None,
+    )
+    service = FrameworkRuntimeService(
+        repo_root=repo,
+        results_root=results,
+        state_dir=tmp_path / "state",
+    )
+
+    assert service.capture_binding_paths() == (
+        lock_path,
+        tmp_path / "framework-venvs",
+        results / "engineering" / "framework-runtime-aaaaaaaaaaaa",
+    )
+
+
 def test_runtime_tab_is_outside_builder_and_has_one_action_per_row(tmp_path: Path) -> None:
     service = _FakeRuntimeService(_snapshot())
     app = _app(tmp_path, service)
@@ -704,7 +732,7 @@ def test_snapshot_plans_every_real_lock_entry_and_parses_the_retained_task_log(
     assert snapshot.campaign_route_id == route
     assert (snapshot.campaign_state, snapshot.campaign_status_tag) == ("idle", "not started")
     assert [row.framework for row in snapshot.rows] == [entry["name"] for entry in lock["frameworks"]]
-    assert len(snapshot.rows) == 15
+    assert len(snapshot.rows) == 16
     assert all(row.plan_action == "install" for row in snapshot.rows)
     assert {row.runtime for row in snapshot.rows} == {"python", "node"}
     latest = {row.framework: row.latest for row in snapshot.rows}
@@ -757,7 +785,7 @@ def test_snapshot_plans_every_real_lock_entry_and_parses_the_retained_task_log(
     assert argv[argv.index("--env-root") + 1] == str(results.resolve().parent / "framework-venvs")
     assert argv[argv.index("--state-root") + 1] == str(results.resolve() / "engineering" / route)
     assert argv[argv.index("--only") + 1] == "promptfoo"
-    assert "--python" not in argv  # promptfoo is the Node runtime
+    assert "--python" not in argv  # Promptfoo and T3MP3ST are Node runtimes
     assert captured["cwd"] == repo
 
 

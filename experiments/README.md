@@ -112,10 +112,10 @@ target/arm mismatches remain rejected in UI parity.
 T3MP3ST and HarmBench use one simple two-step path. First, run the prepared
 attack capture from the Build page or CLI. T3MP3ST writes an exact
 `ura-t3mp3st-plan-bundle/1`; HarmBench writes an exact
-`ura-harmbench-transfer-replay/1` plus its attacker config. New T3MP3ST
-capture is currently blocked-unpinned by the lock disposition and the runbook
-procedure rather than by a code gate: `capture_t3mp3st` and the Build capture
-panel remain operable, and only an already attributable bundle may be replayed. Second, select the
+`ura-harmbench-transfer-replay/1` plus its attacker config. T3MP3ST capture must
+use the exact installer-managed source revision from the framework lock; the
+capture helper rejects any different revision before HTTP, and only the
+resulting attributable bundle may be replayed. Second, select the
 attacker in Build or pass that config to `run_matrix`. Preparation may use a
 source model or GPU and is outside the Runner's target/judge ceilings. The
 measured run makes no attacker-generation call: it verifies the artifact hash
@@ -124,6 +124,20 @@ attempts. Rig Web resolves a symlinked configured results root before capture an
 puts canonical absolute, runtime-only artifact paths in the generated attacker
 config. The hardened artifact reader still rejects symlink path components, and
 `run_matrix` persists content identity rather than those host paths.
+
+NanoGCG and IDEATOR use separate prepared-input paths. NanoGCG first derives and
+acquires its sealed Qwen2.5-0.5B surrogate, then
+`experiments.nanogcg_capture` invokes the verified NanoGCG runtime once and
+writes both `ura-nanogcg-suffix-capture/1` provenance and the replay config.
+The later Runner replay does not invoke NanoGCG. IDEATOR does not run the
+unverified generator path:
+`experiments.ideator_vlbreakbench_prepare` maps the exact pinned VLBreakBench
+release to `advbench:245` and writes an
+`ura-ideator-seed-pairs/2` manifest for the Build panel. Its exact outer
+selection is `--corpora advbench_harmful --limit 1 --sample-seed 105`;
+`pair_limit=0` selects all eight verified mapped pairs, not the complete
+AdvBench arm. Both belong to a separately admitted follow-on cohort with their
+own projection, canary, Gate 5 record and measured schedule.
 
 ## Source inventory
 
@@ -336,7 +350,8 @@ response artifacts remain authoritative.
   tier limit. Explicit local or hosted `--limit 0` is supported only as a
   separately projected full-corpus cohort with caps covering the complete grid;
   the current hosted campaign lanes retain their positive prospective limits
-  (runbook section 5.2).
+  (runbook section 5.2). The source-mapped IDEATOR v2 artifact is not a
+  full-corpus configuration: it is fixed to the one-cluster selection above.
 - `--exclude-tool-conditioned` is not a sampling mode. It is admitted only for
   the standalone offline dry-run smoke and records its diagnostic row
   exclusions. Preflight, acquisition, attestation, canary, and measured routes

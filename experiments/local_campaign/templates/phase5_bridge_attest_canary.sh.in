@@ -1066,9 +1066,9 @@ run_isolated harmbench-replay run_canary harmbench-replay harmbench harmbench_te
   --attacker-config "$HB_CANARY_CONFIG" \
   --attacker-config-sha256 "$(sha256sum -- "$HB_CANARY_CONFIG" | awk '{print $1}')"
 
-printf 'bridge-nanogcg\tunavailable\tno attributable precomputed suffix artifact exists; live optimization remains disabled\n' >> "$DISPOSITIONS"
-printf 'bridge-ideator\tunavailable\tno attributable seed-pair artifact or defensible source-pair mapping exists\n' >> "$DISPOSITIONS"
-printf 't3mp3st\tblocked-unpinned\tno exact executable source URL and immutable revision is documented\n' >> "$DISPOSITIONS"
+printf 'bridge-nanogcg\tunavailable\tthe attributable NanoGCG suffix is assigned to a separate follow-on cohort and is not bound to this core cohort\n' >> "$DISPOSITIONS"
+printf 'bridge-ideator\tunavailable\tthe source-mapped IDEATOR seed pairs are assigned to a separate follow-on cohort and are not bound to this core cohort\n' >> "$DISPOSITIONS"
+printf 't3mp3st\tunavailable\tthe pinned T3MP3ST capture and replay are assigned to a separate follow-on cohort and are not bound to this core cohort\n' >> "$DISPOSITIONS"
 
 "$PY" - "$STATUS" "$DISPOSITIONS" <<'PY'
 import csv
@@ -1100,7 +1100,7 @@ with open(sys.argv[2], encoding="utf-8", newline="") as handle:
 expected_dispositions = {
     "bridge-nanogcg": "unavailable",
     "bridge-ideator": "unavailable",
-    "t3mp3st": "blocked-unpinned",
+    "t3mp3st": "unavailable",
 }
 if {row["lane"]: row["disposition"] for row in dispositions} != expected_dispositions:
     raise SystemExit("typed unavailable-lane disposition inventory drift")

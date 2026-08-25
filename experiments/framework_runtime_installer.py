@@ -385,26 +385,54 @@ def load_lock(path: Path = DEFAULT_LOCK) -> dict[str, Any]:
                 raise InstallerError(f"{label}.dependencies.package_count is invalid")
             _validate_hashed_requirements(text, count, label)
         else:
+            source_mode_hint = (
+                entry.get("install", {}).get("source_mode")
+                if isinstance(entry.get("install"), Mapping)
+                else None
+            )
+            dependency_keys = (
+                {
+                    "fully_hashed",
+                    "source_lock_sha256",
+                    "source_lock_bytes",
+                    "package_count",
+                }
+                if source_mode_hint == "source-only"
+                else {"fully_hashed", "npm_lock", "sha256", "package_count"}
+            )
             deps = _exact_keys(
-                entry.get("dependencies"),
-                {"fully_hashed", "npm_lock", "sha256", "package_count"},
-                f"{label}.dependencies",
+                entry.get("dependencies"), dependency_keys, f"{label}.dependencies"
             )
             if deps.get("fully_hashed") is not True:
                 raise InstallerError(f"{label}.dependencies must be fully hash locked")
-            npm_lock = deps.get("npm_lock")
-            if not isinstance(npm_lock, dict) or npm_lock.get("lockfileVersion") != 3:
-                raise InstallerError(f"{label} must embed npm lockfileVersion 3")
-            digest = deps.get("sha256")
-            _check_sha(digest, f"{label}.dependencies.sha256")
-            if _sha256_bytes(_canonical_json(npm_lock)) != digest:
-                raise InstallerError(f"{label} npm lock SHA-256 mismatch")
-            packages = npm_lock.get("packages", {})
-            if deps.get("package_count") != len(packages) - 1:
-                raise InstallerError(f"{label} npm package count is invalid")
-            for package_path, package in packages.items():
-                if package.get("resolved") and not package.get("integrity"):
-                    raise InstallerError(f"{label} npm package lacks integrity: {package_path}")
+            if source_mode_hint == "source-only":
+                _check_sha(
+                    deps.get("source_lock_sha256"),
+                    f"{label}.dependencies.source_lock_sha256",
+                )
+                if (
+                    not isinstance(deps.get("source_lock_bytes"), int)
+                    or deps["source_lock_bytes"] <= 0
+                    or not isinstance(deps.get("package_count"), int)
+                    or deps["package_count"] <= 0
+                ):
+                    raise InstallerError(f"{label} source npm lock metadata is invalid")
+            else:
+                npm_lock = deps.get("npm_lock")
+                if not isinstance(npm_lock, dict) or npm_lock.get("lockfileVersion") != 3:
+                    raise InstallerError(f"{label} must embed npm lockfileVersion 3")
+                digest = deps.get("sha256")
+                _check_sha(digest, f"{label}.dependencies.sha256")
+                if _sha256_bytes(_canonical_json(npm_lock)) != digest:
+                    raise InstallerError(f"{label} npm lock SHA-256 mismatch")
+                packages = npm_lock.get("packages", {})
+                if deps.get("package_count") != len(packages) - 1:
+                    raise InstallerError(f"{label} npm package count is invalid")
+                for package_path, package in packages.items():
+                    if package.get("resolved") and not package.get("integrity"):
+                        raise InstallerError(
+                            f"{label} npm package lacks integrity: {package_path}"
+                        )
         install_required = (
             {"source_mode", "timeout_seconds", "commands", "constraints", "repair"}
             if runtime_name == "python"
@@ -424,8 +452,20 @@ def load_lock(path: Path = DEFAULT_LOCK) -> dict[str, Any]:
             raise InstallerError(f"{label}.install.source_mode is invalid")
         if (source_mode == "none") != (source is None):
             raise InstallerError(f"{label}.install.source_mode disagrees with source provenance")
-        if runtime_name == "node" and source_mode != "provenance-only":
+        if runtime_name == "node" and source_mode not in {"provenance-only", "source-only"}:
             raise InstallerError(f"{label}.install Node source mode is invalid")
+        if runtime_name == "node" and source_mode == "source-only":
+            if kind != "git" or artifacts:
+                raise InstallerError(
+                    f"{label} source-only Node runtime must use its exact git source"
+                )
+            if install.get("commands") != [
+                "npm ci --ignore-scripts --no-audit --no-fund",
+                "npm run build",
+            ]:
+                raise InstallerError(
+                    f"{label} source-only Node commands are not the sealed build path"
+                )
         if not isinstance(install.get("timeout_seconds"), int) or install["timeout_seconds"] <= 0:
             raise InstallerError(f"{label}.install.timeout_seconds is invalid")
         if not isinstance(install.get("commands"), list) or not all(
@@ -501,7 +541,11 @@ def load_lock(path: Path = DEFAULT_LOCK) -> dict[str, Any]:
         inventory_keys = (
             {"distributions", "sha256"}
             if runtime_name == "python"
-            else {"packages", "package_count", "sha256"}
+            else (
+                {"package_count", "sha256"}
+                if source_mode == "source-only"
+                else {"packages", "package_count", "sha256"}
+            )
         )
         inventory = _exact_keys(
             entry.get("expected_inventory"), inventory_keys, f"{label}.expected_inventory"
@@ -528,6 +572,11 @@ def load_lock(path: Path = DEFAULT_LOCK) -> dict[str, Any]:
             _check_sha(inventory.get("sha256"), f"{label}.expected_inventory.sha256")
             if _sha256_bytes(blob) != inventory["sha256"]:
                 raise InstallerError(f"{label} expected inventory SHA-256 mismatch")
+        elif source_mode == "source-only":
+            count = inventory.get("package_count")
+            if not isinstance(count, int) or count <= 0:
+                raise InstallerError(f"{label} installed source npm inventory is invalid")
+            _check_sha(inventory.get("sha256"), f"{label}.expected_inventory.sha256")
         else:
             packages = inventory.get("packages")
             count = inventory.get("package_count")
@@ -1950,6 +1999,63 @@ def _node_lock_inventory(npm_lock: Mapping[str, Any]) -> tuple[int, str]:
     return len(rows), _sha256_bytes(_canonical_json(rows))
 
 
+def _validate_source_node_lock(entry: Mapping[str, Any], source_dir: Path) -> None:
+    """Verify the exact upstream npm lock before installing a source runtime."""
+
+    lock_path = source_dir / "package-lock.json"
+    try:
+        _safe_regular_identity(lock_path)
+        raw = lock_path.read_bytes()
+        npm_lock = _strict_json_loads(raw)
+    except (OSError, UnicodeError, ValueError, TypeError) as exc:
+        raise InstallerError(f"invalid source npm lock for {entry['name']}") from exc
+    dependencies = entry["dependencies"]
+    if (
+        len(raw) != dependencies["source_lock_bytes"]
+        or _sha256_bytes(raw) != dependencies["source_lock_sha256"]
+    ):
+        raise InstallerError(f"source npm lock identity mismatch for {entry['name']}")
+    if not isinstance(npm_lock, Mapping) or npm_lock.get("lockfileVersion") != 3:
+        raise InstallerError(f"{entry['name']} source must use npm lockfileVersion 3")
+    packages = npm_lock.get("packages")
+    if not isinstance(packages, Mapping):
+        raise InstallerError(f"{entry['name']} source npm lock has no package inventory")
+    if len(packages) - 1 != dependencies["package_count"]:
+        raise InstallerError(f"{entry['name']} source npm package count is invalid")
+    for package_path, package in packages.items():
+        if not isinstance(package, Mapping):
+            raise InstallerError(
+                f"{entry['name']} source npm package is invalid: {package_path}"
+            )
+        if package.get("resolved") and not package.get("integrity"):
+            raise InstallerError(
+                f"{entry['name']} source npm package lacks integrity: {package_path}"
+            )
+    manifest_path = source_dir / "package.json"
+    try:
+        _safe_regular_identity(manifest_path)
+        manifest = _strict_json_loads(manifest_path.read_bytes())
+    except (OSError, UnicodeError, ValueError, TypeError) as exc:
+        raise InstallerError(f"invalid source package manifest for {entry['name']}") from exc
+    if not isinstance(manifest, Mapping) or (
+        _canonical_name(str(manifest.get("name", "")))
+        != _canonical_name(entry["canonical_name"])
+        or manifest.get("version") != entry["version"]
+    ):
+        raise InstallerError(f"source package identity mismatch for {entry['name']}")
+
+
+def _node_install_root(entry: Mapping[str, Any], env_dir: Path) -> Path:
+    install = entry.get("install")
+    source_only = isinstance(install, Mapping) and install.get("source_mode") == "source-only"
+    if source_only:
+        source_dir = env_dir / "source" / entry["name"]
+        if not source_dir.is_dir():
+            raise InstallerError(f"source checkout is missing for {entry['name']}")
+        return source_dir
+    return env_dir
+
+
 def _node_package_json_path(relative: Path) -> bool:
     if relative.name != "package.json" or "node_modules" not in relative.parts:
         return False
@@ -2113,9 +2219,23 @@ def _validate_npm_ls_output(
                     f"npm ls reported dependency problems for {entry['name']}"
                 )
             tolerated.append(f"{name} {wanted} optional peer of {requirer}")
-    dependencies = tree.get("dependencies")
-    if not isinstance(dependencies, Mapping) or "promptfoo" not in dependencies:
-        raise InstallerError(f"npm ls did not report promptfoo for {entry['name']}")
+    install = entry.get("install")
+    source_only = isinstance(install, Mapping) and install.get("source_mode") == "source-only"
+    if source_only:
+        if (
+            _canonical_name(str(tree.get("name", "")))
+            != _canonical_name(entry["canonical_name"])
+            or tree.get("version") != entry["version"]
+        ):
+            raise InstallerError(
+                f"npm ls did not report the source project for {entry['name']}"
+            )
+    else:
+        dependencies = tree.get("dependencies")
+        if not isinstance(dependencies, Mapping) or entry["name"] not in dependencies:
+            raise InstallerError(
+                f"npm ls did not report {entry['name']} for {entry['name']}"
+            )
     if returncode and not tolerated:
         raise InstallerError(
             f"npm ls exited {returncode} for {entry['name']} with no tolerable cause"
@@ -2189,12 +2309,16 @@ def _verify_node(entry: Mapping[str, Any], env_dir: Path, runner: CommandRunner)
     runtime = entry["install"]["node_runtime_dir"]
     node = env_dir / "runtime" / runtime / "bin" / "node"
     npm = env_dir / "runtime" / runtime / "bin" / "npm"
+    install_root = _node_install_root(entry, env_dir)
+    source_only = entry["install"].get("source_mode") == "source-only"
+    if source_only:
+        _validate_source_node_lock(entry, install_root)
     version = runner.run([str(node), "--version"], capture=True).stdout.strip().removeprefix("v")
     if version != entry["install"]["node_version"]:
         raise InstallerError(f"Node version mismatch for {entry['name']}")
     npm_tree = runner.run(
         [str(npm), "ls", "--all", "--json"],
-        cwd=env_dir,
+        cwd=install_root,
         extra_env={"PATH": f"{node.parent}:/usr/bin:/bin"},
         capture=True,
         timeout=300,
@@ -2205,13 +2329,13 @@ def _verify_node(entry: Mapping[str, Any], env_dir: Path, runner: CommandRunner)
         allowed_returncodes=(0, 1),
     )
     tolerated_peers = _validate_npm_ls_output(
-        npm_tree.stdout, entry, env_dir, returncode=npm_tree.returncode
+        npm_tree.stdout, entry, install_root, returncode=npm_tree.returncode
     )
     guard = env_dir / ".ura" / "node-network-guard.cjs"
     guard.parent.mkdir(parents=True, exist_ok=True)
     _node_network_guard(guard)
     smoke = entry["smoke"]
-    cli = env_dir / smoke["relative_cli"]
+    cli = install_root / smoke["relative_cli"]
     result = runner.run(
         [str(node), str(cli), *smoke["args"]],
         extra_env={
@@ -2224,14 +2348,20 @@ def _verify_node(entry: Mapping[str, Any], env_dir: Path, runner: CommandRunner)
     )
     if smoke["expected_version"] not in (result.stdout + result.stderr):
         raise InstallerError(f"CLI version smoke mismatch for {entry['name']}")
-    rows, digest = _node_installed_inventory(env_dir)
+    rows, digest = _node_installed_inventory(install_root)
     count = len(rows)
     expected = entry["expected_inventory"]
-    if (
-        rows != expected["packages"]
-        or count != expected["package_count"]
-        or digest != expected["sha256"]
-    ):
+    if source_only:
+        inventory_matches = (
+            count == expected["package_count"] and digest == expected["sha256"]
+        )
+    else:
+        inventory_matches = (
+            rows == expected["packages"]
+            and count == expected["package_count"]
+            and digest == expected["sha256"]
+        )
+    if not inventory_matches:
         raise InstallerError(f"installed Node inventory differs from lock for {entry['name']}")
     return {
         "inventory_sha256": digest,
@@ -2259,6 +2389,37 @@ def _install_node(
         archive = _verify_node_release(runtime, stage, runner, lock["runtimes"])
         _safe_extract_tar(archive, stage / "runtime")
         _complete_phase(stage, state, "node-runtime")
+    source_only = entry["install"]["source_mode"] == "source-only"
+    if source_only:
+        source_dir = stage / "source" / entry["name"]
+        if not _phase_done(state, "npm"):
+            source_dir = _acquire_source(entry, stage, runner, lock["runtimes"])
+            if source_dir is None:
+                raise InstallerError(f"source checkout is missing for {entry['name']}")
+            _complete_phase(stage, state, "source")
+        _validate_source_node_lock(entry, source_dir)
+        node_dir = stage / "runtime" / entry["install"]["node_runtime_dir"] / "bin"
+        if not _phase_done(state, "npm"):
+            runner.run(
+                [
+                    str(node_dir / "npm"),
+                    "ci",
+                    "--ignore-scripts",
+                    "--no-audit",
+                    "--no-fund",
+                ],
+                cwd=source_dir,
+                extra_env={"PATH": f"{node_dir}:/usr/bin:/bin"},
+                timeout=entry["install"].get("timeout_seconds", 14400),
+            )
+            runner.run(
+                [str(node_dir / "npm"), "run", "build"],
+                cwd=source_dir,
+                extra_env={"PATH": f"{node_dir}:/usr/bin:/bin"},
+                timeout=entry["install"].get("timeout_seconds", 14400),
+            )
+            _complete_phase(stage, state, "npm")
+        return _verify_node(entry, stage, runner)
     if not _phase_done(state, "npm"):
         if resume:
             for relative in ("node_modules", "package.json", "package-lock.json"):

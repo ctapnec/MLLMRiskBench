@@ -60,10 +60,11 @@ distro/install.sh all
 
 That single entry point installs the main URA environment, corpora and pinned
 Ollama runtime, builds BIPIA through its own fully hashed support venv, and
-resumes and verifies all 15 locked third-party framework runtimes in separate
-content-addressed stores (14 private Python virtual environments and Promptfoo's
-private Node runtime) from `experiments/framework_runtime_lock.json`. Each of
-the 15 runtimes gets its own sequential `--only` named session, so one failure
+resumes and verifies all 16 locked third-party framework runtimes in separate
+content-addressed stores (14 private Python virtual environments and two private
+Node runtimes, Promptfoo and T3MP3ST) from
+`experiments/framework_runtime_lock.json`. Each of the 16 runtimes gets its own
+sequential `--only` named session, so one failure
 is recorded without hiding later runtime results; the aggregate phase still
 fails honestly. The installer writes the campaign locators, seeds only missing
 aggregator source-registry entries, and never rewrites receipt-bound operator
@@ -114,7 +115,7 @@ instead uses `distro/bipia-build-requirements.lock` in
 ### Isolated framework runtimes
 
 [`experiments/framework_runtime_lock.json`](experiments/framework_runtime_lock.json)
-is the sole dependency/source/runtime manifest for all 15 managed attack,
+is the sole dependency/source/runtime manifest for all 16 managed attack,
 preparation, and native-framework runtimes. Use
 `python -m experiments.framework_runtime_installer plan|install|resume|verify`
 with an exact CPython 3.12.13 base interpreter; never install those packages in
@@ -272,9 +273,12 @@ executable bytecode under `ura-framework-runtime-content-seal/2`
 before any component construction, reuses that worker across attempts, and
 requires a second full-tree closing seal before completed evidence is
 published. Durable artifacts contain only the path-free receipt/bridge identity.
-Live NanoGCG remains disabled until its managed-snapshot subprocess handshake is
-implemented; precomputed suffix replay explicitly records that NanoGCG itself
-was not invoked.
+Direct live NanoGCG construction inside Runner remains disabled. The separate
+`experiments.nanogcg_capture` command runs the verified NanoGCG 0.3.0
+interpreter with a sealed Qwen2.5-0.5B surrogate, performs one bounded
+optimization, and emits an attributable suffix plus replay config. Replaying
+that config performs no further NanoGCG/model call and therefore records
+`framework_execution=not_invoked` for the replay stage only.
 
 The Local Ollama group is a live inventory from the fixed loopback daemon
 (`http://127.0.0.1:11434` by default). Rig Web provides Status, Start, Stop,
@@ -583,6 +587,10 @@ full arm. The framework supports full-set execution for local and hosted targets
 through a separately projected cohort; hosted full mode still requires caps that
 cover its full no-call projection, deadline, attestation and approval.
 Current-campaign policy authorizes full mode only for all-local replication.
+The current source-mapped IDEATOR v2 artifact is narrower: its outer Runner
+selection is `advbench_harmful --limit 1 --sample-seed 105`, and
+`pair_limit=0` means all eight verified pairs mapped to `advbench:245`, not
+the complete AdvBench arm.
 The current measured cohort uses `--sample-seed 0` only. `--sample-seed 1` is a
 separately projected future cohort with its own selection-bound projections,
 acquisition envelopes, Gate record, output roots and analysis stratum, never an
@@ -714,16 +722,24 @@ builder covers all 45 maintained source arms. T3MP3ST and HarmBench are
 selectable attacker lanes after their prepared artifact is supplied. The same
 Build page exposes the separate preparation commands: T3MP3ST captures an exact
 planning bundle, while HarmBench captures generated text cases and writes the
-matching attacker config. New T3MP3ST capture is currently blocked-unpinned by
-the lock disposition and the runbook procedure rather than by a code gate: the
-capture helper and the Build capture panel remain operable, so the block
-depends on the operator following the runbook. These preparation jobs can use source-model or GPU
+matching attacker config. T3MP3ST capture is admitted only through the exact
+installer-managed source commit and runtime recorded by the framework lock; the
+capture helper rejects a different claimed revision before contacting its
+literal-loopback planner. These preparation jobs can use source-model or GPU
 compute; the measured Runner only validates and replays their content-addressed
 outputs. The Build preparation workflow resolves a symlinked configured results
 root before invoking either producer and emits canonical absolute artifact paths
 for runtime use. The native artifact readers still reject paths containing a
 symlink component. `run_matrix` removes those host-only paths before persistence
 and retains only the verified content identity.
+NanoGCG uses a separate CLI preparation path: plan and acquire the exact
+`Qwen/Qwen2.5-0.5B-Instruct` surrogate, run one bounded capture under the
+verified NanoGCG environment, then replay the emitted six-field attacker
+config. IDEATOR preparation maps the pinned public VLBreakBench release to the
+one exact admitted AdvBench source row and emits
+`ura-ideator-seed-pairs/2`; its Build panel validates that manifest and its
+eight PNGs. The exact commands and the separate follow-on cohort boundary are in
+the operator runbook.
 Before a paid mode, it shows the durable argv identity and offers a no-call
 preflight whose lane-projection gives the
 required target/judge/HTTP call upper bounds; Start is blocked until the entered

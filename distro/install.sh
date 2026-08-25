@@ -1060,11 +1060,11 @@ lock_id = row.get("lock_id")
 if not isinstance(lock_id, str) or not re.fullmatch(r"[0-9a-f]{64}", lock_id):
     raise SystemExit("framework_runtime_lock.json has no 64-hex lock_id")
 frameworks = row.get("frameworks")
-if not isinstance(frameworks, list) or len(frameworks) != 15:
-    raise SystemExit("framework_runtime_lock.json must contain exactly 15 frameworks")
+if not isinstance(frameworks, list) or len(frameworks) != 16:
+    raise SystemExit("framework_runtime_lock.json must contain exactly 16 frameworks")
 names = [entry.get("name") for entry in frameworks if isinstance(entry, dict)]
-if len(names) != 15 or len(set(names)) != 15:
-    raise SystemExit("framework runtime names must be 15 unique strings")
+if len(names) != 16 or len(set(names)) != 16:
+    raise SystemExit("framework runtime names must be 16 unique strings")
 if any(not isinstance(name, str) or not re.fullmatch(r"[a-z0-9][a-z0-9-]*", name) for name in names):
     raise SystemExit("framework runtime name is unsafe")
 print(lock_id)
@@ -1077,8 +1077,8 @@ PYEOF
   for row_index in "${!lock_rows[@]}"; do
     lock_rows[$row_index]=${lock_rows[$row_index]%$'\r'}
   done
-  [ "${#lock_rows[@]}" -eq 16 ] \
-    || { echo "  [FAIL] runtimes-plan (lock did not yield 15 framework names)"; echo "FAIL runtimes-plan" >> "$SESSION_LEDGER"; return 1; }
+  [ "${#lock_rows[@]}" -eq 17 ] \
+    || { echo "  [FAIL] runtimes-plan (lock did not yield 16 framework names)"; echo "FAIL runtimes-plan" >> "$SESSION_LEDGER"; return 1; }
   lock_id=${lock_rows[0]}
   frameworks=("${lock_rows[@]:1}")
   base_python=$("$PY" -c 'import sys; print(sys._base_executable)') \
@@ -1132,10 +1132,10 @@ PYEOF
   } > "$LOG/runtimes-install.log"
   if [ "$install_failed" -eq 0 ]; then
     echo OK > "$LOG/runtimes-install.status"; : > "$LOG/runtimes-install.done"
-    echo "  [ok]   runtimes-install (15/15 isolated rows)"
+    echo "  [ok]   runtimes-install (16/16 isolated rows)"
   else
     echo FAIL:1 > "$LOG/runtimes-install.status"; rm -f "$LOG/runtimes-install.done"
-    echo "  [FAIL] runtimes-install aggregate (all 15 rows were attempted)"
+    echo "  [FAIL] runtimes-install aggregate (all 16 rows were attempted)"
   fi
   {
     for framework in "${frameworks[@]}"; do
@@ -1144,7 +1144,7 @@ PYEOF
   } > "$LOG/runtimes-verify.log"
   if [ "$verify_failed" -eq 0 ]; then
     echo OK > "$LOG/runtimes-verify.status"; : > "$LOG/runtimes-verify.done"
-    echo "  [ok]   runtimes-verify (15/15 isolated rows)"
+    echo "  [ok]   runtimes-verify (16/16 isolated rows)"
   else
     echo FAIL:1 > "$LOG/runtimes-verify.status"; rm -f "$LOG/runtimes-verify.done"
     echo "  [FAIL] runtimes-verify aggregate (see per-row statuses)"

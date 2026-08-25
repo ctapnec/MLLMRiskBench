@@ -122,6 +122,12 @@ _SCOPE_HINTS = (
     "account, credential, repository, filesystem path, security range, or live tool. "
     "The downstream target is a model that will receive plan text only."
 )
+_PLANNING_SERVICE_BOUNDARY = {
+    "endpoint_policy": "prestarted_literal_loopback_http_plan",
+    "process_identity_attested": False,
+    "reason": "upstream_plan_api_exposes_no_process_identity",
+    "route": _PLAN_PATH,
+}
 
 
 class _NoRedirect(urllib.request.HTTPRedirectHandler):
@@ -146,6 +152,12 @@ def _canonical_sha256(value: object) -> str:
         allow_nan=False,
     ).encode("utf-8")
     return hashlib.sha256(encoded).hexdigest()
+
+
+def planning_service_boundary() -> dict[str, object]:
+    """Describe what a prestarted planning endpoint can and cannot attest."""
+
+    return dict(_PLANNING_SERVICE_BOUNDARY)
 
 
 def _reject_duplicate_keys(pairs: list[tuple[str, object]]) -> dict[str, object]:
@@ -433,6 +445,91 @@ def _datapoint_sha256(datapoint: DataPoint) -> str:
     return canonical_converted_corpus_sha256([datapoint])
 
 
+def validate_capture_runtime_provenance(
+    value: object, *, upstream_revision: str
+) -> dict[str, object]:
+    """Validate the installed-runtime identity and the endpoint attribution limit."""
+
+    if not isinstance(value, dict):
+        raise ExternalEngineOutputError(
+            "T3MP3ST capture runtime provenance must be an object"
+        )
+    _exact_keys(
+        value,
+        {"framework_lock", "planning_service", "runtime_receipt", "source"},
+        "capture runtime provenance",
+    )
+    lock = value.get("framework_lock")
+    receipt_binding = value.get("runtime_receipt")
+    source = value.get("source")
+    service = value.get("planning_service")
+    if not isinstance(lock, dict):
+        raise ExternalEngineOutputError("T3MP3ST framework-lock binding is invalid")
+    if not isinstance(receipt_binding, dict):
+        raise ExternalEngineOutputError("T3MP3ST runtime-receipt binding is invalid")
+    if not isinstance(source, dict):
+        raise ExternalEngineOutputError("T3MP3ST source binding is invalid")
+    _exact_keys(lock, {"bytes", "lock_id", "sha256"}, "framework-lock binding")
+    _exact_keys(
+        receipt_binding,
+        {"bytes", "content_seal_sha256", "framework", "lock_id", "sha256", "version"},
+        "runtime-receipt binding",
+    )
+    _exact_keys(
+        source,
+        {"archive_sha256", "commit", "tree", "url"},
+        "capture source binding",
+    )
+    if service != _PLANNING_SERVICE_BOUNDARY:
+        raise ExternalEngineOutputError(
+            "T3MP3ST planning-service attribution boundary changed"
+        )
+    if (
+        isinstance(lock.get("bytes"), bool)
+        or not isinstance(lock.get("bytes"), int)
+        or lock["bytes"] <= 0
+        or not isinstance(lock.get("lock_id"), str)
+        or _SHA256_RE.fullmatch(lock["lock_id"]) is None
+        or lock["lock_id"] != lock["lock_id"].lower()
+        or not isinstance(lock.get("sha256"), str)
+        or _SHA256_RE.fullmatch(lock["sha256"]) is None
+        or lock["sha256"] != lock["sha256"].lower()
+    ):
+        raise ExternalEngineOutputError("T3MP3ST framework-lock identity is invalid")
+    pin = upstream_revision.lower()
+    if (
+        source.get("commit") != pin
+        or not isinstance(source.get("tree"), str)
+        or _COMMIT_RE.fullmatch(source["tree"]) is None
+        or source["tree"] != source["tree"].lower()
+        or not isinstance(source.get("archive_sha256"), str)
+        or _SHA256_RE.fullmatch(source["archive_sha256"]) is None
+        or source["archive_sha256"] != source["archive_sha256"].lower()
+        or not isinstance(source.get("url"), str)
+        or urlsplit(source["url"]).scheme != "https"
+    ):
+        raise ExternalEngineOutputError(
+            "T3MP3ST capture source differs from the claimed revision"
+        )
+    if (
+        isinstance(receipt_binding.get("bytes"), bool)
+        or not isinstance(receipt_binding.get("bytes"), int)
+        or receipt_binding["bytes"] <= 0
+        or receipt_binding.get("framework") != "t3mp3st"
+        or receipt_binding.get("lock_id") != lock["lock_id"]
+        or not isinstance(receipt_binding.get("version"), str)
+        or not receipt_binding["version"].strip()
+        or any(
+            not isinstance(receipt_binding.get(field), str)
+            or _SHA256_RE.fullmatch(receipt_binding[field]) is None
+            or receipt_binding[field] != receipt_binding[field].lower()
+            for field in ("content_seal_sha256", "sha256")
+        )
+    ):
+        raise ExternalEngineOutputError("T3MP3ST runtime receipt identity is invalid")
+    return dict(value)
+
+
 def build_plan_bundle(
     datapoints: Sequence[DataPoint],
     responses: Sequence[Mapping[str, object]],
@@ -440,6 +537,7 @@ def build_plan_bundle(
     upstream_revision: str,
     source_provider: str,
     source_model: str,
+    runtime_provenance: Mapping[str, object] | None = None,
 ) -> dict[str, object]:
     """Build one deterministic replay bundle for an exact converted selection.
 
@@ -478,7 +576,7 @@ def build_plan_bundle(
             "response_sha256": _canonical_sha256(response),
             "response": response,
         })
-    return {
+    bundle: dict[str, object] = {
         "format_version": _BUNDLE_FORMAT,
         "upstream_revision": pin,
         "source_provider": provider,
@@ -489,6 +587,11 @@ def build_plan_bundle(
         },
         "entries": entries,
     }
+    if runtime_provenance is not None:
+        bundle["capture_runtime"] = validate_capture_runtime_provenance(
+            dict(runtime_provenance), upstream_revision=pin
+        )
+    return bundle
 
 
 class T3MP3STAttacker(BaseAttacker):
@@ -568,16 +671,23 @@ class T3MP3STAttacker(BaseAttacker):
             self._validated_bundle_entries = self._validate_bundle_selection(
                 wrapper, datapoints, source
             )
-        else:
-            if len(datapoints) != 1:
+            capture_runtime = source.get("capture_runtime")
+            if not isinstance(capture_runtime, dict):
                 raise ExternalEngineConformanceError(
-                    "legacy T3MP3ST replay artifacts cover exactly one DataPoint; "
-                    "capture a plan bundle for a multi-record selection"
+                    "measured T3MP3ST replay requires a bundle produced by the "
+                    "installer-attributed capture command"
                 )
-            response = self._legacy_response(
-                wrapper, self._request_body(datapoints[0]), pin
+        else:
+            if len(datapoints) == 1:
+                response = self._legacy_response(
+                    wrapper, self._request_body(datapoints[0]), pin
+                )
+                _validate_official_response(response)
+            raise ExternalEngineConformanceError(
+                "legacy T3MP3ST artifacts remain readable for compatibility but "
+                "are not admitted as measured Runner evidence; use the "
+                "installer-attributed capture command"
             )
-            _validate_official_response(response)
         self.response_artifact_identity = {
             "sha256": source["sha256"],
             "bytes": source["bytes"],
@@ -588,6 +698,10 @@ class T3MP3STAttacker(BaseAttacker):
         if source.get("corpus_sha256") is not None:
             self.response_artifact_identity["corpus_sha256"] = source[
                 "corpus_sha256"
+            ]
+        if source.get("capture_runtime") is not None:
+            self.response_artifact_identity["capture_runtime"] = source[
+                "capture_runtime"
             ]
 
     @staticmethod
@@ -760,6 +874,8 @@ class T3MP3STAttacker(BaseAttacker):
                 "records": corpus["records"],
                 "corpus_sha256": corpus["sha256"],
             })
+            if "capture_runtime" in corpus:
+                source["capture_runtime"] = corpus["capture_runtime"]
         return wrapper, source
 
     def _legacy_response(
@@ -791,16 +907,19 @@ class T3MP3STAttacker(BaseAttacker):
     def _validate_bundle_structure(
         self, wrapper: Mapping[str, object], pin: str
     ) -> dict[str, object]:
+        fields = {
+            "format_version",
+            "upstream_revision",
+            "source_provider",
+            "source_model",
+            "corpus",
+            "entries",
+        }
+        if "capture_runtime" in wrapper:
+            fields.add("capture_runtime")
         _exact_keys(
             wrapper,
-            {
-                "format_version",
-                "upstream_revision",
-                "source_provider",
-                "source_model",
-                "corpus",
-                "entries",
-            },
+            fields,
             "plan bundle",
         )
         if wrapper.get("format_version") != _BUNDLE_FORMAT:
@@ -845,6 +964,11 @@ class T3MP3STAttacker(BaseAttacker):
         if not isinstance(entries, list) or len(entries) != records:
             raise ExternalEngineOutputError(
                 "T3MP3ST plan bundle entry count does not match corpus.records"
+            )
+        runtime_provenance = None
+        if "capture_runtime" in wrapper:
+            runtime_provenance = validate_capture_runtime_provenance(
+                wrapper["capture_runtime"], upstream_revision=pin
             )
         seen_ids: set[str] = set()
         for index, entry in enumerate(entries):
@@ -932,7 +1056,13 @@ class T3MP3STAttacker(BaseAttacker):
                     f"T3MP3ST plan bundle has duplicate DataPoint id {datapoint_id!r}"
                 )
             seen_ids.add(datapoint_id)
-        return {"sha256": corpus_sha256, "records": records}
+        result: dict[str, object] = {
+            "sha256": corpus_sha256,
+            "records": records,
+        }
+        if runtime_provenance is not None:
+            result["capture_runtime"] = runtime_provenance
+        return result
 
     def _validate_bundle_selection(
         self,
@@ -1052,4 +1182,9 @@ class T3MP3STAttacker(BaseAttacker):
             )
 
 
-__all__ = ["T3MP3STAttacker", "build_plan_bundle"]
+__all__ = [
+    "T3MP3STAttacker",
+    "build_plan_bundle",
+    "planning_service_boundary",
+    "validate_capture_runtime_provenance",
+]

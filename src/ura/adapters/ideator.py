@@ -1,10 +1,12 @@
 """IDEATOR engine adapter: VLM-driven multimodal (image+text) jailbreak generation.
 
-IDEATOR (roywang021/IDEATOR, ICCV 2025, research licence [ideator-2025]) is an
-automated black-box red-teaming method for Vision-Language Models. It uses a VLM
+IDEATOR (roywang021/IDEATOR, ICCV 2025; its public source tree declares no
+software licence) is an automated black-box red-teaming method for Vision-Language
+Models. It uses a VLM
 as the red-teamer to invent a malicious idea and the accompanying jailbreak text,
-then drives a text-to-image diffusion model (Stable Diffusion 3.5 Large) to
-synthesize the paired adversarial image, yielding malicious image+text pairs that
+then drives a text-to-image diffusion model (the released MiniGPT-4 script names
+Stable Diffusion 3 Medium) to synthesize the paired adversarial image, yielding
+malicious image+text pairs that
 transfer across target VLMs without any gradient access to them. In URA-Bench it
 represents the automated multimodal attack-generation family (thesis II.4.x,
 III.2.2; OWASP LLM01 Prompt Injection / jailbreak; RiskCategory.JAILBREAK). It is
@@ -33,6 +35,9 @@ only stdlib + pydantic present and raises a clear RuntimeError when they are abs
 from __future__ import annotations
 
 from collections.abc import Iterable
+import hashlib
+from pathlib import PurePosixPath
+import re
 
 from ..attacker_input_contract import (
     AttackerInputContract,
@@ -73,9 +78,9 @@ class IDEATORAttacker(BaseAttacker):
     def plan_target_inputs(
         self, datapoint: DataPoint, budget: AttackBudget
     ) -> AttackerInputContract:
-        selected, _mode = self._pairs(
-            datapoint.payload_text or datapoint.payload_code or "",
-            self._effective_pair_count(),
+        selected, _mode, _bindings = self._pairs(
+            datapoint,
+            self._effective_pair_count(datapoint),
             budget,
         )
         return generated_image_input_contract(
@@ -88,10 +93,11 @@ class IDEATORAttacker(BaseAttacker):
     def __init__(
         self,
         vlm: str = "minigpt4",
-        diffusion_model: str = "stabilityai/stable-diffusion-3.5-large",
+        diffusion_model: str = "stabilityai/stable-diffusion-3-medium-diffusers",
         device: str = "cuda:0",
         out_dir: str | None = None,
         seed_pairs: list[tuple[str, str]] | None = None,
+        seed_pair_source_bindings: list[dict[str, object]] | None = None,
         pair_limit: int = 0,
     ) -> None:
         # Red-teamer VLM backend and the diffusion synthesizer that paints the image.
@@ -103,6 +109,9 @@ class IDEATORAttacker(BaseAttacker):
         self.out_dir = out_dir
         # Precomputed (text, image_path) pairs; when set, generate() is fully offline.
         self.seed_pairs = seed_pairs
+        # Optional v2 provenance maps every pair to one exact converted source row.
+        # Keeping it separate from seed_pairs preserves path-free Runner identity.
+        self.seed_pair_source_bindings = seed_pair_source_bindings
         if (
             isinstance(pair_limit, bool)
             or not isinstance(pair_limit, int)
@@ -112,8 +121,9 @@ class IDEATORAttacker(BaseAttacker):
         self.pair_limit = pair_limit
 
     def generate(self, datapoint: DataPoint, budget: AttackBudget) -> Iterable[Attempt]:
-        objective = datapoint.payload_text or datapoint.payload_code or ""
-        pairs, mode = self._pairs(objective, self._effective_pair_count(), budget)
+        pairs, mode, source_bindings = self._pairs(
+            datapoint, self._effective_pair_count(datapoint), budget
+        )
         # Preserve the adapter's established conformance/output exceptions from
         # ``_pairs`` while still binding every accepted image before yielding an
         # Attempt. Runner admission calls ``plan_target_inputs`` on the original
@@ -150,8 +160,17 @@ class IDEATORAttacker(BaseAttacker):
                     "modalities": ["image", "text"],
                     "mode": mode,
                     "pair_limit": self.pair_limit,
-                    "sampling_policy": "ordered_prefix_v1",
+                    "sampling_policy": (
+                        "exact_source_ordered_prefix_v2"
+                        if source_bindings is not None
+                        else "ordered_prefix_v1"
+                    ),
                     "selected_pairs": len(pairs),
+                    "source_binding": (
+                        dict(source_bindings[i])
+                        if source_bindings is not None
+                        else None
+                    ),
                 },
             )
             # Attach the synthesized image so the rendered dialog is truly multimodal:
@@ -168,8 +187,12 @@ class IDEATORAttacker(BaseAttacker):
             yield attempt
 
     def _pairs(
-        self, objective: str, n: int, budget: AttackBudget
-    ) -> tuple[list[tuple[str, str]], str]:
+        self, datapoint: DataPoint, n: int, budget: AttackBudget
+    ) -> tuple[
+        list[tuple[str, str]],
+        str,
+        list[dict[str, object]] | None,
+    ]:
         """Return ``(pairs, mode)`` where each pair is ``(jailbreak_text, image_path)``.
 
         Uses the precomputed ``seed_pairs`` fully offline (mode ``"seed"``), or runs
@@ -183,10 +206,41 @@ class IDEATORAttacker(BaseAttacker):
                 raise ExternalEngineOutputError(
                     "IDEATOR seed-pair input contains no valid image+text pairs"
                 )
-            effective = len(pairs) if self.pair_limit == 0 else self.pair_limit
-            if effective > len(pairs):
+            source_bindings = self._validated_source_bindings(len(pairs))
+            selected_pairs = pairs
+            selected_bindings: list[dict[str, object]] | None = None
+            mode = "seed"
+            if source_bindings is not None:
+                objective = datapoint.payload_text or datapoint.payload_code or ""
+                objective_sha256 = hashlib.sha256(objective.encode("utf-8")).hexdigest()
+                selected_indices = [
+                    index
+                    for index, binding in enumerate(source_bindings)
+                    if binding["source_id"] == datapoint.id
+                ]
+                if not selected_indices:
+                    raise ExternalEngineConformanceError(
+                        "IDEATOR v2 manifest has no seed pair bound to source row "
+                        f"{datapoint.id!r}"
+                    )
+                selected_bindings = [source_bindings[index] for index in selected_indices]
+                if any(
+                    binding["source_text_sha256"] != objective_sha256
+                    for binding in selected_bindings
+                ):
+                    raise ExternalEngineConformanceError(
+                        "IDEATOR v2 source binding differs from the selected source text"
+                    )
+                selected_pairs = [pairs[index] for index in selected_indices]
+                mode = "source_mapped_seed_v2"
+
+            effective = (
+                len(selected_pairs) if self.pair_limit == 0 else self.pair_limit
+            )
+            if effective > len(selected_pairs):
                 raise ExternalEngineOutputError(
-                    "IDEATOR pair_limit exceeds the verified seed-pair inventory"
+                    "IDEATOR pair_limit exceeds the verified seed-pair inventory "
+                    "for the selected source row"
                 )
             if n != effective:
                 raise ExternalEngineConformanceError(
@@ -197,7 +251,15 @@ class IDEATORAttacker(BaseAttacker):
                     "IDEATOR selected pairs require max_queries and max_turns to be "
                     f"at least {effective}"
                 )
-            return pairs[:effective], "seed"
+            return (
+                selected_pairs[:effective],
+                mode,
+                (
+                    selected_bindings[:effective]
+                    if selected_bindings is not None
+                    else None
+                ),
+            )
 
         raise ExternalEngineConformanceError(
             "IDEATOR live generation is disabled: the official repository does "
@@ -205,7 +267,7 @@ class IDEATORAttacker(BaseAttacker):
             "bridge. Supply verified precomputed seed_pairs instead."
         )
 
-    def _effective_pair_count(self) -> int:
+    def _effective_pair_count(self, datapoint: DataPoint) -> int:
         if self.seed_pairs is None:
             raise ExternalEngineConformanceError(
                 "IDEATOR live generation is disabled; supply verified seed_pairs"
@@ -215,7 +277,19 @@ class IDEATORAttacker(BaseAttacker):
             raise ExternalEngineOutputError(
                 "IDEATOR seed-pair input contains no valid image+text pairs"
             )
-        return len(pairs) if self.pair_limit == 0 else self.pair_limit
+        source_bindings = self._validated_source_bindings(len(pairs))
+        if source_bindings is None:
+            selected_count = len(pairs)
+        else:
+            selected_count = sum(
+                binding["source_id"] == datapoint.id for binding in source_bindings
+            )
+            if selected_count == 0:
+                raise ExternalEngineConformanceError(
+                    "IDEATOR v2 manifest has no seed pair bound to source row "
+                    f"{datapoint.id!r}"
+                )
+        return selected_count if self.pair_limit == 0 else self.pair_limit
 
     def _validated_seed_pairs(self) -> list[tuple[str, str]]:
         """Return the exact configured order, rejecting any unverified entry."""
@@ -236,3 +310,71 @@ class IDEATORAttacker(BaseAttacker):
                 "(text, image_path) pairs"
             )
         return [(pair[0], pair[1]) for pair in self.seed_pairs]
+
+    def _validated_source_bindings(
+        self, pair_count: int
+    ) -> list[dict[str, object]] | None:
+        """Validate v2's one-to-one pair/source mapping without host locators."""
+
+        if self.seed_pair_source_bindings is None:
+            return None
+        if len(self.seed_pair_source_bindings) != pair_count:
+            raise ExternalEngineConformanceError(
+                "IDEATOR v2 requires exactly one source binding per seed pair"
+            )
+        expected_fields = {
+            "source_id",
+            "source_text_sha256",
+            "upstream_split",
+            "upstream_index",
+            "upstream_record_sha256",
+            "upstream_image_path",
+        }
+        normalized: list[dict[str, object]] = []
+        for index, raw in enumerate(self.seed_pair_source_bindings):
+            if not isinstance(raw, dict) or set(raw) != expected_fields:
+                raise ExternalEngineConformanceError(
+                    f"IDEATOR v2 source binding {index} has invalid fields"
+                )
+            source_id = raw.get("source_id")
+            source_text_sha256 = raw.get("source_text_sha256")
+            split = raw.get("upstream_split")
+            upstream_index = raw.get("upstream_index")
+            record_sha256 = raw.get("upstream_record_sha256")
+            image_path = raw.get("upstream_image_path")
+            if not isinstance(source_id, str) or not source_id.strip():
+                raise ExternalEngineConformanceError(
+                    f"IDEATOR v2 source binding {index} has a blank source_id"
+                )
+            if (
+                not isinstance(source_text_sha256, str)
+                or re.fullmatch(r"[0-9a-f]{64}", source_text_sha256) is None
+                or not isinstance(record_sha256, str)
+                or re.fullmatch(r"[0-9a-f]{64}", record_sha256) is None
+            ):
+                raise ExternalEngineConformanceError(
+                    f"IDEATOR v2 source binding {index} has an invalid digest"
+                )
+            if not isinstance(split, str) or not split.strip() or split != split.strip() or (
+                isinstance(upstream_index, bool)
+                or not isinstance(upstream_index, int)
+                or upstream_index < 0
+            ):
+                raise ExternalEngineConformanceError(
+                    f"IDEATOR v2 source binding {index} has an invalid upstream row"
+                )
+            upstream_path = (
+                PurePosixPath(image_path)
+                if isinstance(image_path, str) and image_path.strip() == image_path
+                else None
+            )
+            if (
+                upstream_path is None
+                or upstream_path.is_absolute()
+                or ".." in upstream_path.parts
+            ):
+                raise ExternalEngineConformanceError(
+                    f"IDEATOR v2 source binding {index} has an invalid upstream path"
+                )
+            normalized.append(dict(raw))
+        return normalized

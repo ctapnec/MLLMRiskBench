@@ -424,18 +424,21 @@ The rendered Gate 5-8 chain enforces an exact 46-row partition. Its baseline is
 conditional N/A. GPTGeoChat x each of the three RWKV Ollama targets is a typed unavailable
 row because the retained GPTGeoChat source requires images while the exact
 Ollama transport is text-only; those rows never enter projection, canary, or
-measured loops. The frozen current cohort also types `bridge-nanogcg` and
-`bridge-ideator` as `unavailable` and does not schedule either lane for measured
-execution. No attributable NanoGCG suffix artifact was bound before Gate 5, and
-no defensible IDEATOR seed-pair manifest with source mapping was bound. The
-IDEATOR Build/UI seed-pair quantity control in revision C is prospective
-capability, not admission or evidence for this cohort. Either lane requires a fresh
-prepared-input manifest or attributable artifact, no-call projection,
-diagnostic canary, Gate 5 record, and controller generation before measured
-scheduling. This does not remove either adapter or optional full-set execution
-through the framework: a future prepared-replay cohort may use a positive limit
-or explicit `--limit 0` with its own complete projection and sufficient admitted
-caps. Four GraySwan RR rows are separately unavailable with reason
+measured loops. The core cohort records `bridge-nanogcg`, `bridge-ideator`, and
+`t3mp3st` as `unavailable` only because their prepared artifacts are assigned
+to a separate follow-on cohort and were not bound when its Gate 5 authorization
+was sealed. This is not a current capability disposition. The core controller
+does not schedule those three lanes for core-cohort measured execution. The
+follow-on cohort binds the NanoGCG capture config, IDEATOR v2 source-mapped
+manifest, and T3MP3ST bundle and uses the ordinary documented Runner commands
+with its own retained immutable argument array. For each lane, the retained
+schedule contains a prepared artifact, no-call projection,
+diagnostic canary, Gate 5 record, and measured schedule.
+NanoGCG may use a positive outer limit or a separately projected `--limit 0`
+transfer cohort. IDEATOR v2 is fixed to
+`advbench_harmful --limit 1 --sample-seed 105`; `pair_limit=0` means
+all eight verified pairs mapped to `advbench:245`, not all 520 AdvBench
+rows. Four GraySwan RR rows are separately unavailable with reason
 `target_baseline_nontermination_at_generation_cap`. Their shared create-only
 `ura-phase5-target-runtime-terminal/1` artifact binds the exact checkpoint,
 local config, sealed acquisition identity, text and physical-image 4,096-token
@@ -557,7 +560,7 @@ runtimes, and the console launch. It removes legacy duplicate PyRIT, Spikee,
 `datasets`, and `jsonlines` top-level installs from the main URA venv, then
 fails if any other lock-derived framework root remains in a reused main venv;
 it does not prune shared transitive dependencies, and the dedicated
-environments remain installed. Each of the 15 locked framework rows runs as a
+environments remain installed. Each of the 16 locked framework rows runs as a
 separate sequential `--only` resume/verify named session and a failure does not
 suppress later rows. The console likewise persists under tmux or, when
 unavailable, screen. Secret files are sourced only within HF-backed
@@ -1291,7 +1294,9 @@ export URA_LOCAL_SAMPLE_SEED=0
   acknowledgement where applicable, and its target, judge and HTTP caps must
   cover the complete no-call projection. Current-campaign policy authorizes full
   mode only for all-local replication. It is not the measured bounded cohort and
-  cannot reuse its Gate record, caps or output roots.
+  cannot reuse its Gate record, caps or output roots. This does not override a
+  prepared artifact's narrower source mapping: current IDEATOR v2 admits only
+  `advbench:245` through `--limit 1 --sample-seed 105`.
 
 `--limit N` is an equal per-arm cap applied independently to each logical source
 arm. Selection is deterministic whole-cluster sampling without replacement and
@@ -2161,6 +2166,9 @@ Use whole source-cluster sampling. The framework supports the complete selected
 release for local or hosted targets through explicit `--limit 0` and a separate
 complete projection with sufficient admitted caps. Current-campaign policy
 admits that full mode only as a separately projected all-local replication.
+Current source-mapped IDEATOR v2 is the explicit exception: its manifest binds
+only `advbench:245` and therefore requires
+`--limit 1 --sample-seed 105`.
 `--limit N` retains every row in each of at most N selected clusters under the
 equal cap applied independently to every logical source arm.
 For the same real converted-corpus digest and `--sample-seed`, limits are nested
@@ -2545,10 +2553,11 @@ printf '%s\n' "$URA_FRAMEWORK_SESSION_JSON"
 ura_wait_session "$URA_FRAMEWORK_SESSION_JSON" || exit $?
 ```
 
-The repository has one strict `ura-framework-runtime-lock/1` manifest for 15
-managed runtimes: 14 separate CPython virtual environments and Promptfoo's
-separate Node environment. It binds
-CPython 3.12.13, the official Promptfoo Node runtime, every package/source
+The repository has one strict `ura-framework-runtime-lock/1` manifest for 16
+managed runtimes: 14 separate CPython virtual environments and separate
+Promptfoo and T3MP3ST Node environments. It binds
+CPython 3.12.13, the official Node runtime shared by the two isolated Node
+stores, every package/source
 version and artifact/source SHA-256, fully hashed transitive dependency locks,
 the observed installed inventory, and the explicit 20-attacker coverage
 disposition. The installer creates one content-addressed store per managed
@@ -2585,7 +2594,7 @@ cache outside the sealed store: `$URA_FRAMEWORK_ENVS/.cache/pip` for Python and
 interrupted sessions and lock revisions, but are transfer optimizations only;
 the hashed dependency lock, exact inventory, offline smoke, receipt, and whole-
 runtime content seal still decide admission. `distro/install.sh runtimes`
-derives the exact 15 names from the validated lock and runs one sequential
+derives the exact 16 names from the validated lock and runs one sequential
 `resume --only NAME` and, on success, `verify --only NAME` session per row. It
 continues after an isolated row failure and returns a nonzero aggregate after
 all rows have been attempted.
@@ -2724,95 +2733,280 @@ The remaining runner bridges are specialized:
 
 | Bridge | Defensible use in this program |
 | --- | --- |
-| `nanogcg` | Stage 1 accepts only a precomputed suffix with `suffix_source` and records that the framework was not invoked; live optimization remains fail-closed until the managed-snapshot subprocess handshake is implemented |
+| `nanogcg` | prepare one attributable suffix with `experiments.nanogcg_capture` under the verified NanoGCG 0.3.0 runtime and sealed Qwen2.5-0.5B surrogate, then replay that suffix without another framework/model call |
 | `harmbench` attacker | prepare text cases from a clean exact-revision checkout with `experiments.harmbench_capture`, then replay only its exact `ura-harmbench-transfer-replay/1` in the measured grid |
 | `purplellama` | only with `cyberseceval` rows; source-identity replay, not the native pipeline |
-| `ideator` | verified precomputed text-image `seed_pairs` only; Build accepts an exact `ura-ideator-seed-pairs/1` manifest plus digest and the live package path remains disabled |
-| `t3mp3st` | currently `blocked-unpinned`: no exact executable Op-General source URL/revision is documented; admit no live planner until a prospective lock amendment supplies both, and use only an already attributable replay bundle |
+| `ideator` | prepare the eight exact VLBreakBench/AdvBench mappings as `ura-ideator-seed-pairs/2` and replay them through Build; legacy v1 remains accepted only for previously reviewed pairs, while live generation remains disabled |
+| `t3mp3st` | capture through the exact installer-managed source commit `f2eec3c48cefe301983b3865811eda89d454e988`, then replay only the resulting attributable bundle |
 
-The frozen current cohort types `bridge-nanogcg` and `bridge-ideator` as
-`unavailable` and does not schedule either lane for measured execution. No
-attributable NanoGCG suffix artifact was bound before Gate 5, and no defensible
-IDEATOR seed-pair manifest with source mapping was bound. The IDEATOR Build/UI
-seed-pair quantity control in revision C is prospective capability, not admission or
-evidence for this cohort. Either lane requires a fresh prepared-input manifest
-or attributable artifact, no-call projection, diagnostic canary, Gate 5 record,
-and controller generation before measured scheduling. This does not remove
-either adapter or optional full-set execution through the framework: a future
-prepared-replay cohort may use a positive limit or explicit `--limit 0` with its
-own complete projection and sufficient admitted caps.
+The core cohort records `bridge-nanogcg`, `bridge-ideator`, and `t3mp3st` as
+`unavailable` only because their prepared artifacts are assigned to a separate
+follow-on cohort and were not bound when its Gate 5 authorization was sealed.
+This is not a current capability disposition. The core controller does not
+schedule those three lanes for core-cohort measured execution. The follow-on
+cohort binds all three prepared artifacts and uses the ordinary documented
+Runner commands with its own retained immutable argument array. For each lane,
+the retained schedule contains a prepared artifact, no-call
+projection, diagnostic canary, Gate 5 record, and measured schedule.
+NanoGCG may use a separately projected positive or `--limit 0` transfer
+selection. Current IDEATOR v2 may not: its source mapping fixes the outer
+selection to `advbench_harmful --limit 1 --sample-seed 105`.
 
-NanoGCG live configuration is deliberately rejected before managed-snapshot,
-framework, target, or model construction in Stage 1. Use only an already
-retained suffix with an attributable source; do not include a model ID/revision
-in the same entry:
+#### NanoGCG: sealed suffix capture, then replay
+
+Direct live NanoGCG configuration inside Runner remains fail-closed. The
+dedicated preparation command is the implemented live path: it verifies the
+NanoGCG 0.3.0 framework store, admits the exact sealed
+`Qwen/Qwen2.5-0.5B-Instruct` surrogate at revision
+`7ae557604adf67be50417f59c2c2f167def9a775`, runs one bounded GCG
+optimization, rechecks the framework/model/project seals, and writes both the
+create-only capture artifact and replay config. Its exact source row is
+`advbench:245`, selected by limit 1 and sample seed 105.
+
+Reuse one immutable argument array for plan derivation and capture. The model
+paths below are the already-resolved stores initialized in section 6.1; choose a
+fresh preparation root because both output files are create-only:
+
+```bash
+URA_NANOGCG_ENV="$(ura_runtime_store nanogcg)" || exit $?
+[[ -x "$URA_NANOGCG_ENV/bin/python" ]] || exit 1
+NANOGCG_PREP_ROOT="$URA_WORK/runs/thesis/prepared/nanogcg-qwen25-05b-row245"
+mkdir -p "$NANOGCG_PREP_ROOT" "$URA_MODEL_PLANS" \
+  "$URA_MODEL_RECEIPTS" "$URA_MODEL_STORE" "$URA_MODEL_TRANSPORT"
+
+NANOGCG_CAPTURE_ARGS=(
+  --source "$URA_ADVBENCH_HARMFUL_PATH"
+  --corpus-name advbench_harmful
+  --source-row-index 245
+  --limit 1
+  --sample-seed 105
+  --model-id Qwen/Qwen2.5-0.5B-Instruct
+  --model-revision 7ae557604adf67be50417f59c2c2f167def9a775
+  --framework-lock "$URA_FRAMEWORK_LOCK"
+  --framework-env-root "$URA_FRAMEWORK_ENVS"
+  --framework-state-root "$URA_FRAMEWORK_STATE"
+  --project-revision "$URA_PROJECT_REVISION_MANIFEST"
+  --project-revision-sha256 "$URA_PROJECT_REVISION_SHA256"
+  --num-steps 20
+  --search-width 64
+  --topk 64
+  --gcg-seed 0
+  --device cuda:0
+  --torch-dtype float16
+)
+
+"$URA_NANOGCG_ENV/bin/python" -m experiments.nanogcg_capture \
+  "${NANOGCG_CAPTURE_ARGS[@]}" \
+  --model-acquisition-plan-only \
+  --model-acquisition-plan-dir "$URA_MODEL_PLANS"
+```
+
+Copy the create-only plan path and SHA-256 printed by that command, acquire only
+that public snapshot under explicit byte/free-space/time bounds, then copy the
+printed receipt path and digest:
+
+```bash
+export URA_NANOGCG_PLAN='<absolute acquisition-plan-*.plan.json>'
+export URA_NANOGCG_PLAN_SHA256='<printed 64-hex digest>'
+python -m experiments.model_acquire \
+  --plan "$URA_NANOGCG_PLAN" \
+  --plan-sha256 "$URA_NANOGCG_PLAN_SHA256" \
+  --store "$URA_MODEL_STORE" \
+  --receipts-dir "$URA_MODEL_RECEIPTS" \
+  --transport-cache "$URA_MODEL_TRANSPORT" \
+  --max-download-bytes 17179869184 \
+  --min-free-bytes 21474836480 \
+  --deadline-seconds 86400
+
+export URA_NANOGCG_RECEIPT='<absolute acquisition-receipt-*.receipt.json>'
+export URA_NANOGCG_RECEIPT_SHA256='<printed 64-hex digest>'
+"$URA_NANOGCG_ENV/bin/python" -m experiments.nanogcg_capture \
+  "${NANOGCG_CAPTURE_ARGS[@]}" \
+  --model-acquisition-plan "$URA_NANOGCG_PLAN" \
+  --model-acquisition-plan-sha256 "$URA_NANOGCG_PLAN_SHA256" \
+  --model-acquisition-receipt "$URA_NANOGCG_RECEIPT" \
+  --model-acquisition-receipt-sha256 "$URA_NANOGCG_RECEIPT_SHA256" \
+  --model-acquisition-store "$URA_MODEL_STORE" \
+  --artifact-out "$NANOGCG_PREP_ROOT/capture.json" \
+  --attacker-config-out "$NANOGCG_PREP_ROOT/attacker-config.json"
+```
+
+Run the final GPU command in a named tmux/screen session. Any change to the
+source row, GCG controls, framework lock, project receipt, model identity, or
+device/dtype requires a new plan and receipt. Use the emitted attacker config
+unchanged. Its replay-only shape is:
 
 ```json
 {
   "nanogcg": {
-    "suffix": "<exact precomputed suffix>",
-    "suffix_source": "<retained artifact/run identity>"
+    "captured_surrogate_id": "Qwen/Qwen2.5-0.5B-Instruct",
+    "captured_surrogate_revision": "7ae557604adf67be50417f59c2c2f167def9a775",
+    "captured_source_id": "advbench:245",
+    "captured_target": "<exact target continuation retained by the capture>",
+    "suffix": "<captured exact suffix>",
+    "suffix_source": "ura-nanogcg-suffix-capture/1@sha256:<capture-file-sha256>"
   }
 }
 ```
 
-The resulting provenance explicitly says `framework_execution=not_invoked`; it
-is replay evidence, never evidence that NanoGCG optimization ran. Run these only
-after preparing their exact attacker config and passing `rig_check`. Do not
-claim that a complete upstream evaluator ran. Garak,
-Promptfoo, Petri, FuzzyAI, EasyJailbreak, AutoDAN-Turbo, Giskard, ASB, and
-AgentDojo are not runner attackers; they belong in the native track below.
+For its first projection/canary/measured sequence, use
+`--attackers nanogcg --attacker-config "$NANOGCG_PREP_ROOT/attacker-config.json"`
+with `--corpora advbench_harmful --limit 1 --sample-seed 105 --seeds 0`
+and query/turn bounds of one, plus the normal target, judge, acquisition,
+attestation and cap flags. The later Runner provenance says
+`framework_execution=not_invoked` because replay itself performs no
+NanoGCG or surrogate call; the separate capture artifact records exactly one
+framework generation call.
+
+#### IDEATOR: exact VLBreakBench mapping, then Build replay
+
+The implemented preparation path does not run IDEATOR generation. It records
+the official generator source at commit
+`504a9825f97c833fb4c3da1feb5542594024d0bd` and tree
+`1e181bca68af2f5fbc4adc6e7bf5c071600e327f`, whose public tree
+declares no software licence, and separately consumes the Apache-2.0
+`wang021/VLBreakBench` release at revision
+`10b1ce5ab4546b5c2ab27c0aed4e171ab8ee98a0`. The preparer verifies
+the exact base/challenge JSON bytes, all referenced PNGs, and the exact admitted
+AdvBench CSV before writing eight one-to-one source mappings:
+
+```bash
+URA_IDEATOR_DATASET_ROOT="$(realpath '<exact VLBreakBench snapshot root>')" || exit $?
+[[ -d "$URA_IDEATOR_DATASET_ROOT" && ! -L "$URA_IDEATOR_DATASET_ROOT" ]] || exit 1
+URA_IDEATOR_PREP_ROOT="$URA_WORK/runs/thesis/prepared/ideator-vlbreakbench-v2"
+mkdir -p "$URA_IDEATOR_PREP_ROOT/images"
+export URA_IDEATOR_MANIFEST="$URA_IDEATOR_PREP_ROOT/ideator-vlbreakbench-v2.json"
+[[ ! -e "$URA_IDEATOR_MANIFEST" && ! -L "$URA_IDEATOR_MANIFEST" ]] || exit 1
+
+"$URA_PY" -m experiments.ideator_vlbreakbench_prepare \
+  --base-json "$URA_IDEATOR_DATASET_ROOT/vlbreakbench_base.json" \
+  --challenge-json "$URA_IDEATOR_DATASET_ROOT/vlbreakbench_challenge.json" \
+  --dataset-root "$URA_IDEATOR_DATASET_ROOT" \
+  --advbench "$URA_ADVBENCH_HARMFUL_PATH" \
+  --prepared-image-dir "$URA_IDEATOR_PREP_ROOT/images" \
+  --out "$URA_IDEATOR_MANIFEST"
+URA_IDEATOR_MANIFEST_SHA256="$(sha256sum "$URA_IDEATOR_MANIFEST" | awk '{print $1}')" || exit $?
+export URA_IDEATOR_MANIFEST_SHA256
+```
+
+In Build select the `ideator` attacker, the
+`advbench_harmful` source arm, limit 1 and sample seed 105. Supply
+`$URA_IDEATOR_MANIFEST` and
+`$URA_IDEATOR_MANIFEST_SHA256` in the verified seed-pair panel and
+use an image-capable target. Pair limit 0 selects all eight verified pairs for
+`advbench:245`; a positive value 1 through 8 selects the exact
+source-ordered prefix. Set both `--max-queries` and `--max-turns`
+to at least that selected pair count. The v2 manifest itself is not a
+`run_matrix --attacker-config` file; Build validates it and materializes
+the private runtime config. Legacy `ura-ideator-seed-pairs/1` remains
+accepted only for previously reviewed pairs. After review, the follow-on lane
+still requires its own projection, diagnostic canary, Gate 5 record and measured
+schedule.
+
+Run all prepared lanes only after passing `rig_check`. Do not claim that
+a complete upstream evaluator ran. Garak, Promptfoo, Petri, FuzzyAI,
+EasyJailbreak, AutoDAN-Turbo, Giskard, ASB, and AgentDojo are not runner
+attackers; they belong in the native track below.
 
 T3MP3ST planning and HarmBench generation are not target/judge/provider-HTTP
 calls covered by the Runner's common call ledger. They run once out of band
-under their own cap or quota. A Stage-1 precomputed NanoGCG suffix performs no
-model load or framework execution. Retain exact preparation/suffix provenance
+under their own cap or quota. NanoGCG capture is also an out-of-band framework
+generation call outside those ceilings; IDEATOR v2 preparation performs only
+local source/image validation and copying. Retain exact preparation provenance
 and never describe any of these operations as protected by the target/judge
 ceilings.
 
 #### T3MP3ST: capture, then replay
 
-This preparation route is currently blocked: the repository has no exact
-executable Op-General source URL and revision, and the runtime lock records
-`t3mp3st` as `blocked-unpinned`. The block is a lock disposition and a runbook
-prohibition, not a code gate: `capture_t3mp3st` and the Build capture panel
-remain operable and will compose a capture against an operator-supplied
-loopback endpoint with an operator-asserted revision, so the block depends on
-the operator following this procedure. Do not improvise a checkout or service
-version. Only after a prospective lock/protocol amendment supplies and verifies
-both may an operator start that exact service on loopback and capture the same
-arm, limit, and sample seed that the measured run will use:
+The framework lock admits the official T3MP3ST source at exact commit
+`f2eec3c48cefe301983b3865811eda89d454e988` in its own source-only Node
+runtime. Start that verified runtime in tmux against the dedicated
+literal-loopback Qwen3-VL vLLM service. The stable runtime alias is resolved to
+the content-addressed store before launch. The capture helper independently
+verifies that store and its receipt, reads the current lock, rejects a different
+claimed revision before HTTP, and re-verifies the runtime before publication.
+The upstream planning route does not expose process identity, so the retained
+boundary records `process_identity_attested=false`; do not claim that the HTTP
+process itself was attested. Start the service and check both local endpoints:
 
 ```bash
-python -m experiments.capture_t3mp3st \
-  --corpus strongreject_official \
-  --source-config experiments/source-instances.json \
-  --limit 50 --sample-seed 0 \
-  --endpoint http://127.0.0.1:3333/api/general/plan \
-  --upstream-revision '<exact-40-hex-T3MP3ST-revision>' \
-  --source-provider '<source-provider>' \
-  --source-model '<source-model>' \
-  --out runs/thesis/prepared/t3mp3st
+export URA_T3_ENV="$(ura_runtime_store t3mp3st)" || exit $?
+export URA_T3_SOURCE="$URA_T3_ENV/source/t3mp3st"
+export URA_T3_NODE="$URA_T3_ENV/runtime/node-v24.16.0-linux-x64/bin/node"
+export URA_T3_SESSION="ura-t3mp3st-${URA_FRAMEWORK_LOCK_ID:0:12}"
+export URA_T3_LOG="$URA_WORK/runs/engineering/$URA_T3_SESSION.log"
+[[ -x "$URA_T3_NODE" && -f "$URA_T3_SOURCE/dist/server.js" ]] || exit 1
+mkdir -p "$(dirname "$URA_T3_LOG")"
+curl --fail --silent --show-error http://127.0.0.1:8000/v1/models >/dev/null
+tmux has-session -t "$URA_T3_SESSION" 2>/dev/null || \
+  tmux new-session -d -s "$URA_T3_SESSION" -c "$URA_T3_SOURCE" \
+    "exec env T3MP3ST_HOST=127.0.0.1 T3MP3ST_PORT=3333 \
+TEMPEST_DEFAULT_PROVIDER=local \
+TEMPEST_LOCAL_BASE_URL=http://127.0.0.1:8000/v1 \
+TEMPEST_LOCAL_MODEL=Qwen/Qwen3-VL-8B-Instruct \
+TEMPEST_LOCAL_TIMEOUT=600000 \
+'$URA_T3_NODE' dist/server.js >>'$URA_T3_LOG' 2>&1"
+curl --retry 30 --retry-delay 2 --retry-connrefused \
+  --fail --silent --show-error http://127.0.0.1:3333/api/health >/dev/null
 ```
 
-The command prints the canonical absolute content-addressed artifact path and
-SHA-256. Put those exact values into a one-attacker config:
+Capture one record first, then the bounded 50-record selection. Keep separate,
+create-only preparation roots because each artifact authorizes a different
+Runner selection:
+
+```bash
+export URA_T3_PREP_ROOT="$URA_WORK/runs/thesis/prepared/t3mp3st-follow-on"
+export URA_T3_ONE_ROOT="$URA_T3_PREP_ROOT/limit-1-seed-0"
+export URA_T3_BOUND_ROOT="$URA_T3_PREP_ROOT/limit-50-seed-0"
+[[ ! -e "$URA_T3_ONE_ROOT" && ! -L "$URA_T3_ONE_ROOT" ]] || exit 1
+[[ ! -e "$URA_T3_BOUND_ROOT" && ! -L "$URA_T3_BOUND_ROOT" ]] || exit 1
+mkdir -p "$URA_T3_PREP_ROOT"
+
+T3_COMMON=(
+  --corpus strongreject_official
+  --source-config experiments/source-instances.json
+  --framework-lock "$URA_FRAMEWORK_LOCK"
+  --framework-env-root "$URA_FRAMEWORK_ENVS"
+  --framework-state-root "$URA_FRAMEWORK_STATE"
+  --upstream-revision f2eec3c48cefe301983b3865811eda89d454e988
+  --source-provider local
+  --source-model Qwen/Qwen3-VL-8B-Instruct
+  --endpoint http://127.0.0.1:3333/api/general/plan
+  --timeout-seconds 600
+)
+
+"$URA_PY" -m experiments.capture_t3mp3st \
+  "${T3_COMMON[@]}" --limit 1 --sample-seed 0 --out "$URA_T3_ONE_ROOT" \
+  | tee "$URA_T3_PREP_ROOT/limit-1-result.json"
+"$URA_PY" -m experiments.capture_t3mp3st \
+  "${T3_COMMON[@]}" --limit 50 --sample-seed 0 --out "$URA_T3_BOUND_ROOT" \
+  | tee "$URA_T3_PREP_ROOT/limit-50-result.json"
+```
+
+Each command prints the canonical absolute content-addressed artifact path and
+SHA-256. Put the exact values from the matching result into a one-attacker
+config:
 
 ```json
 {
   "t3mp3st": {
-    "upstream_revision": "<exact-40-hex-T3MP3ST-revision>",
-    "source_provider": "<source-provider>",
-    "source_model": "<source-model>",
+    "upstream_revision": "f2eec3c48cefe301983b3865811eda89d454e988",
+    "source_provider": "local",
+    "source_model": "Qwen/Qwen3-VL-8B-Instruct",
     "response_artifact": "<printed-artifact-path>",
     "response_artifact_sha256": "<printed-sha256>"
   }
 }
 ```
 
-Use that file with `--attackers t3mp3st --attacker-config <file>` in both
-`rig_check` and `run_matrix`. The measured selection must match the captured
-arm, limit, sample seed and source bytes exactly.
+Use the limit-1 file for the follow-on projection and diagnostic canary, and the
+limit-50 file for its separately projected and admitted bounded measured run.
+Pass `--attackers t3mp3st --attacker-config <matching-file>` in both `rig_check`
+and `run_matrix`. Every immutable Runner argument, including the selected arm,
+limit, seed, call caps and deadline, must be reused verbatim across plan,
+acquisition, projection, canary and measured execution for that cohort.
+Legacy single-response artifacts and bundles without `capture_runtime` remain
+readable for compatibility, but Runner rejects them as measured evidence.
 
 In Rig Web, a configured results-root symlink is resolved before the T3MP3ST
 capture command is built. The generated operational config therefore contains
@@ -3018,8 +3212,9 @@ export URA_ASB_ENV URA_AGENTDOJO_ENV
 ```
 
 Wait for the named-session exit marker, re-run the same `resume` command after
-an interruption, and then run `verify` with the identical flags. The lock installs Promptfoo in its
-own exact official Node runtime and all Python projects in separate exact
+an interruption, and then run `verify` with the identical flags. The lock installs
+Promptfoo and T3MP3ST in separate stores under the exact official Node runtime
+and all Python projects in separate exact
 CPython 3.12.13 venvs. Each published alias below points at a stable
 content-addressed store, while source checkouts are retained under that same
 runtime's `source/` directory. A pin that cannot satisfy the lock remains a
@@ -3973,13 +4168,16 @@ Build surface. Build composes every `run_matrix`/`rig_check` flag the lanes
 above use except the `--models` shorthand, which is CLI/`rig_check`-only: Build
 always emits the equivalent explicit `--api`/`--local` split. `ideator` is
 available through a verified precomputed-replay panel. Supply a strict
-`ura-ideator-seed-pairs/1` manifest under the results root and its exact
-SHA-256. Each `seed_pairs` item contains only `text`, `image_path`, and
-`image_sha256`; every declared PNG must also resolve under the results root.
-Build validates the exact bytes, captures the manifest and images in the review
-ticket, and materializes private copies for the generated `--attacker-config`
-at launch. This does not enable live IDEATOR generation. `purplellama` admits
-only `cyberseceval_*` arms. Build
+source-mapped `ura-ideator-seed-pairs/2` manifest from the preparation
+command above under the results root and its exact SHA-256. Build verifies its
+pinned dataset/generator/source descriptors, eight one-to-one source bindings,
+and every declared PNG. Legacy `ura-ideator-seed-pairs/1` remains accepted
+only for previously reviewed pairs. Build captures the manifest and images in
+the review ticket and materializes private copies for the generated
+`--attacker-config` at launch. The v2 selection must be
+`advbench_harmful --limit 1 --sample-seed 105`; pair limit 0 means all
+eight mapped pairs, not a full-corpus run. This does not enable live IDEATOR
+generation. `purplellama` admits only `cyberseceval_*` arms. Build
 also exposes the documented `--group` (default: the CLI default
 `model,source,risk,effective_modality,expected_behavior,attacker,source_policy_id,source_policy_version`,
 the value every lane above passes; narrower groupings are rejected at the

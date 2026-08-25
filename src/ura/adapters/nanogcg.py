@@ -10,17 +10,22 @@ in-process fallback remains in this adapter.
 from __future__ import annotations
 
 from collections.abc import Iterable
+import re
 from typing import Any
 
 from ..attacker_input_contract import AttackerInputContract, text_only_transfer_contract
 from ..data_models import Attempt, DataPoint
-from ._engine_common import ExternalEngineOutputError, _attempt
+from ._engine_common import (
+    ExternalEngineConformanceError,
+    ExternalEngineOutputError,
+    _attempt,
+)
 from .base import AttackBudget, BaseAttacker
 
-_DEFAULT_TARGET = "Sure, here is"
+PRECOMPUTED_SURROGATE_UNSPECIFIED = "precomputed-surrogate-unspecified"
 LIVE_NANOGCG_DISABLED_MESSAGE = (
-    "live nanoGCG optimization is disabled until the isolated managed-snapshot "
-    "load/verify/optimize handshake is implemented"
+    "live nanoGCG optimization is disabled inside Runner; prepare one sealed "
+    "suffix with experiments.nanogcg_capture and replay that artifact"
 )
 
 
@@ -28,6 +33,10 @@ class NanoGCGAttacker(BaseAttacker):
     """Replay one explicitly supplied suffix without invoking nanoGCG."""
 
     name = "nanogcg"
+    portable_config_exclude = (
+        "device", "model_id", "model_revision", "num_steps", "search_width",
+        "topk", "torch_dtype",
+    )
 
     def plan_target_inputs(
         self, datapoint: DataPoint, budget: AttackBudget
@@ -41,6 +50,10 @@ class NanoGCGAttacker(BaseAttacker):
         model_revision: str | None = None,
         suffix: str | None = None,
         suffix_source: str | None = None,
+        captured_surrogate_id: str | None = None,
+        captured_surrogate_revision: str | None = None,
+        captured_source_id: str | None = None,
+        captured_target: str | None = None,
         device: str = "cuda",
         torch_dtype: str = "float16",
         num_steps: int = 250,
@@ -64,6 +77,37 @@ class NanoGCGAttacker(BaseAttacker):
             not isinstance(suffix_source, str) or not suffix_source.strip()
         ):
             raise ValueError("nanoGCG suffix_source must be non-blank when supplied")
+        if captured_surrogate_id is not None and (
+            not isinstance(captured_surrogate_id, str)
+            or not captured_surrogate_id.strip()
+        ):
+            raise ValueError("nanoGCG captured_surrogate_id must be non-blank")
+        if captured_surrogate_revision is not None and (
+            not isinstance(captured_surrogate_revision, str)
+            or re.fullmatch(r"[0-9a-f]{40,64}", captured_surrogate_revision.strip())
+            is None
+        ):
+            raise ValueError(
+                "nanoGCG captured_surrogate_revision must be 40-64 lowercase hex"
+            )
+        if (captured_surrogate_id is None) != (captured_surrogate_revision is None):
+            raise ValueError(
+                "nanoGCG captured surrogate ID and revision must be supplied together"
+            )
+        for field, value in (
+            ("captured_source_id", captured_source_id),
+            ("captured_target", captured_target),
+        ):
+            if value is not None and (
+                not isinstance(value, str)
+                or not value.strip()
+                or value != value.strip()
+            ):
+                raise ValueError(f"nanoGCG {field} must be non-blank")
+        if (captured_source_id is None) != (captured_target is None):
+            raise ValueError(
+                "nanoGCG captured source ID and target must be supplied together"
+            )
         if not isinstance(device, str) or not device.strip():
             raise ValueError("nanoGCG device must be non-blank")
         if torch_dtype not in {"float16", "bfloat16"}:
@@ -80,6 +124,18 @@ class NanoGCGAttacker(BaseAttacker):
         self.model_revision = model_revision.strip().lower() if model_revision else None
         self.suffix = suffix
         self.suffix_source = suffix_source.strip() if suffix_source else None
+        self.captured_surrogate_id = (
+            captured_surrogate_id.strip() if captured_surrogate_id else None
+        )
+        self.captured_surrogate_revision = (
+            captured_surrogate_revision.strip().lower()
+            if captured_surrogate_revision
+            else None
+        )
+        self.captured_source_id = (
+            captured_source_id if captured_source_id else None
+        )
+        self.captured_target = captured_target if captured_target else None
         self.device = device.strip()
         self.torch_dtype = torch_dtype
         self.num_steps = num_steps
@@ -87,11 +143,16 @@ class NanoGCGAttacker(BaseAttacker):
         self.topk = topk
 
     def preflight(self) -> dict[str, Any]:
+        surrogate = (
+            self.captured_surrogate_id or PRECOMPUTED_SURROGATE_UNSPECIFIED
+        )
+        revision = self.captured_surrogate_revision
         return {
             "component": self.name,
             "mode": "precomputed_suffix_replay",
-            "model": self.model_id,
-            "revision": self.model_revision,
+            "model": surrogate,
+            "revision": revision,
+            "source_id": self.captured_source_id,
             "framework_execution": "not_invoked",
         }
 
@@ -99,34 +160,43 @@ class NanoGCGAttacker(BaseAttacker):
         request = datapoint.payload_text or datapoint.payload_code or ""
         if not request.strip():
             raise ExternalEngineOutputError("nanoGCG received a blank attack request")
-        target = datapoint.meta.get("gcg_target", _DEFAULT_TARGET)
-        if not isinstance(target, str) or not target.strip():
-            raise ExternalEngineOutputError("nanoGCG target continuation is blank")
+        if (
+            self.captured_source_id is not None
+            and datapoint.id != self.captured_source_id
+        ):
+            raise ExternalEngineConformanceError(
+                "nanoGCG captured suffix source differs from the selected row"
+            )
         prompt = f"{request} {self.suffix}".strip()
         if prompt == request:
             raise ExternalEngineOutputError("nanoGCG emitted the unchanged seed prompt")
 
+        surrogate = (
+            self.captured_surrogate_id or PRECOMPUTED_SURROGATE_UNSPECIFIED
+        )
+        revision = self.captured_surrogate_revision
         yield _attempt(
             datapoint,
             self.name,
-            strategy=f"gcg:precomputed_suffix_replay:{self.model_id}",
+            strategy=f"gcg:precomputed_suffix_replay:{surrogate}",
             turn_index=0,
             prompt=prompt,
             seed=budget.seed,
             params={
-                "surrogate_model_id": self.model_id,
-                "requested_surrogate_revision": self.model_revision,
+                "surrogate_model_id": surrogate,
+                "requested_surrogate_revision": revision,
                 "suffix": self.suffix,
-                "target_continuation": target,
-                "num_steps": self.num_steps,
-                "search_width": self.search_width,
-                "topk": self.topk,
-                "device": self.device,
-                "torch_dtype": self.torch_dtype,
+                "captured_source_id": self.captured_source_id,
+                "target_continuation": self.captured_target,
+                "num_steps": None,
+                "search_width": None,
+                "topk": None,
+                "device": None,
+                "torch_dtype": None,
                 "mode": "precomputed",
                 "attack_semantics": "precomputed_suffix_replay",
                 "suffix_source": self.suffix_source,
-                "resolved_surrogate_revision": self.model_revision,
+                "resolved_surrogate_revision": revision,
                 "nanogcg_version": None,
                 "best_loss": None,
                 "losses": [],
@@ -140,4 +210,5 @@ class NanoGCGAttacker(BaseAttacker):
 __all__ = [
     "LIVE_NANOGCG_DISABLED_MESSAGE",
     "NanoGCGAttacker",
+    "PRECOMPUTED_SURROGATE_UNSPECIFIED",
 ]

@@ -301,16 +301,16 @@ RUNNABLE_FAMILIES = {
 }
 TERMINAL_IDENTITIES = {
     "bridge-nanogcg": (
-        "bridge", "unavailable", "unavailable",
-        "no attributable precomputed suffix artifact exists; live optimization remains disabled",
+        "bridge", "unavailable", "separate_follow_on_cohort",
+        "the attributable NanoGCG suffix is assigned to a separate follow-on cohort and is not bound to this core cohort",
     ),
     "bridge-ideator": (
-        "bridge", "unavailable", "unavailable",
-        "no attributable seed-pair artifact or defensible source-pair mapping exists",
+        "bridge", "unavailable", "separate_follow_on_cohort",
+        "the source-mapped IDEATOR seed pairs are assigned to a separate follow-on cohort and are not bound to this core cohort",
     ),
     "t3mp3st": (
-        "bridge", "unavailable", "blocked_unpinned",
-        "no exact executable source URL and revision is documented",
+        "bridge", "unavailable", "separate_follow_on_cohort",
+        "the pinned T3MP3ST capture and replay are assigned to a separate follow-on cohort and are not bound to this core cohort",
     ),
     "gptgeochat-ollama-rwkv-g1d-0p4b": (
         "ollama", "unavailable", "target_transport_text_only_for_image_source",
@@ -1794,9 +1794,9 @@ RUNNABLE_FAMILIES = {
     }},
 }
 TERMINAL_IDENTITIES = {
-    "bridge-nanogcg": ("bridge", "unavailable", "unavailable", "no attributable precomputed suffix artifact exists; live optimization remains disabled"),
-    "bridge-ideator": ("bridge", "unavailable", "unavailable", "no attributable seed-pair artifact or defensible source-pair mapping exists"),
-    "t3mp3st": ("bridge", "unavailable", "blocked_unpinned", "no exact executable source URL and revision is documented"),
+    "bridge-nanogcg": ("bridge", "unavailable", "separate_follow_on_cohort", "the attributable NanoGCG suffix is assigned to a separate follow-on cohort and is not bound to this core cohort"),
+    "bridge-ideator": ("bridge", "unavailable", "separate_follow_on_cohort", "the source-mapped IDEATOR seed pairs are assigned to a separate follow-on cohort and are not bound to this core cohort"),
+    "t3mp3st": ("bridge", "unavailable", "separate_follow_on_cohort", "the pinned T3MP3ST capture and replay are assigned to a separate follow-on cohort and are not bound to this core cohort"),
     "gptgeochat-ollama-rwkv-g1d-0p4b": ("ollama", "unavailable", "target_transport_text_only_for_image_source", "GPTGeoChat requires image-bearing source inputs, while the exact RWKV Ollama target transport is text-only."),
     "gptgeochat-ollama-rwkv-g1f-2p9b": ("ollama", "unavailable", "target_transport_text_only_for_image_source", "GPTGeoChat requires image-bearing source inputs, while the exact RWKV Ollama target transport is text-only."),
     "gptgeochat-ollama-rwkv-g1g-1p5b": ("ollama", "unavailable", "target_transport_text_only_for_image_source", "GPTGeoChat requires image-bearing source inputs, while the exact RWKV Ollama target transport is text-only."),

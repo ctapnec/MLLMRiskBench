@@ -352,27 +352,31 @@ EXPECTED_TERMINAL_BASE_ROWS = {
         "lane_id": "bridge-nanogcg",
         "family": "bridge",
         "disposition": "unavailable",
-        "reason_code": "unavailable",
+        "reason_code": "separate_follow_on_cohort",
         "reason": (
-            "no attributable precomputed suffix artifact exists; live optimization "
-            "remains disabled"
+            "the attributable NanoGCG suffix is assigned to a separate follow-on "
+            "cohort and is not bound to this core cohort"
         ),
     },
     "bridge-ideator": {
         "lane_id": "bridge-ideator",
         "family": "bridge",
         "disposition": "unavailable",
-        "reason_code": "unavailable",
+        "reason_code": "separate_follow_on_cohort",
         "reason": (
-            "no attributable seed-pair artifact or defensible source-pair mapping exists"
+            "the source-mapped IDEATOR seed pairs are assigned to a separate follow-on "
+            "cohort and are not bound to this core cohort"
         ),
     },
     "t3mp3st": {
         "lane_id": "t3mp3st",
         "family": "bridge",
         "disposition": "unavailable",
-        "reason_code": "blocked_unpinned",
-        "reason": "no exact executable source URL and revision is documented",
+        "reason_code": "separate_follow_on_cohort",
+        "reason": (
+            "the pinned T3MP3ST capture and replay are assigned to a separate follow-on "
+            "cohort and are not bound to this core cohort"
+        ),
     },
     **{
         lane: {

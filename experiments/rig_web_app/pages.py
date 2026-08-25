@@ -904,7 +904,11 @@ class PagesMixin:
         else:
             campaigns = []
         recent_campaigns, recent_campaign_note = self._engineering_campaign_scan()
-        if recent_campaign_note and recent_campaign_note not in campaign_notes:
+        if (
+            not valid_window
+            and recent_campaign_note
+            and recent_campaign_note not in campaign_notes
+        ):
             campaign_notes.append(recent_campaign_note)
         pinned_campaign_ids: set[str] = set()
         campaign_by_route = {campaign.route_id: campaign for campaign in campaigns}

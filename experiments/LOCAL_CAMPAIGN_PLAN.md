@@ -6,13 +6,17 @@ operating plan for the rig, not thesis evidence. It complements, and never
 replaces, the operator runbook [`RUN_AND_RETURN.md`](RUN_AND_RETURN.md): every
 command below is a runbook command (section numbers in brackets) restricted to
 local, unpaid resources. Nothing in this plan makes a hosted-provider call.
+The forward runtime inventory was amended on 25 August 2026 to admit T3MP3ST
+at an exact source commit, increasing the managed inventory from 15 to 16. The
+dated readiness snapshot below remains a historical record of what was found on
+20 August.
 
 Goal: exercise and, where the admission gates allow, measure the complete
 portfolio without spending provider budget:
 
 - all 45 logical corpus arms of the 25 converter families (28 common-metric,
   2 source-classification, 15 conversion-only);
-- all 15 isolated framework runtimes and all 20 attacker dispositions, plus the
+- all 16 isolated framework runtimes and all 20 attacker dispositions, plus the
   nine source-native engines;
 - only free targets and judges: local vLLM checkpoints, locally pulled Ollama
   models, the deterministic rules judge and a locally served guardrail classifier.
@@ -78,11 +82,11 @@ audit; any future paid call (none planned here).
    packages environment under `$URA_WORK/support-venvs`. No framework is
    discarded because of a main-environment conflict.
 3. Confirm the console dashboard shows the new pin, and that Build -> Runtimes
-   lists the 15 lock entries with their current status.
+   lists the 16 lock entries with their current status.
 
 Gate 0: suite green on the rig at the new pin; receipt valid; console 200.
 
-## 2. Phase 1: all 15 framework runtimes (3-6 hours, mostly unattended)
+## 2. Phase 1: all 16 framework runtimes (3-6 hours, mostly unattended)
 
 Runbook 12.2 and 14.1 are the authoritative commands. With the lock's env-root
 and state-root conventions (`URA_FRAMEWORK_ENVS=$URA_WORK/framework-venvs`,
@@ -99,7 +103,7 @@ python -m experiments.framework_runtime_installer verify --only pyrit --lock "$U
 ```
 
 Run one installer session per framework with `--only <name>`, tolerating a
-failure and continuing, rather than a single session for all fifteen. The
+failure and continuing, rather than a single session for all sixteen. The
 installer is fail-closed and sequential, so one framework that cannot build
 stops the whole session and hides every later defect: on 20 August a single
 failing smoke blocked the twelve frameworks queued behind it, and a second,
@@ -109,12 +113,14 @@ a time. Observed per-framework times on the rig range from about a minute
 under `$URA_FRAMEWORK_ENVS/.cache/pip` and the npm cache under
 `$URA_FRAMEWORK_ENVS/.cache/npm` are explicitly bound outside every sealed
 store and persist despite each runtime's clean HOME. They affect transfer time,
-not admission. The distro phase derives all 15 names from the validated lock,
+not admission. The distro phase derives all 16 names from the validated lock,
 continues after an isolated row failure, and returns an honest nonzero aggregate
 after attempting the complete inventory. The console equivalent is Build -> Runtimes (Install / Resume /
 Verify per row); use it for at least one batch so that the CLI and UI paths are
 both exercised. Disk: about 65 GiB under `$URA_FRAMEWORK_ENVS`. The Node 24.16.0
-runtime for Promptfoo is downloaded and signature-verified by the installer.
+runtime used by the separate Promptfoo and T3MP3ST Node stores is downloaded
+and signature-verified by the installer. T3MP3ST is built from its exact source
+checkout with `npm ci` against the bound upstream package lock.
 
 Then materialize the private engine runtime configuration for the four
 persistent-worker bridges [12.2]:
@@ -125,8 +131,8 @@ python -m experiments.engine_runtime_config --runtime pyrit=URA_PYRIT_ENV --runt
 # create-only ura-engine-runtime-config/1; each URA_*_ENV names the verified runtime alias from ura_runtime_alias
 ```
 
-Gate 1: `verify` reports all 15 passed (content seals, smoke) and Build ->
-Runtimes shows 15 verified rows; a `run_matrix --dry-run --corpora synth
+Gate 1: `verify` reports all 16 passed (content seals, smoke) and Build ->
+Runtimes shows 16 verified rows; a `run_matrix --dry-run --corpora synth
 --exclude-tool-conditioned --attackers pyrit --engine-runtime-config ...` lane
 succeeds for each of pyrit, deepteam, h4rm3l, spikee (sealed worker opening and
 closing seals present in the manifest).
@@ -364,12 +370,15 @@ therefore receives a new exact no-call projection, acquisition plan and receipt,
 request envelope and Gate 5 cap. Existing commit-matched `--limit 1` canaries may
 remain as nested diagnostics when every other model, attacker, judge and source
 identity is unchanged. HarmBench preparation is selection-bound and must be
-regenerated at limit 50. The framework supports full-set execution for local and
-hosted targets through explicit `--limit 0` with a complete projection and
-sufficient admitted caps. Current-campaign policy authorizes full mode only for
-all-local replication, as a separately approved cohort with its own projection,
-caps, output roots and analysis stratum; it is not part of the bounded Phase 6
-cohort. The current measured cohort uses `--sample-seed 0` only.
+regenerated at limit 50. The framework supports full-set execution for local
+and hosted targets through explicit `--limit 0` with a complete projection and
+sufficient admitted caps. A source-mapped prepared artifact can still bind a
+narrower selection; the general full-set capability does not broaden that
+manifest. Current-campaign policy authorizes
+full mode only for all-local replication, as a separately approved cohort with
+its own projection, caps, output roots and analysis stratum; it is not part of
+the bounded Phase 6 cohort. The current measured cohort uses
+`--sample-seed 0` only.
 `--sample-seed 1` is a separately projected future cohort that requires its own
 selection-bound projections, acquisition envelopes, Gate 5 caps, output roots
 and analysis stratum before any calls; it is never appended to the seed-0 cohort
@@ -405,17 +414,23 @@ while all three local RWKV Ollama targets are text-only. Those three pairs are
 `unavailable` with reason `target_transport_text_only_for_image_source`; they
 never enter projection, canary or measured loops.
 
-The frozen current cohort also types `bridge-nanogcg` and `bridge-ideator` as
-`unavailable` and does not schedule either lane for measured execution. No
-attributable NanoGCG suffix artifact was bound before Gate 5, and no defensible
-IDEATOR seed-pair manifest with source mapping was bound. The IDEATOR Build/UI
-seed-pair quantity control in revision C is prospective capability, not admission or
-evidence for this cohort. Either lane requires a fresh prepared-input manifest
-or attributable artifact, no-call projection, diagnostic canary, Gate 5 record,
-and controller generation before measured scheduling. This does not remove
-either adapter or optional full-set execution through the framework: a future
-prepared-replay cohort may use a positive limit or explicit `--limit 0` with its
-own complete projection and sufficient admitted caps.
+The core cohort records `bridge-nanogcg`, `bridge-ideator`, and `t3mp3st` as
+`unavailable` only because their prepared artifacts are assigned to a separate
+follow-on cohort and were not bound when its Gate 5 authorization was sealed.
+This is not a current capability disposition. The core controller does not
+schedule those three lanes for core-cohort measured execution. The follow-on
+cohort binds the newly prepared NanoGCG suffix, IDEATOR source-mapped seed-pair
+manifest, and T3MP3ST bundle and uses the ordinary documented Runner commands
+with its own retained immutable argument array. For each lane, the retained
+schedule contains a prepared artifact, no-call projection,
+diagnostic canary, Gate 5 record, and measured schedule.
+NanoGCG can use a positive corpus limit or a separately projected
+`--limit 0` transfer cohort. Current IDEATOR v2 cannot: it is fixed to
+`advbench_harmful --limit 1 --sample-seed 105`, while `pair_limit=0` means
+all eight verified pairs mapped to `advbench:245`.
+Prepare those two inputs with the runbook's named "NanoGCG: sealed suffix
+capture, then replay" and "IDEATOR: exact VLBreakBench mapping, then Build
+replay" procedures; do not substitute a manually assembled suffix or manifest.
 
 The corpus limit is the outer population selector, not a universal framework-
 operation limit. `--limit 0` selects every source cluster; a positive limit uses
@@ -424,11 +439,19 @@ separately cover the selected attacker's per-datapoint fanout. The bounded
 HarmBench preparation is fixed to `DirectRequest`, experiment `llama2_7b`, one
 case per method, limit 50, sample seed 0, a 28,800-second preparation timeout,
 and query/turn bounds of one. T3MP3ST capture exposes its own corpus limit,
-sample seed and per-request timeout, but remains `blocked-unpinned` in this
-cohort. IDEATOR's prospective `pair_limit` uses 0 for all verified manifest
-pairs and a positive value for `ordered_prefix_v1`; it is distinct from random
-corpus sampling. NanoGCG accepts one attributable precomputed suffix and has no
-invented quantity selector.
+sample seed and per-request timeout and is bound to exact source commit
+`f2eec3c48cefe301983b3865811eda89d454e988`; after the active sealed chain, run
+a one-record capture/replay before the bounded capture/replay. IDEATOR v2 uses
+the exact outer selection `advbench_harmful --limit 1 --sample-seed 105`;
+`pair_limit=0` selects all eight source-mapped pairs and a positive value
+selects their `exact_source_ordered_prefix_v2`. It is distinct from random
+corpus sampling and does not admit `--limit 0` over all 520 AdvBench rows.
+For the legacy v1 manifest, `pair_limit` uses 0 for all verified manifest pairs
+and a positive value for `ordered_prefix_v1`; this does not change the current
+v2 source mapping or outer selector.
+At Runner replay time, NanoGCG accepts one attributable precomputed suffix and
+has no invented quantity selector. The dedicated capture step generates that
+suffix under the verified framework runtime and sealed surrogate identity.
 
 For an R-Judge canary, source-evaluator completeness and source-evaluator
 validity are separate observations. A completed prediction that does not obey
@@ -566,8 +589,8 @@ JALMBench invocation. Every other arm observes in under 15 s.
 | 2 [11] | R-Judge and GPTGeoChat classification | vLLM roster for both; text-only Ollama targets for R-Judge only, with GPTGeoChat pairs typed unavailable | replay | rules (not queried; source parser authoritative) | `runs/thesis/runner/rjudge`, `.../gptgeochat` |
 | 3 [12.1] | live Crescendo (response-conditioned) | Qwen3-VL-8B | crescendo | rules,guardrail | `runs/thesis/runner/crescendo-<model>` |
 | 3 [12.2] | frozen measured Runner-safe bridges | Qwen3-VL-8B | pyrit, deepteam, h4rm3l, spikee (sealed workers), purplellama (CyberSecEval arms) | rules,guardrail | `runs/thesis/runner/bridge-<attacker>` |
-| 3 [12.2] | prepared attacks | Qwen3-VL-8B | pinned HarmBench DirectRequest preparation + replay; t3mp3st stays blocked-unpinned | rules,guardrail | `runs/thesis/runner/harmbench-replay` |
-| prospective, outside frozen cohort | prepared replay capability | Qwen3-VL-8B | nanogcg attributable suffixes; ideator seed pairs | rules,guardrail | fresh content-bound root only after new admission |
+| 3 [12.2] | sealed `bdd8252` prepared attacks | Qwen3-VL-8B | pinned HarmBench DirectRequest preparation + replay; T3MP3ST retained its historical pre-amendment terminal | rules,guardrail | `runs/thesis/runner/harmbench-replay` |
+| follow-on prepared cohort | prepared replay capability | Qwen3-VL-8B | pinned T3MP3ST capture/replay; NanoGCG attributable suffixes; IDEATOR source-mapped seed pairs | rules,guardrail | fresh content-bound roots only after new admission |
 | 4 [13] | same-base defense contrast | non-estimable: LLaVA base runs, while the exact LLaVA RR target is a Gate 5 runtime terminal and makes no Phase 6 call | replay | rules,guardrail | typed Phase 7 unavailable artifacts, not a paired estimate |
 | 4 [13] | guard defense (text-only) | Qwen3-VL-8B with `--defense both --defense-guard guardrail` (1B guard on GPU 1 alongside the 8B scoring guard only if VRAM allows; otherwise N/A) | replay | rules,guardrail | `runs/thesis/runner/defense-local` |
 | 5 [14] | nine native engines | local OpenAI-compatible endpoint (`vllm serve` of Qwen3-VL-8B or the Ollama API) where the engine supports it | engine-native | engine-native | `$URA_WORK/runs/engineering/ura-native-*`, then `native_import` |

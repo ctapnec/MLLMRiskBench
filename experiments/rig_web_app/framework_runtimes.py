@@ -149,6 +149,13 @@ class FrameworkRuntimeService:
             self.results_root / "engineering" / route,
         )
 
+    def capture_binding_paths(self) -> tuple[Path, Path, Path]:
+        """Return the checked-in lock and its exact managed runtime roots."""
+
+        lock = load_lock(self.lock_path)
+        layout = self._layout(lock["lock_id"])
+        return self.lock_path, layout.env_root, layout.state_root
+
     @staticmethod
     def _public_error(error: BaseException) -> str:
         if isinstance(error, InstallerError):

@@ -148,6 +148,60 @@ def _t3_points() -> list[DataPoint]:
     ]
 
 
+def _t3_runtime_receipt() -> dict[str, object]:
+    return {
+        "schema": "ura-framework-runtime-receipt/1",
+        "lock_id": "7" * 64,
+        "framework": "t3mp3st",
+        "version": "1.0.0",
+        "env_slug": "t3mp3st",
+        "runtime": "node",
+        "inventory_sha256": "8" * 64,
+        "distribution_count": 419,
+        "content_seal": {
+            "schema": "ura-framework-runtime-content-seal/2",
+            "sha256": "9" * 64,
+            "file_count": 10,
+            "byte_count": 100,
+        },
+        "pip_check": "not-applicable",
+        "smoke": "passed",
+        "provider_calls": 0,
+        "model_calls": 0,
+        "network_smoke": "denied",
+        "status": "passed",
+    }
+
+
+def _t3_runtime_provenance(pin: str) -> dict[str, object]:
+    receipt = _t3_runtime_receipt()
+    raw = (json.dumps(receipt, sort_keys=True, separators=(",", ":")) + "\n").encode()
+    seal = receipt["content_seal"]
+    assert isinstance(seal, dict)
+    return {
+        "framework_lock": {
+            "bytes": 123,
+            "lock_id": receipt["lock_id"],
+            "sha256": "a" * 64,
+        },
+        "planning_service": t3mp3st_module.planning_service_boundary(),
+        "runtime_receipt": {
+            "bytes": len(raw),
+            "content_seal_sha256": seal["sha256"],
+            "framework": "t3mp3st",
+            "lock_id": receipt["lock_id"],
+            "sha256": hashlib.sha256(raw).hexdigest(),
+            "version": receipt["version"],
+        },
+        "source": {
+            "archive_sha256": "b" * 64,
+            "commit": pin,
+            "tree": "c" * 40,
+            "url": "https://github.com/elder-plinius/T3MP3ST.git",
+        },
+    }
+
+
 def _write_t3_json(path: Path, value: object) -> str:
     raw = (
         json.dumps(
@@ -373,14 +427,11 @@ def test_t3mp3st_replay_artifact_is_pinned_and_request_bound(tmp_path: Path) -> 
     assert source["mode"] == "precomputed_response"
     assert "path" not in source
     assert len(source["sha256"]) == 64 and source["bytes"] > 0
-    manifest = _runner(attacker).plan_manifest([_datapoint()])
-    attacker_config = manifest.config["components"]["attacker"]
-    assert "response_artifact" not in attacker_config
-    assert attacker_config["response_artifact_identity"] == {
-        "sha256": source["sha256"],
-        "bytes": source["bytes"],
-        "format_version": "ura-t3mp3st-plan-replay/1",
-    }
+    with pytest.raises(
+        ExternalEngineConformanceError,
+        match="not admitted as measured Runner evidence",
+    ):
+        _runner(attacker).plan_manifest([_datapoint()])
     copied_path = tmp_path / "same-plan-different-path.json"
     copied_path.write_bytes(attacker.response_artifact.read_bytes())
     copied_attacker = T3MP3STAttacker(
@@ -389,8 +440,11 @@ def test_t3mp3st_replay_artifact_is_pinned_and_request_bound(tmp_path: Path) -> 
         source_model="frozen-planner",
         response_artifact=copied_path,
     )
-    copied_manifest = _runner(copied_attacker).plan_manifest([_datapoint()])
-    assert copied_manifest.config["components"]["attacker"] == attacker_config
+    with pytest.raises(
+        ExternalEngineConformanceError,
+        match="not admitted as measured Runner evidence",
+    ):
+        _runner(copied_attacker).plan_manifest([_datapoint()])
     copied_attempts = list(copied_attacker.generate(_datapoint(), _budget()))
     assert [row.model_dump(mode="json") for row in copied_attempts] == [
         row.model_dump(mode="json") for row in attempts
@@ -499,6 +553,7 @@ def test_t3mp3st_capture_bundle_round_trips_exact_selection(
         return _t3_response()
 
     monkeypatch.setattr(t3mp3st_module, "_post_plan", fake_post)
+    runtime_provenance = _t3_runtime_provenance("1" * 40)
     descriptor = capture_t3mp3st_bundle(
         points,
         endpoint="http://127.0.0.1:3333/api/general/plan",
@@ -506,6 +561,8 @@ def test_t3mp3st_capture_bundle_round_trips_exact_selection(
         source_provider="local",
         source_model="frozen-planner",
         output_directory=tmp_path / "nested" / "capture",
+        runtime_provenance=runtime_provenance,
+        runtime_recheck=lambda: runtime_provenance,
         timeout_seconds=12,
     )
 
@@ -528,6 +585,7 @@ def test_t3mp3st_capture_bundle_round_trips_exact_selection(
     identity = manifest.config["components"]["attacker"]["response_artifact_identity"]
     assert identity["sha256"] == descriptor["sha256"]
     assert identity["records"] == 2
+    assert identity["capture_runtime"]["framework_lock"]["lock_id"] == "7" * 64
     assert "response_artifact" not in manifest.config["components"]["attacker"]
     assert str(tmp_path) not in json.dumps(
         manifest.config["components"]["attacker"], sort_keys=True
@@ -535,6 +593,132 @@ def test_t3mp3st_capture_bundle_round_trips_exact_selection(
     for point in points:
         attempts = list(attacker.generate(point, _budget()))
         assert attempts[0].params["response_source"]["mode"] == "precomputed_bundle"
+        runtime = attempts[0].params["response_source"]["capture_runtime"]
+        assert runtime["framework_lock"]["lock_id"] == "7" * 64
+        assert runtime["planning_service"]["process_identity_attested"] is False
+
+
+def test_t3mp3st_legacy_readability_does_not_admit_measured_evidence(
+    tmp_path: Path,
+) -> None:
+    point = _datapoint()
+    legacy_attacker = T3MP3STAttacker(
+        upstream_revision="1" * 40,
+        source_provider="local",
+        source_model="planner",
+        response_artifact=tmp_path / "legacy.json",
+    )
+    assert legacy_attacker.response_artifact is not None
+    legacy_attacker.response_artifact.write_text(
+        json.dumps({
+            "format_version": "ura-t3mp3st-plan-replay/1",
+            "upstream_revision": "1" * 40,
+            "request": legacy_attacker._request_body(point),
+            "response": _t3_response(),
+        }),
+        encoding="utf-8",
+    )
+    assert list(legacy_attacker.generate(point, _budget()))
+    with pytest.raises(
+        ExternalEngineConformanceError,
+        match="legacy .* not admitted as measured Runner evidence",
+    ):
+        _runner(legacy_attacker).plan_manifest([point])
+
+    bundle = build_plan_bundle(
+        [point],
+        [_t3_response()],
+        upstream_revision="2" * 40,
+        source_provider="local",
+        source_model="planner",
+    )
+    bundle_path = tmp_path / "unattributed-bundle.json"
+    digest = _write_t3_json(bundle_path, bundle)
+    unattributed = T3MP3STAttacker(
+        upstream_revision="2" * 40,
+        source_provider="local",
+        source_model="planner",
+        response_artifact=bundle_path,
+        response_artifact_sha256=digest,
+    )
+    assert list(unattributed.generate(point, _budget()))
+    with pytest.raises(
+        ExternalEngineConformanceError,
+        match="installer-attributed capture command",
+    ):
+        _runner(unattributed).plan_manifest([point])
+
+
+def test_t3mp3st_capture_closes_runtime_seal_before_publishing(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    calls = 0
+
+    def fake_post(*_args, **_kwargs):
+        nonlocal calls
+        calls += 1
+        return _t3_response()
+
+    monkeypatch.setattr(t3mp3st_module, "_post_plan", fake_post)
+    opening = _t3_runtime_provenance("1" * 40)
+    changed = json.loads(json.dumps(opening))
+    changed["framework_lock"]["sha256"] = "d" * 64
+    output = tmp_path / "capture"
+    with pytest.raises(ValueError, match="identity changed during capture"):
+        capture_t3mp3st_bundle(
+            _t3_points(),
+            endpoint="http://127.0.0.1:3333/api/general/plan",
+            upstream_revision="1" * 40,
+            source_provider="local",
+            source_model="planner",
+            output_directory=output,
+            runtime_provenance=opening,
+            runtime_recheck=lambda: changed,
+        )
+    assert calls == 2
+    assert not output.exists()
+
+
+@pytest.mark.parametrize(
+    ("mutation", "message"),
+    [
+        ("service_claim", "attribution boundary"),
+        ("receipt_lock", "receipt identity"),
+    ],
+)
+def test_t3mp3st_bundle_rejects_false_runtime_or_service_attribution(
+    tmp_path: Path, mutation: str, message: str
+) -> None:
+    points = _t3_points()
+    bundle = build_plan_bundle(
+        points,
+        [_t3_response(), _t3_response()],
+        upstream_revision="1" * 40,
+        source_provider="local",
+        source_model="planner",
+        runtime_provenance=_t3_runtime_provenance("1" * 40),
+    )
+    runtime = bundle["capture_runtime"]
+    assert isinstance(runtime, dict)
+    if mutation == "service_claim":
+        service = runtime["planning_service"]
+        assert isinstance(service, dict)
+        service["process_identity_attested"] = True
+    else:
+        receipt = runtime["runtime_receipt"]
+        assert isinstance(receipt, dict)
+        receipt["lock_id"] = "d" * 64
+    artifact = tmp_path / f"runtime-{mutation}.json"
+    digest = _write_t3_json(artifact, bundle)
+    attacker = T3MP3STAttacker(
+        upstream_revision="1" * 40,
+        source_provider="local",
+        source_model="planner",
+        response_artifact=artifact,
+        response_artifact_sha256=digest,
+    )
+    with pytest.raises(ExternalEngineOutputError, match=message):
+        _runner(attacker).plan_manifest(points)
 
 
 @pytest.mark.parametrize(
@@ -693,6 +877,7 @@ def test_t3mp3st_capture_rejects_duplicate_rows_before_http(
         lambda *_args, **_kwargs: pytest.fail("duplicate selection reached HTTP"),
     )
     with pytest.raises(ExternalEngineConformanceError, match="duplicate DataPoint id"):
+        runtime_provenance = _t3_runtime_provenance("5" * 40)
         capture_t3mp3st_bundle(
             points,
             endpoint="http://127.0.0.1:3333/api/general/plan",
@@ -700,6 +885,8 @@ def test_t3mp3st_capture_rejects_duplicate_rows_before_http(
             source_provider="local",
             source_model="planner",
             output_directory=tmp_path,
+            runtime_provenance=runtime_provenance,
+            runtime_recheck=lambda: runtime_provenance,
         )
 
 
@@ -726,11 +913,24 @@ def test_t3mp3st_capture_cli_writes_machine_readable_completion(
         "_post_plan",
         lambda *_args, **_kwargs: _t3_response(),
     )
+    runtime_checks: list[str] = []
+
+    def verified_runtime(_lock, _env, _state):  # noqa: ANN001
+        runtime_checks.append("verified")
+        return "6" * 40, _t3_runtime_provenance("6" * 40)
+
+    monkeypatch.setattr(
+        t3mp3st_capture_module,
+        "verified_t3mp3st_runtime",
+        verified_runtime,
+    )
 
     assert t3mp3st_capture_module.main([
         "--input", str(input_path),
         "--endpoint", "http://127.0.0.1:3333/api/general/plan",
         "--upstream-revision", "6" * 40,
+        "--framework-env-root", str(tmp_path),
+        "--framework-state-root", str(tmp_path),
         "--source-provider", "local",
         "--source-model", "planner",
         "--timeout-seconds", "10",
@@ -738,12 +938,143 @@ def test_t3mp3st_capture_cli_writes_machine_readable_completion(
     ]) == 0
 
     completion = json.loads(capsys.readouterr().out)
+    assert runtime_checks == ["verified", "verified"]
     assert completion["format_version"] == "ura-t3mp3st-plan-bundle/1"
     assert completion["records"] == 2
-    assert Path(completion["artifact"]).is_file()
-    assert Path(completion["artifact"]).name.endswith(
+    assert completion["runtime_lock_id"] == "7" * 64
+    artifact = Path(completion["artifact"])
+    assert artifact.is_file()
+    assert artifact.name.endswith(
         f"{completion['sha256']}.json"
     )
+    retained = json.loads(artifact.read_text(encoding="utf-8"))
+    assert retained["capture_runtime"]["framework_lock"]["lock_id"] == "7" * 64
+    assert (
+        retained["capture_runtime"]["planning_service"]
+        ["process_identity_attested"]
+        is False
+    )
+
+
+def test_t3mp3st_runtime_provenance_comes_from_verified_store_receipt(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    pin = "6" * 40
+    lock_id = "7" * 64
+    source = {
+        "archive_sha256": "b" * 64,
+        "commit": pin,
+        "tree": "c" * 40,
+        "url": "https://github.com/elder-plinius/T3MP3ST.git",
+    }
+    lock = {"lock_id": lock_id}
+    entry = {"env_slug": "t3mp3st", "source": source}
+    lock_raw = b"validated-lock-fixture\n"
+    env_root = tmp_path / "envs"
+    state_root = tmp_path / "state"
+    env_root.mkdir()
+    state_root.mkdir()
+    store = env_root / ".store" / f"t3mp3st-{lock_id[:16]}"
+    store.mkdir(parents=True)
+    document = _t3_runtime_receipt()
+    (store / ".ura-runtime-receipt.json").write_bytes(
+        (json.dumps(document, sort_keys=True, separators=(",", ":")) + "\n").encode()
+    )
+    monkeypatch.setattr(
+        t3mp3st_capture_module,
+        "_locked_t3mp3st_entry",
+        lambda _path: (lock, entry, lock_raw),
+    )
+    verified: list[tuple[object, object]] = []
+    monkeypatch.setattr(
+        t3mp3st_capture_module,
+        "verify_one",
+        lambda observed_entry, observed_lock, _layout: verified.append(
+            (observed_entry, observed_lock)
+        ),
+    )
+
+    revision, provenance = t3mp3st_capture_module.verified_t3mp3st_runtime(
+        "lock.json", env_root, state_root
+    )
+    assert revision == pin
+    assert verified == [(entry, lock)]
+    assert provenance["framework_lock"] == {
+        "bytes": len(lock_raw),
+        "lock_id": lock_id,
+        "sha256": hashlib.sha256(lock_raw).hexdigest(),
+    }
+    receipt_binding = provenance["runtime_receipt"]
+    assert isinstance(receipt_binding, dict)
+    assert receipt_binding["sha256"] == hashlib.sha256(
+        (json.dumps(document, sort_keys=True, separators=(",", ":")) + "\n").encode()
+    ).hexdigest()
+    assert receipt_binding["content_seal_sha256"] == "9" * 64
+
+
+def test_t3mp3st_capture_cli_rejects_revision_mismatch_before_http(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    input_path = tmp_path / "selection.json"
+    input_path.write_text(
+        json.dumps([_datapoint().model_dump(mode="json")]), encoding="utf-8"
+    )
+    monkeypatch.setattr(
+        t3mp3st_capture_module,
+        "verified_t3mp3st_runtime",
+        lambda _lock, _env, _state: (
+            "6" * 40,
+            _t3_runtime_provenance("6" * 40),
+        ),
+    )
+    monkeypatch.setattr(
+        t3mp3st_module,
+        "_post_plan",
+        lambda *_args, **_kwargs: pytest.fail("revision mismatch reached HTTP"),
+    )
+
+    with pytest.raises(SystemExit):
+        t3mp3st_capture_module.main([
+            "--input", str(input_path),
+            "--endpoint", "http://127.0.0.1:3333/api/general/plan",
+            "--upstream-revision", "8" * 40,
+            "--framework-env-root", str(tmp_path),
+            "--framework-state-root", str(tmp_path),
+            "--source-provider", "local",
+            "--source-model", "planner",
+            "--out", str(tmp_path / "captures"),
+        ])
+
+
+def test_t3mp3st_capture_rejects_unverified_runtime_before_http(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    input_path = tmp_path / "selection.json"
+    input_path.write_text(
+        json.dumps([_datapoint().model_dump(mode="json")]), encoding="utf-8"
+    )
+    monkeypatch.setattr(
+        t3mp3st_capture_module,
+        "verified_t3mp3st_runtime",
+        lambda *_args: (_ for _ in ()).throw(ValueError("runtime receipt failed")),
+    )
+    monkeypatch.setattr(
+        t3mp3st_module,
+        "_post_plan",
+        lambda *_args, **_kwargs: pytest.fail("unverified runtime reached HTTP"),
+    )
+
+    with pytest.raises(SystemExit):
+        t3mp3st_capture_module.main([
+            "--input", str(input_path),
+            "--endpoint", "http://127.0.0.1:3333/api/general/plan",
+            "--upstream-revision", "6" * 40,
+            "--framework-env-root", str(tmp_path),
+            "--framework-state-root", str(tmp_path),
+            "--source-provider", "local",
+            "--source-model", "planner",
+            "--out", str(tmp_path / "captures"),
+        ])
 
 
 def test_purplellama_is_exact_cyberseceval_identity_replay() -> None:

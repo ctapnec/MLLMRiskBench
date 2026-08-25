@@ -258,12 +258,27 @@ class BuilderCaptureMixin:
                     timeout_value = 0
                 if not math.isfinite(timeout_value) or not 0 < timeout_value <= 3600:
                     errors["t3cap_timeout"] = "must be in (0, 3600]"
+            framework_lock = framework_env_root = framework_state_root = ""
+            try:
+                lock_path, env_root, state_root = (
+                    self.framework_runtimes.capture_binding_paths()
+                )
+                framework_lock = str(lock_path)
+                framework_env_root = str(env_root)
+                framework_state_root = str(state_root)
+            except (OSError, RuntimeError, TypeError, ValueError):
+                errors["t3cap_revision"] = (
+                    "verified T3MP3ST framework runtime paths are unavailable"
+                )
             values = {
                 "--corpus": corpus,
                 "--limit": limit,
                 "--sample-seed": seed,
                 "--endpoint": endpoint,
                 "--upstream-revision": revision,
+                "--framework-lock": framework_lock,
+                "--framework-env-root": framework_env_root,
+                "--framework-state-root": framework_state_root,
                 "--source-provider": provider,
                 "--source-model": model,
                 "--out": out,

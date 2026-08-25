@@ -13,17 +13,30 @@ import os
 import secrets
 import sys
 from pathlib import Path
-from typing import Sequence
+from typing import Callable, Mapping, Sequence
 
 ROOT = Path(__file__).resolve().parents[1]
 SRC = ROOT / "src"
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
 if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
+from experiments.framework_runtime_installer import (  # noqa: E402
+    DEFAULT_LOCK,
+    RECEIPT_NAME as FRAMEWORK_RECEIPT_NAME,
+    Layout,
+    load_lock,
+    select_frameworks,
+    verify_one,
+)
 from ura.adapters.t3mp3st import (  # noqa: E402
     T3MP3STAttacker,
     build_plan_bundle,
+    planning_service_boundary,
+    validate_capture_runtime_provenance,
 )
+from ura.adapters._native_artifacts import read_binary_artifact  # noqa: E402
 from ura.data_models import DataPoint  # noqa: E402
 
 
@@ -31,6 +44,126 @@ _FORMAT_VERSION = "ura-t3mp3st-plan-bundle/1"
 _MAX_INPUT_BYTES = 64 * 1024 * 1024
 _MAX_OUTPUT_BYTES = 256 * 1024 * 1024
 _MAX_RECORDS = 10_000
+_MAX_FRAMEWORK_LOCK_BYTES = 16 * 1024 * 1024
+_MAX_FRAMEWORK_RECEIPT_BYTES = 1024 * 1024
+
+
+def _locked_t3mp3st_entry(
+    lock_path: str | Path,
+) -> tuple[dict[str, object], dict[str, object], bytes]:
+    path, before = read_binary_artifact(
+        Path(lock_path), max_bytes=_MAX_FRAMEWORK_LOCK_BYTES
+    )
+    lock = load_lock(path)
+    _path_after, after = read_binary_artifact(
+        path, max_bytes=_MAX_FRAMEWORK_LOCK_BYTES
+    )
+    if after != before:
+        raise ValueError("framework runtime lock changed while it was validated")
+    coverage = next(
+        (row for row in lock["coverage"] if row["attacker"] == "t3mp3st"), None
+    )
+    if (
+        coverage is None
+        or coverage["status"] != "installer-managed"
+        or coverage["runtime"] != "t3mp3st"
+    ):
+        raise ValueError("runtime lock does not admit T3MP3ST capture")
+    entries = select_frameworks(lock, ["t3mp3st"])
+    if len(entries) != 1:
+        raise ValueError("runtime lock has no unique T3MP3ST source pin")
+    entry = entries[0]
+    source = entry.get("source")
+    if not isinstance(source, dict) or not isinstance(source.get("commit"), str):
+        raise ValueError("runtime lock has no T3MP3ST source pin")
+    return lock, entry, before
+
+
+def locked_t3mp3st_revision(lock_path: str | Path = DEFAULT_LOCK) -> tuple[str, str]:
+    """Return the installer-managed T3MP3ST source pin and lock identity."""
+
+    lock, entry, _raw = _locked_t3mp3st_entry(lock_path)
+    source = entry["source"]
+    assert isinstance(source, dict)
+    return source["commit"], lock["lock_id"]
+
+
+def verified_t3mp3st_runtime(
+    lock_path: str | Path,
+    env_root: str | Path,
+    state_root: str | Path,
+) -> tuple[str, dict[str, object]]:
+    """Verify the installed T3MP3ST store and return path-free provenance."""
+
+    lock, entry, lock_raw = _locked_t3mp3st_entry(lock_path)
+    roots = [Path(env_root).expanduser().absolute(), Path(state_root).expanduser().absolute()]
+    for root in roots:
+        if root.is_symlink() or not root.is_dir() or root.resolve(strict=True) != root:
+            raise ValueError("framework roots must be resolved non-link directories")
+    layout = Layout(roots[0], roots[1])
+    verify_one(entry, lock, layout)
+    receipt_path = (
+        layout.store(entry["env_slug"], lock["lock_id"])
+        / FRAMEWORK_RECEIPT_NAME
+    )
+    _receipt_path, receipt_raw = read_binary_artifact(
+        receipt_path, max_bytes=_MAX_FRAMEWORK_RECEIPT_BYTES
+    )
+    receipt = _strict_json(receipt_raw.decode("utf-8"))
+    seal = receipt.get("content_seal") if isinstance(receipt, dict) else None
+    if (
+        not isinstance(seal, dict)
+        or receipt.get("lock_id") != lock["lock_id"]
+        or receipt.get("framework") != "t3mp3st"
+        or receipt.get("status") != "passed"
+        or not isinstance(receipt.get("version"), str)
+        or not isinstance(seal.get("sha256"), str)
+    ):
+        raise ValueError("T3MP3ST runtime receipt identity is invalid")
+    source = entry["source"]
+    assert isinstance(source, dict)
+    provenance = {
+        "framework_lock": {
+            "bytes": len(lock_raw),
+            "lock_id": lock["lock_id"],
+            "sha256": hashlib.sha256(lock_raw).hexdigest(),
+        },
+        "planning_service": planning_service_boundary(),
+        "runtime_receipt": {
+            "bytes": len(receipt_raw),
+            "content_seal_sha256": seal["sha256"],
+            "framework": "t3mp3st",
+            "lock_id": lock["lock_id"],
+            "sha256": hashlib.sha256(receipt_raw).hexdigest(),
+            "version": receipt["version"],
+        },
+        "source": {
+            key: source[key]
+            for key in ("archive_sha256", "commit", "tree", "url")
+        },
+    }
+    validated = validate_capture_runtime_provenance(
+        provenance, upstream_revision=source["commit"]
+    )
+    return source["commit"], validated
+
+
+def recheck_t3mp3st_runtime(
+    lock_path: str | Path,
+    env_root: str | Path,
+    state_root: str | Path,
+    *,
+    expected_revision: str,
+    expected_provenance: Mapping[str, object],
+) -> dict[str, object]:
+    """Close the runtime seal after capture and require identical provenance."""
+
+    revision, provenance = verified_t3mp3st_runtime(
+        lock_path, env_root, state_root
+    )
+    if revision != expected_revision or provenance != expected_provenance:
+        raise ValueError("T3MP3ST runtime identity changed during capture")
+    return provenance
 
 
 def _strict_json(text: str) -> object:
@@ -206,6 +339,8 @@ def capture_bundle(
     source_provider: str,
     source_model: str,
     output_directory: str | Path,
+    runtime_provenance: Mapping[str, object],
+    runtime_recheck: Callable[[], Mapping[str, object]],
     timeout_seconds: float = 120.0,
 ) -> dict[str, object]:
     """Capture every selected plan, validate it, then atomically publish once."""
@@ -243,7 +378,11 @@ def capture_bundle(
         upstream_revision=upstream_revision,
         source_provider=source_provider,
         source_model=source_model,
+        runtime_provenance=runtime_provenance,
     )
+    closing_provenance = dict(runtime_recheck())
+    if closing_provenance != runtime_provenance:
+        raise ValueError("T3MP3ST runtime identity changed during capture")
     return write_content_addressed_bundle(bundle, output_directory)
 
 
@@ -263,6 +402,15 @@ def build_parser() -> argparse.ArgumentParser:
         help="prestarted literal-loopback T3MP3ST planning endpoint",
     )
     parser.add_argument("--upstream-revision", required=True)
+    parser.add_argument("--framework-lock", default=str(DEFAULT_LOCK))
+    parser.add_argument(
+        "--framework-env-root",
+        default=os.environ.get("URA_FRAMEWORK_ENVS"),
+    )
+    parser.add_argument(
+        "--framework-state-root",
+        default=os.environ.get("URA_FRAMEWORK_STATE"),
+    )
     parser.add_argument("--source-provider", required=True)
     parser.add_argument("--source-model", required=True)
     parser.add_argument("--timeout-seconds", type=float, default=120.0)
@@ -276,6 +424,21 @@ def main(argv: Sequence[str] | None = None) -> int:
     if args.input and args.source_config:
         parser.error("--source-config is valid only with --corpus")
     try:
+        if not args.framework_env_root or not args.framework_state_root:
+            raise ValueError(
+                "T3MP3ST capture requires --framework-env-root and "
+                "--framework-state-root (or URA_FRAMEWORK_ENVS/URA_FRAMEWORK_STATE)"
+            )
+        locked_revision, runtime_provenance = verified_t3mp3st_runtime(
+            args.framework_lock,
+            args.framework_env_root,
+            args.framework_state_root,
+        )
+        if args.upstream_revision.lower() != locked_revision:
+            raise ValueError(
+                "--upstream-revision does not match the installer-managed "
+                "T3MP3ST source pin"
+            )
         datapoints = (
             load_input_list(args.input)
             if args.input
@@ -293,8 +456,19 @@ def main(argv: Sequence[str] | None = None) -> int:
             source_provider=args.source_provider,
             source_model=args.source_model,
             output_directory=args.out,
+            runtime_provenance=runtime_provenance,
+            runtime_recheck=lambda: recheck_t3mp3st_runtime(
+                args.framework_lock,
+                args.framework_env_root,
+                args.framework_state_root,
+                expected_revision=locked_revision,
+                expected_provenance=runtime_provenance,
+            ),
             timeout_seconds=args.timeout_seconds,
         )
+        lock_binding = runtime_provenance["framework_lock"]
+        assert isinstance(lock_binding, dict)
+        result["runtime_lock_id"] = lock_binding["lock_id"]
     except Exception as exc:  # noqa: BLE001 - concise CLI boundary
         parser.error(str(exc))
     print(json.dumps(result, sort_keys=True, allow_nan=False))

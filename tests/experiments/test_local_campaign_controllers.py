@@ -77,6 +77,23 @@ def _rendered_gate5_namespace(tmp_path: Path) -> dict[str, object]:
     return namespace
 
 
+def _rendered_gate5_promoter_namespace(tmp_path: Path) -> dict[str, object]:
+    import re
+
+    bindings = _bindings(tmp_path / "bindings-promoter.json")
+    output = tmp_path / "workspace-promoter"
+    render_controller_set(bindings, output)
+    shell = (output / "phase5_promote_gate5.sh").read_text(encoding="utf-8")
+    blocks = re.findall(r"<<'PY'\n(.*?)\nPY(?:\n|$)", shell, re.DOTALL)
+    assert len(blocks) == 1
+    source = blocks[0].split(
+        "\ntry:\n    raise SystemExit(main(sys.argv[1:]))", 1
+    )[0]
+    namespace: dict[str, object] = {"__name__": "gate5_promoter_contract_test"}
+    exec(compile(source, "phase5_promote_gate5.py", "exec"), namespace)
+    return namespace
+
+
 def _rendered_phase6_extended_namespace(tmp_path: Path) -> dict[str, object]:
     import re
 
@@ -609,7 +626,7 @@ def test_gptgeochat_rwkv_cross_products_are_exact_typed_terminals() -> None:
     assert '(25, 18, ["defense-local"])' not in combined
 
 
-def test_frozen_nanogcg_and_ideator_terminals_match_campaign_documents() -> None:
+def test_core_follow_on_terminals_match_campaign_documents() -> None:
     project = Path(__file__).parents[2]
     templates = project / "experiments" / "local_campaign" / "templates"
     finalizer = (templates / "phase5_finalize_gate5.sh.in").read_text(
@@ -637,16 +654,15 @@ def test_frozen_nanogcg_and_ideator_terminals_match_campaign_documents() -> None
         "bridge-purplellama",
         "harmbench-replay",
     )
-    frozen_terminals = ("bridge-nanogcg", "bridge-ideator")
+    core_terminals = ("bridge-nanogcg", "bridge-ideator", "t3mp3st")
     document_contract = (
-        "The frozen current cohort",
-        "`bridge-nanogcg` and `bridge-ideator` as `unavailable`",
-        "does not schedule either lane for measured execution",
-        "IDEATOR Build/UI seed-pair quantity control in revision C is prospective capability",
-        "fresh prepared-input manifest or attributable artifact, no-call projection, "
-        "diagnostic canary, Gate 5 record, and controller generation",
-        "optional full-set execution through the framework",
-        "positive limit or explicit `--limit 0`",
+        "The core cohort records `bridge-nanogcg`, `bridge-ideator`, and "
+        "`t3mp3st` as `unavailable` only because their prepared artifacts are "
+        "assigned to a separate follow-on cohort",
+        "This is not a current capability disposition",
+        "does not schedule those three lanes for core-cohort measured execution",
+        "prepared artifact, no-call projection, diagnostic canary, Gate 5 record, "
+        "and measured schedule",
     )
 
     def assert_contract(
@@ -663,7 +679,7 @@ def test_frozen_nanogcg_and_ideator_terminals_match_campaign_documents() -> None
         for lane in runnable:
             assert f'"{lane}"' in finalizer_order
             assert f'"{lane}"' in extended_order
-        for lane in frozen_terminals:
+        for lane in core_terminals:
             assert f'"{lane}"' not in finalizer_order
             assert f'"{lane}"' not in extended_order
             assert f'"{lane}": "unavailable"' in finalizer_source
@@ -2796,6 +2812,141 @@ def test_gate5_revalidates_the_bounded_harmbench_attacker_config(
             sha_value="0" * 64,
             expected_identity=bounded_identity,
         )
+
+
+def test_gate5_promoter_reads_rr_rich_descriptors_without_stripping_identity(
+    tmp_path: Path,
+) -> None:
+    template = (
+        Path(__file__).parents[2]
+        / "experiments"
+        / "local_campaign"
+        / "templates"
+        / "phase5_promote_gate5.sh.in"
+    ).read_text(encoding="utf-8")
+    block = template[
+        template.index("def validate_rr_projection(") :
+        template.index("def validate_rr_terminal_row(")
+    ]
+    required = (
+        '"projection_artifact": {"path", "file", "sha256", "bytes"}',
+        '"request_envelope_artifact": {',
+        '\n            descriptor_path(item, f"{lane} RR {name}")',
+        "projection_path = descriptor_path(",
+        "eligibility_path = exact_descriptor_path(",
+        "envelope_path = descriptor_path(",
+    )
+    _assert_source_contract(block, required)
+
+    for reverted in (
+        block.replace(
+            'descriptor_path(item, f"{lane} RR {name}")',
+            'exact_descriptor_path(item, f"{lane} RR {name}")',
+            1,
+        ),
+        block.replace(
+            "projection_path = descriptor_path(",
+            "projection_path = exact_descriptor_path(",
+            1,
+        ),
+    ):
+        with pytest.raises(AssertionError):
+            _assert_source_contract(reverted, required)
+
+    namespace = _rendered_gate5_promoter_namespace(tmp_path)
+    promotion_error = namespace["PromotionError"]
+    calls: list[tuple[str, set[str]]] = []
+
+    def descriptor_path(value: object, label: str) -> Path:
+        assert isinstance(value, dict)
+        calls.append((label, set(value)))
+        return Path(str(value["path"]))
+
+    def exact_descriptor_path(value: object, label: str) -> Path:
+        assert isinstance(value, dict)
+        if set(value) != {"path", "sha256", "bytes"}:
+            raise promotion_error(f"{label} descriptor fields changed")
+        calls.append((label, set(value)))
+        return Path(str(value["path"]))
+
+    projection_id = "lane-projection-" + "1" * 24
+    eligibility_id = "eligibility-" + "2" * 24
+    envelope_id = "request-envelope-" + "3" * 24
+    projection_descriptor = {
+        "path": str((tmp_path / f"{projection_id}.lane-projection.json").absolute()),
+        "file": f"{projection_id}.lane-projection.json",
+        "sha256": "4" * 64,
+        "bytes": 10,
+    }
+    eligibility_descriptor = {
+        "path": str((tmp_path / f"{eligibility_id}.eligibility.json").absolute()),
+        "sha256": "5" * 64,
+        "bytes": 11,
+    }
+    envelope_descriptor = {
+        "path": str((tmp_path / f"{envelope_id}.request-envelope.json").absolute()),
+        "envelope_id": envelope_id,
+        "file": f"{envelope_id}.request-envelope.json",
+        "sha256": "6" * 64,
+        "bytes": 12,
+    }
+    projected_calls = {
+        "trajectories": 1,
+        "target_calls": 1,
+        "model_judge_calls": 0,
+        "local_guardrail_evaluations": 0,
+        "http_attempts": 0,
+    }
+    retained_projection = {
+        "projection_id": projection_id,
+        "selection": {},
+        "call_projection": {
+            "trajectories": 1,
+            "target_calls": 1,
+            "judge_calls": 0,
+            "local_guardrail_evaluations": 0,
+            "http_attempts": 0,
+        },
+    }
+    namespace.update({
+        "descriptor_path": descriptor_path,
+        "exact_descriptor_path": exact_descriptor_path,
+        "load_stable_lane_projection_file": lambda *_args: (
+            retained_projection,
+            {key: projection_descriptor[key] for key in ("file", "sha256", "bytes")},
+        ),
+        "load_eligibility_artifact": lambda *_args: (
+            {"plan_id": eligibility_id},
+            {key: eligibility_descriptor[key] for key in ("sha256", "bytes")},
+        ),
+        "load_stable_request_envelope_file": lambda *_args: (
+            {"envelope_id": envelope_id},
+            {key: envelope_descriptor[key] for key in ("envelope_id", "file", "sha256", "bytes")},
+        ),
+        "validate_lane_projection_binding": lambda *_args, **_kwargs: None,
+        "validate_eligibility_envelope_binding": lambda *_args, **_kwargs: None,
+        "validate_rr_projection_lane": lambda *_args, **_kwargs: None,
+    })
+    validate = namespace["validate_rr_projection"]
+    assert callable(validate)
+    assert validate(
+        {
+            "projection_id": projection_id,
+            "projection_artifact": projection_descriptor,
+            "eligibility_plan_id": eligibility_id,
+            "eligibility_artifact": eligibility_descriptor,
+            "request_envelope_id": envelope_id,
+            "request_envelope_artifact": envelope_descriptor,
+            "selection": {},
+            "projected_calls": projected_calls,
+        },
+        lane="local-llava-rr-text-full",
+        validate_files=True,
+    ) == ("4" * 64, 10)
+    assert all(
+        fields >= {"path", "sha256", "bytes"}
+        for _label, fields in calls
+    )
 
 
 def test_gate5_accepts_exact_prompt_proxy_guard_abstention_without_results(
