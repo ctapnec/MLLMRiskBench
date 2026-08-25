@@ -1299,8 +1299,9 @@ def scan_engineering_campaigns(
 ) -> tuple[list[EngineeringCampaign], str]:
     """Load a bounded campaign index and return any omission notice.
 
-    Jobs passes its inclusive date window so marker start times are filtered
-    before the 20-row display cap. An unwindowed scan also reconciles every
+    Campaign markers are validated before the 20-row display cap, and Jobs
+    passes its inclusive date window so marker start times are filtered there
+    too. An unwindowed scan also reconciles every
     exact-session nonterminal controller in the bounded directory scan, so a
     genuinely live controller cannot disappear behind newer terminal history.
     """
@@ -1336,28 +1337,30 @@ def scan_engineering_campaigns(
                 continue
             if stat.S_ISDIR(metadata.st_mode):
                 started_at = float(metadata.st_mtime)
-                if started_from is not None:
-                    marker_bytes, marker_error = _bounded_file(
-                        candidate / "ENGINEERING_ONLY.json",
-                        _MAX_MARKER_BYTES,
-                    )
-                    if marker_bytes is None or marker_error is not None:
-                        continue
-                    try:
-                        marker = strict_json_loads(marker_bytes.decode("utf-8"))
-                    except (UnicodeError, ValueError, TypeError, RecursionError):
-                        continue
-                    if (
-                        not isinstance(marker, dict)
-                        or marker.get("schema") != _CAMPAIGN_SCHEMA
-                        or marker.get("thesis_empirical_evidence") is not False
-                    ):
-                        continue
-                    marker_started = _timestamp(marker.get("started_at"))
-                    if marker_started is not None:
-                        started_at = marker_started
-                    if not float(started_from) <= started_at <= float(started_to):
-                        continue
+                marker_bytes, marker_error = _bounded_file(
+                    candidate / "ENGINEERING_ONLY.json",
+                    _MAX_MARKER_BYTES,
+                )
+                if marker_bytes is None or marker_error is not None:
+                    continue
+                try:
+                    marker = strict_json_loads(marker_bytes.decode("utf-8"))
+                except (UnicodeError, ValueError, TypeError, RecursionError):
+                    continue
+                if (
+                    not isinstance(marker, dict)
+                    or marker.get("schema") != _CAMPAIGN_SCHEMA
+                    or marker.get("thesis_empirical_evidence") is not False
+                    or not isinstance(marker.get("hosted_calls_allowed"), bool)
+                ):
+                    continue
+                marker_started = _timestamp(marker.get("started_at"))
+                if marker_started is not None:
+                    started_at = marker_started
+                if started_from is not None and not (
+                    float(started_from) <= started_at <= float(started_to)
+                ):
+                    continue
                 candidates.append((started_at, metadata.st_mtime_ns, candidate))
     except OSError:
         return [], "External campaign directory could not be scanned."
@@ -1437,8 +1440,8 @@ def scan_engineering_campaigns(
         notices.append(
             f"Showing the {_MAX_CAMPAIGNS} newest retained engineering campaigns"
             f"{' in the selected date range' if started_from is not None else ''}; "
-            f"{omitted} additional scanned director"
-            f"{'y was' if omitted == 1 else 'ies were'} omitted."
+            f"{omitted} additional retained engineering campaign"
+            f"{' was' if omitted == 1 else 's were'} omitted."
             + (
                 " Exact-session live controllers outside the recent cap remain included."
                 if started_from is None

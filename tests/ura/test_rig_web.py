@@ -3806,7 +3806,7 @@ def test_jobs_date_window_filters_campaign_markers_before_recent_cap(
     recent, notice = app._engineering_campaign_scan()
     assert len(recent) == 20
     assert all(item.campaign_id != "campaign-00" for item in recent)
-    assert "1 additional scanned directory was omitted" in notice
+    assert "1 additional retained engineering campaign was omitted" in notice
 
     status, _, body = app.handle(
         "GET",
@@ -3816,6 +3816,55 @@ def test_jobs_date_window_filters_campaign_markers_before_recent_cap(
     assert status == 200
     assert "campaign-00" in text
     assert "campaign-20" not in text
+    app.close()
+
+
+def test_stats_campaign_cap_ignores_newer_non_campaign_directories(
+    tmp_path: Path,
+) -> None:
+    app = _app(tmp_path)
+    engineering = app.results_root / "engineering"
+    engineering.mkdir()
+    for index in range(20):
+        campaign_id = f"campaign-valid-{index:02d}"
+        directory = engineering / campaign_id
+        directory.mkdir()
+        started_at = f"2026-08-17T00:00:{index:02d}Z"
+        (directory / "ENGINEERING_ONLY.json").write_text(
+            json.dumps({
+                "schema": "ura-engineering-campaign/1",
+                "campaign_id": campaign_id,
+                "release_commit": "a" * 40,
+                "evidence_class": "engineering_stress",
+                "thesis_empirical_evidence": False,
+                "hosted_calls_allowed": False,
+                "target_call_cap": 1,
+                "started_at": started_at,
+            }),
+            encoding="utf-8",
+        )
+        (directory / "task-log.jsonl").write_text(
+            json.dumps({
+                "at": started_at,
+                "event": "campaign_start",
+                "task": "bootstrap",
+                "status": "running",
+                "detail": campaign_id,
+            }) + "\n",
+            encoding="utf-8",
+        )
+        os.utime(directory, (1_700_000_000 + index, 1_700_000_000 + index))
+
+    ordinary = engineering / "repin-newer-not-a-campaign"
+    ordinary.mkdir()
+    os.utime(ordinary, (1_800_000_000, 1_800_000_000))
+
+    recent, notice = app._engineering_campaign_scan()
+    assert len(recent) == 20
+    assert {item.campaign_id for item in recent} == {
+        f"campaign-valid-{index:02d}" for index in range(20)
+    }
+    assert notice == ""
     app.close()
 
 

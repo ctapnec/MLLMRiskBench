@@ -760,6 +760,99 @@ def test_rendered_ollama_roster_validator_imports_json(tmp_path: Path) -> None:
     assert namespace["serialized"] == '{"available": true}'
 
 
+def test_rendered_ollama_projection_validator_imports_its_dependencies(
+    tmp_path: Path,
+) -> None:
+    import re
+
+    bindings = _bindings(tmp_path / "bindings.json")
+    output = tmp_path / "workspace"
+    render_controller_set(bindings, output)
+    shell = (output / "phase5_ollama_workflow.sh").read_text(encoding="utf-8")
+    function = shell.split("projection_fields() {", 1)[1].split(
+        "\n}\n\ncompare_projections()", 1
+    )[0]
+    match = re.search(r"<<'PY'\n(.*?)\nPY(?:\n|$)", function, re.DOTALL)
+    assert match is not None
+
+    imports = match.group(1).split("\nroot = pathlib.Path", 1)[0]
+    namespace: dict[str, object] = {}
+    exec(
+        compile(
+            imports,
+            "phase5_ollama_projection_fields.py",
+            "exec",
+        ),
+        namespace,
+    )
+    for name in (
+        "hashlib",
+        "os",
+        "_bounded_nofollow_read",
+        "validate_eligibility_plan",
+        "validate_lane_projection_binding",
+        "strict_json_loads",
+    ):
+        assert name in namespace
+
+
+def test_rendered_phase6_runtime_validators_import_their_used_globals(
+    tmp_path: Path,
+) -> None:
+    import ast
+    import re
+
+    bindings = _bindings(tmp_path / "bindings.json")
+    output = tmp_path / "workspace"
+    render_controller_set(bindings, output)
+
+    cases = (
+        (
+            "phase6_core_measured.sh",
+            "def defense_conditional_variant_for_row(",
+            {"Mapping"},
+            "from typing import Any, Mapping",
+            "from typing import Any",
+        ),
+        (
+            "phase6_sequence.sh",
+            'started_at = launch.get("started_at_utc")',
+            {"re"},
+            "import re",
+            "",
+        ),
+    )
+
+    def assert_imported(block: str, required: set[str]) -> None:
+        tree = ast.parse(block)
+        imported: set[str] = set()
+        loaded = {
+            node.id
+            for node in ast.walk(tree)
+            if isinstance(node, ast.Name) and isinstance(node.ctx, ast.Load)
+        }
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Import):
+                imported.update(alias.asname or alias.name.split(".", 1)[0] for alias in node.names)
+            elif isinstance(node, ast.ImportFrom):
+                imported.update(alias.asname or alias.name for alias in node.names)
+        assert required <= loaded
+        assert required <= imported
+
+    for filename, marker, required, original, replacement in cases:
+        shell = (output / filename).read_text(encoding="utf-8")
+        blocks = re.findall(r"<<'PY'\n(.*?)\nPY(?:\n|$)", shell, re.DOTALL)
+        matches = [block for block in blocks if marker in block]
+        assert len(matches) == 1
+        block = matches[0]
+        assert_imported(block, required)
+
+        mutation = block.replace(original, replacement, 1)
+        assert mutation != block
+        with pytest.raises(AssertionError):
+            assert_imported(mutation, required)
+
+
 def test_gate5_revalidates_nested_samples_without_inventing_projection_fields() -> None:
     root = Path(__file__).parents[2] / "experiments" / "local_campaign" / "templates"
     finalizer = (root / "phase5_finalize_gate5.sh.in").read_text(encoding="utf-8")

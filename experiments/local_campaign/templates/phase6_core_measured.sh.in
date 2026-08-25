@@ -667,7 +667,7 @@ from pathlib import Path
 import re
 import stat
 import sys
-from typing import Any
+from typing import Any, Mapping
 
 from experiments.run_matrix import build_parser
 from ura.eligibility import validate_eligibility_plan

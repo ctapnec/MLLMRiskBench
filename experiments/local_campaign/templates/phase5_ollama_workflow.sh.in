@@ -479,9 +479,16 @@ acquisition_args() {
 
 projection_fields() {
   "$PY" - "$1" "$2" "$3" "$4" "$5" "$SCORE_GUARD" "$SCORE_GUARD_REV" <<'PY'
+import hashlib
 import json
+import os
 import pathlib
 import sys
+
+from experiments.run_matrix import _bounded_nofollow_read
+from ura.eligibility import validate_eligibility_plan
+from ura.lane_projection import validate_lane_projection_binding
+from ura.strict_json import strict_json_loads
 
 root = pathlib.Path(sys.argv[1])
 mode, expected_spec, expected_arms_csv = sys.argv[2:5]
