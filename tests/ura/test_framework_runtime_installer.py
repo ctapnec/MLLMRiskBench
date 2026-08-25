@@ -2234,6 +2234,34 @@ def test_distro_runtimes_phase_verifies_current_rows_without_resuming(tmp_path: 
     assert "[warn] framework runtimes need" not in result.stdout
 
 
+@pytest.mark.skipif(os.name == "nt", reason="distro shell contract targets Linux")
+def test_distro_runtimes_phase_resolves_symlinked_data_root_before_verification(
+    tmp_path: Path,
+) -> None:
+    sandbox = _DistroSandbox(tmp_path)
+    physical_data = tmp_path / "storage" / "ura-work"
+    physical_data.mkdir(parents=True)
+    sandbox.data.rmdir()
+    sandbox.data.symlink_to(physical_data, target_is_directory=True)
+
+    result = sandbox.run("runtimes")
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    lock_id = json.loads(LOCK_PATH.read_text(encoding="utf-8"))["lock_id"]
+    resolved_data = physical_data.resolve().as_posix()
+    expected_env_root = f"{resolved_data}/framework-venvs"
+    expected_state_root = (
+        f"{resolved_data}/runs/engineering/framework-runtime-{lock_id[:12]}"
+    )
+    calls = sandbox.installer_calls()
+    frameworks = [entry["name"] for entry in installer.load_lock(LOCK_PATH)["frameworks"]]
+    assert [call[0] for call in calls] == ["plan"] + ["verify"] * len(frameworks)
+    for call in calls:
+        assert call[call.index("--env-root") + 1] == expected_env_root
+        assert call[call.index("--state-root") + 1] == expected_state_root
+    assert not any(call[0] in {"install", "resume", "adopt"} for call in calls)
+
+
 def test_distro_runtimes_phase_resumes_only_rows_that_fail_initial_verification(
     tmp_path: Path,
 ) -> None:

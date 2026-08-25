@@ -1118,7 +1118,13 @@ PYEOF
   base_version=$("$base_python" -c 'import platform; print(platform.python_version())' 2>/dev/null || echo unknown)
   [ "$base_version" = "3.12.13" ] \
     || echo "  [warn] the lock binds exact CPython 3.12.13 but the venv base is $base_version; the installer will refuse it"
-  local env_root="$URA_DATA/framework-venvs" state_root="$URA_DATA/runs/engineering/framework-runtime-${lock_id:0:12}"
+  # The default /data locator may be a storage symlink. The runtime installer
+  # deliberately accepts only canonical managed roots, including for plan.
+  local env_root state_root
+  env_root=$(readlink -m -- "$URA_DATA/framework-venvs") \
+    || { echo "  [FAIL] runtimes-plan (cannot resolve framework environment root)"; echo "FAIL runtimes-plan" >> "$SESSION_LEDGER"; return 1; }
+  state_root=$(readlink -m -- "$URA_DATA/runs/engineering/framework-runtime-${lock_id:0:12}") \
+    || { echo "  [FAIL] runtimes-plan (cannot resolve framework state root)"; echo "FAIL runtimes-plan" >> "$SESSION_LEDGER"; return 1; }
   echo "  lock $lock_id"
   echo "  env-root $env_root"
   echo "  state-root $state_root"
