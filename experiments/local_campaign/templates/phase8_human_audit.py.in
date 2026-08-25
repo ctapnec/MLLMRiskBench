@@ -29,6 +29,14 @@ import tempfile
 import types
 from typing import Any, Iterable, Mapping, Sequence
 
+sys.path.insert(0, str(Path.cwd()))
+from experiments.local_campaign.ollama_static_terminal import (
+    OLLAMA_STATIC_TERMINAL_DISPOSITION,
+    OLLAMA_STATIC_TERMINAL_LANES,
+    inventory_counts as ollama_static_inventory_counts,
+    validate_gate5_terminal_rows,
+)
+
 
 EXPECTED_COMMIT = "@@EXPECTED_COMMIT@@"
 EXPECTED_FRAMEWORK_LOCK = (
@@ -318,6 +326,17 @@ TERMINAL_LANES = {
     "structural-native-giskard": "structural_na",
     "structural-native-asb": "structural_na",
     "structural-native-agentdojo": "structural_na",
+}
+EXTENDED_BASE_TERMINALS = {
+    lane: TERMINAL_LANES[lane]
+    for lane in (
+        "bridge-nanogcg",
+        "bridge-ideator",
+        "t3mp3st",
+        "gptgeochat-ollama-rwkv-g1d-0p4b",
+        "gptgeochat-ollama-rwkv-g1f-2p9b",
+        "gptgeochat-ollama-rwkv-g1g-1p5b",
+    )
 }
 RUNNABLE_FAMILIES = {
     **{
@@ -2205,25 +2224,44 @@ def _exact_inventory(
         lane: row for lane, row in by_id.items() if row.get("disposition") == "runnable"
     }
     terminal = {lane: row for lane, row in by_id.items() if lane not in runnable}
+    ollama_static_terminals = validate_gate5_terminal_rows(
+        [by_id[lane] for lane in OLLAMA_STATIC_TERMINAL_LANES],
+        label="Gate 5",
+        validate_artifact=validate_artifact,
+        error_type=Phase8Error,
+    )
     defense = by_id.get(DEFENSE_LOCAL_LANE)
     conditional = (
         isinstance(defense, dict)
         and defense.get("disposition") == "conditional_na"
     )
+    dynamic_counts = ollama_static_inventory_counts(
+        ollama_static_terminals,
+        [DEFENSE_LOCAL_LANE] if conditional else [],
+    )
     expected_runnable = (
         set(RUNNABLE_LANES)
         - RR_RUNTIME_TERMINAL_LANE_SET
+        - set(ollama_static_terminals)
         - ({DEFENSE_LOCAL_LANE} if conditional else set())
     )
     expected_terminal = set(TERMINAL_LANES) | (
         {DEFENSE_LOCAL_LANE} if conditional else set()
-    )
-    if set(runnable) != expected_runnable or len(runnable) != 22 - int(conditional):
+    ) | set(ollama_static_terminals)
+    if (
+        set(runnable) != expected_runnable
+        or len(runnable) != dynamic_counts["runnable"]
+    ):
         raise Phase8Error("Gate 5 runnable inventory is not an accepted exact set")
-    if set(terminal) != expected_terminal or len(terminal) != 24 + int(conditional):
+    if (
+        set(terminal) != expected_terminal
+        or len(terminal) != dynamic_counts["typed_terminal"]
+    ):
         raise Phase8Error("Gate 5 terminal inventory is not an accepted exact set")
     for lane, family in RUNNABLE_FAMILIES.items():
-        if conditional and lane == DEFENSE_LOCAL_LANE:
+        if (conditional and lane == DEFENSE_LOCAL_LANE) or (
+            lane in ollama_static_terminals
+        ):
             continue
         row = runnable[lane]
         if (
@@ -2254,8 +2292,12 @@ def _gate5_profile(
     runnable: Mapping[str, Any], terminal: Mapping[str, Any]
 ) -> dict[str, Any]:
     conditional = DEFENSE_LOCAL_LANE in terminal
+    ollama_static_terminals = tuple(
+        lane for lane in OLLAMA_STATIC_TERMINAL_LANES if lane in terminal
+    )
     return {
         "conditional_na_lanes": [DEFENSE_LOCAL_LANE] if conditional else [],
+        "ollama_static_terminal_lanes": ollama_static_terminals,
         "scheduled_core_lanes": [
             lane for lane in CORE_LANES if lane in runnable
         ],
@@ -2264,12 +2306,19 @@ def _gate5_profile(
             for lane in RUNNABLE_LANES
             if lane in runnable
         ],
+        "scheduled_extended_lanes": [
+            lane for lane in EXTENDED_LANES if lane in runnable
+        ],
         "runnable_lane_count": len(runnable),
         "terminal_lane_count": len(terminal),
     }
 
 
 def _count_inventory(value: object, *, profile: Mapping[str, Any]) -> None:
+    dynamic_counts = ollama_static_inventory_counts(
+        profile["ollama_static_terminal_lanes"],
+        profile["conditional_na_lanes"],
+    )
     expected = {
         "total": 46,
         "runnable": profile["runnable_lane_count"],
@@ -2279,7 +2328,7 @@ def _count_inventory(value: object, *, profile: Mapping[str, Any]) -> None:
         "ollama_transport_terminal": 3,
         "portfolio_terminal": 5,
         "native_terminal": 9,
-        "target_runtime_terminal": 4,
+        "target_runtime_terminal": dynamic_counts["target_runtime_terminal"],
     }
     if (
         not isinstance(value, dict)
@@ -4024,22 +4073,24 @@ def validate_extended_completion(
         ),
         label="Phase 6 extended completion",
     )
-    if value.get("runnable_lanes") != list(EXTENDED_LANES):
-        raise Phase8Error("Phase 6 extended completion does not bind exact 12 lanes")
-    expected_terminals = {
-        "bridge-nanogcg": "unavailable",
-        "bridge-ideator": "unavailable",
-        "t3mp3st": "unavailable",
-    }
-    if value.get("typed_terminal_lanes") != expected_terminals:
-        raise Phase8Error("Phase 6 extended typed-terminal inventory differs")
+    runnable_lanes = value.get("runnable_lanes")
+    if (
+        not isinstance(runnable_lanes, list)
+        or not runnable_lanes
+        or len(runnable_lanes) != len(set(runnable_lanes))
+        or any(lane not in EXTENDED_LANES for lane in runnable_lanes)
+        or runnable_lanes
+        != [lane for lane in EXTENDED_LANES if lane in set(runnable_lanes)]
+    ):
+        raise Phase8Error("Phase 6 extended runnable-lane inventory differs")
+    scheduled_extended_lanes = tuple(runnable_lanes)
 
     states = value.get("lane_terminal_states")
     lane_results = value.get("lane_results")
     lane_failures = value.get("lane_failures")
     if (
         not isinstance(states, dict)
-        or set(states) != set(EXTENDED_LANES)
+        or set(states) != set(scheduled_extended_lanes)
         or any(
             state not in {"measured_complete", "failed"} for state in states.values()
         )
@@ -4048,14 +4099,19 @@ def validate_extended_completion(
     ):
         raise Phase8Error("Phase 6 extended terminal-state inventory differs")
     completed_lanes = [
-        lane for lane in EXTENDED_LANES if states[lane] == "measured_complete"
+        lane
+        for lane in scheduled_extended_lanes
+        if states[lane] == "measured_complete"
     ]
-    failed_lanes = [lane for lane in EXTENDED_LANES if states[lane] == "failed"]
+    failed_lanes = [
+        lane for lane in scheduled_extended_lanes if states[lane] == "failed"
+    ]
     if (
         set(lane_results) != set(completed_lanes)
         or set(lane_failures) != set(failed_lanes)
         or set(lane_results) & set(lane_failures)
-        or set(lane_results) | set(lane_failures) != set(EXTENDED_LANES)
+        or set(lane_results) | set(lane_failures)
+        != set(scheduled_extended_lanes)
     ):
         raise Phase8Error("Phase 6 extended result/failure partition differs")
     expected_status = "complete_with_failures" if failed_lanes else "complete"
@@ -4098,7 +4154,19 @@ def validate_extended_completion(
     )
     gate5_profile = _gate5_profile(gate5_runnable, gate5_terminals)
     conditional_na_lanes = list(gate5_profile["conditional_na_lanes"])
-    if value.get("conditional_na_lanes") != conditional_na_lanes:
+    expected_terminals = {
+        **EXTENDED_BASE_TERMINALS,
+        **{
+            lane: OLLAMA_STATIC_TERMINAL_DISPOSITION
+            for lane in gate5_profile["ollama_static_terminal_lanes"]
+        },
+    }
+    if (
+        list(scheduled_extended_lanes)
+        != gate5_profile["scheduled_extended_lanes"]
+        or value.get("typed_terminal_lanes") != expected_terminals
+        or value.get("conditional_na_lanes") != conditional_na_lanes
+    ):
         raise Phase8Error("Phase 6 extended conditional Gate 5 profile differs")
 
     launch_path, launch_payload = extended_descriptor_bytes(
@@ -4229,7 +4297,7 @@ def validate_extended_completion(
         or summary.get("controller_exit_code") != expected_exit
         or not UTC_RE.fullmatch(str(summary.get("completed_at_utc", "")))
         or summary.get("attempt") != attempt
-        or summary.get("runnable_inventory") != list(EXTENDED_LANES)
+        or summary.get("runnable_inventory") != list(scheduled_extended_lanes)
         or summary.get("lane_terminal_states") != states
         or summary.get("completed_lanes") != sorted(completed_lanes)
         or summary.get("failed_lanes") != sorted(failed_lanes)
@@ -4359,7 +4427,9 @@ def validate_extended_completion(
             raise Phase8Error(f"{lane}: failed extended lane retains evidence")
         failure_values[lane] = failure
     if summary.get("failures") != [
-        failure_values[lane] for lane in EXTENDED_LANES if lane in failure_values
+        failure_values[lane]
+        for lane in scheduled_extended_lanes
+        if lane in failure_values
     ]:
         raise Phase8Error("Phase 6 extended summary failure inventory differs")
 
@@ -6582,18 +6652,6 @@ def validate_phase7_completion(
     )
     if conditional_na_lanes not in ([], [DEFENSE_LOCAL_LANE]):
         raise Phase8Error("Phase 7 Gate 5 conditional N/A inventory differs")
-    scheduled_core_lanes = [
-        lane
-        for lane in CORE_LANES
-        if lane not in RR_RUNTIME_TERMINAL_LANE_SET
-        and lane not in conditional_na_lanes
-    ]
-    scheduled_runner_lanes = [
-        lane
-        for lane in RUNNABLE_LANES
-        if lane not in RR_RUNTIME_TERMINAL_LANE_SET
-        and lane not in conditional_na_lanes
-    ]
     if (
         not isinstance(gate5, dict)
         or set(gate5) != gate5_fields
@@ -6606,17 +6664,7 @@ def validate_phase7_completion(
                 "target_runtime_terminal",
             )
         )
-        or (
-            gate5.get("lane_count"),
-            gate5.get("runnable_lane_count"),
-            gate5.get("terminal_lane_count"),
-        )
-        != (
-            46,
-            len(scheduled_runner_lanes),
-            24 + len(conditional_na_lanes),
-        )
-        or gate5.get("target_runtime_terminal") != 4
+        or gate5.get("lane_count") != 46
     ):
         raise Phase8Error("Phase 7 Gate 5 inventory differs")
     gate5_observations = {
@@ -6643,9 +6691,19 @@ def validate_phase7_completion(
         validate_artifact=validate_gate5_artifacts,
     )
     manifest_profile = _gate5_profile(_gate5_runnable, gate5_terminals)
+    scheduled_core_lanes = manifest_profile["scheduled_core_lanes"]
+    scheduled_runner_lanes = manifest_profile["scheduled_runner_lanes"]
+    scheduled_extended_lanes = manifest_profile["scheduled_extended_lanes"]
+    ollama_static_terminals = manifest_profile[
+        "ollama_static_terminal_lanes"
+    ]
     if (
         gate5.get("terminal_inventory") != gate5_terminals
         or manifest_profile["conditional_na_lanes"] != conditional_na_lanes
+        or gate5.get("runnable_lane_count") != len(scheduled_runner_lanes)
+        or gate5.get("terminal_lane_count") != len(gate5_terminals)
+        or gate5.get("target_runtime_terminal")
+        != 4 + len(ollama_static_terminals)
         or gate5.get("target_runtime_terminal_artifact")
         != gate5_terminals[RR_RUNTIME_TERMINAL_LANES[0]]["canary"][
             "target_runtime_terminal_artifact"
@@ -6829,17 +6887,19 @@ def validate_phase7_completion(
     extended_states = extended.get("lane_terminal_states")
     if (
         not isinstance(extended_states, dict)
-        or set(extended_states) != set(EXTENDED_LANES)
+        or set(extended_states) != set(scheduled_extended_lanes)
         or set(extended_states.values()) - {"measured_complete", "failed"}
     ):
         raise Phase8Error("Phase 7 extended terminal states differ")
     extended_complete = {
-        lane for lane in EXTENDED_LANES if extended_states[lane] == "measured_complete"
+        lane
+        for lane in scheduled_extended_lanes
+        if extended_states[lane] == "measured_complete"
     }
-    extended_failed = set(EXTENDED_LANES) - extended_complete
+    extended_failed = set(scheduled_extended_lanes) - extended_complete
     if (
         not isinstance(extended.get("lane_specs"), list)
-        or len(extended["lane_specs"]) != 12
+        or len(extended["lane_specs"]) != len(scheduled_extended_lanes)
         or extended.get("conditional_na_lanes") != conditional_na_lanes
         or not isinstance(extended.get("measured_argv_states"), list)
         or len(extended["measured_argv_states"]) != len(extended_complete)
@@ -6851,7 +6911,7 @@ def validate_phase7_completion(
         or set(extended["result_roots"]) != extended_complete
         or not isinstance(extended.get("terminal_results"), dict)
         or set(extended["terminal_results"])
-        != {"bridge-nanogcg", "bridge-ideator", "t3mp3st"}
+        != set(EXTENDED_BASE_TERMINALS) | set(ollama_static_terminals)
         or extended.get("status")
         != ("complete_with_failures" if extended_failed else "complete")
     ):
@@ -7100,7 +7160,7 @@ def validate_phase7_completion(
         ),
         (
             extended["lane_specs"],
-            set(EXTENDED_LANES),
+            set(scheduled_extended_lanes),
             "ura-phase6-extended-lane-spec/1",
             "extended",
         ),
@@ -7827,7 +7887,7 @@ def validate_phase7_completion(
         *{f"native-{engine}" for engine in NATIVE_ENGINES},
         *{
             f"gate5-{lane}"
-            for lane in set(TERMINAL_LANES) | set(conditional_na_lanes)
+            for lane in gate5_terminals
         },
         *{f"runner-{lane}" for lane in failed_runner_lanes},
     }
@@ -7835,7 +7895,7 @@ def validate_phase7_completion(
         not isinstance(statuses, dict)
         or set(statuses) != expected_status_names
         or len(statuses)
-        != 59 + len(conditional_na_lanes) + len(failed_runner_lanes)
+        != 35 + len(gate5_terminals) + len(failed_runner_lanes)
         or any(
             not isinstance(name, str)
             or not isinstance(status, str)
@@ -8401,7 +8461,9 @@ def build_input_manifest(args: argparse.Namespace) -> dict[str, Any]:
             "extended_completion": descriptor(extended_path),
             "native_completion": descriptor(native_path),
             "core_lane_count": len(gate5_profile["scheduled_core_lanes"]),
-            "extended_lane_count": len(EXTENDED_LANES),
+            "extended_lane_count": len(
+                gate5_profile["scheduled_extended_lanes"]
+            ),
             "core_status": core["status"],
             "core_terminal_states": core["lane_terminal_states"],
             "conditional_na_lanes": gate5_profile["conditional_na_lanes"],
@@ -8618,6 +8680,18 @@ def validate_input_manifest(
     ):
         raise Phase8Error("Phase 8 input identity or state differs")
     scope = value.get("scope")
+    gate5 = value.get("gate5")
+    terminal_dispositions = (
+        gate5.get("terminal_dispositions")
+        if isinstance(gate5, dict)
+        else None
+    )
+    ollama_static_terminals = tuple(
+        lane
+        for lane in OLLAMA_STATIC_TERMINAL_LANES
+        if isinstance(terminal_dispositions, dict)
+        and lane in terminal_dispositions
+    )
     if (
         not isinstance(scope, dict)
         or set(scope)
@@ -8648,8 +8722,12 @@ def validate_input_manifest(
         )
         != (
             46,
-            22 - len(scope.get("conditional_na_lanes", [])),
-            24 + len(scope.get("conditional_na_lanes", [])),
+            22
+            - len(scope.get("conditional_na_lanes", []))
+            - len(ollama_static_terminals),
+            24
+            + len(scope.get("conditional_na_lanes", []))
+            + len(ollama_static_terminals),
         )
     ):
         raise Phase8Error("Phase 8 input does not retain an accepted Gate 5 profile")
@@ -8665,8 +8743,11 @@ def validate_input_manifest(
         for lane in RUNNABLE_LANES
         if lane not in RR_RUNTIME_TERMINAL_LANE_SET
         and lane not in conditional_na_lanes
+        and lane not in ollama_static_terminals
     ]
-    gate5 = value.get("gate5")
+    scheduled_extended_lanes = [
+        lane for lane in EXTENDED_LANES if lane in scheduled_runner_lanes
+    ]
     if (
         not isinstance(gate5, dict)
         or set(gate5)
@@ -8685,6 +8766,10 @@ def validate_input_manifest(
         or gate5.get("terminal_dispositions")
         != {
             **{lane: TERMINAL_LANES[lane] for lane in sorted(TERMINAL_LANES)},
+            **{
+                lane: OLLAMA_STATIC_TERMINAL_DISPOSITION
+                for lane in ollama_static_terminals
+            },
             **(
                 {DEFENSE_LOCAL_LANE: "conditional_na"}
                 if conditional_na_lanes
@@ -8716,7 +8801,7 @@ def validate_input_manifest(
         }
         or phase6.get("core_lane_count") != len(scheduled_core_lanes)
         or phase6.get("conditional_na_lanes") != conditional_na_lanes
-        or phase6.get("extended_lane_count") != 12
+        or phase6.get("extended_lane_count") != len(scheduled_extended_lanes)
         or type(phase6.get("core_lane_count")) is not int
         or type(phase6.get("extended_lane_count")) is not int
         or phase6.get("core_status") not in {"complete", "complete_with_failures"}
@@ -8729,7 +8814,8 @@ def validate_input_manifest(
         )
         or phase6.get("extended_status") not in {"complete", "complete_with_failures"}
         or not isinstance(phase6.get("extended_terminal_states"), dict)
-        or set(phase6.get("extended_terminal_states", {})) != set(EXTENDED_LANES)
+        or set(phase6.get("extended_terminal_states", {}))
+        != set(scheduled_extended_lanes)
         or any(
             state not in {"measured_complete", "failed"}
             for state in phase6.get("extended_terminal_states", {}).values()
@@ -9326,6 +9412,18 @@ def semantic_revalidate(inputs: Mapping[str, Any]) -> dict[str, Any]:
     runner_root = checked_dir(thesis_root / "runner", label="measured runner root")
     model_store = checked_dir(required_env("URA_MODEL_STORE"), label="model store")
     scope = inputs.get("scope")
+    gate5_snapshot = inputs.get("gate5")
+    terminal_dispositions = (
+        gate5_snapshot.get("terminal_dispositions")
+        if isinstance(gate5_snapshot, dict)
+        else None
+    )
+    ollama_static_terminals = tuple(
+        lane
+        for lane in OLLAMA_STATIC_TERMINAL_LANES
+        if isinstance(terminal_dispositions, dict)
+        and lane in terminal_dispositions
+    )
     if (
         not isinstance(scope, dict)
         or not isinstance(scope.get("audit_runner_root"), str)
@@ -9341,8 +9439,12 @@ def semantic_revalidate(inputs: Mapping[str, Any]) -> dict[str, Any]:
         "audit_runner_root": scope["audit_runner_root"],
         "thesis_root": str(thesis_root),
         "gate5_lane_count": 46,
-        "gate5_runnable_lane_count": 22 - len(conditional_na_lanes),
-        "gate5_terminal_lane_count": 24 + len(conditional_na_lanes),
+        "gate5_runnable_lane_count": (
+            22 - len(conditional_na_lanes) - len(ollama_static_terminals)
+        ),
+        "gate5_terminal_lane_count": (
+            24 + len(conditional_na_lanes) + len(ollama_static_terminals)
+        ),
         "conditional_na_lanes": conditional_na_lanes,
     }:
         raise Phase8Error("authorized Phase 8 scope differs from canonical roots")
@@ -9845,6 +9947,18 @@ def validate_human_only_blocker(
         raise Phase8Error("Phase 8 human-only blocker makes a human claim")
 
 
+def _valid_phase8_gate5_counts(value: object) -> bool:
+    return (
+        isinstance(value, dict)
+        and set(value) == {"total", "runnable", "terminal", "native"}
+        and all(type(item) is int for item in value.values())
+        and value["total"] == 46
+        and value["native"] == 9
+        and 18 <= value["runnable"] <= 22
+        and value["terminal"] == 46 - value["runnable"]
+    )
+
+
 def validate_machine_preparation_record(
     value: Mapping[str, Any], *, authorized_input_sha: str, final_root: Path
 ) -> None:
@@ -9877,13 +9991,7 @@ def validate_machine_preparation_record(
         or value.get("schema") != PREPARATION_SCHEMA
         or value.get("status") != "machine_preparation_complete_human_only_blocked"
         or value.get("authorized_input_manifest_sha256") != authorized_input_sha
-        or not isinstance(gate5_inventory, dict)
-        or any(type(item) is not int for item in gate5_inventory.values())
-        or gate5_inventory
-        not in (
-            {"total": 46, "runnable": 22, "terminal": 24, "native": 9},
-            {"total": 46, "runnable": 21, "terminal": 25, "native": 9},
-        )
+        or not _valid_phase8_gate5_counts(gate5_inventory)
         or not isinstance(statuses, dict)
         or set(statuses) != {"core", "extended", "native", "phase7"}
         or statuses.get("core") not in {"complete", "complete_with_failures"}
@@ -10158,13 +10266,7 @@ def _validate_boundary_record(
         set(value) != fields
         or value.get("schema") != BOUNDARY_SCHEMA
         or value.get("status") != "validated_for_blinded_preparation"
-        or not isinstance(gate5, dict)
-        or any(type(item) is not int for item in gate5.values())
-        or gate5
-        not in (
-            {"total": 46, "runnable": 22, "terminal": 24, "native": 9},
-            {"total": 46, "runnable": 21, "terminal": 25, "native": 9},
-        )
+        or not _valid_phase8_gate5_counts(gate5)
         or value.get("common_frame")
         != {
             "common_metrics_eligible_only": True,
@@ -12371,6 +12473,7 @@ def self_test() -> int:
     )
     if conditional_gate5_profile != {
         "conditional_na_lanes": [DEFENSE_LOCAL_LANE],
+        "ollama_static_terminal_lanes": (),
         "scheduled_core_lanes": [
             lane
             for lane in CORE_LANES
@@ -12383,6 +12486,7 @@ def self_test() -> int:
             if lane not in RR_RUNTIME_TERMINAL_LANE_SET
             and lane != DEFENSE_LOCAL_LANE
         ],
+        "scheduled_extended_lanes": list(EXTENDED_LANES),
         "runnable_lane_count": 21,
         "terminal_lane_count": 25,
     }:
@@ -14119,11 +14223,7 @@ def self_test() -> int:
                 "control_root": str(control),
             }
             write_new(launch_path, canonical(launch))
-            typed = {
-                "bridge-nanogcg": "unavailable",
-                "bridge-ideator": "unavailable",
-                "t3mp3st": "unavailable",
-            }
+            typed = dict(EXTENDED_BASE_TERMINALS)
             terminal_rows = {
                 row["lane_id"]: row
                 for row in gate5_rows

@@ -726,7 +726,7 @@ def test_ollama_bounded_lane_identity_is_used_by_every_workflow_stage() -> None:
         / "phase5_ollama_workflow.sh.in"
     ).read_text(encoding="utf-8")
 
-    assert source.count('f"ollama-{label}-text-exploratory-50"') == 2
+    assert source.count('f"ollama-{label}-text-exploratory-50"') == 1
     assert source.count(
         'static_lane="ollama-${label}-text-exploratory-50"'
     ) == 2
@@ -1160,9 +1160,10 @@ def test_phase5_rr_preserves_projections_and_starts_terminal_at_canary(
     assert "rr_swapped_projection_lane" in finalizer
     assert '{"path", "file", "sha256", "bytes"}' in finalizer
     assert '{"path", "envelope_id", "file", "sha256", "bytes"}' in finalizer
-    assert '"target_runtime_terminal": 4' in finalizer
-    assert '"target_runtime_terminal": 4' in promoter
     for source in (finalizer, promoter):
+        assert "inventory_counts as ollama_inventory_counts" in source
+        assert '"expected_runnable": [18, 19, 20, 21, 22]' in source
+        assert '"expected_target_runtime_terminal": [4, 5, 6, 7]' in source
         assert re.search(r'(?<![A-Za-z_])"records"\s*:\s*1\b', source) is None
         assert source.count("load_eligibility_artifact(") == 5
         assert "validate_eligibility_envelope_binding(" in source
@@ -1179,8 +1180,17 @@ def test_phase5_rr_preserves_projections_and_starts_terminal_at_canary(
     assert "grid is not bound to the exact retained eligibility plan" in canaries
     assert "grid is not bound to the exact retained lane projection" in canaries
     assert "acquisition binding names another request envelope" in canaries
-    assert '(22, 24, 4, [])' in sequence
-    assert '(21, 25, 4, ["defense-local"])' in sequence
+    for profile in (
+        "exact_profile(22, 24, 4, [])",
+        'exact_profile(21, 25, 4, ["defense-local"])',
+        "exact_profile(21, 25, 5, [])",
+        'exact_profile(20, 26, 5, ["defense-local"])',
+        "exact_profile(20, 26, 6, [])",
+        'exact_profile(19, 27, 6, ["defense-local"])',
+        "exact_profile(19, 27, 7, [])",
+        'exact_profile(18, 28, 7, ["defense-local"])',
+    ):
+        assert profile in sequence
 
     bindings = _bindings(tmp_path / "bindings.json")
     output = tmp_path / "workspace"
@@ -1219,8 +1229,8 @@ def test_phase5_rr_preserves_projections_and_starts_terminal_at_canary(
         value = json.loads(result.stdout)
         assert value["status"] == "passed"
         assert value["expected_rows"] == 46
-        assert value["expected_runnable"] == [21, 22]
-        assert value["expected_target_runtime_terminal"] == 4
+        assert value["expected_runnable"] == [18, 19, 20, 21, 22]
+        assert value["expected_target_runtime_terminal"] == [4, 5, 6, 7]
         assert expected_mutations <= set(value["rejected_mutations"])
         assert set(value["rejected_conditional_variant_mutations"]) == {
             "v2_reason_from_v1",
@@ -1870,11 +1880,13 @@ def test_phase6_rr_runtime_terminals_are_required_but_never_scheduled() -> None:
         assert 'projection_field.get("status") != "passed"' in source or (
             'value.get("status") != "passed"' in source
         )
+        assert "inventory_counts as ollama_static_inventory_counts" in source
+        assert "validate_gate5_terminal_rows as validate_ollama_static_gate5_rows" in source
+        assert "OLLAMA_STATIC_TERMINAL_LANES" in source
+        assert "ollama_static_inventory_counts(" in source
         assert '"target_runtime_terminal": 4' in source
         assert '"runnable": 22' in source
         assert '"typed_terminal": 24' in source
-        assert '"runnable": 21' in source
-        assert '"typed_terminal": 25' in source
         assert '"local-llava-rr.json"' in source
         assert "5c0a288e7b19dcd748c3169abdf52e2e7d37b2fa" in source
         assert (
@@ -1942,9 +1954,10 @@ def test_phase6_rr_runtime_terminals_are_required_but_never_scheduled() -> None:
             assert "load_request_envelope_file(" not in validator
     assert "projection_content, observed_projection = projection_from_bytes(" in core
     assert "envelope_content, observed_envelope = envelope_from_bytes(" in core
-    assert '"target_runtime_terminal": 4' in sequence
-    assert "(22, 24, 4, [])" in sequence
-    assert '(21, 25, 4, ["defense-local"])' in sequence
+    assert "for static_count in range(4)" in sequence
+    assert "runnable != 22 - ollama_static_terminals - defense_terminal" in sequence
+    assert "terminal != 24 + ollama_static_terminals + defense_terminal" in sequence
+    assert '"target_runtime_terminal": 4 + static_count' in sequence
     assert "RR_TERMINAL_LANES[0]: \"measured_complete\"" in sequence
 
     combined = "\n".join(sources.values())
@@ -2013,28 +2026,28 @@ def test_phase7_watcher_cross_checks_phase6_inventory_profiles() -> None:
         if lane not in rr_terminals and lane != "defense-local"
     }
 
-    assert require_profile(
-        {
-            "runnable_lanes": 22,
-            "typed_terminal_lanes": 24,
-            "target_runtime_terminal": 4,
-            "conditional_na_lanes": [],
-        },
-        sequence_conditional=[],
-        core_states=complete,
-        label="test-success",
-    ) == (22, 24, 4, [])
-    assert require_profile(
-        {
-            "runnable_lanes": 21,
-            "typed_terminal_lanes": 25,
-            "target_runtime_terminal": 4,
-            "conditional_na_lanes": ["defense-local"],
-        },
-        sequence_conditional=["defense-local"],
-        core_states=conditional,
-        label="test-conditional",
-    ) == (21, 25, 4, ["defense-local"])
+    for static_count in range(4):
+        for defense_count, conditional_lanes, states in (
+            (0, [], complete),
+            (1, ["defense-local"], conditional),
+        ):
+            expected = (
+                22 - static_count - defense_count,
+                24 + static_count + defense_count,
+                4 + static_count,
+                conditional_lanes,
+            )
+            assert require_profile(
+                {
+                    "runnable_lanes": expected[0],
+                    "typed_terminal_lanes": expected[1],
+                    "target_runtime_terminal": expected[2],
+                    "conditional_na_lanes": conditional_lanes,
+                },
+                sequence_conditional=conditional_lanes,
+                core_states=states,
+                label=f"test-static-{static_count}-defense-{defense_count}",
+            ) == expected
     with pytest.raises(SystemExit, match="conditional and core inventories differ"):
         require_profile(
             {
@@ -2059,6 +2072,13 @@ def test_phase7_watcher_cross_checks_phase6_inventory_profiles() -> None:
 
 
 def test_phase7_watcher_cross_checks_preparation_metric_profiles() -> None:
+    from experiments.local_campaign.ollama_static_terminal import (
+        DISPOSITION as OLLAMA_STATIC_TERMINAL_DISPOSITION,
+        OLLAMA_STATIC_TERMINAL_LANES,
+        REASON_CODE as OLLAMA_STATIC_TERMINAL_REASON_CODE,
+        inventory_counts as ollama_static_inventory_counts,
+    )
+
     template = (
         Path(__file__).parents[2]
         / "experiments"
@@ -2069,14 +2089,23 @@ def test_phase7_watcher_cross_checks_preparation_metric_profiles() -> None:
     begin = "# BEGIN_PHASE7_PREPARATION_PROFILE_CONTRACT\n"
     end = "# END_PHASE7_PREPARATION_PROFILE_CONTRACT\n"
     contract = template.split(begin, 1)[1].split(end, 1)[0]
-    namespace: dict[str, object] = {}
+    namespace: dict[str, object] = {
+        "OLLAMA_STATIC_TERMINAL_DISPOSITION": OLLAMA_STATIC_TERMINAL_DISPOSITION,
+        "OLLAMA_STATIC_TERMINAL_LANES": OLLAMA_STATIC_TERMINAL_LANES,
+        "OLLAMA_STATIC_TERMINAL_REASON_CODE": OLLAMA_STATIC_TERMINAL_REASON_CODE,
+        "ollama_static_inventory_counts": ollama_static_inventory_counts,
+    }
     exec(compile(contract, "<phase7-preparation-profile>", "exec"), namespace)
     require_profile = namespace["require_preparation_profile"]
     assert callable(require_profile)
 
     def profile(
-        runnable: int, terminal: int, conditional: list[str]
+        static_count: int, conditional: list[str]
     ) -> tuple[dict[str, object], dict[str, object]]:
+        terminal_lanes = OLLAMA_STATIC_TERMINAL_LANES[:static_count]
+        counts = ollama_static_inventory_counts(terminal_lanes, conditional)
+        runnable = int(counts["runnable"])
+        terminal = int(counts["typed_terminal"])
         lifecycle = [f"lane-{index}" for index in range(runnable)]
         if conditional:
             assert conditional == ["defense-local"]
@@ -2094,8 +2123,15 @@ def test_phase7_watcher_cross_checks_preparation_metric_profiles() -> None:
                 "lane_count": 46,
                 "runnable_lane_count": runnable,
                 "terminal_lane_count": terminal,
-                "target_runtime_terminal": 4,
+                "target_runtime_terminal": counts["target_runtime_terminal"],
                 "conditional_na_lanes": conditional,
+                "terminal_inventory": {
+                    lane: {
+                        "disposition": OLLAMA_STATIC_TERMINAL_DISPOSITION,
+                        "reason_code": OLLAMA_STATIC_TERMINAL_REASON_CODE,
+                    }
+                    for lane in terminal_lanes
+                },
             },
             "phase6": {"runner_lane_count": runnable},
             "runner": {
@@ -2107,16 +2143,24 @@ def test_phase7_watcher_cross_checks_preparation_metric_profiles() -> None:
         }
         return result, manifest
 
-    success_result, success_manifest = profile(22, 24, [])
-    assert require_profile(
-        success_result, success_manifest, label="test-success"
-    )[:4] == (22, 24, 4, [])
-    conditional_result, conditional_manifest = profile(
-        21, 25, ["defense-local"]
-    )
-    assert require_profile(
-        conditional_result, conditional_manifest, label="test-conditional"
-    )[:4] == (21, 25, 4, ["defense-local"])
+    for static_count in range(4):
+        for conditional in ([], ["defense-local"]):
+            result, manifest = profile(static_count, conditional)
+            expected = ollama_static_inventory_counts(
+                OLLAMA_STATIC_TERMINAL_LANES[:static_count], conditional
+            )
+            assert require_profile(
+                result,
+                manifest,
+                label=f"test-static-{static_count}-conditional-{bool(conditional)}",
+            )[:4] == (
+                expected["runnable"],
+                expected["typed_terminal"],
+                expected["target_runtime_terminal"],
+                conditional,
+            )
+
+    conditional_result, conditional_manifest = profile(3, ["defense-local"])
 
     stale_runner_count = {**conditional_result, "runner_lanes": 26}
     with pytest.raises(SystemExit, match="metric lanes differ"):
@@ -3075,7 +3119,7 @@ def test_classification_canaries_preserve_invalid_source_predictions(
         _assert_source_contract(restrictive_mutation, required)
 
 
-def test_ollama_rjudge_canary_allows_zero_decided_validity_observation() -> None:
+def test_ollama_canaries_allow_completed_zero_decision_observations() -> None:
     source = (
         Path(__file__).parents[2]
         / "experiments"
@@ -3084,19 +3128,73 @@ def test_ollama_rjudge_canary_allows_zero_decided_validity_observation() -> None
         / "phase5_ollama_workflow.sh.in"
     ).read_text(encoding="utf-8")
     required = (
-        'if mode != "rjudge" and support.get("decided", 0) <= 0:',
-        'raise SystemExit("static canary lacks decided support")',
+        'if not isinstance(support.get("decision_coverage"), (int, float)):',
+        'raise SystemExit("canary lacks numeric decision coverage")',
+        'item.get("guardrail_queried") is not True',
+        'item.get("judge_model_identity") != f"{guard_model}@{guard_revision}"',
     )
-    _assert_source_contract(source, required)
 
+    def assert_contract(value: str) -> None:
+        _assert_source_contract(value, required)
+        assert "static canary lacks decided support" not in value
+        assert 'support.get("decided", 0) <= 0' not in value
+
+    assert_contract(source)
     restrictive_mutation = source.replace(
-        'if mode != "rjudge" and support.get("decided", 0) <= 0:',
-        'if support.get("decided", 0) <= 0:',
+        "print(\n    summary[\"canary_id\"],",
+        'if support.get("decided", 0) <= 0:\n'
+        '    raise SystemExit("static canary lacks decided support")\n'
+        "print(\n    summary[\"canary_id\"],",
         1,
     )
     assert restrictive_mutation != source
     with pytest.raises(AssertionError):
-        _assert_source_contract(restrictive_mutation, required)
+        assert_contract(restrictive_mutation)
+
+
+def test_ollama_static_output_failures_are_typed_without_stopping_other_lanes() -> None:
+    source = (
+        Path(__file__).parents[2]
+        / "experiments"
+        / "local_campaign"
+        / "templates"
+        / "phase5_ollama_workflow.sh.in"
+    ).read_text(encoding="utf-8")
+    _, canary_tail = source.split("run_canary_lane() {", 1)
+    canary_body, remainder = canary_tail.split("\n}\n\n# Phase 5 bounded", 1)
+    canary_required = (
+        '[[ "$mode" == \'static\' ]] || return "$runner_rc"',
+        '"$PY" -m experiments.local_campaign.ollama_static_terminal classify',
+        '--runner-returncode "$runner_rc"',
+        'safe_marker "${lane}.target-runtime-terminal"',
+        'return 0\n  fi',
+        "'runnable' '' '' '' | tee -a \"$CANARY_STATUS\"",
+    )
+    remainder_required = (
+        "validate_terminal_rows(",
+        'if lane in terminal_lanes:',
+    )
+
+    def assert_canary_contract(value: str) -> None:
+        _assert_source_contract(value, canary_required)
+
+    assert_canary_contract(canary_body)
+    _assert_source_contract(remainder, remainder_required)
+    for original, replacement in (
+        (
+            '[[ "$mode" == \'static\' ]] || return "$runner_rc"',
+            ':',
+        ),
+        (
+            'safe_marker "${lane}.target-runtime-terminal"',
+            'safe_marker "${lane}.canary"',
+        ),
+        ('return 0\n  fi', 'return "$runner_rc"\n  fi'),
+    ):
+        changed = canary_body.replace(original, replacement, 1)
+        assert changed != canary_body
+        with pytest.raises(AssertionError):
+            assert_canary_contract(changed)
 
 
 def _assert_completion_bound_guard_query_contract(

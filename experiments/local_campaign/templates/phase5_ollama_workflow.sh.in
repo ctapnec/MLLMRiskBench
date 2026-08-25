@@ -178,7 +178,7 @@ mkdir -p "$SUCCESS_ROOT" "$CONFIG_ROOT" "$RECEIPTS_ROOT" \
 printf 'phase\tunit\tdisposition\treason\n' > "$DISPOSITIONS"
 printf 'lane\tmodel_label\trequested_spec\tdigest\tmetric_mode\tpreliminary_projection_id\tfinal_projection_id\ttarget_cap\tjudge_cap\tlocal_guardrail_evaluations\thttp_cap\tselected_clusters\tselected_records\tpreliminary_root\tfinal_root\n' > "$PROJECTION_STATUS"
 printf 'model_label\trequested_spec\tdigest\tattestation_id\treceipt\tsha256\tprobe_root\n' > "$ATTEST_STATUS"
-printf 'lane\tmodel_label\trequested_spec\tdigest\tmetric_mode\trehearsal_projection_id\ttarget_cap\tjudge_cap\tlocal_guardrail_evaluations\thttp_cap\tcanary_id\tall_configured_stages_represented\ttarget_status\tattacker_status\tsource_evaluator_status\tdecided\tdecision_coverage\tdiagnostic_root\n' > "$CANARY_STATUS"
+printf 'lane\tmodel_label\trequested_spec\tdigest\tmetric_mode\trehearsal_projection_id\ttarget_cap\tjudge_cap\tlocal_guardrail_evaluations\thttp_cap\tcanary_id\tall_configured_stages_represented\ttarget_status\tattacker_status\tsource_evaluator_status\tdecided\tdecision_coverage\tdiagnostic_root\tdisposition\treason_code\treason\ttarget_runtime_terminal_artifact\n' > "$CANARY_STATUS"
 
 "$PY" - "$GPTGEOCHAT_TERMINAL_REASON_CODE" "$GPTGEOCHAT_TERMINAL_REASON" \
   "${MODEL_LABELS[@]}" <<'PY'
@@ -1337,8 +1337,6 @@ else:
 support = summary["decision_support"]
 if not isinstance(support.get("decision_coverage"), (int, float)):
     raise SystemExit("canary lacks numeric decision coverage")
-if mode != "rjudge" and support.get("decided", 0) <= 0:
-    raise SystemExit("static canary lacks decided support")
 print(
     summary["canary_id"],
     str(roles["all_configured_stages_represented"]).lower(),
@@ -1359,6 +1357,7 @@ run_canary_lane() {
   local rehearsal_base rehearsal_plan rehearsal_run diagnostic_base diagnostic_plan diagnostic_run
   local projection_id target_cap judge_cap guard_evals http_cap clusters records eligibility
   local canary_id stages target_status attacker_status source_status decided coverage
+  local runner_rc terminal_artifact terminal_returned terminal_disposition terminal_reason_code terminal_reason
   config_sha="$(sha256sum -- "$config" | awk '{print $1}')"
   rehearsal_base="$PREFLIGHT_ROOT/${lane}-rehearsal-${TAG}"
   rehearsal_plan="$rehearsal_base/plan"
@@ -1442,8 +1441,31 @@ run_canary_lane() {
   fi
   # R-Judge with an Ollama target has no Hub resources. Supplying an empty
   # acquisition plan would itself violate Runner admission, so it is omitted.
+  set +e
   CUDA_VISIBLE_DEVICES=0,1 "$PY" -m experiments.run_matrix \
     "${canary_args[@]}" "${acq[@]}" > "$CONTROL_ROOT/${lane}.canary.log" 2>&1
+  runner_rc=$?
+  set -e
+  if (( runner_rc != 0 )); then
+    [[ "$mode" == 'static' ]] || return "$runner_rc"
+    terminal_artifact="$CONTROL_ROOT/${lane}.target-runtime-terminal.json"
+    IFS=$'\t' read -r terminal_disposition terminal_reason_code terminal_reason terminal_returned < <(
+      "$PY" -m experiments.local_campaign.ollama_static_terminal classify \
+        --output "$terminal_artifact" \
+        --runner-log "$CONTROL_ROOT/${lane}.canary.log" \
+        --diagnostic-root "$diagnostic_run" \
+        --lane "$lane" --runner-returncode "$runner_rc"
+    )
+    test "$terminal_returned" = "$terminal_artifact"
+    printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
+      "$lane" "$label" "$spec" "$digest" "$mode" "$projection_id" \
+      "$target_cap" "$judge_cap" "$guard_evals" "$http_cap" '' '' '' '' '' \
+      '' '' "$diagnostic_run" "$terminal_disposition" "$terminal_reason_code" \
+      "$terminal_reason" "$terminal_artifact" | tee -a "$CANARY_STATUS"
+    safe_marker "${lane}.target-runtime-terminal"
+    printf 'CANARY_TARGET_RUNTIME_TERMINAL=%s TIME=%s\n' "$lane" "$(date -Is)"
+    return 0
+  fi
 
   mapfile -t eligibility_files < <(find "$diagnostic_run" -maxdepth 1 -type f \
     -name 'eligibility-*.eligibility.json' -print | sort)
@@ -1457,11 +1479,11 @@ run_canary_lane() {
     canary_fields "$diagnostic_run" "$mode" "$spec" "$digest" "$arm" \
       "$target_cap" "$config" "$config_sha"
   )
-  printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
+  printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
     "$lane" "$label" "$spec" "$digest" "$mode" "$projection_id" "$target_cap" \
     "$judge_cap" "$guard_evals" "$http_cap" "$canary_id" "$stages" \
     "$target_status" "$attacker_status" "$source_status" "$decided" "$coverage" \
-    "$diagnostic_run" | tee -a "$CANARY_STATUS"
+    "$diagnostic_run" 'runnable' '' '' '' | tee -a "$CANARY_STATUS"
   safe_marker "${lane}.canary"
   printf 'CANARY_END=%s TIME=%s\n' "$lane" "$(date -Is)"
 }
@@ -1527,47 +1549,60 @@ if (( ${#FAILED_UNITS[@]} == 0 )); then
 import csv
 import sys
 
+from experiments.local_campaign.ollama_static_terminal import (
+    OLLAMA_STATIC_TERMINAL_LANES,
+    STATIC_LANE_MODELS,
+    validate_terminal_rows,
+)
+
 def rows(path):
     with open(path, encoding="utf-8", newline="") as handle:
         return list(csv.DictReader(handle, delimiter="\t"))
 
 projections, attestations, canaries, dispositions = map(rows, sys.argv[1:])
-labels = ["rwkv-g1d-0p4b", "rwkv-g1f-2p9b", "rwkv-g1g-1p5b"]
-expected_runnable = {
-    lane
-    for label in labels
-    for lane in (
-        f"ollama-{label}-text-exploratory-50",
-        f"rjudge-ollama-{label}",
-    )
-}
-typed_terminals = {f"gptgeochat-ollama-{label}" for label in labels}
-if len(projections) != 6:
-    raise SystemExit(f"expected 6 Ollama projection rows, found {len(projections)}")
-if len(attestations) != 3:
-    raise SystemExit(f"expected 3 Ollama attestation rows, found {len(attestations)}")
-if len(canaries) != 6:
-    raise SystemExit(f"expected 6 Ollama canary rows, found {len(canaries)}")
+static_lanes = set(OLLAMA_STATIC_TERMINAL_LANES)
+rjudge_lanes = {f"rjudge-ollama-{model[0]}" for model in STATIC_LANE_MODELS.values()}
+expected_lanes = static_lanes | rjudge_lanes
+typed_gptgeochat = {f"gptgeochat-ollama-{model[0]}" for model in STATIC_LANE_MODELS.values()}
+if len(projections) != 6 or len(attestations) != 3 or len(canaries) != 6:
+    raise SystemExit("Ollama Phase 5 row counts changed")
 if any(row["disposition"] != "completed" for row in dispositions):
     raise SystemExit("a supposedly clean workflow contains a non-complete disposition")
-if {row["metric_mode"] for row in projections} != {"static", "rjudge"}:
-    raise SystemExit("Ollama projection metric inventory is incomplete")
 if (
-    {row["lane"] for row in projections} != expected_runnable
-    or {row["lane"] for row in canaries} != expected_runnable
-    or ({row["lane"] for row in projections + canaries} & typed_terminals)
+    {row["metric_mode"] for row in projections} != {"static", "rjudge"}
+    or {row["lane"] for row in projections} != expected_lanes
+    or {row["lane"] for row in canaries} != expected_lanes
+    or len({row["lane"] for row in canaries}) != 6
+    or ({row["lane"] for row in projections + canaries} & typed_gptgeochat)
 ):
-    raise SystemExit("typed GPTGeoChat x RWKV terminal entered a runnable loop")
+    raise SystemExit("Ollama projection/canary inventory changed")
+terminal_lanes = set(validate_terminal_rows(
+    (row for row in canaries if row["lane"] in static_lanes),
+    label="Phase 5 Ollama static canaries",
+    error_type=SystemExit,
+))
 for row in projections:
     if int(row["target_cap"]) <= 0 or int(row["judge_cap"]) != 0 or int(row["http_cap"]) != 0:
         raise SystemExit(f"invalid exact cap row: {row['lane']}")
 for row in canaries:
-    if row["target_status"] != "exercised" or row["attacker_status"] != "exercised":
-        raise SystemExit(f"canary roles not exercised: {row['lane']}")
-    if row["metric_mode"] == "static" and row["all_configured_stages_represented"] != "true":
-        raise SystemExit(f"static scoring stages not represented: {row['lane']}")
-    if row["metric_mode"] == "rjudge" and row["source_evaluator_status"] != "exercised":
-        raise SystemExit(f"R-Judge evaluator not exercised: {row['lane']}")
+    lane = row["lane"]
+    if lane in terminal_lanes:
+        if any(row[field] for field in (
+            "canary_id", "all_configured_stages_represented", "target_status",
+            "attacker_status", "source_evaluator_status", "decided", "decision_coverage",
+        )):
+            raise SystemExit(f"terminal static lane retained completed-canary fields: {lane}")
+        continue
+    if (
+        row["disposition"] != "runnable"
+        or row["target_status"] != "exercised"
+        or row["attacker_status"] != "exercised"
+    ):
+        raise SystemExit(f"runnable canary roles not exercised: {lane}")
+    if lane in static_lanes and row["all_configured_stages_represented"] != "true":
+        raise SystemExit(f"static scoring stages not represented: {lane}")
+    if lane in rjudge_lanes and row["source_evaluator_status"] != "exercised":
+        raise SystemExit(f"R-Judge evaluator not exercised: {lane}")
 PY
   printf 'PHASE5_OLLAMA_COMPLETE=%s\n' "$(date -Is)"
 else

@@ -474,13 +474,23 @@ def require_phase6_inventory_profile(
     terminal = gate5.get("typed_terminal_lanes")
     target_runtime = gate5.get("target_runtime_terminal")
     gate_conditional = gate5.get("conditional_na_lanes")
+    defense_terminal = (
+        0 if gate_conditional == []
+        else 1 if gate_conditional == ["defense-local"]
+        else -1
+    )
+    ollama_static_terminals = (
+        target_runtime - 4 if type(target_runtime) is int else -1
+    )
     if (
         type(runnable) is not int
         or type(terminal) is not int
         or type(target_runtime) is not int
         or not isinstance(gate_conditional, list)
-        or (runnable, terminal, target_runtime, gate_conditional)
-        not in ((22, 24, 4, []), (21, 25, 4, ["defense-local"]))
+        or defense_terminal < 0
+        or not 0 <= ollama_static_terminals <= 3
+        or runnable != 22 - ollama_static_terminals - defense_terminal
+        or terminal != 24 + ollama_static_terminals + defense_terminal
     ):
         raise SystemExit(f"{label} Gate 5 inventory profile changed")
     expected_core = (
@@ -519,6 +529,18 @@ def phase6_inventory_profile_self_test() -> None:
         "target_runtime_terminal": 4,
         "conditional_na_lanes": ["defense-local"],
     }
+    static_profile = {
+        "runnable_lanes": 19,
+        "typed_terminal_lanes": 27,
+        "target_runtime_terminal": 7,
+        "conditional_na_lanes": [],
+    }
+    static_conditional_profile = {
+        "runnable_lanes": 18,
+        "typed_terminal_lanes": 28,
+        "target_runtime_terminal": 7,
+        "conditional_na_lanes": ["defense-local"],
+    }
     require_phase6_inventory_profile(
         success_profile,
         sequence_conditional=[],
@@ -531,6 +553,18 @@ def phase6_inventory_profile_self_test() -> None:
         core_states=conditional,
         label="self-test-conditional",
     )
+    require_phase6_inventory_profile(
+        static_profile,
+        sequence_conditional=[],
+        core_states=complete,
+        label="self-test-static-terminals",
+    )
+    require_phase6_inventory_profile(
+        static_conditional_profile,
+        sequence_conditional=["defense-local"],
+        core_states=conditional,
+        label="self-test-static-terminals-conditional",
+    )
     mutations = (
         (success_profile, ["defense-local"], complete),
         (conditional_profile, [], conditional),
@@ -539,6 +573,16 @@ def phase6_inventory_profile_self_test() -> None:
             {**success_profile, "runnable_lanes": 21},
             [],
             complete,
+        ),
+        (
+            {**static_profile, "target_runtime_terminal": 6},
+            [],
+            complete,
+        ),
+        (
+            {**static_conditional_profile, "runnable_lanes": 19},
+            ["defense-local"],
+            conditional,
         ),
     )
     for index, (gate5, sequence_conditional, core_states) in enumerate(
@@ -765,6 +809,12 @@ import hashlib
 from pathlib import Path
 import re
 import sys
+from experiments.local_campaign.ollama_static_terminal import (
+    DISPOSITION as OLLAMA_STATIC_TERMINAL_DISPOSITION,
+    OLLAMA_STATIC_TERMINAL_LANES,
+    REASON_CODE as OLLAMA_STATIC_TERMINAL_REASON_CODE,
+    inventory_counts as ollama_static_inventory_counts,
+)
 from ura.strict_json import strict_json_loads
 
 # BEGIN_PHASE7_PREPARATION_PROFILE_CONTRACT
@@ -789,18 +839,44 @@ def require_preparation_profile(
     lifecycle = runner.get("lifecycle_lane_order")
     metric = runner.get("metric_lane_order")
     states = runner.get("terminal_states")
+    static_lane_ids = set(OLLAMA_STATIC_TERMINAL_LANES)
+    terminal_inventory = gate5.get("terminal_inventory")
+    static_terminal_rows = (
+        {
+            lane: terminal_inventory[lane]
+            for lane in static_lane_ids
+            if isinstance(terminal_inventory, dict) and lane in terminal_inventory
+        }
+        if isinstance(terminal_inventory, dict)
+        else {}
+    )
+    try:
+        expected_profile = ollama_static_inventory_counts(
+            static_terminal_rows, conditional if isinstance(conditional, list) else []
+        )
+    except ValueError as exc:
+        raise SystemExit(f"{label} Gate 5 terminal profile is invalid: {exc}") from exc
     if (
         type(runnable) is not int
         or type(terminal) is not int
         or type(target_runtime) is not int
         or not isinstance(conditional, list)
-        or (runnable, terminal, target_runtime, conditional)
-        not in ((22, 24, 4, []), (21, 25, 4, ["defense-local"]))
+        or runnable != expected_profile["runnable"]
+        or terminal != expected_profile["typed_terminal"]
+        or target_runtime != expected_profile["target_runtime_terminal"]
+        or any(
+            not isinstance(row, dict)
+            or row.get("disposition") != OLLAMA_STATIC_TERMINAL_DISPOSITION
+            or row.get("reason_code")
+            != OLLAMA_STATIC_TERMINAL_REASON_CODE
+            for row in static_terminal_rows.values()
+        )
         or gate5.get("lane_count") != 46
         or not isinstance(lifecycle, list)
         or len(lifecycle) != runnable
         or len(set(lifecycle)) != len(lifecycle)
         or ("defense-local" in lifecycle) != (not conditional)
+        or bool(set(lifecycle) & set(static_terminal_rows))
         or runner.get("conditional_na_lanes") != conditional
         or phase6.get("runner_lane_count") != runnable
         or not isinstance(states, dict)

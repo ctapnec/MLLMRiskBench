@@ -26,6 +26,14 @@ import sys
 import tempfile
 from typing import Any, Mapping, Sequence
 
+sys.path.insert(0, str(Path.cwd()))
+from experiments.local_campaign.ollama_static_terminal import (
+    OLLAMA_STATIC_TERMINAL_DISPOSITION,
+    OLLAMA_STATIC_TERMINAL_LANES,
+    inventory_counts as ollama_static_inventory_counts,
+    validate_gate5_terminal_rows,
+)
+
 
 INPUT_SCHEMA = "ura-phase7-analysis-inputs/1"
 LAUNCH_SCHEMA = "ura-phase7-analysis-launch/1"
@@ -225,6 +233,7 @@ EXTENDED_LANES = (
     "ollama-rwkv-g1g-1p5b-text-exploratory-50",
     "rjudge-ollama-rwkv-g1g-1p5b",
 )
+OLLAMA_STATIC_TERMINAL_LANE_SET = set(OLLAMA_STATIC_TERMINAL_LANES)
 RUNNER_LANES = CORE_LANES + EXTENDED_LANES
 
 BRIDGE_TERMINALS = {
@@ -3216,6 +3225,22 @@ def gate5_inventory_profile(
         validate_conditional_defense_row(
             defense, label=label, validate_artifact=validate_artifact
         )
+    validated_ollama_static_terminals = validate_gate5_terminal_rows(
+        [by_lane[lane] for lane in OLLAMA_STATIC_TERMINAL_LANES],
+        label=label,
+        validate_artifact=validate_artifact,
+        error_type=Phase7Error,
+    )
+    terminal_inventory = {
+        lane: by_lane[lane]
+        for lane in by_lane
+        if by_lane[lane].get("disposition") != "runnable"
+    }
+    ollama_static_terminals = require_exact_gate5_terminal_inventory(
+        terminal_inventory, label=label, validate_artifact=validate_artifact
+    )
+    if ollama_static_terminals != validated_ollama_static_terminals:
+        raise Phase7Error(f"{label} Ollama static terminal subset changed")
     scheduled_runner_lanes = tuple(
         lane
         for lane in RUNNER_LANES
@@ -3227,7 +3252,9 @@ def gate5_inventory_profile(
         if by_lane[lane].get("disposition") == "runnable"
     )
     for lane, family in EXPECTED_RUNNABLE_FAMILIES.items():
-        if conditional and lane == DEFENSE_LOCAL_LANE:
+        if (conditional and lane == DEFENSE_LOCAL_LANE) or (
+            lane in ollama_static_terminals
+        ):
             continue
         row = by_lane[lane]
         if (
@@ -3247,43 +3274,45 @@ def gate5_inventory_profile(
             or row != EXPECTED_TERMINAL_ROWS[lane]
         ):
             raise Phase7Error(f"{label} exact terminal row changed: {lane}")
-    terminal_inventory = {
-        lane: by_lane[lane]
-        for lane in by_lane
-        if by_lane[lane].get("disposition") != "runnable"
-    }
-    require_exact_gate5_terminal_inventory(
-        terminal_inventory, label=label, validate_artifact=validate_artifact
+    conditional_na_lanes = [DEFENSE_LOCAL_LANE] if conditional else []
+    dynamic_counts = ollama_static_inventory_counts(
+        ollama_static_terminals, conditional_na_lanes
     )
     return {
         "conditional_defense_na": conditional,
-        "conditional_na_lanes": (
-            [DEFENSE_LOCAL_LANE] if conditional else []
-        ),
+        "conditional_na_lanes": conditional_na_lanes,
+        "ollama_static_terminal_lanes": ollama_static_terminals,
         "scheduled_core_lanes": scheduled_core_lanes,
+        "scheduled_extended_lanes": tuple(
+            lane for lane in EXTENDED_LANES if lane in scheduled_runner_lanes
+        ),
         "scheduled_runner_lanes": scheduled_runner_lanes,
         "runnable_lane_count": len(scheduled_runner_lanes),
         "terminal_lane_count": len(terminal_inventory),
-        "target_runtime_terminal": len(RR_RUNTIME_TERMINAL_LANES),
+        "target_runtime_terminal": len(RR_RUNTIME_TERMINAL_LANES)
+        + len(ollama_static_terminals),
         "target_runtime_terminal_artifact": validate_rr_runtime_terminal_rows(
             by_lane, label=label, validate_artifact=validate_artifact
         ),
         "terminal_inventory": terminal_inventory,
-        "inventory_counts": (
-            GATE5_CONDITIONAL_INVENTORY_COUNTS
-            if conditional
-            else GATE5_SUCCESS_INVENTORY_COUNTS
-        ),
+        "inventory_counts": {
+            **GATE5_SUCCESS_INVENTORY_COUNTS,
+            **dynamic_counts,
+        },
     }
 
 
 def require_exact_gate5_terminal_inventory(
     value: object, *, label: str, validate_artifact: bool = True
-) -> None:
+) -> tuple[str, ...]:
     if not isinstance(value, dict):
         raise Phase7Error(f"{label} exact Gate 5 terminal inventory changed")
+    ollama_static_terminals = tuple(
+        lane for lane in OLLAMA_STATIC_TERMINAL_LANES if lane in value
+    )
     expected_ids = set(EXPECTED_TERMINAL_ROWS)
     expected_ids.update(RR_RUNTIME_TERMINAL_LANES)
+    expected_ids.update(ollama_static_terminals)
     if DEFENSE_LOCAL_LANE in value:
         expected_ids.add(DEFENSE_LOCAL_LANE)
     if set(value) != expected_ids or any(
@@ -3299,6 +3328,7 @@ def require_exact_gate5_terminal_inventory(
             label=label,
             validate_artifact=validate_artifact,
         )
+    return ollama_static_terminals
 
 
 def require_zero_accounting(
@@ -5120,6 +5150,16 @@ def validate_extended_controller(
         label="Phase 6 extended Gate 5 manifest",
     )
     conditional_na_lanes = list(gate5_profile["conditional_na_lanes"])
+    scheduled_extended_lanes = tuple(
+        gate5_profile["scheduled_extended_lanes"]
+    )
+    expected_extended_terminals = {
+        **EXTENDED_TERMINALS,
+        **{
+            lane: OLLAMA_STATIC_TERMINAL_DISPOSITION
+            for lane in gate5_profile["ollama_static_terminal_lanes"]
+        },
+    }
     completion = strict_object(completion_file)
     require_exact_fields(
         completion,
@@ -5134,8 +5174,8 @@ def validate_extended_controller(
         or completion.get("expected_commit") != code_identity["expected_commit"]
         or completion.get("framework_lock_id") != code_identity["framework_lock_id"]
         or completion.get("inventory_complete") is not True
-        or completion.get("runnable_lanes") != list(EXTENDED_LANES)
-        or completion.get("typed_terminal_lanes") != EXTENDED_TERMINALS
+        or completion.get("runnable_lanes") != list(scheduled_extended_lanes)
+        or completion.get("typed_terminal_lanes") != expected_extended_terminals
         or completion.get("conditional_na_lanes") != conditional_na_lanes
         or completion.get("all_independent_lanes_attempted") is not True
         or any(
@@ -5165,7 +5205,7 @@ def validate_extended_controller(
     )
     require_exact_order(
         completion.get("runnable_lanes"),
-        expected=EXTENDED_LANES,
+        expected=scheduled_extended_lanes,
         label="Phase 6 extended completion lanes",
     )
     require_utc_timestamp(
@@ -5175,7 +5215,7 @@ def validate_extended_controller(
     terminal_states = completion.get("lane_terminal_states")
     if (
         not isinstance(terminal_states, dict)
-        or set(terminal_states) != set(EXTENDED_LANES)
+        or set(terminal_states) != set(scheduled_extended_lanes)
         or any(
             state not in {"measured_complete", "failed"}
             for state in terminal_states.values()
@@ -5183,10 +5223,12 @@ def validate_extended_controller(
     ):
         raise Phase7Error("Phase 6 extended lane terminal inventory changed")
     completed_lanes = [
-        lane for lane in EXTENDED_LANES if terminal_states[lane] == "measured_complete"
+        lane
+        for lane in scheduled_extended_lanes
+        if terminal_states[lane] == "measured_complete"
     ]
     failed_lanes = [
-        lane for lane in EXTENDED_LANES if terminal_states[lane] == "failed"
+        lane for lane in scheduled_extended_lanes if terminal_states[lane] == "failed"
     ]
     expected_status = "complete" if not failed_lanes else "complete_with_failures"
     expected_exit_code = 0 if not failed_lanes else 1
@@ -5234,11 +5276,11 @@ def validate_extended_controller(
         or type(summary.get("controller_exit_code")) is not int
         or summary.get("controller_exit_code") != expected_exit_code
         or summary.get("attempt") != attempt.name
-        or summary.get("runnable_inventory") != list(EXTENDED_LANES)
+        or summary.get("runnable_inventory") != list(scheduled_extended_lanes)
         or summary.get("lane_terminal_states") != terminal_states
         or summary.get("completed_lanes") != sorted(completed_lanes)
         or summary.get("failed_lanes") != sorted(failed_lanes)
-        or summary.get("typed_terminal_inventory") != EXTENDED_TERMINALS
+        or summary.get("typed_terminal_inventory") != expected_extended_terminals
         or summary.get("conditional_na_lanes") != conditional_na_lanes
         or not isinstance(summary.get("failures"), list)
         or summary.get("all_independent_lanes_attempted") is not True
@@ -5318,7 +5360,10 @@ def validate_extended_controller(
         or dispositions.get("schema") != "ura-phase6-extended-dispositions/1"
         or dispositions.get("status") != "complete"
         or dispositions.get("rows")
-        != [EXPECTED_TERMINAL_ROWS[lane] for lane in EXTENDED_TERMINALS]
+        != [
+            gate5_profile["terminal_inventory"][lane]
+            for lane in expected_extended_terminals
+        ]
     ):
         raise Phase7Error("Phase 6 extended typed dispositions differ")
 
@@ -5329,17 +5374,17 @@ def validate_extended_controller(
         lane = spec.get("lane_id")
         if (
             spec.get("schema") != "ura-phase6-extended-lane-spec/1"
-            or lane not in EXTENDED_LANES
+            or lane not in scheduled_extended_lanes
         ):
             raise Phase7Error(f"unexpected Phase 6 extended lane spec: {path}")
         if lane in specs:
             raise Phase7Error(f"duplicate Phase 6 extended lane spec: {lane}")
         specs[str(lane)] = (path, spec)
-    if set(specs) != set(EXTENDED_LANES) or len(specs) != 12:
+    if set(specs) != set(scheduled_extended_lanes):
         raise Phase7Error("Phase 6 extended lane-spec inventory is not exact")
     if any(
         specs[lane][0] != spec_root / f"{position:02d}-{lane}.json"
-        for position, lane in enumerate(EXTENDED_LANES, start=1)
+        for position, lane in enumerate(scheduled_extended_lanes, start=1)
     ):
         raise Phase7Error("Phase 6 extended lane-spec paths changed")
 
@@ -5354,14 +5399,14 @@ def validate_extended_controller(
         or not isinstance(lane_failures, dict)
         or set(lane_failures) != set(failed_lanes)
         or set(lane_results) & set(lane_failures)
-        or set(lane_results) | set(lane_failures) != set(EXTENDED_LANES)
+        or set(lane_results) | set(lane_failures) != set(scheduled_extended_lanes)
         or not isinstance(terminal_results, dict)
-        or set(terminal_results) != set(EXTENDED_TERMINALS)
+        or set(terminal_results) != set(expected_extended_terminals)
     ):
         raise Phase7Error("Phase 6 extended terminal result inventory changed")
     partition_completed, partition_failed = require_terminal_partition(
         terminal_states,
-        order=EXTENDED_LANES,
+        order=scheduled_extended_lanes,
         success_state="measured_complete",
         success_keys=lane_results,
         failure_keys=lane_failures,
@@ -5372,7 +5417,7 @@ def validate_extended_controller(
     completion_markers: list[dict[str, Any]] = []
     failure_descriptors: dict[str, dict[str, Any]] = {}
     failure_values: dict[str, dict[str, Any]] = {}
-    for lane in EXTENDED_LANES:
+    for lane in scheduled_extended_lanes:
         spec_path, _spec = specs[lane]
         if terminal_states[lane] == "failed":
             failure_path, failure = descriptor_object(
@@ -5637,14 +5682,16 @@ def validate_extended_controller(
         completion_markers.append(descriptor(marker))
         roots[lane] = result_root
     if summary.get("failures") != [
-        failure_values[lane] for lane in EXTENDED_LANES if lane in failure_values
+        failure_values[lane]
+        for lane in scheduled_extended_lanes
+        if lane in failure_values
     ]:
         raise Phase7Error("Phase 6 extended summary failure accounting differs")
     terminal_descriptors: dict[str, dict[str, Any]] = {}
     manifest_rows = {
         row["lane_id"]: row for row in strict_object(gate5_manifest)["lanes"]
     }
-    for lane in EXTENDED_TERMINALS:
+    for lane in expected_extended_terminals:
         terminal_path, terminal_value = descriptor_object(
             terminal_results[lane], label=f"{lane} typed terminal result"
         )
@@ -5666,7 +5713,9 @@ def validate_extended_controller(
         "summary": descriptor(summary_path),
         "exit_marker": exit_desc,
         "typed_dispositions": descriptor(dispositions_path),
-        "lane_specs": [descriptor(specs[lane][0]) for lane in EXTENDED_LANES],
+        "lane_specs": [
+            descriptor(specs[lane][0]) for lane in scheduled_extended_lanes
+        ],
         "lane_terminal_states": dict(terminal_states),
         "measured_argv_states": states,
         "lane_completions": completion_markers,
@@ -6860,6 +6909,9 @@ def validate_runner_inventory(
 ) -> dict[str, Any]:
     scheduled_runner_lanes = tuple(gate5_profile["scheduled_runner_lanes"])
     scheduled_core_lanes = tuple(gate5_profile["scheduled_core_lanes"])
+    scheduled_extended_lanes = tuple(
+        gate5_profile["scheduled_extended_lanes"]
+    )
     conditional_na_lanes = list(gate5_profile["conditional_na_lanes"])
     core_specs = _lane_specs_by_id(core)
     extended_specs = _lane_specs_by_id(extended)
@@ -6873,7 +6925,7 @@ def validate_runner_inventory(
         or set(core_states) != set(scheduled_core_lanes)
         or set(core_states.values()) - {"measured_complete", "failed"}
         or not isinstance(extended_states, dict)
-        or set(extended_states) != set(EXTENDED_LANES)
+        or set(extended_states) != set(scheduled_extended_lanes)
         or set(extended_states.values()) - {"measured_complete", "failed"}
     ):
         raise Phase7Error("Phase 6 runner terminal-state inventory is not exact")
@@ -8208,10 +8260,22 @@ class AnalysisController:
         )
         if conditional_na_lanes not in ([], [DEFENSE_LOCAL_LANE]):
             raise Phase7Error("Phase 7 Runner conditional N/A inventory changed")
+        gate5_snapshot = value.get("gate5")
+        terminal_snapshot = (
+            gate5_snapshot.get("terminal_inventory")
+            if isinstance(gate5_snapshot, dict)
+            else {}
+        )
+        ollama_static_terminals = tuple(
+            lane
+            for lane in OLLAMA_STATIC_TERMINAL_LANES
+            if isinstance(terminal_snapshot, dict) and lane in terminal_snapshot
+        )
         scheduled_runner_lanes = tuple(
             lane
             for lane in RUNNER_LANES
             if lane not in RR_RUNTIME_TERMINAL_LANE_SET
+            and lane not in ollama_static_terminals
             and (
                 conditional_na_lanes != [DEFENSE_LOCAL_LANE]
                 or lane != DEFENSE_LOCAL_LANE
@@ -8226,6 +8290,16 @@ class AnalysisController:
                 or lane != DEFENSE_LOCAL_LANE
             )
         )
+        scheduled_extended_lanes = tuple(
+            lane for lane in EXTENDED_LANES if lane in scheduled_runner_lanes
+        )
+        expected_extended_terminals = {
+            **EXTENDED_TERMINALS,
+            **{
+                lane: OLLAMA_STATIC_TERMINAL_DISPOSITION
+                for lane in ollama_static_terminals
+            },
+        }
         measured_lanes = (
             [
                 lane
@@ -8574,13 +8648,16 @@ class AnalysisController:
                 "result_roots",
                 "status",
             }
-            or len(extended.get("lane_specs", [])) != 12
+            or len(extended.get("lane_specs", []))
+            != len(scheduled_extended_lanes)
             or extended.get("conditional_na_lanes") != conditional_na_lanes
             or not isinstance(extended.get("lane_terminal_states"), dict)
-            or set(extended.get("lane_terminal_states", {})) != set(EXTENDED_LANES)
+            or set(extended.get("lane_terminal_states", {}))
+            != set(scheduled_extended_lanes)
             or set(extended.get("lane_terminal_states", {}).values())
             - {"measured_complete", "failed"}
-            or set(extended.get("terminal_results", {})) != set(EXTENDED_TERMINALS)
+            or set(extended.get("terminal_results", {}))
+            != set(expected_extended_terminals)
         ):
             raise Phase7Error(
                 "authorized Phase 6 extended completion inventory changed"
@@ -8590,7 +8667,7 @@ class AnalysisController:
             for lane, state in extended["lane_terminal_states"].items()
             if state == "measured_complete"
         }
-        extended_failed = set(EXTENDED_LANES) - extended_completed
+        extended_failed = set(scheduled_extended_lanes) - extended_completed
         if (
             len(extended.get("measured_argv_states", [])) != len(extended_completed)
             or len(extended.get("lane_completions", [])) != len(extended_completed)
@@ -8690,11 +8767,14 @@ class AnalysisController:
             or gate5.get("lane_count") != 46
             or gate5.get("runnable_lane_count") != len(scheduled_runner_lanes)
             or gate5.get("terminal_lane_count")
-            != 24 + len(conditional_na_lanes)
-            or gate5.get("target_runtime_terminal") != 4
+            != 24 + len(conditional_na_lanes) + len(ollama_static_terminals)
+            or gate5.get("target_runtime_terminal")
+            != 4 + len(ollama_static_terminals)
             or gate5.get("conditional_na_lanes") != conditional_na_lanes
             or set(gate5.get("terminal_inventory", {}))
-            != set(EXPECTED_GATE5_TERMINALS) | set(conditional_na_lanes)
+            != set(EXPECTED_GATE5_TERMINALS)
+            | set(conditional_na_lanes)
+            | set(ollama_static_terminals)
             or gate5.get("target_runtime_terminal_artifact")
             != validate_rr_runtime_terminal_rows(
                 gate5.get("terminal_inventory", {}),
@@ -8716,9 +8796,10 @@ class AnalysisController:
                 or row != EXPECTED_TERMINAL_ROWS[lane]
             ):
                 raise Phase7Error(f"authorized Gate 5 terminal changed: {lane}")
-        require_exact_gate5_terminal_inventory(
+        if require_exact_gate5_terminal_inventory(
             gate5["terminal_inventory"], label="authorized input"
-        )
+        ) != ollama_static_terminals:
+            raise Phase7Error("authorized Ollama terminal subset changed")
         require_gate5_input_identities(
             native.get("gate5_inputs"),
             manifest=gate5["manifest"],
@@ -9951,6 +10032,8 @@ class AnalysisController:
         terminals = self.inputs["gate5"]["terminal_inventory"]
         expected = set(EXPECTED_GATE5_TERMINALS) | set(
             self.inputs["gate5"]["conditional_na_lanes"]
+        ) | (
+            set(terminals) & OLLAMA_STATIC_TERMINAL_LANE_SET
         )
         if set(terminals) != expected:
             raise Phase7Error(
@@ -10322,11 +10405,9 @@ class AnalysisController:
             },
             *{f"runner-{lane}" for lane in failed_runner_lanes},
         }
-        expected_count = (
-            59
-            + len(self.inputs["gate5"]["conditional_na_lanes"])
-            + len(failed_runner_lanes)
-        )
+        expected_count = 35 + len(
+            self.inputs["gate5"]["terminal_inventory"]
+        ) + len(failed_runner_lanes)
         if set(self.statuses) != expected or len(expected) != expected_count:
             raise Phase7Error(
                 "Phase 7 completion inventory differs: "

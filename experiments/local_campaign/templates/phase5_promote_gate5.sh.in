@@ -51,6 +51,15 @@ from ura.approximate_metrics import (
     validate_approximate_decision,
     validate_approximate_metric_provenance,
 )
+from experiments.local_campaign.ollama_static_terminal import (
+    OLLAMA_STATIC_TERMINAL_DISPOSITION,
+    OLLAMA_STATIC_TERMINAL_LANES,
+    OLLAMA_STATIC_TERMINAL_REASON,
+    OLLAMA_STATIC_TERMINAL_REASON_CODE,
+    OLLAMA_STATIC_TERMINAL_VALUE,
+    inventory_counts as ollama_inventory_counts,
+    validate_gate5_terminal_rows,
+)
 from ura.eligibility import validate_eligibility_plan
 from ura.lane_projection import (
     validate_lane_projection,
@@ -1509,6 +1518,51 @@ def validate_rr_terminal_row(
     return canary["target_runtime_terminal_artifact"], projection_identity
 
 
+
+def validate_ollama_static_terminal_row(
+    raw: Mapping[str, Any], *, lane: str
+) -> None:
+    row = strict_fields(raw, {
+        "lane_id", "family", "disposition", "reason_code", "reason",
+        "projection", "canary", "final_preflight", "approved_caps",
+    }, f"{lane} Ollama static terminal row")
+    if (
+        lane not in OLLAMA_STATIC_TERMINAL_LANES
+        or row.get("lane_id") != lane
+        or row.get("family") != "ollama"
+        or row.get("disposition") != OLLAMA_STATIC_TERMINAL_DISPOSITION
+        or row.get("reason_code") != OLLAMA_STATIC_TERMINAL_REASON_CODE
+        or row.get("reason") != OLLAMA_STATIC_TERMINAL_REASON
+        or row.get("final_preflight") != OLLAMA_STATIC_TERMINAL_VALUE
+        or row.get("approved_caps") != OLLAMA_STATIC_TERMINAL_VALUE
+    ):
+        raise PromotionError(f"{lane}: Ollama static terminal identity changed")
+    projection = strict_fields(row.get("projection"), {"status", "value"}, f"{lane} projection")
+    projection_value = projection.get("value")
+    if projection.get("status") != "passed" or not isinstance(projection_value, dict):
+        raise PromotionError(f"{lane}: Ollama completed projection was not preserved")
+    required_projection = {
+        "projection_id", "projection_artifact", "eligibility_plan_id",
+        "eligibility_artifact", "request_envelope_id", "request_envelope_artifact",
+        "selection", "projected_calls",
+    }
+    if set(projection_value) != required_projection:
+        raise PromotionError(f"{lane}: Ollama terminal projection fields changed")
+    calls = projection_value.get("projected_calls")
+    if (
+        not isinstance(calls, dict)
+        or set(calls) != {
+            "trajectories", "target_calls", "model_judge_calls",
+            "local_guardrail_evaluations", "http_attempts",
+        }
+        or any(type(calls.get(field)) is not int for field in calls)
+        or calls.get("target_calls", 0) <= 0
+        or calls.get("local_guardrail_evaluations") != calls.get("target_calls")
+        or calls.get("model_judge_calls") != 0
+        or calls.get("http_attempts") != 0
+    ):
+        raise PromotionError(f"{lane}: Ollama terminal projected calls changed")
+
 def write_create_only(path: Path, payload: bytes, *, mode: int = 0o600) -> dict[str, Any]:
     if path.exists() or path.is_symlink():
         raise PromotionError(f"create-only destination already exists: {path}")
@@ -1624,8 +1678,22 @@ def validate_inventory(rows: object, *, completed: bool) -> dict[str, dict[str, 
             "Gate-5 inventory is not the exact 46 rows: "
             f"missing={sorted(expected_ids-set(by_id))}, extra={sorted(set(by_id)-expected_ids)}"
         )
+    validate_gate5_terminal_rows(
+        [by_id[lane] for lane in OLLAMA_STATIC_TERMINAL_LANES],
+        label="Gate-5 promotion Ollama static lanes",
+        validate_artifact=False,
+        error_type=PromotionError,
+    )
     for lane, family in RUNNABLE_FAMILIES.items():
         row = by_id[lane]
+        if (
+            lane in OLLAMA_STATIC_TERMINAL_LANES
+            and row.get("disposition") == OLLAMA_STATIC_TERMINAL_DISPOSITION
+        ):
+            validate_ollama_static_terminal_row(
+                row, lane=lane
+            )
+            continue
         if lane == "defense-local" and row.get("disposition") == DEFENSE_NA_DISPOSITION:
             validate_defense_conditional_na_row(row)
             continue
@@ -1700,36 +1768,62 @@ def inventory_counts(rows: Mapping[str, Mapping[str, Any]]) -> dict[str, Any]:
         lane for lane, row in rows.items()
         if row.get("disposition") == DEFENSE_NA_DISPOSITION
     )
-    runnable = sum(row.get("disposition") == "runnable" for row in rows.values())
+    ollama_static_terminal = sorted(
+        lane for lane in OLLAMA_STATIC_TERMINAL_LANES
+        if rows[lane].get("disposition") == OLLAMA_STATIC_TERMINAL_DISPOSITION
+    )
+    try:
+        dynamic = ollama_inventory_counts(ollama_static_terminal, conditional)
+    except ValueError as exc:
+        raise PromotionError(f"Gate-5 inventory profile changed: {exc}") from exc
     counts = {
         "total": 46,
-        "runnable": runnable,
-        "typed_terminal": 46 - runnable,
-        "conditional_na_lanes": conditional,
+        **dynamic,
         "bridge_terminal": 3,
         "ollama_transport_terminal": 3,
-        "target_runtime_terminal": 4,
         "portfolio_terminal": 5,
         "native_terminal": 9,
     }
-    if counts not in (
-        {
-            "total": 46, "runnable": 22, "typed_terminal": 24,
-            "conditional_na_lanes": [], "bridge_terminal": 3,
-            "ollama_transport_terminal": 3,
-            "target_runtime_terminal": 4,
-            "portfolio_terminal": 5, "native_terminal": 9,
-        },
-        {
-            "total": 46, "runnable": 21, "typed_terminal": 25,
-            "conditional_na_lanes": ["defense-local"], "bridge_terminal": 3,
-            "ollama_transport_terminal": 3,
-            "target_runtime_terminal": 4,
-            "portfolio_terminal": 5, "native_terminal": 9,
-        },
-    ):
+    if not valid_inventory_counts(counts):
         raise PromotionError(f"Gate-5 conditional inventory profile changed: {counts}")
     return counts
+
+
+def valid_inventory_counts(raw: object) -> bool:
+    if not isinstance(raw, Mapping) or set(raw) != {
+        "total", "runnable", "typed_terminal", "conditional_na_lanes",
+        "bridge_terminal", "ollama_transport_terminal", "target_runtime_terminal",
+        "portfolio_terminal", "native_terminal",
+    }:
+        return False
+    if any(
+        type(raw.get(field)) is not int
+        for field in (
+            "total", "runnable", "typed_terminal", "bridge_terminal",
+            "ollama_transport_terminal", "target_runtime_terminal",
+            "portfolio_terminal", "native_terminal",
+        )
+    ):
+        return False
+    ollama_terminal = raw["target_runtime_terminal"] - len(RR_TERMINAL_LANES)
+    if not 0 <= ollama_terminal <= len(OLLAMA_STATIC_TERMINAL_LANES):
+        return False
+    try:
+        dynamic = ollama_inventory_counts(
+            OLLAMA_STATIC_TERMINAL_LANES[:ollama_terminal],
+            raw.get("conditional_na_lanes"),
+        )
+    except (TypeError, ValueError):
+        return False
+    expected = {
+        "total": 46,
+        **dynamic,
+        "bridge_terminal": 3,
+        "ollama_transport_terminal": 3,
+        "portfolio_terminal": 5,
+        "native_terminal": 9,
+    }
+    return dict(raw) == expected
 
 
 def validate_zero_download_result_rows(
@@ -3148,9 +3242,9 @@ def inventory_self_test() -> dict[str, Any]:
             )
     return {
         "schema": "ura-gate5-promotion-self-test/1", "status": "passed",
-        "expected_rows": 46, "expected_runnable": [21, 22],
-        "expected_terminal": [24, 25],
-        "expected_target_runtime_terminal": 4,
+        "expected_rows": 46, "expected_runnable": [18, 19, 20, 21, 22],
+        "expected_terminal": [24, 25, 26, 27, 28],
+        "expected_target_runtime_terminal": [4, 5, 6, 7],
         "expected_conditional_na_lanes": [[], ["defense-local"]],
         "placeholder_bytes": 22, "placeholder_sha256": PLACEHOLDER_SHA256,
         "rejected_mutations": rejected,
@@ -4197,6 +4291,12 @@ def validate_evidence(
     validate_rr_terminal_artifact(
         rr_terminal_descriptors[0], project=project, work=work
     )
+    validate_gate5_terminal_rows(
+        [manifest_rows[lane] for lane in OLLAMA_STATIC_TERMINAL_LANES],
+        label="Gate-5 promotion Ollama static artifacts",
+        validate_artifact=True,
+        error_type=PromotionError,
+    )
     if counts["conditional_na_lanes"]:
         validate_defense_conditional_na_artifact(
             manifest_rows["defense-local"], project=project, work=work
@@ -4560,22 +4660,7 @@ def validate_plan_fields(plan: object) -> dict[str, Any]:
             "expected_commit": EXPECTED_COMMIT,
             "framework_lock_id": EXPECTED_FRAMEWORK_LOCK,
         }
-        or value["inventory_counts"] not in (
-            {
-                "total": 46, "runnable": 22, "typed_terminal": 24,
-                "conditional_na_lanes": [], "bridge_terminal": 3,
-                "ollama_transport_terminal": 3,
-                "target_runtime_terminal": 4,
-                "portfolio_terminal": 5, "native_terminal": 9,
-            },
-            {
-                "total": 46, "runnable": 21, "typed_terminal": 25,
-                "conditional_na_lanes": ["defense-local"], "bridge_terminal": 3,
-                "ollama_transport_terminal": 3,
-                "target_runtime_terminal": 4,
-                "portfolio_terminal": 5, "native_terminal": 9,
-            },
-        )
+        or not valid_inventory_counts(value["inventory_counts"])
         or value["authorization"] != {
             "kind": "exact_promotion_plan_sha256", "required": True,
             "launches_models_or_jobs": False,

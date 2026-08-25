@@ -419,9 +419,9 @@ events. It terminates and confirms absence of only an exact tmux session it
 launched and owns; a controller that times out while awaiting upstream Phase 5
 or Phase 6 never terminates that upstream session.
 
-The rendered Gate 5-8 chain enforces the exact 46-row profile: 22 runnable and
-24 typed-terminal rows, or 21/25 only for the exact `defense-local` conditional
-N/A. GPTGeoChat x each of the three RWKV Ollama targets is a typed unavailable
+The rendered Gate 5-8 chain enforces an exact 46-row partition. Its baseline is
+22 runnable and 24 typed-terminal rows, or 21/25 for the exact `defense-local`
+conditional N/A. GPTGeoChat x each of the three RWKV Ollama targets is a typed unavailable
 row because the retained GPTGeoChat source requires images while the exact
 Ollama transport is text-only; those rows never enter projection, canary, or
 measured loops. The frozen current cohort also types `bridge-nanogcg` and
@@ -443,7 +443,23 @@ failures, the 512-token vLLM repetition probe, the independent Transformers
 base/RR control, and complete call accounting. The completed RR no-call
 projections remain recorded, but no RR canary response, measured request,
 metric row, paired estimate, or human-label item is admitted. The checkpoint
-and its isolated dependencies stay installed. Phase 7's authoritative lifecycle registry covers complete,
+and its isolated dependencies stay installed. Each exact RWKV static text
+canary is classified independently. If it returns the already-observed
+`finish_reason='length'` incomplete result at the sealed generation cap, or an
+exact empty completion with no response to judge, the controller writes
+one create-only `ura-phase5-ollama-static-canary-terminal/1` artifact with
+reason `local_target_output_unusable` and moves only that lane from runnable to
+`target_runtime_terminal`. With `n` such lanes,
+the enforced profile is `22-n` runnable, `24+n` terminal and `4+n`
+target-runtime-terminal rows before the optional defense shift. A completed
+static canary remains runnable when its nonempty response content is vague or
+nonsensical; the selected evaluator may decide or abstain and the resulting
+coverage is retained. Each independently completed R-Judge canary also remains
+runnable. Only the two exact nonjudgeable output conditions are excluded from
+this campaign cohort's measured schedule. Malformed protocol, transport,
+identity, provenance, residency, timeout, and backend failures remain hard
+failures. Earlier completed attempts remain diagnostic observations, and the
+disposition is not a general model/runtime claim. Phase 7's authoritative lifecycle registry covers complete,
 partial, failed-after-request, and genuine pre-Runner-no-request states. Each
 lane binds its controller failure, optional exact measured argv, and retained
 grid, request-envelope, eligibility, and error artifacts. `level1_evidence`

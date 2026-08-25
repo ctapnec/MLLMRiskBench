@@ -669,6 +669,12 @@ import stat
 import sys
 from typing import Any, Mapping
 
+from experiments.local_campaign.ollama_static_terminal import (
+    DISPOSITION as OLLAMA_STATIC_TERMINAL_DISPOSITION,
+    OLLAMA_STATIC_TERMINAL_LANES,
+    inventory_counts as ollama_static_inventory_counts,
+    validate_gate5_terminal_rows as validate_ollama_static_gate5_rows,
+)
 from experiments.run_matrix import build_parser
 from ura.eligibility import validate_eligibility_plan
 from ura.lane_projection import (
@@ -941,16 +947,35 @@ SUCCESS_INVENTORY_COUNTS = {
     "portfolio_terminal": 5, "native_terminal": 9,
     "target_runtime_terminal": 4,
 }
-CONDITIONAL_INVENTORY_COUNTS = {
-    **SUCCESS_INVENTORY_COUNTS,
-    "runnable": 21,
-    "typed_terminal": 25,
-    "conditional_na_lanes": [DEFENSE_LOCAL],
-}
-ALLOWED_INVENTORY_COUNTS = (
-    SUCCESS_INVENTORY_COUNTS,
-    CONDITIONAL_INVENTORY_COUNTS,
-)
+
+def complete_inventory_counts(
+    static_terminal_lanes: Any, conditional_na_lanes: Any
+) -> dict[str, Any]:
+    return {
+        **SUCCESS_INVENTORY_COUNTS,
+        **ollama_static_inventory_counts(
+            static_terminal_lanes, conditional_na_lanes
+        ),
+    }
+
+CONDITIONAL_INVENTORY_COUNTS = complete_inventory_counts([], [DEFENSE_LOCAL])
+
+def valid_inventory_counts(value: object) -> bool:
+    if not isinstance(value, dict) or set(value) != set(SUCCESS_INVENTORY_COUNTS):
+        return False
+    target_runtime = value.get("target_runtime_terminal")
+    conditional = value.get("conditional_na_lanes")
+    if type(target_runtime) is not int or conditional not in ([], [DEFENSE_LOCAL]):
+        return False
+    static_count = target_runtime - 4
+    if not 0 <= static_count <= len(OLLAMA_STATIC_TERMINAL_LANES):
+        return False
+    return type_strict_equal(
+        value,
+        complete_inventory_counts(
+            OLLAMA_STATIC_TERMINAL_LANES[:static_count], conditional
+        ),
+    )
 LOCAL_ONLY_PROMOTION = {
     "hosted_provider_calls": 0, "hosted_judge_calls": 0,
     "http_attempts": 0, "paid_provider_calls": 0, "model_downloads": 0,
@@ -2233,12 +2258,16 @@ def validate_rr_runtime_terminal_rows(
         )
     return shared_descriptor
 
+
 def selected_inventory_counts(lanes: dict[str, dict[str, Any]]) -> dict[str, Any]:
     defense = lanes[DEFENSE_LOCAL]
-    return dict(
-        CONDITIONAL_INVENTORY_COUNTS
-        if defense.get("disposition") == "conditional_na"
-        else SUCCESS_INVENTORY_COUNTS
+    static_terminals = [
+        lane for lane in OLLAMA_STATIC_TERMINAL_LANES
+        if lanes[lane].get("disposition") == OLLAMA_STATIC_TERMINAL_DISPOSITION
+    ]
+    return complete_inventory_counts(
+        static_terminals,
+        [DEFENSE_LOCAL] if defense.get("disposition") == "conditional_na" else [],
     )
 
 def validate_inventory_identity(
@@ -2267,8 +2296,14 @@ def validate_inventory_identity(
     validate_rr_runtime_terminal_rows(
         lanes, label, verify_artifact=verify_conditional_artifact
     )
+    static_terminals = set(validate_ollama_static_gate5_rows(
+        [lanes[lane] for lane in OLLAMA_STATIC_TERMINAL_LANES],
+        label=label,
+        validate_artifact=verify_conditional_artifact,
+        error_type=ValueError,
+    ))
     for lane_id, family in EXPECTED_RUNNABLE_FAMILIES.items():
-        if lane_id == DEFENSE_LOCAL:
+        if lane_id == DEFENSE_LOCAL or lane_id in static_terminals:
             continue
         row = lanes[lane_id]
         if (
@@ -2565,10 +2600,7 @@ def validate_promotion_header(value: Any) -> None:
         or set(value) != expected_fields
         or value.get("schema") != "ura-gate5-runnote-promotion/1"
         or value.get("status") != "complete"
-        or not any(
-            type_strict_equal(value.get("inventory_counts"), expected)
-            for expected in ALLOWED_INVENTORY_COUNTS
-        )
+        or not valid_inventory_counts(value.get("inventory_counts"))
         or not type_strict_equal(value.get("local_only"), LOCAL_ONLY_PROMOTION)
         or type(value.get("downloads_observed_bytes")) is not int
         or value.get("downloads_observed_bytes") != 0

@@ -453,14 +453,33 @@ accounting. Its reason code is
 installed. No truncated prefix, synthetic stop, altered decoding configuration,
 or replacement model is admitted as a response.
 
-With all planned local rows present, Gate 5 therefore contains 46 rows: 22
-runnable and 24 typed terminal rows. If the optional local defense lane is
-unavailable, the profile is 21 runnable and 25 terminal rows.
+With all planned local rows present, Gate 5 therefore contains 46 rows. Before
+the Ollama static canaries are classified, the baseline profile is 22 runnable
+and 24 typed terminal rows, or 21 runnable and 25 terminal rows when the
+optional local defense lane is unavailable. Each exact RWKV static lane that
+returns the already-observed `finish_reason='length'` incomplete completion at
+the sealed generation cap, or an exact empty completion with no response to
+judge, is independently
+reclassified from runnable to `target_runtime_terminal` with a create-only
+`ura-phase5-ollama-static-canary-terminal/1` artifact and reason code
+`local_target_output_unusable`. If `n` of the three static lanes meet that
+typed model-output boundary, the profile becomes
+`22-n` runnable and `24+n` terminal rows, with one further runnable-to-terminal
+shift only for `defense-local`. The three R-Judge lanes remain independently
+runnable when their diagnostic prompts complete. Nonempty vague or nonsensical
+response content remains an ordinary observed outcome: the selected evaluator
+may decide or abstain, and decision coverage is reported. Only the two exact
+nonjudgeable output conditions above exclude that static lane from this
+campaign cohort's measured schedule. Malformed protocol, transport, identity,
+provenance, residency, timeout, and backend failures remain hard failures.
+Earlier completed canary attempts remain diagnostic observations; the
+disposition is not a general claim about the model or runtime.
 
 Gate 5: projections and canaries retained under `runs/thesis/preflight` and
-`runs/thesis/diagnostics`; the non-evidence GraySwan RR target-runtime terminal
-retained in its sealed Phase 5 engineering control root and bound from the Gate
-5 manifest and run note; caps recorded in `runs/thesis/RUNNOTE.md`; all 46
+`runs/thesis/diagnostics`; the non-evidence GraySwan RR and any exact
+cap-bounded Ollama static target-runtime terminals retained in their sealed
+Phase 5 engineering control roots and bound from the Gate 5 manifest and run
+note; caps recorded in `runs/thesis/RUNNOTE.md`; all 46
 planned rows represented exactly once as runnable or typed terminal. Each
 runnable row also binds `core_primary_100` or `extended_50`, limit, sample seed,
 selected-cluster and converted-row identities, exact no-call projection and
@@ -501,7 +520,7 @@ do not replace the new content-bound Gate 5 projections.
 | Crescendo, Qwen3-VL | core 100 | 700 conversations across seven arms | 2,800 at four turns |
 | local guard defense, if runnable | core 100 | 3,854 | 3,854 |
 | five runnable bridge lanes plus HarmBench replay combined | extended 50 | 850 source selections before per-method expansion | 1,750 |
-| three Ollama static text lanes combined | extended 50 | 5,835 | 5,835 |
+| up to three admitted Ollama static text lanes combined | extended 50 | up to 5,835 | up to 5,835 |
 | three Ollama R-Judge lanes combined | extended 50 | 150 | 150 |
 
 The total below counts each `per target` core group for the two planned core
@@ -509,10 +528,12 @@ targets, then adds the single Qwen3-VL Crescendo lane and the combined bridge
 and Ollama groups shown above.
 
 The bounded design permits at most 25,747 target calls when the local defense is
-typed unavailable, or 29,601 when it is runnable. Model-judge and provider HTTP
-caps remain zero in this local campaign. Local scoring and defense-guard
-evaluations are accounted separately and are fixed by the new projection. Caps
-are never raised mid-lane.
+typed unavailable, or 29,601 when it is runnable, before any exact Ollama
+static terminal is removed from measured scheduling. Subtract 1,945 calls for
+each such terminal lane; if all three are terminal, the ceilings are 19,912 or
+23,766 respectively. Model-judge and provider HTTP caps remain zero in this
+local campaign. Local scoring and defense-guard evaluations are accounted
+separately and are fixed by the new projection. Caps are never raised mid-lane.
 
 Source records: common text arms about 35,900 (SALAD-Bench base 21,318;
 AIR-Bench 5,694; DecodingTrust 3,456; CyberSecEval 3,416; AdvBench 520; XSTest
@@ -532,7 +553,7 @@ an outcome- or throughput-triggered extension of the current cohort.
 
 | Tier | Lane | Targets | Attackers | Judges | Output root |
 |---|---|---|---|---|---|
-| 1 [10.1] | static text, all common text arms incl. the six aggregator arms | Qwen3-VL-8B; LLaVA base; rwkv via Ollama after transport admission; LLaVA RR retained as a typed target-runtime terminal | replay | rules,guardrail | `runs/thesis/runner/local-<model>-text` |
+| 1 [10.1] | static text, all common text arms incl. the six aggregator arms | Qwen3-VL-8B; LLaVA base; each RWKV Ollama target only after its exact static canary completes; LLaVA RR and any cap-bounded RWKV static lane retained as typed target-runtime terminals | replay | rules,guardrail | `runs/thesis/runner/local-<model>-text` |
 | 1 [10.2] | static image, all common image arms | Qwen3-VL-8B; LLaVA base; LLaVA RR retained as a typed target-runtime terminal | replay | rules,guardrail | `runs/thesis/runner/local-<model>-image` |
 | 1 [10.3] | audio/video | none (no local audio/video renderer) | - | - | structural `N/A` |
 
@@ -753,7 +774,7 @@ artifact root equals that child's one declared `--out` directory.
 | 3 models | 1-3 h | 0.5 h |
 | 4 attestations | 1 h | 0.5 h |
 | 5 projections/canaries | 2-4 h | 2 h |
-| 6 measured lanes | bounded inference; observed wall time to be reported, with a provisional 25,747 or 29,601 target-call ceiling pending exact Gate 5 projections | periodic |
+| 6 measured lanes | bounded inference; observed wall time to be reported, with a provisional ceiling of 25,747 or 29,601 calls minus 1,945 for each exact Ollama static terminal admitted by Gate 5 | periodic |
 | 7 analysis | 2-4 h | 2 h |
 | 8 human audit | rater-dependent | rater-dependent |
 

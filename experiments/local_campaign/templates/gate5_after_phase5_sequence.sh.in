@@ -278,23 +278,46 @@ import json
 from pathlib import Path
 import re
 import sys
+from experiments.local_campaign.ollama_static_terminal import (
+    OLLAMA_STATIC_TERMINAL_LANES,
+    inventory_counts,
+)
 from ura.strict_json import strict_json_loads
 
 def exact_profile(runnable, terminal, target_runtime_terminal, conditional):
-    return (runnable, terminal, target_runtime_terminal, conditional) in (
-        (22, 24, 4, []),
-        (21, 25, 4, ["defense-local"]),
+    ollama_terminal = target_runtime_terminal - 4
+    if not 0 <= ollama_terminal <= len(OLLAMA_STATIC_TERMINAL_LANES):
+        return False
+    try:
+        profile = inventory_counts(
+            OLLAMA_STATIC_TERMINAL_LANES[:ollama_terminal], conditional
+        )
+    except (TypeError, ValueError):
+        return False
+    return (
+        runnable == profile["runnable"]
+        and terminal == profile["typed_terminal"]
+        and target_runtime_terminal == profile["target_runtime_terminal"]
     )
 
 if (
     not exact_profile(22, 24, 4, [])
     or not exact_profile(21, 25, 4, ["defense-local"])
+    or not exact_profile(21, 25, 5, [])
+    or not exact_profile(20, 26, 5, ["defense-local"])
+    or not exact_profile(20, 26, 6, [])
+    or not exact_profile(19, 27, 6, ["defense-local"])
+    or not exact_profile(19, 27, 7, [])
+    or not exact_profile(18, 28, 7, ["defense-local"])
     or any(exact_profile(*row) for row in (
         (22, 24, 4, ["defense-local"]),
         (21, 25, 4, []),
         (21, 25, 4, ["forged"]),
         (21, 25, 3, ["defense-local"]),
         (20, 26, 4, ["defense-local"]),
+        (20, 26, 5, []),
+        (19, 27, 7, ["defense-local"]),
+        (18, 28, 4, ["defense-local"]),
     ))
 ):
     raise SystemExit("Gate 5 profile mutation self-test failed")
@@ -336,6 +359,10 @@ mapfile -d '' -t FINALIZER_VALUES < <(
   "$PWD/.venv/bin/python" - "$LAUNCH_RESULT" "$MANIFEST_SHA" <<'PY'
 from pathlib import Path
 import sys
+from experiments.local_campaign.ollama_static_terminal import (
+    OLLAMA_STATIC_TERMINAL_LANES,
+    inventory_counts,
+)
 from ura.strict_json import strict_json_loads
 
 value = strict_json_loads(Path(sys.argv[1]).read_bytes())
@@ -449,20 +476,39 @@ typed_terminal = int(terminal_text)
 target_runtime_terminal = int(target_runtime_terminal_text)
 conditional_na_lanes = strict_json_loads(conditional_json)
 def exact_profile(runnable_value, terminal_value, target_value, conditional_value):
-    return (runnable_value, terminal_value, target_value, conditional_value) in (
-        (22, 24, 4, []),
-        (21, 25, 4, ["defense-local"]),
+    ollama_terminal = target_value - 4
+    if not 0 <= ollama_terminal <= len(OLLAMA_STATIC_TERMINAL_LANES):
+        return False
+    try:
+        profile = inventory_counts(
+            OLLAMA_STATIC_TERMINAL_LANES[:ollama_terminal], conditional_value
+        )
+    except (TypeError, ValueError):
+        return False
+    return (
+        runnable_value == profile["runnable"]
+        and terminal_value == profile["typed_terminal"]
+        and target_value == profile["target_runtime_terminal"]
     )
 
 if (
     not exact_profile(22, 24, 4, [])
     or not exact_profile(21, 25, 4, ["defense-local"])
+    or not exact_profile(21, 25, 5, [])
+    or not exact_profile(20, 26, 5, ["defense-local"])
+    or not exact_profile(20, 26, 6, [])
+    or not exact_profile(19, 27, 6, ["defense-local"])
+    or not exact_profile(19, 27, 7, [])
+    or not exact_profile(18, 28, 7, ["defense-local"])
     or any(exact_profile(*row) for row in (
         (22, 24, 4, ["defense-local"]),
         (21, 25, 4, []),
         (21, 25, 4, ["forged"]),
         (21, 25, 3, ["defense-local"]),
         (20, 26, 4, ["defense-local"]),
+        (20, 26, 5, []),
+        (19, 27, 7, ["defense-local"]),
+        (18, 28, 4, ["defense-local"]),
     ))
 ):
     raise SystemExit("Gate 5 completion profile mutation self-test failed")

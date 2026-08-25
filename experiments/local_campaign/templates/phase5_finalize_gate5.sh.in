@@ -57,6 +57,17 @@ import time
 from typing import Any, Iterable, Mapping, Sequence
 
 from experiments.lane_canary import summarize_canary
+from experiments.local_campaign.ollama_static_terminal import (
+    OLLAMA_STATIC_TERMINAL_DISPOSITION,
+    OLLAMA_STATIC_TERMINAL_LANES,
+    OLLAMA_STATIC_TERMINAL_MODELS,
+    OLLAMA_STATIC_TERMINAL_REASON,
+    OLLAMA_STATIC_TERMINAL_REASON_CODE,
+    OLLAMA_STATIC_TERMINAL_VALUE,
+    inventory_counts as ollama_inventory_counts,
+    validate_gate5_terminal_rows,
+    validate_terminal_artifact,
+)
 from experiments.run_matrix import (
     _load_attacker_config,
     _load_source_config,
@@ -272,7 +283,6 @@ RR_TERMINAL_LANES = (
 )
 RR_UNAVAILABLE_VALUE = {"status": "UNAVAILABLE", "value": None}
 
-
 def exact_typed_int_contract(
     raw: object, expected: Mapping[str, Any], int_fields: Iterable[str]
 ) -> bool:
@@ -445,6 +455,7 @@ OWNED_BOOLEAN_FLAGS = {
 ALLOWED_DISPOSITIONS = {
     "runnable",
     DEFENSE_NA_DISPOSITION,
+    OLLAMA_STATIC_TERMINAL_DISPOSITION,
     "structural_na",
     "unavailable",
     "not_selected",
@@ -2264,6 +2275,21 @@ def indexed_status(rows: Sequence[Mapping[str, str]], identity_field: str) -> di
                 raise Gate5Error(
                     f"{lane}: RR terminal status requires a blank canary id and "
                     "one target-runtime artifact"
+                )
+            row["canary_id"] = ""
+            if lane in output:
+                raise Gate5Error(f"duplicate lane in status TSV: {lane}")
+            output[lane] = row
+            continue
+        if (
+            identity_field == "canary_id"
+            and lane in OLLAMA_STATIC_TERMINAL_LANES
+            and disposition == OLLAMA_STATIC_TERMINAL_DISPOSITION
+        ):
+            if identity or conditional_artifact or not rr_terminal_artifact:
+                raise Gate5Error(
+                    f"{lane}: Ollama static terminal status requires a blank canary id "
+                    "and one target-runtime artifact"
                 )
             row["canary_id"] = ""
             if lane in output:
@@ -4987,7 +5013,9 @@ def terminal_row(raw: Mapping[str, Any]) -> dict[str, Any]:
     disposition = str(raw.get("disposition", "")).strip().lower().replace("-", "_")
     if disposition in {"blocked_unpinned", "blocked"}:
         disposition = "unavailable"
-    if disposition not in ALLOWED_DISPOSITIONS - {"runnable", DEFENSE_NA_DISPOSITION}:
+    if disposition not in ALLOWED_DISPOSITIONS - {
+        "runnable", DEFENSE_NA_DISPOSITION, OLLAMA_STATIC_TERMINAL_DISPOSITION,
+    }:
         raise Gate5Error(f"{lane}: invalid terminal disposition {disposition!r}")
     reason = str(raw.get("reason", "")).strip()
     if not reason:
@@ -5131,6 +5159,32 @@ def validated_artifact_descriptor(
         raise Gate5Error(f"{label}: artifact descriptor does not match exact retained bytes")
     return path
 
+
+def validate_ollama_static_terminal_artifact(
+    path_value: str | Path, *, lane: str, canary_control: Path,
+    diagnostic_root: Path | None = None,
+) -> dict[str, Any]:
+    artifact_path = checked_file(path_value, max_bytes=MAX_JSON_BYTES)
+    if (
+        artifact_path.parent != canary_control
+        or artifact_path.name != f"{lane}.target-runtime-terminal.json"
+    ):
+        raise Gate5Error(
+            f"{lane}: Ollama terminal is not the canonical controller artifact"
+        )
+    try:
+        value = validate_terminal_artifact(
+            artifact_path,
+            expected_lane=lane,
+            expected_diagnostic_root=diagnostic_root,
+        )
+    except ValueError as exc:
+        raise Gate5Error(f"{lane}: invalid Ollama static terminal: {exc}") from exc
+    return {
+        "value": value,
+        "accounting": dict(value["call_accounting"]),
+        "descriptor": descriptor(artifact_path, max_bytes=MAX_JSON_BYTES),
+    }
 
 def validate_zero_download_result_rows(
     rows: Sequence[Mapping[str, Any]], *, receipt_id: str, receipt_sha256: str
@@ -5867,6 +5921,26 @@ def defense_conditional_na_manifest_row(
     }
 
 
+def ollama_static_terminal_manifest_row(
+    *, lane: str, prelim: Mapping[str, Any], artifact: Mapping[str, Any]
+) -> dict[str, Any]:
+    return {
+        "lane_id": lane,
+        "family": "ollama",
+        "disposition": OLLAMA_STATIC_TERMINAL_DISPOSITION,
+        "reason_code": OLLAMA_STATIC_TERMINAL_REASON_CODE,
+        "reason": OLLAMA_STATIC_TERMINAL_REASON,
+        "projection": {"status": "passed", "value": rr_projection_value(prelim)},
+        "canary": {
+            **OLLAMA_STATIC_TERMINAL_VALUE,
+            "target_runtime_terminal_artifact": dict(artifact["descriptor"]),
+            "call_accounting": dict(artifact["accounting"]),
+        },
+        "final_preflight": dict(OLLAMA_STATIC_TERMINAL_VALUE),
+        "approved_caps": dict(OLLAMA_STATIC_TERMINAL_VALUE),
+    }
+
+
 def validate_rr_target_runtime_terminal(
     path_value: str | Path,
     *,
@@ -6318,6 +6392,7 @@ def root_runnable_rows(
     ollama_judge_counts = {"rules_guardrail": 0, "rules": 0}
     rr_terminal_descriptors: set[tuple[str, str, int]] = set()
     rr_projection_identities: set[tuple[str, int]] = set()
+    ollama_static_terminal_lanes: set[str] = set()
     for lane in sorted(projection_rows):
         p_row = projection_rows[lane]
         c_row = canary_rows[lane]
@@ -6411,6 +6486,71 @@ def root_runnable_rows(
                 lane=lane, prelim=prelim, artifact=terminal,
             ))
             continue
+        if c_row.get("disposition", "").strip() == OLLAMA_STATIC_TERMINAL_DISPOSITION:
+            expected_model = OLLAMA_STATIC_TERMINAL_MODELS.get(lane)
+            terminal_path = c_row.get("target_runtime_terminal_artifact", "").strip()
+            if family != "ollama" or expected_model is None:
+                raise Gate5Error(
+                    f"{lane}: target-runtime terminal is not an allowed Ollama static lane"
+                )
+            model_label, requested_spec, model_digest = expected_model
+            diagnostic_root = checked_dir(
+                c_row.get("diagnostic_root", ""),
+                label=f"{lane} Ollama terminal diagnostic root",
+            )
+            if (
+                c_row.get("canary_id", "").strip()
+                or c_row.get("conditional_na_artifact", "").strip()
+                or not terminal_path
+                or c_row.get("reason_code", "").strip()
+                != OLLAMA_STATIC_TERMINAL_REASON_CODE
+                or c_row.get("reason", "").strip() != OLLAMA_STATIC_TERMINAL_REASON
+                or c_row.get("model_label", "").strip()
+                != model_label
+                or c_row.get("requested_spec", "").strip()
+                != requested_spec
+                or c_row.get("digest", "").strip() != model_digest
+                or c_row.get("metric_mode", "").strip() != "static"
+                or PROJECTION_ID_RE.fullmatch(
+                    c_row.get("rehearsal_projection_id", "").strip()
+                ) is None
+                or status_int(c_row, "target_cap", lane=lane) != 15
+                or status_int(c_row, "judge_cap", lane=lane) != 0
+                or status_int(c_row, "local_guardrail_evaluations", lane=lane) != 15
+                or status_int(c_row, "http_cap", lane=lane) != 0
+                or any(c_row.get(field, "").strip() for field in (
+                    "all_configured_stages_represented", "target_status",
+                    "attacker_status", "source_evaluator_status", "decided",
+                    "decision_coverage",
+                ))
+            ):
+                raise Gate5Error(f"{lane}: Ollama static terminal status row is not exact")
+            request = prelim["envelope"]["request"]
+            if (
+                request.get("requested_target_keys")
+                != [requested_spec]
+                or request.get("selected_attackers") != ["replay"]
+                or request.get("judges") != ["rules", "guardrail"]
+                or request.get("approximate_common_metrics") is not True
+                or request.get("limit") != EXPLORATORY_EXTENDED_LIMIT
+                or request.get("sample_seed") != 0
+                or request.get("seeds") != [0]
+            ):
+                raise Gate5Error(f"{lane}: Ollama static terminal projection changed")
+            terminal = validate_ollama_static_terminal_artifact(
+                terminal_path,
+                lane=lane,
+                canary_control=canary_control,
+                diagnostic_root=diagnostic_root,
+            )
+            if terminal["accounting"]["max_target_calls"] != 15:
+                raise Gate5Error(f"{lane}: Ollama static terminal accounting changed")
+            ollama_judge_counts["rules_guardrail"] += 1
+            ollama_static_terminal_lanes.add(lane)
+            output.append(ollama_static_terminal_manifest_row(
+                lane=lane, prelim=prelim, artifact=terminal,
+            ))
+            continue
         if c_row.get("disposition", "").strip() == DEFENSE_NA_DISPOSITION:
             if family != "core" or lane != "defense-local":
                 raise Gate5Error("conditional N/A is allowed only for the core defense-local lane")
@@ -6501,6 +6641,10 @@ def root_runnable_rows(
         raise Gate5Error(
             "Ollama inventory must contain three static rules/guardrail lanes and three R-Judge rules lanes"
         )
+    if family == "ollama" and not ollama_static_terminal_lanes <= set(
+        OLLAMA_STATIC_TERMINAL_LANES
+    ):
+        raise Gate5Error("Ollama static terminal cohort escaped its exact lane set")
     if family == "core" and (
         len(rr_terminal_descriptors) != 1
         or len(rr_projection_identities) != len(RR_TERMINAL_LANES)
@@ -6871,6 +7015,79 @@ def validate_rr_terminal_manifest_row(
     return terminal_identity, projection_identity
 
 
+def validate_ollama_static_terminal_manifest_row(
+    raw: Mapping[str, Any], *, lane: str, validate_files: bool
+) -> None:
+    projection = raw.get("projection")
+    value = projection.get("value") if isinstance(projection, dict) else None
+    if (
+        not isinstance(projection, dict)
+        or set(projection) != {"status", "value"}
+        or projection.get("status") != "passed"
+        or not isinstance(value, dict)
+        or set(value) != {
+            "projection_id", "projection_artifact", "eligibility_plan_id",
+            "eligibility_artifact", "request_envelope_id",
+            "request_envelope_artifact", "selection", "projected_calls",
+        }
+        or PROJECTION_ID_RE.fullmatch(str(value.get("projection_id", ""))) is None
+        or re.fullmatch(
+            r"eligibility-[0-9a-f]{24}", str(value.get("eligibility_plan_id", ""))
+        ) is None
+        or re.fullmatch(
+            r"request-envelope-[0-9a-f]{24}",
+            str(value.get("request_envelope_id", "")),
+        ) is None
+        or not isinstance(value.get("selection"), dict)
+    ):
+        raise Gate5Error(f"{lane}: Ollama static terminal projection changed")
+    calls = value.get("projected_calls")
+    if (
+        not isinstance(calls, dict)
+        or set(calls) != {
+            "trajectories", "target_calls", "model_judge_calls",
+            "local_guardrail_evaluations", "http_attempts",
+        }
+        or any(type(calls.get(field)) is not int for field in calls)
+        or calls["trajectories"] <= 0
+        or calls["target_calls"] <= 0
+        or calls["model_judge_calls"] != 0
+        or calls["local_guardrail_evaluations"] != calls["target_calls"]
+        or calls["http_attempts"] != 0
+    ):
+        raise Gate5Error(f"{lane}: Ollama static terminal projected calls changed")
+    projection_artifact = value.get("projection_artifact")
+    if (
+        not isinstance(projection_artifact, dict)
+        or set(projection_artifact) != {"path", "file", "sha256", "bytes"}
+        or projection_artifact.get("file")
+        != f"{value['projection_id']}.lane-projection.json"
+        or Path(str(projection_artifact.get("path", ""))).name
+        != projection_artifact.get("file")
+        or not isinstance(projection_artifact.get("sha256"), str)
+        or HEX64_RE.fullmatch(projection_artifact["sha256"]) is None
+        or type(projection_artifact.get("bytes")) is not int
+        or projection_artifact["bytes"] <= 0
+    ):
+        raise Gate5Error(f"{lane}: Ollama terminal projection descriptor changed")
+    if validate_files:
+        prelim = load_projection_bundle(checked_file(
+            projection_artifact["path"], max_bytes=MAX_JSON_BYTES
+        ))
+        _label, requested_spec, _digest = OLLAMA_STATIC_TERMINAL_MODELS[lane]
+        request = prelim["envelope"]["request"]
+        if (
+            rr_projection_value(prelim) != value
+            or request.get("requested_target_keys") != [requested_spec]
+            or request.get("selected_attackers") != ["replay"]
+            or request.get("judges") != ["rules", "guardrail"]
+            or request.get("approximate_common_metrics") is not True
+            or request.get("limit") != EXPLORATORY_EXTENDED_LIMIT
+            or request.get("sample_seed") != 0
+            or request.get("seeds") != [0]
+        ):
+            raise Gate5Error(f"{lane}: retained Ollama terminal projection changed")
+
 def validate_exact_inventory(
     rows: Sequence[Mapping[str, Any]], *, validate_files: bool = True
 ) -> None:
@@ -6896,9 +7113,23 @@ def validate_exact_inventory(
             f"missing={sorted(expected_ids-observed_ids)}, "
             f"extra={sorted(observed_ids-expected_ids)}, rows={len(rows)}"
         )
+    validated_ollama_static_terminal_lanes = validate_gate5_terminal_rows(
+        [by_id[lane] for lane in OLLAMA_STATIC_TERMINAL_LANES],
+        label="Gate-5 Ollama static lane inventory",
+        validate_artifact=validate_files,
+        error_type=Gate5Error,
+    )
 
     for lane, family in EXPECTED_RUNNABLE_FAMILIES.items():
         row = by_id[lane]
+        if (
+            lane in OLLAMA_STATIC_TERMINAL_LANES
+            and row.get("disposition") == OLLAMA_STATIC_TERMINAL_DISPOSITION
+        ):
+            validate_ollama_static_terminal_manifest_row(
+                row, lane=lane, validate_files=validate_files
+            )
+            continue
         if lane == "defense-local" and row.get("disposition") == DEFENSE_NA_DISPOSITION:
             validate_defense_conditional_na_manifest_row(row)
             continue
@@ -6929,6 +7160,7 @@ def validate_exact_inventory(
     if len(rr_projection_identities) != len(RR_TERMINAL_LANES):
         raise Gate5Error("RR manifest does not preserve four distinct passed projections")
 
+    ollama_static_terminal_lanes = list(validated_ollama_static_terminal_lanes)
     family_counts = {
         "runnable": sum(row.get("disposition") == "runnable" for row in rows),
         "conditional_na": sum(
@@ -6938,23 +7170,32 @@ def validate_exact_inventory(
         "ollama_transport_terminal": sum(
             lane in EXPECTED_OLLAMA_TRANSPORT_TERMINALS for lane in by_id
         ),
-        "target_runtime_terminal": sum(lane in RR_TERMINAL_LANES for lane in by_id),
+        "target_runtime_terminal": (
+            len(RR_TERMINAL_LANES) + len(ollama_static_terminal_lanes)
+        ),
         "portfolio_terminal": sum(lane in {r["lane_id"] for r in BUILTIN_TERMINAL_ROWS} for lane in by_id),
         "native_terminal": sum(lane in {r["lane_id"] for r in NATIVE_ENGINE_ROWS} for lane in by_id),
     }
-    allowed_counts = (
-        {
-            "runnable": 22, "conditional_na": 0, "bridge_terminal": 3,
-            "ollama_transport_terminal": 3, "target_runtime_terminal": 4,
-            "portfolio_terminal": 5, "native_terminal": 9,
-        },
-        {
-            "runnable": 21, "conditional_na": 1, "bridge_terminal": 3,
-            "ollama_transport_terminal": 3, "target_runtime_terminal": 4,
-            "portfolio_terminal": 5, "native_terminal": 9,
-        },
+    conditional_na_lanes = sorted(
+        lane for lane, row in by_id.items()
+        if row.get("disposition") == DEFENSE_NA_DISPOSITION
     )
-    if family_counts not in allowed_counts:
+    try:
+        dynamic_counts = ollama_inventory_counts(
+            ollama_static_terminal_lanes, conditional_na_lanes
+        )
+    except ValueError as exc:
+        raise Gate5Error(f"Gate-5 inventory profile changed: {exc}") from exc
+    expected_counts = {
+        "runnable": dynamic_counts["runnable"],
+        "conditional_na": len(dynamic_counts["conditional_na_lanes"]),
+        "bridge_terminal": 3,
+        "ollama_transport_terminal": 3,
+        "target_runtime_terminal": dynamic_counts["target_runtime_terminal"],
+        "portfolio_terminal": 5,
+        "native_terminal": 9,
+    }
+    if family_counts != expected_counts:
         raise Gate5Error(f"Gate-5 inventory category counts changed: {family_counts}")
 
 
@@ -7743,11 +7984,11 @@ def inventory_contract_self_test() -> dict[str, Any]:
         "status": "passed",
         "schema": "ura-gate5-inventory-contract-self-test/1",
         "expected_rows": 46,
-        "expected_runnable": [21, 22],
+        "expected_runnable": [18, 19, 20, 21, 22],
         "expected_conditional_na_lanes": [[], ["defense-local"]],
         "expected_bridge_terminal": 3,
         "expected_ollama_transport_terminal": 3,
-        "expected_target_runtime_terminal": 4,
+        "expected_target_runtime_terminal": [4, 5, 6, 7],
         "expected_portfolio_terminal": 5,
         "expected_native_terminal": 9,
         "rejected_mutations": accepted,
@@ -8818,13 +9059,22 @@ def main(argv: Sequence[str]) -> int:
         row["lane_id"] for row in manifest["lanes"]
         if row["disposition"] == DEFENSE_NA_DISPOSITION
     )
-    target_runtime_terminal_count = sum(
-        row["lane_id"] in RR_TERMINAL_LANES for row in manifest["lanes"]
+    ollama_static_terminal_lanes = sorted(
+        row["lane_id"] for row in manifest["lanes"]
+        if row["lane_id"] in OLLAMA_STATIC_TERMINAL_LANES
+        and row["disposition"] == OLLAMA_STATIC_TERMINAL_DISPOSITION
     )
-    if (runnable_count, terminal_count, tuple(conditional_na_lanes)) not in {
-        (22, 24, ()),
-        (21, 25, ("defense-local",)),
-    }:
+    try:
+        profile = ollama_inventory_counts(
+            ollama_static_terminal_lanes, conditional_na_lanes
+        )
+    except ValueError as exc:
+        raise Gate5Error(f"Gate-5 inventory profile changed: {exc}") from exc
+    target_runtime_terminal_count = profile["target_runtime_terminal"]
+    if (
+        runnable_count != profile["runnable"]
+        or terminal_count != profile["typed_terminal"]
+    ):
         raise Gate5Error("Gate-5 runnable/terminal/conditional N/A profile changed")
     if not args.launch and not args._payload_execute:
         print(json.dumps({

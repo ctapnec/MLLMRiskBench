@@ -198,6 +198,12 @@ import time
 import urllib.request
 
 from experiments.framework_runtime_installer import load_lock
+from experiments.local_campaign.ollama_static_terminal import (
+    DISPOSITION as OLLAMA_STATIC_TERMINAL_DISPOSITION,
+    OLLAMA_STATIC_TERMINAL_LANES,
+    inventory_counts as ollama_static_inventory_counts,
+    validate_gate5_terminal_rows as validate_ollama_static_gate5_rows,
+)
 from ura.eligibility import validate_eligibility_plan
 from ura.lane_projection import (
     lane_projection_bytes,
@@ -397,6 +403,16 @@ DEFENSE_NA_COUNTS = {
     "portfolio_terminal": 5, "native_terminal": 9,
     "target_runtime_terminal": 4,
 }
+
+def complete_inventory_counts(
+    static_terminal_lanes: object, conditional_na_lanes: object
+) -> dict[str, object]:
+    return {
+        **SUCCESS_COUNTS,
+        **ollama_static_inventory_counts(
+            static_terminal_lanes, conditional_na_lanes
+        ),
+    }
 
 
 def typed_na(disposition: str) -> dict[str, object]:
@@ -914,9 +930,19 @@ def validate_rr_runtime_terminals(
 
 
 def inventory_counts(by_id: dict[str, dict[str, object]]) -> dict[str, object]:
-    if is_defense_na_row(by_id["defense-local"]):
-        return DEFENSE_NA_COUNTS
-    return SUCCESS_COUNTS
+    static_terminals = [
+        lane
+        for lane in OLLAMA_STATIC_TERMINAL_LANES
+        if by_id[lane].get("disposition")
+        == OLLAMA_STATIC_TERMINAL_DISPOSITION
+    ]
+    conditional = (
+        ["defense-local"]
+        if is_defense_na_row(by_id["defense-local"]) else []
+    )
+    return complete_inventory_counts(
+        static_terminals, conditional
+    )
 
 
 def validate_inventory(rows: object, *, label: str) -> dict[str, dict[str, object]]:
@@ -932,9 +958,17 @@ def validate_inventory(rows: object, *, label: str) -> dict[str, dict[str, objec
     ):
         raise SystemExit(f"{label} lane identifiers differ from the reviewed inventory")
     validate_rr_runtime_terminals(by_id, label=label)
+    static_terminals = set(validate_ollama_static_gate5_rows(
+        [by_id[lane] for lane in OLLAMA_STATIC_TERMINAL_LANES],
+        label=label,
+        validate_artifact=True,
+        error_type=SystemExit,
+    ))
     for lane, family in RUNNABLE_FAMILIES.items():
         row = by_id[lane]
-        if lane == "defense-local" and is_defense_na_row(row):
+        if lane in static_terminals or (
+            lane == "defense-local" and is_defense_na_row(row)
+        ):
             continue
         if (
             row.get("family") != family
@@ -1647,6 +1681,12 @@ PROJECT = Path(os.environ.get("URA_REPO", "@@PROJECT_ROOT@@")).resolve(strict=Tr
 os.chdir(PROJECT)
 sys.path.insert(0, str(PROJECT))
 
+from experiments.local_campaign.ollama_static_terminal import (  # noqa: E402
+    DISPOSITION as OLLAMA_STATIC_TERMINAL_DISPOSITION,
+    OLLAMA_STATIC_TERMINAL_LANES,
+    inventory_counts as ollama_static_inventory_counts,
+    validate_gate5_terminal_rows as validate_ollama_static_gate5_rows,
+)
 from experiments.native_import import canonical_native_engine_ids  # noqa: E402
 from ura.eligibility import validate_eligibility_plan  # noqa: E402
 from ura.lane_projection import (  # noqa: E402
@@ -1818,6 +1858,16 @@ DEFENSE_NA_GATE5_COUNTS = {
     "portfolio_terminal": 5, "native_terminal": 9,
     "target_runtime_terminal": 4,
 }
+
+def complete_gate5_counts(
+    static_terminal_lanes: object, conditional_na_lanes: object
+) -> dict[str, object]:
+    return {
+        **SUCCESS_GATE5_COUNTS,
+        **ollama_static_inventory_counts(
+            static_terminal_lanes, conditional_na_lanes
+        ),
+    }
 EXPECTED_GATE5_LOCAL_ONLY = {
     "hosted_provider_calls": 0, "hosted_judge_calls": 0, "http_attempts": 0,
     "paid_provider_calls": 0, "model_downloads": 0, "offline_environment": True,
@@ -2571,9 +2621,19 @@ def validate_rr_runtime_terminals(
 
 
 def gate5_inventory_counts(by_id: Mapping[str, Mapping[str, Any]]) -> dict[str, object]:
-    if is_defense_na_row(by_id["defense-local"]):
-        return DEFENSE_NA_GATE5_COUNTS
-    return SUCCESS_GATE5_COUNTS
+    static_terminals = [
+        lane
+        for lane in OLLAMA_STATIC_TERMINAL_LANES
+        if by_id[lane].get("disposition")
+        == OLLAMA_STATIC_TERMINAL_DISPOSITION
+    ]
+    conditional = (
+        ["defense-local"]
+        if is_defense_na_row(by_id["defense-local"]) else []
+    )
+    return complete_gate5_counts(
+        static_terminals, conditional
+    )
 
 
 def validate_gate5_inventory(rows: object, label: str) -> dict[str, dict[str, Any]]:
@@ -2589,9 +2649,17 @@ def validate_gate5_inventory(rows: object, label: str) -> dict[str, dict[str, An
     ):
         raise ValueError(f"{label} lane identifiers differ from the reviewed inventory")
     validate_rr_runtime_terminals(by_id, label=label)
+    static_terminals = set(validate_ollama_static_gate5_rows(
+        [by_id[lane] for lane in OLLAMA_STATIC_TERMINAL_LANES],
+        label=label,
+        validate_artifact=True,
+        error_type=ValueError,
+    ))
     for lane, family in RUNNABLE_FAMILIES.items():
         row = by_id[lane]
-        if lane == "defense-local" and is_defense_na_row(row):
+        if lane in static_terminals or (
+            lane == "defense-local" and is_defense_na_row(row)
+        ):
             continue
         if (
             row.get("family") != family

@@ -276,6 +276,12 @@ os.chdir(PROJECT)
 sys.path.insert(0, str(PROJECT))
 
 from experiments.framework_runtime_installer import load_lock
+from experiments.local_campaign.ollama_static_terminal import (
+    DISPOSITION as OLLAMA_STATIC_TERMINAL_DISPOSITION,
+    OLLAMA_STATIC_TERMINAL_LANES,
+    inventory_counts as ollama_static_inventory_counts,
+    validate_gate5_terminal_rows as validate_ollama_static_gate5_rows,
+)
 from experiments.local_targets import _models_map, load_roster
 from experiments.rig_web_app.ollama_service import OllamaService
 from experiments.run_matrix import build_parser
@@ -354,7 +360,8 @@ OLLAMA_ORDER = [
     "ollama-rwkv-g1g-1p5b-text-exploratory-50",
     "rjudge-ollama-rwkv-g1g-1p5b",
 ]
-LANE_ORDER = BRIDGE_ORDER + OLLAMA_ORDER
+CANDIDATE_LANE_ORDER = BRIDGE_ORDER + OLLAMA_ORDER
+LANE_ORDER = list(CANDIDATE_LANE_ORDER)
 CORE_RUNNABLE = {
     "local-qwen3-vl-text-primary-100", "local-qwen3-vl-image-primary-100",
     "local-llava-base-text-primary-100", "local-llava-base-image-primary-100",
@@ -459,7 +466,7 @@ DEFENSE_CONDITIONAL_VARIANTS = {
             "local_config", "project_revision", "source_config", "source_conformance"},
     },
 }
-RUNNABLE_CANDIDATES = CORE_RUNNABLE | set(LANE_ORDER)
+RUNNABLE_CANDIDATES = CORE_RUNNABLE | set(CANDIDATE_LANE_ORDER)
 GATE5_SUCCESS_INVENTORY_COUNTS = {
     "total": 46, "runnable": 22, "typed_terminal": 24,
     "conditional_na_lanes": [], "bridge_terminal": 3,
@@ -473,6 +480,16 @@ GATE5_CONDITIONAL_INVENTORY_COUNTS = {
     "typed_terminal": 25,
     "conditional_na_lanes": [DEFENSE_LOCAL],
 }
+
+def complete_gate5_inventory_counts(
+    static_terminal_lanes: Any, conditional_na_lanes: Any
+) -> dict[str, Any]:
+    return {
+        **GATE5_SUCCESS_INVENTORY_COUNTS,
+        **ollama_static_inventory_counts(
+            static_terminal_lanes, conditional_na_lanes
+        ),
+    }
 OLLAMA = {
     "rwkv-g1d-0p4b": (
         "ollama:mollysama/rwkv-7-g1d:0.4b",
@@ -487,7 +504,7 @@ OLLAMA = {
         "8ff95f43952c361048310b50a5c4b16f98d8f0642a87b536452e627224a0dddc",
     ),
 }
-TERMINALS = {
+BASE_TERMINALS = {
     "bridge-nanogcg": "unavailable",
     "bridge-ideator": "unavailable",
     "t3mp3st": "unavailable",
@@ -495,6 +512,7 @@ TERMINALS = {
     "gptgeochat-ollama-rwkv-g1f-2p9b": "unavailable",
     "gptgeochat-ollama-rwkv-g1g-1p5b": "unavailable",
 }
+TERMINALS = dict(BASE_TERMINALS)
 GPTGEOCHAT_OLLAMA_TERMINAL_ROWS = {
     lane: {
         "lane_id": lane,
@@ -2955,6 +2973,7 @@ def validate_rr_runtime_terminal_rows(
 
 def selected_gate5_profile(
     lanes: Mapping[str, Mapping[str, Any]], *, label: str,
+    static_terminal_lanes: set[str],
     verify_conditional_artifact: bool = True,
 ) -> dict[str, Any]:
     defense = lanes.get(DEFENSE_LOCAL)
@@ -2967,12 +2986,14 @@ def selected_gate5_profile(
             or defense.get("reason") is not None
         ):
             raise ValueError(f"{label}: runnable defense-local identity changed")
-        return dict(GATE5_SUCCESS_INVENTORY_COUNTS)
+        return complete_gate5_inventory_counts(static_terminal_lanes, [])
     if defense.get("disposition") == "conditional_na":
         validate_conditional_defense_row(
             defense, label=label, verify_artifact=verify_conditional_artifact
         )
-        return dict(GATE5_CONDITIONAL_INVENTORY_COUNTS)
+        return complete_gate5_inventory_counts(
+            static_terminal_lanes, [DEFENSE_LOCAL]
+        )
     raise ValueError(f"{label}: defense-local disposition changed")
 
 
@@ -2998,14 +3019,28 @@ def validate_gate5_inventory_rows(
     note_lanes = {row["lane_id"]: row for row in note_rows}
     if len(manifest_lanes) != len(manifest_rows) or len(note_lanes) != len(note_rows):
         raise ValueError("Gate 5 lane inventory contains a duplicate lane id")
+    manifest_static_terminals = set(validate_ollama_static_gate5_rows(
+        [manifest_lanes.get(lane, {}) for lane in OLLAMA_STATIC_TERMINAL_LANES],
+        label="covered manifest",
+        validate_artifact=verify_conditional_artifact,
+        error_type=ValueError,
+    ))
+    note_static_terminals = set(validate_ollama_static_gate5_rows(
+        [note_lanes.get(lane, {}) for lane in OLLAMA_STATIC_TERMINAL_LANES],
+        label="canonical RUNNOTE",
+        validate_artifact=verify_conditional_artifact,
+        error_type=ValueError,
+    ))
     manifest_profile = selected_gate5_profile(
         manifest_lanes,
         label="covered manifest",
+        static_terminal_lanes=manifest_static_terminals,
         verify_conditional_artifact=verify_conditional_artifact,
     )
     note_profile = selected_gate5_profile(
         note_lanes,
         label="canonical RUNNOTE",
+        static_terminal_lanes=note_static_terminals,
         verify_conditional_artifact=verify_conditional_artifact,
     )
     if not type_strict_equal(manifest_profile, note_profile):
@@ -3022,12 +3057,21 @@ def validate_gate5_inventory_rows(
     )
     if not type_strict_equal(manifest_rr_descriptor, note_rr_descriptor):
         raise ValueError("Gate 5 manifest/RUNNOTE RR evidence descriptor differs")
+    if manifest_static_terminals != note_static_terminals:
+        raise ValueError("Gate 5 manifest/RUNNOTE Ollama terminal subset differs")
+    if any(
+        note_lanes[lane] != manifest_lanes[lane]
+        for lane in manifest_static_terminals
+    ):
+        raise ValueError("Gate 5 manifest/RUNNOTE Ollama terminal row differs")
     runnable = {
         lane for lane, row in manifest_lanes.items()
         if row.get("disposition") == "runnable"
     }
-    expected_runnable = RUNNABLE_CANDIDATES - set(
-        manifest_profile["conditional_na_lanes"]
+    expected_runnable = (
+        RUNNABLE_CANDIDATES
+        - set(manifest_profile["conditional_na_lanes"])
+        - manifest_static_terminals
     )
     if runnable != expected_runnable:
         raise ValueError("Gate 5 runnable inventory changed")
@@ -4308,10 +4352,28 @@ PROMOTION_BASIS_FIELDS = {
     "all_final_preflights_revalidated", "local_only_zero_download_revalidated",
     "measured_run_launched",
 }
-PROMOTION_INVENTORY_COUNTS = (
-    GATE5_SUCCESS_INVENTORY_COUNTS,
-    GATE5_CONDITIONAL_INVENTORY_COUNTS,
-)
+def valid_gate5_inventory_counts(value: object) -> bool:
+    if (
+        not isinstance(value, dict)
+        or set(value) != set(GATE5_SUCCESS_INVENTORY_COUNTS)
+    ):
+        return False
+    target_runtime = value.get("target_runtime_terminal")
+    conditional = value.get("conditional_na_lanes")
+    if (
+        type(target_runtime) is not int
+        or conditional not in ([], [DEFENSE_LOCAL])
+    ):
+        return False
+    static_count = target_runtime - 4
+    if not 0 <= static_count <= 3:
+        return False
+    return type_strict_equal(
+        value,
+        complete_gate5_inventory_counts(
+            OLLAMA_STATIC_TERMINAL_LANES[:static_count], conditional
+        ),
+    )
 PROMOTION_LOCAL_ONLY = {
     "hosted_provider_calls": 0,
     "hosted_judge_calls": 0,
@@ -4359,10 +4421,7 @@ def validate_promotion_contract(
     note: Mapping[str, Any],
     expected_inventory_counts: Mapping[str, Any],
 ) -> dict[str, Any]:
-    if not any(
-        type_strict_equal(expected_inventory_counts, profile)
-        for profile in PROMOTION_INVENTORY_COUNTS
-    ):
+    if not valid_gate5_inventory_counts(expected_inventory_counts):
         raise ValueError("selected Gate 5 promotion inventory profile changed")
     if (
         set(note) != CANONICAL_RUNNOTE_FIELDS
@@ -4802,7 +4861,7 @@ def validate_gate5(
     promotion_path: Path,
     launch_path: Path,
     spec_root: Path,
-) -> tuple[list[Path], list[str]]:
+) -> tuple[list[Path], list[str], list[str], dict[str, str]]:
     manifest_raw = manifest_path.read_bytes()
     manifest_sha = sha256_bytes(manifest_raw)
     manifest = strict_json_loads(manifest_raw)
@@ -4885,6 +4944,23 @@ def validate_gate5(
     manifest_lanes, note_lanes, gate5_profile = validate_gate5_inventory_rows(
         manifest.get("lanes"), note.get("lanes")
     )
+    static_terminal_lanes = {
+        lane for lane in OLLAMA_STATIC_TERMINAL_LANES
+        if manifest_lanes[lane].get("disposition")
+        == OLLAMA_STATIC_TERMINAL_DISPOSITION
+    }
+    scheduled_lane_order = [
+        lane for lane in CANDIDATE_LANE_ORDER
+        if manifest_lanes[lane].get("disposition") == "runnable"
+    ]
+    typed_terminal_dispositions = {
+        **BASE_TERMINALS,
+        **{
+            lane: OLLAMA_STATIC_TERMINAL_DISPOSITION
+            for lane in OLLAMA_STATIC_TERMINAL_LANES
+            if lane in static_terminal_lanes
+        },
+    }
     validate_promotion_contract(
         manifest_raw=manifest_raw,
         runnote_path=runnote_path,
@@ -4931,13 +5007,15 @@ def validate_gate5(
         canonical({
             "schema": "ura-phase6-extended-dispositions/1",
             "status": "complete",
-            "rows": [manifest_lanes[lane] for lane in TERMINALS],
+            "rows": [
+                manifest_lanes[lane] for lane in typed_terminal_dispositions
+            ],
         }),
     )
 
     spec_paths: list[Path] = []
     parser = build_parser()
-    for position, lane in enumerate(LANE_ORDER, 1):
+    for position, lane in enumerate(scheduled_lane_order, 1):
         raw = manifest_lanes.get(lane)
         completed = note_lanes.get(lane)
         if not isinstance(raw, dict) or not isinstance(completed, dict):
@@ -5332,7 +5410,18 @@ def validate_gate5(
         for rr_lane in RR_TERMINAL_LANES
     ):
         raise ValueError("Phase 6 extended generated an RR lane spec")
-    return spec_paths, list(gate5_profile["conditional_na_lanes"])
+    if any(
+        lane in path.name
+        for path in observed_specs
+        for lane in static_terminal_lanes
+    ):
+        raise ValueError("Phase 6 extended generated an Ollama terminal lane spec")
+    return (
+        spec_paths,
+        list(gate5_profile["conditional_na_lanes"]),
+        scheduled_lane_order,
+        typed_terminal_dispositions,
+    )
 
 
 class Controller:
@@ -7436,14 +7525,27 @@ def main() -> int:
         launch = ctl.control / "launch.json"
         spec_root = ctl.control / "lane-specs"
         spec_root.mkdir(mode=0o700, exist_ok=True)
-        spec_paths, conditional_na_lanes = validate_gate5(
+        (
+            spec_paths,
+            conditional_na_lanes,
+            scheduled_lane_order,
+            typed_terminal_dispositions,
+        ) = validate_gate5(
             manifest, runnote, promotion, launch, spec_root
         )
-        if [strict_object(path)["lane_id"] for path in spec_paths] != LANE_ORDER:
+        if (
+            [strict_object(path)["lane_id"] for path in spec_paths]
+            != scheduled_lane_order
+        ):
             raise ValueError("validated extended lane order changed")
+        LANE_ORDER[:] = scheduled_lane_order
+        TERMINALS.clear()
+        TERMINALS.update(typed_terminal_dispositions)
         ctl.event(
             "controller", "gate5-revalidation", "complete",
-            "exact 46-row Gate 5 inventory; selected 12 extended runnable lanes, 6 typed terminals, and exact conditional profile",
+            "exact 46-row Gate 5 inventory; selected "
+            f"{len(LANE_ORDER)} extended runnable lanes and "
+            f"{len(TERMINALS)} extended typed terminals",
         )
         for spec_path in spec_paths:
             spec = strict_object(spec_path)

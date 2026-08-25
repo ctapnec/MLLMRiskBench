@@ -496,33 +496,39 @@ def require_gate5_inventory_profile(
     terminal = value.get("typed_terminal_lanes")
     target_runtime_terminal = value.get("target_runtime_terminal")
     conditional = value.get("conditional_na_lanes")
-    observed = (runnable, terminal, target_runtime_terminal, conditional)
-    allowed = (
-        (22, 24, 4, []),
-        (21, 25, 4, ["defense-local"]),
+    defense_terminal = (
+        0 if conditional == []
+        else 1 if conditional == ["defense-local"]
+        else -1
+    )
+    ollama_static_terminals = (
+        target_runtime_terminal - 4
+        if type(target_runtime_terminal) is int
+        else -1
     )
     if (
         type(runnable) is not int
         or type(terminal) is not int
         or type(target_runtime_terminal) is not int
         or not isinstance(conditional, list)
-        or observed not in allowed
+        or defense_terminal < 0
+        or not 0 <= ollama_static_terminals <= 3
+        or runnable != 22 - ollama_static_terminals - defense_terminal
+        or terminal != 24 + ollama_static_terminals + defense_terminal
     ):
         raise SystemExit(f"{label} Gate 5 inventory profile changed")
     return runnable, terminal, target_runtime_terminal, list(conditional)
 
 def inventory_profile_self_test() -> None:
-    fixtures = (
+    fixtures = tuple(
         {
-            "runnable_lanes": 22, "typed_terminal_lanes": 24,
-            "target_runtime_terminal": 4, "conditional_na_lanes": [],
-        },
-        {
-            "runnable_lanes": 21,
-            "typed_terminal_lanes": 25,
-            "target_runtime_terminal": 4,
-            "conditional_na_lanes": ["defense-local"],
-        },
+            "runnable_lanes": 22 - static_count - defense_count,
+            "typed_terminal_lanes": 24 + static_count + defense_count,
+            "target_runtime_terminal": 4 + static_count,
+            "conditional_na_lanes": conditional,
+        }
+        for static_count in range(4)
+        for defense_count, conditional in ((0, []), (1, ["defense-local"]))
     )
     for fixture in fixtures:
         require_gate5_inventory_profile(fixture, label="self-test")
@@ -555,6 +561,20 @@ def inventory_profile_self_test() -> None:
             "typed_terminal_lanes": 25,
             "target_runtime_terminal": 4,
             "conditional_na_lanes": ["another-lane"],
+        },
+        {
+            "runnable_lanes": 20, "typed_terminal_lanes": 26,
+            "target_runtime_terminal": 5, "conditional_na_lanes": [],
+        },
+        {
+            "runnable_lanes": 19, "typed_terminal_lanes": 27,
+            "target_runtime_terminal": 7,
+            "conditional_na_lanes": ["defense-local"],
+        },
+        {
+            "runnable_lanes": 18, "typed_terminal_lanes": 28,
+            "target_runtime_terminal": 4,
+            "conditional_na_lanes": ["defense-local"],
         },
         {
             "runnable_lanes": True, "typed_terminal_lanes": 24,
@@ -1247,13 +1267,25 @@ def require_gate5_inventory_profile(
     terminal = value.get("typed_terminal_lanes")
     target_runtime_terminal = value.get("target_runtime_terminal")
     conditional = value.get("conditional_na_lanes")
+    defense_terminal = (
+        0 if conditional == []
+        else 1 if conditional == ["defense-local"]
+        else -1
+    )
+    ollama_static_terminals = (
+        target_runtime_terminal - 4
+        if type(target_runtime_terminal) is int
+        else -1
+    )
     if (
         type(runnable) is not int
         or type(terminal) is not int
         or type(target_runtime_terminal) is not int
         or not isinstance(conditional, list)
-        or (runnable, terminal, target_runtime_terminal, conditional)
-        not in ((22, 24, 4, []), (21, 25, 4, ["defense-local"]))
+        or defense_terminal < 0
+        or not 0 <= ollama_static_terminals <= 3
+        or runnable != 22 - ollama_static_terminals - defense_terminal
+        or terminal != 24 + ollama_static_terminals + defense_terminal
     ):
         raise SystemExit(f"{label} Gate 5 inventory profile changed")
     return runnable, terminal, target_runtime_terminal, list(conditional)

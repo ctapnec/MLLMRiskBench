@@ -32,12 +32,17 @@ Input preparation requires:
   for its exact SHA-256;
 - prospective common-frame and source-task cluster counts.
 
-The Gate 5 inventory is exactly 46 lanes: 22 runnable and 24 typed terminal, or
-21 runnable and 25 typed terminal only when `defense-local` has its exact
-conditional N/A disposition. Four GraySwan RR identities are typed runtime
-terminals and never enter a measured, analysis, or human-audit sample. Phase 6
+The Gate 5 inventory is exactly 46 lanes: 22 runnable and 24 typed terminal
+when no optional terminal applies, or 21 runnable and 25 typed terminal when
+only `defense-local` has its exact conditional N/A disposition. More generally,
+let `n` be the number of the three static Ollama lanes that produced no usable
+diagnostic-canary completion, and let `d` be one only for that conditional
+defense disposition. The accepted profile is `22 - n - d` runnable and
+`24 + n + d` typed terminal. Four GraySwan RR identities and those `n` static
+Ollama lanes never enter a measured, analysis, or human-audit sample. Phase 6
 therefore contains 10 scheduled core lanes, or nine with the conditional
-defense N/A, plus 12 extended lanes and nine separately typed native engines.
+defense N/A, plus `12 - n` extended lanes and nine separately typed native
+engines.
 
 Phase 7 may honestly retain failed Runner lifecycles. Human-audit preparation
 uses Phase 7's validated success-only read-only Runner copy, not the mixed
