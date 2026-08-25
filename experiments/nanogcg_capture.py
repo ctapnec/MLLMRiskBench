@@ -26,6 +26,7 @@ from experiments.framework_runtime_installer import (  # noqa: E402
     Layout,
     canonical_python_interpreter,
     load_lock,
+    published_store,
     select_frameworks,
     verify_one,
 )
@@ -243,10 +244,7 @@ def _verified_framework_runtime(
         correct_interpreter = False
     if not correct_interpreter:
         raise ValueError("capture must run under the verified NanoGCG interpreter")
-    receipt_path = (
-        layout.store(entry["env_slug"], lock["lock_id"])
-        / FRAMEWORK_RECEIPT_NAME
-    )
+    receipt_path = published_store(entry, lock, layout) / FRAMEWORK_RECEIPT_NAME
     _path, receipt_raw = read_binary_artifact(receipt_path, max_bytes=1024 * 1024)
     receipt = strict_json_loads(receipt_raw)
     if not isinstance(receipt, dict) or receipt.get("status") != "passed":

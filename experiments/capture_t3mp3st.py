@@ -27,6 +27,7 @@ from experiments.framework_runtime_installer import (  # noqa: E402
     RECEIPT_NAME as FRAMEWORK_RECEIPT_NAME,
     Layout,
     load_lock,
+    published_store,
     select_frameworks,
     verify_one,
 )
@@ -102,10 +103,7 @@ def verified_t3mp3st_runtime(
             raise ValueError("framework roots must be resolved non-link directories")
     layout = Layout(roots[0], roots[1])
     verify_one(entry, lock, layout)
-    receipt_path = (
-        layout.store(entry["env_slug"], lock["lock_id"])
-        / FRAMEWORK_RECEIPT_NAME
-    )
+    receipt_path = published_store(entry, lock, layout) / FRAMEWORK_RECEIPT_NAME
     _receipt_path, receipt_raw = read_binary_artifact(
         receipt_path, max_bytes=_MAX_FRAMEWORK_RECEIPT_BYTES
     )

@@ -2451,14 +2451,54 @@ PY
 
 ura_runtime_store() {
   python - "$1" <<'PY'
+import json
 import os
 import sys
 from pathlib import Path
-from experiments.framework_runtime_installer import load_lock
+import re
+
+from experiments.framework_runtime_installer import Layout, load_lock, published_store
 
 lock = load_lock(Path(os.environ["URA_FRAMEWORK_LOCK"]))
-entry = next(item for item in lock["frameworks"] if item["name"] == sys.argv[1])
-print(Path(os.environ["URA_FRAMEWORK_ENVS"]) / ".store" / f'{entry["env_slug"]}-{lock["lock_id"][:16]}')
+name = sys.argv[1]
+rows = [item for item in lock["frameworks"] if item.get("name") == name]
+if len(rows) != 1:
+    raise SystemExit(f"expected one framework lock row for {name}, found {len(rows)}")
+entry = rows[0]
+env_root = Path(os.environ["URA_FRAMEWORK_ENVS"]).resolve(strict=True)
+layout = Layout(env_root, Path(os.environ["URA_FRAMEWORK_STATE"]))
+store = published_store(entry, lock, layout)
+alias = layout.final(entry["env_slug"])
+raw_target = Path(os.readlink(alias))
+unresolved_store = env_root / raw_target
+if (
+    raw_target.is_absolute()
+    or len(raw_target.parts) != 2
+    or raw_target.parts[0] != ".store"
+    or not re.fullmatch(
+        rf"{re.escape(entry['env_slug'])}-[0-9a-f]{{16}}", raw_target.parts[1]
+    )
+    or unresolved_store.is_symlink()
+    or unresolved_store.resolve(strict=True) != store
+):
+    raise SystemExit(f"{name}: stable runtime alias is not a direct managed-store link")
+receipt = json.loads((store / ".ura-runtime-receipt.json").read_bytes())
+expected = {
+    "schema": "ura-framework-runtime-receipt/1",
+    "lock_id": lock["lock_id"],
+    "framework": name,
+    "version": entry["version"],
+    "env_slug": entry["env_slug"],
+    "runtime": entry["runtime"],
+    "status": "passed",
+    "smoke": "passed",
+    "network_smoke": "denied",
+    "provider_calls": 0,
+    "model_calls": 0,
+}
+if any(receipt.get(key) != value for key, value in expected.items()):
+    raise SystemExit(f"{name}: current runtime receipt identity is invalid")
+print(store)
 PY
 }
 
@@ -2532,25 +2572,40 @@ PY
   (( rc == 0 ))
 }
 
+ura_framework_action() {
+  local action="$1" framework="$2" payload
+  shift 2
+  payload="$(
+    python -m experiments.framework_runtime_installer "$action" \
+      --lock "$URA_FRAMEWORK_LOCK" --env-root "$URA_FRAMEWORK_ENVS" \
+      --state-root "$URA_FRAMEWORK_STATE" --python "$URA_FRAMEWORK_PYTHON" \
+      --only "$framework" "$@"
+  )" || return $?
+  printf '%s\n' "$payload"
+  ura_wait_session "$payload"
+}
+
 python -m experiments.framework_runtime_installer plan \
   --lock "$URA_FRAMEWORK_LOCK" --env-root "$URA_FRAMEWORK_ENVS" \
   --state-root "$URA_FRAMEWORK_STATE"
-URA_FRAMEWORK_SESSION_JSON="$(
-  python -m experiments.framework_runtime_installer resume \
-    --lock "$URA_FRAMEWORK_LOCK" --env-root "$URA_FRAMEWORK_ENVS" \
-    --state-root "$URA_FRAMEWORK_STATE" --python "$URA_FRAMEWORK_PYTHON"
-)" || exit $?
-export URA_FRAMEWORK_SESSION_JSON
-printf '%s\n' "$URA_FRAMEWORK_SESSION_JSON"
-ura_wait_session "$URA_FRAMEWORK_SESSION_JSON" || exit $?
-URA_FRAMEWORK_SESSION_JSON="$(
-  python -m experiments.framework_runtime_installer verify \
-    --lock "$URA_FRAMEWORK_LOCK" --env-root "$URA_FRAMEWORK_ENVS" \
-    --state-root "$URA_FRAMEWORK_STATE" --python "$URA_FRAMEWORK_PYTHON"
-)" || exit $?
-export URA_FRAMEWORK_SESSION_JSON
-printf '%s\n' "$URA_FRAMEWORK_SESSION_JSON"
-ura_wait_session "$URA_FRAMEWORK_SESSION_JSON" || exit $?
+
+# Preferred complete-inventory path. It verifies every row first and does not
+# reinstall a row that passes. Set this only for an aggregate-lock transition:
+# export URA_FRAMEWORK_ADOPT_FROM_LOCK=/absolute/operator/path/framework_runtime_lock.previous.json
+distro/install.sh runtimes
+
+# Direct one-row equivalent, useful for bounded recovery and inspection.
+export URA_FRAMEWORK_NAME=pyrit
+if ura_framework_action verify "$URA_FRAMEWORK_NAME"; then
+  printf '%s\n' "$URA_FRAMEWORK_NAME already verified; no mutation performed"
+elif [[ -n "${URA_FRAMEWORK_ADOPT_FROM_LOCK:-}" ]] \
+  && ura_framework_action adopt "$URA_FRAMEWORK_NAME" \
+    --from-lock "$URA_FRAMEWORK_ADOPT_FROM_LOCK"; then
+  ura_framework_action verify "$URA_FRAMEWORK_NAME" || exit $?
+else
+  ura_framework_action resume "$URA_FRAMEWORK_NAME" || exit $?
+  ura_framework_action verify "$URA_FRAMEWORK_NAME" || exit $?
+fi
 ```
 
 The repository has one strict `ura-framework-runtime-lock/1` manifest for 16
@@ -2568,14 +2623,15 @@ The global distro path also keeps BIPIA's legacy corpus builder out of the main
 URA venv: `distro/bipia-build-requirements.lock` is fully hashed and installs to
 its own content-addressed `$URA_WORK/support-venvs` environment.
 
-`install`, `resume`, and `verify` automatically dispatch into a deterministic
+`install`, `resume`, `verify`, and `adopt` automatically dispatch into a deterministic
 named tmux session (screen only when tmux is unavailable), with a credential-free
 environment and retained bounded log/exit marker under the engineering campaign.
 Wait for the exit marker before the next action. The default block above and
-`distro/install.sh runtimes` use `resume` because it safely creates an absent
-store and resumes an admitted, phase-checked staged store. Fresh-only `install`
-intentionally refuses an existing stage. After a successful install/resume, run
-the same argv as `verify`. Add repeated `--only NAME` (or a comma-separated
+`distro/install.sh runtimes` verify each row before any mutation. A passing row
+is left untouched. `resume` safely creates an absent store or resumes an
+admitted, phase-checked staged store; fresh-only `install` intentionally refuses
+an existing stage. After a successful adoption, install, or resume, run the same
+row selection as `verify`. Add repeated `--only NAME` (or a comma-separated
 value) for a bounded subset. An existing receipt never skips verification:
 `pip check` or npm inventory, offline import/CLI startup, exact installed
 inventory, and the deterministic whole-runtime seal including executable
@@ -2588,6 +2644,15 @@ store.
 A same-version dependency, source shadow, console script, or other retained-file
 change therefore invalidates verification.
 
+Cross-lock adoption is explicit, not automatic. Set
+`URA_FRAMEWORK_ADOPT_FROM_LOCK` to an already-resolved absolute path containing
+the exact retained prior lock, or pass that path to `adopt --from-lock`. Adoption
+requires identical lock schema, platform, policy and runtime pins and an
+identical complete selected framework entry. It validates the retained seal,
+inventory and offline smoke before rebinding the path-free receipt to the new
+aggregate lock. A new or changed row cannot be adopted and follows the normal
+resume path. No previous lock is searched for or guessed.
+
 Each runtime subprocess receives a clean private HOME plus an explicit package
 cache outside the sealed store: `$URA_FRAMEWORK_ENVS/.cache/pip` for Python and
 `$URA_FRAMEWORK_ENVS/.cache/npm` for Node. Those caches persist across
@@ -2595,9 +2660,12 @@ interrupted sessions and lock revisions, but are transfer optimizations only;
 the hashed dependency lock, exact inventory, offline smoke, receipt, and whole-
 runtime content seal still decide admission. `distro/install.sh runtimes`
 derives the exact 16 names from the validated lock and runs one sequential
-`resume --only NAME` and, on success, `verify --only NAME` session per row. It
-continues after an isolated row failure and returns a nonzero aggregate after
-all rows have been attempted.
+`verify --only NAME` first. It skips mutation on success, otherwise attempts an
+explicit strict adoption when the prior-lock variable is set, and calls
+`resume --only NAME` only for a missing, interrupted, new, or changed row. Every
+mutated row receives a final `verify --only NAME`. The phase continues after an
+isolated row failure and returns a nonzero aggregate after all rows have been
+attempted.
 
 Rig Web exposes the same fixed interface under **Build → Runtimes**, with one
 lock-derived Install/Resume/Verify action per row and no package, path, shell,
@@ -3024,24 +3092,16 @@ pins the tested vLLM, BitsAndBytes, FastChat, Ray, Accelerate, spaCy,
 `datasketch`, and SHA-256-bound `en_core_web_sm` dependencies:
 
 ```bash
-URA_FRAMEWORK_SESSION_JSON="$(
-  python -m experiments.framework_runtime_installer resume \
-    --lock "$URA_FRAMEWORK_LOCK" --env-root "$URA_FRAMEWORK_ENVS" \
-    --state-root "$URA_FRAMEWORK_STATE" --python "$URA_FRAMEWORK_PYTHON" \
-    --only harmbench
-)" || exit $?
-export URA_FRAMEWORK_SESSION_JSON
-printf '%s\n' "$URA_FRAMEWORK_SESSION_JSON"
-ura_wait_session "$URA_FRAMEWORK_SESSION_JSON" || exit $?
-URA_FRAMEWORK_SESSION_JSON="$(
-  python -m experiments.framework_runtime_installer verify \
-    --lock "$URA_FRAMEWORK_LOCK" --env-root "$URA_FRAMEWORK_ENVS" \
-    --state-root "$URA_FRAMEWORK_STATE" --python "$URA_FRAMEWORK_PYTHON" \
-    --only harmbench
-)" || exit $?
-export URA_FRAMEWORK_SESSION_JSON
-printf '%s\n' "$URA_FRAMEWORK_SESSION_JSON"
-ura_wait_session "$URA_FRAMEWORK_SESSION_JSON" || exit $?
+if ! ura_framework_action verify harmbench; then
+  if [[ -n "${URA_FRAMEWORK_ADOPT_FROM_LOCK:-}" ]] \
+    && ura_framework_action adopt harmbench \
+      --from-lock "$URA_FRAMEWORK_ADOPT_FROM_LOCK"; then
+    :
+  else
+    ura_framework_action resume harmbench || exit $?
+  fi
+  ura_framework_action verify harmbench || exit $?
+fi
 URA_HARMBENCH_ENV="$(ura_runtime_store harmbench)" || exit $?
 [[ -d "$URA_HARMBENCH_ENV" ]] || exit 1
 export URA_HARMBENCH_ENV
@@ -3172,24 +3232,20 @@ export URA_NATIVE_SELECTION='fuzzyai,garak,promptfoo,petri,easyjailbreak,autodan
 python -m experiments.framework_runtime_installer plan \
   --lock "$URA_FRAMEWORK_LOCK" --env-root "$URA_FRAMEWORK_ENVS" \
   --state-root "$URA_FRAMEWORK_STATE" --only "$URA_NATIVE_SELECTION"
-URA_FRAMEWORK_SESSION_JSON="$(
-  python -m experiments.framework_runtime_installer resume \
-    --lock "$URA_FRAMEWORK_LOCK" --env-root "$URA_FRAMEWORK_ENVS" \
-    --state-root "$URA_FRAMEWORK_STATE" --python "$URA_FRAMEWORK_PYTHON" \
-    --only "$URA_NATIVE_SELECTION"
-)" || exit $?
-export URA_FRAMEWORK_SESSION_JSON
-printf '%s\n' "$URA_FRAMEWORK_SESSION_JSON"
-ura_wait_session "$URA_FRAMEWORK_SESSION_JSON" || exit $?
-URA_FRAMEWORK_SESSION_JSON="$(
-  python -m experiments.framework_runtime_installer verify \
-    --lock "$URA_FRAMEWORK_LOCK" --env-root "$URA_FRAMEWORK_ENVS" \
-    --state-root "$URA_FRAMEWORK_STATE" --python "$URA_FRAMEWORK_PYTHON" \
-    --only "$URA_NATIVE_SELECTION"
-)" || exit $?
-export URA_FRAMEWORK_SESSION_JSON
-printf '%s\n' "$URA_FRAMEWORK_SESSION_JSON"
-ura_wait_session "$URA_FRAMEWORK_SESSION_JSON" || exit $?
+IFS=',' read -r -a URA_NATIVE_NAMES <<< "$URA_NATIVE_SELECTION"
+for URA_NATIVE_NAME in "${URA_NATIVE_NAMES[@]}"; do
+  if ura_framework_action verify "$URA_NATIVE_NAME"; then
+    continue
+  fi
+  if [[ -n "${URA_FRAMEWORK_ADOPT_FROM_LOCK:-}" ]] \
+    && ura_framework_action adopt "$URA_NATIVE_NAME" \
+      --from-lock "$URA_FRAMEWORK_ADOPT_FROM_LOCK"; then
+    :
+  else
+    ura_framework_action resume "$URA_NATIVE_NAME" || exit $?
+  fi
+  ura_framework_action verify "$URA_NATIVE_NAME" || exit $?
+done
 
 URA_FUZZYAI_ENV="$(ura_runtime_alias fuzzyai)" || exit $?
 URA_GARAK_ENV="$(ura_runtime_alias garak)" || exit $?

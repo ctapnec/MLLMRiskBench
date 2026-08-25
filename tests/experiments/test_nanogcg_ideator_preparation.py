@@ -10,6 +10,7 @@ from types import SimpleNamespace
 
 import pytest
 
+from experiments import framework_runtime_installer as runtime_installer
 from experiments import ideator_vlbreakbench_prepare as ideator_prepare
 from experiments import nanogcg_capture, run_matrix
 from experiments.rig_web_app.builder_models import BuilderModelsMixin
@@ -380,6 +381,61 @@ def test_nanogcg_worker_derives_surrogate_plan_and_all_four_bindings() -> None:
         project=project,
     )
     assert changed_selection.selection_sha256 != selection.selection_sha256
+
+
+def test_nanogcg_runtime_receipt_resolves_an_adopted_store(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    env_root = tmp_path / "framework-envs"
+    state_root = tmp_path / "framework-state"
+    store_root = env_root / ".store"
+    store_root.mkdir(parents=True)
+    state_root.mkdir()
+    entry = {
+        "name": "nanogcg",
+        "version": "0.3.0",
+        "env_slug": "nanogcg-0.3.0-py312",
+        "runtime": "python",
+    }
+    lock = {"lock_id": "b" * 64}
+    adopted = store_root / f"{entry['env_slug']}-{'a' * 16}"
+    adopted.mkdir()
+    (env_root / entry["env_slug"]).symlink_to(
+        Path(".store") / adopted.name, target_is_directory=True
+    )
+    receipt = runtime_installer._receipt(
+        entry,
+        lock,
+        {"inventory_sha256": "c" * 64, "distribution_count": 1},
+        {
+            "schema": runtime_installer.CONTENT_SEAL_SCHEMA,
+            "sha256": "d" * 64,
+            "file_count": 1,
+            "byte_count": 1,
+        },
+    )
+    raw = runtime_installer._canonical_json(receipt)
+    (adopted / runtime_installer.RECEIPT_NAME).write_bytes(raw)
+    monkeypatch.setattr(nanogcg_capture, "verify_one", lambda *_args: None)
+    monkeypatch.setattr(
+        nanogcg_capture,
+        "canonical_python_interpreter",
+        lambda *_args: Path(nanogcg_capture.sys.executable),
+    )
+    args = SimpleNamespace(
+        framework_env_root=str(env_root),
+        framework_state_root=str(state_root),
+    )
+
+    _layout, binding = nanogcg_capture._verified_framework_runtime(
+        args,
+        lock=lock,
+        framework={"entry": entry, "binding": {"lock_id": lock["lock_id"]}},
+    )
+
+    assert binding["receipt"] == receipt
+    assert binding["receipt_sha256"] == hashlib.sha256(raw).hexdigest()
+    assert not (store_root / f"{entry['env_slug']}-{lock['lock_id'][:16]}").exists()
 
 
 def test_nanogcg_capture_rejects_a_stored_plan_other_than_its_derived_plan(

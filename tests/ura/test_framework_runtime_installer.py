@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import copy
 import hashlib
 import json
 import os
@@ -148,6 +149,28 @@ def _inventory_version(entry: dict[str, Any], distribution: str) -> str:
     raise AssertionError(f"{distribution!r} is absent from the locked inventory")
 
 
+def _assert_runbook_runtime_store_adoption_contract(runbook: str) -> None:
+    block = runbook.split("ura_runtime_store() {", 1)[1].split("\nPY\n}", 1)[0]
+    required = (
+        "from experiments.framework_runtime_installer import Layout, load_lock, published_store",
+        "store = published_store(entry, lock, layout)",
+        "raw_target = Path(os.readlink(alias))",
+        "raw_target.is_absolute()",
+        'raw_target.parts[0] != ".store"',
+        "[0-9a-f]{{16}}",
+        "unresolved_store.is_symlink()",
+        '"lock_id": lock["lock_id"]',
+        '"status": "passed"',
+        '"provider_calls": 0',
+        '"model_calls": 0',
+        "current runtime receipt identity is invalid",
+        "print(store)",
+    )
+    for token in required:
+        assert token in block
+    assert 'lock["lock_id"][:16]' not in block
+
+
 def _assert_global_installer_docs_match_lock(
     lock: dict[str, Any], documents: dict[str, str], install_script: str
 ) -> None:
@@ -182,9 +205,11 @@ def _assert_global_installer_docs_match_lock(
     assert "managed_framework_roots_present" in install_script
     assert "for distribution in metadata.distributions()" in install_script
     assert "main URA venv contains lock-managed framework root distributions" in install_script
-    assert "framework_runtime_installer resume" in documents[
-        "experiments/RUN_AND_RETURN.md"
-    ]
+    runbook_actions = documents["experiments/RUN_AND_RETURN.md"]
+    verify_at = runbook_actions.index("ura_framework_action verify")
+    adopt_at = runbook_actions.index("ura_framework_action adopt", verify_at)
+    resume_at = runbook_actions.index("ura_framework_action resume", adopt_at)
+    assert verify_at < adopt_at < resume_at
 
     readme = normalized["README.md"]
     bridge_versions = {
@@ -197,6 +222,7 @@ def _assert_global_installer_docs_match_lock(
         in readme
     )
     runbook = documents["experiments/RUN_AND_RETURN.md"]
+    _assert_runbook_runtime_store_adoption_contract(runbook)
     config_section = runbook[
         runbook.index("configs = {") : runbook.index("attacker = sys.argv[1]")
     ]
@@ -283,6 +309,22 @@ def test_global_installer_doc_sync_rejects_mutated_duplicate_pins() -> None:
             _assert_global_installer_docs_match_lock(
                 lock, candidate_documents, candidate_script
             )
+
+
+def test_runbook_runtime_store_adoption_contract_rejects_lock_suffix_and_link_mutations() -> None:
+    runbook = (LOCK_PATH.parents[1] / "experiments/RUN_AND_RETURN.md").read_text(
+        encoding="utf-8"
+    )
+    _assert_runbook_runtime_store_adoption_contract(runbook)
+    for original, replacement in (
+        ('raw_target.parts[0] != ".store"', 'raw_target.parts[0] == ".store"'),
+        ('"lock_id": lock["lock_id"]', '"lock_id": "0" * 64'),
+        ("print(store)", 'print(Path(os.environ["URA_FRAMEWORK_ENVS"]) / ".store")'),
+    ):
+        mutated = runbook.replace(original, replacement, 1)
+        assert mutated != runbook
+        with pytest.raises(AssertionError):
+            _assert_runbook_runtime_store_adoption_contract(mutated)
 
 
 def test_bipia_builder_has_its_own_exact_hashed_environment_not_runner_dependencies() -> None:
@@ -720,6 +762,14 @@ def test_stable_alias_preserves_console_script_and_bridge_root(tmp_path: Path) -
     assert configured.parent.resolve(strict=True).parent == store
     entry = {"runtime": "python", "env_slug": "demo"}
     lock = {"lock_id": "a" * 64}
+    entry.update({"name": "demo", "version": "0.14.0"})
+    receipt = installer._receipt(
+        entry,
+        lock,
+        {"inventory_sha256": "c" * 64, "distribution_count": 1},
+        installer._content_seal(store),
+    )
+    (store / installer.RECEIPT_NAME).write_bytes(installer._canonical_json(receipt))
     canonical = installer.canonical_python_interpreter(entry, lock, layout)
     assert canonical.parent.parent == store
     from ura.adapters._engine_runtime import inspect_engine_runtime
@@ -871,18 +921,30 @@ def test_source_node_install_runs_exact_npm_ci_and_build(
 def test_existing_receipt_never_skips_verification(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    entry = {"name": "demo", "env_slug": "demo"}
+    entry = {
+        "name": "demo",
+        "version": "1.0.0",
+        "env_slug": "demo",
+        "runtime": "python",
+    }
     lock = {"lock_id": "a" * 64}
     layout = installer.Layout(tmp_path / "envs", tmp_path / "state")
-    receipt = {
-        "schema": "ura-framework-runtime-receipt/1",
-        "lock_id": lock["lock_id"],
-        "framework": "demo",
-        "env_slug": "demo",
-        "content_seal": {"schema": installer.CONTENT_SEAL_SCHEMA},
-        "status": "passed",
-    }
-    monkeypatch.setattr(installer, "_alias_points_to", lambda *_args: True)
+    receipt = installer._receipt(
+        entry,
+        lock,
+        {"inventory_sha256": "c" * 64, "distribution_count": 1},
+        {
+            "schema": installer.CONTENT_SEAL_SCHEMA,
+            "sha256": "d" * 64,
+            "file_count": 1,
+            "byte_count": 1,
+        },
+    )
+    monkeypatch.setattr(
+        installer,
+        "_managed_alias_target",
+        lambda *_args: layout.final(entry["env_slug"]),
+    )
     monkeypatch.setattr(installer, "_read_receipt", lambda *_args: receipt)
     monkeypatch.setattr(
         installer,
@@ -1391,7 +1453,9 @@ def test_plan_only_selects_requested_framework(tmp_path: Path) -> None:
 
 
 @pytest.mark.skipif(not hasattr(os, "symlink"), reason="symlink unavailable")
-def test_new_lock_migrates_old_seal_receipt_to_new_store(tmp_path: Path) -> None:
+def test_adopt_reuses_exact_prior_runtime_without_installing(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     layout = installer.Layout(tmp_path / "envs", tmp_path / "state")
     layout.store_root.mkdir(parents=True)
     old_lock_id = "a" * 64
@@ -1402,18 +1466,31 @@ def test_new_lock_migrates_old_seal_receipt_to_new_store(tmp_path: Path) -> None
         "env_slug": "pyrit-0.14.0-py312",
         "runtime": "python",
     }
+    globals_ = {
+        "schema": installer.SCHEMA,
+        "platform": {"os": "linux", "arch": "x86_64"},
+        "policy": {"offline_smoke": True},
+        "runtimes": {"python": {"version": "3.12.13"}},
+    }
+    old_lock = {**globals_, "lock_id": old_lock_id, "frameworks": [copy.deepcopy(entry)]}
+    new_lock = {**globals_, "lock_id": new_lock_id, "frameworks": [copy.deepcopy(entry)]}
     old_store = layout.store(entry["env_slug"], old_lock_id)
-    old_store.mkdir()
+    (old_store / "bin").mkdir(parents=True)
+    (old_store / "bin" / "python").write_bytes(b"sealed-python")
+    installer._write_state(
+        old_store,
+        {
+            "completed": ["venv", "dependencies", "artifacts", "source"],
+            "lock_id": old_lock_id,
+            "framework": entry["name"],
+            "env_slug": entry["env_slug"],
+        },
+    )
     old_receipt = installer._receipt(
         entry,
-        {"lock_id": old_lock_id},
+        old_lock,
         {"inventory_sha256": "c" * 64, "distribution_count": 1},
-        {
-            "schema": "ura-framework-runtime-content-seal/1",
-            "sha256": "d" * 64,
-            "file_count": 0,
-            "byte_count": 0,
-        },
+        installer._content_seal(old_store),
     )
     (old_store / installer.RECEIPT_NAME).write_bytes(installer._canonical_json(old_receipt))
     try:
@@ -1421,20 +1498,97 @@ def test_new_lock_migrates_old_seal_receipt_to_new_store(tmp_path: Path) -> None
     except OSError:
         pytest.skip("symlink creation is unavailable")
 
-    new_store = layout.store(entry["env_slug"], new_lock_id)
-    assert new_store != old_store
-    assert not installer._receipt_matches(old_receipt, entry, old_lock_id)
-    result = installer.plan({"lock_id": new_lock_id}, layout, [entry])
+    def no_install(*_args, **_kwargs):  # noqa: ANN002, ANN003
+        raise AssertionError("adoption must not call an install helper")
 
-    assert result["actions"] == [
-        {
-            "framework": "pyrit",
-            "env_slug": "pyrit-0.14.0-py312",
-            "action": "install",
-        }
-    ]
+    monkeypatch.setattr(installer, "_install_python", no_install)
+    monkeypatch.setattr(installer, "_install_node", no_install)
+    monkeypatch.setattr(
+        installer,
+        "_verify_runtime",
+        lambda *_args: {"inventory_sha256": "c" * 64, "distribution_count": 1},
+    )
+
+    adopted = installer.adopt_one(entry, new_lock, old_lock, layout)
+
+    assert adopted["status"] == "adopted-verified"
+    assert installer.published_store(entry, new_lock, layout) == old_store.resolve(strict=True)
+    assert installer._read_receipt(old_store)["lock_id"] == new_lock_id
+    assert installer._read_state(old_store)["lock_id"] == new_lock_id
+    assert installer.plan(new_lock, layout, [entry])["actions"][0]["action"] == "verify"
+    assert installer.install_one(entry, new_lock, layout, resume=True)["status"] == (
+        "already-installed-verified"
+    )
+    assert installer.verify_one(entry, new_lock, layout)["status"] == "verified"
+    assert installer.canonical_python_interpreter(entry, new_lock, layout) == (
+        old_store / "bin" / "python"
+    )
     assert old_store.is_dir()
-    assert not new_store.exists()
+    assert not layout.store(entry["env_slug"], new_lock_id).exists()
+
+
+@pytest.mark.parametrize("mutation", ["platform", "policy", "runtimes", "entry"])
+def test_adopt_rejects_changed_entry_or_execution_global_pin(mutation: str) -> None:
+    entry = {
+        "name": "pyrit",
+        "version": "0.14.0",
+        "env_slug": "pyrit-0.14.0-py312",
+        "runtime": "python",
+    }
+    old = {
+        "schema": installer.SCHEMA,
+        "lock_id": "a" * 64,
+        "platform": {"os": "linux", "arch": "x86_64"},
+        "policy": {"offline_smoke": True},
+        "runtimes": {"python": {"version": "3.12.13"}},
+        "frameworks": [copy.deepcopy(entry)],
+    }
+    current = copy.deepcopy(old)
+    current["lock_id"] = "b" * 64
+    if mutation == "entry":
+        current["frameworks"][0]["version"] = "0.15.0"
+        selected = current["frameworks"][0]
+    else:
+        current[mutation]["mutation"] = True
+        selected = entry
+    with pytest.raises(installer.InstallerError, match="differs"):
+        installer._adoption_entry(selected, current, old)
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("version", "0.14.1"),
+        ("runtime", "node"),
+        ("inventory_sha256", "not-a-sha"),
+        ("provider_calls", 1),
+        ("model_calls", False),
+        ("network_smoke", "allowed"),
+    ],
+)
+def test_current_receipt_match_rejects_identity_or_no_call_drift(
+    field: str, value: object
+) -> None:
+    entry = {
+        "name": "pyrit",
+        "version": "0.14.0",
+        "env_slug": "pyrit-0.14.0-py312",
+        "runtime": "python",
+    }
+    lock = {"lock_id": "a" * 64}
+    receipt = installer._receipt(
+        entry,
+        lock,
+        {"inventory_sha256": "c" * 64, "distribution_count": 1},
+        {
+            "schema": installer.CONTENT_SEAL_SCHEMA,
+            "sha256": "d" * 64,
+            "file_count": 1,
+            "byte_count": 1,
+        },
+    )
+    receipt[field] = value
+    assert not installer._receipt_matches(receipt, entry, lock["lock_id"])
 
 
 # --------------------------------------------------------------------------- #
@@ -1631,6 +1785,18 @@ def test_verify_requires_published_alias_and_matching_receipt(tmp_path: Path) ->
     with pytest.raises(installer.InstallerError, match="valid receipt not found for pyrit"):
         installer.verify_one(_GUARD_ENTRY, _GUARD_LOCK, layout)
     # a published alias whose store lacks the interpreter is not a usable runtime
+    current = installer._receipt(
+        _GUARD_ENTRY,
+        _GUARD_LOCK,
+        {"inventory_sha256": "c" * 64, "distribution_count": 1},
+        {
+            "schema": installer.CONTENT_SEAL_SCHEMA,
+            "sha256": "d" * 64,
+            "file_count": 0,
+            "byte_count": 0,
+        },
+    )
+    (store / installer.RECEIPT_NAME).write_bytes(installer._canonical_json(current))
     with pytest.raises(installer.InstallerError, match="runtime interpreter is missing"):
         installer.canonical_python_interpreter(_GUARD_ENTRY, _GUARD_LOCK, layout)
 
@@ -1644,17 +1810,94 @@ def test_verify_published_rejects_inventory_drift_before_the_seal(
     monkeypatch.setattr(
         installer,
         "_verify_runtime",
-        lambda _entry, _env_dir, _runner: {"inventory_sha256": "e" * 64, "distribution_count": 1},
+        lambda _entry, _env_dir, _runner: {
+            "inventory_sha256": "e" * 64,
+            "distribution_count": 1,
+        },
     )
+    seal_checks: list[str] = []
     monkeypatch.setattr(
         installer,
         "_verify_content_seal",
-        lambda *_args, **_kwargs: pytest.fail("seal must not be consulted after an inventory mismatch"),
+        lambda *_args, **_kwargs: seal_checks.append("seal"),
     )
     receipt = {"inventory_sha256": "c" * 64}
     with pytest.raises(installer.InstallerError, match="receipt inventory mismatch for pyrit"):
         installer._verify_published(
             _GUARD_ENTRY, _GUARD_LOCK, layout, final, receipt, log_prefix="verify-"
+        )
+    assert seal_checks == ["seal"]
+
+
+@pytest.mark.parametrize(
+    ("receipt_count", "verification_count"),
+    [(2, 1), (True, 1), (1, True)],
+    ids=["count-drift", "boolean-receipt", "boolean-verification"],
+)
+def test_verify_published_rejects_distribution_count_drift_or_boolean(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    receipt_count: object,
+    verification_count: object,
+) -> None:
+    layout = installer.Layout(tmp_path / "envs", tmp_path / "state")
+    final = layout.final(_GUARD_ENTRY["env_slug"])
+    final.mkdir(parents=True)
+    monkeypatch.setattr(
+        installer,
+        "_verify_runtime",
+        lambda _entry, _env_dir, _runner: {
+            "inventory_sha256": "c" * 64,
+            "distribution_count": verification_count,
+        },
+    )
+    seal_checks: list[str] = []
+    monkeypatch.setattr(
+        installer,
+        "_verify_content_seal",
+        lambda *_args, **_kwargs: seal_checks.append("seal"),
+    )
+    receipt = {
+        "inventory_sha256": "c" * 64,
+        "distribution_count": receipt_count,
+    }
+
+    with pytest.raises(
+        installer.InstallerError, match="receipt distribution count mismatch for pyrit"
+    ):
+        installer._verify_published(
+            _GUARD_ENTRY, _GUARD_LOCK, layout, final, receipt, log_prefix="verify-"
+        )
+
+    assert seal_checks == ["seal"]
+
+
+def test_verify_published_rejects_bad_preseal_before_runtime_execution(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    layout = installer.Layout(tmp_path / "envs", tmp_path / "state")
+    final = layout.final(_GUARD_ENTRY["env_slug"])
+    final.mkdir(parents=True)
+    monkeypatch.setattr(
+        installer,
+        "_verify_content_seal",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            installer.InstallerError("installed content seal mismatch for pyrit")
+        ),
+    )
+    monkeypatch.setattr(
+        installer,
+        "_verify_runtime",
+        lambda *_args, **_kwargs: pytest.fail("bad pre-seal reached runtime execution"),
+    )
+    with pytest.raises(installer.InstallerError, match="content seal mismatch"):
+        installer._verify_published(
+            _GUARD_ENTRY,
+            _GUARD_LOCK,
+            layout,
+            final,
+            {"inventory_sha256": "c" * 64},
+            log_prefix="verify-",
         )
 
 
@@ -1786,7 +2029,7 @@ if [ "${1:-}" = "-m" ] && [ "${2:-}" = "experiments.framework_runtime_installer"
     plan)
       echo '{"schema":"ura-framework-runtime-plan/1","lock_id":"stub","actions":[]}'
       exit 0 ;;
-    install|resume|verify)
+    install|resume|verify|adopt)
       name="ura-framework-$command-${only:-all}-stub"
       mkdir -p "$state_root/sessions"
       exit_rc="${URA_STUB_EXIT_RC:-0}"
@@ -1794,10 +2037,23 @@ if [ "${1:-}" = "-m" ] && [ "${2:-}" = "experiments.framework_runtime_installer"
         exit_rc=0
       fi
       if [ "$command" = verify ]; then
+        if [ "${URA_STUB_VERIFY_REQUIRES_MUTATION:-}" = "1" ] \
+          && [ ! -f "$state_root/sessions/.stub-mutated-$only" ]; then
+          exit_rc=2
+        fi
         exit_rc="${URA_STUB_VERIFY_EXIT_RC:-$exit_rc}"
         if [ -n "${URA_STUB_VERIFY_FAIL_ONLY:-}" ] && [ "$only" != "$URA_STUB_VERIFY_FAIL_ONLY" ]; then
           exit_rc=0
         fi
+      fi
+      if [ "$command" = adopt ]; then
+        exit_rc="${URA_STUB_ADOPT_EXIT_RC:-$exit_rc}"
+        if [ -n "${URA_STUB_ADOPT_FAIL_ONLY:-}" ] && [ "$only" != "$URA_STUB_ADOPT_FAIL_ONLY" ]; then
+          exit_rc=0
+        fi
+      fi
+      if [ "$exit_rc" = 0 ] && { [ "$command" = resume ] || [ "$command" = adopt ]; }; then
+        : > "$state_root/sessions/.stub-mutated-$only"
       fi
       printf '%s\n' "$exit_rc" > "$state_root/sessions/$name.exit"
       printf 'stub %s transcript\n' "$command" > "$state_root/sessions/$name.log"
@@ -1948,9 +2204,7 @@ def test_distro_deps_propagates_lock_derived_main_venv_contamination(
         assert "[FAIL] deps - every later phase depends on this venv" in result.stdout
 
 
-def test_distro_runtimes_phase_resumes_fresh_or_staged_store_then_verifies(
-    tmp_path: Path,
-) -> None:
+def test_distro_runtimes_phase_verifies_current_rows_without_resuming(tmp_path: Path) -> None:
     sandbox = _DistroSandbox(tmp_path)
     result = sandbox.run("runtimes")
     assert result.returncode == 0, result.stdout + result.stderr
@@ -1960,32 +2214,80 @@ def test_distro_runtimes_phase_resumes_fresh_or_staged_store_then_verifies(
     state_root = f"{sandbox.data.as_posix()}/runs/engineering/framework-runtime-{lock_id[:12]}"
     calls = sandbox.installer_calls()
     frameworks = [entry["name"] for entry in installer.load_lock(LOCK_PATH)["frameworks"]]
-    # `resume` is deliberately used even for a fresh store: it handles both a
-    # missing store and a stage left by an interrupted earlier invocation. The
-    # fresh-only `install` command rejects the latter and broke global recovery.
-    assert [call[0] for call in calls] == ["plan"] + [
-        command for _framework in frameworks for command in ("resume", "verify")
-    ]
+    assert [call[0] for call in calls] == ["plan"] + ["verify"] * len(frameworks)
     assert calls[0] == ["plan", "--lock", lock, "--env-root", env_root, "--state-root", state_root]
-    for framework, pair_start in zip(frameworks, range(1, len(calls), 2), strict=True):
-        pair = calls[pair_start : pair_start + 2]
-        assert [call[-2:] for call in pair] == [["--only", framework], ["--only", framework]]
-    for call in calls[1:]:
+    for framework, call in zip(frameworks, calls[1:], strict=True):
+        assert call[-2:] == ["--only", framework]
         assert call[1:7] == ["--lock", lock, "--env-root", env_root, "--state-root", state_root]
         assert call[7] == "--python" and len(call) == 11
         assert Path(call[8]).name.startswith("python")
         assert "--session-policy" not in call
+    assert not any(call[0] in {"install", "resume", "adopt"} for call in calls)
     logs = sandbox.data / "acquire-logs"
     assert (logs / "runtimes-install.status").read_text(encoding="utf-8").strip() == "OK"
     assert (logs / "runtimes-verify.status").read_text(encoding="utf-8").strip() == "OK"
     assert (logs / "runtimes-install.done").exists() and (logs / "runtimes-verify.done").exists()
     assert "[ok]   runtimes-install" in result.stdout
     assert "[ok]   runtimes-verify" in result.stdout
+    assert "current installation passed strict verification" in result.stdout
+    assert all((logs / f"runtime-{name}-verify.done").is_file() for name in frameworks)
+    assert "[warn] framework runtimes need" not in result.stdout
+
+
+def test_distro_runtimes_phase_resumes_only_rows_that_fail_initial_verification(
+    tmp_path: Path,
+) -> None:
+    sandbox = _DistroSandbox(tmp_path)
+    result = sandbox.run("runtimes", URA_STUB_VERIFY_REQUIRES_MUTATION="1")
+    assert result.returncode == 0, result.stdout + result.stderr
+    calls = sandbox.installer_calls()
+    frameworks = [entry["name"] for entry in installer.load_lock(LOCK_PATH)["frameworks"]]
+    assert [call[0] for call in calls] == ["plan"] + [
+        command
+        for _framework in frameworks
+        for command in ("verify", "resume", "verify")
+    ]
+    for framework, group_start in zip(frameworks, range(1, len(calls), 3), strict=True):
+        group = calls[group_start : group_start + 3]
+        assert [call[-2:] for call in group] == [["--only", framework]] * 3
+    logs = sandbox.data / "acquire-logs"
+    assert (logs / "runtimes-install.status").read_text(encoding="utf-8").strip() == "OK"
+    assert (logs / "runtimes-verify.status").read_text(encoding="utf-8").strip() == "OK"
     install_log = (logs / "runtime-pyrit-install.log").read_text(encoding="utf-8")
     assert "session ura-framework-resume-pyrit-stub exit 0" in install_log
     assert "stub resume transcript" in install_log
-    assert all((logs / f"runtime-{name}-verify.done").is_file() for name in frameworks)
-    assert "[warn] framework runtimes need" not in result.stdout
+
+
+def test_distro_runtimes_phase_explicitly_adopts_unchanged_prior_lock_rows(
+    tmp_path: Path,
+) -> None:
+    sandbox = _DistroSandbox(tmp_path)
+    prior_lock = (tmp_path / "framework_runtime_lock.previous.json").resolve()
+    shutil.copy(LOCK_PATH, prior_lock)
+    result = sandbox.run(
+        "runtimes",
+        URA_FRAMEWORK_ADOPT_FROM_LOCK=prior_lock.as_posix(),
+        URA_STUB_VERIFY_REQUIRES_MUTATION="1",
+        URA_STUB_ADOPT_EXIT_RC="2",
+        URA_STUB_ADOPT_FAIL_ONLY="t3mp3st",
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    calls = sandbox.installer_calls()
+    frameworks = [entry["name"] for entry in installer.load_lock(LOCK_PATH)["frameworks"]]
+    assert frameworks[-1] == "t3mp3st"
+    selected = [(call[0], call[-1]) for call in calls[1:]]
+    assert sum(command == "adopt" for command, _name in selected) == 16
+    assert [(command, name) for command, name in selected if command == "resume"] == [
+        ("resume", "t3mp3st")
+    ]
+    for call in calls:
+        if call[0] == "adopt":
+            assert call[9:11] == ["--from-lock", prior_lock.as_posix()]
+    logs = sandbox.data / "acquire-logs"
+    assert (logs / "runtimes-install.status").read_text(encoding="utf-8").strip() == "OK"
+    assert (logs / "runtimes-verify.status").read_text(encoding="utf-8").strip() == "OK"
+    assert not (logs / "runtime-t3mp3st-adopt.status").exists()
+    assert "unchanged prior-lock installation strictly adopted" in result.stdout
 
 
 def test_distro_runtimes_phase_continues_after_one_failed_isolated_session(tmp_path: Path) -> None:
@@ -1997,11 +2299,11 @@ def test_distro_runtimes_phase_continues_after_one_failed_isolated_session(tmp_p
     calls = sandbox.installer_calls()
     selected = [(call[0], call[-1]) for call in calls[1:]]
     assert ("resume", "deepteam") in selected
-    assert ("verify", "deepteam") not in selected
-    assert ("resume", "harmbench") in selected
+    assert selected.count(("verify", "deepteam")) == 1
+    assert ("resume", "harmbench") not in selected
     assert ("verify", "harmbench") in selected
-    assert sum(command == "resume" for command, _name in selected) == 16
-    assert sum(command == "verify" for command, _name in selected) == 15
+    assert sum(command == "resume" for command, _name in selected) == 1
+    assert sum(command == "verify" for command, _name in selected) == 16
     logs = sandbox.data / "acquire-logs"
     assert (logs / "runtime-deepteam-install.status").read_text(encoding="utf-8").strip() == "FAIL:2"
     assert (logs / "runtime-deepteam-verify.status").read_text(encoding="utf-8").strip() == "FAIL:install"
@@ -2023,8 +2325,11 @@ def test_distro_runtimes_phase_propagates_a_verify_failure(tmp_path: Path) -> No
 
     assert result.returncode != 0
     calls = sandbox.installer_calls()
-    assert len(calls) == 33
-    assert (calls[-1][0], calls[-1][-1]) == ("verify", "t3mp3st")
+    assert len(calls) == 19
+    assert sum(call[0] == "resume" for call in calls) == 1
+    assert [(call[0], call[-1]) for call in calls if call[0] == "resume"] == [
+        ("resume", "giskard")
+    ]
     logs = sandbox.data / "acquire-logs"
     assert (logs / "runtimes-install.status").read_text(encoding="utf-8").strip() == "OK"
     assert (logs / "runtime-giskard-verify.status").read_text(encoding="utf-8").strip() == "FAIL:7"

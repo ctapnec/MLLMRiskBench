@@ -1931,6 +1931,51 @@ def validate_exact_live_runtime_receipts(
     return stored
 
 
+def managed_framework_store(row: Mapping[str, Any], label: str) -> Path:
+    env_root = Path(os.environ["URA_FRAMEWORK_ENVS"]).resolve(strict=True)
+    store_root = (env_root / ".store").resolve(strict=True)
+    slug = str(row["env_slug"])
+    alias = env_root / slug
+    if not alias.is_symlink():
+        raise ValueError(f"{label}: stable runtime alias is absent")
+    raw_target = Path(os.readlink(alias))
+    if (
+        raw_target.is_absolute()
+        or len(raw_target.parts) != 2
+        or raw_target.parts[0] != ".store"
+        or not re.fullmatch(
+            rf"{re.escape(slug)}-[0-9a-f]{{16}}", raw_target.parts[1]
+        )
+    ):
+        raise ValueError(f"{label}: stable runtime alias is not a direct managed-store link")
+    unresolved_store = env_root / raw_target
+    store = unresolved_store.resolve(strict=True)
+    if (
+        unresolved_store.is_symlink()
+        or not store.is_dir()
+        or store.parent != store_root
+        or store.name != raw_target.parts[1]
+    ):
+        raise ValueError(f"{label}: stable runtime alias escaped the managed store")
+    receipt = strict_object(store / ".ura-runtime-receipt.json")
+    expected = {
+        "schema": "ura-framework-runtime-receipt/1",
+        "lock_id": EXPECTED_LOCK,
+        "framework": row["name"],
+        "version": row["version"],
+        "env_slug": slug,
+        "runtime": row["runtime"],
+        "status": "passed",
+        "smoke": "passed",
+        "network_smoke": "denied",
+        "provider_calls": 0,
+        "model_calls": 0,
+    }
+    if any(receipt.get(key) != value for key, value in expected.items()):
+        raise ValueError(f"{label}: current runtime receipt identity is invalid")
+    return store
+
+
 def validate_runtime_config(path: Path, engine: str) -> None:
     value = strict_object(path)
     entry = exact_runtime_config_entry(value, engine)
@@ -1954,23 +1999,12 @@ def validate_runtime_config(path: Path, engine: str) -> None:
         or row.get("version") != receipt.get("version")
     ):
         raise ValueError(f"{engine}: runtime receipt differs from its exact lock row")
-    env_root = Path(os.environ["URA_FRAMEWORK_ENVS"])
-    expected_store = (
-        env_root / ".store" / f"{row['env_slug']}-{EXPECTED_LOCK[:16]}"
-    )
-    expected_interpreter = expected_store / "bin" / "python"
-    alias = env_root / row["env_slug"]
+    store = managed_framework_store(row, engine)
+    expected_interpreter = store / "bin" / "python"
     if (
         interpreter != expected_interpreter
-        or not expected_store.is_dir()
-        or expected_store.is_symlink()
-        or not alias.is_symlink()
-        or alias.resolve(strict=True) != expected_store.resolve(strict=True)
     ):
         raise ValueError(f"{engine}: stable alias does not resolve to the configured isolated store")
-    expected_parent = env_root / ".store"
-    if expected_store.resolve(strict=True).parent != expected_parent.resolve(strict=True):
-        raise ValueError(f"{engine}: configured runtime is outside the content-addressed store")
     live_receipt = inspect_engine_runtime(interpreter, engine)
     validate_exact_live_runtime_receipts(receipt, live_receipt, engine)
 
@@ -2047,10 +2081,7 @@ def validate_attacker_config(path: Path, lane: str) -> None:
         expected_revision = (row.get("source") or {}).get("commit")
         if config.get("upstream_revision") != expected_revision or bundle.get("upstream_revision") != expected_revision:
             raise ValueError("HarmBench replay does not bind the locked upstream revision")
-        alias = Path(os.environ["URA_FRAMEWORK_ENVS"]) / row["env_slug"]
-        if not alias.is_symlink():
-            raise ValueError("HarmBench stable runtime alias is absent")
-        store = alias.resolve(strict=True)
+        store = managed_framework_store(row, "HarmBench")
         interpreter = store / "bin" / "python"
         repo = store / "source" / "harmbench"
         if not interpreter.is_file() or not os.access(interpreter, os.X_OK) or not repo.is_dir():

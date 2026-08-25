@@ -50,7 +50,7 @@ failed; logs live under `$URA_DATA/acquire-logs/`.
 | `bipia` | create or verify a content-addressed, no-system-site-packages support venv under `$URA_DATA/support-venvs` from the fully hashed `distro/bipia-build-requirements.lock`, then build the BIPIA qa/abstract sets without installing its legacy `datasets` stack into the main URA venv (NewsQA is licensed - obtain `$URA_UPSTREAM/newsqa-data` manually; until then `URA_BIPIA_TEST_QA_PATH` is reported `MISSING ... (blocked: licensed NewsQA base)`) |
 | `aggregators` | fetch the aggregator corpora - SALAD-Bench, AIR-Bench 2024, XSTest, SimpleSafetyTests, DecodingTrust (stereotype), HoliSafe (multimodal, gated) - via `experiments.export_aggregators` (the HoliSafe export resolves the `hf` CLI next to the venv interpreter, so the venv need not be activated), per-source skip when present |
 | `ollama` | user-local ollama runtime **v0.32.13** pinned: `ollama-linux-amd64.tar.zst` from the GitHub release, its sha256 checked against the release's published `sha256sum.txt` AND the pin in the script (fail-closed on any mismatch), extracted under `~/.local/ollama` + `~/.local/bin/ollama` symlink (the console-owned daemon needs it on PATH) |
-| `runtimes` | plan the strict lock, then issue a separate sequential `resume --only NAME` and `verify --only NAME` named tmux/screen session for each of all 16 isolated third-party framework runtimes: 14 private Python venvs plus separate Promptfoo and T3MP3ST Node runtimes under `$URA_DATA/framework-venvs`. A failed row is retained and its verify is skipped, but every later row is still attempted; per-row statuses and honest `runtimes-install`/`runtimes-verify` aggregates make this phase and `all` exit nonzero when any row fails. `resume` safely creates an absent store or repairs a phase-checked stage. The clean per-runtime homes use persistent caches at `$URA_DATA/framework-venvs/.cache/pip` and `.cache/npm`; caches never decide admission. Uses the same lock/roots as runbook 12.2 and Build -> Runtimes and requires the `deps` venv with exact CPython 3.12.13 as its base. |
+| `runtimes` | plan the strict lock, then issue a separate sequential `verify --only NAME` named tmux/screen session for each of all 16 isolated third-party framework runtimes: 14 private Python venvs plus separate Promptfoo and T3MP3ST Node runtimes under `$URA_DATA/framework-venvs`. A passing row is left untouched. A missing, interrupted, new, or changed row alone proceeds through `resume --only NAME` and final verification. When `URA_FRAMEWORK_ADOPT_FROM_LOCK` explicitly names an exact retained prior lock, an aggregate-lock mismatch first attempts strict per-row adoption; only a byte-identical row with unchanged execution-global pins can be rebound without reinstalling. A failed row is retained, but every later row is still attempted; per-row statuses and honest `runtimes-install`/`runtimes-verify` aggregates make this phase and `all` exit nonzero when any row fails. The clean per-runtime homes use persistent caches at `$URA_DATA/framework-venvs/.cache/pip` and `.cache/npm`; caches never decide admission. Uses the same lock/roots as runbook 12.2 and Build -> Runtimes and requires the `deps` venv with exact CPython 3.12.13 as its base. |
 | `locators` | write every `URA_*_PATH` binding (incl. `URA_MEDIA_ROOTS`, `HF_HOME`, `PATH`) plus `URA_REPO` (the checkout) and `URA_PY` (`$URA_REPO/.venv/bin/python`, the interpreter the runbook's `ura_native_run` wrapper uses) into `~/.ura_campaign_env`; seed `experiments/source-instances.json` from `experiments/rig/source-instances.example.json` when absent and add only missing aggregator arms from that example. Existing operator-reviewed entries are never rewritten because `source_conformance` binds their converter, path, label, and split to the retained receipt; print an existence report |
 | `console` | (re)launch the rig console in persistent session `console` on `127.0.0.1:8642`, preferring tmux and falling back to screen, with the FULL login env (profile + secrets + campaign env + `~/.local/bin` on PATH) |
 | `summary` | per-step OK/FAIL report from the step ledger |
@@ -59,6 +59,21 @@ Run a subset by naming phases: `distro/install.sh clones hf aggregators locators
 
 `all` = deps clones hf archives bipia aggregators ollama runtimes locators
 console summary - the complete start-to-end installation.
+
+For an aggregate framework-lock transition, retain the exact old lock outside
+the checkout and opt into adoption explicitly:
+
+```bash
+export URA_FRAMEWORK_ADOPT_FROM_LOCK=/absolute/operator/path/framework_runtime_lock.previous.json
+distro/install.sh runtimes
+unset URA_FRAMEWORK_ADOPT_FROM_LOCK
+```
+
+The path must be an already-resolved absolute regular file. The installer never
+discovers a prior lock automatically. Adoption requires equal lock schema,
+platform, policy and runtime pins and an equal complete framework row, then
+rechecks its retained seal, exact inventory and offline smoke. Rows that do not
+qualify follow the ordinary resume/install path.
 
 ## Secrets
 

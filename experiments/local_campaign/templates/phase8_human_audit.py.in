@@ -4846,21 +4846,34 @@ def validate_native_completion(
         alias = Path(runtime["alias"])
         managed = Path(runtime["managed_store"])
         framework_env_root = expected_execution_paths["framework_env_root"]
-        expected_store = (
-            framework_env_root
-            / ".store"
-            / f"{expected_slug}-{EXPECTED_FRAMEWORK_LOCK[:16]}"
-        )
         if (
             not alias.is_absolute()
             or alias.parent != framework_env_root
             or alias.name != expected_slug
             or not alias.is_symlink()
+        ):
+            raise Phase8Error(f"{engine}: Phase 6 native runtime layout differs")
+        raw_target = Path(os.readlink(alias))
+        if (
+            raw_target.is_absolute()
+            or len(raw_target.parts) != 2
+            or raw_target.parts[0] != ".store"
+            or not re.fullmatch(
+                rf"{re.escape(expected_slug)}-[0-9a-f]{{16}}",
+                raw_target.parts[1],
+            )
+        ):
+            raise Phase8Error(f"{engine}: Phase 6 native runtime layout differs")
+        unresolved_store = framework_env_root / raw_target
+        store_root = (framework_env_root / ".store").resolve(strict=True)
+        if (
+            unresolved_store.is_symlink()
             or not managed.is_absolute()
-            or managed != expected_store
             or managed.is_symlink()
             or not managed.is_dir()
-            or alias.resolve(strict=True) != managed.resolve(strict=True)
+            or managed.parent != store_root
+            or managed.name != raw_target.parts[1]
+            or unresolved_store.resolve(strict=True) != managed
         ):
             raise Phase8Error(f"{engine}: Phase 6 native runtime layout differs")
         runtime_receipt_path, runtime_receipt = descriptor_object(

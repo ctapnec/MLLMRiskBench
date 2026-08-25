@@ -587,6 +587,93 @@ def test_native_diagnostics_distinguish_importer_from_canonical_engine() -> None
     assert 'native_import.get("native_engine") not in canonical_native_engine_ids(engine)' in source
 
 
+def _assert_direct_runtime_alias_contract(
+    source: str, *, receipt_lock_token: str
+) -> None:
+    required = (
+        "raw_target = Path(os.readlink(alias))",
+        "raw_target.is_absolute()",
+        "len(raw_target.parts) != 2",
+        'raw_target.parts[0] != ".store"',
+        "[0-9a-f]{{16}}",
+        "unresolved_store.is_symlink()",
+        receipt_lock_token,
+    )
+    for token in required:
+        assert token in source
+
+
+def test_campaign_runtime_consumers_accept_only_direct_receipt_bound_aliases() -> None:
+    templates = (
+        Path(__file__).parents[2] / "experiments" / "local_campaign" / "templates"
+    )
+    canary = (templates / "phase5_bridge_attest_canary.sh.in").read_text(
+        encoding="utf-8"
+    )
+    projection = (templates / "phase5_bridge_projections.sh.in").read_text(
+        encoding="utf-8"
+    )
+    extended = (templates / "phase6_extended_measured.sh.in").read_text(
+        encoding="utf-8"
+    )
+    native = (templates / "phase6_native_diagnostics.sh.in").read_text(
+        encoding="utf-8"
+    )
+    phase8 = (templates / "phase8_human_audit.py.in").read_text(encoding="utf-8")
+    blocks = (
+        (
+            canary.split("runtime_store() {", 1)[1].split("\nPY\n}", 1)[0],
+            '"lock_id": lock["lock_id"]',
+        ),
+        (
+            projection.split("runtime_store() {", 1)[1].split("\nPY\n}", 1)[0],
+            '"lock_id": lock["lock_id"]',
+        ),
+        (
+            extended.split("def managed_framework_store(", 1)[1].split(
+                "\n\ndef validate_runtime_config", 1
+            )[0],
+            '"lock_id": EXPECTED_LOCK',
+        ),
+        (
+            native.split('for engine in ORDER:', 1)[1].split(
+                "\nwith OllamaProcessLock", 1
+            )[0],
+            '"lock_id": lock_id',
+        ),
+        (
+            native.split("def validate_runtime(", 1)[1].split(
+                "\n\ndef validate_planned_ollama_models", 1
+            )[0],
+            'value.get("lock_id") != LOCK_ID',
+        ),
+        (
+            phase8.split('alias = Path(runtime["alias"])', 1)[1].split(
+                "\n    plan_by_engine", 1
+            )[0],
+            'runtime_receipt.get("lock_id") != EXPECTED_FRAMEWORK_LOCK',
+        ),
+    )
+    for block, receipt_lock_token in blocks:
+        _assert_direct_runtime_alias_contract(
+            block, receipt_lock_token=receipt_lock_token
+        )
+        assert "EXPECTED_FRAMEWORK_LOCK:0:16" not in block
+        assert "EXPECTED_LOCK[:16]" not in block
+        assert "LOCK_ID[:16]" not in block
+        assert "lock_id[:16]" not in block
+        mutated = block.replace(
+            'raw_target.parts[0] != ".store"',
+            'raw_target.parts[0] == ".store"',
+            1,
+        )
+        assert mutated != block
+        with pytest.raises(AssertionError):
+            _assert_direct_runtime_alias_contract(
+                mutated, receipt_lock_token=receipt_lock_token
+            )
+
+
 def test_gptgeochat_rwkv_cross_products_are_exact_typed_terminals() -> None:
     root = Path(__file__).parents[2] / "experiments" / "local_campaign" / "templates"
     lanes = (

@@ -100,7 +100,7 @@ def test_operator_docs_and_requirements_share_the_global_runtime_entrypoint() ->
     assert 'ENGINEERING_ONLY.json"' in runbook
     assert "ura_abort_native_session 124" in runbook
     assert "ura_native_support_run petri-convert" in runbook
-    assert 'ura_wait_session "$URA_FRAMEWORK_SESSION_JSON" || exit $?' in runbook
+    assert 'ura_wait_session "$payload"' in runbook
     # The native wrappers resolve the URA interpreter through URA_PY (section 2),
     # never through a path under the data root URA_WORK (P2-02).
     assert 'export URA_REPO="$HOME/MLLMRiskBench"' in runbook

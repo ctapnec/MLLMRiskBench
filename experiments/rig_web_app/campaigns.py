@@ -233,7 +233,7 @@ def _framework_named_session_spec(
         if sessions.parent != directory or not stat.S_ISDIR(sessions.lstat().st_mode):
             return None
         pattern = re.compile(
-            rf"ura-framework-(?:install|resume|verify)-{lock_id[:8]}-"
+            rf"ura-framework-(?:install|resume|verify|adopt)-{lock_id[:8]}-"
             r"(?:all|[0-9a-f]{8})-[0-9a-f]{10}\.log\Z"
         )
         session_logs: list[tuple[int, float, Path]] = []

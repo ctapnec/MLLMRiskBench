@@ -345,6 +345,8 @@ class BuilderPageMixin:
                     )
                 elif latest.status == "passed" and latest.action in {"install", "resume"}:
                     history = f"Publish verification passed{when}. " + history
+                elif latest.status == "passed" and latest.action == "adopt":
+                    history = f"Runtime adoption and verification passed{when}. " + history
                 elif latest.status == "failed":
                     attempted = latest.action or "installer action"
                     history = f"Last {attempted} failed{when}. " + history

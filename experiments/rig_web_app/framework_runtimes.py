@@ -31,8 +31,9 @@ from ura.strict_json import strict_json_loads
 from .campaigns import load_engineering_campaign
 
 
-_ACTIONS = {"install", "resume", "verify"}
-_PLAN_ACTIONS = _ACTIONS | {"blocked-existing-unverified"}
+_UI_ACTIONS = {"install", "resume", "verify"}
+_OBSERVED_ACTIONS = _UI_ACTIONS | {"adopt"}
+_PLAN_ACTIONS = _UI_ACTIONS | {"blocked-existing-unverified"}
 _SAFE_TOKEN = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,255}\Z")
 _MAX_DISPATCH_OUTPUT = 64 * 1024
 _MAX_EVENT_LOG = 512 * 1024
@@ -208,7 +209,7 @@ class FrameworkRuntimeService:
             at = event.get("at") if isinstance(event.get("at"), str) else ""
             detail = event.get("detail") if isinstance(event.get("detail"), str) else ""
             detail = detail if _SAFE_TOKEN.fullmatch(detail) else ""
-            if event.get("event") == "task_start" and detail in _ACTIONS:
+            if event.get("event") == "task_start" and detail in _OBSERVED_ACTIONS:
                 attempts[framework] = RuntimeAttempt(detail, "running", at[:40], "")
             elif event.get("event") == "task_end":
                 previous = attempts.get(framework)
@@ -285,7 +286,7 @@ class FrameworkRuntimeService:
         return resolved
 
     def launch(self, framework: str, action: str) -> FrameworkRuntimeLaunch:
-        if _SAFE_TOKEN.fullmatch(framework) is None or action not in _ACTIONS:
+        if _SAFE_TOKEN.fullmatch(framework) is None or action not in _UI_ACTIONS:
             raise FrameworkRuntimeError("unsupported framework runtime action")
         snapshot = self.snapshot()
         if not snapshot.available:
@@ -393,6 +394,6 @@ def runtime_action_form(data: Mapping[str, str]) -> tuple[str, str]:
         raise FrameworkRuntimeError("runtime action requires exactly framework and action")
     framework = data["framework"]
     action = data["action"]
-    if _SAFE_TOKEN.fullmatch(framework) is None or action not in _ACTIONS:
+    if _SAFE_TOKEN.fullmatch(framework) is None or action not in _UI_ACTIONS:
         raise FrameworkRuntimeError("unsupported framework runtime action")
     return framework, action

@@ -266,17 +266,59 @@ PY
 }
 
 runtime_store() {
-  local name="$1" slug alias store
-  slug="$(lock_field "$name" env_slug)"
-  alias="$URA_FRAMEWORK_ENVS/$slug"
-  test -L "$alias"
-  store="$(readlink -f -- "$alias")"
-  case "$store" in
-    "$URA_FRAMEWORK_ENVS"/.store/*-"${EXPECTED_FRAMEWORK_LOCK:0:16}") ;;
-    *) printf 'unexpected runtime store for %s: %s\n' "$name" "$store" >&2; return 1 ;;
-  esac
-  test -x "$store/bin/python"
-  printf '%s\n' "$store"
+  "$PY" - "$1" <<'PY'
+import json
+import os
+from pathlib import Path
+import re
+import sys
+
+from experiments.framework_runtime_installer import Layout, load_lock, published_store
+
+name = sys.argv[1]
+lock = load_lock(Path(os.environ["URA_FRAMEWORK_LOCK"]))
+rows = [row for row in lock["frameworks"] if row.get("name") == name]
+if len(rows) != 1:
+    raise SystemExit(f"expected one framework lock row for {name}, found {len(rows)}")
+entry = rows[0]
+env_root = Path(os.environ["URA_FRAMEWORK_ENVS"]).resolve(strict=True)
+layout = Layout(env_root, Path(os.environ["URA_FRAMEWORK_STATE"]))
+store = published_store(entry, lock, layout)
+alias = layout.final(entry["env_slug"])
+raw_target = Path(os.readlink(alias))
+unresolved_store = env_root / raw_target
+if (
+    raw_target.is_absolute()
+    or len(raw_target.parts) != 2
+    or raw_target.parts[0] != ".store"
+    or not re.fullmatch(
+        rf"{re.escape(entry['env_slug'])}-[0-9a-f]{{16}}", raw_target.parts[1]
+    )
+    or unresolved_store.is_symlink()
+    or unresolved_store.resolve(strict=True) != store
+):
+    raise SystemExit(f"{name}: stable runtime alias is not a direct managed-store link")
+receipt = json.loads((store / ".ura-runtime-receipt.json").read_bytes())
+expected = {
+    "schema": "ura-framework-runtime-receipt/1",
+    "lock_id": lock["lock_id"],
+    "framework": name,
+    "version": entry["version"],
+    "env_slug": entry["env_slug"],
+    "runtime": entry["runtime"],
+    "status": "passed",
+    "smoke": "passed",
+    "network_smoke": "denied",
+    "provider_calls": 0,
+    "model_calls": 0,
+}
+if any(receipt.get(key) != value for key, value in expected.items()):
+    raise SystemExit(f"{name}: current runtime receipt identity is invalid")
+interpreter = store / "bin" / "python"
+if not interpreter.is_file() or not os.access(interpreter, os.X_OK):
+    raise SystemExit(f"{name}: runtime interpreter is absent")
+print(store)
+PY
 }
 
 make_runtime_config() {

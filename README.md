@@ -60,17 +60,17 @@ distro/install.sh all
 
 That single entry point installs the main URA environment, corpora and pinned
 Ollama runtime, builds BIPIA through its own fully hashed support venv, and
-resumes and verifies all 16 locked third-party framework runtimes in separate
+manages all 16 locked third-party framework runtimes in separate
 content-addressed stores (14 private Python virtual environments and two private
 Node runtimes, Promptfoo and T3MP3ST) from
-`experiments/framework_runtime_lock.json`. Each of the 16 runtimes gets its own
-sequential `--only` named session, so one failure
-is recorded without hiding later runtime results; the aggregate phase still
-fails honestly. The installer writes the campaign locators, seeds only missing
-aggregator source-registry entries, and never rewrites receipt-bound operator
-choices. It starts the console in tmux, or screen when tmux is unavailable.
-Re-running the same command safely resumes interrupted staged installs. The
-phase-by-phase form and recovery rules are in
+`experiments/framework_runtime_lock.json`. It verifies every runtime before any
+mutation, leaves a passing installation untouched, and resumes only a missing,
+interrupted, new, or changed row. Each runtime gets its own sequential `--only`
+named session, so one failure is recorded without hiding later runtime results;
+the aggregate phase still fails honestly. The installer writes the campaign
+locators, seeds only missing aggregator source-registry entries, and never
+rewrites receipt-bound operator choices. It starts the console in tmux, or
+screen when tmux is unavailable. The phase-by-phase form and recovery rules are in
 [`distro/README.md`](distro/README.md) and use the same roots and lock as the
 [operator runbook](experiments/RUN_AND_RETURN.md).
 
@@ -117,7 +117,7 @@ instead uses `distro/bipia-build-requirements.lock` in
 [`experiments/framework_runtime_lock.json`](experiments/framework_runtime_lock.json)
 is the sole dependency/source/runtime manifest for all 16 managed attack,
 preparation, and native-framework runtimes. Use
-`python -m experiments.framework_runtime_installer plan|install|resume|verify`
+`python -m experiments.framework_runtime_installer plan|install|resume|verify|adopt`
 with an exact CPython 3.12.13 base interpreter; never install those packages in
 the main URA venv. Each long mutating/verification action automatically runs in
 a credential-free named tmux session (screen is the only fallback), publishes
@@ -131,6 +131,22 @@ Clean per-runtime homes bind explicit persistent package caches at
 `$URA_WORK/framework-venvs/.cache/{pip,npm}`. Cache bytes are download
 optimizations only; hashed locks, exact inventories, smoke checks, and content
 seals remain authoritative.
+
+An aggregate lock identity can change when one runtime is added even though the
+other complete framework rows are byte-identical. Retain the exact prior lock at
+an operator-private, already-resolved absolute path and opt in explicitly:
+
+```bash
+export URA_FRAMEWORK_ADOPT_FROM_LOCK=/absolute/operator/path/framework_runtime_lock.previous.json
+distro/install.sh runtimes
+unset URA_FRAMEWORK_ADOPT_FROM_LOCK
+```
+
+Adoption is never inferred. For each selected row, it requires identical lock
+schema, platform, policy and runtime pins plus an identical complete framework
+entry. It then checks the retained content seal, exact inventory and offline
+smoke before rebinding the receipt. A new or changed row is resumed normally;
+an already-current row is only verified.
 
 Dry-run and synthetic output are plumbing evidence only and cannot enter the
 thesis results. This explicit offline form records

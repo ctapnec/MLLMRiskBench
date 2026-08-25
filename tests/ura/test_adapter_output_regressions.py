@@ -968,14 +968,25 @@ def test_t3mp3st_runtime_provenance_comes_from_verified_store_receipt(
         "url": "https://github.com/elder-plinius/T3MP3ST.git",
     }
     lock = {"lock_id": lock_id}
-    entry = {"env_slug": "t3mp3st", "source": source}
+    entry = {
+        "name": "t3mp3st",
+        "version": "1.0.0",
+        "env_slug": "t3mp3st",
+        "runtime": "node",
+        "source": source,
+    }
     lock_raw = b"validated-lock-fixture\n"
     env_root = tmp_path / "envs"
     state_root = tmp_path / "state"
     env_root.mkdir()
     state_root.mkdir()
-    store = env_root / ".store" / f"t3mp3st-{lock_id[:16]}"
+    # Adoption deliberately leaves the immutable payload under its old
+    # aggregate-lock pathname. The current alias/receipt must be authoritative.
+    store = env_root / ".store" / f"t3mp3st-{'6' * 16}"
     store.mkdir(parents=True)
+    (env_root / "t3mp3st").symlink_to(
+        Path(".store") / store.name, target_is_directory=True
+    )
     document = _t3_runtime_receipt()
     (store / ".ura-runtime-receipt.json").write_bytes(
         (json.dumps(document, sort_keys=True, separators=(",", ":")) + "\n").encode()

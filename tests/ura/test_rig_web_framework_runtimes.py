@@ -181,6 +181,7 @@ def test_runtime_post_is_exact_and_does_not_create_console_job(tmp_path: Path) -
             {"framework": "deepteam"},
             {"framework": "deepteam", "action": "install", "path": "/tmp/x"},
             {"framework": "deepteam", "action": "shell"},
+            {"framework": "deepteam", "action": "adopt"},
             {"framework": "../deepteam", "action": "install"},
         ):
             rejected, _kind, rejected_body = app.handle(
@@ -682,6 +683,127 @@ def test_installer_campaign_uses_its_exact_named_session_liveness(
         assert detail_fragment in detail
     else:
         assert observed.state_detail == ""
+
+
+def test_installer_campaign_observes_newer_adopt_session_not_prior_verify(
+    tmp_path: Path,
+) -> None:
+    from experiments.rig_web_app.campaigns import _framework_named_session_spec
+
+    lock_id = "c" * 64
+    route = f"framework-runtime-{lock_id[:12]}"
+    campaign = tmp_path / route
+    sessions = campaign / "sessions"
+    sessions.mkdir(parents=True)
+    started_epoch = time.time() - 60
+    prior = "ura-framework-verify-cccccccc-e90e4460-1111111111"
+    current = "ura-framework-adopt-cccccccc-e90e4460-2222222222"
+    for session, modified in (
+        (prior, started_epoch + 1),
+        (current, started_epoch + 2),
+    ):
+        log = sessions / f"{session}.log"
+        log.write_text(
+            "[command] executable=python argc=17 cwd=default\n", encoding="utf-8"
+        )
+        (sessions / f"{session}.home").mkdir()
+        os.utime(log, (modified, modified))
+
+    observed = _framework_named_session_spec(
+        campaign,
+        {
+            "campaign_id": route,
+            "evidence_class": "framework_runtime_setup",
+            "model_tasks": [],
+            "runtime_lock_id": lock_id,
+            "target_call_cap": 0,
+        },
+        started_at=started_epoch,
+    )
+    socket = f"ura-fw-{hashlib.sha256(current.encode('ascii')).hexdigest()[:16]}"
+    assert observed is not None
+    assert (observed.launcher, observed.socket, observed.session) == (
+        "auto",
+        socket,
+        current,
+    )
+
+
+def test_adopt_task_completion_replaces_prior_verify_but_is_not_launchable(
+    tmp_path: Path,
+) -> None:
+    state_root = tmp_path / "campaign"
+    state_root.mkdir()
+    events = (
+        {
+            "at": "2026-08-20T10:00:00Z",
+            "event": "task_start",
+            "task": "framework-runtime-pyrit",
+            "status": "running",
+            "detail": "verify",
+        },
+        {
+            "at": "2026-08-20T10:00:01Z",
+            "event": "task_end",
+            "task": "framework-runtime-pyrit",
+            "status": "passed",
+            "detail": "verified",
+        },
+        {
+            "at": "2026-08-20T10:01:00Z",
+            "event": "task_start",
+            "task": "framework-runtime-pyrit",
+            "status": "running",
+            "detail": "adopt",
+        },
+        {
+            "at": "2026-08-20T10:01:01Z",
+            "event": "task_end",
+            "task": "framework-runtime-pyrit",
+            "status": "passed",
+            "detail": "adopted-verified",
+        },
+    )
+    (state_root / "task-log.jsonl").write_text(
+        "".join(json.dumps(row) + "\n" for row in events), encoding="utf-8"
+    )
+    latest = FrameworkRuntimeService._latest_attempts(state_root)
+    assert latest == {
+        "pyrit": RuntimeAttempt(
+            "adopt", "passed", "2026-08-20T10:01:01Z", "adopted-verified"
+        )
+    }
+
+    service = _FakeRuntimeService(
+        replace(
+            _snapshot(),
+            rows=(replace(_snapshot().rows[1], latest=latest["pyrit"]),),
+        )
+    )
+    app = _app(tmp_path, service)
+    try:
+        status, _kind, body = app.handle("GET", "/build#build-runtimes")
+        rejected, _kind, rejected_body = app.handle(
+            "POST",
+            "/build/framework-runtimes",
+            {"framework": "pyrit", "action": "adopt"},
+        )
+    finally:
+        app.close()
+
+    runtime_html = body.decode("utf-8").split(
+        "data-page-panel='build-runtimes'", 1
+    )[1]
+    runtime_html = runtime_html.split(
+        "<form method='post' action='/build' id='builder'>", 1
+    )[0]
+    assert status == 200
+    assert "Runtime adoption and verification passed" in runtime_html
+    assert "name='action' value='verify'" in runtime_html
+    assert "name='action' value='adopt'" not in runtime_html
+    assert rejected == 400
+    assert b"Runtime action was not launched" in rejected_body
+    assert service.calls == []
 
 
 # --------------------------------------------------------------------------- #

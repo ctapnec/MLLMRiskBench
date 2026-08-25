@@ -35,7 +35,8 @@
 #
 # Env overrides: URA_DATA (default /data/ura-work), URA_ROOT (repo, autodetected),
 # URA_PYTHON (interpreter used to create the venv), URA_PY_EXTRAS (default
-# "dev,analysis,api,guardrail,local-vllm").
+# "dev,analysis,api,guardrail,local-vllm"), and the optional explicit
+# URA_FRAMEWORK_ADOPT_FROM_LOCK (already-resolved absolute prior lock path).
 set -uo pipefail
 
 # --------------------------------------------------------------------------- #
@@ -126,6 +127,26 @@ skip_step() { # name reason -- records OK so the ledger stays truthful on re-run
   echo OK > "$LOG/$name.status"; : > "$LOG/$name.done"
   echo "SKIP $name" >> "$SESSION_LEDGER"
   echo "  [skip] $name ($reason)"
+}
+
+probe_step() { # name cmd... -- a failed applicability probe is not a final failure
+  local name=$1 rc; shift
+  echo "=== $name probe: $(date -u +%FT%TZ) ===" >> "$LOG/$name.log"
+  : > "$LOG/$name.running"
+  if "$@" >> "$LOG/$name.log" 2>&1; then
+    echo OK > "$LOG/$name.status"; : > "$LOG/$name.done"
+    echo "OK $name" >> "$SESSION_LEDGER"; echo "  [ok]   $name"
+    rc=0
+  else
+    rc=$?
+    # A missing/current-lock-mismatched runtime is an expected verify-first
+    # miss. Do not leave a historical FAIL status or poison this invocation's
+    # ledger when the row can still be strictly adopted or resumed below.
+    rm -f "$LOG/$name.status" "$LOG/$name.done"
+    echo "  [miss] $name (exit $rc; see $LOG/$name.log)"
+  fi
+  rm -f "$LOG/$name.running"
+  return "$rc"
 }
 
 # A step may be skipped only when its own completion sentinel exists, or when
@@ -978,15 +999,25 @@ ensure_env_line() { # VAR value -- append 'export VAR="value"' to the campaign e
   printf 'export %s="%s"\n' "$var" "$value" >> "$CAMPAIGN_ENV"
 }
 
-runtimes_session() { # command lock env-root state-root python framework -- launch and wait
+runtimes_session() { # command lock env-root state-root python framework [prior-lock]
   # The installer runs inside its own named tmux/screen session and returns a
   # session JSON immediately; this waits for the session's terminal exit marker
   # exactly as the runbook's ura_wait_session does (168 h deadline, liveness
   # probe) and returns the inner exit code, so run_step ledgers the real result.
-  local command=$1 lock=$2 env_root=$3 state_root=$4 python=$5 framework=$6 session_json
-  session_json=$( cd "$URA_ROOT" && "$PY" -m experiments.framework_runtime_installer "$command" \
-      --lock "$lock" --env-root "$env_root" --state-root "$state_root" --python "$python" \
-      --only "$framework" ) || return 1
+  local command=$1 lock=$2 env_root=$3 state_root=$4 python=$5 framework=$6
+  local prior_lock=${7:-} session_json
+  local -a runtime_args=(
+    --lock "$lock" --env-root "$env_root" --state-root "$state_root" --python "$python"
+  )
+  if [ "$command" = adopt ]; then
+    [ -n "$prior_lock" ] || return 2
+    runtime_args+=(--from-lock "$prior_lock")
+  elif [ -n "$prior_lock" ]; then
+    return 2
+  fi
+  runtime_args+=(--only "$framework")
+  session_json=$( cd "$URA_ROOT" && "$PY" -m experiments.framework_runtime_installer \
+      "$command" "${runtime_args[@]}" ) || return 1
   printf '%s\n' "$session_json"
   "$PY" - "$session_json" "$state_root" <<'PYEOF'
 import hashlib, json, re, shutil, subprocess, sys, time
@@ -1049,6 +1080,7 @@ phase_runtimes() {
   # $URA_WORK/runs/engineering/framework-runtime-<lock_id[:12]>, and the venv's
   # base interpreter (exact CPython 3.12.13; the installer fails closed otherwise).
   local lock="$URA_ROOT/experiments/framework_runtime_lock.json" lock_id base_python base_version
+  local adopt_from_lock=${URA_FRAMEWORK_ADOPT_FROM_LOCK:-} adopt_from_lock_resolved
   local -a lock_rows frameworks
   # The lock is read with the venv interpreter: without the venv the real
   # cause is the missing deps phase, not an unreadable lock - say so.
@@ -1091,6 +1123,17 @@ PYEOF
   echo "  env-root $env_root"
   echo "  state-root $state_root"
   echo "  python $base_python ($base_version)"
+  if [ -n "$adopt_from_lock" ]; then
+    case "$adopt_from_lock" in
+      /*) ;;
+      *) echo "  [FAIL] runtimes-plan (URA_FRAMEWORK_ADOPT_FROM_LOCK must be absolute)"; echo "FAIL runtimes-plan" >> "$SESSION_LEDGER"; return 1 ;;
+    esac
+    adopt_from_lock_resolved=$(readlink -f -- "$adopt_from_lock" 2>/dev/null) \
+      || { echo "  [FAIL] runtimes-plan (cannot resolve URA_FRAMEWORK_ADOPT_FROM_LOCK)"; echo "FAIL runtimes-plan" >> "$SESSION_LEDGER"; return 1; }
+    [ "$adopt_from_lock_resolved" = "$adopt_from_lock" ] && [ -f "$adopt_from_lock" ] \
+      || { echo "  [FAIL] runtimes-plan (URA_FRAMEWORK_ADOPT_FROM_LOCK must be an already-resolved regular file)"; echo "FAIL runtimes-plan" >> "$SESSION_LEDGER"; return 1; }
+    echo "  explicit prior lock $adopt_from_lock"
+  fi
   run_step runtimes-plan bash -c \
     'cd "$1" && exec "$2" -m experiments.framework_runtime_installer plan --lock "$3" --env-root "$4" --state-root "$5"' \
     _ "$URA_ROOT" "$PY" "$lock" "$env_root" "$state_root"
@@ -1098,20 +1141,30 @@ PYEOF
     echo "  runtimes not started because strict lock planning failed"
     return 1
   fi
-  # `resume` is the safe universal entry point: it builds an absent store, repairs
-  # an interrupted stage phase-by-phase, and re-verifies an already published
-  # runtime. Fresh-only `install` would strand a staged store after an SSH or
-  # host interruption even though the plan above correctly reports `resume`.
-  # One framework per named session prevents one incompatible package set from
-  # terminating the global pass before the other independent stores are tried.
-  # Every successful resume is immediately verified; failures are retained per
-  # framework and the loop continues through the complete locked inventory.
-  local framework install_step verify_step install_failed=0 verify_failed=0
+  # Verify before any mutation. A current installation that passes is left
+  # untouched. Across an aggregate lock change, adoption is attempted only when
+  # the operator supplies the exact prior lock; the installer itself proves the
+  # execution-global pins and complete row are identical. `resume` remains the
+  # recovery/install path only for an absent, interrupted, new, or changed row.
+  # One framework per named session keeps failures isolated and observable.
+  local framework install_step verify_step adopt_step install_failed=0 verify_failed=0
   for framework in "${frameworks[@]}"; do
     install_step="runtime-${framework}-install"
     verify_step="runtime-${framework}-verify"
-    run_step "$install_step" runtimes_session resume "$lock" "$env_root" \
-      "$state_root" "$base_python" "$framework"
+    adopt_step="runtime-${framework}-adopt"
+    if probe_step "$verify_step" runtimes_session verify "$lock" "$env_root" \
+      "$state_root" "$base_python" "$framework"; then
+      skip_step "$install_step" "current installation passed strict verification"
+      continue
+    fi
+    if [ -n "$adopt_from_lock" ] \
+      && probe_step "$adopt_step" runtimes_session adopt "$lock" "$env_root" \
+        "$state_root" "$base_python" "$framework" "$adopt_from_lock"; then
+      skip_step "$install_step" "unchanged prior-lock installation strictly adopted"
+    else
+      run_step "$install_step" runtimes_session resume "$lock" "$env_root" \
+        "$state_root" "$base_python" "$framework"
+    fi
     if grep -q '^OK' "$LOG/$install_step.status" 2>/dev/null; then
       run_step "$verify_step" runtimes_session verify "$lock" "$env_root" \
         "$state_root" "$base_python" "$framework"
@@ -1121,7 +1174,7 @@ PYEOF
       verify_failed=1
       echo "FAIL:install" > "$LOG/$verify_step.status"
       rm -f "$LOG/$verify_step.done"
-      echo "  [skip] $verify_step (that framework's resume failed; later frameworks continue)"
+      echo "  [skip] $verify_step (that framework's adoption/resume failed; later frameworks continue)"
     fi
   done
 

@@ -96,14 +96,22 @@ and state-root conventions (`URA_FRAMEWORK_ENVS=$URA_WORK/framework-venvs`,
 ```bash
 distro/install.sh runtimes
 
-# The equivalent manual unit for one lock-derived name is:
+# The equivalent manual unit verifies before any mutation:
+python -m experiments.framework_runtime_installer verify --only pyrit --lock "$URA_FRAMEWORK_LOCK" --env-root "$URA_FRAMEWORK_ENVS" --state-root "$URA_FRAMEWORK_STATE" --python "$URA_FRAMEWORK_PYTHON"
+# Across an aggregate-lock change, an unchanged row may be adopted only from
+# an explicit retained prior lock after exact row/global-pin and seal checks:
+python -m experiments.framework_runtime_installer adopt --from-lock "$URA_FRAMEWORK_ADOPT_FROM_LOCK" --only pyrit --lock "$URA_FRAMEWORK_LOCK" --env-root "$URA_FRAMEWORK_ENVS" --state-root "$URA_FRAMEWORK_STATE" --python "$URA_FRAMEWORK_PYTHON"
+# Use resume only for a missing, interrupted, new or changed row, then verify:
 python -m experiments.framework_runtime_installer resume --only pyrit --lock "$URA_FRAMEWORK_LOCK" --env-root "$URA_FRAMEWORK_ENVS" --state-root "$URA_FRAMEWORK_STATE" --python "$URA_FRAMEWORK_PYTHON"
-# wait for its named tmux/screen session, then use the identical selection:
 python -m experiments.framework_runtime_installer verify --only pyrit --lock "$URA_FRAMEWORK_LOCK" --env-root "$URA_FRAMEWORK_ENVS" --state-root "$URA_FRAMEWORK_STATE" --python "$URA_FRAMEWORK_PYTHON"
 ```
 
 Run one installer session per framework with `--only <name>`, tolerating a
-failure and continuing, rather than a single session for all sixteen. The
+failure and continuing, rather than a single session for all sixteen. Every row
+is verified first. A passing current installation is left untouched; strict
+adoption is explicit and applies only when the complete prior/current row and
+execution-global pins are identical; installation/resume is reserved for a
+genuinely missing, interrupted, new or changed row. The
 installer is fail-closed and sequential, so one framework that cannot build
 stops the whole session and hides every later defect: on 20 August a single
 failing smoke blocked the twelve frameworks queued behind it, and a second,

@@ -1324,9 +1324,25 @@ for engine in ORDER:
     alias = env_root / entry["env_slug"]
     if not alias.is_symlink():
         raise SystemExit(f"{runtime_name}: stable runtime alias is not a symlink")
-    managed = alias.resolve(strict=True)
-    expected_store = store_root / f'{entry["env_slug"]}-{lock_id[:16]}'
-    if managed != expected_store or managed.parent != store_root:
+    raw_target = Path(os.readlink(alias))
+    if (
+        raw_target.is_absolute()
+        or len(raw_target.parts) != 2
+        or raw_target.parts[0] != ".store"
+        or not re.fullmatch(
+            rf"{re.escape(entry['env_slug'])}-[0-9a-f]{{16}}",
+            raw_target.parts[1],
+        )
+    ):
+        raise SystemExit(f"{runtime_name}: runtime alias is not one direct managed-store link")
+    unresolved_store = env_root / raw_target
+    managed = unresolved_store.resolve(strict=True)
+    if (
+        unresolved_store.is_symlink()
+        or not managed.is_dir()
+        or managed.parent != store_root
+        or managed.name != raw_target.parts[1]
+    ):
         raise SystemExit(f"{runtime_name}: runtime alias escaped the exact managed store")
     receipt_path = managed / ".ura-runtime-receipt.json"
     receipt = strict_json_loads(receipt_path.read_bytes())
@@ -3311,13 +3327,26 @@ def validate_runtime(runtime: Mapping[str, Any], engine: str) -> None:
         raise ValueError(f"{engine}: exact runtime identity changed")
     alias = Path(runtime["alias"])
     managed = Path(runtime["managed_store"])
-    expected_store_name = f"{runtime['env_slug']}-{LOCK_ID[:16]}"
+    if not alias.is_symlink() or alias.name != runtime["env_slug"]:
+        raise ValueError(f"{engine}: stable runtime alias changed")
+    raw_target = Path(os.readlink(alias))
     if (
-        not alias.is_symlink()
-        or alias.name != runtime["env_slug"]
-        or alias.resolve(strict=True) != managed
+        raw_target.is_absolute()
+        or len(raw_target.parts) != 2
+        or raw_target.parts[0] != ".store"
+        or not re.fullmatch(
+            rf"{re.escape(runtime['env_slug'])}-[0-9a-f]{{16}}",
+            raw_target.parts[1],
+        )
+    ):
+        raise ValueError(f"{engine}: stable runtime alias changed")
+    unresolved_store = alias.parent / raw_target
+    if (
+        unresolved_store.is_symlink()
+        or unresolved_store.resolve(strict=True) != managed
+        or not managed.is_dir()
         or managed.parent.name != ".store"
-        or managed.name != expected_store_name
+        or managed.name != raw_target.parts[1]
     ):
         raise ValueError(f"{engine}: stable runtime alias changed")
     receipt_row = runtime["receipt"]

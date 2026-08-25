@@ -1064,10 +1064,7 @@ def canonical_python_interpreter(
 
     if entry.get("runtime") != "python":
         raise InstallerError("canonical Python handoff requires a Python runtime")
-    store = layout.store(str(entry["env_slug"]), str(lock["lock_id"]))
-    alias = layout.final(str(entry["env_slug"]))
-    if not _alias_points_to(alias, store):
-        raise InstallerError(f"published runtime alias is invalid: {entry['env_slug']}")
+    store = published_store(entry, lock, layout)
     interpreter = store / ("Scripts/python.exe" if os.name == "nt" else "bin/python")
     try:
         info = interpreter.lstat()
@@ -2523,9 +2520,47 @@ def _receipt_matches(receipt: Mapping[str, Any] | None, entry: Mapping[str, Any]
         and content_seal.get("schema") == CONTENT_SEAL_SCHEMA
         and receipt.get("lock_id") == lock_id
         and receipt.get("framework") == entry["name"]
+        and receipt.get("version") == entry["version"]
         and receipt.get("env_slug") == entry["env_slug"]
+        and receipt.get("runtime") == entry["runtime"]
+        and isinstance(receipt.get("inventory_sha256"), str)
+        and SHA256.fullmatch(str(receipt["inventory_sha256"]))
+        and type(receipt.get("distribution_count")) is int
+        and receipt["distribution_count"] >= 0
+        and receipt.get("pip_check")
+        == ("passed" if entry["runtime"] == "python" else "not-applicable")
+        and receipt.get("smoke") == "passed"
+        and type(receipt.get("provider_calls")) is int
+        and receipt["provider_calls"] == 0
+        and type(receipt.get("model_calls")) is int
+        and receipt["model_calls"] == 0
+        and receipt.get("network_smoke") == "denied"
+        and set(content_seal) == {"schema", "sha256", "file_count", "byte_count"}
+        and isinstance(content_seal.get("sha256"), str)
+        and SHA256.fullmatch(str(content_seal["sha256"]))
+        and type(content_seal.get("file_count")) is int
+        and content_seal["file_count"] >= 0
+        and type(content_seal.get("byte_count")) is int
+        and content_seal["byte_count"] >= 0
         and receipt.get("status") == "passed"
     )
+
+
+def published_store(
+    entry: Mapping[str, Any], lock: Mapping[str, Any], layout: Layout
+) -> Path:
+    """Resolve one managed alias whose receipt is bound to the current lock.
+
+    The payload directory can retain an older aggregate-lock suffix after an
+    explicit adoption. Its current receipt and immutable content seal, not that
+    historical construction pathname, authorize the stable alias.
+    """
+
+    managed = _managed_alias_target(layout, str(entry["env_slug"]))
+    receipt = _read_receipt(managed) if managed is not None else None
+    if managed is None or not _receipt_matches(receipt, entry, str(lock["lock_id"])):
+        raise InstallerError(f"published runtime alias is invalid: {entry['env_slug']}")
+    return managed
 
 
 def plan(lock: Mapping[str, Any], layout: Layout, entries: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
@@ -2533,8 +2568,12 @@ def plan(lock: Mapping[str, Any], layout: Layout, entries: Sequence[Mapping[str,
     for entry in entries:
         final = layout.final(entry["env_slug"])
         store = layout.store(entry["env_slug"], lock["lock_id"])
-        receipt = _read_receipt(final) if _alias_points_to(final, store) else None
-        if _receipt_matches(receipt, entry, lock["lock_id"]):
+        try:
+            published_store(entry, lock, layout)
+            current = True
+        except InstallerError:
+            current = False
+        if current:
             action = "verify"
         elif _path_exists(final) and _managed_alias_target(layout, entry["env_slug"]) is None:
             action = "blocked-existing-unverified"
@@ -2628,13 +2667,111 @@ def _verify_published(
     # application directory, so every verification changed the content the seal
     # covers and the next one failed against its own receipt. A scratch home
     # outside the environment keeps the check read-only.
+    # Validate the old immutable seal before executing any code from the
+    # retained runtime. Recheck it afterwards to prove the smoke was read-only.
+    _verify_content_seal(managed, receipt, entry["name"])
     with tempfile.TemporaryDirectory(prefix="ura-runtime-verify-") as scratch:
         runner = _runner(layout, entry, managed, log_prefix, home=Path(scratch))
         verification = _verify_runtime(entry, managed, runner)
     if receipt.get("inventory_sha256") != verification["inventory_sha256"]:
         raise InstallerError(f"receipt inventory mismatch for {entry['name']}")
+    receipt_count = receipt.get("distribution_count")
+    verification_count = verification.get("distribution_count")
+    if (
+        type(receipt_count) is not int
+        or type(verification_count) is not int
+        or receipt_count != verification_count
+    ):
+        raise InstallerError(f"receipt distribution count mismatch for {entry['name']}")
     _verify_content_seal(managed, receipt, entry["name"])
     return verification
+
+
+def _adoption_entry(
+    entry: Mapping[str, Any],
+    lock: Mapping[str, Any],
+    previous_lock: Mapping[str, Any],
+) -> Mapping[str, Any]:
+    """Prove that an old receipt describes this exact current runtime row."""
+
+    for field in ("schema", "platform", "policy", "runtimes"):
+        if _canonical_json(previous_lock.get(field)) != _canonical_json(lock.get(field)):
+            raise InstallerError(f"previous lock execution-global field differs: {field}")
+    current = [
+        item
+        for item in lock.get("frameworks", [])
+        if isinstance(item, Mapping) and item.get("name") == entry["name"]
+    ]
+    if len(current) != 1 or _canonical_json(current[0]) != _canonical_json(entry):
+        raise InstallerError(f"current lock entry differs for {entry['name']}")
+    previous = [
+        item
+        for item in previous_lock.get("frameworks", [])
+        if isinstance(item, Mapping) and item.get("name") == entry["name"]
+    ]
+    if len(previous) != 1:
+        raise InstallerError(f"previous lock has no unique entry for {entry['name']}")
+    if _canonical_json(previous[0]) != _canonical_json(entry):
+        raise InstallerError(f"previous lock entry differs for {entry['name']}")
+    return previous[0]
+
+
+def _bind_store_state(
+    store: Path, entry: Mapping[str, Any], lock: Mapping[str, Any]
+) -> None:
+    state = _read_state(store)
+    state.update(
+        {
+            "lock_id": lock["lock_id"],
+            "framework": entry["name"],
+            "env_slug": entry["env_slug"],
+        }
+    )
+    _write_state(store, state)
+
+
+def adopt_one(
+    entry: Mapping[str, Any],
+    lock: Mapping[str, Any],
+    previous_lock: Mapping[str, Any],
+    layout: Layout,
+) -> dict[str, Any]:
+    """Adopt a byte-identical prior-lock runtime without reinstalling it."""
+
+    previous_entry = _adoption_entry(entry, lock, previous_lock)
+    managed = _managed_alias_target(layout, str(entry["env_slug"]))
+    if managed is None:
+        raise InstallerError(f"managed prior runtime alias not found for {entry['name']}")
+    receipt = _read_receipt(managed)
+    if _receipt_matches(receipt, entry, str(lock["lock_id"])):
+        assert receipt is not None
+        _verify_published(entry, lock, layout, managed, receipt, log_prefix="adopt-verify-")
+        _bind_store_state(managed, entry, lock)
+        return {
+            "framework": entry["name"],
+            "env_slug": entry["env_slug"],
+            "status": "already-adopted-verified",
+        }
+    if not _receipt_matches(receipt, previous_entry, str(previous_lock["lock_id"])):
+        raise InstallerError(f"valid previous-lock receipt not found for {entry['name']}")
+    assert receipt is not None
+    verification = _verify_published(
+        entry, lock, layout, managed, receipt, log_prefix="adopt-verify-"
+    )
+    rebound = _receipt(entry, lock, verification, receipt["content_seal"])
+    # Both metadata files are outside the sealed payload and each replacement is
+    # atomic. State goes first, so interruption leaves the old receipt reusable.
+    _bind_store_state(managed, entry, lock)
+    _atomic_write_bytes(managed / RECEIPT_NAME, _canonical_json(rebound))
+    if published_store(entry, lock, layout) != managed:
+        raise InstallerError(f"adopted runtime alias changed for {entry['name']}")
+    _verify_content_seal(managed, rebound, entry["name"])
+    return {
+        "framework": entry["name"],
+        "env_slug": entry["env_slug"],
+        "from_lock_id": previous_lock["lock_id"],
+        "status": "adopted-verified",
+    }
 
 
 def install_one(
@@ -2642,9 +2779,14 @@ def install_one(
 ) -> dict[str, Any]:
     final = layout.final(entry["env_slug"])
     store = layout.store(entry["env_slug"], lock["lock_id"])
-    existing = _read_receipt(final) if _alias_points_to(final, store) else None
-    if _receipt_matches(existing, entry, lock["lock_id"]):
-        _verify_published(entry, lock, layout, final, existing, log_prefix="install-verify-")
+    try:
+        managed = published_store(entry, lock, layout)
+    except InstallerError:
+        managed = None
+    existing = _read_receipt(managed) if managed is not None else None
+    if managed is not None and existing is not None:
+        _verify_published(entry, lock, layout, managed, existing, log_prefix="install-verify-")
+        _bind_store_state(managed, entry, lock)
         return {
             "framework": entry["name"],
             "env_slug": entry["env_slug"],
@@ -2681,14 +2823,15 @@ def install_one(
 def verify_one(
     entry: Mapping[str, Any], lock: Mapping[str, Any], layout: Layout
 ) -> dict[str, Any]:
-    final = layout.final(entry["env_slug"])
-    store = layout.store(entry["env_slug"], lock["lock_id"])
-    if not _alias_points_to(final, store):
-        raise InstallerError(f"valid runtime alias not found for {entry['name']}")
-    receipt = _read_receipt(final)
-    if not _receipt_matches(receipt, entry, lock["lock_id"]):
-        raise InstallerError(f"valid receipt not found for {entry['name']}")
-    _verify_published(entry, lock, layout, final, receipt, log_prefix="verify-")
+    try:
+        managed = published_store(entry, lock, layout)
+    except InstallerError as exc:
+        if _managed_alias_target(layout, str(entry["env_slug"])) is None:
+            raise InstallerError(f"valid runtime alias not found for {entry['name']}") from exc
+        raise InstallerError(f"valid receipt not found for {entry['name']}") from exc
+    receipt = _read_receipt(managed)
+    assert receipt is not None
+    _verify_published(entry, lock, layout, managed, receipt, log_prefix="verify-")
     return {"framework": entry["name"], "env_slug": entry["env_slug"], "status": "verified"}
 
 
@@ -2879,12 +3022,14 @@ def _session_name(
     only: Sequence[str] | None,
     layout: Layout,
     python: Path | None,
+    previous_lock_id: str | None = None,
 ) -> str:
     suffix = _sha256_bytes(",".join(sorted(only or [])).encode())[:8] if only else "all"
     invocation = {
         "env_root": str(layout.env_root.resolve()),
         "state_root": str(layout.state_root.resolve()),
         "python": str(python.resolve()) if python is not None else "none",
+        "previous_lock_id": previous_lock_id or "none",
     }
     invocation_id = _sha256_bytes(_canonical_json(invocation))[:10]
     return f"ura-framework-{command}-{lock_id[:8]}-{suffix}-{invocation_id}"
@@ -2902,9 +3047,13 @@ def _launch_session(
     layout: Layout,
     only: Sequence[str] | None,
     python: Path | None,
+    previous_lock_id: str | None = None,
+    previous_lock_path: Path | None = None,
 ) -> dict[str, Any]:
     layout.state_root.mkdir(parents=True, exist_ok=True)
-    session = _session_name(command, lock["lock_id"], only, layout, python)
+    session = _session_name(
+        command, lock["lock_id"], only, layout, python, previous_lock_id
+    )
     sessions = layout.state_root / "sessions"
     sessions.mkdir(parents=True, exist_ok=True)
     log = sessions / f"{session}.log"
@@ -2931,6 +3080,8 @@ def _launch_session(
     ]
     if python is not None:
         wrapper.extend(["--redact", str(python)])
+    if previous_lock_path is not None:
+        wrapper.extend(["--redact", str(previous_lock_path)])
     wrapper.extend(["--", *inner])
     clean_wrapper = [
         "env",
@@ -3031,7 +3182,10 @@ def _inside_session(
     layout: Layout,
     only: Sequence[str] | None,
 ) -> bool:
-    expected = _session_name(args.command, lock["lock_id"], only, layout, args.python)
+    previous_lock_id = getattr(args, "previous_lock_id", None)
+    expected = _session_name(
+        args.command, lock["lock_id"], only, layout, args.python, previous_lock_id
+    )
     return bool(
         args.session_name_proof == expected
         and os.environ.get("URA_FRAMEWORK_NAMED_SESSION") == expected
@@ -3051,8 +3205,16 @@ def _maybe_session(
             raise InstallerError("--session-policy off is restricted to installer tests")
         return None
     if args.session_policy == "required":
-        raise InstallerError("install/resume/verify must run inside tmux or screen")
-    return _launch_session(args.command, lock, layout, only, args.python)
+        raise InstallerError("install/resume/verify/adopt must run inside tmux or screen")
+    return _launch_session(
+        args.command,
+        lock,
+        layout,
+        only,
+        args.python,
+        getattr(args, "previous_lock_id", None),
+        getattr(args, "from_lock", None),
+    )
 
 
 def _parse_only(values: Sequence[str] | None) -> list[str]:
@@ -3065,7 +3227,7 @@ def _parse_only(values: Sequence[str] | None) -> list[str]:
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
     subparsers = parser.add_subparsers(dest="command", required=True)
-    for command in ("plan", "install", "resume", "verify"):
+    for command in ("plan", "install", "resume", "verify", "adopt"):
         sub = subparsers.add_parser(command)
         sub.add_argument("--lock", type=Path, default=DEFAULT_LOCK)
         sub.add_argument("--env-root", type=Path, required=True)
@@ -3074,6 +3236,8 @@ def build_parser() -> argparse.ArgumentParser:
         sub.add_argument("--only", action="append", default=[])
         sub.add_argument("--session-policy", choices=("auto", "required", "off"), default="auto")
         sub.add_argument("--session-name-proof", help=argparse.SUPPRESS)
+        if command == "adopt":
+            sub.add_argument("--from-lock", type=Path, required=True)
     return parser
 
 
@@ -3083,8 +3247,16 @@ def main(argv: Sequence[str] | None = None) -> int:
     args = parser.parse_args(argv)
     try:
         lock = load_lock(args.lock)
+        previous_lock = load_lock(args.from_lock) if args.command == "adopt" else None
+        args.previous_lock_id = previous_lock["lock_id"] if previous_lock is not None else None
         only = _parse_only(args.only)
         entries = select_frameworks(lock, only)
+        if previous_lock is not None:
+            # Prove the complete selected adoption set before launching a
+            # mutating session. A new or changed row must not cause a partial
+            # metadata rebind merely because it follows compatible rows.
+            for entry in entries:
+                _adoption_entry(entry, lock, previous_lock)
         layout = Layout(args.env_root, args.state_root)
         if args.command == "plan":
             print(json.dumps(plan(lock, layout, entries), sort_keys=True))
@@ -3130,16 +3302,17 @@ def main(argv: Sequence[str] | None = None) -> int:
                         },
                     )
                     try:
-                        result = (
-                            install_one(
+                        if args.command == "adopt" and previous_lock is not None:
+                            result = adopt_one(entry, lock, previous_lock, layout)
+                        elif args.command in ("install", "resume"):
+                            result = install_one(
                                 entry,
                                 lock,
                                 layout,
                                 resume=args.command == "resume",
                             )
-                            if args.command in ("install", "resume")
-                            else verify_one(entry, lock, layout)
-                        )
+                        else:
+                            result = verify_one(entry, lock, layout)
                     except Exception as exc:
                         campaign_failed = True
                         _append_campaign_event(
@@ -3194,6 +3367,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 getattr(args, "env_root", None),
                 getattr(args, "state_root", None),
                 getattr(args, "lock", None),
+                getattr(args, "from_lock", None),
             )
             if value is not None
         ]
