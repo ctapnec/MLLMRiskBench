@@ -1083,8 +1083,11 @@ CORE_LAUNCH="$CONTROL_ROOT/core.launch.txt"
 test ! -e "$CORE_LAUNCH" && test ! -L "$CORE_LAUNCH"
 verify_regular "$CORE" "$CORE_SHA256" "$CORE_BYTES"
 core_recovery_args=()
-if [[ -n "${PHASE6_CORE_RECOVERY_ROOT-}" ]]; then
-  core_recovery_args=(--recover-lane-state-from "$PHASE6_CORE_RECOVERY_ROOT")
+if [[ -n "${PHASE6_CORE_RECOVERY_ROOTS-}" ]]; then
+  IFS=: read -r -a core_recovery_roots <<< "$PHASE6_CORE_RECOVERY_ROOTS"
+  for core_recovery_root in "${core_recovery_roots[@]}"; do
+    core_recovery_args+=(--recover-lane-state-from "$core_recovery_root")
+  done
 fi
 bash "$CORE" \
   --gate5-manifest "$GATE5_MANIFEST" \

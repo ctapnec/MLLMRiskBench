@@ -45,7 +45,8 @@ GATE5_RUNNOTE=''
 GATE5_PROMOTION=''
 AUTHORIZED_SHA=''
 RESUME_ROOT=''
-RECOVERY_STATE_ROOT=''
+RECOVERY_STATE_ROOTS=()
+RECOVERY_STATE_ROOTS_SERIALIZED=''
 while (( "$#" )); do
   case "$1" in
     --gate5-manifest)
@@ -75,7 +76,7 @@ while (( "$#" )); do
       ;;
     --recover-lane-state-from)
       (( "$#" >= 2 )) || usage
-      RECOVERY_STATE_ROOT="$2"
+      RECOVERY_STATE_ROOTS+=("$2")
       shift 2
       ;;
     *) usage ;;
@@ -84,7 +85,7 @@ done
 
 if [[ -n "$RESUME_ROOT" ]]; then
   [[ -z "$GATE5_MANIFEST" && -z "$GATE5_RUNNOTE" && -z "$GATE5_PROMOTION" && \
-     -z "$AUTHORIZED_SHA" && -z "$RECOVERY_STATE_ROOT" ]] || usage
+     -z "$AUTHORIZED_SHA" && "${#RECOVERY_STATE_ROOTS[@]}" == '0' ]] || usage
 else
   [[ -n "$GATE5_MANIFEST" && -n "$GATE5_RUNNOTE" && -n "$GATE5_PROMOTION" && "$AUTHORIZED_SHA" =~ ^[0-9a-f]{64}$ ]] || usage
 fi
@@ -232,15 +233,22 @@ PY
 else
   [[ -n "$GATE5_MANIFEST" && -n "$GATE5_RUNNOTE" && -n "$GATE5_PROMOTION" && -n "$AUTHORIZED_SHA" ]] || usage
   [[ "$AUTHORIZED_SHA" =~ ^[0-9a-f]{64}$ ]] || usage
-  if [[ -n "$RECOVERY_STATE_ROOT" ]]; then
-    RECOVERY_STATE_ROOT="$(readlink -e -- "$RECOVERY_STATE_ROOT")"
-    test -d "$RECOVERY_STATE_ROOT" && test ! -L "$RECOVERY_STATE_ROOT"
-    case "$RECOVERY_STATE_ROOT" in
+  validated_recovery_roots=()
+  for recovery_root in "${RECOVERY_STATE_ROOTS[@]}"; do
+    recovery_root="$(readlink -e -- "$recovery_root")"
+    test -d "$recovery_root" && test ! -L "$recovery_root"
+    case "$recovery_root" in
       "$URA_WORK"/runs/engineering/phase6-core-measured-*) ;;
-      *) printf 'unsafe Phase 6 recovery-state root: %s\n' "$RECOVERY_STATE_ROOT" >&2; exit 1 ;;
+      *) printf 'unsafe Phase 6 recovery-state root: %s\n' "$recovery_root" >&2; exit 1 ;;
     esac
-    test -d "$RECOVERY_STATE_ROOT/lanes" && test ! -L "$RECOVERY_STATE_ROOT/lanes"
-    test -d "$RECOVERY_STATE_ROOT/lane-specs" && test ! -L "$RECOVERY_STATE_ROOT/lane-specs"
+    test -d "$recovery_root/lanes" && test ! -L "$recovery_root/lanes"
+    test -d "$recovery_root/lane-specs" && test ! -L "$recovery_root/lane-specs"
+    [[ " ${validated_recovery_roots[*]} " != *" $recovery_root "* ]] || \
+      { printf 'duplicate Phase 6 recovery-state root\n' >&2; exit 1; }
+    validated_recovery_roots+=("$recovery_root")
+  done
+  if ((${#validated_recovery_roots[@]})); then
+    RECOVERY_STATE_ROOTS_SERIALIZED="$(IFS=:; printf '%s' "${validated_recovery_roots[*]}")"
   fi
   GATE5_MANIFEST="$(checked_regular "$GATE5_MANIFEST")"
   GATE5_RUNNOTE="$(checked_regular "$GATE5_RUNNOTE")"
@@ -4545,7 +4553,14 @@ import sys
 from ura.strict_json import strict_json_loads
 
 source_state, target_state, current_spec = map(Path, sys.argv[1:])
-recovery_root = Path(os.environ["RECOVERY_STATE_ROOT"]).resolve(strict=True)
+authorized_roots = tuple(
+    Path(item).resolve(strict=True)
+    for item in os.environ["RECOVERY_STATE_ROOTS_SERIALIZED"].split(":")
+    if item
+)
+recovery_root = source_state.parents[2].resolve(strict=True)
+if recovery_root not in authorized_roots:
+    raise SystemExit("Phase 6 recovery state root is not authorized")
 lane = target_state.parent.name
 expected_source = recovery_root / "lanes" / lane / "exact-measured-argv.json"
 if (
@@ -4746,14 +4761,19 @@ run_lane_body() {
   fi
   chmod 700 "$lane_control"
 
-  if [[ ! -e "$state_path" && ! -L "$state_path" && -n "${RECOVERY_STATE_ROOT-}" ]]; then
-    recovery_state="$RECOVERY_STATE_ROOT/lanes/$LANE/exact-measured-argv.json"
-    if [[ -e "$recovery_state" || -L "$recovery_state" ]]; then
-      current_stage='recovery-state-import'
-      event "$LANE" resume-state start 'content-identical sealed state import'
-      import_recovery_state "$recovery_state" "$state_path" "$spec_path"
-      event "$LANE" resume-state imported 'content-identical sealed state imported'
-    fi
+  if [[ ! -e "$state_path" && ! -L "$state_path" && \
+        -n "${RECOVERY_STATE_ROOTS_SERIALIZED-}" ]]; then
+    IFS=: read -r -a recovery_roots <<< "$RECOVERY_STATE_ROOTS_SERIALIZED"
+    for recovery_root in "${recovery_roots[@]}"; do
+      recovery_state="$recovery_root/lanes/$LANE/exact-measured-argv.json"
+      if [[ -e "$recovery_state" || -L "$recovery_state" ]]; then
+        current_stage='recovery-state-import'
+        event "$LANE" resume-state start 'content-identical sealed state import'
+        import_recovery_state "$recovery_state" "$state_path" "$spec_path"
+        event "$LANE" resume-state imported 'content-identical sealed state imported'
+        break
+      fi
+    done
   fi
 
   if [[ -e "$state_path" || -L "$state_path" ]]; then
@@ -7369,7 +7389,7 @@ SOCKET="ura-phase6-core-${ATTEMPT_TAG}"
 test ! -e "$CONTROL_ROOT/attempts/$ATTEMPT_TAG"
 
 tmux -L "$SOCKET" new-session -d -s "$SESSION" \
-  "exec env CONTROL_ROOT=$(printf '%q' "$CONTROL_ROOT") ATTEMPT_TAG=$(printf '%q' "$ATTEMPT_TAG") RECOVERY_STATE_ROOT=$(printf '%q' "$RECOVERY_STATE_ROOT") bash $(printf '%q' "$PAYLOAD_PATH")"
+  "exec env CONTROL_ROOT=$(printf '%q' "$CONTROL_ROOT") ATTEMPT_TAG=$(printf '%q' "$ATTEMPT_TAG") RECOVERY_STATE_ROOTS_SERIALIZED=$(printf '%q' "$RECOVERY_STATE_ROOTS_SERIALIZED") bash $(printf '%q' "$PAYLOAD_PATH")"
 
 printf 'SESSION=%s\n' "$SESSION"
 printf 'SOCKET=%s\n' "$SOCKET"

@@ -1576,7 +1576,8 @@ def test_phase6_sequence_recovers_only_content_identical_sealed_lane_state() -> 
     sequence = (root / "phase6_sequence.sh.in").read_text(encoding="utf-8")
     core = (root / "phase6_core_measured.sh.in").read_text(encoding="utf-8")
 
-    assert 'core_recovery_args=(--recover-lane-state-from "$PHASE6_CORE_RECOVERY_ROOT")' in sequence
+    assert 'IFS=: read -r -a core_recovery_roots <<< "$PHASE6_CORE_RECOVERY_ROOTS"' in sequence
+    assert 'core_recovery_args+=(--recover-lane-state-from "$core_recovery_root")' in sequence
     assert '--recover-lane-state-from)' in core
     assert 'event "$LANE" resume-state imported' in core
     assert 'current_spec_payload != old_spec_payload' in core
@@ -1584,7 +1585,8 @@ def test_phase6_sequence_recovers_only_content_identical_sealed_lane_state() -> 
     assert 'path_replacements[str(source_artifact)] = str(target_artifact)' in core
     assert 'state["runner_argv"] = [path_replacements.get(item, item) for item in runner_argv]' in core
     assert '"schema": "ura-phase6-core-state-import/1"' in core
-    assert 'RECOVERY_STATE_ROOT=$(printf \'%q\' "$RECOVERY_STATE_ROOT")' in core
+    assert 'RECOVERY_STATE_ROOTS+=("$2")' in core
+    assert 'RECOVERY_STATE_ROOTS_SERIALIZED=$(printf \'%q\' "$RECOVERY_STATE_ROOTS_SERIALIZED")' in core
 
     mutated = core.replace(
         "current_spec_payload != old_spec_payload",
