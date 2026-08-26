@@ -637,12 +637,14 @@ def test_follow_on_runbook_keeps_purpose_and_media_contracts() -> None:
             assert_contract(mutated)
 
     for document in (local_plan, controller_readme):
-        assert "common scientific base" in document
+        normalized_document = " ".join(document.split())
+        assert "common scientific base" in normalized_document
         assert (
-            "separate exact preflight, canary and measured argument arrays" in document
+            "separate exact preflight, canary and measured argument arrays"
+            in normalized_document
         )
-        assert "Each purpose keeps its own plan and receipt" in document
-        assert "retained immutable argument array" not in document
+        assert "Each purpose keeps its own plan and receipt" in normalized_document
+        assert "retained immutable argument array" not in normalized_document
 
 
 def test_runbook_section_18_documents_the_build_surface_and_hf_token_children() -> None:
