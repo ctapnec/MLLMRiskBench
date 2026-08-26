@@ -3732,7 +3732,10 @@ attestation_manifest, _ = load_live_attestation_file(att["path"], att["sha256"])
 measured_resources = {
     (spec["target"]["repo_id"], spec["target"]["revision"]): ["vllm_target"]
 }
-probe_resources = {
+probe_target_resources = {
+    (spec["target"]["repo_id"], spec["target"]["revision"]): ["vllm_target"],
+}
+probe_guard_resources = {
     (spec["target"]["repo_id"], spec["target"]["revision"]): ["vllm_target"],
     (
         "meta-llama/Llama-Guard-3-8B",
@@ -3799,7 +3802,12 @@ def validate_stored_acquisition(value, *, label, expected_resources):
         (row["repo_id"], row["revision"]): row["roles"]
         for row in plan_value["resources"]
     }
-    if observed_resources != expected_resources or receipt_value["plan_id"] != plan_value["plan_id"]:
+    resource_match = (
+        any(observed_resources == option for option in expected_resources)
+        if isinstance(expected_resources, tuple)
+        else observed_resources == expected_resources
+    )
+    if not resource_match or receipt_value["plan_id"] != plan_value["plan_id"]:
         raise SystemExit(f"stored {label} acquisition resources differ from the lane identity")
     result_rows = []
     for raw_line in log_payload.splitlines():
@@ -3824,7 +3832,7 @@ def validate_stored_acquisition(value, *, label, expected_resources):
 probe_plan, probe_receipt = validate_stored_acquisition(
     state["attestation_acquisition"],
     label="attestation",
-    expected_resources=probe_resources,
+    expected_resources=(probe_target_resources, probe_guard_resources),
 )
 acq = state["model_acquisition"]
 plan, receipt = validate_stored_acquisition(
@@ -3850,6 +3858,31 @@ if len(probe_envelopes) != 1 or probe_envelopes[0].is_symlink():
 probe_envelope, probe_envelope_descriptor = load_request_envelope_file(probe_envelopes[0])
 probe_request = probe_envelope["request"]
 expected_probe_limit = 2 if spec["modality"] == "image" else 1
+probe_judges = probe_request.get("judges")
+if probe_judges == ["rules"]:
+    expected_probe_resources = probe_target_resources
+    if any(
+        probe_request.get(field) is not None
+        for field in ("guardrail_model", "guardrail_revision", "guardrail_device")
+    ):
+        raise SystemExit("stored rules-only attestation unexpectedly binds a guardrail")
+elif probe_judges == ["rules", "guardrail"]:
+    expected_probe_resources = probe_guard_resources
+    if (
+        probe_request.get("guardrail_model") != "meta-llama/Llama-Guard-3-8B"
+        or probe_request.get("guardrail_revision")
+        != "7327bd9f6efbbe6101dc6cc4736302b3cbb6e425"
+        or probe_request.get("guardrail_device") != "cuda:1"
+    ):
+        raise SystemExit("stored guarded attestation binds a different local guardrail")
+else:
+    raise SystemExit("stored attestation judge cascade is unsupported")
+observed_probe_resources = {
+    (row["repo_id"], row["revision"]): row["roles"]
+    for row in probe_plan["resources"]
+}
+if observed_probe_resources != expected_probe_resources:
+    raise SystemExit("stored attestation acquisition differs from its judge cascade")
 if (
     probe_plan.get("bindings", {}).get("request_envelope_sha256")
     != probe_envelope_descriptor["sha256"]
@@ -3857,11 +3890,6 @@ if (
     or probe_request.get("requested_target_keys") != [spec["target"]["spec"]]
     or probe_request.get("logical_source_arms") != ["synth"]
     or probe_request.get("selected_attackers") != ["replay"]
-    or probe_request.get("judges") != ["rules", "guardrail"]
-    or probe_request.get("guardrail_model") != "meta-llama/Llama-Guard-3-8B"
-    or probe_request.get("guardrail_revision")
-    != "7327bd9f6efbbe6101dc6cc4736302b3cbb6e425"
-    or probe_request.get("guardrail_device") != "cuda:1"
     or probe_request.get("limit") != expected_probe_limit
     or probe_request.get("seeds") != [0]
     or probe_request.get("sample_seed") != 0

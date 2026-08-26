@@ -1550,7 +1550,7 @@ def test_phase6_core_attestation_probe_uses_local_guardrail_fallback() -> None:
             '    event "$LANE" attestation-probe complete', shell_start
         )
         shell_contract = candidate[shell_start:shell_end]
-        state_start = candidate.index("probe_resources = {")
+        state_start = candidate.index("probe_target_resources = {")
         state_end = candidate.index("del probe_receipt", state_start)
         state_contract = candidate[state_start:state_end]
         assert "--judges rules,guardrail" in shell_contract
@@ -1559,7 +1559,10 @@ def test_phase6_core_attestation_probe_uses_local_guardrail_fallback() -> None:
         assert "--guardrail-device cuda:1" in shell_contract
         assert '"$PROBE_RECEIPT_PATH" "$PROBE_RECEIPT_SHA" target_and_guard' in shell_contract
         assert '["guardrail_judge"]' in state_contract
-        assert 'probe_request.get("judges") != ["rules", "guardrail"]' in state_contract
+        assert 'probe_judges == ["rules"]' in state_contract
+        assert 'probe_judges == ["rules", "guardrail"]' in state_contract
+        assert "expected_resources=(probe_target_resources, probe_guard_resources)" in state_contract
+        assert "observed_probe_resources != expected_probe_resources" in state_contract
         assert 'probe_request.get("guardrail_device") != "cuda:1"' in state_contract
 
     assert_probe_contract(source)
