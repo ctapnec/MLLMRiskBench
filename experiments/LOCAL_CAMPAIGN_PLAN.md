@@ -130,13 +130,24 @@ runtime used by the separate Promptfoo and T3MP3ST Node stores is downloaded
 and signature-verified by the installer. T3MP3ST is built from its exact source
 checkout with `npm ci` against the bound upstream package lock.
 
-Then materialize the private engine runtime configuration for the four
-persistent-worker bridges [12.2]:
+Then materialize one private engine runtime configuration for each selected
+persistent-worker bridge [12.2]. The campaign controllers create these files
+under their private, campaign-tagged state root and bind each file by SHA-256 to
+the one lane that consumes it:
 
 ```bash
-python -m experiments.engine_runtime_config --runtime pyrit=URA_PYRIT_ENV --runtime deepteam=URA_DEEPTEAM_ENV \
-  --runtime h4rm3l=URA_H4RM3L_ENV --runtime spikee=URA_SPIKEE_ENV --out "$URA_WORK/state/engine-runtime-config.json"
-# create-only ura-engine-runtime-config/1; each URA_*_ENV names the verified runtime alias from ura_runtime_alias
+export URA_LANE_ENGINE_CONFIG_ROOT="$URA_WORK/state/bridge-configs/<campaign-tag>"
+test ! -e "$URA_LANE_ENGINE_CONFIG_ROOT" || exit 1
+mkdir -m 700 -p "$URA_LANE_ENGINE_CONFIG_ROOT"
+URA_LANE_ENGINE_STORE="$(ura_runtime_store pyrit)" || exit $?
+export URA_LANE_ENGINE_PYTHON="$URA_LANE_ENGINE_STORE/bin/python"
+[[ -x "$URA_LANE_ENGINE_PYTHON" ]] || exit 1
+python -m experiments.engine_runtime_config \
+  --runtime pyrit=URA_LANE_ENGINE_PYTHON \
+  --out "$URA_LANE_ENGINE_CONFIG_ROOT/pyrit.json"
+# Repeat only for a selected deepteam, h4rm3l or spikee lane.
+# Each output is create-only ura-engine-runtime-config/1 and resolves into the
+# already verified content-addressed store. No global combined config is needed.
 ```
 
 Gate 1: `verify` reports all 16 passed (content seals, smoke) and Build ->
@@ -186,7 +197,7 @@ CLI plan -> acquire -> run chain, for:
 | target | `vllm:llava-hf/llava-v1.6-mistral-7b-hf` @ exact revision (text+image) | 14.10 GiB | GPU 0 |
 | target | `vllm:GraySwanAI/llava-v1.6-mistral-7b-hf-RR` @ exact revision (same-base defense pair) | 27.59 GiB | GPU 0 |
 | scoring guard | `meta-llama/Llama-Guard-3-8B` (gated; HF_TOKEN) | 29.93 GiB | GPU 1 (`--guardrail-device cuda:1`) |
-| defense guard (optional, hosted lanes only in the runbook; here used for the local text-only defense contrast if VRAM permits) | `meta-llama/Llama-Guard-3-1B` | ~3 GB | GPU 1 |
+| defense guard (optional, hosted lanes only in the runbook; here used for the local text-only defense contrast if VRAM permits) | `meta-llama/Llama-Guard-3-1B` | 5.59 GiB (6,005,361,738 sealed bytes) | GPU 1 |
 
 The legacy hub bytes under `/mnt/stor/data/ura/hf/post-release-.../hub` may be
 reused as the transport cache only through the sealed controller; no manual
@@ -278,15 +289,17 @@ shows the three vLLM rows as compatible with an exact revision/digest; the
 console Build model picker shows the same rows under Local vLLM and the Ollama
 rows under Local Ollama.
 
-Status, 21 August 2026: **met for the three targets.** Each was sealed with
-`downloaded_bytes: 0`, because the rig already held all three snapshots at
-exactly the pinned commits in a legacy Hugging Face hub, which was staged as
-the controller's transport cache by hard link. That costs no disk, leaves the
-legacy hub intact and is not a manual copy into the managed store: promotion is
-gated on `seal_snapshot`, which proves the complete official sibling set and
-every Git/LFS content identity against the upstream manifest for the exact
-commit before anything is promoted. The three receipts bind 16, 17 and 26 files
-respectively, matching the sibling counts verified upstream before acquisition.
+Status, 21 August 2026: **met for the three targets.** By 25 August both guards
+were also sealed and the 1B guard's fit check passed, completing all five
+snapshots. Each target was sealed with `downloaded_bytes: 0`, because the rig
+already held all three target snapshots at exactly the pinned commits in a
+legacy Hugging Face hub, which was staged as the controller's transport cache
+by hard link. That costs no disk, leaves the legacy hub intact and is not a
+manual copy into the managed store: promotion is gated on `seal_snapshot`,
+which proves the complete official sibling set and every Git/LFS content
+identity against the upstream manifest for the exact commit before anything is
+promoted. The three target receipts bind 16, 17 and 26 files respectively,
+matching the sibling counts verified upstream before acquisition.
 The store and each receipt with its digest are bound in `~/.ura_campaign_env`
 as `URA_MODEL_STORE` and `URA_ACQ_RECEIPT_*`. Both Llama Guard sizes are gated
 and are not in the legacy hub, so they are genuine downloads; their pinned
@@ -323,6 +336,10 @@ GPU only). Receipts are content-addressed and expire per the recorded max-age
 policy, so schedule them immediately before the measured lanes.
 
 Gate 4: one valid receipt per (target, modality combination) that Phase 6 uses.
+Because these receipts expire under their recorded maximum-age policy, each
+required route must meet Gate 4 immediately before its live canary. Gate 5
+finalization then revalidates current receipt coverage against the resulting
+runnable inventory before it admits Phase 6.
 
 ## 6. Phase 5: no-call projections and one-cluster canaries (2-4 hours)
 
