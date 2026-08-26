@@ -1460,6 +1460,11 @@ def test_phase6_local_attestations_use_realized_local_identity_schema() -> None:
     core_start = core.index('expected_resolved = f"{target}@{revision}"')
     core_end = core.index("event \"$LANE\" attestation-probe complete", core_start)
     core_contract = core[core_start:core_end]
+    stored_start = core.index(
+        'expected_resolved = f"{spec[\'target\'][\'spec\']}@{spec[\'target\'][\'revision\']}"'
+    )
+    stored_end = core.index("expected_tail = [", stored_start)
+    stored_contract = core[stored_start:stored_end]
     extended_start = extended.index("def validate_attestation_identity(")
     extended_end = extended.index("def derive_attestation(", extended_start)
     extended_contract = extended[extended_start:extended_end]
@@ -1467,6 +1472,9 @@ def test_phase6_local_attestations_use_realized_local_identity_schema() -> None:
     assert "identity != expected_identity" in core_contract
     assert 'row["resolved_target"] != expected_resolved' in core_contract
     assert '"provider"' not in core_contract
+    assert "identity != expected_identity" in stored_contract
+    assert 'row["resolved_target"] != expected_resolved' in stored_contract
+    assert '"provider"' not in stored_contract
     assert "identity != expected_identity" in extended_contract
     assert 'record["resolved_target"] != expected_resolved' in extended_contract
     assert '"provider"' not in extended_contract
@@ -1481,6 +1489,50 @@ def test_phase6_local_attestations_use_realized_local_identity_schema() -> None:
     )
     with pytest.raises(AssertionError):
         assert '"provider"' not in mutated[core_start:mutated_end]
+
+    stored_mutated = core.replace(
+        "identity != expected_identity",
+        'identity.get("provider") != "vllm"',
+        2,
+    )
+    stored_mutated_start = stored_mutated.index(
+        'expected_resolved = f"{spec[\'target\'][\'spec\']}@{spec[\'target\'][\'revision\']}"'
+    )
+    stored_mutated_end = stored_mutated.index("expected_tail = [", stored_mutated_start)
+    with pytest.raises(AssertionError):
+        assert '"provider"' not in stored_mutated[
+            stored_mutated_start:stored_mutated_end
+        ]
+
+
+def test_phase6_core_validates_materialized_probe_group_keys() -> None:
+    source = (
+        Path(__file__).parents[2]
+        / "experiments"
+        / "local_campaign"
+        / "templates"
+        / "phase6_core_measured.sh.in"
+    ).read_text(encoding="utf-8")
+    start = source.index('probe_request = probe_envelope["request"]')
+    end = source.index("del probe_receipt", start)
+    contract = source[start:end]
+    expected = (
+        'probe_request.get("group_keys") != [\n'
+        '        "model", "source", "risk", "effective_modality", "expected_behavior",\n'
+        '        "attacker", "source_policy_id", "source_policy_version",\n'
+        "    ]"
+    )
+    assert expected in contract
+
+    mutated = source.replace(
+        expected,
+        'probe_request.get("group_keys")\n'
+        '    != "model,source,risk,effective_modality,expected_behavior,attacker,source_policy_id,source_policy_version"',
+        1,
+    )
+    mutated_contract = mutated[start:mutated.index("del probe_receipt", start)]
+    with pytest.raises(AssertionError):
+        assert expected in mutated_contract
 
 
 def test_phase6_failure_sealers_create_missing_runner_parent() -> None:

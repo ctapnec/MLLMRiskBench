@@ -3860,8 +3860,10 @@ if (
     or probe_request.get("max_turns") != 1
     or probe_request.get("defense") != "none"
     or probe_request.get("defense_guard") != "rules"
-    or probe_request.get("group_keys")
-    != "model,source,risk,effective_modality,expected_behavior,attacker,source_policy_id,source_policy_version"
+    or probe_request.get("group_keys") != [
+        "model", "source", "risk", "effective_modality", "expected_behavior",
+        "attacker", "source_policy_id", "source_policy_version",
+    ]
     or probe_request.get("quantization") != ""
     or probe_request.get("dtype") != "auto"
     or probe_request.get("dry_run") is not False
@@ -3937,12 +3939,18 @@ if {
     tuple(row["exact_input_modalities"]) for row in attestation_records
 } != expected_modalities:
     raise SystemExit("stored live attestation lacks the exact target/modality records")
+expected_resolved = f"{spec['target']['spec']}@{spec['target']['revision']}"
+expected_identity = {
+    "target": expected_resolved,
+    "resolved_model": spec["target"]["spec"].removeprefix("vllm:"),
+    "model_revision": spec["target"]["revision"],
+}
 for row in attestation_records:
     identity = row["realized_target_identity"]
     if (
         row["route_kind"] != "local_runtime"
-        or identity.get("provider") != "vllm"
-        or identity.get("model_revision") != spec["target"]["revision"]
+        or row["resolved_target"] != expected_resolved
+        or identity != expected_identity
     ):
         raise SystemExit("stored live attestation has a different realized target identity")
 expected_tail = [
