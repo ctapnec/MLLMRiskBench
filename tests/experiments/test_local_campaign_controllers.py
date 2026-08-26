@@ -1386,6 +1386,36 @@ def test_phase6_core_reads_normalized_conditional_config_identities() -> None:
         assert_normalized_identity_contract(reverted)
 
 
+def test_phase6_core_reads_zero_downloads_from_acquisition_result() -> None:
+    source = (
+        Path(__file__).parents[2]
+        / "experiments"
+        / "local_campaign"
+        / "templates"
+        / "phase6_core_measured.sh.in"
+    ).read_text(encoding="utf-8")
+    stale = 'receipt.get("downloaded_bytes")'
+
+    def assert_receipt_schema_contract(candidate: str) -> None:
+        start = candidate.index("def validate_defense_conditional_artifact(")
+        end = candidate.index("def validate_rr_projection_field(", start)
+        contract = candidate[start:end]
+        assert stale not in contract
+        assert "validate_acquisition_result_rows(" in contract
+        assert '"downloaded_bytes", "receipt_id", "receipt_sha256"' in contract
+        assert 'value.get("resource_identities") != expected_resources' in contract
+
+    assert_receipt_schema_contract(source)
+    mutated = source.replace(
+        'value.get("resource_identities") != expected_resources',
+        'receipt.get("downloaded_bytes") != 0\n'
+        '        or value.get("resource_identities") != expected_resources',
+        1,
+    )
+    with pytest.raises(AssertionError):
+        assert_receipt_schema_contract(mutated)
+
+
 def test_phase7_conditional_analyses_branch_before_subprocesses() -> None:
     source = (
         Path(__file__).parents[2]

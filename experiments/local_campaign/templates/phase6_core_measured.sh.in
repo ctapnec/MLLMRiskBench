@@ -2066,9 +2066,7 @@ def validate_defense_conditional_artifact(row: dict[str, Any], label: str) -> No
         for item in expected_resources
     }
     if (
-        type(receipt.get("downloaded_bytes")) is not int
-        or receipt.get("downloaded_bytes") != 0
-        or value.get("resource_identities") != expected_resources
+        value.get("resource_identities") != expected_resources
         or role_inventory != {
             (
                 "Qwen/Qwen3-VL-8B-Instruct",
