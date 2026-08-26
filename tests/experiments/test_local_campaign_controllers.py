@@ -1445,6 +1445,74 @@ def test_phase6_core_preserves_no_resource_gate5_acquisition_mode() -> None:
         assert_acquisition_modes(mutated)
 
 
+def test_phase6_local_attestations_use_realized_local_identity_schema() -> None:
+    root = (
+        Path(__file__).parents[2]
+        / "experiments"
+        / "local_campaign"
+        / "templates"
+    )
+    core = (root / "phase6_core_measured.sh.in").read_text(encoding="utf-8")
+    extended = (root / "phase6_extended_measured.sh.in").read_text(
+        encoding="utf-8"
+    )
+
+    core_start = core.index('expected_resolved = f"{target}@{revision}"')
+    core_end = core.index("event \"$LANE\" attestation-probe complete", core_start)
+    core_contract = core[core_start:core_end]
+    extended_start = extended.index("def validate_attestation_identity(")
+    extended_end = extended.index("def derive_attestation(", extended_start)
+    extended_contract = extended[extended_start:extended_end]
+
+    assert "identity != expected_identity" in core_contract
+    assert 'row["resolved_target"] != expected_resolved' in core_contract
+    assert '"provider"' not in core_contract
+    assert "identity != expected_identity" in extended_contract
+    assert 'record["resolved_target"] != expected_resolved' in extended_contract
+    assert '"provider"' not in extended_contract
+
+    mutated = core.replace(
+        "identity != expected_identity",
+        'identity.get("provider") != "vllm"',
+        1,
+    )
+    mutated_end = mutated.index(
+        "event \"$LANE\" attestation-probe complete", core_start
+    )
+    with pytest.raises(AssertionError):
+        assert '"provider"' not in mutated[core_start:mutated_end]
+
+
+def test_phase6_failure_sealers_create_missing_runner_parent() -> None:
+    root = (
+        Path(__file__).parents[2]
+        / "experiments"
+        / "local_campaign"
+        / "templates"
+    )
+    core = (root / "phase6_core_measured.sh.in").read_text(encoding="utf-8")
+    extended = (root / "phase6_extended_measured.sh.in").read_text(
+        encoding="utf-8"
+    )
+
+    core_start = core.index("write_lane_failure() {")
+    core_end = core.index("lane_attempt_finish() {", core_start)
+    extended_start = extended.index("    def record_failure(")
+    extended_end = extended.index("def parse_result_json(", extended_start)
+
+    def assert_parent_creation(contract: str) -> None:
+        assert "runner_container" in contract
+        assert "os.mkdir(runner_parent, 0o700)" in contract
+        assert "runner_parent.resolve(strict=True) != runner_parent" in contract
+
+    assert_parent_creation(core[core_start:core_end])
+    assert_parent_creation(extended[extended_start:extended_end])
+    mutated = core.replace("os.mkdir(runner_parent, 0o700)", "pass", 1)
+    mutated_end = mutated.index("lane_attempt_finish() {", core_start)
+    with pytest.raises(AssertionError):
+        assert_parent_creation(mutated[core_start:mutated_end])
+
+
 def test_phase7_conditional_analyses_branch_before_subprocesses() -> None:
     source = (
         Path(__file__).parents[2]

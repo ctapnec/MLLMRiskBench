@@ -4622,9 +4622,19 @@ expected = {("text",)} if modality == "text" else {("text",), ("text", "image")}
 observed = {tuple(row["exact_input_modalities"]) for row in records}
 if observed != expected:
     raise SystemExit(f"fresh attestation modality inventory differs: {observed!r}")
+expected_resolved = f"{target}@{revision}"
+expected_identity = {
+    "target": expected_resolved,
+    "resolved_model": target.removeprefix("vllm:"),
+    "model_revision": revision,
+}
 for row in records:
     identity = row["realized_target_identity"]
-    if row["route_kind"] != "local_runtime" or identity.get("provider") != "vllm" or identity.get("model_revision") != revision:
+    if (
+        row["route_kind"] != "local_runtime"
+        or row["resolved_target"] != expected_resolved
+        or identity != expected_identity
+    ):
         raise SystemExit("fresh attestation realized target identity differs")
 PY
     event "$LANE" attestation-probe complete "$attestation_sha"
@@ -4728,11 +4738,26 @@ if not result_root.is_absolute() or result_root.name != lane:
     raise SystemExit("Phase 6 core failure result root differs")
 if result_root.is_symlink():
     raise SystemExit("Phase 6 core failure result root is a symlink")
-runner_parent = (
-    Path(os.environ["URA_WORK"]).resolve(strict=True)
-    / "runs" / "thesis" / "runner"
+runner_container = (
+    Path(os.environ["URA_WORK"]).resolve(strict=True) / "runs" / "thesis"
 )
-if runner_parent.is_symlink() or not runner_parent.is_dir():
+if (
+    runner_container.is_symlink()
+    or not runner_container.is_dir()
+    or runner_container.resolve(strict=True) != runner_container
+):
+    raise SystemExit("Phase 6 core Runner container is unsafe")
+runner_parent = runner_container / "runner"
+if runner_parent.exists() or runner_parent.is_symlink():
+    if (
+        runner_parent.is_symlink()
+        or not runner_parent.is_dir()
+        or runner_parent.resolve(strict=True) != runner_parent
+    ):
+        raise SystemExit("Phase 6 core Runner parent is unsafe")
+else:
+    os.mkdir(runner_parent, 0o700)
+if runner_parent.resolve(strict=True) != runner_parent:
     raise SystemExit("Phase 6 core Runner parent is unsafe")
 expected_result_root = runner_parent / lane
 if result_root != expected_result_root:

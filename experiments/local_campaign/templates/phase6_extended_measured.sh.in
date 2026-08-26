@@ -5825,13 +5825,25 @@ class Controller:
         error_type = "lane_wall_time_exceeded" if timed_out else type(exc).__name__
         error = str(exc)[:4000]
         failed_at = utc_now()
-        runner_parent = self.work / "runs" / "thesis" / "runner"
+        runner_container = self.work / "runs" / "thesis"
         if (
-            runner_parent.is_symlink()
-            or not runner_parent.is_dir()
-            or runner_parent.resolve(strict=True) != runner_parent
+            runner_container.is_symlink()
+            or not runner_container.is_dir()
+            or runner_container.resolve(strict=True) != runner_container
         ):
-            raise ValueError("Phase 6 extended Runner parent is absent or unsafe")
+            raise ValueError("Phase 6 extended Runner container is unsafe")
+        runner_parent = runner_container / "runner"
+        if runner_parent.exists() or runner_parent.is_symlink():
+            if (
+                runner_parent.is_symlink()
+                or not runner_parent.is_dir()
+                or runner_parent.resolve(strict=True) != runner_parent
+            ):
+                raise ValueError("Phase 6 extended Runner parent is unsafe")
+        else:
+            os.mkdir(runner_parent, 0o700)
+        if runner_parent.resolve(strict=True) != runner_parent:
+            raise ValueError("Phase 6 extended Runner parent is unsafe")
         result_root = runner_parent / lane
         if not result_root.exists() and not result_root.is_symlink():
             os.mkdir(result_root, 0o700)
@@ -6095,10 +6107,24 @@ def validate_attestation_identity(
         raise ValueError(f"{spec['lane_id']}: live attestation route/modality inventory changed")
     identity = record["realized_target_identity"]
     if spec["family"] == "ollama":
-        if identity.get("provider") != "ollama" or identity.get("model_digest") != spec["target"]["digest"]:
-            raise ValueError(f"{spec['lane_id']}: live Ollama attestation identity changed")
-    elif identity.get("provider") != "vllm" or identity.get("model_revision") != spec["target"]["revision"]:
-        raise ValueError(f"{spec['lane_id']}: live vLLM attestation identity changed")
+        expected_resolved = f"{spec['target']['spec']}@sha256:{spec['target']['digest']}"
+        expected_identity = {
+            "target": expected_resolved,
+            "resolved_model": spec["target"]["spec"].removeprefix("ollama:"),
+            "model_digest": spec["target"]["digest"],
+        }
+    else:
+        expected_resolved = f"{spec['target']['spec']}@{spec['target']['revision']}"
+        expected_identity = {
+            "target": expected_resolved,
+            "resolved_model": spec["target"]["repo_id"],
+            "model_revision": spec["target"]["revision"],
+        }
+    if (
+        record["resolved_target"] != expected_resolved
+        or identity != expected_identity
+    ):
+        raise ValueError(f"{spec['lane_id']}: live local attestation identity changed")
     if record.get("probe", {}).get("evidence_kind") != "synthetic_live_transport_probe":
         raise ValueError(f"{spec['lane_id']}: attestation is not the documented synthetic transport probe")
     return receipt
