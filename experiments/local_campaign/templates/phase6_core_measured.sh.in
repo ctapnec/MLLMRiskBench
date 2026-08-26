@@ -3732,6 +3732,13 @@ attestation_manifest, _ = load_live_attestation_file(att["path"], att["sha256"])
 measured_resources = {
     (spec["target"]["repo_id"], spec["target"]["revision"]): ["vllm_target"]
 }
+probe_resources = {
+    (spec["target"]["repo_id"], spec["target"]["revision"]): ["vllm_target"],
+    (
+        "meta-llama/Llama-Guard-3-8B",
+        "7327bd9f6efbbe6101dc6cc4736302b3cbb6e425",
+    ): ["guardrail_judge"],
+}
 if not spec["classification"]:
     measured_resources[(
         "meta-llama/Llama-Guard-3-8B",
@@ -3817,9 +3824,7 @@ def validate_stored_acquisition(value, *, label, expected_resources):
 probe_plan, probe_receipt = validate_stored_acquisition(
     state["attestation_acquisition"],
     label="attestation",
-    expected_resources={
-        (spec["target"]["repo_id"], spec["target"]["revision"]): ["vllm_target"]
-    },
+    expected_resources=probe_resources,
 )
 acq = state["model_acquisition"]
 plan, receipt = validate_stored_acquisition(
@@ -3852,7 +3857,11 @@ if (
     or probe_request.get("requested_target_keys") != [spec["target"]["spec"]]
     or probe_request.get("logical_source_arms") != ["synth"]
     or probe_request.get("selected_attackers") != ["replay"]
-    or probe_request.get("judges") != ["rules"]
+    or probe_request.get("judges") != ["rules", "guardrail"]
+    or probe_request.get("guardrail_model") != "meta-llama/Llama-Guard-3-8B"
+    or probe_request.get("guardrail_revision")
+    != "7327bd9f6efbbe6101dc6cc4736302b3cbb6e425"
+    or probe_request.get("guardrail_device") != "cuda:1"
     or probe_request.get("limit") != expected_probe_limit
     or probe_request.get("seeds") != [0]
     or probe_request.get("sample_seed") != 0
@@ -4579,7 +4588,10 @@ run_lane_body() {
       --local-config "$local_config"
       --local-config-sha256 "$local_config_sha"
       --attackers replay
-      --judges rules
+      --judges rules,guardrail
+      --guardrail-model meta-llama/Llama-Guard-3-8B
+      --guardrail-revision 7327bd9f6efbbe6101dc6cc4736302b3cbb6e425
+      --guardrail-device cuda:1
       --corpora synth
       --limit "$probe_limit"
       --sample-seed 0
@@ -4600,7 +4612,7 @@ run_lane_body() {
     PROBE_PLAN_PATH="$PLAN_PATH"; PROBE_PLAN_SHA="$PLAN_SHA"
     PROBE_RECEIPT_PATH="$RECEIPT_PATH"; PROBE_RECEIPT_SHA="$RECEIPT_SHA"
     validate_acquisition "$PROBE_PLAN_PATH" "$PROBE_PLAN_SHA" \
-      "$PROBE_RECEIPT_PATH" "$PROBE_RECEIPT_SHA" target_only
+      "$PROBE_RECEIPT_PATH" "$PROBE_RECEIPT_SHA" target_and_guard
     probe_acq=(
       --model-acquisition-plan "$PROBE_PLAN_PATH"
       --model-acquisition-plan-sha256 "$PROBE_PLAN_SHA"

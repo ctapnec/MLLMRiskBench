@@ -1535,6 +1535,43 @@ def test_phase6_core_validates_materialized_probe_group_keys() -> None:
         assert expected in mutated_contract
 
 
+def test_phase6_core_attestation_probe_uses_local_guardrail_fallback() -> None:
+    source = (
+        Path(__file__).parents[2]
+        / "experiments"
+        / "local_campaign"
+        / "templates"
+        / "phase6_core_measured.sh.in"
+    ).read_text(encoding="utf-8")
+
+    def assert_probe_contract(candidate: str) -> None:
+        shell_start = candidate.index("    probe_args=(")
+        shell_end = candidate.index(
+            '    event "$LANE" attestation-probe complete', shell_start
+        )
+        shell_contract = candidate[shell_start:shell_end]
+        state_start = candidate.index("probe_resources = {")
+        state_end = candidate.index("del probe_receipt", state_start)
+        state_contract = candidate[state_start:state_end]
+        assert "--judges rules,guardrail" in shell_contract
+        assert "--guardrail-model meta-llama/Llama-Guard-3-8B" in shell_contract
+        assert "--guardrail-revision 7327bd9f6efbbe6101dc6cc4736302b3cbb6e425" in shell_contract
+        assert "--guardrail-device cuda:1" in shell_contract
+        assert '"$PROBE_RECEIPT_PATH" "$PROBE_RECEIPT_SHA" target_and_guard' in shell_contract
+        assert '["guardrail_judge"]' in state_contract
+        assert 'probe_request.get("judges") != ["rules", "guardrail"]' in state_contract
+        assert 'probe_request.get("guardrail_device") != "cuda:1"' in state_contract
+
+    assert_probe_contract(source)
+    mutated = source.replace(
+        "      --judges rules,guardrail\n      --guardrail-model",
+        "      --judges rules\n      --guardrail-model",
+        1,
+    )
+    with pytest.raises(AssertionError):
+        assert_probe_contract(mutated)
+
+
 def test_phase6_failure_sealers_create_missing_runner_parent() -> None:
     root = (
         Path(__file__).parents[2]
