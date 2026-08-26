@@ -1349,6 +1349,43 @@ def test_phase6_core_binds_archived_placeholder_to_its_new_path() -> None:
         assert_relocation_contract(reverted)
 
 
+def test_phase6_core_reads_normalized_conditional_config_identities() -> None:
+    source = (
+        Path(__file__).parents[2]
+        / "experiments"
+        / "local_campaign"
+        / "templates"
+        / "phase6_core_measured.sh.in"
+    ).read_text(encoding="utf-8")
+    normalized = 'get("normalized_selected_sha256", "")'
+    raw = 'get("sha256", "")'
+
+    def assert_normalized_identity_contract(candidate: str) -> None:
+        start = candidate.index(
+            'selected = conditions.get("selected_config_identities", {})'
+        )
+        end = candidate.index(
+            'raise ValueError(f"{label}: defense-local conditional selection binding changed")',
+            start,
+        )
+        contract = candidate[start:end]
+        assert contract.count(normalized) == 2
+        assert (
+            'set(selected["source_config"]) != {"normalized_selected_sha256"}'
+            in contract
+        )
+        assert (
+            'set(selected["local_config"]) != {"normalized_selected_sha256"}'
+            in contract
+        )
+        assert raw not in contract
+
+    assert_normalized_identity_contract(source)
+    reverted = source.replace(normalized, raw, 1)
+    with pytest.raises(AssertionError):
+        assert_normalized_identity_contract(reverted)
+
+
 def test_phase7_conditional_analyses_branch_before_subprocesses() -> None:
     source = (
         Path(__file__).parents[2]

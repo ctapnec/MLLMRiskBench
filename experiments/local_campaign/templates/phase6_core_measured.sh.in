@@ -1959,12 +1959,30 @@ def validate_defense_conditional_artifact(row: dict[str, Any], label: str) -> No
     ).get("values", {})
     selected = conditions.get("selected_config_identities", {})
     if (
-        selected.get("source_conformance", {}).get("sha256")
-        != os.environ["URA_SOURCE_CONFORMANCE_SHA256"]
-        or selected.get("source_config", {}).get("sha256")
-        != artifacts["source_config"]["sha256"]
-        or selected.get("local_config", {}).get("sha256")
-        != artifacts["local_config"]["sha256"]
+        not isinstance(selected, dict)
+        or set(selected) != {
+            "source_config", "source_conformance", "attacker_config",
+            "engine_runtime_config", "api_config", "local_config",
+        }
+        or selected.get("source_conformance") != {
+            "sha256": artifacts["source_conformance"]["sha256"],
+            "bytes": artifacts["source_conformance"]["bytes"],
+        }
+        or selected.get("attacker_config") is not None
+        or selected.get("engine_runtime_config") is not None
+        or selected.get("api_config") is not None
+        or not isinstance(selected.get("source_config"), dict)
+        or set(selected["source_config"]) != {"normalized_selected_sha256"}
+        or re.fullmatch(
+            r"[0-9a-f]{64}",
+            str(selected["source_config"].get("normalized_selected_sha256", "")),
+        ) is None
+        or not isinstance(selected.get("local_config"), dict)
+        or set(selected["local_config"]) != {"normalized_selected_sha256"}
+        or re.fullmatch(
+            r"[0-9a-f]{64}",
+            str(selected["local_config"].get("normalized_selected_sha256", "")),
+        ) is None
     ):
         raise ValueError(f"{label}: defense-local conditional selection binding changed")
     live_binding = conditions.get("live_attestation")
