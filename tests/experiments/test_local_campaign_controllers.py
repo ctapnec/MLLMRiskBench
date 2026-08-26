@@ -1327,6 +1327,28 @@ def test_phase7_phase8_bind_archived_placeholder_to_its_new_path() -> None:
         assert_relocation_contract(reverted)
 
 
+def test_phase6_core_binds_archived_placeholder_to_its_new_path() -> None:
+    source = (
+        Path(__file__).parents[2]
+        / "experiments"
+        / "local_campaign"
+        / "templates"
+        / "phase6_core_measured.sh.in"
+    ).read_text(encoding="utf-8")
+    archived = 'artifact != {"path": str(archived_path), **placeholder_identity}'
+    planned = '{"path": str(expected_canonical), **placeholder_identity}'
+
+    def assert_relocation_contract(candidate: str) -> None:
+        assert archived in candidate
+        assert planned in candidate
+        assert "or archive != artifact" in candidate
+
+    assert_relocation_contract(source)
+    reverted = source.replace(archived, planned, 1)
+    with pytest.raises(AssertionError):
+        assert_relocation_contract(reverted)
+
+
 def test_phase7_conditional_analyses_branch_before_subprocesses() -> None:
     source = (
         Path(__file__).parents[2]

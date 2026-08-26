@@ -3052,16 +3052,16 @@ if not isinstance(artifact, dict) or set(artifact) != {"path", "sha256", "bytes"
     raise ValueError("Gate 5 prior-canonical artifact descriptor changed")
 archive = prior.get("archive")
 if prior["state"] == "placeholder_archived_and_replaced":
-    if artifact != {
-        "path": str(expected_canonical),
+    placeholder_identity = {
         "sha256": "7ec84df8ea241fd09e6403de30a06fc18c10c8ff449b99834821b567dace17cf",
         "bytes": 22,
-    }:
-        raise ValueError("Gate 5 prior placeholder identity changed")
+    }
     archived_path = exact_descriptor(archive, "archived pre-Gate-5 RUNNOTE")
-    if archive["sha256"] != artifact["sha256"] or archive["bytes"] != artifact["bytes"]:
+    if (
+        artifact != {"path": str(archived_path), **placeholder_identity}
+        or archive != artifact
+    ):
         raise ValueError("archived pre-Gate-5 RUNNOTE differs from the displaced placeholder")
-    del archived_path
 else:
     if artifact != promotion["canonical_runnote"]:
         raise ValueError("already-identical prior canonical identity changed")
@@ -3081,7 +3081,15 @@ expected_plan_prior_state = (
     if prior["state"] == "placeholder_archived_and_replaced"
     else "identical_canonical"
 )
-if plan_prior != {"state": expected_plan_prior_state, "artifact": artifact}:
+expected_plan_prior_artifact = (
+    {"path": str(expected_canonical), **placeholder_identity}
+    if prior["state"] == "placeholder_archived_and_replaced"
+    else artifact
+)
+if plan_prior != {
+    "state": expected_plan_prior_state,
+    "artifact": expected_plan_prior_artifact,
+}:
     raise ValueError("Gate 5 promotion plan and receipt disagree about prior canonical state")
 approval = note.get("approval")
 canonical_approval_self_test()
