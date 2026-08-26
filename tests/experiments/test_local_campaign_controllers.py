@@ -1668,6 +1668,48 @@ def test_phase6_sequence_adopts_only_an_exact_terminal_core_launch() -> None:
             assert_adoption_contract(mutated)
 
 
+def test_phase7_validates_controller_gate5_copies_by_location_and_bytes() -> None:
+    source = (
+        Path(__file__).parents[2]
+        / "experiments"
+        / "local_campaign"
+        / "templates"
+        / "phase7_analysis.py.in"
+    ).read_text(encoding="utf-8")
+
+    core = source.split("def validate_core_controller(", 1)[1].split(
+        "def validate_extended_controller(", 1
+    )[0]
+    extended = source.split("def validate_extended_controller(", 1)[1].split(
+        "def validate_native_controller(", 1
+    )[0]
+    native = source.split("def validate_native_controller(", 1)[1].split(
+        "def build_runner_input_view(", 1
+    )[0]
+
+    def assert_copy_contract(candidate: tuple[str, str, str]) -> None:
+        core_value, extended_value, native_value = candidate
+        for value in (core_value, extended_value):
+            before_launch = value.split("_validate_launch_gate5(", 1)[0]
+            assert "require_gate5_input_identities(" not in before_launch
+            assert "copied != authoritative_path" not in before_launch
+            assert "_validate_launch_gate5(" in value
+        assert "Phase 6 native Gate 5 input inventory changed" in native_value
+        assert "if copied_payload != authoritative_payload:" in native_value
+        assert "copied != authoritative_path" not in native_value
+        assert '!= control / "inputs" / filename' in native_value
+
+    values = (core, extended, native)
+    assert_copy_contract(values)
+    reverted_native = native.replace(
+        "if copied_payload != authoritative_payload:",
+        "if _copied != _authoritative_path or copied_payload != authoritative_payload:",
+        1,
+    )
+    with pytest.raises(AssertionError):
+        assert_copy_contract((core, extended, reverted_native))
+
+
 def test_phase6_failure_sealers_create_missing_runner_parent() -> None:
     root = (
         Path(__file__).parents[2]

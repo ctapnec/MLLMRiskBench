@@ -4545,28 +4545,6 @@ def validate_core_controller(
         "canonical_runnote": completion.get("gate5_runnote"),
         "promotion_receipt": completion.get("gate5_promotion_receipt"),
     }
-    require_gate5_input_identities(
-        gate5_inputs,
-        manifest=descriptor(gate5_manifest),
-        runnote=descriptor(gate5_runnote),
-        promotion=descriptor(gate5_promotion),
-        label="Phase 6 core",
-    )
-    for field, authoritative in (
-        ("manifest", gate5_manifest),
-        ("canonical_runnote", gate5_runnote),
-        ("promotion_receipt", gate5_promotion),
-    ):
-        copied, copied_payload = descriptor_bytes(
-            gate5_inputs[field], label=f"Phase 6 core Gate 5 {field}"
-        )
-        authoritative_path, authoritative_payload = _stable_regular_bytes(
-            authoritative,
-            label=f"authoritative Gate 5 {field}",
-            max_bytes=512 * 1024 * 1024,
-        )
-        if copied != authoritative_path or copied_payload != authoritative_payload:
-            raise Phase7Error(f"Phase 6 core used different Gate 5 {field} bytes")
 
     launch_path, launch = descriptor_object(
         completion.get("launch"), label="Phase 6 core launch"
@@ -5296,28 +5274,6 @@ def validate_extended_controller(
         )
 
     gate5_inputs = completion.get("gate5_inputs")
-    require_gate5_input_identities(
-        gate5_inputs,
-        manifest=descriptor(gate5_manifest),
-        runnote=descriptor(gate5_runnote),
-        promotion=descriptor(gate5_promotion),
-        label="Phase 6 extended",
-    )
-    for field, authoritative in (
-        ("manifest", gate5_manifest),
-        ("canonical_runnote", gate5_runnote),
-        ("promotion_receipt", gate5_promotion),
-    ):
-        copied, copied_payload = descriptor_bytes(
-            gate5_inputs[field], label=f"Phase 6 extended Gate 5 {field}"
-        )
-        authoritative_path, authoritative_payload = _stable_regular_bytes(
-            authoritative,
-            label=f"authoritative Gate 5 {field}",
-            max_bytes=512 * 1024 * 1024,
-        )
-        if copied != authoritative_path or copied_payload != authoritative_payload:
-            raise Phase7Error(f"Phase 6 extended used different Gate 5 {field} bytes")
     summary_path, summary = descriptor_object(
         completion.get("summary"), label="Phase 6 extended summary"
     )
@@ -5862,27 +5818,24 @@ def validate_native_controller(
         raise Phase7Error("Phase 6 native authorized plan SHA is invalid")
 
     gate5_inputs = completion.get("gate5_inputs")
-    require_gate5_input_identities(
-        gate5_inputs,
-        manifest=descriptor(gate5_manifest),
-        runnote=descriptor(gate5_runnote),
-        promotion=descriptor(gate5_promotion),
-        label="Phase 6 native",
-    )
+    if not isinstance(gate5_inputs, dict) or set(gate5_inputs) != {
+        "manifest", "canonical_runnote", "promotion_receipt",
+    }:
+        raise Phase7Error("Phase 6 native Gate 5 input inventory changed")
     for field, authoritative in (
         ("manifest", gate5_manifest),
         ("canonical_runnote", gate5_runnote),
         ("promotion_receipt", gate5_promotion),
     ):
-        copied, copied_payload = descriptor_bytes(
+        _copied, copied_payload = descriptor_bytes(
             gate5_inputs[field], label=f"Phase 6 native Gate 5 {field}"
         )
-        authoritative_path, authoritative_payload = _stable_regular_bytes(
+        _authoritative_path, authoritative_payload = _stable_regular_bytes(
             authoritative,
             label=f"authoritative Gate 5 {field}",
             max_bytes=512 * 1024 * 1024,
         )
-        if copied != authoritative_path or copied_payload != authoritative_payload:
+        if copied_payload != authoritative_payload:
             raise Phase7Error(f"Phase 6 native used different Gate 5 {field} bytes")
     plan_path, plan = descriptor_object(
         completion.get("plan"), label="Phase 6 native plan"
