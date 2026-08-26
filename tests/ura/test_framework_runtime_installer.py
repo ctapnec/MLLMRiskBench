@@ -752,7 +752,9 @@ def test_stable_alias_preserves_console_script_and_bridge_root(tmp_path: Path) -
     alias = layout.final("demo")
     result = subprocess.run([str(alias / "bin" / "pip"), "--version"], capture_output=True, text=True)
     assert result.returncode == 0
-    assert str(store) in (store / "bin" / "pip").read_text(encoding="utf-8").splitlines()[0]
+    console_script = (store / "bin" / "pip").read_text(encoding="utf-8")
+    assert str(store) in console_script
+    assert str(alias) not in console_script
     assert installer._content_seal(alias) == installer._content_seal(store)
     from ura.adapters._engine_runtime import _resolve_interpreter
 

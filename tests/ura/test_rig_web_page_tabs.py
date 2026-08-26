@@ -401,6 +401,7 @@ def test_jobs_history_globally_orders_heterogeneous_rows_by_start_time(
         model_attempted_calls=0,
         model_successful_generations=0,
         model_execution_covered_tasks=0,
+        model_execution_scope="",
         download_tasks=(),
         runtime_seconds=lambda: 1.0,
     )
