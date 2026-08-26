@@ -1119,14 +1119,6 @@ def checked_dir(value: str | Path, *, label: str) -> Path:
     return path
 
 
-def is_beneath(path: Path, root: Path) -> bool:
-    try:
-        path.relative_to(root)
-    except ValueError:
-        return False
-    return path != root
-
-
 def descriptor(path: Path, *, max_bytes: int = 512 * 1024 * 1024) -> dict[str, Any]:
     path, payload = _stable_regular_bytes(
         path, label="artifact", max_bytes=max_bytes
@@ -2672,6 +2664,31 @@ def validate_rr_runtime_terminal_rows(
         raise Phase7Error(f"{label} RR evidence-root inventory changed")
     for name, value in evidence_roots.items():
         _validate_runtime_terminal_tree(value, label=f"{label} RR {name}")
+    text_evidence_root = checked_dir(
+        Path(evidence_roots["text_vllm_4096"]["path"]),
+        label=f"{label} RR text evidence root",
+    )
+    image_evidence_root = checked_dir(
+        Path(evidence_roots["image_vllm_4096"]["path"]),
+        label=f"{label} RR image evidence root",
+    )
+    text_evidence_match = re.fullmatch(
+        r"phase5-core-canaries-(20[0-9]{6}T[0-9]{6}Z)",
+        text_evidence_root.name,
+    )
+    image_evidence_match = re.fullmatch(
+        r"rr-image-probe-(20[0-9]{6}T[0-9]{6}Z)",
+        image_evidence_root.name,
+    )
+    if text_evidence_match is None or image_evidence_match is None:
+        raise Phase7Error(f"{label} RR evidence-root names changed")
+    attestation_root = checked_dir(
+        checked_dir(required_env("URA_WORK"), label="URA_WORK")
+        / "runs"
+        / "thesis"
+        / "attestation",
+        label=f"{label} RR attestation root",
+    )
 
     observations = artifact.get("observations")
     if not isinstance(observations, dict) or set(observations) != evidence_keys:
@@ -2699,13 +2716,25 @@ def validate_rr_runtime_terminal_rows(
         or len(text_probe["error_artifacts"]) != 3
     ):
         raise Phase7Error(f"{label} RR text observation changed")
-    for index, raw in enumerate(text_probe["error_artifacts"]):
+    for index, (seed, raw) in enumerate(
+        zip(
+            text_probe["sample_seeds"],
+            text_probe["error_artifacts"],
+            strict=True,
+        )
+    ):
         _runtime_terminal_descriptor_shape(
             raw, label=f"{label} RR text error {index}"
         )
         error_path = descriptor_file(raw, label=f"{label} RR text error {index}")
-        if not is_beneath(error_path, Path(evidence_roots["text_vllm_4096"]["path"])):
-            raise Phase7Error(f"{label} RR text error escaped its evidence root")
+        expected_text_error_root = checked_dir(
+            attestation_root
+            / f"llava-rr-text-seed{seed}-{text_evidence_match.group(1)}"
+            / "run",
+            label=f"{label} RR text error root {index}",
+        )
+        if error_path.parent != expected_text_error_root:
+            raise Phase7Error(f"{label} RR text error placement changed")
     if not isinstance(image_probe, dict) or set(image_probe) != {
         "modality", "corpus", "sample_seed", "max_tokens", "finish_reason",
         "stop_reason", "successful_responses", "error_artifact",
@@ -2729,10 +2758,12 @@ def validate_rr_runtime_terminal_rows(
     image_error_path = descriptor_file(
         image_probe["error_artifact"], label=f"{label} RR image error"
     )
-    if not is_beneath(
-        image_error_path, Path(evidence_roots["image_vllm_4096"]["path"])
-    ):
-        raise Phase7Error(f"{label} RR image error escaped its evidence root")
+    expected_image_error_root = checked_dir(
+        attestation_root / image_evidence_match.group(0) / "run",
+        label=f"{label} RR image error root",
+    )
+    if image_error_path.parent != expected_image_error_root:
+        raise Phase7Error(f"{label} RR image error placement changed")
 
     if not isinstance(tail, dict) or set(tail) != {
         "probe_schema", "max_tokens", "prompt_tokens", "completion_tokens",

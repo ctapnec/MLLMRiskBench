@@ -1234,7 +1234,7 @@ def test_phase6_phase7_rr_use_runner_eligibility_envelope_binding_shape() -> Non
         assert_real_shape("phase7_analysis.py.in", reverted)
 
 
-def test_phase7_defines_rr_evidence_root_containment_helper() -> None:
+def test_phase7_binds_rr_errors_to_actual_attestation_run_roots() -> None:
     source = (
         Path(__file__).parents[2]
         / "experiments"
@@ -1242,25 +1242,29 @@ def test_phase7_defines_rr_evidence_root_containment_helper() -> None:
         / "templates"
         / "phase7_analysis.py.in"
     ).read_text(encoding="utf-8")
-    helper = (
-        "def is_beneath(path: Path, root: Path) -> bool:\n"
-        "    try:\n"
-        "        path.relative_to(root)\n"
-        "    except ValueError:\n"
-        "        return False\n"
-        "    return path != root\n\n\n"
+    expected_text = "error_path.parent != expected_text_error_root"
+    expected_image = "image_error_path.parent != expected_image_error_root"
+    stale_text = (
+        'is_beneath(error_path, Path(evidence_roots["text_vllm_4096"]["path"]))'
     )
 
-    def assert_defined_before_use(candidate: str) -> None:
-        definition = candidate.index(helper)
-        first_call = candidate.index("is_beneath(", definition + len(helper))
-        assert definition < first_call
-        assert candidate.count("is_beneath(") == 3
+    def assert_actual_roots(candidate: str) -> None:
+        assert expected_text in candidate
+        assert expected_image in candidate
+        assert stale_text not in candidate
+        assert (
+            'f"llava-rr-text-seed{seed}-{text_evidence_match.group(1)}"'
+            in candidate
+        )
+        assert (
+            'attestation_root / image_evidence_match.group(0) / "run"'
+            in candidate
+        )
 
-    assert_defined_before_use(source)
-    reverted = source.replace(helper, "", 1)
-    with pytest.raises((AssertionError, ValueError)):
-        assert_defined_before_use(reverted)
+    assert_actual_roots(source)
+    reverted = source.replace(expected_text, stale_text, 1)
+    with pytest.raises(AssertionError):
+        assert_actual_roots(reverted)
 
 
 def test_phase7_conditional_analyses_branch_before_subprocesses() -> None:
