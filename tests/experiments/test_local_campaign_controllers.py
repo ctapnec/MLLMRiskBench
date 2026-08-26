@@ -772,6 +772,36 @@ def test_gptgeochat_rwkv_cross_products_are_exact_typed_terminals() -> None:
     assert '(25, 18, ["defense-local"])' not in combined
 
 
+def test_phase6_extended_uses_the_real_full_gate5_transport_terminal_rows() -> None:
+    source = (
+        Path(__file__).parents[2]
+        / "experiments"
+        / "local_campaign"
+        / "templates"
+        / "phase6_extended_measured.sh.in"
+    ).read_text(encoding="utf-8")
+    start = source.index("GPTGEOCHAT_OLLAMA_TERMINAL_ROWS = {")
+    end = source.index("\nPORTFOLIO_TERMINALS = {", start)
+    contract = source[start:end]
+    required = (
+        '"family": "ollama"',
+        '"disposition": "unavailable"',
+        '"reason_code": "target_transport_text_only_for_image_source"',
+        '"projection": {"status": "UNAVAILABLE", "value": None}',
+        '"canary": {"status": "UNAVAILABLE", "value": None}',
+        '"final_preflight": {"status": "UNAVAILABLE", "value": None}',
+        '"approved_caps": {"status": "UNAVAILABLE", "value": None}',
+    )
+
+    def assert_real_row_shape(candidate: str) -> None:
+        _assert_source_contract(candidate, required)
+
+    assert_real_row_shape(contract)
+    reverted = contract.replace(required[-1], "", 1)
+    with pytest.raises(AssertionError):
+        assert_real_row_shape(reverted)
+
+
 def test_phase6_extended_final_event_uses_dynamic_typed_terminal_count() -> None:
     source = (
         Path(__file__).parents[2]

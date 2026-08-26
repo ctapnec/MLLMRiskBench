@@ -523,6 +523,10 @@ GPTGEOCHAT_OLLAMA_TERMINAL_ROWS = {
             "GPTGeoChat requires image-bearing source inputs, while the exact "
             "RWKV Ollama target transport is text-only."
         ),
+        "projection": {"status": "UNAVAILABLE", "value": None},
+        "canary": {"status": "UNAVAILABLE", "value": None},
+        "final_preflight": {"status": "UNAVAILABLE", "value": None},
+        "approved_caps": {"status": "UNAVAILABLE", "value": None},
     }
     for lane in TERMINALS
     if lane.startswith("gptgeochat-ollama-")
