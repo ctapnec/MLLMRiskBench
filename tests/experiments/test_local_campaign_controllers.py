@@ -4952,8 +4952,7 @@ def test_phase6_gate5_wait_uses_the_declared_controller_hard_stop() -> None:
             720,
             (
                 (
-                    'while tmux -L "$PHASE6_SOCKET" has-session -t '
-                    '"$PHASE6_SESSION" 2>/dev/null; do',
+                    "phase6_terminal_seen='no'\nwhile true; do",
                     "controller_hard_stop_check await-phase6",
                     False,
                 ),
@@ -5073,6 +5072,37 @@ def test_controller_waits_enforce_their_declared_global_hard_stop(
         assert changed != source
         with pytest.raises(AssertionError):
             assert_contract(changed)
+
+
+def test_phase7_watcher_waits_through_phase6_pre_session_validation() -> None:
+    source = (
+        Path(__file__).parents[2]
+        / "experiments"
+        / "local_campaign"
+        / "templates"
+        / "phase7_after_phase6_sequence.sh.in"
+    ).read_text(encoding="utf-8")
+    required = (
+        "phase6_terminal_seen='no'",
+        "while true; do",
+        'if tmux -L "$PHASE6_SOCKET" has-session -t "$PHASE6_SESSION" 2>/dev/null; then',
+        'if [[ -f "$PHASE6_ROOT/.exit" && ! -L "$PHASE6_ROOT/.exit" ]]; then',
+        "phase6_terminal_seen='yes'",
+        'test "$phase6_terminal_seen" = \'yes\'',
+    )
+
+    def assert_wait_contract(candidate: str) -> None:
+        _assert_source_contract(candidate, required)
+
+    assert_wait_contract(source)
+    reverted = source.replace(
+        "phase6_terminal_seen='no'\nwhile true; do",
+        'while tmux -L "$PHASE6_SOCKET" has-session -t '
+        '"$PHASE6_SESSION" 2>/dev/null; do',
+        1,
+    )
+    with pytest.raises(AssertionError):
+        assert_wait_contract(reverted)
 
 
 def _controller_test_bash() -> str:

@@ -395,10 +395,20 @@ PY
 printf 'PHASE7_WATCHER_CONTROL_ROOT=%s\n' "$CONTROL_ROOT"
 printf 'PHASE7_WATCHER_WAITING_FOR_PHASE6=%s\n' "$PHASE6_ROOT"
 controller_hard_stop_check await-phase6
-while tmux -L "$PHASE6_SOCKET" has-session -t "$PHASE6_SESSION" 2>/dev/null; do
+phase6_terminal_seen='no'
+while true; do
   controller_hard_stop_check await-phase6
+  if tmux -L "$PHASE6_SOCKET" has-session -t "$PHASE6_SESSION" 2>/dev/null; then
+    sleep 30
+    continue
+  fi
+  if [[ -f "$PHASE6_ROOT/.exit" && ! -L "$PHASE6_ROOT/.exit" ]]; then
+    phase6_terminal_seen='yes'
+    break
+  fi
   sleep 30
 done
+test "$phase6_terminal_seen" = 'yes'
 controller_hard_stop_check await-phase6
 controller_task_pass await-phase6
 
