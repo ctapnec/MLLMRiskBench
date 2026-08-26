@@ -67,7 +67,7 @@ from ura.lane_projection import (
 )
 from ura.live_attestation import load_live_attestation_file
 from ura.model_acquisition import load_plan, load_receipt
-from ura.project_revision import load_project_revision_file
+from ura.project_revision import load_project_revision_file, project_revision_binding
 from ura.request_envelope import (
     request_envelope_bytes,
     validate_request_envelope,
@@ -3339,7 +3339,8 @@ def current_identities(project: Path, work: Path) -> dict[str, Any]:
         },
         "project_revision": {
             "artifact": artifact(project_path, max_bytes=MAX_JSON_BYTES),
-            "revision_id": project_receipt["revision_id"], "binding": binding,
+            "revision_id": project_receipt["revision_id"],
+            "binding": project_revision_binding(project_receipt, binding),
         },
         "source_conformance_artifact": source_desc,
     }

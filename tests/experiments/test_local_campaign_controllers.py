@@ -1933,6 +1933,103 @@ def test_gate5_expands_project_receipt_descriptor_to_experiment_binding(
     assert calls == [(receipt, descriptor_binding)]
 
 
+def test_gate5_promoter_compares_the_normalized_project_revision_binding(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    namespace = _rendered_gate5_promoter_namespace(tmp_path)
+    project = tmp_path / "project"
+    project.mkdir()
+    work = tmp_path / "work"
+    framework_state = (
+        work
+        / "runs"
+        / "engineering"
+        / f"framework-runtime-{namespace['EXPECTED_FRAMEWORK_LOCK'][:12]}"
+    )
+    framework_state.mkdir(parents=True)
+
+    project_manifest = tmp_path / "project-revision-test.project-revision.json"
+    project_manifest.write_text("{}\n", encoding="utf-8")
+    source_manifest = tmp_path / "source-conformance.json"
+    source_manifest.write_text("{}\n", encoding="utf-8")
+    project_sha = hashlib.sha256(project_manifest.read_bytes()).hexdigest()
+    source_sha = hashlib.sha256(source_manifest.read_bytes()).hexdigest()
+    expected_commit = namespace["EXPECTED_COMMIT"]
+    receipt = {"revision_id": "project-revision-test"}
+    descriptor_binding = {
+        "file": project_manifest.name,
+        "sha256": project_sha,
+        "bytes": project_manifest.stat().st_size,
+        "revision_id": receipt["revision_id"],
+    }
+    normalized_binding = {
+        "mode": "verified",
+        **descriptor_binding,
+        "expected_commit": expected_commit,
+        "observed_commit": expected_commit,
+        "head_tree": "3" * 40,
+        "harness_source_sha256": "4" * 64,
+        "driver_source_sha256": "5" * 64,
+    }
+    source_value = {
+        "arms": [
+            *(
+                {"arm_id": f"admitted-{index}", "disposition": "admitted"}
+                for index in range(44)
+            ),
+            {"arm_id": "bipia_test_qa", "disposition": "blocked"},
+        ]
+    }
+    normalization_calls: list[tuple[object, object]] = []
+
+    namespace["EXPECTED_PROJECT_RECEIPT"] = str(project_manifest)
+    namespace["EXPECTED_PROJECT_RECEIPT_SHA256"] = project_sha
+    namespace["EXPECTED_SOURCE_RECEIPT"] = str(source_manifest)
+    namespace["EXPECTED_SOURCE_RECEIPT_SHA256"] = source_sha
+    namespace["run_capture"] = lambda argv, *, cwd: (
+        expected_commit if argv == ["git", "rev-parse", "HEAD"] else ""
+    )
+    namespace["load_project_revision_file"] = (
+        lambda *_args, **_kwargs: (receipt, descriptor_binding)
+    )
+    namespace["project_revision_binding"] = (
+        lambda observed_receipt, observed_descriptor: (
+            normalization_calls.append((observed_receipt, observed_descriptor))
+            or normalized_binding
+        )
+    )
+    namespace["strict_json"] = lambda _path: source_value
+    namespace["validate_source_conformance_manifest"] = lambda value: value
+    monkeypatch.setenv(
+        "URA_FRAMEWORK_LOCK_ID", str(namespace["EXPECTED_FRAMEWORK_LOCK"])
+    )
+    monkeypatch.setenv("URA_FRAMEWORK_STATE", str(framework_state))
+    monkeypatch.setenv("URA_PROJECT_REVISION_MANIFEST", str(project_manifest))
+    monkeypatch.setenv("URA_PROJECT_REVISION_SHA256", project_sha)
+    monkeypatch.setenv("URA_SOURCE_CONFORMANCE_MANIFEST", str(source_manifest))
+    monkeypatch.setenv("URA_SOURCE_CONFORMANCE_SHA256", source_sha)
+
+    identities = namespace["current_identities"](project, work)
+    candidate_project_revision = {
+        "artifact": identities["project_revision"]["artifact"],
+        "revision_id": receipt["revision_id"],
+        "binding": normalized_binding,
+    }
+    raw_descriptor_identity = {
+        **candidate_project_revision,
+        "binding": descriptor_binding,
+    }
+
+    def assert_candidate_identity(observed: dict[str, object]) -> None:
+        assert observed["project_revision"] == candidate_project_revision
+
+    assert_candidate_identity(identities)
+    with pytest.raises(AssertionError):
+        assert_candidate_identity({"project_revision": raw_descriptor_identity})
+    assert normalization_calls == [(receipt, descriptor_binding)]
+
+
 def test_render_is_commit_bound_and_workspace_drift_fails(tmp_path: Path) -> None:
     bindings = _bindings(tmp_path / "bindings.json")
     output = tmp_path / "workspace"
