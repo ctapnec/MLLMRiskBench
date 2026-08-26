@@ -649,9 +649,12 @@ controller applies the same ceiling cumulatively across each lane's preparation,
 resume and measured stages. A setup failure or timeout that occurs before Runner
 can publish its own request/error lifecycle writes one create-only,
 non-empirical `ura-phase6-pre-runner-failure/1` marker inside that exact planned
-`runs/thesis/runner/<lane>` root. The marker is not a Runner artifact and cannot
-enter metrics. It exists so Gate 6 never represents a planned measured lane by
-an absent directory or by an engineering log outside the Runner inventory.
+Runner root. Core uses `runs/thesis/runner/<lane>`; the retryable extended
+controller uses `runs/thesis/runner/<lane>/<phase6-extended-control>` so a later
+controller can preserve earlier job evidence instead of deleting or reusing it.
+The marker is not a Runner artifact and cannot enter metrics. It exists so Gate
+6 never represents a planned measured lane by an absent directory or by an
+engineering log outside the Runner inventory.
 
 Immediately before each real measured `run_matrix` child, the controller also
 creates one fixed-child operational registration binding the exact sanitized

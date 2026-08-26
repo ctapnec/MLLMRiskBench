@@ -470,7 +470,9 @@ grid, request-envelope, eligibility, and error artifacts. `level1_evidence`
 receives all retained Runner/request artifacts it can represent. A setup error
 or 24-hour lane timeout that occurs before Runner can publish a lifecycle writes
 one create-only `ura-phase6-pre-runner-failure/1` marker under the exact planned
-`runs/thesis/runner/<lane>` root. The marker is explicitly non-Runner and
+Runner root. Core uses `runs/thesis/runner/<lane>`; retryable extended attempts
+use `runs/thesis/runner/<lane>/<phase6-extended-control>` so retained job output
+is never deleted or silently reused. The marker is explicitly non-Runner and
 non-empirical: it satisfies the Gate 6 inventory requirement but is never
 fabricated as Level-1 metric input. Phase 7 rejects a missing lane root or an
 untyped controller-log explanation. Suite metrics and Level 2 use a separate

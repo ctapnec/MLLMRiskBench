@@ -3649,7 +3649,7 @@ def parse_state_result_root(
     state: Mapping[str, Any],
     *,
     lane: str,
-    runner_root: Path,
+    expected_root: Path,
     spec_descriptor: Mapping[str, Any],
     expected_schema: str,
 ) -> tuple[dict[str, Any], Path]:
@@ -3663,12 +3663,15 @@ def parse_state_result_root(
     result_root = checked_dir(
         str(state.get("result_root", "")), label=f"{lane} result root"
     )
-    expected_root = (runner_root / lane).resolve()
-    if result_root != expected_root:
+    if result_root != expected_root.resolve():
         raise Phase7Error(
             f"{lane}: measured result root is not the canonical runner lane root"
         )
     return state, result_root
+
+
+def extended_result_root(runner_root: Path, lane: str, control: Path) -> Path:
+    return runner_root / lane / control.name
 
 
 def validate_gate5(
@@ -4919,7 +4922,7 @@ def validate_core_controller(
         state, result_root = parse_state_result_root(
             state_value,
             lane=lane,
-            runner_root=runner_root,
+            expected_root=runner_root / lane,
             spec_descriptor=descriptor(spec_path),
             expected_schema="ura-phase6-core-measured-argv/1",
         )
@@ -5468,7 +5471,7 @@ def validate_extended_controller(
                 )
                 or failure.get("lane_spec") != descriptor(spec_path)
                 or failure.get("result_root")
-                != str((runner_root / lane).resolve())
+                != str(extended_result_root(runner_root, lane, control).resolve())
                 or failure.get("approved_wall_time_seconds") != 86_400
                 or failure.get("evidence_eligible") is not False
                 or _spec.get("approved_caps", {}).get("wall_time_seconds")
@@ -5496,7 +5499,9 @@ def validate_extended_controller(
                 failure.get("result_root", ""),
                 label=f"{lane} failed Runner root",
             )
-            if result_root != (runner_root / lane).resolve():
+            if result_root != extended_result_root(
+                runner_root, lane, control
+            ).resolve():
                 raise Phase7Error(f"{lane}: failed Runner root changed")
             critical_paths = [
                 path
@@ -5544,7 +5549,7 @@ def validate_extended_controller(
         state, result_root = parse_state_result_root(
             state,
             lane=lane,
-            runner_root=runner_root,
+            expected_root=extended_result_root(runner_root, lane, control),
             spec_descriptor=descriptor(spec_path),
             expected_schema="ura-phase6-extended-measured-argv/1",
         )
@@ -6920,6 +6925,16 @@ def validate_runner_inventory(
         gate5_profile["scheduled_extended_lanes"]
     )
     conditional_na_lanes = list(gate5_profile["conditional_na_lanes"])
+    extended_control = checked_dir(
+        str(extended.get("control_root", "")),
+        label="Phase 6 extended lifecycle control root",
+    )
+
+    def expected_lane_root(lane: str) -> Path:
+        if lane in scheduled_core_lanes:
+            return runner_root / lane
+        return extended_result_root(runner_root, lane, extended_control)
+
     core_specs = _lane_specs_by_id(core)
     extended_specs = _lane_specs_by_id(extended)
     specs = {**core_specs, **extended_specs}
@@ -6955,18 +6970,22 @@ def validate_runner_inventory(
     }
     if set(root_map) != set(measured_lanes):
         raise Phase7Error("Phase 6 runner result-root inventory is not exact")
+    measured_roots = {
+        lane: checked_dir(root_map[lane], label=f"{lane} runner root")
+        for lane in measured_lanes
+    }
 
     unexpected_errors = sorted(
         path
         for lane in measured_lanes
-        for path in (runner_root / lane).rglob("*.error.json")
+        for path in measured_roots[lane].rglob("*.error.json")
     )
     unexpected_locks = sorted(
         path
         for lane in measured_lanes
         for path in [
-            *(runner_root / lane).rglob("*.grid.lock"),
-            *(runner_root / lane).rglob("*.cell.lock"),
+            *measured_roots[lane].rglob("*.grid.lock"),
+            *measured_roots[lane].rglob("*.cell.lock"),
         ]
     )
     if unexpected_errors or unexpected_locks:
@@ -6974,7 +6993,7 @@ def validate_runner_inventory(
     all_grids = sorted(
         path
         for lane in measured_lanes
-        for path in (runner_root / lane).glob("*.grid.json")
+        for path in measured_roots[lane].glob("*.grid.json")
     )
     if len(all_grids) != len(measured_lanes):
         raise Phase7Error(
@@ -7004,8 +7023,8 @@ def validate_runner_inventory(
     validated_grid_request_descriptors: dict[str, dict[str, Any]] = {}
 
     for lane in measured_lanes:
-        root = checked_dir(root_map[lane], label=f"{lane} runner root")
-        if root != (runner_root / lane).resolve():
+        root = measured_roots[lane]
+        if root != expected_lane_root(lane).resolve():
             raise Phase7Error(f"{lane}: runner root is not canonical")
         grid_paths = sorted(root.glob("*.grid.json"))
         if len(grid_paths) != 1:
@@ -7199,20 +7218,27 @@ def validate_runner_inventory(
         for item in metric_eligibility
     }
     lifecycle_attestation_by_sha = dict(attestation_by_sha)
+    failure_rows = {
+        **dict(core.get("lane_failures", {})),
+        **dict(extended.get("lane_failures", {})),
+    }
     for lane in scheduled_runner_lanes:
-        candidate = runner_root / lane
         if normalized_states[lane] == "measured_complete":
             root = checked_dir(root_map[lane], label=f"{lane} lifecycle runner root")
             lifecycle_roots[lane] = str(root)
             lifecycle_states[lane] = "complete"
             continue
         failed_runner_artifacts[lane] = []
+        _failure_path, failure_row = descriptor_object(
+            failure_rows[lane], label=f"{lane} lifecycle controller failure"
+        )
+        candidate = Path(str(failure_row.get("result_root", "")))
         if not candidate.exists() and not candidate.is_symlink():
             raise Phase7Error(
                 f"{lane}: failed lifecycle Runner root is absent"
             )
         root = checked_dir(candidate, label=f"{lane} failed lifecycle runner root")
-        if root != candidate.resolve():
+        if root != expected_lane_root(lane).resolve():
             raise Phase7Error(f"{lane}: failed lifecycle runner root is not canonical")
         lifecycle_roots[lane] = str(root)
         files: list[Path] = []
@@ -7440,7 +7466,7 @@ def validate_runner_inventory(
                 state.get("schema") != expected_schema
                 or state.get("lane_spec") != spec_descriptor
                 or not isinstance(result_root, str)
-                or Path(result_root).resolve() != (runner_root / lane).resolve()
+                or Path(result_root).resolve() != expected_lane_root(lane).resolve()
                 or not isinstance(runner_argv, list)
                 or not runner_argv
                 or any(

@@ -863,6 +863,60 @@ def test_phase6_extended_compares_receipt_to_the_semantic_plan_digest() -> None:
         assert_contract(reverted)
 
 
+def test_phase6_extended_scopes_retry_outputs_without_reusing_job_evidence() -> None:
+    project = Path(__file__).parents[2]
+    extended = (
+        project
+        / "experiments"
+        / "local_campaign"
+        / "templates"
+        / "phase6_extended_measured.sh.in"
+    ).read_text(encoding="utf-8")
+    phase7 = (
+        project
+        / "experiments"
+        / "local_campaign"
+        / "templates"
+        / "phase7_analysis.py.in"
+    ).read_text(encoding="utf-8")
+    documents = (
+        (project / "experiments" / "LOCAL_CAMPAIGN_PLAN.md").read_text(
+            encoding="utf-8"
+        ),
+        (project / "experiments" / "RUN_AND_RETURN.md").read_text(
+            encoding="utf-8"
+        ),
+    )
+    extended_contract = (
+        "def expected_result_root(",
+        '        / spec["lane_id"]\n        / control_root.name',
+        "result_root = expected_result_root(ctl.work, spec, ctl.control)",
+    )
+    phase7_contract = (
+        "def extended_result_root(runner_root: Path, lane: str, control: Path)",
+        "return runner_root / lane / control.name",
+        "measured_roots[lane].rglob",
+        "expected_lane_root(lane).resolve()",
+    )
+    document_contract = "runs/thesis/runner/<lane>/<phase6-extended-control>"
+
+    def assert_contract(
+        extended_source: str,
+        phase7_source: str,
+        document_sources: tuple[str, str],
+    ) -> None:
+        _assert_source_contract(extended_source, extended_contract)
+        _assert_source_contract(phase7_source, phase7_contract)
+        for document in document_sources:
+            assert document_contract in document
+
+    assert_contract(extended, phase7, documents)
+    reverted = extended.replace("\n        / control_root.name", "", 1)
+    assert reverted != extended
+    with pytest.raises(AssertionError):
+        assert_contract(reverted, phase7, documents)
+
+
 def test_phase6_extended_final_event_uses_dynamic_typed_terminal_count() -> None:
     source = (
         Path(__file__).parents[2]

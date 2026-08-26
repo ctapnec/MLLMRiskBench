@@ -3931,7 +3931,16 @@ def recovery_argv_contract_self_test() -> dict[str, Any]:
             }
             spec_path = lane_control / "lane-spec.json"
             write_new(spec_path, canonical(spec))
-            result_root = fixture_root / label / "work" / "runs" / "thesis" / "runner" / lane
+            result_root = (
+                fixture_root
+                / label
+                / "work"
+                / "runs"
+                / "thesis"
+                / "runner"
+                / lane
+                / control.name
+            )
             prestate_path = lane_control / "measured-prestate.json"
             attestation = {"path": "/fixture/attestation.json", "sha256": "a" * 64}
             _reservation_path, _payload, reservation = reservation_identity(
@@ -5659,8 +5668,7 @@ class Controller:
     ) -> None:
         if (
             result_root.is_symlink()
-            or result_root.parent.resolve(strict=True)
-            != (self.work / "runs" / "thesis" / "runner").resolve(strict=True)
+            or result_root != expected_result_root(self.work, spec, self.control)
         ):
             raise ValueError(f"{lane}: external measured result root is unsafe")
         if not result_root.exists():
@@ -5850,7 +5858,16 @@ class Controller:
             os.mkdir(runner_parent, 0o700)
         if runner_parent.resolve(strict=True) != runner_parent:
             raise ValueError("Phase 6 extended Runner parent is unsafe")
-        result_root = runner_parent / lane
+        lane_parent = runner_parent / lane
+        if not lane_parent.exists() and not lane_parent.is_symlink():
+            os.mkdir(lane_parent, 0o700)
+        if (
+            lane_parent.is_symlink()
+            or not lane_parent.is_dir()
+            or lane_parent.resolve(strict=True) != lane_parent
+        ):
+            raise ValueError(f"{lane}: failure Runner lane parent is unsafe")
+        result_root = expected_result_root(self.work, spec, self.control)
         if not result_root.exists() and not result_root.is_symlink():
             os.mkdir(result_root, 0o700)
         if (
@@ -6208,8 +6225,17 @@ def derive_attestation(ctl: Controller, spec: Mapping[str, Any], lane_control: P
     }
 
 
-def expected_result_root(work: Path, spec: Mapping[str, Any]) -> Path:
-    return work.resolve(strict=True) / "runs" / "thesis" / "runner" / spec["lane_id"]
+def expected_result_root(
+    work: Path, spec: Mapping[str, Any], control_root: Path
+) -> Path:
+    return (
+        work.resolve(strict=True)
+        / "runs"
+        / "thesis"
+        / "runner"
+        / spec["lane_id"]
+        / control_root.name
+    )
 
 
 def expected_measured_args(
@@ -6350,7 +6376,7 @@ def build_prestate(
     prestate_path = lane_control / "measured-prestate.json"
     if result_root.exists() or result_root.is_symlink():
         raise ValueError(f"unowned measured output root already exists: {result_root}")
-    if result_root != expected_result_root(ctl.work, spec):
+    if result_root != expected_result_root(ctl.work, spec, lane_control.parents[1]):
         raise ValueError("measured result root is outside the exact campaign namespace")
     reservation_path, _reservation_payload, reservation_descriptor = reservation_identity(
         prestate_path, lane_control / "lane-spec.json", spec, result_root
@@ -6394,7 +6420,9 @@ def validate_prestate(path: Path, spec: Mapping[str, Any], spec_path: Path) -> d
         raise ValueError("measured prestate schema/field inventory changed")
     if value.get("lane_spec") != frozen_descriptor(spec_path):
         raise ValueError("measured prestate binds a different lane spec")
-    expected_root = expected_result_root(Path(os.environ["URA_WORK"]), spec)
+    expected_root = expected_result_root(
+        Path(os.environ["URA_WORK"]), spec, spec_path.parents[2]
+    )
     result_root = Path(str(value.get("result_root", "")))
     if result_root != expected_root or result_root.is_symlink():
         raise ValueError("measured prestate result root is not the exact canonical lane root")
@@ -6830,7 +6858,7 @@ def execute_lane(ctl: Controller, spec_path: Path) -> None:
     write_or_match(retained_spec, spec_path.read_bytes())
     state_path = lane_control / "exact-measured-argv.json"
     prestate_path = lane_control / "measured-prestate.json"
-    result_root = ctl.work / "runs" / "thesis" / "runner" / lane
+    result_root = expected_result_root(ctl.work, spec, ctl.control)
 
     if state_path.exists():
         try:
