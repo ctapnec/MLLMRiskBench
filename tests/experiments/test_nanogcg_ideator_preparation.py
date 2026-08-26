@@ -482,7 +482,10 @@ def test_nanogcg_capture_rejects_a_stored_plan_other_than_its_derived_plan(
 
 def test_nanogcg_capture_config_passes_runner_as_truthful_replay(
     tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    monkeypatch.delenv("URA_PROJECT_REVISION_MANIFEST", raising=False)
+    monkeypatch.delenv("URA_PROJECT_REVISION_SHA256", raising=False)
     selected_source_id = run_matrix.load_corpus("synth", 1)[0].id
     captured_target = "A deliberately non-default captured continuation"
     config = nanogcg_capture._replay_config(
@@ -825,8 +828,11 @@ def test_ideator_and_t3mp3st_runbook_paths_are_executable_not_placeholders() -> 
     assert "'$URA_T3_VLLM_BIN' serve '$URA_T3_QWEN_SNAPSHOT'" in t3mp3st
     assert "--served-model-name Qwen/Qwen3-VL-8B-Instruct" in t3mp3st
     assert "tmux new-session -d -s \"$URA_T3_VLLM_SESSION\"" in t3mp3st
-    assert "tmux has-session -t \"$URA_T3_VLLM_SESSION\" 2>/dev/null ||" not in t3mp3st
-    assert "tmux has-session -t \"$URA_T3_SESSION\" 2>/dev/null ||" not in t3mp3st
+    for session in ("URA_T3_VLLM_SESSION", "URA_T3_SESSION"):
+        probe = f'tmux has-session -t "${session}" 2>/dev/null'
+        assert f"if {probe}; then" in t3mp3st
+        assert f"{probe} || exit 1" in t3mp3st
+        assert f"{probe} || \\\n  tmux new-session" not in t3mp3st
     assert "Refusing to reuse existing session" in t3mp3st
     assert "Refusing to reuse an existing listener" in t3mp3st
     assert "served model identity mismatch" in t3mp3st
