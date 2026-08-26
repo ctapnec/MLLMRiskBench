@@ -463,6 +463,10 @@ import json
 import os
 from pathlib import Path
 import sys
+from experiments.local_campaign.ollama_static_terminal import (
+    OLLAMA_STATIC_TERMINAL_LANES,
+    inventory_counts,
+)
 from ura.strict_json import strict_json_loads
 
 (

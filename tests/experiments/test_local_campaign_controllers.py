@@ -1383,6 +1383,47 @@ def test_phase5_rr_preserves_projections_and_starts_terminal_at_canary(
     ):
         assert profile in sequence
 
+    completion_source = sequence[sequence.index("controller_task_start sequence-completion"):]
+    completion_blocks = re.findall(
+        r"<<'PY'\n(.*?)\nPY(?:\n|$)", completion_source, re.DOTALL
+    )
+    assert len(completion_blocks) == 1
+
+    def run_completion_profile_self_test(block: str) -> None:
+        import ast
+
+        tree = ast.parse(block)
+        function_index = next(
+            index
+            for index, node in enumerate(tree.body)
+            if isinstance(node, ast.FunctionDef) and node.name == "exact_profile"
+        )
+        profile_self_test = tree.body[function_index + 1]
+        assert isinstance(profile_self_test, ast.If)
+        imports = [
+            node
+            for node in tree.body[:function_index]
+            if isinstance(node, (ast.Import, ast.ImportFrom))
+        ]
+        isolated = ast.Module(
+            body=[*imports, tree.body[function_index], profile_self_test],
+            type_ignores=[],
+        )
+        exec(compile(ast.fix_missing_locations(isolated), "<gate5-completion>", "exec"), {})
+
+    run_completion_profile_self_test(completion_blocks[0])
+    missing_import = completion_blocks[0].replace(
+        "from experiments.local_campaign.ollama_static_terminal import (\n"
+        "    OLLAMA_STATIC_TERMINAL_LANES,\n"
+        "    inventory_counts,\n"
+        ")\n",
+        "",
+        1,
+    )
+    assert missing_import != completion_blocks[0]
+    with pytest.raises(NameError, match="OLLAMA_STATIC_TERMINAL_LANES"):
+        run_completion_profile_self_test(missing_import)
+
     bindings = _bindings(tmp_path / "bindings.json")
     output = tmp_path / "workspace"
     render_controller_set(bindings, output)
