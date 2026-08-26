@@ -1267,6 +1267,38 @@ def test_phase7_binds_rr_errors_to_actual_attestation_run_roots() -> None:
         assert_actual_roots(reverted)
 
 
+def test_phase7_phase8_bind_gate5_runtime_terminal_receipt_count() -> None:
+    root = (
+        Path(__file__).parents[2]
+        / "experiments"
+        / "local_campaign"
+        / "templates"
+    )
+    sources = {
+        name: (root / name).read_text(encoding="utf-8")
+        for name in ("phase7_analysis.py.in", "phase8_human_audit.py.in")
+    }
+    value_check = (
+        'finalization.get("target_runtime_terminal")\n'
+        '        != profile["target_runtime_terminal"]'
+    )
+    type_check = (
+        'type(finalization.get("target_runtime_terminal")) is not int'
+    )
+
+    def assert_current_receipt(candidate: str) -> None:
+        assert candidate.count('"target_runtime_terminal",') >= 1
+        assert value_check in candidate
+        assert type_check in candidate
+
+    for source in sources.values():
+        assert_current_receipt(source)
+
+    reverted = sources["phase7_analysis.py.in"].replace(value_check, "", 1)
+    with pytest.raises(AssertionError):
+        assert_current_receipt(reverted)
+
+
 def test_phase7_conditional_analyses_branch_before_subprocesses() -> None:
     source = (
         Path(__file__).parents[2]

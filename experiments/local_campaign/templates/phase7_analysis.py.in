@@ -3983,6 +3983,7 @@ def validate_gate5(
             "runnote_candidate",
             "runnable_lanes",
             "typed_terminal_lanes",
+            "target_runtime_terminal",
             "conditional_na_lanes",
             "downloads_observed_bytes",
             "commands",
@@ -3996,10 +3997,13 @@ def validate_gate5(
         != profile["runnable_lane_count"]
         or finalization.get("typed_terminal_lanes")
         != profile["terminal_lane_count"]
+        or finalization.get("target_runtime_terminal")
+        != profile["target_runtime_terminal"]
         or finalization.get("conditional_na_lanes")
         != profile["conditional_na_lanes"]
         or type(finalization.get("runnable_lanes")) is not int
         or type(finalization.get("typed_terminal_lanes")) is not int
+        or type(finalization.get("target_runtime_terminal")) is not int
         or finalization.get("downloads_observed_bytes") != 0
     ):
         raise Phase7Error("Gate 5 finalization receipt inventory changed")
