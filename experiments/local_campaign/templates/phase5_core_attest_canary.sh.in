@@ -84,7 +84,7 @@ PYTHONDONTWRITEBYTECODE=1 "$PY" -m experiments.local_campaign.console_events \
   child-start --work-root "$URA_WORK" --control-root "$CONTROL_ROOT" \
   --campaign-id "${CONTROL_ROOT##*/}" --release-commit "$EXPECTED_COMMIT" \
   --evidence-class local_campaign_control --hard-stop-hours 24 \
-  --tmux-socket "$SOCKET" --tmux-session "$SESSION"
+  --tmux-socket "$SOCKET" --tmux-session "$SESSION" --target-execution
 
 test "$(git rev-parse HEAD)" = "$EXPECTED_COMMIT"
 test -z "$(git status --porcelain)"
@@ -131,9 +131,9 @@ unset URA_MODEL_ACQUISITION_PLAN_DIR \
   URA_MODEL_ACQUISITION_STORE
 
 mkdir -p "$RECEIPTS_ROOT" "$TRANSPORT_CACHE" "$ATTEST_RECEIPTS"
-printf 'target\tmodality\treceipt\tsha256\n' > "$ATTEST_STATUS"
+printf 'target\tmodality\treceipt\tsha256\ttarget_attempts\tsuccessful_target_generations\n' > "$ATTEST_STATUS"
 printf 'target\tmodality\tarm\tsample_seed\trun_root\texit_code\n' > "$ATTEST_FAILURES"
-printf 'lane\trehearsal_projection_id\ttarget_cap\tlocal_guardrail_evaluations\tcanary_id\tall_configured_stages_represented\ttarget_status\tattacker_status\tsource_evaluator_status\tdisposition\tconditional_na_artifact\ttarget_runtime_terminal_artifact\n' > "$STATUS"
+printf 'lane\trehearsal_projection_id\ttarget_cap\tlocal_guardrail_evaluations\tcanary_id\tall_configured_stages_represented\ttarget_status\tattacker_status\tsource_evaluator_status\tdisposition\tconditional_na_artifact\ttarget_runtime_terminal_artifact\ttarget_attempts\tsuccessful_target_generations\n' > "$STATUS"
 
 json_fields() {
   "$PY" - "$1" "$2" <<'PY'
@@ -152,6 +152,15 @@ for line in reversed(lines):
         raise SystemExit(0)
     if kind == "receipt" and {"receipt_id", "receipt_sha256", "downloaded_bytes"} <= row.keys():
         print(row["receipt_id"], row["receipt_sha256"], row["downloaded_bytes"])
+        raise SystemExit(0)
+    if kind == "attestation" and {
+        "target_attempts", "successful_target_generations"
+    } <= row.keys():
+        print(
+            row["target_attempts"],
+            row["successful_target_generations"],
+            sep="\t",
+        )
         raise SystemExit(0)
 raise SystemExit(f"no {kind} result JSON in {path}")
 PY
@@ -205,7 +214,7 @@ probe_target_once() {
   local label="$1" modality="$2" spec="$3" config="$4" arm="$5"
   local sample_seed="$6"
   local config_sha plan_root run_root receipt_file receipt_sha run_log derive_log
-  local run_rc
+  local run_rc target_attempts successful_target_generations
   local probe_limit=1 target_cap=1
   local -a source_args=()
   if [[ "$arm" == 'synth' ]]; then
@@ -231,6 +240,7 @@ probe_target_once() {
   mkdir -p "${plan_root%/plan}" || return 91
   run_log="$CONTROL_ROOT/attest-${label}-${modality}-seed${sample_seed}.run.log"
   derive_log="$CONTROL_ROOT/attest-${label}-${modality}-seed${sample_seed}.derive.log"
+  test ! -e "$receipt_file" || return 92
 
   local -a args=(
     --attestation-probe
@@ -273,7 +283,6 @@ probe_target_once() {
       | tee -a "$ATTEST_FAILURES"
     return "$run_rc"
   fi
-  test ! -e "$receipt_file" || return 92
   if ! "$PY" -m experiments.live_attestation \
     --probe-root "$run_root" \
     --execution-scope-id "$SCOPE" \
@@ -283,14 +292,27 @@ probe_target_once() {
       | tee -a "$ATTEST_FAILURES"
     return 90
   fi
-  test -f "$receipt_file" && test ! -L "$receipt_file" || return 92
+  if [[ ! -f "$receipt_file" || -L "$receipt_file" ]]; then
+    printf '%s\t%s\t%s\t%s\t%s\t%s\n' \
+      "$label" "$modality" "$arm" "$sample_seed" "$run_root" 92 \
+      | tee -a "$ATTEST_FAILURES"
+    return 92
+  fi
   receipt_sha="$(sha256sum -- "$receipt_file" | awk '{print $1}')"
   if ! "$PY" -m experiments.live_attestation \
     --validate "$receipt_file" --sha256 "$receipt_sha" >> "$derive_log" 2>&1
   then
+    printf '%s\t%s\t%s\t%s\t%s\t%s\n' \
+      "$label" "$modality" "$arm" "$sample_seed" "$run_root" 93 \
+      | tee -a "$ATTEST_FAILURES"
     return 93
   fi
-  printf '%s\t%s\t%s\t%s\n' "$label" "$modality" "$receipt_file" "$receipt_sha" | tee -a "$ATTEST_STATUS"
+  IFS=$'\t' read -r target_attempts successful_target_generations < <(
+    json_fields "$derive_log" attestation
+  )
+  printf '%s\t%s\t%s\t%s\t%s\t%s\n' \
+    "$label" "$modality" "$receipt_file" "$receipt_sha" \
+    "$target_attempts" "$successful_target_generations" | tee -a "$ATTEST_STATUS"
   LAST_ATTESTATION_FILE="$receipt_file"
   LAST_ATTESTATION_SHA="$receipt_sha"
   printf 'ATTEST_END=%s/%s TIME=%s\n' "$label" "$modality" "$(date -Is)"
@@ -388,6 +410,7 @@ import os
 import pathlib
 import sys
 
+from experiments.local_campaign.target_execution import completed_target_execution
 from experiments.run_matrix import _bounded_nofollow_read
 from ura.eligibility import validate_eligibility_plan
 from ura.lane_canary import validate_lane_canary_summary
@@ -1019,12 +1042,16 @@ if expected_defense:
             raise SystemExit("two-stage defense canary execution facts changed")
 if roles.get("all_configured_stages_represented") is not True:
     raise SystemExit("not all configured judge stages are represented")
+target_attempts, successful_target_generations = completed_target_execution(row)
 print(
     row["canary_id"],
     str(roles["all_configured_stages_represented"]).lower(),
     execution["target"]["status"],
     execution["attacker"]["status"],
     execution["source_evaluator"]["status"],
+    target_attempts,
+    successful_target_generations,
+    sep="\t",
 )
 PY
 }
@@ -3725,6 +3752,7 @@ run_canary() {
   local defense_enabled="${12:-no}"
   local config_sha rehearsal_base rehearsal_plan rehearsal_run diagnostic_base diagnostic_plan diagnostic_run
   local projection_id target_cap guard_evals eligibility canary_id stages target_status attacker_status source_status
+  local target_attempts successful_target_generations
   config_sha="$(sha256sum -- "$config" | awk '{print $1}')"
   rehearsal_base="$PREFLIGHT_ROOT/${lane}-${TAG}"
   rehearsal_plan="$rehearsal_base/plan"
@@ -3822,7 +3850,7 @@ run_canary() {
   plan_acquire "${lane}-canary" "$diagnostic_plan" "${canary_args[@]}"
   acq=()
   while IFS= read -r -d '' item; do acq+=("$item"); done < <(acquisition_args)
-  local canary_rc conditional_artifact=''
+  local canary_rc conditional_artifact='' conditional_attempts='' conditional_successes=''
   set +e
   CUDA_VISIBLE_DEVICES=0,1 "$PY" -m experiments.run_matrix \
     "${canary_args[@]}" "${acq[@]}" > "$CONTROL_ROOT/${lane}.canary.log" 2>&1
@@ -3838,7 +3866,8 @@ run_canary() {
         "$ACQ_PLAN_PATH" "$ACQ_PLAN_SHA" "$ACQ_RECEIPT_PATH" "$ACQ_RECEIPT_SHA" \
         "$CONTROL_ROOT/${lane}-canary.acquire.log"
       then
-        :
+        conditional_attempts=0
+        conditional_successes=0
       elif write_defense_output_noncompletion_na \
         "$conditional_artifact" "$CONTROL_ROOT/${lane}.canary.log" \
         "$diagnostic_run" "$canary_rc" "$spec" "$config" "$config_sha" \
@@ -3846,14 +3875,16 @@ run_canary() {
         "$ACQ_PLAN_PATH" "$ACQ_PLAN_SHA" "$ACQ_RECEIPT_PATH" "$ACQ_RECEIPT_SHA" \
         "$CONTROL_ROOT/${lane}-canary.acquire.log"
       then
-        :
+        conditional_attempts=1
+        conditional_successes=0
       else
         return "$canary_rc"
       fi
       if [[ -f "$conditional_artifact" && ! -L "$conditional_artifact" ]]; then
-        printf '%s\t%s\t%s\t%s\t\t\t\t\t\tconditional_na\t%s\t\n' \
+        printf '%s\t%s\t%s\t%s\t\t\t\t\t\tconditional_na\t%s\t\t%s\t%s\n' \
           "$lane" "$projection_id" "$target_cap" "$guard_evals" \
-          "$conditional_artifact" | tee -a "$STATUS"
+          "$conditional_artifact" "$conditional_attempts" \
+          "$conditional_successes" | tee -a "$STATUS"
         printf 'CANARY_CONDITIONAL_NA=%s ARTIFACT=%s TIME=%s\n' \
           "$lane" "$conditional_artifact" "$(date -Is)"
         return 0
@@ -3870,14 +3901,16 @@ run_canary() {
     --results "$diagnostic_run" \
     --eligibility "$eligibility" \
     --out-dir "$diagnostic_run" > "$CONTROL_ROOT/${lane}.lane-canary.log" 2>&1
-  read -r canary_id stages target_status attacker_status source_status < <(
+  IFS=$'\t' read -r canary_id stages target_status attacker_status source_status \
+    target_attempts successful_target_generations < <(
     canary_fields "$diagnostic_run" "$spec" "$config" "$config_sha" \
       "$attackers" "$arm" "$judges" "$max_queries" "$max_turns" \
       "$approximate" "$target_cap" "$defense_enabled"
   )
-  printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\trunnable\t\t\n' \
+  printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\trunnable\t\t\t%s\t%s\n' \
     "$lane" "$projection_id" "$target_cap" "$guard_evals" "$canary_id" \
-    "$stages" "$target_status" "$attacker_status" "$source_status" | tee -a "$STATUS"
+    "$stages" "$target_status" "$attacker_status" "$source_status" \
+    "$target_attempts" "$successful_target_generations" | tee -a "$STATUS"
   printf 'CANARY_END=%s TIME=%s\n' "$lane" "$(date -Is)"
 }
 
@@ -3894,7 +3927,7 @@ for lane in \
   local-llava-rr-text-full local-llava-rr-image-full \
   rjudge-llava-rr gptgeochat-llava-rr
 do
-  printf '%s\t\t\t\t\t\t\t\t\tunavailable\t\t%s\n' \
+  printf '%s\t\t\t\t\t\t\t\t\tunavailable\t\t%s\t\t\n' \
     "$lane" "$RR_TERMINAL" | tee -a "$STATUS"
 done
 
@@ -3920,10 +3953,13 @@ run_canary gptgeochat-llava-base "$BASE" "$BASE_CFG" replay gptgeochat_release r
 run_canary crescendo-qwen3-vl "$QWEN" "$QWEN_CFG" crescendo cyberseceval_mitre rules,guardrail 4 4 yes "$QWEN_TEXT_ATTEST" "$QWEN_TEXT_SHA"
 run_canary defense-local "$QWEN" "$QWEN_CFG" replay jailbreakbench_benign rules,guardrail 1 1 yes "$QWEN_TEXT_ATTEST" "$QWEN_TEXT_SHA" yes
 
-"$PY" - "$STATUS" <<'PY'
+IFS=$'\t' read -r TARGET_ATTEMPTS SUCCESSFUL_TARGET_GENERATIONS < <(
+"$PY" - "$STATUS" "$ATTEST_STATUS" "$ATTEST_FAILURES" <<'PY'
 import csv
 import pathlib
 import sys
+
+from experiments.local_campaign.target_execution import aggregate_target_execution
 
 with open(sys.argv[1], encoding="utf-8", newline="") as handle:
     rows = list(csv.DictReader(handle, delimiter="\t"))
@@ -3945,6 +3981,7 @@ rr_lanes = {
 }
 failures = []
 rr_artifacts = set()
+execution_rows = []
 for row in rows:
     lane = row["lane"]
     disposition = row["disposition"]
@@ -3958,6 +3995,7 @@ for row in rows:
                 "all_configured_stages_represented", "target_status",
                 "attacker_status", "source_evaluator_status",
                 "conditional_na_artifact",
+                "target_attempts", "successful_target_generations",
             ))
             or not artifact.is_absolute()
             or artifact.is_symlink()
@@ -3981,6 +4019,8 @@ for row in rows:
             or not artifact.is_file()
         ):
             failures.append("defense-local: conditional N/A status row is malformed")
+        else:
+            execution_rows.append(row)
         continue
     if (
         disposition != "runnable"
@@ -3994,11 +4034,47 @@ for row in rows:
             failures.append(f"{lane}: source evaluator was not exercised")
     elif row["all_configured_stages_represented"] != "true":
         failures.append(f"{lane}: not all configured scoring stages were represented")
+    execution_rows.append(row)
 if len(rr_artifacts) != 1:
     failures.append("RR terminal lanes do not share one exact target-runtime artifact")
+
+with open(sys.argv[2], encoding="utf-8", newline="") as handle:
+    attestations = list(csv.DictReader(handle, delimiter="\t"))
+expected_attestations = {
+    ("qwen3-vl", "text"), ("qwen3-vl", "image"),
+    ("llava-base", "text"), ("llava-base", "image"),
+}
+if (
+    len(attestations) != 4
+    or {(row["target"], row["modality"]) for row in attestations}
+    != expected_attestations
+):
+    failures.append("core target attestation inventory drift")
+else:
+    execution_rows.extend(attestations)
 if failures:
     raise SystemExit("; ".join(failures))
+with open(sys.argv[3], encoding="utf-8", newline="") as handle:
+    failed_attestations = list(csv.DictReader(handle, delimiter="\t"))
+execution = aggregate_target_execution(
+    execution_rows,
+    accounting_unavailable=bool(failed_attestations),
+)
+if execution is None:
+    print("UNAVAILABLE", "UNAVAILABLE", sep="\t")
+else:
+    print(*execution, sep="\t")
 PY
+)
+if [[ "$TARGET_ATTEMPTS" == 'UNAVAILABLE' ]]; then
+  test "$SUCCESSFUL_TARGET_GENERATIONS" = 'UNAVAILABLE'
+  printf 'TARGET_EXECUTION_UNAVAILABLE=failed_attestation_candidates\n'
+else
+  PYTHONDONTWRITEBYTECODE=1 "$PY" -m experiments.local_campaign.console_events \
+    target-execution --work-root "$URA_WORK" --control-root "$CONTROL_ROOT" \
+    --target-attempts "$TARGET_ATTEMPTS" \
+    --successful-target-generations "$SUCCESSFUL_TARGET_GENERATIONS"
+fi
 
 printf 'PHASE5_CORE_CANARIES_COMPLETE=%s\n' "$(date -Is)"
 INNER

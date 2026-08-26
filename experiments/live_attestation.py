@@ -23,6 +23,9 @@ from experiments.level1_evidence import (  # noqa: E402
     _load_results,
     _plan_artifact,
 )
+from experiments.local_campaign.target_execution import (  # noqa: E402
+    target_execution_counts,
+)
 from ura.data_models import Attempt  # noqa: E402
 from ura.live_attestation import (  # noqa: E402
     build_live_attestation_manifest,
@@ -96,9 +99,9 @@ def _attempt_combination(value: dict[str, Any]) -> tuple[str, ...]:
     )
 
 
-def build_from_probe_root(
+def _build_from_probe_root_with_target_execution(
     root: Path, *, execution_scope_id: str
-) -> dict[str, Any]:
+) -> tuple[dict[str, Any], tuple[int, int]]:
     """Strictly load one completed probe grid and derive exact receipt records."""
 
     if root.is_symlink():
@@ -244,7 +247,21 @@ def build_from_probe_root(
                 "project_revision": project_revision,
             },
         })
-    return build_live_attestation_manifest(records)
+    responses = validated.get("responses")
+    if not isinstance(responses, dict):
+        raise ValueError("probe completion lacks validated target responses")
+    execution = target_execution_counts(len(responses), len(responses))
+    return build_live_attestation_manifest(records), execution
+
+
+def build_from_probe_root(
+    root: Path, *, execution_scope_id: str
+) -> dict[str, Any]:
+    """Strictly derive a receipt while retaining the historical public API."""
+
+    return _build_from_probe_root_with_target_execution(
+        root, execution_scope_id=execution_scope_id
+    )[0]
 
 
 def _write_new(path: Path, value: dict[str, Any]) -> None:
@@ -307,10 +324,13 @@ def main(argv: list[str] | None = None) -> int:
             "derivation requires --probe-root, --execution-scope-id, and --out"
         )
     try:
-        receipt = build_from_probe_root(
-            args.probe_root, execution_scope_id=args.execution_scope_id
+        receipt, (target_attempts, successful_target_generations) = (
+            _build_from_probe_root_with_target_execution(
+                args.probe_root, execution_scope_id=args.execution_scope_id
+            )
         )
         _write_new(args.out, receipt)
+        receipt_sha256 = _sha256_file(args.out)
     except (KeyError, OSError, TypeError, ValueError) as exc:
         print(f"live attestation failed: {exc}", file=sys.stderr)
         return 1
@@ -318,6 +338,9 @@ def main(argv: list[str] | None = None) -> int:
         "status": "written",
         "attestation_id": receipt["attestation_id"],
         "records": len(receipt["records"]),
+        "sha256": receipt_sha256,
+        "successful_target_generations": successful_target_generations,
+        "target_attempts": target_attempts,
         "out": str(args.out.resolve()),
         "validity_claim": "target_route_and_byte_backed_transport_only",
     }, sort_keys=True))

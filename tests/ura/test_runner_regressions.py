@@ -1166,6 +1166,13 @@ def test_probe_producer_and_measured_run_bind_one_fake_live_route(
         *common, "--attestation-probe", "--execution-scope-id", "test-scope",
         "--out", str(probe_root),
     ]) == 0
+    _probe_receipt, probe_target_execution = (
+        live_attestation_cli._build_from_probe_root_with_target_execution(
+            probe_root,
+            execution_scope_id="test-scope",
+        )
+    )
+    assert probe_target_execution == (1, 1)
     probe_manifest = json.loads(next(probe_root.glob("*.manifest.json")).read_text(
         encoding="utf-8"
     ))

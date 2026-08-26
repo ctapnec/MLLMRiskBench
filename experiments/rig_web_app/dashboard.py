@@ -1663,9 +1663,15 @@ class DashboardMixin:
                 "<dt>Authority</dt><dd>engineering / non-thesis</dd>"
                 f"<dt>Progress</dt><dd>{html.escape(campaign.progress)}</dd>"
                 + analysis_state
-                + "<dt>Reported calls</dt><dd>"
                 + (
-                    "not reported"
+                    "<dt>Reported target attempts</dt><dd>"
+                    if campaign.model_execution_scope == "target_only_mixed_controller"
+                    else "<dt>Reported calls</dt><dd>"
+                )
+                + (
+                    "not applicable - support only"
+                    if campaign.model_tasks == ()
+                    else "not reported"
                     if campaign.model_attempted_calls is None
                     else str(campaign.model_attempted_calls)
                 )

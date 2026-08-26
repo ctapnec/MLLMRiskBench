@@ -193,6 +193,35 @@ def test_independently_launched_children_render_native_jobs_registration(
         assert "child-finish" in source
         assert source.index("CONSOLE_CAMPAIGN_STARTED=1") < source.index("child-start")
 
+    target_capable = (
+        "phase5_core_attest_canary.sh",
+        "phase5_bridge_attest_canary.sh",
+        "phase5_ollama_workflow.sh",
+    )
+    for name in target_capable:
+        source = (output / name).read_text(encoding="utf-8")
+        assert "--target-execution" in source
+        assert "target-execution --work-root" in source
+        assert "completed_target_execution" in source
+        assert "aggregate_target_execution" in source
+        assert "target_attempts" in source
+        assert "successful_target_generations" in source
+
+    core_canary = (output / "phase5_core_attest_canary.sh").read_text(
+        encoding="utf-8"
+    )
+    assert "accounting_unavailable=bool(failed_attestations)" in core_canary
+    assert "TARGET_EXECUTION_UNAVAILABLE=failed_attestation_candidates" in core_canary
+
+    for name in (
+        "phase5_core_projections.sh",
+        "phase5_bridge_projections.sh",
+        "phase5_finalize_gate5.sh",
+    ):
+        source = (output / name).read_text(encoding="utf-8")
+        assert "--target-execution" not in source
+        assert "target-execution --work-root" not in source
+
     phase7_payload = (output / "phase7_analysis.py").read_text(encoding="utf-8")
     assert '_console_child("child-start", terminal_root)' in phase7_payload
     assert '_console_child("child-finish", terminal_root, exit_code)' in phase7_payload
@@ -322,7 +351,7 @@ def test_phase7_registers_only_the_launch_validated_control_root(
         terminal = load_engineering_campaign(tmp_path / "work" / "runs", authoritative.name)
         assert terminal is not None
         assert terminal.state == "failed"
-        assert terminal.task_outcomes == (("controller", "failed", "unclassified"),)
+        assert terminal.task_outcomes == (("controller", "failed", "support"),)
 
 
 def test_controller_templates_are_repository_normalized_to_lf() -> None:
@@ -1560,6 +1589,10 @@ def test_phase5_defense_failure_classifiers_are_disjoint_and_mutation_bound() ->
         "elif write_defense_output_noncompletion_na \\",
         'return "$canary_rc"',
         '[[ -f "$conditional_artifact" && ! -L "$conditional_artifact" ]]',
+        "conditional_attempts=0\n        conditional_successes=0",
+        "conditional_attempts=1\n        conditional_successes=0",
+        '"$conditional_artifact" "$conditional_attempts" \\',
+        '"$conditional_successes" | tee -a "$STATUS"',
     )
     _assert_source_contract(dispatch, dispatch_required)
     dispatch_mutation = dispatch.replace(
@@ -1569,6 +1602,15 @@ def test_phase5_defense_failure_classifiers_are_disjoint_and_mutation_bound() ->
     )
     with pytest.raises(AssertionError):
         _assert_source_contract(dispatch_mutation, dispatch_required)
+    for original, replacement in (
+        ("conditional_attempts=1", "conditional_attempts=0"),
+        ('"$conditional_artifact" "$conditional_attempts"',
+         '"$conditional_artifact" "$conditional_successes"'),
+    ):
+        changed = dispatch.replace(original, replacement, 1)
+        assert changed != dispatch
+        with pytest.raises(AssertionError):
+            _assert_source_contract(changed, dispatch_required)
 
 
 def test_defense_output_noncompletion_log_prefix_is_shared_end_to_end() -> None:
@@ -2537,7 +2579,7 @@ def test_bridge_canary_preserves_source_role_and_typed_abstention_contracts() ->
         'source_evaluator["required_records"] <= 0',
         'source_evaluator["observed_records"] != 0',
         'source_evaluator["valid_records"] != 0',
-        r'attacker_status\tsource_evaluator_status\n',
+        r'attacker_status\tsource_evaluator_status\ttarget_attempts\tsuccessful_target_generations\n',
         '"not_exercised" if row["lane"] == "bridge-purplellama" else "not_applicable"',
         'if row["source_evaluator_status"] != expected_source:',
         'responses = artifact_rows("responses")',
@@ -3593,7 +3635,11 @@ def test_ollama_static_output_failures_are_typed_without_stopping_other_lanes() 
         '--runner-returncode "$runner_rc"',
         'safe_marker "${lane}.target-runtime-terminal"',
         'return 0\n  fi',
-        "'runnable' '' '' '' | tee -a \"$CANARY_STATUS\"",
+        "'runnable' '' '' '' \"$target_attempts\" \\",
+        '"$successful_target_generations" | tee -a "$CANARY_STATUS"',
+        'terminal_returned terminal_attempts terminal_successes < <(',
+        '"$terminal_artifact" "$terminal_attempts" \\',
+        '"$terminal_successes" | tee -a "$CANARY_STATUS"',
     )
     remainder_required = (
         "validate_terminal_rows(",
@@ -3615,6 +3661,8 @@ def test_ollama_static_output_failures_are_typed_without_stopping_other_lanes() 
             'safe_marker "${lane}.canary"',
         ),
         ('return 0\n  fi', 'return "$runner_rc"\n  fi'),
+        ('"$terminal_artifact" "$terminal_attempts"',
+         '"$terminal_artifact" "$terminal_successes"'),
     ):
         changed = canary_body.replace(original, replacement, 1)
         assert changed != canary_body

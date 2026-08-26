@@ -34,6 +34,7 @@ _MAX_DIRECTORY_ENTRIES = 500
 _MAX_MARKER_BYTES = 64 * 1024
 _MAX_EVENT_LOG_BYTES = 512 * 1024
 _MAX_MODEL_EXECUTION_COUNT = 1_000_000
+_TARGET_ONLY_MIXED_SCOPE = "target_only_mixed_controller"
 _MAX_FRAMEWORK_SESSION_ENTRIES = 256
 _FRAMEWORK_SESSION_START_SLOP_SECONDS = 300
 _FRAMEWORK_SESSION_LAUNCH_GRACE_SECONDS = 30
@@ -562,6 +563,23 @@ def _declared_model_tasks(
     return tuple(tasks), ""
 
 
+def _declared_model_execution_scope(
+    marker: dict[str, Any],
+    planned_tasks: tuple[str, ...] | None,
+    model_tasks: tuple[str, ...] | None,
+) -> tuple[str, str]:
+    """Recognize the narrow target-only singleton-controller extension."""
+
+    raw = marker.get("model_execution_scope")
+    if raw is None:
+        return "", ""
+    if raw != _TARGET_ONLY_MIXED_SCOPE:
+        return "", "unsupported model_execution_scope"
+    if planned_tasks != ("controller",) or model_tasks != ("controller",):
+        return "", "target-only scope requires one mixed controller task"
+    return _TARGET_ONLY_MIXED_SCOPE, ""
+
+
 def _compact_status_tag(
     state: str,
     display_state: str,
@@ -635,6 +653,7 @@ class EngineeringCampaign:
     logs: tuple[tuple[str, str, Path], ...]
     artifact_links: tuple[tuple[str, str], ...] = ()
     artifact_link_error: str = ""
+    model_execution_scope: str = ""
 
     def runtime_seconds(self) -> float:
         return max(0.0, (self.ended_at or time.time()) - self.started_at)
@@ -939,6 +958,13 @@ def _load_campaign(
     )
 
     model_tasks, model_declaration_error = _declared_model_tasks(marker, planned_tasks)
+    model_execution_scope, scope_error = _declared_model_execution_scope(
+        marker, planned_tasks, model_tasks
+    )
+    model_declaration_error = model_declaration_error or scope_error
+    if scope_error:
+        model_tasks = None
+    target_only_execution = model_execution_scope == _TARGET_ONLY_MIXED_SCOPE
     model_task_set = set(model_tasks or ())
     planned_task_set = set(planned_tasks or ())
     task_order = list(planned_tasks or ())
@@ -952,6 +978,8 @@ def _load_campaign(
             if planned_tasks is not None and task not in planned_task_set
             else "unclassified"
             if model_tasks is None
+            else "mixed"
+            if task in model_task_set and target_only_execution
             else "model"
             if task in model_task_set
             else "support",
@@ -1000,6 +1028,7 @@ def _load_campaign(
             task = row.get("task")
             attempted = row.get("attempted_calls")
             successful = row.get("successful_generations")
+            execution_role = row.get("execution_role")
             if (
                 not isinstance(task, str)
                 or not task.strip()
@@ -1014,6 +1043,17 @@ def _load_campaign(
                 or attempted > _MAX_MODEL_EXECUTION_COUNT
             ):
                 model_execution_error = model_execution_error or "invalid model execution event"
+                continue
+            if target_only_execution:
+                if execution_role != "target":
+                    model_execution_error = model_execution_error or (
+                        "target execution event lacks execution_role=target"
+                    )
+                    continue
+            elif execution_role is not None:
+                model_execution_error = model_execution_error or (
+                    "execution_role requires a declared model_execution_scope"
+                )
                 continue
             normalized_task = task.strip()
             if normalized_task in execution_by_task:
@@ -1112,22 +1152,41 @@ def _load_campaign(
         parts.append(f"model tasks unavailable: {model_declaration_error}")
     elif model_tasks is None:
         parts.append("model tasks: not declared")
+    elif target_only_execution:
+        parts.append(
+            f"target-capable mixed controller: {model_succeeded_tasks} succeeded; "
+            f"{model_failed_tasks} failed; {model_skipped_tasks} skipped; "
+            f"{model_active_tasks} active; pending: {model_pending_tasks}"
+        )
+    elif not model_tasks:
+        parts.append("model tasks: not applicable - support only")
     else:
         parts.append(
             f"model tasks: {model_succeeded_tasks} succeeded; "
             f"{model_failed_tasks} failed; {model_skipped_tasks} skipped; "
             f"{model_active_tasks} active; pending: {model_pending_tasks}"
         )
+    execution_label = "target execution" if target_only_execution else "model execution"
     if model_execution_error:
-        parts.append(f"model execution report invalid: {model_execution_error}")
+        parts.append(f"{execution_label} report invalid: {model_execution_error}")
+    elif model_tasks == ():
+        parts.append("model execution: not applicable - support only")
     elif model_attempted_calls is None:
-        parts.append("model execution: not reported")
+        parts.append(f"{execution_label}: not reported")
     else:
-        parts.append(
-            f"model execution report: {model_successful_generations} successful generation(s) "
-            f"from {model_attempted_calls} attempt(s); coverage "
-            f"{model_execution_covered_tasks}/{len(model_tasks or ())} model tasks"
-        )
+        if target_only_execution:
+            parts.append(
+                "target execution report: "
+                f"{model_successful_generations} successful target generation(s) "
+                f"from {model_attempted_calls} target attempt(s); coverage "
+                f"{model_execution_covered_tasks}/1 mixed controller task"
+            )
+        else:
+            parts.append(
+                f"model execution report: {model_successful_generations} successful generation(s) "
+                f"from {model_attempted_calls} attempt(s); coverage "
+                f"{model_execution_covered_tasks}/{len(model_tasks or ())} model tasks"
+            )
     if target_call_cap is not None:
         calls = "unknown" if call_error else str(reserved_calls)
         parts.append(
@@ -1147,7 +1206,11 @@ def _load_campaign(
             ("stage2", "Stage 2 activity", stage2_path),
             ("failures", "Stage 2 failures", directory / "stage2-failures.jsonl"),
             ("calls", "Local call ledger", directory / "local-call-ledger.jsonl"),
-            ("model", "Model execution report", model_execution_path),
+            (
+                "model",
+                "Target execution report" if target_only_execution else "Model execution report",
+                model_execution_path,
+            ),
         )
         if not path.is_symlink() and path.is_file()
     )
@@ -1200,6 +1263,7 @@ def _load_campaign(
         logs=logs,
         artifact_links=artifact_links,
         artifact_link_error=artifact_link_error,
+        model_execution_scope=model_execution_scope,
     )
 
 

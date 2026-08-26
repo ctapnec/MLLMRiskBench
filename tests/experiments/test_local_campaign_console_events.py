@@ -12,6 +12,7 @@ from experiments.local_campaign.console_events import (
     append_event,
     finish_child_controller,
     main as console_main,
+    publish_target_execution,
     start_campaign,
     start_child_controller,
 )
@@ -27,6 +28,20 @@ def _roots(tmp_path: Path) -> tuple[Path, Path]:
     control = work / "runs" / "engineering" / "phase5-sequence-20260823T120000Z"
     control.mkdir(parents=True)
     return work, control
+
+
+def _start_target_controller(work: Path, control: Path) -> None:
+    start_child_controller(
+        work_root=work,
+        control_root=control,
+        campaign_id=control.name,
+        release_commit="a" * 40,
+        evidence_class="local_campaign_control",
+        hard_stop_hours=24,
+        tmux_socket="ura-model-controller",
+        tmux_session="ura-model-controller",
+        target_execution=True,
+    )
 
 
 def test_tmux_controller_registration_is_visible_and_reaches_terminal(
@@ -161,7 +176,6 @@ def test_child_controller_uses_native_jobs_index_and_detail_routes(
     assert f"/jobs/campaign/{control.name}" in jobs[2].decode("utf-8")
     assert detail[0] == 200
     assert "controller" in detail[2].decode("utf-8")
-
     assert (
         console_main(
             [
@@ -182,8 +196,251 @@ def test_child_controller_uses_native_jobs_index_and_detail_routes(
     assert terminal is not None
     assert terminal.state == "complete"
     assert terminal.status_tag == "passed"
-    assert terminal.task_outcomes == (("controller", "passed", "unclassified"),)
+    marker = json.loads((control / "ENGINEERING_ONLY.json").read_text(encoding="utf-8"))
+    assert marker["model_tasks"] == []
+    assert terminal.task_outcomes == (("controller", "passed", "support"),)
+    assert "model tasks: not applicable - support only" in terminal.progress
+    assert "model execution: not applicable - support only" in terminal.progress
+    terminal_jobs = app.handle("GET", "/jobs")[2].decode("utf-8")
+    terminal_detail = app.handle(
+        "GET", f"/jobs/campaign/{control.name}"
+    )[2].decode("utf-8")
+    terminal_stats = app.handle("GET", "/stats")[2].decode("utf-8")
+    assert "<td>support only</td><td>not applicable - support only</td>" in terminal_jobs
+    assert (
+        "<tr><td>Declared model tasks</td><td>support only</td></tr>"
+        in terminal_detail
+    )
+    assert (
+        "<tr><td>Reported model execution</td><td>"
+        "not applicable - support only</td></tr>"
+        in terminal_detail
+    )
+    stats_card = terminal_stats.split(f">{control.name}</a>", 1)[1].split(
+        "</article>", 1
+    )[0]
+    assert (
+        "<dt>Reported calls</dt><dd>not applicable - support only "
+        "(operational self-report)</dd>"
+        in stats_card
+    )
     app.close()
+
+
+def test_target_capable_child_reports_target_only_calls_without_analysis_charts(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from experiments.rig_web_app import campaigns as campaigns_module
+
+    monkeypatch.setattr(
+        campaigns_module,
+        "_named_session_liveness",
+        lambda specs: {spec: True for spec in specs},
+    )
+    work, control = _roots(tmp_path)
+    _start_target_controller(work, control)
+    marker = json.loads((control / "ENGINEERING_ONLY.json").read_text(encoding="utf-8"))
+    assert marker["model_tasks"] == ["controller"]
+    assert marker["model_execution_scope"] == "target_only_mixed_controller"
+    assert (
+        console_main(
+            [
+                "target-execution",
+                "--work-root",
+                str(work),
+                "--control-root",
+                str(control),
+                "--target-attempts",
+                "7",
+                "--successful-target-generations",
+                "5",
+            ]
+        )
+        == 0
+    )
+    finish_child_controller(
+        work_root=work,
+        control_root=control,
+        exit_code=0,
+    )
+
+    terminal = load_engineering_campaign(work / "runs", control.name)
+    assert terminal is not None
+    assert terminal.task_outcomes == (("controller", "passed", "mixed"),)
+    assert terminal.model_execution_scope == "target_only_mixed_controller"
+    assert terminal.model_attempted_calls == 7
+    assert terminal.model_successful_generations == 5
+    assert terminal.model_execution_error == ""
+    assert "target-capable mixed controller:" in terminal.progress
+
+    app = RigWebApp(results_root=work / "runs", state_dir=tmp_path / "state")
+    jobs_html = app.handle("GET", "/jobs")[2].decode("utf-8")
+    assert "target-capable mixed controller" in jobs_html
+    assert "5/7 target calls returned successfully" in jobs_html
+    detail_html = app.handle("GET", f"/jobs/campaign/{control.name}")[2].decode("utf-8")
+    assert "Target-capable mixed controller" in detail_html
+    assert "Reported target execution" in detail_html
+    assert "guard, defense, attacker, and framework-model roles" in detail_html
+    stats_html = app.handle("GET", "/stats")[2].decode("utf-8")
+    card = stats_html.split(f">{control.name}</a>", 1)[1].split("</article>", 1)[0]
+    assert "Reported target attempts" in card
+    assert "7 (operational self-report)" in card
+    assert "stats-detail-trigger" not in card
+    app.close()
+
+
+def test_target_execution_publication_is_create_only(tmp_path: Path) -> None:
+    work, control = _roots(tmp_path)
+    _start_target_controller(work, control)
+    kwargs = {
+        "work_root": work,
+        "control_root": control,
+        "target_attempts": 2,
+        "successful_target_generations": 1,
+    }
+    publish_target_execution(**kwargs)
+    row = json.loads((control / "model-execution.jsonl").read_text(encoding="utf-8"))
+    assert row["execution_role"] == "target"
+    retained = (control / "model-execution.jsonl").read_bytes()
+    with pytest.raises(ConsoleEventError, match="create-only"):
+        publish_target_execution(**kwargs)
+    assert (control / "model-execution.jsonl").read_bytes() == retained
+
+
+def test_target_scope_rejects_an_execution_row_without_target_role(
+    tmp_path: Path,
+) -> None:
+    work, control = _roots(tmp_path)
+    _start_target_controller(work, control)
+    (control / "model-execution.jsonl").write_text(
+        json.dumps({
+            "attempted_calls": 1,
+            "event": "model_execution",
+            "successful_generations": 1,
+            "task": "controller",
+        })
+        + "\n",
+        encoding="utf-8",
+    )
+
+    observed = load_engineering_campaign(work / "runs", control.name)
+    assert observed is not None
+    assert observed.model_attempted_calls is None
+    assert observed.model_execution_error == (
+        "target execution event lacks execution_role=target"
+    )
+
+
+def test_legacy_model_scope_rejects_a_target_execution_role(tmp_path: Path) -> None:
+    work, control = _roots(tmp_path)
+    start_campaign(
+        work_root=work,
+        control_root=control,
+        campaign_id=control.name,
+        release_commit="a" * 40,
+        evidence_class="local_campaign_control",
+        hard_stop_hours=24,
+        planned_tasks=("controller",),
+        tmux_socket="ura-model-controller",
+        tmux_session="ura-model-controller",
+        model_tasks=("controller",),
+        initial_running_tasks=("controller",),
+    )
+    (control / "model-execution.jsonl").write_text(
+        json.dumps({
+            "attempted_calls": 1,
+            "event": "model_execution",
+            "execution_role": "target",
+            "successful_generations": 1,
+            "task": "controller",
+        })
+        + "\n",
+        encoding="utf-8",
+    )
+
+    observed = load_engineering_campaign(work / "runs", control.name)
+    assert observed is not None
+    assert observed.model_attempted_calls is None
+    assert observed.model_execution_error == (
+        "execution_role requires a declared model_execution_scope"
+    )
+
+
+def test_invalid_execution_scope_cannot_downgrade_to_a_legacy_report(
+    tmp_path: Path,
+) -> None:
+    work, control = _roots(tmp_path)
+    start_campaign(
+        work_root=work,
+        control_root=control,
+        campaign_id=control.name,
+        release_commit="a" * 40,
+        evidence_class="local_campaign_control",
+        hard_stop_hours=24,
+        planned_tasks=("controller",),
+        tmux_socket="ura-model-controller",
+        tmux_session="ura-model-controller",
+        model_tasks=("controller",),
+        initial_running_tasks=("controller",),
+    )
+    marker_path = control / "ENGINEERING_ONLY.json"
+    marker = json.loads(marker_path.read_text(encoding="utf-8"))
+    marker["model_execution_scope"] = "unsupported_scope"
+    marker_path.write_text(json.dumps(marker) + "\n", encoding="utf-8")
+    (control / "model-execution.jsonl").write_text(
+        json.dumps({
+            "attempted_calls": 1,
+            "event": "model_execution",
+            "successful_generations": 1,
+            "task": "controller",
+        })
+        + "\n",
+        encoding="utf-8",
+    )
+
+    observed = load_engineering_campaign(work / "runs", control.name)
+    assert observed is not None
+    assert observed.model_tasks is None
+    assert observed.model_attempted_calls is None
+    assert observed.model_declaration_error == "unsupported model_execution_scope"
+    assert observed.model_execution_error == (
+        "model execution log requires a valid model_tasks declaration"
+    )
+    assert observed.task_outcomes == (("controller", "running", "unclassified"),)
+
+
+def test_target_execution_scope_rejects_a_multi_task_controller(tmp_path: Path) -> None:
+    work, control = _roots(tmp_path)
+    with pytest.raises(ConsoleEventError, match="one mixed controller task"):
+        start_campaign(
+            work_root=work,
+            control_root=control,
+            campaign_id=control.name,
+            release_commit="a" * 40,
+            evidence_class="local_campaign_control",
+            hard_stop_hours=24,
+            planned_tasks=("controller", "postprocess"),
+            tmux_socket="ura-model-controller",
+            tmux_session="ura-model-controller",
+            model_tasks=("controller", "postprocess"),
+            model_execution_scope="target_only_mixed_controller",
+        )
+    assert not (control / "ENGINEERING_ONLY.json").exists()
+
+
+def test_target_controller_without_complete_accounting_remains_not_reported(
+    tmp_path: Path,
+) -> None:
+    work, control = _roots(tmp_path)
+    _start_target_controller(work, control)
+    finish_child_controller(work_root=work, control_root=control, exit_code=0)
+
+    observed = load_engineering_campaign(work / "runs", control.name)
+    assert observed is not None
+    assert observed.model_attempted_calls is None
+    assert observed.model_execution_error == ""
+    assert "target execution: not reported" in observed.progress
 
 
 def test_child_start_marker_failure_removes_complete_initial_lifecycle(

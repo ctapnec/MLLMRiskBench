@@ -330,7 +330,16 @@ def main(argv: list[str] | None = None) -> int:
     value = classify(output=args.output, runner_log=args.runner_log,
                      diagnostic_root=args.diagnostic_root, lane=args.lane,
                      runner_returncode=args.runner_returncode)
-    print(value["disposition"], value["reason_code"], value["reason"], args.output, sep="\t")
+    accounting = value["call_accounting"]
+    print(
+        value["disposition"],
+        value["reason_code"],
+        value["reason"],
+        args.output,
+        accounting["target_calls"],
+        accounting["completed_attempts"],
+        sep="\t",
+    )
     return 0
 
 

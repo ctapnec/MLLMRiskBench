@@ -17,6 +17,7 @@ from experiments.local_campaign.ollama_static_terminal import (
     classify,
     descriptor_for,
     inventory_counts,
+    main,
     validate_gate5_terminal_rows,
     validate_terminal_artifact,
     validate_terminal_rows,
@@ -106,6 +107,30 @@ def test_exact_nonjudgeable_model_outputs_become_typed_lane_outcomes(
     assert validate_terminal_artifact(
         output, expected_lane=lane, expected_diagnostic_root=diagnostic
     ) == value
+
+
+def test_classifier_cli_reports_attempted_and_successful_target_counts(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    lane, diagnostic, log, output = _runner_case(
+        tmp_path,
+        message="Ollama returned an empty completion",
+        target_calls=9,
+    )
+
+    assert main([
+        "classify",
+        "--output", str(output),
+        "--runner-log", str(log),
+        "--diagnostic-root", str(diagnostic),
+        "--lane", lane,
+        "--runner-returncode", "1",
+    ]) == 0
+
+    fields = capsys.readouterr().out.rstrip("\n").split("\t")
+    assert fields[-2:] == ["9", "8"]
+    assert len(fields) == 6
 
 
 @pytest.mark.parametrize(

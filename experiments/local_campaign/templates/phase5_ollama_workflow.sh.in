@@ -104,7 +104,7 @@ PYTHONDONTWRITEBYTECODE=1 "$PY" -m experiments.local_campaign.console_events \
   child-start --work-root "$URA_WORK" --control-root "$CONTROL_ROOT" \
   --campaign-id "${CONTROL_ROOT##*/}" --release-commit "$EXPECTED_COMMIT" \
   --evidence-class local_campaign_control --hard-stop-hours 24 \
-  --tmux-socket "$SOCKET" --tmux-session "$SESSION"
+  --tmux-socket "$SOCKET" --tmux-session "$SESSION" --target-execution
 
 test "$(git rev-parse HEAD)" = "$EXPECTED_COMMIT"
 test -z "$(git status --porcelain)"
@@ -177,8 +177,8 @@ mkdir -p "$SUCCESS_ROOT" "$CONFIG_ROOT" "$RECEIPTS_ROOT" \
 
 printf 'phase\tunit\tdisposition\treason\n' > "$DISPOSITIONS"
 printf 'lane\tmodel_label\trequested_spec\tdigest\tmetric_mode\tpreliminary_projection_id\tfinal_projection_id\ttarget_cap\tjudge_cap\tlocal_guardrail_evaluations\thttp_cap\tselected_clusters\tselected_records\tpreliminary_root\tfinal_root\n' > "$PROJECTION_STATUS"
-printf 'model_label\trequested_spec\tdigest\tattestation_id\treceipt\tsha256\tprobe_root\n' > "$ATTEST_STATUS"
-printf 'lane\tmodel_label\trequested_spec\tdigest\tmetric_mode\trehearsal_projection_id\ttarget_cap\tjudge_cap\tlocal_guardrail_evaluations\thttp_cap\tcanary_id\tall_configured_stages_represented\ttarget_status\tattacker_status\tsource_evaluator_status\tdecided\tdecision_coverage\tdiagnostic_root\tdisposition\treason_code\treason\ttarget_runtime_terminal_artifact\n' > "$CANARY_STATUS"
+printf 'model_label\trequested_spec\tdigest\tattestation_id\treceipt\tsha256\tprobe_root\ttarget_attempts\tsuccessful_target_generations\n' > "$ATTEST_STATUS"
+printf 'lane\tmodel_label\trequested_spec\tdigest\tmetric_mode\trehearsal_projection_id\ttarget_cap\tjudge_cap\tlocal_guardrail_evaluations\thttp_cap\tcanary_id\tall_configured_stages_represented\ttarget_status\tattacker_status\tsource_evaluator_status\tdecided\tdecision_coverage\tdiagnostic_root\tdisposition\treason_code\treason\ttarget_runtime_terminal_artifact\ttarget_attempts\tsuccessful_target_generations\n' > "$CANARY_STATUS"
 
 "$PY" - "$GPTGEOCHAT_TERMINAL_REASON_CODE" "$GPTGEOCHAT_TERMINAL_REASON" \
   "${MODEL_LABELS[@]}" <<'PY'
@@ -398,6 +398,15 @@ for line in reversed(open(path, encoding="utf-8").read().splitlines()):
         raise SystemExit(0)
     if kind == "receipt" and {"receipt_id", "receipt_sha256", "downloaded_bytes"} <= row.keys():
         print(row["receipt_id"], row["receipt_sha256"], row["downloaded_bytes"])
+        raise SystemExit(0)
+    if kind == "attestation" and {
+        "target_attempts", "successful_target_generations"
+    } <= row.keys():
+        print(
+            row["target_attempts"],
+            row["successful_target_generations"],
+            sep="\t",
+        )
         raise SystemExit(0)
 raise SystemExit(f"no {kind} result JSON in {path}")
 PY
@@ -802,10 +811,12 @@ probe_ollama_text() {
   local label="$1"
   local spec="${MODEL_SPECS[$label]}" digest="${MODEL_DIGESTS[$label]}"
   local config="${MODEL_CONFIGS[$label]}" config_sha base run_root receipt_file receipt_sha attestation_id
+  local derive_log target_attempts successful_target_generations
   config_sha="$(sha256sum -- "$config" | awk '{print $1}')"
   base="$ATTEST_ROOT/${label}-text-${TAG}"
   run_root="$base/run"
   receipt_file="$ATTEST_RECEIPTS/${label}-text-${TAG}.live-attestation.json"
+  derive_log="$CONTROL_ROOT/${label}.attestation-derive.log"
   test ! -e "$base" && mkdir -p "$base"
   test ! -e "$receipt_file"
 
@@ -841,17 +852,21 @@ probe_ollama_text() {
   "$PY" -m experiments.live_attestation \
     --probe-root "$run_root" \
     --execution-scope-id "$SCOPE" \
-    --out "$receipt_file" > "$CONTROL_ROOT/${label}.attestation-derive.log" 2>&1
+    --out "$receipt_file" > "$derive_log" 2>&1
   test -f "$receipt_file" && test ! -L "$receipt_file"
   receipt_sha="$(sha256sum -- "$receipt_file" | awk '{print $1}')"
   "$PY" -m experiments.live_attestation \
     --validate "$receipt_file" --sha256 "$receipt_sha" \
-    >> "$CONTROL_ROOT/${label}.attestation-derive.log" 2>&1
+    >> "$derive_log" 2>&1
   attestation_id="$(validate_attestation_receipt \
     "$receipt_file" "$config" "$spec" "$digest" synthetic_live_transport_probe)"
-  printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
+  IFS=$'\t' read -r target_attempts successful_target_generations < <(
+    json_fields "$derive_log" attestation
+  )
+  printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
     "$label" "$spec" "$digest" "$attestation_id" "$receipt_file" "$receipt_sha" \
-    "$run_root" | tee -a "$ATTEST_STATUS"
+    "$run_root" "$target_attempts" "$successful_target_generations" \
+    | tee -a "$ATTEST_STATUS"
   safe_marker "${label}.attestation"
   printf 'ATTESTATION_END=%s TIME=%s\n' "$label" "$(date -Is)"
 }
@@ -867,6 +882,7 @@ import os
 import pathlib
 import sys
 
+from experiments.local_campaign.target_execution import completed_target_execution
 from experiments.run_matrix import _bounded_nofollow_read
 from ura.eligibility import validate_eligibility_plan
 from ura.lane_canary import validate_lane_canary_summary
@@ -1337,6 +1353,7 @@ else:
 support = summary["decision_support"]
 if not isinstance(support.get("decision_coverage"), (int, float)):
     raise SystemExit("canary lacks numeric decision coverage")
+target_attempts, successful_target_generations = completed_target_execution(summary)
 print(
     summary["canary_id"],
     str(roles["all_configured_stages_represented"]).lower(),
@@ -1345,6 +1362,9 @@ print(
     execution["source_evaluator"]["status"],
     support["decided"],
     support["decision_coverage"],
+    target_attempts,
+    successful_target_generations,
+    sep="\t",
 )
 PY
 }
@@ -1357,7 +1377,9 @@ run_canary_lane() {
   local rehearsal_base rehearsal_plan rehearsal_run diagnostic_base diagnostic_plan diagnostic_run
   local projection_id target_cap judge_cap guard_evals http_cap clusters records eligibility
   local canary_id stages target_status attacker_status source_status decided coverage
+  local target_attempts successful_target_generations
   local runner_rc terminal_artifact terminal_returned terminal_disposition terminal_reason_code terminal_reason
+  local terminal_attempts terminal_successes
   config_sha="$(sha256sum -- "$config" | awk '{print $1}')"
   rehearsal_base="$PREFLIGHT_ROOT/${lane}-rehearsal-${TAG}"
   rehearsal_plan="$rehearsal_base/plan"
@@ -1449,7 +1471,8 @@ run_canary_lane() {
   if (( runner_rc != 0 )); then
     [[ "$mode" == 'static' ]] || return "$runner_rc"
     terminal_artifact="$CONTROL_ROOT/${lane}.target-runtime-terminal.json"
-    IFS=$'\t' read -r terminal_disposition terminal_reason_code terminal_reason terminal_returned < <(
+    IFS=$'\t' read -r terminal_disposition terminal_reason_code terminal_reason \
+      terminal_returned terminal_attempts terminal_successes < <(
       "$PY" -m experiments.local_campaign.ollama_static_terminal classify \
         --output "$terminal_artifact" \
         --runner-log "$CONTROL_ROOT/${lane}.canary.log" \
@@ -1457,11 +1480,12 @@ run_canary_lane() {
         --lane "$lane" --runner-returncode "$runner_rc"
     )
     test "$terminal_returned" = "$terminal_artifact"
-    printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
+    printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
       "$lane" "$label" "$spec" "$digest" "$mode" "$projection_id" \
       "$target_cap" "$judge_cap" "$guard_evals" "$http_cap" '' '' '' '' '' \
       '' '' "$diagnostic_run" "$terminal_disposition" "$terminal_reason_code" \
-      "$terminal_reason" "$terminal_artifact" | tee -a "$CANARY_STATUS"
+      "$terminal_reason" "$terminal_artifact" "$terminal_attempts" \
+      "$terminal_successes" | tee -a "$CANARY_STATUS"
     safe_marker "${lane}.target-runtime-terminal"
     printf 'CANARY_TARGET_RUNTIME_TERMINAL=%s TIME=%s\n' "$lane" "$(date -Is)"
     return 0
@@ -1475,15 +1499,17 @@ run_canary_lane() {
     --results "$diagnostic_run" \
     --eligibility "$eligibility" \
     --out-dir "$diagnostic_run" > "$CONTROL_ROOT/${lane}.lane-canary.log" 2>&1
-  read -r canary_id stages target_status attacker_status source_status decided coverage < <(
+  IFS=$'\t' read -r canary_id stages target_status attacker_status source_status \
+    decided coverage target_attempts successful_target_generations < <(
     canary_fields "$diagnostic_run" "$mode" "$spec" "$digest" "$arm" \
       "$target_cap" "$config" "$config_sha"
   )
-  printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
+  printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
     "$lane" "$label" "$spec" "$digest" "$mode" "$projection_id" "$target_cap" \
     "$judge_cap" "$guard_evals" "$http_cap" "$canary_id" "$stages" \
     "$target_status" "$attacker_status" "$source_status" "$decided" "$coverage" \
-    "$diagnostic_run" 'runnable' '' '' '' | tee -a "$CANARY_STATUS"
+    "$diagnostic_run" 'runnable' '' '' '' "$target_attempts" \
+    "$successful_target_generations" | tee -a "$CANARY_STATUS"
   safe_marker "${lane}.canary"
   printf 'CANARY_END=%s TIME=%s\n' "$lane" "$(date -Is)"
 }
@@ -1545,6 +1571,7 @@ run_isolated integrity roster-final \
   verify_live_roster "$CONTROL_ROOT/roster-final.json" "${roster_args[@]}"
 
 if (( ${#FAILED_UNITS[@]} == 0 )); then
+  IFS=$'\t' read -r TARGET_ATTEMPTS SUCCESSFUL_TARGET_GENERATIONS < <(
   "$PY" - "$PROJECTION_STATUS" "$ATTEST_STATUS" "$CANARY_STATUS" "$DISPOSITIONS" <<'PY'
 import csv
 import sys
@@ -1554,6 +1581,7 @@ from experiments.local_campaign.ollama_static_terminal import (
     STATIC_LANE_MODELS,
     validate_terminal_rows,
 )
+from experiments.local_campaign.target_execution import aggregate_target_execution
 
 def rows(path):
     with open(path, encoding="utf-8", newline="") as handle:
@@ -1576,6 +1604,11 @@ if (
     or ({row["lane"] for row in projections + canaries} & typed_gptgeochat)
 ):
     raise SystemExit("Ollama projection/canary inventory changed")
+expected_attestations = {
+    model[0]: (model[1], model[2]) for model in STATIC_LANE_MODELS.values()
+}
+if {row["model_label"] for row in attestations} != set(expected_attestations):
+    raise SystemExit("Ollama target attestation inventory changed")
 terminal_lanes = set(validate_terminal_rows(
     (row for row in canaries if row["lane"] in static_lanes),
     label="Phase 5 Ollama static canaries",
@@ -1603,7 +1636,20 @@ for row in canaries:
         raise SystemExit(f"static scoring stages not represented: {lane}")
     if lane in rjudge_lanes and row["source_evaluator_status"] != "exercised":
         raise SystemExit(f"R-Judge evaluator not exercised: {lane}")
+for attestation in attestations:
+    expected_spec, expected_digest = expected_attestations[attestation["model_label"]]
+    if (
+        attestation["requested_spec"] != expected_spec
+        or attestation["digest"] != expected_digest
+    ):
+        raise SystemExit("Ollama target attestation identity changed")
+print(*aggregate_target_execution([*canaries, *attestations]), sep="\t")
 PY
+  )
+  PYTHONDONTWRITEBYTECODE=1 "$PY" -m experiments.local_campaign.console_events \
+    target-execution --work-root "$URA_WORK" --control-root "$CONTROL_ROOT" \
+    --target-attempts "$TARGET_ATTEMPTS" \
+    --successful-target-generations "$SUCCESSFUL_TARGET_GENERATIONS"
   printf 'PHASE5_OLLAMA_COMPLETE=%s\n' "$(date -Is)"
 else
   printf 'PHASE5_OLLAMA_ATTEMPTED_ALL_WITH_FAILURES=%s\n' "$(date -Is)"

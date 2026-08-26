@@ -1083,7 +1083,9 @@ class PagesMixin:
             work = "model work undeclared"
             if campaign.model_tasks is not None:
                 roles = {role for _task, _status, role in campaign.task_outcomes}
-                if campaign.model_tasks:
+                if campaign.model_execution_scope == "target_only_mixed_controller":
+                    work = "target-capable mixed controller"
+                elif campaign.model_tasks:
                     work = "model + support" if "support" in roles else "model only"
                 else:
                     work = "support only"
@@ -1091,15 +1093,24 @@ class PagesMixin:
                     work += " + unplanned"
             if campaign.model_execution_error:
                 execution = "report invalid"
+            elif campaign.model_tasks == ():
+                execution = "not applicable - support only"
             elif campaign.model_attempted_calls is None:
                 execution = "not reported"
             else:
-                execution = (
-                    f"{campaign.model_successful_generations}/{campaign.model_attempted_calls} "
-                    "reported successful; "
-                    f"{campaign.model_execution_covered_tasks}/"
-                    f"{len(campaign.model_tasks or ())} model tasks"
-                )
+                if campaign.model_execution_scope == "target_only_mixed_controller":
+                    execution = (
+                        f"{campaign.model_successful_generations}/"
+                        f"{campaign.model_attempted_calls} target calls returned "
+                        "successfully; 1/1 target-execution controller"
+                    )
+                else:
+                    execution = (
+                        f"{campaign.model_successful_generations}/"
+                        f"{campaign.model_attempted_calls} reported successful; "
+                        f"{campaign.model_execution_covered_tasks}/"
+                        f"{len(campaign.model_tasks or ())} model tasks"
+                    )
             rows.append(
                 f"<tr data-state='{html.escape(state_tag)}' "
                 f"data-started='{started_ms}' data-hay='{hay}'"
@@ -1380,6 +1391,11 @@ class PagesMixin:
         hard_stop = (
             "-" if campaign.hard_stop_hours is None else f"{campaign.hard_stop_hours:g} hours"
         )
+        declaration_label = (
+            "Target-capable mixed controller"
+            if campaign.model_execution_scope == "target_only_mixed_controller"
+            else "Declared model tasks"
+        )
         details = (
             "<div class='card scroll'><table>"
             f"<tr><td>Release commit</td><td><code>{html.escape(campaign.release_commit)}</code></td></tr>"
@@ -1388,25 +1404,39 @@ class PagesMixin:
             f"<tr><td>Hosted calls allowed</td><td>{'yes' if campaign.hosted_calls_allowed else 'no'}</td></tr>"
             f"<tr><td>Reserved call budget (not execution)</td>"
             f"<td>{campaign.reserved_calls}/{call_cap}</td></tr>"
-            "<tr><td>Declared model tasks</td><td>"
+            f"<tr><td>{declaration_label}</td><td>"
             + (
                 "invalid: " + html.escape(campaign.model_declaration_error)
                 if campaign.model_declaration_error
                 else "not declared"
                 if campaign.model_tasks is None
+                else "support only"
+                if campaign.model_tasks == ()
                 else str(len(campaign.model_tasks))
             )
             + "</td></tr>"
-            "<tr><td>Reported model execution</td><td>"
+            + (
+                "<tr><td>Reported target execution</td><td>"
+                if campaign.model_execution_scope == "target_only_mixed_controller"
+                else "<tr><td>Reported model execution</td><td>"
+            )
             + (
                 "report invalid: " + html.escape(campaign.model_execution_error)
                 if campaign.model_execution_error
+                else "not applicable - support only"
+                if campaign.model_tasks == ()
                 else "not reported"
                 if campaign.model_attempted_calls is None
-                else f"{campaign.model_successful_generations} successful generation(s) / "
-                f"{campaign.model_attempted_calls} attempt(s); "
-                f"{campaign.model_execution_covered_tasks}/"
-                f"{len(campaign.model_tasks or ())} model tasks reported"
+                else (
+                    f"{campaign.model_successful_generations} successful target "
+                    f"generation(s) / {campaign.model_attempted_calls} target attempt(s); "
+                    "1/1 target-execution controller reported"
+                    if campaign.model_execution_scope == "target_only_mixed_controller"
+                    else f"{campaign.model_successful_generations} successful generation(s) / "
+                    f"{campaign.model_attempted_calls} attempt(s); "
+                    f"{campaign.model_execution_covered_tasks}/"
+                    f"{len(campaign.model_tasks or ())} model tasks reported"
+                )
             )
             + "</td></tr>"
             f"<tr><td>Hard stop</td><td>{hard_stop}</td></tr>"
@@ -1429,12 +1459,20 @@ class PagesMixin:
             + "</td></tr>"
             for task, status, role in campaign.task_outcomes
         )
+        accounting_note = (
+            "Reported target-call counts omit guard, defense, attacker, and "
+            "framework-model roles. All reported counts remain operational "
+            "self-reports; validated response artifacts are authoritative."
+            if campaign.model_execution_scope == "target_only_mixed_controller"
+            else "Reported call counts remain operational self-reports; "
+            "validated response artifacts are authoritative."
+        )
         task_table = (
             "<div class='card'><h2>Task outcomes</h2>"
             "<p class='note'>A passed support task proves only that its command "
-            "exited successfully. It is not model-execution evidence. Reported "
-            "call counts remain operational self-reports; validated response "
-            "artifacts are authoritative.</p>"
+            "exited successfully. It is not model-execution evidence. "
+            + accounting_note
+            + "</p>"
             "<div class='scroll'><table><tr><th>Task</th><th>Work</th>"
             "<th>Result</th></tr>"
             + task_rows

@@ -18,6 +18,8 @@ import re
 import stat
 from typing import Sequence
 
+from experiments.local_campaign.target_execution import target_execution_counts
+
 
 _CAMPAIGN_SCHEMA = "ura-engineering-campaign/1"
 _ROUTE_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,127}\Z")
@@ -28,6 +30,7 @@ _NAMED_SESSION_TOKEN = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,127}\Z")
 _TERMINAL_EVENTS = {"campaign_end", "campaign_stop"}
 _TASK_EVENTS = {"task_start", "task_end", "task_skip"}
 _CONTROLLER_TASK = "controller"
+_TARGET_ONLY_MIXED_SCOPE = "target_only_mixed_controller"
 _FileIdentity = tuple[int, int]
 
 
@@ -205,6 +208,8 @@ def start_campaign(
     planned_tasks: Sequence[str],
     tmux_socket: str,
     tmux_session: str,
+    model_tasks: Sequence[str] | None = None,
+    model_execution_scope: str | None = None,
     at: str | None = None,
     initial_running_tasks: Sequence[str] = (),
 ) -> None:
@@ -231,6 +236,22 @@ def start_campaign(
         or any(not _TASK.fullmatch(task) or task in {"bootstrap", "stage2"} for task in tasks)
     ):
         raise ConsoleEventError("planned tasks must be non-empty, safe, and unique")
+    declared_model_tasks = None if model_tasks is None else tuple(model_tasks)
+    if declared_model_tasks is not None and (
+        any(
+            not isinstance(task, str) or _TASK.fullmatch(task) is None
+            for task in declared_model_tasks
+        )
+        or len(declared_model_tasks) != len(set(declared_model_tasks))
+        or any(task not in tasks for task in declared_model_tasks)
+    ):
+        raise ConsoleEventError("model tasks must be a unique subset of planned tasks")
+    if model_execution_scope is not None and (
+        model_execution_scope != _TARGET_ONLY_MIXED_SCOPE
+        or tasks != (_CONTROLLER_TASK,)
+        or declared_model_tasks != (_CONTROLLER_TASK,)
+    ):
+        raise ConsoleEventError("target execution scope requires one mixed controller task")
     running_tasks = tuple(initial_running_tasks)
     if (
         len(running_tasks) != len(set(running_tasks))
@@ -251,6 +272,10 @@ def start_campaign(
         "tmux_socket": tmux_socket,
         "tmux_session": tmux_session,
     }
+    if declared_model_tasks is not None:
+        marker["model_tasks"] = list(declared_model_tasks)
+    if model_execution_scope is not None:
+        marker["model_execution_scope"] = model_execution_scope
     # Publish the marker last. The console ignores an event log without its
     # marker, whereas publishing a marker before its required log would expose
     # a transient, false "unknown" campaign.
@@ -388,10 +413,13 @@ def start_child_controller(
     hard_stop_hours: int,
     tmux_socket: str,
     tmux_session: str,
+    target_execution: bool = False,
     at: str | None = None,
 ) -> None:
     """Register an independently launched child under the normal Jobs contract."""
 
+    if not isinstance(target_execution, bool):
+        raise ConsoleEventError("target-execution selector must be boolean")
     start_campaign(
         work_root=work_root,
         control_root=control_root,
@@ -402,8 +430,57 @@ def start_child_controller(
         planned_tasks=(_CONTROLLER_TASK,),
         tmux_socket=tmux_socket,
         tmux_session=tmux_session,
+        model_tasks=(_CONTROLLER_TASK,) if target_execution else (),
+        model_execution_scope=_TARGET_ONLY_MIXED_SCOPE if target_execution else None,
         at=at,
         initial_running_tasks=(_CONTROLLER_TASK,),
+    )
+
+
+def publish_target_execution(
+    *,
+    work_root: Path,
+    control_root: Path,
+    target_attempts: int,
+    successful_target_generations: int,
+) -> None:
+    """Publish the singleton controller's target-only execution accounting."""
+
+    root = _control_root(work_root, control_root)
+    try:
+        target_attempts, successful_target_generations = target_execution_counts(
+            target_attempts, successful_target_generations
+        )
+    except ValueError as exc:
+        raise ConsoleEventError("target execution counts are invalid") from exc
+    marker = _read_marker(root / "ENGINEERING_ONLY.json")
+    if (
+        not isinstance(marker, dict)
+        or marker.get("schema") != _CAMPAIGN_SCHEMA
+        or marker.get("campaign_id") != root.name
+        or marker.get("thesis_empirical_evidence") is not False
+        or marker.get("hosted_calls_allowed") is not False
+    ):
+        raise ConsoleEventError("campaign marker does not own this control root")
+    if (
+        marker.get("planned_tasks") != [_CONTROLLER_TASK]
+        or marker.get("model_tasks") != [_CONTROLLER_TASK]
+        or marker.get("model_execution_scope") != _TARGET_ONLY_MIXED_SCOPE
+    ):
+        raise ConsoleEventError(
+            "target execution requires the exact singleton mixed-controller declaration"
+        )
+    _write_create_only(
+        root / "model-execution.jsonl",
+        _canonical_line(
+            {
+                "attempted_calls": target_attempts,
+                "event": "model_execution",
+                "execution_role": "target",
+                "successful_generations": successful_target_generations,
+                "task": _CONTROLLER_TASK,
+            }
+        ),
     )
 
 
@@ -454,12 +531,20 @@ def _parser() -> argparse.ArgumentParser:
     child_start.add_argument("--hard-stop-hours", type=int, required=True)
     child_start.add_argument("--tmux-socket", required=True)
     child_start.add_argument("--tmux-session", required=True)
+    child_start.add_argument("--target-execution", action="store_true")
     child_start.add_argument("--at")
     child_finish = subparsers.add_parser("child-finish")
     child_finish.add_argument("--work-root", type=Path, required=True)
     child_finish.add_argument("--control-root", type=Path, required=True)
     child_finish.add_argument("--exit-code", type=int, required=True)
     child_finish.add_argument("--at")
+    target_execution = subparsers.add_parser("target-execution")
+    target_execution.add_argument("--work-root", type=Path, required=True)
+    target_execution.add_argument("--control-root", type=Path, required=True)
+    target_execution.add_argument("--target-attempts", type=int, required=True)
+    target_execution.add_argument(
+        "--successful-target-generations", type=int, required=True
+    )
     event = subparsers.add_parser("event")
     event.add_argument("--work-root", type=Path, required=True)
     event.add_argument("--control-root", type=Path, required=True)
@@ -496,6 +581,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             hard_stop_hours=args.hard_stop_hours,
             tmux_socket=args.tmux_socket,
             tmux_session=args.tmux_session,
+            target_execution=args.target_execution,
             at=args.at,
         )
     elif args.action == "child-finish":
@@ -504,6 +590,13 @@ def main(argv: Sequence[str] | None = None) -> int:
             control_root=args.control_root,
             exit_code=args.exit_code,
             at=args.at,
+        )
+    elif args.action == "target-execution":
+        publish_target_execution(
+            work_root=args.work_root,
+            control_root=args.control_root,
+            target_attempts=args.target_attempts,
+            successful_target_generations=args.successful_target_generations,
         )
     else:
         append_event(
