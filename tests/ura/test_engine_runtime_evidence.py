@@ -26,14 +26,14 @@ def test_artifact_version_gate_accepts_only_exact_runtime_free_legacy_pair() -> 
         attacker="replay",
         code_version="ura-runner/2.19",
         schema_version="1.4",
-        current_code_version="ura-runner/2.21",
+        current_code_version="ura-runner/2.22",
         current_schema_version="1.5",
     ) is True
     assert validate_engine_runtime_artifact_version(
         attacker="replay",
-        code_version="ura-runner/2.21",
+        code_version="ura-runner/2.22",
         schema_version="1.5",
-        current_code_version="ura-runner/2.21",
+        current_code_version="ura-runner/2.22",
         current_schema_version="1.5",
     ) is False
     with pytest.raises(ValueError, match="predates.*closing seal"):
@@ -41,7 +41,7 @@ def test_artifact_version_gate_accepts_only_exact_runtime_free_legacy_pair() -> 
             attacker="pyrit",
             code_version="ura-runner/2.19",
             schema_version="1.4",
-            current_code_version="ura-runner/2.21",
+            current_code_version="ura-runner/2.22",
             current_schema_version="1.5",
         )
     with pytest.raises(ValueError, match="current runner/schema"):
@@ -49,7 +49,7 @@ def test_artifact_version_gate_accepts_only_exact_runtime_free_legacy_pair() -> 
             attacker="replay",
             code_version="ura-runner/2.19",
             schema_version="1.5",
-            current_code_version="ura-runner/2.21",
+            current_code_version="ura-runner/2.22",
             current_schema_version="1.5",
         )
 

@@ -2283,7 +2283,7 @@ manifest_project = manifest_run.get("project_revision") if isinstance(
 if (
     not isinstance(manifest, dict)
     or manifest.get("schema_version") != "1.5"
-    or manifest.get("code_version") != "ura-runner/2.21"
+    or manifest.get("code_version") != "ura-runner/2.22"
     or manifest.get("run_id") != error.get("run_id")
     or manifest.get("models") != [resolved_target]
     or manifest.get("adapters") != ["replay"]

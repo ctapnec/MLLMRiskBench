@@ -923,9 +923,9 @@ class VLLMTarget(BaseTarget):
         if not text.strip():
             raise LocalTargetOutputError("vLLM returned an empty completion")
         finish_reason = getattr(completion, "finish_reason", None)
-        if finish_reason != "stop":
+        if finish_reason not in {"stop", "length"}:
             raise LocalTargetOutputError(
-                f"vLLM completion is truncated or incomplete: {finish_reason!r}"
+                f"vLLM completion ended with an unsupported reason: {finish_reason!r}"
             )
         stop_reason_raw = getattr(completion, "stop_reason", None)
         stop_reason = str(stop_reason_raw) if stop_reason_raw is not None else None
@@ -1397,9 +1397,9 @@ class OllamaTarget(BaseTarget):
                         "Ollama response did not declare done=true"
                     )
                 done_reason = data.get("done_reason")
-                if done_reason != "stop":
+                if done_reason not in {"stop", "length"}:
                     raise LocalTargetOutputError(
-                        "Ollama response is truncated or incomplete: "
+                        "Ollama response ended with an unsupported reason: "
                         f"{done_reason!r}"
                     )
                 resolved_model = data.get("model")

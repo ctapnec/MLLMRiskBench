@@ -646,7 +646,7 @@ Runner `RunManifest`; the URA revision that performed their import is retained
 in the return-package/importer context rather than relabelled as an upstream
 native field.
 
-Runner `ura-runner/2.21` writes unified schema `1.5`. Runner 2.19/schema 1.4
+Runner `ura-runner/2.22` writes unified schema `1.5`. Runner 2.19/schema 1.4
 artifacts remain readable only as runtime-free legacy compatibility and are not
 mixed into the current measured cohort. Immutable planning/source
 stratum identity is stored separately from adaptive per-turn evaluation

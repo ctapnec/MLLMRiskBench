@@ -20,7 +20,6 @@ from ura.judges.rules import RuleJudge
 from ura.runner import CODE_VERSION, Runner, _component_config
 from ura.targets.local import (
     MAX_VLLM_MODEL_LEN,
-    LocalTargetOutputError,
     OllamaTarget,
     VLLMTarget,
 )
@@ -31,7 +30,7 @@ REVISION = "6" * 40
 
 
 def test_local_context_contract_bumps_runner_version() -> None:
-    assert CODE_VERSION == "ura-runner/2.21"
+    assert CODE_VERSION == "ura-runner/2.22"
 
 
 def _rig_hardware() -> dict[str, object]:
@@ -347,7 +346,7 @@ def test_vllm_engine_receives_only_explicit_context_cap(
     assert "max_model_len" not in native_response.raw
 
 
-def test_vllm_length_capped_completion_is_never_admitted_as_a_response() -> None:
+def test_vllm_length_capped_nonempty_completion_is_retained() -> None:
     completion = SimpleNamespace(
         text="ear Bez " * 256,
         finish_reason="length",
@@ -356,11 +355,12 @@ def test_vllm_length_capped_completion_is_never_admitted_as_a_response() -> None
     )
     outputs = [SimpleNamespace(outputs=[completion], prompt_token_ids=[1, 2, 3])]
 
-    with pytest.raises(
-        LocalTargetOutputError,
-        match=r"truncated or incomplete: 'length'",
-    ):
-        VLLMTarget._extract(outputs)
+    text, tokens, finish_reason, stop_reason = VLLMTarget._extract(outputs)
+
+    assert text == completion.text
+    assert tokens == {"prompt": 3, "completion": 512, "total": 515}
+    assert finish_reason == "length"
+    assert stop_reason is None
 
 
 def test_ollama_uses_the_same_nonblank_deterministic_attempt_placeholder(
@@ -387,7 +387,7 @@ def test_ollama_uses_the_same_nonblank_deterministic_attempt_placeholder(
             "model": "fixture:latest",
             "message": {"role": "assistant", "content": "local response"},
             "done": True,
-            "done_reason": "stop",
+            "done_reason": "length",
             "prompt_eval_count": 3,
             "eval_count": 2,
         },
@@ -407,6 +407,8 @@ def test_ollama_uses_the_same_nonblank_deterministic_attempt_placeholder(
 
     assert first.attempt_id == second.attempt_id
     assert first.attempt_id.strip()
+    assert first.output_turns[0].content == "local response"
+    assert first.raw["done_reason"] == "length"
 
 
 def test_ollama_config_forbids_vllm_context_cap(tmp_path: Path) -> None:
