@@ -2608,10 +2608,14 @@ def validate_gate5(
     ):
         raise Phase8Error("Gate 5 prior-canonical receipt differs")
     prior_artifact = prior.get("artifact")
+    plan_prior = plan.get("prior_canonical")
     if not isinstance(prior_artifact, dict) or set(prior_artifact) != {
         "path",
         "sha256",
         "bytes",
+    } or not isinstance(plan_prior, dict) or set(plan_prior) != {
+        "state",
+        "artifact",
     }:
         raise Phase8Error("prior canonical artifact descriptor fields differ")
     archive = prior.get("archive")
@@ -2619,21 +2623,33 @@ def validate_gate5(
         archive_path, archive_payload = descriptor_bytes(
             archive, label="archived prior canonical RUNNOTE"
         )
+        placeholder_identity = {
+            "sha256": "7ec84df8ea241fd09e6403de30a06fc18c10c8ff449b99834821b567dace17cf",
+            "bytes": 22,
+        }
         if (
-            prior_artifact
+            plan_prior
             != {
-                "path": str(runnote_path),
-                "sha256": "7ec84df8ea241fd09e6403de30a06fc18c10c8ff449b99834821b567dace17cf",
-                "bytes": 22,
+                "state": "exact_placeholder",
+                "artifact": {"path": str(runnote_path), **placeholder_identity},
             }
+            or prior_artifact
+            != {"path": str(archive_path), **placeholder_identity}
+            or archive != prior_artifact
             or sha256_bytes(archive_payload) != prior_artifact["sha256"]
             or len(archive_payload) != prior_artifact["bytes"]
+            or plan.get("placeholder_archive_destination") != str(archive_path)
         ):
             raise Phase8Error(
                 "archived prior canonical does not prove the exact placeholder"
             )
     else:
-        if prior_artifact != descriptor_from_bytes(runnote_path, runnote_payload):
+        current_descriptor = descriptor_from_bytes(runnote_path, runnote_payload)
+        if (
+            plan_prior
+            != {"state": "identical_canonical", "artifact": current_descriptor}
+            or prior_artifact != current_descriptor
+        ):
             raise Phase8Error(
                 "already-identical prior canonical differs from current bytes"
             )

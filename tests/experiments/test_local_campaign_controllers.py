@@ -1299,6 +1299,34 @@ def test_phase7_phase8_bind_gate5_runtime_terminal_receipt_count() -> None:
         assert_current_receipt(reverted)
 
 
+def test_phase7_phase8_bind_archived_placeholder_to_its_new_path() -> None:
+    root = (
+        Path(__file__).parents[2]
+        / "experiments"
+        / "local_campaign"
+        / "templates"
+    )
+    sources = {
+        name: (root / name).read_text(encoding="utf-8")
+        for name in ("phase7_analysis.py.in", "phase8_human_audit.py.in")
+    }
+    archived = '"path": str(archive_path)'
+    plan_path = '"path": str(runnote_path)'
+
+    def assert_relocation_contract(candidate: str) -> None:
+        assert archived in candidate
+        assert plan_path in candidate
+        assert '"state": "exact_placeholder"' in candidate
+        assert "placeholder_archive_destination" in candidate
+
+    for source in sources.values():
+        assert_relocation_contract(source)
+
+    reverted = sources["phase7_analysis.py.in"].replace(archived, plan_path, 1)
+    with pytest.raises(AssertionError):
+        assert_relocation_contract(reverted)
+
+
 def test_phase7_conditional_analyses_branch_before_subprocesses() -> None:
     source = (
         Path(__file__).parents[2]

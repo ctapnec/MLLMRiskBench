@@ -4135,30 +4135,32 @@ def validate_gate5(
         not in {"placeholder_archived_and_replaced", "already_identical"}
         or not isinstance(plan_prior, dict)
         or set(plan_prior) != {"state", "artifact"}
-        or prior.get("artifact") != plan_prior.get("artifact")
     ):
         raise Phase7Error("Gate 5 prior-canonical record changed")
     if prior["state"] == "placeholder_archived_and_replaced":
-        if plan_prior.get("state") != "exact_placeholder":
-            raise Phase7Error("Gate 5 placeholder promotion state differs")
         archive_path = descriptor_file(
             prior.get("archive"), label="archived pre-Gate-5 RUNNOTE"
         )
+        placeholder_identity = {
+            "sha256": "7ec84df8ea241fd09e6403de30a06fc18c10c8ff449b99834821b567dace17cf",
+            "bytes": 22,
+        }
         if (
-            prior["artifact"]
+            plan_prior
             != {
-                "path": str(runnote_path),
-                "sha256": "7ec84df8ea241fd09e6403de30a06fc18c10c8ff449b99834821b567dace17cf",
-                "bytes": 22,
+                "state": "exact_placeholder",
+                "artifact": {"path": str(runnote_path), **placeholder_identity},
             }
-            or prior["archive"]["sha256"] != prior["artifact"]["sha256"]
-            or prior["archive"]["bytes"] != 22
+            or prior["artifact"]
+            != {"path": str(archive_path), **placeholder_identity}
+            or prior["archive"] != prior["artifact"]
             or plan.get("placeholder_archive_destination") != str(archive_path)
         ):
             raise Phase7Error("Gate 5 displaced-placeholder evidence differs")
     else:
         if (
-            plan_prior.get("state") != "identical_canonical"
+            plan_prior
+            != {"state": "identical_canonical", "artifact": canonical_desc}
             or prior.get("artifact") != canonical_desc
         ):
             raise Phase7Error("Gate 5 already-identical promotion state differs")
