@@ -3900,13 +3900,6 @@ if probe_judges == ["rules"]:
         raise SystemExit("stored rules-only attestation unexpectedly binds a guardrail")
 elif probe_judges == ["rules", "guardrail"]:
     expected_probe_resources = probe_guard_resources
-    if (
-        probe_request.get("guardrail_model") != "meta-llama/Llama-Guard-3-8B"
-        or probe_request.get("guardrail_revision")
-        != "7327bd9f6efbbe6101dc6cc4736302b3cbb6e425"
-        or probe_request.get("guardrail_device") != "cuda:1"
-    ):
-        raise SystemExit("stored guarded attestation binds a different local guardrail")
 else:
     raise SystemExit("stored attestation judge cascade is unsupported")
 observed_probe_resources = {

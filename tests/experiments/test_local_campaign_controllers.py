@@ -1554,7 +1554,9 @@ def test_phase6_core_attestation_probe_uses_local_guardrail_fallback() -> None:
         assert 'probe_judges == ["rules", "guardrail"]' in state_contract
         assert "expected_resources=(probe_target_resources, probe_guard_resources)" in state_contract
         assert "observed_probe_resources != expected_probe_resources" in state_contract
-        assert 'probe_request.get("guardrail_device") != "cuda:1"' in state_contract
+        assert '"meta-llama/Llama-Guard-3-8B"' in state_contract
+        assert '"7327bd9f6efbbe6101dc6cc4736302b3cbb6e425"' in state_contract
+        assert 'probe_request.get("guardrail_model")' not in state_contract
 
     assert_probe_contract(source)
     mutated = source.replace(
@@ -1564,6 +1566,16 @@ def test_phase6_core_attestation_probe_uses_local_guardrail_fallback() -> None:
     )
     with pytest.raises(AssertionError):
         assert_probe_contract(mutated)
+    stale_request_field = source.replace(
+        "elif probe_judges == [\"rules\", \"guardrail\"]:\n"
+        "    expected_probe_resources = probe_guard_resources",
+        "elif probe_judges == [\"rules\", \"guardrail\"]:\n"
+        "    expected_probe_resources = probe_guard_resources\n"
+        "    probe_request.get(\"guardrail_model\")",
+        1,
+    )
+    with pytest.raises(AssertionError):
+        assert_probe_contract(stale_request_field)
 
 
 def test_phase6_sequence_recovers_only_content_identical_sealed_lane_state() -> None:
