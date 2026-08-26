@@ -802,6 +802,39 @@ def test_phase6_extended_uses_the_real_full_gate5_transport_terminal_rows() -> N
         assert_real_row_shape(reverted)
 
 
+def test_phase6_extended_preserves_the_sealed_venv_executable_spelling() -> None:
+    source = (
+        Path(__file__).parents[2]
+        / "experiments"
+        / "local_campaign"
+        / "templates"
+        / "phase6_extended_measured.sh.in"
+    ).read_text(encoding="utf-8")
+    required = (
+        'runner_python = PROJECT / ".venv" / "bin" / "python"',
+        "if not runner_python.is_file() or not os.access(runner_python, os.X_OK):",
+        'raise ValueError("project Runner venv interpreter is unavailable")',
+        'executable = [str(runner_python), "-m"]',
+    )
+
+    def assert_contract(candidate: str) -> None:
+        _assert_source_contract(candidate, required)
+        assert (
+            'runner_python = (PROJECT / ".venv" / "bin" / "python").resolve('
+            not in candidate
+        )
+
+    assert_contract(source)
+    reverted = source.replace(
+        required[0],
+        'runner_python = (PROJECT / ".venv" / "bin" / "python").resolve(strict=True)',
+        1,
+    )
+    assert reverted != source
+    with pytest.raises(AssertionError):
+        assert_contract(reverted)
+
+
 def test_phase6_extended_final_event_uses_dynamic_typed_terminal_count() -> None:
     source = (
         Path(__file__).parents[2]

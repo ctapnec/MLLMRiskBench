@@ -5314,7 +5314,9 @@ def validate_gate5(
             or gate5_argv.get("base_argv") != argv
         ):
             raise ValueError(f"{lane}: exact Gate-5 argv artifact changed")
-        runner_python = (PROJECT / ".venv" / "bin" / "python").resolve(strict=True)
+        runner_python = PROJECT / ".venv" / "bin" / "python"
+        if not runner_python.is_file() or not os.access(runner_python, os.X_OK):
+            raise ValueError("project Runner venv interpreter is unavailable")
         executable = [str(runner_python), "-m"]
         final_args = [
             *argv,
