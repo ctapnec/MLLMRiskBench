@@ -133,7 +133,12 @@ The later Runner replay does not invoke NanoGCG. IDEATOR does not run the
 unverified generator path:
 `experiments.ideator_vlbreakbench_prepare` maps the exact pinned VLBreakBench
 release to `advbench:245` and writes an
-`ura-ideator-seed-pairs/2` manifest for the Build panel. Its exact outer
+`ura-ideator-seed-pairs/2` manifest for the Build panel plus, when requested,
+a create-only ordinary Runner attacker config for CLI replay. The config carries
+the path-free manifest SHA-256, one declared digest per image, the exact source
+bindings, and an explicit `pair_limit` (`0` means all verified pairs). Runner
+checks those image bytes before planning, and no live IDEATOR generation runs.
+Its exact outer
 selection is `--corpora advbench_harmful --limit 1 --sample-seed 105`;
 `pair_limit=0` selects all eight verified mapped pairs, not the complete
 AdvBench arm. Both belong to a separately admitted follow-on cohort with their

@@ -2804,7 +2804,7 @@ The remaining runner bridges are specialized:
 | `nanogcg` | prepare one attributable suffix with `experiments.nanogcg_capture` under the verified NanoGCG 0.3.0 runtime and sealed Qwen2.5-0.5B surrogate, then replay that suffix without another framework/model call |
 | `harmbench` attacker | prepare text cases from a clean exact-revision checkout with `experiments.harmbench_capture`, then replay only its exact `ura-harmbench-transfer-replay/1` in the measured grid |
 | `purplellama` | only with `cyberseceval` rows; source-identity replay, not the native pipeline |
-| `ideator` | prepare the eight exact VLBreakBench/AdvBench mappings as `ura-ideator-seed-pairs/2` and replay them through Build; legacy v1 remains accepted only for previously reviewed pairs, while live generation remains disabled |
+| `ideator` | prepare the eight exact VLBreakBench/AdvBench mappings as `ura-ideator-seed-pairs/2` and replay them through Build or the emitted ordinary CLI config; legacy v1 remains accepted only for previously reviewed pairs, while live generation remains disabled |
 | `t3mp3st` | capture through the exact installer-managed source commit `f2eec3c48cefe301983b3865811eda89d454e988`, then replay only the resulting attributable bundle |
 
 The core cohort records `bridge-nanogcg`, `bridge-ideator`, and `t3mp3st` as
@@ -2926,7 +2926,7 @@ attestation and cap flags. The later Runner provenance says
 NanoGCG or surrogate call; the separate capture artifact records exactly one
 framework generation call.
 
-#### IDEATOR: exact VLBreakBench mapping, then Build replay
+#### IDEATOR: exact VLBreakBench mapping, then Build or CLI replay
 
 The implemented preparation path does not run IDEATOR generation. It records
 the official generator source at commit
@@ -2939,12 +2939,26 @@ the exact base/challenge JSON bytes, all referenced PNGs, and the exact admitted
 AdvBench CSV before writing eight one-to-one source mappings:
 
 ```bash
-URA_IDEATOR_DATASET_ROOT="$(realpath '<exact VLBreakBench snapshot root>')" || exit $?
+export REF_HF_VLBREAKBENCH=10b1ce5ab4546b5c2ab27c0aed4e171ab8ee98a0
+export URA_IDEATOR_DATASET_ROOT="$URA_CORPORA/VLBreakBench-$REF_HF_VLBREAKBENCH"
+[[ ! -e "$URA_IDEATOR_DATASET_ROOT" && ! -L "$URA_IDEATOR_DATASET_ROOT" ]] || exit 1
+hf download wang021/VLBreakBench --repo-type dataset \
+  --revision "$REF_HF_VLBREAKBENCH" \
+  --local-dir "$URA_IDEATOR_DATASET_ROOT"
+URA_IDEATOR_DATASET_ROOT="$(realpath "$URA_IDEATOR_DATASET_ROOT")" || exit $?
 [[ -d "$URA_IDEATOR_DATASET_ROOT" && ! -L "$URA_IDEATOR_DATASET_ROOT" ]] || exit 1
+( cd "$URA_IDEATOR_DATASET_ROOT" && printf '%s  %s\n' \
+    264f68ac656a6c8880e447821dc9f2858cd26db88fcbd7c4a80941e36945a523 \
+      vlbreakbench_base.json \
+    c077e482530cf9ec7c403d4022204ff266c2226cd55830439187a67d24404f00 \
+      vlbreakbench_challenge.json | sha256sum --check --strict - ) || exit $?
 URA_IDEATOR_PREP_ROOT="$URA_WORK/runs/thesis/prepared/ideator-vlbreakbench-v2"
 mkdir -p "$URA_IDEATOR_PREP_ROOT/images"
 export URA_IDEATOR_MANIFEST="$URA_IDEATOR_PREP_ROOT/ideator-vlbreakbench-v2.json"
-[[ ! -e "$URA_IDEATOR_MANIFEST" && ! -L "$URA_IDEATOR_MANIFEST" ]] || exit 1
+export URA_IDEATOR_ATTACKER_CONFIG="$URA_IDEATOR_PREP_ROOT/attacker-config-limit-all.json"
+[[ ! -e "$URA_IDEATOR_MANIFEST" && ! -L "$URA_IDEATOR_MANIFEST" \
+   && ! -e "$URA_IDEATOR_ATTACKER_CONFIG" \
+   && ! -L "$URA_IDEATOR_ATTACKER_CONFIG" ]] || exit 1
 
 "$URA_PY" -m experiments.ideator_vlbreakbench_prepare \
   --base-json "$URA_IDEATOR_DATASET_ROOT/vlbreakbench_base.json" \
@@ -2952,10 +2966,22 @@ export URA_IDEATOR_MANIFEST="$URA_IDEATOR_PREP_ROOT/ideator-vlbreakbench-v2.json
   --dataset-root "$URA_IDEATOR_DATASET_ROOT" \
   --advbench "$URA_ADVBENCH_HARMFUL_PATH" \
   --prepared-image-dir "$URA_IDEATOR_PREP_ROOT/images" \
-  --out "$URA_IDEATOR_MANIFEST"
+  --out "$URA_IDEATOR_MANIFEST" \
+  --attacker-config-out "$URA_IDEATOR_ATTACKER_CONFIG" \
+  --pair-limit 0
 URA_IDEATOR_MANIFEST_SHA256="$(sha256sum "$URA_IDEATOR_MANIFEST" | awk '{print $1}')" || exit $?
-export URA_IDEATOR_MANIFEST_SHA256
+URA_IDEATOR_ATTACKER_CONFIG_SHA256="$(sha256sum "$URA_IDEATOR_ATTACKER_CONFIG" | awk '{print $1}')" || exit $?
+export URA_IDEATOR_MANIFEST_SHA256 URA_IDEATOR_ATTACKER_CONFIG_SHA256
 ```
+
+The immutable Hub revision, the two checked JSON artifacts, the selected PNG
+digests and their one-to-one AdvBench mappings are retained in the create-only
+v2 manifest. Retain that manifest and its printed SHA-256 as the preparation
+receipt. The second create-only file is an ordinary Runner attacker config. It
+retains that path-free manifest SHA-256, one declared digest per image, the
+exact source bindings, `seed_pairs`, and the explicit `pair_limit`; it performs
+no IDEATOR or other model generation. Runner checks every declared image digest
+before planning. A changed image therefore fails before a target call.
 
 In Build select the `ideator` attacker, the
 `advbench_harmful` source arm, limit 1 and sample seed 105. Supply
@@ -2966,7 +2992,11 @@ use an image-capable target. Pair limit 0 selects all eight verified pairs for
 source-ordered prefix. Set both `--max-queries` and `--max-turns`
 to at least that selected pair count. The v2 manifest itself is not a
 `run_matrix --attacker-config` file; Build validates it and materializes
-the private runtime config. Legacy `ura-ideator-seed-pairs/1` remains
+the private runtime config. For CLI replay, pass
+`--attacker-config "$URA_IDEATOR_ATTACKER_CONFIG"` and
+`--attacker-config-sha256 "$URA_IDEATOR_ATTACKER_CONFIG_SHA256"`. A different
+positive pair limit needs a new create-only config output and must be projected
+as its own immutable selection. Legacy `ura-ideator-seed-pairs/1` remains
 accepted only for previously reviewed pairs. After review, the follow-on lane
 still requires its own projection, diagnostic canary, Gate 5 record and measured
 schedule.
@@ -2995,7 +3025,72 @@ verifies that store and its receipt, reads the current lock, rejects a different
 claimed revision before HTTP, and re-verifies the runtime before publication.
 The upstream planning route does not expose process identity, so the retained
 boundary records `process_identity_attested=false`; do not claim that the HTTP
-process itself was attested. Start the service and check both local endpoints:
+process itself was attested. Bind the plan, receipt, and store from a completed
+sealed Qwen acquisition first. The verifier below re-hashes the receipted
+snapshot before the standalone server starts; it must resolve exactly one
+`Qwen/Qwen3-VL-8B-Instruct` resource at the reviewed revision:
+
+```bash
+export URA_T3_QWEN_PLAN='<absolute Qwen acquisition-plan-*.plan.json>'
+export URA_T3_QWEN_PLAN_SHA256='<matching 64 lowercase hex>'
+export URA_T3_QWEN_RECEIPT='<absolute Qwen acquisition-receipt-*.receipt.json>'
+export URA_T3_QWEN_RECEIPT_SHA256='<matching 64 lowercase hex>'
+export URA_T3_QWEN_STORE="$URA_MODEL_STORE"
+URA_T3_QWEN_SNAPSHOT="$("$URA_PY" - \
+  "$URA_T3_QWEN_PLAN" "$URA_T3_QWEN_PLAN_SHA256" \
+  "$URA_T3_QWEN_RECEIPT" "$URA_T3_QWEN_RECEIPT_SHA256" \
+  "$URA_T3_QWEN_STORE" <<'PY'
+import sys
+from ura.model_acquisition import load_plan, load_receipt, verify_receipt_snapshots
+
+plan = load_plan(sys.argv[1], expected_sha256=sys.argv[2])
+receipt = load_receipt(sys.argv[3], expected_sha256=sys.argv[4], plan=plan)
+matches = [
+    resource for resource in plan["resources"]
+    if resource["repo_id"] == "Qwen/Qwen3-VL-8B-Instruct"
+    and resource["revision"] == "60595ebc30ec8e3b1d3b9e65d4943ca011c0006a"
+]
+if len(matches) != 1:
+    raise SystemExit("Qwen acquisition plan does not contain one exact resource")
+snapshots = verify_receipt_snapshots(plan, receipt, managed_store=sys.argv[5])
+print(snapshots[matches[0]["resource_id"]])
+PY
+)" || exit $?
+export URA_T3_QWEN_SNAPSHOT
+[[ -d "$URA_T3_QWEN_SNAPSHOT" && ! -L "$URA_T3_QWEN_SNAPSHOT" ]] || exit 1
+
+export URA_T3_VLLM_SESSION='ura-t3mp3st-qwen3-vllm-60595ebc30ec'
+export URA_T3_VLLM_LOG="$URA_WORK/runs/engineering/$URA_T3_VLLM_SESSION.log"
+export URA_T3_VLLM_BIN="$URA_REPO/.venv/bin/vllm"
+[[ -x "$URA_T3_VLLM_BIN" ]] || exit 1
+mkdir -p "$(dirname "$URA_T3_VLLM_LOG")"
+if tmux has-session -t "$URA_T3_VLLM_SESSION" 2>/dev/null; then
+  printf 'Refusing to reuse existing session %s; inspect or stop it first.\n' \
+    "$URA_T3_VLLM_SESSION" >&2
+  exit 1
+fi
+if "$URA_PY" -c 'import socket,sys; s=socket.socket(); s.settimeout(1); sys.exit(0 if s.connect_ex(("127.0.0.1",8000)) == 0 else 1)'; then
+  printf 'Refusing to reuse an existing listener on 127.0.0.1:8000.\n' >&2
+  exit 1
+fi
+tmux new-session -d -s "$URA_T3_VLLM_SESSION" -c "$URA_REPO" \
+  "exec env CUDA_VISIBLE_DEVICES=0 HF_DATASETS_OFFLINE=1 HF_HUB_OFFLINE=1 \
+TRANSFORMERS_OFFLINE=1 VLLM_NO_USAGE_STATS=1 \
+'$URA_T3_VLLM_BIN' serve '$URA_T3_QWEN_SNAPSHOT' \
+--served-model-name Qwen/Qwen3-VL-8B-Instruct \
+--host 127.0.0.1 --port 8000 --tensor-parallel-size 1 \
+--gpu-memory-utilization 0.90 --max-model-len 12288 \
+>>'$URA_T3_VLLM_LOG' 2>&1"
+curl --retry 120 --retry-delay 2 --retry-connrefused \
+  --fail --silent --show-error http://127.0.0.1:8000/v1/models | \
+  "$URA_PY" -c 'import json,sys; value=json.load(sys.stdin); ids=[item.get("id") for item in value.get("data",[]) if isinstance(item,dict)]; expected=["Qwen/Qwen3-VL-8B-Instruct"]; sys.exit(0 if ids == expected else "served model identity mismatch")' || exit $?
+tmux has-session -t "$URA_T3_VLLM_SESSION" 2>/dev/null || exit 1
+```
+
+This separate T3MP3ST source-model server is engineering infrastructure, not a
+Runner target lane. Give it exclusive GPU 0 ownership for capture and stop its
+tmux session before a normal in-process Runner vLLM lane. Start the verified
+T3MP3ST service and check its local endpoint:
 
 ```bash
 export URA_T3_ENV="$(ura_runtime_store t3mp3st)" || exit $?
@@ -3005,10 +3100,17 @@ export URA_T3_SESSION="ura-t3mp3st-${URA_FRAMEWORK_LOCK_ID:0:12}"
 export URA_T3_LOG="$URA_WORK/runs/engineering/$URA_T3_SESSION.log"
 [[ -x "$URA_T3_NODE" && -f "$URA_T3_SOURCE/dist/server.js" ]] || exit 1
 mkdir -p "$(dirname "$URA_T3_LOG")"
-curl --fail --silent --show-error http://127.0.0.1:8000/v1/models >/dev/null
-tmux has-session -t "$URA_T3_SESSION" 2>/dev/null || \
-  tmux new-session -d -s "$URA_T3_SESSION" -c "$URA_T3_SOURCE" \
-    "exec env T3MP3ST_HOST=127.0.0.1 T3MP3ST_PORT=3333 \
+if tmux has-session -t "$URA_T3_SESSION" 2>/dev/null; then
+  printf 'Refusing to reuse existing session %s; inspect or stop it first.\n' \
+    "$URA_T3_SESSION" >&2
+  exit 1
+fi
+if "$URA_PY" -c 'import socket,sys; s=socket.socket(); s.settimeout(1); sys.exit(0 if s.connect_ex(("127.0.0.1",3333)) == 0 else 1)'; then
+  printf 'Refusing to reuse an existing listener on 127.0.0.1:3333.\n' >&2
+  exit 1
+fi
+tmux new-session -d -s "$URA_T3_SESSION" -c "$URA_T3_SOURCE" \
+  "exec env T3MP3ST_HOST=127.0.0.1 T3MP3ST_PORT=3333 \
 TEMPEST_DEFAULT_PROVIDER=local \
 TEMPEST_LOCAL_BASE_URL=http://127.0.0.1:8000/v1 \
 TEMPEST_LOCAL_MODEL=Qwen/Qwen3-VL-8B-Instruct \
@@ -3016,6 +3118,7 @@ TEMPEST_LOCAL_TIMEOUT=600000 \
 '$URA_T3_NODE' dist/server.js >>'$URA_T3_LOG' 2>&1"
 curl --retry 30 --retry-delay 2 --retry-connrefused \
   --fail --silent --show-error http://127.0.0.1:3333/api/health >/dev/null
+tmux has-session -t "$URA_T3_SESSION" 2>/dev/null || exit 1
 ```
 
 Capture one record first, then the bounded 50-record selection. Keep separate,

@@ -1,13 +1,22 @@
 """Strict, campaign-neutral manifest contract for IDEATOR seed-pair replay."""
 from __future__ import annotations
 
-from pathlib import PurePosixPath
+from collections import Counter
+from collections.abc import Callable
+import json
+from pathlib import Path, PurePosixPath
 import re
 from typing import Any
 
+from ..attacker_input_contract import media_input_identity
+from ..data_models import MediaRef
 from ._native_artifacts import json_sha256
 
 FORMAT_VERSION = "ura-ideator-seed-pairs/2"
+MAX_SEED_PAIRS = 256
+MAX_TOTAL_IMAGE_BYTES = 256 * 1024 * 1024
+MAX_RUNNER_CONFIG_BYTES = 1024 * 1024
+MAX_SERIALIZED_TEXT_BYTES = MAX_RUNNER_CONFIG_BYTES // 2
 _HEX40_64 = re.compile(r"[0-9a-f]{40,64}")
 _HEX64 = re.compile(r"[0-9a-f]{64}")
 _PAIR_FIELDS = {
@@ -180,4 +189,136 @@ def validate_manifest(document: object) -> dict[str, Any]:
     return document
 
 
-__all__ = ["FORMAT_VERSION", "validate_manifest"]
+def _canonical_json_bytes(value: object) -> bytes:
+    return (
+        json.dumps(
+            value,
+            allow_nan=False,
+            ensure_ascii=False,
+            separators=(",", ":"),
+            sort_keys=True,
+        )
+        + "\n"
+    ).encode("utf-8")
+
+
+def materialize_runner_attacker_config(
+    document: object,
+    *,
+    manifest_sha256: str,
+    pair_limit: int = 0,
+    image_resolver: Callable[[str, int], Path | str] | None = None,
+) -> dict[str, dict[str, object]]:
+    """Build an ordinary Runner config from one validated v2 manifest.
+
+    ``pair_limit=0`` means every verified pair. A resolver may impose an
+    operator-specific locator boundary, such as Rig Web's results root. Image
+    bytes, declared digests, MIME signatures and aggregate/config size bounds
+    are checked identically for CLI and Build callers. The returned config is
+    suitable for an ordinary ``--attacker-config`` file and deliberately omits
+    Rig Web's private transient-handoff fields.
+    """
+
+    manifest = validate_manifest(document)
+    if not isinstance(manifest_sha256, str) or _HEX64.fullmatch(
+        manifest_sha256
+    ) is None:
+        raise ValueError("IDEATOR manifest SHA-256 must be exact lowercase 64-hex")
+    pairs = manifest["seed_pairs"]
+    if (
+        isinstance(pair_limit, bool)
+        or not isinstance(pair_limit, int)
+        or not 0 <= pair_limit <= MAX_SEED_PAIRS
+    ):
+        raise ValueError(
+            f"IDEATOR pair limit must be an integer from 0 to {MAX_SEED_PAIRS}"
+        )
+    if len(pairs) > MAX_SEED_PAIRS:
+        raise ValueError(f"IDEATOR manifest exceeds the {MAX_SEED_PAIRS} seed-pair limit")
+    source_counts = Counter(str(pair["source_id"]) for pair in pairs)
+    if pair_limit and any(pair_limit > count for count in source_counts.values()):
+        raise ValueError(
+            "IDEATOR pair limit exceeds the verified inventory for a selected "
+            "source row"
+        )
+
+    runner_pairs: list[list[str]] = []
+    image_digests: list[str] = []
+    source_bindings: list[dict[str, object]] = []
+    total_image_bytes = 0
+    for index, pair in enumerate(pairs):
+        raw_path = str(pair["image_path"])
+        try:
+            image_candidate = Path(
+                image_resolver(raw_path, index)
+                if image_resolver is not None
+                else raw_path
+            ).expanduser()
+            if not image_candidate.is_absolute():
+                raise ValueError("image path must be absolute")
+            identity = media_input_identity(
+                MediaRef(
+                    modality="image",
+                    path=str(image_candidate),
+                    sha256=str(pair["image_sha256"]),
+                    mime="image/png",
+                ),
+                origin="attacker_generated",
+                require_declared_sha256=True,
+            )
+            image = image_candidate.resolve(strict=True)
+        except (OSError, ValueError) as exc:
+            raise ValueError(
+                f"IDEATOR seed-pair image {index} is not the declared PNG: {exc}"
+            ) from exc
+        total_image_bytes += identity.bytes
+        if total_image_bytes > MAX_TOTAL_IMAGE_BYTES:
+            raise ValueError(
+                f"IDEATOR seed-pair images exceed the "
+                f"{MAX_TOTAL_IMAGE_BYTES // (1024 * 1024)} MiB snapshot limit"
+            )
+        runner_pairs.append([str(pair["text"]), str(image)])
+        image_digests.append(identity.sha256)
+        source_bindings.append({
+            "source_id": pair["source_id"],
+            "source_text_sha256": pair["source_text_sha256"],
+            "upstream_split": pair["upstream_split"],
+            "upstream_index": pair["upstream_index"],
+            "upstream_record_sha256": pair["upstream_record_sha256"],
+            "upstream_image_path": pair["upstream_image_path"],
+        })
+
+    projected_text_payload = _canonical_json_bytes({
+        "ideator": {
+            "seed_pairs": [[pair[0], ""] for pair in runner_pairs],
+            "seed_pair_source_bindings": source_bindings,
+        }
+    })
+    if len(projected_text_payload) > MAX_SERIALIZED_TEXT_BYTES:
+        raise ValueError(
+            "IDEATOR serialized seed text exceeds its 512 KiB share of "
+            "Runner's 1 MiB attacker-config bound"
+        )
+    config: dict[str, dict[str, object]] = {
+        "ideator": {
+            "pair_limit": pair_limit,
+            "seed_pair_image_digests": image_digests,
+            "seed_pair_manifest_sha256": manifest_sha256,
+            "seed_pair_source_bindings": source_bindings,
+            "seed_pairs": runner_pairs,
+        }
+    }
+    if len(_canonical_json_bytes(config)) > MAX_RUNNER_CONFIG_BYTES:
+        raise ValueError("IDEATOR attacker config exceeds Runner's 1 MiB bound")
+    return config
+
+
+__all__ = [
+    "FORMAT_VERSION",
+    "MAX_RUNNER_CONFIG_BYTES",
+    "MAX_SEED_PAIRS",
+    "MAX_SERIALIZED_TEXT_BYTES",
+    "MAX_TOTAL_IMAGE_BYTES",
+    "materialize_runner_attacker_config",
+    "validate_manifest",
+]

@@ -42,6 +42,7 @@ import re
 from ..attacker_input_contract import (
     AttackerInputContract,
     generated_image_input_contract,
+    media_input_identity,
 )
 from ..data_models import Attempt, DataPoint, MediaRef
 from .base import AttackBudget, BaseAttacker
@@ -98,6 +99,8 @@ class IDEATORAttacker(BaseAttacker):
         out_dir: str | None = None,
         seed_pairs: list[tuple[str, str]] | None = None,
         seed_pair_source_bindings: list[dict[str, object]] | None = None,
+        seed_pair_manifest_sha256: str | None = None,
+        seed_pair_image_digests: list[str] | None = None,
         pair_limit: int = 0,
     ) -> None:
         # Red-teamer VLM backend and the diffusion synthesizer that paints the image.
@@ -112,6 +115,33 @@ class IDEATORAttacker(BaseAttacker):
         # Optional v2 provenance maps every pair to one exact converted source row.
         # Keeping it separate from seed_pairs preserves path-free Runner identity.
         self.seed_pair_source_bindings = seed_pair_source_bindings
+        if (seed_pair_manifest_sha256 is None) != (seed_pair_image_digests is None):
+            raise ValueError(
+                "IDEATOR manifest SHA-256 and image digests must be supplied together"
+            )
+        if seed_pair_manifest_sha256 is not None and (
+            re.fullmatch(r"[0-9a-f]{64}", seed_pair_manifest_sha256) is None
+            or seed_pair_source_bindings is None
+        ):
+            raise ValueError(
+                "IDEATOR manifest SHA-256 requires exact lowercase 64-hex and "
+                "source bindings"
+            )
+        if seed_pair_image_digests is not None and (
+            not isinstance(seed_pair_image_digests, list)
+            or seed_pairs is None
+            or len(seed_pair_image_digests) != len(seed_pairs)
+            or any(
+                not isinstance(value, str)
+                or re.fullmatch(r"[0-9a-f]{64}", value) is None
+                for value in seed_pair_image_digests
+            )
+        ):
+            raise ValueError(
+                "IDEATOR requires one exact lowercase image digest per seed pair"
+            )
+        self.seed_pair_manifest_sha256 = seed_pair_manifest_sha256
+        self.seed_pair_image_digests = seed_pair_image_digests
         if (
             isinstance(pair_limit, bool)
             or not isinstance(pair_limit, int)
@@ -309,7 +339,28 @@ class IDEATORAttacker(BaseAttacker):
                 "IDEATOR seed_pairs must contain only non-blank "
                 "(text, image_path) pairs"
             )
-        return [(pair[0], pair[1]) for pair in self.seed_pairs]
+        pairs = [(pair[0], pair[1]) for pair in self.seed_pairs]
+        if self.seed_pair_image_digests is not None:
+            for index, ((_, image_path), declared_sha256) in enumerate(
+                zip(pairs, self.seed_pair_image_digests, strict=True)
+            ):
+                try:
+                    media_input_identity(
+                        MediaRef(
+                            modality="image",
+                            path=image_path,
+                            sha256=declared_sha256,
+                            mime="image/png",
+                        ),
+                        origin="attacker_generated",
+                        require_declared_sha256=True,
+                    )
+                except (OSError, ValueError) as exc:
+                    raise ExternalEngineConformanceError(
+                        f"IDEATOR seed-pair image {index} differs from its "
+                        "declared digest"
+                    ) from exc
+        return pairs
 
     def _validated_source_bindings(
         self, pair_count: int

@@ -27,6 +27,7 @@ from ura.adapters._native_artifacts import (  # noqa: E402
 )
 from ura.adapters.ideator_manifest import (  # noqa: E402
     FORMAT_VERSION,
+    materialize_runner_attacker_config,
     validate_manifest as validate_generic_manifest,
 )
 from ura.converters.advbench import AdvBenchConverter  # noqa: E402
@@ -273,29 +274,92 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--advbench", required=True)
     parser.add_argument("--prepared-image-dir", required=True)
     parser.add_argument("--out", required=True)
+    parser.add_argument(
+        "--attacker-config-out",
+        help="create-only ordinary Runner attacker config for the prepared v2 manifest",
+    )
+    parser.add_argument(
+        "--pair-limit",
+        type=int,
+        default=0,
+        help="ordered verified-pair prefix for the Runner config; 0 selects all",
+    )
     return parser
+
+
+def _checked_create_only_output(raw: str, *, label: str) -> Path:
+    output = Path(raw).expanduser().absolute()
+    output.parent.mkdir(parents=True, exist_ok=True)
+    if (
+        output.exists()
+        or output.is_symlink()
+        or output.parent.resolve(strict=True) != output.parent
+    ):
+        raise FileExistsError(f"refusing unsafe or existing {label}: {output}")
+    return output
+
+
+def _write_create_only(path: Path, payload: bytes) -> None:
+    # A failed create may leave a partial file. Do not unlink by pathname: a
+    # concurrent process may have replaced it. The create-only path then blocks
+    # reuse and the operator must choose a fresh output path.
+    with path.open("xb") as handle:
+        handle.write(payload)
+        handle.flush()
+        os.fsync(handle.fileno())
 
 
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
-    output = Path(args.out).expanduser().absolute()
-    output.parent.mkdir(parents=True, exist_ok=True)
-    if output.exists() or output.is_symlink() or output.parent.resolve(strict=True) != output.parent:
-        raise FileExistsError(f"refusing unsafe or existing output: {output}")
+    if args.pair_limit != 0 and not args.attacker_config_out:
+        raise ValueError("nonzero IDEATOR pair limit requires --attacker-config-out")
+    output = _checked_create_only_output(args.out, label="manifest output")
+    config_output = (
+        _checked_create_only_output(
+            args.attacker_config_out,
+            label="attacker-config output",
+        )
+        if args.attacker_config_out
+        else None
+    )
+    if config_output == output:
+        raise ValueError("manifest and attacker-config outputs must be different files")
     manifest = build_manifest(
         base_json=Path(args.base_json), challenge_json=Path(args.challenge_json),
         dataset_root=Path(args.dataset_root), advbench_csv=Path(args.advbench),
         prepared_image_dir=Path(args.prepared_image_dir).absolute(),
     )
     raw = json.dumps(manifest, ensure_ascii=False, indent=2, sort_keys=True).encode() + b"\n"
-    with output.open("xb") as handle:
-        handle.write(raw)
-        handle.flush()
-        os.fsync(handle.fileno())
+    manifest_sha256 = hashlib.sha256(raw).hexdigest()
+    config_raw: bytes | None = None
+    if config_output is not None:
+        attacker_config = materialize_runner_attacker_config(
+            manifest,
+            manifest_sha256=manifest_sha256,
+            pair_limit=args.pair_limit,
+        )
+        config_raw = (
+            json.dumps(
+                attacker_config,
+                allow_nan=False,
+                ensure_ascii=False,
+                separators=(",", ":"),
+                sort_keys=True,
+            )
+            + "\n"
+        ).encode("utf-8")
+    _write_create_only(output, raw)
+    if config_output is not None and config_raw is not None:
+        _write_create_only(config_output, config_raw)
     print(
         f"prepared {len(manifest['seed_pairs'])} exact-source IDEATOR pairs -> "
-        f"{output} (sha256:{hashlib.sha256(raw).hexdigest()})"
+        f"{output} (sha256:{manifest_sha256})"
     )
+    if config_output is not None and config_raw is not None:
+        print(
+            f"prepared ordinary Runner attacker config with pair_limit={args.pair_limit} "
+            f"-> {config_output} (sha256:{hashlib.sha256(config_raw).hexdigest()})"
+        )
     return 0
 
 

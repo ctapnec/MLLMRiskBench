@@ -16,6 +16,7 @@ from ura.strict_json import strict_json_loads
 from ura.adapters.nanogcg import LIVE_NANOGCG_DISABLED_MESSAGE
 from ura.adapters.ideator_manifest import (
     FORMAT_VERSION as IDEATOR_MAPPED_FORMAT,
+    materialize_runner_attacker_config,
     validate_manifest as validate_ideator_mapped_manifest,
 )
 
@@ -877,17 +878,6 @@ class BuilderModelsMixin:
                     )
             elif format_version == IDEATOR_MAPPED_FORMAT:
                 document = validate_ideator_mapped_manifest(document)
-                source_bindings = [
-                    {
-                        "source_id": pair["source_id"],
-                        "source_text_sha256": pair["source_text_sha256"],
-                        "upstream_split": pair["upstream_split"],
-                        "upstream_index": pair["upstream_index"],
-                        "upstream_record_sha256": pair["upstream_record_sha256"],
-                        "upstream_image_path": pair["upstream_image_path"],
-                    }
-                    for pair in document["seed_pairs"]
-                ]
             else:
                 raise ValueError(
                     "IDEATOR manifest is not a supported seed-pair artifact"
@@ -907,6 +897,19 @@ class BuilderModelsMixin:
                 raise ValueError(
                     "IDEATOR pair limit exceeds the verified manifest inventory"
                 )
+            if format_version == IDEATOR_MAPPED_FORMAT:
+                shared_config = materialize_runner_attacker_config(
+                    document,
+                    manifest_sha256=expected,
+                    pair_limit=pair_limit,
+                    image_resolver=lambda path, index: self._prepared_file(
+                        path,
+                        label=f"IDEATOR seed-pair image {index}",
+                    ),
+                )
+                source_bindings = shared_config["ideator"][
+                    "seed_pair_source_bindings"
+                ]  # type: ignore[assignment]
             pairs: list[dict[str, object]] = []
             total_image_bytes = 0
             for index, raw_pair in enumerate(raw_pairs):

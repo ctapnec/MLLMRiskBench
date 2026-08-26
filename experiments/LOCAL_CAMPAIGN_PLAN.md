@@ -437,7 +437,7 @@ NanoGCG can use a positive corpus limit or a separately projected
 `advbench_harmful --limit 1 --sample-seed 105`, while `pair_limit=0` means
 all eight verified pairs mapped to `advbench:245`.
 Prepare those two inputs with the runbook's named "NanoGCG: sealed suffix
-capture, then replay" and "IDEATOR: exact VLBreakBench mapping, then Build
+capture, then replay" and "IDEATOR: exact VLBreakBench mapping, then Build or CLI
 replay" procedures; do not substitute a manually assembled suffix or manifest.
 
 The corpus limit is the outer population selector, not a universal framework-

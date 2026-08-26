@@ -754,7 +754,12 @@ verified NanoGCG environment, then replay the emitted six-field attacker
 config. IDEATOR preparation maps the pinned public VLBreakBench release to the
 one exact admitted AdvBench source row and emits
 `ura-ideator-seed-pairs/2`; its Build panel validates that manifest and its
-eight PNGs. The exact commands and the separate follow-on cohort boundary are in
+eight PNGs. The same preparer can emit a create-only ordinary Runner attacker
+config for CLI replay with explicit `pair_limit=0` (all eight) or an ordered
+positive prefix. That config retains the path-free manifest identity, declared
+image digests, and exact source bindings, which are checked before planning;
+neither path runs live IDEATOR generation. The exact pinned
+acquisition, receipt, CLI, and separate follow-on cohort commands are in
 the operator runbook.
 Before a paid mode, it shows the durable argv identity and offers a no-call
 preflight whose lane-projection gives the

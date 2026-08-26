@@ -546,9 +546,287 @@ def test_nanogcg_six_field_replay_shape_is_documented_exactly() -> None:
     )
     section = runbook.split("#### NanoGCG: sealed suffix capture, then replay", 1)[
         1
-    ].split("#### IDEATOR: exact VLBreakBench mapping, then Build replay", 1)[0]
+    ].split("#### IDEATOR: exact VLBreakBench mapping, then Build or CLI replay", 1)[0]
     for field in expected:
         assert f'"{field}"' in section
     readme = " ".join((project / "README.md").read_text(encoding="utf-8").split())
     assert "six-field attacker config" in readme
     assert "four-field attacker config" not in readme
+
+
+def test_ideator_cli_emits_create_only_ordinary_runner_config(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    images = []
+    for index in range(8):
+        image = tmp_path / f"cli-{index}.png"
+        image.write_bytes(_PNG)
+        images.append(image)
+    manifest = _v2_manifest(images)
+    monkeypatch.setattr(
+        ideator_prepare,
+        "build_manifest",
+        lambda **_kwargs: manifest,
+    )
+    manifest_path = tmp_path / "prepared" / "ideator-v2.json"
+    config_path = tmp_path / "prepared" / "attacker-config.json"
+    argv = [
+        "--base-json", "unused-base.json",
+        "--challenge-json", "unused-challenge.json",
+        "--dataset-root", "unused-dataset",
+        "--advbench", "unused-advbench.csv",
+        "--prepared-image-dir", str(tmp_path / "prepared" / "images"),
+        "--out", str(manifest_path),
+        "--attacker-config-out", str(config_path),
+    ]
+    assert ideator_prepare.main(argv) == 0
+    config = json.loads(config_path.read_text(encoding="utf-8"))
+    assert set(config) == {"ideator"}
+    assert set(config["ideator"]) == {
+        "pair_limit",
+        "seed_pair_image_digests",
+        "seed_pair_manifest_sha256",
+        "seed_pair_source_bindings",
+        "seed_pairs",
+    }
+    assert config["ideator"]["pair_limit"] == 0
+    assert len(config["ideator"]["seed_pairs"]) == 8
+    assert config["ideator"]["seed_pair_manifest_sha256"] == hashlib.sha256(
+        manifest_path.read_bytes()
+    ).hexdigest()
+    assert config["ideator"]["seed_pair_image_digests"] == [
+        hashlib.sha256(_PNG).hexdigest()
+    ] * 8
+    assert "seed_pair_image_sha256" not in config["ideator"]
+    loaded, descriptor = run_matrix._load_attacker_config(
+        str(config_path),
+        ["ideator"],
+        hashlib.sha256(config_path.read_bytes()).hexdigest(),
+    )
+    assert loaded == config
+    assert descriptor is not None
+    attacker = IDEATORAttacker(**loaded["ideator"])
+    images[0].write_bytes(_PNG + b"changed-after-preparation")
+    with pytest.raises(ExternalEngineConformanceError, match="declared digest"):
+        attacker.plan_target_inputs(
+            _datapoint(ideator_prepare.ADVBENCH_SOURCE_ID, "irrelevant after drift"),
+            AttackBudget(max_queries=8, max_turns=8, seed=0),
+        )
+
+    incomplete = deepcopy(config["ideator"])
+    incomplete.pop("seed_pair_image_digests")
+    with pytest.raises(ValueError, match="must be supplied together"):
+        IDEATORAttacker(**incomplete)
+
+    with pytest.raises(FileExistsError, match="existing manifest output"):
+        ideator_prepare.main(argv)
+
+
+def test_ideator_pair_limit_is_valid_for_every_mapped_source(tmp_path: Path) -> None:
+    images = []
+    for index in range(8):
+        image = tmp_path / f"multi-source-{index}.png"
+        image.write_bytes(_PNG)
+        images.append(image)
+    manifest = _v2_manifest(images)
+    manifest["runner_selection"]["selected_source_ids"] = [
+        "advbench:245",
+        "advbench:246",
+    ]
+    for pair in manifest["seed_pairs"][4:]:
+        pair["source_id"] = "advbench:246"
+    unsigned = {
+        key: value for key, value in manifest.items() if key != "content_sha256"
+    }
+    manifest["content_sha256"] = ideator_prepare.json_sha256(unsigned)
+
+    with pytest.raises(ValueError, match="inventory for a selected source row"):
+        ideator_prepare.materialize_runner_attacker_config(
+            manifest,
+            manifest_sha256="a" * 64,
+            pair_limit=5,
+        )
+    config = ideator_prepare.materialize_runner_attacker_config(
+        manifest,
+        manifest_sha256="a" * 64,
+        pair_limit=4,
+    )
+    assert config["ideator"]["pair_limit"] == 4
+
+
+def test_ideator_nonzero_pair_limit_requires_config_output(tmp_path: Path) -> None:
+    with pytest.raises(ValueError, match="requires --attacker-config-out"):
+        ideator_prepare.main([
+            "--base-json", "unused-base.json",
+            "--challenge-json", "unused-challenge.json",
+            "--dataset-root", "unused-dataset",
+            "--advbench", "unused-advbench.csv",
+            "--prepared-image-dir", str(tmp_path / "images"),
+            "--out", str(tmp_path / "manifest.json"),
+            "--pair-limit", "1",
+        ])
+
+
+def test_ideator_failed_write_preserves_foreign_replacement(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    target = tmp_path / "race.json"
+    original_open = Path.open
+
+    class RacingHandle:
+        def __init__(self, handle: object) -> None:
+            self.handle = handle
+
+        def __enter__(self):  # noqa: ANN204
+            return self
+
+        def __exit__(self, *_args: object) -> None:
+            self.handle.close()
+
+        def fileno(self) -> int:
+            return self.handle.fileno()
+
+        def write(self, _payload: bytes) -> None:
+            target.unlink()
+            with original_open(target, "wb") as replacement:
+                replacement.write(b"foreign replacement")
+            raise OSError("simulated write failure")
+
+    def racing_open(path: Path, mode: str = "r", *args: object, **kwargs: object):
+        handle = original_open(path, mode, *args, **kwargs)
+        return RacingHandle(handle) if path == target and mode == "xb" else handle
+
+    monkeypatch.setattr(Path, "open", racing_open)
+    with pytest.raises(OSError, match="simulated write failure"):
+        ideator_prepare._write_create_only(target, b"owned output")
+    assert target.read_bytes() == b"foreign replacement"
+
+
+def test_ideator_second_output_failure_preserves_replaced_manifest(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    images = []
+    for index in range(8):
+        image = tmp_path / f"outer-race-{index}.png"
+        image.write_bytes(_PNG)
+        images.append(image)
+    monkeypatch.setattr(
+        ideator_prepare,
+        "build_manifest",
+        lambda **_kwargs: _v2_manifest(images),
+    )
+    manifest_path = tmp_path / "manifest.json"
+    config_path = tmp_path / "config.json"
+    actual_write = ideator_prepare._write_create_only
+    writes = 0
+
+    def racing_write(path: Path, payload: bytes) -> None:
+        nonlocal writes
+        writes += 1
+        if writes == 1:
+            actual_write(path, payload)
+            path.unlink()
+            path.write_bytes(b"foreign replacement")
+            return
+        raise OSError("simulated config failure")
+
+    monkeypatch.setattr(ideator_prepare, "_write_create_only", racing_write)
+    with pytest.raises(OSError, match="simulated config failure"):
+        ideator_prepare.main([
+            "--base-json", "unused-base.json",
+            "--challenge-json", "unused-challenge.json",
+            "--dataset-root", "unused-dataset",
+            "--advbench", "unused-advbench.csv",
+            "--prepared-image-dir", str(tmp_path / "prepared-images"),
+            "--out", str(manifest_path),
+            "--attacker-config-out", str(config_path),
+        ])
+    assert manifest_path.read_bytes() == b"foreign replacement"
+
+
+def test_ideator_build_uses_shared_v2_materialization_and_pair_limit(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import experiments.rig_web_app.builder_models as builder_models
+
+    images = []
+    for index in range(8):
+        image = tmp_path / f"shared-{index}.png"
+        image.write_bytes(_PNG)
+        images.append(image)
+    manifest = _v2_manifest(images)
+    manifest_path = tmp_path / "shared-v2.json"
+    manifest_raw = json.dumps(manifest, sort_keys=True).encode("utf-8")
+    manifest_path.write_bytes(manifest_raw)
+
+    class Builder(BuilderModelsMixin):
+        repo_root = tmp_path
+        results_root = tmp_path
+
+        @staticmethod
+        def _split_list(raw: str) -> list[str]:
+            return [item.strip() for item in raw.split(",") if item.strip()]
+
+        @staticmethod
+        def _canonical_json_bytes(value: object) -> bytes:
+            return json.dumps(value, sort_keys=True, separators=(",", ":")).encode()
+
+    called = 0
+    shared = builder_models.materialize_runner_attacker_config
+
+    def observed(*args: object, **kwargs: object):  # noqa: ANN202
+        nonlocal called
+        called += 1
+        return shared(*args, **kwargs)
+
+    monkeypatch.setattr(
+        builder_models,
+        "materialize_runner_attacker_config",
+        observed,
+    )
+    entry = Builder()._prepared_attacker_entries({
+        "attackers": "ideator",
+        "ideator_manifest": str(manifest_path),
+        "ideator_manifest_sha": hashlib.sha256(manifest_raw).hexdigest(),
+        "ideator_pair_limit": "3",
+    })["ideator"]
+    assert called == 1
+    assert entry["pair_limit"] == 3
+    assert len(entry["seed_pairs"]) == 8
+
+
+def test_ideator_and_t3mp3st_runbook_paths_are_executable_not_placeholders() -> None:
+    project = Path(__file__).parents[2]
+    runbook = (project / "experiments" / "RUN_AND_RETURN.md").read_text(
+        encoding="utf-8"
+    )
+    ideator = runbook.split(
+        "#### IDEATOR: exact VLBreakBench mapping, then Build or CLI replay",
+        1,
+    )[1].split("#### T3MP3ST: capture, then replay", 1)[0]
+    assert "<exact VLBreakBench snapshot root>" not in ideator
+    assert "hf download wang021/VLBreakBench --repo-type dataset" in ideator
+    assert ideator_prepare.DATASET_REVISION in ideator
+    assert "--attacker-config-out \"$URA_IDEATOR_ATTACKER_CONFIG\"" in ideator
+    assert "--pair-limit 0" in ideator
+    assert "--attacker-config-sha256" in ideator
+    assert "path-free manifest SHA-256" in ideator
+    assert "one declared digest per image" in ideator
+
+    t3mp3st = runbook.split("#### T3MP3ST: capture, then replay", 1)[1].split(
+        "#### HarmBench: capture, then replay",
+        1,
+    )[0]
+    assert "verify_receipt_snapshots" in t3mp3st
+    assert "'$URA_T3_VLLM_BIN' serve '$URA_T3_QWEN_SNAPSHOT'" in t3mp3st
+    assert "--served-model-name Qwen/Qwen3-VL-8B-Instruct" in t3mp3st
+    assert "tmux new-session -d -s \"$URA_T3_VLLM_SESSION\"" in t3mp3st
+    assert "tmux has-session -t \"$URA_T3_VLLM_SESSION\" 2>/dev/null ||" not in t3mp3st
+    assert "tmux has-session -t \"$URA_T3_SESSION\" 2>/dev/null ||" not in t3mp3st
+    assert "Refusing to reuse existing session" in t3mp3st
+    assert "Refusing to reuse an existing listener" in t3mp3st
+    assert "served model identity mismatch" in t3mp3st
