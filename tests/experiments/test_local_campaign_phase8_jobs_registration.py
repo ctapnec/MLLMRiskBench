@@ -952,3 +952,79 @@ def test_phase8_jobs_operator_guide_describes_the_visible_terminal() -> None:
         "it forbids hosted calls and is not thesis empirical evidence"
         in " ".join(guide.split())
     )
+
+
+def test_phase8_operator_guide_self_test_uses_deployed_checkout() -> None:
+    guide = TEMPLATE.with_name("phase8_human_audit.README.md.in").read_text(
+        encoding="ascii"
+    )
+    assert (
+        "```bash\n"
+        "cd /home/ura/MLLMRiskBench\n"
+        "bash ~/.ura-controller-active/phase8_human_audit.sh --self-test\n"
+        "```"
+    ) in guide
+
+
+def test_phase8_operator_guide_documents_non_fabricated_ethics_contract() -> None:
+    guide = TEMPLATE.with_name("phase8_human_audit.README.md.in").read_text(
+        encoding="ascii"
+    )
+    assert "intentionally non-runnable shape template" in guide
+    block = guide.split("```json\n", 1)[1].split("\n```", 1)[0]
+    template = json.loads(block)
+    assert tuple(template) == (
+        "schema",
+        "status",
+        "determination_id",
+        "decided_at_utc",
+        "responsible_party",
+        "scope",
+        "sensitive_content_acknowledged",
+        "preparation_authorized",
+        "human_labeling_authorized",
+        "details",
+    )
+    assert tuple(template["scope"]) == (
+        "expected_commit",
+        "framework_lock_id",
+        "runner_root",
+        "common_frame",
+        "source_task_frame",
+    )
+    assert template["schema"] == "ura-human-audit-ethics-determination/1"
+    assert template["status"] == "OPERATOR_MUST_CHOOSE_ALLOWED_STATUS"
+    assert template["scope"]["expected_commit"] == "@@EXPECTED_COMMIT@@"
+    assert (
+        template["scope"]["framework_lock_id"]
+        == "@@FRAMEWORK_LOCK_SHA256@@"
+    )
+    assert template["details"] == {}
+    for value in (
+        *(
+            template[field]
+            for field in (
+                "status",
+                "determination_id",
+                "decided_at_utc",
+                "responsible_party",
+                "sensitive_content_acknowledged",
+                "preparation_authorized",
+                "human_labeling_authorized",
+            )
+        ),
+        template["scope"]["runner_root"],
+        template["scope"]["common_frame"],
+        template["scope"]["source_task_frame"],
+    ):
+        assert isinstance(value, str) and value.startswith("OPERATOR_MUST_")
+    normalized = " ".join(guide.split())
+    for fragment in (
+        "`status` must be exactly one of `approved`, `exempt`, "
+        "`not_human_subjects`, or `authorized`",
+        "JSON boolean `true` for both `common_frame` and `source_task_frame`",
+        "acknowledgement and preparation-authorization fields must also be "
+        "JSON boolean `true`",
+        "`human_labeling_authorized` must be a JSON boolean",
+    ):
+        assert fragment in normalized

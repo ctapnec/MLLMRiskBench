@@ -590,6 +590,61 @@ def test_runbook_lanes_use_the_level2_grouping_and_bounded_population_tiers() ->
             assert_sampling_contract(mutated)
 
 
+def test_follow_on_runbook_keeps_purpose_and_media_contracts() -> None:
+    runbook = (_ROOT / "experiments" / "RUN_AND_RETURN.md").read_text(
+        encoding="utf-8"
+    )
+    local_plan = (_ROOT / "experiments" / "LOCAL_CAMPAIGN_PLAN.md").read_text(
+        encoding="utf-8"
+    )
+    controller_readme = (
+        _ROOT / "experiments" / "local_campaign" / "README.md"
+    ).read_text(encoding="utf-8")
+    section = " ".join(
+        runbook[
+            runbook.index("#### NanoGCG: sealed suffix capture, then replay"):
+            runbook.index("#### HarmBench: capture, then replay")
+        ].split()
+    )
+    required = (
+        "not a claim of one surrogate forward pass",
+        "URA_IDEATOR_MEDIA_ROOT",
+        "same ordered `URA_MEDIA_ROOTS` value",
+        "`--timeout-seconds 600` applies to each planning HTTP request",
+        "set -o pipefail",
+        'URA_T3_CAPTURE_SESSION="ura-t3mp3st-capture-',
+        "separate exact preflight, diagnostic-canary and measured argument vectors",
+        "`--attacker-config-sha256 <matching-digest>`",
+        "path is operational, not part of model-acquisition identity",
+        "Do not append to or rewrite the sealed core cohort's `runs/thesis/RUNNOTE.md`",
+        "`ura-external-measured-job/2` start/terminal records",
+    )
+
+    def assert_contract(value: str) -> None:
+        for token in required:
+            assert token in value
+        assert (
+            "must be reused verbatim across plan, acquisition, projection, canary "
+            "and measured execution"
+        ) not in value
+
+    assert_contract(section)
+    assert "retained immutable argument array" not in runbook
+    for token in required:
+        mutated = section.replace(token, "MUTATED_FOLLOW_ON_CONTRACT")
+        assert mutated != section
+        with pytest.raises(AssertionError):
+            assert_contract(mutated)
+
+    for document in (local_plan, controller_readme):
+        assert "common scientific base" in document
+        assert (
+            "separate exact preflight, canary and measured argument arrays" in document
+        )
+        assert "Each purpose keeps its own plan and receipt" in document
+        assert "retained immutable argument array" not in document
+
+
 def test_runbook_section_18_documents_the_build_surface_and_hf_token_children() -> None:
     """Section 18 states the Build-vs-CLI surface the console parity tests
     enforce and the HF_TOKEN child policy (R4-5, R5-2, D4)."""

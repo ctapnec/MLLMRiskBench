@@ -7734,7 +7734,8 @@ def main() -> int:
             "controller",
             "final-inventory",
             terminal_status,
-            f"measured_complete={len(complete)}, failed={len(failed)}, typed_terminals=6",
+            f"measured_complete={len(complete)}, failed={len(failed)}, "
+            f"typed_terminals={len(TERMINALS)}",
         )
         write_new(completion_path, canonical(completion))
         validate_controller_completion(

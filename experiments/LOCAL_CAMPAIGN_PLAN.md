@@ -446,9 +446,10 @@ This is not a current capability disposition. The core controller does not
 schedule those three lanes for core-cohort measured execution. The follow-on
 cohort binds the newly prepared NanoGCG suffix, IDEATOR source-mapped seed-pair
 manifest, and T3MP3ST bundle and uses the ordinary documented Runner commands
-with its own retained immutable argument array. For each lane, the retained
-schedule contains a prepared artifact, no-call projection,
-diagnostic canary, Gate 5 record, and measured schedule.
+with one retained common scientific base and separate exact preflight, canary
+and measured argument arrays. Each purpose keeps its own plan and receipt. For
+each lane, the retained schedule contains a prepared artifact, no-call
+projection, diagnostic canary, Gate 5 record, and measured schedule.
 NanoGCG can use a positive corpus limit or a separately projected
 `--limit 0` transfer cohort. Current IDEATOR v2 cannot: it is fixed to
 `advbench_harmful --limit 1 --sample-seed 105`, while `pair_limit=0` means

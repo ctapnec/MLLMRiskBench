@@ -1221,7 +1221,7 @@ if (
     or approval.get("approver") != "project operator"
     or approval.get("authentication") != "operator_asserted"
     or approval.get("covered_manifest_sha256") != hashlib.sha256(gate5_raw).hexdigest()
-    or approval.get("scope") != "exact frozen Gate-5 lane inventory, caps, deadline semantics, and external storage policy"
+    or approval.get("scope") != "exact frozen Gate-5 lane inventory, caps, call-start and measured-lane wall-time semantics, and external storage policy"
 ):
     raise SystemExit("canonical RUNNOTE approval changed")
 
@@ -2843,7 +2843,7 @@ def validate_gate5_contract(
         or approval.get("approver") != "project operator"
         or approval.get("authentication") != "operator_asserted"
         or approval.get("covered_manifest_sha256") != hashlib.sha256(manifest_raw).hexdigest()
-        or approval.get("scope") != "exact frozen Gate-5 lane inventory, caps, deadline semantics, and external storage policy"
+        or approval.get("scope") != "exact frozen Gate-5 lane inventory, caps, call-start and measured-lane wall-time semantics, and external storage policy"
     ):
         raise ValueError("canonical Gate 5 RUNNOTE approval changed")
     routes = note.get("routes")

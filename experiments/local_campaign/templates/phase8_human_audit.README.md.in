@@ -9,6 +9,7 @@ installed in the same immutable controller generation. Do not use an older
 workspace copy. Invoke the controller through the active generation:
 
 ```bash
+cd /home/ura/MLLMRiskBench
 bash ~/.ura-controller-active/phase8_human_audit.sh --self-test
 ```
 
@@ -31,6 +32,47 @@ Input preparation requires:
 - an operator-supplied ethics/consent determination and explicit authorization
   for its exact SHA-256;
 - prospective common-frame and source-task cluster counts.
+
+### Ethics determination contract
+
+The ethics file is an operator-authored decision record, not a controller
+output. The following JSON is an intentionally non-runnable shape template. It
+does not state or imply an ethics determination. An accountable operator must
+replace every `OPERATOR_MUST_...` sentinel from an actual determination and
+then independently authorize the exact completed bytes:
+
+```json
+{
+  "schema": "ura-human-audit-ethics-determination/1",
+  "status": "OPERATOR_MUST_CHOOSE_ALLOWED_STATUS",
+  "determination_id": "OPERATOR_MUST_SUPPLY_NONEMPTY_ID",
+  "decided_at_utc": "OPERATOR_MUST_SUPPLY_UTC_TIMESTAMP",
+  "responsible_party": "OPERATOR_MUST_SUPPLY_NONEMPTY_PARTY",
+  "scope": {
+    "expected_commit": "@@EXPECTED_COMMIT@@",
+    "framework_lock_id": "@@FRAMEWORK_LOCK_SHA256@@",
+    "runner_root": "OPERATOR_MUST_SUPPLY_EXACT_RESOLVED_RUNNER_ROOT",
+    "common_frame": "OPERATOR_MUST_SET_TRUE_IF_IN_SCOPE",
+    "source_task_frame": "OPERATOR_MUST_SET_TRUE_IF_IN_SCOPE"
+  },
+  "sensitive_content_acknowledged": "OPERATOR_MUST_SET_TRUE_AFTER_ACKNOWLEDGEMENT",
+  "preparation_authorized": "OPERATOR_MUST_SET_TRUE_IF_AUTHORIZED",
+  "human_labeling_authorized": "OPERATOR_MUST_SET_TRUE_OR_FALSE",
+  "details": {}
+}
+```
+
+The completed file must contain exactly those top-level fields and no others.
+`status` must be exactly one of `approved`, `exempt`, `not_human_subjects`, or
+`authorized`. `determination_id` and `responsible_party` must be non-empty,
+`decided_at_utc` must be a valid UTC timestamp, and `details` must be an object.
+The `scope` object must contain exactly the bound commit, framework-lock ID,
+resolved canonical `$URA_WORK/runs/thesis/runner` path, and JSON boolean `true`
+for both `common_frame` and `source_task_frame`. The acknowledgement and
+preparation-authorization fields must also be JSON boolean `true`.
+`human_labeling_authorized` must be a JSON boolean reflecting the actual
+determination; it may be `false` for machine preparation. The controller
+requires `--authorize-ethics-sha256` to equal the SHA-256 of those exact bytes.
 
 The Gate 5 inventory is exactly 46 lanes: 22 runnable and 24 typed terminal
 when no optional terminal applies, or 21 runnable and 25 typed terminal when

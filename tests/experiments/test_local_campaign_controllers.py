@@ -616,6 +616,36 @@ def test_native_diagnostics_distinguish_importer_from_canonical_engine() -> None
     assert 'native_import.get("native_engine") not in canonical_native_engine_ids(engine)' in source
 
 
+def test_gate5_approval_scope_consumers_use_current_time_semantics() -> None:
+    template_root = (
+        Path(__file__).parents[2] / "experiments" / "local_campaign" / "templates"
+    )
+    current_scope = (
+        "exact frozen Gate-5 lane inventory, caps, call-start and measured-lane "
+        "wall-time semantics, and external storage policy"
+    )
+    obsolete_scope = (
+        "exact frozen Gate-5 lane inventory, caps, deadline semantics, and "
+        "external storage policy"
+    )
+    expected_consumers = {
+        "phase5_promote_gate5.sh.in": 1,
+        "phase6_native_diagnostics.sh.in": 2,
+    }
+
+    def assert_contract(candidate: str, expected_count: int) -> None:
+        assert candidate.count(current_scope) == expected_count
+        assert obsolete_scope not in candidate
+
+    for filename, expected_count in expected_consumers.items():
+        source = (template_root / filename).read_text(encoding="utf-8")
+        assert_contract(source, expected_count)
+        reverted = source.replace(current_scope, obsolete_scope)
+        assert reverted != source
+        with pytest.raises(AssertionError):
+            assert_contract(reverted, expected_count)
+
+
 def _assert_direct_runtime_alias_contract(
     source: str, *, receipt_lock_token: str
 ) -> None:
@@ -740,6 +770,35 @@ def test_gptgeochat_rwkv_cross_products_are_exact_typed_terminals() -> None:
     assert '"total": 46' in combined
     assert '(26, 17, [])' not in combined
     assert '(25, 18, ["defense-local"])' not in combined
+
+
+def test_phase6_extended_final_event_uses_dynamic_typed_terminal_count() -> None:
+    source = (
+        Path(__file__).parents[2]
+        / "experiments"
+        / "local_campaign"
+        / "templates"
+        / "phase6_extended_measured.sh.in"
+    ).read_text(encoding="utf-8")
+    dynamic_event = (
+        'f"measured_complete={len(complete)}, failed={len(failed)}, "\n'
+        '            f"typed_terminals={len(TERMINALS)}",'
+    )
+
+    def assert_contract(candidate: str) -> None:
+        assert "TERMINALS.update(typed_terminal_dispositions)" in candidate
+        assert dynamic_event in candidate
+        assert "typed_terminals=6" not in candidate
+
+    assert_contract(source)
+    mutated = source.replace(
+        "typed_terminals={len(TERMINALS)}",
+        "typed_terminals=6",
+        1,
+    )
+    assert mutated != source
+    with pytest.raises(AssertionError):
+        assert_contract(mutated)
 
 
 def test_core_follow_on_terminals_match_campaign_documents() -> None:

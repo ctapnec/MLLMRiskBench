@@ -431,8 +431,9 @@ was sealed. This is not a current capability disposition. The core controller
 does not schedule those three lanes for core-cohort measured execution. The
 follow-on cohort binds the NanoGCG capture config, IDEATOR v2 source-mapped
 manifest, and T3MP3ST bundle and uses the ordinary documented Runner commands
-with its own retained immutable argument array. For each lane, the retained
-schedule contains a prepared artifact, no-call projection,
+with one retained common scientific base and separate exact preflight, canary
+and measured argument arrays. Each purpose keeps its own plan and receipt. For
+each lane, the retained schedule contains a prepared artifact, no-call projection,
 diagnostic canary, Gate 5 record, and measured schedule.
 NanoGCG may use a positive outer limit or a separately projected `--limit 0`
 transfer cohort. IDEATOR v2 is fixed to
@@ -2813,9 +2814,10 @@ follow-on cohort and were not bound when its Gate 5 authorization was sealed.
 This is not a current capability disposition. The core controller does not
 schedule those three lanes for core-cohort measured execution. The follow-on
 cohort binds all three prepared artifacts and uses the ordinary documented
-Runner commands with its own retained immutable argument array. For each lane,
-the retained schedule contains a prepared artifact, no-call
-projection, diagnostic canary, Gate 5 record, and measured schedule.
+Runner commands with one retained common scientific base and separate exact
+preflight, canary and measured argument arrays. Each purpose keeps its own plan
+and receipt. For each lane, the retained schedule contains a prepared artifact,
+no-call projection, diagnostic canary, Gate 5 record, and measured schedule.
 NanoGCG may use a separately projected positive or `--limit 0` transfer
 selection. Current IDEATOR v2 may not: its source mapping fixes the outer
 selection to `advbench_harmful --limit 1 --sample-seed 105`.
@@ -2923,8 +2925,9 @@ with `--corpora advbench_harmful --limit 1 --sample-seed 105 --seeds 0`
 and query/turn bounds of one, plus the normal target, judge, acquisition,
 attestation and cap flags. The later Runner provenance says
 `framework_execution=not_invoked` because replay itself performs no
-NanoGCG or surrogate call; the separate capture artifact records exactly one
-framework generation call.
+NanoGCG or surrogate call. The separate capture artifact records one bounded
+optimization invocation governed by the declared step, search-width and top-k
+controls; this is not a claim of one surrogate forward pass.
 
 #### IDEATOR: exact VLBreakBench mapping, then Build or CLI replay
 
@@ -2972,6 +2975,8 @@ export URA_IDEATOR_ATTACKER_CONFIG="$URA_IDEATOR_PREP_ROOT/attacker-config-limit
 URA_IDEATOR_MANIFEST_SHA256="$(sha256sum "$URA_IDEATOR_MANIFEST" | awk '{print $1}')" || exit $?
 URA_IDEATOR_ATTACKER_CONFIG_SHA256="$(sha256sum "$URA_IDEATOR_ATTACKER_CONFIG" | awk '{print $1}')" || exit $?
 export URA_IDEATOR_MANIFEST_SHA256 URA_IDEATOR_ATTACKER_CONFIG_SHA256
+export URA_IDEATOR_MEDIA_ROOT="$(realpath "$URA_IDEATOR_PREP_ROOT/images")" || exit $?
+export URA_MEDIA_ROOTS="${URA_MEDIA_ROOTS:+$URA_MEDIA_ROOTS:}$URA_IDEATOR_MEDIA_ROOT"
 ```
 
 The immutable Hub revision, the two checked JSON artifacts, the selected PNG
@@ -2982,6 +2987,10 @@ retains that path-free manifest SHA-256, one declared digest per image, the
 exact source bindings, `seed_pairs`, and the explicit `pair_limit`; it performs
 no IDEATOR or other model generation. Runner checks every declared image digest
 before planning. A changed image therefore fails before a target call.
+The resolved prepared-image directory must remain in the same ordered
+`URA_MEDIA_ROOTS` value for the IDEATOR preflight, diagnostic canary and measured
+request; otherwise generated-media admission correctly fails before a target
+call.
 
 In Build select the `ideator` attacker, the
 `advbench_harmful` source arm, limit 1 and sample seed 105. Supply
@@ -3008,9 +3017,9 @@ attackers; they belong in the native track below.
 
 T3MP3ST planning and HarmBench generation are not target/judge/provider-HTTP
 calls covered by the Runner's common call ledger. They run once out of band
-under their own cap or quota. NanoGCG capture is also an out-of-band framework
-generation call outside those ceilings; IDEATOR v2 preparation performs only
-local source/image validation and copying. Retain exact preparation provenance
+under their own cap or quota. NanoGCG capture is also an out-of-band bounded
+optimization invocation outside those ceilings; IDEATOR v2 preparation performs
+only local source/image validation and copying. Retain exact preparation provenance
 and never describe any of these operations as protected by the target/judge
 ceilings.
 
@@ -3125,7 +3134,18 @@ Capture one record first, then the bounded 50-record selection. Keep separate,
 create-only preparation roots because each artifact authorizes a different
 Runner selection:
 
+Open a fresh interactive operator shell before running the capture block; the
+two service sessions remain separate:
+
 ```bash
+export URA_T3_CAPTURE_SESSION="ura-t3mp3st-capture-${URA_FRAMEWORK_LOCK_ID:0:12}"
+tmux new-session -s "$URA_T3_CAPTURE_SESSION" -c "$URA_REPO"
+```
+
+Run the following commands inside that attached capture session:
+
+```bash
+set -o pipefail
 export URA_T3_PREP_ROOT="$URA_WORK/runs/thesis/prepared/t3mp3st-follow-on"
 export URA_T3_ONE_ROOT="$URA_T3_PREP_ROOT/limit-1-seed-0"
 export URA_T3_BOUND_ROOT="$URA_T3_PREP_ROOT/limit-50-seed-0"
@@ -3146,13 +3166,20 @@ T3_COMMON=(
   --timeout-seconds 600
 )
 
-"$URA_PY" -m experiments.capture_t3mp3st \
+timeout --signal=TERM --kill-after=60s 1800s \
+  "$URA_PY" -m experiments.capture_t3mp3st \
   "${T3_COMMON[@]}" --limit 1 --sample-seed 0 --out "$URA_T3_ONE_ROOT" \
-  | tee "$URA_T3_PREP_ROOT/limit-1-result.json"
-"$URA_PY" -m experiments.capture_t3mp3st \
+  | tee "$URA_T3_PREP_ROOT/limit-1-result.json" || exit $?
+timeout --signal=TERM --kill-after=60s 43200s \
+  "$URA_PY" -m experiments.capture_t3mp3st \
   "${T3_COMMON[@]}" --limit 50 --sample-seed 0 --out "$URA_T3_BOUND_ROOT" \
-  | tee "$URA_T3_PREP_ROOT/limit-50-result.json"
+  | tee "$URA_T3_PREP_ROOT/limit-50-result.json" || exit $?
 ```
+
+`--timeout-seconds 600` applies to each planning HTTP request. The two shell
+timeouts above separately bound the complete one-record and fifty-record capture
+processes. Run both inside the capture tmux session and retain a timed-out process
+as a failed preparation rather than resuming from an incomplete bundle.
 
 Each command prints the canonical absolute content-addressed artifact path and
 SHA-256. Put the exact values from the matching result into a one-attacker
@@ -3172,10 +3199,30 @@ config:
 
 Use the limit-1 file for the follow-on projection and diagnostic canary, and the
 limit-50 file for its separately projected and admitted bounded measured run.
-Pass `--attackers t3mp3st --attacker-config <matching-file>` in both `rig_check`
-and `run_matrix`. Every immutable Runner argument, including the selected arm,
-limit, seed, call caps and deadline, must be reused verbatim across plan,
-acquisition, projection, canary and measured execution for that cohort.
+Pass `--attackers t3mp3st`, `--attacker-config <matching-file>` and
+`--attacker-config-sha256 <matching-digest>` in both `rig_check` and
+`run_matrix`. Retain one common scientific base, then derive separate exact
+preflight, diagnostic-canary and measured argument vectors because purpose,
+selection, caps, deadline and attestation participate in request identity. Use a
+distinct output root for each operation. The path is operational, not part of
+model-acquisition identity. Within each purpose, reuse that exact vector for plan
+derivation,
+acquisition and its consumer; `rig_check` adds its wrapper-owned
+`--preflight-only`. Never reuse a preflight plan for a canary or a limit-1 plan
+for the limit-50 measured request.
+
+The same purpose separation applies to NanoGCG and IDEATOR. After each live
+canary, run `experiments.lane_canary` with the canary result root and that
+canary's own eligibility artifact. Before measured execution, write one
+create-only cohort-local RUNNOTE and content-bound operator authorization that
+bind the three preparations, measured projections, canary summaries, exact
+measured vectors and approved target/local-Guard/model-judge/HTTP, wall-time,
+storage and no-hosted-call limits. Do not append to or rewrite the sealed core
+cohort's `runs/thesis/RUNNOTE.md`. Use the follow-on authorization digest as the
+generic `admission_sha256` association when publishing the existing
+`ura-external-measured-job/2` start/terminal records for each exact measured
+Runner child. This makes the jobs and their artifacts visible in Jobs/Stats but
+does not give the operational registration scientific authority.
 Legacy single-response artifacts and bundles without `capture_runtime` remain
 readable for compatibility, but Runner rejects them as measured evidence.
 

@@ -4426,7 +4426,7 @@ def validate_evidence(
         or approval["authentication"] != "operator_asserted"
         or approval["covered_manifest_sha256"] != manifest_desc["sha256"]
         or approval["scope"]
-        != "exact frozen Gate-5 lane inventory, caps, deadline semantics, and external storage policy"
+        != "exact frozen Gate-5 lane inventory, caps, call-start and measured-lane wall-time semantics, and external storage policy"
     ):
         raise PromotionError("operator approval scope/identity changed")
     if strict_json(approval_path) != approval or approval != note["approval"]:
