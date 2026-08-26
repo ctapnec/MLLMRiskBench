@@ -1082,19 +1082,37 @@ controller_task_start core-measured
 CORE_LAUNCH="$CONTROL_ROOT/core.launch.txt"
 test ! -e "$CORE_LAUNCH" && test ! -L "$CORE_LAUNCH"
 verify_regular "$CORE" "$CORE_SHA256" "$CORE_BYTES"
-core_recovery_args=()
-if [[ -n "${PHASE6_CORE_RECOVERY_ROOTS-}" ]]; then
-  IFS=: read -r -a core_recovery_roots <<< "$PHASE6_CORE_RECOVERY_ROOTS"
-  for core_recovery_root in "${core_recovery_roots[@]}"; do
-    core_recovery_args+=(--recover-lane-state-from "$core_recovery_root")
-  done
+if [[ -n "${PHASE6_CORE_ADOPT_LAUNCH-}" ]]; then
+  test -z "${PHASE6_CORE_RECOVERY_ROOTS-}"
+  test "${PHASE6_CORE_ADOPT_LAUNCH#/}" != "$PHASE6_CORE_ADOPT_LAUNCH"
+  test -f "$PHASE6_CORE_ADOPT_LAUNCH" && test ! -L "$PHASE6_CORE_ADOPT_LAUNCH"
+  adopted_core_launch="$(readlink -e -- "$PHASE6_CORE_ADOPT_LAUNCH")"
+  test "$adopted_core_launch" = "$PHASE6_CORE_ADOPT_LAUNCH"
+  case "$adopted_core_launch" in
+    "$URA_WORK"/runs/engineering/phase6-sequence-*/core.launch.txt) ;;
+    *) printf 'unsafe adopted core launch\n' >&2; exit 1 ;;
+  esac
+  test "$(stat -c '%a' -- "$adopted_core_launch")" = '600'
+  test "$(stat -c '%h' -- "$adopted_core_launch")" = '1'
+  cp -- "$adopted_core_launch" "$CORE_LAUNCH"
+  chmod 600 -- "$CORE_LAUNCH"
+  cmp -s -- "$adopted_core_launch" "$CORE_LAUNCH"
+  printf 'PHASE6_CONTROLLER_ADOPTED=core LAUNCH=%s\n' "$adopted_core_launch"
+else
+  core_recovery_args=()
+  if [[ -n "${PHASE6_CORE_RECOVERY_ROOTS-}" ]]; then
+    IFS=: read -r -a core_recovery_roots <<< "$PHASE6_CORE_RECOVERY_ROOTS"
+    for core_recovery_root in "${core_recovery_roots[@]}"; do
+      core_recovery_args+=(--recover-lane-state-from "$core_recovery_root")
+    done
+  fi
+  bash "$CORE" \
+    --gate5-manifest "$GATE5_MANIFEST" \
+    --gate5-runnote "$GATE5_RUNNOTE" \
+    --gate5-promotion-receipt "$GATE5_PROMOTION" \
+    --authorize-manifest-sha256 "$GATE5_MANIFEST_SHA" \
+    "${core_recovery_args[@]}" > "$CORE_LAUNCH"
 fi
-bash "$CORE" \
-  --gate5-manifest "$GATE5_MANIFEST" \
-  --gate5-runnote "$GATE5_RUNNOTE" \
-  --gate5-promotion-receipt "$GATE5_PROMOTION" \
-  --authorize-manifest-sha256 "$GATE5_MANIFEST_SHA" \
-  "${core_recovery_args[@]}" > "$CORE_LAUNCH"
 wait_for_child core "$CORE" "$CORE_SHA256" "$CORE_BYTES" "$CORE_LAUNCH"
 if [ "${CHILD_RC[core]}" = '0' ]; then
   controller_task_pass core-measured

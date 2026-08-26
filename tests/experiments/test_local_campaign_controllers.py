@@ -1636,6 +1636,38 @@ def test_phase6_sequence_recovers_only_content_identical_sealed_lane_state() -> 
         assert 'state["runner_argv"] = [path_replacements.get(item, item) for item in runner_argv]' in stale_locators
 
 
+def test_phase6_sequence_adopts_only_an_exact_terminal_core_launch() -> None:
+    source = (
+        Path(__file__).parents[2]
+        / "experiments"
+        / "local_campaign"
+        / "templates"
+        / "phase6_sequence.sh.in"
+    ).read_text(encoding="utf-8")
+
+    required = (
+        'if [[ -n "${PHASE6_CORE_ADOPT_LAUNCH-}" ]]; then',
+        'test -z "${PHASE6_CORE_RECOVERY_ROOTS-}"',
+        'test -f "$PHASE6_CORE_ADOPT_LAUNCH" && test ! -L "$PHASE6_CORE_ADOPT_LAUNCH"',
+        'test "$adopted_core_launch" = "$PHASE6_CORE_ADOPT_LAUNCH"',
+        '"$URA_WORK"/runs/engineering/phase6-sequence-*/core.launch.txt)',
+        'test "$(stat -c \'%a\' -- "$adopted_core_launch")" = \'600\'',
+        'test "$(stat -c \'%h\' -- "$adopted_core_launch")" = \'1\'',
+        'cmp -s -- "$adopted_core_launch" "$CORE_LAUNCH"',
+        'wait_for_child core "$CORE" "$CORE_SHA256" "$CORE_BYTES" "$CORE_LAUNCH"',
+    )
+
+    def assert_adoption_contract(candidate: str) -> None:
+        for item in required:
+            assert item in candidate
+
+    assert_adoption_contract(source)
+    for item in required[:-1]:
+        mutated = source.replace(item, "removed-adoption-check", 1)
+        with pytest.raises(AssertionError):
+            assert_adoption_contract(mutated)
+
+
 def test_phase6_failure_sealers_create_missing_runner_parent() -> None:
     root = (
         Path(__file__).parents[2]
