@@ -14,6 +14,12 @@ set -Eeuo pipefail
 #   bash phase6_core_measured.sh \
 #     --resume-control-root /absolute/phase6-core-measured-...
 #
+# Recovery after a sealed controller defect:
+#   bash phase6_core_measured.sh \
+#     --gate5-manifest ... --gate5-runnote ... --gate5-promotion-receipt ... \
+#     --authorize-manifest-sha256 ... \
+#     --recover-lane-state-from /absolute/failed-phase6-core-measured-...
+#
 # A resume never derives a replacement acquisition plan, changes a cap, or
 # replaces an attestation for a lane that reached measured-argv sealing. It
 # either accepts a strictly revalidated complete Runner grid, or invokes the
@@ -29,6 +35,7 @@ usage() {
   printf '%s\n' \
     'usage:' \
     '  phase6_core_measured.sh --gate5-manifest PATH --gate5-runnote PATH --gate5-promotion-receipt PATH --authorize-manifest-sha256 HEX' \
+    '    [--recover-lane-state-from PATH]' \
     '  phase6_core_measured.sh --resume-control-root PATH' >&2
   exit 2
 }
@@ -38,6 +45,7 @@ GATE5_RUNNOTE=''
 GATE5_PROMOTION=''
 AUTHORIZED_SHA=''
 RESUME_ROOT=''
+RECOVERY_STATE_ROOT=''
 while (( "$#" )); do
   case "$1" in
     --gate5-manifest)
@@ -65,12 +73,18 @@ while (( "$#" )); do
       RESUME_ROOT="$2"
       shift 2
       ;;
+    --recover-lane-state-from)
+      (( "$#" >= 2 )) || usage
+      RECOVERY_STATE_ROOT="$2"
+      shift 2
+      ;;
     *) usage ;;
   esac
 done
 
 if [[ -n "$RESUME_ROOT" ]]; then
-  [[ -z "$GATE5_MANIFEST" && -z "$GATE5_RUNNOTE" && -z "$GATE5_PROMOTION" && -z "$AUTHORIZED_SHA" ]] || usage
+  [[ -z "$GATE5_MANIFEST" && -z "$GATE5_RUNNOTE" && -z "$GATE5_PROMOTION" && \
+     -z "$AUTHORIZED_SHA" && -z "$RECOVERY_STATE_ROOT" ]] || usage
 else
   [[ -n "$GATE5_MANIFEST" && -n "$GATE5_RUNNOTE" && -n "$GATE5_PROMOTION" && "$AUTHORIZED_SHA" =~ ^[0-9a-f]{64}$ ]] || usage
 fi
@@ -218,6 +232,16 @@ PY
 else
   [[ -n "$GATE5_MANIFEST" && -n "$GATE5_RUNNOTE" && -n "$GATE5_PROMOTION" && -n "$AUTHORIZED_SHA" ]] || usage
   [[ "$AUTHORIZED_SHA" =~ ^[0-9a-f]{64}$ ]] || usage
+  if [[ -n "$RECOVERY_STATE_ROOT" ]]; then
+    RECOVERY_STATE_ROOT="$(readlink -e -- "$RECOVERY_STATE_ROOT")"
+    test -d "$RECOVERY_STATE_ROOT" && test ! -L "$RECOVERY_STATE_ROOT"
+    case "$RECOVERY_STATE_ROOT" in
+      "$URA_WORK"/runs/engineering/phase6-core-measured-*) ;;
+      *) printf 'unsafe Phase 6 recovery-state root: %s\n' "$RECOVERY_STATE_ROOT" >&2; exit 1 ;;
+    esac
+    test -d "$RECOVERY_STATE_ROOT/lanes" && test ! -L "$RECOVERY_STATE_ROOT/lanes"
+    test -d "$RECOVERY_STATE_ROOT/lane-specs" && test ! -L "$RECOVERY_STATE_ROOT/lane-specs"
+  fi
   GATE5_MANIFEST="$(checked_regular "$GATE5_MANIFEST")"
   GATE5_RUNNOTE="$(checked_regular "$GATE5_RUNNOTE")"
   GATE5_PROMOTION="$(checked_regular "$GATE5_PROMOTION")"
@@ -4507,6 +4531,140 @@ for pattern in executed_patterns:
 PY
 }
 
+import_recovery_state() {
+  local source_state="$1" target_state="$2" current_spec="$3"
+  "$PY" - "$source_state" "$target_state" "$current_spec" <<'PY'
+import hashlib
+import json
+import os
+from pathlib import Path
+import re
+import stat
+import sys
+
+from ura.strict_json import strict_json_loads
+
+source_state, target_state, current_spec = map(Path, sys.argv[1:])
+recovery_root = Path(os.environ["RECOVERY_STATE_ROOT"]).resolve(strict=True)
+lane = target_state.parent.name
+expected_source = recovery_root / "lanes" / lane / "exact-measured-argv.json"
+if (
+    source_state != expected_source
+    or source_state.is_symlink()
+    or not source_state.is_file()
+    or source_state.resolve(strict=True) != source_state
+):
+    raise SystemExit("Phase 6 recovery state locator is unsafe")
+metadata = source_state.stat()
+if stat.S_IMODE(metadata.st_mode) != 0o600 or metadata.st_nlink != 1:
+    raise SystemExit("Phase 6 recovery state permissions changed")
+state_payload = source_state.read_bytes()
+state = strict_json_loads(state_payload)
+if (
+    not isinstance(state, dict)
+    or state.get("schema") != "ura-phase6-core-measured-argv/1"
+    or set(state) != {
+        "schema", "lane_spec", "result_root", "probe_root", "live_attestation",
+        "attestation_acquisition", "model_acquisition", "runner_argv",
+        "resume_semantics",
+    }
+):
+    raise SystemExit("Phase 6 recovery state schema changed")
+
+old_spec_descriptor = state["lane_spec"]
+if not isinstance(old_spec_descriptor, dict) or set(old_spec_descriptor) != {
+    "path", "sha256", "bytes",
+}:
+    raise SystemExit("Phase 6 recovery lane-spec descriptor is invalid")
+old_spec = Path(old_spec_descriptor["path"])
+if (
+    old_spec.is_symlink()
+    or not old_spec.is_file()
+    or old_spec.resolve(strict=True) != old_spec
+    or old_spec.parent != recovery_root / "lane-specs"
+):
+    raise SystemExit("Phase 6 recovery lane spec is unsafe")
+old_spec_payload = old_spec.read_bytes()
+current_spec_payload = current_spec.read_bytes()
+if (
+    len(old_spec_payload) != old_spec_descriptor["bytes"]
+    or hashlib.sha256(old_spec_payload).hexdigest() != old_spec_descriptor["sha256"]
+    or current_spec_payload != old_spec_payload
+):
+    raise SystemExit("Phase 6 recovery lane spec differs from the current lane")
+state["lane_spec"] = {
+    "path": str(current_spec),
+    "sha256": hashlib.sha256(current_spec_payload).hexdigest(),
+    "bytes": len(current_spec_payload),
+}
+
+preparations = target_state.parent / "preparations"
+preparations.mkdir(mode=0o700)
+for field in ("attestation_acquisition", "model_acquisition"):
+    acquisition = state.get(field)
+    descriptor = acquisition.get("controller_log") if isinstance(acquisition, dict) else None
+    if not isinstance(descriptor, dict) or set(descriptor) != {"path", "sha256", "bytes"}:
+        raise SystemExit("Phase 6 recovery acquisition-log descriptor is invalid")
+    source_log = Path(descriptor["path"])
+    if (
+        source_log.is_symlink()
+        or not source_log.is_file()
+        or source_log.resolve(strict=True) != source_log
+        or not source_log.is_relative_to(recovery_root / "lanes" / lane / "preparations")
+        or re.fullmatch(r"20[0-9]{6}T[0-9]{6}Z-[0-9]+", source_log.parent.name) is None
+    ):
+        raise SystemExit("Phase 6 recovery acquisition log is unsafe")
+    payload = source_log.read_bytes()
+    if len(payload) != descriptor["bytes"] or hashlib.sha256(payload).hexdigest() != descriptor["sha256"]:
+        raise SystemExit("Phase 6 recovery acquisition log bytes changed")
+    import_root = preparations / source_log.parent.name
+    if not import_root.exists():
+        import_root.mkdir(mode=0o700)
+    if import_root.is_symlink() or import_root.resolve(strict=True) != import_root:
+        raise SystemExit("Phase 6 recovery import directory is unsafe")
+    target_log = import_root / source_log.name
+    fd = os.open(target_log, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    with os.fdopen(fd, "wb") as handle:
+        handle.write(payload)
+        handle.flush()
+        os.fsync(handle.fileno())
+    acquisition["controller_log"] = {
+        "path": str(target_log),
+        "sha256": descriptor["sha256"],
+        "bytes": descriptor["bytes"],
+    }
+
+payload = (json.dumps(state, sort_keys=True, separators=(",", ":"), allow_nan=False) + "\n").encode()
+fd = os.open(target_state, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+with os.fdopen(fd, "wb") as handle:
+    handle.write(payload)
+    handle.flush()
+    os.fsync(handle.fileno())
+receipt = target_state.parent / "recovery-import.json"
+value = {
+    "schema": "ura-phase6-core-state-import/1",
+    "status": "imported_content_identical_lane_state",
+    "source_control_root": str(recovery_root),
+    "source_state": {
+        "path": str(source_state),
+        "sha256": hashlib.sha256(state_payload).hexdigest(),
+        "bytes": len(state_payload),
+    },
+    "imported_state": {
+        "path": str(target_state),
+        "sha256": hashlib.sha256(payload).hexdigest(),
+        "bytes": len(payload),
+    },
+}
+receipt_payload = (json.dumps(value, sort_keys=True, separators=(",", ":")) + "\n").encode("ascii")
+fd = os.open(receipt, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+with os.fdopen(fd, "wb") as handle:
+    handle.write(receipt_payload)
+    handle.flush()
+    os.fsync(handle.fileno())
+PY
+}
+
 mapfile -t SPEC_FILES < <(find "$LANE_SPECS" -maxdepth 1 -type f -name '*.json' -print | sort)
 test "${#SPEC_FILES[@]}" -eq 9 || test "${#SPEC_FILES[@]}" -eq 10
 
@@ -4551,6 +4709,16 @@ run_lane_body() {
     mkdir "$lane_control"
   fi
   chmod 700 "$lane_control"
+
+  if [[ ! -e "$state_path" && ! -L "$state_path" && -n "${RECOVERY_STATE_ROOT-}" ]]; then
+    recovery_state="$RECOVERY_STATE_ROOT/lanes/$LANE/exact-measured-argv.json"
+    if [[ -e "$recovery_state" || -L "$recovery_state" ]]; then
+      current_stage='recovery-state-import'
+      event "$LANE" resume-state start 'content-identical sealed state import'
+      import_recovery_state "$recovery_state" "$state_path" "$spec_path"
+      event "$LANE" resume-state imported 'content-identical sealed state imported'
+    fi
+  fi
 
   if [[ -e "$state_path" || -L "$state_path" ]]; then
     current_stage='resume-state-revalidation'
@@ -7165,7 +7333,7 @@ SOCKET="ura-phase6-core-${ATTEMPT_TAG}"
 test ! -e "$CONTROL_ROOT/attempts/$ATTEMPT_TAG"
 
 tmux -L "$SOCKET" new-session -d -s "$SESSION" \
-  "exec env CONTROL_ROOT=$(printf '%q' "$CONTROL_ROOT") ATTEMPT_TAG=$(printf '%q' "$ATTEMPT_TAG") bash $(printf '%q' "$PAYLOAD_PATH")"
+  "exec env CONTROL_ROOT=$(printf '%q' "$CONTROL_ROOT") ATTEMPT_TAG=$(printf '%q' "$ATTEMPT_TAG") RECOVERY_STATE_ROOT=$(printf '%q' "$RECOVERY_STATE_ROOT") bash $(printf '%q' "$PAYLOAD_PATH")"
 
 printf 'SESSION=%s\n' "$SESSION"
 printf 'SOCKET=%s\n' "$SOCKET"

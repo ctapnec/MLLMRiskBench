@@ -1575,6 +1575,32 @@ def test_phase6_core_attestation_probe_uses_local_guardrail_fallback() -> None:
         assert_probe_contract(mutated)
 
 
+def test_phase6_sequence_recovers_only_content_identical_sealed_lane_state() -> None:
+    root = (
+        Path(__file__).parents[2]
+        / "experiments"
+        / "local_campaign"
+        / "templates"
+    )
+    sequence = (root / "phase6_sequence.sh.in").read_text(encoding="utf-8")
+    core = (root / "phase6_core_measured.sh.in").read_text(encoding="utf-8")
+
+    assert 'core_recovery_args=(--recover-lane-state-from "$PHASE6_CORE_RECOVERY_ROOT")' in sequence
+    assert '--recover-lane-state-from)' in core
+    assert 'event "$LANE" resume-state imported' in core
+    assert 'current_spec_payload != old_spec_payload' in core
+    assert '"schema": "ura-phase6-core-state-import/1"' in core
+    assert 'RECOVERY_STATE_ROOT=$(printf \'%q\' "$RECOVERY_STATE_ROOT")' in core
+
+    mutated = core.replace(
+        "current_spec_payload != old_spec_payload",
+        "False",
+        1,
+    )
+    with pytest.raises(AssertionError):
+        assert "current_spec_payload != old_spec_payload" in mutated
+
+
 def test_phase6_failure_sealers_create_missing_runner_parent() -> None:
     root = (
         Path(__file__).parents[2]

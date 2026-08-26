@@ -1082,11 +1082,16 @@ controller_task_start core-measured
 CORE_LAUNCH="$CONTROL_ROOT/core.launch.txt"
 test ! -e "$CORE_LAUNCH" && test ! -L "$CORE_LAUNCH"
 verify_regular "$CORE" "$CORE_SHA256" "$CORE_BYTES"
+core_recovery_args=()
+if [[ -n "${PHASE6_CORE_RECOVERY_ROOT-}" ]]; then
+  core_recovery_args=(--recover-lane-state-from "$PHASE6_CORE_RECOVERY_ROOT")
+fi
 bash "$CORE" \
   --gate5-manifest "$GATE5_MANIFEST" \
   --gate5-runnote "$GATE5_RUNNOTE" \
   --gate5-promotion-receipt "$GATE5_PROMOTION" \
-  --authorize-manifest-sha256 "$GATE5_MANIFEST_SHA" > "$CORE_LAUNCH"
+  --authorize-manifest-sha256 "$GATE5_MANIFEST_SHA" \
+  "${core_recovery_args[@]}" > "$CORE_LAUNCH"
 wait_for_child core "$CORE" "$CORE_SHA256" "$CORE_BYTES" "$CORE_LAUNCH"
 if [ "${CHILD_RC[core]}" = '0' ]; then
   controller_task_pass core-measured
