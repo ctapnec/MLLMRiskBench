@@ -2238,8 +2238,8 @@ def _validate_rr_projection_artifact_binding(
             envelope_descriptor != {"path": str(envelope_path), **observed_envelope}
             or envelope.get("envelope_id")
             != projection_value.get("request_envelope_id")
-            or eligibility.get("bindings", {}).get("request_envelope_sha256")
-            != envelope_descriptor["sha256"]
+            or eligibility.get("bindings", {}).get("request_envelope")
+            != observed_envelope
         ):
             raise Phase7Error(f"{label} RR request-envelope identity changed")
 

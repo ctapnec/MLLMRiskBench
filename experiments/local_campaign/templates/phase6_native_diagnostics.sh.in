@@ -867,8 +867,8 @@ def validate_rr_projection_field(value: object, *, label: str) -> None:
         or projection.get("projection_id") != projection_value.get("projection_id")
         or eligibility.get("plan_id") != projection_value.get("eligibility_plan_id")
         or envelope.get("envelope_id") != projection_value.get("request_envelope_id")
-        or eligibility.get("bindings", {}).get("request_envelope_sha256")
-        != envelope_descriptor["sha256"]
+        or eligibility.get("bindings", {}).get("request_envelope")
+        != observed_envelope
         or projection.get("selection") != projection_value.get("selection")
         or projected_calls != {
             "trajectories": calls.get("trajectories"),
@@ -2574,8 +2574,8 @@ def validate_rr_projection_field(value: object, *, label: str) -> None:
         or projection.get("projection_id") != projection_value.get("projection_id")
         or eligibility.get("plan_id") != projection_value.get("eligibility_plan_id")
         or envelope.get("envelope_id") != projection_value.get("request_envelope_id")
-        or eligibility.get("bindings", {}).get("request_envelope_sha256")
-        != envelope_descriptor["sha256"]
+        or eligibility.get("bindings", {}).get("request_envelope")
+        != observed_envelope
         or projection.get("selection") != projection_value.get("selection")
         or projected_calls != {
             "trajectories": calls.get("trajectories"),

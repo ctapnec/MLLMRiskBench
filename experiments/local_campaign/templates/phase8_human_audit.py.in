@@ -1339,8 +1339,8 @@ def _validate_rr_projection_artifact_binding(
             envelope_descriptor != {"path": str(envelope_path), **observed_envelope}
             or envelope.get("envelope_id")
             != projection_value.get("request_envelope_id")
-            or eligibility.get("bindings", {}).get("request_envelope_sha256")
-            != envelope_descriptor["sha256"]
+            or eligibility.get("bindings", {}).get("request_envelope")
+            != observed_envelope
         ):
             raise Phase8Error(f"{label} RR request-envelope identity changed")
 
@@ -2027,7 +2027,12 @@ def _validate_conditional_defense_row(
         raise Phase8Error(
             f"{label} conditional defense eligibility plan must be one object"
         )
-    experiment_conditions = eligibility.get("experiment_conditions")
+    eligibility_bindings = eligibility.get("bindings")
+    experiment_conditions = (
+        eligibility_bindings.get("experiment_conditions")
+        if isinstance(eligibility_bindings, dict)
+        else None
+    )
     condition_values = (
         experiment_conditions.get("values")
         if isinstance(experiment_conditions, dict)
@@ -13190,24 +13195,26 @@ def self_test() -> int:
         eligibility_path.write_bytes(
             canonical(
                 {
-                    "experiment_conditions": {
-                        "values": {
-                            "live_attestation": {
-                                "mode": "measured",
-                                "execution_scope_id": "conditional-defense-self-test",
-                                "max_age_hours": 24.0,
-                                "artifacts": [
-                                    {
-                                        "file": live_attestation_path.name,
-                                        "sha256": conditional_artifacts[
-                                            "live_attestation"
-                                        ]["sha256"],
-                                        "bytes": conditional_artifacts[
-                                            "live_attestation"
-                                        ]["bytes"],
-                                        "attestation_id": attestation_id,
-                                    }
-                                ],
+                    "bindings": {
+                        "experiment_conditions": {
+                            "values": {
+                                "live_attestation": {
+                                    "mode": "measured",
+                                    "execution_scope_id": "conditional-defense-self-test",
+                                    "max_age_hours": 24.0,
+                                    "artifacts": [
+                                        {
+                                            "file": live_attestation_path.name,
+                                            "sha256": conditional_artifacts[
+                                                "live_attestation"
+                                            ]["sha256"],
+                                            "bytes": conditional_artifacts[
+                                                "live_attestation"
+                                            ]["bytes"],
+                                            "attestation_id": attestation_id,
+                                        }
+                                    ],
+                                }
                             }
                         }
                     }
@@ -13385,9 +13392,9 @@ def self_test() -> int:
                 conditional_artifact_v2["artifacts"]["eligibility_plan"]["path"]
             ).read_text(encoding="utf-8")
         )
-        eligibility_v2["experiment_conditions"]["values"]["live_attestation"][
-            "artifacts"
-        ][0].update({
+        eligibility_v2["bindings"]["experiment_conditions"]["values"][
+            "live_attestation"
+        ]["artifacts"][0].update({
             "file": Path(retained_live["path"]).name,
             "sha256": retained_live["sha256"],
             "bytes": retained_live["bytes"],
@@ -13480,7 +13487,7 @@ def self_test() -> int:
                 )
             )
         )
-        integer_age_eligibility["experiment_conditions"]["values"][
+        integer_age_eligibility["bindings"]["experiment_conditions"]["values"][
             "live_attestation"
         ]["max_age_hours"] = 24
         integer_age_path = root / "conditional-eligibility-integer-age.json"
@@ -13516,9 +13523,9 @@ def self_test() -> int:
                 )
             )
         )
-        mismatched_retained = mismatched_eligibility["experiment_conditions"][
-            "values"
-        ]["live_attestation"]["artifacts"][0]
+        mismatched_retained = mismatched_eligibility["bindings"][
+            "experiment_conditions"
+        ]["values"]["live_attestation"]["artifacts"][0]
         mismatched_retained.update(
             {
                 "file": mismatched_live_path.name,

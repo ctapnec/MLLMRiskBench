@@ -1176,6 +1176,63 @@ def test_phase7_conditional_defense_uses_runner_eligibility_binding_shape() -> N
     with pytest.raises(AssertionError):
         assert_real_shape(reverted)
 
+    phase8 = (
+        Path(__file__).parents[2]
+        / "experiments"
+        / "local_campaign"
+        / "templates"
+        / "phase8_human_audit.py.in"
+    ).read_text(encoding="utf-8")
+    assert 'eligibility_bindings = eligibility.get("bindings")' in phase8
+    assert 'eligibility_bindings.get("experiment_conditions")' in phase8
+    assert 'eligibility_v2["bindings"]["experiment_conditions"]' in phase8
+    assert (
+        'integer_age_eligibility["bindings"]["experiment_conditions"]'
+        in phase8
+    )
+    assert 'mismatched_eligibility["bindings"][' in phase8
+
+
+def test_phase6_phase7_rr_use_runner_eligibility_envelope_binding_shape() -> None:
+    root = (
+        Path(__file__).parents[2]
+        / "experiments"
+        / "local_campaign"
+        / "templates"
+    )
+    expected = {
+        "phase6_core_measured.sh.in": (2, 1),
+        "phase6_extended_measured.sh.in": (1, 0),
+        "phase6_native_diagnostics.sh.in": (2, 0),
+        "phase7_analysis.py.in": (1, 0),
+        "phase8_human_audit.py.in": (1, 0),
+    }
+    direct = 'eligibility.get("bindings", {}).get("request_envelope")'
+    stale = 'eligibility.get("bindings", {}).get("request_envelope_sha256")'
+    content = 'eligibility_content.get("bindings", {}).get("request_envelope")'
+    stale_content = (
+        'eligibility_content.get("bindings", {}).get(\n'
+        '                "request_envelope_sha256"\n'
+        "            )"
+    )
+
+    def assert_real_shape(name: str, candidate: str) -> None:
+        direct_count, content_count = expected[name]
+        assert stale not in candidate
+        assert stale_content not in candidate
+        assert candidate.count(direct) == direct_count
+        assert candidate.count(content) == content_count
+
+    sources = {
+        name: (root / name).read_text(encoding="utf-8") for name in expected
+    }
+    for name, source in sources.items():
+        assert_real_shape(name, source)
+
+    reverted = sources["phase7_analysis.py.in"].replace(direct, stale, 1)
+    with pytest.raises(AssertionError):
+        assert_real_shape("phase7_analysis.py.in", reverted)
+
 
 def test_phase7_conditional_analyses_branch_before_subprocesses() -> None:
     source = (
@@ -1261,7 +1318,7 @@ def test_phase7_rr_runtime_terminal_never_invokes_paired_compare() -> None:
         '{"path", "envelope_id", "file", "sha256", "bytes"}' in source
     )
     assert 'set(eligibility) != {"path", "sha256", "bytes"}' in source
-    assert 'eligibility.get("bindings", {}).get("request_envelope_sha256")' in source
+    assert 'eligibility.get("bindings", {}).get("request_envelope")' in source
     assert '"records": eligibility_records' in source
     assert "projection-file-mismatch" in source
     assert "request-envelope-id-mismatch" in source
@@ -1319,7 +1376,7 @@ def test_phase8_rejects_rr_human_samples_and_metric_inputs() -> None:
         '{"path", "envelope_id", "file", "sha256", "bytes"}' in source
     )
     assert 'set(eligibility) != {"path", "sha256", "bytes"}' in source
-    assert 'eligibility.get("bindings", {}).get("request_envelope_sha256")' in source
+    assert 'eligibility.get("bindings", {}).get("request_envelope")' in source
     assert '"records": eligibility_records' in source
     assert "RR projection descriptor filename mismatch" in source
     assert "RR request-envelope descriptor identity mismatch" in source
@@ -2485,7 +2542,7 @@ def test_phase6_rr_runtime_terminals_are_required_but_never_scheduled() -> None:
     assert "native controller contains an RR argv, spec, root, result, or reservation" in native
     for source in (core, extended, native):
         assert 'projection.get("bindings", {}).get("request_envelope_sha256")' not in source
-        assert 'eligibility.get("bindings", {}).get("request_envelope_sha256")' in source
+        assert 'eligibility.get("bindings", {}).get("request_envelope")' in source
         assert '{"path", "file", "sha256", "bytes"}' in source
         assert '{"path", "envelope_id", "file", "sha256", "bytes"}' in source
         assert '"records": eligibility_records' in source
@@ -2493,7 +2550,7 @@ def test_phase6_rr_runtime_terminals_are_required_but_never_scheduled() -> None:
         assert "eligibility_path.read_text" not in source
     assert 'eligibility_content.get("bindings", {}).get(' in core
     assert native.count(
-        'eligibility.get("bindings", {}).get("request_envelope_sha256")'
+        'eligibility.get("bindings", {}).get("request_envelope")'
     ) == 2
     assert "rr-envelope-eligibility-binding" in native
     assert "rr-projection-byte-mutation" in native

@@ -2919,8 +2919,8 @@ def validate_rr_projection_field(
     if (
         envelope_descriptor != {"path": str(envelope_path), **observed_envelope}
         or envelope.get("envelope_id") != projection_value["request_envelope_id"]
-        or eligibility.get("bindings", {}).get("request_envelope_sha256")
-        != envelope_descriptor["sha256"]
+        or eligibility.get("bindings", {}).get("request_envelope")
+        != observed_envelope
     ):
         raise ValueError(f"{label}: RR request-envelope identity changed")
     calls = projection.get("call_projection", {})

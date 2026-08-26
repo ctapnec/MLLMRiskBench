@@ -2187,8 +2187,8 @@ def validate_rr_projection_field(
     if (
         envelope_descriptor != {"path": str(envelope_path), **observed_envelope}
         or envelope.get("envelope_id") != projection_value["request_envelope_id"]
-        or eligibility.get("bindings", {}).get("request_envelope_sha256")
-        != envelope_descriptor["sha256"]
+        or eligibility.get("bindings", {}).get("request_envelope")
+        != observed_envelope
     ):
         raise ValueError(f"{label}: RR request-envelope identity changed")
     calls = projection.get("call_projection", {})
@@ -3362,8 +3362,8 @@ for index, lane in enumerate(CORE_ORDER, 1):
     if (
         final_envelope_desc["sha256"]
         != final["request_envelope_artifact"]["sha256"]
-        or eligibility.get("bindings", {}).get("request_envelope_sha256")
-        != final_envelope_desc["sha256"]
+        or eligibility.get("bindings", {}).get("request_envelope")
+        != final_envelope_desc
     ):
         raise ValueError(f"{lane}: final request-envelope digest differs")
     request = final_envelope["request"]
@@ -6136,10 +6136,8 @@ def validate_rr_runtime_terminals(
             != projection_value.get("eligibility_plan_id")
             or envelope_content.get("envelope_id")
             != projection_value.get("request_envelope_id")
-            or eligibility_content.get("bindings", {}).get(
-                "request_envelope_sha256"
-            )
-            != envelope_descriptor["sha256"]
+            or eligibility_content.get("bindings", {}).get("request_envelope")
+            != observed_envelope
             or projection_content.get("selection")
             != projection_value.get("selection")
             or projected_calls != {
