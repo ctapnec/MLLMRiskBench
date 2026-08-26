@@ -1580,6 +1580,9 @@ def test_phase6_sequence_recovers_only_content_identical_sealed_lane_state() -> 
     assert '--recover-lane-state-from)' in core
     assert 'event "$LANE" resume-state imported' in core
     assert 'current_spec_payload != old_spec_payload' in core
+    assert 'for artifact_field in ("plan", "receipt")' in core
+    assert 'path_replacements[str(source_artifact)] = str(target_artifact)' in core
+    assert 'state["runner_argv"] = [path_replacements.get(item, item) for item in runner_argv]' in core
     assert '"schema": "ura-phase6-core-state-import/1"' in core
     assert 'RECOVERY_STATE_ROOT=$(printf \'%q\' "$RECOVERY_STATE_ROOT")' in core
 
@@ -1590,6 +1593,13 @@ def test_phase6_sequence_recovers_only_content_identical_sealed_lane_state() -> 
     )
     with pytest.raises(AssertionError):
         assert "current_spec_payload != old_spec_payload" in mutated
+    stale_locators = core.replace(
+        'state["runner_argv"] = [path_replacements.get(item, item) for item in runner_argv]',
+        'state["runner_argv"] = runner_argv',
+        1,
+    )
+    with pytest.raises(AssertionError):
+        assert 'state["runner_argv"] = [path_replacements.get(item, item) for item in runner_argv]' in stale_locators
 
 
 def test_phase6_failure_sealers_create_missing_runner_parent() -> None:

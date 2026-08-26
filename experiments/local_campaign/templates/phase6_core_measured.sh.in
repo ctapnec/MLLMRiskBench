@@ -4600,6 +4600,7 @@ state["lane_spec"] = {
 
 preparations = target_state.parent / "preparations"
 preparations.mkdir(mode=0o700)
+path_replacements = {}
 for field in ("attestation_acquisition", "model_acquisition"):
     acquisition = state.get(field)
     descriptor = acquisition.get("controller_log") if isinstance(acquisition, dict) else None
@@ -4622,6 +4623,36 @@ for field in ("attestation_acquisition", "model_acquisition"):
         import_root.mkdir(mode=0o700)
     if import_root.is_symlink() or import_root.resolve(strict=True) != import_root:
         raise SystemExit("Phase 6 recovery import directory is unsafe")
+    for artifact_field in ("plan", "receipt"):
+        artifact = acquisition.get(artifact_field)
+        if not isinstance(artifact, dict) or set(artifact) != {"path", "sha256"}:
+            raise SystemExit("Phase 6 recovery acquisition artifact descriptor is invalid")
+        source_artifact = Path(artifact["path"])
+        if (
+            source_artifact.is_symlink()
+            or not source_artifact.is_file()
+            or source_artifact.resolve(strict=True) != source_artifact
+            or not source_artifact.is_relative_to(
+                recovery_root / "lanes" / lane / "preparations"
+            )
+        ):
+            raise SystemExit("Phase 6 recovery acquisition artifact is unsafe")
+        artifact_payload = source_artifact.read_bytes()
+        if hashlib.sha256(artifact_payload).hexdigest() != artifact["sha256"]:
+            raise SystemExit("Phase 6 recovery acquisition artifact bytes changed")
+        target_artifact = import_root / source_artifact.name
+        fd = os.open(
+            target_artifact, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600
+        )
+        with os.fdopen(fd, "wb") as handle:
+            handle.write(artifact_payload)
+            handle.flush()
+            os.fsync(handle.fileno())
+        path_replacements[str(source_artifact)] = str(target_artifact)
+        acquisition[artifact_field] = {
+            "path": str(target_artifact),
+            "sha256": artifact["sha256"],
+        }
     target_log = import_root / source_log.name
     fd = os.open(target_log, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
     with os.fdopen(fd, "wb") as handle:
@@ -4633,6 +4664,11 @@ for field in ("attestation_acquisition", "model_acquisition"):
         "sha256": descriptor["sha256"],
         "bytes": descriptor["bytes"],
     }
+
+runner_argv = state.get("runner_argv")
+if not isinstance(runner_argv, list) or any(not isinstance(item, str) for item in runner_argv):
+    raise SystemExit("Phase 6 recovery Runner argv is invalid")
+state["runner_argv"] = [path_replacements.get(item, item) for item in runner_argv]
 
 payload = (json.dumps(state, sort_keys=True, separators=(",", ":"), allow_nan=False) + "\n").encode()
 fd = os.open(target_state, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
