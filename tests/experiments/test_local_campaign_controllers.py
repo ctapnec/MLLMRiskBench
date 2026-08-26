@@ -835,6 +835,34 @@ def test_phase6_extended_preserves_the_sealed_venv_executable_spelling() -> None
         assert_contract(reverted)
 
 
+def test_phase6_extended_compares_receipt_to_the_semantic_plan_digest() -> None:
+    source = (
+        Path(__file__).parents[2]
+        / "experiments"
+        / "local_campaign"
+        / "templates"
+        / "phase6_extended_measured.sh.in"
+    ).read_text(encoding="utf-8")
+    required = (
+        "from ura.model_acquisition import load_plan, load_receipt, plan_sha256",
+        'or receipt["plan_sha256"] != plan_sha256(plan)',
+    )
+
+    def assert_contract(candidate: str) -> None:
+        _assert_source_contract(candidate, required)
+        assert 'receipt["plan_sha256"] != plan_sha:' not in candidate
+
+    assert_contract(source)
+    reverted = source.replace(
+        required[1],
+        'or receipt["plan_sha256"] != plan_sha:',
+        1,
+    )
+    assert reverted != source
+    with pytest.raises(AssertionError):
+        assert_contract(reverted)
+
+
 def test_phase6_extended_final_event_uses_dynamic_typed_terminal_count() -> None:
     source = (
         Path(__file__).parents[2]

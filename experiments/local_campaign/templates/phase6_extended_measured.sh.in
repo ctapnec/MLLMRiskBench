@@ -304,7 +304,7 @@ from ura.lane_projection import (
     validate_lane_projection_binding,
 )
 from ura.live_attestation import load_live_attestation_file
-from ura.model_acquisition import load_plan, load_receipt
+from ura.model_acquisition import load_plan, load_receipt, plan_sha256
 from ura.request_envelope import (
     load_request_envelope_file,
     request_envelope_bytes,
@@ -6053,7 +6053,10 @@ def plan_acquire(
     observed = {(row["repo_id"], row["revision"]): row["roles"] for row in plan["resources"]}
     if observed != expected:
         raise ValueError(f"{label}: acquisition resources differ: {observed!r}")
-    if receipt["plan_id"] != plan["plan_id"] or receipt["plan_sha256"] != plan_sha:
+    if (
+        receipt["plan_id"] != plan["plan_id"]
+        or receipt["plan_sha256"] != plan_sha256(plan)
+    ):
         raise ValueError(f"{label}: acquisition receipt does not bind the exact plan")
     return {
         "status": "complete", "downloaded_bytes": 0,
