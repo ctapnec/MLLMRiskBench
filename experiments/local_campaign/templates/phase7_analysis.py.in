@@ -3027,7 +3027,12 @@ def validate_conditional_defense_row(
         artifacts["eligibility_plan"],
         label=f"{label} conditional defense eligibility plan",
     )
-    experiment_conditions = eligibility.get("experiment_conditions")
+    eligibility_bindings = eligibility.get("bindings")
+    experiment_conditions = (
+        eligibility_bindings.get("experiment_conditions")
+        if isinstance(eligibility_bindings, dict)
+        else None
+    )
     condition_values = (
         experiment_conditions.get("values")
         if isinstance(experiment_conditions, dict)
@@ -11577,24 +11582,26 @@ def contract_self_test() -> int:
         eligibility_path.write_bytes(
             canonical(
                 {
-                    "experiment_conditions": {
-                        "values": {
-                            "live_attestation": {
-                                "mode": "measured",
-                                "execution_scope_id": "conditional-defense-self-test",
-                                "max_age_hours": 24.0,
-                                "artifacts": [
-                                    {
-                                        "file": live_attestation_path.name,
-                                        "sha256": artifact_inputs[
-                                            "live_attestation"
-                                        ]["sha256"],
-                                        "bytes": artifact_inputs[
-                                            "live_attestation"
-                                        ]["bytes"],
-                                        "attestation_id": attestation_id,
-                                    }
-                                ],
+                    "bindings": {
+                        "experiment_conditions": {
+                            "values": {
+                                "live_attestation": {
+                                    "mode": "measured",
+                                    "execution_scope_id": "conditional-defense-self-test",
+                                    "max_age_hours": 24.0,
+                                    "artifacts": [
+                                        {
+                                            "file": live_attestation_path.name,
+                                            "sha256": artifact_inputs[
+                                                "live_attestation"
+                                            ]["sha256"],
+                                            "bytes": artifact_inputs[
+                                                "live_attestation"
+                                            ]["bytes"],
+                                            "attestation_id": attestation_id,
+                                        }
+                                    ],
+                                }
                             }
                         }
                     }
@@ -11768,9 +11775,9 @@ def contract_self_test() -> int:
                 encoding="utf-8"
             )
         )
-        eligibility_v2["experiment_conditions"]["values"]["live_attestation"][
-            "artifacts"
-        ][0].update({
+        eligibility_v2["bindings"]["experiment_conditions"]["values"][
+            "live_attestation"
+        ]["artifacts"][0].update({
             "file": Path(retained_live["path"]).name,
             "sha256": retained_live["sha256"],
             "bytes": retained_live["bytes"],
@@ -11851,7 +11858,7 @@ def contract_self_test() -> int:
             ),
         )
         integer_age_eligibility = copy.deepcopy(strict_object(eligibility_path))
-        integer_age_eligibility["experiment_conditions"]["values"][
+        integer_age_eligibility["bindings"]["experiment_conditions"]["values"][
             "live_attestation"
         ]["max_age_hours"] = 24
         integer_age_path = temp / "eligibility-plan-integer-age.json"
@@ -11879,9 +11886,9 @@ def contract_self_test() -> int:
         )
         mismatched_live_descriptor = descriptor(mismatched_live_path)
         mismatched_eligibility = copy.deepcopy(strict_object(eligibility_path))
-        mismatched_retained = mismatched_eligibility["experiment_conditions"][
-            "values"
-        ]["live_attestation"]["artifacts"][0]
+        mismatched_retained = mismatched_eligibility["bindings"][
+            "experiment_conditions"
+        ]["values"]["live_attestation"]["artifacts"][0]
         mismatched_retained.update(
             {
                 "file": mismatched_live_path.name,

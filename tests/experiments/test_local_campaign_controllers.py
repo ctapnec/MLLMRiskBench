@@ -1148,6 +1148,35 @@ def test_rendered_phase7_lifecycle_partition_mutations_fail(tmp_path: Path) -> N
     assert "phase7-runner-view-content-binding" in value["contracts"]
 
 
+def test_phase7_conditional_defense_uses_runner_eligibility_binding_shape() -> None:
+    source = (
+        Path(__file__).parents[2]
+        / "experiments"
+        / "local_campaign"
+        / "templates"
+        / "phase7_analysis.py.in"
+    ).read_text(encoding="utf-8")
+
+    def assert_real_shape(candidate: str) -> None:
+        assert 'eligibility_bindings = eligibility.get("bindings")' in candidate
+        assert 'eligibility_bindings.get("experiment_conditions")' in candidate
+        assert 'eligibility_v2["bindings"]["experiment_conditions"]' in candidate
+        assert (
+            'integer_age_eligibility["bindings"]["experiment_conditions"]'
+            in candidate
+        )
+        assert 'mismatched_eligibility["bindings"][' in candidate
+
+    assert_real_shape(source)
+    reverted = source.replace(
+        'eligibility_bindings = eligibility.get("bindings")',
+        'experiment_conditions = eligibility.get("experiment_conditions")',
+        1,
+    )
+    with pytest.raises(AssertionError):
+        assert_real_shape(reverted)
+
+
 def test_phase7_conditional_analyses_branch_before_subprocesses() -> None:
     source = (
         Path(__file__).parents[2]
