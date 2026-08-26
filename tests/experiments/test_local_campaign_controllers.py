@@ -1234,6 +1234,35 @@ def test_phase6_phase7_rr_use_runner_eligibility_envelope_binding_shape() -> Non
         assert_real_shape("phase7_analysis.py.in", reverted)
 
 
+def test_phase7_defines_rr_evidence_root_containment_helper() -> None:
+    source = (
+        Path(__file__).parents[2]
+        / "experiments"
+        / "local_campaign"
+        / "templates"
+        / "phase7_analysis.py.in"
+    ).read_text(encoding="utf-8")
+    helper = (
+        "def is_beneath(path: Path, root: Path) -> bool:\n"
+        "    try:\n"
+        "        path.relative_to(root)\n"
+        "    except ValueError:\n"
+        "        return False\n"
+        "    return path != root\n\n\n"
+    )
+
+    def assert_defined_before_use(candidate: str) -> None:
+        definition = candidate.index(helper)
+        first_call = candidate.index("is_beneath(", definition + len(helper))
+        assert definition < first_call
+        assert candidate.count("is_beneath(") == 3
+
+    assert_defined_before_use(source)
+    reverted = source.replace(helper, "", 1)
+    with pytest.raises((AssertionError, ValueError)):
+        assert_defined_before_use(reverted)
+
+
 def test_phase7_conditional_analyses_branch_before_subprocesses() -> None:
     source = (
         Path(__file__).parents[2]

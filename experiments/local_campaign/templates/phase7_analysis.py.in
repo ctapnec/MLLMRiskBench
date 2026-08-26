@@ -1119,6 +1119,14 @@ def checked_dir(value: str | Path, *, label: str) -> Path:
     return path
 
 
+def is_beneath(path: Path, root: Path) -> bool:
+    try:
+        path.relative_to(root)
+    except ValueError:
+        return False
+    return path != root
+
+
 def descriptor(path: Path, *, max_bytes: int = 512 * 1024 * 1024) -> dict[str, Any]:
     path, payload = _stable_regular_bytes(
         path, label="artifact", max_bytes=max_bytes
