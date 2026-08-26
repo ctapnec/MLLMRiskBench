@@ -1668,6 +1668,35 @@ def test_phase6_sequence_adopts_only_an_exact_terminal_core_launch() -> None:
             assert_adoption_contract(mutated)
 
 
+def test_phase6_sequence_passes_the_validated_gate5_profile_to_core() -> None:
+    source = (
+        Path(__file__).parents[2]
+        / "experiments"
+        / "local_campaign"
+        / "templates"
+        / "phase6_sequence.sh.in"
+    ).read_text(encoding="utf-8")
+    required = (
+        'if kind == "core":',
+        'gate5 = phase7.strict_object(Path(manifest_value))',
+        'kwargs["gate5_profile"] = phase7.gate5_inventory_profile(',
+        'gate5["lanes"], label="Phase 6 sequence validated Gate 5 manifest"',
+        'validated = validators[kind](**kwargs)',
+    )
+
+    def assert_profile_contract(candidate: str) -> None:
+        _assert_source_contract(candidate, required)
+
+    assert_profile_contract(source)
+    reverted = source.replace(
+        'kwargs["gate5_profile"] = phase7.gate5_inventory_profile(',
+        'phase7.gate5_inventory_profile(',
+        1,
+    )
+    with pytest.raises(AssertionError):
+        assert_profile_contract(reverted)
+
+
 def test_phase7_validates_controller_gate5_copies_by_location_and_bytes() -> None:
     source = (
         Path(__file__).parents[2]

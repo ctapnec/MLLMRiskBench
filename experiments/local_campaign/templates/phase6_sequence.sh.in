@@ -957,6 +957,11 @@ kwargs = {
 }
 if kind in {"core", "extended"}:
     kwargs["runner_root"] = Path(work_value).resolve(strict=True) / "runs" / "thesis" / "runner"
+if kind == "core":
+    gate5 = phase7.strict_object(Path(manifest_value))
+    kwargs["gate5_profile"] = phase7.gate5_inventory_profile(
+        gate5["lanes"], label="Phase 6 sequence validated Gate 5 manifest"
+    )
 validators = {
     "core": phase7.validate_core_controller,
     "extended": phase7.validate_extended_controller,
