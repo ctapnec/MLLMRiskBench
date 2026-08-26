@@ -1416,6 +1416,35 @@ def test_phase6_core_reads_zero_downloads_from_acquisition_result() -> None:
         assert_receipt_schema_contract(mutated)
 
 
+def test_phase6_core_preserves_no_resource_gate5_acquisition_mode() -> None:
+    source = (
+        Path(__file__).parents[2]
+        / "experiments"
+        / "local_campaign"
+        / "templates"
+        / "phase6_core_measured.sh.in"
+    ).read_text(encoding="utf-8")
+    no_resource_mode = (
+        'raw_lane.get("acquisition_mode") == (\n'
+        '            "not_applicable_no_managed_hub_resource"'
+    )
+    typed_na = '"downloaded_bytes": {"status": "N/A", "value": None}'
+
+    def assert_acquisition_modes(candidate: str) -> None:
+        start = candidate.index("for lane_id, raw_lane in manifest_lanes.items():")
+        end = candidate.index("conditional_na_lanes =", start)
+        contract = candidate[start:end]
+        assert 'raw_lane.get("acquisition_mode") == "required_zero_download"' in contract
+        assert no_resource_mode in contract
+        assert typed_na in contract
+        assert "or not acquisition_complete" in contract
+
+    assert_acquisition_modes(source)
+    mutated = source.replace(no_resource_mode, "False", 1)
+    with pytest.raises(AssertionError):
+        assert_acquisition_modes(mutated)
+
+
 def test_phase7_conditional_analyses_branch_before_subprocesses() -> None:
     source = (
         Path(__file__).parents[2]

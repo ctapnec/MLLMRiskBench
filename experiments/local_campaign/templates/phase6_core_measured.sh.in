@@ -3173,6 +3173,30 @@ for lane_id, raw_lane in manifest_lanes.items():
         ):
             raise ValueError(f"{lane_id}: RUNNOTE runnable row is not an exact finalization")
         acquisition = lane_execution.get("acquisition")
+        if raw_lane.get("acquisition_mode") == "required_zero_download":
+            acquisition_complete = (
+                isinstance(acquisition, dict)
+                and acquisition.get("status") == "complete"
+                and type(acquisition.get("downloaded_bytes")) is int
+                and acquisition.get("downloaded_bytes") == 0
+                and type(acquisition.get("maximum_download_bytes")) is int
+                and acquisition.get("maximum_download_bytes") == 0
+            )
+        elif raw_lane.get("acquisition_mode") == (
+            "not_applicable_no_managed_hub_resource"
+        ):
+            acquisition_complete = acquisition == {
+                "status": "N/A",
+                "value": None,
+                "reason": (
+                    "selected Ollama target/rules lane has no managed Hugging Face "
+                    "resource"
+                ),
+                "downloaded_bytes": {"status": "N/A", "value": None},
+                "maximum_download_bytes": 0,
+            }
+        else:
+            acquisition_complete = False
         if (
             not isinstance(lane_final, dict)
             or lane_final.get("status") != "complete"
@@ -3183,14 +3207,11 @@ for lane_id, raw_lane in manifest_lanes.items():
                     "exact_cap_binding",
                 )
             )
-            or not isinstance(acquisition, dict)
-            or acquisition.get("status") != "complete"
-            or type(acquisition.get("downloaded_bytes")) is not int
-            or acquisition.get("downloaded_bytes") != 0
-            or type(acquisition.get("maximum_download_bytes")) is not int
-            or acquisition.get("maximum_download_bytes") != 0
+            or not acquisition_complete
         ):
-            raise ValueError(f"{lane_id}: canonical RUNNOTE lacks complete zero-download finalization")
+            raise ValueError(
+                f"{lane_id}: canonical RUNNOTE lacks its exact acquisition finalization"
+            )
     elif completed_lane != raw_lane:
         raise ValueError(f"{lane_id}: RUNNOTE terminal row differs from the covered manifest")
 conditional_na_lanes = manifest_counts["conditional_na_lanes"]
