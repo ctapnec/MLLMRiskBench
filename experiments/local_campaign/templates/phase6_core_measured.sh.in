@@ -444,7 +444,11 @@ abort_signal() {
 }
 run_owned() {
   local rc
-  "$@" &
+  # The caller may supply a here-document to a stdin-driven command such as
+  # ``python -``.  Bash otherwise gives a background command /dev/null for
+  # stdin when job control is disabled, making that command exit successfully
+  # without consuming its program.  Make the inherited descriptor explicit.
+  "$@" <&0 &
   active_child_pid="$!"
   if wait "$active_child_pid"; then
     rc=0

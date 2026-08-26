@@ -1578,6 +1578,26 @@ def test_phase6_core_attestation_probe_uses_local_guardrail_fallback() -> None:
         assert_probe_contract(stale_request_field)
 
 
+def test_phase6_core_owned_commands_preserve_here_document_stdin() -> None:
+    source = (
+        Path(__file__).parents[2]
+        / "experiments"
+        / "local_campaign"
+        / "templates"
+        / "phase6_core_measured.sh.in"
+    ).read_text(encoding="utf-8")
+
+    def assert_stdin_contract(candidate: str) -> None:
+        function = candidate.split("run_owned() {", 1)[1].split("\n}\n", 1)[0]
+        assert '"$@" <&0 &' in function
+        assert 'run_owned "$PY" - "$COMPLETION"' in candidate
+
+    assert_stdin_contract(source)
+    reverted = source.replace('"$@" <&0 &', '"$@" &', 1)
+    with pytest.raises(AssertionError):
+        assert_stdin_contract(reverted)
+
+
 def test_phase6_sequence_recovers_only_content_identical_sealed_lane_state() -> None:
     root = (
         Path(__file__).parents[2]
