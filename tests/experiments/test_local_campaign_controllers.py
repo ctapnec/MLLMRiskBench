@@ -1479,30 +1479,21 @@ def test_phase6_local_attestations_use_realized_local_identity_schema() -> None:
     assert 'record["resolved_target"] != expected_resolved' in extended_contract
     assert '"provider"' not in extended_contract
 
-    mutated = core.replace(
+    mutated_contract = core_contract.replace(
         "identity != expected_identity",
         'identity.get("provider") != "vllm"',
         1,
     )
-    mutated_end = mutated.index(
-        "event \"$LANE\" attestation-probe complete", core_start
-    )
     with pytest.raises(AssertionError):
-        assert '"provider"' not in mutated[core_start:mutated_end]
+        assert '"provider"' not in mutated_contract
 
-    stored_mutated = core.replace(
+    stored_mutated_contract = stored_contract.replace(
         "identity != expected_identity",
         'identity.get("provider") != "vllm"',
-        2,
+        1,
     )
-    stored_mutated_start = stored_mutated.index(
-        'expected_resolved = f"{spec[\'target\'][\'spec\']}@{spec[\'target\'][\'revision\']}"'
-    )
-    stored_mutated_end = stored_mutated.index("expected_tail = [", stored_mutated_start)
     with pytest.raises(AssertionError):
-        assert '"provider"' not in stored_mutated[
-            stored_mutated_start:stored_mutated_end
-        ]
+        assert '"provider"' not in stored_mutated_contract
 
 
 def test_phase6_core_validates_materialized_probe_group_keys() -> None:
