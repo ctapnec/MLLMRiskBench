@@ -867,6 +867,36 @@ def test_stats_campaign_index_is_paginated_with_all_jobs_reachable(tmp_path: Pat
     app.close()
 
 
+def test_stats_engineering_campaigns_are_not_repeated_on_history_pages(
+    tmp_path: Path,
+) -> None:
+    app = _app(tmp_path)
+    campaign_id = "engineering-shown-once"
+    _write_engineering_campaign(
+        app,
+        campaign_id=campaign_id,
+        started_at=time.time() + 60,
+    )
+    for index in range(25):
+        _record_run(
+            app,
+            tmp_path,
+            job_id=f"job-{index:02d}",
+            out=app.results_root / f"lane-{index:02d}",
+            extra=["--preflight-only"],
+        )
+
+    first = app.handle("GET", "/stats")[2].decode("utf-8")
+    second = app.handle("GET", "/stats?page=2")[2].decode("utf-8")
+
+    assert "Engineering campaigns" in first
+    assert f"/jobs/campaign/{campaign_id}" in first
+    assert "Engineering campaigns" not in second
+    assert f"/jobs/campaign/{campaign_id}" not in second
+    assert "href='/stats?page=1'>Newer</a>" in second
+    app.close()
+
+
 def test_stats_includes_active_run_kind_job_in_card_and_detail_only(
     tmp_path: Path,
 ) -> None:

@@ -1938,22 +1938,24 @@ class DashboardMixin:
                 + analysis_action
                 + "</article>"
             )
-        engineering_html = (
-            "<h2>Engineering campaigns <span class='badge gray'>never thesis "
-            "evidence</span></h2>"
-            + (
-                f"<div class='notice amber'>{html.escape(engineering_note)}</div>"
-                if engineering_note
-                else ""
+        engineering_html = ""
+        if page == 1:
+            engineering_html = (
+                "<h2>Engineering campaigns <span class='badge gray'>never thesis "
+                "evidence</span></h2>"
+                + (
+                    f"<div class='notice amber'>{html.escape(engineering_note)}</div>"
+                    if engineering_note
+                    else ""
+                )
+                + (
+                    "<div class='stats-campaign-list'>"
+                    + "".join(engineering_cards)
+                    + "</div>"
+                    if engineering_cards
+                    else "<p class='note'>No external engineering campaigns retained.</p>"
+                )
             )
-            + (
-                "<div class='stats-campaign-list'>"
-                + "".join(engineering_cards)
-                + "</div>"
-                if engineering_cards
-                else "<p class='note'>No external engineering campaigns retained.</p>"
-            )
-        )
         page_links = "<nav class='stats-pagination' aria-label='Campaign pages'>"
         if page > 1:
             page_links += f"<a class='button ghost' href='/stats?page={page - 1}'>Newer</a>"
