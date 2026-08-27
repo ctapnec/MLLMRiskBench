@@ -487,48 +487,37 @@ denominator. Gate 5 therefore requires the implemented source evaluator to be
 queried and to complete the planned observations, but it does not require a
 positive valid-prediction count or retry until a parseable answer appears.
 
-Four further rows retain completed no-call projections but are unavailable for
-canary and measured admission because the exact GraySwan RR checkpoint did not
-produce one complete response. Text and physical-image vLLM probes reached the
-declared 4,096-token generation cap with no stop, and a sealed Transformers
-control reproduced the checkpoint's two-token repetition while the exact LLaVA
-base emitted EOS. The shared create-only
-`ura-phase5-target-runtime-terminal/1` artifact binds the exact checkpoint,
-local config, acquisition identity, all four diagnostic roots and complete call
-accounting. Its reason code is
-`target_baseline_nontermination_at_generation_cap`; the affected rows are
-`local-llava-rr-text-full`, `local-llava-rr-image-full`,
-`rjudge-llava-rr` and `gptgeochat-llava-rr`. The sealed checkpoint remains
-installed. No truncated prefix, synthetic stop, altered decoding configuration,
-or replacement model is admitted as a response.
+Seven rows retain historical Gate 5 terminal records produced under the older
+output policy: four exact GraySwan RR identities and three RWKV static
+identities. The GraySwan probes reached the declared 4,096-token generation cap
+with no stop, and a sealed Transformers control reproduced the checkpoint's
+two-token repetition while the exact LLaVA base emitted EOS. The RWKV probes
+either reached their generation cap or returned an exact successful empty
+completion. Their create-only terminal artifacts remain immutable diagnostic
+provenance and continue to bind exact model identity, configuration, diagnostic
+roots and call accounting.
 
-With all planned local rows present, Gate 5 therefore contains 46 rows. Before
-the Ollama static canaries are classified, the baseline profile is 22 runnable
-and 24 typed terminal rows, or 21 runnable and 25 terminal rows when the
-optional local defense lane is unavailable. Each exact RWKV static lane that
-returns the already-observed `finish_reason='length'` incomplete completion at
-the sealed generation cap, or an exact empty completion with no response to
-judge, is independently
-reclassified from runnable to `target_runtime_terminal` with a create-only
-`ura-phase5-ollama-static-canary-terminal/1` artifact and reason code
-`local_target_output_unusable`. If `n` of the three static lanes meet that
-typed model-output boundary, the profile becomes
-`22-n` runnable and `24+n` terminal rows, with one further runnable-to-terminal
-shift only for `defense-local`. The three R-Judge lanes remain independently
-runnable when their diagnostic prompts complete. Nonempty vague or nonsensical
-response content remains an ordinary observed outcome: the selected evaluator
-may decide or abstain, and decision coverage is reported. Only the two exact
-nonjudgeable output conditions above exclude that static lane from this
-campaign cohort's measured schedule. Malformed protocol, transport, identity,
-provenance, residency, timeout, and backend failures remain hard failures.
-Earlier completed canary attempts remain diagnostic observations; the
-disposition is not a general claim about the model or runtime.
+They are not the current disposition. Runner 2.22 and later retains every
+nonempty length-capped response and its `finish_reason='length'` provenance;
+Runner 2.23 and later retains a successful empty Ollama completion as typed
+`model_nonresponse`. Vague, repetitive or nonsensical text is sent to the
+selected evaluator, which may decide or abstain. A typed nonresponse does not
+query the policy judge and is represented in response and decision coverage.
+Neither outcome is a software failure, and neither authorizes altered stops,
+generation caps, decoding configuration or checkpoint identity.
+
+Only the seven affected identities are re-attested and canaried in a targeted
+Gate 5 amendment. If they pass the ordinary identity, transport, cap and
+provenance checks, the amended 46-row profile is 26 runnable and 20 typed
+terminal rows, or 25 runnable and 21 terminal rows when the optional local
+defense lane is unavailable, with zero target-runtime-terminal rows. Malformed
+protocol, transport, identity, provenance, residency, timeout and backend
+failures remain hard failures. Earlier attempts remain diagnostic observations.
 
 Gate 5: projections and canaries retained under `runs/thesis/preflight` and
-`runs/thesis/diagnostics`; the non-evidence GraySwan RR and any exact
-cap-bounded Ollama static target-runtime terminals retained in their sealed
-Phase 5 engineering control roots and bound from the Gate 5 manifest and run
-note; caps recorded in `runs/thesis/RUNNOTE.md`; all 46
+`runs/thesis/diagnostics`; the seven-row current-policy amendment retained
+without rewriting the earlier terminal artifacts; caps recorded in
+`runs/thesis/RUNNOTE.md`; all 46
 planned rows represented exactly once as runnable or typed terminal. Each
 runnable row also binds `core_primary_100` or `extended_50`, limit, sample seed,
 selected-cluster and converted-row identities, exact no-call projection and
@@ -602,8 +591,8 @@ an outcome- or throughput-triggered extension of the current cohort.
 
 | Tier | Lane | Targets | Attackers | Judges | Output root |
 |---|---|---|---|---|---|
-| 1 [10.1] | static text, all common text arms incl. the six aggregator arms | Qwen3-VL-8B; LLaVA base; each RWKV Ollama target only after its exact static canary completes; LLaVA RR and any cap-bounded RWKV static lane retained as typed target-runtime terminals | replay | rules,guardrail | `runs/thesis/runner/local-<model>-text` |
-| 1 [10.2] | static image, all common image arms | Qwen3-VL-8B; LLaVA base; LLaVA RR retained as a typed target-runtime terminal | replay | rules,guardrail | `runs/thesis/runner/local-<model>-image` |
+| 1 [10.1] | static text, all common text arms incl. the six aggregator arms | Qwen3-VL-8B; LLaVA base; GraySwan RR and each RWKV Ollama target only after the affected identity passes its exact current-policy Gate 5 amendment | replay | rules,guardrail | `runs/thesis/runner/local-<model>-text` |
+| 1 [10.2] | static image, all common image arms | Qwen3-VL-8B; LLaVA base; GraySwan RR only after its exact current-policy Gate 5 amendment | replay | rules,guardrail | `runs/thesis/runner/local-<model>-image` |
 | 1 [10.3] | audio/video | none (no local audio/video renderer) | - | - | structural `N/A` |
 
 Conversion cost, measured on the rig (21 August 2026): the audio arm converts its
@@ -617,7 +606,7 @@ JALMBench invocation. Every other arm observes in under 15 s.
 | 3 [12.2] | frozen measured Runner-safe bridges | Qwen3-VL-8B | pyrit, deepteam, h4rm3l, spikee (sealed workers), purplellama (CyberSecEval arms) | rules,guardrail | `runs/thesis/runner/bridge-<attacker>` |
 | 3 [12.2] | sealed `bdd8252` prepared attacks | Qwen3-VL-8B | pinned HarmBench DirectRequest preparation + replay; T3MP3ST retained its historical pre-amendment terminal | rules,guardrail | `runs/thesis/runner/harmbench-replay` |
 | follow-on prepared cohort | prepared replay capability | Qwen3-VL-8B | pinned T3MP3ST capture/replay; NanoGCG attributable suffixes; IDEATOR source-mapped seed pairs | rules,guardrail | fresh content-bound roots only after new admission |
-| 4 [13] | same-base defense contrast | non-estimable: LLaVA base runs, while the exact LLaVA RR target is a Gate 5 runtime terminal and makes no Phase 6 call | replay | rules,guardrail | typed Phase 7 unavailable artifacts, not a paired estimate |
+| 4 [13] | same-base defense contrast | LLaVA base versus exact GraySwan RR, estimable only after all affected RR identities pass the current-policy amendment and complete matching Phase 6 cells | replay | rules,guardrail | paired estimate when matching evidence exists; otherwise a typed Phase 7 unavailable artifact |
 | 4 [13] | guard defense (text-only) | Qwen3-VL-8B with `--defense both --defense-guard guardrail` (1B guard on GPU 1 alongside the 8B scoring guard only if VRAM allows; otherwise N/A) | replay | rules,guardrail | `runs/thesis/runner/defense-local` |
 | 5 [14] | nine native engines | local OpenAI-compatible endpoint (`vllm serve` of Qwen3-VL-8B or the Ollama API) where the engine supports it | engine-native | engine-native | `$URA_WORK/runs/engineering/ura-native-*`, then `native_import` |
 

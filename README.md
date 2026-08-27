@@ -230,17 +230,18 @@ Rig Web preserves the field in its selected local config, and the normalized
 value enters grid/run provenance. Each Build row labels either the explicit
 context cap or native model context.
 
-The exact campaign GraySwan RR checkpoint remains sealed and installed but is
-not a runnable target in the current measured inventory. Its text and physical-
-image probes reached the declared 4,096-token generation cap without a stop;
-an independent Transformers control reproduced its two-token repetition while
-the exact LLaVA base emitted EOS. Gate 5 records the four affected lanes through
-one `ura-phase5-target-runtime-terminal/1` artifact with reason
-`target_baseline_nontermination_at_generation_cap`. URA keeps rejecting every
-length-capped vLLM completion: it does not retain a prefix, inject stop strings,
-change the decoding configuration, substitute a checkpoint, send the prefix to
-a judge, or report a same-base estimate. The completed no-call projections and
-the sealed acquisition remain valid engineering/admission records.
+The exact campaign GraySwan RR checkpoint remains sealed and installed. Its
+text and physical-image probes reached the declared 4,096-token generation cap
+without a stop; an independent Transformers control reproduced its two-token
+repetition while the exact LLaVA base emitted EOS. The original Gate 5 record
+classified the four affected lanes as target-runtime terminals under the older
+Runner policy. Runner 2.22 and later instead retain every nonempty length-capped
+completion, preserve `finish_reason='length'`, and send the observed text to the
+selected evaluator. The historical terminal artifact remains immutable
+diagnostic provenance, but a targeted Gate 5 amendment must re-attest and canary
+those four lane identities before they enter measured execution. URA does not
+inject stop strings, change decoding configuration, substitute a checkpoint,
+or hide truncation provenance.
 
 Hub-backed local execution is a sealed three-stage workflow, never an implicit
 first-load download. It covers all five model roles: vLLM target, local vLLM
@@ -368,8 +369,8 @@ The focal contrast is cross-provider and associational, not a same-base
 ablation or a causal estimate of a safety mechanism. Broader roster rows are
 descriptive replication/coverage evidence. A verified local same-base defense
 pair is the appropriate design for a defense effect. The current LLaVA/GraySwan
-pair is explicitly non-estimable because the GraySwan target failed mandatory
-response admission; that typed omission is not a zero effect. Fable thinking
+pair remains non-estimable until its affected identities pass the targeted
+current-policy amendment; that pending estimate is not a zero effect. Fable thinking
 and Sol encrypted reasoning or assistant-output state are retained only as needed for
 provider-faithful stateless continuation and checkpoint resume.
 
@@ -646,7 +647,7 @@ Runner `RunManifest`; the URA revision that performed their import is retained
 in the return-package/importer context rather than relabelled as an upstream
 native field.
 
-Runner `ura-runner/2.22` writes unified schema `1.5`. Runner 2.19/schema 1.4
+Runner `ura-runner/2.24` writes unified schema `1.5`. Runner 2.19/schema 1.4
 artifacts remain readable only as runtime-free legacy compatibility and are not
 mixed into the current measured cohort. Immutable planning/source
 stratum identity is stored separately from adaptive per-turn evaluation

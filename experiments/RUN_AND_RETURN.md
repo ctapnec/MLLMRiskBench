@@ -6,7 +6,7 @@ source-native evaluators. Experiments and the human audit are still pending.
 Preflight, dry-run, diagnostic-canary, and bounded transport-probe artifacts are
 diagnostics, not thesis results.
 
-The maintained artifact contract is Runner `ura-runner/2.22` with unified schema
+The maintained artifact contract is Runner `ura-runner/2.24` with unified schema
 `1.5`. Runner 2.19/schema 1.4 artifacts remain runtime-free legacy
 compatibility only; do not combine them with the current measured cohort.
 
@@ -439,31 +439,28 @@ NanoGCG may use a positive outer limit or a separately projected `--limit 0`
 transfer cohort. IDEATOR v2 is fixed to
 `advbench_harmful --limit 1 --sample-seed 105`; `pair_limit=0` means
 all eight verified pairs mapped to `advbench:245`, not all 520 AdvBench
-rows. Four GraySwan RR rows are separately unavailable with reason
-`target_baseline_nontermination_at_generation_cap`. Their shared create-only
-`ura-phase5-target-runtime-terminal/1` artifact binds the exact checkpoint,
-local config, sealed acquisition identity, text and physical-image 4,096-token
-failures, the 512-token vLLM repetition probe, the independent Transformers
-base/RR control, and complete call accounting. The completed RR no-call
-projections remain recorded, but no RR canary response, measured request,
-metric row, paired estimate, or human-label item is admitted. The checkpoint
-and its isolated dependencies stay installed. Each exact RWKV static text
-canary is classified independently. If it returns the already-observed
-`finish_reason='length'` incomplete result at the sealed generation cap, or an
-exact empty completion with no response to judge, the controller writes
-one create-only `ura-phase5-ollama-static-canary-terminal/1` artifact with
-reason `local_target_output_unusable` and moves only that lane from runnable to
-`target_runtime_terminal`. With `n` such lanes,
-the enforced profile is `22-n` runnable, `24+n` terminal and `4+n`
-target-runtime-terminal rows before the optional defense shift. A completed
-static canary remains runnable when its nonempty response content is vague or
-nonsensical; the selected evaluator may decide or abstain and the resulting
-coverage is retained. Each independently completed R-Judge canary also remains
-runnable. Only the two exact nonjudgeable output conditions are excluded from
-this campaign cohort's measured schedule. Malformed protocol, transport,
-identity, provenance, residency, timeout, and backend failures remain hard
-failures. Earlier completed attempts remain diagnostic observations, and the
-disposition is not a general model/runtime claim. Phase 7's authoritative lifecycle registry covers complete,
+rows. Four GraySwan RR rows and three RWKV static rows retain immutable
+historical Gate 5 terminal records produced before Runner accepted nonempty
+length-capped output and typed successful empty completions. Those artifacts
+still bind the exact checkpoint or Ollama digest, configuration, diagnostic
+calls and complete accounting, but they are not the current output policy.
+Runner 2.22 and later retains nonempty `finish_reason='length'` text and its
+truncation provenance; Runner 2.23 and later retains a successful empty Ollama
+completion as typed `model_nonresponse`. Nonempty vague, repetitive or
+nonsensical content is sent to the selected evaluator, which may decide or
+abstain. A typed nonresponse does not query the policy judge and contributes to
+reported response and decision coverage. Neither condition is a software
+failure or permission to alter stops, generation caps, checkpoint identity or
+decoding.
+
+A targeted amendment must re-attest and canary only the seven affected lane
+identities under the current Runner before measured execution. On successful
+amendment, the expected Gate 5 profile is 26 runnable and 20 typed-terminal
+rows, with zero target-runtime-terminal rows, before the optional
+`defense-local` shift. The historical terminal artifacts remain diagnostic
+provenance and are never rewritten. Malformed protocol, transport, identity,
+provenance, residency, timeout, and backend failures remain hard failures.
+Phase 7's authoritative lifecycle registry covers complete,
 partial, failed-after-request, and genuine pre-Runner-no-request states. Each
 lane binds its controller failure, optional exact measured argv, and retained
 grid, request-envelope, eligibility, and error artifacts. `level1_evidence`
@@ -3317,14 +3314,13 @@ CUDA_VISIBLE_DEVICES=0,1 python -m experiments.rig_check \
 Repeat with `run_matrix`, `"${LIVE_ATTESTATION_ARGS[@]}"`, exact totals, and
 `--out runs/thesis/runner/local-qwen3-vl-text-core100`; allow the process to exit, then
 run the image lane. Repeat both for the LLaVA base using its own exact local
-config. Do not run either GraySwan RR lane in the current campaign: its four Gate
-5 rows carry the exact target-runtime terminal described above. The sealed RR
-checkpoint remains in the model store, but its length-capped prefixes are not
-responses and may not be sent to a judge. A future paired comparison is
-meaningful only after a newly admitted exact RR response path passes the normal
-attestation and canary gates with identical source clusters, input bytes,
-inference settings, and judge condition; do not change stops, generation caps,
-checkpoint identity, or decoding settings to make the current pair runnable.
+config. The four GraySwan RR identities enter only through their targeted Gate 5
+amendment: each exact lane must pass the normal attestation and canary gates with
+the original source clusters, input bytes, inference settings, judge condition
+and caps. A nonempty length-capped prefix is a response and is sent to the
+selected evaluator with `finish_reason='length'` retained. Do not change stops,
+generation caps, checkpoint identity or decoding settings to make the pair look
+more favorable.
 
 The command above is the pre-registered bounded core pass. Its exact seed-0
 selection must agree across every model used in a paired comparison. An

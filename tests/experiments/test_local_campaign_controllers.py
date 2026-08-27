@@ -5466,6 +5466,40 @@ def test_controller_hard_stop_documentation_matches_owned_session_semantics() ->
                 assert_contract(changed)
 
 
+def test_length_capped_output_documentation_matches_runner_policy() -> None:
+    root = Path(__file__).parents[2]
+    documents = (
+        root / "README.md",
+        root / "experiments" / "LOCAL_CAMPAIGN_PLAN.md",
+        root / "experiments" / "RUN_AND_RETURN.md",
+        root / "experiments" / "local_campaign" / "README.md",
+    )
+
+    def assert_contract(value: str) -> None:
+        flattened = " ".join(value.split())
+        assert "length-capped" in flattened
+        assert "selected evaluator" in flattened
+        assert "keeps rejecting every" not in flattened.lower()
+        assert "length-capped prefixes are not responses" not in flattened
+        assert "finish_reason='length' incomplete result" not in flattened
+
+    for path in documents:
+        source = path.read_text(encoding="utf-8")
+        assert_contract(source)
+        changed = source.replace("selected evaluator", "terminal classifier", 1)
+        assert changed != source
+        with pytest.raises(AssertionError):
+            assert_contract(changed)
+
+    plan = " ".join(
+        (root / "experiments" / "LOCAL_CAMPAIGN_PLAN.md")
+        .read_text(encoding="utf-8")
+        .split()
+    )
+    assert "26 runnable and 20 typed terminal rows" in plan
+    assert "zero target-runtime-terminal rows" in plan
+
+
 def test_local_campaign_plan_documents_bounded_controls_and_gate7() -> None:
     plan = (
         Path(__file__).parents[2] / "experiments" / "LOCAL_CAMPAIGN_PLAN.md"

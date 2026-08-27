@@ -229,34 +229,22 @@ already running.
 Its one-case native canaries/imports are engineering diagnostics outside
 `runs/thesis`; they are not Runner/common-metric measured evidence.
 
-The Gate 5 inventory contains 46 rows. Its baseline is 22 runnable rows and 24
-typed terminal rows, or 21 runnable and 25 terminal rows when `defense-local`
-takes its exact conditional N/A disposition. The three GPTGeoChat x RWKV Ollama cross-products
+The Gate 5 inventory contains 46 rows. The three GPTGeoChat x RWKV Ollama cross-products
 are unavailable because that exact target transport is text-only; the Ollama
 projection and canary controller self-test proves they cannot enter a runnable
-loop. Four further rows share one exact
-`ura-phase5-target-runtime-terminal/1` descriptor because the sealed GraySwan RR
-checkpoint reached its generation cap without a stop in both text and physical-
-image probes. The controller retains its completed no-call projections but
-excludes those four identities from canary, measured, metric, paired-analysis,
-and human-audit inputs. The checkpoint and runtime remain installed. Each of
-the three RWKV static text canaries is also classified independently. The
-already-observed `finish_reason='length'` incomplete result at the sealed
-generation cap, or an exact empty completion with no response to judge, becomes
-a non-evidence `target_runtime_terminal` row with reason
-`local_target_output_unusable`, backed by a create-only
-`ura-phase5-ollama-static-canary-terminal/1` artifact. Nonempty vague or
-nonsensical response content remains an ordinary observed outcome. Malformed
-protocol, transport, identity, provenance, residency, timeout, and backend
-failures remain hard failures.
-For `n` exact
-static terminals, Gate 5 requires
-`22-n` runnable, `24+n` terminal and `4+n` target-runtime-terminal rows before
-the optional defense shift. R-Judge remains runnable when its own prompt
-completes. Decision or abstention coverage is retained, and only the two exact
-nonjudgeable output conditions exclude that static lane from this campaign
-cohort's measured schedule. Earlier completed canary attempts remain diagnostic
-observations; the disposition is not a general model/runtime claim.
+loop. Four GraySwan RR and three RWKV static identities retain immutable
+historical target-runtime-terminal artifacts from the older output policy.
+Runner 2.22 and later retains nonempty length-capped text with its terminal
+reason, while Runner 2.23 and later retains a successful empty Ollama completion
+as typed `model_nonresponse`. Vague, repetitive or nonsensical text is ordinary
+observed output and reaches the selected evaluator; a typed nonresponse bypasses
+the judge and remains visible in response and decision coverage.
+
+A targeted amendment re-attests and canaries only those seven identities. If it
+passes, Gate 5 requires 26 runnable, 20 typed-terminal and zero
+target-runtime-terminal rows before the optional defense shift. The older
+terminal artifacts are not rewritten. Malformed protocol, transport, identity,
+provenance, residency, timeout and backend failures remain hard failures.
 
 The core cohort records `bridge-nanogcg`, `bridge-ideator`, and `t3mp3st` as
 `unavailable` only because their prepared artifacts are assigned to a separate
