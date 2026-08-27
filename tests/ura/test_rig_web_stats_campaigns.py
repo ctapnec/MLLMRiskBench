@@ -530,7 +530,10 @@ def test_stats_renders_digest_bound_runner_aggregate_diagram_before_phase7(
     assert "Runner cell aggregates" in detail
     assert "ASR" in detail and "harmful_content" in detail
     assert "class='barchart'" in detail
-    assert "does not pool strata" in detail and "Phase 7" in detail
+    assert "does not pool strata" in detail
+    assert "separately bound Level-2 analysis" in detail
+    assert "Phase 7" not in detail
+    assert "completion-bound Runner aggregates" in detail
 
     # A post-completion byte mutation must remove the diagram rather than
     # presenting unbound aggregate values.

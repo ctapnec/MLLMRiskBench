@@ -1603,8 +1603,8 @@ class DashboardMixin:
             + "Runner cell aggregates <span class='badge blue'>exact job</span></h2>"
             "<p class='note'>Digest-verified <code>*.results.jsonl</code> rows "
             "bound by each completed cell marker. This is a per-job view only: "
-            "it does not pool strata, compare runs, or replace the Phase 7 "
-            "Level-2 analysis.</p>"
+            "it does not pool strata, compare runs, or replace a separately "
+            "bound Level-2 analysis.</p>"
             + "".join(sections)
             + "</div>"
         )
@@ -1833,8 +1833,9 @@ class DashboardMixin:
             f"<div class='notice {evidence_tone}'><strong>Evidence {evidence_label}."
             "</strong><p class='note'>"
             f"{html.escape(self._stats_coverage_text(evidence))}. "
-            "Charts below are rendered only from producer-contract-validated "
-            f"reports attached to this job.{artifact_link}</p></div>"
+            "Charts below are rendered only from completion-bound Runner "
+            "aggregates or producer-contract-validated reports attached to "
+            f"this job.{artifact_link}</p></div>"
             + external_analysis_note
             + limitations_note
             + "<div class='card'><h3>Recorded calls, tokens &amp; calculated cost</h3>"
