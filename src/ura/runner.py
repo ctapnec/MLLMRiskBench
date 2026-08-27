@@ -73,7 +73,7 @@ from .targets.api import (
 from .modality_coverage import declared_target_combinations
 
 #: Bumped when the orchestration semantics change (recorded in every manifest).
-CODE_VERSION = "ura-runner/2.23"
+CODE_VERSION = "ura-runner/2.24"
 _MAX_SCORED_MEDIA_BYTES = 25 * 1024 * 1024
 #: Video releases legitimately exceed the image/audio bound (Video-SafetyBench
 #: ships ~44 MiB MP4s); mirrors DEFAULT_MAX_VIDEO_ASSET_BYTES converter-side.
@@ -4339,6 +4339,7 @@ def validate_persisted_judgment_trails(
             )
         model_nonresponse = (
             responses[attempt_id].raw.get("empty_completion_observed") is True
+            and not (planning_eligible is False and not approximate_enabled)
         )
         if policy_evaluable is False:
             valid_state = (

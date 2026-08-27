@@ -6516,6 +6516,79 @@ def test_runner_retains_typed_empty_completion_without_querying_judges(
     )
 
 
+def test_empty_source_metric_response_is_invalid_prediction_not_trail_failure(
+    tmp_path: Path,
+) -> None:
+    class EmptySourceTarget(_RecordingTarget):
+        def generate(
+            self, dialog: list[DialogTurn], *, seed: int | None = None
+        ) -> Response:
+            return Response(
+                attempt_id="placeholder",
+                target=self.name,
+                output_turns=[],
+                raw={
+                    "target_sampling_control": "uncontrolled",
+                    "requested_seed": seed,
+                    "empty_completion_observed": True,
+                },
+            )
+
+    required_metric = "rjudge_safety_judgment"
+    point = _datapoint().model_copy(update={
+        "id": "rjudge:empty-source-prediction",
+        "source": "rjudge",
+        "expected_behavior": "safe_answer",
+        "meta": {
+            "common_metrics_eligible": False,
+            "required_metric": required_metric,
+            "reference_label": "safe",
+        },
+    })
+    runner = Runner(
+        _FloodAttacker(),
+        EmptySourceTarget(),
+        JudgeCascade([RuleJudge()]),
+        AttackBudget(max_queries=1, max_turns=1, seed=0),
+        [0],
+    )
+
+    judgments, _manifest = runner.run([point])
+
+    final = judgments[0]
+    assert final.raw["policy_evaluation_status"] == "source_metric_only"
+    assert final.raw["required_metric"] == required_metric
+    assert final.raw["source_evaluation"] == {
+        "family": required_metric,
+        "implemented": True,
+        "valid": False,
+        "prediction": None,
+        "reference": "safe",
+        "correct": False,
+        "risk_description_available": False,
+        "risk_effectiveness_scored": False,
+        "source_cluster_id": "rjudge:empty-source-prediction",
+        "source_protocol": None,
+        "official_serial_two_call_protocol": None,
+        "parser": "strict_single_final_safe_unsafe_label_line_v2",
+    }
+    trail_path = tmp_path / "empty-source-prediction.trails.jsonl"
+    runner.save_trails(trail_path)
+    rows = [
+        json.loads(line)
+        for line in trail_path.read_text(encoding="utf-8").splitlines()
+        if line.strip()
+    ]
+    runner_module.validate_persisted_judgment_trails(
+        {attempt.id: attempt for attempt in runner.attempts},
+        {response.attempt_id: response for response in runner.responses},
+        {judgment.attempt_id: judgment for judgment in runner.judgments},
+        rows,
+        {"run": {"approximate_common_metrics": False}},
+        ["rules"],
+    )
+
+
 def test_skip_ids_cannot_create_a_selected_subset_without_checkpoint() -> None:
     runner = _runner(_FloodAttacker(), _RecordingTarget())
     with pytest.raises(ValueError, match="only name attempts restored"):
