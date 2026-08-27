@@ -495,7 +495,7 @@ def test_stats_cta_promises_diagrams_only_for_chart_renderable_bound_report(
     app.close()
 
 
-def test_stats_renders_digest_bound_runner_aggregate_diagram_before_phase7(
+def test_stats_renders_digest_bound_runner_aggregate_diagram_without_linked_analysis(
     tmp_path: Path,
 ) -> None:
     app = _app(tmp_path)
@@ -532,8 +532,50 @@ def test_stats_renders_digest_bound_runner_aggregate_diagram_before_phase7(
     assert "class='barchart'" in detail
     assert "does not pool strata" in detail
     assert "separately bound Level-2 analysis" in detail
-    assert "Phase 7" not in detail
     assert "completion-bound Runner aggregates" in detail
+
+    engineering_boundary = app.results_root / "quarantined-output"
+    engineering_boundary.mkdir()
+    (engineering_boundary / "ENGINEERING_ONLY.json").write_text(
+        "{}", encoding="utf-8"
+    )
+    quarantined_root = engineering_boundary / "runner"
+    _write_completed_cell(
+        quarantined_root,
+        run_id="run-quarantined",
+        target="vllm:fixture/quarantined@revision",
+    )
+    _attach_completed_results(
+        quarantined_root,
+        run_id="run-quarantined",
+        target="vllm:fixture/quarantined@revision",
+    )
+    _record_run(
+        app,
+        tmp_path,
+        job_id="job-quarantined-chart",
+        out=quarantined_root,
+        extra=[
+            "--local",
+            "vllm:fixture/quarantined@revision",
+            "--attackers",
+            "replay",
+            "--corpora",
+            "strongreject_official",
+        ],
+    )
+    quarantined_index = app.handle("GET", "/stats")[2].decode("utf-8")
+    quarantined_card = quarantined_index.split(
+        "data-job-id='job-quarantined-chart'", 1
+    )[1].split("</article>", 1)[0]
+    assert "data-authority='engineering'" in quarantined_index
+    assert "Statistics details" in quarantined_card
+    assert "Statistics &amp; diagrams" not in quarantined_card
+    quarantined_detail = app.handle(
+        "GET", "/stats/job/job-quarantined-chart?fragment=1"
+    )[2].decode("utf-8")
+    assert "Runner cell aggregates" not in quarantined_detail
+    assert "class='barchart'" not in quarantined_detail
 
     # A post-completion byte mutation must remove the diagram rather than
     # presenting unbound aggregate values.

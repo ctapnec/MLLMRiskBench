@@ -1170,6 +1170,7 @@ class DashboardMixin:
                     "authority": authority,
                     "authority_label": authority_label,
                     "authority_tone": authority_tone,
+                    "output_quarantined": quarantined_output,
                     "reports": [],
                     "external_owned": isinstance(external_job, ExternalMeasuredJob),
                     "_external_job": external_job,
@@ -1372,7 +1373,10 @@ class DashboardMixin:
     def _stats_completion_has_results(self, campaign: Mapping[str, Any]) -> bool:
         """Whether an exact completed Runner cell declares aggregate results."""
 
-        if campaign.get("kind") != "measured":
+        if (
+            campaign.get("kind") != "measured"
+            or campaign.get("output_quarantined") is True
+        ):
             return False
         root = campaign.get("output_root")
         if not isinstance(root, Path) or not root.is_dir():
@@ -1394,13 +1398,16 @@ class DashboardMixin:
     ) -> tuple[list[dict[str, Any]], str]:
         """Load completion-bound per-cell Runner aggregates for one exact Job.
 
-        This is a presentation of already produced Runner rows, not Phase 7
+        This is a presentation of already produced Runner rows, not cross-run
         pooling or a replacement for a bound Level-2 report. Every source file
         is resolved through its completion marker and digest-checked before any
         row is rendered.
         """
 
-        if campaign.get("kind") != "measured":
+        if (
+            campaign.get("kind") != "measured"
+            or campaign.get("output_quarantined") is True
+        ):
             return [], ""
         root = campaign.get("output_root")
         if not isinstance(root, Path) or not root.is_dir():
