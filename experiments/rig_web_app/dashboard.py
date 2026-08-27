@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import html
 import json
+import math
 import os
 import re
 import time
@@ -25,6 +26,7 @@ from .artifacts import (
     derived_index_path_quarantined,
     derived_path_quarantined,
     iter_completed_markers,
+    _marker_artifact_path,
     run_kind,
 )
 
@@ -46,6 +48,11 @@ from .external_analysis import (
 
 
 class DashboardMixin:
+    _STATS_RUNNER_RESULT_ROWS_MAX = 10_000
+    _STATS_RUNNER_RESULT_FILE_BYTES_MAX = 32 * 1024 * 1024
+    _STATS_RUNNER_RESULT_TABLE_MAX = 1_000
+    _STATS_RUNNER_RESULT_CHART_MAX = 40
+
     # -- pages -------------------------------------------------------------
 
     def _load_warnings(self) -> list[dict[str, str]]:
@@ -1362,6 +1369,246 @@ class DashboardMixin:
             + "</table></div>"
         )
 
+    def _stats_completion_has_results(self, campaign: Mapping[str, Any]) -> bool:
+        """Whether an exact completed Runner cell declares aggregate results."""
+
+        if campaign.get("kind") != "measured":
+            return False
+        root = campaign.get("output_root")
+        if not isinstance(root, Path) or not root.is_dir():
+            return False
+        try:
+            markers, observed = iter_completed_markers(root)
+        except (OSError, ValueError):
+            return False
+        if observed.get("truncated") or observed.get("skipped_invalid"):
+            return False
+        return any(
+            isinstance(marker.get("artifacts"), Mapping)
+            and isinstance(marker["artifacts"].get("results"), Mapping)
+            for _path, marker in markers
+        )
+
+    def _stats_runner_result_rows(
+        self, campaign: Mapping[str, Any]
+    ) -> tuple[list[dict[str, Any]], str]:
+        """Load completion-bound per-cell Runner aggregates for one exact Job.
+
+        This is a presentation of already produced Runner rows, not Phase 7
+        pooling or a replacement for a bound Level-2 report. Every source file
+        is resolved through its completion marker and digest-checked before any
+        row is rendered.
+        """
+
+        if campaign.get("kind") != "measured":
+            return [], ""
+        root = campaign.get("output_root")
+        if not isinstance(root, Path) or not root.is_dir():
+            return [], ""
+        try:
+            markers, observed = iter_completed_markers(root)
+        except (OSError, ValueError) as exc:
+            return [], f"Runner completion scan failed: {exc}"
+        if observed.get("truncated"):
+            return [], "Runner completion scan was truncated"
+        if observed.get("skipped_invalid"):
+            return [], "Runner completion inventory contains an invalid marker"
+
+        rows: list[dict[str, Any]] = []
+        seen_ids: set[str] = set()
+        try:
+            for marker_path, marker in markers:
+                artifacts = marker.get("artifacts")
+                descriptor = (
+                    artifacts.get("results")
+                    if isinstance(artifacts, Mapping)
+                    else None
+                )
+                if descriptor is None:
+                    continue
+                result_path = _marker_artifact_path(
+                    marker_path, descriptor, verify_sha=True
+                )
+                if result_path.stat().st_size > self._STATS_RUNNER_RESULT_FILE_BYTES_MAX:
+                    raise ValueError("Runner results artifact exceeds the Stats byte cap")
+                expected_records = descriptor.get("records")
+                if (
+                    not isinstance(expected_records, int)
+                    or isinstance(expected_records, bool)
+                    or expected_records < 0
+                ):
+                    raise ValueError("Runner results descriptor has no valid record count")
+                observed_records = 0
+                with result_path.open(encoding="utf-8") as handle:
+                    for line_number, line in enumerate(handle, 1):
+                        if not line.strip():
+                            continue
+                        observed_records += 1
+                        if len(rows) >= self._STATS_RUNNER_RESULT_ROWS_MAX:
+                            raise ValueError("Runner aggregate row cap exceeded")
+                        value = strict_json_loads(line)
+                        if not isinstance(value, Mapping):
+                            raise ValueError(
+                                f"Runner result row {line_number} is not an object"
+                            )
+                        row_id = value.get("id")
+                        metric = value.get("metric")
+                        estimate = value.get("value")
+                        group = value.get("group_by")
+                        provenance = value.get("provenance")
+                        n = value.get("n")
+                        if (
+                            not isinstance(row_id, str)
+                            or not row_id
+                            or len(row_id) > 256
+                            or row_id in seen_ids
+                            or not isinstance(metric, str)
+                            or not metric
+                            or len(metric) > 256
+                            or (
+                                estimate is not None
+                                and (
+                                    not isinstance(estimate, (int, float))
+                                    or isinstance(estimate, bool)
+                                    or not math.isfinite(float(estimate))
+                                )
+                            )
+                            or not isinstance(group, Mapping)
+                            or not isinstance(provenance, Mapping)
+                            or provenance.get("evidence_class") != "measured"
+                            or value.get("run_id") != marker.get("run_id")
+                            or not isinstance(n, int)
+                            or isinstance(n, bool)
+                            or n < 0
+                        ):
+                            raise ValueError(
+                                f"Runner result row {line_number} has an invalid identity"
+                            )
+                        for bound in ("ci_low", "ci_high"):
+                            candidate = value.get(bound)
+                            if candidate is not None and (
+                                not isinstance(candidate, (int, float))
+                                or isinstance(candidate, bool)
+                                or not math.isfinite(float(candidate))
+                            ):
+                                raise ValueError(
+                                    f"Runner result row {line_number} has an invalid {bound}"
+                                )
+                        seen_ids.add(row_id)
+                        rows.append(dict(value))
+                if observed_records != expected_records:
+                    raise ValueError(
+                        "Runner results record count changed since completion"
+                    )
+        except (OSError, TypeError, ValueError, RecursionError) as exc:
+            return [], f"Runner aggregate artifact invalid: {exc}"
+        return rows, ""
+
+    def _stats_runner_results_card(self, campaign: Mapping[str, Any]) -> str:
+        rows, error = self._stats_runner_result_rows(campaign)
+        if error:
+            return (
+                "<div class='notice red'><strong>Runner aggregates not rendered."
+                "</strong><p class='note'>"
+                + html.escape(error)
+                + ".</p></div>"
+            )
+        if not rows:
+            return ""
+
+        by_metric: dict[str, list[dict[str, Any]]] = {}
+        for row in rows:
+            by_metric.setdefault(str(row["metric"]), []).append(row)
+        sections: list[str] = []
+        for metric, metric_rows in sorted(by_metric.items()):
+            ordered = sorted(
+                metric_rows,
+                key=lambda row: tuple(
+                    str(row.get("group_by", {}).get(field) or "")
+                    for field in (
+                        "source", "risk", "effective_modality", "attacker", "model"
+                    )
+                ),
+            )
+            chartable = [
+                row
+                for row in ordered
+                if isinstance(row["value"], (int, float))
+                and not isinstance(row["value"], bool)
+                and 0.0 <= float(row["value"]) <= 1.0
+            ]
+            chart = self._bar_chart(
+                [
+                    (
+                        " / ".join(
+                            str(row.get("group_by", {}).get(field) or "?")
+                            for field in ("source", "risk", "attacker")
+                        ),
+                        float(row["value"]),
+                    )
+                    for row in chartable[: self._STATS_RUNNER_RESULT_CHART_MAX]
+                ]
+            )
+            if len(chartable) > self._STATS_RUNNER_RESULT_CHART_MAX:
+                chart += (
+                    "<p class='note'>Chart shows "
+                    f"{self._STATS_RUNNER_RESULT_CHART_MAX} of {len(chartable)} "
+                    "rate rows for this metric; the bounded table below retains "
+                    "the per-row details.</p>"
+                )
+            table_rows = []
+            for row in ordered[: self._STATS_RUNNER_RESULT_TABLE_MAX]:
+                group = row["group_by"]
+                ci_low = row.get("ci_low")
+                ci_high = row.get("ci_high")
+                ci_text = (
+                    "N/A"
+                    if ci_low is None or ci_high is None
+                    else f"{float(ci_low):.4f}, {float(ci_high):.4f}"
+                )
+                value_text = (
+                    "N/A" if row["value"] is None else f"{float(row['value']):.4f}"
+                )
+                table_rows.append(
+                    "<tr>"
+                    f"<td>{html.escape(str(group.get('model') or 'N/A'))}</td>"
+                    f"<td>{html.escape(str(group.get('source') or 'N/A'))}</td>"
+                    f"<td>{html.escape(str(group.get('risk') or 'N/A'))}</td>"
+                    f"<td>{html.escape(str(group.get('effective_modality') or 'N/A'))}</td>"
+                    f"<td>{html.escape(str(group.get('attacker') or 'N/A'))}</td>"
+                    f"<td>{value_text}</td>"
+                    f"<td>{html.escape(ci_text)}</td><td>{int(row['n']):,}</td></tr>"
+                )
+            table_note = ""
+            if len(ordered) > self._STATS_RUNNER_RESULT_TABLE_MAX:
+                table_note = (
+                    "<p class='note'>Table is bounded to "
+                    f"{self._STATS_RUNNER_RESULT_TABLE_MAX} of {len(ordered)} rows. "
+                    "Open the exact output artifacts for the full file.</p>"
+                )
+            sections.append(
+                f"<h3>{html.escape(metric)} "
+                f"<span class='fieldhint'>({len(ordered)} row(s))</span></h3>"
+                + chart
+                + "<div class='scroll'><table><tr><th>Model</th><th>Source</th>"
+                "<th>Risk</th><th>Modality</th><th>Attacker</th><th>Value</th>"
+                "<th>CI low, high</th><th>n</th></tr>"
+                + "".join(table_rows)
+                + "</table></div>"
+                + table_note
+            )
+        return (
+            "<div class='card'><h2>"
+            + _icon("chart")
+            + "Runner cell aggregates <span class='badge blue'>exact job</span></h2>"
+            "<p class='note'>Digest-verified <code>*.results.jsonl</code> rows "
+            "bound by each completed cell marker. This is a per-job view only: "
+            "it does not pool strata, compare runs, or replace the Phase 7 "
+            "Level-2 analysis.</p>"
+            + "".join(sections)
+            + "</div>"
+        )
+
     def _stats_campaign_card(self, campaign: Mapping[str, Any]) -> str:
         state = str(campaign["state"])
         state_label, state_tone = self._stats_state_badge(state)
@@ -1393,7 +1640,7 @@ class DashboardMixin:
             if usage_reported
             else "not reported"
         )
-        has_chart = any(
+        has_chart = self._stats_completion_has_results(campaign) or any(
             "class='barchart'" in self._stats_report_card(report)
             for report in campaign["reports"]
         )
@@ -1579,6 +1826,7 @@ class DashboardMixin:
             if limitations
             else ""
         )
+        runner_results = self._stats_runner_results_card(campaign)
         return (
             "<p class='stats-detail-state'>Campaign status: "
             f"<span class='badge {state_tone}'>{html.escape(state_label)}</span></p>"
@@ -1594,6 +1842,7 @@ class DashboardMixin:
             + "<p class='note'>Usage is read only from this job's exact output "
             "root and completion-bound artifacts. It is not mixed with diagnostic, "
             "synthetic, engineering, or temporary trees.</p></div>"
+            + runner_results
             + reports
             + "<p class='stats-modal-links'><a href='"
             + html.escape(job_href, quote=True)

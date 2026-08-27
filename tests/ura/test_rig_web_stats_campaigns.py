@@ -93,6 +93,47 @@ def _write_completed_cell(root: Path, *, run_id: str, target: str) -> None:
     )
 
 
+def _attach_completed_results(root: Path, *, run_id: str, target: str) -> Path:
+    results = root / "cell.results.jsonl"
+    results.write_text(
+        json.dumps(
+            {
+                "id": "res-real-runner-chart",
+                "metric": "ASR",
+                "value": 0.625,
+                "ci_low": 0.25,
+                "ci_high": 0.875,
+                "n": 8,
+                "group_by": {
+                    "model": target,
+                    "source": "strongreject",
+                    "risk": "harmful_content",
+                    "effective_modality": "text",
+                    "expected_behavior": "refuse",
+                    "attacker": "replay",
+                    "source_policy_id": "unversioned",
+                    "source_policy_version": "unversioned",
+                },
+                "provenance": {
+                    "run_id": run_id,
+                    "evidence_class": "measured",
+                    "population": "harmful_static_attempts",
+                    "n_clusters": 8,
+                },
+                "run_id": run_id,
+            },
+            sort_keys=True,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    marker_path = root / "cell.complete.json"
+    marker = json.loads(marker_path.read_text(encoding="utf-8"))
+    marker["artifacts"]["results"] = _descriptor(results)
+    marker_path.write_text(json.dumps(marker, sort_keys=True), encoding="utf-8")
+    return results
+
+
 def _record_run(
     app: RigWebApp,
     tmp_path: Path,
@@ -451,6 +492,56 @@ def test_stats_cta_promises_diagrams_only_for_chart_renderable_bound_report(
     assert "class='barchart'" in chart_detail
     assert "class='barchart'" not in table_detail
     assert "Validated Level-2 report with no common estimate rows" in table_detail
+    app.close()
+
+
+def test_stats_renders_digest_bound_runner_aggregate_diagram_before_phase7(
+    tmp_path: Path,
+) -> None:
+    app = _app(tmp_path)
+    root = app.results_root / "thesis" / "runner-direct-chart"
+    run_id = "run-direct-chart"
+    target = "vllm:fixture/target@revision"
+    _write_completed_cell(root, run_id=run_id, target=target)
+    results = _attach_completed_results(root, run_id=run_id, target=target)
+    _record_run(
+        app,
+        tmp_path,
+        job_id="job-direct-chart",
+        out=root,
+        extra=[
+            "--local",
+            target,
+            "--attackers",
+            "replay",
+            "--corpora",
+            "strongreject_official",
+        ],
+    )
+
+    index = app.handle("GET", "/stats")[2].decode("utf-8")
+    card = index.split("data-job-id='job-direct-chart'", 1)[1].split(
+        "</article>", 1
+    )[0]
+    assert "Statistics &amp; diagrams" in card
+    detail = app.handle(
+        "GET", "/stats/job/job-direct-chart?fragment=1"
+    )[2].decode("utf-8")
+    assert "Runner cell aggregates" in detail
+    assert "ASR" in detail and "harmful_content" in detail
+    assert "class='barchart'" in detail
+    assert "does not pool strata" in detail and "Phase 7" in detail
+
+    # A post-completion byte mutation must remove the diagram rather than
+    # presenting unbound aggregate values.
+    results.write_text(results.read_text(encoding="utf-8") + "\n", encoding="utf-8")
+    mutated = app.handle(
+        "GET", "/stats/job/job-direct-chart?fragment=1"
+    )[2].decode("utf-8")
+    assert "Runner aggregates not rendered" in mutated
+    assert "digest changed since completion" not in mutated
+    assert "byte size changed since completion" in mutated
+    assert "class='barchart'" not in mutated
     app.close()
 
 
