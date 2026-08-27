@@ -454,7 +454,11 @@ failure or permission to alter stops, generation caps, checkpoint identity or
 decoding.
 
 A targeted amendment must re-attest and canary only the seven affected lane
-identities under the current Runner before measured execution. On successful
+identities under the current Runner before measured execution. The four current
+GraySwan identities use the limit-100, sample-seed-0 selections and caps from
+their matching LLaVA-base rows; the three RWKV static identities keep their
+limit-50, sample-seed-0 selections. The older GraySwan `-full` terminal names
+remain only in immutable historical provenance. On successful
 amendment, the expected Gate 5 profile is 26 runnable and 20 typed-terminal
 rows, with zero target-runtime-terminal rows, before the optional
 `defense-local` shift. The historical terminal artifacts remain diagnostic
@@ -3316,8 +3320,9 @@ Repeat with `run_matrix`, `"${LIVE_ATTESTATION_ARGS[@]}"`, exact totals, and
 run the image lane. Repeat both for the LLaVA base using its own exact local
 config. The four GraySwan RR identities enter only through their targeted Gate 5
 amendment: each exact lane must pass the normal attestation and canary gates with
-the original source clusters, input bytes, inference settings, judge condition
-and caps. A nonempty length-capped prefix is a response and is sent to the
+the current bounded source clusters matched to its LLaVA-base row, identical
+input bytes, inference settings, judge condition and caps. A nonempty
+length-capped prefix is a response and is sent to the
 selected evaluator with `finish_reason='length'` retained. Do not change stops,
 generation caps, checkpoint identity or decoding settings to make the pair look
 more favorable.
@@ -4003,12 +4008,15 @@ python -m experiments.paired_compare --results runs/thesis/runner \
 
 ```
 
-Do not invoke `paired_compare` for the current LLaVA base/RR plan. Phase 7
-instead writes one `ura-phase7-non-estimable-contrast/1` artifact for each of
-the twelve planned image facets. Each binds the shared Gate 5 RR runtime-terminal
-descriptor, declares the planned contrast unavailable, and contains no estimate.
-Those artifacts disclose the missing comparison without treating a truncated
-prefix, a no-call projection, or the successful base lane as RR evidence.
+Invoke `paired_compare` for an LLaVA base/RR facet only when the seven-row Gate 5
+amendment admits all four bounded RR identities and both exact measured inputs
+match on source clusters, input bytes, limit, sample seed, inference settings and
+judge condition. When any prerequisite is absent or failed, write one
+`ura-phase7-non-estimable-contrast/1` artifact for each unavailable planned
+facet. Bind the failed or retained-terminal prerequisite, declare the contrast
+unavailable, and include no estimate. Never treat a length-capped canary, a
+no-call projection, a partial measured root or the successful base lane alone as
+RR evidence.
 
 Build the mandatory Level-1 lifecycle inventory from one explicitly selected
 runner cohort. Supply every final eligibility plan in that scope, including

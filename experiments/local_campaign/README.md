@@ -243,7 +243,10 @@ the judge and remains visible in response and decision coverage.
 A targeted amendment re-attests and canaries only those seven identities. If it
 passes, Gate 5 requires 26 runnable, 20 typed-terminal and zero
 target-runtime-terminal rows before the optional defense shift. The older
-terminal artifacts are not rewritten. Malformed protocol, transport, identity,
+GraySwan `-full` terminal identities are not rewritten; the current GraySwan
+rows instead use limit 100 and sample seed 0 matched to the LLaVA-base rows.
+The RWKV static rows retain limit 50 and sample seed 0. Malformed protocol,
+transport, identity,
 provenance, residency, timeout and backend failures remain hard failures.
 
 The core cohort records `bridge-nanogcg`, `bridge-ideator`, and `t3mp3st` as

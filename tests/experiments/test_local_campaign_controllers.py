@@ -5498,6 +5498,17 @@ def test_length_capped_output_documentation_matches_runner_policy() -> None:
     )
     assert "26 runnable and 20 typed terminal rows" in plan
     assert "zero target-runtime-terminal rows" in plan
+    assert "local-llava-rr-text-primary-100" in plan
+    assert "local-llava-rr-image-primary-100" in plan
+    assert "match the corresponding LLaVA-base rows" in plan
+
+    runbook = " ".join(
+        (root / "experiments" / "RUN_AND_RETURN.md")
+        .read_text(encoding="utf-8")
+        .split()
+    )
+    assert "Do not invoke `paired_compare` for the current LLaVA base/RR plan" not in runbook
+    assert "only when the seven-row Gate 5 amendment admits all four bounded RR identities" in runbook
 
 
 def test_local_campaign_plan_documents_bounded_controls_and_gate7() -> None:

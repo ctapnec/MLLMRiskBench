@@ -507,7 +507,14 @@ Neither outcome is a software failure, and neither authorizes altered stops,
 generation caps, decoding configuration or checkpoint identity.
 
 Only the seven affected identities are re-attested and canaried in a targeted
-Gate 5 amendment. If they pass the ordinary identity, transport, cap and
+Gate 5 amendment. The historical GraySwan rows keep their immutable `-full`
+terminal identities, but the amendment's current measured identities are
+`local-llava-rr-text-primary-100`,
+`local-llava-rr-image-primary-100`, `rjudge-llava-rr` and
+`gptgeochat-llava-rr`. Their limit-100, sample-seed-0 selections and caps match
+the corresponding LLaVA-base rows. The three RWKV static identities retain
+their limit-50, sample-seed-0 selections. If the seven rows pass the ordinary
+identity, transport, cap and
 provenance checks, the amended 46-row profile is 26 runnable and 20 typed
 terminal rows, or 25 runnable and 21 terminal rows when the optional local
 defense lane is unavailable, with zero target-runtime-terminal rows. Malformed
@@ -690,10 +697,13 @@ narrower: `suite_summary`, `level2_report`, `judge_sensitivity --attacker replay
 --defense none`, `kappa --attacker replay --defense none`, `transfer_matrix
 --attacker replay --defense none`, and the free replay-vs-Crescendo paired
 comparison within Qwen3-VL-8B [16]. The planned LLaVA base-vs-RR comparison is
-represented instead by one strict `ura-phase7-non-estimable-contrast/1`
-artifact for each of the twelve planned image facets. Each binds the shared
-Gate 5 runtime-terminal descriptor and carries no estimate; no RR metric input
-or `paired_compare` invocation is constructed. The Level-2 export keeps rules-only
+estimated only when the seven-row amendment admits all four bounded RR rows and
+both base and RR measured cells match on source clusters, input bytes, sampling,
+inference settings and judge condition. Otherwise Phase 7 writes one strict
+`ura-phase7-non-estimable-contrast/1` artifact for every unavailable planned
+facet, binds the failed or retained-terminal prerequisite and carries no
+estimate. It must not construct RR metric input from projections, canaries or
+partial measured roots. The Level-2 export keeps rules-only
 and cascade (rules+guardrail) evaluator modes as separate compatibility keys.
 Only successful measured lanes enter those metric and Level-2 views; failed and
 partial lanes remain visible in Level-1 lifecycle evidence rather than being
