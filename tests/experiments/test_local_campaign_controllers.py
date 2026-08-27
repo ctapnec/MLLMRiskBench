@@ -5486,7 +5486,7 @@ def test_length_capped_output_documentation_matches_runner_policy() -> None:
     for path in documents:
         source = path.read_text(encoding="utf-8")
         assert_contract(source)
-        changed = source.replace("selected evaluator", "terminal classifier", 1)
+        changed = source.replace("selected evaluator", "terminal classifier")
         assert changed != source
         with pytest.raises(AssertionError):
             assert_contract(changed)
