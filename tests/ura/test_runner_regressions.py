@@ -6466,12 +6466,54 @@ def test_runner_rejects_empty_mismatched_and_unreported_target_outputs() -> None
             )
 
     for mode, message in (
-        ("empty", "no substantive output"),
+        ("empty", "must report exactly one"),
         ("mismatch", "returned identity"),
         ("sampling", "sampling-control"),
     ):
         with pytest.raises(ValueError, match=message):
             _runner(_FloodAttacker(), BadTarget(mode)).run([_datapoint()])
+
+
+def test_runner_retains_typed_empty_completion_without_querying_judges(
+    tmp_path: Path,
+) -> None:
+    class EmptyTarget(_RecordingTarget):
+        def generate(
+            self, dialog: list[DialogTurn], *, seed: int | None = None
+        ) -> Response:
+            return Response(
+                attempt_id="placeholder",
+                target=self.name,
+                output_turns=[],
+                raw={
+                    "target_sampling_control": "uncontrolled",
+                    "requested_seed": seed,
+                    "empty_completion_observed": True,
+                },
+            )
+
+    runner = _runner(_FloodAttacker(), EmptyTarget())
+    judgments, _manifest = runner.run([_datapoint()])
+
+    assert len(runner.responses) == 1
+    assert judgments[0].label == "not_applicable"
+    assert judgments[0].raw["policy_evaluation_status"] == "model_nonresponse"
+    assert judgments[0].raw["stage_queried"] is False
+    trail_path = tmp_path / "model-nonresponse.trails.jsonl"
+    runner.save_trails(trail_path)
+    rows = [
+        json.loads(line)
+        for line in trail_path.read_text(encoding="utf-8").splitlines()
+        if line.strip()
+    ]
+    runner_module.validate_persisted_judgment_trails(
+        {attempt.id: attempt for attempt in runner.attempts},
+        {response.attempt_id: response for response in runner.responses},
+        {judgment.attempt_id: judgment for judgment in runner.judgments},
+        rows,
+        {"run": {"approximate_common_metrics": False}},
+        ["binary"],
+    )
 
 
 def test_skip_ids_cannot_create_a_selected_subset_without_checkpoint() -> None:

@@ -30,7 +30,7 @@ REVISION = "6" * 40
 
 
 def test_local_context_contract_bumps_runner_version() -> None:
-    assert CODE_VERSION == "ura-runner/2.22"
+    assert CODE_VERSION == "ura-runner/2.23"
 
 
 def _rig_hardware() -> dict[str, object]:
@@ -409,6 +409,47 @@ def test_ollama_uses_the_same_nonblank_deterministic_attempt_placeholder(
     assert first.attempt_id.strip()
     assert first.output_turns[0].content == "local response"
     assert first.raw["done_reason"] == "length"
+
+
+def test_ollama_retains_successful_empty_completion_as_typed_nonresponse(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    digest = "a" * 64
+    target = OllamaTarget("fixture:latest", model_digest=digest)
+    monkeypatch.setattr(
+        target, "_verify_daemon_identity", lambda *, deadline=None: digest
+    )
+    monkeypatch.setattr(
+        target, "_verify_loaded_identity", lambda *_args, deadline=None: digest
+    )
+    monkeypatch.setattr(
+        target, "_verify_pre_generation_residency", lambda *, deadline: "empty"
+    )
+    monkeypatch.setattr(
+        target,
+        "_chat",
+        lambda _messages, *, seed=None, deadline=None: {
+            "model": "fixture:latest",
+            "message": {"role": "assistant", "content": ""},
+            "done": True,
+            "done_reason": "stop",
+            "prompt_eval_count": 3,
+            "eval_count": 0,
+        },
+    )
+
+    response = target.generate([DialogTurn(role="user", content="probe")], seed=7)
+
+    def release(*, deadline: float) -> str:
+        del deadline
+        target._residency_owned = False
+        return "unload"
+
+    monkeypatch.setattr(target, "_release_owned_residency", release)
+    target.close()
+    assert response.output_turns == []
+    assert response.raw["empty_completion_observed"] is True
+    assert response.raw["done_reason"] == "stop"
 
 
 def test_ollama_config_forbids_vllm_context_cap(tmp_path: Path) -> None:

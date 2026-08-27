@@ -73,7 +73,7 @@ from .targets.api import (
 from .modality_coverage import declared_target_combinations
 
 #: Bumped when the orchestration semantics change (recorded in every manifest).
-CODE_VERSION = "ura-runner/2.22"
+CODE_VERSION = "ura-runner/2.23"
 _MAX_SCORED_MEDIA_BYTES = 25 * 1024 * 1024
 #: Video releases legitimately exceed the image/audio bound (Video-SafetyBench
 #: ships ~44 MiB MP4s); mirrors DEFAULT_MAX_VIDEO_ASSET_BYTES converter-side.
@@ -657,6 +657,14 @@ class Runner:
                 final, raw_trail = self._non_evaluable_setup_outcome(
                     response
                 )
+            elif response.raw.get("empty_completion_observed") is True and not (
+                evaluation_datapoint.meta.get("common_metrics_eligible", True)
+                is False
+                and not approximate_proxy
+            ):
+                final, raw_trail = self._model_nonresponse_outcome(
+                    evaluation_datapoint, response
+                )
             elif (
                 evaluation_datapoint.meta.get("common_metrics_eligible", True)
                 is False
@@ -892,6 +900,39 @@ class Runner:
             ))
         return trail[0], trail
 
+    def _model_nonresponse_outcome(
+        self, datapoint: DataPoint, response: Response
+    ) -> tuple[Judgment, list[Judgment]]:
+        """Retain a successful target call that emitted no assistant content."""
+
+        required_metric = datapoint.meta.get("required_metric")
+        trail: list[Judgment] = []
+        for index, stage in enumerate(self.judge_cascade.stages):
+            raw: dict[str, Any] = {
+                "confidence": 1.0,
+                "parsed": None,
+                "stage_queried": False,
+                "policy_evaluation_status": "model_nonresponse",
+                "cascade_stage": index,
+                "cascade_confident": True,
+                "cascade_role": "authoritative" if index == 0 else "shadow",
+                "cascade_policy": "first_confident_with_full_shadow_trail",
+            }
+            if required_metric is not None:
+                raw["required_metric"] = required_metric
+            trail.append(Judgment(
+                attempt_id=response.attempt_id,
+                judge=stage.name,
+                label="not_applicable",
+                score=0.0,
+                rationale=(
+                    "target call completed without substantive assistant output; "
+                    "policy judge not queried"
+                ),
+                raw=raw,
+            ))
+        return trail[0], trail
+
     def _response_checkpoint_record(
         self, attempt: Attempt, response: Response
     ) -> CheckpointRecord:
@@ -947,16 +988,13 @@ class Runner:
                 f"response checkpoint lacks sampling-control provenance for "
                 f"{expected.id!r}"
             )
-        provider_refusal = response.raw.get("provider_refusal", False)
-        if not isinstance(provider_refusal, bool):
+        try:
+            validate_response_refusal_state(response)
+        except ValueError as exc:
             raise ValueError(
-                f"response checkpoint has invalid provider_refusal for {expected.id!r}"
-            )
-        if provider_refusal == _response_has_substantive_output(response):
-            raise ValueError(
-                f"response checkpoint output/refusal state is inconsistent for "
-                f"{expected.id!r}"
-            )
+                f"response checkpoint output state is inconsistent for "
+                f"{expected.id!r}: {exc}"
+            ) from exc
         _validate_response_accounting(response)
         self._validate_attested_target_identity(response)
         saved_budget = record.get("budget_after_target")
@@ -1772,16 +1810,13 @@ class Runner:
                 f"checkpoint response lacks sampling-control provenance for "
                 f"{expected.id!r}"
             )
-        provider_refusal = response.raw.get("provider_refusal", False)
-        if not isinstance(provider_refusal, bool):
+        try:
+            validate_response_refusal_state(response)
+        except ValueError as exc:
             raise ValueError(
-                f"checkpoint response has invalid provider_refusal for {expected.id!r}"
-            )
-        if provider_refusal == _response_has_substantive_output(response):
-            raise ValueError(
-                f"checkpoint response output/refusal state is inconsistent for "
-                f"{expected.id!r}"
-            )
+                f"checkpoint response output state is inconsistent for "
+                f"{expected.id!r}: {exc}"
+            ) from exc
         _validate_response_accounting(response)
         self._validate_attested_target_identity(response)
         saved_budget = record.get("budget_after_attempt")
@@ -1806,6 +1841,11 @@ class Runner:
             policy_evaluable
             and datapoint.meta.get("common_metrics_eligible", True) is False
             and self.approximate_common_metrics
+        )
+        model_nonresponse = (
+            response.raw.get("empty_completion_observed") is True
+            and policy_evaluable
+            and not source_metric_only
         )
         for index, (item, stage_name) in enumerate(zip(trail, expected_stage_names)):
             if item.judge != stage_name:
@@ -1839,7 +1879,23 @@ class Runner:
                         f"{expected.id!r}"
                     )
                 authorities.append(item)
-            if source_metric_only:
+            if model_nonresponse:
+                expected_required_metric = (
+                    datapoint.meta.get("required_metric")
+                    if datapoint.meta.get("common_metrics_eligible", True) is False
+                    else None
+                )
+                if (
+                    item.label != "not_applicable"
+                    or raw.get("stage_queried") is not False
+                    or raw.get("policy_evaluation_status") != "model_nonresponse"
+                    or raw.get("required_metric") != expected_required_metric
+                ):
+                    raise ValueError(
+                        "checkpoint model-nonresponse turn contains a judge "
+                        f"verdict for {expected.id!r}"
+                    )
+            elif source_metric_only:
                 if (
                     item.label != "not_applicable"
                     or raw.get("stage_queried") is not False
@@ -4166,7 +4222,9 @@ def _validate_llm_trail_call_state(
 
     if stage_queried is False:
         if (
-            policy_status not in {"not_evaluable", "source_metric_only"}
+            policy_status not in {
+                "not_evaluable", "source_metric_only", "model_nonresponse"
+            }
             or model_queried is not None
             or call is not None
             or provider_signal not in {None, False}
@@ -4279,6 +4337,9 @@ def validate_persisted_judgment_trails(
             raise ValueError(
                 f"{context} has an invalid provider-signal authority marker"
             )
+        model_nonresponse = (
+            responses[attempt_id].raw.get("empty_completion_observed") is True
+        )
         if policy_evaluable is False:
             valid_state = (
                 queried is False
@@ -4286,6 +4347,17 @@ def validate_persisted_judgment_trails(
                 and row.get("label") == "not_applicable"
                 and row.get("metric_authority") is None
                 and row.get("required_metric") is None
+            )
+        elif model_nonresponse:
+            expected_required_metric = (
+                planning_required_metric if planning_eligible is False else None
+            )
+            valid_state = (
+                queried is False
+                and status == "model_nonresponse"
+                and row.get("label") == "not_applicable"
+                and row.get("metric_authority") is None
+                and row.get("required_metric") == expected_required_metric
             )
         elif planning_eligible is False:
             required_metric_matches = (
@@ -4948,7 +5020,7 @@ def validate_planned_realized_identities(
             if (
                 row.get("stage_queried") is False
                 and row.get("policy_evaluation_status")
-                in {"not_evaluable", "source_metric_only"}
+                in {"not_evaluable", "source_metric_only", "model_nonresponse"}
             ):
                 continue
             if not realized_identity_matches(
@@ -5558,7 +5630,7 @@ def _write_jsonl_models(records: list[Any], path: Path) -> None:
 
 
 def validate_response_refusal_state(response: Response) -> None:
-    """Require one truthful, exclusive output-vs-provider-refusal state."""
+    """Require one truthful output, refusal, or model-nonresponse state."""
 
     provider_refusal = response.raw.get("provider_refusal", False)
     if not isinstance(provider_refusal, bool):
@@ -5573,15 +5645,14 @@ def validate_response_refusal_state(response: Response) -> None:
         raise ValueError(
             "non-refusal target response must not carry a refusal category"
         )
+    empty_completion = response.raw.get("empty_completion_observed", False)
+    if not isinstance(empty_completion, bool):
+        raise ValueError("target empty_completion_observed signal must be boolean")
     has_output = _response_has_substantive_output(response)
-    if provider_refusal and has_output:
+    if sum((provider_refusal, empty_completion, has_output)) != 1:
         raise ValueError(
-            "typed provider refusal must not also carry scored assistant output"
-        )
-    if not provider_refusal and not has_output:
-        raise ValueError(
-            f"target {response.target!r} returned no substantive output and no "
-            "typed provider refusal"
+            f"target {response.target!r} must report exactly one of substantive "
+            "output, typed provider refusal, or typed empty completion"
         )
 
 

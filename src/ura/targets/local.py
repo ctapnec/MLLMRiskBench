@@ -1421,10 +1421,11 @@ class OllamaTarget(BaseTarget):
                         "Ollama returned a non-assistant message"
                     )
                 text = message.get("content")
-                if not isinstance(text, str) or not text.strip():
+                if not isinstance(text, str):
                     raise LocalTargetOutputError(
-                        "Ollama returned an empty completion"
+                        "Ollama returned a non-text completion"
                     )
+                empty_completion_observed = not bool(text.strip())
                 tokens = self._token_counts(data)
                 post_digest = self._verify_daemon_identity(deadline=deadline)
                 loaded_digest = self._verify_loaded_identity(
@@ -1457,7 +1458,11 @@ class OllamaTarget(BaseTarget):
         return Response(
             attempt_id=_dialog_fingerprint(dialog),
             target=self.name,
-            output_turns=[DialogTurn(role="assistant", content=text)],
+            output_turns=(
+                []
+                if empty_completion_observed
+                else [DialogTurn(role="assistant", content=text)]
+            ),
             latency_ms=latency_ms,
             tokens=tokens,
             raw={
@@ -1476,6 +1481,7 @@ class OllamaTarget(BaseTarget):
                 ),
                 "done": True,
                 "done_reason": done_reason,
+                "empty_completion_observed": empty_completion_observed,
                 "requested_seed": seed,
                 "target_sampling_control": (
                     "local_seed" if seed is not None else "uncontrolled"

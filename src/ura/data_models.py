@@ -299,7 +299,7 @@ class Response(BaseModel):
 
     attempt_id: str
     target: str                                   # target model id
-    output_turns: list[DialogTurn]                # may be empty for a typed provider refusal
+    output_turns: list[DialogTurn]                # may be empty for a typed terminal outcome
     tool_trace: list[DialogTurn] = Field(default_factory=list)
     latency_ms: Optional[float] = None
     tokens: Optional[dict[str, int]] = None
@@ -307,9 +307,8 @@ class Response(BaseModel):
     run_id: Optional[str] = None
 
     # Note: output_turns is intentionally allowed to be empty so a typed provider
-    # refusal can carry no invented assistant text. The Runner admits that state
-    # only via raw.provider_refusal; an ordinary empty, partial, filtered, or
-    # truncated completion is an execution failure.
+    # refusal or successful empty model completion can carry no invented text.
+    # Runner admits those states only through their explicit raw signals.
 
     @field_validator("attempt_id", "target")
     @classmethod
